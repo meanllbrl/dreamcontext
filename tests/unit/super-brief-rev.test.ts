@@ -42,8 +42,12 @@ describe('the briefing carries the jarvis sections and its revision', () => {
     expect(OWNER_VOICE_TEXT.startsWith('<')).toBe(true);
   });
 
+  it('rev 11 (2026-10-25): the dock\'s page block is named, in the briefing and in the update', () => {
+    expect(SUPER_BRIEF_REV).toBe(11);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) expect(t).toContain('A message ending `[On page <page> …]` was written from the dock');
+  });
+
   it('rev 10 (2026-10-23): which answer is to which message, in the briefing and in the update', () => {
-    expect(SUPER_BRIEF_REV).toBe(10);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       expect(t).toContain('`<owner-msg ref="…"/>`');
       expect(t).toContain('`<!-- re:<ref> -->` on its first line (up to 3 refs');

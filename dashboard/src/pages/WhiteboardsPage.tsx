@@ -15,6 +15,7 @@ import { readLastBoard, writeLastBoard } from '../components/whiteboard/boardPla
 import { hydrateWhiteboardPrefs, isWhiteboardPrefsHydrated } from '../components/whiteboard/whiteboardPrefs';
 import { BoardTabs } from './whiteboards/BoardTabs';
 import { clearBoardHash, formatBoardHash, parseBoardHash } from './whiteboards/boardHash';
+import { publishPageDetail } from '../lib/pageContext';
 import './WhiteboardsPage.css';
 
 interface WhiteboardsPageProps {
@@ -54,7 +55,7 @@ export function WhiteboardsPage({ focus }: WhiteboardsPageProps = {}) {
 
 function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   const { t } = useI18n();
-  const { instanceId, vault } = useVault();
+  const { instanceId, vault, bus } = useVault();
   // The board open before a reload: the URL hash (see boardHash). There is one URL per window,
   // so only the window's first project reads it back, like Shell's `/lab/` deep link.
   const [openSlug, setOpenSlug] = useState<string | null>(
@@ -92,6 +93,12 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   useEffect(() => {
     if (openSlug && vault) writeLastBoard(vault, openSlug);
   }, [openSlug, vault]);
+  // The open board, for the Super dock's page chip (lib/pageContext.ts).
+  useEffect(() => {
+    if (!openSlug) return undefined;
+    publishPageDetail(bus, 'whiteboards', { page: 'whiteboards', board: openSlug });
+    return () => publishPageDetail(bus, 'whiteboards', null);
+  }, [bus, openSlug]);
 
   // Only the open board's agents' conversations stay alive (one `claude` each): its home agents
   // and the agents with a card on it. The rest end once idle, so boards visited with the panel

@@ -1,11 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
-import { isLightMode } from '../../../lib/lightMode';
 import { MAX_CONTAINERS, PRESENT_LAYOUTS, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
-import { SleepyMascot } from '../SleepyMascot';
 import type { ChatSession } from '../chatSession';
-import { prefersReducedMotion } from './motionRunner';
 import { TeamTile, type TeamCard } from './TeamTile';
 import { OthersStack, type OthersItem } from './OthersStack';
 import { GroupPanel } from './GroupPanel';
@@ -26,6 +23,7 @@ import { LOOK_RENEW_MS, anchoredPos, childIsLive, fitsNow, isGroupId, planStage,
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { cardTitle } from './superTitles';
+import { BrandMark } from '../../brand/BrandMark';
 import { useTasks } from '../../../hooks/useTasks';
 import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
@@ -85,6 +83,57 @@ export interface SuperSurfaceProps {
   endPending: ReadonlySet<string>;
   /** Children whose end the server did not record (still running; the card says so). */
   endFailed: ReadonlySet<string>;
+  /** The Super dock is open: the question band is drawn there, so the stage draws none (ONE band
+   *  and one set of test ids in the page). */
+  queueElsewhere?: boolean;
+  /** Written on every render: the stage's own "show this child beside the agenda", and whether
+   *  the stage can do it now (on screen, measured). The dock's band reaches the stage through it. */
+  stageShowChild?: MutableRefObject<StageShowChild | null>;
+}
+
+export interface StageShowChild { show: (sid: string) => void; ready: boolean }
+
+/** The look the agenda and the question band read (both the stage and the Super dock). */
+export function jobLookOf({ sessionFor, titleFor, nameFor, children, superTitle }: {
+  sessionFor: (claudeId: string) => ChatSession | undefined;
+  titleFor: (claudeId: string) => string;
+  nameFor?: (claudeId: string) => string;
+  children: SuperStateView['children'];
+  superTitle: string;
+}): JobLook {
+  return {
+    live: (sid) => { const cs = sessionFor(sid); return cs ? chatStatus(cs).kind : null; },
+    titleFor,
+    nameFor,
+    modelFor: (sid) => childModelChip(sessionFor(sid), hasOwnKey(children, sid) ? children[sid] : undefined),
+    superTitle,
+  };
+}
+
+/**
+ * The Super chat's head: the dreamcontext logo, its name ("dreamcontext Super Agent", owner
+ * 2026-10-25), and (as a column) the subtitle, the stage's Agenda button when one is given and
+ * New session. The stage centre and the Super dock both draw it; the dock passes no agenda (the
+ * agenda is a stage card) and its two buttons as `actions`.
+ */
+export function SuperCentreHead({ chat, agenda, pending, onNewSession, actions }: {
+  chat: string;
+  agenda?: ReactNode;
+  pending: boolean;
+  onNewSession: () => Promise<boolean>;
+  actions?: ReactNode;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="super-centre-head">
+      <BrandMark size={28} />
+      <span className="super-centre-name">{t('super.centre.name')}</span>
+      {chat === 'column' && <span className="super-centre-sub">{t('super.centre.sub')}</span>}
+      {chat === 'column' && agenda}
+      {chat === 'column' && <NewSessionButton pending={pending} onPress={onNewSession} />}
+      {actions}
+    </div>
+  );
 }
 
 /**
@@ -477,12 +526,6 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // token: its transcript re-renders itself (liveSession.ts).
   useLiveSession(superSession, () => { const s = chatStatus(superSession); return `${s.kind}|${s.mood}`; });
   const status = superCentreStatus(superSession, ownerAsk);
-  // The cape goes on WITH the hand-over (D18, AC13): the face mounts with the surface — inside
-  // the centre, still at opacity 0 while its stand-in grows in — so the 400 ms entrance starts
-  // on the choreography's first frame and is over before its end (≥ 440 ms). Decided once, at
-  // mount: a surface that mounts with nothing flying (a reload, a take-back reversed back here)
-  // and the crossfade (Light mode, reduced motion) have the cape simply on.
-  const [capeOn] = useState(() => motion === 'running' && !prefersReducedMotion() && !isLightMode());
 
   const head = queueHead(state);
   // What each child's card says it waits on the owner for: a question it asks, or something only he can do.
@@ -506,13 +549,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     publishSuperEventContext(superId, { ownerBatches: state.ownerBatches, titleFor: (c) => titleForRef.current(c) }, `${batchKey}\u0002${titleKey}`);
   }, [superId, batchKey, titleKey, state.ownerBatches, motion]);
   // The agenda and the question band read the same record and the children's live sessions (0 requests).
-  const jobLook: JobLook = {
-    live: (sid) => { const cs = props.sessionFor(sid); return cs ? chatStatus(cs).kind : null; },
-    titleFor: props.titleFor,
-    nameFor: props.nameFor,
-    modelFor: (sid) => childModelChip(props.sessionFor(sid), hasOwnKey(state.children, sid) ? state.children[sid] : undefined),
-    superTitle: t('super.centre.name'),
-  };
+  const jobLook: JobLook = jobLookOf({ sessionFor: props.sessionFor, titleFor: props.titleFor, nameFor: props.nameFor, children: state.children, superTitle: t('super.centre.name') });
   // A child the agenda points at (a permission waiting on the owner) shows beside the centre,
   // and the agenda stays with it (presented together, the agenda last): a page side by side
   // would send the agenda to Others, and the owner reads on from it.
@@ -527,9 +564,10 @@ export function SuperSurface(props: SuperSurfaceProps) {
     else onLayout({ ...(c.place === 'others' ? { cards: [{ id: c.id, place: 'float' as const }] } : {}), view: { mode: 'present', cards: [c.id, agenda.id] } });
     if (wait) showOwnerCard(wait.wait);
   };
+  if (props.stageShowChild) props.stageShowChild.current = { show: showChild, ready: plan.width > 0 && props.visible };
   // The super's own question (or an approval) in the agenda: its card in the centre chat.
   const showQuestion = (item: string) => {
-    if (showQuestionCard(item)) return;
+    if (showQuestionCard(item, superSession?.container)) return;
     document.querySelector<HTMLElement>('[data-testid="super-queue-head"]')?.scrollIntoView({ block: 'center' });
   };
   // The agenda card (owner 2026-10-22: a card on the stage, not a column; the super's notepad):
@@ -622,16 +660,15 @@ export function SuperSurface(props: SuperSurfaceProps) {
         >
           <div className="super-centre-bg" aria-hidden />
           <div className="super-centre-clip">
-            <div className="super-centre-head">
-              <SleepyMascot size={28} compact mood={status.mood} mode="super" capeOn={capeOn} />
-              <span className="super-centre-name">{t('super.centre.name')}</span>
-              {plan.chat === 'column' && <span className="super-centre-sub">{t('super.centre.sub')}</span>}
-              {plan.chat === 'column' && !agendaOnStage && <AgendaButton state={state} look={jobLook} onOpen={openAgenda} />}
-              {plan.chat === 'column' && <NewSessionButton pending={freshPending(state)} onPress={props.onNewSession} />}
-              {plan.chat === 'mini' && view.mode === 'present' && view.chat !== 'bar' && (
+            <SuperCentreHead
+              chat={plan.chat}
+              agenda={!agendaOnStage ? <AgendaButton state={state} look={jobLook} onOpen={openAgenda} /> : undefined}
+              pending={freshPending(state)}
+              onNewSession={props.onNewSession}
+              actions={plan.chat === 'mini' && view.mode === 'present' && view.chat !== 'bar' ? (
                 <button type="button" className="super-chat-fold" data-testid="super-chat-fold" aria-pressed={false} onClick={toggleBar}>{t('super.chat.toBar')}</button>
-              )}
-            </div>
+              ) : undefined}
+            />
             <div className="super-slot" data-super-slot="centre" />
           </div>
           {hot === 'centre' && <div className="super-ask-target" data-testid="super-ask-target" aria-hidden>{t('super.card.askAbout')}</div>}
@@ -723,7 +760,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
           {isGroupId(target) ? t('super.drop.join').replace('{name}', groupsById.get(target)?.name ?? '') : t('super.drop.group')}
         </div>
       )}
-      <JobBar
+      {!props.queueElsewhere && <JobBar
         state={state}
         head={head}
         waiting={ownerQueueCount(state)}
@@ -735,7 +772,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         titleFor={props.titleFor}
         onReplyToSuper={props.onReplyToSuper}
         onShowChild={showChild}
-      />
+      />}
       {plan.chat === 'bar' && !plan.narrow && (
         // Folded, the centre is the composer alone: its unfold sits just right of it.
         <button type="button" className="super-chat-fold super-chat-fold--bar" data-testid="super-chat-fold" aria-pressed

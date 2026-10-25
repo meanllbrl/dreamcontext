@@ -18,7 +18,11 @@ import { HoverActions, ConfirmPrompt, ThinkingPill } from './molecules';
 import { ToolCard } from './ToolCard';
 import { useSpokenHighlight } from './useSpokenHighlight';
 import { splitAbout } from '../super/superHandover';
-import { AgendaAboutStrip, ReplyStrip } from './AgendaAboutStrip';
+import { AgendaAboutStrip, PageStrip, ReplyStrip } from './AgendaAboutStrip';
+import { splitPageContext } from '../../../lib/superTypes';
+import { pageChipName } from '../../../lib/pageContext';
+import { PAGE_LABEL_KEY } from '../../../lib/pageLabels';
+import type { Page } from '../../layout/Sidebar';
 import { useI18n } from '../../../context/I18nContext';
 import type { AgentRoleId } from '../../../lib/agentRoles';
 import type {
@@ -127,12 +131,14 @@ function UserMessage({
   const { t } = useI18n();
   // What was attached is drawn; what was typed stays in the bubble. Copy/quote/rewind all
   // keep `item.text` — the real message, paths and all, is what was sent.
-  const { text, media, refs, about } = useMemo(() => {
+  const { text, media, refs, about, page } = useMemo(() => {
     // A message written about an agenda line, or replying to one message (owner 2026-10-23),
     // opens with its block: drawn as a strip above the bubble, the bubble keeps only his words.
-    const split = splitAbout(item.text);
+    // One sent from the Super dock ends with the page it was written from (2026-10-25).
+    const paged = splitPageContext(item.text);
+    const split = splitAbout(paged.text);
     const board = splitUserBoardRefs(split.text);
-    return { ...splitUserMedia(board.text), refs: board.refs, about: split.about };
+    return { ...splitUserMedia(board.text), refs: board.refs, about: split.about, page: paged.page };
   }, [item.text]);
   return (
     <div className="chat-msg-user-row" data-item-id={item.id} tabIndex={-1}>
@@ -145,6 +151,7 @@ function UserMessage({
           />
         )
         : about && <AgendaAboutStrip about={about} superSid={session && (session.mode === 'super' || session.superMirror) ? session.claudeId : null} />}
+      {page && <PageStrip label={t('super.page.label')} text={pageChipName(page, (p) => (p in PAGE_LABEL_KEY ? t(PAGE_LABEL_KEY[p as Page]) : p))} />}
       {media.length > 0 && (
         <div className="chat-msg-user-media">
           {media.map((p) => <UserMediaItem key={p} path={p} onOpenFile={onOpenFile} />)}

@@ -21,6 +21,18 @@ export function AgendaAboutStrip({ about, superSid }: { about: AgendaAbout; supe
   );
 }
 
+/** "Page: Tasks · Current Version" under a message the dock sent from that page (owner
+ *  2026-10-25): the `[On page …]` block it ends with, drawn, never shown raw. */
+export function PageStrip({ label, text }: { label: string; text: string }) {
+  return (
+    <div className="chat-msg-about chat-msg-about--page" data-testid="chat-msg-page">
+      <span className="chat-msg-about-glyph" aria-hidden>⌖</span>
+      <span className="chat-msg-about-label">{label}:</span>
+      <span className="chat-msg-about-text" title={text}>{text}</span>
+    </div>
+  );
+}
+
 /**
  * The reply variant (owner 2026-10-23): "↩ To Super: <quote>" above his reply, or "↩ Your
  * message: <quote>" above a Super answer group. The same strip, a ↩ where the dot is; a click

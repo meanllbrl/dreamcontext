@@ -136,9 +136,9 @@ describe('the gear reaches the surfaces that draw a chat', () => {
     expect(css).toMatch(/:root\[data-light='true'\] \.smascot-cape-entering \.smascot-cape \{ animation: none; \}/);
     const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
     expect(reduced.slice(0, reduced.indexOf('}'))).toMatch(/\.smascot-cape,[\s\S]*animation: none !important;/);
-    // The SuperSurface gate decides it once at mount, and never in the crossfade's two cases.
+    // The Super header shows the dreamcontext logo now (owner 2026-10-25): no caped face, so no cape gate.
     const surface = sleepy('super', 'SuperSurface.tsx');
-    expect(surface).toMatch(/useState\(\(\) => motion === 'running' && !prefersReducedMotion\(\) && !isLightMode\(\)\)/);
+    expect(surface).not.toMatch(/capeOn/);
   });
 
   it('the Super Agent keeps its smile: nothing is worked on under the chin, only fastened', () => {

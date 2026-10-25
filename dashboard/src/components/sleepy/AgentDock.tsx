@@ -79,53 +79,9 @@ export function AgentDock({ rows, focusedId, onOpen, onClose, className }: {
     <div className={'agent-dock' + (className ? ' ' + className : '')} data-collapsed={collapsed} role="group" aria-label="Agent sessions">
       {!collapsed && (
         <div className="agent-dock-tiles">
-          {ordered.map((row) => {
-            const focused = row.id === focusedId;
-            const busyish = row.info.kind === 'working' || row.info.kind === 'starting';
-            return (
-              <div
-                key={row.id}
-                className={'agent-dock-chip' + (focused ? ' focused' : '')}
-                data-kind={row.info.kind}
-                role="button"
-                tabIndex={0}
-                aria-current={focused ? 'true' : undefined}
-                aria-label={`${row.title} — ${row.info.label} · open`}
-                title={`${row.title} — ${row.info.label} · click to open`}
-                onClick={() => onOpen(row.id)}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(row.id); } }}
-              >
-                <ChipFigure row={row} />
-                <span className="agent-dock-chip-text">
-                  <span className="agent-dock-chip-title" title={row.title}>{row.title}</span>
-                  <span className="agent-dock-chip-state" data-kind={row.info.kind}>
-                    {row.info.label}
-                    {busyish && <span className="agent-dock-chip-dots" aria-hidden><i /><i /><i /></span>}
-                  </span>
-                  {/* Sleepy-team line: a minimized agent (or chat) running a goal-skill
-                      or council cycle shows its live phase + dots right on the chip. */}
-                  {row.kind !== 'shell' && (
-                    <>
-                      <GoalDockBadge claudeId={row.claudeId} enabled={!!row.claudeId} />
-                      <CouncilDockBadge claudeId={row.claudeId} enabled={!!row.claudeId} />
-                    </>
-                  )}
-                </span>
-                {/* The same predicate the project chip's dot is counted from (`flagged` in
-                    rollupProject) — one function, so the tile and the strip above it can never
-                    disagree about whether this session has something unseen. */}
-                {wantsALook(row) && <span className="agent-dock-chip-badge" aria-label="Waiting for you" />}
-                {!row.pinned && <button
-                  type="button"
-                  className="agent-dock-chip-close"
-                  aria-label={`Close ${row.title}`}
-                  title="Close session"
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={(e) => { e.stopPropagation(); onClose(row.id); }}
-                >✕</button>}
-              </div>
-            );
-          })}
+          {ordered.map((row) => (
+            <DockChip key={row.id} row={row} focused={row.id === focusedId} onOpen={onOpen} onClose={onClose} />
+          ))}
         </div>
       )}
 
@@ -150,6 +106,62 @@ export function AgentDock({ rows, focusedId, onOpen, onClose, className }: {
           <path d="M2 6.2 L5 3.2 L8 6.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
+    </div>
+  );
+}
+
+/**
+ * One session tile of the dock: `[figure] [title / state] [✕]`. The Super dock draws the
+ * sessions that ask while Super is on with this same tile (owner 2026-10-25); there it has no
+ * ✕ (a row that asks is answered, not closed).
+ */
+export function DockChip({ row, focused, onOpen, onClose }: {
+  row: SessionRow;
+  focused: boolean;
+  onOpen: (id: string) => void;
+  onClose?: (id: string) => void;
+}) {
+  const busyish = row.info.kind === 'working' || row.info.kind === 'starting';
+  return (
+    <div
+      className={'agent-dock-chip' + (focused ? ' focused' : '')}
+      data-kind={row.info.kind}
+      role="button"
+      tabIndex={0}
+      aria-current={focused ? 'true' : undefined}
+      aria-label={`${row.title} — ${row.info.label} · open`}
+      title={`${row.title} — ${row.info.label} · click to open`}
+      onClick={() => onOpen(row.id)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(row.id); } }}
+    >
+      <ChipFigure row={row} />
+      <span className="agent-dock-chip-text">
+        <span className="agent-dock-chip-title" title={row.title}>{row.title}</span>
+        <span className="agent-dock-chip-state" data-kind={row.info.kind}>
+          {row.info.label}
+          {busyish && <span className="agent-dock-chip-dots" aria-hidden><i /><i /><i /></span>}
+        </span>
+        {/* Sleepy-team line: a minimized agent (or chat) running a goal-skill
+            or council cycle shows its live phase + dots right on the chip. */}
+        {row.kind !== 'shell' && (
+          <>
+            <GoalDockBadge claudeId={row.claudeId} enabled={!!row.claudeId} />
+            <CouncilDockBadge claudeId={row.claudeId} enabled={!!row.claudeId} />
+          </>
+        )}
+      </span>
+      {/* The same predicate the project chip's dot is counted from (`flagged` in
+          rollupProject) — one function, so the tile and the strip above it can never
+          disagree about whether this session has something unseen. */}
+      {wantsALook(row) && <span className="agent-dock-chip-badge" aria-label="Waiting for you" />}
+      {onClose && !row.pinned && <button
+        type="button"
+        className="agent-dock-chip-close"
+        aria-label={`Close ${row.title}`}
+        title="Close session"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); onClose(row.id); }}
+      >✕</button>}
     </div>
   );
 }

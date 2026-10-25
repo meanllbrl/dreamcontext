@@ -253,13 +253,13 @@ const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, 
                 // The agenda line the message is about: the agenda's Waiting dot.
                 <span className="chat-cmp-attachment-dot" aria-hidden />
               ) : (
-                <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : a.kind === 'ref' ? '📌' : a.kind === 'element' ? '◎' : a.kind === 'image' ? '🖼' : '📄'}</span>
+                <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : a.kind === 'ref' ? '📌' : a.kind === 'element' ? '◎' : a.kind === 'page' ? '⌖' : a.kind === 'image' ? '🖼' : '📄'}</span>
               )}
               {/* An attachment says what will happen to it. A picture that can't be sent
                   must never look like one that can — that is the whole bug this row grew
                   a state for (a pasted screenshot the agent never received). */}
               <span className="chat-cmp-attachment-name">
-                {a.name}
+                {a.kind === 'page' ? <PageChipName name={a.name} /> : a.name}
                 {a.uploading && <span className="chat-cmp-attachment-note">attaching…</span>}
                 {a.failed && <span className="chat-cmp-attachment-note">{a.note ?? (a.kind === 'element' ? 'sent without its picture' : 'couldn\'t attach — not sent')}</span>}
               </span>
@@ -272,6 +272,19 @@ const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, 
     </>
   );
 });
+
+/** The page chip's name: the page's own name whole, only the item after it clipped (a long
+ *  board or view name must never hide which page it is). */
+function PageChipName({ name }: { name: string }) {
+  const cut = name.indexOf(' · ');
+  if (cut < 0) return <span className="chat-cmp-page-label">{name}</span>;
+  return (
+    <span className="chat-cmp-page-row">
+      <span className="chat-cmp-page-label">{name.slice(0, cut)}</span>
+      <span className="chat-cmp-page-item">{name.slice(cut + 1)}</span>
+    </span>
+  );
+}
 
 /** The leading mode + permission trigger (the mascot is the costly part of it). */
 const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto, permissionMode, seen, open, onToggle }: {
@@ -1307,7 +1320,7 @@ export function Composer({
   // An About chip (the agenda line the message is about) is not content: alone it sends nothing.
   const sendableAttachments = attachments.filter(countsAsContent);
   // Only an About chip staged and nothing typed: the box asks for the words about that line.
-  const aboutOnly = !draft.trim() && attachments.length > 0 && attachments.every((a) => a.kind === 'about');
+  const aboutOnly = !draft.trim() && attachments.some((a) => a.kind === 'about') && attachments.every((a) => a.kind === 'about' || a.kind === 'page');
   // A reply chip (its ↩ on one message, owner 2026-10-23) asks for his answer, not "about".
   const aboutPlaceholder = attachments.some((a) => a.kind === 'about' && REPLY_TO_RE.test(a.text ?? ''))
     ? t('super.reply.placeholder') : t('super.agenda.aboutPlaceholder');

@@ -1,0 +1,72 @@
+/* ── The Super dock (owner 2026-10-25) ─────────────────────────────────────────────
+   The pill sits where the session stack sat (the AgentDock inset), the window is a full-height
+   column on the right (D2, "B"): just under the app's top bar down to the pill's inset. A page
+   with its own bottom-right control lifts both (D4): a whiteboard with a board open, AI Team.
+   Everything inside is an existing piece (the Others pill, the centre's head and slot, the
+   stage's question band, the dock tile); only position and the re-bounce are new here. */
+.super-dock {
+  --super-dock-lift: 0px;
+  position: fixed;
+  right: var(--space-5);
+  bottom: calc(var(--space-5) + var(--dc-bottom-strip, 0px) + var(--super-dock-lift));
+  /* Above an open insight's panel (InsightDetailPanel, 30/31): he writes to Super about the
+     insight he is reading; under the app's own top bar menus and full-screen viewers. */
+  z-index: 32;
+  white-space: normal;
+}
+.super-dock[data-lift='board'] { --super-dock-lift: 64px; }
+.super-dock[data-lift='team'] { --super-dock-lift: 84px; }
+
+/* The pill: the stage's Others pill at its own size, the dreamcontext logo where Others has its sheets
+   (the same mark and name as the Super header, owner 2026-10-25). */
+.super-dock .super-others-stack {
+  width: auto;
+  min-width: 176px;
+  max-width: 280px;
+  height: 44px;
+  padding: 0 10px 0 8px;
+}
+.super-dock-logo { flex: none; display: inline-flex; width: 26px; height: 26px; align-items: center; justify-content: center; }
+/* The "?" and the news dot ride the pill's top-right corner, as on a dock tile. */
+.super-dock-q { top: -5px; right: -5px; }
+.super-dock-news { position: absolute; top: -3px; right: -3px; }
+/* Something waits on the owner: the pill re-bounces every few seconds until answered (D3). The
+   motion is in the first 0.6 s of each cycle; the rest of the cycle it rests where it started. */
+.super-dock .super-others-stack[data-asking] {
+  border-color: color-mix(in srgb, var(--mood-waiting) 55%, var(--color-border));
+  animation: var(--dc-motion-status-name, super-dock-bounce) 4s var(--ease-out) infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+@keyframes super-dock-bounce {
+  0% { transform: translateY(0); }
+  4% { transform: translateY(-7px); }
+  8% { transform: translateY(0); }
+  11% { transform: translateY(-3px); }
+  15% { transform: translateY(0); }
+  100% { transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .super-dock .super-others-stack[data-asking] { animation: none; }
+}
+
+/* The window: the centre's own frame (bg, clip, head, slot) as a right-hand column. */
+.super-dock-window {
+  position: fixed;
+  right: var(--space-5);
+  top: calc(var(--header-height, 0px) + var(--space-3));
+  bottom: calc(var(--space-5) + var(--dc-bottom-strip, 0px) + var(--super-dock-lift));
+  width: min(420px, calc(100vw - 2 * var(--space-5)));
+  max-height: calc(100vh - var(--super-dock-lift) - 2 * var(--space-5));
+  isolation: isolate;
+}
+/* The head at the dock's width: the subtitle goes (the centre's own 420 px rule) and New session
+   keeps only its glyph, so the two window buttons always fit (mockup finding 1). */
+.super-dock-window .super-centre-sub { display: none; }
+.super-dock-window .super-fresh-btn { padding: 0 4px; }
+.super-dock-window .super-fresh-btn-label { display: none; }
+.super-dock-actions { flex: none; display: inline-flex; align-items: center; gap: 2px; }
+/* Sessions that ask but are not the Super's: today's dock tiles, one row each. */
+.super-dock-rows { flex: none; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-3) 0; }
+.super-dock-rows .agent-dock-chip { width: 100%; pointer-events: auto; }
+.super-dock-window .super-queue-strip { flex: none; padding-top: var(--space-2); }
+.super-dock-connecting { flex: none; padding: var(--space-3) var(--space-4); font-size: var(--font-size-sm); color: var(--color-text-tertiary); }

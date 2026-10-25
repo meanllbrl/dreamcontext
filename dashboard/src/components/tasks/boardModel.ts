@@ -67,6 +67,12 @@ export interface BoardFilters {
   feature: FieldFilter;
   due: DueFilter; minRice: number;
 }
+/** How many filters are on: the Filter chip's badge, and the page the super dock reports. */
+export function activeFilterCount(f: BoardFilters): number {
+  const fields: (keyof BoardFilters)[] = ['status', 'priority', 'urgency', 'assignee', 'version', 'feature', 'tags'];
+  return fields.reduce((n, k) => { const fld = f[k] as FieldFilter; return n + fld.inc.length + fld.exc.length; }, 0)
+    + (f.due !== 'all' ? 1 : 0) + (f.minRice > 0 ? 1 : 0);
+}
 export interface ViewConfig {
   filters: BoardFilters;
   groupBy: Dim;

@@ -67,7 +67,7 @@ import { Composer } from './chat/Composer';
 import { nextAttachmentId, readScratch, setAbout, setQuote, subscribeScratch } from './chat/composerScratch';
 import { replyGroups } from './chat/replyLinks';
 import { ReplyStrip } from './chat/AgendaAboutStrip';
-import { msgRef } from '../../lib/superTypes';
+import { msgRef, splitPageContext } from '../../lib/superTypes';
 import { createHiddenRenderGate } from './chat/hiddenRenderGate';
 import { shouldInterruptChat } from './chat/interruptKey';
 import { useI18n } from '../../context/I18nContext';
@@ -1737,7 +1737,7 @@ export function ChatPane({
   const handleQuote = useCallback((item: ChatUserItem | ChatTextItem) => {
     if (!superView) { setQuote(convId, item.text); return; }
     const from = item.kind === 'user' ? 'owner' : 'super';
-    const words = item.kind === 'user' ? splitAbout(item.text).text : item.text;
+    const words = item.kind === 'user' ? splitAbout(splitPageContext(item.text).text).text : item.text;
     const name = replyAboutChipName(words, from, { chipSuper: t('super.reply.chipSuper'), chipOwn: t('super.reply.chipOwn') });
     setAbout(session.scratchId || convId, { id: nextAttachmentId(), kind: 'about', name, text: replyAboutBlock(item.text, from, words) });
     requestAnimationFrame(() => session.focus());
@@ -2142,7 +2142,7 @@ export function ChatPane({
     const it = replyItems?.get(id);
     if (!it || it.kind !== 'user') return '';
     const answer = parseSuperAnswer(it.text);
-    const words = (answer ? answer.values.join(', ') : splitAbout(it.text).text).replace(/\s+/g, ' ').trim();
+    const words = (answer ? answer.values.join(', ') : splitAbout(splitPageContext(it.text).text).text).replace(/\s+/g, ' ').trim();
     const chars = Array.from(words);
     return chars.length > max ? `${chars.slice(0, max - 1).join('').trimEnd()}…` : words;
   };

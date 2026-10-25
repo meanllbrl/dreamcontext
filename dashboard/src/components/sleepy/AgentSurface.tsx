@@ -68,7 +68,7 @@ import { useI18n } from '../../context/I18nContext';
 import { ReadinessChecklist } from '../../pages/onboarding/ReadinessChecklist';
 import { clearPins } from '../../lib/pinStore';
 import { traceRespawn, traceOrphan, clearOrphan, installRespawnTraceGlobal } from '../../lib/respawnTrace';
-import { addAttachments, dropScratch, nextAttachmentId, setAbout, settleAttachment, trackUpload } from './chat/composerScratch';
+import { addAttachments, dropScratch, nextAttachmentId, setAbout, setPageContext, settleAttachment, trackUpload } from './chat/composerScratch';
 import { dataUrlBlob, pickBlock, pickChipName, type WebPick } from '../../lib/webPick';
 import { deliverToChat, postToSession } from './chat/postToSession';
 import { parseChatActions } from './chat/chatActions';
@@ -96,13 +96,21 @@ import { readSuperStateView, type SuperStateView } from '../../lib/superTypes';
 import { holdSidebarCollapsed } from '../../hooks/useSidebarCollapse';
 import type { PendingQuestion } from './chatSession';
 import { HandoverButton } from './super/HandoverButton';
-import { SuperSurface, prefersReducedMotion, runFlights, type FlightRun } from './super/SuperSurface';
+import { SuperCentreHead, SuperSurface, jobLookOf, prefersReducedMotion, runFlights, type FlightRun, type StageShowChild } from './super/SuperSurface';
+import { SuperDock } from './super/SuperDock';
+import { JobBar } from './super/JobBar';
+import { IconButton, chatStatus } from './super/SuperContainer';
+import { DockChip } from './AgentDock';
+import { pageBlockOf, pageChipName, pageKeyOf, usePageContext } from '../../lib/pageContext';
+import { PAGE_LABEL_KEY } from '../../lib/pageLabels';
+import type { Page } from '../layout/Sidebar';
 import type { TerminalRowItem } from './super/TerminalsRow';
 import {
   actionGeneration, adoptionBody, cardReference, headAlarmOnce, childMarks, DELEGATE_MARK_GRACE_MS, delegateArgs, delegateExpired, delegateMarkUntil, endedChildIds, hasOwnKey,
   homedSessions, isSuperSession, markedChildren, needsOwner, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, superAnswerPicks, superWindowRefusal, terminalTabs,
   SUPER_CHILD_VERBS, windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
   linkOpensSuperStage, presenceChatId, leanMcpFor, agendaAboutBlock, agendaAboutChipName, type AgendaRow,
+  freshPending, superDockOn, superDockPill, superSlotFor,
 } from './super/superHandover';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
 import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperRecap } from './super/superApi';
@@ -666,6 +674,22 @@ export function AgentSurface() {
   const superBusyRef = useRef(false);
   const [superWidth, setSuperWidth] = useState(0);
   const [superSlotEpoch, bumpSuperSlots] = useReducer((x: number) => x + 1, 0);
+  // ── The Super dock (owner 2026-10-25): the pill and window on every other screen ──
+  // `superKnown` mirrors `superKnownRef` for rendering: until the record is read the corner draws
+  // nothing on desktop, so a reload never paints the old stack before the pill.
+  const [superKnown, setSuperKnown] = useState(false);
+  const [superDockOpen, setSuperDockOpen] = useState(false);
+  // The dock's slot is a callback ref: a new element re-runs the placement (like superSlotEpoch).
+  const [dockSlotEpoch, bumpDockSlot] = useReducer((x: number) => x + 1, 0);
+  const dockSlotRef = useRef<HTMLDivElement | null>(null);
+  const setDockSlot = useCallback((el: HTMLDivElement | null) => {
+    if (dockSlotRef.current === el) return;
+    dockSlotRef.current = el;
+    bumpDockSlot();
+  }, []);
+  const superDockPillRef = useRef<HTMLButtonElement | null>(null);
+  // The stage's own "show this child beside the agenda", written by SuperSurface every render.
+  const stageShowChild = useRef<StageShowChild | null>(null);
   // Read by every chat `spawn` creates, so a respawned Super Agent (an account switch, a
   // resume) keeps its wiring: the handlers are refs, rebuilt every render below.
   const superCommandRef = useRef<(cmd: { verb: string; args: Record<string, unknown> }) =>
@@ -3224,6 +3248,30 @@ export function AgentSurface() {
   // The record's children plus the ones this window just opened for a `delegate` (D16).
   const marked = childMarks(superState, superDelegated, Date.now()).marked;
   const handedOver = superView === 'super' && !!superState && !isMobile;
+  // The Super dock's ONE gate (plan R1) and whether its window is open now. Never written from
+  // here: the view stays as the hand-over and take-back left it (T1).
+  const dockOn = superDockOn({ handedOver, enabled: superState?.enabled, desktop: caps?.desktop, agentsEnabled: agentSettings.enabled });
+  const dockOpen = dockOn && superDockOpen && !expanded;
+  // Closed whenever the dock is off or the overlay is expanded (the stage centre holds the chat).
+  useEffect(() => { if (superDockOpen && (!dockOn || expanded)) setSuperDockOpen(false); }, [superDockOpen, dockOn, expanded]);
+  // The page this project shows (lib/pageContext.ts): the dock's page chip and its lift.
+  const pageCtx = usePageContext(bus);
+  const pageKey = pageKeyOf(pageCtx);
+  const pageCtxRef = useRef(pageCtx);
+  pageCtxRef.current = pageCtx;
+  // The page chip (plan R2): ONE effect. Staged in the Super chat's composer while the dock's
+  // window is visibly open, cleared by its cleanup on every way it closes (minimize, Büyüt, the
+  // sidebar's Chat, a banner link, take-back, a pushed disable, a fresh session, unmount).
+  const superConvId = superChatSession ? (superChatSession.scratchId || superChatSession.claudeId) : '';
+  useEffect(() => {
+    const ctx = pageCtxRef.current;
+    if (!dockOpen || !superConvId || !ctx) return undefined;
+    const text = pageBlockOf(ctx);
+    if (!text) return undefined;
+    const name = pageChipName(ctx, (p) => (p in PAGE_LABEL_KEY ? t(PAGE_LABEL_KEY[p as Page]) : p));
+    setPageContext(superConvId, { id: nextAttachmentId(), kind: 'page', name, text });
+    return () => setPageContext(superConvId, null);
+  }, [dockOpen, superConvId, pageKey, t]);
   // Web containers hold a frame only while the window can be seen (webBudget.ts).
   const windowActivity = useWindowActivity();
   // The tabs a hand-over cannot adopt: terminals, in their own row.
@@ -3318,6 +3366,7 @@ export function AgentSurface() {
     // too: an unread record must not hold a question for ever). Held alarms are released.
     const settle = () => {
       superKnownRef.current = true;
+      setSuperKnown(true);
       const marked = markedChildren(superStateRef.current);
       sessions.current.forEach((s) => { if (s.kind === 'chat') (s as ChatSession).setSuperChild(marked.has(s.claudeId)); });
     };
@@ -4162,7 +4211,8 @@ export function AgentSurface() {
     // `display:none`) — garaging them on collapse would thrash the DOM on every expand. But
     // they are NOT foreground, so a session finishing while collapsed still earns its dock
     // attention badge.
-    const foreground = new Set(expanded ? homed : []);
+    // The Super dock's window is on screen with the overlay folded: its chat is foreground.
+    const foreground = new Set(expanded ? homed : dockOpen && superSid ? [superSid] : []);
     sessions.current.forEach((s) => { s.minimized = !foreground.has(s.id); });
 
     const slots = new Map<string, HTMLElement>();
@@ -4175,7 +4225,13 @@ export function AgentSurface() {
         const slot = hostRef.current?.querySelector<HTMLElement>(`[data-super-slot="${name}"]`);
         if (s && slot && s.container.parentElement !== slot) { slot.appendChild(s.container); s.ensureOpen({ focus: isActive }); }
       };
-      place(superSid, 'centre');
+      // The Super dock open: its chat lives in the dock's slot (looked up through the dock's own
+      // ref), never placed in the centre meanwhile.
+      if (superSlotFor({ dockOpen, expanded }) === 'dock') {
+        const s = superSid ? sessions.current.get(superSid) : undefined;
+        const slot = dockSlotRef.current;
+        if (s && slot && s.container.parentElement !== slot) { slot.appendChild(s.container); s.ensureOpen({ focus: isActive }); }
+      } else place(superSid, 'centre');
       place(superShownSid, 'shown');
     } else {
       panes.forEach((pane) => {
@@ -4201,7 +4257,7 @@ export function AgentSurface() {
     // set of appendChild calls that are all no-ops.
     // `superSlotEpoch` re-runs it when the hand-over screen recreates its slots.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panes, expanded, handedOver, superSid, superShownSid, superSlotEpoch]);
+  }, [panes, expanded, handedOver, superSid, superShownSid, superSlotEpoch, dockOpen, dockSlotEpoch]);
 
   // Keep activePaneId pointing at a real pane (panes shrink as tabs close/move).
   useEffect(() => {
@@ -4868,6 +4924,56 @@ export function AgentSurface() {
     rollupFlagged,
   ]);
 
+  // ── The Super dock's pill, rows and gestures (owner 2026-10-25) ──
+  // Sessions that ask but are not the Super's (an unadopted chat, a terminal): they light the
+  // pill and show in its window as today's dock tiles (plan S4).
+  const dockAskingRows = dockOn ? dockRows.filter((r) => !r.superChild && r.info.kind === 'asking') : [];
+  const superDockPillModel = superDockPill({
+    on: dockOn,
+    known: superKnown,
+    state: superState,
+    liveStatus: (sid) => { const cs = chatByClaudeId(sid); return cs ? chatStatus(cs).kind : null; },
+    otherAsking: dockAskingRows.length > 0,
+    superAttention: !!superChatSession?.attention,
+  });
+  // The page the corner sits on lifts it above the page's own bottom control.
+  const dockLift: 'board' | 'team' | null = pageCtx?.page === 'whiteboards' && 'board' in pageCtx && pageCtx.board ? 'board'
+    : pageCtx?.page === 'automations' || pageCtx?.page === 'agents' ? 'team' : null;
+  const openSuperDock = () => {
+    if (superState?.enabled && superState.session && !superChatRef.current) ensureSuperSession(superState.session);
+    superChatRef.current?.clearAttention();
+    setSuperDockOpen(true);
+    // The caret in the Composer once the chat has landed in the dock's slot.
+    requestAnimationFrame(() => requestAnimationFrame(() => superChatRef.current?.focus()));
+  };
+  const minimizeSuperDock = () => {
+    setSuperDockOpen(false);
+    requestAnimationFrame(() => superDockPillRef.current?.focus());
+  };
+  // Büyüt: the Chat screen directly, the Super chat in the stage centre (owner D2).
+  const expandSuperDock = () => { setSuperDockOpen(false); setExpanded(true); };
+  // A row of the window: today's dock tile handler, as is (plan T3).
+  const openDockRow = (id: string) => { setExpanded(true); if (minimizedIds.includes(id)) restoreMinimized(id); else focusSession(id); };
+  // The band's child: the stage opens and shows it beside the agenda, once the stage can (T2).
+  const showChildSeq = useRef(0);
+  const dockShowChild = useCallback((sid: string) => {
+    setSuperDockOpen(false);
+    setExpanded(true);
+    const seq = ++showChildSeq.current;
+    const started = Date.now();
+    const tick = () => {
+      if (seq !== showChildSeq.current) return;
+      const stage = stageShowChild.current;
+      const st = superStateRef.current;
+      if (stage?.ready && st?.containers.some((c) => c.kind === 'chat' && c.ref === sid)) { stage.show(sid); return; }
+      if (Date.now() - started < 1500) window.setTimeout(tick, 50);
+    };
+    window.setTimeout(tick, 50);
+  }, []);
+  // While the window is open, its chat is looked at: nothing it says is news.
+  const superAttentionNow = !!superChatSession?.attention;
+  useEffect(() => { if (dockOpen && superAttentionNow) superChatRef.current?.clearAttention(); }, [dockOpen, superAttentionNow]);
+
   // Rows for the corner dock that floats over the EXPANDED overlay — only the sessions the
   // user minimized out of the panes (in minimize order). Empty → no corner dock shown.
   const minimizedRows: SessionRow[] = minimizedIds
@@ -4963,6 +5069,8 @@ export function AgentSurface() {
             onKeepChild={keepChildRunning}
             endPending={endPending}
             endFailed={endFailed}
+            queueElsewhere={dockOpen}
+            stageShowChild={stageShowChild}
           />
         )}
         {/* Mac mode's phone has two screens, the Sohbetler list and one chat (owner, 2026-10-17):
@@ -5385,7 +5493,54 @@ export function AgentSurface() {
           sessions: the bottom-right chip dock (one chip per session, each coloured by its
           OWN state; collapsible to a handle), click a chip to open + focus. With zero
           sessions: a single "Chat" FAB. */}
-      {caps?.desktop && agentSettings.enabled && !expanded && (
+      {caps?.desktop && agentSettings.enabled && !expanded && superKnown && (
+        // Super on: ONE pill (and its window) in place of the stack (owner 2026-10-25, D1).
+        dockOn && superDockPillModel ? (
+          <SuperDock
+            pill={superDockPillModel}
+            open={dockOpen}
+            lift={dockLift}
+            head={(
+              <SuperCentreHead
+                chat="column"
+                pending={!!superState && freshPending(superState)}
+                onNewSession={() => postSuperFresh(scopedApi)}
+                actions={(
+                  <span className="super-dock-actions">
+                    <IconButton icon="fullscreen" label={t('super.dock.expand')} testId="super-dock-expand" onClick={expandSuperDock} />
+                    <IconButton icon="others" label={t('super.dock.minimize')} testId="super-dock-minimize" onClick={minimizeSuperDock} />
+                  </span>
+                )}
+              />
+            )}
+            rows={dockAskingRows.length > 0 ? (
+              <div className="super-dock-rows" data-testid="super-dock-rows">
+                {dockAskingRows.map((row) => (
+                  <DockChip key={row.id} row={row} focused={false} onOpen={openDockRow} />
+                ))}
+              </div>
+            ) : null}
+            band={superState ? (
+              <JobBar
+                state={superState}
+                head={queueHead(superState)}
+                waiting={ownerQueueCount(superState)}
+                vault={vault ?? ''}
+                look={jobLookOf({ sessionFor: chatByClaudeId, titleFor: superTitleFor, nameFor: superNameFor, children: superState.children, superTitle: t('super.centre.name') })}
+                superSession={superChatSession}
+                sessionFor={chatByClaudeId}
+                titleFor={superTitleFor}
+                onReplyToSuper={() => superChatSession?.focus()}
+                onShowChild={dockShowChild}
+              />
+            ) : null}
+            connecting={!superChatSession}
+            slotRef={setDockSlot}
+            pillRef={superDockPillRef}
+            onOpen={openSuperDock}
+            onMinimize={minimizeSuperDock}
+          />
+        ) : dockOn ? null :
         // `dockRows`, not the roster: a parked Super Agent alone is no session the dock shows
         // (its open question is: `superAskRow`).
         dockShown.length === 0 ? (

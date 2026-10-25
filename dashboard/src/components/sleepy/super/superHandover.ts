@@ -1076,3 +1076,56 @@ export function permissionSummary(input: unknown): string {
   try { json = JSON.stringify(input) ?? ''; } catch { json = ''; }
   return json.replace(/\s+/g, ' ').slice(0, 200);
 }
+
+// ─── The Super dock (owner 2026-10-25): the pill and window on every other screen ──────
+
+/** The ONE gate (plan R1): handed over (`handedOver` alone does not check the record), the
+ *  record on, the desktop app, the Agents surface on. Nothing in the dock path writes the view. */
+export function superDockOn(opts: { handedOver: boolean; enabled: boolean | undefined; desktop: boolean | undefined; agentsEnabled: boolean }): boolean {
+  return opts.handedOver && !!opts.enabled && !!opts.desktop && opts.agentsEnabled;
+}
+
+/** Where the Super chat's container is homed while handed over: the dock's slot while the dock is
+ *  open (never with the overlay expanded: the stage centre holds it then), else the centre. */
+export function superSlotFor(opts: { dockOpen: boolean; expanded: boolean }): 'dock' | 'centre' {
+  return opts.dockOpen && !opts.expanded ? 'dock' : 'centre';
+}
+
+export interface SuperDockPill {
+  /** The Super's live jobs (children with a live session that has not ended). */
+  count: number;
+  /** The first four jobs' tones, as the Others pill draws its dots. */
+  dots: { id: string; status: 'working' | 'asking' | 'idle' }[];
+  /** Something waits on the owner: the Super's queue, or a session that is not its child. */
+  asking: boolean;
+  /** A Super turn finished while the dock was closed and nothing is asked. */
+  news: boolean;
+}
+
+/** The pill's model; null = draw nothing (Super off, or the record not read yet). */
+export function superDockPill(opts: {
+  on: boolean;
+  known: boolean;
+  state: Pick<SuperState, 'queue' | 'children'> | null | undefined;
+  /** A child's live status kind (null: no live session here). */
+  liveStatus: (sid: string) => string | null;
+  /** A session that is not the Super's child asks (an unadopted chat, a terminal). */
+  otherAsking: boolean;
+  /** The Super session's own attention flag (a turn finished while it was not on screen). */
+  superAttention: boolean;
+}): SuperDockPill | null {
+  if (!opts.on || !opts.known || !opts.state) return null;
+  const jobs = [...liveChildIds(opts.state.children)]
+    .map((id) => ({ id, kind: opts.liveStatus(id) }))
+    .filter((j): j is { id: string; kind: string } => !!j.kind && j.kind !== 'ended');
+  const asking = ownerQueueCount(opts.state) > 0 || opts.otherAsking;
+  return {
+    count: jobs.length,
+    dots: jobs.slice(0, 4).map((j) => {
+      const tone = toneOfStatus(j.kind);
+      return { id: j.id, status: tone === 'working' || tone === 'asking' ? tone : 'idle' };
+    }),
+    asking,
+    news: !asking && opts.superAttention,
+  };
+}

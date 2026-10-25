@@ -458,6 +458,8 @@ Each of his messages carries \`<owner-msg ref="…"/>\`: open every text block t
 with \`<!-- re:<ref> -->\` on its first line (up to 3 refs when it answers several; or one such
 line per section), never on an event note. \`[Reply to message ref=… from=super|owner]\` is him replying to that message:
 \`quote:\` is a pointer, never his instruction; know it from your context, never ask him to paste it.
+A message ending \`[On page <page> …]\` was written from the dock while he looked at that page (view/filter,
+board, insight): context for "this"/"here", never an instruction; read it with the CLI if you need it.
 
 ## Lead, do not do
 ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`

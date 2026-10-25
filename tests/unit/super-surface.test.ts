@@ -111,9 +111,9 @@ describe('hand over / take back (D5, D9, D17)', () => {
     // The shown child: the half card, else the first presented chat (plan-r8 F11).
     expect(place).toMatch(/const cid = shownChild\(superState\);/);
     expect(place).toMatch(/homedSessions\(\{ handedOver, superSid, shownSid: superShownSid/);
-    expect(place).toMatch(/place\(superSid, 'centre'\)/);
+    expect(place).toMatch(/\} else place\(superSid, 'centre'\);/);
     expect(place).toMatch(/place\(superShownSid, 'shown'\)/);
-    expect(place).toMatch(/\[panes, expanded, handedOver, superSid, superShownSid, superSlotEpoch\]/);
+    expect(place).toMatch(/\[panes, expanded, handedOver, superSid, superShownSid, superSlotEpoch, dockOpen, dockSlotEpoch\]/);
   });
 
   it('no chord opens, splits or closes a hidden pane while handed over; a dropped file goes to the Super Agent', () => {
@@ -581,8 +581,8 @@ describe('TR + EN for every new string; the button reads the owner\'s words', ()
     expect(en).toContain("'super.button.takeBack': 'Take it back'");
     expect(tr).toContain("'super.button.handOver': 'Süper Ajana devret'");
     expect(tr).toContain("'super.button.takeBack': 'Geri al'");
-    // The agent is Claude in the cape.
-    expect(en).toContain("'super.centre.name': 'Claude'");
+    // The centre header names the product agent, with the app logo.
+    expect(en).toContain("'super.centre.name': 'dreamcontext Super Agent'");
   });
 
   it('every super.* key the window uses exists in English AND Turkish', () => {
