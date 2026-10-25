@@ -266,77 +266,82 @@ async function browserLeg(WebSocket, port, consoleErrors, failedRequests) {
           await page.locator('[data-team-row="scout"]').click();
         }
         const stageUp = await until(() => page.locator('.aiteam-stage[data-stage="scout"]').isVisible());
-        check(`${tag}: Scout opens on its stage`, stageUp);
-        const tone = await page.locator('.aiteam-stage-head .agent-figure').first().evaluate((el) => getComputedStyle(el).getPropertyValue('--fc-body') && getComputedStyle(el.querySelector('*')).fill).catch(() => '');
-        check(`${tag}: the stage header wears its figure in a theme tone`, /rgb/.test(tone), tone);
-        // Looking at a teammate starts nothing; the card is the way in.
-        const sessionsBefore = (await (await fetch(`${base}/api/agent/live-chats?vault=lumen`)).json().catch(() => ({}))).chats?.length ?? null;
-        check(`${tag}: opening the stage spawns nothing until the card is clicked`, await page.locator('[data-stage-start]').isVisible(), `live chats: ${sessionsBefore}`);
-        if (!phone) await shot('0-stage-before-talk');
-        await page.locator('[data-stage-start]').click();
-        const input = page.locator('.aiteam-stage-chat .chat-cmp-input').first();
-        const inputUp = await until(() => input.isVisible(), 20000);
-        check(`${tag}: the centre card is a live chat`, inputUp);
+        check(`${tag}: Scout opens on its conversation`, stageUp);
+        const headFits = async () => page.locator('.aiteam-stage .aiteam-convo-head').evaluate((h) => {
+          const name = h.querySelector('.aiteam-convo-name-text');
+          return h.scrollWidth <= h.clientWidth + 1 && !!name && name.scrollWidth <= name.clientWidth + 1;
+        });
+        // Guards a header whose pills push the agent's name out (owner 2026-10-25: "S..").
+        check(`${tag}: the header fits, the name shown whole`, await headFits());
+        const tone = await page.locator('.aiteam-stage .aiteam-convo-head .agent-figure').first().evaluate((el) => getComputedStyle(el).getPropertyValue('--fc-body') && getComputedStyle(el.querySelector('*')).fill).catch(() => '');
+        check(`${tag}: the header wears its figure in a theme tone`, /rgb/.test(tone), tone);
+        // Owner 2026-10-25: the middle IS the Chat screen's pane and composer, nothing made up.
+        const pane = page.locator('.aiteam-stage .agent-chat-pane-host .chat-pane');
+        const input = page.locator('.aiteam-stage .chat-cmp-input').first();
+        check(`${tag}: the middle is the real Chat pane, opened at once (no starter card)`,
+          await until(() => input.isVisible(), 20000) && (await pane.count()) === 1 && (await page.locator('[data-stage-start]').count()) === 0);
+        check(`${tag}: …with the Chat composer's model and effort picker, and no mode menu (it speaks as Scout)`,
+          (await page.locator('.aiteam-stage .chat-cmp-modeltrigger:not(.chat-cmp-modetrigger)').count()) === 1
+            && (await page.locator('.aiteam-stage .chat-cmp-modetrigger').count()) === 0);
+        // Guards a page that grows its own surfaces again: no stage cards, no side column, no reports strip.
+        check(`${tag}: no stage cards beside it`, (await page.locator('.aiteam-card, .aiteam-stage-side, .aiteam-stage-foot, .aiteam-stage-chat').count()) === 0);
+        if (!phone) await shot('0-stage-open');
         await input.click();
         await page.keyboard.type('What broke last night?');
         await page.keyboard.press('Enter');
-        const answered = await until(async () => (await page.locator('.aiteam-stage-chat').innerText()).includes('I am Scout'), 20000);
-        const chatText = await page.locator('.aiteam-stage-chat').innerText().catch(() => '');
-        check(`${tag}: the stand-in's answer streams into the centre card`, answered, chatText.replace(/\s+/g, ' ').slice(-160));
+        const answered = await until(async () => (await pane.innerText()).includes('I am Scout'), 20000);
+        const chatText = await pane.innerText().catch(() => '');
+        check(`${tag}: the stand-in's answer streams into the pane`, answered, chatText.replace(/\s+/g, ' ').slice(-160));
         const echoed = /"permissionMode":"(\w+)"/.exec(chatText)?.[1];
         check(`${tag}: …spawned at its level (${theme === 'light' && !phone ? 'auto' : 'default'})`, echoed === (theme === 'light' && !phone ? 'auto' : 'default'), echoed);
-        if (phone) {
-          const sideHidden = !(await page.locator('.aiteam-stage-side').isVisible());
-          check(`${tag}: at 390 the chat fills the stage, the cards wait`, sideHidden);
-          await shot('2-stage-chat');
-          await page.locator('.aiteam-stage-head .aiteam-pill').click();
-          await until(() => page.locator('.aiteam-stage-side').isVisible());
-        }
-        const running = await page.locator('.aiteam-card--running').innerText().catch(() => '');
-        check(`${tag}: the running routine is on a card`, /Morning sync check/.test(running) && /working/i.test(running), running.replace(/\s+/g, ' '));
-        const files = page.locator('.aiteam-card--file');
-        check(`${tag}: the deliveries are on cards`, (await files.count()) === 2);
-        await shot(phone ? '3-stage-cards' : '1-stage');
+        const paneW = await pane.evaluate((el) => el.getBoundingClientRect().width);
+        const mainW = await page.locator('.aiteam-stage').evaluate((el) => el.getBoundingClientRect().width);
+        check(`${tag}: the pane fills the conversation column (${Math.round(paneW)}/${Math.round(mainW)} px)`, paneW >= mainW - 2);
+        await shot(phone ? '2-stage-chat' : '1-stage');
+        // What the cards used to show lives in the page's existing panel: routines, files.
+        if (phone) await page.locator('.aiteam-stage .aiteam-iconbtn[aria-label="Details"]').click();
+        else await page.locator('.aiteam-stage .aiteam-iconbtn[aria-label="Details"]').click();
+        await page.locator('.aiteam-panel').first().waitFor({ timeout: 10000 });
+        await page.locator('[data-panel-tab="files"]').click();
+        const files = page.locator('.aiteam-panel .agent-msg-file');
+        check(`${tag}: the deliveries are in the panel's Files`, await until(async () => (await files.count()) >= 1, 8000), String(await files.count()));
         if (!phone) {
-          // The side panel beside the stage: the conversation keeps a usable width.
-          await page.locator('.aiteam-stage-head .aiteam-pill').last().click();
-          await page.locator('.aiteam-panel').first().waitFor({ timeout: 10000 });
           await wait(500);
-          const chatW = await page.locator('.aiteam-stage-chat').evaluate((el) => el.getBoundingClientRect().width);
+          const chatW = await pane.evaluate((el) => el.getBoundingClientRect().width);
+          check(`${tag}: with the panel open the header still fits, the name whole`, await headFits());
           check(`${tag}: with the panel open the chat keeps its width (${Math.round(chatW)} px)`, chatW >= 380);
-          await shot('1b-stage-with-panel');
-          await page.locator('.aiteam-panel-close').first().click();
-          await wait(400);
         }
+        await shot(phone ? '3-panel-files' : '1b-stage-with-panel');
         await files.filter({ hasText: 'sync-outage-10-23.md' }).first().click();
         const opened = await until(() => page.locator('button', { hasText: 'Copy path' }).first().isVisible(), 8000);
         check(`${tag}: a delivery opens in the app`, opened);
         await shot('4-delivery-open');
         await page.keyboard.press('Escape');
         await wait(500);
+        if (await page.locator('.aiteam-panel-close').count()) { await page.locator('.aiteam-panel-close').first().click(); await wait(400); }
 
         if (theme === 'light' && !phone) {
           console.log(`\n── §3 autonomy @${tag}`);
-          await page.locator('.aiteam-stage-head .aiteam-autonomy').click();
+          await page.locator('.aiteam-stage .aiteam-convo-head .aiteam-autonomy').click();
           await page.locator('.aid-segment[data-autonomy="ask"]').waitFor({ timeout: 10000 });
           await shotOf('.aid-autonomy', '5-autonomy-dialog');
           await page.locator('.aid-segment[data-autonomy="ask"]').click();
           await page.locator('.aid-btn--primary').click();
-          const chip = await until(async () => /Ask/.test(await page.locator('.aiteam-stage-head .aiteam-autonomy').innerText()), 10000);
-          check(`${tag}: the stage chip follows the dialog (Autonomy: Ask)`, chip, await page.locator('.aiteam-stage-head .aiteam-autonomy').innerText().catch(() => ''));
+          const chip = await until(async () => /Ask/.test(await page.locator('.aiteam-stage .aiteam-convo-head .aiteam-autonomy').innerText()), 10000);
+          check(`${tag}: the stage chip follows the dialog (Autonomy: Ask)`, chip, await page.locator('.aiteam-stage .aiteam-convo-head .aiteam-autonomy').innerText().catch(() => ''));
           const agentFile = readFileSync(join(DC, 'agents', 'scout.md'), 'utf-8');
           check(`${tag}: the level is saved in the agent's file`, /^autonomy: ask$/m.test(agentFile));
           // The live conversation is respawned at the new level: the next answer runs `default`.
           await wait(1500);
-          const input2 = page.locator('.aiteam-stage-chat .chat-cmp-input').first();
+          const input2 = page.locator('.aiteam-stage .chat-cmp-input').first();
           if (!(await until(() => input2.isVisible(), 20000))) {
             await shot('debug-after-autonomy');
-            console.log('stage chat after the level change:', (await page.locator('.aiteam-stage-chat').innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300));
+            console.log('stage chat after the level change:', (await page.locator('.aiteam-stage .chat-pane').innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300));
           }
           await input2.click();
           await page.keyboard.type('And now?');
           await page.keyboard.press('Enter');
-          const modes = async () => [...(await page.locator('.aiteam-stage-chat').innerText()).matchAll(/"permissionMode":"(\w+)"/g)].map((m) => m[1]);
+          const modes = async () => [...(await page.locator('.aiteam-stage .chat-pane').innerText()).matchAll(/"permissionMode":"(\w+)"/g)].map((m) => m[1]);
           const respawned = await until(async () => (await modes()).at(-1) === 'default', 20000);
           check(`${tag}: after Ask, the stage conversation runs in default mode`, respawned, (await modes()).join(','));
           await shot('6-autonomy-chip');

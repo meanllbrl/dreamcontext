@@ -69,7 +69,7 @@ function MarkdownBlock({ md, slug, theme, sectionKey, onToggle, expectedBoxes, c
   return <div ref={ref} className={`markdown-body ${className ?? ''}`} />;
 }
 
-function Section({ k, title, count, actions, children }: { k: string; title: string; count?: number | string; actions?: ReactNode; children: ReactNode }) {
+export function Section({ k, title, count, actions, children }: { k: string; title: string; count?: number | string; actions?: ReactNode; children: ReactNode }) {
   return (
     <section className="dsec" data-section={k}>
       <div className="dsec-head">
@@ -228,7 +228,9 @@ export function BodySections({ task, body, theme, slots, onToggle }: {
   /** The body as the drawer currently sees it (the pending, optimistic one). */
   body: string;
   theme: Theme;
-  slots: { subtasks: ReactNode; criteria: ReactNode; media: ReactNode };
+  /** `work`: the agent job's Deliveries and Review rounds (after Media); `history`: who moved
+   *  the status (before the Changelog). */
+  slots: { subtasks: ReactNode; criteria: ReactNode; media: ReactNode; work?: ReactNode; history?: ReactNode };
   onToggle: (key: SectionKey, index: number, checked: boolean) => void;
 }) {
   const sections = useMemo(() => splitSections(body), [body]);
@@ -255,6 +257,7 @@ export function BodySections({ task, body, theme, slots, onToggle }: {
       {slots.subtasks}
       {slots.criteria}
       {slots.media}
+      {slots.work}
       {stories && (
         <Section k="user_stories" title="User Stories">
           <MarkdownBlock md={stories.text} slug={slug} theme={theme} sectionKey="user_stories" onToggle={onToggle} expectedBoxes={checkItems(body, 'user_stories').length} />
@@ -281,6 +284,7 @@ export function BodySections({ task, body, theme, slots, onToggle }: {
           <MarkdownBlock md={sectionContent(o.text)} slug={slug} theme={theme} sectionKey="other" />
         </Section>
       ))}
+      {slots.history}
       {changelog && sectionContent(changelog.text) && (
         <LatestList text={changelog.text} kind="changelog" slug={slug} theme={theme} actions={<AddChangelogEntry task={task} />} />
       )}

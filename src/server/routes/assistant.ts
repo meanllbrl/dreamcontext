@@ -36,7 +36,7 @@ import {
 import { markThreadRead, plainPostText } from '../../lib/automations/threads.js';
 import { getRunTarget } from '../../lib/automations/store.js';
 import { getAgent } from '../../lib/agents/store.js';
-import { automationProject, invalidateAutomationInbox, runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
+import { automationProject, invalidateAutomationInbox, ownerTaskRows, runningAutomations, unreadAutomationPosts } from '../assistant-inbox.js';
 import { sayToAgent } from './automations.js';
 import { boardAgents } from '../../lib/whiteboards/agents.js';
 import { listWhiteboards } from '../../lib/whiteboards/store.js';
@@ -829,6 +829,8 @@ export async function handleAssistantInbox(req: IncomingMessage, res: ServerResp
   let running: ReturnType<typeof runningAutomations> = [];
   try { posts = unreadAutomationPosts(); } catch { posts = []; }
   try { running = runningAutomations(); } catch { running = []; }
+  let tasks: ReturnType<typeof ownerTaskRows> = [];
+  try { tasks = ownerTaskRows(); } catch { tasks = []; }
   const muted = readMutedAutomations();
   const vaultOf = new Map(listVaults().map((v) => [v.path, v.name]));
   sendJson(res, 200, {
@@ -841,6 +843,7 @@ export async function handleAssistantInbox(req: IncomingMessage, res: ServerResp
       text: p.text ? wrapUntrusted(p.vault, p.text) : '',
     })),
     running: running.map((r) => ({ ...r, title: wrapUntrusted(r.vault, r.title) })),
+    tasks: tasks.map((r) => ({ ...r, title: wrapUntrusted(r.vault, r.title), detail: r.detail ? wrapUntrusted(r.vault, r.detail) : '' })),
     muted: Object.entries(muted).flatMap(([root, slugs]) => {
       const vault = vaultOf.get(root);
       return vault ? slugs.map((slug) => ({ vault, slug })) : [];

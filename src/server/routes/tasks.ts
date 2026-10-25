@@ -1,3 +1,4 @@
+import { dirname } from 'node:path';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { today, slugify } from '../../lib/id.js';
 import { assertTaskFilingBar, isSleepCycleLive, recordCycleTaskFiled } from '../../lib/task-filing-bar.js';
@@ -16,8 +17,13 @@ import { developHandoffGaps, developHandoffNotes } from '../../lib/handoff-readi
 import { getAgent } from '../../lib/agents/store.js';
 import { isSafeAutomationSlug } from '../../lib/agents/slot.js';
 import { commitAssignment, prepareAssignment, type AssignmentRefusal } from '../../lib/agents/task-assignment.js';
-import { endTaskJobIfClosed, startDueTaskJobs, stopTaskAction, unassignTaskJob } from '../../lib/agents/task-starter.js';
-import { recordStatusChange } from '../../lib/task-history.js';
+import { endTaskJobIfClosed, reconcileTaskRows, startDueTaskJobs, stopTaskAction, taskIdOfRow, unassignTaskJob } from '../../lib/agents/task-starter.js';
+import { parseStatusHistory, recordStatusChange } from '../../lib/task-history.js';
+import { agentJobDetailOf, agentJobOf, type AgentJob } from '../../lib/agents/task-job-api.js';
+import { readTaskJobs } from '../../lib/agents/task-jobs.js';
+import { listInboxRows, resolveInboxRow } from '../../lib/owner-inbox.js';
+import { answerTaskAction } from './agent-sync.js';
+import { refuseNotOwner } from './owner-guard.js';
 import {
   loadTaskOverride,
   loadStatuses,
@@ -97,9 +103,26 @@ async function objectionReadCtx(contextRoot: string, backend: TaskBackend): Prom
 function toApiTask(
   task: TaskData,
   ctx?: ObjectionReadCtx,
-): Omit<TaskData, 'raw' | 'rawBody'> & { objection: ObjectionView | null } {
+): Omit<TaskData, 'raw' | 'rawBody'> & { objection: ObjectionView | null; agent_job: AgentJob | null } {
   const { raw: _raw, rawBody: _rawBody, ...api } = task;
-  return { ...api, objection: ctx ? objectionView(ctx.records, task.slug, ctx.rules, ctx.nameOf) : null };
+  return {
+    ...api,
+    objection: ctx ? objectionView(ctx.records, task.slug, ctx.rules, ctx.nameOf) : null,
+    agent_job: agentJobOf(task.raw ?? {}),
+  };
+}
+
+/** One task as the drawer reads it (AI Team v2 C2): the job's deliveries and this machine's rows
+ *  about it, and who moved its status (any task, agent or not). */
+async function toApiTaskDetail(contextRoot: string, backend: TaskBackend, task: TaskData) {
+  return {
+    ...toApiTask(task, await objectionReadCtx(contextRoot, backend)),
+    agent_job: agentJobDetailOf(
+      task.raw ?? {}, task.id, listInboxRows(dirname(contextRoot)),
+      readTaskJobs(dirname(contextRoot)).claims.find((c) => c.taskId === task.id && c.sessionId)?.sessionId ?? null,
+    ),
+    status_history: parseStatusHistory(task.changelog ?? ''),
+  };
 }
 
 function backendFor(contextRoot: string): TaskBackend {
@@ -966,8 +989,54 @@ export async function handleTasksGet(
     return;
   }
 
-  sendJson(res, 200, { task: toApiTask(task, await objectionReadCtx(contextRoot, backend)) });
+  sendJson(res, 200, { task: await toApiTaskDetail(contextRoot, backend, task) });
 }
+
+/**
+ * POST /api/tasks/:slug/agent-action {action, text?} — the owner answers the task's agent job from
+ * the drawer (AI Team v2 C2): the same actions as its owner-inbox rows and `tasks agent-action`.
+ * The rows of this task offering that action close with it. 409 with the action's refusal.
+ */
+export async function handleTasksAgentAction(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const { slug } = params;
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
+  const body = await parseJsonBody(req);
+  const action = typeof body?.action === 'string' ? body.action : '';
+  if (!TASK_AGENT_ACTIONS.has(action)) { sendError(res, 400, 'bad_action', `Unknown action "${action}".`); return; }
+  let taskId: string | null = null;
+  try {
+    taskId = (await backendFor(contextRoot).get(slug))?.id ?? null;
+    const result = await answerTaskAction(contextRoot, slug, action, typeof body?.text === 'string' ? body.text : '');
+    if (!result.ok) { sendError(res, result.code === 'not_owner' ? 403 : 409, result.code, result.message); return; }
+  } catch (err) {
+    console.error('[tasks] agent-action failed', err);
+    sendError(res, 500, 'agent_action_failed', 'Failed to answer the task job.');
+    return;
+  }
+  // The action is applied: what follows only tidies, so its failure never reads as the action's.
+  try {
+    const projectRoot = dirname(contextRoot);
+    for (const r of listInboxRows(projectRoot)) {
+      if (taskId && r.kind.startsWith('task-') && taskIdOfRow(r) === taskId && (r.actions as string[]).includes(action)) resolveInboxRow(projectRoot, r.id);
+    }
+    reconcileTaskRows(contextRoot);
+    recordDashboardChange(contextRoot, { entity: 'task', action: 'update', target: slug, field: 'agent', summary: `Task '${slug}': ${action}` });
+  } catch (err) {
+    console.error('[tasks] agent-action tidy failed', err);
+  }
+  sendJson(res, 200, { ok: true });
+}
+
+/** The actions the drawer may send (the inbox rows' task actions). */
+const TASK_AGENT_ACTIONS: ReadonlySet<string> = new Set([
+  'start-now', 'reschedule', 'stop', 'let-finish', 'continue', 'take-over', 'approve-plan',
+  'change-plan', 'one-more-round', 'cancel', 'send-back', 'complete',
+]);
 
 /**
  * POST /api/tasks/:slug/objection — the owner objects to a task an agent opened
@@ -1157,6 +1226,13 @@ export async function handleTasksUpdate(
     if (typeof body.agent !== 'string' || !isSafeAutomationSlug(body.agent) || !getAgent(contextRoot, body.agent)) {
       sendError(res, 400, 'invalid_agent', 'agent must be the slug of an agent in this project, or null.');
       return;
+    }
+  }
+  // Only an agent's owner gives it a task or takes one off it (B1-4): a teammate's is read-only.
+  if (body.agent !== undefined && (body.agent ?? null) !== (existing.agent ?? null)) {
+    for (const s of [existing.agent, body.agent]) {
+      const a = typeof s === 'string' && isSafeAutomationSlug(s) ? getAgent(contextRoot, s) : null;
+      if (a && refuseNotOwner(res, { slug: a.slug, owner: a.owner, title: a.title })) return;
     }
   }
   // `parent_task` (local-only, two levels max): a task slug, or null to clear.
@@ -1436,7 +1512,7 @@ export async function handleTasksUpdate(
     summary: buildFieldSummary('task', `state/${slug}.md`, fieldChanges),
   });
 
-  sendJson(res, 200, { task: toApiTask(task, await objectionReadCtx(contextRoot, backend)) });
+  sendJson(res, 200, { task: await toApiTaskDetail(contextRoot, backend, task) });
 }
 
 /**

@@ -124,6 +124,23 @@ export function closeInboxRows(projectRoot: string, match: (row: InboxRow) => bo
   return closed;
 }
 
+/** Point open rows at a new `ref` (`id` → ref): a task renamed keeps its rows. Never throws. */
+export function retargetInboxRows(projectRoot: string, refs: ReadonlyMap<string, string>, home?: string): void {
+  if (refs.size === 0) return;
+  try {
+    updateLocalJson<InboxFile>(projectRoot, FILE, { rows: [] }, (cur) => {
+      const rows = rowsOf(cur);
+      for (const r of rows) {
+        const ref = refs.get(r.id);
+        if (ref) r.ref = ref;
+      }
+      return { rows };
+    }, home);
+  } catch {
+    // the next read retargets it again
+  }
+}
+
 /** Close one row by id (the owner pressed an action). Returns the row, or null. */
 export function resolveInboxRow(projectRoot: string, id: string, home?: string): InboxRow | null {
   const row = listInboxRows(projectRoot, home).find((r) => r.id === id) ?? null;

@@ -135,6 +135,13 @@ export function prepareAssignment(
   }
   const task = readTask(contextRoot, taskSlug);
   if (!task) return refuse('unknown_task', `There is no task named "${oneDataLine(taskSlug, 80)}" in this project.`);
+  // A teammate's agent holding the task keeps it: only that agent's owner takes it off (B1-4).
+  const holder = typeof task.raw?.agent === 'string' && task.raw.agent !== agentSlug && isSafeAutomationSlug(task.raw.agent)
+    ? getRunTarget(contextRoot, task.raw.agent, 'agent') : null;
+  const held = holder ? checkApproval(dirname(contextRoot), holder, opts.home, 'run') : null;
+  if (holder && held && !held.approved && held.reason === 'not_owner') {
+    return refuse('not_owner', `${oneDataLine(holder.agentTitle || holder.title, 120)} belongs to ${ownerLabel(held.owner)} and has this task: only its owner can hand it on.`);
+  }
   const target = isSafeAutomationSlug(agentSlug) ? getRunTarget(contextRoot, agentSlug, 'agent') : null;
   if (!target) return refuse('unknown_agent', `There is no agent named "${oneDataLine(agentSlug, 80)}" in this project.`);
   const title = oneDataLine(target.agentTitle || target.title, 120);

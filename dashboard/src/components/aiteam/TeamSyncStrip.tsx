@@ -3,6 +3,8 @@ import { useI18n } from '../../context/I18nContext';
 import { useAgentSync, useAnswerInbox, useConfirmAgentSync, useOwnerInbox, type OwnerInboxRow } from '../../hooks/useAgents';
 import { TeamIcon } from './TeamIcons';
 import { isPhoneSurface } from '../../lib/phoneSurface';
+import { emitInstance, useVault } from '../../context/VaultContext';
+import { tr } from '../../lib/assignToAgent';
 
 /**
  * AGENT SYNC, ON THE TEAM LIST (AI Team v2, wave B1): what the brain sync asks of the owner here.
@@ -11,7 +13,9 @@ import { isPhoneSurface } from '../../lib/phoneSurface';
  *    the one warning (every machine must run this version first), how many files would start to
  *    sync, and each secret-scan hit by path, since confirming is what lets those files push.
  *  - The owner inbox: rows only this machine raises (a held secret, a task assigned outside the
- *    app, a renamed agent, a learned pattern to adopt), each with its own buttons.
+ *    app, a renamed agent, a learned pattern to adopt), each with its own buttons. A task job's
+ *    row (AI Team v2 C2) opens its task instead: its answers (some take words or a time) live in
+ *    the task's drawer.
  *
  * Folded to one line by default: the notice is a decision, not an alarm.
  */
@@ -22,6 +26,7 @@ export function TeamSyncStrip({ onToast }: { onToast: (msg: string) => void }) {
   const confirm = useConfirmAgentSync();
   const answer = useAnswerInbox();
   const [open, setOpen] = useState(false);
+  const { bus } = useVault();
   const notice = sync && !sync.active;
   if (!notice && rows.length === 0) return null;
 
@@ -82,7 +87,15 @@ export function TeamSyncStrip({ onToast }: { onToast: (msg: string) => void }) {
               <p className="aiteam-inbox-title">{row.title}</p>
               {row.detail && <p className="aiteam-inbox-detail">{row.detail}</p>}
               <div className="aiteam-inbox-actions">
-                {row.actions.map((a) => (
+                {row.kind.startsWith('task-') ? (
+                  <button
+                    type="button"
+                    className="agp-btn agp-btn--primary"
+                    onClick={() => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'tasks', id: row.ref })}
+                  >
+                    {tr(t, 'aiteam.stage.openTask', 'Open the task')}
+                  </button>
+                ) : row.actions.map((a) => (
                   <button
                     key={a}
                     type="button"

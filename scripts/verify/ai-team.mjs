@@ -63,17 +63,13 @@ async function openTeam(page, phone) {
 }
 
 /**
- * A teammate opens on its STAGE (AI Team v2); the conversation these screens are about is its
- * Activity, one click away ("Open all" on the reports card, behind "Cards" on a phone).
+ * A teammate opens on its conversation (AI Team v2: the real Chat pane); the routines' activity
+ * these screens are about is one click away ("See activity" in its header).
  */
 async function toActivity(page) {
   if (!(await page.locator('.aiteam-stage').first().isVisible().catch(() => false))) return;
-  if (await page.locator('.aiteam-stage--narrow[data-show="chat"]').count()) {
-    await page.locator('.aiteam-stage-head .aiteam-pill').first().click();
-    await page.waitForTimeout(300);
-  }
-  await page.locator('.aiteam-card--reports .aiteam-linkbtn').first().click();
-  await page.locator('.aiteam-convo').first().waitFor({ timeout: 10000 });
+  await page.locator('[data-team-activity]').first().click();
+  await page.locator('[data-team-stage]').first().waitFor({ timeout: 10000 });
   await page.waitForTimeout(600);
 }
 

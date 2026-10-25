@@ -473,7 +473,7 @@ function settleReview(
   setResumeNote(projectRoot, { taskId: view.id, kind: 'findings', text: findings || 'The reviewer failed the delivery.' }, home);
   const reviewerGone = !getRunTarget(contextRoot, reviewer, 'agent');
   raiseTaskRow(projectRoot, 'task-stuck', view, reviewer,
-    `${view.name}: ${claim.round} review rounds and still failing${reviewerGone ? ` (its reviewer ${reviewer} is gone)` : ''}.`,
+    `${view.name}: still failing at review round ${claim.round}${reviewerGone ? ` (its reviewer ${reviewer} is gone)` : ''}.`,
     ['one-more-round', 'take-over', 'cancel'], findings || undefined, home, now);
   return 'stuck';
 }

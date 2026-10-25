@@ -294,7 +294,11 @@ export interface AgentStageView {
   reports: { slug: string; id: string; runId: string; at: string; text: string; files: string[] }[];
   files: { path: string; kind: StageFileKind; at: string; slug: string }[];
   routines: { slug: string; title: string; enabled: boolean; nextFireAt: string | null; cadence: string; face: AgentFace }[];
-  inbox: unknown[];
+  /** This machine's owner-inbox rows about this agent (M1). */
+  inbox: OwnerInboxRow[];
+  /** Its task-job steps running on this machine (M0 claims). A task session is shown read-only,
+   *  never chatted. Absent from an older server. */
+  taskJobs?: { taskId: string; taskSlug: string; taskName: string; step: string; role: string; round: number; phase: string; sessionId: string | null; claimedAt: string }[];
 }
 
 /** How often the stage re-reads its cards while it is on screen. */
@@ -333,12 +337,17 @@ export interface AgentSyncState {
 /** One owner-inbox row — mirrors `InboxRow` (src/lib/owner-inbox.ts). */
 export interface OwnerInboxRow {
   id: string;
-  kind: 'secret-held' | 'assigned-outside' | 'assigned-elsewhere' | 'renamed' | 'parked' | 'replaced-by-sync' | 'adopt-pattern' | 'unowned';
+  kind: 'secret-held' | 'assigned-outside' | 'assigned-elsewhere' | 'renamed' | 'parked' | 'replaced-by-sync' | 'adopt-pattern' | 'unowned'
+    // Task jobs (AI Team v2 C1): each dies when its task moves on. `ref` is the task slug.
+    | 'task-start-missed' | 'task-orphaned' | 'task-stopped' | 'task-blocked' | 'task-plan'
+    | 'task-question' | 'task-stalled' | 'task-review' | 'task-stuck';
   ref: string;
   agent: string | null;
   title: string;
   detail?: string;
-  actions: ('start' | 'ignore' | 'adopt' | 'dismiss' | 'start-all' | 'review')[];
+  actions: ('start' | 'ignore' | 'adopt' | 'dismiss' | 'start-all' | 'review'
+    | 'start-now' | 'reschedule' | 'stop' | 'let-finish' | 'continue' | 'take-over'
+    | 'approve-plan' | 'change-plan' | 'one-more-round' | 'cancel' | 'open-task' | 'complete' | 'send-back')[];
   createdAt: string;
 }
 
@@ -375,10 +384,12 @@ export function useAnswerInbox() {
   const api = useApi();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, action }: { id: string; action: OwnerInboxRow['actions'][number] }) =>
-      api.post<{ ok: boolean; rows: OwnerInboxRow[] }>(`/agents/inbox/${encodeURIComponent(id)}`, { action }),
+    mutationFn: ({ id, action, text }: { id: string; action: OwnerInboxRow['actions'][number]; text?: string }) =>
+      api.post<{ ok: boolean; rows: OwnerInboxRow[] }>(`/agents/inbox/${encodeURIComponent(id)}`, text ? { action, text } : { action }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['agents', 'inbox'] });
+      // A task row's answer moves its task (C1): the board and the drawer follow.
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
       invalidateAgent(queryClient);
     },
   });

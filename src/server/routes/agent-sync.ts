@@ -26,7 +26,12 @@ import {
   approvePlanAction, cancelTaskAction, changePlanAction, continueTaskAction, letFinishAction, oneMoreRoundAction,
   reconcileTaskRows, rescheduleAction, sendBackAction, startNowAction, stopTaskAction, takeOverAction, type ActionResult,
 } from '../../lib/agents/task-starter.js';
-import { startDueTaskJobs } from '../../lib/agents/task-starter.js';
+import { endTaskJobIfClosed, startDueTaskJobs, taskIdOfRow } from '../../lib/agents/task-starter.js';
+import { findTaskHead } from '../../lib/agents/task-jobs.js';
+import { foreignOwner, NotOwnerError } from '../../lib/agents/owner.js';
+import { loadStatuses } from '../../lib/overrides.js';
+import { checkCloseGate } from '../../lib/sleep-eval/report.js';
+import { isMappedWaveChild, openChildren } from '../../lib/task-parent.js';
 
 /**
  * Agents ride the brain sync (AI Team v2, wave B1): the migration notice, this machine's
@@ -117,8 +122,14 @@ function startOutsideTask(contextRoot: string, taskSlug: string, agent: string):
  * `complete` is the owner signing off a delivery (status by owner); `open-task` only closes the
  * row (the drawer is where the task opens).
  */
-async function taskRowAction(contextRoot: string, row: InboxRow, action: string, text: string): Promise<ActionResult> {
-  const task = row.ref;
+export async function answerTaskAction(contextRoot: string, task: string, action: string, text: string): Promise<ActionResult> {
+  // Only the agent's owner answers its job (B1-4): a teammate's agent is read-only here.
+  const head = findTaskHead(contextRoot, task);
+  for (const slug of head ? [head.data.agent, head.data.reviewer] : []) {
+    const agent = typeof slug === 'string' && isSafeAutomationSlug(slug) ? getAgent(contextRoot, slug) : null;
+    const owner = agent ? foreignOwner({ owner: agent.owner }) : null;
+    if (agent && owner) return { ok: false, code: 'not_owner', message: new NotOwnerError(owner, agent.title || agent.slug).message };
+  }
   switch (action) {
     case 'start-now': return startNowAction(contextRoot, task);
     case 'reschedule': return rescheduleAction(contextRoot, task, text);
@@ -131,18 +142,38 @@ async function taskRowAction(contextRoot: string, row: InboxRow, action: string,
     case 'one-more-round': return oneMoreRoundAction(contextRoot, task);
     case 'cancel': return cancelTaskAction(contextRoot, task);
     case 'send-back': return sendBackAction(contextRoot, task, text);
-    case 'complete': {
-      const backend = getTaskBackend(contextRoot);
-      if (!(await backend.get(task))) return { ok: false, code: 'unknown_task', message: 'There is no such task.' };
-      await backend.complete(task, 'The owner approved the delivery.', { by: 'owner' });
-      return { ok: true };
-    }
+    case 'complete': return completeDeliveryAction(contextRoot, head?.slug ?? task);
     case 'open-task':
     case 'dismiss':
       return { ok: true };
     default:
       return { ok: false, code: 'bad_action', message: `Unknown action "${action}".` };
   }
+}
+
+/**
+ * The owner signs off a delivery: only one that is delivered, behind the same close gates as the
+ * board and `tasks complete` (open sub-tasks, the sleep-eval gate), and the job ends with it.
+ */
+async function completeDeliveryAction(contextRoot: string, slug: string): Promise<ActionResult> {
+  const backend = getTaskBackend(contextRoot);
+  const task = await backend.get(slug);
+  if (!task) return { ok: false, code: 'unknown_task', message: 'There is no such task.' };
+  if ((task.raw?.agent_state ?? null) !== 'delivered') {
+    return { ok: false, code: 'not_delivered', message: 'That task has no delivery waiting for your approval.' };
+  }
+  const statuses = loadStatuses(contextRoot);
+  const all = (await backend.list()).map((s) => ({ slug: s.name, parent_task: s.parent_task, status: s.status }));
+  const open = openChildren(all, slug, statuses);
+  if (open.length > 0) {
+    return { ok: false, code: 'parent_has_open_children', message: `This task has ${open.length} open sub-task(s): ${open.map((t) => t.slug).join(', ')}. Close or cancel them first.` };
+  }
+  const parent = task.parent_task ? await backend.get(task.parent_task) : null;
+  const gate = checkCloseGate(contextRoot, slug, task.parent_task ?? null, { exempt: !!(parent && isMappedWaveChild(parent, task)) });
+  if (gate.applies && !gate.ok) return { ok: false, code: 'sleep_eval_gate', message: gate.message };
+  await backend.complete(slug, 'The owner approved the delivery.', { by: 'owner' });
+  endTaskJobIfClosed(contextRoot, slug);
+  return { ok: true };
 }
 
 export async function handleAgentsInboxAction(
@@ -165,7 +196,8 @@ export async function handleAgentsInboxAction(
   }
   try {
     if (row.kind.startsWith('task-')) {
-      const result = await taskRowAction(contextRoot, row, action, typeof body?.text === 'string' ? body.text : '');
+      // By the task's id: a row keeps the slug it was raised with, and a rename moves the task.
+      const result = await answerTaskAction(contextRoot, taskIdOfRow(row) || row.ref, action, typeof body?.text === 'string' ? body.text : '');
       if (!result.ok) {
         sendError(res, 409, result.code, result.message);
         return;

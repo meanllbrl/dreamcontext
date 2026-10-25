@@ -429,7 +429,7 @@ describe('M1: task rows die with their subject (reconciler table per kind)', () 
     expect(listInboxRows(f.projectRoot, f.home).filter((r) => r.kind === kind)).toHaveLength(0);
   });
 
-  it('task-review dies when the task leaves review; every row dies when the task is deleted or renamed', () => {
+  it('task-review dies when the task leaves review; every row dies when the task is deleted; a renamed task keeps its row, re-pointed', () => {
     makeAgent(f, 'scout');
     for (const slug of ['r', 'gone', 'moved']) {
       writeTask(f, slug, { id: `task_${slug}`, status: 'in_review', extra: { agent: 'scout', agent_state: 'delivered' } });
@@ -440,7 +440,9 @@ describe('M1: task rows die with their subject (reconciler table per kind)', () 
     writeFileSync(join(f.contextRoot, 'state', 'r.md'), taskText(f, 'r').replace('status: in_review', 'status: completed'));
     rmSync(join(f.contextRoot, 'state', 'gone.md'));
     renameSync(join(f.contextRoot, 'state', 'moved.md'), join(f.contextRoot, 'state', 'moved-elsewhere.md'));
+    // Another task now holds the old slug: the row still follows its own task, by id.
+    writeTask(f, 'moved', { id: 'task_other', status: 'in_review', extra: { agent: 'scout', agent_state: 'delivered' } });
     reconcileTaskRows(f.contextRoot, f.home);
-    expect(listInboxRows(f.projectRoot, f.home)).toHaveLength(0);
+    expect(listInboxRows(f.projectRoot, f.home).map((r) => [r.ref, r.dedupeKey])).toEqual([['moved-elsewhere', 'task-review:task_moved']]);
   });
 });

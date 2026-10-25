@@ -1,4 +1,6 @@
 import { useI18n } from '../../../context/I18nContext';
+import type { OwnerInboxRow } from '../../../hooks/useAgents';
+import { tr } from '../../../lib/assignToAgent';
 import type { SuperStateView } from '../../../lib/superTypes';
 import { AGENDA_SECTIONS, superNotepad, type AgendaRow, type JobLook } from './superHandover';
 import './SuperAgenda.css';
@@ -21,7 +23,7 @@ import './SuperAgenda.css';
  * 2026-10-23, pick A): it stages the line as an About chip in the centre's composer
  * (`onWriteAbout`). A sibling of the row's own control, never inside it; the tile has none.
  */
-export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, onShowChild, onShowQuestion, onWriteAbout }: {
+export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, onShowChild, onShowQuestion, onWriteAbout, taskRows = [], onOpenTask }: {
   state: SuperStateView;
   /** `tile`: the three counts (a small or medium card); `full`: the notepad. */
   variant?: 'tile' | 'full';
@@ -35,16 +37,21 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   onShowQuestion: (item: string) => void;
   /** "Write about this" on a row. Absent: no icon (the super chat is not there to write in). */
   onWriteAbout?: (row: AgendaRow) => void;
+  /** This machine's task-job rows waiting on the owner (M1, AI Team v2 C2): "I did it", stuck,
+   *  stalled, a plan to approve. They need no Super session; each opens its task. */
+  taskRows?: OwnerInboxRow[];
+  onOpenTask?: (slug: string) => void;
 }) {
   const { t } = useI18n();
   const sections = superNotepad(state, look);
+  const countOf = (sec: string) => sections[sec as keyof typeof sections].length + (sec === 'waiting' ? taskRows.length : 0);
 
   if (variant === 'tile') {
     return (
       <div className="super-agenda super-agenda--tile" data-testid="super-agenda" data-variant="tile" data-wide={wide ? 'true' : undefined}>
         {AGENDA_SECTIONS.map((sec) => (
-          <div key={sec} className="super-agenda-tile-n" data-section={sec} data-on={sections[sec].length > 0 ? 'true' : undefined} data-testid={`super-agenda-tile-${sec}`}>
-            <span className="super-agenda-tile-v">{sections[sec].length}</span>
+          <div key={sec} className="super-agenda-tile-n" data-section={sec} data-on={countOf(sec) > 0 ? 'true' : undefined} data-testid={`super-agenda-tile-${sec}`}>
+            <span className="super-agenda-tile-v">{countOf(sec)}</span>
             <span className="super-agenda-tile-l">{t(`super.agenda.tile.${sec}`)}</span>
           </div>
         ))}
@@ -71,9 +78,9 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
           <section key={sec} className="super-agenda-sec" data-section={sec} data-testid={`super-agenda-section-${sec}`}>
             <h3 className="super-agenda-sec-h">
               <span>{t(`super.agenda.section.${sec}`)}</span>
-              <span className="super-agenda-n" data-testid={`super-agenda-count-${sec}`}>{rows.length}</span>
+              <span className="super-agenda-n" data-testid={`super-agenda-count-${sec}`}>{countOf(sec)}</span>
             </h3>
-            {rows.length === 0 && <div className="super-agenda-empty">{t(`super.agenda.empty.${sec}`)}</div>}
+            {countOf(sec) === 0 && <div className="super-agenda-empty">{t(`super.agenda.empty.${sec}`)}</div>}
             {rows.map((r) => {
               const body = (
                 <>
@@ -116,6 +123,18 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
                 </div>
               );
             })}
+            {sec === 'waiting' && taskRows.map((r) => (
+              <div key={r.id} className="super-agenda-row" data-row={r.id} data-testid="super-agenda-row" data-state="waiting" data-kind="task" data-chip={r.kind}>
+                <button type="button" className="super-agenda-row-btn" onClick={() => onOpenTask?.(r.ref)} title={tr(t, 'super.agenda.openTask', 'Open the task')}>
+                  <span className="super-agenda-dot" aria-hidden />
+                  <span className="super-agenda-name" title={r.title}>{r.title}</span>
+                  <span className="super-agenda-meta">
+                    <span className="super-agenda-chip" data-kind="task">{tr(t, 'super.agenda.chip.task', 'Task')}</span>
+                  </span>
+                  {r.detail && <span className="super-agenda-line" title={r.detail}>{r.detail}</span>}
+                </button>
+              </div>
+            ))}
           </section>
         );
       })}

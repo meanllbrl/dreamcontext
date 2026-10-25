@@ -123,6 +123,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'PATCH /api/tasks/:slug': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/changelog': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/assign-agent': allow(PROJECT_WRITE),
+  'POST /api/tasks/:slug/agent-action': allow('the owner answers its task\'s agent job from the drawer (start now, stop, continue, approve), as its inbox row does; a teammate\'s agent is refused not_owner'),
   'POST /api/tasks/:slug/objection': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/filing-approval': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/insert': allow(PROJECT_WRITE),

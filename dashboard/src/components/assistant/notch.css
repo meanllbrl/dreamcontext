@@ -500,6 +500,7 @@ html:has(.dc-notch) #root {
   font-size: var(--font-size-sm);
 }
 .dc-inbox__icon--done { color: var(--color-success); }
+.dc-inbox__icon--task { color: var(--color-warning); }
 .dc-inbox__icon--account { color: var(--color-warning); }
 .dc-inbox__actions { display: flex; flex-direction: column; padding: var(--space-1) var(--space-1) 0 0; }
 .dc-inbox__icon-btn {

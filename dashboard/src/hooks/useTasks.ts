@@ -1,3 +1,4 @@
+import type { OwnerInboxRow } from './useAgents';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { useApi, useVault } from '../context/VaultContext';
@@ -60,6 +61,61 @@ export interface Task {
   filing_approved?: { at: string } | null;
   /** The owner's objection to this task and the rule sleep learned from it (newest), or null. */
   objection?: TaskObjection | null;
+  /** Its agent job (AI Team v2): state, step, round, reviewer… Null when no agent was ever given
+   *  it. The single-task read adds the deliveries and this machine's rows about it. */
+  agent_job?: AgentJob | AgentJobDetail | null;
+  /** Who moved its status, newest first. Single-task read only. */
+  status_history?: StatusHistoryRow[];
+}
+
+/** Mirrors `AgentTaskState` (`src/lib/agents/task-jobs.ts`). */
+export type AgentTaskState =
+  | 'scheduled' | 'queued' | 'starting' | 'running' | 'waiting_owner'
+  | 'blocked' | 'delivered' | 'stopped' | 'stalled' | 'stuck';
+export type AgentTaskStep = 'plan' | 'work' | 'review' | 'rework';
+
+/** Mirrors `AgentJob` (`src/lib/agents/task-job-api.ts`). Display only. */
+export interface AgentJob {
+  state: AgentTaskState | null;
+  step: AgentTaskStep | null;
+  round: number;
+  cap: number;
+  reviewer: string | null;
+  workspace: 'code' | 'doc' | null;
+  repo: string | null;
+  startAt: string | null;
+  queuedAt: string | null;
+  reviewPassed: boolean;
+  claimedMachine: string | null;
+  reason: string | null;
+}
+
+export interface AgentJobDelivery {
+  round: number;
+  at: string;
+  by: string;
+  note: string;
+  refs: Array<{ kind: 'doc' | 'board' | 'file' | 'branch'; path: string }>;
+  branch: string | null;
+  commits: string[];
+}
+
+export type { OwnerInboxRow };
+
+export interface AgentJobDetail extends AgentJob {
+  deliveries: AgentJobDelivery[];
+  /** The live step's session on this machine: a question it asked is answered from the task. */
+  sessionId: string | null;
+  rows: OwnerInboxRow[];
+}
+
+/** Mirrors `StatusHistoryRow` (`src/lib/task-history.ts`). `by` is `owner`, `agent:<slug>`,
+ *  `reviewer:<slug>`, `claude`, `sleep`, or null for an older heading. */
+export interface StatusHistoryRow {
+  date: string;
+  to: string;
+  by: string | null;
+  reason: string | null;
 }
 
 export type FiledBy = 'human' | 'agent' | 'sleep' | 'plan';
@@ -94,6 +150,9 @@ export interface TaskObjection {
   /** The rule sleep learned from it, or null (not yet, or deleted by hand). */
   rule: { id: string; title: string; dont: string; do: string } | null;
 }
+
+/** Job states that move without the owner (mirrors `LIVE_STATES`, lib/taskAgentJob.ts). */
+const LIVE_JOB_STATES: ReadonlySet<string> = new Set(['scheduled', 'queued', 'starting', 'running']);
 
 interface TasksResponse {
   tasks: Task[];
@@ -162,6 +221,8 @@ export function useTasks() {
     queryKey: ['tasks'],
     queryFn: () => api.get<TasksResponse>('/tasks'),
     select: (data) => data.tasks,
+    // A board with a job moving on its own (an agent working, a start due) keeps its chips current.
+    refetchInterval: (q) => ((q.state.data?.tasks ?? []).some((t) => LIVE_JOB_STATES.has(t.agent_job?.state ?? '')) ? 15_000 : false),
   });
 }
 
@@ -172,6 +233,8 @@ export function useTask(slug: string) {
     queryFn: () => api.get<TaskResponse>(`/tasks/${slug}`),
     select: (data) => data.task,
     enabled: !!slug,
+    // While its agent job moves on its own (scheduled, queued, running), the drawer follows it.
+    refetchInterval: (q) => (LIVE_JOB_STATES.has(q.state.data?.task.agent_job?.state ?? '') ? 10_000 : false),
   });
 }
 
@@ -268,11 +331,18 @@ export type AssignAgentRefusal =
   | 'missing_agent'
   | 'invalid_note'
   | 'invalid_path'
+  | 'invalid_start'
+  | 'invalid_workspace'
+  | 'no_repo'
+  | 'unknown_reviewer'
+  | 'reviewer_is_agent'
+  | 'not_owner'
   | 'assign_failed';
 
 const ASSIGN_REFUSALS: ReadonlySet<string> = new Set<AssignAgentRefusal>([
   'agent_not_approved_to_run', 'agent_disabled', 'agent_busy', 'unknown_task', 'unknown_agent',
-  'note_too_long', 'missing_agent', 'invalid_note', 'invalid_path', 'assign_failed',
+  'note_too_long', 'missing_agent', 'invalid_note', 'invalid_path', 'invalid_start',
+  'invalid_workspace', 'no_repo', 'unknown_reviewer', 'reviewer_is_agent', 'not_owner', 'assign_failed',
 ]);
 
 /**
@@ -305,6 +375,19 @@ export interface AssignAgentResult {
   runId: string;
   /** The task moved to its active status (only ever from an open-kind or missing status). */
   statusMoved: boolean;
+  /** Where the job stands now: `starting` (it began), `scheduled` (a later start) or `queued`
+   *  (the agent is busy). Absent from an older server. */
+  state?: AgentTaskState;
+}
+
+/** What the composer sends beyond the agent and the note. */
+export interface AssignAgentOptions {
+  /** An absolute instant (ISO); absent = now. */
+  startAt?: string;
+  workspace?: 'code' | 'doc';
+  repo?: string;
+  /** An agent of the caller's that reviews the delivery; absent = the owner reviews. */
+  reviewer?: string;
 }
 
 /**
@@ -314,9 +397,11 @@ export interface AssignAgentResult {
 export function useAssignTaskToAgent() {
   const queryClient = useQueryClient();
   const api = useApi();
-  return useMutation<AssignAgentResult, AssignAgentError, { slug: string; agent: string; note?: string }>({
-    mutationFn: async ({ slug, agent, note }) => {
-      const body = note && note.trim() ? { agent, note } : { agent };
+  return useMutation<AssignAgentResult, AssignAgentError, { slug: string; agent: string; note?: string } & AssignAgentOptions>({
+    mutationFn: async ({ slug, agent, note, ...opts }) => {
+      const body: Record<string, string> = { agent };
+      if (note && note.trim()) body.note = note;
+      for (const k of ['startAt', 'workspace', 'repo', 'reviewer'] as const) if (opts[k]) body[k] = opts[k] as string;
       try {
         return await api.post<AssignAgentResult>(`/tasks/${encodeURIComponent(slug)}/assign-agent`, body);
       } catch (err) {
@@ -329,6 +414,26 @@ export function useAssignTaskToAgent() {
       queryClient.invalidateQueries({ queryKey: ['agents'] });
       queryClient.invalidateQueries({ queryKey: ['automations-run-job'] });
       queryClient.invalidateQueries({ queryKey: ['automations-feed'] });
+    },
+  });
+}
+
+/** A task job action the drawer sends (`POST /api/tasks/:slug/agent-action`). */
+export type TaskAgentAction =
+  | 'start-now' | 'reschedule' | 'stop' | 'let-finish' | 'continue' | 'take-over' | 'approve-plan'
+  | 'change-plan' | 'one-more-round' | 'cancel' | 'send-back' | 'complete';
+
+/** Answer a task's agent job from the drawer: the same actions as its owner-inbox rows. */
+export function useTaskAgentAction() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation<{ ok: true }, Error, { slug: string; action: TaskAgentAction; text?: string }>({
+    mutationFn: ({ slug, action, text }) =>
+      api.post<{ ok: true }>(`/tasks/${encodeURIComponent(slug)}/agent-action`, text ? { action, text } : { action }),
+    onSettled: (_d, _e, { slug }) => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['tasks', slug] });
+      queryClient.invalidateQueries({ queryKey: ['agents'] });
     },
   });
 }

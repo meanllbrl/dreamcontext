@@ -48,7 +48,6 @@ const W5_KEYS = [
   'agents.profile.flowSet',
   'automations.pickAgentOwn',
   'automations.new',
-  'tasks.assignWhatHappens',
   'tasks.assignUnknownAgent',
   'tasks.assignUnknownTask',
   'tasks.assignTryAgain',

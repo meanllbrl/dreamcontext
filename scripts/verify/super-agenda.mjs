@@ -28,7 +28,8 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { appendFileSync, chmodSync, createWriteStream, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, createWriteStream, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -278,7 +279,18 @@ function setupScratch() {
   chmodSync(bin, 0o755);
   const r = spawnSync(process.execPath, [CLI, 'vaults', 'add', 'orbit', PROJ], { env: env(), encoding: 'utf-8' });
   if (r.status !== 0) throw new Error(`vaults add failed: ${r.stderr || r.stdout}`);
+  // AI Team v2 C2: a task job's row waiting on the owner (M1, machine-local, no Super session
+  // needed). The agenda's Waiting on you lists it beside the super's own lines and opens the task.
+  writeFileSync(join(PROJ, '_dream_context', 'state', `${TASK_ROW.slug}.md`), ['---', `id: ${TASK_ROW.id}`, 'name: Publish the pricing FAQ',
+    'status: in_review', 'agent: scout', 'agent_state: delivered', "created_at: '2026-10-20'", "updated_at: '2026-10-20'", '---', '', '## Changelog', ''].join('\n'));
+  const key = createHash('sha256').update(realpathSync(PROJ), 'utf8').digest('hex').slice(0, 16);
+  mkdirSync(join(HOME, '.dreamcontext', 'local', key), { recursive: true });
+  writeFileSync(join(HOME, '.dreamcontext', 'local', key, 'owner-inbox.json'), JSON.stringify({ rows: [{
+    id: 'row-pfaq', kind: 'task-review', ref: TASK_ROW.slug, agent: 'scout', title: 'Scout delivered Publish the pricing FAQ.',
+    actions: ['complete', 'send-back'], createdAt: new Date().toISOString(), dedupeKey: `task-review:${TASK_ROW.id}`,
+  }] }));
 }
+const TASK_ROW = { slug: 'publish-the-pricing-faq', id: 'task_pfaq0001' };
 const freePort = () => new Promise((res, rej) => { const s = createServer(); s.on('error', rej); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => res(port)); }); });
 async function startServer(port, extraEnv = {}, logName = 'server.log') {
   const PATH = [join(HOME, '.local', 'bin'), '/usr/bin', '/bin', '/usr/sbin', '/sbin', dirname(process.execPath)].join(':');
@@ -498,6 +510,8 @@ async function main() {
     // Waiting on you: the question open with him, then what the super noted it needs from him.
     ok('Waiting on you: the open question (the lease is over) and the super\'s own waiting line', await until(page, async () => (await rowsOf(page, 'waiting').filter({ hasText: 'Fiyat sayfası' }).count()) === 1
       && (await noteRows('waiting').filter({ hasText: 'Yıllık plan indirimi için kararın' }).count()) === 1, 45000));
+    // Guards an agenda that only reads the super's notepad: a task job's row needs no Super session.
+    ok('Waiting on you also lists a task job waiting on the owner (AI Team v2 C2)', await until(page, async () => (await rowsOf(page, 'waiting').and(page.locator('[data-kind="task"]')).filter({ hasText: 'Publish the pricing FAQ' }).count()) === 1, 15000));
     await page.mouse.move(5, 5);
     await stageSettled(page);
     await shot(page, '01-agenda-1440-light.png');

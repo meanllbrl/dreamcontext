@@ -270,6 +270,18 @@ export interface RunningAutomation {
   runId: string | null;
 }
 
+/** A task job's row waiting on the owner (M1), across projects: it opens its task. */
+export interface OwnerTaskRow {
+  key: string;
+  vault: string;
+  task: string;
+  agent: string | null;
+  kind: string;
+  title: string;
+  detail: string;
+  at: string;
+}
+
 export interface Inbox {
   /** The project the owner is looking at (presence), or null: he is in another app. */
   lookingAt: string | null;
@@ -278,14 +290,18 @@ export interface Inbox {
   notices: InboxNotice[];
   posts: AutomationPost[];
   running: RunningAutomation[];
+  /** Task jobs waiting on the owner (AI Team v2 C2). */
+  tasks: OwnerTaskRow[];
   muted: Array<{ vault: string; slug: string }>;
 }
 
-export const EMPTY_INBOX: Inbox = { lookingAt: null, lookingAtSession: null, notices: [], posts: [], running: [], muted: [] };
+export const EMPTY_INBOX: Inbox = { lookingAt: null, lookingAtSession: null, notices: [], posts: [], running: [], tasks: [], muted: [] };
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
+/** A task slug (longer than an agent's; lib/task-slug.ts). */
+const TASK_RE = /^[a-z0-9][a-z0-9-]{0,249}$/;
 
 /** The route's body through a forward-compatible cast: a junk row is dropped, never drawn. */
 export function readInbox(raw: unknown): Inbox {
@@ -329,11 +345,20 @@ export function readInbox(raw: unknown): Inbox {
       since: num(a.since)!, runId: typeof a.runId === 'string' ? a.runId : null,
     });
   }
+  const tasks: OwnerTaskRow[] = [];
+  for (const r of arr('tasks')) {
+    const x = rec(r);
+    if (!x || typeof x.key !== 'string' || typeof x.vault !== 'string' || !TASK_RE.test(str(x.task))) continue;
+    tasks.push({
+      key: x.key, vault: x.vault, task: str(x.task), agent: typeof x.agent === 'string' ? x.agent : null, kind: str(x.kind),
+      title: unwrapUntrusted(x.title) || str(x.task), detail: unwrapUntrusted(x.detail), at: str(x.at),
+    });
+  }
   const muted = arr('muted').map(rec).filter((m): m is Record<string, unknown> => !!m && typeof m.vault === 'string' && SLUG_RE.test(str(m.slug)))
     .map((m) => ({ vault: m.vault as string, slug: str(m.slug) }));
   const lookingAt = typeof o.lookingAt === 'string' ? o.lookingAt : null;
   const lookingAtSession = lookingAt && typeof o.lookingAtSession === 'string' ? o.lookingAtSession : null;
-  return { lookingAt, lookingAtSession, notices, posts, running, muted };
+  return { lookingAt, lookingAtSession, notices, posts, running, tasks, muted };
 }
 
 /** How long an unread finished chat keeps its name on the collapsed pill ("acme finished"). */

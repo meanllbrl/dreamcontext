@@ -14,19 +14,12 @@ import { OrgView } from '../components/aiteam/OrgChart';
 import { chainOf } from '../../../src/lib/agents/tree.js';
 import { AgentIdentityDialog } from '../components/agents/AgentIdentityDialog';
 import { dropThreadScratch } from '../components/agents/agentsChannelHost';
-import { agentFileKind } from '../components/agents/AgentMessage';
 import { BrandMark } from '../components/brand/BrandMark';
-import { SlideOver } from '../components/sleepy/chat/SlideOver';
-import { Lightbox } from '../components/sleepy/chat/Lightbox';
-import { PdfViewer } from '../components/sleepy/chat/PdfViewer';
-import { BoardFullscreen } from '../components/sleepy/chat/BoardEmbed';
-import { classifyReference } from '../components/sleepy/chat/chatEntities';
-import { agentFileUrl, graphContentUrl } from '../api/client';
+import { BrainFileViewer } from '../components/agents/BrainFileViewer';
 import { useVault } from '../context/VaultContext';
 import { useI18n } from '../context/I18nContext';
 import { useAgents } from '../hooks/useAgents';
 import { useAgentFeed, useAutomationDispatcher, useAutomations } from '../hooks/useAutomations';
-import { useAgentCapabilities } from '../hooks/useAgentCapabilities';
 import { nextFireWords } from '../lib/agentDraft';
 import type { AgentsFocus } from '../lib/openAgents';
 import '../components/sleepy/chat/overlays.css';
@@ -67,7 +60,6 @@ export function AiTeamPage({
 } = {}) {
   const { t } = useI18n();
   const { vault } = useVault();
-  const desktop = useAgentCapabilities().data?.desktop === true;
   const agentsQ = useAgents();
   const automationsQ = useAutomations();
   const { data: feed } = useAgentFeed();
@@ -97,7 +89,7 @@ export function AiTeamPage({
   const [openFile, setOpenFile] = useState<string | null>(null);
   /** A notification or link landed: which routine's newest message to bring into view. */
   const [landing, setLanding] = useState<{ slug: string; nonce: number } | null>(null);
-  /** A teammate opens on its STAGE (live conversation + cards); its activity (the routines' runs
+  /** A teammate opens on its conversation (the real Chat pane); its activity (the routines' runs
    *  and posts) is one step away. */
   const [teamView, setTeamView] = useState<'stage' | 'activity'>('stage');
   /** Phone width: which of the two halves is on screen. */
@@ -332,12 +324,12 @@ export function AiTeamPage({
             key={current.slug}
             row={current}
             agent={agentsQ.data.find((a) => a.slug === current.slug)!}
-            narrow={narrow}
+            panelOpen={panelShown}
             onBack={narrow ? () => setMobileShow('list') : undefined}
             onPanel={(tab) => setPanel((p) => (p === tab ? null : tab))}
+            onTogglePanel={() => setPanel((p) => (p ? null : 'profile'))}
             onEdit={setEditing}
-            onOpenFile={setOpenFile}
-            onActivity={openActivity}
+            onActivity={() => openActivity(null)}
             onToast={setToast}
           />
         ) : current && agent ? (
@@ -377,32 +369,7 @@ export function AiTeamPage({
         />
       )}
 
-      {openFile && (() => {
-        // Routed by type, exactly as Chat routes a file it opens; paths arrive brain-relative.
-        const projectPath = `_dream_context/${openFile}`;
-        const close = () => setOpenFile(null);
-        const kind = agentFileKind(openFile);
-        if (kind === 'board') return <BoardFullscreen path={projectPath} onClose={close} />;
-        if (openFile.toLowerCase().endsWith('.svg') && desktop) {
-          return <Lightbox src={agentFileUrl(vault, projectPath, { raw: true })} caption={openFile.split('/').pop()} path={projectPath} onClose={close} />;
-        }
-        if (kind === 'image') {
-          return <Lightbox src={graphContentUrl(vault, openFile, { raw: true })} caption={openFile.split('/').pop()} path={projectPath} onClose={close} />;
-        }
-        if (kind === 'pdf') {
-          return <PdfViewer path={projectPath} src={graphContentUrl(vault, openFile, { raw: true })} label={openFile.split('/').pop()} onClose={close} />;
-        }
-        return (
-          <SlideOver
-            mode="file"
-            path={projectPath}
-            reference={classifyReference(projectPath)}
-            onClose={close}
-            onNavApp={close}
-            onOpenPath={(p) => setOpenFile(p.replace(/^_dream_context\//, ''))}
-          />
-        );
-      })()}
+      {openFile && <BrainFileViewer path={openFile} onClose={() => setOpenFile(null)} onOpenPath={setOpenFile} />}
 
       {toast && <div className="aiteam-toast" role="status" onClick={() => setToast(null)}>{toast}</div>}
     </div>

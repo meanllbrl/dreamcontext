@@ -6,6 +6,8 @@ import { buildFeed } from '../lib/automations/feed.js';
 import { plainPostText } from '../lib/automations/threads.js';
 import { readMutedAutomations } from '../lib/assistant/notch-inbox.js';
 import { agentActivities } from './automation-job.js';
+import { listInboxRows } from '../lib/owner-inbox.js';
+import { taskHeadOfRow } from '../lib/agents/task-starter.js';
 
 /**
  * The automation half of the notch inbox: every registered project's agents, joined at read
@@ -139,6 +141,41 @@ export function unreadAutomationPosts(now = Date.now()): AutomationPost[] {
   const value = out.slice(0, POSTS_CAP);
   postsCache = { at: now, value };
   return value;
+}
+
+/** A task job's owner-inbox row (M1), as the notch lists it: it opens its task. */
+export interface OwnerTaskRow {
+  /** `<vault>::<row id>`. */
+  key: string;
+  vault: string;
+  /** The task's slug. */
+  task: string;
+  agent: string | null;
+  kind: string;
+  title: string;
+  detail: string;
+  at: string;
+}
+
+/**
+ * Every registered project's task-job rows waiting on the owner (AI Team v2 C2): "I did it", a
+ * plan to approve, a stuck or stalled task. They are machine-local (M1) and need no Super
+ * session; the notch lists them so the owner sees them from any app. Newest first.
+ */
+export function ownerTaskRows(): OwnerTaskRow[] {
+  const out: OwnerTaskRow[] = [];
+  for (const v of listVaults()) {
+    let rows: ReturnType<typeof listInboxRows> = [];
+    try { rows = listInboxRows(v.path); } catch { continue; }
+    for (const r of rows) {
+      if (!r.kind.startsWith('task-')) continue;
+      // The task's slug now (found by id): a rename since the row was raised still opens it.
+      let task = r.ref;
+      try { task = taskHeadOfRow(join(v.path, '_dream_context'), r)?.slug ?? r.ref; } catch { /* the raised slug */ }
+      out.push({ key: `${v.name}::${r.id}`, vault: v.name, task, agent: r.agent, kind: r.kind, title: clip(r.title), detail: clip(r.detail ?? ''), at: r.createdAt });
+    }
+  }
+  return out.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, POSTS_CAP);
 }
 
 /** A seen or mute write changed what the next read must say. */

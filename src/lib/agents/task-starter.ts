@@ -12,7 +12,7 @@ import { localDir } from '../local-store.js';
 import { lockHolderPid, reclaimDeadHolderLock } from '../file-lock.js';
 import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
-import { closeInboxRows, listInboxRows, raiseInboxRow, type InboxRow } from '../owner-inbox.js';
+import { closeInboxRows, listInboxRows, raiseInboxRow, retargetInboxRows, type InboxRow } from '../owner-inbox.js';
 import { readAccountWait } from '../automations/account.js';
 import { clearRunSidecar, getRunTarget, lockPathFor, readRunSidecar } from '../automations/store.js';
 import { allPendingQuestions, writeQuestion } from '../automations/hitl.js';
@@ -26,7 +26,7 @@ import { scanOutsideAssignments } from './outside-assignments.js';
 import {
   casTask, claimsForTask, clampReviewCap, findTaskHead, forgetTaskJob, listTaskHeads, metaFor, newRunId, newSessionId,
   patchMeta, peekResumeNote, readTaskJobs, renameOrForgetAgentTaskJobs, setResumeNote, taskFilePath, taskJobView, taskOfSession, taskSessionFor, thisMachine, updateTaskJobs,
-  type AgentTaskState, type TaskClaim, type TaskJobView, type TaskStep,
+  type AgentTaskState, type TaskClaim, type TaskHead, type TaskJobView, type TaskStep,
 } from './task-jobs.js';
 
 /**
@@ -214,12 +214,25 @@ export function raiseTaskRow(
   }
 }
 
+/** The task id a task row is about (its dedupe key is `<kind>:<task id>`). */
+export function taskIdOfRow(row: InboxRow): string {
+  return row.dedupeKey.slice(row.kind.length + 1);
+}
+
+/** The task a task row is about, found by id: its `ref` is the slug it had when raised. */
+export function taskHeadOfRow(contextRoot: string, row: InboxRow): TaskHead | null {
+  const taskId = taskIdOfRow(row);
+  const byRef = findTaskHead(contextRoot, row.ref);
+  if (byRef && byRef.id === taskId) return byRef;
+  return taskId ? findTaskHead(contextRoot, taskId) : null;
+}
+
 /** Whether the row's subject still holds, per kind (the M1 reconciler's table). */
 export function taskRowAlive(contextRoot: string, row: InboxRow, claims: TaskClaim[]): boolean {
   if (!row.kind.startsWith('task-')) return true;
-  const taskId = row.dedupeKey.slice(row.kind.length + 1);
-  const head = findTaskHead(contextRoot, row.ref);
-  // Deleted, or renamed (the slug now names another task): the row dies.
+  const taskId = taskIdOfRow(row);
+  const head = taskHeadOfRow(contextRoot, row);
+  // Deleted: the row dies. Renamed: the row lives on (the reconciler moves its ref).
   if (!head || head.id !== taskId) return false;
   const v = taskJobView(head);
   if (!v.agent) return false;
@@ -246,6 +259,14 @@ export function reconcileTaskRows(contextRoot: string, home?: string): number {
     if (rows.length === 0) return 0;
     const claims = readTaskJobs(projectRoot, home).claims;
     const dead = new Set(rows.filter((r) => !taskRowAlive(contextRoot, r, claims)).map((r) => r.id));
+    // A renamed task's rows follow it: their ref becomes the current slug.
+    const renamed = new Map<string, string>();
+    for (const r of rows) {
+      if (dead.has(r.id)) continue;
+      const slug = taskHeadOfRow(contextRoot, r)?.slug;
+      if (slug && slug !== r.ref) renamed.set(r.id, slug);
+    }
+    retargetInboxRows(projectRoot, renamed, home);
     return dead.size ? closeInboxRows(projectRoot, (r) => dead.has(r.id), home) : 0;
   } catch {
     return 0;
@@ -539,8 +560,10 @@ export function startNowAction(contextRoot: string, idOrSlug: string, deps: Task
   const v = viewOf(contextRoot, idOrSlug);
   if (!v || !metaFor(dirname(contextRoot), v.id, deps.home)) return refused('not_assigned_here', 'That task is not assigned on this machine.');
   const now = (deps.now ?? (() => new Date()))();
+  if (!casTask(contextRoot, v.slug, { from: ['scheduled'] }, { agent_start_at: now.toISOString(), updated_at: today() })) {
+    return refused('not_waiting', 'That task is no longer waiting to start.');
+  }
   patchMeta(dirname(contextRoot), v.id, { startAt: now.toISOString(), lateOk: true }, deps.home);
-  casTask(contextRoot, v.slug, { from: ['scheduled'] }, { agent_start_at: now.toISOString(), updated_at: today() });
   closeRowsFor(dirname(contextRoot), v.id, ['task-start-missed'], deps.home);
   startDueTaskJobs(contextRoot, deps);
   return { ok: true };
