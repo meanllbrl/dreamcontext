@@ -13,6 +13,7 @@ import {
 } from './agentSession';
 import { createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
 import { publishSuperEventContext, publishSuperQuestions } from './super/superJobsStore';
+import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
 import { openOwnerQuestions, trimOwnerAnswers } from './super/superQuestions';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import {
@@ -101,7 +102,7 @@ import { SuperSurface, prefersReducedMotion, runFlights, type FlightRun } from '
 import type { TerminalRowItem } from './super/TerminalsRow';
 import {
   actionGeneration, adoptionBody, cardReference, headAlarmOnce, childMarks, DELEGATE_MARK_GRACE_MS, delegateArgs, delegateExpired, delegateMarkUntil, endedChildIds, hasOwnKey,
-  homedSessions, isSuperSession, markedChildren, needsOwner, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, superAnswerPicks, superWindowRefusal, terminalTabs,
+  homedSessions, isSuperSession, markedChildren, needsOwner, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, ownerAnswerPicks, superAnswerPicks, superWindowRefusal, terminalTabs,
   SUPER_CHILD_VERBS, windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
   linkOpensSuperStage, presenceChatId, leanMcpFor, agendaAboutBlock, agendaRefName, type AgendaRow,
 } from './super/superHandover';
@@ -3274,6 +3275,9 @@ export function AgentSurface() {
     const s = entry ? sessions.current.get(entry.id) : undefined;
     return s && s.kind === 'chat' ? s as ChatSession : undefined;
   }, []);
+  // The hands-free phone has no super record and no child socket: its mirror of the Super's
+  // chat draws the same cards from the server's view (usePhoneSuperQuestions.ts).
+  usePhoneSuperQuestions({ enabled: isMacPhoneSurface() && !!vault, api: scopedApi, sessionFor: chatByClaudeId });
   // The super chat draws the Super Agent's questions to the owner as cards (superQuestions.ts,
   // owner 2026-10-21 "soruyu hep chatta sorsun"). They read the record's open questions from
   // here, where the record lives whether or not the stage is up; no live record = static cards.
@@ -3503,8 +3507,18 @@ export function AgentSurface() {
       // Only an AskUserQuestion card — never a permission, never a plan approval.
       const q = cs.getModel().pending.find((p): p is PendingQuestion => p.kind === 'question' && p.requestId === requestId);
       if (!q) return { ok: false, error: 'no_such_question' };
+      // The OWNER's answer from a surface without the child's socket (the hands-free phone,
+      // /api/agent/super-answer): "Unclear — ask again", exactly as the child's card sends it…
+      if (typeof args.unclear === 'string') {
+        if (!cs.answer(requestId, { behavior: 'deny', message: args.unclear || 'Unclear — please ask again.' })) return { ok: false, error: 'not_connected' };
+        return { ok: true };
+      }
+      // …or the card's own picks and notes, keyed by the child's question texts (every question,
+      // several picks a question): the full card, not the agent's one-label form.
       const choices = Array.isArray(args.choices) ? args.choices.filter((c): c is string => typeof c === 'string') : [];
-      const picks = superAnswerPicks(q.questions, choices, typeof args.text === 'string' ? args.text : undefined);
+      const picks = args.picked !== undefined
+        ? ownerAnswerPicks(q.questions, args.picked, args.notes)
+        : superAnswerPicks(q.questions, choices, typeof args.text === 'string' ? args.text : undefined);
       if (!picks.ok) return picks;
       // Exactly what the child's own card sends (`answerQuestion` builds the load-bearing
       // `{questions, answers}` shape).

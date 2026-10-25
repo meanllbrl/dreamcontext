@@ -1916,7 +1916,7 @@ export function ChatPane({
       return <StageMediaStrip key={item.id} items={item.stageMedia} snapshot={!!item.stageSnapshot} onOpenFile={handleOpenFile} />;
     }
     // The owner's answer to a question card in the super chat: the card's receipt, never a bubble.
-    if (item.kind === 'user' && session.mode === 'super' && parseSuperAnswer(item.text)) {
+    if (item.kind === 'user' && superView && parseSuperAnswer(item.text)) {
       return <SuperAnswerReceipt key={item.id} text={item.text} itemId={item.id} />;
     }
     const shape = shapeOf(item);
@@ -2048,7 +2048,8 @@ export function ChatPane({
       const keptIds = new Set(kept.map((it) => it.id));
       drawn = piece.filter((it) => keptIds.has(it.id) || inCard.has(it.id));
     }
-    if (session.mode === 'super') for (const [k, cards] of placeQuestionCards(drawn)) questionCards.set(k, cards);
+    // The phone's mirror draws them too (its cards come from /api/agent/super-questions).
+    if (superView) for (const [k, cards] of placeQuestionCards(drawn)) questionCards.set(k, cards);
     return kept;
   };
   const historySlice = conv.history.slice(historyFrom);
@@ -2480,7 +2481,7 @@ export function ChatPane({
             {conv.pending
               .filter((p): p is PendingPlan => p.kind === 'plan')
               .map((p) => <PlanCard key={p.requestId} item={p} session={session} />)}
-            {session.mode === 'super' && <SuperQuestionTail session={session} anchored={anchoredQuestions} />}
+            {superView && <SuperQuestionTail session={session} anchored={anchoredQuestions} />}
             {askRouting?.phase === 'preparing' && <PreparingQuestionCard item={askRouting.item} />}
             {askRouting?.phase === 'degraded' && (
               <DegradedQuestionCard item={askRouting.item} onContinueInTerminal={onContinueInTerminal} />

@@ -126,6 +126,15 @@ export function tokenOfSession(sessionId: string): string | null {
   return null;
 }
 
+/** The live token of the SUPER-mode chat with pin id `sessionId`, the newest one when a respawn
+ *  briefly leaves the old channel registered beside its successor, or null. */
+export function superTokenOfSession(sessionId: string): string | null {
+  if (!sessionId) return null;
+  let found: string | null = null;
+  for (const [token, c] of channels) if (c.sessionId === sessionId && c.mode === 'super') found = token;
+  return found;
+}
+
 /** Push one `_meta` frame down a token's socket without waiting for an answer. */
 export function pushFrame(token: string, frame: Record<string, unknown>): boolean {
   const channel = channels.get(token);

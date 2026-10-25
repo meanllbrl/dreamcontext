@@ -2,9 +2,10 @@ import { useEffect, useReducer, useState } from 'react';
 import type { SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession, PendingQuestion } from '../chatSession';
 import { SurveyCard, SurveyReceipt, type SurveyHost } from '../chat/SurveyCard';
-import { useSuperQuestions } from './superJobsStore';
+import { useSuperQuestions, type SuperRemoteQuestions } from './superJobsStore';
+import { surveyDraftKey } from '../chat/surveyDrafts';
 import {
-  askPendingOf, cardState, childQuestionOf, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText,
+  askPendingOf, askQuestionsOf, cardState, childQuestionOf, parseSuperAnswer, sendToSuper, superAnswerText, superUnclearText,
   type AskRef,
 } from './superQuestions';
 
@@ -37,14 +38,16 @@ export function SuperQuestionCard({ ask, session }: {
       item={item}
       superSession={view.superSession ?? session}
       child={item.kind === 'question' ? view.sessionFor(item.sessionId) : undefined}
+      remote={view.remote}
     />
   );
 }
 
-function OpenQuestion({ item, superSession, child }: {
+function OpenQuestion({ item, superSession, child, remote }: {
   item: SuperQueueItem;
   superSession: ChatSession;
   child: ChatSession | undefined;
+  remote?: SuperRemoteQuestions;
 }) {
   // A child's pending question is what its card is: follow it.
   const [, force] = useReducer((n: number) => n + 1, 0);
@@ -68,6 +71,37 @@ function OpenQuestion({ item, superSession, child }: {
   // The child is here but no longer asks this (its answer just went out; the record follows):
   // nothing to draw, never a second way to answer it.
   if (item.kind === 'question' && child) return null;
+
+  // A surface that holds no child's socket (the hands-free phone): the child's OWN card as the
+  // server read it, every question and option, answered through the Mac window into the child's
+  // session (owner 2026-10-24: a 4-question card reached the phone with no options at all). Its
+  // draft is keyed by the CHILD's request (no chat on the phone settles it; the hook drops it when
+  // the question leaves), and no `connected`: the answer rides HTTP, not the mirror's socket.
+  const remoteCard = item.kind === 'question' && remote && item.requestId ? remote.cardOf(item.id) : null;
+  if (remoteCard && remote && item.requestId) {
+    const pending: PendingQuestion = {
+      kind: 'question', requestId: item.requestId, toolName: 'AskUserQuestion',
+      questions: askQuestionsOf(remoteCard), ...(remoteCard.title ? { title: remoteCard.title } : {}),
+    };
+    // Written = handed to the route. A refusal brings the card back with its picks (the draft),
+    // except a stale one (answered elsewhere meanwhile): the next read takes that card away.
+    const post = (body: Parameters<typeof remote.answer>[1]): boolean => {
+      void remote.answer(item, body).then((r) => { if (r.retry) setAttempt((a) => a + 1); });
+      return true;
+    };
+    const host: SurveyHost = {
+      answerQuestion: (_requestId, _questions, picked, notes) => post({ picked, ...(notes && Object.keys(notes).length ? { notes } : {}) }),
+      answer: (_requestId, opts) => post({ unclear: opts.message ?? '' }),
+    };
+    return wrap(
+      <SurveyCard
+        key={`${item.id}:${item.requestId}:${attempt}`}
+        item={pending}
+        session={host}
+        draftKey={surveyDraftKey(item.sessionId, item.requestId)}
+      />,
+    );
+  }
 
   const pending: PendingQuestion = item.kind === 'ask'
     ? askPendingOf(item)

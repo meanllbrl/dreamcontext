@@ -215,6 +215,7 @@ import {
 import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent-shelf.js';
 import { handleAgentTeammates, handleAgentTeammateHistory } from './routes/agent-teammates.js';
 import { handleAppMachine } from './routes/machine.js';
+import { handleSuperPhoneAnswer, handleSuperPhoneQuestions } from './routes/super-phone-questions.js';
 import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentPhoneGrant, handleLoopbackGrantsGet, handleLoopbackGrantSet, handleWebSessionOpen, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
@@ -587,6 +588,8 @@ export function buildRouter(): Router {
   // Every chat child running in this process (names, never paths): the phone drawer's
   // "Mac'te açık" section. Gated by isAgentRequest like its neighbours.
   router.get('/api/agent/live-chats', handleAgentLiveChats);
+  router.get('/api/agent/super-questions', handleSuperPhoneQuestions);
+  router.post('/api/agent/super-answer', handleSuperPhoneAnswer);
   // The project's cached `/` list, for composers with no chat process (the #agents channel).
   router.get('/api/agent/slash-commands', handleAgentSlashCommands);
   // Every past conversation of THIS project, for the surface's "Past chats" picker —
