@@ -38,7 +38,7 @@ describe('the gate and the slot', () => {
     const src = read('dashboard/src/components/sleepy/AgentSurface.tsx');
     const from = src.indexOf('// ── The Super dock (owner 2026-10-25)');
     const dockBits = [
-      src.slice(src.indexOf('const dockOn = superDockOn('), src.indexOf('}, [dockOpen, superConvId, pageKey, t]);')),
+      src.slice(src.indexOf('const dockOn = superDockOn('), src.indexOf('}, [dockOpen, superConvId, pageKey, locale]);')),
       src.slice(src.indexOf('// ── The Super dock\'s pill, rows and gestures'), src.indexOf('// Rows for the corner dock that floats over the EXPANDED overlay')),
     ];
     expect(from).toBeGreaterThan(0);
@@ -56,7 +56,9 @@ describe('the gate and the slot', () => {
     expect(read('dashboard/src/components/sleepy/super/superHandover.ts')).toMatch(/if \(!opts\.handedOver\) return new Set\(opts\.paneActives\.filter\(Boolean\)\);\n  return new Set\(\[opts\.superSid, opts\.shownSid\]/);
     // The page chip is ONE effect, cleared by its own cleanup.
     expect(src.match(/setPageContext\(/g)?.length).toBe(2);
-    expect(src).toMatch(/setPageContext\(superConvId, \{ id: nextAttachmentId\(\), kind: 'page', name, text \}\);\s*return \(\) => setPageContext\(superConvId, null\);\s*\}, \[dockOpen, superConvId, pageKey, t\]\);/);
+    expect(src).toMatch(/setPageContext\(superConvId, \{ id: nextAttachmentId\(\), kind: 'page', name, text \}\);\s*return \(\) => setPageContext\(superConvId, null\);\s*\}, \[dockOpen, superConvId, pageKey, locale\]\);/);
+    // `t` is never a dependency there: a new `t` per provider render brought a ✕'d chip back.
+    expect(src).toMatch(/tRef\.current\(PAGE_LABEL_KEY\[p as Page\]\)/);
     // Nothing until the record is known; the old stack only when the dock is off.
     expect(src).toMatch(/\{caps\?\.desktop && agentSettings\.enabled && !expanded && superKnown && \(/);
     expect(src).toMatch(/\) : dockOn \? null :/);

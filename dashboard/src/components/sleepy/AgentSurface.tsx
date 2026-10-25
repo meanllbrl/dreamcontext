@@ -2680,7 +2680,11 @@ export function AgentSurface() {
   // the surface before its capabilities, settings and roster load, so the request waits
   // (bounded) for them, then starts ONE revealed chat through `delegateAgent`. A surface that
   // cannot start Claude here says so on the bus, and the bridge shows the visible notice.
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  // `t` is a new function on every provider render: an effect that names it in its deps would
+  // re-run on renders that change nothing (the page chip came back after its ✕). Read it here.
+  const tRef = useRef(t);
+  tRef.current = t;
   const [startIntentAt, setStartIntentAt] = useState<number | null>(null);
   // `startWaitTick` is a dependency below on purpose: readiness includes `hydratedRef`, a ref
   // that flips without a render, so only the tick re-runs the wait. Without it the first
@@ -3268,10 +3272,10 @@ export function AgentSurface() {
     if (!dockOpen || !superConvId || !ctx) return undefined;
     const text = pageBlockOf(ctx);
     if (!text) return undefined;
-    const name = pageChipName(ctx, (p) => (p in PAGE_LABEL_KEY ? t(PAGE_LABEL_KEY[p as Page]) : p));
+    const name = pageChipName(ctx, (p) => (p in PAGE_LABEL_KEY ? tRef.current(PAGE_LABEL_KEY[p as Page]) : p));
     setPageContext(superConvId, { id: nextAttachmentId(), kind: 'page', name, text });
     return () => setPageContext(superConvId, null);
-  }, [dockOpen, superConvId, pageKey, t]);
+  }, [dockOpen, superConvId, pageKey, locale]);
   // Web containers hold a frame only while the window can be seen (webBudget.ts).
   const windowActivity = useWindowActivity();
   // The tabs a hand-over cannot adopt: terminals, in their own row.

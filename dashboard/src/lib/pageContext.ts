@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import type { Page } from '../components/layout/Sidebar';
 import { pageContextBlock, type PageContextRef } from './superTypes';
 
@@ -72,14 +72,13 @@ export function readPageContext(bus: EventTarget): PageContext | null {
 }
 
 export function usePageContext(bus: EventTarget): PageContext | null {
-  return useSyncExternalStore(
-    (cb) => {
-      const s = storeOf(bus);
-      s.listeners.add(cb);
-      return () => { s.listeners.delete(cb); };
-    },
-    () => storeOf(bus).snapshot,
-  );
+  // Stable per bus: a new subscribe each render would unsubscribe and resubscribe every time.
+  const subscribe = useCallback((cb: () => void) => {
+    const s = storeOf(bus);
+    s.listeners.add(cb);
+    return () => { s.listeners.delete(cb); };
+  }, [bus]);
+  return useSyncExternalStore(subscribe, () => storeOf(bus).snapshot);
 }
 
 /** The wire block for a page context ('' for none). */

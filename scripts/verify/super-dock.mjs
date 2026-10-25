@@ -183,7 +183,20 @@ async function runEngine(engineName) {
   const engine = engineName === 'webkit' ? webkit : chromium;
   const browser = await engine.launch();
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark' });
+  // Every animation frame, from the first one of every document: was the old stack ever painted
+  // while Super was on? (criterion 2's "never painted before the pill").
+  await context.addInitScript(() => {
+    window.__oldStackFrames = 0;
+    const tick = () => {
+      if (window.__watchOldStack && document.querySelector('.agent-dock:not(.agent-dock--floating), .agent-fab')) window.__oldStackFrames += 1;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    window.__watchOldStack = sessionStorage.getItem('verify-watch-old-stack') === '1';
+  });
   const page = await context.newPage();
+  let sockets = 0;
+  page.on('websocket', () => { sockets += 1; });
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -236,6 +249,7 @@ async function runEngine(engineName) {
     await page.waitForTimeout(3000);
     for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(150); }
     ok('Super OFF: today\'s stack/Chat button, no super dock', await until(page, async () => (await page.locator('.agent-fab, .agent-dock').count()) > 0 && (await dock.count()) === 0, 15000));
+    await shotSet('00-super-off-tasks');
     await nav('Chat');
     if (!(await page.locator('.chat-cmp-input:visible').count())) await page.getByRole('button', { name: /Start chat/ }).click().catch(() => {});
     ok('a chat opens', await until(page, async () => (await page.locator('.chat-cmp-input:visible').count()) > 0));
@@ -249,6 +263,12 @@ async function runEngine(engineName) {
     const child = reports().find((r) => r.kind === 'handover')?.children?.[0];
     await until(page, async () => (await centreInput.count()) > 0, 20000);
     ok('Chat screen (stage): no pill, no window', (await dock.count()) === 0);
+    // The Super chat's own container, tagged where it is homed now (the stage centre).
+    ok('the stage centre holds the Super chat container', await page.evaluate(() => {
+      const el = document.querySelector('[data-super-slot="centre"] > .agent-pane-chat');
+      if (el) el.dataset.verifyTag = 'super-centre';
+      return !!el;
+    }));
     await shotSet('05-chat-screen-no-pill');
 
     console.log('── the pill on every page');
@@ -272,8 +292,12 @@ async function runEngine(engineName) {
 
     console.log('── open on Tasks: the Super chat in the right-hand column');
     await nav('Tasks');
+    const socketsBefore = sockets;
     await pill.first().click();
     ok('the window opens', await until(page, async () => (await win.count()) === 1 && (await dockInput.count()) === 1, 8000));
+    ok('it is the SAME container the stage centre held (moved, not a new chat)', (await page.locator('[data-super-slot="dock"] > .agent-pane-chat[data-verify-tag="super-centre"]').count()) === 1);
+    await page.waitForTimeout(800);
+    ok('no chat socket opened by opening the dock', sockets === socketsBefore, `${socketsBefore} → ${sockets}`);
     const box = await win.boundingBox();
     ok('a right-hand column ~420 px, from under the top bar to the pill\'s inset', !!box && Math.abs(box.width - 420) <= 2 && box.x + box.width >= 1440 - 30 && box.y < 120 && box.y + box.height > 900 - 40, JSON.stringify(box));
     ok('the Super chat container moved there (the centre slot is empty), no chat spawned', (await centreInput.count()) === 0 && (await page.locator('.agent-pane-chat').count()) === sessions0);
@@ -304,6 +328,8 @@ async function runEngine(engineName) {
     ok('one click: the stage, the chat in the centre with the draft, the dock closed', await until(page, async () => (await page.locator('[data-testid="super-surface"]:visible').count()) === 1
       && (await centreInput.count()) === 1 && (await centreInput.first().inputValue()) === 'draft-kept-123' && (await dock.count()) === 0, 8000));
     ok('the centre composer has no page chip', (await page.locator('[data-super-slot="centre"] .chat-cmp-attachment-page').count()) === 0);
+    ok('…the same container is back in the centre', (await page.locator('[data-super-slot="centre"] > .agent-pane-chat[data-verify-tag="super-centre"]').count()) === 1);
+    await shotSet('07-after-buyut-chat-screen');
     await centreInput.first().fill('CENTRE-MSG from the stage');
     await page.keyboard.press('Enter');
     ok('a message sent on the Chat screen has no block', await until(page, async () => frameOf('CENTRE-MSG') !== '', 15000) && !frameOf('CENTRE-MSG').includes('[On page'));
@@ -333,6 +359,11 @@ async function runEngine(engineName) {
     if (await card.count()) { await card.click().catch(() => {}); await page.waitForTimeout(1000); }
     await pill.first().click().catch(() => {});
     await until(page, async () => (await win.count()) === 1, 5000);
+    await dock.locator('[data-testid="super-dock-minimize"]').click();
+    ok('an open insight: exactly one pill, no old stack', await until(page, async () => (await pill.count()) === 1 && (await oldStack.count()) === 0, 5000));
+    await shotSet('08-pill-over-insight');
+    await pill.first().click();
+    await until(page, async () => (await win.count()) === 1, 5000);
     ok('the chip reads the open insight', await until(page, async () => /weekly-active-users/.test(await chipText()), 5000), await chipText());
     ok('sent with an insight open: [On page lab insight=weekly-active-users]', await sendInDock('PAGE-INSIGHT this number') && /\n\n\[On page lab insight=weekly-active-users\]$/.test(frameOf('PAGE-INSIGHT')), frameOf('PAGE-INSIGHT'));
     await page.keyboard.press('Escape');
@@ -346,6 +377,12 @@ async function runEngine(engineName) {
     const nearTeam = await pageControlsNear();
     const pt = await pill.first().boundingBox();
     ok('AI Team: the pill is >= 12 px clear of the page\'s bottom-right controls', nearTeam.every((r) => !overlaps(pt, r, 12)), JSON.stringify({ pt, near: nearTeam.filter((r) => overlaps(pt, r, 12)) }));
+    await pill.first().click();
+    await until(page, async () => (await win.count()) === 1, 5000);
+    const wt = await win.boundingBox();
+    ok('AI Team: the window is >= 12 px clear of them too', nearTeam.every((r) => !overlaps(wt, r, 12)), JSON.stringify({ wt, near: nearTeam.filter((r) => overlaps(wt, r, 12)) }));
+    await shotSet('09-dock-open-ai-team');
+    await dock.locator('[data-testid="super-dock-minimize"]').click();
 
     console.log('── a Super question: the pill asks and bounces until answered');
     await nav('Tasks');
@@ -380,7 +417,10 @@ async function runEngine(engineName) {
     await page.keyboard.press('Enter');
     await page.waitForTimeout(300);
     await dock.locator('[data-testid="super-dock-minimize"]').click();
-    ok('news dot once the turn ends, no bounce', await until(page, async () => (await pill.first().getAttribute('data-news')) === 'true' && (await pill.first().getAttribute('data-asking')) === null, 15000));
+    ok('news dot once the turn ends, no bounce', await until(page, async () => (await pill.first().getAttribute('data-news')) === 'true' && (await pill.first().getAttribute('data-asking')) === null
+      && (await pill.first().locator('[data-testid="super-dock-news"]').count()) === 1
+      && (await pill.first().evaluate((el) => getComputedStyle(el).animationName)) === 'none', 15000));
+    await shotSet('10-pill-news');
     await pill.first().click();
     await dock.locator('[data-testid="super-dock-minimize"]').click();
     ok('opening the dock clears it', await until(page, async () => (await pill.first().getAttribute('data-news')) === null, 3000));
@@ -417,14 +457,13 @@ async function runEngine(engineName) {
     await page.setViewportSize({ width: 1440, height: 900 });
 
     console.log('── reload: the old stack is never painted first');
+    await page.evaluate(() => sessionStorage.setItem('verify-watch-old-stack', '1'));
     await page.reload({ waitUntil: 'commit' });
-    let flashed = false;
-    for (const end = Date.now() + 6000; Date.now() < end;) {
-      if (await oldStack.count().catch(() => 0)) { flashed = true; break; }
-      if (await pill.count().catch(() => 0)) break;
-      await page.waitForTimeout(16);
-    }
-    ok('after a reload: the pill, never the old stack first', !flashed && await until(page, async () => (await pill.count()) === 1, 15000));
+    ok('after a reload: the pill shows', await until(page, async () => (await pill.count()) === 1, 15000));
+    await page.waitForTimeout(1000);
+    const frames0 = await page.evaluate(() => window.__oldStackFrames);
+    ok('…and no animation frame from the first one on ever had the old stack', frames0 === 0, `${frames0} frames`);
+    await page.evaluate(() => sessionStorage.removeItem('verify-watch-old-stack'));
 
     console.log('── take back from this window');
     await nav('Chat');
