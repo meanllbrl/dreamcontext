@@ -72,6 +72,19 @@ export interface AgentSummary {
   approvedToRun: boolean;
   /** Why it may not run, when `approvedToRun` is false. */
   approvalReason: string | null;
+  /** Its creator's login (`machine:<id>`, `unowned`); null on an unstamped file. Optional: an
+   *  older server sends none. */
+  owner?: string | null;
+  /** How the owner reads in a sentence. */
+  ownerLabel?: string | null;
+  /** Someone else's agent: read-only here (no composer, no edit, no assign). */
+  readOnly?: boolean;
+  /** The owner's other machine runs it (same login, several machines). */
+  runsElsewhere?: { machine: string; name: string } | null;
+  /** Arrived by sync and was not created on this machine. */
+  arrivedBySync?: boolean;
+  /** Who authored the synced change that needs a re-approval. */
+  syncedChangeBy?: string | null;
   /** Synthesised from a not-yet-split legacy automation file. */
   implicit: boolean;
   /** Its call settings differ from the defaults (shown read-only, never edited here). */
@@ -296,5 +309,87 @@ export function useAgentStage(slug: string | null) {
     enabled: !!slug,
     retry: 0,
     refetchInterval: () => pollMs(STAGE_POLL_MS),
+  });
+}
+
+// ─── Agent sync (AI Team v2, wave B1) ───────────────────────────────────────────────────────
+
+/** `GET /api/agents/sync` — mirrors `handleAgentSyncState` (src/server/routes/agent-sync.ts). */
+export interface AgentSyncState {
+  switchOn: boolean;
+  confirmedHere: boolean;
+  active: boolean;
+  confirmedAt: string | null;
+  login: string;
+  machine: { id: string; name: string };
+  /** How many of this machine's files would start to sync. */
+  filesToSync: number;
+  /** Secret-scan hits in them: a `block` never pushes, a `warn` pushes once confirmed. */
+  hits: { file: string; line: number; rule: string; severity: 'block' | 'warn' }[];
+  unowned: string[];
+  parked: string[];
+}
+
+/** One owner-inbox row — mirrors `InboxRow` (src/lib/owner-inbox.ts). */
+export interface OwnerInboxRow {
+  id: string;
+  kind: 'secret-held' | 'assigned-outside' | 'assigned-elsewhere' | 'renamed' | 'parked' | 'replaced-by-sync' | 'adopt-pattern' | 'unowned';
+  ref: string;
+  agent: string | null;
+  title: string;
+  detail?: string;
+  actions: ('start' | 'ignore' | 'adopt' | 'dismiss' | 'start-all' | 'review')[];
+  createdAt: string;
+}
+
+export function useAgentSync() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['agents', 'sync'],
+    queryFn: () => api.get<AgentSyncState>('/agents/sync'),
+    retry: 0,
+  });
+}
+
+/** Turn agent sync on (when off) and confirm it on THIS machine. */
+export function useConfirmAgentSync() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<AgentSyncState>('/agents/sync/confirm', {}),
+    onSuccess: () => invalidateAgent(queryClient),
+  });
+}
+
+export function useOwnerInbox() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['agents', 'inbox'],
+    queryFn: () => api.get<{ rows: OwnerInboxRow[] }>('/agents/inbox').then((r) => r.rows),
+    retry: 0,
+    refetchInterval: () => pollMs(30_000),
+  });
+}
+
+export function useAnswerInbox() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, action }: { id: string; action: OwnerInboxRow['actions'][number] }) =>
+      api.post<{ ok: boolean; rows: OwnerInboxRow[] }>(`/agents/inbox/${encodeURIComponent(id)}`, { action }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['agents', 'inbox'] });
+      invalidateAgent(queryClient);
+    },
+  });
+}
+
+/** Run this agent on this machine from now on (same login, several machines). */
+export function useBringAgentHere() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.post<{ active: unknown }>(`/agents/${encodeURIComponent(slug)}/bring-here`, {}),
+    onSuccess: (_r, slug) => invalidateAgent(queryClient, slug),
   });
 }

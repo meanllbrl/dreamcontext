@@ -438,7 +438,8 @@ describe('the profile: soul, job, pattern, where it works, approval (T7)', () =>
     const src = code(read(PANEL));
     expect(src).toMatch(/size=\{72\}/);
     expect(src).toMatch(/className=\{`agp-state agp-state--\$\{state\}`\}/);
-    expect(src).toMatch(/\{state !== 'ready' && \(\s*<button type="button" className="agp-textbtn" onClick=\{reviewFromHeader\}/);
+    // A teammate's agent (read-only here, B1-4) never offers the review.
+    expect(src).toMatch(/\{state !== 'ready' && !readOnly && \(\s*<button type="button" className="agp-textbtn" onClick=\{reviewFromHeader\}/);
     expect(src).toMatch(/const reviewFromHeader = \(\) => \{\s*openReview\(\);/);
     // One filled accent while no review is open: Talk to it. Approve is the other, inside the review.
     expect(src.match(/agp-btn--primary/g)).toHaveLength(2);

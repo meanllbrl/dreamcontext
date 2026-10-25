@@ -3,6 +3,7 @@ import { listSharedAgentSlugs, listSharedSlugs } from './sharing.js';
 import { listAutomationJobs } from './store.js';
 import { plainPostText, readThread } from './threads.js';
 import type { ThreadEntry } from './types.js';
+import { threadEntriesHere } from '../agents/agent-sync.js';
 
 /**
  * An agent's RECENT HISTORY, as notes in its next fresh run.
@@ -97,8 +98,12 @@ export function buildRecentHistoryBlock(
     const since = now.getTime() - days * 86_400_000;
     const entries: (ThreadEntry & { source: string })[] = [];
     for (const source of privateSources(contextRoot, agentSlug)) {
+      // Once agents ride the brain sync, a thread can hold lines written on another machine: only
+      // the entries THIS machine wrote reach the prompt (the M0 ledger; null = switch off, all ours).
+      const here = threadEntriesHere(contextRoot, source);
       // `days` bounds the I/O (newest day files); the calendar window is applied below.
       for (const e of readThread(contextRoot, source, { days })) {
+        if (here && !here.has(e.id)) continue;
         if (e.kind !== 'agent' && e.kind !== 'user') continue;
         if (excludeRunId && e.runId === excludeRunId) continue;
         const at = Date.parse(e.at);

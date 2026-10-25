@@ -431,6 +431,7 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
     // itself rather than a control that is not on the screen.
     'manifest-changed': "This agent's manifest changed since it was last approved. Its next run will stop and ask about the change in its own chat session before doing anything else; answer there to re-approve it.",
     'payload-format-changed': 'The approval format itself changed — not a normal manifest edit, but still resolved the same way: the next run asks about it in its own chat session.',
+    'not_owner': "This is a teammate's automation: it is read-only here and runs only on its owner's machine.",
   };
 
   return (

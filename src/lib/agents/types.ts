@@ -90,6 +90,13 @@ export interface AgentManifest {
   /** Its figure (`face: {shape, color}`), stamped at create; null on a manifest written before
    *  figures existed (the page then draws the bare hash). Unhashed, like `photo`. */
   face: AgentFace | null;
+  /** Its creator's GitHub login (`owner:`), `machine:<id>` before anyone signed in on that machine,
+   *  `unowned` when no creator could be worked out, null on a file the migration has not stamped
+   *  yet. Unhashed. Only the owner writes, runs, talks to or assigns it (`agents/owner.ts`). */
+  owner: string | null;
+  /** When its owner last wrote it (`updated:`, ISO), unhashed: between two machines of the same
+   *  login, the later one wins a same-id merge. Null before the first owner write. */
+  updated: string | null;
   /** The id of the legacy automation file this agent came from, or null. On an
    *  agent synthesised from a not-yet-split legacy file it is that file's id, so
    *  the composed call target keeps the legacy id byte for byte. */

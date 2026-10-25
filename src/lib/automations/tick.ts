@@ -55,6 +55,9 @@ import { listRegisteredProjects, recordTickCompleted, recordTickStarted } from '
 import { rotateLogIfLarge } from './launchd.js';
 import { runAutomation, type RunOutcome } from './runner.js';
 import { readAccountWait } from './account.js';
+import { scanOutsideAssignments } from '../agents/outside-assignments.js';
+import { currentLogin, foreignOwner } from '../agents/owner.js';
+import { placement } from '../agents/active.js';
 import { pollTelegram, type PollResult } from './telegram.js';
 
 /** The real poller. Cheap when Telegram is off: `readTelegramConfig` returns
@@ -103,7 +106,7 @@ export interface TickOptions {
  *  mapping. */
 export interface SlugVerdict {
   slug: string;
-  verdict: DueVerdict['reason'] | 'blocked' | 'disabled' | 'orphaned' | 'awaiting-review' | 'awaiting-approval' | 'waiting-for-account';
+  verdict: DueVerdict['reason'] | 'blocked' | 'disabled' | 'orphaned' | 'awaiting-review' | 'awaiting-approval' | 'waiting-for-account' | 'read-only' | 'runs-elsewhere';
 }
 
 export interface TickProjectResult {
@@ -192,6 +195,10 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   // after the earliest account frees up.
   const accountWait = readAccountWait(opts.home, now.getTime());
 
+  // Hand edits arriving by sync raise owner rows here instead of starting anything (B1-5), and
+  // ledger records of tasks that moved on die.
+  scanOutsideAssignments(contextRoot, opts.home);
+
   // ── Drain, BEFORE isDue() (D9/A4/R5 — see this module's header) ──────────
   const drained = accountWait === null ? drainQueue(projectRoot, opts.home, now.getTime()) : [];
   for (const fire of drained) {
@@ -257,6 +264,17 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   // ── isDue(), for everything the drain phase didn't already run ──────────
   for (const manifest of manifests) {
     if (drainedAndRan.has(manifest.slug)) continue;
+
+    // A teammate's routine is read-only here, and the owner's other machine runs its own: neither
+    // is tried (the runner would refuse it anyway, every tick, into its history).
+    if (foreignOwner(manifest)) {
+      verdicts.push({ slug: manifest.slug, verdict: 'read-only' });
+      continue;
+    }
+    if (!placement(contextRoot, manifest.agent || manifest.slug, manifest.owner ?? null, opts.home, now).here) {
+      verdicts.push({ slug: manifest.slug, verdict: 'runs-elsewhere' });
+      continue;
+    }
 
     if (!manifest.enabled) {
       verdicts.push({ slug: manifest.slug, verdict: 'disabled' });

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AgentProfilePanel } from '../agents/AgentProfilePanel';
+import { findAgent, useAgents } from '../../hooks/useAgents';
 import { SlotRowEditor } from '../agents/AutomationDialog';
 import { useVault } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
@@ -60,6 +61,8 @@ export function TeamPanel({
   team?: { rows: TeamRow[]; tree: TeamTree; onTalk: (slug: string) => void };
 }) {
   const { t } = useI18n();
+  // A teammate's agent (B1-4): every tab reads, nothing writes.
+  const readOnly = findAgent(useAgents().data, slug)?.readOnly === true;
   const reports = team?.tree.nodes.get(slug)?.children.length ?? 0;
   const tabs: { id: PanelTab; label: string; count?: number }[] = [
     { id: 'profile', label: t('aiteam.panel.profile') },
@@ -93,7 +96,7 @@ export function TeamPanel({
       </div>
       {tab === 'profile' && (
         <AgentProfilePanel slug={slug} onClose={onClose} onEdit={onEdit} onDeleted={onDeleted} onToast={onToast}
-          placement={<PlaceInTeam slug={slug} onOpen={onSelectAgent} onToast={onToast} />} />
+          placement={readOnly ? null : <PlaceInTeam slug={slug} onOpen={onSelectAgent} onToast={onToast} />} />
       )}
       {tab === 'team' && team && (
         <TeamTab
@@ -112,9 +115,18 @@ export function TeamPanel({
             <span>{t('aiteam.routines.tip').replace('{name}', title)}</span>
           </div>
           {routines.length === 0 && <p className="aiteam-panel-empty">{t('aiteam.routines.empty').replace('{name}', title)}</p>}
-          {routines.map((r, i) => (
+          {routines.map((r, i) => (readOnly ? (
+            <div key={r.slug} className="aiteam-routine" data-routine={r.slug} data-routine-readonly>
+              <div className="aiteam-routine-top">
+                <span className="aiteam-routine-id">
+                  <span className="aiteam-routine-name">{r.title}</span>
+                  <span className="aiteam-routine-when">{r.enabled ? r.cadenceLabel : t('aiteam.routine.paused')}</span>
+                </span>
+              </div>
+            </div>
+          ) : (
             <RoutineCard key={r.slug} routine={r} agentTitle={title} startOpen={i === 0} onToast={onToast} />
-          ))}
+          )))}
         </div>
       )}
       {tab === 'files' && <TeamFiles messages={messages} onOpenFile={onOpenFile} />}

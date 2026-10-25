@@ -143,6 +143,7 @@ export function buildAutomationsSnapshot(
 
   const recentLines: string[] = [];
   const blockedLines: string[] = [];
+  const readOnlySlugs = new Set<string>();
   const reviewLines: string[] = [];
   const orphanLines: string[] = [];
   const okRuns = new Map<string, number>();
@@ -183,6 +184,11 @@ export function buildAutomationsSnapshot(
     // page and NO command, like the agent lines: a session that reads the
     // snapshot must not be one shell line away from approving the job itself.
     const verdict = manifest.runKind === 'agent' ? null : checkApproval(projectRoot, manifest, opts.home, 'run');
+    // A teammate's routine is read-only, never "needs approval": counted once below.
+    if (verdict && !verdict.approved && verdict.reason === 'not_owner') {
+      readOnlySlugs.add(manifest.slug);
+      continue;
+    }
     if (verdict && !verdict.approved) {
       blockedLines.push(
         `- ${manifest.slug}: blocked pending approval (${verdict.reason}) — needs approval on the AI Team page in the dashboard`,
@@ -226,11 +232,20 @@ export function buildAutomationsSnapshot(
   try { agentTargets = listAgentTargets(contextRoot); } catch { agentTargets = []; }
   for (const target of agentTargets) {
     if (blockedSlugs.has(target.slug)) continue;
-    if (checkApproval(projectRoot, target, opts.home, 'run').approved) continue;
+    const runVerdict = checkApproval(projectRoot, target, opts.home, 'run');
+    if (!runVerdict.approved && runVerdict.reason === 'not_owner') {
+      readOnlySlugs.add(target.slug);
+      continue;
+    }
+    if (runVerdict.approved) continue;
     if (target.bindings.length > 0 && checkApproval(projectRoot, target, opts.home, 'identity').approved) continue;
     agentLines.push(`- agent ${target.slug}: ${target.agentTitle || target.title} needs approval on the AI Team page`);
   }
   blockedLines.push(...agentLines);
+  // Teammates' agents and routines: ONE line, no names, nothing to do here (B1-4).
+  if (readOnlySlugs.size > 0) {
+    blockedLines.push(`- ${readOnlySlugs.size} teammates' agent${readOnlySlugs.size === 1 ? '' : 's'} (read-only)`);
+  }
 
   // ─── Pending automation output (Change C) — ONE combined line, not one per
   // slug: this is a nudge that consolidation has material waiting, not a

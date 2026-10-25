@@ -160,6 +160,13 @@ import {
   handleAgentsPhotoUpload,
 } from './routes/agents.js';
 import {
+  handleAgentSyncState,
+  handleAgentSyncConfirm,
+  handleAgentsInbox,
+  handleAgentsInboxAction,
+  handleAgentsBringHere,
+} from './routes/agent-sync.js';
+import {
   handleThesesList,
   handleThesesCreate,
   handleThesesShow,
@@ -779,7 +786,13 @@ export function buildRouter(): Router {
   // differ by method or segment count.
   router.get('/api/agents', handleAgentsList);
   router.post('/api/agents', handleAgentsCreate);
+  // Agent sync (B1): literal segments BEFORE `/:slug`, which would otherwise capture them.
+  router.get('/api/agents/sync', handleAgentSyncState);
+  router.post('/api/agents/sync/confirm', handleAgentSyncConfirm);
+  router.get('/api/agents/inbox', handleAgentsInbox);
+  router.post('/api/agents/inbox/:id', handleAgentsInboxAction);
   router.get('/api/agents/:slug', handleAgentsShow);
+  router.post('/api/agents/:slug/bring-here', handleAgentsBringHere);
   router.post('/api/agents/:slug/update', handleAgentsUpdate);
   router.post('/api/agents/:slug/delete', handleAgentsDelete);
   router.post('/api/agents/:slug/approve', handleAgentsApprove);

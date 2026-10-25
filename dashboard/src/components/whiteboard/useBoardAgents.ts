@@ -20,7 +20,9 @@ export function useBoardAgents(board: string | undefined): {
   const { vault } = useVault();
   const { data: roster, isLoading } = useAgents();
   const cards = useBoardCards(vault, board);
-  const agents = useMemo(() => (board ? boardAgentsOf(roster, board, cards) : []), [roster, board, cards]);
+  // The panel talks only to agents this machine may talk to: a teammate's is read-only (B1-4).
+  const own = useMemo(() => roster?.filter((a) => !a.readOnly), [roster]);
+  const agents = useMemo(() => (board ? boardAgentsOf(own, board, cards) : []), [own, board, cards]);
   const agent = panelAgentOf(agents, usePanelPick(vault, board));
   return { agents, agent, cards, isLoading };
 }

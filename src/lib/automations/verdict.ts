@@ -31,6 +31,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { effectivePattern } from '../agents/agent-sync.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { accountEnvFor } from '../claude-accounts.js';
 import { ensureSandbox } from '../claude-account-sandbox.js';
@@ -1044,7 +1045,12 @@ export async function resumeWithMessage(
       nowFn().toISOString(),
       liveSessionId,
       thread
-        ? buildThreadMessagePreamble(messageText, envelope.manifest, turn ?? { nonce: newTurnNonce(), board: '', refs: '' })
+        ? buildThreadMessagePreamble(
+          messageText,
+          // The agent's notes as THIS machine adopted them (B1-6), never a synced edit from elsewhere.
+          { ...envelope.manifest, pattern: effectivePattern(contextRoot, envelope.manifest.agent || slug, envelope.manifest.pattern ?? '') },
+          turn ?? { nonce: newTurnNonce(), board: '', refs: '' },
+        )
         : buildMessagePreamble(messageText, turn),
       opts,
       resume,

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
@@ -843,6 +843,31 @@ describe('runAutomation — completed runs', () => {
     const detailed = logLines.find((l) => l.includes('output write failed'));
     expect(detailed).toBeDefined();
     expect(detailed).toContain(outputPath);
+  });
+
+  it('an output folder that arrived as a symlink is never written through (M2): the run fails, nothing lands outside', async () => {
+    const manifest = createApproved('linked-out');
+    const outputPath = outputPathFor(contextRoot, manifest, NOW);
+    const outDir = dirname(outputPath);
+    const outside = mkdtempSync(join(tmpdir(), 'dc-outside-'));
+    mkdirSync(dirname(outDir), { recursive: true });
+    symlinkSync(outside, outDir);
+
+    const { child, emitClose, emitStdout } = makeFakeChild(1239);
+    const runPromise = runAutomation(contextRoot, manifest.slug, {
+      now: () => NOW, home, spawnImpl: makeSpawnImpl(child), notify: () => {}, log: () => {},
+    });
+    emitStdout(CLAUDE_JSON_OK);
+    emitClose(0);
+    const outcome = await runPromise;
+
+    try {
+      expect(outcome.status).toBe('failed');
+      expect(outcome.error).toBe(OUTPUT_WRITE_FAILURE_REASON);
+      expect(readdirSync(outside)).toEqual([]);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('a completed run writes NO sidecar afterward (cleared in finally)', async () => {

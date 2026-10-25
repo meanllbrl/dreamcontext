@@ -205,6 +205,8 @@ export function AgentProfilePanel({
 
   const name = agent.title;
   const fullyApproved = agent.approvedForChat && agent.approvedToRun;
+  // Someone else's agent (B1-4): read-only here, no talk, edit, approve or delete.
+  const readOnly = agent.readOnly === true;
 
   const openReview = () => {
     setApproveError(null);
@@ -294,15 +296,18 @@ export function AgentProfilePanel({
       </div>
 
       <div className="agp-stateline">
-        <span
+        {!readOnly && <span
           className={`agp-state agp-state--${state}`}
           data-approval-state={state}
           title={state === 'cant-run' ? tx(t, approvalReasonKey(agent.approvalReason), t('agents.approval.runNo')) : undefined}
         >
           {stateHasDot(state) && <span className="agp-dot" aria-hidden="true" />}
           {t(APPROVAL_STATE_KEY[state])}
-        </span>
-        {state !== 'ready' && (
+        </span>}
+        {readOnly && (
+          <span className="agr-tag" data-readonly-owner>{t('aiteam.section.readonly').replace('{owner}', agent.ownerLabel ?? agent.owner ?? '')}</span>
+        )}
+        {state !== 'ready' && !readOnly && (
           <button type="button" className="agp-textbtn" onClick={reviewFromHeader} data-review-approval>
             {t('agents.profile.reviewApproval')}
           </button>
@@ -311,7 +316,7 @@ export function AgentProfilePanel({
         {agent.implicit && <span className="agr-tag" title={t('agents.roster.implicitHint')}>{t('agents.roster.implicit')}</span>}
       </div>
 
-      <div className="agp-actions">
+      {!readOnly && <div className="agp-actions">
         <button
           type="button"
           className="agp-btn agp-btn--primary"
@@ -322,7 +327,7 @@ export function AgentProfilePanel({
           {t('agents.profile.talk')}
         </button>
         <button type="button" className="agp-btn" onClick={() => onEdit(slug)}>{t('agents.profile.edit')}</button>
-      </div>
+      </div>}
       {talkError && <p className="agp-error" role="alert">{talkError}</p>}
 
       {placement}
@@ -454,8 +459,8 @@ export function AgentProfilePanel({
         )}
       </section>
 
-      {/* Approval: two verdicts, two rows, never one. */}
-      <section
+      {/* Approval: two verdicts, two rows, never one. A teammate's agent asks nothing here. */}
+      {!readOnly && <section
         ref={approvalRef}
         className="agp-section"
         aria-label={t('agents.approval.title')}
@@ -501,7 +506,7 @@ export function AgentProfilePanel({
             </div>
           </div>
         )}
-      </section>
+      </section>}
 
       {agent.hasCallSettings && (
         <section className="agp-section" aria-label={t('agents.profile.callSettings')} data-call-settings>
@@ -517,7 +522,7 @@ export function AgentProfilePanel({
         </section>
       )}
 
-      <section className="agp-section agp-section--danger">
+      {!readOnly && <section className="agp-section agp-section--danger">
         <button
           type="button"
           className={`agp-btn agp-btn--danger${armed ? ' agp-btn--armed' : ''}`}
@@ -528,7 +533,7 @@ export function AgentProfilePanel({
           {armed ? t('agents.profile.deleteConfirm').replace('{name}', name) : t('agents.profile.delete')}
         </button>
         {deleteError && <p className="agp-error" role="alert">{deleteError}</p>}
-      </section>
+      </section>}
     </aside>
   );
 }

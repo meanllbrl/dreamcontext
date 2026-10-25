@@ -416,6 +416,13 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   // Agents
   'GET /api/agents': allow(READ),
   'POST /api/agents': allow(PROJECT_WRITE),
+  // Agent sync (B1): reading the state and the inbox is free; confirming publishes this machine's
+  // private agents to the team, so it is decided at the machine itself.
+  'GET /api/agents/sync': allow(READ),
+  'POST /api/agents/sync/confirm': deny('publishes this machine\'s private agents to the team: confirmed at the machine'),
+  'GET /api/agents/inbox': allow(READ),
+  'POST /api/agents/inbox/:id': allow('the owner answers a row waiting on this machine (start, ignore, adopt), as on the laptop'),
+  'POST /api/agents/:slug/bring-here': deny('moves where an agent runs: decided at the machine that will run it'),
   'GET /api/agents/:slug': allow(READ),
   'POST /api/agents/:slug/update': allow(PROJECT_WRITE),
   'POST /api/agents/:slug/delete': allow(PROJECT_WRITE),

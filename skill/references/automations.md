@@ -75,6 +75,18 @@ Chat, card chat and sub-agents speak from the agent's identity only (`identityOn
 
 **Symlinks.** A symlinked manifest file, old format or new, is skipped (it never reads, runs or splits) and `doctor` names it.
 
+### Agents ride the brain sync: owner-only, read-only for everyone else
+
+Every agent and automation belongs to its creator's GitHub login (`owner:` in the manifest, unhashed, stamped at create; a migration stamps older files: a file this machine made gets its login, an already-shared one the login of whoever added it, `unowned` when nobody can be worked out). **Only the owner writes, runs, talks to, approves, gives tasks to or assigns it**: every write path (CLI and dashboard routes) refuses anyone else with `not_owner`, and `checkApproval` answers `not_owner` FIRST, so a teammate's agent is read-only on your machine, never "needs approval" (the session snapshot shows one line: `N teammates' agents (read-only)`).
+
+One brain-level switch, `agentSync` in `state/.config.json`, sends agents and automations (definition, instructions, memory, threads, outputs; never `cache/`) through the EXISTING brain sync: no new sync path. It is turned on from the migration notice on the AI Team page (or `dreamcontext agents sync --confirm`), never off, and each machine's owner confirms it on THAT machine before its own agents start to sync (`dreamcontext agents sync` shows the state, the file count and each secret-scan hit by path). Every machine on the brain must run this version first. Until a machine confirms, its private agent files stay out of git through a machine-local block in `.git/info/exclude`; once confirmed, the brain sync force-adds its own agent files. On every sync, an agent or automation file that holds a real secret (the brain sync's own scrub rules) is unstaged and stays on this machine, with an inbox row, until the secret is gone; home-path warnings in agent files never block a pull.
+
+- **Thread files are per machine** (`threads/<slug>/<day>-<machineId>.md`); readers merge them. History injected into a run reads only entries this machine wrote, and a learned `## Pattern` changed on another machine is not used until the owner adopts it (an inbox row).
+- **Same-name collisions:** a teammate's new agent with your agent's slug keeps the slug; yours comes back as `<slug>-2` after the merge commits (its threads, outputs, approval and routines follow it), with one inbox row. Same agent, two of your machines: the later edit wins.
+- **Several machines, one login:** `agents/.active/<slug>.json` names the machine that runs it; only that machine runs it. `dreamcontext agents bring-here <slug>` (or "Bring it here" on the stage) moves it; the other machine stops at its next pull.
+- **Nothing starts from synced fields alone.** A task's `agent:` / `reviewer:` set by a hand edit or a teammate starts nothing: it raises an inbox row ("assigned outside the app: Start / Ignore"). Only an assignment made on this machine starts work (a machine-local ledger, `~/.dreamcontext/local/<project>/`).
+- **The owner inbox** (`dreamcontext agents inbox`, the AI Team list) holds those rows: held secrets, assignments made outside the app, renamed agents, patterns to adopt.
+
 ### Sharing an agent
 
 Agents are private by default, with their own ignore block. `agents share|unshare <slug>` publishes or stops publishing one; `unshare` is refused while a shared automation runs as it. `automations create --shared --agent <a>` and `automations share <slug>` on a split automation share its agent too, so a teammate never receives a job with no agent. `automations unshare` leaves the agent shared, since another automation may run as it; stop publishing it with `agents unshare <a>`. The migration copies `shared` to both files.

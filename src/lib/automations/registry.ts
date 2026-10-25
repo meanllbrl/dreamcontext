@@ -15,6 +15,7 @@ import {
   type RunKind,
 } from './types.js';
 import { classifyAutomationSlot, contextRootOf } from '../agents/slot.js';
+import { assertOwned, currentLogin, foreignOwner } from '../agents/owner.js';
 
 /**
  * Automations registry — the machine-local approval tripwire + project
@@ -24,8 +25,9 @@ import { classifyAutomationSlot, contextRootOf } from '../agents/slot.js';
  *
  * TYPES-ONLY import from `./types.js` — never `./store.js`. That keeps this
  * module home-injectable and layout-independent, testable against a literal
- * `AutomationManifest` object with no filesystem manifest required. The one
- * other import is `../agents/slot.js`, which imports no store either: the agent
+ * `AutomationManifest` object with no filesystem manifest required. The other
+ * imports are `../agents/owner.js` (the `not_owner` verdict; it reads the
+ * signed-in login through the injected home, no store) and `../agents/slot.js`, which imports no store either: the agent
  * approval writes re-classify the automation slot INSIDE their own registry
  * write, so they never trust a classification made earlier by a caller.
  *
@@ -558,7 +560,14 @@ export type ApprovalVerdict =
       reason: 'never-approved' | 'manifest-changed' | 'payload-format-changed';
       expected: string | null;
       actual: string;
-    };
+    }
+  /**
+   * Someone else's agent or automation: read-only here, never "needs approval". Returned FIRST,
+   * before any own-entry or binding rule, so every run and chat path that asks this gate refuses
+   * it, and an approval this machine held from before (a formerly `shared: true` slug) lends it
+   * nothing. `owner` names who it belongs to.
+   */
+  | { approved: false; reason: 'not_owner'; owner: string; expected: null; actual: string };
 
 /** One stored entry judged against the target's current hash. Order matters: a
  *  stored `payloadVersion` mismatch is reported BEFORE any hash comparison,
@@ -605,15 +614,22 @@ function projectEntry(registry: AutomationsRegistry, projectRoot: string): Proje
  * The invariant: anything that EXECUTES an agent's call target needs this Mac's
  * direct approval of that exact hash; a bound automation's approval only lends
  * the agent its identity for conversations. `use` defaults to the strict `'run'`.
+ *
+ * Before all of that: a target whose owner (its agent's, or its routine's) is not
+ * this machine's `login` is `not_owner`, read-only (AI Team v2 B1-4). `login`
+ * defaults to the signed-in GitHub login of `home` (`agents/owner.ts`).
  */
 export function checkApproval(
   projectRoot: string,
   m: AutomationManifest,
   home?: string,
   use: ApprovalUse = 'run',
+  login: string = currentLogin(),
 ): ApprovalVerdict {
-  const project = projectEntry(readAutomationsRegistry(home), projectRoot);
   const actual = manifestHash(m);
+  const owner = foreignOwner(m, login);
+  if (owner) return { approved: false, reason: 'not_owner', owner, expected: null, actual };
+  const project = projectEntry(readAutomationsRegistry(home), projectRoot);
   if (m.runKind !== 'agent') return judgeEntry(project?.approvals[m.slug], actual);
 
   const direct = project?.agentApprovals?.[m.slug];
@@ -682,6 +698,8 @@ function mutateProject<T>(projectRoot: string, home: string | undefined, mutate:
  * `'automation'`) is never touched.
  */
 export function approveAutomation(projectRoot: string, m: AutomationManifest, now: Date, home?: string): ApprovalEntry {
+  // Someone else's member is read-only here: approving it would be running it by another door.
+  assertOwned(m, m.agentTitle || m.title || m.slug);
   const entry = approvalEntryFor(m, now);
   return mutateProject(projectRoot, home, (project) => {
     if (m.runKind === 'agent') {
@@ -714,6 +732,8 @@ export function approvePair(
   now: Date,
   home?: string,
 ): ApprovalEntry {
+  assertOwned(automation, automation.title || automation.slug);
+  assertOwned(agentTarget, agentTarget.agentTitle || agentTarget.slug);
   if (
     automation.runKind === 'agent' ||
     agentTarget.runKind !== 'agent' ||
@@ -873,4 +893,28 @@ export function recordTickStarted(now: Date, home?: string): void {
 export function recordTickCompleted(now: Date, durationMs: number, home?: string): void {
   const hb = readDispatcherHeartbeat(home);
   writeDispatcherHeartbeat({ ...hb, lastTickCompletedAt: now.toISOString(), lastTickDurationMs: durationMs }, home);
+}
+
+/**
+ * Move a slug's approval records to a new slug (`renameAgentLocal`, B1-8). The hash covers no
+ * slug, so an approved member stays approved under its new name; `which` picks the agent's
+ * record, the automation's, or both. No-op when there is nothing under `from`.
+ */
+export function renameApprovals(projectRoot: string, from: string, to: string, which: 'agent' | 'automation' | 'both', home?: string): void {
+  const registry = readAutomationsRegistry(home);
+  const key = findProjectKey(registry, projectRoot);
+  if (key === null) return;
+  const project = registry.projects[key];
+  let changed = false;
+  if ((which === 'agent' || which === 'both') && project.agentApprovals?.[from]) {
+    project.agentApprovals[to] = project.agentApprovals[from];
+    delete project.agentApprovals[from];
+    changed = true;
+  }
+  if ((which === 'automation' || which === 'both') && project.approvals[from]) {
+    project.approvals[to] = project.approvals[from];
+    delete project.approvals[from];
+    changed = true;
+  }
+  if (changed) writeAutomationsRegistry(registry, home);
 }

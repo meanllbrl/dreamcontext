@@ -2,6 +2,11 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, join } from 'node:path';
 import { lstatSync } from 'node:fs';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
+import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
+import { ownerLabel } from '../../lib/agents/owner.js';
+import { placement } from '../../lib/agents/active.js';
+import { agentSyncSwitchOn, createdLocally, loginFromEmail } from '../../lib/agents/agent-sync.js';
+import { lastAuthorEmail as gitLastAuthorEmail } from '../../lib/git-sync/git.js';
 import {
   agentUsage,
   createAgent,
@@ -98,6 +103,20 @@ export interface AgentSummary {
   approvedToRun: boolean;
   /** Why it may not run, when it may not (`approvedToRun` false). */
   approvalReason: string | null;
+  /** Its creator's login (`machine:<id>`, `unowned`), null on an unstamped file (B1-3). */
+  owner: string | null;
+  /** How the owner reads in a sentence ("nobody (unowned)" …), null when it has none. */
+  ownerLabel: string | null;
+  /** Someone else's agent: read-only here, never "needs approval" (B1-4). The approval fields
+   *  above are then all false and say nothing about this machine. */
+  readOnly: boolean;
+  /** Same login, several machines (B1-7): where it runs, when that is not this machine. */
+  runsElsewhere: { machine: string; name: string } | null;
+  /** It arrived by sync and was not created on this machine (the approval view marks it). */
+  arrivedBySync: boolean;
+  /** When it needs a re-approval after a synced change: who authored that change (login, or the
+   *  commit email), so the approval prompt names them beside the diff. */
+  syncedChangeBy: string | null;
   /** Synthesised from a not-yet-split legacy automation file. */
   implicit: boolean;
   /** Its call settings differ from the defaults (a migrated on-call agent). */
@@ -129,6 +148,12 @@ function taskSummary(contextRoot: string, slug: string): { slug: string; name: s
   }
 }
 
+/** Who authored the newest synced change to an agent's file (login when the email says so). */
+function syncedChangeAuthor(contextRoot: string, slug: string): string | null {
+  const email = gitLastAuthorEmail(dirname(contextRoot), join('_dream_context', 'agents', `${slug}.md`));
+  return email ? loginFromEmail(contextRoot, email) ?? email : null;
+}
+
 /** One agent's summary, from its call target as the store composed it. */
 export function summarizeAgent(
   contextRoot: string,
@@ -139,6 +164,9 @@ export function summarizeAgent(
   const projectRoot = dirname(contextRoot);
   const forChat = checkApproval(projectRoot, target, home, 'identity');
   const toRun = checkApproval(projectRoot, target, home, 'run');
+  const readOnly = !toRun.approved && toRun.reason === 'not_owner';
+  const where = readOnly ? { here: true as const } : placement(contextRoot, target.slug, target.owner ?? null, home);
+  const owner = agent?.owner ?? target.owner ?? null;
   const usage = agentUsage(contextRoot, target.slug);
   const now = new Date();
   return {
@@ -158,7 +186,14 @@ export function summarizeAgent(
     face: faceOf(target.slug, agent?.face ?? null),
     approvedForChat: forChat.approved,
     approvedToRun: toRun.approved,
-    approvalReason: toRun.approved ? null : toRun.reason,
+    approvalReason: toRun.approved || readOnly ? null : toRun.reason,
+    owner,
+    ownerLabel: owner ? ownerLabel(owner) : null,
+    readOnly,
+    runsElsewhere: where.here ? null : { machine: where.machine, name: where.name },
+    arrivedBySync: !!agent && !agent.implicit && agentSyncSwitchOn(contextRoot)
+      && !createdLocally(contextRoot, `agents/${target.slug}.md`, home),
+    syncedChangeBy: !toRun.approved && !readOnly && agentSyncSwitchOn(contextRoot) ? syncedChangeAuthor(contextRoot, target.slug) : null,
     implicit: agent?.implicit ?? false,
     hasCallSettings: agent ? hasCallSettings(agent) : false,
     usedBy: {
@@ -249,6 +284,8 @@ function sendSummary(res: ServerResponse, contextRoot: string, slug: string, sta
 }
 
 function sendWriteError(res: ServerResponse, err: unknown, code: string, message: string): void {
+  // Someone else's agent: read-only here, 403 with the owner named (B1-4).
+  if (sendIfNotOwner(res, err)) return;
   if (err instanceof AutomationError) {
     sendError(res, 400, 'invalid', err.message);
     return;
@@ -510,10 +547,12 @@ export async function handleAgentsPhotoUpload(
   contextRoot: string,
 ): Promise<void> {
   const slug = params.slug;
-  if (!isSafeAutomationSlug(slug) || !getAgent(contextRoot, slug)) {
+  const agent = isSafeAutomationSlug(slug) ? getAgent(contextRoot, slug) : null;
+  if (!agent) {
     sendError(res, 404, 'not_found', `Agent not found: ${slug}`);
     return;
   }
+  if (refuseNotOwner(res, { slug, owner: agent.owner, title: agent.title })) return;
   const image = await receivePhoto(req, res);
   if (!image) return;
   try {

@@ -407,7 +407,9 @@ describe('automations CLI (integration)', () => {
     // 11 → 12 with `soul`: the agent's `## Soul` decides how it behaves (stance,
     // tone, what it refuses), so a synced soul must be shown and re-approved.
     // Appended LAST and omitted when empty, so every older hash is unchanged.
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(12);
+    // 12 → 13 with `autonomy` (AI Team v2): Free runs bypassPermissions, so a synced move to it
+    // must block; omitted when `balanced`, so every existing hash is unchanged.
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(13);
     for (const field of APPROVAL_DIFF_FIELDS) {
       expect(yesOut.stdout).toContain(field);
     }

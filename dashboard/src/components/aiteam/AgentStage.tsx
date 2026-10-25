@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import { emitInstance, useVault } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
-import { useAgentStage, type AgentSummary } from '../../hooks/useAgents';
+import { useAgentStage, useBringAgentHere, type AgentSummary } from '../../hooks/useAgents';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { OPEN_SESSION_EVENT, type OpenSessionDetail } from '../../lib/openSession';
@@ -15,6 +15,7 @@ import { pendingApprovals, type TeamRow } from './teamModel';
 import { TeamApproval } from './TeamApproval';
 import type { PanelTab } from './TeamPanel';
 import { TeamIcon } from './TeamIcons';
+import { isPhoneSurface } from '../../lib/phoneSurface';
 import '../sleepy/ChatPane.css';
 import '../sleepy/chat/composer.css';
 import '../sleepy/chat/cards.css';
@@ -67,6 +68,10 @@ export function AgentStage({
   const autonomy = stage?.autonomy ?? agent.autonomy ?? 'balanced';
   // What waits for the owner's approval (the agent, a routine): approved here, in place.
   const pending = useMemo(() => pendingApprovals(agent, row.routines), [agent, row.routines]);
+  // Someone else's agent is read-only here; the owner's other machine may be the one running it.
+  const readOnly = agent.readOnly === true;
+  const elsewhere = readOnly ? null : agent.runsElsewhere ?? null;
+  const bring = useBringAgentHere();
 
   return (
     <section className={`aiteam-stage${narrow ? ' aiteam-stage--narrow' : ''}`} data-stage={agent.slug} data-show={narrow ? show : 'all'}>
@@ -81,7 +86,12 @@ export function AgentStage({
           <h2 className="aiteam-stage-name">{agent.title}</h2>
           {row.role && <p className="aiteam-stage-role">{row.role}</p>}
         </div>
-        <AutonomyChip level={autonomy} onEdit={() => onEdit(agent.slug)} />
+        {agent.owner && (
+          <span className="aiteam-tag aiteam-tag--muted aiteam-stage-owner" data-owner-chip>
+            {readOnly ? t('aiteam.owner.of').replace('{owner}', agent.ownerLabel ?? agent.owner) : t('aiteam.owner.you')}
+          </span>
+        )}
+        <AutonomyChip level={autonomy} onEdit={readOnly ? undefined : () => onEdit(agent.slug)} />
         {narrow ? (
           <button type="button" className="aiteam-pill" onClick={() => setShow((s) => (s === 'chat' ? 'cards' : 'chat'))}>
             {show === 'chat' ? t('aiteam.stage.cards') : t('aiteam.stage.chat')}
@@ -91,11 +101,46 @@ export function AgentStage({
         )}
       </header>
 
-      <TeamApproval agentTitle={agent.title} pending={pending} onToast={onToast} />
+      {readOnly ? (
+        <div className="aiteam-stage-banner" role="note" data-readonly-banner>
+          <TeamIcon name="lock" size={14} />
+          <span>{t('aiteam.readonly.banner').replace('{owner}', agent.ownerLabel ?? agent.owner ?? '')}</span>
+        </div>
+      ) : elsewhere ? (
+        <div className="aiteam-stage-banner" role="note" data-elsewhere-banner>
+          <span>{t('aiteam.elsewhere.banner').replace('{machine}', elsewhere.name)}</span>
+          {/* Where an agent runs is decided at the machine that will run it, never from the phone. */}
+          {!isPhoneSurface() && <button
+            type="button"
+            className="agp-btn agp-btn--primary"
+            disabled={bring.isPending}
+            onClick={() => bring.mutate(agent.slug, {
+              onSuccess: () => onToast(t('aiteam.elsewhere.brought').replace('{name}', agent.title)),
+              onError: (err) => onToast((err as Error).message),
+            })}
+            data-bring-here
+          >
+            {t('aiteam.elsewhere.bring')}
+          </button>}
+        </div>
+      ) : (
+        <TeamApproval agentTitle={agent.title} pending={pending} onToast={onToast} />
+      )}
 
       <div className="aiteam-stage-body">
         <div className="aiteam-stage-main">
-          <StageChat agent={agent} level={autonomy} homeId={stage?.homeSessionId ?? null} homeLive={!!stage?.homeLive} ready={!!stage} vault={vault ?? ''} bus={bus} />
+          {readOnly || elsewhere ? (
+            <div className="aiteam-stage-chat" role="region" aria-label={t('aiteam.stage.chatWith').replace('{name}', agent.title)}>
+              <div className="aiteam-stage-note" data-stage-closed>
+                <AgentAvatar slug={agent.slug} title={agent.title} hasPhoto={agent.hasPhoto} size={56} of="agent" face={agent.face} />
+                <p>{readOnly
+                  ? t('aiteam.readonly.chat').replace('{owner}', agent.ownerLabel ?? agent.owner ?? '').replace('{name}', agent.title)
+                  : t('aiteam.elsewhere.chat').replace('{machine}', elsewhere?.name ?? '').replace('{name}', agent.title)}</p>
+              </div>
+            </div>
+          ) : (
+            <StageChat agent={agent} level={autonomy} homeId={stage?.homeSessionId ?? null} homeLive={!!stage?.homeLive} ready={!!stage} vault={vault ?? ''} bus={bus} />
+          )}
         </div>
         <aside className="aiteam-stage-side" aria-label={t('aiteam.stage.cardsLabel')}>
           {stage && (

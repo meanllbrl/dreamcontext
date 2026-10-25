@@ -482,6 +482,11 @@ export interface AutomationManifest {
    * to `ask` or `free` costs a re-approval, and a synced edit to it must block.
    */
   autonomy?: AgentAutonomy;
+  /** Its agent's owner (`owner:`), unhashed; absent on an unstamped file. `checkApproval` returns
+   *  `not_owner` FIRST when it is not this machine's login (`agents/owner.ts`). */
+  owner?: string;
+  /** A routine's own owner, only when it differs from its agent's: a target answers to both. */
+  jobOwner?: string;
   /** For an agent's call target only: every automation bound to the agent, as
    *  its current composed hash. `[]` for an automation. Rule (c) of
    *  `checkApproval` reads it, for an `'identity'` use only. */
@@ -523,6 +528,10 @@ export interface AutomationJob {
   /** The `## Job` section, `''` when absent. */
   job: string;
   flow: FlowGraph | null;
+  /** Its creator's login (`owner:`), unhashed; null before the migration stamps it. */
+  owner: string | null;
+  /** When its owner last wrote it (`updated:`), unhashed. */
+  updated: string | null;
   path: string;
   body: string;
 }

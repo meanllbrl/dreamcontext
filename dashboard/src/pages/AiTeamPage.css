@@ -401,3 +401,24 @@ button.aiteam-person:not(:disabled):hover { border-color: var(--color-border-hov
 /* The head keeps the title on one line; the count gives way first. */
 .aiteam-roster-title { white-space: nowrap; flex-shrink: 0; }
 .aiteam-roster-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Agent sync on the team list (B1): the migration notice and the owner inbox. */
+.aiteam-syncstrip { display: flex; flex-direction: column; gap: var(--space-2); margin: 0 var(--space-4) var(--space-3) var(--space-4); }
+.aiteam-syncnote { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-secondary); }
+.aiteam-syncnote-head { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 36px; padding: 0 var(--space-3); border: 0; background: transparent; color: var(--color-text); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); text-align: left; }
+.aiteam-syncnote-title { flex: 1; min-width: 0; }
+.aiteam-syncnote-body { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); padding: 0 var(--space-3) var(--space-3) var(--space-3); font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.aiteam-syncnote-body p { margin: 0; }
+.aiteam-syncnote-warn { color: var(--color-text); }
+.aiteam-syncnote-meta { color: var(--color-text-tertiary); }
+.aiteam-syncnote-hits { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; margin: 0; padding: 0; list-style: none; }
+.aiteam-syncnote-hits li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; }
+.aiteam-syncnote-hits code { overflow-wrap: anywhere; font-size: var(--font-size-xs); }
+.aiteam-syncnote-held { color: var(--color-error); font-weight: var(--font-weight-semibold); }
+.aiteam-syncnote-check { color: var(--color-text-secondary); }
+.aiteam-inbox { display: flex; flex-direction: column; gap: var(--space-2); }
+.aiteam-inbox .aiteam-section { padding: 0; margin: 0; }
+.aiteam-inbox-row { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); }
+.aiteam-inbox-title { margin: 0; font-size: var(--font-size-sm); color: var(--color-text); overflow-wrap: anywhere; }
+.aiteam-inbox-detail { margin: 0; font-size: var(--font-size-xs); color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.aiteam-inbox-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }

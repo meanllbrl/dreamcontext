@@ -188,6 +188,8 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'DELETE /api/packs/:name',
   'GET /api/lab/credentials',
   'POST /api/lab/credentials',
+  'POST /api/agents/sync/confirm',
+  'POST /api/agents/:slug/bring-here',
   'POST /api/automations/dispatcher/install',
   'POST /api/automations/dispatcher/uninstall',
   'GET /api/automations/:slug/telegram',

@@ -34,7 +34,8 @@ export function tr(t: Translate, key: string, fallback: string, vars: Record<str
  * common case (an approved agent) sits at the top.
  */
 export function offeredAgents(agents: readonly AgentSummary[] | undefined): AgentSummary[] {
-  return [...(agents ?? [])].sort((a, b) => {
+  // A teammate's agent is read-only here: nobody but its owner gives it a task (B1-4).
+  return [...(agents ?? [])].filter((a) => !a.readOnly).sort((a, b) => {
     if (a.approvedToRun !== b.approvedToRun) return a.approvedToRun ? -1 : 1;
     return a.title.localeCompare(b.title);
   });

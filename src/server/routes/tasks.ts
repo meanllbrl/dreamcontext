@@ -15,7 +15,7 @@ import { PeopleStoreError, listPeople } from '../../lib/people-store.js';
 import { developHandoffGaps, developHandoffNotes } from '../../lib/handoff-readiness.js';
 import { getAgent } from '../../lib/agents/store.js';
 import { isSafeAutomationSlug } from '../../lib/agents/slot.js';
-import { commitAssignment, prepareAssignment, type AssignmentRefusal } from '../../lib/agents/task-assignment.js';
+import { commitAssignment, consumeAssignmentStart, prepareAssignment, type AssignmentRefusal } from '../../lib/agents/task-assignment.js';
 import { currentAutomationJob, startAutomationJob } from '../automation-job.js';
 import {
   loadTaskOverride,
@@ -1560,10 +1560,11 @@ export async function handleTasksInsert(
 }
 
 /** The HTTP status each assignment refusal answers with. */
-const ASSIGN_REFUSAL_STATUS: Record<AssignmentRefusal, 400 | 404 | 409> = {
+const ASSIGN_REFUSAL_STATUS: Record<AssignmentRefusal, 400 | 403 | 404 | 409> = {
   unknown_task: 404,
   unknown_agent: 404,
   agent_not_approved_to_run: 409,
+  not_owner: 403,
   agent_disabled: 409,
   note_too_long: 400,
 };
@@ -1612,6 +1613,10 @@ export async function handleTasksAssignAgent(
   try {
     const fireAt = new Date();
     const { statusMoved } = commitAssignment(contextRoot, prep, fireAt);
+    if (!consumeAssignmentStart(contextRoot, prep)) {
+      sendError(res, 409, 'not_armed', 'This assignment was not queued on this machine, so it does not start here.');
+      return;
+    }
     const { job } = startAutomationJob(contextRoot, prep.target.slug, {
       text: prep.ownerNote ?? '',
       fireAt,

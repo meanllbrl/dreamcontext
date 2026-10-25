@@ -75,6 +75,8 @@ export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: 
     // A legacy file holds no autonomy (the default) and no stamped face.
     autonomy: m.autonomy ?? DEFAULT_AGENT_AUTONOMY,
     face: null,
+    owner: m.owner ?? null,
+    updated: null,
     call: isCall
       ? {
           timeoutMinutes: m.timeoutMinutes,
@@ -110,6 +112,8 @@ export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: 
     outputInstructions: m.outputInstructions,
     job: '',
     flow: m.flow ?? null,
+    owner: m.owner ?? null,
+    updated: null,
     path: m.path,
     body: m.body,
   };
@@ -147,6 +151,8 @@ export function composeRun(
     // Only a level other than the default rides the target, so a composed target stays field for
     // field what a legacy read gives (the hash omits the default either way).
     ...(agent.autonomy !== DEFAULT_AGENT_AUTONOMY ? { autonomy: agent.autonomy } : {}),
+    // Unhashed; carried only when stamped, so an unstamped pair composes as before.
+    ...(agent.owner ? { owner: agent.owner } : {}),
   };
   if (job) {
     return {
@@ -167,6 +173,8 @@ export function composeRun(
       flow: job.flow ?? null,
       job: job.job,
       ...identity,
+      // A routine answers to its own owner too, when that is someone else (`foreignOwner`).
+      ...(job.owner && job.owner !== agent.owner ? { jobOwner: job.owner } : {}),
       runKind: 'automation',
       bindings: [],
       legacyKey: false,

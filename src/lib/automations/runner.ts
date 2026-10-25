@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve as resolvePath, sep as pathSep } from 'node:path';
 import { homedir } from 'node:os';
+import { safeWriteTarget } from '../vault-read.js';
 import { notifyViaBundle, NOTIFY_SOUND_OK, NOTIFY_SOUND_FAILED } from './notifier.js';
 import { recordNotification } from '../notification-log.js';
 import { appLinkForContextRoot, brainRelativePath } from '../app-link.js';
@@ -22,6 +23,9 @@ import {
 import { inspectSleepLock } from '../sleep-consolidation.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { approvalFields, checkApproval, getApproval, renderApprovalReview } from './registry.js';
+import { ownerLabel } from '../agents/owner.js';
+import { effectivePattern } from '../agents/agent-sync.js';
+import { placement } from '../agents/active.js';
 import { backfillQuestionSession, createQuestion, pendingQuestionFor } from './hitl.js';
 import { foreignRunEvidence, recordAutomationSession } from './session-registry.js';
 import { enqueueFire } from './queue.js';
@@ -608,7 +612,12 @@ export function composePrompt(
   // approved instructions and before the notes, never ahead of either.
   if (board?.board) parts.push('', board.board);
   if (board?.refs) parts.push('', board.refs);
-  const pattern = buildPatternBlock(m, board?.nonce);
+  // The agent's notes as THIS machine adopted them (B1-6): a synced edit from another machine is
+  // not read until the owner adopts it here. Unchanged while the agent-sync switch is off.
+  const pattern = buildPatternBlock(
+    { ...m, pattern: effectivePattern(join(projectRoot, '_dream_context'), m.agent || m.slug, m.pattern ?? '') },
+    board?.nonce,
+  );
   if (pattern) parts.push('', pattern);
   // The agent's recent history goes right under its pattern: both are notes, both lose to
   // everything approved above, and the owner's live message still comes after them.
@@ -892,6 +901,13 @@ function localDateString(d: Date): string {
   const mo = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${mo}-${day}`;
+}
+
+/** Write a run's output, refusing a target reached through a symlink (M2: a synced folder can
+ *  hold one a teammate committed, and following it would write outside the vault). */
+function writeOutputFile(contextRoot: string, path: string, text: string): void {
+  if (!safeWriteTarget(contextRoot, path)) throw new Error('refusing to write the output through a symlink');
+  writeFileSync(path, text, 'utf-8');
 }
 
 /** Same-day re-run suffixes `-2`, `-3`, …; never clobbers a prior day's output. */
@@ -1933,6 +1949,19 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
   //    envelope, and exits.
   // Strict 'run' use: anything that EXECUTES a target needs a direct grant.
   const approval = checkApproval(projectRoot, manifest, home, 'run');
+  // Someone else's agent or automation is read-only here: refused BEFORE the prior-approval
+  // question branch, so it never asks (a held approval from before lends it nothing).
+  if (!approval.approved && approval.reason === 'not_owner') {
+    return shortCircuit(
+      'blocked',
+      `read-only here — ${manifest.agentTitle || manifest.title} belongs to ${ownerLabel(approval.owner)}; only its owner runs it`,
+    );
+  }
+  // Re-read before every start: only the machine the owner brought the agent to runs it (B1-7).
+  const where = placement(contextRoot, manifest.agent || slug, manifest.owner ?? null, home);
+  if (!where.here) {
+    return shortCircuit('blocked', `runs on ${where.name} — bring it here on the AI Team page to run it on this machine`);
+  }
   // An agent's call target reads ONLY its own direct grant as a prior approval:
   // for a same-slug pair, `approvals[slug]` is the automation's record, and the
   // agent was never approved to run on the strength of it.
@@ -2124,8 +2153,9 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     } catch (err) {
       logFn(`warning: could not ensure automations gitignore entries: ${(err as Error).message}`);
     }
-    mkdirSync(outDir, { recursive: true });
-    mkdirSync(outputRootDir(contextRoot), { recursive: true });
+    // A synced folder can hold a symlink: never create (or later write) through one.
+    if (safeWriteTarget(contextRoot, outDir)) mkdirSync(outDir, { recursive: true });
+    if (safeWriteTarget(contextRoot, outputRootDir(contextRoot))) mkdirSync(outputRootDir(contextRoot), { recursive: true });
 
     // WHICH ACCOUNT. Picked once, here, so the approval question and the job run on the same
     // one: the preferred account unless auto-switch says it cannot serve, the same decision a
@@ -2224,7 +2254,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // default one does above — a target that resolves but was never created is
     // an ENOENT at the last moment, which reads as "the run failed" rather than
     // "the graph named somewhere that isn't there".
-    if (useFlowOutput) mkdirSync(flowOutput.dir, { recursive: true });
+    if (useFlowOutput && safeWriteTarget(contextRoot, flowOutput.dir)) mkdirSync(flowOutput.dir, { recursive: true });
     const outputPath = outputPathFor(
       contextRoot,
       useFlowOutput ? { ...manifest, outputDir: flow.reportTarget } : manifest,
@@ -2474,7 +2504,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         status = 'failed';
         error = 'unparseable CLI output';
         try {
-          writeFileSync(outputPath, execution.stdout, 'utf-8');
+          writeOutputFile(contextRoot, outputPath, execution.stdout);
           finalOutputPath = outputPath;
         } catch (err) {
           logFn(`warning: could not write raw output for "${slug}": ${(err as Error).message}`);
@@ -2665,7 +2695,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
           reviewCardId = proposedThisRun.id;
         } else {
           try {
-            writeFileSync(outputPath, claudeResult.result ?? '', 'utf-8');
+            writeOutputFile(contextRoot, outputPath, claudeResult.result ?? '');
             finalOutputPath = outputPath;
           } catch (err) {
             status = 'failed';

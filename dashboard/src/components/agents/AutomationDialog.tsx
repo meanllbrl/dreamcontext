@@ -268,7 +268,9 @@ export function AutomationDialog({
   /** Only a plain create picks an agent: an edit keeps what it runs as, and a whiteboard's
    *  create makes that board's own agent. */
   const pickable = !editing && !start?.whiteboard;
-  const roster = useAgents({ enabled: pickable });
+  const rosterQ = useAgents({ enabled: pickable });
+  // Only agents this machine owns take a routine (B1-4: a routine is a write to its agent).
+  const roster = useMemo(() => ({ ...rosterQ, data: rosterQ.data?.filter((a) => !a.readOnly) }), [rosterQ]);
   // A starter arrives with its own description, so it opens on the self-contained form.
   const [choice, setChoice] = useState<string>(start ? OWN_AGENT : '');
   const bound = pickable && choice !== OWN_AGENT;
@@ -279,7 +281,7 @@ export function AutomationDialog({
   const [job, setJob] = useState('');
   // Nothing to pick from: the only way forward in the dialog is the self-contained form.
   useEffect(() => {
-    if (pickable && roster.isSuccess && roster.data.length === 0 && choice === '') setChoice(OWN_AGENT);
+    if (pickable && roster.isSuccess && (roster.data ?? []).length === 0 && choice === '') setChoice(OWN_AGENT);
   }, [pickable, roster.isSuccess, roster.data, choice]);
   const unapprovedAgent = bound && choice
     ? (pickedAgent && !pickedAgent.approvedForChat) || refusedSlug === choice
@@ -621,7 +623,7 @@ export function AutomationDialog({
               </button>
             </div>
             <span className="agent-note">
-              {roster.isSuccess && roster.data.length === 0 ? t('automations.pickAgentNone') : t('automations.pickAgentHint')}
+              {roster.isSuccess && (roster.data ?? []).length === 0 ? t('automations.pickAgentNone') : t('automations.pickAgentHint')}
             </span>
             {unapprovedAgent && (
               /* The 409 `agent_unapproved`, in place: what is wrong and the one way to fix it. */

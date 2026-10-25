@@ -15,6 +15,13 @@
       ]
     },
     {
+      "path": "agents bring-here",
+      "desc": "Run this agent on THIS machine from now on (same login, several machines); the other machine stops at its next pull",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
       "path": "agents create",
       "desc": "Create an agent, approved on this machine",
       "args": [
@@ -52,6 +59,11 @@
       ]
     },
     {
+      "path": "agents inbox",
+      "desc": "What waits for you here: held secrets, tasks assigned outside the app, renamed agents, patterns to adopt",
+      "args": []
+    },
+    {
       "path": "agents list",
       "desc": "List every agent, with whether it may chat and whether it may run on this machine",
       "args": []
@@ -76,6 +88,11 @@
       "args": [
         "<slug>"
       ]
+    },
+    {
+      "path": "agents sync",
+      "desc": "Agents ride the brain sync: show the switch and this machine's state, or confirm it here",
+      "args": []
     },
     {
       "path": "agents unshare",

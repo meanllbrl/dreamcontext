@@ -34,6 +34,7 @@ import {
   parseEffort,
   parseFlowSection,
   patchManifestFrontmatter,
+  stampOwnerWrite,
   pathOccupied,
   readManifestParts,
   removeAutomation,
@@ -52,6 +53,8 @@ import { readWhiteboard, listWhiteboards } from '../whiteboards/store.js';
 import { liveElements } from '../whiteboards/ops.js';
 import { widgetPayloadOf } from '../whiteboards/widgets.js';
 import { classifyAutomationSlot, isSafeAutomationSlug, parseManifestFrontmatter, readManifestFrontmatter } from './slot.js';
+import { assertOwned, currentLogin, parseOwner } from './owner.js';
+import { adoptPattern, agentSyncSwitchOn, effectivePattern, recordCreatedLocally } from './agent-sync.js';
 import { composeRun, legacyPair } from './compose.js';
 import { normalizeSoul } from './soul-templates.js';
 import { validateSoul } from './soul.js';
@@ -155,6 +158,8 @@ export function readAgentFile(filePath: string): AgentManifest {
     call: callSettings,
     autonomy: parseAutonomy(data.autonomy),
     face: parseFace(data.face),
+    owner: parseOwner(data.owner),
+    updated: strOrNull(data.updated),
     migratedFrom: strOrNull(data.migrated_from),
     implicit: false,
     path: filePath,
@@ -184,6 +189,8 @@ export function placeholderAgent(slug: string): AgentManifest {
     call: { ...DEFAULT_CALL_SETTINGS },
     autonomy: DEFAULT_AGENT_AUTONOMY,
     face: null,
+    owner: null,
+    updated: null,
     migratedFrom: null,
     implicit: false,
     path: '',
@@ -428,9 +435,14 @@ export function createAgent(contextRoot: string, input: AgentInput, opts: Create
     // Stamped once, here: the next free face in this vault (agents + automations), so adding a
     // member never moves anyone else's face.
     face: nextFreeFace(contextRoot, slug),
+    // Its creator, unhashed: everyone else reads it, read-only (`agents/owner.ts`).
+    owner: currentLogin(),
+    updated: new Date().toISOString(),
   };
   const soul = draft.soul ? `\n## Soul\n\n${draft.soul}\n` : '';
   createManifestText(path, matter.stringify(`## Prompt\n\n${draft.prompt}\n${soul}`, frontmatter));
+  // Created HERE: once agents sync, this is what tells this machine's own from what arrived.
+  if (agentSyncSwitchOn(contextRoot)) recordCreatedLocally(contextRoot, `agents/${slug}.md`);
   const agent = readAgentFile(path);
   if (opts.approve) {
     const target = getRunTarget(contextRoot, slug, 'agent');
@@ -449,6 +461,7 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
   assertIdentityPatch(patch);
   const agent = getAgent(contextRoot, slug);
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
+  assertOwned({ owner: agent.owner }, agent.title || slug);
   const next = applyIdentityPatch(agent, patch);
   validateIdentity(contextRoot, next);
   if (agent.implicit && patch.autonomy !== undefined && next.autonomy !== agent.autonomy) {
@@ -482,6 +495,7 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
       next.soul ? upsertSectionAfter(raw, SOUL_HEADING, next.soul, 'Prompt') : removeSection(raw, SOUL_HEADING),
     );
   }
+  stampOwnerWrite(agent.path);
   const updated = getAgent(contextRoot, slug);
   if (!updated) throw new AutomationError(`Agent "${slug}" could not be read back after the edit.`);
   return updated;
@@ -516,6 +530,7 @@ export type RemoveAgentResult = { removed: true } | { removed: false; usedBy: st
 export function removeAgent(contextRoot: string, slug: string, opts: { home?: string } = {}): RemoveAgentResult {
   const agent = getAgent(contextRoot, slug);
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
+  assertOwned({ owner: agent.owner }, agent.title || slug);
   const usedBy = readSlotFiles(contextRoot)
     .filter((f) => boundJobOf(f, slug) !== null)
     .map((f) => f.slug);
@@ -553,6 +568,7 @@ export function removeAgent(contextRoot: string, slug: string, opts: { home?: st
 export function setAgentPlacement(contextRoot: string, slug: string, patch: AgentPlacementPatch): AgentManifest {
   const agent = getAgent(contextRoot, slug);
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
+  assertOwned({ owner: agent.owner }, agent.title || slug);
   if (agent.implicit) {
     throw new AutomationError(`"${slug}" still lives in its old automation file, which cannot hold a place in the team: run \`dreamcontext update\` (it splits old files into an agent and its routine), then try again.`);
   }
@@ -615,6 +631,7 @@ function reparentReports(contextRoot: string, slug: string, manager: string | nu
 export function setAgentShared(contextRoot: string, slug: string, shared: boolean): AgentManifest {
   const agent = getAgent(contextRoot, slug);
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
+  assertOwned({ owner: agent.owner }, agent.title || slug);
   patchManifestFrontmatter(agent.path, { shared });
   return getAgent(contextRoot, slug) as AgentManifest;
 }
@@ -624,8 +641,12 @@ export function setAgentShared(contextRoot: string, slug: string, shared: boolea
 export function recordAgentLesson(contextRoot: string, slug: string, input: RecordLessonInput): AgentManifest {
   const agent = getAgent(contextRoot, slug);
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
-  writeLessonToFile(agent.path, agent.pattern, input);
-  return getAgent(contextRoot, slug) as AgentManifest;
+  assertOwned({ owner: agent.owner }, agent.title || slug);
+  // The lesson lands on the pattern as THIS machine adopted it (B1-6), and the result is adopted.
+  writeLessonToFile(agent.path, effectivePattern(contextRoot, slug, agent.pattern), input);
+  const after = getAgent(contextRoot, slug) as AgentManifest;
+  adoptIfSyncing(contextRoot, slug, after.pattern);
+  return after;
 }
 
 export interface AgentUsage {
@@ -744,4 +765,11 @@ function withIdentity(target: AutomationManifest, agent: AgentManifest): Automat
     whiteboard: agent.whiteboard,
     autonomy: agent.autonomy,
   };
+}
+
+/** After a local pattern write: adopt the new text, so this machine's own lessons never read as a
+ *  change from elsewhere. A no-op while the agent-sync switch is off. */
+export function adoptIfSyncing(contextRoot: string, slug: string, pattern: string): void {
+  if (!agentSyncSwitchOn(contextRoot)) return;
+  try { adoptPattern(contextRoot, slug, pattern); } catch { /* adopted at the next run */ }
 }

@@ -50,7 +50,7 @@ export interface AutomationSchedule {
 }
 
 /** Why `approved` is false — mirrors registry.ts's `ApprovalVerdict['reason']`. */
-export type ApprovalReason = 'never-approved' | 'manifest-changed' | 'payload-format-changed';
+export type ApprovalReason = 'never-approved' | 'manifest-changed' | 'payload-format-changed' | 'not_owner';
 
 export interface AutomationCacheSummary {
   status: RunStatus | null;

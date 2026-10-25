@@ -15,6 +15,8 @@ import {
   parseManifestFrontmatter,
   slotFromFrontmatter,
 } from '../agents/slot.js';
+import { assertOwned, currentLogin, parseOwner } from '../agents/owner.js';
+import { agentSyncSwitchOn, effectivePattern, recordCreatedLocally } from '../agents/agent-sync.js';
 import { composeRun, legacyPair } from '../agents/compose.js';
 import { nextFreeFace } from '../agents/faces.js';
 import {
@@ -24,6 +26,7 @@ import {
   listAgentTargets,
   placeholderAgent,
   recordAgentLesson,
+  adoptIfSyncing,
   updateAgent,
 } from '../agents/store.js';
 import { approveAutomation, approvePair } from './registry.js';
@@ -656,6 +659,8 @@ export function readManifestParts(filePath: string): ManifestParts {
       outputInstructions: legacy.outputInstructions,
       job: extractSection(content, JOB_HEADING),
       flow: legacy.flow,
+      owner: parseOwner(data.owner),
+      updated: typeof data.updated === 'string' && data.updated.trim() ? data.updated.trim() : null,
       path: legacy.path,
       body: legacy.body,
     },
@@ -768,6 +773,8 @@ function legacyManifestFrom(filePath: string, data: Record<string, unknown>, con
     job: '',
     bindings: [],
     legacyKey: slotFromFrontmatter(data) === 'legacy-call',
+    // Unhashed, and only when stamped, so an unstamped file reads field for field as before.
+    ...(parseOwner(data.owner) ? { owner: parseOwner(data.owner) as string } : {}),
     path: filePath,
     body: content.trim(),
   };
@@ -880,8 +887,11 @@ export function recordLesson(contextRoot: string, slug: string, input: RecordLes
     recordAgentLesson(contextRoot, parts.job.agent, input);
     return readAutomationFile(path);
   }
-  writeLessonToFile(path, parts.legacy.pattern, input);
-  return readAutomationFile(path);
+  assertOwned({ owner: parts.legacy.owner }, parts.legacy.title || slug);
+  writeLessonToFile(path, effectivePattern(contextRoot, slug, parts.legacy.pattern), input);
+  const after = readAutomationFile(path);
+  adoptIfSyncing(contextRoot, slug, after.pattern);
+  return after;
 }
 
 /**
@@ -1486,7 +1496,12 @@ export function createAutomation(
   const path = automationPath(contextRoot, slug);
   if (pathOccupied(path)) throw new AutomationError(`Automation already exists: ${slug}`);
 
-  const created = i.agent === undefined ? createLegacyManifest(contextRoot, slug, path, i) : createBoundAutomation(contextRoot, slug, path, i);
+  // Stamped at create, unhashed: only its creator writes, runs or assigns it (`agents/owner.ts`).
+  const owner = currentLogin();
+  const created = i.agent === undefined
+    ? createLegacyManifest(contextRoot, slug, path, i, owner)
+    : createBoundAutomation(contextRoot, slug, path, i, owner);
+  if (agentSyncSwitchOn(contextRoot)) recordCreatedLocally(contextRoot, `automations/${slug}.md`);
   if (opts.approve) {
     const projectRoot = dirname(contextRoot);
     const agentTarget = created.agent === slug && i.agent !== undefined ? getRunTarget(contextRoot, slug, 'agent') : null;
@@ -1505,11 +1520,14 @@ const OUTPUT_INSTRUCTIONS_PLACEHOLDER =
  * equal an agent's slug only when that agent is the one it is bound to (a
  * same-slug pair); any other agent of that name owns the slug.
  */
-function createBoundAutomation(contextRoot: string, slug: string, path: string, i: CreateAutomationInput): AutomationManifest {
+function createBoundAutomation(contextRoot: string, slug: string, path: string, i: CreateAutomationInput, owner: string): AutomationManifest {
   const agentSlug = (i.agent ?? '').trim();
-  if (!isSafeAutomationSlug(agentSlug) || !getAgent(contextRoot, agentSlug)) {
+  const boundAgent = isSafeAutomationSlug(agentSlug) ? getAgent(contextRoot, agentSlug) : null;
+  if (!boundAgent) {
     throw new AutomationError(`No agent named "${agentSlug}" in this project.`);
   }
+  // A routine is a write to its agent: only the agent's owner may give it one.
+  assertOwned({ owner: boundAgent.owner }, boundAgent.title || agentSlug);
   if (slug !== agentSlug && getAgent(contextRoot, slug)) {
     throw new AutomationError(`"${slug}" is already an agent's name; an automation may share a name only with its own agent.`);
   }
@@ -1525,6 +1543,8 @@ function createBoundAutomation(contextRoot: string, slug: string, path: string, 
     agent: agentSlug,
     // Its figure, stamped once at create (unhashed, like `photo`).
     face: nextFreeFace(contextRoot, slug),
+    owner,
+    updated: new Date().toISOString(),
     mode: 'sched',
     enabled: i.enabled ?? true,
     schedule: serializeSchedule(scheduleFromInput(i)),
@@ -1552,7 +1572,7 @@ function createBoundAutomation(contextRoot: string, slug: string, path: string, 
 /** An unsplit manifest that is its own agent — byte for byte what every create
  *  wrote before the agent split. Refused when an agent file of that name
  *  exists: the legacy file would shadow it on read. */
-function createLegacyManifest(contextRoot: string, slug: string, path: string, i: CreateAutomationInput): AutomationManifest {
+function createLegacyManifest(contextRoot: string, slug: string, path: string, i: CreateAutomationInput, owner: string): AutomationManifest {
   if (pathOccupied(agentPath(contextRoot, slug))) {
     throw new AutomationError(`"${slug}" is already an agent's name; create the automation for that agent instead.`);
   }
@@ -1574,6 +1594,8 @@ function createLegacyManifest(contextRoot: string, slug: string, path: string, i
     title: i.title.trim(),
     mode,
     face: nextFreeFace(contextRoot, slug),
+    owner,
+    updated: new Date().toISOString(),
     // Written explicitly (as `null` when absent) rather than omitted, so the
     // capture protocol and a human reading the manifest both see the field
     // exists. Neither key is approval-hashed, so writing them cannot change
@@ -1696,9 +1718,27 @@ export function updateAutomation(
   }
   // Checked before anything is written, so a refused job leaves the file untouched.
   if (parts.kind === 'legacy' && patch.job !== undefined) throw new AutomationError(JOB_NEEDS_BOUND);
-  return parts.kind === 'legacy'
+  // A teammate's routine (or a routine of a teammate's agent) is read-only here.
+  if (parts.kind === 'legacy') assertOwned({ owner: parts.legacy.owner }, parts.legacy.title || slug);
+  else assertOwned({ owner: getAgent(contextRoot, parts.job.agent)?.owner ?? null, jobOwner: parts.job.owner }, parts.job.title || slug);
+  const updated = parts.kind === 'legacy'
     ? updateLegacyManifest(contextRoot, slug, parts.legacy, patch)
     : updateBoundAutomation(contextRoot, slug, parts.job, patch);
+  stampOwnerWrite(path);
+  return readAutomationFile(path);
+}
+
+/**
+ * `updated:` (ISO, unhashed) on every owner write of a manifest: between two machines of the same
+ * login, the later one wins a same-id merge (`agent-manifest` merge class). Best effort: a file
+ * that cannot be stamped keeps its edit.
+ */
+export function stampOwnerWrite(path: string, now: Date = new Date()): void {
+  try {
+    patchManifestFrontmatter(path, { updated: now.toISOString() });
+  } catch {
+    // the edit itself landed; only the merge tiebreak is older
+  }
 }
 
 /**
@@ -1902,6 +1942,7 @@ export function setAutomationEnabled(contextRoot: string, slug: string, enabled:
 export function setAutomationShared(contextRoot: string, slug: string, shared: boolean): AutomationManifest {
   const manifest = automationFileTarget(contextRoot, slug);
   if (!manifest) throw new AutomationError(`No such automation: ${slug}`);
+  assertOwned(manifest, manifest.title || slug);
   patchManifestFrontmatter(manifest.path, { shared });
   return readAutomationFile(manifest.path);
 }
@@ -1916,6 +1957,7 @@ export function setAutomationShared(contextRoot: string, slug: string, shared: b
 export function removeAutomation(contextRoot: string, slug: string, opts?: { purgeOutput?: boolean }): void {
   const manifest = automationFileTarget(contextRoot, slug);
   if (!manifest) throw new AutomationError(`No such automation: ${slug}`);
+  assertOwned(manifest, manifest.title || slug);
   const isLegacy = readManifestParts(manifest.path).kind === 'legacy';
 
   if (opts?.purgeOutput) {

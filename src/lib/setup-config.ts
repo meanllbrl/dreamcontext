@@ -102,6 +102,13 @@ export interface SetupConfig {
    * file, seeded from the machine-local `BrainLocalState.contextHandoffDefault`.
    */
   contextHandoff?: ContextHandoffConfig;
+  /**
+   * Agents and automations ride the brain sync (AI Team v2, wave B1). One brain-level switch,
+   * turned on from the migration notice and never written false: the `config-json` merge ORs it.
+   * Each machine still holds its own agents back until its owner confirms the notice THERE (an
+   * M0 fact in `~/.dreamcontext/local/`, never in this file).
+   */
+  agentSync?: true;
 }
 
 /**
@@ -601,6 +608,7 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
       learning: sanitizeLearning(parsed.learning),
       sleep: sanitizeSleep(parsed.sleep),
       contextHandoff: sanitizeContextHandoff(parsed.contextHandoff),
+      agentSync: (parsed as { agentSync?: unknown }).agentSync === true ? true : undefined,
     };
   } catch {
     return null;
@@ -647,6 +655,8 @@ export function updateSetupConfig(
     learning: patch.learning ?? existing.learning,
     sleep: patch.sleep ?? existing.sleep,
     contextHandoff: patch.contextHandoff ?? existing.contextHandoff,
+    // Never written false: once on, a rewrite keeps it on.
+    agentSync: patch.agentSync ?? existing.agentSync,
   };
   writeSetupConfig(projectRoot, next);
   return next;

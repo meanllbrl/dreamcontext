@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { TeamRoster } from '../components/aiteam/TeamRoster';
+import { TeamSyncStrip } from '../components/aiteam/TeamSyncStrip';
 import { TeamConversation } from '../components/aiteam/TeamConversation';
 import { AgentStage } from '../components/aiteam/AgentStage';
 import { dropStageSessions } from '../components/aiteam/stageSession';
@@ -287,6 +288,7 @@ export function AiTeamPage({
           view={rosterView}
           onView={pickRosterView}
           onOrgChart={() => { pickPageView('org'); setPanel((p) => (p ? 'team' : p)); }}
+          top={<TeamSyncStrip onToast={setToast} />}
         />
       )}
 

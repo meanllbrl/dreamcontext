@@ -17,6 +17,11 @@ import {
 } from '../../lib/agents/store.js';
 import type { AgentIdentityPatch, AgentPlacementPatch } from '../../lib/agents/types.js';
 import { buildTree, flattenTree } from '../../lib/agents/tree.js';
+import { assertOwned, ownerLabel } from '../../lib/agents/owner.js';
+import { agentSyncPreview, agentSyncState, confirmAgentSyncHere } from '../../lib/agents/agent-sync.js';
+import { writeActiveHere } from '../../lib/agents/active.js';
+import { scanOutsideAssignments } from '../../lib/agents/outside-assignments.js';
+import { listInboxRows } from '../../lib/owner-inbox.js';
 import { getRunTarget, parsePattern, setAutomationShared } from '../../lib/automations/store.js';
 import { SOUL_TEMPLATE_IDS, soulTemplate } from '../../lib/agents/soul-templates.js';
 import { shareAgent, shareAutomation, unshareAgent, unshareAutomation } from '../../lib/automations/sharing.js';
@@ -114,13 +119,16 @@ export function resolveSoulOption(opts: SoulOptions): string | undefined {
   return undefined;
 }
 
-function verdicts(root: string, slug: string): { chat: boolean; run: boolean } | null {
+function verdicts(root: string, slug: string): { chat: boolean; run: boolean; readOnlyOwner: string | null } | null {
   const target = getRunTarget(root, slug, 'agent');
   if (!target) return null;
   const projectRoot = dirname(root);
+  const run = checkApproval(projectRoot, target, undefined, 'run');
   return {
     chat: checkApproval(projectRoot, target, undefined, 'identity').approved,
-    run: checkApproval(projectRoot, target, undefined, 'run').approved,
+    run: run.approved,
+    // Someone else's agent: read-only here, never "needs approval" (B1-4).
+    readOnlyOwner: !run.approved && run.reason === 'not_owner' ? run.owner : null,
   };
 }
 
@@ -143,6 +151,8 @@ export function registerAgentsCommand(program: Command): void {
           title: a.title,
           approvedForChat: v?.chat ?? false,
           approvedToRun: v?.run ?? false,
+          owner: a.owner,
+          readOnly: !!v?.readOnlyOwner,
           implicit: a.implicit,
           reportsTo: a.reportsTo,
           team: a.team,
@@ -159,7 +169,9 @@ export function registerAgentsCommand(program: Command): void {
       }
       console.log(header('Agents'));
       const line = (r: (typeof rows)[number]) => {
-        const state = r.approvedToRun ? chalk.green('may run') : r.approvedForChat ? chalk.yellow('chat only') : chalk.red('needs approval');
+        const state = r.readOnly
+          ? chalk.dim(`${ownerLabel(r.owner ?? '')}'s · read-only`)
+          : r.approvedToRun ? chalk.green('may run') : r.approvedForChat ? chalk.yellow('chat only') : chalk.red('needs approval');
         const used = r.automations.length > 0 ? chalk.dim(` · runs ${r.automations.join(', ')}`) : '';
         return `${chalk.bold(r.slug)}  ${r.title}  ${state}${used}`;
       };
@@ -450,5 +462,85 @@ export function registerAgentsCommand(program: Command): void {
       } catch (err) {
         fail(err);
       }
+    });
+
+  agents
+    .command('sync')
+    .description('Agents ride the brain sync: show the switch and this machine\'s state, or confirm it here')
+    .option('--confirm', 'Turn agent sync on (if off) and confirm it on THIS machine: its agents start to sync')
+    .option('--json', 'Emit as JSON')
+    .action((opts: { confirm?: boolean; json?: boolean }) => {
+      const root = ensureContextRoot();
+      if (opts.confirm) {
+        // The owner's call, never an agent's: confirming publishes this machine's agents.
+        if (insideAgentRun()) {
+          error('An agent run cannot turn on agent sync. Ask the owner to confirm it on the AI Team page.');
+          process.exitCode = 1;
+          return;
+        }
+        const r = confirmAgentSyncHere(root);
+        success(`Agent sync is on for this machine${r.renamed > 0 ? ` (${r.renamed} thread day file${r.renamed === 1 ? '' : 's'} renamed for this machine)` : ''}. The next brain sync pushes your agents; run \`dreamcontext brain sync\` to send them now.`);
+        return;
+      }
+      const state = agentSyncState(root);
+      const preview = state.active ? { files: [] as string[], hits: [] as { file: string; line: number; rule: string; severity: string }[] } : agentSyncPreview(root);
+      if (opts.json) {
+        console.log(JSON.stringify({ ...state, filesToSync: preview.files.length, hits: preview.hits }, null, 2));
+        return;
+      }
+      console.log(header('Agent sync'));
+      console.log(`  Brain switch: ${state.switchOn ? chalk.green('on') : chalk.dim('off')}`);
+      console.log(`  This machine: ${state.confirmedHere ? chalk.green('confirmed') : chalk.yellow('not confirmed')}`);
+      if (!state.active) {
+        console.log(chalk.dim(`  ${preview.files.length} file(s) would start to sync from here. Every machine on this brain must run this version first: an older version overwrites its own same-named agents when it pulls.`));
+        for (const h of preview.hits) console.log(`  ${h.severity === 'block' ? chalk.red('held') : chalk.yellow('check')}  ${h.file}:${h.line}  ${h.rule}`);
+      }
+    });
+
+  agents
+    .command('bring-here')
+    .argument('<slug>', 'Agent slug')
+    .description('Run this agent on THIS machine from now on (same login, several machines); the other machine stops at its next pull')
+    .action((slug: string) => {
+      const root = ensureContextRoot();
+      if (insideAgentRun()) {
+        error('An agent run cannot move an agent between machines. Ask the owner.');
+        process.exitCode = 1;
+        return;
+      }
+      const agent = getAgent(root, slug);
+      if (!agent) {
+        error(`No agent named "${slug}" in this project.`);
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        assertOwned({ owner: agent.owner }, agent.title || slug);
+        writeActiveHere(root, slug, agent.owner);
+        success(`${agent.title || slug} runs on this machine now. Run \`dreamcontext brain sync\` so your other machine learns it at its next pull.`);
+      } catch (err) {
+        fail(err);
+      }
+    });
+
+  agents
+    .command('inbox')
+    .description('What waits for you here: held secrets, tasks assigned outside the app, renamed agents, patterns to adopt')
+    .option('--json', 'Emit as JSON')
+    .action((opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      scanOutsideAssignments(root);
+      const rows = listInboxRows(dirname(root));
+      if (opts.json) {
+        console.log(JSON.stringify({ rows }, null, 2));
+        return;
+      }
+      if (rows.length === 0) {
+        console.log(chalk.dim('Nothing waits for you.'));
+        return;
+      }
+      console.log(header('Waiting for you'));
+      for (const r of rows) console.log(`  ${chalk.bold(r.kind)}  ${r.title}${r.detail ? chalk.dim(` (${r.detail})`) : ''}`);
+      console.log(chalk.dim('  Answer them on the AI Team page.'));
     });
 }

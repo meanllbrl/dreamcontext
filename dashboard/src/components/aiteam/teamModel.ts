@@ -28,7 +28,7 @@ export type TeamAutomation = Pick<
 export type TeamAgent = Pick<
   AgentSummary,
   'slug' | 'title' | 'hasPhoto' | 'roleLine' | 'description' | 'approvedForChat' | 'approvedToRun' | 'approvalReason' | 'model' | 'effort'
->;
+> & Partial<Pick<AgentSummary, 'readOnly' | 'owner' | 'ownerLabel' | 'runsElsewhere'>>;
 
 export type TeamStatus = 'working' | 'needs' | 'approval' | 'paused' | 'idle';
 
@@ -47,8 +47,14 @@ export interface TeamRow {
   /** The newest message's time, ISO; null before anything was said. */
   lastAt: string | null;
   unread: number;
-  /** Which part of the list it sits in. */
-  section: 'needs' | 'team';
+  /** Which part of the list it sits in: a teammate's agent sits in its owner's read-only part. */
+  section: 'needs' | 'team' | 'readonly';
+  /** Someone else's agent (B1-4): read-only here. */
+  readOnly: boolean;
+  /** Its owner, as a sentence reads it; null on an unstamped agent. */
+  ownerLabel: string | null;
+  /** The owner's other machine runs it: that machine's name. */
+  elsewhere: string | null;
 }
 
 /** Is this automation one of `agentSlug`'s routines? An older backend names no agent: the
@@ -125,7 +131,8 @@ export function buildRoster(
 
     const needs = mine.some((m) => m.question !== null || m.status === 'needs-you')
       || routines.some((r) => r.pendingQuestion !== null);
-    const approval = pendingApprovals(agent, routines).length > 0;
+    const readOnly = agent.readOnly === true;
+    const approval = !readOnly && pendingApprovals(agent, routines).length > 0;
     const paused = routines.length > 0 && routines.every((r) => !r.enabled);
     const status: TeamStatus = since !== null ? 'working'
       : needs ? 'needs'
@@ -147,12 +154,17 @@ export function buildRoster(
       preview: last ? previewOf(last) : null,
       lastAt: last?.at ?? null,
       unread,
-      section: status === 'needs' ? 'needs' : 'team',
+      section: readOnly ? 'readonly' : status === 'needs' ? 'needs' : 'team',
+      readOnly,
+      ownerLabel: agent.ownerLabel ?? agent.owner ?? null,
+      elsewhere: agent.runsElsewhere?.name ?? null,
     };
   });
 
+  const order = { needs: 0, team: 1, readonly: 2 } as const;
   return rows.sort((a, b) => {
-    if (a.section !== b.section) return a.section === 'needs' ? -1 : 1;
+    if (a.section !== b.section) return order[a.section] - order[b.section];
+    if (a.readOnly && b.readOnly && a.ownerLabel !== b.ownerLabel) return (a.ownerLabel ?? '').localeCompare(b.ownerLabel ?? '');
     if (a.lastAt && b.lastAt) return a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : 0;
     if (a.lastAt) return -1;
     if (b.lastAt) return 1;
@@ -188,6 +200,8 @@ export function pendingApprovals(
   routines: readonly Pick<TeamAutomation, 'slug' | 'title' | 'approved' | 'approvalReason'>[],
 ): PendingApproval[] {
   // `say` runs the routine that shares the agent's slug when there is one, else the call target.
+  // A teammate's agent asks nothing here: it is read-only, never "needs approval".
+  if ((agent as { readOnly?: boolean }).readOnly) return [];
   const talkRoutine = routines.some((r) => r.slug === agent.slug);
   const out: PendingApproval[] = [];
   if (!agent.approvedForChat || !agent.approvedToRun) {

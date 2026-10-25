@@ -50,7 +50,8 @@ import {
 } from '../../lib/handoff-readiness.js';
 import { locateHandoffSession, writeHandoffArtifacts } from './handoff-artifacts.js';
 import { superHandoffCommand, superHandoffContext } from '../../lib/super/handoff-task.js';
-import { commitAssignment, logAssignmentResult, prepareAssignment } from '../../lib/agents/task-assignment.js';
+import { commitAssignment, consumeAssignmentStart, logAssignmentResult, prepareAssignment } from '../../lib/agents/task-assignment.js';
+import { forgetTaskAssignments } from '../../lib/agents/assignment-ledger.js';
 import { runAutomation } from '../../lib/automations/runner.js';
 import { insideAgentRun } from '../../lib/automations/types.js';
 import { isMultiPersonVault, listPeople, PeopleStoreError } from '../../lib/people-store.js';
@@ -2007,6 +2008,9 @@ export function registerTasksCommand(program: Command): void {
       if (!slug) return;
       if (opts.clear) {
         await backend.updateFields(slug, { agent: null, updated_at: today() });
+        // The ledger entries die with the assignment (M0 death rule).
+        const cleared = await backend.get(slug).catch(() => null);
+        forgetTaskAssignments(dirname(root), cleared?.id || slug);
         success(`Cleared the agent on ${slug}.`);
         return;
       }
@@ -2024,6 +2028,11 @@ export function registerTasksCommand(program: Command): void {
       const fireAt = new Date();
       const agentTitle = prep.target.agentTitle || prep.target.title;
       const { statusMoved, from } = commitAssignment(root, prep, fireAt, { source: 'cli' });
+      if (!consumeAssignmentStart(root, prep)) {
+        error('This assignment was not queued on this machine, so it does not start here.');
+        process.exitCode = 1;
+        return;
+      }
       info(`Assigned ${slug} to ${agentTitle}${statusMoved ? ` (status ${from ?? 'none'} → in_progress)` : ''}. Running it now…`);
       const outcome = await runAutomation(root, prep.target.slug, {
         host: 'cli',

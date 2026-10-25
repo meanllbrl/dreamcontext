@@ -549,14 +549,21 @@ describe('snapshot (integration)', () => {
       const ctx = scaffoldRich(tmpDir);
       const fakeHome = join(tmpDir, 'fake-home');
       mkdirSync(fakeHome, { recursive: true });
-      const manifest = createAutomation(ctx, {
-        slug: 'weekly-report',
-        title: 'Weekly Report',
-        days: 'mon',
-        at: '09:00',
-        prompt: 'Summarize the week.',
-      });
-      approveAutomation(realpathSync(tmpDir), manifest, new Date(), fakeHome);
+      // Created as the machine the snapshot runs on: its owner is that machine's identity.
+      const savedHome = process.env.HOME;
+      process.env.HOME = fakeHome;
+      try {
+        const manifest = createAutomation(ctx, {
+          slug: 'weekly-report',
+          title: 'Weekly Report',
+          days: 'mon',
+          at: '09:00',
+          prompt: 'Summarize the week.',
+        });
+        approveAutomation(realpathSync(tmpDir), manifest, new Date(), fakeHome);
+      } finally {
+        if (savedHome === undefined) delete process.env.HOME; else process.env.HOME = savedHome;
+      }
 
       const output = runSnapshot(tmpDir, { HOME: fakeHome });
       expect(output).toContain('## Automations');

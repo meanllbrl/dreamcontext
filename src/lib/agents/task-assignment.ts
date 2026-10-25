@@ -15,6 +15,8 @@ import { appendThreadEntry } from '../automations/threads.js';
 import { oneDataLine, TASK_NAME_MAX_CHARS } from '../automations/runner.js';
 import type { AutomationManifest, RunStatus } from '../automations/types.js';
 import { isSafeAutomationSlug } from './slot.js';
+import { ownerLabel } from './owner.js';
+import { armStart, consumeArmedStart, recordAssignment } from './assignment-ledger.js';
 
 /**
  * Assigning a task to an agent — the shared steps the dashboard route and the
@@ -41,6 +43,7 @@ export type AssignmentRefusal =
   | 'unknown_task'
   | 'unknown_agent'
   | 'agent_not_approved_to_run'
+  | 'not_owner'
   | 'agent_disabled'
   | 'note_too_long';
 
@@ -49,7 +52,7 @@ export type AssignmentPrep =
       ok: true;
       /** The agent's call target, from the store (legacyKey and bindings set). */
       target: AutomationManifest;
-      task: { slug: string; name: string };
+      task: { slug: string; id: string; name: string };
       /** The note as the OWNER's live words: only a note typed in the dashboard. */
       ownerNote: string | null;
       /** A note that is data, not the owner speaking: the CLI's `--note`. */
@@ -105,13 +108,18 @@ export function prepareAssignment(
   if (!target) return refuse('unknown_agent', `There is no agent named "${oneDataLine(agentSlug, 80)}" in this project.`);
   const title = oneDataLine(target.agentTitle || target.title, 120);
   if (!target.enabled) return refuse('agent_disabled', `${title} is switched off, so it cannot take a task.`);
-  if (!checkApproval(dirname(contextRoot), target, opts.home, 'run').approved) {
+  const verdict = checkApproval(dirname(contextRoot), target, opts.home, 'run');
+  // A person assigns a task only to an agent they own: refused here for the CLI and the server.
+  if (!verdict.approved && verdict.reason === 'not_owner') {
+    return refuse('not_owner', `${title} belongs to ${ownerLabel(verdict.owner)}, so it is read-only here: only its owner can give it a task.`);
+  }
+  if (!verdict.approved) {
     return refuse('agent_not_approved_to_run', `${title} is not approved to run on this machine. Approve it on the AI Team page.`);
   }
   return {
     ok: true,
     target,
-    task: { slug: task.slug, name: task.name },
+    task: { slug: task.slug, id: task.id || task.slug, name: task.name },
     ownerNote: opts.source === 'dashboard' && note ? note : null,
     dataNote: opts.source === 'cli' && note ? note : null,
   };
@@ -125,13 +133,18 @@ export function commitAssignment(
   contextRoot: string,
   prep: Extract<AssignmentPrep, { ok: true }>,
   fireAt: Date,
-  opts: { source?: AssignmentSource } = {},
+  opts: { source?: AssignmentSource; home?: string } = {},
 ): { statusMoved: boolean; from: string | null } {
   const slug = prep.task.slug;
   const agent = { slug: prep.target.slug, title: prep.target.agentTitle || prep.target.title };
   withTaskFileLock(contextRoot, slug, () => {
     updateFrontmatterFields(taskPath(contextRoot, slug), { agent: agent.slug, updated_at: today() });
   });
+  // The ledger and the armed start (M0): this machine assigned it, so this machine may start it.
+  // The run the caller starts next consumes the armed entry (`consumeAssignmentStart`).
+  const projectRoot = dirname(contextRoot);
+  recordAssignment(projectRoot, { taskId: prep.task.id, taskSlug: slug, role: 'doer', agent: agent.slug }, opts.home);
+  armStart(projectRoot, prep.task.id, 'work', 0, opts.home);
   const status = applyAssignmentStatus(contextRoot, slug, agent);
   const name = oneDataLine(prep.task.name, TASK_NAME_MAX_CHARS);
   const note = prep.ownerNote ?? prep.dataNote;
@@ -213,4 +226,13 @@ export function logAssignmentResult(
     insertToSection(path, 'Changelog', entry, 'top', true);
     updateFrontmatterFields(path, { updated_at: now });
   });
+}
+
+/**
+ * The run of an assignment consumes its armed start (B1-5): the one-time ticket the local
+ * assignment wrote. False when there is none, i.e. the run was not queued by an action on this
+ * machine, and the caller must not start it.
+ */
+export function consumeAssignmentStart(contextRoot: string, prep: Extract<AssignmentPrep, { ok: true }>, opts: { home?: string } = {}): boolean {
+  return consumeArmedStart(dirname(contextRoot), prep.task.id, 'work', 0, opts.home);
 }

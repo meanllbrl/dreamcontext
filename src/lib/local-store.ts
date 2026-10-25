@@ -156,3 +156,19 @@ export function forgetAgentLocal(projectRoot: string, agent: string, home?: stri
     // a stale entry only names a conversation the stage can no longer open
   }
 }
+
+/** An agent renamed: its stage home session follows it. Never throws. */
+export function renameAgentStage(projectRoot: string, from: string, to: string, home?: string): void {
+  try {
+    const rec = readLocalJson<StageRecord>(projectRoot, STAGE_FILE, { agents: {} }, home);
+    if (!rec.agents?.[from]) return;
+    updateLocalJson<StageRecord>(projectRoot, STAGE_FILE, { agents: {} }, (cur) => {
+      const agents = { ...(cur.agents ?? {}) };
+      if (agents[from] && !agents[to]) agents[to] = agents[from];
+      delete agents[from];
+      return { agents };
+    }, home);
+  } catch {
+    // the renamed agent's stage opens a fresh conversation
+  }
+}
