@@ -1,6 +1,6 @@
 import {
   useEffect, useMemo, useRef, useState, useReducer, useCallback, useLayoutEffect,
-  type CSSProperties,
+  type CSSProperties, type TouchEvent as ReactTouchEvent,
 } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import './AgentTerminal.css';
@@ -86,7 +86,7 @@ import { useChrome } from '../layout/WindowChrome';
 import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
 import { carriedUnrestored, generationOf, mergeStoredRoster, phoneRestorable, putOutcome, seededRoster, withBaseGeneration, type DesktopSeedTab } from '../handsfree/rosterRehydrate';
 import { PhoneChip } from '../handsfree/phone/PhoneChip';
-import { takePendingMacAdopt } from '../handsfree/macAdopt';
+import { takePendingMacAdopt, takePendingPhoneOpen } from '../handsfree/macAdopt';
 import { MAC_MODE_ENDED_EVENT, type LiveChatWire, type LiveChatsWire, type SuperChatWire } from '../handsfree/macContract';
 import { isSuperMirrorId, rememberSuperMirrorIds } from './superMirrorIds';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
@@ -111,7 +111,10 @@ import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRo
 import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperRecap, remoteSkippedTitles } from './super/superApi';
 import { fetchRemoteStage, postRemoteLayout, remoteLayoutPatch, remoteStageState } from './super/remoteStage';
 import { useQuery } from '@tanstack/react-query';
-import { superRowFor } from './phoneList';
+import { listTap, superRowFor, superTap } from './phoneList';
+import { newlyWaiting, swipeTarget, waitingElsewhere, type HomeRow } from './phoneHome';
+import { usePhoneHome } from './usePhoneHome';
+import { openElsewhere } from './PhoneChatList';
 import { applyLayoutPatch, withPendingPatches, type LayoutPatch, type StagePlan } from './super/superLayout';
 
 /**
@@ -2356,20 +2359,30 @@ export function AgentSurface() {
     // The product's name, the same in every language (`handsfree.super.title`).
     resumePastSession({ id: row.conversationId, title: 'Super Agent', named: true, updatedAt: Date.now(), preview: '' } as unknown as PastSession, 'passive');
   }, [resumePastSession]);
-  // A tap in another project's drawer parked the adoption for THIS project (macAdopt.ts):
-  // taken once the roster has hydrated, so a restored tab of the same chat is reused.
+  // A tap in another project's drawer, or in the phone's one list / a swipe (hands-free sekmeler
+  // W3), parked what to open for THIS project (macAdopt.ts): taken once the roster has hydrated,
+  // so a restored tab of the same chat is reused, when the project mounts AND whenever it becomes
+  // the one on screen again (an already open chip is only switched to, never remounted).
   useEffect(() => {
-    if (!vault || !isMacPhoneSurface()) return;
+    if (!vault || !isMacPhoneSurface() || !isActive) return;
     let tries = 0;
     const timer = setInterval(() => {
       tries++;
       if (!hydratedRef.current && tries < 25) return;
       clearInterval(timer);
       const pending = takePendingMacAdopt(vault);
-      if (pending) adoptLiveChat(pending);
+      if (pending) { adoptLiveChat(pending); setPhoneView('chat'); return; }
+      const open = takePendingPhoneOpen(vault);
+      if (!open) return;
+      if (open.kind === 'super') {
+        openSuperOnPhone({ conversationId: open.id, vault, title: null, busy: false, state: 'idle', lastLine: null, updatedAt: null, live: true });
+      } else {
+        resumePastSession({ id: open.id, title: open.title, preview: '', updatedAt: 0, startedAt: null, sizeBytes: 0, gitBranch: '' } as PastSession);
+      }
+      setPhoneView('chat');
     }, 200);
     return () => clearInterval(timer);
-  }, [vault, adoptLiveChat]);
+  }, [vault, isActive, adoptLiveChat, openSuperOnPhone, resumePastSession]);
 
   // ── Run sleep agent (from the header's Sleep-debt tracker) ────────────────────────
   // Spawn a dedicated "Sleep" agent that auto-runs the project's consolidation flow, and
@@ -4947,6 +4960,105 @@ export function AgentSurface() {
     const s = sessions.current.get(id);
     return s && s.kind === 'chat' ? (s as ChatSession) : undefined;
   }, []);
+
+  // ── The phone's chat screen across projects (hands-free sekmeler W3, owner D1) ─────────────
+  // The same rows the Sohbetler list draws: a swipe moves to the next / previous OPEN chat in the
+  // list's order, the back button counts chats waiting elsewhere, and a one-line toast above the
+  // composer says when another chat starts waiting (a tap opens it).
+  const chrome = windowChrome;
+  const phoneChatOn = macPhone && expanded && phoneView === 'chat' && !mobileEscaped && isActive;
+  const phoneHome = usePhoneHome({ vault: vault ?? '', tabs: stackTabs, active: phoneChatOn });
+  const superHereId = phoneHome.live?.supers?.find((x) => x.vault === vault)?.conversationId;
+  const activeClaude = mobileActive ? (sessions.current.get(mobileActive.id)?.claudeId || claudeIdOf.get(mobileActive.id)) : undefined;
+  const phoneCurrentKey = !mobileActive ? null : activeClaude && activeClaude === superHereId ? `super:${vault}` : `${vault}:tab:${mobileActive.id}`;
+  const phoneWaitingElsewhere = phoneChatOn ? waitingElsewhere(phoneHome.rows, phoneCurrentKey) : 0;
+  const [phoneSwipe, setPhoneSwipe] = useState<'next' | 'prev' | null>(null);
+  useEffect(() => {
+    if (!phoneSwipe) return undefined;
+    const timer = setTimeout(() => setPhoneSwipe(null), 260);
+    return () => clearTimeout(timer);
+  }, [phoneSwipe]);
+  /** Open a row of the one list from the chat screen: here as the list does, elsewhere through
+   *  that project's surface (macAdopt.ts). */
+  const goPhoneRow = (r: HomeRow, dir?: 1 | -1) => {
+    if (dir) setPhoneSwipe(dir === 1 ? 'next' : 'prev');
+    if (r.vault !== vault) { openElsewhere(r, chrome); return; }
+    if (r.kind === 'super') {
+      const st = superTap(r.row, stackTabs);
+      if (st && 'select' in st) selectTab(st.select.paneId, st.select.id);
+      else if (st) openSuperOnPhone(st.open);
+      return;
+    }
+    if (r.kind === 'closed') { resumePastSession(r.row.past); return; }
+    const d = listTap(r.row);
+    if ('select' in d) selectTab(d.select.paneId, d.select.id);
+    else if ('adopt' in d) adoptLiveChat(d.adopt);
+  };
+  const swipeFrom = useRef<{ x: number; y: number; at: number } | null>(null);
+  const onPhoneTouchStart = (e: TouchEvent | ReactTouchEvent) => {
+    swipeFrom.current = null;
+    if (!phoneChatOn || e.touches.length !== 1) return;
+    // A code block or a table scrolls sideways, and the composer is the owner's: never a swipe.
+    if ((e.target as HTMLElement | null)?.closest('pre, table, textarea, input, .chat-cmp, .mchat-toast')) return;
+    swipeFrom.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, at: Date.now() };
+  };
+  const onPhoneTouchEnd = (e: TouchEvent | ReactTouchEvent) => {
+    const from = swipeFrom.current;
+    swipeFrom.current = null;
+    if (!from || !phoneChatOn) return;
+    const dx = e.changedTouches[0].clientX - from.x;
+    const dy = e.changedTouches[0].clientY - from.y;
+    if (Math.abs(dx) < 72 || Math.abs(dy) > 48 || Date.now() - from.at > 800) return;
+    const dir: 1 | -1 = dx < 0 ? 1 : -1;
+    const target = swipeTarget(phoneHome.rows, phoneCurrentKey, dir);
+    if (target) goPhoneRow(target, dir);
+  };
+  // NATIVE listeners on the surface: the chat panes are portals whose React parent is not this
+  // element, so a synthetic touch inside a transcript never reaches a React handler here; the DOM
+  // event does (the panes sit inside it). Passive: a swipe never blocks the transcript's scroll.
+  const swipeHandlers = useRef({ start: onPhoneTouchStart, end: onPhoneTouchEnd });
+  swipeHandlers.current = { start: onPhoneTouchStart, end: onPhoneTouchEnd };
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el || !macPhone) return undefined;
+    const start = (e: TouchEvent) => swipeHandlers.current.start(e);
+    const end = (e: TouchEvent) => swipeHandlers.current.end(e);
+    el.addEventListener('touchstart', start, { passive: true });
+    el.addEventListener('touchend', end, { passive: true });
+    return () => { el.removeEventListener('touchstart', start); el.removeEventListener('touchend', end); };
+  }, [macPhone]);
+  // The toast: a chat that STARTED waiting since the last look, never the one on screen.
+  const seenWaitingRef = useRef<Set<string> | null>(null);
+  const [phoneToast, setPhoneToast] = useState<HomeRow | null>(null);
+  const waitingKeys = phoneHome.rows.filter((r) => r.section === 'waiting').map((r) => r.key).join('|');
+  useEffect(() => {
+    if (!phoneHome.live) return;
+    const waiting = new Set(waitingKeys ? waitingKeys.split('|') : []);
+    // The first answer is the baseline: a chat already waiting when the screen opened is no news.
+    if (seenWaitingRef.current === null) { seenWaitingRef.current = waiting; return; }
+    const fresh = phoneChatOn ? newlyWaiting(phoneHome.rows, seenWaitingRef.current, phoneCurrentKey) : null;
+    seenWaitingRef.current = waiting;
+    if (fresh) setPhoneToast(fresh);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waitingKeys, phoneChatOn, phoneCurrentKey, !!phoneHome.live]);
+  useEffect(() => {
+    if (!phoneToast) return undefined;
+    const timer = setTimeout(() => setPhoneToast(null), 10_000);
+    return () => clearTimeout(timer);
+  }, [phoneToast]);
+  const toastTitle = !phoneToast ? '' : phoneToast.kind === 'super' ? t('handsfree.super.title') : (phoneToast.row.title || t('handsfree.mac.untitled'));
+  const phoneToastEl = phoneToast && phoneChatOn ? (
+    <button
+      type="button"
+      className="mchat-toast"
+      data-testid="chat-waiting-toast"
+      onClick={() => { const r = phoneToast; setPhoneToast(null); goPhoneRow(r); }}
+    >
+      <span className="mchat-toast-dot" aria-hidden />
+      <span className="mchat-toast-text">{t('handsfree.chat.waitingToast').replace('{title}', () => toastTitle)}</span>
+      <span className="mchat-toast-go">{t('handsfree.chat.waitingOpen')} ›</span>
+    </button>
+  ) : null;
   // Collapsed dock rows — one chip per session, in roster order. Never the Super Agent (it is
   // not a tab; its queue speaks through the hand-over button's dot and the queue head).
   const dockRows: SessionRow[] = sessionList.filter((meta) => !isSuperSession(meta, superState?.session)).map((meta) => {
@@ -5296,6 +5408,7 @@ export function AgentSurface() {
         /* The phone layer's switch — every rule in `MobileChat.css` hangs off this one
            attribute, so the desktop layout is untouched at any width. */
         data-mobile={isMobile ? 'true' : undefined}
+        data-swipe={phoneSwipe ?? undefined}
         data-phone-nav={macPhone && phoneNav ? phoneNav : undefined}
         /* The live pane count, for the focus-widening math in CSS — the focused pane's
            extra width is capped at what is left once every OTHER pane keeps `--pane-min`,
@@ -5328,6 +5441,10 @@ export function AgentSurface() {
                   <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <path d="M12.5 4.5 7 10l5.5 5.5" />
                   </svg>
+                  {/* Chats waiting on the owner elsewhere, across projects (W3). */}
+                  {phoneWaitingElsewhere > 0 && (
+                    <span className="mchat-back-badge" data-testid="chat-back-badge" aria-label={t('handsfree.chat.waitingBadge').replace('{n}', String(phoneWaitingElsewhere))}>{phoneWaitingElsewhere}</span>
+                  )}
                 </button>
               ) : (
               <button
@@ -5620,6 +5737,7 @@ export function AgentSurface() {
           // Agent (owner decision 3). Back to a normal composer the moment it is taken back.
           readOnly={marked.has(cs.claudeId)}
           idlePlaceholder={cs.mode === 'super' ? t('super.centre.placeholder') : undefined}
+          aboveComposer={cs.id === mobileActive?.id ? phoneToastEl : undefined}
         />,
         cs.container,
         `chat-${cs.id}`,

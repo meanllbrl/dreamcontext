@@ -38,17 +38,19 @@ describe('the Super Agent row (AC6)', () => {
     expect(superTap(row({ live: false }), [])).toBeNull();
   });
 
-  it('the list renders the one row before anything else, and the old list otherwise', () => {
+  it('in the one list (W3) a handed-over project is its one Super row: no chat of it, no new chat there', async () => {
     const list = code('dashboard/src/components/sleepy/PhoneChatList.tsx');
-    const early = list.indexOf('if (superRow) {');
-    expect(early).toBeGreaterThan(0);
-    const superBlock = list.slice(early, list.indexOf('return (', list.indexOf('return (', early) + 1));
-    expect(superBlock).toContain('data-testid="super-row"');
-    for (const gone of ['list-search', 'list-filter-', 'past-row', 'list-new', 'mac-live-row', 'onNewChat']) expect(superBlock).not.toContain(gone);
-    // The normal list is still there, after it.
-    const rest = list.slice(early + superBlock.length);
-    for (const kept of ['list-search', 'past-row', 'list-new', 'mac-live-row']) expect(rest).toContain(kept);
-    expect(list).toMatch(/const superRow = superRowFor\(live, vault\);/);
+    expect(list).toContain('data-testid="super-row"');
+    expect(list).toMatch(/const superHere = superRowFor\(live, vault\);/);
+    // No ＋ in a handed-over project (its chats are the Super's); the rest of the list stays.
+    expect(list).toMatch(/\{!superHere && \(\s*<button type="button" className="mlist-foot-btn mlist-foot-btn--primary" onClick=\{onNewChat\} data-testid="list-new">/);
+    for (const kept of ['list-search', 'past-row', 'mac-live-row']) expect(list).toContain(kept);
+    const { homeRows } = await import('../../dashboard/src/components/sleepy/phoneHome.js');
+    const rows = homeRows({
+      vault: 'acme', tabs: [], projects: ['acme'], pastByVault: { acme: [{ id: 'old', title: 'old', preview: '', updatedAt: 1, startedAt: 1, sizeBytes: 1, gitBranch: '' }] },
+      live: { chats: [{ conversationId: 'c1', vault: 'acme', title: 'x', busy: false, state: 'idle', lastLine: null, updatedAt: 1 }], draining: [], supers: [{ conversationId: 's', vault: 'acme', title: null, busy: false, state: 'idle', lastLine: null, updatedAt: 1, live: true }] },
+    });
+    expect(rows.map((r) => r.kind)).toEqual(['super']);
   });
 
   it('opening it never evicts the window: a passive open, no `reattach=1`', () => {

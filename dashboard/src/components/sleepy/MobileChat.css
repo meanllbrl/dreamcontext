@@ -932,3 +932,87 @@ body[data-phone] .agent-dock { display: none; }
 
 /* The reply groups' line (cards.css) sits inside the phone's narrower gutter. */
 .agent-surface[data-mobile] .chat-reply-line { left: calc(-1 * var(--space-2)); }
+
+/* ── The one list over every chosen project (hands-free sekmeler W3) ────────────────────── */
+/* A row's project: the same quiet tag the Mac chip uses, never a colour of its own. */
+.mlist-tag {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs, 11px);
+  font-weight: 500;
+}
+/* "Proje ▾": a chip holding the platform's own picker (no new menu to build or to trap focus in). */
+.mlist-project-pick { position: relative; padding: 0; }
+.mlist-project-pick select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0 var(--space-3);
+  min-height: inherit;
+  cursor: pointer;
+}
+/* The waiting section leads in the attention tone, like the rows it holds. */
+.mlist-sec[data-section='waiting'] { color: var(--color-warning, var(--color-text-secondary)); }
+
+/* ── The chat screen across projects: the back badge and the one-line waiting toast ─────── */
+.mchat-back-badge {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-warning, var(--color-accent));
+  color: var(--color-bg);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+.mchat-head-btn { position: relative; }
+.mchat-toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 var(--space-3) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  min-height: 44px;
+  border: 1px solid color-mix(in oklab, var(--color-warning, var(--color-accent)) 50%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: var(--font-size-sm, 13px);
+  text-align: left;
+  width: calc(100% - 2 * var(--space-3));
+}
+.mchat-toast-dot { width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--color-warning, var(--color-accent)); flex: 0 0 auto; }
+.mchat-toast-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mchat-toast-go { flex: 0 0 auto; color: var(--color-accent); font-weight: 600; }
+@media (prefers-reduced-motion: no-preference) {
+  .mchat-swipe-in-next { animation: mchat-swipe-next 180ms ease-out; }
+  .mchat-swipe-in-prev { animation: mchat-swipe-prev 180ms ease-out; }
+}
+@keyframes mchat-swipe-next { from { transform: translateX(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+@keyframes mchat-swipe-prev { from { transform: translateX(-24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+.agent-surface[data-swipe='next'] .agent-pane-slot { animation: mchat-swipe-next 180ms ease-out; }
+.agent-surface[data-swipe='prev'] .agent-pane-slot { animation: mchat-swipe-prev 180ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .agent-surface[data-swipe] .agent-pane-slot { animation: none; }
+}
+
+/* The phone shows ONE chat (hands-free sekmeler W3): a roster a remote computer split into panes
+   (the remote screens share one roster) comes back here as its active pane alone, full width. */
+.agent-surface[data-mobile] .agent-pane:not(.active) { display: none; }
+.agent-surface[data-mobile] .agent-pane.active { flex: 1 1 auto; width: 100%; max-width: none; }

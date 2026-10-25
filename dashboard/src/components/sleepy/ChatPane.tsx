@@ -639,7 +639,7 @@ export function ChatPane({
   taskSlug, onContinueInTerminal,
   permissionMode, onPermissionModeChange, mode, onModeChange, onAgentPick, onHandoffToDevelop,
   onResume, automation, onOpenAppPage, onSignIn,
-  canSignInInApp, signInCommand, bare = false, idlePlaceholder, readOnly = false,
+  canSignInInApp, signInCommand, bare = false, idlePlaceholder, readOnly = false, aboveComposer,
 }: {
   session: ChatSession;
   modelConfig: ModelConfig;
@@ -718,6 +718,8 @@ export function ChatPane({
   /** A child of the handed-over Super Agent (plan-r7 D10, owner decision 3): the owner looks,
    *  and writes only to the Super Agent, so the composer is replaced by one line saying so. */
   readOnly?: boolean;
+  /** One line right above the composer, never over it (the phone's waiting toast, W3). */
+  aboveComposer?: React.ReactNode;
 }) {
   // A computer or landscape tablet on Mac mode's tunnel (hands-free sekmeler W2).
   const remoteDesktop = useRemoteDesktop();
@@ -2538,6 +2540,7 @@ export function ChatPane({
       {/* Nearest the composer, and OUTSIDE the needsSignIn/ended branch below on purpose: these
           rows are the only copy of text the user has already committed to sending, so they must
           survive the composer being replaced by a banner (see QueuedMessages.tsx). */}
+      {aboveComposer}
       <QueuedMessages session={session} />
       {/* The pinned shelf, docked to the composer's TOP EDGE — and, like the two rows above
           it, OUTSIDE `.chat-transcript`. That placement is the whole mechanism behind its

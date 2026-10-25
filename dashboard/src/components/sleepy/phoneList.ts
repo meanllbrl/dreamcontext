@@ -32,10 +32,17 @@ function rankOf(kind: string): number {
 }
 
 export function openRows(i: { tabs: readonly StackTab[]; live: readonly LiveChatWire[]; draining?: readonly string[]; vault: string }): OpenRow[] {
-  const tabRows: OpenRow[] = i.tabs.map((t) => ({
-    kind: 'tab', key: `tab:${t.id}`, id: t.id, paneId: t.paneId, title: t.title, dot: t.info.kind,
-    stateKey: activeStateKey(t.info), label: t.info.label, waiting: t.info.kind === 'asking', rank: rankOf(t.info.kind),
-  }));
+  const tabRows: OpenRow[] = i.tabs.map((t) => {
+    // A tab whose chat another screen holds (the Mac's window, 4409) says what the Mac says: a
+    // question waiting there waits on the owner here too (hands-free sekmeler W3).
+    const there = i.live.find((c) => c.conversationId === t.claudeId || (!!t.altClaudeId && c.conversationId === t.altClaudeId));
+    const asksThere = there?.state === 'asking' && t.info.kind !== 'asking' && t.info.kind !== 'working';
+    const kind = asksThere ? 'asking' : t.info.kind;
+    return {
+      kind: 'tab', key: `tab:${t.id}`, id: t.id, paneId: t.paneId, title: t.title, dot: kind,
+      stateKey: asksThere ? liveStateKey('asking') : activeStateKey(t.info), label: t.info.label, waiting: kind === 'asking', rank: rankOf(kind),
+    };
+  });
   const openClaudeIds = heldIds(i.tabs);
   // A draining (or just-closed) conversation is on its way out: never a row to adopt.
   const live = i.live.filter((c) => !(i.draining ?? []).includes(c.conversationId));

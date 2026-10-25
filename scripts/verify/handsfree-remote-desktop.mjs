@@ -86,6 +86,11 @@ process.stdin.on('data', (c) => {
     fs.appendFileSync(path.join(process.env.HOME, 'said.log'), JSON.stringify({ sid, text }) + '\\n');
     if (!inited) { inited = true; out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: [] }); }
     row({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+    if (text.includes('please ask')) {
+      // A question to the owner: the chat waits on him (the phone's "Seni bekliyor").
+      out({ type: 'control_request', request_id: 'ask-' + Date.now(), request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Which port?', header: 'Port', multiSelect: false, options: [{ label: '3000', description: 'dev' }, { label: '5173', description: 'vite' }] }] } } });
+      continue;
+    }
     const message = { role: 'assistant', content: [{ type: 'text', text: 'ECHO ' + text }] };
     row({ type: 'assistant', message }); out({ type: 'assistant', message });
     out({ type: 'result', subtype: 'success', is_error: false, result: 'ECHO', num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 }, session_id: sid });
@@ -120,7 +125,8 @@ const SUPER = crypto.randomUUID();
 const CHILD = crypto.randomUUID();
 const T1 = crypto.randomUUID();
 const T2 = crypto.randomUUID();
-const TITLES = { [A]: 'Checkout adımı', [B]: 'Fiyat kartı', [CHILD]: 'Push izinleri', [T1]: 'Arama sırası', [T2]: 'Kargo ücreti' };
+const P1 = crypto.randomUUID();
+const TITLES = { [A]: 'Checkout adımı', [B]: 'Fiyat kartı', [CHILD]: 'Push izinleri', [T1]: 'Arama sırası', [T2]: 'Kargo ücreti', [P1]: 'İade akışı' };
 
 function transcript(dir, sid, title) {
   const tdir = join(HOME, '.claude', 'projects', dir.replace(/[^a-zA-Z0-9]/g, '-'));
@@ -160,7 +166,7 @@ function setupScratch() {
   mkdirSync(join(OTHER, 'docs'), { recursive: true });
   // A real 2x2 PNG for the picture card.
   writeFileSync(join(OTHER, 'docs', 'shot.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVR4AWP4z8Dwn4GBgYGJgYEBAA0QAgEsl2u9AAAAAElFTkSuQmCC', 'base64'));
-  transcript(PROJ, A, TITLES[A]); transcript(PROJ, B, TITLES[B]);
+  transcript(PROJ, A, TITLES[A]); transcript(PROJ, B, TITLES[B]); transcript(PROJ, P1, TITLES[P1]);
   transcript(OTHER, CHILD, TITLES[CHILD]); transcript(OTHER, SUPER, 'Super Agent');
   transcript(THIRD, T1, TITLES[T1]); transcript(THIRD, T2, TITLES[T2]);
   // proj: the Mac window's roster (two panes) and a terminal that must never be seeded.
@@ -596,6 +602,87 @@ try {
     await desk.screenshot({ path: join(SHOTS, 'mac-1440-skipped-notice.png') });
     await r.ctx.close();
     await deskCtx.close();
+  }
+
+  // ── W3: the phone's ONE list over every chosen project, and its chat screen ────────────
+  console.log('\n· phone 390x844: one list over every chosen project (W3)');
+  {
+    const r = await remote('phone-w3', { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 3 });
+    const ph = r.page;
+    // From the handed-over project: its one Super row, every other project's chats beside it.
+    await go(ph, `${url}/?vault=other`);
+    report.check('W3: the phone layout', await until(async () => (await layout(ph)).phoneList, 30000));
+    await ph.waitForTimeout(2000);
+    await dismiss(ph);
+    // A chat that waits on the owner: B asks (the Mac holds it).
+    holders.B.ws.send(JSON.stringify({ type: 'user', text: 'please ask about the port' }));
+    const listInfo = () => ph.evaluate(() => ({
+      sections: [...document.querySelectorAll('[data-testid^="list-section-"]')].map((e) => e.getAttribute('data-testid').replace('list-section-', '')),
+      rows: [...document.querySelectorAll('[data-testid="phone-list"] .mlist-row')].map((e) => ({ id: e.getAttribute('data-id'), vault: e.getAttribute('data-vault'), kind: e.getAttribute('data-kind'), text: e.textContent })),
+      tags: document.querySelectorAll('[data-testid="list-project-tag"]').length,
+    }));
+    const macLive = async () => { const x = await fetch(`${base}/api/agent/live-chats`, { headers: { 'x-dreamcontext-vault': 'proj' } }); return (await x.json()).chats?.map((c) => [TITLES[c.conversationId] ?? c.conversationId.slice(0, 8), c.state]); };
+    report.check('AC15: B waits on you and leads the list', await until(async () => (await listInfo()).sections[0] === 'waiting', 30000), JSON.stringify({ sections: (await listInfo()).sections, mac: await macLive(), said: said().filter((x) => x.sid === B) }));
+    const li = await listInfo();
+    const order = ['waiting', 'working', 'idle', 'closed'];
+    report.check('AC15: sections run waiting → working → idle → closed', li.sections.every((x, k) => k === 0 || order.indexOf(x) > order.indexOf(li.sections[k - 1])), JSON.stringify(li.sections));
+    const vaultsListed = [...new Set(li.rows.map((x) => x.vault))].sort();
+    report.check('AC15: chats of every chosen project are in the one list, each row tagged', JSON.stringify(vaultsListed) === JSON.stringify(['other', 'proj', 'third']) && li.tags === li.rows.length, JSON.stringify({ vaultsListed, tags: li.tags, rows: li.rows.length }));
+    report.check('AC15: a project handed over at the Mac (third) is one Super row too', li.rows.filter((x) => x.vault === 'third').every((x) => x.kind === 'super'), JSON.stringify(li.rows.filter((x) => x.vault === 'third')));
+    report.check('AC15: the handed-over project is its one Super row', li.rows.filter((x) => x.vault === 'other').every((x) => x.kind === 'super') && li.rows.some((x) => x.vault === 'other'), JSON.stringify(li.rows.filter((x) => x.vault === 'other')));
+    await ph.screenshot({ path: join(SHOTS, 'phone-390-one-list.png') });
+    // Search finds a chat in a project the phone is not in.
+    await ph.locator('[data-testid="list-search"]').fill('iade');
+    report.check('AC15: search finds a chat of another project (Turkish-folded)', await until(async () => (await listInfo()).rows.some((x) => x.vault === 'proj' && /İade/.test(x.text ?? '')), 15000), JSON.stringify((await listInfo()).rows));
+    await ph.screenshot({ path: join(SHOTS, 'phone-390-search.png') });
+    await ph.locator('.mlist-row[data-vault="proj"]', { hasText: 'İade' }).first().click();
+    report.check('AC15: tapping it opens that chat in its project', await until(async () => {
+      const t0 = await ph.evaluate(() => ({ url: location.href, title: [...document.querySelectorAll('.mchat-head-title')].filter((e) => e.getBoundingClientRect().width > 0).map((e) => e.textContent).join('|') }));
+      return /İade/.test(t0.title);
+    }, 25000), await ph.evaluate(() => [...document.querySelectorAll('.mchat-head-title')].map((e) => e.textContent).join('|')));
+    await ph.screenshot({ path: join(SHOTS, 'phone-390-opened-elsewhere.png') });
+    // The chat screen: the back badge counts B waiting elsewhere.
+    report.check('AC16: the back badge counts the chat waiting elsewhere', await until(async () => ((await ph.locator('[data-testid="chat-back-badge"]:visible').textContent().catch(() => '')) ?? '').trim() === '1', 15000), (await ph.locator('[data-testid="chat-back-badge"]').textContent().catch(() => '')) ?? '');
+    // A swipe left moves to the next open chat in the list's order (across projects).
+    const swipe = (dx) => ph.evaluate((d) => {
+      const el = [...document.querySelectorAll('.chat-scroll, .chat-transcript')].find((e) => e.getBoundingClientRect().width > 0) ?? document.querySelector('.agent-surface');
+      const r0 = el.getBoundingClientRect();
+      const x = r0.left + r0.width / 2; const y = r0.top + r0.height / 2;
+      const mk = (cx) => new Touch({ identifier: 1, target: el, clientX: cx, clientY: y });
+      el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true, touches: [mk(x)], changedTouches: [mk(x)] }));
+      el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, touches: [], changedTouches: [mk(x + d)] }));
+    }, dx);
+    const headTitle = () => ph.evaluate(() => [...document.querySelectorAll('.mchat-head-title')].filter((e) => e.getBoundingClientRect().width > 0).map((e) => e.textContent).join('|'));
+    const before = await headTitle();
+    await swipe(160);
+    report.check('AC16: a swipe right moves to the previous open chat', await until(async () => (await headTitle()) !== before, 20000), JSON.stringify({ before, after: await headTitle() }));
+    const mid = await headTitle();
+    await ph.waitForTimeout(1500);
+    await swipe(-160);
+    report.check('AC16: a swipe left comes back', await until(async () => (await headTitle()) !== mid, 20000), JSON.stringify({ mid, after: await headTitle() }));
+    await ph.screenshot({ path: join(SHOTS, 'phone-390-chat.png') });
+    // The toast: another chat starts waiting while this one is on screen.
+    // (The Super Agent's chat, which the Mac still holds, starts asking.)
+    holders.super.ws.send(JSON.stringify({ type: 'user', text: 'please ask again' }));
+    report.check('AC16: the waiting toast appears above the composer', await until(async () => (await ph.locator('[data-testid="chat-waiting-toast"]:visible').count()) === 1, 20000));
+    const box = await ph.evaluate(() => {
+      const t0 = document.querySelector('[data-testid="chat-waiting-toast"]')?.getBoundingClientRect();
+      const c0 = [...document.querySelectorAll('textarea.chat-cmp-input')].find((e) => e.getBoundingClientRect().width > 0)?.getBoundingClientRect();
+      return t0 && c0 ? { toastBottom: t0.bottom, composerTop: c0.top } : null;
+    });
+    report.check('AC16: the toast never covers the composer', !!box && box.toastBottom <= box.composerTop + 1, JSON.stringify(box));
+    await ph.screenshot({ path: join(SHOTS, 'phone-390-toast.png') });
+    await ph.locator('[data-testid="chat-waiting-toast"]').click();
+    report.check('AC16: a tap on the toast opens that chat (in its own project)', await until(async () => /Super/.test(await headTitle()), 25000), await headTitle());
+    await r.ctx.close();
+    const small = await remote('phone-375', { viewport: { width: 375, height: 667 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+    await go(small.page, `${url}/?vault=proj`);
+    await until(async () => (await layout(small.page)).phoneList, 30000);
+    await small.page.waitForTimeout(2000);
+    await dismiss(small.page);
+    report.check('W3 375x667: the one list, no horizontal overflow', (await layout(small.page)).overflow <= 1, String((await layout(small.page)).overflow));
+    await small.page.screenshot({ path: join(SHOTS, 'phone-375-one-list.png') });
+    await small.ctx.close();
   }
 
   const errs = errors.filter((e) => !/__TAURI|status of 401/.test(e));

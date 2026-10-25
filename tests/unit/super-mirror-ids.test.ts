@@ -44,7 +44,8 @@ describe('superMirrorIds', () => {
   });
 
   it('the phone list feeds it from `live.supers`, the Super row\'s tap too, and every chat spawn reads it', () => {
-    const list = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/PhoneChatList.tsx'), 'utf-8');
+    // The one list's data (W3) reads live-chats for the list and the chat screen alike.
+    const list = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/usePhoneHome.ts'), 'utf-8');
     expect(list).toMatch(/rememberSuperMirrorIds\(\(wire\.supers \?\? \[\]\)\.map\(\(x\) => x\.conversationId\)\);/);
     const surface = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/AgentSurface.tsx'), 'utf-8');
     expect(surface).toMatch(/const mirror = mode !== 'super' && isSuperMirrorId\(cid\);/);

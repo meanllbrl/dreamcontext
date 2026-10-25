@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react';
+import { memo, type ReactNode, useCallback } from 'react';
 import { ChatPane } from './ChatPane';
 import type { ModelConfig } from '../../lib/agentComposer';
 import type { AutomationRunRef } from '../../lib/automationRunChat';
@@ -70,7 +70,7 @@ export interface ChatSurfaceActions {
 
 function ChatPaneHostInner({
   session, actions, modelConfig, model, effort, mode, automation, permissionMode, canSignInInApp,
-  signInCommand, bare, idlePlaceholder, readOnly,
+  signInCommand, bare, idlePlaceholder, readOnly, aboveComposer,
 }: {
   session: ChatSession;
   actions: ChatSurfaceActions;
@@ -95,6 +95,8 @@ function ChatPaneHostInner({
   /** A handed-over Super Agent's child: the owner looks, never types (ChatPane's `readOnly`).
    *  A primitive, so the memo boundary holds. */
   readOnly?: boolean;
+  /** One line drawn right above the composer (the phone's waiting toast, hands-free W3). */
+  aboveComposer?: ReactNode;
 }) {
   const onModelChange = useCallback((id: string) => actions.changeModel(session.id, id), [actions, session]);
   const onEffortChange = useCallback((level: string) => actions.changeEffort(session.id, level), [actions, session]);
@@ -139,6 +141,7 @@ function ChatPaneHostInner({
       bare={bare}
       idlePlaceholder={idlePlaceholder}
       readOnly={readOnly}
+      aboveComposer={aboveComposer}
     />
   );
 }
