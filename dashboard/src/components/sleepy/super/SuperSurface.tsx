@@ -5,7 +5,7 @@ import { MAX_CONTAINERS, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, res
 import type { ChatSession } from '../chatSession';
 import { TeamTile, type TeamCard } from './TeamTile';
 import { OthersStack, type OthersItem } from './OthersStack';
-import { GroupPanel } from './GroupPanel';
+import { GroupPanel, panelCloseOf, runPanelClose, type PanelClose } from './GroupPanel';
 import { SuperGroupCard } from './SuperGroupCard';
 import { GroupTile, KindTile, TileSheets, groupStatus, type GroupMember } from './SuperTiles';
 import { StageMotion, cssEsc } from './StageMotion';
@@ -17,7 +17,7 @@ import { SuperAgenda } from './SuperAgenda';
 import { onOpenJobRow, publishSuperEventContext } from './superJobsStore';
 import { AgendaButton, AgendaPill } from './AgendaButton';
 import { childModelChip, type AsksOwner } from './AgentCard';
-import { SuperContainer, chatStatus, isLivePage, superCentreStatus } from './SuperContainer';
+import { SuperContainer, chatStatus, childBusyOf, isLivePage, superCentreStatus } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
 import { LOOK_RENEW_MS, anchoredPos, childIsLive, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
@@ -430,6 +430,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
       else stackRef.current?.focus();
     });
   };
+  /** Cards closed for good (the stage's close, a group's close-all, a panel's ×): out of the
+   *  live pages' recency list too. */
+  const closeCards = (ids: readonly string[]) => {
+    setLru((prev) => ids.reduce(dropFromLru, prev));
+    onLayout({ closed: [...ids] });
+  };
   const actions = {
     onSideBySide: (id: string) => {
       const c = byId.get(id);
@@ -452,7 +458,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         return;
       }
       if (remote) return;
-      setLru((prev) => dropFromLru(prev, id)); onLayout({ closed: [id] }); focusAfter(id);
+      closeCards([id]); focusAfter(id);
     },
     onEndSession: (id: string, whenDone: boolean) => {
       const c = byId.get(id);
@@ -562,14 +568,38 @@ export function SuperSurface(props: SuperSurfaceProps) {
     }
     return out;
   };
-  const closeGroups = (groupIds: readonly string[]) => {
+  /** `keepPanel`: one group closed from Others' ×, the panel stays open on the rest. */
+  const closeGroups = (groupIds: readonly string[], keepPanel = false) => {
     const cards = closableIn(groupIds);
     if (!cards.length) return;
-    setOpenGroup(null);
+    if (!keepPanel) setOpenGroup(null);
     const plain = cards.filter((c) => c.kind !== 'chat').map((c) => c.id);
-    if (plain.length) { setLru((prev) => plain.reduce(dropFromLru, prev)); onLayout({ closed: plain }); }
+    if (plain.length) closeCards(plain);
     for (const c of cards) if (c.kind === 'chat') props.onEndChild(c.ref, false);
-    requestAnimationFrame(() => stackRef.current?.focus());
+    if (!keepPanel) requestAnimationFrame(() => stackRef.current?.focus());
+  };
+  /** A tile's × in Others (GroupPanel): the stage's own close for its kind (panelCloseOf). The
+   *  remote screen closes nothing (remoteStage.ts), so it draws no ×. */
+  const panelCloseFor = (id: string): PanelClose | null => {
+    if (remote) return null;
+    if (isGroupId(id)) return groupsById.has(id) ? panelCloseOf({ kind: 'group', closable: closableIn([id]).length }) : null;
+    const c = byId.get(id);
+    if (!c) return null;
+    if (c.kind !== 'chat') return panelCloseOf({ kind: c.kind });
+    const ending = props.endPending.has(c.ref) ? 'pending' : props.endFailed.has(c.ref) ? 'failed' : undefined;
+    return panelCloseOf({ kind: 'chat', busy: childBusyOf(props.sessionFor(c.ref)), ending });
+  };
+  const panelSessionOf = (id: string): ChatSession | undefined => {
+    const c = byId.get(id);
+    return c?.kind === 'chat' ? props.sessionFor(c.ref) : undefined;
+  };
+  const closeFromPanel = (id: string, close: PanelClose) => {
+    if (remote) return;
+    runPanelClose(id, close, {
+      closeCard: (cid) => closeCards([cid]),
+      endChat: (cid, whenDone) => { const c = byId.get(cid); if (c?.kind === 'chat') props.onEndChild(c.ref, whenDone); },
+      closeGroup: (gid) => closeGroups([gid], true),
+    });
   };
   const othersGroupIds = plan.others.filter(isGroupId);
   dragDeps.current = {
@@ -924,6 +954,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
             onUngroup={g ? () => onUngroup(g.id) : undefined}
             closableCards={system ? closableIn(othersGroupIds).length : undefined}
             onCloseGroups={system ? () => closeGroups(othersGroupIds) : undefined}
+            closeOf={system ? panelCloseFor : undefined}
+            sessionOf={system ? panelSessionOf : undefined}
+            onCloseItem={system ? closeFromPanel : undefined}
             onOpenItem={openFromPanel}
             onPressItem={(e, id) => onPressPanelItem(e, id, openGroup)}
             onPresentAll={g ? () => presentGroup(g.id) : undefined}

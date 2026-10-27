@@ -72,6 +72,14 @@ export function frameKeyOf(session: ChatSession | undefined): string {
   return `${chatStatus(session).kind}|${session?.hasLiveWork() ? 1 : 0}`;
 }
 
+/** A child still in its turn (working, asking, or a job of its own running): its close offers
+ *  "end when done" instead of cutting the turn. Read by the card's close and by a panel's ×. */
+export function childBusyOf(session: ChatSession | undefined): boolean {
+  if (!session) return false;
+  const kind = chatStatus(session).kind;
+  return kind === 'working' || kind === 'asking' || session.hasLiveWork();
+}
+
 export function chatStatus(session: ChatSession | undefined): SessionStatusInfo {
   return deriveSessionStatus({
     dormant: !session, status: session?.status, busy: session?.busy, asking: session?.asking,
@@ -201,7 +209,7 @@ export function SuperContainer(props: SuperContainerProps) {
   // Others. A working or asking child offers "end when done" instead of cutting its turn.
   const [closeAsk, setCloseAsk] = useState(false);
   const asksOnClose = c.kind === 'chat';
-  const childBusy = !!session && (status?.kind === 'working' || status?.kind === 'asking' || session.hasLiveWork());
+  const childBusy = childBusyOf(session);
   useEffect(() => {
     if (!closeAsk) return undefined;
     const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') setCloseAsk(false); };

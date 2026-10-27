@@ -876,6 +876,29 @@
 .super-panel-clip { position: absolute; inset: 0; display: flex; flex-direction: column; border-radius: var(--radius-xl); overflow: hidden; }
 .super-panel-tile:is([data-status='working'], [data-status='asking']) .super-panel-clip { box-shadow: 0 0 0 1px color-mix(in srgb, var(--tone) 62%, transparent), 0 0 24px 2px color-mix(in srgb, var(--tone) 29%, transparent); }
 .super-panel-item .super-tile { pointer-events: none; user-select: none; }
+/* A tile's × in Others (owner 2026-10-28): the stage card's close, top right; on hover or focus,
+   always on a touch screen (nothing hovers there). Its question opens under it, as on the stage. */
+.super-panel-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: flex;
+  padding: 2px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+.super-panel-item:hover .super-panel-close,
+.super-panel-item:focus-within .super-panel-close,
+.super-panel-close[data-asking] { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .super-panel-close { opacity: 1; pointer-events: auto; } }
+@media (prefers-reduced-motion: reduce) { .super-panel-close { transition: none; } }
+.super-panel-item .super-close-choice { cursor: default; }
 
 /* Over a task's page side by side: status, priority, how far its criteria are. */
 .super-card-view--page { overflow: auto; }
