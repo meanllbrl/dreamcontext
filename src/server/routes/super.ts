@@ -9,7 +9,7 @@ import {
 } from '../../lib/window-control.js';
 import { PhoneHeldError, SuperStoreRefused, isReservedId, okMember, phoneHeld, readSuperState, superRootOfChild } from '../../lib/super/store.js';
 import {
-  CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
+  CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, groupPresentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
   MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
@@ -1141,12 +1141,18 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       refuse(res, 400, 'invalid_args', `layout is one of: ${PRESENT_LAYOUTS.join(', ')}`);
       return;
     }
-    if (raw.length > MAX_FILMSTRIP) {
+    // A group (`grp-…`) stands for its cards (owner 2026-10-27: "open every picture of the
+    // group at once"): `super present <group>` lays the whole group out, first 8 cards.
+    const named = raw.flatMap((x) => {
+      const g = typeof x === 'string' ? c.state.groups.find((y) => y.id === x) : undefined;
+      return g ? groupPresentCards(g, c.state.containers) : [x];
+    });
+    if (named.length > MAX_FILMSTRIP && !(raw.length === 1 && named.length)) {
       refuse(res, 400, 'invalid_args', `present shows at most ${MAX_FILMSTRIP} cards (a filmstrip); every other layout at most ${MAX_PRESENT}`);
       return;
     }
     const ids: string[] = [];
-    for (const x of raw) {
+    for (const x of named.slice(0, MAX_FILMSTRIP)) {
       const id = typeof x === 'string' ? x : '';
       if (!id || !c.state.containers.some((k) => k.id === id)) {
         refuse(res, 404, 'unknown_container', 'no such container (`dreamcontext super state` lists them)');
@@ -1165,6 +1171,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       c.state.containers.filter((k) => k.kind === 'image' && ids.includes(k.id)).map((k) => k.ref));
     const state = await writeSuper(c.who.contextRoot, (s) => {
       for (const k of s.containers) if (ids.includes(k.id)) setAspect(k, aspects);
+      // A group presented whole comes out of Others: leaving the presentation finds it on the stage.
+      for (const g of s.groups) if (raw.includes(g.id)) g.place = 'float';
       // One present (types.ts `presentCards`): the owner's same-set pick and a question the same
       // cards show stay; other cards are a new presentation.
       kept = presentCards(s, ids, layout).kept;

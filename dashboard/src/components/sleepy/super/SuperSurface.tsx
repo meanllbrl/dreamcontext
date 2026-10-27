@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
-import { MAX_CONTAINERS, PRESENT_LAYOUTS, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
+import { MAX_CONTAINERS, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
 import { TeamTile, type TeamCard } from './TeamTile';
 import { OthersStack, type OthersItem } from './OthersStack';
@@ -150,6 +150,9 @@ export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSess
   );
 }
 
+/** Leaving a group's presentation reopens its panel only if the stage answers within this long. */
+const BACK_TO_GROUP_MS = 3000;
+
 /**
  * The hand-over screen (plan-r8, owner decisions O1-O11): Claude in the cape EXACTLY in the
  * centre — the Super Agent's own chat, homed into `[data-super-slot="centre"]` by AgentSurface's
@@ -265,6 +268,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const cards = presented.map((id) => state.containers.find((c) => c.id === id)!);
     return cards.length ? PRESENT_LAYOUTS.filter((l) => resolveLayout(l, cards) === l) : [];
   }, [presented, state.containers]);
+  // A presentation that shows one group whole (its "open all", a double-click, `super present
+  // <group>`): leaving it goes back to that group's panel (owner 2026-10-27).
+  const shownGroup = useMemo(() => presentedGroup(presented, state.groups, state.containers)?.id ?? null, [presented, state.groups, state.containers]);
   /** Leaving a presentation: the cards the owner saw, plus his closes still on their way. */
   const exitPatch = (): LayoutPatch => ({ exit: { cards: presented, closing: props.pendingCloses() } });
   const queueUp = !!queueHead(state);
@@ -326,6 +332,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
     if (openGroup === 'others' ? !plan.others.length : plan.cards[openGroup]?.where !== 'float') setOpenGroup(null);
   }, [openGroup, plan]);
   const closePanel = useCallback(() => setOpenGroup(null), []);
+  // The panel a tile click opened (its double-click may finish on it), not one reopened by "back to the group".
+  const [panelByTile, setPanelByTile] = useState(false);
+  const openFromTile = useCallback((id: string) => { setPanelByTile(true); setOpenGroup(id); }, []);
   // The owner looks at a group (its panel) or a card full screen: reported when it opens, while it
   // stays open and when it closes, with the cards it shows (the last ones, if the group dissolved
   // meanwhile). A report that arrives after a picture's job moved on makes it his (tidy.ts).
@@ -480,7 +489,19 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // ── A presentation (plan-r2 D7, D11-D13): every gesture names the cards the owner SAW ──
   const pickLayout = (layout: PresentLayout) => onLayout({ presentLayout: { layout, cards: presented } });
   const toggleBar = () => onLayout({ chat: { value: plan.chat === 'bar' ? null : 'bar', cards: presented } });
-  const exitPresentation = () => onLayout(exitPatch());
+  // The group to reopen once the stage has left the presentation (the record answers first).
+  const backTo = useRef<{ id: string; at: number } | null>(null);
+  const exitPresentation = () => {
+    backTo.current = shownGroup ? { id: shownGroup, at: Date.now() } : null;
+    onLayout(exitPatch());
+  };
+  useEffect(() => {
+    const b = backTo.current;
+    if (!b || plan.mode === 'present') return;
+    backTo.current = null;
+    // A late answer (another view took over meanwhile) opens nothing.
+    if (Date.now() - b.at < BACK_TO_GROUP_MS && plan.cards[b.id]?.where === 'float') { setPanelByTile(false); setOpenGroup(b.id); }
+  }, [plan]);
   const presentKeysRef = useRef({ exit: exitPresentation, plan, full: !!full });
   presentKeysRef.current = { exit: exitPresentation, plan, full: !!full };
   const presenting = plan.mode === 'present' && props.visible;
@@ -511,6 +532,15 @@ export function SuperSurface(props: SuperSurfaceProps) {
   }, [presenting, view.cards]);
 
   const onUngroup = (id: string) => { setOpenGroup(null); onLayout({ ungroup: [id] }); };
+  /** Every card of a group at once, in the layout its cards pick (2 compare, 3-4 grid, 5-8
+   *  filmstrip, clips filmstrip). The cards stay in the group; a group in Others comes out. */
+  const presentGroup = (id: string) => {
+    const g = groupsById.get(id);
+    const cards = g ? groupPresentCards(g, state.containers) : [];
+    if (!g || !cards.length) return;
+    setOpenGroup(null);
+    onLayout({ ...(g.place === 'others' ? { cards: [{ id, place: 'float' as const }] } : {}), view: { mode: 'present', cards } });
+  };
   // Closing groups (owner 2026-10-25): every card of the group goes the way its own close does,
   // except a live job's card (the server's rule, mirrored): that one stays. A plain card is
   // closed in one patch; a finished chat is ended (its tab closes, the transcript stays).
@@ -807,7 +837,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
               pending={pending.has(g.id)}
               dropTarget={target === g.id}
               onPress={onPressCard}
-              onOpen={setOpenGroup}
+              onOpen={openFromTile}
+              onPresentAll={presentGroup}
               onToOthers={actions.onToOthers}
               onAskAbout={actions.onAskAbout}
               onUngroup={onUngroup}
@@ -848,7 +879,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         </button>
       )}
       {plan.controls && plan.layout && (
-        <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout} onExit={exitPresentation} />
+        <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout} onExit={exitPresentation} toGroup={!!shownGroup} />
       )}
       {plan.tabs && (
         <SheetTabs rect={plan.tabs.rect} ids={plan.tabs.ids} selected={plan.tabs.ids.find((id) => plan.cards[id]?.where === 'sheet') ?? plan.tabs.ids[0]}
@@ -891,6 +922,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
             onCloseGroups={system ? () => closeGroups(othersGroupIds) : undefined}
             onOpenItem={openFromPanel}
             onPressItem={(e, id) => onPressPanelItem(e, id, openGroup)}
+            onPresentAll={g ? () => presentGroup(g.id) : undefined}
+            doubleOpens={panelByTile}
             renderItem={renderPanelItem}
             itemTestId={system ? 'super-others-item' : 'super-group-item'}
             returnFocus={returnFocus}

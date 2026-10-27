@@ -225,7 +225,7 @@ U1 and U3 both edit `orbit-app` but not the same file; each has its own worktree
 merges them. Reply: "Started 6 (one messages Ayla), 2 wait for the invites API. Releasing 1.4 needs your yes."
 
 ## 7. Presentation layouts
-`super present <card…> [--layout <name>]` takes 1-8 cards. Leave `--layout` off and the cards pick it:
+`super present <card…> [--layout <name>]` takes 1-8 cards or a group (`grp-…`, all its cards). Leave `--layout` off and the cards pick it:
 1 spotlight, 2 compare, 3-4 grid, 5-8 filmstrip (2+ clips: filmstrip), and a page with its own child's chat (and browser) is
 review. A wrong count for a named layout answers 400 naming the range. The owner can switch the layout
 from the stage's top band; an answer with `kept: owner_layout` means he chose it: leave it.

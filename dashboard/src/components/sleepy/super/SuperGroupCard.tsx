@@ -10,10 +10,11 @@ import { cardZIndex, type CardPlan } from './superLayout';
 /**
  * A group on the stage (owner decision 2026-10-20): ONE tile standing on a deck of sheets, placed
  * and moved like a card (same frame, same drag, same layout motion), glowing as its loudest member
- * (asking, else working). A click or Enter opens it (GroupPanel); its hover buttons put it in
- * Others, ask the Super Agent about it, or dissolve it.
+ * (asking, else working). A click or Enter opens it (GroupPanel); a double-click or its "open all"
+ * button shows every card at once (owner 2026-10-27); its hover buttons put it in Others, ask the
+ * Super Agent about it, or dissolve it.
  */
-export function SuperGroupCard({ group, plan, members, sessions, closable, pending, dropTarget, onPress, onOpen, onToOthers, onAskAbout, onUngroup, onCloseCards }: {
+export function SuperGroupCard({ group, plan, members, sessions, closable, pending, dropTarget, onPress, onOpen, onPresentAll, onToOthers, onAskAbout, onUngroup, onCloseCards }: {
   group: SuperGroup;
   plan: CardPlan;
   members: readonly GroupMember[];
@@ -26,6 +27,8 @@ export function SuperGroupCard({ group, plan, members, sessions, closable, pendi
   dropTarget: boolean;
   onPress: (e: PointerEvent<HTMLDivElement>, id: string) => void;
   onOpen: (id: string) => void;
+  /** Every card of the group at once (the presentation's layout). */
+  onPresentAll: (id: string) => void;
   onToOthers: (id: string) => void;
   onAskAbout: (id: string) => void;
   onUngroup: (id: string) => void;
@@ -70,7 +73,12 @@ export function SuperGroupCard({ group, plan, members, sessions, closable, pendi
       tabIndex={0}
       style={{ left: plan.rect.x, top: plan.rect.y, width: plan.rect.width, height: plan.rect.height, zIndex: cardZIndex(plan.z) }}
       onPointerDown={(e) => onPress(e, group.id)}
-      onClick={(e) => { if (!(e.target as HTMLElement).closest('button')) onOpen(group.id); }}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('button')) return;
+        // The second press of a double-click (when it lands on the tile, not on the panel the
+        // first one opened): all cards at once.
+        if (e.detail >= 2) onPresentAll(group.id); else onOpen(group.id);
+      }}
       onKeyDown={onKeyDown}
     >
       <div className="super-card-lift" aria-hidden />
@@ -82,6 +90,7 @@ export function SuperGroupCard({ group, plan, members, sessions, closable, pendi
       </div>
       <span className="super-drop-ring" aria-hidden />
       <div className="super-card-actions">
+        <IconButton icon="side" label={t('super.group.openAllHint')} onClick={() => onPresentAll(group.id)} testId="super-group-open-all" />
         <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => onToOthers(group.id)} />
         <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => onAskAbout(group.id)} />
         <IconButton icon="ungroup" label={t('super.group.ungroup')} onClick={() => onUngroup(group.id)} testId="super-group-ungroup" />
