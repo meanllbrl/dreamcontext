@@ -70,6 +70,8 @@ export interface Attachment {
   /** Image attachments only — the upload was refused (not the desktop app, over the 25 MB
    *  cap, unwritable temp dir). The chip says so instead of pretending it will be sent. */
   failed?: boolean;
+  /** `file` from the hands-free phone: its size in bytes, so the chip reads "report.pdf · 1.2 MB". */
+  size?: number;
   /** What a failed chip says instead of the generic refusal (a phone photo this browser could
    *  not decode, a photo the phone's caps refused). */
   note?: string;

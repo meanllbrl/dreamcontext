@@ -25,6 +25,7 @@ import { useI18n } from '../../../context/I18nContext';
 import { uploadAgentFile } from '../../../lib/agentDrop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { PHONE_PHOTOS_PER_MESSAGE, jpegName, photoUploadSignal, preparePhonePhotoQueued, withPhotoUploadSlot } from '../../../lib/phonePhoto';
+import { PHONE_FILE_UPLOAD_TIMEOUT_MS, formatFileSize, splitPhonePicks } from '../../../lib/phoneAttach';
 import { useAgentSessionStats, useClaudeAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
 import {
   effortLabel, modelLabelFor, quotePath, isSignInCommand, isMcpCommand, contextLimitFor, usageLimits,
@@ -266,6 +267,7 @@ const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, 
                   a state for (a pasted screenshot the agent never received). */}
               <span className="chat-cmp-attachment-name">
                 {a.kind === 'page' ? <PageChipName name={a.name} /> : a.name}
+                {a.kind === 'file' && a.size !== undefined && <span className="chat-cmp-attachment-size" data-testid="phone-file-size">{formatFileSize(a.size)}</span>}
                 {a.uploading && <span className="chat-cmp-attachment-note">attaching…</span>}
                 {a.failed && <span className="chat-cmp-attachment-note">{a.note ?? (a.kind === 'element' ? 'sent without its picture' : 'couldn\'t attach — not sent')}</span>}
               </span>
@@ -367,13 +369,11 @@ const AttachButton = memo(function AttachButton({ onPick, onOpenTaskPicker }: {
   );
 });
 
-/** A picture, drawn (the hands-free phone's photo button). */
+/** A paperclip, drawn (the hands-free phone's attach button: photos AND files). */
 function PhotoIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <rect x="3" y="4" width="18" height="16" rx="3" />
-      <circle cx="9" cy="10" r="1.8" />
-      <path d="M21 16l-5-5-8 9" />
+      <path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.9-8.9a3.7 3.7 0 0 1 5.2 5.2l-8.9 8.9a1.8 1.8 0 0 1-2.6-2.6l8.2-8.2" />
     </svg>
   );
 }
@@ -381,8 +381,9 @@ function PhotoIcon() {
 /**
  * The hands-free phone's attach control (task hands-free-phone-shows-every-picture…, D3): the `+`
  * menu's files, folders and task all need the Mac's own picker, so on the phone it is ONE button
- * that opens the phone's own sheet — photo library, camera, files. No `capture`, so the library
- * is offered too; `multiple`, the composer keeps the first six.
+ * that opens the phone's own sheet — photo library, camera, files. No `accept` (owner 2026-10-27:
+ * a zip or any file must be pickable, `image/*` hid them) and no `capture`, so the sheet offers
+ * all three; `multiple`, the composer keeps the first six.
  */
 const PhotoButton = memo(function PhotoButton({ onFiles, label }: { onFiles: (files: File[]) => void; label: string }) {
   const input = useRef<HTMLInputElement>(null);
@@ -394,7 +395,6 @@ const PhotoButton = memo(function PhotoButton({ onFiles, label }: { onFiles: (fi
       <input
         ref={input}
         type="file"
-        accept="image/*"
         multiple
         hidden
         data-testid="phone-photo-input"
@@ -1119,12 +1119,28 @@ export function Composer({
   // same channel a pasted image does, so the message quotes its path exactly as the desktop's.
   const phonePhotos = isMacPhoneSurface();
   const [photoCapNote, setPhotoCapNote] = useState(false);
-  const onPhonePhotos = (files: File[]) => {
-    const staged = readScratch(convId).attachments.filter((a) => a.kind === 'image').length;
-    const room = Math.max(0, PHONE_PHOTOS_PER_MESSAGE - staged);
-    setPhotoCapNote(files.length > room);
-    for (const file of files.slice(0, room)) {
+  const onPhonePhotos = (picked: File[]) => {
+    // A refused chip holds no room: only what can still be sent counts toward the six.
+    const staged = readScratch(convId).attachments.filter((a) => (a.kind === 'image' || a.kind === 'file') && !a.failed).length;
+    const { picks, overCap } = splitPhonePicks(picked, PHONE_PHOTOS_PER_MESSAGE - staged);
+    setPhotoCapNote(overCap);
+    // In pick order, so the chips and the paths in the message read as he picked them.
+    for (const { file, route } of picks) {
       const id = nextAttachmentId();
+      if (route !== 'photo') {
+        // Not a photo (a zip, a PDF, a text file, a video, a PSD): its own bytes under its own
+        // name, so the agent's path still says what it is. The Mac stores it as it came, never
+        // extracted. Too large or empty: refused here, before a byte crosses the tunnel.
+        const name = file.name || 'file';
+        if (route !== 'file') {
+          addAttachments(convId, [{ id, kind: 'file', name, size: file.size, failed: true, note: t(route === 'empty' ? 'chat.file.empty' : 'chat.file.tooLarge') }]);
+          continue;
+        }
+        addAttachments(convId, [{ id, kind: 'file', name, size: file.size, uploading: true }]);
+        trackUpload(convId, withPhotoUploadSlot(() => uploadAgentFile(vault, file, name, photoUploadSignal(PHONE_FILE_UPLOAD_TIMEOUT_MS)))
+          .then((path) => { settleAttachment(convId, id, path); }));
+        continue;
+      }
       const name = jpegName(file.name || 'photo');
       // No preview from the original (a 24 MP decode per chip): the small JPEG becomes it.
       addAttachments(convId, [{ id, kind: 'image', name, uploading: true }]);
@@ -1547,11 +1563,13 @@ export function Composer({
   const aboutPlaceholder = attachments.some((a) => a.kind === 'about' && REPLY_TO_RE.test(a.text ?? ''))
     ? t('super.reply.placeholder') : t('super.agenda.aboutPlaceholder');
   const uploadingCount = attachments.filter((a) => a.uploading).length;
-  // The phone's line under its photo chips: how many, how many still on their way, the cap.
+  // The phone's line under its photo and file chips: how many, how many still on their way, the cap.
   const photoCount = attachments.filter((a) => a.kind === 'image').length;
-  const photoMeta = phonePhotos && photoCount > 0
+  const fileCount = phonePhotos ? attachments.filter((a) => a.kind === 'file').length : 0;
+  const photoMeta = phonePhotos && photoCount + fileCount > 0
     ? [
-      photoCount === 1 ? t('chat.photo.count.one') : t('chat.photo.count.many').replace('{n}', String(photoCount)),
+      photoCount === 0 ? '' : photoCount === 1 ? t('chat.photo.count.one') : t('chat.photo.count.many').replace('{n}', String(photoCount)),
+      fileCount === 0 ? '' : fileCount === 1 ? t('chat.file.count.one') : t('chat.file.count.many').replace('{n}', String(fileCount)),
       uploadingCount > 0 ? t('chat.photo.uploading').replace('{n}', String(uploadingCount)) : '',
       photoCapNote ? t('chat.photo.max') : '',
     ].filter(Boolean).join(' · ')

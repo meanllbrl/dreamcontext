@@ -342,10 +342,12 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/onboarding/fix': deny(ONBOARDING),
   'POST /api/onboarding/fix/cancel': deny(ONBOARDING),
   'POST /api/agent/prompt': filtered(`${CHAT}: hands an opening prompt to a new chat (the body's vault is checked with isMacExposed)`),
-  // A photo from the phone (task hands-free-phone-shows-every-picture…): images only, decided by
-  // their bytes; the server names and places the file (the project's gitignored tmp), capped per
-  // device in the handler (10 MB, 2 in flight, 30 a minute, 500 MB of phone files per project).
-  'POST /api/agent/drop': allow(`${CHAT}: a photo from the phone (PNG/JPEG/WebP/GIF by magic bytes, server-named into this project's gitignored tmp; phone caps: 10 MB, 2 in flight, 30/min per device)`),
+  // A photo or any file from the phone (task hands-free-phone-shows-every-picture…, any type since
+  // 2026-10-27): an image is decided by its bytes and named by the server; another file keeps its
+  // sanitized basename behind a server prefix, stored as bytes (a zip is never extracted). Placed
+  // in the project's gitignored tmp, capped per device in the handler (photo 10 MB, file 25 MB,
+  // 2 in flight, 30 a minute, 500 MB of phone files per project).
+  'POST /api/agent/drop': allow(`${CHAT}: a photo or file from the phone (stored as bytes, never extracted, in this project's gitignored tmp under a server-chosen prefix; phone caps: photo 10 MB, file 25 MB, 2 in flight, 30/min per device)`),
   'GET /api/notifications': deny(DESKTOP),
   'POST /api/notify': deny(DESKTOP),
   'POST /api/agent/secret': deny(SECRET),

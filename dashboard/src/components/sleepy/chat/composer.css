@@ -289,6 +289,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* A phone file's size under its name ("1.2 MB"): what was picked, read at a glance. */
+.chat-cmp-attachment-size {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
 .chat-cmp-attachment[data-state='uploading'] .chat-cmp-thumb { opacity: 0.6; }
 .chat-cmp-attachment[data-state='failed'] {
   border-color: var(--color-error);

@@ -5,7 +5,8 @@
  * own, kept per DEVICE (`deviceIdHash`) rather than per socket — a phone that reconnects does not
  * start a fresh allowance:
  *   • a photo of at most {@link PHONE_MAX_PHOTO_BYTES} (the phone re-encodes to a 2560 px JPEG,
- *     typically 0.4-1.5 MB, so this is room, not a target);
+ *     typically 0.4-1.5 MB, so this is room, not a target), any other file of at most
+ *     {@link PHONE_MAX_FILE_BYTES};
  *   • two uploads in flight and thirty a minute per device (six photos per message, sent at once);
  *   • at most {@link PHONE_DROPS_MAX_BYTES} of phone photos in one project's drop folder.
  * The gate is taken BEFORE the body is read, so a burst is refused without buffering it.
@@ -14,6 +15,10 @@
 import { VoiceGate, type GateVerdict } from '../../voice/limits.js';
 
 export const PHONE_MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+/** Any other file from the phone (a zip, a PDF, a text file): stored as its bytes, never opened
+ *  or extracted, at most this big — the desktop drop's own 25 MB. Mirrored in the dashboard
+ *  (`PHONE_MAX_FILE_BYTES`, lib/phoneAttach.ts); tests/unit/phone-attach.test.ts holds them equal. */
+export const PHONE_MAX_FILE_BYTES = 25 * 1024 * 1024;
 export const PHONE_DROPS_MAX_BYTES = 500 * 1024 * 1024;
 export const PHONE_PHOTO_LIMITS = { concurrency: 2, perWindow: 30, windowMs: 60_000 } as const;
 /** The file-name prefix every phone photo carries in the drop folder (counted by the cap). */
