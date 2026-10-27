@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CaptureUpdateAction, Excalidraw, getCommonBounds, getSceneVersion, newElementWith,
   reconcileElements, restoreElements,
@@ -36,6 +36,7 @@ import { useCanvasWrapEffects } from './useCanvasWrapEffects';
 import { WhiteboardHostContext, useDataTheme, useWbText, type WhiteboardHost } from './whiteboardHost';
 import { WIDGET_REGISTRY } from './widgets/registry';
 import { WidgetFrame, WidgetNotice } from './widgets/WidgetFrame';
+import { sameWidgetSlot, widgetSlotProps, type WidgetSlotProps } from './widgetSlot';
 import './WhiteboardCanvas.css';
 
 /** The scene the page hands in once, at mount. The page remounts (via `key`) for another board. */
@@ -437,26 +438,11 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
   }, [onLinkOpen]);
 
   // ── widgets ───────────────────────────────────────────────────────────────────────────────
+  // Excalidraw calls this on every render of its App (each pan / zoom frame); the memoised slot
+  // is what keeps a frame from re-rendering every widget on the board (widgetSlot.ts).
   const renderEmbeddable = useCallback((element: NonDeleted<ExcalidrawEmbeddableElement>, appState: AppState) => {
     const active = appState.activeEmbeddable?.element === element && appState.activeEmbeddable.state === 'active';
-    const payload = readWidgetPayload(element);
-    // Never null: a null hands the element to Excalidraw's own iframe.
-    if (!payload) {
-      return (
-        <WidgetFrame kind="unknown" title={txRef.current('whiteboard.widget.unknown', 'Unknown widget')} active={active}>
-          <WidgetNotice tone="missing">{txRef.current('whiteboard.widget.unknownBody', 'This widget has no readable content.')}</WidgetNotice>
-        </WidgetFrame>
-      );
-    }
-    const Widget = WIDGET_REGISTRY[payload.kind];
-    const size = widgetSizeOf(payload.size, element.width, element.height);
-    // Keyed by what makes a widget a different thing, so e.g. a web widget whose URL changed
-    // under it does not keep the previous URL's "loaded" state.
-    const widget = <Widget key={`${payload.kind}:${payload.ref ?? ''}:${payload.url ?? ''}`} elementId={element.id} payload={payload} active={active} size={size} height={element.height} />;
-    // The wrapper takes no box (`display: contents`); it carries the card's colour, which the
-    // card's own CSS mixes into its surface (widgets.css). Always there, so a colour change
-    // never remounts the widget (an agent card would lose its session).
-    return <div className="wb-widget-tint" data-card-color={isCardColor(payload.color) ? payload.color : undefined}>{widget}</div>;
+    return <WidgetSlot {...widgetSlotProps(element, active)} />;
   }, []);
 
   const renderTopRightUI = useCallback(() => (
@@ -507,3 +493,26 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
     </WhiteboardHostContext.Provider>
   );
 }
+
+/** One embeddable's widget. Re-renders only when its element or its active state changed. */
+const WidgetSlot = memo(function WidgetSlot({ element, active }: WidgetSlotProps<NonDeleted<ExcalidrawEmbeddableElement>>) {
+  const tx = useWbText();
+  const payload = readWidgetPayload(element);
+  // Never null: a null hands the element to Excalidraw's own iframe.
+  if (!payload) {
+    return (
+      <WidgetFrame kind="unknown" title={tx('whiteboard.widget.unknown', 'Unknown widget')} active={active}>
+        <WidgetNotice tone="missing">{tx('whiteboard.widget.unknownBody', 'This widget has no readable content.')}</WidgetNotice>
+      </WidgetFrame>
+    );
+  }
+  const Widget = WIDGET_REGISTRY[payload.kind];
+  const size = widgetSizeOf(payload.size, element.width, element.height);
+  // Keyed by what makes a widget a different thing, so e.g. a web widget whose URL changed
+  // under it does not keep the previous URL's "loaded" state.
+  const widget = <Widget key={`${payload.kind}:${payload.ref ?? ''}:${payload.url ?? ''}`} elementId={element.id} payload={payload} active={active} size={size} height={element.height} />;
+  // The wrapper takes no box (`display: contents`); it carries the card's colour, which the
+  // card's own CSS mixes into its surface (widgets.css). Always there, so a colour change
+  // never remounts the widget (an agent card would lose its session).
+  return <div className="wb-widget-tint" data-card-color={isCardColor(payload.color) ? payload.color : undefined}>{widget}</div>;
+}, sameWidgetSlot);

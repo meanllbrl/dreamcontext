@@ -232,24 +232,41 @@ export function listWhiteboards(root: string): WhiteboardSummary[] {
     } catch {
       continue;
     }
-    const updatedAt = statSync(file).mtime.toISOString();
+    const st = statSync(file);
+    const updatedAt = st.mtime.toISOString();
     const mark = slug === DEFAULT_WHITEBOARD.slug ? { isDefault: true as const } : {};
+    const cached = summaryCache.get(file);
+    if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
+      out.push({ slug, ...cached.summary, updatedAt, ...mark });
+      continue;
+    }
+    let summary: BoardSummaryBody;
     try {
       const board = parseWhiteboard(readFileSync(file, 'utf-8'));
-      out.push({
-        slug,
+      summary = {
         name: boardName(board, slug),
         description: typeof board.frontmatter.description === 'string' ? board.frontmatter.description : '',
         elements: board.elements.filter((e) => e.isDeleted !== true).length,
-        updatedAt,
-        ...mark,
-      });
+      };
     } catch (err) {
-      out.push({ slug, name: slug, description: '', elements: 0, updatedAt, corrupt: (err as Error).message, ...mark });
+      summary = { name: slug, description: '', elements: 0, corrupt: (err as Error).message };
     }
+    summaryCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, summary });
+    out.push({ slug, ...summary, updatedAt, ...mark });
   }
   return out;
 }
+
+/** What a list row reads out of the board's bytes; the rest comes from the folder and a stat. */
+type BoardSummaryBody = Pick<WhiteboardSummary, 'name' | 'description' | 'elements' | 'corrupt'>;
+
+/**
+ * A board's list row, cached by mtime + size like {@link whiteboardRev}: the dashboard re-pulls
+ * the list every 15 s and on every focus, and parsing every board on each pull made a vault's
+ * biggest board the price of every refresh. A write changes the mtime, so a changed board is
+ * always parsed again.
+ */
+const summaryCache = new Map<string, { mtimeMs: number; size: number; summary: BoardSummaryBody }>();
 
 const MAX_SLUG = 64;
 
