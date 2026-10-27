@@ -215,8 +215,16 @@ describe('end-review fixes', () => {
     const t = startConnect({ files: [], cwd: '/p', env: {}, spawnImpl, accountId: 'a', name: 'posthog', projectRoot: '/p', home: tmpdir(), everyMs: 5, windowMs: 60_000 });
     expect(t).not.toBe('busy');
     const id = (t as { id: string }).id;
-    // The child answers nothing and dies.
-    children[0].emit('exit', 1);
+    // The CLI hands out its auth URL (the ticket is now WAITING on the owner's browser) …
+    const child = children[0];
+    const written = () => (child.stdin as { write: ReturnType<typeof vi.fn> }).write.mock.calls.map((c) => JSON.parse(String(c[0])));
+    for (let i = 0; i < 100 && !written().some((f) => f.request?.subtype === 'mcp_authenticate'); i++) await new Promise((r) => setTimeout(r, 5));
+    const auth = written().find((f) => f.request?.subtype === 'mcp_authenticate');
+    (child.stdout as EventEmitter).emit('data', Buffer.from(`${JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: auth.request_id, response: { authUrl: 'https://auth.example.test/x' } } })}\n`));
+    for (let i = 0; i < 100 && connectStatus(id)?.state !== 'waiting'; i++) await new Promise((r) => setTimeout(r, 5));
+    expect(connectStatus(id)?.state).toBe('waiting');
+    // … and then dies while the owner is still in the browser.
+    child.emit('exit', 1);
     for (let i = 0; i < 100 && connectStatus(id)?.state !== 'failed'; i++) await new Promise((r) => setTimeout(r, 10));
     expect(connectStatus(id)?.state).toBe('failed');
     expect(startConnect({ files: [], cwd: '/p', env: {}, spawnImpl, accountId: 'a', name: 'x', projectRoot: '/p', home: tmpdir() })).not.toBe('busy');
