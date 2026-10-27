@@ -101,6 +101,33 @@ dreamcontext whiteboard draw <slug> --spec spec.json [--at x,y | --below <tag> |
 dreamcontext whiteboard kit                            # the drawing kit: types, fields, a worked example
 ```
 
+### Groups (the dashboard's board explorer)
+
+The Whiteboard page has a left explorer listing every board, in groups. A board's group is its
+own frontmatter, `group: "Tilki metrics"`, next to `group-by: owner|agent` (who placed it), so the
+team, another machine and agents see the same groups and brain sync merges them per key.
+Nothing moves on disk; a board with no (or an invalid) `group` is Ungrouped.
+
+```bash
+dreamcontext whiteboard group list [--json]               # groups and their boards
+dreamcontext whiteboard group set <slug> "Tilki metrics"  # put a board in a group
+dreamcontext whiteboard group clear <slug>                # take it out
+dreamcontext whiteboard group rename "Satis" "Satış"      # every board, every spelling of the group
+dreamcontext whiteboard create "Name" --group "Tilki metrics"
+```
+
+- A name is 1-60 characters on one line, without `/`. An existing group with the same letters
+  (case, accents and ı aside) keeps its spelling: `group set x "tilki metrics"` lands in
+  "Tilki metrics". A rename that only fixes case or letters ("Satis" → "Satış") is taken as typed.
+- **A board the owner placed is refused** (`owner_grouped`) — also after he took it OUT of a
+  group (`group-by: owner` stays). Pass `--force` only when the owner asked for that move.
+  `group rename` skips such boards and lists them as failed; it exits 1 when any failed.
+- A board agent may `group set|clear` only its own board and cannot `group rename`.
+- `group` and `group-by` merge as separate keys, so a cross-machine merge can pair one side's
+  group with the other's author: at worst one refusal or one allowed move, never a lost board.
+- A hand-written date (`group: 2026-10-28`) reads as its ISO string, and the next write of the
+  board saves it that way (every frontmatter key behaves so).
+
 - `--check` / `--uncheck` take a **1-based position** or an item id, and repeat.
 - `update --text` on a plain text element replaces its text.
 - `update --size s|m|l|xl` resizes a widget to a preset (sets `dc.size`, width and height, bumps the version). `--size w,h` resizes any element freely and clears a widget's `dc.size`.
@@ -171,8 +198,8 @@ An `agent` widget is an ordinary agent (`agents/<slug>.md`, [automations.md](aut
 **Home or attached.** An agent is **at home** on a board when its agent file says `whiteboard: <board>`: create it with `dreamcontext agents create <slug> --title "…" --prompt "…" --whiteboard <board>` (or the canvas palette's **New agent**, which opens the AI Team (Profile) with the board preset; a scheduled one: `automations create <slug> --title "…" --whiteboard <board>`, or an automation with `--agent` on the home agent), then put its card there with `dreamcontext whiteboard add <board> agent --ref <slug>`. The field is approval-hashed, the approval records which board was approved, it cannot be combined with an output directory, and nothing re-homes an agent later. Any other agent's card on a board is **attached**: it keeps its normal permissions and only borrows the board as context. `show --json` tells them apart (`agents[].home`).
 
 **A home-board agent acts only on its board.** Every spawn of one (a run, an account-switch continue, a reply, an answered question, a card conversation) runs under Claude Code's own permission rules instead of `bypassPermissions`: `--permission-mode dontAsk --setting-sources project` and an exact allowlist. Anything not on the list is denied.
-- **Reads:** `Read`, `Glob`, `Grep`, `LS`, `WebFetch`, `WebSearch`, and the read verbs `snapshot`, `memory recall`, `tasks list`, `knowledge index`, `lab list|show`, `whiteboard list|show|place|kit|nav list`, `automations list|show|thread|pattern|flow`, `agents list|show`. Each allowed Bash call is one `dreamcontext` command: a compound line (`cat …; dreamcontext …`, `&&`, a pipe) or a write verb's `--help` without the board slug matches no rule and is refused.
-- **Writes:** `whiteboard add|update|remove|draw|render|nav add|nav remove|nav move <its board>`, `automations post|learn|propose <itself>`, and files only under `automations/output/<itself>/` and its scratch folder `$DREAMCONTEXT_AGENT_SCRATCH`. Nothing else: no shell redirect into a file, no `Agent`, `Task` or `Workflow`, no skills, no MCP.
+- **Reads:** `Read`, `Glob`, `Grep`, `LS`, `WebFetch`, `WebSearch`, and the read verbs `snapshot`, `memory recall`, `tasks list`, `knowledge index`, `lab list|show`, `whiteboard list|show|place|kit|nav list|group list`, `automations list|show|thread|pattern|flow`, `agents list|show`. Each allowed Bash call is one `dreamcontext` command: a compound line (`cat …; dreamcontext …`, `&&`, a pipe) or a write verb's `--help` without the board slug matches no rule and is refused.
+- **Writes:** `whiteboard add|update|remove|draw|render|nav add|nav remove|nav move|group set|group clear <its board>`, `automations post|learn|propose <itself>`, and files only under `automations/output/<itself>/` and its scratch folder `$DREAMCONTEXT_AGENT_SCRATCH`. Nothing else: no shell redirect into a file, no `Agent`, `Task` or `Workflow`, no skills, no MCP.
 - **Never read:** `~/.ssh`, `~/.aws`, `~/.claude`, `~/.claude.json`, `~/.dreamcontext`, `~/.config/gh`, `~/.config/gcloud`, `~/.docker`, `~/.gnupg`, `~/.kube`, `~/.azure`, `~/.npmrc`, `~/.netrc`, `~/.git-credentials`, `~/.pypirc`, and anywhere any `.env*`, `*.pem`, `*.key`, `id_rsa*` or `id_ed25519*`.
 - **A second layer in the CLI:** the run carries `DREAMCONTEXT_AGENT_BOARD`, `DREAMCONTEXT_AGENT_SELF` and `DREAMCONTEXT_AGENT_SCRATCH`. While they are set, `whiteboard` write verbs refuse any other board (and `create`), `whiteboard add|update|draw --file` reads only from the agent's scratch folder (`$DREAMCONTEXT_AGENT_SCRATCH`) or `_dream_context/automations/output/<self>/`, compared by real path, and refuses any symlink (`draw --spec` and the pictures a spec names are read the same way), `whiteboard render --out` writes only into those same two folders, and `automations post|learn|propose` refuse any other agent's slug.
 - **It fails closed.** Before each spawn the agent is checked again; a refusal means no spawn and a named reason (a run records "Could not limit <title> to its board: <reason>", a reply is refused). The reasons: not approved as it stands, the manifest's board differs from the approved one, a board together with an output directory, a missing board, a symlink in its output folder, or a real path with a character a permission rule cannot hold (`, ( ) * " ? [ ] { } ! \ #` or a control character).

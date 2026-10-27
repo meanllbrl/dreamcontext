@@ -22,6 +22,8 @@ export interface WhiteboardSummary {
   updatedAt: string;
   /** Set when the board does not parse. */
   corrupt?: string;
+  /** The explorer group (frontmatter `group`); absent = Ungrouped. */
+  group?: string;
 }
 
 interface WhiteboardDoc {
@@ -130,7 +132,7 @@ export function useCreateWhiteboard() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { name: string; description: string }) =>
+    mutationFn: (input: { name: string; description: string; group?: string }) =>
       api.post<{ slug: string }>(LIST_PATH, input),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: LIST_KEY, exact: true }); },
   });
@@ -148,6 +150,72 @@ export function useRenameWhiteboard() {
       qc.setQueryData<WhiteboardSummary[]>(LIST_KEY, (list) => list?.map((b) => (b.slug === slug ? { ...b, name: name.trim() } : b)));
     },
     onSettled: () => { void qc.invalidateQueries({ queryKey: LIST_KEY, exact: true }); },
+  });
+}
+
+/** A group move refused or failed: the board, and the server's reason. */
+export interface GroupMoveNote { board: string; reason: string; code: string }
+
+/**
+ * Move a board into a group (`null` = out of it). The list is patched at once and rolled back
+ * on ANY error (a 409 `stale_group` / `owner_grouped`, a deleted board, a busy lock), then
+ * re-read; `onRefused` gets a line to show. One move per board at a time (`scope`), so two
+ * quick drags reach the server in order. `expectGroup` is always sent (`?? null`): the list
+ * leaves an ungrouped board's `group` out, and an `undefined` would silently skip the check.
+ */
+export function useSetWhiteboardGroup(onRefused?: (note: GroupMoveNote) => void) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { slug: string; group: string | null; expectGroup: string | null | undefined }) =>
+      api.patch<{ slug: string; group: string | null }>(boardUrl(input.slug), groupPatchBody(input.group, input.expectGroup)),
+    onMutate: async ({ slug, group }) => {
+      await qc.cancelQueries({ queryKey: LIST_KEY, exact: true });
+      const before = qc.getQueryData<WhiteboardSummary[]>(LIST_KEY);
+      qc.setQueryData<WhiteboardSummary[]>(LIST_KEY, (list) => list?.map((b) => (b.slug === slug ? withGroup(b, group) : b)));
+      return { before };
+    },
+    onError: (err, { slug }, ctx) => {
+      if (ctx?.before) qc.setQueryData(LIST_KEY, ctx.before);
+      const name = ctx?.before?.find((b) => b.slug === slug)?.name ?? slug;
+      onRefused?.({ board: name, reason: (err as Error).message, code: err instanceof RequestError ? err.code : '' });
+    },
+    onSettled: () => { void qc.invalidateQueries({ queryKey: LIST_KEY, exact: true }); },
+    mutationKey: ['whiteboard-group'],
+    scope: { id: 'whiteboard-group' },
+  });
+}
+
+/** The PATCH body for a group move: both keys always present. */
+export function groupPatchBody(group: string | null, expectGroup: string | null | undefined): { group: string | null; expectGroup: string | null } {
+  return { group, expectGroup: expectGroup ?? null };
+}
+
+function withGroup(b: WhiteboardSummary, group: string | null): WhiteboardSummary {
+  const { group: _old, ...rest } = b;
+  return group ? { ...rest, group } : rest;
+}
+
+export interface GroupRenameResult { from: string; to: string | null; moved: string[]; skipped: string[]; failed: { slug: string; reason: string }[] }
+
+/** Rename a group (`to: null` = ungroup all) on every board in it; boards match by fold. */
+export function useRenameWhiteboardGroup(fold: (s: string) => string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { from: string; to: string | null }) =>
+      api.post<GroupRenameResult>(`${LIST_PATH}/groups/rename`, input),
+    onMutate: async ({ from, to }) => {
+      await qc.cancelQueries({ queryKey: LIST_KEY, exact: true });
+      const before = qc.getQueryData<WhiteboardSummary[]>(LIST_KEY);
+      const key = fold(from);
+      qc.setQueryData<WhiteboardSummary[]>(LIST_KEY, (list) => list?.map((b) => (b.group && fold(b.group) === key ? withGroup(b, to) : b)));
+      return { before };
+    },
+    onError: (_err, _input, ctx) => { if (ctx?.before) qc.setQueryData(LIST_KEY, ctx.before); },
+    onSettled: () => { void qc.invalidateQueries({ queryKey: LIST_KEY, exact: true }); },
+    mutationKey: ['whiteboard-group'],
+    scope: { id: 'whiteboard-group' },
   });
 }
 

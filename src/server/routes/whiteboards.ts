@@ -11,7 +11,9 @@ import {
   listWhiteboards,
   mutateWhiteboard,
   readWhiteboard,
+  patchWhiteboardMeta,
   renameWhiteboard,
+  renameWhiteboardGroup,
   restoreWhiteboard,
   TRASH_DIR,
   trashWhiteboard,
@@ -21,8 +23,10 @@ import { mergeElements } from '../../lib/whiteboards/merge.js';
 import { boardFileRelPath, readBoardFile, WHITEBOARD_MAX_FILE_BYTES, writeBoardFile } from '../../lib/whiteboards/files.js';
 import { assertPicturesHeld } from '../../lib/whiteboards/ops.js';
 import { searchPages } from '../../lib/whiteboards/pages.js';
+import { parseGroupInput, readGroup } from '../../lib/whiteboards/validate.js';
 import {
   WHITEBOARD_MAX_BODY_BYTES,
+  WhiteboardConflictError,
   WhiteboardError,
   WhiteboardTooLargeError,
   WhiteboardValidationError,
@@ -40,6 +44,7 @@ import {
 /** Typed store errors carry their own status; anything else is a real 500. */
 function sendWhiteboardError(res: ServerResponse, err: unknown): void {
   if (!(err instanceof WhiteboardError)) throw err;
+  if (err instanceof WhiteboardConflictError) { sendError(res, 409, err.code, err.message); return; }
   const code = err.status === 404 ? 'not_found'
     : err.status === 413 ? 'too_large'
     : err.status === 422 ? 'corrupt'
@@ -163,9 +168,12 @@ export async function handleWhiteboardsCreate(
     return;
   }
   try {
-    const { slug } = createWhiteboard(contextRoot, name, description);
+    // The dashboard is the owner's hand: a group given here is his placement.
+    const group = body && 'group' in body ? parseGroupInput(body.group) : undefined;
+    const { slug } = createWhiteboard(contextRoot, name, description, { group, by: 'owner' });
     const { board, rev } = readWhiteboard(contextRoot, slug);
-    sendJson(res, 201, { slug, name: boardName(board, slug), description: board.frontmatter.description ?? '', rev });
+    const placed = readGroup(board.frontmatter.group);
+    sendJson(res, 201, { slug, name: boardName(board, slug), description: board.frontmatter.description ?? '', rev, ...(placed ? { group: placed } : {}) });
   } catch (err) {
     sendWhiteboardError(res, err);
   }
@@ -270,7 +278,13 @@ export async function handleWhiteboardPut(
   }
 }
 
-/** PATCH /api/whiteboards/:slug `{name}` → `{slug, name, rev}`: a new display name, same slug. */
+/**
+ * PATCH /api/whiteboards/:slug `{name?, group?, expectGroup?}` → `{slug, name, group, rev}`.
+ * Keys are read by PRESENCE: a missing `group` leaves the group alone, `group: null` takes the
+ * board out of its group; a missing `expectGroup` skips the stale check, `null` expects it
+ * ungrouped. Name and group land in one write. 409 `stale_group` when the board moved since
+ * the dashboard looked.
+ */
 export async function handleWhiteboardRename(
   req: IncomingMessage,
   res: ServerResponse,
@@ -278,15 +292,34 @@ export async function handleWhiteboardRename(
   contextRoot: string,
 ): Promise<void> {
   const body = await parseJsonBody(req);
-  const name = body?.name;
-  // Trimmed, length and characters are the store's to judge (renameWhiteboard), so the CLI and
-  // this route refuse the same names.
-  if (typeof name !== 'string') {
+  const hasName = !!body && 'name' in body;
+  const hasGroup = !!body && 'group' in body;
+  if (!hasName && !hasGroup) {
+    sendError(res, 400, 'invalid', 'Send a name, a group, or both.');
+    return;
+  }
+  // Trimmed, length and characters are the store's to judge, so the CLI and this route refuse
+  // the same names.
+  if (hasName && typeof body.name !== 'string') {
     sendError(res, 400, 'invalid', 'A whiteboard needs a name (1-200 characters).');
     return;
   }
+  const expect = body && 'expectGroup' in body ? body.expectGroup : undefined;
+  if (expect !== undefined && expect !== null && typeof expect !== 'string') {
+    sendError(res, 400, 'invalid', 'expectGroup is a group name or null.');
+    return;
+  }
   try {
-    sendJson(res, 200, await renameWhiteboard(contextRoot, params.slug, name));
+    if (!hasGroup) {
+      sendJson(res, 200, await renameWhiteboard(contextRoot, params.slug, body.name as string));
+      return;
+    }
+    sendJson(res, 200, await patchWhiteboardMeta(contextRoot, params.slug, {
+      ...(hasName ? { name: body.name as string } : {}),
+      group: body.group,
+      ...(expect !== undefined ? { expectGroup: expect === null ? null : readGroup(expect) ?? expect } : {}),
+      by: 'owner',
+    }));
   } catch (err) {
     sendWhiteboardError(res, err);
   }
@@ -387,6 +420,29 @@ export async function handleWhiteboardFileGet(
       'Cache-Control': 'private, max-age=31536000, immutable',
     });
     res.end(bytes);
+  } catch (err) {
+    sendWhiteboardError(res, err);
+  }
+}
+
+/**
+ * POST /api/whiteboards/groups/rename `{from, to}` → `{from, to, moved, skipped, failed}`.
+ * `to: null` takes every board out of the group. Boards are matched by fold, each moved under
+ * its own lock; a retry moves what is left (renameWhiteboardGroup).
+ */
+export async function handleWhiteboardGroupRename(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body || !('from' in body) || !('to' in body)) {
+    sendError(res, 400, 'invalid', 'Send {from, to}: the group to rename and its new name (or null).');
+    return;
+  }
+  try {
+    sendJson(res, 200, await renameWhiteboardGroup(contextRoot, body.from, body.to, { by: 'owner' }));
   } catch (err) {
     sendWhiteboardError(res, err);
   }

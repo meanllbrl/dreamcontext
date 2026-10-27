@@ -519,6 +519,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/whiteboards/pages': allow(READ),
   'GET /api/whiteboards/trash': allow(READ),
   'POST /api/whiteboards/trash/:id/restore': allow(PROJECT_WRITE),
+  'POST /api/whiteboards/groups/rename': allow(PROJECT_WRITE),
   'GET /api/whiteboards/:slug/rev': allow(READ),
   'POST /api/whiteboards/:slug/files/:id': allow(PROJECT_WRITE),
   'GET /api/whiteboards/:slug/files/:id': allow('read: a board file, always sent with the sandbox CSP; side-effect free', 'sandboxed'),

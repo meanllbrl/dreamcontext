@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useI18n } from '../context/I18nContext';
 import { useApi, useVault } from '../context/VaultContext';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
@@ -14,6 +14,10 @@ import { dropBoardAgentScratch, sweepHomeSessions } from '../components/whiteboa
 import { readLastBoard, writeLastBoard } from '../components/whiteboard/boardPlace';
 import { hydrateWhiteboardPrefs, isWhiteboardPrefsHydrated } from '../components/whiteboard/whiteboardPrefs';
 import { BoardTabs } from './whiteboards/BoardTabs';
+import { BoardExplorer, SidebarGlyph } from './whiteboards/BoardExplorer';
+import { useExplorerPrefs } from './whiteboards/useExplorerPrefs';
+import { touchRecent } from './whiteboards/explorerLogic';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { clearBoardHash, formatBoardHash, parseBoardHash } from './whiteboards/boardHash';
 import { publishPageDetail } from '../lib/pageContext';
 import './WhiteboardsPage.css';
@@ -113,14 +117,72 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
       && (a.whiteboard === board || openCards.some((c) => c.agent === agent))));
   }, [vault, openSlug, roster, openCards]);
 
+  // The board explorer (left sidebar) lives HERE, above the slug-keyed editor, so a board
+  // switch keeps its search, its fields and its scroll, and it is there in every state.
+  const phone = useIsMobile();
+  const [prefs, changePrefs] = useExplorerPrefs();
+  // The phone never reads or writes the saved `open`: its drawer starts closed, in memory only.
+  const [drawer, setDrawer] = useState(false);
+  const [wide] = useState(() => typeof window === 'undefined' || window.innerWidth >= 1100);
+  const explorerOpen = phone ? drawer : (prefs.open ?? wide);
+  // Who asked for the last show/hide: focus follows the owner's own click (to the explorer's
+  // search when shown, back to the bar's toggle when hidden), never a page load.
+  const [shownByOwner, setShownByOwner] = useState(false);
+  const setExplorerOpen = useCallback((next: boolean) => {
+    if (phone) setDrawer(next);
+    else changePrefs((p) => ({ ...p, open: next }));
+    setShownByOwner(next);
+    if (!next) requestAnimationFrame(() => document.querySelector<HTMLElement>('.wbp-explorer-toggle')?.focus());
+  }, [phone, changePrefs]);
+  useEffect(() => {
+    if (openSlug) changePrefs((p) => touchRecent(p, openSlug));
+  }, [openSlug, changePrefs]);
+
+  const toggle = explorerOpen ? null : (
+    <button
+      type="button"
+      className="wbp-explorer-toggle"
+      aria-label={t('whiteboard.explorer.show')}
+      title={t('whiteboard.explorer.show')}
+      onClick={() => setExplorerOpen(true)}
+    >
+      <SidebarGlyph />
+    </button>
+  );
+
+  return (
+    <div className="wbp-shell" data-phone={phone ? '' : undefined}>
+      {explorerOpen && (
+        <>
+          {phone && <button type="button" className="wbp-shell-scrim" aria-label={t('whiteboard.explorer.hide')} onClick={() => setExplorerOpen(false)} />}
+          <BoardExplorer
+            openSlug={openSlug}
+            onOpen={setOpenSlug}
+            prefs={prefs}
+            change={changePrefs}
+            onHide={() => setExplorerOpen(false)}
+            phone={phone}
+            // Not on a phone: focusing a field there pops the keyboard over the drawer.
+            focusOnMount={shownByOwner && !phone}
+          />
+        </>
+      )}
+      <div className="wbp-shell-main">
+        {renderMain(toggle)}
+      </div>
+    </div>
+  );
+
+  function renderMain(explorerToggle: ReactNode) {
   if (openSlug) {
     // Keyed on the slug: switching boards unmounts this editor first, so its save loop's
     // dispose flushes the unsaved scene while the canvas handle is still there.
-    return <WhiteboardEditor key={openSlug} slug={openSlug} onOpen={setOpenSlug} renameNote={renameNote?.text ?? null} onRenameNote={onRenameNote} />;
+    return <WhiteboardEditor key={openSlug} slug={openSlug} onOpen={setOpenSlug} renameNote={renameNote?.text ?? null} onRenameNote={onRenameNote} explorerToggle={explorerToggle} />;
   }
   if (fallback.isError) {
     return (
       <div className="wbp-editor">
+        {explorerToggle && <div className="wbp-bar">{explorerToggle}</div>}
         <div className="wbp-card-state" role="alert">
           <h2 className="wbp-state-title">{t('whiteboard.page.defaultFailed')}</h2>
           <p className="wbp-state-reason">{fallback.error?.message}</p>
@@ -131,16 +193,19 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
       </div>
     );
   }
-  return <div className="wbp-editor"><div className="wbp-loading">{t('common.loading')}</div></div>;
+  return <div className="wbp-editor">{explorerToggle && <div className="wbp-bar">{explorerToggle}</div>}<div className="wbp-loading">{t('common.loading')}</div></div>;
+  }
 }
 
 // ── one board, full-bleed ────────────────────────────────────────────────────────────────────
 
-function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote }: {
+function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote, explorerToggle }: {
   slug: string;
   onOpen: (slug: string) => void;
   renameNote: string | null;
   onRenameNote: (board: string, note: string | null) => void;
+  /** The "show the board list" button, when the explorer is hidden. */
+  explorerToggle?: ReactNode;
 }) {
   const { t } = useI18n();
   const { load, saveState, onApi, onSceneChange, exportFile, pictures } = useWhiteboardEditor(slug);
@@ -162,14 +227,14 @@ function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote }: {
   const heading = <h1 className="wbp-sr-only">{listed || (load.kind === 'ready' ? load.name : slug)}</h1>;
 
   if (load.kind === 'loading') {
-    return <div className="wbp-editor">{heading}<div className="wbp-bar">{switcher}</div><div className="wbp-loading">{t('common.loading')}</div></div>;
+    return <div className="wbp-editor">{heading}<div className="wbp-bar">{explorerToggle}{switcher}</div><div className="wbp-loading">{t('common.loading')}</div></div>;
   }
 
   if (load.kind === 'corrupt' || load.kind === 'missing' || load.kind === 'error') {
     return (
       <div className="wbp-editor">
         {heading}
-        <div className="wbp-bar">{switcher}</div>
+        <div className="wbp-bar">{explorerToggle}{switcher}</div>
         <div className="wbp-card-state" role="alert">
           {load.kind === 'corrupt' && (
             <>
@@ -197,6 +262,7 @@ function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote }: {
     <div className="wbp-editor">
       {heading}
       <div className="wbp-bar">
+        {explorerToggle}
         {switcher}
         <SaveStatus state={saveState} />
         <button

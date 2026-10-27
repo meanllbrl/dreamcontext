@@ -559,6 +559,19 @@ describe('git-sync/semantic-merge — whiteboard-md', () => {
     expect(fm.color).toBe('blue');
   });
 
+  it('a group set on one machine and an element edit on the other both survive', () => {
+    const base = wbDoc([wbEl('a', 1, 'a0')]);
+    const ours = wbDoc([wbEl('a', 1, 'a0')], { group: 'Tilki metrics', 'group-by': 'owner' });
+    const theirs = wbDoc([wbEl('a', 2, 'a0', { x: 7 })]);
+    const merged = parseWhiteboard(mergeWhiteboardMd(base, ours, theirs).merged!);
+    expect(merged.frontmatter).toMatchObject({ group: 'Tilki metrics', 'group-by': 'owner' });
+    expect(merged.elements[0].x).toBe(7);
+    // …and taking it out of the group on one side merges as a delete.
+    const out = wbDoc([wbEl('a', 1, 'a0')], { 'group-by': 'owner' });
+    const back = parseWhiteboard(mergeWhiteboardMd(ours, out, ours).merged!).frontmatter;
+    expect(back.group).toBeUndefined();
+  });
+
   it('resolveConflicts writes the merged board and marks it resolved; a corrupt one is deferred to the agent', () => {
     const cwd = makeCwd();
     mkdirSync(join(cwd, 'whiteboards', 'b'), { recursive: true });

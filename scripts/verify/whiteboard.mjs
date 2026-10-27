@@ -1904,6 +1904,13 @@ async function main() {
         back = (await currentName()) === WIKI_BOARD.name;
       }
       ok(`${T} the app is in the ${theme} theme`, await page.evaluate(() => document.documentElement.getAttribute('data-theme')) === theme);
+      // The page panel's geometry below is measured on the full-width board: the board list
+      // (BoardExplorer) is hidden, as the owner can, so the canvas keeps Excalidraw's full
+      // layout beside the panel. The choice is saved, so the dark pass starts hidden too.
+      if (await page.locator('.wbx').count()) {
+        await page.locator('.wbx-head .wbx-icon').last().click();
+        await until(async () => (await page.locator('.wbx').count()) === 0 && (await scene())?.width > 0, 5000);
+      }
       const cleaned = await until(async () => JSON.stringify(await hashState()) === JSON.stringify({ wb: W }), 5000);
       ok(`${T} …the retired wbmode / wbpage params are dropped from the hash (only wb=<slug> stays)`, !!cleaned, JSON.stringify(await hashState()));
       const removed = await page.evaluate(() => ({

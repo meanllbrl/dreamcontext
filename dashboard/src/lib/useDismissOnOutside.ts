@@ -21,10 +21,16 @@ import { pushOverlay, popOverlay, isTopOverlay } from './overlayStack';
  *     before the click that dismissed it lands on whatever was underneath.
  *
  * `refs` are the regions that count as INSIDE. Everything else is outside.
+ *
+ * `onClose` is told WHY (`'pointer'` or `'escape'`): a menu closed by Esc puts focus back on
+ * its trigger, one closed by a click elsewhere leaves focus where that click put it. Callers
+ * that do not care ignore the argument.
  */
+export type DismissReason = 'pointer' | 'escape';
+
 export function useDismissOnOutside(
   open: boolean,
-  onClose: () => void,
+  onClose: (reason: DismissReason) => void,
   refs: Array<React.RefObject<HTMLElement | null>>,
   opts?: {
     /**
@@ -60,12 +66,12 @@ export function useDismissOnOutside(
       const t = e.target as Node;
       if (live.current.refs.some((r) => r.current?.contains(t))) return;
       if (ignoreSelector && t instanceof Element && t.closest(ignoreSelector)) return;
-      live.current.onClose();
+      live.current.onClose('pointer');
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || !isTopOverlay(overlayId)) return;
       e.stopPropagation();
-      live.current.onClose();
+      live.current.onClose('escape');
     };
     document.addEventListener('pointerdown', onDown, true);
     document.addEventListener('keydown', onKey, true);

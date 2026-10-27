@@ -14,6 +14,8 @@ import {
   readWhiteboard,
   boardName,
   DEFAULT_WHITEBOARD,
+  renameWhiteboardGroup,
+  setWhiteboardGroup,
 } from '../../lib/whiteboards/store.js';
 import { WhiteboardError, WhiteboardValidationError } from '../../lib/whiteboards/errors.js';
 import { getBoard } from '../../lib/lab/boards.js';
@@ -645,7 +647,21 @@ export function registerWhiteboardCommand(program: Command): void {
         info('No whiteboards yet. Create one: dreamcontext whiteboard create "<name>"');
         return;
       }
+      // Grouped as the dashboard's explorer shows them: each group by name, Ungrouped last.
+      const groups = new Map<string, typeof boards>();
       for (const b of boards) {
+        const key = b.group ?? '';
+        groups.set(key, [...(groups.get(key) ?? []), b]);
+      }
+      const order = [...groups.keys()].sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b, 'tr', { sensitivity: 'base' }) || (a < b ? -1 : 1)));
+      const ordered = order.flatMap((k) => groups.get(k) ?? []);
+      let lastGroup: string | null = null;
+      for (const b of ordered) {
+        const g = b.group ?? '';
+        if (groups.size > 1 && g !== lastGroup) {
+          console.log(chalk.dim(g ? `${g}:` : 'Ungrouped:'));
+          lastGroup = g;
+        }
         const note = b.corrupt ? chalk.red(`  (does not parse: ${b.corrupt})`) : chalk.dim(`  ${b.elements} element${b.elements === 1 ? '' : 's'}`);
         const mark = b.isDefault ? chalk.cyan('  (default)') : '';
         console.log(`  ${chalk.bold(b.name)}  ${chalk.dim(b.slug)}${mark}${note}`);
@@ -659,12 +675,13 @@ export function registerWhiteboardCommand(program: Command): void {
   wb.command('create <name>')
     .description('Create a whiteboard (the name is kept verbatim; the slug is derived from it)')
     .option('-d, --description <text>', 'One-line description', '')
+    .option('-g, --group <name>', 'Put it in this explorer group (an existing group\'s spelling wins)')
     .option('--json', 'Machine-readable output')
-    .action(run((name: string, opts: { description: string; json?: boolean }) => {
+    .action(run((name: string, opts: { description: string; group?: string; json?: boolean }) => {
       // A new board is "another board" by definition.
       const home = scopedBoard();
       if (home !== null) throw new WhiteboardValidationError(`this agent acts only on its own board '${home}' and cannot create boards`);
-      const created = createWhiteboard(ensureContextRoot(), name, opts.description);
+      const created = createWhiteboard(ensureContextRoot(), name, opts.description, { group: opts.group, by: 'agent' });
       if (opts.json) {
         console.log(JSON.stringify(created, null, 2));
         return;
@@ -685,6 +702,67 @@ export function registerWhiteboardCommand(program: Command): void {
         return;
       }
       success(`Renamed ${chalk.dim(slug)} → ${chalk.bold(renamed.name)}`);
+    }));
+
+  // --- group ---
+  const group = wb.command('group')
+    .description('The explorer groups boards sit in (frontmatter `group`). A board the owner placed is refused without --force.');
+
+  group.command('list', { isDefault: true })
+    .description('List the groups and how many boards each holds')
+    .option('--json', 'Machine-readable output')
+    .action(run((opts: { json?: boolean }) => {
+      const counts = new Map<string, string[]>();
+      for (const b of listWhiteboards(ensureContextRoot())) {
+        if (b.group) counts.set(b.group, [...(counts.get(b.group) ?? []), b.slug]);
+      }
+      const rows = [...counts].sort(([a], [b]) => a.localeCompare(b, 'tr', { sensitivity: 'base' }) || (a < b ? -1 : 1))
+        .map(([name, boards]) => ({ name, boards }));
+      if (opts.json) {
+        console.log(JSON.stringify(rows, null, 2));
+        return;
+      }
+      if (rows.length === 0) {
+        info('No groups yet. Put a board in one: dreamcontext whiteboard group set <slug> "<group>"');
+        return;
+      }
+      for (const r of rows) console.log(`  ${chalk.bold(r.name)}  ${chalk.dim(`${r.boards.length} board${r.boards.length === 1 ? '' : 's'}: ${r.boards.join(', ')}`)}`);
+    }));
+
+  group.command('set <slug> <name>')
+    .description('Put a board in a group (an existing group with the same letters keeps its spelling)')
+    .option('--force', 'Move it even though the owner placed it (only when the owner asked)')
+    .option('--json', 'Machine-readable output')
+    .action(run(async (slug: string, name: string, opts: { force?: boolean; json?: boolean }) => {
+      assertBoardInScope(slug);
+      const out = await setWhiteboardGroup(ensureContextRoot(), slug, name, { by: 'agent', force: opts.force });
+      if (opts.json) { console.log(JSON.stringify(out, null, 2)); return; }
+      success(`${chalk.dim(slug)} → group ${chalk.bold(out.group ?? '')}`);
+    }));
+
+  group.command('clear <slug>')
+    .description('Take a board out of its group')
+    .option('--force', 'Even though the owner placed it (only when the owner asked)')
+    .option('--json', 'Machine-readable output')
+    .action(run(async (slug: string, opts: { force?: boolean; json?: boolean }) => {
+      assertBoardInScope(slug);
+      const out = await setWhiteboardGroup(ensureContextRoot(), slug, null, { by: 'agent', force: opts.force });
+      if (opts.json) { console.log(JSON.stringify(out, null, 2)); return; }
+      success(`${chalk.dim(slug)} is in no group now`);
+    }));
+
+  group.command('rename <from> <to>')
+    .description('Rename a group on every board in it (all spellings of it); owner-placed boards are skipped without --force')
+    .option('--force', 'Also move boards the owner placed (only when the owner asked)')
+    .option('--json', 'Machine-readable output')
+    .action(run(async (from: string, to: string, opts: { force?: boolean; json?: boolean }) => {
+      const home = scopedBoard();
+      if (home !== null) throw new WhiteboardValidationError(`this agent acts only on its own board '${home}' and cannot rename a group`);
+      const out = await renameWhiteboardGroup(ensureContextRoot(), from, to, { by: 'agent', force: opts.force });
+      if (opts.json) { console.log(JSON.stringify(out, null, 2)); return; }
+      success(`Group ${chalk.bold(out.from)} → ${chalk.bold(out.to ?? '')}: ${out.moved.length} board${out.moved.length === 1 ? '' : 's'} moved`);
+      for (const f of out.failed) console.log(chalk.yellow(`  ${f.slug}: ${f.reason}`));
+      if (out.failed.length > 0) process.exitCode = 1;
     }));
 
   // --- show ---

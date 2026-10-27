@@ -16,6 +16,8 @@ export interface SwitcherBoard {
   elements?: number;
   updatedAt?: string;
   corrupt?: string;
+  /** The explorer group, if any. */
+  group?: string;
 }
 
 export function isDefaultBoard(slug: string): boolean {
@@ -28,18 +30,18 @@ export function canDeleteBoard(slug: string): boolean {
 }
 
 /** Case- and accent-free, with Turkish dotless ı folded to i ("İş", "is", "IS" all meet). */
-const fold = (s: string) => s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/ı/g, 'i');
+export const fold = (s: string): string => s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/ı/g, 'i');
 
 /**
  * The popover's list: the default board first, then the most recently updated. A query
- * matches name, slug or description, case- and accent-insensitively ("gunluk" finds
+ * matches name, slug, description or group, case- and accent-insensitively ("gunluk" finds
  * "Günlük"); every whitespace-separated word must match.
  */
 export function filterBoards<T extends SwitcherBoard>(boards: readonly T[], query: string): T[] {
   const words = fold(query).split(/\s+/).filter(Boolean);
   const hit = (b: T) => {
     if (words.length === 0) return true;
-    const hay = fold(`${b.name} ${b.slug} ${b.description ?? ''}`);
+    const hay = fold(`${b.name} ${b.slug} ${b.description ?? ''} ${b.group ?? ''}`);
     return words.every((w) => hay.includes(w));
   };
   const time = (b: T) => {
