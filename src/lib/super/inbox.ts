@@ -5,6 +5,7 @@ import { wrapUntrusted } from '../assistant/autonomy.js';
 import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
 import { armTeamJobWatches, awaitedTeamItem, staleTeamItem, teamItemLines, teamLiveRows } from './team.js';
+import { markPadTold, padNotice, settlePad } from './pad.js';
 import { superRestoreHold } from './restore.js';
 import { makeRoom } from './room.js';
 import { bringLiveCard, floatLiveChildren } from './live.js';
@@ -26,7 +27,7 @@ import {
   DONE_SETTLE_MS, MAX_BATCH, MAX_CONTAINERS, MAX_FLOAT, MAX_WAIT_KEY, MAX_OWNER_BATCHES, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS,
   SUPER_FRAME_STATE, floatCount, leaveGroups, AGENDA_REF, AGENDA_SIZE,
   type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
-  MAX_HELD, type SuperHeldEvent, type SuperQueueItem, type SuperState, type SuperStateView,
+  MAX_HELD, PAD_ID_RE, type SuperHeldEvent, type SuperQueueItem, type SuperState, type SuperStateView,
 } from './types.js';
 
 /**
@@ -343,6 +344,8 @@ export async function writeSuper(
     noteHeld(out);
     // A picture question's cards: presented at the head, put back once it closes (ask-show.ts).
     settleAskShows(out, superQueueHead(out));
+    // A Now line about a job follows that job (pad.ts): every write sees the rows it moved.
+    settlePad(out);
     return out;
   }, { ...superSanitizeOpts(), ...(opts.onDemoted ? { onDemoted: opts.onDemoted } : {}) });
   afterSuperWrite(contextRoot, next);
@@ -670,7 +673,9 @@ async function closeOpenAsks(key: string, sessionId: string, told: readonly stri
   const cur = await readSuperState(key, superSanitizeOpts());
   if (!cur.queue.some((q) => q.kind === 'ask' && q.state !== 'done') && !told.length) return;
   const inbox = inboxes.get(sessionId);
-  const ids = new Set(told);
+  // Agenda note ids told in the same message (`superAnswerDigest`): stamped, never carried.
+  const padIds = told.filter((id) => PAD_ID_RE.test(id));
+  const ids = new Set(told.filter((id) => !PAD_ID_RE.test(id)));
   const batch = newBatchId();
   if (inbox && ids.size) {
     carried.set(key, [...(carried.get(key) ?? []), ...[...ids].map((itemId) => ({ itemId, inboxId: inbox.id, seq: endSeq, batch }))]);
@@ -681,6 +686,7 @@ async function closeOpenAsks(key: string, sessionId: string, told: readonly stri
       else if (ids.has(q.id) && q.state === 'pending') { q.state = inbox ? 'delivered' : q.kind === 'owner' ? 'escalated' : 'done'; q.batch = batch; }
     }
     if (s.held) s.held = s.held.filter((h) => !ids.has(h.item));
+    markPadTold(s, padIds);
   });
   void pumpSuper(key);
 }
@@ -732,7 +738,14 @@ export function superAnswerDigest(sessionId: string, now = Date.now(), abouts: r
   if (!s || !s.enabled || s.session !== sessionId) return null;
   if (!s.queue.some((q) => q.kind === 'ask' && q.state === 'escalated')) return null;
   if (aboutKeepsAsks(s, abouts)) return null;
-  return heldBlock(root, s, now);
+  // No event turn runs while his question is open: what the agenda moved by itself (pad.ts)
+  // rides in this message too, and its note ids are marked told with the held items.
+  const held = heldBlock(root, s, now);
+  const pad = padNotice(s, now);
+  if (!pad.ids.length) return held;
+  // In its own tag: a block that starts with `<` never shows in the owner's replay.
+  const agenda = ['<super-agenda-moved>', ...pad.lines, '</super-agenda-moved>'].join('\n');
+  return { text: [...(held ? [held.text] : []), agenda].join('\n'), items: [...(held?.items ?? []), ...pad.ids] };
 }
 
 // ─── Event texts (server-authored header and last line; child text fenced) ──────
@@ -833,6 +846,8 @@ export function superBatchText(contextRoot: string, state: SuperState, items: re
     ...(items.some((it) => it.team) ? [TEAM_LINE] : []),
     ...(items.some((it) => it.kind === 'owner') ? [OWNER_WAIT_LINE] : []),
     BATCH_LAST_LINE,
+    // The agenda lines the server moved, or that went stale (pad.ts): keep or close each.
+    ...padNotice(state, now).lines,
     // Held while a question was open: the exception to the no-text rule above.
     ...(held ? [held.text] : []),
   ].join('\n');
@@ -1166,7 +1181,9 @@ async function pumpOnce(key: string): Promise<void> {
     // A result he waits on, or a job waiting on HIM (`owner`): the super tells him, in full.
     const tells = !solo && (!!held || items.some((q) => awaitedItem(state, q) || q.kind === 'owner' || (!!q.team && q.kind === 'question')));
     const fresh = solo && items[0].kind === 'fresh';
+    const toldPad = solo ? [] : padNotice(state, now).ids;
     await writeSuper(key, (s) => {
+      markPadTold(s, toldPad, now);
       for (const it of s.queue) if (ids.has(it.id) && it.state === 'pending') { it.state = 'delivered'; it.batch = batch; }
       // The super's own question closes with its session; its text rode the fresh turn.
       if (fresh) for (const it of s.queue) if (it.kind === 'ask' && it.state === 'escalated') it.state = 'done';

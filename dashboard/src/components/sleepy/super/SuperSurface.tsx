@@ -84,6 +84,8 @@ export interface SuperSurfaceProps {
   onEndChild: (child: string, whenDone: boolean) => void;
   /** The owner chose to keep a child running after all (a pending "end when done" is dropped). */
   onKeepChild: (child: string) => void;
+  /** The owner moved an agenda note by hand (Done / Put back). */
+  onMoveNote?: (id: string, section: 'now' | 'done') => void;
   /** Children waiting to be ended when their turn ends. */
   endPending: ReadonlySet<string>;
   /** Children whose end the server did not record (still running; the card says so). */
@@ -678,6 +680,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onWriteAbout={writeAbout}
       taskRows={taskRows}
       onOpenTask={(slug) => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'tasks', id: slug })}
+      onMoveNote={props.onMoveNote}
     />
   );
   const othersItems: OthersItem[] = plan.others.map((id) => {

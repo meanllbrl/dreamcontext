@@ -12,7 +12,7 @@ import {
   CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
   MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
-  AGENDA_REF, MAX_PAD, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
+  AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_FILMSTRIP, PRESENT_LAYOUTS, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
@@ -29,6 +29,7 @@ import {
 import { ownerQuestionReach } from '../../lib/super/owner-question.js';
 import { freshInFlight, isSuperEventTurn, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
+import { padJobOver, padStale } from '../../lib/super/pad.js';
 import { childDefaultEffort } from '../../lib/model-facts.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
@@ -583,7 +584,7 @@ function poolRows(vault: string, pool: readonly SuperPoolItem[]): Array<Record<s
 /** Start `job` as a child (the cap, the worktree, the window), or keep it in the pool when the
  *  cap holds it. `fromRow` is the pool row it came from: removed in the same write that records
  *  the child, kept on any refusal, marked `maybeStarted` when the window did not confirm. */
-async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string): Promise<void> {
+async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string, noteText?: string): Promise<void> {
   // No effort named: a default by mode, never the owner's global one (often xhigh). It is
   // recorded on the pool row and the child, so `super state` and `resume` show the real value.
   const job: Job = jobIn.effort ? jobIn : { ...jobIn, effort: childDefaultEffort(jobIn.mode) };
@@ -660,6 +661,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       return;
     }
     let container: string | null = null;
+    let noted: SuperPadItem | 'full' | null = null;
     const after = await writeSuper(root, (s) => {
       const now = Date.now();
       s.children[sid] = {
@@ -674,12 +676,18 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       container = (succeeds ? succeedChild(s, succeeds, sid, { brief: job.brief }) : null) ?? ensureChatContainer(s, sid, job.title, true);
       // Havuz → Çalışıyor in ONE write: the row leaves the pool as the child enters the list.
       if (fromRow) s.pool = s.pool.filter((p) => p.id !== fromRow.id);
+      // One job, one owner: the agenda lines about the old child follow its successor (the old
+      // one is ended, which would otherwise close a line whose work goes on).
+      if (succeeds) s.pad = s.pad?.map((p) => (p.for === succeeds ? { ...p, for: sid } : p));
+      // Its agenda line, in the same write: Now, and it follows this child from here on.
+      if (noteText) noted = putPadNote(s, 'now', noteText, sid);
     });
     const predecessor = succeeds ? await retirePredecessor(c, succeeds) : null;
     // A child with no card is said out loud (`card: 'not_opened'`), never a quiet null.
     ok(res, {
       sessionId: sid, ...cardOutcome(container, sid, after), ...(wt ? { worktree: wt.path, branch: wt.branch } : {}), ...(fromRow ? { from: fromRow.id } : {}),
       ...(predecessor ? { predecessor } : {}),
+      ...(noted === 'full' ? { note: null, noteRefused: `pad_full: the agenda holds ${MAX_PAD} notes` } : noted ? { note: noted } : {}),
     });
   } catch (err) {
     if (err instanceof WorktreeRefused) { refuse(res, 409, err.code, err.message, err.details); return; }
@@ -741,6 +749,38 @@ async function wakeChild(c: SuperCaller, child: string): Promise<
   return { ok: false, status: status >= 400 ? status : 409, error, message: `that child is parked and could not be woken (${error}): ${why}` };
 }
 
+/**
+ * Write one agenda line into `s`; `forChild` links a Now line to its job (pad.ts). The same line
+ * in the same section is the same note (a retried call writes nothing; a link given now is
+ * added). A full pad gives up its oldest finished line first; with none, nothing is written.
+ */
+function putPadNote(s: SuperState, section: PadSection, text: string, forChild?: string): SuperPadItem | 'full' {
+  const pad = [...(s.pad ?? [])];
+  const same = pad.find((p) => p.section === section && p.text === text);
+  if (same) {
+    if (!forChild || same.for === forChild) return same;
+    const linked: SuperPadItem = { ...same, for: forChild };
+    s.pad = pad.map((p) => (p.id === same.id ? linked : p));
+    return linked;
+  }
+  if (pad.length >= MAX_PAD) {
+    const oldest = pad.findIndex((p) => p.section === 'done');
+    if (oldest < 0) return 'full';
+    pad.splice(oldest, 1);
+  }
+  const next = nextPadId(pad, s.padSeq);
+  const note: SuperPadItem = { id: next.id, section, text, at: Date.now(), ...(forChild ? { for: forChild } : {}) };
+  s.pad = [...pad, note];
+  s.padSeq = next.seq;
+  return note;
+}
+
+async function addPadNote(root: string, section: PadSection, text: string, forChild?: string): Promise<SuperPadItem | 'full'> {
+  let out: SuperPadItem | 'full' = 'full';
+  await writeSuper(root, (s) => { out = putPadNote(s, section, text, forChild); });
+  return out;
+}
+
 /** Each verb's work. */
 export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   state: async (c, _b, res) => {
@@ -796,8 +836,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // `teamLive` is the owner window's (member text, unfenced): the agent reads each team job's
     // status and last line from `team` below, fenced (D10).
     const { teamLive: _ownerOnly, ...view } = superStateView(root, settled);
+    // A Now line no job keeps true, unchanged for PAD_STALE_MS (pad.ts): keep it or close it.
+    const pad = (view.pad ?? []).map((p) => (padStale(p, now) ? { ...p, stale: true, staleMin: Math.floor((now - p.at) / 60_000) } : p));
+    const stalePad = pad.filter((p) => 'stale' in p).map((p) => p.id);
     ok(res, {
-      ...view, children, containers, queue: settled.queue.map(fenceQ), status,
+      ...view, children, ...(view.pad ? { pad } : {}),
+      ...(stalePad.length ? { padStale: { ids: stalePad, do: '`super note keep <id>` if it still holds, else `super note done|drop <id>`' } } : {}), containers, queue: settled.queue.map(fenceQ), status,
       head: head ? fenceQ(head) : null, machine, limits: { maxChildren: MAX_LIVE_CHILDREN },
       // Both card limits, counted the way `open` counts them (its 409 names which one refused).
       cards: cardCounts(settled), pool: poolRows(vault, settled.pool), team, ...(warnings.length ? { warnings } : {}),
@@ -834,6 +878,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       refuse(res, 409, 'adopted', 'that is the owner\'s own chat; it hands its work on only when he says so');
       return;
     }
+    // `--note "<line>"`: its Now line on the agenda, linked to the child it starts (pad.ts).
+    const note = b.note === undefined ? undefined : cleanPadText(b.note);
+    if (note === '') { refuse(res, 400, 'invalid_args', '--note is one line of text'); return; }
     // With no brief of its own, the successor's card keeps the old one's title.
     if (succeeds && !job.brief && c.state.children[succeeds].brief) job.title = c.state.children[succeeds].brief.slice(0, MAX_TITLE);
     const claimed = claims.get(root) ?? new Set<string>();
@@ -843,7 +890,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       claims.set(root, claimed);
     }
     try {
-      await delegateJob(c, res, root, job, fromRow, succeeds);
+      await delegateJob(c, res, root, job, fromRow, succeeds, note);
     } finally {
       // Released whatever happened (r2-E5): a refusal leaves the row for the next try.
       if (fromId) { claimed.delete(fromId); if (!claimed.size) claims.delete(root); }
@@ -1474,25 +1521,38 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!section || !(PAD_SECTIONS as readonly string[]).includes(section)) { refuse(res, 400, 'invalid_args', `section must be one of ${PAD_SECTIONS.join(' | ')}`); return; }
     const text = cleanPadText(b.text);
     if (!text) { refuse(res, 400, 'invalid_args', 'a note is one line of text'); return; }
-    let note: SuperPadItem | null = null;
-    let full = false;
-    await writeSuper(c.who.contextRoot, (s) => {
-      const pad = [...(s.pad ?? [])];
-      // The same line in the same section is the same note (a retried call writes nothing).
-      const same = pad.find((p) => p.section === section && p.text === text);
-      if (same) { note = same; return; }
-      if (pad.length >= MAX_PAD) {
-        // A full pad gives up its oldest finished line first; with none, nothing is dropped.
-        const oldest = pad.findIndex((p) => p.section === 'done');
-        if (oldest < 0) { full = true; return; }
-        pad.splice(oldest, 1);
+    // `--for <child>`: the line is about that job and follows it (pad.ts). Now lines only.
+    const forChild = str(b.for);
+    if (forChild !== undefined) {
+      if (section !== 'now') { refuse(res, 400, 'invalid_args', '--for links a Now line to its job; only `note add now` takes it'); return; }
+      if (!SESSION_ID_RE.test(forChild) || !hasChild(c.state, forChild) || forChild === c.state.session) {
+        refuse(res, 404, 'unknown_child', '--for names none of your children (`dreamcontext super state` lists them)');
+        return;
       }
-      const next = nextPadId(pad, s.padSeq);
-      note = { id: next.id, section: section as PadSection, text, at: Date.now() };
-      s.pad = [...pad, note];
-      s.padSeq = next.seq;
+      // The owner's own chat settles after every turn of his: a line on it would come and go.
+      if (c.state.children[forChild].adopted) { refuse(res, 409, 'adopted', 'that is the owner\'s own chat; note it without --for'); return; }
+      // A job already over would close the line in the same write.
+      const over = padJobOver(c.state, forChild);
+      if (over) { refuse(res, 409, 'job_over', `that job is ${over}; a line about work that goes on: \`super note add now "<line>"\` without --for`); return; }
+    }
+    const added = await addPadNote(c.who.contextRoot, section as PadSection, text, forChild);
+    if (added === 'full') { refuse(res, 409, 'pad_full', `the agenda holds ${MAX_PAD} notes: \`super note done|drop <id>\` or \`super note clear\` first`); return; }
+    ok(res, { note: added });
+  },
+
+  'note-keep': async (c, b, res) => {
+    // A Now line that still holds: stamped now, so it is not stale for another PAD_STALE_MS.
+    const id = str(b.id);
+    if (!id || !(c.state.pad ?? []).some((p) => p.id === id)) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
+    let note: SuperPadItem | null = null;
+    await writeSuper(c.who.contextRoot, (s) => {
+      s.pad = (s.pad ?? []).map((p) => {
+        if (p.id !== id) return p;
+        const { toldAt: _t, ...rest } = p;
+        note = { ...rest, at: Date.now() };
+        return note;
+      });
     });
-    if (full) { refuse(res, 409, 'pad_full', `the agenda holds ${MAX_PAD} notes: \`super note done|drop <id>\` or \`super note clear\` first`); return; }
     ok(res, { note });
   },
 
@@ -1503,8 +1563,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     await writeSuper(c.who.contextRoot, (s) => {
       const have = (s.pad ?? []).find((p) => p.id === id);
       if (!have) return;
-      // Done goes to the end of the pad (the newest finished line), stamped now.
-      note = have.section === 'done' ? have : { ...have, section: 'done', at: Date.now() };
+      // Done goes to the end of the pad (the newest finished line), stamped now. The super moved
+      // it itself: no longer the server's or the owner's move.
+      const { by: _b, why: _w, toldAt: _t, ...mine } = have;
+      note = have.section === 'done' ? { ...mine } : { ...mine, section: 'done', at: Date.now() };
       s.pad = [...(s.pad ?? []).filter((p) => p.id !== id), note];
     });
     if (!note) { refuse(res, 404, 'unknown_note', 'no such note (`dreamcontext super state` lists the pad)'); return; }
@@ -2517,7 +2579,7 @@ export async function handleSuperStateGet(req: IncomingMessage, res: ServerRespo
   } catch (err) { storeRefusal(res, err); }
 }
 
-export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh' | 'seen';
+export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh' | 'seen' | 'pad';
 export type SuperOwnerHandler = (req: IncomingMessage, res: ServerResponse, contextRoot: string, body: Record<string, unknown>) => Promise<void>;
 
 /** The owner's verbs (D17 hand-over/take-back, D9 layout, D7 lease, D13 recap). */
@@ -2588,6 +2650,27 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     const state = await writeSuper(contextRoot, (s) => { applyOwnerSeen(s, marks.marks); });
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },
+  pad: async (_req, res, contextRoot, body) => {
+    // The owner moved an agenda line by hand (the card's Done / Put back): `by: 'owner'`, so the
+    // server never moves it again (pad.ts; pattern: the agent must not undo what the owner did).
+    const id = typeof body.id === 'string' ? body.id : '';
+    const section = body.section === 'now' || body.section === 'done' ? body.section : null;
+    if (!PAD_ID_RE.test(id) || !section) { sendError(res, 400, 'invalid_body', 'give { id: <note id>, section: now | done }'); return; }
+    let found = false;
+    const state = await writeSuper(contextRoot, (s) => {
+      s.pad = (s.pad ?? []).map((p) => {
+        if (p.id !== id) return p;
+        found = true;
+        const { why: _w, toldAt: _t, ...rest } = p;
+        return { ...rest, section, by: 'owner' as const, at: p.section === section ? p.at : Date.now() };
+      });
+      // Moved to the end, like every other move into a section.
+      const moved = s.pad.find((p) => p.id === id);
+      if (moved) s.pad = [...s.pad.filter((p) => p.id !== id), moved];
+    });
+    if (!found) { sendError(res, 404, 'unknown_note', 'no such agenda line'); return; }
+    sendJson(res, 200, { state: superStateView(contextRoot, state) });
+  },
   recap: async (_req, res, contextRoot) => {
     const current = await readSuperState(contextRoot, superSanitizeOpts());
     if (!current.enabled || !current.session || current.away.events < 1) { sendJson(res, 200, { queued: false }); return; }
@@ -2655,3 +2738,4 @@ export const handleSuperRecap = ownerRoute('recap');
 export const handleSuperEnd = ownerRoute('end');
 export const handleSuperFresh = ownerRoute('fresh');
 export const handleSuperSeen = ownerRoute('seen');
+export const handleSuperPad = ownerRoute('pad');

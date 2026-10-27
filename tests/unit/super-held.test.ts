@@ -106,6 +106,27 @@ describe('the held ledger', () => {
 });
 
 describe('the super\'s own question open: the pile rides WITH the owner\'s answer', () => {
+  it('an agenda line its job closed while the question was open rides in the answer, wrapped, and is told once', async () => {
+    makeVault({ children: { c1: child('c1', { adopted: false, row: 'working' }) }, pad: [{ id: 'n1', section: 'now', text: 'Board layout', at: 1, for: 'c1' }], padSeq: 1 });
+    await startSuperInbox([root]);
+    settle(reg(SUPER, 'super'));
+    reg('c1');
+    const { inbox } = fakeInbox();
+    attachSuperInbox(inbox);
+    await openAsk();
+    await finish('c1', 'q-done-c1');
+    const digest = superAnswerDigest(SUPER);
+    expect(digest!.text).toContain('<super-agenda-moved>\n[agenda]');
+    expect(digest!.text).toMatch(/- note=n1 moved Now -> Done by itself: its job \(child=c1\) is (done|gone)/);
+    expect(digest!.items).toContain('n1');
+    superOwnerSpoke(SUPER, Date.now(), digest!.items);
+    await vi.waitFor(async () => {
+      const s = await readSuperState(root);
+      expect(s.pad?.[0].toldAt).toBeGreaterThan(0);
+      expect(s.queue.find((q) => q.id === 'q-ask-1')?.state).toBe('done');
+    }, W);
+  });
+
   it('a finished job, a result he waits on, a child\'s question and one that moved on: all told, none as a silent batch', async () => {
     makeVault({ children: { c1: child('c1'), c2: child('c2', { awaited: true }), c3: child('c3') } });
     await startSuperInbox([root]);

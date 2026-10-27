@@ -109,11 +109,13 @@ export function registerSuperCommand(program: Command): void {
     .option('--prompt <text>', 'The child\'s first message, complete and self-contained')
     .option('--from <pool id>', 'Start a job the pool kept (`super pool list`), exactly as it was kept')
     .option('--force', 'With --from: start a job whose earlier start went unconfirmed')
-    .option('--succeeds <child>', 'It takes this child\'s work over (a context handoff): the card, brief and task pass to it, and the old child is ended (told to stop first if busy)'))
-    .action((o: JobOpts & { from?: string; force?: boolean; succeeds?: string }) => {
-      if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds });
+    .option('--succeeds <child>', 'It takes this child\'s work over (a context handoff): the card, brief and task pass to it, and the old child is ended (told to stop first if busy)')
+    .option('--note <line>', 'Its Now line on the owner\'s agenda, linked to this child: it moves to Done by itself when the job is done, ended or gone'))
+    .action((o: JobOpts & { from?: string; force?: boolean; succeeds?: string; note?: string }) => {
+      const note = o.note !== undefined ? { note: o.note } : {};
+      if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds, ...note });
       if (!o.prompt) return usage('give --prompt, or --from <pool id>');
-      return run('delegate', { ...jobBody(o), succeeds: o.succeeds });
+      return run('delegate', { ...jobBody(o), succeeds: o.succeeds, ...note });
     });
 
   s.command('open <kind> [refs...]')
@@ -274,10 +276,14 @@ export function registerSuperCommand(program: Command): void {
   const n = s.command('note').description('The owner\'s agenda: your notepad of what you do now, what you wait on him for, and what is done (plain words, high level)');
   n.command('add <section> <text...>')
     .description('Write one line: now (what you are doing) | waiting (what you need from the owner) | done (what finished); returns its id (n1, n2, ...)')
-    .action((section: string, text: string[]) => run('note-add', { section, text: text.join(' ') }));
+    .option('--for <child>', 'A Now line about one job: it moves to Done by itself when that child is done, ended or gone (and back while it works again)')
+    .action((section: string, text: string[], o: { for?: string }) => run('note-add', { section, text: text.join(' '), ...(o.for ? { for: o.for } : {}) }));
   n.command('done <id>')
     .description('Move a line to Done (it finished, or the owner gave what you waited for)')
     .action((id: string) => run('note-done', { id }));
+  n.command('keep <id>')
+    .description('A Now line flagged stale (no job behind it, unchanged for 2 h) still holds: keep it another 2 h')
+    .action((id: string) => run('note-keep', { id }));
   n.command('drop <id>')
     .description('Remove a line that no longer holds')
     .action((id: string) => run('note-drop', { id }));

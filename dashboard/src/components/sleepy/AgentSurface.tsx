@@ -119,7 +119,7 @@ import {
   freshPending, superDockLift, superDockOn, superDockPill, superSlotFor,
 } from './super/superHandover';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
-import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperRecap, remoteSkippedTitles } from './super/superApi';
+import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperPad, postSuperRecap, remoteSkippedTitles } from './super/superApi';
 import { fetchRemoteStage, postRemoteLayout, remoteLayoutPatch, remoteStageState } from './super/remoteStage';
 import { useRemoteStage } from './super/useRemoteStage';
 import { usePhoneChatNav } from './usePhoneChatNav';
@@ -3799,6 +3799,12 @@ export function AgentSurface() {
       setEndFailed((prev) => new Set(prev).add(child));
     }).finally(() => { endingRef.current.delete(child); });
   }, [closeSessionById, scopedApi]);
+  // The owner moved an agenda note by hand: the answer is the state after the write.
+  const moveAgendaNote = useCallback((id: string, section: 'now' | 'done') => {
+    void postSuperPad(scopedApi, id, section).then((st) => {
+      if (st) setSuperState(withPendingEdits(st));
+    }).catch((err: unknown) => { console.warn('[super] the agenda line was not moved:', err); });
+  }, [scopedApi]);
   const endChildFromCard = useCallback((child: string, whenDone: boolean) => {
     const s = chatByClaudeId(child);
     if (whenDone && s?.hasLiveWork()) {
@@ -5317,6 +5323,7 @@ export function AgentSurface() {
             onWriteAbout={writeAboutRow}
             onEndChild={endChildFromCard}
             onKeepChild={keepChildRunning}
+            onMoveNote={isMacPhoneSurface() ? undefined : moveAgendaNote}
             endPending={endPending}
             endFailed={endFailed}
             queueElsewhere={dockOpen}

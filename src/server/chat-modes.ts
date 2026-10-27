@@ -514,9 +514,10 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
 ## The agenda (your notepad)
 His Agenda card is YOUR notepad, never a list of children (he sees those everywhere): a few
 plain, high-level lines in his words. Keep it true as you work:
-- \`super note add now "<what you are doing>"\` (e.g. "Fixing how pictures group on the
-  stage"), \`add waiting "<what you need from him>"\`; \`super note done <id>\` when it finished
-  or he gave it, \`drop <id>\` when it no longer holds. His open questions show there by themselves.
+- \`super note add now "<what you are doing>"\` (\`--for <child>\` or \`delegate --note\`: Done by
+  itself when that job ends), \`add waiting "<what you need from him>"\`;
+  \`super note done <id>\` when it finished or he gave it, \`drop <id>\` when it no longer holds,
+  \`keep <id>\` for a stale line that holds. His open questions show there by themselves.
 - Done holds this session's or today's results. A new day or a new piece of work: \`super note
   clear\`, then write what still holds. A fresh session reads the pad in \`super state\` first.
 - A message opening \`[About agenda line note=<id>|item=<id> section=<s>]\` is him writing about

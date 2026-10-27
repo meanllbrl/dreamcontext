@@ -3139,6 +3139,7 @@
         "--prompt",
         "--from",
         "--succeeds",
+        "--note",
         "--brief",
         "--mode",
         "--model",
@@ -3218,6 +3219,9 @@
       "args": [
         "<section>",
         "<text...>"
+      ],
+      "valueFlags": [
+        "--for"
       ]
     },
     {
@@ -3237,6 +3241,13 @@
     {
       "path": "super note drop",
       "desc": "Remove a line that no longer holds",
+      "args": [
+        "<id>"
+      ]
+    },
+    {
+      "path": "super note keep",
+      "desc": "A Now line flagged stale (no job behind it, unchanged for 2 h) still holds: keep it another 2 h",
       "args": [
         "<id>"
       ]

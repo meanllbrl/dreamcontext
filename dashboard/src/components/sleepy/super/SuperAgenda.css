@@ -127,6 +127,28 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 /* A note is the super's own sentence, in its own weight; it wraps whole like every line. */
 .super-agenda-row[data-kind='note'] .super-agenda-name { font-weight: var(--font-weight-medium); }
 
+/* The notepad keeps itself true (owner 2026-10-27): a line its job closed says so, quietly; a
+   line unchanged for hours is a warning word. The owner's own move is a small text button that
+   shows on hover or focus (always on a touch screen). */
+.super-agenda-meta { gap: 4px; }
+.super-agenda-chip[data-kind='stale'] { color: var(--color-warning-ink); background: var(--color-warning-subtle); }
+.super-agenda-move {
+  padding: 1px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: none;
+  font: inherit;
+  font-size: var(--font-size-2xs);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  opacity: 0;
+}
+.super-agenda-row:hover .super-agenda-move,
+.super-agenda-move:focus-visible { opacity: 1; }
+.super-agenda-move:hover { color: var(--color-text); background: var(--color-bg-secondary); }
+.super-agenda-move:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+@media (hover: none) { .super-agenda-move { opacity: 1; } }
+
 /* The counts tile (a small or medium agenda card): what waits on him, what runs, what is done.
    Waiting is the waiting colour (--mood-waiting) here too, as a tint behind ordinary text. */
 .super-agenda--tile {

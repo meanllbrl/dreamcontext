@@ -15,7 +15,7 @@
  * React-free and DOM-free: imports only the window's mirror of the server types.
  */
 import {
-  ABOUT_AGENDA_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
+  ABOUT_AGENDA_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
 } from '../../../lib/superTypes';
 
 // ─── Who is the Super Agent ────────────────────────────────────────────────────
@@ -494,6 +494,10 @@ export interface AgendaRow {
   chip?: AgendaChip;
   /** A pad note's id (`super note done <id>`). */
   note?: string;
+  /** A note the server moved to Done because its job finished (owner 2026-10-27). */
+  auto?: boolean;
+  /** A Now note no job keeps true, unchanged for PAD_STALE_MS. */
+  stale?: boolean;
   at: number;
 }
 export interface JobLook {
@@ -532,7 +536,7 @@ function isQuestionOpen(state: Pick<SuperState, 'queue'>): boolean {
  * owner right now (`needsOwner`, head first; the questions held behind an open one, "queued"),
  * so nothing he must answer is missing from it. Done: newest first.
  */
-export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: JobLook): Record<AgendaSection, AgendaRow[]> {
+export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: JobLook, now = Date.now()): Record<AgendaSection, AgendaRow[]> {
   const out: Record<AgendaSection, AgendaRow[]> = { waiting: [], now: [], done: [] };
   const head = queueHead(state);
   const owner = state.queue.filter(needsOwner).sort((a, b) => (a.id === head?.id ? -1 : b.id === head?.id ? 1 : a.createdAt - b.createdAt));
@@ -555,7 +559,11 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
     }
   }
   for (const p of state.pad ?? []) {
-    out[p.section].push({ key: `n:${p.id}`, section: p.section, text: p.text, note: p.id, at: p.at });
+    out[p.section].push({
+      key: `n:${p.id}`, section: p.section, text: p.text, note: p.id, at: p.at,
+      ...(p.section === 'done' && p.by === 'auto' ? { auto: true } : {}),
+      ...(p.section === 'now' && (!p.for || p.by === 'owner') && now - p.at >= PAD_STALE_MS ? { stale: true } : {}),
+    });
   }
   out.done.sort((a, b) => b.at - a.at);
   return out;

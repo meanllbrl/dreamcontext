@@ -703,9 +703,25 @@ export interface SuperPadItem {
   id: string;
   section: PadSection;
   text: string;
-  /** When it was written, or moved to its section (ms). */
+  /** When it was written, or moved to its section, or kept (`super note keep`) (ms). */
   at: number;
+  /** The job this line is about (`note add now --for <child>`, `delegate --note`): a child's
+   *  session id. While the line is the server's to move, it follows that job: Done once the job
+   *  is done, ended or gone; back to Now when it works again (owner 2026-10-27: "the agenda
+   *  goes stale"). */
+  for?: string;
+  /** Who last moved it, when not the super: `auto` = the server, because its job finished
+   *  (`why`); `owner` = the owner by hand in the card, after which the server never moves it. */
+  by?: 'auto' | 'owner';
+  why?: PadAutoWhy;
+  /** When an event batch last told the super about this line (its auto move or its stale flag). */
+  toldAt?: number;
 }
+export const PAD_AUTO_WHY = ['done', 'ended', 'gone'] as const;
+export type PadAutoWhy = typeof PAD_AUTO_WHY[number];
+/** A Now line with no job behind it that has not changed for this long is stale: `super state`
+ *  flags it and the next event batch asks the super to keep (`note keep`) or close it. */
+export const PAD_STALE_MS = 2 * 60 * 60 * 1000;
 export const PAD_ID_RE = /^n[1-9][0-9]{0,5}$/;
 export const MAX_PAD = 40;
 export const MAX_PAD_TEXT = 160;
@@ -1233,7 +1249,7 @@ export const SUPER_VERBS = [
   'pool-add', 'pool-remove', 'pool-list', 'ask',
   'end', 'resume', 'update', 'adopt',
   'clean', 'team-ask',
-  'note-add', 'note-done', 'note-drop', 'note-clear',
+  'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];
 

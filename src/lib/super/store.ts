@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
-  AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
+  AGENDA_REF, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
   ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_FILMSTRIP, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, viewWithout,
@@ -390,7 +390,15 @@ function sanitizePad(raw: unknown): SuperPadItem[] {
     const at = finite(p.at);
     if (!text || at === undefined || at < 0) continue;
     ids.add(p.id);
-    out.push({ id: p.id, section: p.section, text, at });
+    const toldAt = finite(p.toldAt);
+    const by = p.by === 'auto' || p.by === 'owner' ? p.by : undefined;
+    out.push({
+      id: p.id, section: p.section, text, at,
+      ...(typeof p.for === 'string' && SESSION_ID_RE.test(p.for) ? { for: p.for } : {}),
+      ...(by ? { by } : {}),
+      ...(by === 'auto' && oneOf(PAD_AUTO_WHY, p.why) ? { why: p.why } : {}),
+      ...(toldAt !== undefined && toldAt >= 0 ? { toldAt } : {}),
+    });
   }
   return out;
 }

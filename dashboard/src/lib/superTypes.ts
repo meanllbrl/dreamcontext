@@ -454,7 +454,15 @@ export interface SuperState {
  *  sections. Not a mirror of its children. */
 export const PAD_SECTIONS = ['now', 'waiting', 'done'] as const;
 export type PadSection = typeof PAD_SECTIONS[number];
-export interface SuperPadItem { id: string; section: PadSection; text: string; at: number }
+export interface SuperPadItem {
+  id: string; section: PadSection; text: string; at: number;
+  /** The job (child session id) the line follows; `by` who last moved it when not the super. */
+  for?: string; by?: 'auto' | 'owner'; why?: PadAutoWhy; toldAt?: number;
+}
+export const PAD_AUTO_WHY = ['done', 'ended', 'gone'] as const;
+export type PadAutoWhy = typeof PAD_AUTO_WHY[number];
+/** A Now line with no job behind it, unchanged this long, is stale (the card flags it). */
+export const PAD_STALE_MS = 2 * 60 * 60 * 1000;
 export const MAX_PAD = 40;
 export const MAX_PAD_TEXT = 160;
 /** The owner wrote about one agenda line: the header his message opens with (MIRRORED from the
