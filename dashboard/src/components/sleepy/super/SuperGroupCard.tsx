@@ -6,6 +6,7 @@ import { IconButton, chatStatus } from './SuperContainer';
 import { useLiveSessions } from './liveSession';
 import { GroupTile, TileSheets, groupStatus, type GroupMember } from './SuperTiles';
 import { cardZIndex, type CardPlan } from './superLayout';
+import { openAllHint } from './GroupPanel';
 
 /**
  * A group on the stage (owner decision 2026-10-20): ONE tile standing on a deck of sheets, placed
@@ -90,7 +91,7 @@ export function SuperGroupCard({ group, plan, members, sessions, closable, pendi
       </div>
       <span className="super-drop-ring" aria-hidden />
       <div className="super-card-actions">
-        <IconButton icon="side" label={t('super.group.openAllHint')} onClick={() => onPresentAll(group.id)} testId="super-group-open-all" />
+        <IconButton icon="side" label={openAllHint(t, members.length)} onClick={() => onPresentAll(group.id)} testId="super-group-open-all" />
         <IconButton icon="others" label={t('super.card.toOthers')} onClick={() => onToOthers(group.id)} />
         <IconButton icon="ask" label={t('super.card.askAbout')} onClick={() => onAskAbout(group.id)} />
         <IconButton icon="ungroup" label={t('super.group.ungroup')} onClick={() => onUngroup(group.id)} testId="super-group-ungroup" />

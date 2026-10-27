@@ -6,7 +6,8 @@
  *  - `groupPresentCards`: the group's known cards, in order, at most MAX_FILMSTRIP;
  *  - `presentedGroup`: the group a presentation shows whole ("back to the group");
  *  - `super present <grp-…>`: the Super opens a group straight into that view;
- *  - the panel's double-click window (`isDoubleOpen`).
+ *  - the panel's double-click window (`isDoubleOpen`);
+ *  - every kind of group (owner 2026-10-28: "files too, everything"): PDFs, files, tasks, mixed.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -25,9 +26,12 @@ import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
-import { MAX_FILMSTRIP, emptySuperState, groupPresentCards, presentedGroup, type SuperContainer, type SuperState } from '../../src/lib/super/types.js';
+import { MAX_FILMSTRIP, defaultLayout as serverDefault, emptySuperState, groupPresentCards, presentedGroup, type SuperContainer, type SuperState } from '../../src/lib/super/types.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
-import { DOUBLE_OPEN_MS, isDoubleOpen } from '../../dashboard/src/components/sleepy/super/GroupPanel.js';
+import { DOUBLE_OPEN_MS, isDoubleOpen, openAllHint, openAllLabel } from '../../dashboard/src/components/sleepy/super/GroupPanel.js';
+import { PRESENT_KEY_OWNERS } from '../../dashboard/src/components/sleepy/super/StageParts.js';
+import { planStage, stageItems } from '../../dashboard/src/components/sleepy/super/superLayout.js';
+import { MAX_KEPT_FRAMES, MAX_LIVE_IFRAMES, autoFrames, keptWebIds } from '../../dashboard/src/components/sleepy/super/webBudget.js';
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
 import { handleSuperVerb } from '../../src/server/routes/super.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
@@ -140,5 +144,122 @@ describe('super present <group>', () => {
   it('an unknown group or card is still a 404', async () => {
     makeVault({ containers: [img('image-a')] });
     expect((await present({ containers: ['grp-nope'] })).status).toBe(404);
+  });
+});
+
+// ── Every kind of group (owner 2026-10-28: "files too, everything"): a group opens whole
+//    whatever its cards are, in the layout its cards pick, and "back to the group" finds it. ──
+const card = (id: string, kind: SuperContainer['kind'], ref: string, extra: Partial<SuperContainer> = {}): SuperContainer =>
+  ({ id, kind, ref, shape: 'square', place: 'float', ...extra });
+const pdfs = [card('pdf-a', 'pdf', 'docs/spec.pdf'), card('pdf-b', 'pdf', 'docs/terms.pdf'), card('pdf-c', 'pdf', 'docs/invoice.pdf')];
+// A file card: a `web` card on a project file (.html; a .pdf or a picture has its own kind).
+const files = [card('web-report', 'web', 'docs/report.html'), card('web-pricing', 'web', 'docs/pricing.html')];
+const tasks = ['ledger-export', 'ledger-import', 'ledger-sync', 'ledger-audit'].map((s) => card(`task-${s}`, 'task', s));
+const mixed = [
+  card('image-x', 'image', 'shots/home.png'), card('pdf-x', 'pdf', 'docs/spec.pdf'), card('video-x', 'video', 'clips/demo.mp4'),
+  card('web-x', 'web', 'docs/report.html'), card('task-x', 'task', 'ledger-export'), card('knowledge-x', 'knowledge', 'pricing-notes'),
+  card('insight-x', 'insight', 'weekly-active-users'), card('whiteboard-x', 'whiteboard', 'flows'),
+];
+const KIND_CASES: { name: string; cards: SuperContainer[]; layout: string; state?: Partial<SuperState> }[] = [
+  { name: 'a PDF group (3: a grid)', cards: pdfs, layout: 'grid' },
+  { name: 'a file group (2: compare)', cards: files, layout: 'compare' },
+  { name: 'a task group (4: a grid)', cards: tasks, layout: 'grid' },
+  { name: 'a mixed group (8 kinds: a filmstrip)', cards: mixed, layout: 'filmstrip' },
+  { name: 'a mixed group of 3 (picture, file, task: a grid)', cards: [mixed[0], mixed[3], mixed[4]], layout: 'grid' },
+  { name: 'a finished child\'s chat with its site (review)', cards: [card('chat-kid', 'chat', 'kid-1'), card('web-kid', 'web', 'http://localhost:5173/', { by: 'auto', of: 'kid-1' })], layout: 'review',
+    state: { children: { 'kid-1': { sessionId: 'kid-1', brief: 'the ledger site', adopted: true, startedAt: 1 } } } },
+];
+
+describe('every kind of group opens whole', () => {
+  it('the layout the cards pick, the same on both sides of the wire', () => {
+    for (const { cards, layout } of KIND_CASES) {
+      expect(serverDefault(cards)).toBe(layout);
+      expect(client.defaultLayout(cards)).toBe(layout);
+      const g = { id: 'grp-k', cards: cards.map((c) => c.id) };
+      for (const f of [presentedGroup, client.presentedGroup]) expect(f([...g.cards].reverse(), [g], cards)?.id).toBe('grp-k');
+    }
+  });
+
+  it('the stage draws every card of a mixed group at once, none covering another', () => {
+    for (const { cards } of KIND_CASES) {
+      const groups = [{ id: 'grp-k', name: 'k', cards: cards.map((c) => c.id), place: 'float' as const }];
+      const view = { mode: 'present' as const, cards: cards.map((c) => c.id) };
+      const plan = planStage(stageItems(cards, groups, view), view, { width: 1384, height: 844 });
+      const shown = cards.map((c) => plan.cards[c.id]);
+      expect(shown.every((p) => p && (p.where === 'present' || p.where === 'thumb'))).toBe(true);
+      const rects = shown.map((p) => p!.rect);
+      const overlap = (a: typeof rects[number], b: typeof rects[number]) => a.x < b.x + b.width - 0.5 && b.x < a.x + a.width - 0.5 && a.y < b.y + b.height - 0.5 && b.y < a.y + a.height - 0.5;
+      expect(rects.some((a, i) => rects.some((b, j) => i < j && overlap(a, b)))).toBe(false);
+      // The group's own tile stays a group (its cards never leave it).
+      expect(plan.cards['grp-k']).toBeDefined();
+    }
+  });
+
+  it('a group bigger than a filmstrip says which cards open: "Open first 8"', () => {
+    const t = (k: string) => ({ 'super.group.openAll': 'Open all', 'super.group.openFirst': 'Open first {n}', 'super.group.openAllHint': 'all', 'super.group.openFirstHint': '{total}: first {n}' } as Record<string, string>)[k] ?? k;
+    expect(openAllLabel(t, 3)).toBe('Open all');
+    expect(openAllLabel(t, MAX_FILMSTRIP)).toBe('Open all');
+    expect(openAllLabel(t, 11)).toBe('Open first 8');
+    expect(openAllHint(t, 11)).toBe('11: first 8');
+    expect(openAllHint(t, 2)).toBe('all');
+  });
+});
+
+describe('a group of pages and PDFs shown whole', () => {
+  it('every page it presents loads (no card behind Load); any other presentation keeps the budget of two', () => {
+    expect(autoFrames(false, 4)).toBe(MAX_LIVE_IFRAMES);
+    expect(autoFrames(true, 1)).toBe(MAX_LIVE_IFRAMES);
+    expect(autoFrames(true, 3)).toBe(3);
+    expect(autoFrames(true, 9)).toBe(MAX_KEPT_FRAMES);
+    const shown = ['web-a', 'web-b', 'web-c', 'web-d'];
+    const auto = autoFrames(true, shown.length);
+    // Two dev-server pages parked off the stage keep their frames too (a reload loses work).
+    const parked = ['web-dev1', 'web-dev2'];
+    const kept = keptWebIds(parked, shown, [...parked, ...shown], auto, MAX_KEPT_FRAMES + auto - MAX_LIVE_IFRAMES);
+    for (const id of [...shown, ...parked]) expect(kept.has(id)).toBe(true);
+    expect(keptWebIds([], shown, shown).size).toBe(MAX_LIVE_IFRAMES);
+  });
+
+  it('a PDF card\'s own viewer does not swallow Esc: only a full-window viewer does', () => {
+    const owners = PRESENT_KEY_OWNERS.split(',').map((x) => x.trim());
+    expect(owners).not.toContain('.pdf-viewer');
+    expect(owners).toContain('.pdf-viewer:not(.pdf-viewer--embedded)');
+    expect(owners).toContain('.image-viewer');
+  });
+});
+
+describe('super present <group> of any kind', () => {
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'super-group-present-'));
+    _resetChatRegistry();
+    resetSuperIndex();
+    _resetSuperInbox();
+    resetWindowControl();
+    process.env.DREAMCONTEXT_DESKTOP = '1';
+  });
+  afterEach(() => {
+    if (savedDesktop === undefined) delete process.env.DREAMCONTEXT_DESKTOP; else process.env.DREAMCONTEXT_DESKTOP = savedDesktop;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  for (const { name, cards, layout, state } of KIND_CASES) {
+    it(`${name}: all its cards, in group order; they stay in the group`, async () => {
+      const ids = cards.map((c) => c.id);
+      makeVault({ ...state, containers: cards, groups: [{ id: 'grp-kind', name: 'kind', cards: ids, place: 'float' }] });
+      const r = await present({ containers: ['grp-kind'] });
+      expect(r.status).toBe(200);
+      const s = await readSuperState(root);
+      expect(s.view).toMatchObject({ mode: 'present', cards: ids, layout });
+      expect(s.groups.find((g) => g.id === 'grp-kind')?.cards).toEqual(ids);
+    });
+  }
+
+  it('a mixed group in Others comes back on the stage, and a layout its cards take is kept', async () => {
+    const three = [mixed[1], mixed[3], mixed[4]].map((c) => ({ ...c, place: 'others' as const }));
+    makeVault({ containers: three, groups: [{ id: 'grp-mix', name: 'mix', cards: three.map((c) => c.id), place: 'others' }] });
+    expect((await present({ containers: ['grp-mix'], layout: 'filmstrip' })).status).toBe(200);
+    const s = await readSuperState(root);
+    expect(s.groups[0].place).toBe('float');
+    expect(s.view).toMatchObject({ mode: 'present', cards: three.map((c) => c.id), layout: 'filmstrip' });
   });
 });

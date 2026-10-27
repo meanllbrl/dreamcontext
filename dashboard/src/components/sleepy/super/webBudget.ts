@@ -14,6 +14,16 @@ export const MAX_KEPT_FRAMES = 4;
 /** Live browser cards that re-render on new frames at once (jarvis AC7); the rest stay frozen. */
 export const MAX_LIVE_BROWSERS = 2;
 
+/**
+ * How many on-screen pages load on their own: {@link MAX_LIVE_IFRAMES}, except while a group is
+ * shown whole (its "open all"): then every page it presents, up to {@link MAX_KEPT_FRAMES}, so no
+ * card of the group waits behind a Load button (owner 2026-10-28). A grid presents at most 4; a
+ * filmstrip's thumbs hold no frame.
+ */
+export function autoFrames(groupWhole: boolean, onScreen: number): number {
+  return groupWhole ? Math.min(MAX_KEPT_FRAMES, Math.max(MAX_LIVE_IFRAMES, onScreen)) : MAX_LIVE_IFRAMES;
+}
+
 /** `id` became the most recently focused (moved to the front). */
 export function touchLru(lru: readonly string[], id: string): string[] {
   return [id, ...lru.filter((x) => x !== id)];

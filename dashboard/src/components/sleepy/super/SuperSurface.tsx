@@ -10,7 +10,7 @@ import { SuperGroupCard } from './SuperGroupCard';
 import { GroupTile, KindTile, TileSheets, groupStatus, type GroupMember } from './SuperTiles';
 import { StageMotion, cssEsc } from './StageMotion';
 import { useStageDrag, type StageDragDeps } from './useStageDrag';
-import { OrbitPath, PanelChatTile, SheetTabs, StageControls } from './StageParts';
+import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, SheetTabs, StageControls } from './StageParts';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { remoteLayoutPatch } from './remoteStage';
 import { SuperAgenda } from './SuperAgenda';
@@ -32,7 +32,7 @@ import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
 import { freshPending, hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
 import { NewSessionButton } from './NewSessionButton';
-import { MAX_LIVE_BROWSERS, keptWebIds, liveWebIds, touchLru, dropFromLru } from './webBudget';
+import { MAX_KEPT_FRAMES, MAX_LIVE_BROWSERS, MAX_LIVE_IFRAMES, autoFrames, keptWebIds, liveWebIds, touchLru, dropFromLru } from './webBudget';
 import { LIGHT_POLL_FACTOR, pollMs, useWindowActivity } from '../../../lib/windowActivity';
 import { useStageCues, withGhosts } from './useStageCues';
 import './SuperSurface.css';
@@ -392,7 +392,10 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // Every live page card, and the ones keeping their page now (on screen or parked off the stage).
   const livePages = state.containers.filter(isLivePage).map((c) => c.id);
   // A project file's frame is never parked: it counts only while on screen.
-  const liveWeb = keptWebIds(lru, webOnScreen, [...livePages, ...webOnScreen.filter((id) => !livePages.includes(id))]);
+  // A group shown whole (owner 2026-10-28: "open all" means all): every page it presents loads,
+  // and the extra frames come on top of the kept ones, so no parked page reloads for it.
+  const auto = autoFrames(!!shownGroup, webOnScreen.length);
+  const liveWeb = keptWebIds(lru, webOnScreen, [...livePages, ...webOnScreen.filter((id) => !livePages.includes(id))], auto, MAX_KEPT_FRAMES + auto - MAX_LIVE_IFRAMES);
   cuesLiveWebRef.current = liveWeb;
   // A page that loaded on its own joins the recency list, so it stays alive when moved away.
   const liveKey = [...liveWeb].join(',');
@@ -515,7 +518,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
       // and answers on the arrows and Esc.
       if (ae && (ae.tagName === 'IFRAME' || ae.isContentEditable || ae.closest('input, textarea, select, .agent-composer, .agent-pane-slot, [data-super-slot], .cmd-modal'))) return;
       if (presentKeysRef.current.full) return;
-      if (document.querySelector('.image-viewer, .pdf-viewer, .fullscreen-overlay, .quest-receipt-scrim, .agent-composer-menu, .cmd-modal, .agent-tab-menu, .agent-new-menu')) return;
+      // A full-window viewer owns Esc; a PDF card's own embedded viewer is no such window.
+      if (document.querySelector(PRESENT_KEY_OWNERS)) return;
       if (document.querySelector('.super-group-panel, .super-size-menu, .super-close-choice, .super-zoom[data-inspect], [data-testid="super-zoom-clear-ask"], [data-resizing], .super-surface[data-dragging]')) return;
       const p = presentKeysRef.current.plan;
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); presentKeysRef.current.exit(); return; }
