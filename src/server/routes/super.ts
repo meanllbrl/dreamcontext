@@ -51,6 +51,7 @@ import { validateSuperWebUrl } from '../../lib/super/web-url.js';
 import { ownedLoopbackPorts } from '../owned-ports.js';
 import { existsSync } from 'node:fs';
 import { insightPath } from '../../lib/lab/store.js';
+import { DEFAULT_WHITEBOARD, ensureDefaultWhiteboard, listWhiteboards, resolveWhiteboardPath } from '../../lib/whiteboards/store.js';
 import { noteDismissed } from '../../lib/super/proactive.js';
 import { RECORD_FULL_MESSAGE, cardCounts, cardOutcome, makeRoom, noCardWarnings, roomPossible } from '../../lib/super/room.js';
 import { childIsLive, isLiveChatCard } from '../../lib/super/live.js';
@@ -362,6 +363,20 @@ function tooMany(res: ServerResponse, s: Pick<SuperState, 'containers' | 'groups
 /** An insight the vault really has (a card naming none would draw an empty tile). */
 function insightExists(contextRoot: string, slug: string): boolean {
   try { return existsSync(insightPath(contextRoot, slug)); } catch { return false; }
+}
+
+/** A whiteboard the vault really has: its card reads `whiteboards/<slug>/<slug>.excalidraw.md`,
+ *  and a slug naming none drew "couldn't be read" with no way to tell why (owner 2026-10-27). */
+function whiteboardExists(contextRoot: string, slug: string): boolean {
+  try { resolveWhiteboardPath(contextRoot, slug); return true; } catch { return false; }
+}
+
+/** The refusal for a missing board names the ones that exist, so the next try can be right. */
+function unknownWhiteboardMessage(contextRoot: string, slug: string): string {
+  const have = listWhiteboards(contextRoot).map((w) => w.slug);
+  const shown = have.slice(0, 12).join(', ') + (have.length > 12 ? `, … (${have.length})` : '');
+  return `no whiteboard named ${slug} in this project${have.length ? ` (it has: ${shown})` : ' (it has none)'}; `
+    + 'create it first (`dreamcontext whiteboard create "<name>"`) or open it once its board is written';
 }
 
 /** `delegate` calls in flight per vault, counted against the cap until they settle. */
@@ -856,6 +871,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const r = refFor(c, kind as ContainerKind, raw);
       if ('error' in r) { refuse(res, 400, 'invalid_ref', r.error); return; }
       if (kind === 'insight' && !insightExists(c.who.contextRoot, r.ref)) { refuse(res, 404, 'unknown_insight', `no insight named ${r.ref} (\`dreamcontext insight list\`)`); return; }
+      // The default board is made on first ask, as the whiteboards page makes it.
+      if (kind === 'whiteboard' && r.ref === DEFAULT_WHITEBOARD.slug) await ensureDefaultWhiteboard(c.who.contextRoot).catch(() => {});
+      if (kind === 'whiteboard' && !whiteboardExists(c.who.contextRoot, r.ref)) { refuse(res, 404, 'unknown_whiteboard', unknownWhiteboardMessage(c.who.contextRoot, r.ref)); return; }
       if (!refs.includes(r.ref)) refs.push(r.ref);
       const t = oneLine(String(rawTitles[i] ?? '')).slice(0, MAX_TITLE).trim();
       if (t && !titles.has(r.ref)) titles.set(r.ref, t);

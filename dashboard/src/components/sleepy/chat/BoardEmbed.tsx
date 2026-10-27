@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApi } from '../../../context/VaultContext';
+import { boardFailure, boardRetryDelay, type BoardFailure } from '../../../lib/boardFailure';
 import { ExcalidrawPreview } from '../../core/ExcalidrawPreview';
 import { FullscreenOverlay } from '../../layout/FullscreenOverlay';
 
@@ -25,6 +26,8 @@ interface BoardScene {
   assets: AssetFiles | undefined;
   assetsLoading: boolean;
   failed: boolean;
+  /** Why it failed, in a few words, for the card (null while it has not). */
+  failure: BoardFailure | null;
 }
 
 /**
@@ -38,29 +41,39 @@ interface BoardScene {
 export function useBoardScene(path: string): BoardScene {
   const api = useApi();
   const [scene, setScene] = useState<BoardScene>({
-    content: null, assets: undefined, assetsLoading: false, failed: false,
+    content: null, assets: undefined, assetsLoading: false, failed: false, failure: null,
   });
 
   useEffect(() => {
     let cancelled = false;
-    setScene({ content: null, assets: undefined, assetsLoading: false, failed: false });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let tries = 0;
+    setScene({ content: null, assets: undefined, assetsLoading: false, failed: false, failure: null });
 
-    api.get<{ content: string }>(`/agent/file?path=${encodeURIComponent(path)}`)
+    const load = () => api.get<{ content: string }>(`/agent/file?path=${encodeURIComponent(path)}`)
       .then((data) => {
         if (cancelled) return;
         const content = data?.content ?? '';
         if (!content.includes('## Embedded Files')) {
-          setScene({ content, assets: {}, assetsLoading: false, failed: false });
+          setScene({ content, assets: {}, assetsLoading: false, failed: false, failure: null });
           return;
         }
-        setScene({ content, assets: undefined, assetsLoading: true, failed: false });
+        setScene({ content, assets: undefined, assetsLoading: true, failed: false, failure: null });
         api.get<{ files: AssetFiles }>(`/agent/board-assets?path=${encodeURIComponent(path)}`)
           .then((r) => { if (!cancelled) setScene((s) => ({ ...s, assets: r?.files ?? {}, assetsLoading: false })); })
           .catch(() => { if (!cancelled) setScene((s) => ({ ...s, assets: {}, assetsLoading: false })); });
       })
-      .catch(() => { if (!cancelled) setScene({ content: null, assets: {}, assetsLoading: false, failed: true }); });
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const failure = boardFailure(err);
+        setScene({ content: null, assets: {}, assetsLoading: false, failed: true, failure });
+        // A board not written yet draws once it lands (boardFailure.ts).
+        const wait = boardRetryDelay(failure, tries++);
+        if (wait !== null) timer = setTimeout(load, wait);
+      });
+    load();
 
-    return () => { cancelled = true; };
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [api, path]);
 
   return scene;
@@ -83,12 +96,12 @@ export function boardName(path: string): string {
  * closing leaves the card exactly where the reader had panned it.
  */
 export function BoardFullscreen({ path, onClose }: { path: string; onClose: () => void }) {
-  const { content, assets, assetsLoading, failed } = useBoardScene(path);
+  const { content, assets, assetsLoading, failed, failure } = useBoardScene(path);
   return createPortal(
     <FullscreenOverlay label={boardName(path)} onClose={onClose}>
       <div className="chat-board-full">
         {failed
-          ? <p className="chat-slideover-status error">Couldn't read this board.</p>
+          ? <p className="chat-slideover-status error">{failure?.missing ? 'This board is not in the project yet.' : `Couldn't read this board: ${failure?.detail ?? ''}`}</p>
           : content === null
             ? <div className="chat-board-loading">Loading board…</div>
             : <ExcalidrawPreview content={content} boardKey={`${path}#full`} assets={assets} assetsLoading={assetsLoading} />}
@@ -106,13 +119,13 @@ export function BoardEmbed({
   /** Open this board fullscreen — the "bigger" affordance. */
   onOpenBoard: (path: string) => void;
 }) {
-  const { content, assets, assetsLoading, failed } = useBoardScene(path);
+  const { content, assets, assetsLoading, failed, failure } = useBoardScene(path);
 
   if (failed) {
     return (
       <div className="chat-board chat-board--failed">
         <span className="chat-board-name"><span aria-hidden>▦</span> {boardName(path)}</span>
-        <span className="chat-board-note">couldn't be read</span>
+        <span className="chat-board-note" title={failure?.detail}>{failure?.note ?? "couldn't be read"}</span>
         <button type="button" className="chat-board-open" onClick={() => onOpenBoard(path)}>
           Open <span aria-hidden>↗</span>
         </button>

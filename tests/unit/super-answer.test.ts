@@ -22,6 +22,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { insightPath } from '../../src/lib/lab/store.js';
+import { createWhiteboard } from '../../src/lib/whiteboards/store.js';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
@@ -165,6 +166,8 @@ describe('card verbs (AC4, plan-r8 F2)', () => {
     // An insight card names an insight the vault has (jarvis r9).
     mkdirSync(dirname(insightPath(root, 'daily-signups')), { recursive: true });
     writeFileSync(insightPath(root, 'daily-signups'), '---\nname: Daily signups\n---\n');
+    // So does a whiteboard card (owner 2026-10-27).
+    createWhiteboard(root, 'Roadmap');
     const cases: Array<[string, string]> = [
       ['chat', 'c1'], ['insight', 'daily-signups'], ['task', 'fix-login'], ['knowledge', 'architecture/overview'],
       ['whiteboard', 'roadmap'], ['board', 'growth'], ['web', 'https://example.com/page'], ['image', 'assets/shot.png'],
@@ -463,6 +466,22 @@ describe('jarvis r9: many refs at once, one group, the cue, the owner\'s "no"', 
     expect((await verb('open', { kind: 'browser', ref: 'c1' })).status).toBe(200);
     expect((await verb('open', { kind: 'browser', ref: 'stranger' })).status).toBe(400);
     expect((await verb('open', { kind: 'insight', ref: 'no-such-insight' })).status).toBe(404);
+  });
+
+  // Owner 2026-10-27: a `key-metrics` whiteboard card drew "couldn't be read" — its slug named no
+  // board in the vault. The open is refused now, naming the boards the vault has.
+  it('a whiteboard card names a board the vault has; a missing one is refused with the ones that exist', async () => {
+    makeVault();
+    createWhiteboard(root, 'Growth Plan');
+    const r = await verb('open', { kind: 'whiteboard', ref: 'key-metrics' });
+    expect(r.status).toBe(404);
+    expect(r.json).toMatchObject({ error: 'unknown_whiteboard' });
+    expect(String(r.json.message)).toContain('no whiteboard named key-metrics');
+    expect(String(r.json.message)).toContain('growth-plan');
+    expect((await readSuperState(root)).containers).toEqual([]);
+    expect((await verb('open', { kind: 'whiteboard', ref: 'growth-plan' })).status).toBe(200);
+    // The default board is made on first ask, never refused.
+    expect((await verb('open', { kind: 'whiteboard', ref: 'control-panel' })).status).toBe(200);
   });
 
   it('the owner closing an automatic card records it as dismissed (G5)', async () => {
