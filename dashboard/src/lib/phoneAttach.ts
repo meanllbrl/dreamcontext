@@ -22,7 +22,7 @@ export const PHONE_FILE_UPLOAD_TIMEOUT_MS = 5 * 60_000;
 /** The photo types a phone browser decodes, so they can be re-encoded. ANY other image type (a
  *  PSD, a DNG, a TIFF, an SVG, which is markup) goes as a file: refusing it as "can't be opened"
  *  would undo the point of taking any file. */
-const PHOTO_TYPE_RE = /^image\/(jpeg|pjpeg|png|webp|gif|heic|heif|avif|bmp)$/i;
+const PHOTO_TYPE_RE = /^image\/(jpeg|jpg|pjpeg|png|webp|gif|heic|heif|avif|bmp)$/i;
 
 /** A picked file the phone re-encodes as a photo. */
 export function isPhonePhoto(file: { type: string }): boolean {

@@ -13,7 +13,7 @@ const f = (name: string, type: string, size = 100) => ({ name, type, size });
 
 describe('isPhonePhoto', () => {
   it('takes the photo types a phone decodes, including the iPhone\'s HEIC', () => {
-    for (const t of ['image/jpeg', 'image/png', 'image/heic', 'image/heif', 'image/webp', 'image/gif', 'image/avif']) expect(isPhonePhoto({ type: t }), t).toBe(true);
+    for (const t of ['image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif', 'image/webp', 'image/gif', 'image/avif']) expect(isPhonePhoto({ type: t }), t).toBe(true);
   });
   it('sends everything else as a file, including image types a browser cannot decode', () => {
     for (const t of ['application/zip', 'application/pdf', 'text/plain', 'video/mp4', 'image/svg+xml', 'image/vnd.adobe.photoshop', 'image/x-adobe-dng', 'image/tiff', '']) expect(isPhonePhoto({ type: t }), t).toBe(false);
