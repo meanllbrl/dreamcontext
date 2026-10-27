@@ -382,12 +382,13 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * ~140 of headroom.
    *
    * 14150 -> 14500 on 2026-10-27, a RAISE for the `mcp` card (325 characters), owner-asked (task
-   * mcp-management: "when a connection goes stale the agent sends a click-here-and-connect card,
-   * like the secret card"). Cut from a 650-character first draft to when-to-send, what comes
-   * back, one example; the rest (rows, buttons) is the card's own. Actual 14,332 with both.
+   * mcp-management). Then -> 14800 the same day for 'Pictures in a message' (284 characters),
+   * owner-asked (task composer-photos-are-inline-chips…): each picture goes out as
+   * `[Picture N: <path>]` with his words after it, and the agent has to know those words are
+   * about that picture. Both rules kept in one briefing.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(14500);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(14800);
   });
 
   /**
@@ -398,7 +399,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 14332)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 14616)).toBeLessThanOrEqual(20);
   });
 
   /**

@@ -135,7 +135,9 @@ describe('the composer', () => {
     expect(composer).toMatch(/const \{ message, quoted, slash \} = composeOutgoing\(text, readScratch\(convId\)\.attachments, liveQuote, quotePath, \{ superView \}\);/);
     expect(composer).toMatch(/if \(mode === 'queue'\) session\.enqueue\(message\);/);
     expect(composer).toMatch(/if \(!session\.steer\(message\)\) session\.enqueue\(message, \{ steerWhenPossible: true \}\);/);
-    expect(composer).toMatch(/const addressed = onPeerMessage \? addressedPeer\(quoted, peers\) : null;/);
+    // The peer's body is cut from `quoted` (no page block), also when a picture chip opens it.
+    expect(composer).toMatch(/: onPeerMessage \? addressedPeer\(quoted, peers\) : null;/);
+    expect(composer).toMatch(/body: quoted\.replace\(/);
   });
 });
 

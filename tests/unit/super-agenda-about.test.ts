@@ -160,11 +160,12 @@ describe('the composer and the server use it', () => {
     expect(composer).toMatch(/const sendableAttachments = attachments\.filter\(countsAsContent\);/);
     // Sign-in and MCP are judged on what he typed, not on the folded message, and without the
     // chips in it (owner 2026-10-24, plan R3-4: `words` is the draft with its tokens stripped).
-    expect(composer).toMatch(/const words = superView \? stripTokens\(text\) : text;/);
+    // Pictures are chips in every view (2026-10-27): a normal chat strips them when it holds one.
+    expect(composer).toMatch(/const words = superView \|\| parseRefTokens\(text\)\.length \? stripTokens\(text\) : text;/);
     expect(composer).toMatch(/isSignInCommand\(words\)/);
     expect(composer).toMatch(/isMcpCommand\(words\)/);
     // A slash send keeps the About chip staged.
-    expect(composer).toMatch(/dropSentAttachments\(convId, \{ keepAbout: slash \}\)/);
+    expect(composer).toMatch(/dropSentAttachments\(convId, \{ keepAbout: slash, keepInline: slash \}\)/);
   });
 
   it('a submit refused while another waits on its upload leaves that spoken take armed', () => {

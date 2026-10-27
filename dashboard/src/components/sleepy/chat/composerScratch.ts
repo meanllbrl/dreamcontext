@@ -32,7 +32,7 @@
  */
 
 import { ABOUT_AGENDA_RE, MAX_MESSAGE_REFS, REPLY_TO_RE } from '../../../lib/superTypes';
-import { parseRefTokens, refKey, refTokenId, stripTokens } from './composerRefs';
+import { isTokenRef, parseRefTokens, refKey, refTokenId, stripTokens, type RefTokenSpan } from './composerRefs';
 
 export interface Attachment {
   id: string;
@@ -75,9 +75,14 @@ export interface Attachment {
   /** What a failed chip says instead of the generic refusal (a phone photo this browser could
    *  not decode, a photo the phone's caps refused). */
   note?: string;
-  /** `about` only: staged by `insertRef` and its token not yet in the draft. The composer puts
+  /** `about` (and an `inline` image): staged and its token not yet in the draft. The composer puts
    *  it at the caret (or at the end, mounting) and clears this (`markInserted`). */
   pending?: boolean;
+  /** `image` only: drawn as a chip IN the draft at the caret, with its thumbnail (owner
+   *  2026-10-27: a comment written after each photo must stay that photo's), not in the row
+   *  above. A send puts it where its chip stands: `[Picture N: <path>]`, then his words after it.
+   *  Its token leaving the box unstages it (`dropRefs`) like an About chip's. */
+  inline?: boolean;
   /** `about` only: bumped when the same target is pressed again; the composer flashes that chip
    *  and moves the caret after it. */
   flash?: number;
@@ -167,13 +172,12 @@ export function addAttachments(convId: string, added: Attachment[]): void {
  */
 export function settleAttachment(convId: string, id: string, path: string | null, note?: string): void {
   const cur = readScratch(convId);
-  if (!cur.attachments.some((a) => a.id === id)) return;
-  commit(convId, {
-    ...cur,
-    attachments: cur.attachments.map((a) => (a.id === id
-      ? { ...a, path: path ?? undefined, uploading: false, failed: !path, ...(!path && note ? { note } : {}) }
-      : a)),
-  });
+  const settle = (a: Attachment) => (a.id === id
+    ? { ...a, path: path ?? undefined, uploading: false, failed: !path, ...(!path && note ? { note } : {}) }
+    : a);
+  // A picture cut mid-upload waits in `recent` for a paste back: it settles there too.
+  if (cur.attachments.some((a) => a.id === id)) commit(convId, { ...cur, attachments: cur.attachments.map(settle) });
+  else if (cur.recent?.some((a) => a.id === id)) commit(convId, { ...cur, recent: cur.recent.map(settle) });
 }
 
 /**
@@ -185,9 +189,12 @@ export function settleAttachment(convId: string, id: string, path: string | null
 export function setAttachmentPreview(convId: string, id: string, url: string): void {
   const cur = readScratch(convId);
   const found = cur.attachments.find((a) => a.id === id);
-  if (!found) { try { URL.revokeObjectURL(url); } catch { /* no DOM */ } return; }
-  revoke(found);
-  commit(convId, { ...cur, attachments: cur.attachments.map((a) => (a.id === id ? { ...a, url } : a)) });
+  const away = found ? undefined : cur.recent?.find((a) => a.id === id);
+  if (!found && !away) { try { URL.revokeObjectURL(url); } catch { /* no DOM */ } return; }
+  revoke((found ?? away) as Attachment);
+  const set = (a: Attachment) => (a.id === id ? { ...a, url } : a);
+  if (found) commit(convId, { ...cur, attachments: cur.attachments.map(set) });
+  else commit(convId, { ...cur, recent: (cur.recent ?? []).map(set) });
 }
 
 const IMAGE_NAME_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
@@ -205,7 +212,8 @@ export function stageUpload(convId: string, file: File, upload: (f: File) => Pro
   const name = file.name || (isImage ? 'Pasted image' : 'Pasted file');
   let url: string | undefined;
   if (isImage) { try { url = URL.createObjectURL(file); } catch { /* no DOM */ } }
-  addAttachments(convId, [{ id, kind: isImage ? 'image' : 'file', name, url, uploading: true }]);
+  // A picture is a chip in the text, where the caret is (the composer puts its token in).
+  addAttachments(convId, [{ id, kind: isImage ? 'image' : 'file', name, url, uploading: true, ...(isImage ? { inline: true, pending: true } : {}) }]);
   trackUpload(convId, upload(file).catch(() => null).then((path) => { settleAttachment(convId, id, path); }));
 }
 
@@ -227,13 +235,16 @@ export function removeAttachment(convId: string, id: string): void {
  * case this module exists for: a chip pasted just before a respawn is `uploading` with no path
  * and no `failed` flag, and the old rule would have dropped it as though it had been sent.
  */
-export function dropSentAttachments(convId: string, opts: { keepAbout?: boolean } = {}): void {
+export function dropSentAttachments(convId: string, opts: { keepAbout?: boolean; keepInline?: boolean } = {}): void {
   const cur = readScratch(convId);
   if (!cur.attachments.length && cur.quote === null && !cur.recent && !cur.refused) return;
-  // A slash command never carries the About block, so its chip stays for the next message.
-  // The page chip stays always: the next message is still written from that page.
-  const gone = (a: Attachment) => a.kind !== 'page' && wasSent(a) && !(opts.keepAbout && a.kind === 'about');
+  // A slash command never carries the About block, so its chip stays for the next message; nor
+  // its inline pictures (`keepInline`). The page chip stays always: the next message is still
+  // written from that page.
+  const gone = (a: Attachment) => a.kind !== 'page' && wasSent(a) && !(opts.keepAbout && a.kind === 'about')
+    && !(opts.keepInline && a.kind === 'image' && a.inline);
   cur.attachments.forEach((a) => { if (gone(a)) revoke(a); });
+  (cur.recent ?? []).forEach((a) => { if (!cur.attachments.some((x) => x.id === a.id)) revoke(a); });
   // A send ends what `recent` remembers: a chip cut before it is not pasted back after it.
   commit(convId, { attachments: cur.attachments.filter((a) => !gone(a)), quote: null });
 }
@@ -300,13 +311,26 @@ export function markInserted(convId: string, ids: readonly string[], chips: Read
   });
 }
 
+/** These pictures' chips left the box without him (the draft was replaced wholesale: a rewind, an
+ *  adopted draft): staged pending again, so the composer puts their chips back. */
+export function repend(convId: string, ids: readonly string[]): void {
+  const cur = readScratch(convId);
+  if (!cur.attachments.some((a) => ids.includes(a.id))) return;
+  commit(convId, { ...cur, attachments: cur.attachments.map((a) => (ids.includes(a.id) ? { ...a, pending: true } : a)) });
+}
+
 /** These refs left the box (deleted, cut, a damaged token): unstaged, and kept in `recent`
  *  until the next send, so a paste can bring one back. */
 export function dropRefs(convId: string, ids: readonly string[]): void {
   const cur = readScratch(convId);
-  const gone = cur.attachments.filter((a) => a.kind === 'about' && ids.includes(a.id));
+  const gone = cur.attachments.filter((a) => isTokenRef(a) && ids.includes(a.id));
   if (!gone.length) return;
-  const recent = [...(cur.recent ?? []).filter((a) => !ids.includes(a.id)), ...gone.map((a) => ({ ...a, pending: false }))].slice(-MAX_RECENT);
+  const all = [...(cur.recent ?? []).filter((a) => !ids.includes(a.id)), ...gone.map((a) => ({ ...a, pending: false }))];
+  // The cap is for About chips; pictures stay until the send (a cut of a whole 40-file drop must
+  // paste back whole), which revokes their previews (`dropSentAttachments`).
+  const abouts = all.filter((a) => a.kind === 'about');
+  const over = new Set(abouts.slice(0, Math.max(0, abouts.length - MAX_RECENT)));
+  const recent = all.filter((a) => !over.has(a));
   commit(convId, { ...withRecent(cur, recent), attachments: cur.attachments.filter((a) => !gone.includes(a)) });
 }
 
@@ -315,7 +339,7 @@ export function restoreRefs(convId: string, refs: readonly Attachment[]): void {
   if (!refs.length) return;
   const cur = readScratch(convId);
   const ids = refs.map((a) => a.id);
-  const add = refs.filter((r) => !cur.attachments.some((a) => a.id === r.id)).map((a) => ({ ...a, kind: 'about' as const, pending: false }));
+  const add = refs.filter((r) => !cur.attachments.some((a) => a.id === r.id)).map((a) => ({ ...a, kind: a.kind === 'image' ? 'image' as const : 'about' as const, pending: false }));
   commit(convId, { ...withRecent(cur, (cur.recent ?? []).filter((a) => !ids.includes(a.id))), attachments: [...cur.attachments, ...add] });
 }
 
@@ -328,7 +352,10 @@ export function restoreRefs(convId: string, refs: readonly Attachment[]): void {
 export function stageRefs(convId: string, refs: readonly Attachment[], draft = ''): void {
   const cur = readScratch(convId);
   const named = new Set(parseRefTokens(draft).map((t) => t.id));
-  const kept = cur.attachments.filter((a) => a.kind !== 'about' || (!a.pending && named.has(refTokenId(a))));
+  // A picture the new draft does not hold is not dropped: its chip is put back (pending).
+  const kept = cur.attachments
+    .filter((a) => a.kind !== 'about' || (!a.pending && named.has(refTokenId(a))))
+    .map((a) => (a.kind === 'image' && a.inline && !named.has(refTokenId(a)) ? { ...a, pending: true } : a));
   const add = refs.filter((r) => !kept.some((a) => a.id === r.id)).map((a) => ({ ...a, kind: 'about' as const, pending: false }));
   commit(convId, { ...cur, attachments: [...kept, ...add] });
 }
@@ -376,15 +403,23 @@ function composeBody(
   text: string, attachments: readonly Attachment[], quote: string | null, quotePath: (p: string) => string,
   opts: { superView?: boolean } = {},
 ): { message: string; quoted: string; slash: boolean } {
-  // Tokens live only in the Super view's draft; a normal chat's text is read exactly as typed.
-  const plain = opts.superView ? stripTokens(text) : text;
-  const slash = plain.trimStart().startsWith('/');
   const abouts = attachments.filter((a) => a.kind === 'about' && !!a.text);
-  const byId = new Map(abouts.map((a) => [refTokenId(a), a] as const));
-  const spans = parseRefTokens(text).filter((t) => byId.has(t.id));
+  const pictures = attachments.filter((a) => a.kind === 'image' && a.inline);
+  const byId = new Map([...abouts, ...pictures].map((a) => [refTokenId(a), a] as const));
+  const all = parseRefTokens(text).filter((t) => byId.has(t.id));
+  // A picture whose chip stands in the text goes where it stands, never folded at the end (and a
+  // slash command, which carries no chip, leaves it staged for the next message).
+  const placed = new Set(all.map((t) => byId.get(t.id) as Attachment).filter((a) => a.kind === 'image'));
+  const rest = placed.size ? attachments.filter((a) => !placed.has(a)) : attachments;
+  const spans = all.filter((t) => (byId.get(t.id) as Attachment).kind === 'about');
+  // Tokens: About chips (the Super view) and inline pictures (every view), read without them. A
+  // normal chat with no picture chip is read exactly as typed (isolates he pasted stay).
+  const plain = opts.superView || placed.size ? stripTokens(text) : text;
+  const slash = plain.trimStart().startsWith('/');
   const guard = (w: string) => (opts.superView ? neutraliseHeaders(w) : w);
+  if (!slash && placed.size) return composeInline(text, all, byId, rest, quote, quotePath, guard);
   if (slash || !spans.length) {
-    const bodyText = foldAttachments(guard(plain), attachments, quotePath);
+    const bodyText = foldAttachments(guard(plain), rest, quotePath);
     const quoted = quote ? `> ${quote}\n\n${bodyText}` : bodyText;
     // A draft with no tokens keeps today's single staged About (a caller still on `setAbout`).
     const about = slash || parseRefTokens(text).length ? undefined : abouts[0];
@@ -423,6 +458,34 @@ function composeBody(
   const opening = quote ? `> ${quote}${head ? `\n\n${head}` : ''}` : head;
   const message = [opening, ...parts.flatMap((p) => [p.block, p.words])].filter(Boolean).join('\n\n');
   const quoted = [opening, ...parts.map((p) => p.words)].filter(Boolean).join('\n\n');
+  return { message, quoted, slash: false };
+}
+
+/**
+ * A draft whose chips include pictures (owner 2026-10-27): read strictly left to right, so each
+ * picture is followed by exactly the words he wrote after it. A picture is `[Picture N: <path>]`
+ * on its own line with those words on the next (N counts the pictures that have a path); an
+ * About chip is its block and its words, as always. Words before the first chip open the message
+ * with the files and picked elements; parts are set off by blank lines.
+ */
+function composeInline(
+  text: string, spans: readonly RefTokenSpan[], byId: ReadonlyMap<string, Attachment>, rest: readonly Attachment[],
+  quote: string | null, quotePath: (p: string) => string, guard: (w: string) => string,
+): { message: string; quoted: string; slash: boolean } {
+  const tidy = (w: string) => stripTokens(w).trim();
+  const head = foldAttachments(guard(tidy(text.slice(0, spans[0].start))), rest, quotePath);
+  const opening = quote ? `> ${quote}${head ? `\n\n${head}` : ''}` : head;
+  let n = 0;
+  const parts = spans.map((t, i) => {
+    const att = byId.get(t.id) as Attachment;
+    const words = guard(tidy(text.slice(t.end, i + 1 < spans.length ? spans[i + 1].start : text.length)));
+    if (att.kind === 'about') return { message: [att.text ?? '', words].filter(Boolean).join('\n\n'), quoted: words };
+    const line = att.path ? `[Picture ${++n}: ${quotePath(att.path)}]` : '';
+    const both = [line, words].filter(Boolean).join('\n');
+    return { message: both, quoted: both };
+  });
+  const message = [opening, ...parts.map((p) => p.message)].filter(Boolean).join('\n\n');
+  const quoted = [opening, ...parts.map((p) => p.quoted)].filter(Boolean).join('\n\n');
   return { message, quoted, slash: false };
 }
 
@@ -485,6 +548,7 @@ export function dropScratch(convId: string): void {
   const cur = store.get(convId);
   if (!cur) return;
   cur.attachments.forEach(revoke);
+  (cur.recent ?? []).forEach(revoke);
   store.delete(convId);
   listeners.get(convId)?.forEach((fn) => fn(EMPTY));
 }

@@ -327,6 +327,12 @@ const BRIEFING_VOICE_TAKE = `## A dictated message
 
 A message with \`<voice-take ref=…>\` was dictated. Nonsense, an unexpected language or a loop: run \`dreamcontext voice retry <ref>\` once first (\`--language <code>\` = the language you two speak). Act on the new text only if it reads sensibly, quoting it in one line before anything irreversible; else ask the user in one short sentence to say it again. Never act on garbled text.`;
 
+/** Pictures dropped INTO the composer text, each with his words after it (owner 2026-10-27: a
+ *  comment per photo that the agent could not pair). Written by composerScratch.composeInline. */
+const BRIEFING_PICTURES = `## Pictures in a message
+
+A line \`[Picture N: <path>]\` is a picture the user put at that place in the message; everything after it, up to the next picture line or \`[About\`/\`[Reply\` header, is what they wrote about THAT picture. Open each path, and answer each picture by its number.`;
+
 export const CHAT_SURFACE_BRIEFING = `${BRIEFING_HEAD}
 ${BRIEFING_DRAW_HTML}
 ${BRIEFING_ASK}
@@ -337,6 +343,8 @@ ${BRIEFING_WINDOW}
 ${BRIEFING_NATIVE_TOOLS}
 
 ${BRIEFING_VOICE_TAKE}
+
+${BRIEFING_PICTURES}
 `;
 
 /**

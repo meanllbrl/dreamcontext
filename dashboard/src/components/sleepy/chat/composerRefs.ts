@@ -11,6 +11,8 @@
  *   FSI <glyph> NBSP <name> <id digits> PDI
  *
  * - glyph `●` for an agenda line, `↩` for a reply: the KIND (the hue, by order, is the identity);
+ *   two EM SPACEs for a picture (owner 2026-10-27: each photo a chip with his words after it),
+ *   blank in the textarea so the mirror's thumbnail behind them shows through;
  * - FSI/PDI (U+2068/U+2069) are zero-width isolates, NBSPs keep the token from wrapping inside;
  * - the id digits are the staged ref's id (this run's nonce + its attachment sequence) in base 4,
  *   written with the invisible format characters U+2061..U+2064, so labels may repeat freely
@@ -29,6 +31,9 @@ const DIGITS = ['\u2061', '\u2062', '\u2063', '\u2064'] as const;
 const DIGIT_RE = /[\u2061-\u2064]/;
 export const GLYPH_NOTE = '●';
 export const GLYPH_REPLY = '↩';
+/** A picture's glyph: two EM SPACEs, the room its thumbnail is painted in (behind the textarea). */
+export const GLYPH_IMAGE = '\u2003\u2003';
+const EMSP = '\u2003';
 /** The chip's name in the box, at most this many graphemes (measured at 390 px, W2). */
 export const REF_LABEL_MAX = 24;
 /** How far the remains of a damaged token may reach when its id digits are gone too. */
@@ -37,7 +42,7 @@ const DAMAGE_REACH = 40;
 /** A well-formed token: `[start, end)` in the draft, its glyph, its name and its id (base 4). */
 export interface RefTokenSpan { start: number; end: number; glyph: string; label: string; id: string }
 
-const TOKEN_RE = /\u2068([●↩])\u00A0([^\u2068\u2069\n\u2061-\u2064]*)([\u2061-\u2064]+)\u2069/g;
+const TOKEN_RE = /\u2068([●↩]|\u2003\u2003)\u00A0([^\u2068\u2069\n\u2061-\u2064]*)([\u2061-\u2064]+)\u2069/g;
 
 const toBase4 = (n: number, width = 1): string => {
   let s = Math.max(0, Math.floor(n)).toString(4);
@@ -64,6 +69,12 @@ export function refTokenId(att: Pick<Attachment, 'id'>): string {
 
 const encodeId = (id: string) => Array.from(id, (d) => DIGITS[Number(d)] ?? '').join('');
 const decodeId = (digits: string) => Array.from(digits, (c) => String(c.charCodeAt(0) - 0x2061)).join('');
+
+/** A staged attachment drawn as a token in the draft: an About line, or a picture staged inline
+ *  (pasted, dropped or picked into the composer, `inline`). */
+export function isTokenRef(a: Pick<Attachment, 'kind' | 'inline'>): boolean {
+  return a.kind === 'about' || (a.kind === 'image' && !!a.inline);
+}
 
 /** What a ref names, for "the same target twice": `note:n7`, `item:q-1`, `reply:k3f9q0`. */
 export function refKey(att: Pick<Attachment, 'text'>): string | null {
@@ -97,13 +108,14 @@ export function refLabel(att: Pick<Attachment, 'name' | 'chip'>, fits?: (label: 
   return clip(Math.max(n, Math.min(g.length, 2)));
 }
 
-/** The glyph a ref's chip opens with: ↩ for a reply, ● for an agenda line. */
-export function refGlyph(att: Pick<Attachment, 'text'>): string {
+/** The glyph a ref's chip opens with: ↩ for a reply, ● for an agenda line, a picture's room. */
+export function refGlyph(att: Pick<Attachment, 'text'> & { kind?: Attachment['kind'] }): string {
+  if (att.kind === 'image') return GLYPH_IMAGE;
   return REPLY_TO_RE.test(att.text ?? '') ? GLYPH_REPLY : GLYPH_NOTE;
 }
 
 /** The token a staged ref is drawn as in the draft (`fits`: see {@link refLabel}). */
-export function refToken(att: Pick<Attachment, 'id' | 'name' | 'text' | 'chip'>, fits?: (label: string) => boolean): string {
+export function refToken(att: Pick<Attachment, 'id' | 'name' | 'text' | 'chip'> & { kind?: Attachment['kind'] }, fits?: (label: string) => boolean): string {
   return `${FSI}${refGlyph(att)}${NBSP}${refLabel(att, fits)}${encodeId(refTokenId(att))}${PDI}`;
 }
 
@@ -118,7 +130,7 @@ export function parseRefTokens(draft: string): RefTokenSpan[] {
 }
 
 /** A token read as plain text: its glyph and name, delimiters and id gone. */
-const asText = (t: Pick<RefTokenSpan, 'glyph' | 'label'>) => `${t.glyph} ${t.label.replace(/\u00A0/g, ' ')}`;
+const asText = (t: Pick<RefTokenSpan, 'glyph' | 'label'>) => `${t.glyph === GLYPH_IMAGE ? '🖼' : t.glyph} ${t.label.replace(/\u00A0/g, ' ')}`;
 /** Stray token characters (a delimiter or id digit outside any token) never reach the wire. */
 const stripStray = (s: string) => s.replace(/[\u2068\u2069\u2061-\u2064]/g, '');
 
@@ -129,9 +141,10 @@ export function stripTokens(draft: string): string {
 }
 
 /** Only the draft's tokens, space-separated with a trailing space: what stays in the box after
- *  a slash command (the chips are for the next message). '' when there are none. */
-export function tokensOnly(draft: string): string {
-  const spans = parseRefTokens(draft);
+ *  a slash command (the chips are for the next message). '' when there are none. `keep` limits
+ *  it to the tokens it accepts. */
+export function tokensOnly(draft: string, keep?: (t: RefTokenSpan) => boolean): string {
+  const spans = parseRefTokens(draft).filter((t) => !keep || keep(t));
   return spans.length ? `${spans.map((t) => draft.slice(t.start, t.end)).join(' ')} ` : '';
 }
 
@@ -256,6 +269,7 @@ function damageEdits(text: string, from: number, to: number): Array<Edit & { ids
       for (let j = s - 1; j >= Math.max(from, i - DAMAGE_REACH); j--) {
         if (text[j] === '\n' || text[j] === PDI || text[j] === FSI) break;
         if ((text[j] === GLYPH_NOTE || text[j] === GLYPH_REPLY) && text[j + 1] === NBSP) { s = j; break; }
+        if (text[j] === EMSP && text[j + 1] === NBSP) { s = j > 0 && text[j - 1] === EMSP ? j - 1 : j; break; }
       }
       // Never reach back over an edit already made.
       const prev = out[out.length - 1];
@@ -281,14 +295,15 @@ function damageEdits(text: string, from: number, to: number): Array<Edit & { ids
 /**
  * The draft as the chips must stand after any edit the composer did not make itself (cut, drag,
  * autocorrect, a paste already sanitised, an external adoption). Each well-formed token is matched
- * by id to a staged About ref (`pending` ones are skipped: their tokens are not in yet); a token
+ * by id to a staged token ref, an About line or an inline picture (`pending` ones are skipped:
+ * their tokens are not in yet); a token
  * no ref claims becomes plain text; a damaged token's remains go whole (and its ref with them);
  * a staged ref with no token is `dropped` (the caller keeps it in `recent`). `caret` follows.
  */
 export function reconcileRefs(
   draft: string, staged: readonly Attachment[], caret = draft.length,
 ): { draft: string; caret: number; keep: Attachment[]; dropped: Attachment[] } {
-  const abouts = staged.filter((a) => a.kind === 'about' && !a.pending);
+  const abouts = staged.filter((a) => isTokenRef(a) && !a.pending);
   const byId = new Map(abouts.map((a) => [refTokenId(a), a] as const));
   const spans = parseRefTokens(draft);
   const edits: Edit[] = [];
@@ -325,7 +340,8 @@ export interface PasteResult {
  * id and label name a ref staged in, or in `recent` for, this conversation; (b) that id is not
  * in the draft outside the replaced range `[selStart, selEnd)`, nor earlier in this paste;
  * (c) no other staged ref outside that range names the same target; (d) the chip count after
- * the paste is at most MAX_MESSAGE_REFS. Evaluated token by token, in order.
+ * the paste is at most MAX_MESSAGE_REFS (About chips only: pictures have their own cap). Evaluated
+ * token by token, in order.
  */
 export function sanitizePaste(
   pasted: string,
@@ -334,11 +350,12 @@ export function sanitizePaste(
   const spans = parseRefTokens(pasted);
   const outsideSpans = parseRefTokens(ctx.draft).filter((t) => t.end <= ctx.selStart || t.start >= ctx.selEnd);
   const outsideIds = new Set(outsideSpans.map((t) => t.id));
-  const abouts = ctx.staged.filter((a) => a.kind === 'about');
+  const abouts = ctx.staged.filter(isTokenRef);
   const outsideRefs = abouts.filter((a) => a.pending || outsideIds.has(refTokenId(a)));
   const takenKeys = new Set(outsideRefs.map(refKey).filter(Boolean) as string[]);
-  const candidates = [...abouts, ...ctx.recent.filter((a) => a.kind === 'about')];
-  let count = outsideIds.size + abouts.filter((a) => a.pending).length;
+  const candidates = [...abouts, ...ctx.recent.filter(isTokenRef)];
+  const isAbout = new Set(abouts.filter((a) => a.kind === 'about').map(refTokenId));
+  let count = outsideSpans.filter((t) => isAbout.has(t.id)).length + abouts.filter((a) => a.kind === 'about' && a.pending).length;
   const seen = new Set<string>();
   const restore: Attachment[] = [];
   const flash: string[] = [];
@@ -357,8 +374,8 @@ export function sanitizePaste(
       text += asText(t);
       continue;
     }
-    if (count + 1 > MAX_MESSAGE_REFS) { max = true; text += asText(t); continue; }
-    count += 1;
+    if (cand.kind === 'about' && count + 1 > MAX_MESSAGE_REFS) { max = true; text += asText(t); continue; }
+    if (cand.kind === 'about') count += 1;
     seen.add(t.id);
     if (key) takenKeys.add(key);
     restore.push(cand);
