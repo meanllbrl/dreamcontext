@@ -1327,11 +1327,10 @@ export function Composer({
     });
   }, [voiceEnabled, session.claudeId]);
   useEffect(() => {
-    // Not on the phone: warm, prefs and the hotkey are the laptop's routes.
+    // Not on the phone: prefs and the hotkey are the laptop's routes.
     if (!voiceEnabled || phoneVoice) return;
-    // Load the local transcription model NOW rather than on the first press: it is a 1.5 GB
-    // read, and paying it while the owner is still deciding what to say costs them nothing.
-    void fetch('/api/agent/voice/warm', { method: 'POST' }).catch(() => {});
+    // No warm-up here any more: loading the local model whenever assistant mode opened (every
+    // launch) took the app down on 8 GB Macs (owner, 2026-10-27). The first take loads it.
     const adopt = (p: { pushToTalk: string; pushToTalkMode: 'hold' | 'toggle'; speechRate: number }) => {
       setPushToTalk(p.pushToTalk);
       setPushToTalkMode(p.pushToTalkMode);

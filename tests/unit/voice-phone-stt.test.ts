@@ -7,6 +7,7 @@
  * stubbed whisper; the phone socket is marked the way the phone listener marks it.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { setPressureReader, stopWhisperServer } from '../../src/lib/voice/whisper.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -65,13 +66,15 @@ let home: string;
 let inference: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  // The machine's real load must not decide a unit test: pressure is its own suite.
+  setPressureReader(async () => ({ pressed: false, why: null }));
   saved = Object.fromEntries(TOUCHED.map((k) => [k, process.env[k]]));
   home = mkdtempSync(join(tmpdir(), 'dc-phone-stt-'));
   process.env.HOME = home;
   process.env.DREAMCONTEXT_DESKTOP = '1';
   const bin = join(home, 'whisper-server');
   const model = join(home, 'ggml-large-v3-turbo.bin');
-  writeFileSync(bin, '#!/bin/sh\nexit 0\n');
+  writeFileSync(bin, '#!/bin/sh\nsleep 30\n', { mode: 0o755 });  // a server that stays up
   writeFileSync(model, Buffer.alloc(2_000_000));
   process.env.DREAMCONTEXT_WHISPER_BIN = bin;
   process.env.DREAMCONTEXT_WHISPER_MODEL = model;
@@ -85,6 +88,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  stopWhisperServer();
+  setPressureReader(null);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   rmSync(home, { recursive: true, force: true });

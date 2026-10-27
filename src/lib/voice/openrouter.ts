@@ -236,3 +236,75 @@ export async function resolveModel(
     detail: `No OpenRouter ${kind} model matched any known id (${prefs.join(', ')}). The model may have been renamed.`,
   });
 }
+
+// ─── Cloud dictation ────────────────────────────────────────────────────────────────────
+
+/**
+ * Dictation through OpenRouter's speech-to-text endpoint, for an owner who picks the cloud
+ * engine (2026-10-27: a low-memory Mac should not have to run a model at all).
+ *
+ * `POST /audio/transcriptions` with a JSON body — `model`, `input_audio: { data, format }` with
+ * RAW base64 (not a data URI), an optional ISO-639-1 `language` — answering `{ text, usage }`.
+ * Verified against https://openrouter.ai/docs/guides/overview/multimodal/stt on 2026-10-27.
+ * The ids are tried in order, because the transcription namespace is not in `/models` (see
+ * `AUDIO_MODELS` above): the turbo whisper was measured working here on 2026-09-07, and the two
+ * after it are the ones the docs name.
+ */
+export const TRANSCRIPTION_MODELS = [
+  'openai/whisper-large-v3-turbo',
+  'openai/whisper-large-v3',
+  'openai/whisper-1',
+] as const;
+
+/** One cloud take's budget. The provider's own upstream limit is about a minute. */
+const CLOUD_STT_TIMEOUT_MS = 45_000;
+
+export type CloudTranscription =
+  | { ok: true; text: string; model: string; ms: number }
+  /** `auth`: the key was refused (bad, revoked, out of credit) — permanent until it changes.
+   *  `rejected`: the provider refused THIS take (too long, unreadable) — retrying it is futile.
+   *  `failed`: nothing answered usefully — worth another try. */
+  | { ok: false; reason: 'no_key' | 'auth' | 'rejected' | 'failed' };
+
+export async function transcribeCloud(
+  wav: Buffer,
+  opts: { key?: string | null; language?: string; fetchImpl?: FetchLike; home?: string } = {},
+): Promise<CloudTranscription> {
+  const key = opts.key !== undefined ? opts.key : voiceApiKey(opts.home);
+  if (!key) return { ok: false, reason: 'no_key' };
+  const doFetch = opts.fetchImpl ?? globalThis.fetch;
+  const language = (opts.language ?? '').trim();
+  const started = Date.now();
+  for (const model of TRANSCRIPTION_MODELS) {
+    const body: Record<string, unknown> = {
+      model,
+      input_audio: { data: wav.toString('base64'), format: 'wav' },
+    };
+    // Only a real ISO code is sent: absent means the provider detects the language itself.
+    if (/^[a-z]{2}$/.test(language)) body.language = language;
+    try {
+      const res = await doFetch(`${OPENROUTER_BASE}/audio/transcriptions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...OPENROUTER_HEADERS },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(CLOUD_STT_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        logUpstream('stt', res.status, text, key);
+        // A key or billing problem is the same for every model: do not spend two more requests.
+        if (res.status === 401 || res.status === 402 || res.status === 403) return { ok: false, reason: 'auth' };
+        // An unknown model id is the one 4xx the NEXT id can fix; any other 4xx is about the take.
+        if (res.status === 404 || (res.status === 400 && /model\b[^.]{0,60}\b(not found|does not exist|unknown|invalid|not supported)|(unknown|invalid|unsupported) model/i.test(text))) continue;
+        if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) return { ok: false, reason: 'rejected' };
+        continue;
+      }
+      const json = (await res.json()) as { text?: unknown };
+      const text = typeof json?.text === 'string' ? json.text.trim() : '';
+      return { ok: true, text, model, ms: Date.now() - started };
+    } catch (err) {
+      console.error('[voice:stt] cloud request failed', err instanceof Error ? err.message : 'error');
+    }
+  }
+  return { ok: false, reason: 'failed' };
+}

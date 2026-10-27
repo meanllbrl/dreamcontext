@@ -39,7 +39,7 @@ import {
 import { normalizeHotkey } from '../../lib/voice/hotkey.js';
 import {
   OPENROUTER_BASE, OPENROUTER_HEADERS, logUpstream, resolveModel, clearModelCache, AUDIO_MODELS,
-  fallbackVoice, FALLBACK_VOICE_DEFAULT,
+  fallbackVoice, FALLBACK_VOICE_DEFAULT, transcribeCloud,
 } from '../../lib/voice/openrouter.js';
 import {
   sttGate, ttsGate, focusGate, MAX_STT_BYTES, MAX_TTS_CHARS,
@@ -50,11 +50,12 @@ import {
   wavFromPcm16, normalizeSpeech, pcmSeconds, PCM16_SAMPLE_RATE,
   trimSpeechTail, SENTENCE_TAIL_MS, CLAUSE_TAIL_MS,
 } from '../../lib/voice/wav.js';
-import {
-  transcribeLocal, findWhisper, warmWhisper,
-} from '../../lib/voice/whisper.js';
+import { transcribeLocal, localBlocked, checkPressure } from '../../lib/voice/whisper.js';
 import { readVerbatim, verbatimRatio } from '../../lib/voice/verbatim.js';
-import { dictationState, startDictationInstall } from '../../lib/voice/dictationInstall.js';
+import {
+  dictationState, startDictationInstall, resolveDictation, parseDictationChoice, ChoiceRequired, InstallRunning,
+} from '../../lib/voice/dictationInstall.js';
+import { machineInfo, recommendModel } from '../../lib/voice/whisperModels.js';
 import { buildVoiceLexicon } from '../../lib/voice/lexicon.js';
 import { hold, release, hookExitRestore } from '../../lib/voice/audioFocus.js';
 import { logVoiceEvent, parseTakeMeta, parseTurnTrace, parseSpeechReport, keepTake } from '../../lib/voice/voiceLog.js';
@@ -303,16 +304,89 @@ export async function handleVoiceStt(
       }
     }
 
-    // DICTATION IS LOCAL, AND ONLY LOCAL (owner, 2026-09-27: "dikte sadece yerel olsun",
-    // "her konuştuğumda maliyet olsun istemiyorum"). No take is ever sent to an API: a take
-    // the local model could not answer is reported, never re-sent somewhere that bills.
+    // THE OWNER'S ENGINE, AND NOTHING ELSE (2026-10-27). Local whisper when chosen (or when an
+    // install from before the choice is here and fits this Mac); OpenRouter's transcription
+    // endpoint when the cloud was chosen. A take is never re-sent to the other engine: a local
+    // failure is reported, never quietly billed, and a cloud failure never loads a model.
+    const meta = parseTakeMeta(req.headers['x-dreamcontext-take']);
+    const route = resolveDictation();
+    const unconfigured = (failed: string, message: string): void => {
+      logVoiceEvent({ kind: 'stt', ...meta, bytes: audioEarly.length, failed });
+      sendJson(res, 400, { error: 'stt_unconfigured', message });
+    };
+    const tooBig = (model: string): string => {
+      const m = machineInfo();
+      return `The ${model} speech model is too large for this Mac's memory (${Math.round(m.memBytes / 1024 ** 3)} GB), so it was not loaded. Choose ${recommendModel(m)} or the cloud in Settings → Voice.`;
+    };
+
+    if (route.engine === 'none') {
+      unconfigured('stt_unconfigured', 'Dictation is not set up yet. Choose where it runs in Settings → Voice: on this Mac (a model sized for it) or in the cloud.');
+      return;
+    }
+
+    if (route.engine === 'cloud') {
+      if (!route.ready) {
+        unconfigured('stt_unconfigured', 'Cloud dictation needs an OpenRouter key. Add it in Settings → Voice.');
+        return;
+      }
+      const cloud = await transcribeCloud(audioEarly, { language: cfgEarly.sttLanguage });
+      if (!cloud.ok) {
+        if (cloud.reason === 'auth' || cloud.reason === 'no_key') {
+          unconfigured('stt_unconfigured', 'OpenRouter refused the key (wrong, revoked or out of credit). Check it in Settings → Voice.');
+          return;
+        }
+        logVoiceEvent({ kind: 'stt', ...meta, bytes: audioEarly.length, failed: 'stt_failed' });
+        if (cloud.reason === 'rejected') {
+          // 400: this take, not retried — the same bytes would be refused the same way.
+          sendJson(res, 400, { error: 'stt_failed', message: 'The cloud could not transcribe this take. Try a shorter one.' });
+          return;
+        }
+        sendJson(res, 503, { error: 'stt_failed', message: 'Cloud transcription did not answer. Try again in a moment.' });
+        return;
+      }
+      console.info(`[voice:stt] cloud ${cloud.model} ${cloud.ms}ms`);
+      const record = { kind: 'stt', ...meta, bytes: audioEarly.length, engine: `cloud:${cloud.model}`, ms: cloud.ms, chars: cloud.text.length };
+      logVoiceEvent(record);
+      keepTake(audioEarly, { ...record, language: cfgEarly.sttLanguage || 'auto', text: cloud.text });
+      sendJson(res, 200, { text: cloud.text, ms: cloud.ms, engine: `cloud:${cloud.model}` });
+      return;
+    }
+
+    const install = route.install;
+    if (!install) {
+      unconfigured('stt_unconfigured', 'The chosen speech model is not installed yet. Finish it in Settings → Voice.');
+      return;
+    }
+    if (route.blocked === 'too_big') { unconfigured('stt_too_big', tooBig(install.modelName)); return; }
+    if (route.blocked === 'load_failed') {
+      unconfigured('stt_load_failed', `The ${install.modelName} speech model could not be loaded on this Mac. Choose a smaller model or the cloud in Settings → Voice.`);
+      return;
+    }
+
+    // Under load (memory, swap or heat — the Super Agent's own reading), the model stays out of
+    // RAM: a loaded one is unloaded by `checkPressure`, and none is loaded until the load is gone.
+    const pressure = await checkPressure();
+    if (pressure.pressed) {
+      const what = pressure.why === 'heat' ? 'running hot' : 'short on memory';
+      // THIS take only (409, its own code): not `stt_unconfigured`, which the composer reads as
+      // "dictation is not set up" until Settings changes, and not retryable — the load will
+      // not be gone in the composer's retry window.
+      logVoiceEvent({ kind: 'stt', ...meta, bytes: audioEarly.length, failed: 'stt_pressure' });
+      sendJson(res, 409, {
+        error: 'stt_pressure',
+        message: `This Mac is ${what} right now, so local dictation is paused to keep it responsive. Try again in a minute, or switch dictation to the cloud in Settings → Voice.`,
+      });
+      return;
+    }
+
+    // Loaded HERE, on the first take, never at launch — and unloaded again after idle.
     const local = await transcribeLocal(audioEarly, {
+      install,
       language: cfgEarly.sttLanguage,
       // The vault's own vocabulary, biasing the decoder toward the words this project
       // actually uses. Vault-scoped, which is why `/stt` is classified vault-SCOPED.
       lexicon: buildVoiceLexicon(contextRoot),
     });
-    const meta = parseTakeMeta(req.headers['x-dreamcontext-take']);
     if (local) {
       console.info(`[voice:stt] local ${local.model} ${local.ms}ms`);
       const record = { kind: 'stt', ...meta, bytes: audioEarly.length, engine: `local:${local.model}`, ms: local.ms, chars: local.text.length };
@@ -321,17 +395,15 @@ export async function handleVoiceStt(
       sendJson(res, 200, { text: local.text, ms: local.ms, engine: `local:${local.model}` });
       return;
     }
-    logVoiceEvent({ kind: 'stt', ...meta, bytes: audioEarly.length, failed: findWhisper() ? 'stt_failed' : 'stt_unconfigured' });
-    // Installed but silent is a TRANSIENT failure (a cold or busy whisper server): the composer
-    // retries it. Only a missing install is `stt_unconfigured`, which the mode reads as permanent.
-    if (findWhisper()) {
-      sendJson(res, 503, { error: 'stt_failed', message: 'Local transcription did not answer. Try again in a moment.' });
+    // The model never came up (out of memory, a bad file): PERMANENT for this choice, so the
+    // composer stops retrying a load that would only fail again, and the owner is told why.
+    if (localBlocked(install) === 'load_failed') {
+      unconfigured('stt_load_failed', `The ${install.modelName} speech model could not be loaded on this Mac. Choose a smaller model or the cloud in Settings → Voice.`);
       return;
     }
-    sendJson(res, 400, {
-      error: 'stt_unconfigured',
-      message: 'Dictation is not installed yet. Install it in Settings → Voice (it downloads the speech model once).',
-    });
+    logVoiceEvent({ kind: 'stt', ...meta, bytes: audioEarly.length, failed: 'stt_failed' });
+    // Loaded but silent is a TRANSIENT failure (a busy whisper server): the composer retries it.
+    sendJson(res, 503, { error: 'stt_failed', message: 'Local transcription did not answer. Try again in a moment.' });
   } finally {
     sttGate.release();
     if (phone) phoneSttGate.release();
@@ -692,11 +764,11 @@ function untilGoneOr(ms: number, gone: AbortSignal): AbortSignal {
 // ─── POST /api/agent/voice/warm ──────────────────────────────────────────────────────────
 
 /**
- * Load the local model before it is needed.
+ * Kept as a route for clients from before 0.35.1, and deliberately a NO-OP.
  *
- * Called when assistant mode opens, which is seconds before the first press — long enough
- * to turn the first take from ~3.3s into ~0.85s like every take after it. Answers immediately
- * and never blocks: warming is an optimisation, and a slow warm-up must not become a slow UI.
+ * It used to load the local model whenever assistant mode opened — at every launch — and on an
+ * 8 GB MacBook Air that load took the app down (owner, 2026-10-27). The model now loads on the
+ * first take only (`whisper.ts`), so warming answers "nothing" and touches nothing.
  */
 export async function handleVoiceWarm(
   _req: IncomingMessage,
@@ -706,8 +778,7 @@ export async function handleVoiceWarm(
     sendError(res, 403, 'desktop_only', 'Voice is only available in the desktop app.');
     return;
   }
-  const warmed = warmWhisper();
-  sendJson(res, 200, { warming: warmed ? warmed.model : null });
+  sendJson(res, 200, { warming: null });
 }
 
 // ─── POST /api/agent/voice/log ────────────────────────────────────────────────────────
@@ -851,13 +922,12 @@ export async function handleVoiceStatus(
   // Deliberately NOT desktop-gated: the web dashboard renders no mic button, but its
   // Settings page still has to be able to say "voice is a desktop feature" truthfully rather
   // than showing a card in an unknown state.
-  const local = findWhisper();
   sendJson(res, 200, {
     ...voiceStatus(),
     desktop: isDesktop(),
-    // What the machine actually has, so the engine row can say "Local · large-v3-turbo"
-    // instead of offering a choice the owner cannot verify.
-    localWhisper: local ? local.modelName : null,
+    // What a take would use, so the engine row can say "Local · small" instead of offering a
+    // choice the owner cannot verify.
+    localWhisper: localModelName(),
   });
 }
 
@@ -912,10 +982,14 @@ export async function handleVoiceConfigPut(
   }
   // A new key means the previous "no model / no key" resolution is stale.
   clearModelCache();
-  const local = findWhisper();
   sendJson(res, 200, {
-    ...voiceStatus(), desktop: isDesktop(), localWhisper: local ? local.modelName : null,
+    ...voiceStatus(), desktop: isDesktop(), localWhisper: localModelName(),
   });
+}
+
+function localModelName(): string | null {
+  const route = resolveDictation();
+  return route.engine === 'local' && route.install ? route.install.modelName : null;
 }
 
 // ─── GET/POST /api/agent/voice/dictation ──────────────────────────────────────────────
@@ -938,12 +1012,26 @@ export async function handleDictationStatus(
 }
 
 export async function handleDictationInstall(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
   if (!isDesktop()) {
     sendError(res, 403, 'desktop_only', 'Voice is only available in the desktop app.');
     return;
   }
-  sendJson(res, 202, startDictationInstall());
+  // The owner's choice is REQUIRED: a bare POST (what setup used to send on open) installs
+  // nothing and downloads nothing.
+  let choice;
+  try {
+    choice = parseDictationChoice(await parseJsonBody(req).catch(() => null));
+  } catch (err) {
+    if (err instanceof ChoiceRequired) { sendError(res, 400, 'choice_required', err.message); return; }
+    throw err;
+  }
+  try {
+    sendJson(res, 202, startDictationInstall(choice));
+  } catch (err) {
+    if (err instanceof InstallRunning) { sendError(res, 409, 'install_running', err.message); return; }
+    throw err;
+  }
 }

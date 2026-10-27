@@ -6,6 +6,7 @@ import { isDesktop } from '../../lib/desktop';
 import { chordFromEvent, formatHotkey, hotkeyLabel, isLatchKey, parseHotkey } from '../../lib/voice/hotkey';
 import { adoptVoicePrefs } from '../../lib/voice/voicePrefs';
 import { DictationInstall } from './DictationInstall';
+import { notifyDictationChanged } from '../../lib/voice/useDictationReady';
 
 /**
  * The Voice card — assistant mode's one key, its push-to-talk chord, and the preferences
@@ -125,6 +126,8 @@ export function VoiceSettings() {
       const body = await res.json() as VoiceStatus;
       setStatus(body);
       adoptVoicePrefs(body);
+      // A key makes cloud dictation ready (or not): the Dictation row and every mic gate re-read.
+      if ('openRouterKey' in patch) notifyDictationChanged();
     } catch {
       setError('Could not save the voice settings.');
     } finally {
@@ -191,9 +194,9 @@ export function VoiceSettings() {
       <SettingRow
         title="OpenRouter key"
         hint={status.key
-          ? 'A key is set. It is used only to read replies aloud; clear it to turn speech off.'
-          : 'Only needed to read replies aloud. Dictation is local and needs no key.'}
-        more={'The key is used for ONE thing: reading replies aloud, and only while read-aloud is on. Dictation never uses it. It is stored on THIS MACHINE at ~/.dreamcontext/voice.json with 0600 permissions, never in a project, so a team sync cannot carry it anywhere. The server reports only whether a key exists — there is no route that returns the key itself, which is why this field can never show you the one already set. No OpenAI key is read or requested anywhere in this feature.'}
+          ? 'A key is set. It reads replies aloud, and transcribes dictation when Dictation is set to the cloud.'
+          : 'Needed to read replies aloud, and for cloud dictation. Local dictation needs no key.'}
+        more={'The key is used for two things: reading replies aloud (while read-aloud is on), and transcribing dictation when you choose the cloud in the Dictation row below. Local dictation never uses it. It is stored on THIS MACHINE at ~/.dreamcontext/voice.json with 0600 permissions, never in a project, so a team sync cannot carry it anywhere. The server reports only whether a key exists — there is no route that returns the key itself, which is why this field can never show you the one already set. No OpenAI key is read or requested anywhere in this feature.'}
         control={
           <span className="voice-key-row">
             <input
@@ -292,8 +295,8 @@ export function VoiceSettings() {
 
       <SettingRow
         title="Dictation"
-        hint="Runs on this Mac with whisper.cpp — the same model Handy uses, primed with this project's words. No take is ever sent to an API."
-        more={'Local only, by the owner\'s decision: every take is transcribed here, for nothing, and never falls back to a paid service. Measured on one Turkish take, a warm local whisper answered in 0.85s every time. The install decides its own route: whisper.cpp through Homebrew, and the speech model is reused if one is already on disk (Handy\'s included) or downloaded once otherwise.'}
+        hint="On this Mac with whisper.cpp at a size it can carry, or in the cloud through OpenRouter. Nothing downloads until you choose."
+        more={'Local: every take is transcribed here, for nothing, primed with this project\'s words. The model loads on your first take — never at launch — and is unloaded after five idle minutes or as soon as the Mac is short on memory or running hot. The size is preselected from this Mac\'s memory and chip (8 GB: small; 16 GB: medium; 32 GB or a Pro/Max chip: large-v3-turbo); a size too large for it cannot be picked. A model already on disk (Handy\'s included) is reused and never deleted. Cloud: OpenRouter\'s transcription endpoint with the OpenRouter key on this card; each take leaves the Mac and costs a fraction of a cent. A take is never sent to the engine you did not choose.'}
         control={<DictationInstall />}
       />
 

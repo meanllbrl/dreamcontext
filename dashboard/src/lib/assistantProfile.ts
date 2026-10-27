@@ -9,6 +9,7 @@
  * result, and a shell error becomes `{ ok: false, error }` so the wizard can say it.
  */
 import { isDesktop } from './desktop';
+import { notifyDictationChanged } from './voice/useDictationReady';
 import {
   checkAvatarFile, sniffAvatarBytes,
   type AssistantAutonomy, type AssistantHotkey, type HotkeyApplyResult,
@@ -137,6 +138,8 @@ export async function saveVoiceKey(key: string | null): Promise<boolean> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ openRouterKey: key }),
   });
+  // A key makes cloud dictation ready (or not): the setup's Dictation row and the mic gates re-read.
+  notifyDictationChanged();
   return !!out.key;
 }
 

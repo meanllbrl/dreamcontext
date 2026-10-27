@@ -227,6 +227,9 @@ export class MacSession {
 
   get macDir(): string { return macDirOf(this.home); }
   isOn(): boolean { return this.phase !== 'off'; }
+  /** The thermal governor's last reading (`null` while it is not running). Read by dictation to
+   *  unload its model while the Mac is hot, without taking a second reading. */
+  thermalState(): string | null { return this.governor?.snapshot().state ?? null; }
 
   private sudoersInstalled(): boolean {
     return this.d.sudoersInstalled ? this.d.sudoersInstalled() : existsSync(power.SUDOERS_PATH);

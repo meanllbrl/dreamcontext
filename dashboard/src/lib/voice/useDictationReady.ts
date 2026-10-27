@@ -8,7 +8,9 @@ import { useEffect, useState } from 'react';
  * its notch keeps the install hint.
  */
 
-const EVENT = 'dc:dictation-changed';
+/** Fired when dictation's readiness may have changed (a choice, an install, a key saved). */
+export const DICTATION_CHANGED_EVENT = 'dc:dictation-changed';
+const EVENT = DICTATION_CHANGED_EVENT;
 let cached: boolean | null = null;
 let inflight: Promise<boolean> | null = null;
 
