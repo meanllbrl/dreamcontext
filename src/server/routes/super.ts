@@ -69,7 +69,7 @@ import { cachedLeftovers, defaultPlaces, diskUsage, forgetLeftovers, oldTestTmp 
 import { readMachineFacts } from './machine.js';
 import { tmpdir } from 'node:os';
 import { picturesToPull, planImageGroup, type ImageChain, type ImageGroupPlan } from '../../lib/super/image-group.js';
-import { ensureTidy, keepOwnerLooked, touchCards, viewShows, type TidyIo } from '../../lib/super/tidy.js';
+import { ensureTidy, keepOwnerLooked, noteSeenClick, retireClockFrom, retireKeep, seenClickAt, touchCards, touchedAt, viewShows, type RetireLive, type TidyIo } from '../../lib/super/tidy.js';
 import { titleFromBrief } from '../../lib/super/remote-view.js';
 
 /**
@@ -403,7 +403,11 @@ function mcpRefused(root: string, job: Job, res: ServerResponse): boolean {
 }
 
 /** The stage's own tidying (tidy.ts) reads and writes the record the way every verb does. */
-const TIDY_IO: TidyIo = { read: (root) => readSuperState(root, superSanitizeOpts()), write: (root, fn) => writeSuper(root, fn) };
+const TIDY_IO: TidyIo = {
+  read: (root) => readSuperState(root, superSanitizeOpts()),
+  write: (root, fn) => writeSuper(root, fn),
+  retire: { live: (root, sid) => retireLive(root, sid), end: (root, sids) => retireChildren(root, sids) },
+};
 
 /** The super's last `open image|pdf|video`, per vault and kind (image-group.ts): the next one of
  *  that kind within the window joins its group. In memory: a restart only ends a chain. */
@@ -2311,13 +2315,46 @@ export function _resetSuperSuccession(): void {
   successionArmed = null;
 }
 
-/** Record a child ended (the agent's `super end` and the owner's card close share it): its card
- *  goes, its open queue items close, a done `ended` item records who, when and its last brief. */
-async function recordEnded(contextRoot: string, sid: string): Promise<void> {
+/** What the registry knows of a child's process, for the retire clock (tidy.ts). */
+function retireLive(contextRoot: string, sid: string): RetireLive {
+  return { status: childStatus(sid), ownerAt: Math.max(findParkable(sid)?.focusedAt() ?? 0, seenClickAt(contextRoot, sid)) };
+}
+
+/**
+ * The tidy clock's retire half (tidy.ts `planRetire`): end each finished, told, untouched child
+ * the way `super end` does. Every child is checked again on a fresh read before its process is
+ * closed, the park primitive keeps its own refusals (a turn, a question, background work, the
+ * owner's focus or draft in the window), and the record is written only if it is still due
+ * under the lock. Returns the children ended.
+ */
+export async function retireChildren(contextRoot: string, sids: readonly string[]): Promise<string[]> {
+  const due = (s: SuperState, sid: string) =>
+    retireKeep(s, sid, (id) => touchedAt(contextRoot, id), retireLive(contextRoot, sid), Date.now(), retireClockFrom(contextRoot)) === null;
+  const ended: string[] = [];
+  for (const sid of sids) {
+    if (!due(await readSuperState(contextRoot, superSanitizeOpts()), sid)) continue;
+    if (isLiveChat(sid)) {
+      const outcome = await parkChat(sid, 'super-retire', { end: true }).catch((): ParkOutcome => 'refused');
+      if (outcome !== 'parked' && outcome !== 'drained' && outcome !== 'already') continue;
+      // Its tab is closed now: recorded like `super end`, never left half ended.
+      if (await recordEnded(contextRoot, sid)) ended.push(sid);
+      continue;
+    }
+    if (await recordEnded(contextRoot, sid, (s) => due(s, sid))) ended.push(sid);
+  }
+  return ended;
+}
+
+/** Record a child ended (the agent's `super end`, the owner's card close and the retire clock
+ *  share it): its card goes, its open queue items close, a done `ended` item records who, when
+ *  and its last brief. `guard` (the retire clock): written only while it still holds. */
+async function recordEnded(contextRoot: string, sid: string, guard?: (s: SuperState) => boolean): Promise<boolean> {
   const now = Date.now();
+  let done = false;
   await writeSuper(contextRoot, (s) => {
     const x = s.children[sid];
-    if (!x) return;
+    if (!x || (guard && !guard(s))) return;
+    done = true;
     x.endedAt = now;
     // Its job-list row rests in done (Bitti), never stuck or gone.
     setRow(x, 'done', undefined, now);
@@ -2331,6 +2368,7 @@ async function recordEnded(contextRoot: string, sid: string): Promise<void> {
     delete s.notes[sid];
     s.queue.push({ id: newQueueId(), sessionId: sid, kind: 'ended', state: 'done', createdAt: now, brief: x.brief });
   });
+  return done;
 }
 
 /** POST /api/super/v/:verb */
@@ -2648,6 +2686,9 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     const marks = ownerSeenMarks(body);
     if ('error' in marks) { sendError(res, 400, 'invalid_body', marks.error); return; }
     const state = await writeSuper(contextRoot, (s) => { applyOwnerSeen(s, marks.marks); });
+    // The retire clock (tidy.ts) counts from his click: `seenAt` holds the finish key he saw,
+    // not when he looked.
+    noteSeenClick(contextRoot, marks.marks.map((m) => m.id));
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
   },
   pad: async (_req, res, contextRoot, body) => {

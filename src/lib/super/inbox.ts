@@ -530,7 +530,7 @@ async function settleCarried(key: string): Promise<boolean> {
         if (pureExit) {
           const exits = (it.exits ?? 0) + 1;
           it.exits = exits;
-          if (exits < 2) { it.state = 'pending'; continue; }
+          if (exits < 2) { it.state = 'pending'; delete it.batch; continue; }
           if (it.kind === 'question' && stillAsking(it)) { it.state = 'escalated'; it.ownerText = childQuestionText(it.sessionId); continue; }
           if (it.kind === 'owner') { it.state = ownerWaitStands(it) ? 'escalated' : 'done'; continue; }
           it.state = 'done';
