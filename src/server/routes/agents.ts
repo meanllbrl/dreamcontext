@@ -34,6 +34,7 @@ import { readThread } from '../../lib/automations/threads.js';
 import { listInboxRows, type InboxRow } from '../../lib/owner-inbox.js';
 import { findTaskHead, readTaskJobs } from '../../lib/agents/task-jobs.js';
 import { readStageHomeSession } from '../../lib/local-store.js';
+import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
 import { agentActivity } from '../automation-job.js';
 import { isAgentRequest } from '../desktop.js';
@@ -687,6 +688,20 @@ const STAGE_FILES = 8;
 /** How many day files of each thread a stage read looks at: a bound, not a filter. */
 const STAGE_THREAD_DAYS = 14;
 
+/**
+ * Home conversations known to have a transcript. Only the positive is kept: a transcript, once
+ * written, stays, so the stage poll scans `~/.claude/projects` only while a home is still empty.
+ */
+const HOME_WITH_TURNS = new Set<string>();
+
+function homeHasTurns(home: string | null): boolean {
+  if (!home) return false;
+  if (HOME_WITH_TURNS.has(home)) return true;
+  if (findTranscriptBySessionId([home]) === null) return false;
+  HOME_WITH_TURNS.add(home);
+  return true;
+}
+
 export type StageFileKind = 'doc' | 'board' | 'image' | 'data' | 'other';
 
 /** A posted file's kind, from its brain-relative path. */
@@ -708,6 +723,10 @@ export interface StageView {
   homeSessionId: string | null;
   /** A live, ATTACHED process holds the home session right now (a stage, or a Chat tab). */
   homeLive: boolean;
+  /** The home conversation has at least one turn: Claude keeps a transcript only after the first
+   *  one, so a stage that was opened and never spoken to has none. The page opens such an agent on
+   *  its activity, where its routines' messages are, instead of an empty chat. */
+  homeHasTurns: boolean;
   /** Whose agent it is (arrives with the brain sync); null on this build. */
   owner: string | null;
   /** What it is doing right now: one row per target of it holding its run lock. */
@@ -770,6 +789,7 @@ export function buildStageView(contextRoot: string, slug: string, now: Date = ne
     // Held = a live child with a socket bound to it right now. A detached one (its pane closed a
     // moment ago) is not held: the stage adopts it.
     homeLive: !!home && !!findLiveChat(home)?.holder?.(),
+    homeHasTurns: homeHasTurns(home),
     owner: null,
     liveJobs,
     reports,

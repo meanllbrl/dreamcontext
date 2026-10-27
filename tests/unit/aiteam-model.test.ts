@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  buildConversation, buildRoster, conversationSlugs, filterRoster, messagesOf, openQuestionOf, overrideFor,
+  buildConversation, buildRoster, conversationSlugs, filterRoster, messagesOf, openingView, openQuestionOf, overrideFor,
   plainLine, readTemporaryModels, routineCountLabel, writeTemporaryModel,
   type TeamAgent, type TeamAutomation,
 } from '../../dashboard/src/components/aiteam/teamModel';
@@ -221,5 +221,25 @@ describe('small words', () => {
     const t = (k: string) => ({ 'aiteam.routines.none': 'No routines', 'aiteam.routines.one': '1 routine', 'aiteam.routines.many': '{n} routines' }[k] ?? k);
     expect([0, 1, 2].map((n) => routineCountLabel(n, t))).toEqual(['No routines', '1 routine', '2 routines']);
     expect(plainLine('**Signups** up [12%](x.md)\n`code`')).toBe('Signups up 12% code');
+  });
+});
+
+describe('openingView: a picked teammate opens where its roster row\'s messages are', () => {
+  const at = '2026-10-27T12:28:00.000Z';
+  it('unread messages open the activity, whatever the stage holds', () => {
+    expect(openingView({ unread: 1, lastAt: at }, null)).toBe('activity');
+    expect(openingView({ unread: 3, lastAt: at }, { homeHasTurns: true })).toBe('activity');
+  });
+  it('a teammate that never said anything opens on the stage, without waiting for it', () => {
+    expect(openingView({ unread: 0, lastAt: null }, null)).toBe('stage');
+  });
+  it('read messages: the stage only when its home conversation has a turn', () => {
+    expect(openingView({ unread: 0, lastAt: at }, { homeHasTurns: true })).toBe('stage');
+    expect(openingView({ unread: 0, lastAt: at }, { homeHasTurns: false })).toBe('activity');
+    // An older server says nothing about turns: the messages are what is certain to be there.
+    expect(openingView({ unread: 0, lastAt: at }, {})).toBe('activity');
+  });
+  it('undecided while the stage view loads', () => {
+    expect(openingView({ unread: 0, lastAt: at }, undefined)).toBeNull();
   });
 });

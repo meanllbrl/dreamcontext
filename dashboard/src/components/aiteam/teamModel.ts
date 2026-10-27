@@ -176,6 +176,28 @@ export function buildRoster(
 }
 
 /**
+ * WHERE A PICKED TEAMMATE OPENS: its conversation (the stage, the agent's home Chat session) or
+ * its activity (its routines' runs and posts, the thread the roster row previews).
+ *
+ * The roster's preview and unread count come from the activity. Opening on an empty stage hid
+ * exactly what the row promised (owner 2026-10-27: "the messages are missing"), so:
+ *  - unread messages: the activity, where reading them clears the count;
+ *  - nothing ever said: the stage, to start talking;
+ *  - otherwise the stage only when its home conversation has a turn, else the activity;
+ *  - null while the stage view is still loading and the answer depends on it.
+ * Decided once per pick: a count reaching 0 while the owner reads never moves the view.
+ */
+export function openingView(
+  row: Pick<TeamRow, 'unread' | 'lastAt'>,
+  stage: { homeHasTurns?: boolean } | null | undefined,
+): 'stage' | 'activity' | null {
+  if (row.unread > 0) return 'activity';
+  if (row.lastAt === null) return 'stage';
+  if (!stage) return null;
+  return stage.homeHasTurns ? 'stage' : 'activity';
+}
+
+/**
  * ONE THING WAITING FOR THE OWNER'S APPROVAL ON THIS MAC.
  *
  * Every automation needs a machine-local approval of exactly what it is (its hash): that rule

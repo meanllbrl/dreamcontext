@@ -6,7 +6,7 @@ import { AgentStage } from '../components/aiteam/AgentStage';
 import { dropStageSessions } from '../components/aiteam/stageSession';
 import { TeamPanel, type PanelTab } from '../components/aiteam/TeamPanel';
 import { NewTeammate, TEAM_STARTERS, type TeamStarter } from '../components/aiteam/NewTeammate';
-import { buildRoster, messagesOf, type TeamAgent } from '../components/aiteam/teamModel';
+import { buildRoster, messagesOf, openingView, type TeamAgent } from '../components/aiteam/teamModel';
 import {
   clampRosterWidth, pageStorage, readPageView, readRosterWidth, writeRosterWidth, readRosterView, teamTreeOf, writePageView, writeRosterView, type PageView, type RosterView,
 } from '../components/aiteam/teamTree';
@@ -18,7 +18,7 @@ import { BrandMark } from '../components/brand/BrandMark';
 import { BrainFileViewer } from '../components/agents/BrainFileViewer';
 import { useVault } from '../context/VaultContext';
 import { useI18n } from '../context/I18nContext';
-import { useAgents } from '../hooks/useAgents';
+import { useAgents, useAgentStage } from '../hooks/useAgents';
 import { useAgentFeed, useAutomationDispatcher, useAutomations } from '../hooks/useAutomations';
 import { nextFireWords } from '../lib/agentDraft';
 import type { AgentsFocus } from '../lib/openAgents';
@@ -89,9 +89,10 @@ export function AiTeamPage({
   const [openFile, setOpenFile] = useState<string | null>(null);
   /** A notification or link landed: which routine's newest message to bring into view. */
   const [landing, setLanding] = useState<{ slug: string; nonce: number } | null>(null);
-  /** A teammate opens on its conversation (the real Chat pane); its activity (the routines' runs
-   *  and posts) is one step away. */
-  const [teamView, setTeamView] = useState<'stage' | 'activity'>('stage');
+  /** A teammate opens on its conversation (the real Chat pane) or its activity (the routines'
+   *  runs and posts), whichever holds what its roster row shows (`openingView`); the other is one
+   *  step away. `auto` = just picked, decided once the stage view says whether its home has turns. */
+  const [teamView, setTeamView] = useState<'auto' | 'stage' | 'activity'>('auto');
   /** Phone width: which of the two halves is on screen. */
   const [mobileShow, setMobileShow] = useState<'list' | 'convo'>('list');
 
@@ -117,7 +118,16 @@ export function AiTeamPage({
   useEffect(() => {
     if (current || rows.length === 0) return;
     setSelected(rows[0].slug);
+    setTeamView('auto');
   }, [current, rows]);
+  // The same query (and cache) as the stage itself: deciding here costs no second read.
+  const stageQ = useAgentStage(current?.slug ?? null);
+  const stageSettled = stageQ.data ?? (stageQ.isError ? { homeHasTurns: false } : null);
+  useEffect(() => {
+    if (teamView !== 'auto' || !current) return;
+    const view = openingView(current, stageSettled);
+    if (view) setTeamView(view);
+  }, [teamView, current, stageSettled]);
 
   // A link or a caller asked for one teammate, the create flow, or its profile.
   useEffect(() => {
@@ -127,6 +137,7 @@ export function AiTeamPage({
       setMobileShow('convo');
     } else if (agentsFocus.slug) {
       setSelected(agentsFocus.slug);
+      setTeamView('auto');
       setCreating(null);
       setPanel('profile');
       setMobileShow('convo');
@@ -166,7 +177,7 @@ export function AiTeamPage({
     setSelected(slug);
     setLanding(null);
     setCreating(null);
-    setTeamView('stage');
+    setTeamView('auto');
     setMobileShow('convo');
   }, []);
   /** From the stage: its activity, at a routine's newest message when one is named. */
@@ -184,6 +195,7 @@ export function AiTeamPage({
   const talkTo = useCallback((slug: string) => {
     pickPageView('conversations');
     setSelected(slug);
+    setTeamView('stage');
     setLanding(null);
     setCreating(null);
     setPanel(null);
@@ -304,6 +316,7 @@ export function AiTeamPage({
             onCreated={(slug, message) => {
               setCreating(null);
               setSelected(slug);
+              setTeamView('auto');
               setToast(message);
             }}
           />
@@ -327,6 +340,11 @@ export function AiTeamPage({
                 <p className="auto-intro-safety">{t('aiteam.zero.safety')}</p>
               </div>
             </div>
+          </section>
+        ) : current && agent && teamView === 'auto' ? (
+          // Not the stage yet: mounting it opens (and records) a home session the pick may not need.
+          <section className="aiteam-convo" data-team-opening>
+            <p className="aiteam-roster-empty">{t('common.loading')}</p>
           </section>
         ) : current && agent && teamView === 'stage' && agentsQ.data?.find((a) => a.slug === current.slug) ? (
           <AgentStage
