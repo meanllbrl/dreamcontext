@@ -11,7 +11,7 @@ import {
   createSession, currentZoom,
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
-import { createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
+import { FOCUS_FRAME_THROTTLE_MS, createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
 import { publishSuperEventContext, publishSuperQuestions } from './super/superJobsStore';
 import { openOwnerQuestions, trimOwnerAnswers } from './super/superQuestions';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
@@ -1636,6 +1636,8 @@ export function AgentSurface() {
 
   /** The owner is looking at this surface right now (its project chip, opened, window focused). */
   const ownerLooking = (): boolean => isActive && expanded && document.visibilityState === 'visible' && document.hasFocus();
+  const ownerLookingRef = useRef(ownerLooking);
+  ownerLookingRef.current = ownerLooking;
   parkVerdictRef.current = (sid, { focusGraceMs, end, force }) => {
     const s = sessions.current.get(sid);
     const meta = sessionListRef.current.find((m) => m.id === sid);
@@ -1661,10 +1663,20 @@ export function AgentSurface() {
   // The owner looked at or typed in a tab: remembered here (the window's own re-check) and
   // told to the server at most once per 30 s (`markFocus`), so the sweep leaves it alone.
   const touchFocusedRef = useRef<() => void>(() => { /* set below */ });
+  // A Super child's tab he looks at (dormant or not) touches its card too, at most once per
+  // 30 s: the server's retire clock (lib/super/tidy.ts) never ends a job he is reading.
+  const superCardTouchRef = useRef(new Map<string, number>());
   touchFocusedRef.current = () => {
     if (!ownerLooking() || !focusedSessionId) return;
     ownerTouchRef.current.set(focusedSessionId, Date.now());
     sessions.current.get(focusedSessionId)?.markFocus();
+    const claudeId = sessionListRef.current.find((m) => m.id === focusedSessionId)?.claudeId;
+    const st = superStateRef.current;
+    if (!claudeId || !st?.enabled || !hasOwnKey(st.children, claudeId)) return;
+    const cards = st.containers.filter((c) => c.kind === 'chat' && c.ref === claudeId).map((c) => c.id);
+    if (!cards.length || Date.now() - (superCardTouchRef.current.get(claudeId) ?? 0) < FOCUS_FRAME_THROTTLE_MS) return;
+    superCardTouchRef.current.set(claudeId, Date.now());
+    void postSuperLayout(scopedApi, { touch: cards }).catch(() => undefined);
   };
   useEffect(() => {
     const touch = () => touchFocusedRef.current();
@@ -3374,18 +3386,27 @@ export function AgentSurface() {
     return () => clearTimeout(timer);
   }, [superState, sessionList, superDelegated]);
 
+  /** The server's park focus grace (chat-park.ts FOCUS_GRACE_MS): a tab he touched this recently is his. */
+  const DORMANT_CLOSE_GRACE_MS = 2 * 60_000;
   // ── Ended children never come back as tabs (`super end`) ──────────────────────────
   // `super end` closes a live child's tab itself (the park frame's `end`). A child ended while
   // no window held it (drained), or restored dormant by a relaunch before the record arrived,
   // still has a DORMANT roster entry: closed here once the record names it ended. A live tab is
-  // never touched (the owner reopened it from Past chats: his to keep).
+  // never touched (the owner reopened it from Past chats: his to keep). Nor is the dormant tab
+  // he is looking at, touched within the focus grace, or holding his unsent draft: it closes at
+  // a later record push, once he has moved on.
   useEffect(() => {
     const ended = endedChildIds(superState);
     if (!ended.size) return;
     for (const m of sessionList) {
-      if (m.dormant && m.claudeId && ended.has(m.claudeId)) closeSessionById(m.id);
+      if (!m.dormant || !m.claudeId || !ended.has(m.claudeId)) continue;
+      if (focusedSessionId === m.id && ownerLookingRef.current()) continue;
+      if (Date.now() - (ownerTouchRef.current.get(m.id) ?? 0) < DORMANT_CLOSE_GRACE_MS) continue;
+      const s = sessions.current.get(m.id);
+      if (s?.kind === 'chat' && (s as ChatSession).getModel().draft.trim()) continue;
+      closeSessionById(m.id);
     }
-  }, [superState, sessionList, closeSessionById]);
+  }, [superState, sessionList, closeSessionById, focusedSessionId]);
 
   // ── The owner-activity lease: one POST per 5 s at most, and only while typing ─────────
   useEffect(() => {
