@@ -506,7 +506,16 @@
   padding: 0;
 }
 
-/* Web embed */
+/* Web embed. The frame's box: with a device width (lib/webDevice.ts) the frame is laid out at
+   that width and scaled into it, centred on the card's quieter ground. */
+.wb-web-device {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.wb-web-device[data-device] { background: var(--color-bg-tertiary); }
+.wb-web-device[data-device] .wb-web-frame { box-shadow: 0 0 0 1px var(--color-border); }
 .wb-web-frame {
   display: block;
   width: 100%;

@@ -24,6 +24,7 @@ import { useLiveSession } from './liveSession';
 import { cardZIndex, sizeOf, type CardPlan } from './superLayout';
 import { inlineMediaKind } from '../chat/chatEntities';
 import { ZoomPane } from './ZoomPane';
+import { useWebDevice } from '../../../lib/webDevice';
 import { WebFrameControl } from '../../../lib/webFrameControl';
 import type { WebPick } from '../../../lib/webPick';
 
@@ -554,6 +555,8 @@ function WebCardBody(p: BodyProps & { large: boolean }): ReactNode {
   const tile = !p.large && !p.parked && SIZE_UNITS[size].h === 1;
   const hidden = tile || !!p.parked;
   const [control] = useState(() => new WebFrameControl());
+  // Phone, tablet or desktop width, remembered for this card (its full-screen view reads it too).
+  const [device, setDevice] = useWebDevice(c.id);
   const onPick = p.onPickElement;
   useEffect(() => control.subscribe({ pick: (pick) => onPick?.(c.id, pick, control.pageHref() || pick.href) }), [control, onPick, c.id]);
   // The last size the page was drawn at (measured while shown).
@@ -579,9 +582,9 @@ function WebCardBody(p: BodyProps & { large: boolean }): ReactNode {
       {!tile && <CardHead kind={c.kind} title={p.title} container={c} />}
       <div className="super-card-large-body super-web-body">
         <div ref={keepRef} className="super-web-keep" style={keepStyle}>
-          <ZoomPane live interactive={p.large} control={control}>
+          <ZoomPane live interactive={p.large} control={control} device={device} onDevice={setDevice}>
             {frame
-              ? <div className="super-card-view super-card-view--web"><WebWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'web', url: c.ref, title: c.title }} active size={widgetSize(p.plan)} onFrameAllowed={p.onFrameAllowed} control={control} /></div>
+              ? <div className="super-card-view super-card-view--web"><WebWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'web', url: c.ref, title: c.title }} active size={widgetSize(p.plan)} onFrameAllowed={p.onFrameAllowed} control={control} device={device} /></div>
               : null}
           </ZoomPane>
         </div>

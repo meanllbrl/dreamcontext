@@ -1371,3 +1371,22 @@
 /* Kept alive off the stage (Others, a group): never seen, never hit, never in the tab order. */
 .super-card-frame--parked { visibility: hidden; pointer-events: none; }
 .super-card-frame--parked .super-card-actions { display: none; }
+/* Phone / tablet / desktop (DeviceSwitch): an icon each. */
+.super-zoom-bar .web-device-btn { display: inline-flex; align-items: center; justify-content: center; }
+/* "Pan & zoom" on a site on the web: why there is no element picking, just above the bar. */
+.super-zoom-note {
+  position: absolute;
+  right: var(--space-2);
+  bottom: calc(var(--space-2) + 38px);
+  z-index: 2;
+  max-width: min(360px, calc(100% - 2 * var(--space-2)));
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated, var(--color-bg));
+  box-shadow: var(--shadow-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}

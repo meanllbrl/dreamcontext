@@ -61,3 +61,8 @@
   color: hsl(0 0% 100% / 0.86);
   font-size: 0.8125rem;
 }
+
+/* A pressed toggle in the bar (a device width, "Use the page"), on the viewer's dark glass. */
+.frame-viewer .image-viewer-btn[aria-pressed='true'],
+.frame-viewer .image-viewer-level[aria-pressed='true'] { background: rgba(255, 255, 255, 0.22); color: #fff; }
+.frame-viewer .web-device-btn { display: inline-flex; align-items: center; justify-content: center; }

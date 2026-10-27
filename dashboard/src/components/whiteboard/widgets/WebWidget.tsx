@@ -4,6 +4,8 @@ import { useApi, useVault } from '../../../context/VaultContext';
 import { openWebSession, portOfHost, readLoopbackGrants, setLoopbackGrant, useLoopbackGrants, type WebSessionView } from '../../../lib/loopbackGrants';
 import { proxiedHref } from '../../../lib/webPick';
 import type { WebFrameControl, WebFrameInfo } from '../../../lib/webFrameControl';
+import type { WebDevice } from '../../../lib/webDevice';
+import { useDeviceBox } from '../../layout/DeviceSwitch';
 import { openExternalUrl } from '../../../lib/desktop';
 import { externalHref } from '../../../lib/externalLinks';
 import { DocumentReader, readerLinkAction } from '../../appLink/DocumentReader';
@@ -35,7 +37,7 @@ import type { WidgetProps } from './types';
  */
 export const WEB_WIDGET_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
 
-export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zoomBridge, control }: WidgetProps & {
+export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zoomBridge, control, device }: WidgetProps & {
   /** A PAGE's frame is allowed and shown (its trust gate passed): the Super Agent's card offers
    *  it full screen only from then on. Never called for a file. */
   onFrameAllowed?: (href: string) => void;
@@ -43,6 +45,8 @@ export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zo
   zoomBridge?: boolean;
   /** The Super Agent card's handle on the page: Reload, Clear cache, Inspect (webFrameControl.ts). */
   control?: WebFrameControl;
+  /** A PAGE laid out at a phone, tablet or desktop width (lib/webDevice.ts); none fills the card. */
+  device?: WebDevice | null;
 }) {
   const tx = useWbText();
   const check = validateWebUrl(payload.url, window.location.origin);
@@ -57,12 +61,12 @@ export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zo
   if (check.kind === 'file') {
     return <WebFile elementId={elementId} file={check} title={payload.title || check.name} active={active} size={size} zoomBridge={zoomBridge} />;
   }
-  return <WebPage page={check} title={payload.title || check.unicodeHost} active={active} size={size} onFrameAllowed={onFrameAllowed} control={control} />;
+  return <WebPage page={check} title={payload.title || check.unicodeHost} active={active} size={size} onFrameAllowed={onFrameAllowed} control={control} device={device} />;
 }
 
 type PageCheck = Extract<WebUrlCheck, { kind: 'url' }>;
 type FileCheck = Extract<WebUrlCheck, { kind: 'file' }>;
-type FrameProps = Pick<WidgetProps, 'active' | 'size'> & { title: string; onFrameAllowed?: (href: string) => void; control?: WebFrameControl };
+type FrameProps = Pick<WidgetProps, 'active' | 'size'> & { title: string; onFrameAllowed?: (href: string) => void; control?: WebFrameControl; device?: WebDevice | null };
 
 /** Tells the card once a page's frame is up (the trust gate passed). */
 function useFrameAllowed(shown: boolean, href: string, onFrameAllowed?: (href: string) => void) {
@@ -74,9 +78,13 @@ function useFrameAllowed(shown: boolean, href: string, onFrameAllowed?: (href: s
 export const LOOPBACK_BUTTON_DELAY_MS = 600;
 
 /** The ONE frame a web card ever draws: no popups, no top navigation, no permissions (T8).
- *  `control` (a Super Agent card) is handed the frame and what it loaded. */
-export function PageFrame({ title, href, control, info }: { title: string; href: string; control?: WebFrameControl; info?: WebFrameInfo }) {
+ *  `control` (a Super Agent card) is handed the frame and what it loaded. `device`: laid out at
+ *  that width and scaled into the card (the same box the full-screen viewer uses). */
+export function PageFrame({ title, href, control, info, device = null }: {
+  title: string; href: string; control?: WebFrameControl; info?: WebFrameInfo; device?: WebDevice | null;
+}) {
   const ref = useRef<HTMLIFrameElement | null>(null);
+  const box = useDeviceBox(device);
   useEffect(() => {
     const el = ref.current;
     if (!el || !control || !info) return undefined;
@@ -84,15 +92,18 @@ export function PageFrame({ title, href, control, info }: { title: string; href:
     return () => control.detach(el);
   }, [control, info]);
   return (
-    <iframe
-      ref={ref}
-      className="wb-web-frame"
-      title={title}
-      src={href}
-      sandbox={WEB_WIDGET_SANDBOX}
-      allow=""
-      referrerPolicy="no-referrer"
-    />
+    <div ref={box.ref} className="wb-web-device" data-device={box.fit ? device ?? undefined : undefined}>
+      <iframe
+        ref={ref}
+        className="wb-web-frame"
+        title={title}
+        src={href}
+        sandbox={WEB_WIDGET_SANDBOX}
+        allow=""
+        referrerPolicy="no-referrer"
+        style={box.frameStyle}
+      />
+    </div>
   );
 }
 
@@ -130,7 +141,7 @@ function WebPage(props: FrameProps & { page: PageCheck }) {
  * (`lib/loopbackGrants.ts`): "Open once" loads it now and remembers nothing; "Always allow
  * localhost:PORT" records the port. The app's own ports are refused whatever is recorded.
  */
-function LoopbackPage({ page, title, active, size, onFrameAllowed, control }: FrameProps & { page: PageCheck }) {
+function LoopbackPage({ page, title, active, size, onFrameAllowed, control, device }: FrameProps & { page: PageCheck }) {
   const tx = useWbText();
   const api = useApi();
   const { vault } = useVault();
@@ -175,7 +186,7 @@ function LoopbackPage({ page, title, active, size, onFrameAllowed, control }: Fr
           : tx('web.loopback.denied', 'This page could not be allowed here.')}</WidgetNotice>
       ) : (granted || once) ? (
         frameHref
-          ? <PageFrame title={title} href={frameHref} control={control} info={info} />
+          ? <PageFrame title={title} href={frameHref} control={control} info={info} device={device} />
           : <WidgetNotice tone="loading">{tx('whiteboard.widget.loading', 'Loading…')}</WidgetNotice>
       ) : (
         <div className="wb-web-prompt" data-testid="web-loopback-prompt">
@@ -192,7 +203,7 @@ function LoopbackPage({ page, title, active, size, onFrameAllowed, control }: Fr
   );
 }
 
-function RemotePage({ page, title, active, size, onFrameAllowed, control }: FrameProps & { page: PageCheck }) {
+function RemotePage({ page, title, active, size, onFrameAllowed, control, device }: FrameProps & { page: PageCheck }) {
   const tx = useWbText();
   const [loaded, setLoaded] = useState(() => isTrustedHost(page.host));
   const info = useMemo<WebFrameInfo>(() => ({ href: page.href }), [page.href]);
@@ -207,7 +218,7 @@ function RemotePage({ page, title, active, size, onFrameAllowed, control }: Fram
   return (
     <WidgetFrame kind="web" title={title} active={active} size={size} actions={openInBrowser}>
       {loaded ? (
-        <PageFrame title={title} href={page.href} control={control} info={info} />
+        <PageFrame title={title} href={page.href} control={control} info={info} device={device} />
       ) : (
         <div className="wb-web-prompt">
           <span className="wb-web-host">{page.unicodeHost}</span>
