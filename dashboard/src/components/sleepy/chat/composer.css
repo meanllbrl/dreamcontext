@@ -457,7 +457,8 @@
 .chat-cmp-hl {
   position: absolute;
   inset: 0;
-  padding: 4px 2px;
+  /* The right edge gives up what the textarea's scrollbar takes (composerMirror.ts). */
+  padding: 4px calc(2px + var(--chat-cmp-hl-gutter, 0px)) 4px 2px;
   overflow: hidden;
   white-space: pre-wrap;
   overflow-wrap: break-word;

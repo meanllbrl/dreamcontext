@@ -54,6 +54,7 @@ import {
   deleteTokenAt, draftFromMessage, insertTakeAt, insertTokenAt, parseRefTokens, reconcileRefs, refLabel, refToken, refTokenId, sanitizePaste,
   snapSelection, stripTokens, tokensOnly,
 } from './composerRefs';
+import { MIRROR_TAIL, syncMirror } from './composerMirror';
 import { RefPopover, RefSrList, refMirrorSegments, refsInOrder } from './ComposerRefLayer';
 import { Popover } from '../SkillPickerPopover';
 import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
@@ -1772,11 +1773,18 @@ export function Composer({
     ? (REPLY_TO_RE.test(trailingRef.text ?? '') ? t('super.reply.placeholder') : t('super.agenda.aboutPlaceholder'))
     : '';
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     // A mirror that just appeared — a completed mention — starts at scrollTop 0 even when the
-    // field is scrolled. Align it before it is ever seen.
+    // field is scrolled; a new line can bring the scrollbar (a narrower text box) or move the
+    // scroll. Align it before it is ever seen, and again whenever the field is resized.
     const ta = taRef.current;
-    if (hlActive && ta && hlRef.current) hlRef.current.scrollTop = ta.scrollTop;
+    if (!hlActive || !ta) return;
+    const align = () => { if (hlRef.current) syncMirror(ta, hlRef.current); };
+    align();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(align);
+    ro.observe(ta);
+    return () => ro.disconnect();
   }, [hlActive, draft]);
 
   /** The meter takes the text slot while a take is anywhere in the pipeline. `frozen` keeps
@@ -2314,6 +2322,7 @@ export function Composer({
                 return <span key={i}>{s.text}</span>;
               })}
               {refHint && <span className="chat-cmp-hl-hint">{draft.endsWith(' ') ? '' : ' '}{refHint}</span>}
+              {MIRROR_TAIL}
             </div>
           )}
           {refPop && (() => {
@@ -2490,7 +2499,7 @@ export function Composer({
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
             }}
             // Keep the mirror aligned when the field scrolls (a draft past the height cap).
-            onScroll={(e) => { if (hlRef.current) hlRef.current.scrollTop = e.currentTarget.scrollTop; }}
+            onScroll={(e) => { if (hlRef.current) syncMirror(e.currentTarget, hlRef.current); }}
           />
           </div>
         </div>
