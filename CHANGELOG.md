@@ -4,6 +4,12 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.35.4] - 2026-10-28
+
+One fix on top of 0.35.3. Local build; not published.
+
+- **"Open all" works for every kind of stage group.** PDFs, files, tasks, pages and mixed groups all open together (Esc goes back to the group); all project HTML pages in a shown group load; a big group offers "Open first 8".
+
 ## [0.35.3] - 2026-10-27
 
 Three features on top of 0.35.2. Local build; not published.
