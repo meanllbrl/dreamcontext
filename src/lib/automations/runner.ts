@@ -12,7 +12,8 @@ import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { claudeAwarePath, findClaudeBin } from '../claude-path.js';
 import { readEnvelopeLimitSignal, type LimitSignal } from '../claude-limit-signal.js';
 import { accountEnvFor } from '../claude-accounts.js';
-import { ensureSandbox, ensureSharedMcpConfig } from '../claude-account-sandbox.js';
+import { ensureSandbox } from '../claude-account-sandbox.js';
+import { mcpStoreFiles } from '../mcp-store.js';
 import { recordAccountRejection } from '../claude-limit-rejections.js';
 import type { ProbeOutcome } from '../claude-usage-probe.js';
 import { automationAccountWithoutProbe, pickAutomationAccount, type AutomationAccount } from './account.js';
@@ -1319,12 +1320,11 @@ export interface ClaudeExecOptions {
    */
   discardOutput?: boolean;
   /**
-   * Hand a SANDBOXED account the user's own MCP servers, by reference (`--mcp-config`), the
-   * way a chat spawn does (agent-chat.ts). A sandbox's `.claude.json` carries no MCP keys, so
-   * without this a run that lands on a second account silently loses every local server
-   * (Slack, the KB) the same job has on the machine's own account. Account #0 needs nothing.
-   * The value is the HOME whose `.claude.json` servers are shared; absent means off. Off for a
-   * board-scoped agent, whose allowlist names no MCP tool (same rule as chat).
+   * Hand the run dreamcontext's MCP stores (`mcp-store.ts`), by reference (`--mcp-config
+   * <computer> [<project>]`), the way a chat spawn does — on EVERY account, #0 included, so a
+   * run that lands on a second account has the same servers (Slack, the KB) as on the first.
+   * The value is the HOME whose stores are used; absent means off. Off for a board-scoped
+   * agent, whose allowlist names no MCP tool (same rule as chat).
    */
   sharedMcpHome?: string;
   /** HOME whose hands-free state is checked. Tests only; production reads the real one. */
@@ -1373,8 +1373,9 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
     detached: true,
   };
   // `--mcp-config` is variadic: it must stay the LAST argv element or it swallows what follows.
-  const mcpConfig = opts.sharedMcpHome && opts.env?.CLAUDE_CONFIG_DIR ? ensureSharedMcpConfig(opts.sharedMcpHome) : null;
-  const argv = mcpConfig ? [...args, '--mcp-config', mcpConfig] : args;
+  // Positional argv (no shell re-parse), so the paths ride as themselves.
+  const mcpFiles = opts.sharedMcpHome ? mcpStoreFiles({ home: opts.sharedMcpHome, projectRoot: opts.cwd }).files : [];
+  const argv = mcpFiles.length ? [...args, '--mcp-config', ...mcpFiles] : args;
   const claudeBin = findClaudeBin();
   const child: ChildProcess = claudeBin
     ? spawnFn(claudeBin, argv, spawnOptions)

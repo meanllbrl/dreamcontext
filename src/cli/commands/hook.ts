@@ -2062,6 +2062,16 @@ function installedStopTimeoutMs(): number {
   return (found ?? 45) * 1000;
 }
 
+/**
+ * A Settings MCP probe/connect child (`mcp-live.ts`, env `DREAMCONTEXT_MCP_PROBE=1`) is a
+ * transient `claude` that exists only to answer `mcp_status`: its session-start, prompt and
+ * stop hooks do nothing (no output, no roster or session writes). The `.env` deny gate and
+ * every other hook still run unchanged.
+ */
+export function isMcpProbeChild(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.DREAMCONTEXT_MCP_PROBE === '1';
+}
+
 export function registerHookCommand(program: Command): void {
   const hook = program
     .command('hook')
@@ -2073,6 +2083,7 @@ export function registerHookCommand(program: Command): void {
     .description('Record session metadata (called by Claude Code Stop hook)')
     .action(() => {
       const input = readStdin();
+      if (isMcpProbeChild()) process.exit(0);
       if (!input) {
         if (process.stdin.isTTY) {
           console.error('This command is called by the Claude Code Stop hook.');
@@ -2408,6 +2419,7 @@ export function registerHookCommand(program: Command): void {
     .description('Analyze previous session + output context snapshot (called by Claude Code SessionStart hook)')
     .action(() => {
       const input = readStdin();
+      if (isMcpProbeChild()) process.exit(0);
 
       const root = resolveContextRoot();
       if (!root) {
@@ -2761,6 +2773,7 @@ export function registerHookCommand(program: Command): void {
     .description('Inject sleep debt reminder on every user message (called by Claude Code UserPromptSubmit hook)')
     .action(async () => {
       const input = readStdin();
+      if (isMcpProbeChild()) process.exit(0);
       if (!input) process.exit(0);
 
       // ── Deferred first-message context ─────────────────────────────────────

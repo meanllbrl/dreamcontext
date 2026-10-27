@@ -125,7 +125,7 @@ vi.mock('../../src/cli/commands/sleep.js', async (importOriginal) => {
 });
 
 const {
-  startChatSession, assistantAllowedTools, assistantSettingArgs, sharesUserMcp, recallEnvFor, spawnEffortFor, notifyAssistantAutonomy,
+  startChatSession, assistantAllowedTools, assistantSettingArgs, recallEnvFor, spawnEffortFor, notifyAssistantAutonomy,
   chatDeniedToolArgs,
 } = await import('../../src/server/routes/agent-chat.js');
 const { registerChat, isDelegatedConversation, GONE_TTL_MS, _resetChatRegistry } = await import(
@@ -320,20 +320,18 @@ describe('the Assistant carries its own settings, not the owner\'s global ones',
     }
   });
 
-  it('keeps the owner\'s MCP servers by reference, which only a sandbox needed before', () => {
-    expect(sharesUserMcp({ isAssistant: true, isRealHomeAccount: true })).toBe(true);
-    expect(sharesUserMcp({ isAssistant: false, isRealHomeAccount: true })).toBe(false);
-    expect(sharesUserMcp({ isAssistant: false, isRealHomeAccount: false })).toBe(true);
-  });
-
-  it('the real-account Assistant spawn points --mcp-config at the shared copy of ~/.claude.json\'s servers', () => {
+  it('every chat on the real account, the Assistant included, carries the computer MCP store by env reference', () => {
     writeFileSync(join(fakeHome, '.claude.json'), JSON.stringify({ mcpServers: { 'apple-mail': { command: 'mail-mcp' } } }));
     try {
       makeAssistantVault('bypass');
-      const a = argvOf(spawnChat({ mode: 'assistant' }).child);
-      const shared = join(fakeHome, '.dreamcontext', 'claude-accounts', 'mcp-config.json');
-      expect(a.slice(a.indexOf('--mcp-config') + 1)).toContain(shared);
-      expect(argvOf(spawnChat({ mode: 'basic' }).child)).not.toContain(shared);
+      const store = join(fakeHome, '.dreamcontext', 'mcp.json');
+      for (const mode of ['assistant', 'basic'] as const) {
+        const { child } = spawnChat({ mode });
+        const a = argvOf(child);
+        expect(a.slice(a.indexOf('--mcp-config') + 1)).toContain('$DREAMCONTEXT_MCP_CFG_0');
+        expect(child.env.DREAMCONTEXT_MCP_CFG_0).toBe(store);
+        expect(child.script).not.toContain(store);
+      }
     } finally {
       rmSync(join(fakeHome, '.claude.json'), { force: true });
     }

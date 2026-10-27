@@ -30,8 +30,8 @@ import { assertConfinedConfigDir, isRealHomeConfigDir } from './claude-accounts.
  * exemption, the reconciliation policy below would refuse EVERY ORDINARY SPAWN, because the
  * real HOME's `projects/` and `settings.json` are genuine files rather than symlinks — the
  * exact opposite of the feature's headline guarantee. For a user who never adds a second
- * account: no sandbox, no symlink, no mcp-config file, and the only new code their spawn
- * touches is one comparison against `homedir()`.
+ * account: no sandbox and no symlink, and the only new code their spawn touches here is one
+ * comparison against `homedir()`.
  *
  * ── What is isolated, what is shared, what is NEVER copied ────────────────────────────
  * ISOLATE (a real file inside the sandbox): `.claude.json`. It holds `oauthAccount` and
@@ -48,6 +48,10 @@ import { assertConfinedConfigDir, isRealHomeConfigDir } from './claude-accounts.
  * EACH `projects[<path>]` entry. Measured on this machine: 6 of 27 trusted project entries
  * carry their own NON-EMPTY `mcpServers`. So seeding is a WHITELIST, never a blacklist —
  * a blacklist leaks whatever key the CLI adds next; a whitelist fails closed.
+ *
+ * Every account, #0 included, gets its MCP servers from dreamcontext's own stores instead
+ * (`mcp-store.ts`, `--mcp-config` on every spawn). Nothing is ever written into a sandbox's
+ * `.claude.json` for MCP; servers the CLI writes there itself are COPIED into the stores.
  */
 
 /** The paths shared back into the real `~/.claude/`, relative to the sandbox root. */
@@ -260,53 +264,6 @@ export function ensureSandbox(configDir: string, home: string = homedir()): Ensu
   }
 
   return { configDir: dir, created: isNew };
-}
-
-/**
- * The shared MCP config a SANDBOXED spawn is pointed at with `--mcp-config <file>`.
- *
- * Sharing by REFERENCE, not by copy, is the whole point. The sandbox's own `.claude.json` is
- * seeded with NO MCP keys at any depth (see the module header), so without this a sandboxed
- * session would silently lose every MCP server the user has — the opposite of "behaviour is
- * identical". Copying them into each sandbox instead would multiply every MCP secret by the
- * number of accounts; pointing N spawns at ONE 0600 file keeps the blast radius at one.
- *
- * Only the TOP-LEVEL `mcpServers` map is carried. The per-project maps are deliberately left
- * behind: they belong to `projects[<path>]` entries whose trust state is seeded by whitelist,
- * and a project's own `.mcp.json` still applies because `--strict-mcp-config` is deliberately
- * NOT passed.
- *
- * Returns `null` when there is nothing to share, and the caller then passes no flag at all —
- * an empty `--mcp-config` would be a claim about configuration rather than the absence of it.
- */
-export function ensureSharedMcpConfig(home: string = homedir()): string | null {
-  let servers: unknown = null;
-  try {
-    servers = asRecord(JSON.parse(readFileSync(join(home, '.claude.json'), 'utf-8')))?.mcpServers;
-  } catch {
-    return null;
-  }
-  const map = asRecord(servers);
-  if (!map || Object.keys(map).length === 0) return null;
-
-  const target = join(home, '.dreamcontext', 'claude-accounts', 'mcp-config.json');
-  const body = JSON.stringify({ mcpServers: map }, null, 2) + '\n';
-  try {
-    // Rewritten whenever the source changes, so a server the user added reaches the sandboxes.
-    // Compared first: an unchanged file is not rewritten, because this runs before every
-    // sandboxed spawn.
-    if (existsSync(target) && readFileSync(target, 'utf-8') === body) {
-      const mode = statSync(target).mode & 0o777;
-      if (mode !== 0o600) chmodSync(target, 0o600);
-      return target;
-    }
-    writeAtomic0600(target, body);
-    return target;
-  } catch {
-    // A config we cannot write is not a reason to refuse the spawn — the session simply runs
-    // without the shared servers, which is visible and recoverable.
-    return null;
-  }
 }
 
 /**

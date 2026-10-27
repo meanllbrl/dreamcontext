@@ -20,7 +20,6 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  ensureSharedMcpConfig,
   FORBIDDEN_SANDBOX_KEYS,
   SHARED_SANDBOX_ENTRIES,
   SandboxError,
@@ -256,76 +255,9 @@ describe('reconciliation — the four states a shared path can be in', () => {
   });
 });
 
-describe('the MCP config is shared BY REFERENCE — one 0600 file, never N copies', () => {
-  it('writes the top-level mcpServers to one file, 0600, and returns its path', () => {
-    const path = ensureSharedMcpConfig(HOME);
-    expect(path).toBe(join(HOME, '.dreamcontext', 'claude-accounts', 'mcp-config.json'));
-    expect(statSync(path!).mode & 0o777).toBe(0o600);
-    const written = JSON.parse(readFileSync(path!, 'utf-8')) as { mcpServers: Record<string, unknown> };
-    expect(Object.keys(written.mcpServers)).toEqual(['top-level-server']);
-  });
-
-  it('carries ONLY the top-level map — a per-project server is left behind', () => {
-    const written = readFileSync(ensureSharedMcpConfig(HOME)!, 'utf-8');
-    // The per-project server and its secret belong to a `projects[<path>]` entry whose trust
-    // state is seeded by whitelist; it is not part of the shared reference.
-    expect(written).not.toContain('project-server');
-    expect(written).not.toContain('per-project-secret');
-  });
-
-  it('is REWRITTEN when the source changes, so a newly added server reaches the sandboxes', () => {
-    ensureSharedMcpConfig(HOME);
-    const blob = realConfig();
-    (blob.mcpServers as Record<string, unknown>)['a-new-server'] = { command: 'z' };
-    writeFileSync(join(HOME, '.claude.json'), JSON.stringify(blob), 'utf-8');
-
-    const written = readFileSync(ensureSharedMcpConfig(HOME)!, 'utf-8');
-    expect(written).toContain('a-new-server');
-  });
-
-  it('returns null when there is nothing to share, so no empty flag is passed', () => {
-    writeFileSync(join(HOME, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true }), 'utf-8');
-    expect(ensureSharedMcpConfig(HOME)).toBeNull();
-    writeFileSync(join(HOME, '.claude.json'), JSON.stringify({ mcpServers: {} }), 'utf-8');
-    expect(ensureSharedMcpConfig(HOME)).toBeNull();
-  });
-
-  it('never throws on an absent or malformed real config', () => {
-    rmSync(join(HOME, '.claude.json'), { force: true });
-    expect(() => ensureSharedMcpConfig(HOME)).not.toThrow();
-    expect(ensureSharedMcpConfig(HOME)).toBeNull();
-    writeFileSync(join(HOME, '.claude.json'), '{ not json', 'utf-8');
-    expect(ensureSharedMcpConfig(HOME)).toBeNull();
-  });
-});
-
-describe('ensureSandbox is called before EVERY spawn, so it must self-heal', () => {
-  it('repairs a symlink broken long after creation', () => {
-    ensureSandbox(SANDBOX, HOME);
-    rmSync(join(SANDBOX, 'projects'), { force: true });   // someone deleted the link
-
-    ensureSandbox(SANDBOX, HOME);
-
-    // Had this only run at creation time, the CLI would open a REAL projects/ here and the
-    // transcript split would come back silently.
-    expect(lstatSync(join(SANDBOX, 'projects')).isSymbolicLink()).toBe(true);
-  });
-
-  it('recreates and reseeds a sandbox deleted by hand — but its IDENTITY is gone', () => {
-    ensureSandbox(SANDBOX, HOME);
-    writeFileSync(join(SANDBOX, '.claude.json'), '{"oauthAccount":{"accountUuid":"uuid-b"}}', 'utf-8');
-    expect(sandboxHasIdentity(SANDBOX, HOME)).toBe(true);
-
-    rmSync(SANDBOX, { recursive: true, force: true });
-    const res = ensureSandbox(SANDBOX, HOME);
-
-    expect(res.created).toBe(true);
-    expect(existsSync(join(SANDBOX, '.claude.json'))).toBe(true);
-    // Not an ordinary "signed out" — a distinct needs-relogin state the UI must name.
-    expect(sandboxHasIdentity(SANDBOX, HOME)).toBe(false);
-  });
-
-  it('refuses a config dir outside the sandbox root', () => {
-    expect(() => ensureSandbox('/tmp/not-a-sandbox', HOME)).toThrow(/outside the account sandbox root/);
+describe('MCP is never written into a sandbox (task mcp-management)', () => {
+  it('the sandbox module no longer mirrors MCP servers: the stores do (mcp-store.ts)', async () => {
+    const mod = await import('../../src/lib/claude-account-sandbox.js');
+    expect('ensureSharedMcpConfig' in mod).toBe(false);
   });
 });

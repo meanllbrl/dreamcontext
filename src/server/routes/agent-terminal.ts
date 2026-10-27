@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { mcpStoreFiles, storeFileRefs } from '../../lib/mcp-store.js';
 import { isAssistantVault } from '../../lib/assistant/home.js';
 import type { Server } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -1097,6 +1098,17 @@ const liveConversations = new Set<string>();
 const liveSpawnModels = new Map<string, string>();
 
 /** Exported for tests (a fake `pty` module). */
+/**
+ * The agent PTY's `-c` line: `exec claude <flags> [<prompt ref>] [--mcp-config "$VAR"…]`.
+ * The prompt operand comes BEFORE `--mcp-config`, which is variadic and would swallow it; the
+ * store files are env references (`$DREAMCONTEXT_MCP_CFG_n`), double-quoted, so a HOME with a
+ * space or `$(` never reaches the shell as text.
+ */
+export function agentExecLine(flags: string, promptArg: string, mcpRefs: readonly string[]): string {
+  const mcp = mcpRefs.length ? ` --mcp-config ${mcpRefs.map((r) => `"${r}"`).join(' ')}` : '';
+  return `exec claude${flags}${promptArg}${mcp}`;
+}
+
 export function startPtySession(
   ws: import('ws').WebSocket,
   pty: typeof import('node-pty'),
@@ -1267,11 +1279,14 @@ export function startPtySession(
   // breaking user rc logic that branches on `$0` (login detection, basename dispatch).
   const promptRef = basename(shell) === 'fish' ? '"$argv[1]"' : '"$0"';
   const promptArg = kind === 'agent' && submitPrompt ? ` ${promptRef}` : '';
+  // The MCP stores every account shares (task mcp-management), named by env variable so the
+  // `-c` string never carries HOME's text; the prompt operand sits BEFORE the variadic flag.
+  const storeMcp = kind === 'agent' ? storeFileRefs(mcpStoreFiles({ home: opts.home, projectRoot }).files) : { refs: [], env: {} };
   const shellArgs = kind === 'shell'
     ? ['-il']
     : kind === 'exec'
       ? execShellArgs(shell, execCommand)
-      : ['-ilc', `exec claude${idArg}${modelFlag}${effortFlag}${flag}${promptArg}`, ...(promptArg ? [submitPrompt] : [])];
+      : ['-ilc', agentExecLine(`${idArg}${modelFlag}${effortFlag}${flag}`, promptArg, storeMcp.refs), ...(promptArg ? [submitPrompt] : [])];
   // An agent PTY exports its tab's STABLE roster id so the SessionStart hook (which
   // inherits this env through `claude`) can record roster id → live conversation id
   // on every rotation — the other half of the resume-staleness fix above. ONLY when
@@ -1294,7 +1309,7 @@ export function startPtySession(
       // actually installed into, so `exec claude` resolves even when the install's
       // `export PATH` echo never reached the user's rc. Appended, never prepended —
       // a `claude` the rc already resolves keeps winning.
-      env: { ...process.env, PATH: claudeAwarePath(), TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv, ...statusEnv } as Record<string, string>,
+      env: { ...process.env, PATH: claudeAwarePath(), TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv, ...statusEnv, ...storeMcp.env } as Record<string, string>,
     }) as unknown as PtyLike;
   } catch (err) {
     // pty.spawn can throw synchronously (documented posix_spawnp failure when the

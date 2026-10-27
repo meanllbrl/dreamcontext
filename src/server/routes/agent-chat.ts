@@ -55,7 +55,9 @@ import {
   accountEnvFor, autoSwitchEnabled, isRealHomeConfigDir, listClaudeAccounts, resolveConfigDir, sandboxDirFor,
   switchStrategyFor, switchWeightsFor,
 } from '../../lib/claude-accounts.js';
-import { ensureSandbox, ensureSharedMcpConfig } from '../../lib/claude-account-sandbox.js';
+import { ensureSandbox } from '../../lib/claude-account-sandbox.js';
+import { mcpStoreFiles, storeFileRefs } from '../../lib/mcp-store.js';
+import { McpControl, routeChildLine } from '../../lib/mcp-live.js';
 import { probeAccountForDecision, type ProbeOutcome } from '../../lib/claude-usage-probe.js';
 import { readUsageLimits, usageReadingIsCurrent, type UsageLimitsResponse } from '../../lib/claude-usage.js';
 import {
@@ -379,7 +381,7 @@ export function chatDeniedToolArgs(scopedCard: boolean): string[] {
  * owner's global ones. Owner, 2026-10-14: every notch turn carried the global plugins and user
  * settings — measured ~9.6k tokens of a ~42k context, for a two-sentence answer — and none of
  * them is something the Assistant uses. Dropping the `user` source also drops the user-scope MCP
- * servers, which the owner KEEPS, so those ride by reference instead ({@link sharesUserMcp}).
+ * servers, which the owner KEEPS, so those ride in the stores instead ({@link chatStoreMcp}).
  * The model and effort are argv already, so the global `model`/`effortLevel` never applied here.
  */
 export function assistantSettingArgs(isAssistant: boolean): string[] {
@@ -387,12 +389,14 @@ export function assistantSettingArgs(isAssistant: boolean): string[] {
 }
 
 /**
- * Does this spawn get the user's MCP servers through the shared `--mcp-config` file? A sandboxed
- * account always does (its own config has none). So does the Assistant on the real account,
- * because {@link assistantSettingArgs} cut it off from `~/.claude.json`'s user scope.
+ * The MCP stores a chat spawn carries (task mcp-management): every account, #0 included, gets
+ * `--mcp-config <computer> [<project>]` so one list of servers reaches all of them. The paths
+ * ride in env vars and the argv names the variable ({@link storeFileRefs}): the login-shell
+ * script never contains HOME's text. A scoped card and a lean child get none.
  */
-export function sharesUserMcp(o: { isAssistant: boolean; isRealHomeAccount: boolean }): boolean {
-  return !o.isRealHomeAccount || o.isAssistant;
+export function chatStoreMcp(o: { scopedCard: boolean; lean: boolean; projectRoot: string; home?: string }): { refs: string[]; env: Record<string, string> } {
+  if (o.scopedCard || o.lean) return { refs: [], env: {} };
+  return storeFileRefs(mcpStoreFiles({ home: o.home, projectRoot: o.projectRoot }).files);
 }
 
 /**
@@ -1530,7 +1534,6 @@ export function startChatSession(
   }
   const accountEnv = accountEnvFor(accountConfigDir);
   const isRealHomeAccount = isRealHomeConfigDir(accountConfigDir);
-  const mcpConfigPath = sharesUserMcp({ isAssistant, isRealHomeAccount }) ? ensureSharedMcpConfig() : null;
   // The Assistant's hands (mouse, keyboard, screen — computer-mcp.ts): its spawn ONLY, macOS
   // only. Each call is an MCP tool call, so under `ask` the owner approves it in the notch.
   const computerMcpPath = isAssistant && process.platform === 'darwin' ? ensureComputerMcpConfig() : null;
@@ -1661,6 +1664,8 @@ export function startChatSession(
     }
   }
   const browserOverride = scopedCard ? null : prepareBrowserOverride(projectRoot);
+  // The MCP stores every account shares (task mcp-management), by env reference.
+  const storeMcp = chatStoreMcp({ scopedCard, lean: !!opts.leanMcp, projectRoot });
 
   const heldConversation = resumeTarget || freshPin;
   if (heldConversation) liveConversations.add(heldConversation);
@@ -1876,22 +1881,23 @@ export function startChatSession(
     // Variadic, but every later element is a `--` flag, so it swallows nothing.
     ...chatDeniedToolArgs(scopedCard),
     ...assistantSettingArgs(isAssistant),
-    // A SANDBOXED session reaches the user's MCP servers BY REFERENCE. Its own config is
-    // seeded with no MCP keys at any depth, so without this flag it would silently lose every
-    // server the user has; copying them per account would multiply the secrets instead.
-    // Account #0 reads the real config directly and needs nothing. `--strict-mcp-config` is
-    // deliberately NOT passed, so a project's own `.mcp.json` still applies.
+    // Every account (#0 included) reaches the MCP stores BY REFERENCE (`mcp-store.ts`): the
+    // computer file, then the project file (the later one wins a name). They are named as env
+    // variables, never as text, because this whole argv becomes a login-shell string.
+    // `--strict-mcp-config` is deliberately NOT passed, so a project's own `.mcp.json` still applies.
     // No MCP for a scoped card (its allowlist names no MCP tool; out of scope by decision).
     // The browser override rides LAST: between two `--mcp-config` files the later one wins,
-    // and the shared config may carry the owner's headed `playwright` too.
+    // and the stores may carry the owner's headed `playwright` too.
     // A LEAN child (D14) instead: strict, and only its subset, the project's own `.mcp.json`
-    // (strict would drop it) and the browser override, LAST as above. Never the shared config.
-    ...(scopedCard ? [] : leanChildMcpArgs(opts.leanMcp ? { leanMcpPath, projectMcp: leanProjectMcpSafe, browser: browserOverride?.configPath ?? null } : null, [mcpConfigPath, computerMcpPath, browserOverride?.configPath ?? null])),
+    // (strict would drop it) and the browser override, LAST as above. Never a store.
+    ...(scopedCard ? [] : leanChildMcpArgs(opts.leanMcp ? { leanMcpPath, projectMcp: leanProjectMcpSafe, browser: browserOverride?.configPath ?? null } : null, [...storeMcp.refs, computerMcpPath, browserOverride?.configPath ?? null])),
   ];
   // Quoted for the login-shell script string exactly like the terminal/title/capture
   // spawns: every element here is either a fixed flag literal or a whitelist-sanitized
   // value (UUID / model alias / effort level), so plain double-quoting is sufficient —
-  // none of them can contain a shell metacharacter. (`Bash(dreamcontext assistant:*)` is a
+  // none of them can contain a shell metacharacter. The one deliberate expansion is a store
+  // reference (`$DREAMCONTEXT_MCP_CFG_n`, a fixed name): it expands to a path held in the env,
+  // so HOME's text never enters the script. (`Bash(dreamcontext assistant:*)` is a
   // fixed literal whose parens, colon, space and star are all inert inside double quotes.)
   const script = `exec claude ${argv.map((a) => `"${a}"`).join(' ')}`;
 
@@ -1959,7 +1965,7 @@ export function startChatSession(
       mode,
     })
     : null;
-  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...(envelope?.env ?? {}) } as Record<string, string | undefined>;
+  const childEnv = { PATH: claudeAwarePath(), ...storeMcp.env, ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...(envelope?.env ?? {}) } as Record<string, string | undefined>;
   // Its own process group, so the whole tree can be ended at once.
   const child: ChildProcessWithoutNullStreams = spawn(process.env.SHELL || '/bin/zsh', ['-ilc', script], {
     cwd: projectRoot,
@@ -2366,6 +2372,10 @@ export function startChatSession(
     catch { return false; /* stream torn down between the alive check and the write — best-effort */ }
   };
 
+  /** This child's MCP control channel (task mcp-management): `mcp_status`, `mcp_authenticate`,
+   *  `mcp_reconnect`. Its replies are consumed by the stdout loop, never relayed. */
+  const mcpControl = new McpControl((frame) => writeStdin(frame));
+
   /** Hand one OWNER message to the CLI as a turn — the socket's user frame, and a held message
    *  released by `releaseStalledSwitch`. */
   const writeOwnerTurn = (text: string): void => {
@@ -2761,19 +2771,17 @@ export function startChatSession(
     while ((nl = buf.indexOf('\n')) !== -1) {
       const line = buf.slice(0, nl);
       buf = buf.slice(nl + 1);
-      const trimmed = line.trim();
-      if (!trimmed) continue;
 
-      if (ws.readyState === ws.OPEN) {
-        try { ws.send(line); } catch { /* closing */ }
-      }
-      mirrors?.line(line);
-
-      // Light local parse (type/subtype only — full typed parsing is the CLIENT's job,
+      // Parsed BEFORE anything is relayed (task mcp-management): an MCP control reply carries
+      // every server's live config, so it goes to `mcpControl` and nowhere else — no socket, no
+      // phone mirror, no observer below, no interrupt watchdog. Everything else relays verbatim
+      // and comes back parsed (type/subtype only — full typed parsing is the CLIENT's job,
       // chatProtocol.ts) so the server knows when an interrupt has actually resolved.
-      // Never throws on non-JSON/partial lines.
-      let obj: Record<string, unknown> | null = null;
-      try { obj = JSON.parse(trimmed) as Record<string, unknown>; } catch { /* partial line */ }
+      const obj = routeChildLine(line, {
+        send: (l) => { if (ws.readyState === ws.OPEN) { try { ws.send(l); } catch { /* closing */ } } },
+        mirror: (l) => mirrors?.line(l),
+        control: (o) => mcpControl.handle(o),
+      });
       if (!obj) continue;
 
       registry?.observe(obj);
@@ -2989,6 +2997,7 @@ export function startChatSession(
   });
 
   child.on('close', (code) => {
+    mcpControl.close();
     teardown();
     // Before the respawn's early return too: a successor starts with no handoff run, so nothing
     // would ever end this process's rotation hold but the 120 s cap.

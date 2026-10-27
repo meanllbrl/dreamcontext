@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { storeServers, syncImports } from '../mcp-store.js';
 
 /**
  * Lean children (orchestration plan r5 D14, O6): a Super Agent's delegated child starts with
@@ -11,7 +12,7 @@ import { join } from 'node:path';
  * The names come from the agent, so each is checked twice against the servers the user really
  * has (at `delegate` and again at the spawn), looked up by OWN key only. Only the server-made
  * file path reaches argv, never a name. The subset is the one deliberate COPY of MCP config
- * (the shared config is by reference): bounded to the named servers, 0600 inside a 0700 dir,
+ * (the stores are by reference): bounded to the named servers, 0600 inside a 0700 dir,
  * removed when the child exits and swept at server start.
  */
 
@@ -20,10 +21,8 @@ export const MCP_NAME_RE = /^[a-z0-9_-]{1,40}$/;
 /** At most this many servers per child. */
 export const MAX_LEAN_MCP = 6;
 
-const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-
-const asRecord = (v: unknown): Record<string, unknown> | null =>
-  v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+/** Names that would reach an object's prototype. Refused everywhere a server name is a key. */
+export const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 /** `a,b` (or a list) -> the names, or why not. Empty -> []. */
 export function parseMcpNames(raw: unknown): { names: string[] } | { error: string } {
@@ -43,28 +42,17 @@ export function parseMcpNames(raw: unknown): { names: string[] } | { error: stri
 }
 
 /**
- * Every MCP server the user has for this project, by name: `~/.claude.json`'s top-level
- * `mcpServers` (user scope) and its `projects[<projectRoot>].mcpServers` (local scope), the
- * local one winning a clash as Claude Code does. A sandboxed account's shared config is the
- * same user-scope map (`ensureSharedMcpConfig`), so it adds nothing here. Own keys only.
+ * Every MCP server the user has for this project, by name: dreamcontext's own stores (task
+ * mcp-management), synced first from Claude Code's configs, the project store winning a clash
+ * as the later `--mcp-config` file does. Names a child may ask for only (`MCP_NAME_RE`).
  */
 export function knownMcpServers(projectRoot: string, home: string = homedir()): Map<string, Record<string, unknown>> {
+  try { syncImports(home, projectRoot); } catch { /* the stores as they are */ }
   const out = new Map<string, Record<string, unknown>>();
-  let blob: Record<string, unknown> | null = null;
-  try { blob = asRecord(JSON.parse(readFileSync(join(home, '.claude.json'), 'utf-8'))); } catch { blob = null; }
-  if (!blob) return out;
-  const add = (map: unknown) => {
-    const m = asRecord(map);
-    if (!m) return;
-    for (const name of Object.keys(m)) {
-      if (!Object.hasOwn(m, name) || FORBIDDEN_KEYS.has(name) || !MCP_NAME_RE.test(name)) continue;
-      const cfg = asRecord(m[name]);
-      if (cfg) out.set(name, cfg);
-    }
-  };
-  add(blob.mcpServers);
-  const projects = asRecord(blob.projects);
-  if (projects && Object.hasOwn(projects, projectRoot)) add(asRecord(projects[projectRoot])?.mcpServers);
+  for (const [name, cfg] of storeServers(projectRoot, home)) {
+    if (FORBIDDEN_KEYS.has(name) || !MCP_NAME_RE.test(name)) continue;
+    out.set(name, cfg);
+  }
   return out;
 }
 

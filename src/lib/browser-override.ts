@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { claimOwnedPort } from '../server/owned-ports.js';
+import { readScope } from './mcp-store.js';
 
 /**
  * A chat's Playwright browser runs HEADLESS, with a side door the Chat view can watch through.
@@ -105,11 +106,15 @@ export function findPlaywrightServer(projectRoot: string, home: string = homedir
   const local = serversIn(asRecord(asRecord(asRecord(claudeJson?.projects)?.[projectRoot])?.mcpServers));
   const project = serversIn(asRecord(readJson(join(projectRoot, '.mcp.json'))?.mcpServers));
   const user = serversIn(asRecord(claudeJson?.mcpServers));
+  // dreamcontext's stores ride as `--mcp-config` files, which replace every other scope, the
+  // project store (the later file) before the computer one. Both are the owner's own.
+  const projectStore = serversIn(asRecord(readScope('project', projectRoot, home)?.mcpServers));
+  const computerStore = serversIn(asRecord(readScope('computer', null, home)?.mcpServers));
 
   // A name in a higher scope shadows the same name below it, exactly as the CLI resolves it:
   // a local `playwright` that is NOT Playwright hides a project one that is.
   const seen = new Set<string>();
-  for (const [scope, servers] of [['local', local], ['project', project], ['user', user]] as const) {
+  for (const [scope, servers] of [['local', projectStore], ['user', computerStore], ['local', local], ['project', project], ['user', user]] as const) {
     for (const [name, raw] of Object.entries(servers)) {
       if (seen.has(name)) continue;
       seen.add(name);
