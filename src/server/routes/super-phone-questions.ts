@@ -4,7 +4,7 @@ import { isAgentRequest } from '../desktop.js';
 import { isSameOriginStrict } from './agent-spawn-shared.js';
 import { isPhoneSocket } from '../phone-origin.js';
 import { isReservedId, readSuperState } from '../../lib/super/store.js';
-import { superSanitizeOpts, superVaultName, writeSuper } from '../../lib/super/inbox.js';
+import { directQuestion, superSanitizeOpts, superVaultName, writeSuper } from '../../lib/super/inbox.js';
 import { askSpecFromLegacy, type SuperAskSpec, type SuperQueueItem, type SuperState } from '../../lib/super/types.js';
 import { getChat, type RegistryQuestion } from '../../lib/assistant/chat-registry.js';
 import { sendSuperCommand, superTokenOfSession } from '../../lib/window-control.js';
@@ -77,7 +77,8 @@ export function phoneSuperQuestions(state: Pick<SuperState, 'enabled' | 'session
 }): PhoneSuperQuestions {
   if (!state.enabled || !state.session) return { session: null, questions: [] };
   const open = state.queue
-    .filter((q) => q.state === 'escalated' && (q.kind === 'ask' || q.kind === 'question'))
+    // A child's question is his from birth (`direct`), not only once the Super escalated it.
+    .filter((q) => (q.state === 'escalated' && (q.kind === 'ask' || q.kind === 'question')) || directQuestion(q))
     .sort((a, b) => a.createdAt - b.createdAt);
   const questions: PhoneSuperQuestion[] = [];
   for (const q of open) {

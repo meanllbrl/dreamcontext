@@ -315,7 +315,7 @@ export const DIGEST_MAX_NAME = 80;
 /** The slice of the super record a digest reads (`SuperState` satisfies it). */
 export interface SuperDigestSource {
   pad?: ReadonlyArray<{ id: string; section: string; text: string; at: number }>;
-  queue: ReadonlyArray<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string }>;
+  queue: ReadonlyArray<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string; direct?: true }>;
   ownerBatches: readonly string[];
   containers: ReadonlyArray<{ kind: string; ref: string; title?: string }>;
   children: Readonly<Record<string, { brief: string; startedAt: number }>>;
@@ -359,7 +359,7 @@ export function superDigest(state: SuperDigestSource): SuperDigest {
     .map((p) => ({ id: digestText(p.id, 12), section: p.section, text: digestText(p.text, DIGEST_MAX_PAD_TEXT), at: p.at }))
     .filter((p) => p.id && p.text);
   const owes = (q: SuperDigestSource['queue'][number]) => q.state !== 'done'
-    && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && q.state === 'pending'));
+    && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && (q.state === 'pending' || q.direct === true)));
   const waiting = state.queue.filter(owes).slice(0, DIGEST_MAX_WAITING).map((q) => ({
     id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId,
     text: q.kind === 'permission' ? '' : digestText(q.ownerText, DIGEST_MAX_OWNER_TEXT),

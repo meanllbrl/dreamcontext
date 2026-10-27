@@ -55,7 +55,7 @@ describe('the briefing carries the jarvis sections and its revision', () => {
 
   it('rev 12 (2026-10-24): several references in one message, a section per part', () => {
     // One revision for the whole 0.34.6 line: the briefing text of every branch merged into it.
-    expect(SUPER_BRIEF_REV).toBe(13);
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(13);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       expect(t).toContain('A message may carry SEVERAL `[About…]`/`[Reply…]` headers');
       expect(t).toContain('lists `parts="…"`, one ref per header in order');
@@ -147,5 +147,11 @@ describe('superBriefState', () => {
     const old = snapshot('# Mode: Super Agent');
     const summary = { type: 'user', isCompactSummary: true, message: { content: [{ type: 'text', text: `summary ${SUPER_BRIEF_MARKER}` }] } };
     expect(superBriefState(j(old, owner('x', SUPER_BRIEF_TEXT), compact, summary), SUPER_BRIEF_REV).due).toBe(true);
+  });
+  it('rev 14 (2026-10-27): a child\'s question (`shown=owner`) is already on the owner\'s bar: leave it unless settled', () => {
+    expect(SUPER_BRIEF_REV).toBe(14);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('one marked `shown=owner` is already on his\n  bar: else leave it, silent.');
+    }
   });
 });

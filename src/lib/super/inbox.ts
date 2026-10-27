@@ -234,9 +234,15 @@ export function superQueueHead(state: Pick<SuperState, 'queue'>): SuperQueueItem
   const byAge = [...state.queue].sort((a, b) => a.createdAt - b.createdAt);
   return byAge.find((q) => q.kind === 'permission' && q.state !== 'done')
     ?? byAge.find((q) => ((q.kind === 'question' || q.kind === 'ask' || q.kind === 'approval') && q.state === 'escalated')
-      // A child waiting on something only he can do is his from birth, not after a super turn.
-      || (q.kind === 'owner' && q.state !== 'done'))
+      // A child waiting on something only he can do is his from birth, not after a super turn;
+      // so is a child's question (`direct`): its card is his at once, the Super hears it too.
+      || (q.kind === 'owner' && q.state !== 'done') || directQuestion(q))
     ?? null;
+}
+
+/** A child's question that is the owner's from birth (`SuperQueueItem.direct`), still open. */
+export function directQuestion(q: SuperQueueItem): boolean {
+  return q.kind === 'question' && q.direct === true && !q.team && q.state !== 'done';
 }
 
 /** Is the child still asking exactly this question (and is it a question)? */
@@ -247,10 +253,12 @@ function stillAsking(item: SuperQueueItem): boolean {
 }
 
 /** The single-question rule (plan r4 D16): a question is open with the owner — the super
- *  agent's own `ask`, or an escalated child question the child is STILL asking. */
+ *  agent's own `ask`, or an escalated child question the child is STILL asking. A `direct` child
+ *  question holds nothing: it reached him on its own, and holding every other event behind it
+ *  made a finished job wait minutes for an answer to someone else's question (owner 2026-10-27). */
 export function ownerQuestionOpen(state: Pick<SuperState, 'queue'>): boolean {
   return state.queue.some((q) => q.state === 'escalated'
-    && (q.kind === 'ask' || (q.kind === 'question' && stillAsking(q))));
+    && (q.kind === 'ask' || (q.kind === 'question' && q.direct !== true && stillAsking(q))));
 }
 
 interface HeadEntry { root: string; vault: string; enabled: boolean; head: SuperQueueItem | null; children: Set<string> }
@@ -531,7 +539,7 @@ async function settleCarried(key: string): Promise<boolean> {
           const exits = (it.exits ?? 0) + 1;
           it.exits = exits;
           if (exits < 2) { it.state = 'pending'; delete it.batch; continue; }
-          if (it.kind === 'question' && stillAsking(it)) { it.state = 'escalated'; it.ownerText = childQuestionText(it.sessionId); continue; }
+          if (it.kind === 'question' && stillAsking(it)) { it.state = 'escalated'; if (!it.direct) it.ownerText = childQuestionText(it.sessionId); continue; }
           if (it.kind === 'owner') { it.state = ownerWaitStands(it) ? 'escalated' : 'done'; continue; }
           it.state = 'done';
           continue;
@@ -550,6 +558,9 @@ async function settleCarried(key: string): Promise<boolean> {
           continue;
         }
         if (!stillAsking(it)) { it.state = 'done'; continue; }
+        // Already on the owner's bar: the Super was told once and left it to him. It stays his
+        // (escalated) and is never carried again.
+        if (it.direct) { it.state = 'escalated'; continue; }
         if (c.steered) { it.state = 'pending'; continue; }
         const attempts = (it.attempts ?? 0) + 1;
         it.attempts = attempts;
@@ -600,12 +611,29 @@ export function isSuperManaged(sessionId: string): boolean {
 // ─── The owner-activity lease (D7, plan r4 D18) ─────────────────────────────────
 
 const leases = new Map<string, number>();
+/**
+ * A lease his MESSAGE stamped (not his typing) ends with the turn that message is in, not after
+ * OWNER_LEASE_MS: once that turn ended the super is free and what waited goes at once (owner
+ * 2026-10-27: a finished job waited out the rest of the 15 s after a short reply). `waiting` =
+ * his message is written, its turn not seen yet; `running` = that turn runs. The busy check
+ * still guards the bridge's own turn count. His typing afterwards takes the lease back.
+ */
+const spokeTurns = new Map<string, 'waiting' | 'running'>();
+
+/** The super chat moved: the turn his message is in started, or ended (which ends its lease). */
+function followSpokeTurn(key: string, status: ChatEntry['status']): void {
+  const t = spokeTurns.get(key);
+  if (!t) return;
+  if (status === 'working' || status === 'asking') { spokeTurns.set(key, 'running'); return; }
+  if (status === 'idle' && t === 'running') { spokeTurns.delete(key); leases.delete(key); }
+}
 
 /** The owner typed in the super composer. No event goes in for OWNER_LEASE_MS; and the owner is
  *  plainly here, so the away counter starts over. */
 export async function noteOwnerActivity(contextRoot: string, now = Date.now()): Promise<void> {
   const key = keyOf(contextRoot);
   leases.set(key, now);
+  spokeTurns.delete(key);
   scheduleRetry(key, now + OWNER_LEASE_MS + 50);
   const s = await readSuperState(contextRoot, superSanitizeOpts());
   if (s.away.events > 0 || s.away.since !== null) {
@@ -620,6 +648,7 @@ export function leaseActive(contextRoot: string, now = Date.now()): boolean {
 
 export function clearOwnerLease(contextRoot: string): void {
   leases.delete(keyOf(contextRoot));
+  spokeTurns.delete(keyOf(contextRoot));
 }
 
 /**
@@ -636,6 +665,9 @@ export function superOwnerSpoke(sessionId: string, now = Date.now(), told: reado
   if (!root) return;
   const key = keyOf(root);
   leases.set(key, now);
+  // Steered into a running turn: that turn is his. Written while idle: the next one is.
+  const st = getChat(sessionId)?.status;
+  spokeTurns.set(key, st === 'working' || st === 'asking' ? 'running' : 'waiting');
   scheduleRetry(key, now + OWNER_LEASE_MS + 50);
   const ob = openBatch.get(sessionId);
   if (ob) {
@@ -760,7 +792,7 @@ export const OWNER_VOICE = 'in the language the owner writes to you in, never th
  *  the rule says no text at all, in so many words. */
 export const BATCH_LAST_LINE = [
   'These events already updated the job list the owner reads; he sees this turn as ONE line unless it gives him an awaited=owner result, and every result of an awaited=owner job is one, the second and later ones too.',
-  'A question: answer it with `dreamcontext super answer <child> <question id> "<option>"` only when the brief and the project settle it; otherwise escalate ONE clear question with `dreamcontext super queue ask <item> "<question>"` (never AskUserQuestion: it locks your turn until he answers) and in this turn say in one line that a question waits; the choice stays in the card, never only in your text: an escalating turn shows in full. Its reply says whether it `reached` him.',
+  'A question whose server line says shown=owner is ALREADY in front of the owner: the child\'s own card is on his bar, one click from its chat, and his pick goes to the child. Answer it with `dreamcontext super answer <child> <question id> "<option>"` only when the brief and the project settle it (his card then closes); otherwise leave it to him: no escalation, no text. If he answered first, your answer is refused as stale: that is fine, do nothing more. Any other question: answer it the same way, or escalate ONE clear question with `dreamcontext super queue ask <item> "<question>"` (never AskUserQuestion: it locks your turn until he answers) and in this turn say in one line that a question waits; the choice stays in the card, never only in your text: an escalating turn shows in full. Its reply says whether it `reached` him.',
   'Done, stuck or closed: set the row with `dreamcontext super brief <child> "<doing / next>"`; when a slot frees, start the next job with `dreamcontext super delegate --from <pool id>`. Apart from an awaited=owner result or a question you escalate, write no text at all in this turn: no summary, no note, not one line; the commands are the whole turn.',
   `If the owner writes to you during this turn, answer him normally (${OWNER_VOICE}); the no-message rule covers only your notes about the events. Then end your turn.`,
 ].join('\n');
@@ -823,6 +855,7 @@ function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueI
   head += ` status=${status}`;
   const pq = item.kind === 'question' && e?.pendingQuestion && !e.pendingQuestion.isPermission ? e.pendingQuestion : null;
   if (pq && /^[A-Za-z0-9_.:-]{1,120}$/.test(pq.requestId)) head += ` question=${pq.requestId}`;
+  if (item.kind === 'question' && item.direct) head += ' shown=owner';
   const lines = [head];
   const brief = ch?.brief || (e ? chatTopic(e) : '');
   if (brief) lines.push(wrapUntrusted(vault, `Brief: ${brief}`));
@@ -1279,16 +1312,24 @@ function closeRowItems(s: SuperState, sid: string): boolean {
   return changed;
 }
 
+/** A done/stuck row set BEFORE the child's latest turn end: a turn ran since that the row never
+ *  saw working (it started and ended faster than its `working` write landed). That end settles. */
+function newerEnd(ch: SuperChild, e: ChatEntry | null): boolean {
+  if (ch.row !== 'done' && ch.row !== 'stuck') return false;
+  const ended = e?.lastTurn ? Date.parse(e.lastTurn.endedAt) : Number.NaN;
+  return ch.rowAt !== undefined && Number.isFinite(ended) && ended > ch.rowAt;
+}
+
 /** The settle window ran out: still idle → `done` (or `stuck` for an error turn), exactly once:
  *  a row that already left working/asking adds nothing. */
 function settleDraft(s: SuperState, sid: string, now: number): boolean {
   const ch = s.children[sid];
   if (!ch || ch.endedAt !== undefined) return false;
   delete ch.settling;
-  if (ch.row !== undefined && ch.row !== 'working' && ch.row !== 'asking' && ch.row !== 'waiting') return false;
+  const e = getChat(sid);
+  if (ch.row !== undefined && ch.row !== 'working' && ch.row !== 'asking' && ch.row !== 'waiting' && !newerEnd(ch, e)) return false;
   // Something only the owner can do is still open: it waits on him, it is not done.
   if (hasOpenOwnerWait(s, sid)) { setRow(ch, 'waiting', undefined, now); return false; }
-  const e = getChat(sid);
   const stuck = errorTurn(e);
   setRow(ch, stuck ? 'stuck' : 'done', stuck ? 'error' : undefined, now);
   return pushRowItem(s, sid, stuck ? 'stuck' : 'done', now);
@@ -1466,7 +1507,12 @@ async function onMoved(root: string, sid: string, status: 'working' | 'starting'
     const resolved = resolveAnswered(s, sid, asking ? live?.pendingQuestion?.requestId ?? null : null);
     let changed = resolved;
     const ch = s.enabled && !asking ? s.children[sid] : undefined;
-    if (ch && status === 'working') {
+    // Likewise a turn that started and already ENDED, and whose end the row already settled: its
+    // `working` write landed after the settle window wrote `done` (a short window, file I/O in
+    // between) and must not take it back. A row set BEFORE that end is an older turn's: it works.
+    const endedAt = live?.status === 'idle' && live.lastTurn ? Date.parse(live.lastTurn.endedAt) : Number.NaN;
+    const settledThisEnd = ch?.rowAt !== undefined && Number.isFinite(endedAt) && ch.rowAt >= endedAt;
+    if (ch && status === 'working' && !settledThisEnd) {
       if (setRow(ch, 'working')) changed = true;
       if (ch.settling) { delete ch.settling; changed = true; }
       if (closeRowItems(s, sid)) changed = true;
@@ -1520,9 +1566,12 @@ async function onAsking(root: string, entry: ChatEntry): Promise<void> {
     if (!s.enabled || !s.children[sid]) return;
     setRow(s.children[sid], 'asking');
     if (s.queue.some((i) => i.sessionId === sid && i.requestId === q.requestId && i.state !== 'done')) return;
+    // A question is the owner's from birth (`direct`): his bar shows it now, the Super hears it in
+    // its next event turn. A permission was always his alone.
     s.queue.push({
       id: newQueueId(), sessionId: sid, kind: q.isPermission ? 'permission' : 'question',
       requestId: q.requestId, state: 'pending', createdAt: Date.now(),
+      ...(q.isPermission ? {} : { direct: true as const, ownerText: childQuestionText(sid) }),
     });
     countEvent(s);
     added = true;
@@ -1636,6 +1685,7 @@ function onChange({ entry, from }: ChatChange): void {
   const sid = entry.sessionId;
   const superRoot = superRootOfSession(sid);
   if (superRoot) {
+    followSpokeTurn(keyOf(superRoot), entry.status);
     // The super chat settled: the next batch may go.
     if (entry.status === 'idle' || entry.status === 'starting') void pumpSuper(superRoot);
     return;
@@ -1755,6 +1805,7 @@ export function _resetSuperInbox(): void {
   eventTurns.clear();
   escalatedTurns.clear();
   leases.clear();
+  spokeTurns.clear();
   heads.clear();
   pumping.clear();
   again.clear();

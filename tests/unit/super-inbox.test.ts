@@ -31,7 +31,7 @@ import {
 } from '../../src/lib/super/types.js';
 import {
   SUPER_DELIVER_TIMEOUT_MS, _resetSuperInbox, _superInboxDrained, attachSuperInbox, deliveryBlocker, nextBatch, noteOwnerActivity,
-  pumpSuper, startSuperInbox, superAttentionRows, superEventText, superQueueHead, superTurnEnded, type SuperEventFrame, type SuperInbox,
+  pumpSuper, startSuperInbox, superAttentionRows, superEventText, superQueueHead, superTurnEnded, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
 
@@ -170,7 +170,7 @@ describe('the queue', { timeout: 30_000 }, () => {
     expect(delivered[0].event.items).toEqual([{ item: expect.stringMatching(/^q-/), child: 'c1', kind: 'question' }]);
     const lines = delivered[0].text.split('\n');
     expect(lines[0]).toMatch(/^\[super events\] batch=b-[a-z0-9-]+ items=1$/);
-    expect(lines[1]).toMatch(/^- item=q-[a-z0-9-]+ child=c1 event=question status=asking question=req-1$/);
+    expect(lines[1]).toMatch(/^- item=q-[a-z0-9-]+ child=c1 event=question status=asking question=req-1 shown=owner$/);
     expect(delivered[0].text).toContain('<untrusted-project-output vault="acme">Question: Which database?</untrusted-project-output>');
     expect(delivered[0].text).toContain('<untrusted-project-output vault="acme">Brief: brief of c1</untrusted-project-output>');
     await vi.waitFor(async () => {
@@ -333,6 +333,9 @@ describe('event texts', () => {
 });
 
 describe('a delivered question never stalls (M1)', { timeout: 30_000 }, () => {
+  /** A record from before direct questions (0.35.1 and older): the item is the super's alone
+   *  until it escalates, so its attempts decide. */
+  const legacy = (req: string) => writeSuper(root, (s) => { const q = s.queue.find((x) => x.requestId === req); if (q) delete q.direct; });
   async function delivered() {
     makeVault({ children: { c1: child('c1') } });
     await startSuperInbox([root]);
@@ -347,8 +350,19 @@ describe('a delivered question never stalls (M1)', { timeout: 30_000 }, () => {
   }
   const itemOf = async () => (await readSuperState(root)).queue.find((q) => q.requestId === 'req-m1');
 
-  it('(a) the turn ends with no answer and no escalation: back to pending, delivered again', async () => {
+  it('a direct question the turn left alone stays the owner\'s: escalated, never carried again', async () => {
     const { delivered: sent } = await delivered();
+    superTurnEnded(SUPER);
+    await vi.waitFor(async () => expect(await itemOf()).toMatchObject({ state: 'escalated', direct: true }), W);
+    await _superInboxDrained();
+    expect(sent).toHaveLength(1);
+    expect((await itemOf())?.attempts).toBeUndefined();
+    expect((await itemOf())?.ownerText).toContain('Which database?');
+  });
+
+  it('(a) legacy: the turn ends with no answer and no escalation: back to pending, delivered again', async () => {
+    const { delivered: sent } = await delivered();
+    await legacy('req-m1');
     superTurnEnded(SUPER);
     await vi.waitFor(() => expect(sent).toHaveLength(2), W);
     expect(sent[1].kind).toBe('batch');
@@ -356,8 +370,9 @@ describe('a delivered question never stalls (M1)', { timeout: 30_000 }, () => {
     await vi.waitFor(async () => expect(await itemOf()).toMatchObject({ state: 'delivered', attempts: 1 }), W);
   });
 
-  it('(b) a second unsettled close escalates it to the owner with the child\'s own question', async () => {
+  it('(b) legacy: a second unsettled close escalates it to the owner with the child\'s own question', async () => {
     const { delivered: sent } = await delivered();
+    await legacy('req-m1');
     superTurnEnded(SUPER);
     await vi.waitFor(() => expect(sent).toHaveLength(2), W);
     await vi.waitFor(async () => expect((await itemOf())?.state).toBe('delivered'), W);
@@ -436,6 +451,9 @@ describe('a delivered question never stalls (M1)', { timeout: 30_000 }, () => {
     await vi.waitFor(async () => expect((await readSuperState(root)).queue.find((q) => q.requestId === 'req-q1')?.state).toBe('delivered'), W);
     askQuestion(c2, 'req-q2');
     await vi.waitFor(async () => expect((await readSuperState(root)).queue.find((q) => q.requestId === 'req-q2')?.state).toBe('pending'), W);
+    // The attempts race is the legacy path's (a direct question never comes back).
+    await legacy('req-q1');
+    await legacy('req-q2');
     expect(sent).toHaveLength(1);
     // The super's turn is over; the next pump meets the late end.
     busy = false;

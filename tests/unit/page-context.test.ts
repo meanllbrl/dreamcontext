@@ -89,7 +89,7 @@ describe('the page block', () => {
     expect(chat).toMatch(/aboutHeads\(text\)/);
     expect(server.aboutHeads(msg).map((h) => h.id)).toEqual(['q-12']);
     // The briefing names the block (rev 13).
-    expect(server.SUPER_BRIEF_REV).toBe(13);
+    expect(server.SUPER_BRIEF_REV).toBeGreaterThanOrEqual(13);
     expect(read('src/server/chat-modes.ts')).toContain('A message ending \\`[On page <page> …]\\` was written from the dock');
   });
 });

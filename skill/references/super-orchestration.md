@@ -34,7 +34,8 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
    split immediately. Each `--brief` reads `<job> · <mode> <model>/<effort>`. Wait for no approval.
    A Plan unit's prompt carries what is already decided and the validation method (the owner's,
    else "unit tests + tsc"), so its "ask first" has little left to ask. Answer every child question
-   the brief or the brain settles (`super answer`); escalate only per §2.
+   the brief or the brain settles (`super answer`), else leave a `shown=owner` one;
+   escalate only per §2.
 8. **Reply** in 2-4 sentences: how many started, how many wait, what needs the owner.
 9. **As children finish:** use the result, then `dreamcontext super end <child>` in the same turn (a
    refused `end` counts as done for that turn). Start dependents with `delegate --from <pool row>`.

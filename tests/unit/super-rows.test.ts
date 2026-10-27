@@ -34,7 +34,7 @@ import { REASK_TEXT, readOutbox } from '../../src/lib/super/outbox.js';
 import { superRestoreHold } from '../../src/lib/super/restore.js';
 import {
   _resetSuperInbox, _superInboxDrained, _sweepArmed, attachSuperInbox, noteChatStarted, reconcileRows, startSuperInbox,
-  superOwnerSpoke, superTurnEnded, type SuperEventFrame, type SuperInbox,
+  noteOwnerActivity, superOwnerSpoke, superTurnEnded, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { disableSuper } from '../../src/lib/super/handover.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
@@ -121,14 +121,14 @@ afterEach(async () => {
 });
 
 describe('rows, not turns (AC1)', { timeout: 30_000 }, () => {
-  it('5 children each ending 3 turns within 10 s open 0 super turns; 30 s later each has exactly one done', async () => {
+  it('5 children each ending 3 turns, each next turn inside the settle window, open 0 super turns; then each has exactly one done', async () => {
     const ids = ['c1', 'c2', 'c3', 'c4', 'c5'];
     const { hs, delivered } = await boot(ids);
     for (let round = 0; round < 3; round += 1) {
       for (const h of hs) h.observe({ type: 'result' });
-      await advance(1_000);
+      await advance(DONE_SETTLE_MS / 4);
       if (round < 2) for (const h of hs) h.userSent('next step');
-      await advance(2_000);
+      await advance(DONE_SETTLE_MS / 4);
     }
     expect(delivered).toHaveLength(0);
     const mid = await readSuperState(root);
@@ -150,7 +150,7 @@ describe('rows, not turns (AC1)', { timeout: 30_000 }, () => {
   it('a server restart inside the settle window produces exactly one done, never two', async () => {
     const { hs } = await boot(['c1']);
     hs[0].observe({ type: 'result' });
-    await advance(10_000);
+    await advance(DONE_SETTLE_MS / 2);
     // The inbox's timers and memory go; the record and the registry stay.
     _resetSuperInbox();
     resetSuperIndex();
@@ -168,7 +168,7 @@ describe('rows, not turns (AC1)', { timeout: 30_000 }, () => {
   it('a restart that re-registers the child fresh (no last turn) still settles it once, via the sweep', async () => {
     const { hs } = await boot(['c1']);
     hs[0].observe({ type: 'result' });
-    await advance(5_000);
+    await advance(DONE_SETTLE_MS / 2);
     _resetSuperInbox();
     _resetChatRegistry();
     resetSuperIndex();
@@ -304,11 +304,13 @@ describe('batching (AC3)', { timeout: 30_000 }, () => {
 });
 
 describe('owner first (AC4)', { timeout: 30_000 }, () => {
-  it('a steered turn spends no question attempt, and the owner lease holds the pump 15 s', async () => {
+  it('legacy: a steered turn spends no question attempt, and the owner lease holds the pump 15 s', async () => {
     const { hs, delivered } = await boot(['c1']);
     askQuestion(hs[0], 'req-1');
     await drain();
     await vi.waitFor(() => expect(delivered).toHaveLength(1), W);
+    // A record from before direct questions: the question is the super's until it escalates.
+    await writeSuper(root, (s) => { for (const q of s.queue) delete q.direct; });
     superOwnerSpoke(SUPER);
     superTurnEnded(SUPER);
     await drain();
@@ -318,6 +320,73 @@ describe('owner first (AC4)', { timeout: 30_000 }, () => {
     expect(delivered).toHaveLength(1);
     await advance(OWNER_LEASE_MS + 200);
     await vi.waitFor(() => expect(delivered).toHaveLength(2), W);
+  });
+});
+
+describe('instant events (owner 2026-10-27)', { timeout: 30_000 }, () => {
+  it('a child\'s done reaches the idle super DONE_SETTLE_MS (2 s) after its turn ends, not 30 s', async () => {
+    const { hs, delivered } = await boot(['c1']);
+    const t0 = Date.now();
+    hs[0].observe({ type: 'result' });
+    await advance(DONE_SETTLE_MS - 100, 100);
+    expect(delivered).toHaveLength(0);
+    await advance(200, 100);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].text).toMatch(/child=c1 event=done/);
+    expect(Date.now() - t0).toBeLessThanOrEqual(2_100);
+  });
+
+  it('a super mid-turn takes the done the moment its turn ends, no extra wait', async () => {
+    const { sup, hs, delivered } = await boot(['c1']);
+    sup.userSent('a long job');
+    hs[0].observe({ type: 'result' });
+    await advance(DONE_SETTLE_MS + 5_000);
+    expect(delivered).toHaveLength(0);
+    expect((await items('done', 'c1'))[0]?.state).toBe('pending');
+    sup.observe({ type: 'result' });
+    await drain();
+    expect(delivered).toHaveLength(1);
+  });
+
+  it('his message\'s lease ends with the turn it is in: a done waits for that turn, not 15 s', async () => {
+    const { sup, hs, delivered } = await boot(['c1']);
+    // The bridge writes his message (the registry sees it), then stamps the lease.
+    sup.userSent('how is it going?');
+    superOwnerSpoke(SUPER);
+    hs[0].observe({ type: 'result' });
+    await advance(DONE_SETTLE_MS + 100, 100);
+    expect(delivered).toHaveLength(0);
+    const t = Date.now();
+    sup.observe({ type: 'result' });
+    await drain();
+    expect(delivered).toHaveLength(1);
+    expect(Date.now() - t).toBeLessThan(OWNER_LEASE_MS);
+  });
+
+  it('his message written while the super was idle: the lease waits for the turn it starts, then ends with it', async () => {
+    const { sup, hs, delivered } = await boot(['c1']);
+    superOwnerSpoke(SUPER);
+    hs[0].observe({ type: 'result' });
+    await advance(DONE_SETTLE_MS + 100, 100);
+    // No turn seen yet: the lease holds (a frame racing his message never lets an event in).
+    expect(delivered).toHaveLength(0);
+    sup.userSent('hi');
+    sup.observe({ type: 'result' });
+    await drain();
+    expect(delivered).toHaveLength(1);
+  });
+
+  it('his typing still holds the pump the full lease, even after a turn ends', async () => {
+    const { sup, hs, delivered } = await boot(['c1']);
+    sup.userSent('x');
+    superOwnerSpoke(SUPER);
+    await noteOwnerActivity(root);
+    hs[0].observe({ type: 'result' });
+    sup.observe({ type: 'result' });
+    await advance(DONE_SETTLE_MS + 100, 100);
+    expect(delivered).toHaveLength(0);
+    await advance(OWNER_LEASE_MS, 1_000);
+    expect(delivered).toHaveLength(1);
   });
 });
 

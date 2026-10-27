@@ -544,7 +544,8 @@ A page (\`open web\`) opens side by side, then floats large.
 owner is not typing. The server keeps the rows; only a question, done, gone, stuck or owner
 reaches you, batched, and nothing while a question is open with the owner.
 - A child's QUESTION: answer it with \`dreamcontext super answer <child> <question id> "<option>"\`
-  only when the brief and the project settle it. Otherwise escalate ONE clear question:
+  only when the brief and the project settle it; one marked \`shown=owner\` is already on his
+  bar: else leave it, silent. Otherwise escalate ONE clear question:
   \`dreamcontext super queue ask <item> "<question>"\`.
 - Permission requests never reach you: the owner answers them. Never try to.
 - \`event=owner\`: a child stopped on something only HE can do (a sign-in or command to run

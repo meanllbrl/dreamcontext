@@ -170,14 +170,14 @@ describe('the super\'s own question open: the pile rides WITH the owner\'s answe
     expect(superAnswerDigest(SUPER)).toBeNull();
 
     // That turn ends: the result counts as told; the owner's job stays his until the child is gone
-    // (its later results reach him too); the question it did not settle comes back once, as an
-    // ordinary event (never lost).
+    // (its later results reach him too); the question it did not settle stays his (it was on his
+    // bar from birth: `direct`), never carried to the super again.
     superTurnEnded(SUPER);
     await vi.waitFor(async () => {
       const s = await readSuperState(root);
       expect(s.queue.find((q) => q.id === 'q-done-c2')?.state).toBe('done');
       expect(s.children.c2.awaited).toBe(true);
-      expect(s.queue.find((q) => q.kind === 'question')).toMatchObject({ state: 'pending', attempts: 1 });
+      expect(s.queue.find((q) => q.kind === 'question')).toMatchObject({ state: 'escalated', direct: true });
     }, W);
     // No event turn re-tells the done items silently.
     for (const d of delivered) expect(d.text).not.toMatch(/q-done-c2|q-done-c3/);
@@ -194,7 +194,26 @@ describe('the super\'s own question open: the pile rides WITH the owner\'s answe
 });
 
 describe('a child\'s question open: the pile goes in the first event turn after it, told in full', () => {
-  it('held while the escalation is open, then one batch with the held block, rendered in full', async () => {
+  it('a child\'s own question (direct) holds nothing, escalated or not: a done goes at once (owner 2026-10-27)', async () => {
+    makeVault({ children: { c1: child('c1'), c2: child('c2', { awaited: true }) } });
+    await startSuperInbox([root]);
+    settle(reg(SUPER, 'super'));
+    const c1 = reg('c1');
+    reg('c2');
+    const { inbox, delivered } = fakeInbox();
+    attachSuperInbox(inbox);
+    askQuestion(c1, 'req-9');
+    await vi.waitFor(() => expect(delivered).toHaveLength(1), W);
+    await writeSuper(root, (s) => { const q = s.queue.find((x) => x.requestId === 'req-9'); if (q) { q.state = 'escalated'; q.ownerText = 'Postgres or sqlite?'; } });
+    superTurnEnded(SUPER);
+    await finish('c2', 'q-done-c2');
+    void pumpSuper(root); // what the settle does after the same write
+    await vi.waitFor(() => expect(delivered).toHaveLength(2), W);
+    expect(delivered[1].text).toMatch(/- item=q-done-c2 child=c2 event=done awaited=owner/);
+    expect((await readSuperState(root)).held).toBeUndefined();
+  });
+
+  it('held while an older escalation (no `direct`) is open, then one batch with the held block, rendered in full', async () => {
     makeVault({ children: { c1: child('c1'), c2: child('c2', { awaited: true }) } });
     await startSuperInbox([root]);
     settle(reg(SUPER, 'super'));
@@ -205,7 +224,8 @@ describe('a child\'s question open: the pile goes in the first event turn after 
     askQuestion(c1, 'req-9');
     await vi.waitFor(() => expect(delivered).toHaveLength(1), W);
     // The super escalates it to the owner and ends its turn.
-    await writeSuper(root, (s) => { const q = s.queue.find((x) => x.requestId === 'req-9'); if (q) { q.state = 'escalated'; q.ownerText = 'Postgres or sqlite?'; } });
+    // A record from before direct questions: the escalation is the super's alone, and holds.
+    await writeSuper(root, (s) => { const q = s.queue.find((x) => x.requestId === 'req-9'); if (q) { q.state = 'escalated'; q.ownerText = 'Postgres or sqlite?'; delete q.direct; } });
     superTurnEnded(SUPER);
     await finish('c2', 'q-done-c2');
     await vi.waitFor(async () => expect((await readSuperState(root)).held?.map((h) => h.item)).toEqual(['q-done-c2']), W);
