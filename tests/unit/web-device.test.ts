@@ -65,11 +65,11 @@ describe('wiring', () => {
   });
   it('the card, its frame and its full-screen view share one device choice', () => {
     expect(card).toMatch(/const \[device, setDevice\] = useWebDevice\(c\.id\);/);
-    expect(card).toMatch(/<ZoomPane live interactive=\{p\.large\} control=\{control\} device=\{device\} onDevice=\{setDevice\}>/);
-    expect(card).toMatch(/control=\{control\} device=\{device\} \/><\/div>/);
+    expect(card).toMatch(/<ZoomPane live=\{live\} interactive=\{p\.large\} control=\{live \? control : undefined\} device=\{device\} onDevice=\{setDevice\}>/);
+    expect(card).toMatch(/desktop=\{desktop\} device=\{device\} \/><\/div>/);
     // The one frame every web card draws (the board's widget too) sits in the device box.
     expect(widget).toMatch(/const box = useDeviceBox\(device\);/);
-    expect(widget).toMatch(/style=\{box\.frameStyle\}/);
+    expect(widget).toMatch(/box\.fit\s*\? box\.frameStyle/);
     expect(viewer).toMatch(/useWebDevice\(deviceKey \?\? null\)/);
     expect(read('dashboard/src/components/sleepy/super/SuperSurface.tsx')).toMatch(/<CardFullscreenView subject=\{full\.subject\} cardId=\{full\.id\}/);
   });
