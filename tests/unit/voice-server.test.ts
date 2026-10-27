@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { setPressureReader, stopWhisperServer } from '../../src/lib/voice/whisper.js';
 import { mkdtempSync, rmSync, statSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -94,6 +95,8 @@ const TOUCHED = [
 let saved: Record<string, string | undefined> = {};
 
 beforeEach(() => {
+  // The machine's real load must not decide a unit test: pressure is its own suite.
+  setPressureReader(async () => ({ pressed: false, why: null }));
   saved = Object.fromEntries(TOUCHED.map((k) => [k, process.env[k]]));
   home = mkdtempSync(join(tmpdir(), 'dc-voice-'));
   process.env.HOME = home;
@@ -105,6 +108,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  stopWhisperServer();
+  setPressureReader(null);
   rmSync(home, { recursive: true, force: true });
   for (const k of TOUCHED) {
     if (saved[k] === undefined) delete process.env[k];
@@ -401,7 +406,7 @@ function wavBody(n = 64): Buffer {
 function whisperStub(): { bin: string; model: string } {
   const bin = join(home, 'whisper-server');
   const model = join(home, 'ggml-large-v3-turbo.bin');
-  writeFileSync(bin, '#!/bin/sh\nexit 0\n');
+  writeFileSync(bin, '#!/bin/sh\nsleep 30\n', { mode: 0o755 });  // a server that stays up
   writeFileSync(model, Buffer.alloc(2_000_000));
   return { bin, model };
 }
@@ -528,7 +533,8 @@ describe('POST /api/agent/voice/stt — dictation is LOCAL and never calls an AP
     await handleVoiceStt(makeReq(wavBody(), { 'content-type': 'audio/wav' }), r.res, {}, home);
     expect(r.status()).toBe(400);
     expect(r.body().error).toBe('stt_unconfigured');
-    expect(r.body().message).toMatch(/install/i);
+    // Not set up: the owner is sent to the choice, not to a silent cloud call.
+    expect(r.body().message).toMatch(/Settings → Voice/);
     expect(upstream).not.toHaveBeenCalled();
   });
 });

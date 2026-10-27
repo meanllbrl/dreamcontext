@@ -241,10 +241,11 @@ export function VoiceStep({ keySet, keyDraft, keySaved, busy, speak, onKeyDraft,
   return (
     <>
       <StepHead q={t('assistant.voice.q')} hint={t('assistant.voice.hint')} />
-      {/* Setup installs dictation itself (owner, 2026-09-27): the engine and the model, the
-          route decided by the server. It keeps going if the owner moves to the next step. */}
+      {/* Setup ASKS where dictation runs (owner, 2026-10-27): a local model sized for this Mac,
+          or the cloud. Nothing downloads until one is picked; a download keeps going if the
+          owner moves to the next step. */}
       <span className="aw-sublabel">{t('assistant.voice.dictation')}</span>
-      <DictationInstall autoStart />
+      <DictationInstall />
       <label className="aw-sublabel" htmlFor="aw-voice-key">{t('assistant.voice.keyLabel')}</label>
       <div className="aw-hotkey-row">
         {/* Write-only: the server reports only whether a key exists, so this field can never

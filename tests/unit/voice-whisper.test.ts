@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   findWhisper, modelName, cleanWhisperText, serverArgs,
-  transcribeLocal, primerFrom,
+  transcribeLocal, primerFrom, stopWhisperServer, setPressureReader,
 } from '../../src/lib/voice/whisper.js';
 
 let dir: string;
@@ -23,6 +23,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'dc-whisper-'));
 });
 afterEach(() => {
+  stopWhisperServer();
   rmSync(dir, { recursive: true, force: true });
   vi.unstubAllGlobals();
 });
@@ -31,7 +32,7 @@ afterEach(() => {
 function fakeInstall(name = 'ggml-large-v3-turbo.bin') {
   const bin = join(dir, 'whisper-server');
   const model = join(dir, name);
-  writeFileSync(bin, '#!/bin/sh\nexit 0\n');
+  writeFileSync(bin, '#!/bin/sh\nsleep 30\n', { mode: 0o755 });  // a server that stays up
   writeFileSync(model, Buffer.alloc(2_000_000));
   return { bin, model, modelName: modelName(model) };
 }

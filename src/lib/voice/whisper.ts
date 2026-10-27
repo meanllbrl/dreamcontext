@@ -21,9 +21,9 @@
  *
  * ── AND WHY IT IS ALWAYS OPTIONAL ───────────────────────────────────────────────────────
  * whisper.cpp is not a dependency of this package and never will be: a 1.5 GB model download
- * is not something a CLI install may do. Everything here answers `null` when it cannot help,
- * and the route falls back to OpenRouter — so a machine with whisper gets the better path and
- * a machine without keeps working exactly as before.
+ * is not something a CLI install may do, nor something the app may do without asking: the
+ * owner picks the size (or the cloud engine) in Settings → Voice. Everything here answers `null`
+ * when it cannot help, and the route says what is missing instead of crashing.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -34,17 +34,19 @@ import { execFileSync } from 'node:child_process';
 import { claimOwnedPort } from '../../server/owned-ports.js';
 import { normalizeLanguage } from './languageContext.js';
 import type { WhisperSegment } from './garble.js';
+import {
+  modelSpec, fitsMachine, ramForModelFile, machineInfo,
+  type MachineInfo, type WhisperModelId,
+} from './whisperModels.js';
+import { readMachinePressure, type PressureReader, type PressureReading } from './whisperPressure.js';
 
 /** Binaries that speak whisper.cpp's server protocol, in the order they are looked for. */
 const SERVER_BINARIES = ['whisper-server'];
 
 /**
- * Where models are kept, and which are preferred.
- *
- * `large-v3-turbo` first because it is BOTH better and faster than `medium` on Apple silicon
- * — there is no trade to make. The list ends at `base` rather than `tiny`: below `base` the
- * Turkish output stops being worth the round trip at all, and falling through to the cloud is
- * the better answer.
+ * Where models are kept, and which are preferred when the owner has not named one (an install
+ * from before the choice existed). The preference is filtered by what the machine can carry
+ * (`findModel`), so an 8 GB Mac with an old `large-v3-turbo` on disk is not handed it.
  */
 const MODEL_DIRS = [
   join(homedir(), '.cache', 'whisper.cpp', 'models'),
@@ -121,28 +123,82 @@ export function findServerBin(env: NodeJS.ProcessEnv = process.env): string | nu
  * while the app is open should be found without a restart. It is a handful of `existsSync`
  * calls, once per Settings render and once per take.
  */
-export function findWhisper(env: NodeJS.ProcessEnv = process.env): WhisperInstall | null {
+export interface ModelQuery {
+  /** The size the owner chose. Set → only that file is accepted; unset → the legacy preference. */
+  model?: WhisperModelId | null;
+  /** Skip a model this machine cannot carry (legacy preference only). Default on. */
+  machine?: MachineInfo;
+  /** Where to look instead of the known dirs (tests). */
+  dirs?: readonly string[];
+}
+
+export function findWhisper(env: NodeJS.ProcessEnv = process.env, q: ModelQuery = {}): WhisperInstall | null {
   const bin = findServerBin(env);
   if (!bin) return null;
 
-  const model = findModel(env);
+  const model = findModel(env, q);
   return model ? { bin, model, modelName: modelName(model) } : null;
 }
 
-/** The best installed ggml model, or null — the override, then the preference order. */
-export function findModel(env: NodeJS.ProcessEnv = process.env): string | null {
-  const modelOverride = env.DREAMCONTEXT_WHISPER_MODEL;
-  if (modelOverride) return existsSync(modelOverride) ? modelOverride : null;
-  for (const name of MODEL_PREFERENCE) {
-    for (const dir of MODEL_DIRS) {
-      const path = join(dir, name);
-      try {
-        if (existsSync(path) && statSync(path).size > 1_000_000) return path;
-      } catch { /* unreadable — try the next one */ }
-    }
+function usableFile(path: string): boolean {
+  try { return existsSync(path) && statSync(path).size > 1_000_000; } catch { return false; }
+}
+
+/** Where `file` sits on this machine, in any known model dir, or null. */
+export function locateModelFile(file: string, dirs: readonly string[] = MODEL_DIRS): string | null {
+  for (const dir of dirs) {
+    const path = join(dir, file);
+    if (usableFile(path)) return path;
   }
   return null;
 }
+
+/**
+ * The ggml model to use, or null: the override; else the CHOSEN size's file; else (no choice
+ * stored, an install from before the choice existed) the best installed model this machine can
+ * carry. A file that is on disk but too big is left exactly where it is — never deleted.
+ */
+export function findModel(env: NodeJS.ProcessEnv = process.env, q: ModelQuery = {}): string | null {
+  const modelOverride = env.DREAMCONTEXT_WHISPER_MODEL;
+  if (modelOverride) return existsSync(modelOverride) ? modelOverride : null;
+  if (q.model) {
+    const spec = modelSpec(q.model);
+    return spec ? locateModelFile(spec.file, q.dirs) : null;
+  }
+  const machine = q.machine ?? machineInfo();
+  for (const name of MODEL_PREFERENCE) {
+    const path = locateModelFile(name, q.dirs);
+    if (path && fitsMachine(ramForModelFile(name, statSync(path).size), machine)) return path;
+  }
+  return null;
+}
+
+/**
+ * Why this install must NOT be loaded right now, or null when it may.
+ *
+ *   `too_big`     — the model wants more than this machine can spare (`fitsMachine`). Loading it
+ *                   anyway is what took the app down on 8 GB Airs.
+ *   `load_failed` — the last attempt to load THIS model died or never answered, within the last
+ *                   {@link LOAD_FAILURE_TTL_MS}. Retrying it per take would re-run the crash.
+ */
+export function localBlocked(
+  install: WhisperInstall,
+  machine: MachineInfo = machineInfo(),
+  now: number = Date.now(),
+): 'too_big' | 'load_failed' | null {
+  let size = 0;
+  try { size = statSync(install.model).size; } catch { /* gone — the load will say so */ }
+  if (!fitsMachine(ramForModelFile(install.model.split('/').pop()!, size), machine)) return 'too_big';
+  if (loadFailure && loadFailure.model === install.model && now - loadFailure.at < LOAD_FAILURE_TTL_MS) return 'load_failed';
+  return null;
+}
+
+/** A model that failed to load is not retried for this long — the owner picks another meanwhile. */
+export const LOAD_FAILURE_TTL_MS = 10 * 60 * 1000;
+let loadFailure: { model: string; at: number } | null = null;
+
+/** Test seam, and what a new choice in Settings calls: forget the last failure. */
+export function clearLoadFailure(): void { loadFailure = null; }
 
 /** Where a model this app downloads goes: the first dir, whisper.cpp's own convention. */
 export const MODEL_HOME = MODEL_DIRS[0];
@@ -159,6 +215,9 @@ interface Running {
   port: number;
   ready: Promise<boolean>;
   install: WhisperInstall;
+  /** Set when WE stopped it (idle, pressure, a new choice): a load cut short that way is not
+   *  a model that failed to load, and must not be remembered as one. */
+  stoppedByUs: boolean;
 }
 
 let running: Running | null = null;
@@ -201,9 +260,13 @@ export const BEST_OF = 5;
  * (`languageContext.ts`) and passes it in; this module only transcribes what it is told.
  */
 
-async function waitForReady(port: number, deadline: number): Promise<boolean> {
+async function waitForReady(port: number, deadline: number, child?: ChildProcess): Promise<boolean> {
   for (;;) {
     if (Date.now() > deadline) return false;
+    // A child that already died (out of memory, a bad model) will never answer: stop waiting
+    // now rather than for the whole minute.
+    // A child with no pid never started (not executable, out of memory): same answer.
+    if (child && (child.pid === undefined || child.exitCode !== null || child.signalCode !== null)) return false;
     try {
       // Any answer at all means the HTTP server is up; whisper-server 404s on `/`.
       await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1_000) });
@@ -231,7 +294,10 @@ function ensureServer(install: WhisperInstall): Running {
   // `-t` is whisper-server's thread count and its default is FOUR, whatever the machine has.
   // Beam search multiplies the decode work, so the threads are what keep the added search
   // inside the latency budget. One reserved core: this runs while the owner is using the app.
-  const threads = Math.max(2, Math.min(8, (cpus()?.length ?? 4) - 1));
+  // Half the cores on a small machine: a fanless 8 GB Air throttles, and the app has to stay
+  // responsive while a take is decoded.
+  const small = machineInfo().memBytes <= 8.5 * 1024 ** 3;
+  const threads = Math.max(2, Math.min(small ? 4 : 8, (cpus()?.length ?? 4) - 1));
   // `-nlp`: no language-probability map. The server otherwise computes it on EVERY
   // `verbose_json` request (+650-800 ms measured 2026-10-24); with it off, verbose costs the
   // same as plain json and still carries each segment's `avg_logprob` and `no_speech_prob`,
@@ -242,38 +308,137 @@ function ensureServer(install: WhisperInstall): Running {
   });
   // Its port is ours while the child lives: no web card may load it.
   const release = claimOwnedPort(PORT);
-  child.on('exit', () => { release(); if (running?.child === child) running = null; });
-  child.on('error', () => { release(); if (running?.child === child) running = null; });
+  const gone = (): void => {
+    release();
+    if (running?.child !== child) return;
+    running = null;
+    // Nothing loaded is left to watch.
+    if (pressureTimer) { clearInterval(pressureTimer); pressureTimer = null; }
+  };
+  child.on('exit', gone);
+  child.on('error', gone);
 
   const started: Running = {
     child,
     port: PORT,
     install,
-    ready: waitForReady(PORT, Date.now() + READY_TIMEOUT_MS),
+    ready: waitForReady(PORT, Date.now() + READY_TIMEOUT_MS, child),
+    stoppedByUs: false,
   };
   running = started;
+  armPressureWatch();
   return started;
 }
 
 /**
- * Start the model loading NOW, without a take waiting on it.
- *
- * The first take of a session paid ~3.3s against ~0.85s for the ones after it, and almost all
- * of that gap is a 1.5 GB model being read off disk. The composer calls this when assistant
- * mode opens, which is typically seconds before the first press.
+ * ── NO WARM-UP AT LAUNCH (owner, 2026-10-27) ──────────────────────────────────────────────
+ * There used to be a `warmWhisper()` the composer called whenever assistant mode opened —
+ * i.e. at every app launch — which read a 1.6 GB model into memory before anybody spoke. On an
+ * 8 GB MacBook Air that took the app down. The model now loads on the FIRST TAKE (a few
+ * seconds slower, once) and is unloaded after {@link IDLE_UNLOAD_MS} without one.
  */
-export function warmWhisper(): { model: string } | null {
-  const install = findWhisper();
-  if (!install) return null;
-  ensureServer(install);
-  return { model: install.modelName };
+export const IDLE_UNLOAD_MS = 5 * 60 * 1000;
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** (Re)arm the idle unload. Called after every take. */
+function armIdleUnload(): void {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => { idleTimer = null; stopWhisperServer(); }, IDLE_UNLOAD_MS);
+  idleTimer.unref?.();
 }
 
-/** Stop the warm server. Called when the engine is switched off in Settings, and on exit. */
+/**
+ * ── OUT OF RAM UNDER LOAD (owner, 2026-10-27) ─────────────────────────────────────────────
+ * While a model is loaded, the machine's pressure (`whisperPressure.ts`, the Super Agent's own
+ * reading) is checked every {@link PRESSURE_POLL_MS}; pressure unloads it at once. It is not
+ * loaded again until a take asks for it AND {@link checkPressure} says the load is gone.
+ */
+export const PRESSURE_POLL_MS = 30_000;
+let pressureReader: PressureReader = readMachinePressure;
+let pressureTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Test seam: what "is the machine under load" answers. Null restores the real reading. */
+export function setPressureReader(reader: PressureReader | null): void {
+  pressureReader = reader ?? readMachinePressure;
+}
+
+/** Takes being decoded right now, and an unload that waits for them to finish. */
+let inFlight = 0;
+let unloadWhenIdle = false;
+
+/**
+ * Read the pressure now; under pressure, a loaded model is unloaded — at once when no take is
+ * being decoded, else the moment the last one finishes (a take cut off mid-inference is lost
+ * audio, and its retry would be refused anyway). The loaded model's OWN memory is credited
+ * back to the reading: on 8 GB, `small` alone moves "available" under the line, and unloading
+ * for that would cold-load the model on every take.
+ */
+export async function checkPressure(): Promise<PressureReading> {
+  const loaded = running && whisperLoaded() ? running : null;
+  let ownMB = 0;
+  if (loaded) {
+    try { ownMB = ramForModelFile(loaded.install.model.split('/').pop()!, statSync(loaded.install.model).size); } catch { ownMB = 0; }
+  }
+  let reading: PressureReading;
+  try { reading = await pressureReader({ loadedMB: ownMB }); } catch { reading = { pressed: false, why: null }; }
+  if (reading.pressed && running) {
+    if (inFlight > 0) {
+      unloadWhenIdle = true;
+    } else {
+      console.info(`[voice:stt] machine under load (${reading.why}): unloading the local model`);
+      stopWhisperServer();
+    }
+  }
+  return reading;
+}
+
+function armPressureWatch(): void {
+  if (pressureTimer) return;
+  pressureTimer = setInterval(() => { void checkPressure(); }, PRESSURE_POLL_MS);
+  pressureTimer.unref?.();
+}
+
+/** Is a model loaded (a server child alive) right now? For tests and Settings. */
+export function whisperLoaded(): boolean {
+  return !!running && running.child.exitCode === null && !running.child.killed;
+}
+
+/** Resolves when the last stopped child has let go of the port (or after a short bound). */
+let lastExit: Promise<void> = Promise.resolve();
+const EXIT_WAIT_MS = 3_000;
+
+/** Stop the server. Called when the choice changes in Settings, after idle, and on exit. */
 export function stopWhisperServer(): void {
+  unloadWhenIdle = false;
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+  if (pressureTimer) { clearInterval(pressureTimer); pressureTimer = null; }
   if (!running) return;
-  try { running.child.kill(); } catch { /* already gone */ }
+  running.stoppedByUs = true;
+  // Only a child that really started has a pid. One whose spawn failed (a binary that is not
+  // executable) has none, and signalling it can reach the whole process GROUP — it took a test
+  // runner, and its shell, down with it.
+  const pid = running.child.pid;
+  if (typeof pid === 'number' && pid > 0 && running.child.exitCode === null) {
+    const child = running.child;
+    // The next server binds the same port: it must not start while this one still answers
+    // on it, or the new take would be decoded by the model just left.
+    lastExit = new Promise<void>((resolve) => {
+      child.once('exit', () => resolve());
+      setTimeout(resolve, EXIT_WAIT_MS).unref?.();
+    });
+    try { child.kill(); } catch { /* already gone */ }
+  }
   running = null;
+}
+
+/**
+ * The server for THIS install: a running one for a different model is stopped first (the
+ * owner changed the choice), and a new one waits until the old one has let go of the port.
+ */
+async function acquireServer(install: WhisperInstall): Promise<Running> {
+  if (running && whisperLoaded() && running.install.model !== install.model) stopWhisperServer();
+  if (!running || !whisperLoaded()) await lastExit;
+  return ensureServer(install);
 }
 
 process.once('exit', stopWhisperServer);
@@ -308,9 +473,36 @@ export async function transcribeLocal(
   if (!install) return null;
 
   const started = Date.now();
-  const server = ensureServer(install);
+  inFlight += 1;
+  try {
+    return await decode(wav, install, started, opts);
+  } finally {
+    inFlight -= 1;
+    // Pressure arrived while this take was decoding: the unload it deferred happens now.
+    if (inFlight === 0 && unloadWhenIdle) {
+      console.info('[voice:stt] machine under load: unloading the local model after the take');
+      stopWhisperServer();
+    }
+  }
+}
+
+async function decode(
+  wav: Buffer,
+  install: WhisperInstall,
+  started: number,
+  opts: { language?: string; lexicon?: string; primer?: boolean; temperature?: number },
+): Promise<LocalTranscript | null> {
+  const server = await acquireServer(install);
+  armIdleUnload();
   if (!(await server.ready)) {
-    stopWhisperServer();
+    // Remembered, so the composer's retries do not spawn the same doomed load again — unless
+    // WE stopped it (idle, pressure, a new choice), which says nothing about the model.
+    if (!server.stoppedByUs) {
+      loadFailure = { model: install.model, at: Date.now() };
+      console.error(`[voice:stt] the local model ${install.modelName} did not load`);
+    }
+    // Only THIS server: a newer one may already be loading for the next take.
+    if (running === server) stopWhisperServer();
     return null;
   }
 

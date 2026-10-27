@@ -285,6 +285,7 @@ import { startTaskJobLoop } from './task-job-loop.js';
 import { startClaudeUpdateJob } from './claude-update-job.js';
 import { readyVersionOnDisk, startSelfUpdateJob } from './self-update-job.js';
 import { configureMacListener, macSession, registerHandsfreeMacRoutes, writeMacServerHint } from './routes/handsfree-mac.js';
+import { setThermalSource } from '../lib/voice/whisperPressure.js';
 import { authFor, handleHandsfreeLogin, handleHandsfreeLogout } from './handsfree-auth.js';
 import { handleHandsfreePhone, handlePhonePages } from './handsfree-login.js';
 import { handleAdminShutdown } from './routes/admin.js';
@@ -1466,6 +1467,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         const a = server.address();
         if (a && typeof a === 'object') writeMacServerHint(a.port);
         void macSession().recoverOnBoot().catch((err) => console.warn(`[handsfree-mac] boot recovery failed: ${(err as Error).message}`));
+        // Dictation unloads its model while the Mac is hot: the governor's reading, no new probe.
+        setThermalSource(() => (macSession().isOn() ? macSession().thermalState() : null));
       }
       // Headless claude spawns never run the CLI's TUI-only updater; this does. Self-gates to desktop.
       stopClaudeUpdate = startClaudeUpdateJob();

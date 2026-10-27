@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PassThrough, Readable } from 'node:stream';
@@ -63,6 +63,8 @@ beforeEach(() => {
   const bin = join(home, 'whisper-server');
   const model = join(home, 'ggml-large-v3-turbo.bin');
   writeFileSync(bin, '#!/bin/sh\nexit 0\n');
+  // A binary that cannot be executed never starts (whisper.ts waits on a pid).
+  chmodSync(bin, 0o755);
   writeFileSync(model, Buffer.alloc(2_000_000));
   process.env.DREAMCONTEXT_WHISPER_BIN = bin;
   process.env.DREAMCONTEXT_WHISPER_MODEL = model;

@@ -2,8 +2,8 @@
  * The voice feature's ONE secret and its three non-secret preferences, on disk at
  * `~/.dreamcontext/voice.json`.
  *
- * ONE KEY, FOR SPEECH ONLY — dictation is local whisper and never calls an API (owner,
- * 2026-09-27) — and it is an OpenRouter key. This is the owner's explicit instruction and it is not a shape to
+ * ONE KEY — an OpenRouter key, for speech, and for dictation only when the owner picks the cloud
+ * engine (2026-10-27; until then dictation was local-only, owner 2026-09-27). This is the owner's explicit instruction and it is not a shape to
  * generalise later: no OpenAI key is read, requested, or fallen back to anywhere in this
  * feature. The reason is measured rather than ideological. Local whisper saves about a
  * dollar a month, and OpenAI-via-anyone at $15 per million characters is already the FLOOR
@@ -26,10 +26,14 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from '
 import { randomBytes } from 'node:crypto';
 import { normalizeHotkey, effectiveMode, type PushToTalkMode } from './hotkey.js';
 import { normalizeLanguage } from './languageContext.js';
+import { isWhisperModelId, type WhisperModelId } from './whisperModels.js';
+
+/** Where a take is transcribed. Absent = the owner has not chosen yet. */
+export type DictationEngine = 'local' | 'cloud';
 
 /** What lives in `voice.json`. Every field is optional — an absent file is a valid state. */
 export interface VoiceConfig {
-  /** The OpenRouter API key — for SPEECH (read-aloud) only; dictation is local and keyless. */
+  /** The OpenRouter API key — for speech, and for dictation when `dictationEngine` is `cloud`. */
   openRouterKey?: string;
   /** TTS voice name passed through to the speech endpoint. */
   voice?: string;
@@ -84,6 +88,15 @@ export interface VoiceConfig {
    * only lever macOS gives a non-sandboxed app, and it lowers OUR voice by the same amount.
    */
   musicDuck?: number;
+  /**
+   * The owner's dictation choice (2026-10-27): `local` (whisper.cpp, the size below) or `cloud`
+   * (OpenRouter's transcription endpoint, with the key above). Absent until chosen — nothing is
+   * downloaded or loaded before it is set. A NEW field on purpose: an old `sttEngine: "cloud"`
+   * left on disk from before the local-only decision must not start sending audio out.
+   */
+  dictationEngine?: DictationEngine;
+  /** The local model size the owner picked (`small`, `large-v3-turbo`, …). */
+  dictationModel?: WhisperModelId;
 }
 
 /** The default voice. A deep one — the closest this provider gets to the character. */
@@ -185,6 +198,8 @@ export function readVoiceConfig(home: string = homedir()): VoiceConfig {
     if (typeof raw.speechRate === 'number') out.speechRate = clampSpeechRate(raw.speechRate);
     if (typeof raw.musicPause === 'boolean') out.musicPause = raw.musicPause;
     if (typeof raw.musicDuck === 'number') out.musicDuck = clampMusicDuck(raw.musicDuck);
+    if (raw.dictationEngine === 'local' || raw.dictationEngine === 'cloud') out.dictationEngine = raw.dictationEngine;
+    if (isWhisperModelId(raw.dictationModel)) out.dictationModel = raw.dictationModel;
     return out;
   } catch {
     return {};

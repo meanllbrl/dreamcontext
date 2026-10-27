@@ -407,6 +407,9 @@
   align-items: flex-start;
   gap: var(--space-2);
 }
+/* The chooser's option labels carry the size and memory cost: let the select use the column. */
+.dictation-install .dictation-install__select { width: 100%; max-width: 100%; }
+.dictation-install__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .dictation-install__bar {
   width: 100%;
   min-width: 200px;

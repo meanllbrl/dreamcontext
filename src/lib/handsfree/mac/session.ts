@@ -233,6 +233,9 @@ export class MacSession {
 
   get macDir(): string { return macDirOf(this.home); }
   isOn(): boolean { return this.phase !== 'off'; }
+  /** The thermal governor's last reading (`null` while it is not running). Read by dictation to
+   *  unload its model while the Mac is hot, without taking a second reading. */
+  thermalState(): string | null { return this.governor?.snapshot().state ?? null; }
 
   /** Mac mode runs on macOS only: `status().supported` tells the panel, and setup, start and
    *  the fixed address refuse anywhere else before they touch sudo, a tunnel or cloudflared. */

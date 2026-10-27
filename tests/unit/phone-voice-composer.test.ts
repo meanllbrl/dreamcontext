@@ -19,7 +19,7 @@ describe('the phone composer\'s mic', () => {
     expect(fn).toMatch(/return phone && data\?\.dictation === true;/);
     expect(fn).toMatch(/const phone = isMacPhoneSurface\(\);/);
     const caps = code('src/server/routes/agent-terminal.ts');
-    expect(caps).toMatch(/dictation: desktop && findWhisper\(\) !== null,/);
+    expect(caps).toMatch(/dictation: desktop && dictationState\(\)\.installed,/);
   });
 
   it('reads the capabilities cache passively: no fetch off the phone, no interval per pane (review r1)', () => {
@@ -43,7 +43,10 @@ describe('the phone composer\'s mic', () => {
 
   it('keeps the laptop\'s voice off the phone: no read-aloud switch, no warm/prefs, no hotkey wording (AC4)', () => {
     expect(composer).toMatch(/\{voiceEnabled && \(mode === 'assistant' \|\| mode === 'super'\) && !phoneVoice && \(\s*<button\s+type="button"\s+className="chat-cmp-iconbtn chat-cmp-readaloud"/);
-    expect(composer).toMatch(/if \(!voiceEnabled \|\| phoneVoice\) return;\s*void fetch\('\/api\/agent\/voice\/warm'/);
+    // The laptop-only effect (prefs, hotkey) still returns early on the phone; it no longer warms
+    // anything at all (2026-10-27: the model loads on the first take, never at launch).
+    expect(composer).toMatch(/if \(!voiceEnabled \|\| phoneVoice\) return;/);
+    expect(composer).not.toContain("'/api/agent/voice/warm'");
     // At rest the phone's mic carries no caption at all (owner, 2026-10-21: short hints).
     expect(composer).toMatch(/!\(phoneVoice && voice\.state === 'idle'\)/);
     const trace = code('dashboard/src/lib/voice/turnTrace.ts');
