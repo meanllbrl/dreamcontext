@@ -51,7 +51,7 @@ import {
   trimSpeechTail, SENTENCE_TAIL_MS, CLAUSE_TAIL_MS,
 } from '../../lib/voice/wav.js';
 import {
-  transcribeLocal, localBlocked, checkPressure, type LocalTranscript, type WhisperInstall,
+  transcribeLocal, holdLocalModel, localBlocked, checkPressure, type LocalTranscript, type WhisperInstall,
 } from '../../lib/voice/whisper.js';
 import { score, pick, type Candidate, type Verdict } from '../../lib/voice/garble.js';
 import { contextFor, normalizeLanguage, type LanguageContext } from '../../lib/voice/languageContext.js';
@@ -279,6 +279,16 @@ export interface SttGarbled {
  *   • The better pass wins by `pick`'s sort key; a garbled winner is never sent.
  */
 export async function transcribeWithRetry(
+  wav: Buffer,
+  opts: { cfg: { sttLanguage?: string; sttLanguages?: string[] }; conv: string | null; ui?: unknown; lexicon?: string; install?: WhisperInstall | null },
+): Promise<{
+  winner: Candidate<LocalTranscript>; verdict: Verdict; passes: 1 | 2; ms: number;
+  context: LanguageContext; attempts: Array<Record<string, unknown>>;
+} | null> {
+  return holdLocalModel(() => transcribeWithRetryHeld(wav, opts));
+}
+
+async function transcribeWithRetryHeld(
   wav: Buffer,
   opts: { cfg: { sttLanguage?: string; sttLanguages?: string[] }; conv: string | null; ui?: unknown; lexicon?: string; install?: WhisperInstall | null },
 ): Promise<{
@@ -605,6 +615,13 @@ export async function handleVoiceRetranscribe(req: IncomingMessage, res: ServerR
     // The owner's chosen model, and never one this Mac cannot carry or that failed to load.
     const route = resolveDictation();
     const install = route.engine === 'local' && !route.blocked ? route.install : null;
+    if (install) {
+      const pressure = await checkPressure();
+      if (pressure.pressed) {
+        sendJson(res, 409, { error: 'stt_pressure', message: `This Mac is ${pressure.why === 'heat' ? 'running hot' : 'short on memory'}; the speech model stays unloaded for now. Try again in a moment.` });
+        return;
+      }
+    }
     const pass = install ? await transcribeLocal(wav, { language, install, lexicon: buildVoiceLexicon(who.contextRoot) }) : null;
     if (!pass) {
       sendJson(res, 503, { error: 'stt_failed', message: 'Local transcription did not answer. Try again in a moment.' });

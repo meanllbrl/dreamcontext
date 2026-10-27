@@ -486,6 +486,23 @@ export async function transcribeLocal(
   }
 }
 
+/**
+ * Hold the model across several passes of ONE take (the retry ladder runs two): a pressure
+ * unload that arrives during pass 1 waits for the whole ladder, so pass 2 never cold-loads it.
+ */
+export async function holdLocalModel<T>(fn: () => Promise<T>): Promise<T> {
+  inFlight += 1;
+  try {
+    return await fn();
+  } finally {
+    inFlight -= 1;
+    if (inFlight === 0 && unloadWhenIdle) {
+      console.info('[voice:stt] machine under load: unloading the local model after the take');
+      stopWhisperServer();
+    }
+  }
+}
+
 async function decode(
   wav: Buffer,
   install: WhisperInstall,

@@ -4,6 +4,14 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.35.2] - 2026-10-27
+
+Two features on top of 0.35.1, plus two voice fixes. Local build; not published.
+
+- **MCP management.** One local MCP store for every Claude account, live per-server status read from each chat's own process, a connect card the agent can send when a sign-in goes stale, a `/mcp` popover in Chat, and a Settings matrix (every server by every account) with probes, sign-ins and store edits.
+- **AI Team: one continuous history.** A teammate's stage draws its whole history, every routine run and every talk, as one paged flow above the composer. This replaces the 0.35.1 "open where the messages are" fix, which is no longer needed.
+- **Dictation under memory pressure.** The second pass of the retry ladder no longer reloads a model the Mac just asked to unload, and `dreamcontext voice retry` answers `stt_pressure` instead of cold-loading it.
+
 ## [0.35.1] - 2026-10-27
 
 Nine fixes on top of 0.35.0. Local build; not published.
