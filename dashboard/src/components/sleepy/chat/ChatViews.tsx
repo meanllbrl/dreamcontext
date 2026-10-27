@@ -7,6 +7,7 @@ import { postToSession } from './postToSession';
 import type { ChatSegment } from './chatActions';
 import { SecretCard } from './SecretCard';
 import { RunCard } from './RunCard';
+import { McpCard } from './McpCard';
 import { AgentThreadCard } from './AgentThreadCard';
 import { HtmlView, HtmlPending } from './HtmlView';
 import { InsightView } from './InsightView';
@@ -63,7 +64,7 @@ export function ChatBlockSegment({ segment, conversationId, session, report }: {
     case 'view': {
       const sink = session ? (text: string) => postToSession(session, text) : report;
       return conversationId || sink
-        ? <ChatViewItem view={segment.view} conversationId={conversationId} report={sink} />
+        ? <ChatViewItem view={segment.view} conversationId={conversationId} report={sink} session={session} />
         : null;
     }
     // A `dream-html` gets the block-sized slot it is about to fill; a `dream-view` keeps the
@@ -91,10 +92,12 @@ export function ChatViewNotices({ notices }: { notices: string[] }) {
   );
 }
 
-function ChatViewItem({ view, conversationId, report }: {
+function ChatViewItem({ view, conversationId, report, session }: {
   view: ChatViewSpec;
   conversationId?: string;
   report?: (text: string) => void;
+  /** The live session: the `mcp` card reads its live MCP status and drives its sign-ins. */
+  session?: ChatSession;
 }) {
   switch (view.type) {
     case 'insight':
@@ -110,6 +113,10 @@ function ChatViewItem({ view, conversationId, report }: {
       return <SecretCard spec={view} report={report} />;
     case 'run':
       return <RunCard spec={view} report={report} />;
+    // The chat's own live MCP status, a row per server the agent needs (task mcp-management).
+    // It reports once, when all are connected or the owner continues without them.
+    case 'mcp':
+      return <McpCard spec={view} session={session} conversationId={conversationId} report={report} />;
     // DERIVED FROM DISK, like `insight` above: the agent names its own channel and the app
     // draws the thread, so a retyped exchange cannot fork the file the Agents page reads.
     // It takes no `session` — a reply here goes to the AGENT's session over HTTP, not back

@@ -71,7 +71,7 @@ describe('parseViewBlock — the retired chart/page types', () => {
   it('is gone from VIEW_TYPES, so the briefing lockstep can never re-name it', () => {
     expect(VIEW_TYPES as readonly string[]).not.toContain('chart');
     expect(VIEW_TYPES as readonly string[]).not.toContain('page');
-    expect([...VIEW_TYPES]).toEqual(['insight', 'checklist', 'secret', 'run', 'pin', 'progress', 'checkout', 'agent-thread', 'title']);
+    expect([...VIEW_TYPES]).toEqual(['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'progress', 'checkout', 'agent-thread', 'title']);
   });
 });
 
@@ -457,5 +457,21 @@ describe('unslug — a tab name reads, it does not drown in dashes', () => {
     const { cleanTabTitle } = await import('../../dashboard/src/lib/chatViewSpec');
     expect(cleanTabTitle('Plan - Develop geçişi')).toBe('Plan - Develop geçişi');
     expect(cleanTabTitle('Sekme adlandırma')).toBe('Sekme adlandırma');
+  });
+});
+
+describe('type: mcp (task mcp-management)', () => {
+  const parse = (o: unknown) => parseViewBlock(JSON.stringify(o));
+  it('a valid card keeps its names in order, deduplicated, why capped at 160', () => {
+    const r = parse({ type: 'mcp', id: 'report-sources', why: 'w'.repeat(200), servers: ['posthog', 'claude.ai Gmail', 'posthog'] });
+    expect(r.view).toEqual({ type: 'mcp', id: 'report-sources', why: 'w'.repeat(160), servers: ['posthog', 'claude.ai Gmail'] });
+  });
+  it('refused: a bad id, no usable server, more than 8; an option-looking name is dropped with a notice', () => {
+    expect(parse({ type: 'mcp', id: 'bad id', servers: ['a'] }).view).toBeNull();
+    expect(parse({ type: 'mcp', id: 'x', servers: [] }).view).toBeNull();
+    expect(parse({ type: 'mcp', id: 'x', servers: Array.from({ length: 9 }, (_, i) => `s${i}`) }).view).toBeNull();
+    const r = parse({ type: 'mcp', id: 'x', servers: ['--help', 'ok', 'a\nb'] });
+    expect(r.view).toEqual({ type: 'mcp', id: 'x', servers: ['ok'] });
+    expect(r.notices.join(' ')).toContain('dropped');
   });
 });

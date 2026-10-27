@@ -1,9 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
-import { isDesktop } from '../desktop.js';
-import { isLoopback, projectRootOf } from './agent-spawn-shared.js';
+import { projectRootOf, requireOwnerWindow } from './agent-spawn-shared.js';
+import { storeServers } from '../../lib/mcp-store.js';
 import {
-  machineMcpServers, planAdoption, projectMcpBroken, projectMcpPath, rawProjectServers,
+  literalSecretsIn, machineMcpServers, planAdoption, projectMcpBroken, projectMcpPath, rawProjectServers,
   readProjectMcp, maskTarget, writeProjectMcp, type ProjectMcpServer,
 } from '../../lib/mcp-project.js';
 
@@ -26,10 +26,9 @@ import {
  */
 
 function guard(req: IncomingMessage, res: ServerResponse, contextRoot: string | null): boolean {
-  if (!isDesktop() || !isLoopback(req)) {
-    sendError(res, 403, 'forbidden', 'MCP servers are managed from the desktop app only.');
-    return false;
-  }
+  // The owner's own window only (task mcp-management): this route writes a file every
+  // teammate's Claude Code runs, so a DNS-rebinding page that is loopback must not get in.
+  if (!requireOwnerWindow(req, res)) return false;
   if (!contextRoot) {
     sendError(res, 400, 'no_vault', 'This request needs a project.');
     return false;
@@ -48,9 +47,18 @@ interface McpCandidate {
   urlCarriedSecret: boolean;
 }
 
+/** The servers a project can adopt: dreamcontext's stores (computer + this project), then any
+ *  Claude Code user-scope server not in them. */
+function machinePool(projectRoot: string): Record<string, Record<string, unknown>> {
+  const pool: Record<string, Record<string, unknown>> = Object.create(null) as Record<string, Record<string, unknown>>;
+  for (const [name, def] of storeServers(projectRoot)) pool[name] = def;
+  for (const [name, def] of Object.entries(machineMcpServers())) if (!(name in pool)) pool[name] = def;
+  return pool;
+}
+
 function candidates(projectRoot: string): McpCandidate[] {
   const already = new Set(Object.keys(rawProjectServers(projectRoot)));
-  return Object.entries(machineMcpServers())
+  return Object.entries(machinePool(projectRoot))
     .filter(([name]) => !already.has(name))
     .map(([name, raw]) => {
       const plan = planAdoption(name, raw);
@@ -115,7 +123,7 @@ export async function handleAgentMcpProjectAdopt(
     return;
   }
   const projectRoot = projectRootOf(contextRoot as string);
-  const machine = machineMcpServers()[name];
+  const machine = Object.hasOwn(machinePool(projectRoot), name) ? machinePool(projectRoot)[name] : undefined;
   if (!machine) {
     sendError(res, 404, 'not_on_this_machine', 'This machine has no MCP server by that name.');
     return;
@@ -128,6 +136,15 @@ export async function handleAgentMcpProjectAdopt(
     sendError(res, 409, 'url_carries_secret',
       'This server\'s URL contains its own access token, so sharing it would publish that token. '
       + 'Move the token into an environment variable and re-add the server with a ${VAR} in the URL.');
+    return;
+  }
+
+  // A literal key in a URL query or a stdio argument cannot be turned into a `${VAR}` safely
+  // (security review r1): refused, named, never written.
+  const literal = literalSecretsIn(plan.definition);
+  if (literal.length) {
+    sendError(res, 409, 'literal_secret',
+      `Refused: ${literal.join(', ')} would publish a literal secret. Put it in an environment variable and reference it as \${VAR}.`);
     return;
   }
 

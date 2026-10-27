@@ -57,7 +57,9 @@ import {
 } from '../../lib/claude-accounts.js';
 import { ensureSandbox } from '../../lib/claude-account-sandbox.js';
 import { mcpStoreFiles, storeFileRefs } from '../../lib/mcp-store.js';
-import { McpControl, routeChildLine } from '../../lib/mcp-live.js';
+import { McpControl, isSafeAuthUrl, redactContextFor, redactStatus, routeChildLine, writeStatusCache } from '../../lib/mcp-live.js';
+import { removeMcpHealth, writeMcpHealth } from '../../lib/mcp-health.js';
+import { isUsableServerName, type McpLiveServer } from '../../lib/mcp-wire.js';
 import { probeAccountForDecision, type ProbeOutcome } from '../../lib/claude-usage-probe.js';
 import { readUsageLimits, usageReadingIsCurrent, type UsageLimitsResponse } from '../../lib/claude-usage.js';
 import {
@@ -103,7 +105,7 @@ import {
 } from './agent-chat-live.js';
 import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOptions, type ParkOutcome } from '../chat-park.js';
 import {
-  isLoopback, isSameOriginStrict, isCrossSiteRequest, requireLocalDesktop, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
+  isLoopback, isSameOriginStrict, isCrossSiteRequest, requireLocalDesktop, requireOwnerWindow, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizeChatMode, sanitizePrompt, sanitizeAccountId,
   claudeConversationExists, redeemPromptToken, findFirstTranscriptPath,
 } from './agent-spawn-shared.js';
@@ -742,6 +744,19 @@ export const DEVICE_REVOKED_CLOSE = 4401;
 export interface DeviceTag { store: 'mac'; idHash: string }
 
 const socketDevice = new WeakMap<object, DeviceTag>();
+/** How long a chat waits on a browser sign-in, and how often it asks meanwhile. */
+const MCP_CONNECT_WINDOW_MS = 5 * 60_000;
+const MCP_CONNECT_POLL_MS = 3000;
+/** Sockets that were a desktop loopback peer AT THEIR UPGRADE (task mcp-management): the only
+ *  ones that may start an MCP sign-in. `socketDevice` tags phone sockets only, so this is the
+ *  positive mark; a tailnet peer or a phone never gets it. */
+const socketLoopback = new WeakMap<object, boolean>();
+/** May the socket holding a chat right now drive its MCP actions? Desktop + loopback only. */
+export function mcpSocketAllowed(ws: object): boolean {
+  return !socketDevice.has(ws) && socketLoopback.get(ws) === true;
+}
+/** Tests only. */
+export function markSocketLoopbackForTests(ws: object, loopback: boolean): void { socketLoopback.set(ws, loopback); }
 /** Whether a phone socket last said its chat is visible on screen (`{type:'visibility'}`). */
 const socketVisible = new WeakMap<object, boolean>();
 
@@ -1210,6 +1225,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       const deviceTag: DeviceTag | null = deviceHash ? { store: 'mac', idHash: deviceHash } : null;
       wss.handleUpgrade(req, socket, head, (ws) => {
         if (deviceTag) tagDeviceSocket(ws, deviceTag);
+        socketLoopback.set(ws, !phone && isLoopback(req));
         if (adoptable && passive) {
           void passiveAdopt(adoptable, ws).then((outcome) => {
             if (outcome === 'aborted') { settleSupersede(false); return; }
@@ -2376,6 +2392,115 @@ export function startChatSession(
    *  `mcp_reconnect`. Its replies are consumed by the stdout loop, never relayed. */
   const mcpControl = new McpControl((frame) => writeStdin(frame));
 
+  // ── MCP live status (task mcp-management) ─────────────────────────────────────────────
+  // Read from THIS child (`mcp_status`), redacted, then: pushed to the socket, written to the
+  // tab's health file (the hook's source; pinned chats only), and recorded in the account's
+  // status cache. Polled at spawn until nothing is still connecting (20 s), after each turn,
+  // and while a sign-in is in flight. None for a scoped card (it has no MCP).
+  const mcpTab = !isAssistant && !card && pinId && idArg.length ? pinId : '';
+  const mcpAccount = activeAccountId || (listClaudeAccounts().length ? '' : 'default');
+  let mcpLast: McpLiveServer[] | null = null;
+  let mcpLastAt = 0;
+  let mcpSettleTimer: ReturnType<typeof setTimeout> | null = null;
+  let mcpTurnTimer: ReturnType<typeof setTimeout> | null = null;
+  let mcpConnecting: string | null = null;
+  const mcpPublish = (servers: McpLiveServer[]): void => {
+    mcpLast = servers;
+    mcpLastAt = Date.now();
+    sendMeta({ subtype: 'mcp_status', servers, at: mcpLastAt });
+    if (mcpTab) writeMcpHealth(contextRoot, mcpTab, servers);
+    if (mcpAccount) {
+      try { writeStatusCache(mcpAccount, servers, redactContextFor(projectRoot)); } catch { /* shown anyway */ }
+    }
+  };
+  const mcpPoll = async (): Promise<McpLiveServer[] | null> => {
+    if (!alive || scopedCard) return null;
+    try {
+      const servers = redactStatus(await mcpControl.status(), redactContextFor(projectRoot));
+      if (alive) mcpPublish(servers);
+      return servers;
+    } catch { return null; }
+  };
+  /** Poll every 2 s until nothing is `pending`, for at most `windowMs`. One loop at a time. */
+  const mcpSettle = (windowMs = 20_000): void => {
+    if (scopedCard) return;
+    if (mcpSettleTimer) clearTimeout(mcpSettleTimer);
+    const until = Date.now() + windowMs;
+    const tick = async () => {
+      mcpSettleTimer = null;
+      const servers = await mcpPoll();
+      if (!alive) return;
+      if ((!servers || servers.some((x) => x.status === 'pending')) && Date.now() < until) mcpSettleTimer = setTimeout(() => { void tick(); }, 2000);
+    };
+    void tick();
+  };
+  const mcpStop = (): void => {
+    if (mcpSettleTimer) { clearTimeout(mcpSettleTimer); mcpSettleTimer = null; }
+    if (mcpTurnTimer) { clearTimeout(mcpTurnTimer); mcpTurnTimer = null; }
+    mcpConnecting = null;
+    if (mcpTab) removeMcpHealth(contextRoot, mcpTab);
+  };
+  /** A sign-in through this child's own CLI: the browser URL it waits on, then its status every
+   *  3 s for 5 min; one `mcp_reconnect` at the end, then `timeout`. One at a time per chat. */
+  const mcpConnect = async (name: string): Promise<void> => {
+    if (mcpConnecting) { sendMeta({ subtype: 'mcp_connect', name, state: 'busy' }); return; }
+    mcpConnecting = name;
+    sendMeta({ subtype: 'mcp_connect', name, state: 'opening' });
+    try {
+      let authUrl: unknown = null;
+      try { authUrl = (await mcpControl.request('mcp_authenticate', { serverName: name })).authUrl; } catch { authUrl = null; }
+      const host = isSafeAuthUrl(authUrl);
+      // Only the desktop window opens it: a socket a phone took over meanwhile gets no URL.
+      if (host && mcpSocketAllowed(ws)) sendMeta({ subtype: 'mcp_auth_url', name, url: String(authUrl), host });
+      sendMeta({ subtype: 'mcp_connect', name, state: 'waiting' });
+      const deadline = Date.now() + MCP_CONNECT_WINDOW_MS;
+      let reconnected = false;
+      while (alive && mcpConnecting === name) {
+        await new Promise((r) => setTimeout(r, MCP_CONNECT_POLL_MS));
+        const servers = await mcpPoll();
+        if (servers?.find((x) => x.name === name)?.status === 'connected') {
+          sendMeta({ subtype: 'mcp_connect', name, state: 'connected' });
+          return;
+        }
+        if (Date.now() >= deadline) {
+          if (!reconnected) {
+            reconnected = true;
+            try { await mcpControl.request('mcp_reconnect', { serverName: name }); } catch { /* reported below */ }
+            continue;
+          }
+          sendMeta({ subtype: 'mcp_connect', name, state: 'timeout' });
+          return;
+        }
+      }
+    } finally {
+      if (mcpConnecting === name) mcpConnecting = null;
+    }
+  };
+  // Right after spawn most servers are still `pending`: read until they settle (≤ 20 s).
+  if (!scopedCard) setImmediate(() => mcpSettle());
+
+  /** The socket's MCP verbs. Refused unless the socket holding the chat RIGHT NOW is the desktop. */
+  const onMcpMessage = (msg: { type?: string; name?: unknown }): void => {
+    if (!mcpSocketAllowed(ws)) {
+      sendMeta({ subtype: 'mcp_error', code: 'mcp_desktop_only', message: 'MCP sign-in runs from the desktop app only.' });
+      return;
+    }
+    if (msg.type === 'mcpRefresh') { mcpSettle(); return; }
+    if (!isUsableServerName(msg.name)) {
+      sendMeta({ subtype: 'mcp_error', code: 'bad_server_name', message: 'That is not a usable MCP server name.' });
+      return;
+    }
+    const name = msg.name;
+    if (msg.type === 'mcpConnect') { void mcpConnect(name); return; }
+    void (async () => {
+      sendMeta({ subtype: 'mcp_connect', name, state: 'opening' });
+      try { await mcpControl.request('mcp_reconnect', { serverName: name }); } catch { /* the status says how it went */ }
+      mcpSettle();
+      const servers = await mcpPoll();
+      sendMeta({ subtype: 'mcp_connect', name, state: servers?.find((x) => x.name === name)?.status === 'connected' ? 'connected' : 'failed' });
+    })();
+  };
+
   /** Hand one OWNER message to the CLI as a turn — the socket's user frame, and a held message
    *  released by `releaseStalledSwitch`. */
   const writeOwnerTurn = (text: string): void => {
@@ -2696,6 +2821,7 @@ export function startChatSession(
       try { ws.send(line); } catch { /* closing */ }
     }
     if (handoffRun) sendMeta(handoffProgressFrame(handoffRun));
+    if (mcpLast) sendMeta({ subtype: 'mcp_status', servers: mcpLast, at: mcpLastAt });
     browserMirror?.replay();
     // A switch announced to the socket that went away is still owed: the client that just
     // arrived never read it, and without it the held messages wait for a restart nobody asks for.
@@ -2864,6 +2990,11 @@ export function startChatSession(
 
       if (mainResult) {
         closeTurn();
+        // The turn may have used, broken or fixed an MCP server: read again once it settles.
+        if (!scopedCard) {
+          if (mcpTurnTimer) clearTimeout(mcpTurnTimer);
+          mcpTurnTimer = setTimeout(() => { mcpTurnTimer = null; mcpSettle(10_000); }, 2000);
+        }
         // An autonomy change waited for this boundary.
         // Through scheduleRespawn, never straight to respawnInPlace: a message may still be
         // deciding in the switch gate (an account probe takes seconds), and ending stdin under
@@ -2997,6 +3128,7 @@ export function startChatSession(
   });
 
   child.on('close', (code) => {
+    mcpStop();
     mcpControl.close();
     teardown();
     // Before the respawn's early return too: a successor starts with no handoff run, so nothing
@@ -3740,6 +3872,9 @@ export function startChatSession(
     // The client is closing this pane on purpose (a closed tab, a respawn): the socket's close
     // that follows ends the child as it always did, instead of detaching it for a reattach.
     if (msg.type === 'end') { endOnSocketGone = true; return; }
+
+    // MCP status and sign-in (task mcp-management), desktop-held sockets only.
+    if (msg.type === 'mcpConnect' || msg.type === 'mcpReconnect' || msg.type === 'mcpRefresh') { onMcpMessage(msg as { type: string; name?: unknown }); return; }
 
     // The phone says whether this chat is on its screen (D2): a push for it skips that device
     // while it is. Only a phone socket's word counts; the laptop sends none.
@@ -4589,16 +4724,9 @@ export async function handleAgentGrant(
   sendJson(res, 200, { granted: true, path: target });
 }
 
-/** The owner's own window: desktop app, this machine, a loopback Host, and this very origin
- *  (port included). A page on another loopback port (an approved dev server in a web card)
- *  can neither read nor write a grant (T0, AC3). Sends the 403. */
+/** A web card's grants are the owner window's alone (T0, AC3): `requireOwnerWindow`. */
 function requireGrantOwner(req: IncomingMessage, res: ServerResponse): boolean {
-  if (!requireLocalDesktop(req, res)) return false;
-  if (!isSameOriginStrict(req) || isCrossSiteRequest(req)) {
-    sendError(res, 403, 'forbidden', 'Only this app\'s own window can change what a web card may load.');
-    return false;
-  }
-  return true;
+  return requireOwnerWindow(req, res, 'Only this app\'s own window can change what a web card may load.');
 }
 
 function vaultRealPath(contextRoot: string): string {

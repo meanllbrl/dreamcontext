@@ -37,3 +37,67 @@ describe('hook — the MCP probe child', () => {
     }
   });
 });
+
+describe('the MCP block the prompt hook adds (W2)', async () => {
+  const { mkdtempSync, rmSync, existsSync: exists, readFileSync: read } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { mcpHealthBlock, writeMcpHealth, removeMcpHealth, mcpHealthDir } = await import('../../src/lib/mcp-health.js');
+  const TAB = '11111111-2222-4333-8444-555555555555';
+  type Row = { name: string; status: 'connected' | 'needs-auth' | 'pending' | 'failed'; home: 'computer' | 'claudeai'; transport: string };
+  const row = (name: string, status: Row['status'], home: Row['home'] = 'computer'): Row => ({ name, status, home, transport: 'http' });
+
+  const withVault = (fn: (contextRoot: string) => void) => {
+    const project = mkdtempSync(join(tmpdir(), 'dc-mcp-health-'));
+    const contextRoot = join(project, '_dream_context');
+    try { fn(contextRoot); } finally { rmSync(project, { recursive: true, force: true }); }
+  };
+
+  it('says it once per changed set; pending is ignored; silent when all connected', () => {
+    withVault((root) => {
+      writeMcpHealth(root, TAB, [row('posthog', 'needs-auth'), row('stitch', 'pending'), row('claude.ai Gmail', 'needs-auth', 'claudeai')]);
+      const first = mcpHealthBlock(root, TAB)!;
+      expect(first).toContain('"claude.ai Gmail" (needs sign-in, claude.ai)');
+      expect(first).toContain('"posthog" (needs sign-in, this computer)');
+      expect(first).not.toContain('stitch');
+      expect(first).toContain('`mcp` card');
+      expect(mcpHealthBlock(root, TAB)).toBeNull();
+      writeMcpHealth(root, TAB, [row('posthog', 'needs-auth'), row('stitch', 'failed'), row('claude.ai Gmail', 'needs-auth', 'claudeai')]);
+      expect(mcpHealthBlock(root, TAB)).toContain('"stitch" (failed, this computer)');
+      writeMcpHealth(root, TAB, [row('posthog', 'connected'), row('stitch', 'connected')]);
+      expect(mcpHealthBlock(root, TAB)).toBeNull();
+      // Broken again after being fine: said again.
+      writeMcpHealth(root, TAB, [row('posthog', 'needs-auth')]);
+      expect(mcpHealthBlock(root, TAB)).toContain('posthog');
+      // The directory is gitignored before its first write.
+      expect(read(join(root, '..', '.gitignore'), 'utf-8')).toContain('_dream_context/state/.mcp-health/');
+    });
+  });
+
+  it('names are quoted, control characters stripped, 60 chars at most, 8 names then "+N more"', () => {
+    withVault((root) => {
+      const names = Array.from({ length: 10 }, (_, i) => `srv${i}`);
+      writeMcpHealth(root, TAB, [row(`evil"\nname${'x'.repeat(80)}`, 'failed'), ...names.map((n) => row(n, 'needs-auth'))]);
+      const b = mcpHealthBlock(root, TAB)!;
+      expect(b).not.toContain('\n');
+      expect(b).toContain(`"evil' name${'x'.repeat(49)}…"`);
+      expect(b).toContain('+3 more');
+      expect((b.match(/\(needs sign-in|\(failed/g) ?? []).length).toBe(8);
+    });
+  });
+
+  it('an unpinned or malformed tab says nothing; the file dies with the chat', () => {
+    withVault((root) => {
+      expect(mcpHealthBlock(root, undefined)).toBeNull();
+      writeMcpHealth(root, '../escape', [row('posthog', 'needs-auth')]);
+      expect(exists(mcpHealthDir(root))).toBe(false);
+      writeMcpHealth(root, TAB, [row('posthog', 'needs-auth')]);
+      removeMcpHealth(root, TAB);
+      expect(mcpHealthBlock(root, TAB)).toBeNull();
+    });
+  });
+
+  it('the prompt hook prints the block for its pinned tab (wired in user-prompt-submit)', () => {
+    const body = actionOf('user-prompt-submit');
+    expect(body).toContain('mcpHealthBlock(root, process.env.DREAMCONTEXT_TAB_SESSION)');
+  });
+});

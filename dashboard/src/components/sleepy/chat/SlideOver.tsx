@@ -11,7 +11,6 @@ import {
 import { peerForAgent, type PeerMention } from '../../../lib/agentComposer';
 import { FileUnavailable } from './FileUnavailable';
 import { MediaEmbed } from './MediaEmbed';
-import { McpPanel, type McpPanelProps } from './McpPanel';
 import { FileActions } from './FileActions';
 import { AgentAvatar, QuestBadge, VerdictChip } from './atoms';
 import { stepStretches } from './toolAction';
@@ -65,7 +64,7 @@ export interface SlideOverShellProps {
   onNavApp: (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string) => void;
 }
 export type SlideOverProps =
-  | SlideOverFileProps | SlideOverSubAgentProps | SlideOverShellProps | McpPanelProps;
+  | SlideOverFileProps | SlideOverSubAgentProps | SlideOverShellProps;
 
 // ─── File mode ──────────────────────────────────────────────────────────────────────
 
@@ -664,7 +663,6 @@ export function SlideOver(props: SlideOverProps) {
           {/* `/mcp`, typed in the composer. The fourth mode rather than a transcript card:
               this is a live view of the CLI's state that the user acts on and closes, not a
               thing that happened at a point in the conversation. */}
-          {props.mode === 'mcp' && <McpPanel {...props} />}
         </PanelBoundary>
       </div>
     </div>

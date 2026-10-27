@@ -2817,6 +2817,18 @@ export function registerHookCommand(program: Command): void {
       const root = resolveContextRoot();
       if (!root) process.exit(0);
 
+      // ── MCP servers this chat cannot use (task mcp-management) ──────────────
+      // The chat server writes its live MCP status per pinned tab; one block, only when the
+      // set of servers needing a sign-in or failed changed since it was last said. The agent
+      // sends a `mcp` card only if its task needs one. Nested-guarded like the lines above.
+      try {
+        if (process.env.DREAMCONTEXT_TAB_SESSION && !isNestedClaudeHook()) {
+          const { mcpHealthBlock } = await import('../../lib/mcp-health.js');
+          const block = mcpHealthBlock(root, process.env.DREAMCONTEXT_TAB_SESSION);
+          if (block) console.log(block);
+        }
+      } catch { /* advisory — must never break the prompt path */ }
+
       // ── A whiteboard agent card: the board, fresh, beside this message ────
       // Only a card session's child carries the two env vars (card-chat.ts), so
       // every other chat stays silent. Before the sleep-lock return: the board is

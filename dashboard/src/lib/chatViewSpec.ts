@@ -33,11 +33,11 @@
 // Types
 // ---------------------------------------------------------------------------------------
 
-export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'pin', 'progress', 'checkout', 'agent-thread', 'title'] as const;
+export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'progress', 'checkout', 'agent-thread', 'title'] as const;
 export type ChatViewType = typeof VIEW_TYPES[number];
 
 export type ChatViewSpec =
-  InsightViewSpec | ChecklistViewSpec | SecretViewSpec | RunViewSpec
+  InsightViewSpec | ChecklistViewSpec | SecretViewSpec | RunViewSpec | McpViewSpec
   | PinViewSpec | ProgressViewSpec | CheckoutViewSpec | AgentThreadViewSpec | TitleViewSpec;
 
 /**
@@ -139,6 +139,20 @@ export interface RunViewSpec {
   why?: string;
   /** Project-relative working directory. Absent ⇒ the project root. */
   cwd?: string;
+}
+
+/**
+ * `type: "mcp"` — the MCP servers the agent's task needs and this chat cannot use (task
+ * mcp-management). Names only: the card draws the chat's OWN live status for each and the one
+ * button that brings it back; it reports `MCP connected: …` once, when all are green.
+ */
+export interface McpViewSpec {
+  type: 'mcp';
+  id: string;
+  /** 1-8 server names as the chat's status lists them. */
+  servers: string[];
+  /** One sentence: why the task needs them. */
+  why?: string;
 }
 
 /**
@@ -628,6 +642,45 @@ function validateRun(obj: Record<string, unknown>, notices: string[]): { view: C
 }
 
 // ---------------------------------------------------------------------------------------
+// type: "mcp"
+// ---------------------------------------------------------------------------------------
+
+const MCP_CARD_ID_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+const MAX_MCP_CARD_SERVERS = 8;
+/** The server's `isUsableServerName` (lib/mcpWire.ts): free-form, but never an option or a
+ *  control character. */
+// eslint-disable-next-line no-control-regex
+const MCP_NAME_CONTROL = /[\x00-\x1f\x7f]/;
+
+function validateMcp(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
+  const id = typeof obj.id === 'string' ? obj.id.trim() : '';
+  if (!MCP_CARD_ID_RE.test(id)) {
+    notices.push('An MCP card was skipped — its "id" is missing or contains characters other than letters, digits, ".", "_" and "-".');
+    return { view: null, notices };
+  }
+  const raw = Array.isArray(obj.servers) ? obj.servers : [];
+  const servers: string[] = [];
+  for (const n of raw) {
+    const name = typeof n === 'string' ? n.trim() : '';
+    if (!name || name.length > 200 || name.startsWith('-') || MCP_NAME_CONTROL.test(name)) continue;
+    if (!servers.includes(name)) servers.push(name);
+  }
+  if (!servers.length) {
+    notices.push('An MCP card was skipped — it names no server to connect.');
+    return { view: null, notices };
+  }
+  if (servers.length > MAX_MCP_CARD_SERVERS) {
+    notices.push(`An MCP card was skipped — it names more than ${MAX_MCP_CARD_SERVERS} servers.`);
+    return { view: null, notices };
+  }
+  if (servers.length < raw.length) notices.push('An MCP card dropped a server name it could not use.');
+  const view: McpViewSpec = { type: 'mcp', id, servers };
+  const why = optStr(obj.why, 160);
+  if (why) view.why = why;
+  return { view, notices };
+}
+
+// ---------------------------------------------------------------------------------------
 // type: "pin"
 // ---------------------------------------------------------------------------------------
 
@@ -939,6 +992,7 @@ export function parseViewBlock(json: string): { view: ChatViewSpec | null; notic
       case 'checklist': return validateChecklist(parsed, notices);
       case 'secret': return validateSecret(parsed, notices);
       case 'run': return validateRun(parsed, notices);
+      case 'mcp': return validateMcp(parsed, notices);
       case 'pin': return validatePin(parsed, notices);
       case 'progress': return validateProgress(parsed, notices);
       case 'checkout': return validateCheckout(parsed, notices);

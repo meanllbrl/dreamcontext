@@ -1,0 +1,95 @@
+/* `/mcp` — a popover above the composer (task mcp-management, picker-a). Positioned like the
+   slash menu (`.chat-cmp-slash`), wider rows: two lines each, one action at the right. */
+
+.mcp-picker {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% - 8px);
+  z-index: 31;
+  display: flex;
+  flex-direction: column;
+  max-height: min(420px, 60vh);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  box-shadow: var(--shadow-lg, 0 12px 32px rgba(0, 0, 0, 0.28));
+  overflow: hidden;
+}
+
+.mcp-picker-head,
+.mcp-picker-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  min-width: 0;
+}
+.mcp-picker-head { border-bottom: 1px solid var(--color-border); }
+.mcp-picker-head strong { color: var(--color-text); }
+.mcp-picker-head > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.mcp-picker-count { flex: 0 0 auto; }
+.mcp-picker-foot { border-top: 1px solid var(--color-border); }
+
+.mcp-picker-list { overflow-y: auto; padding: var(--space-1); display: flex; flex-direction: column; }
+.mcp-picker-empty { margin: 0; padding: var(--space-3); font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+
+.mcp-picker-group {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.mcp-picker-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: 8px;
+  min-width: 0;
+}
+.mcp-picker-row[data-active='true'] { background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
+
+.mcp-picker-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+}
+.mcp-picker-dot[data-status='connected'] { background: var(--color-success); }
+.mcp-picker-dot[data-status='needs-auth'] { background: var(--color-warning); }
+.mcp-picker-dot[data-status='failed'] { background: var(--color-error); }
+
+.mcp-picker-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.mcp-picker-name,
+.mcp-picker-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-picker-name { font-size: var(--font-size-sm, 13px); color: var(--color-text); }
+.mcp-picker-sub { font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+
+.mcp-picker-actions { flex: 0 0 auto; display: flex; gap: var(--space-1); }
+.mcp-picker-icon { min-width: 28px; justify-content: center; }
+
+.mcp-picker-keys { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+.mcp-picker-keys kbd {
+  padding: 0 5px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.mcp-picker-link {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.mcp-picker-link:hover { text-decoration: underline; }

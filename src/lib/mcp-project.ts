@@ -249,3 +249,33 @@ export function machineMcpServers(home: string = homedir()): Record<string, RawS
     return {};
   }
 }
+
+/** A flag or `name=` that announces a credential follows. */
+const SECRET_WORD = /(token|key|secret|pass(word)?|auth|bearer|credential)/i;
+/** A long opaque run of characters, the shape of an API key. */
+const OPAQUE = /^[A-Za-z0-9_\-]{24,}$/;
+
+/**
+ * Where a definition about to be committed still carries a literal secret OUTSIDE env/headers
+ * (which `planAdoption` already turns into references): a URL query value, or a stdio argument
+ * (`--api-key=…`, `--token …`, a bare opaque key). Returns where, never the value.
+ */
+export function literalSecretsIn(def: RawServer): string[] {
+  const out: string[] = [];
+  if (typeof def.url === 'string') {
+    try {
+      const u = new URL(def.url);
+      for (const [k, v] of u.searchParams) if (v && !isSafeToCommit(v)) out.push(`url query "${k}"`);
+      if (u.password || u.username) out.push('url credentials');
+    } catch { /* not a URL: nothing parsed out of it */ }
+  }
+  const args = Array.isArray(def.args) ? def.args.filter((a): a is string => typeof a === 'string') : [];
+  args.forEach((a, i) => {
+    const eq = a.indexOf('=');
+    if (eq > 0 && SECRET_WORD.test(a.slice(0, eq)) && !isSafeToCommit(a.slice(eq + 1))) { out.push(`argument ${i + 1}`); return; }
+    const prev = i > 0 ? args[i - 1] : '';
+    if (prev.startsWith('-') && !prev.includes('=') && SECRET_WORD.test(prev) && !a.startsWith('-') && !isSafeToCommit(a)) { out.push(`argument ${i + 1}`); return; }
+    if (OPAQUE.test(a) && !isSafeToCommit(a)) out.push(`argument ${i + 1}`);
+  });
+  return out;
+}
