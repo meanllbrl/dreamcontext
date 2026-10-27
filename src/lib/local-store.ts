@@ -142,8 +142,153 @@ export function recordStageHomeSession(projectRoot: string, agent: string, sessi
   return kept;
 }
 
+// ─── An agent's sessions on this machine (AI Team history) ──────────────────────
+
+/**
+ * Every conversation this machine opened with an agent: its stage's sessions and every Chat-tab
+ * talk. A NEW file rather than a reshaped `agent-stage.json`, which an older build would overwrite.
+ * `hadTurns` is set by the server's history reader the first time it finds the transcript, so a
+ * glance (opened, never spoken to) is pruned instead of probed forever.
+ */
+const SESSIONS_FILE = 'agent-sessions.json';
+/** Entries with turns kept per agent; the oldest go first. Turnless entries do not count. */
+export const AGENT_SESSIONS_CAP = 500;
+
+export interface AgentSessionEntry {
+  id: string;
+  at: string;
+  kind: 'stage' | 'chat';
+  hadTurns: boolean;
+}
+
+interface SessionsRecord {
+  agents: Record<string, AgentSessionEntry[]>;
+}
+
+const EMPTY_SESSIONS = (): SessionsRecord => ({ agents: {} });
+let corruptSessionsLogged = false;
+
+function cleanEntries(raw: unknown): AgentSessionEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: AgentSessionEntry[] = [];
+  for (const e of raw) {
+    if (!e || typeof e !== 'object') continue;
+    const { id, at, kind, hadTurns } = e as Partial<AgentSessionEntry>;
+    if (typeof id !== 'string' || !id || typeof at !== 'string') continue;
+    out.push({ id, at, kind: kind === 'stage' ? 'stage' : 'chat', hadTurns: hadTurns === true });
+  }
+  return out;
+}
+
+function readSessions(projectRoot: string, home?: string): SessionsRecord {
+  const path = filePath(projectRoot, SESSIONS_FILE, home);
+  const rec = readParsed<SessionsRecord | null>(path, null);
+  if (rec === null) {
+    // Missing is normal; present but unreadable is corrupt: read as empty, rewritten on the next write.
+    let present = false;
+    try { present = lstatSync(path).isFile(); } catch { /* missing */ }
+    if (present && !corruptSessionsLogged) {
+      corruptSessionsLogged = true;
+      console.warn(`[local-store] ${SESSIONS_FILE} is unreadable; reading it as empty.`);
+    }
+    return EMPTY_SESSIONS();
+  }
+  return rec;
+}
+
+function mutateSessions(
+  projectRoot: string,
+  agent: string,
+  home: string | undefined,
+  change: (list: AgentSessionEntry[]) => AgentSessionEntry[] | null,
+): void {
+  updateLocalJson<SessionsRecord>(projectRoot, SESSIONS_FILE, EMPTY_SESSIONS(), (cur) => {
+    const agents: Record<string, AgentSessionEntry[]> = {};
+    const src = cur.agents && typeof cur.agents === 'object' && !Array.isArray(cur.agents) ? cur.agents : {};
+    for (const [k, v] of Object.entries(src)) agents[k] = cleanEntries(v);
+    const next = change(agents[agent] ?? []);
+    if (next === null) return { agents: src as Record<string, AgentSessionEntry[]> };
+    if (next.length === 0) delete agents[agent]; else agents[agent] = next;
+    return { agents };
+  }, home);
+}
+
+/** This machine's sessions with `agent`, oldest first. Never throws. */
+export function listAgentSessions(projectRoot: string, agent: string, home?: string): AgentSessionEntry[] {
+  try {
+    return cleanEntries(readSessions(projectRoot, home).agents?.[agent]);
+  } catch {
+    return [];
+  }
+}
+
+/** Record an accepted conversation with `agent`. An UPSERT by id that keeps the first `at`, so a
+ *  respawn of the same session or a reopened Chat tab never adds a second entry. */
+export function recordAgentSession(
+  projectRoot: string,
+  agent: string,
+  id: string,
+  kind: 'stage' | 'chat',
+  home?: string,
+  now: Date = new Date(),
+): void {
+  if (!id) return;
+  mutateSessions(projectRoot, agent, home, (list) => {
+    if (list.some((e) => e.id === id)) return null;
+    const next = [...list, { id, at: now.toISOString(), kind, hadTurns: false }];
+    // The cap counts conversations that happened; turnless glances are pruned by the reader.
+    let withTurns = next.filter((e) => e.hadTurns).length;
+    while (withTurns > AGENT_SESSIONS_CAP) {
+      const i = next.findIndex((e) => e.hadTurns);
+      next.splice(i, 1);
+      withTurns--;
+    }
+    return next;
+  });
+}
+
+/** The history reader found `id`'s transcript: it is a conversation, never pruned as a glance. */
+export function markSessionHadTurns(projectRoot: string, agent: string, ids: readonly string[], home?: string): void {
+  if (ids.length === 0) return;
+  const want = new Set(ids);
+  mutateSessions(projectRoot, agent, home, (list) => {
+    if (!list.some((e) => want.has(e.id) && !e.hadTurns)) return null;
+    const next = list.map((e) => (want.has(e.id) ? { ...e, hadTurns: true } : e));
+    let withTurns = next.filter((e) => e.hadTurns).length;
+    while (withTurns > AGENT_SESSIONS_CAP) {
+      const i = next.findIndex((e) => e.hadTurns);
+      next.splice(i, 1);
+      withTurns--;
+    }
+    return next;
+  });
+}
+
+/** Drop turnless glances the reader confirmed have no transcript and are not live. */
+export function pruneAgentSessions(projectRoot: string, agent: string, ids: readonly string[], home?: string): void {
+  if (ids.length === 0) return;
+  const drop = new Set(ids);
+  mutateSessions(projectRoot, agent, home, (list) => {
+    if (!list.some((e) => drop.has(e.id) && !e.hadTurns)) return null;
+    return list.filter((e) => !(drop.has(e.id) && !e.hadTurns));
+  });
+}
+
+/** The stage's latest session from the index (null before any). */
+export function latestStageSession(projectRoot: string, agent: string, home?: string): string | null {
+  const stage = listAgentSessions(projectRoot, agent, home).filter((e) => e.kind === 'stage');
+  return stage.length ? stage[stage.length - 1].id : null;
+}
+
 /** The death of an agent's machine-local entries: deleted or renamed. Never throws. */
 export function forgetAgentLocal(projectRoot: string, agent: string, home?: string): void {
+  try {
+    if (listAgentSessions(projectRoot, agent, home).length > 0) {
+      mutateSessions(projectRoot, agent, home, () => []);
+    }
+  } catch {
+    // a stale entry only lists conversations nobody can open from this agent any more
+  }
   try {
     const rec = readLocalJson<StageRecord>(projectRoot, STAGE_FILE, { agents: {} }, home);
     if (!rec.agents?.[agent]) return;
@@ -157,8 +302,23 @@ export function forgetAgentLocal(projectRoot: string, agent: string, home?: stri
   }
 }
 
-/** An agent renamed: its stage home session follows it. Never throws. */
+/** An agent renamed: its stage home session and its session index follow it. Never throws. */
 export function renameAgentStage(projectRoot: string, from: string, to: string, home?: string): void {
+  try {
+    if (listAgentSessions(projectRoot, from, home).length > 0) {
+      updateLocalJson<SessionsRecord>(projectRoot, SESSIONS_FILE, EMPTY_SESSIONS(), (cur) => {
+        const agents = { ...(cur.agents ?? {}) };
+        const moved = cleanEntries(agents[from]);
+        const kept = cleanEntries(agents[to]);
+        const have = new Set(kept.map((e) => e.id));
+        agents[to] = [...kept, ...moved.filter((e) => !have.has(e.id))].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+        delete agents[from];
+        return { agents };
+      }, home);
+    }
+  } catch {
+    // the renamed agent's history starts over on this machine
+  }
   try {
     const rec = readLocalJson<StageRecord>(projectRoot, STAGE_FILE, { agents: {} }, home);
     if (!rec.agents?.[from]) return;

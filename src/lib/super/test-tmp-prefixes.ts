@@ -220,6 +220,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-heavy-heat-',
   'dc-heavy-slots-',
   'dc-hedge-',
+  'dc-hist-',
+  'dc-hist-home-',
   'dc-history-',
   'dc-hitl-',
   'dc-home-',

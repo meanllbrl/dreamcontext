@@ -40,8 +40,9 @@ import { recordAccountRejection } from '../../src/lib/claude-limit-rejections.js
 import type { ProbeOutcome } from '../../src/lib/claude-usage-probe.js';
 import { tickProject } from '../../src/lib/automations/tick.js';
 import type { RunOutcome } from '../../src/lib/automations/runner.js';
-import { localDir, projectKey, readStageHomeSession, recordStageHomeSession } from '../../src/lib/local-store.js';
-import { buildStageView, handleAgentsStage, handleAgentsUpdate, stageFileKind } from '../../src/server/routes/agents.js';
+import { listAgentSessions, localDir, projectKey, readStageHomeSession, recordAgentSession, recordStageHomeSession } from '../../src/lib/local-store.js';
+import { buildStageView, handleAgentsHistory, handleAgentsStage, handleAgentsUpdate, stageFileKind } from '../../src/server/routes/agents.js';
+import { registerLiveChat, unregisterLiveChat, type LiveChatEntry } from '../../src/server/routes/agent-chat-live.js';
 import { appendThreadEntry } from '../../src/lib/automations/threads.js';
 import {
   agentFigure, assignFigures, baseFigure, faceKey, FIGURE_TONES, fnv1a32,
@@ -441,15 +442,15 @@ describe('AC-A1-4 the stage', () => {
     expect(stageFileKind('shots/a.png')).toBe('image');
   });
 
-  it('homeHasTurns: false with no home and for a home opened but never spoken to, true once it has a transcript', () => {
+  it('homeSessionId: the latest stage session of the history index, falling back to the older record', () => {
     makeAgent();
-    expect(buildStageView(contextRoot, 'scout', NOW)!.homeHasTurns).toBe(false);
-    recordStageHomeSession(projectRoot, 'scout', 'sess-quiet-home');
-    expect(buildStageView(contextRoot, 'scout', NOW)!.homeHasTurns).toBe(false);
-    const dir = join(home, '.claude', 'projects', '-tmp-fictional-project');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'sess-quiet-home.jsonl'), '{"type":"user"}\n');
-    expect(buildStageView(contextRoot, 'scout', NOW)!.homeHasTurns).toBe(true);
+    expect(buildStageView(contextRoot, 'scout', NOW)!.homeSessionId).toBeNull();
+    recordStageHomeSession(projectRoot, 'scout', 'sess-old-home');
+    expect(buildStageView(contextRoot, 'scout', NOW)!.homeSessionId).toBe('sess-old-home');
+    recordAgentSession(projectRoot, 'scout', 'sess-stage-1', 'stage');
+    recordAgentSession(projectRoot, 'scout', 'sess-chat-1', 'chat');
+    expect(buildStageView(contextRoot, 'scout', NOW)!.homeSessionId).toBe('sess-stage-1');
+    expect('homeHasTurns' in buildStageView(contextRoot, 'scout', NOW)!).toBe(false);
   });
 
   it('the route is desktop-gated and 404s an unknown agent', async () => {
@@ -462,11 +463,86 @@ describe('AC-A1-4 the stage', () => {
     await handleAgentsStage(fakeReq(), open, { slug: 'scout' }, contextRoot);
     expect(open.status).toBe(200);
     expect(Object.keys(open.json().stage as object).sort()).toEqual(
-      ['autonomy', 'face', 'files', 'homeHasTurns', 'homeLive', 'homeSessionId', 'inbox', 'liveJobs', 'owner', 'reports', 'routines', 'slug', 'taskJobs', 'title'].sort(),
+      ['autonomy', 'face', 'files', 'homeLive', 'homeSessionId', 'inbox', 'liveJobs', 'owner', 'reports', 'routines', 'slug', 'taskJobs', 'title'].sort(),
     );
     const missing = fakeRes();
     await handleAgentsStage(fakeReq(), missing, { slug: 'nobody' }, contextRoot);
     expect(missing.status).toBe(404);
+  });
+});
+
+describe('the history route (AI Team history, W1 AC6)', () => {
+  const ID_TALK = '11111111-1111-4111-8111-111111111111';
+  const ID_HELD = '22222222-2222-4222-8222-222222222222';
+  const ID_GLANCE = '33333333-3333-4333-8333-333333333333';
+  const ID_LIVE_GLANCE = '44444444-4444-4444-8444-444444444444';
+  const transcript = (id: string, words: string) => {
+    const dir = join(home, '.claude', 'projects', '-tmp-fictional-project');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${id}.jsonl`), [
+      JSON.stringify({ type: 'user', uuid: `${id}-u`, timestamp: '2026-10-23T10:00:00.000Z', message: { content: words } }),
+      JSON.stringify({ type: 'assistant', timestamp: '2026-10-23T10:00:05.000Z', message: { content: [{ type: 'text', text: `re: ${words}` }] } }),
+    ].join('\n') + '\n');
+  };
+  const live = (id: string, held: boolean): LiveChatEntry => ({
+    conversationId: id, projectRoot, busy: false, turnStartedAt: null, lastTurnEndedAt: null,
+    adopt: () => false, supersede: () => () => {}, holder: () => (held ? ({} as never) : null),
+  });
+  const get = async (slug: string, query = '') => {
+    const res = fakeRes();
+    const req = fakeReq();
+    (req as unknown as { url: string }).url = `/api/agents/${slug}/history${query}`;
+    (req as unknown as { method: string }).method = 'GET';
+    await handleAgentsHistory(req, res, { slug }, contextRoot);
+    return res;
+  };
+
+  it('403 off-desktop, 404 unknown, the contract shape; a held talk waits; a not-live glance is pruned, a live one survives', async () => {
+    makeAgent();
+    appendThreadEntry(contextRoot, 'scout', { runId: '2026-10-23T08:00:00.000Z', kind: 'agent', text: 'Morning: nothing new.', via: 'runner' });
+    recordAgentSession(projectRoot, 'scout', ID_TALK, 'stage');
+    recordAgentSession(projectRoot, 'scout', ID_HELD, 'chat');
+    recordAgentSession(projectRoot, 'scout', ID_GLANCE, 'stage');
+    recordAgentSession(projectRoot, 'scout', ID_LIVE_GLANCE, 'chat');
+    transcript(ID_TALK, 'what did you find');
+    transcript(ID_HELD, 'still talking');
+
+    expect((await get('scout')).status).toBe(403);
+    process.env.DREAMCONTEXT_DESKTOP = '1';
+    expect((await get('nobody')).status).toBe(404);
+
+    const heldEntry = live(ID_HELD, true);
+    const glanceEntry = live(ID_LIVE_GLANCE, false);
+    registerLiveChat(heldEntry);
+    registerLiveChat(glanceEntry);
+    try {
+      const res = await get('scout');
+      expect(res.status).toBe(200);
+      const body = res.json() as { sessions: Array<Record<string, unknown>>; nextBefore: unknown; unreadCount: unknown };
+      expect(Object.keys(body).sort()).toEqual(['nextBefore', 'sessions', 'unreadCount']);
+      const keys = body.sessions.map((s) => s.key);
+      expect(keys).toContain(`talk::${ID_TALK}`);
+      expect(keys).not.toContain(`talk::${ID_HELD}`);
+      expect(keys.some((k) => String(k).startsWith('scout::'))).toBe(true);
+      const run = body.sessions.find((s) => String(s.key).startsWith('scout::'))!;
+      for (const k of ['key', 'kind', 'source', 'title', 'startedAt', 'lastAt', 'status', 'durationMs', 'newestId', 'unread', 'rows']) {
+        expect(run).toHaveProperty(k);
+      }
+      expect(body.unreadCount).toBe(1);
+      const ids = listAgentSessions(projectRoot, 'scout').map((e) => e.id);
+      expect(ids).not.toContain(ID_GLANCE);
+      expect(ids).toContain(ID_LIVE_GLANCE);
+      expect(listAgentSessions(projectRoot, 'scout').find((e) => e.id === ID_TALK)!.hadTurns).toBe(true);
+
+      unregisterLiveChat(heldEntry);
+      const after = (await get('scout')).json() as { sessions: Array<{ key: string }> };
+      expect(after.sessions.map((s) => s.key)).toContain(`talk::${ID_HELD}`);
+      const excluded = (await get('scout', `?exclude=${ID_TALK}`)).json() as { sessions: Array<{ key: string }> };
+      expect(excluded.sessions.map((s) => s.key)).not.toContain(`talk::${ID_TALK}`);
+    } finally {
+      unregisterLiveChat(heldEntry);
+      unregisterLiveChat(glanceEntry);
+    }
   });
 });
 

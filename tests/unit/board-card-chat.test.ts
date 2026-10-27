@@ -279,7 +279,8 @@ describe('prepareAgentChat', () => {
     if (!prep.ok) return;
     expect(prep.permissionArgs).toBeNull();
     expect(prep.env).toEqual({ [AGENT_CHAT_ENV]: 'board-pilot' });
-    expect(prep.briefing).toBe(agentChatBriefing(m, null));
+    expect(prep.briefing.startsWith(agentChatBriefing(m, null))).toBe(true);
+    expect(prep.briefing).toContain('dreamcontext agents history board-pilot --search <words>');
     expect(prep.briefing).toContain('You are "Board pilot" (the dreamcontext agent `board-pilot`), talking with the owner in a dreamcontext Chat tab.');
     expect(prep.briefing).toContain('Keep the board tidy.');
     expect(prep.briefing).toContain('dreamcontext automations learn board-pilot --lesson');

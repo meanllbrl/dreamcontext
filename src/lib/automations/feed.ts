@@ -486,10 +486,40 @@ export function buildFeedMessage(
     // Your OWN replies never make a message unread — the same rule
     // `threadUnread` applies, kept identical here so the chip counts and the
     // per-message bar can never disagree.
-    unread: ordered.some((e) => e.kind !== 'user' && (watermark === null || e.id > watermark)),
+    unread: runUnread(ordered, watermark).unread,
     newestId: newest?.id ?? null,
   };
 }
+
+/**
+ * ONE run's unread state against the slug's read watermark — the single rule the feed's chips,
+ * its per-message bars and the AI Team pane's history all count with, so no two of them can
+ * disagree about the same run.
+ *
+ * Your own replies (`kind: 'user'`) never make a run unread. A run with any unread entry counts
+ * as many MESSAGES as it has unread posts, and a run that posted nothing counts once (its card
+ * still says what happened). `newestId` is the run's newest entry of any kind, which is what the
+ * watermark advances to when the run has been seen.
+ */
+export function runUnread(
+  entries: readonly ThreadEntry[],
+  watermark: string | null,
+): { unread: boolean; unreadPosts: number; newestId: string | null } {
+  let newestId: string | null = null;
+  let fresh = 0;
+  let freshPosts = 0;
+  for (const e of entries) {
+    if (newestId === null || e.id > newestId) newestId = e.id;
+    if (e.kind === 'user' || (watermark !== null && e.id <= watermark)) continue;
+    fresh++;
+    if (e.kind === 'agent') freshPosts++;
+  }
+  return { unread: fresh > 0, unreadPosts: fresh > 0 ? Math.max(1, freshPosts) : 0, newestId };
+}
+
+/** How many newest DAY FILES (distinct days) the feed reads per slug — exported so the pane's
+ *  history counts unread inside exactly the feed's window. */
+export const FEED_UNREAD_DAYS = FEED_DAY_WINDOW;
 
 /**
  * The whole channel, oldest message first — the reading order of a chat, with
@@ -559,10 +589,7 @@ export function buildFeed(
     // rule as the store's own `threadUnread`. A run is unread here exactly when its
     // `message.unread` below is true, so the chip and the per-message bars still agree.
     let count = 0;
-    for (const runEntries of byRun.values()) {
-      const fresh = runEntries.filter((e) => e.kind !== 'user' && (watermark === null || e.id > watermark));
-      if (fresh.length > 0) count += Math.max(1, fresh.filter((e) => e.kind === 'agent').length);
-    }
+    for (const runEntries of byRun.values()) count += runUnread(runEntries, watermark).unreadPosts;
     if (count > 0) unreadBySlug[manifest.slug] = count;
     for (const [runId, runEntries] of byRun) {
       messages.push(

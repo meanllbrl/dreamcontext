@@ -109,6 +109,11 @@ export function threadDayPath(contextRoot: string, slug: string, date: Date | st
 
 /** A thread day file name: `<day>.md` (legacy, one machine) or `<day>-<machineId>.md`. */
 const THREAD_DAY_FILE = /^(\d{4}-\d{2}-\d{2})(?:-[0-9a-f]{12})?\.md$/;
+/** Is `name` a thread day file (any machine's, or the legacy one)? The agent history reader
+ *  lists the folder itself so it can cache each file's parse. */
+export function isThreadDayFile(name: string): boolean {
+  return THREAD_DAY_FILE.test(name);
+}
 
 // ─── Entry ids ───────────────────────────────────────────────────────────────
 
@@ -224,7 +229,7 @@ function parseEntry(json: string): ThreadEntry | null {
  * interleave, a hand edit, half a merge) must never cost the reader the rest of
  * the thread.
  */
-function parseDayFile(raw: string): ThreadEntry[] {
+export function parseDayFile(raw: string): ThreadEntry[] {
   const out: ThreadEntry[] = [];
   const lines = raw.split('\n');
   let i = 0;

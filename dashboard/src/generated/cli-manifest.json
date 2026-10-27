@@ -60,6 +60,18 @@
       ]
     },
     {
+      "path": "agents history",
+      "desc": "An agent's past runs and conversations, newest first (what the agent itself reads to remember)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--search",
+        "--before",
+        "--limit"
+      ]
+    },
+    {
       "path": "agents inbox",
       "desc": "What waits for you here: held secrets, tasks assigned outside the app, renamed agents, patterns to adopt",
       "args": []

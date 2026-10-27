@@ -117,12 +117,43 @@ export function userPromptOf(obj: unknown): string {
  * agent's turns (drop them — see the guard below), while in a SUB-AGENT's own file every entry
  * carries it and dropping them would empty the drill-in. Default false = parent.
  */
-export function parseTranscriptHistory(raw: string, opts: { sidechain?: boolean } = {}): ChatHistoryItem[] {
+export function parseTranscriptHistory(raw: string, opts: TranscriptHistoryOptions = {}): ChatHistoryItem[] {
+  return parseTranscriptHistoryEx(raw, opts).items;
+}
+
+export interface TranscriptHistoryOptions {
+  sidechain?: boolean;
+  /** Keep only these item kinds — filtered BEFORE the cap, so a conversation made mostly of tool
+   *  calls still returns its words from the start instead of a tail of tool rows. */
+  kinds?: readonly ChatHistoryItem['kind'][];
+  /** The cap (default {@link HISTORY_MAX_ITEMS}): the newest `max` items are kept. */
+  max?: number;
+}
+
+/** {@link parseTranscriptHistory}, plus whether the cap dropped older items. */
+export function parseTranscriptHistoryEx(
+  raw: string,
+  opts: TranscriptHistoryOptions = {},
+): { items: ChatHistoryItem[]; truncated: boolean } {
+  const all = parseAll(raw, opts);
+  const kinds = opts.kinds ? new Set(opts.kinds) : null;
+  const items = kinds ? all.filter((i) => kinds.has(i.kind)) : all;
+  const max = opts.max ?? HISTORY_MAX_ITEMS;
+  return items.length > max ? { items: items.slice(-max), truncated: true } : { items, truncated: false };
+}
+
+/** Words-only reads skip every line that cannot hold a user prompt or an assistant text
+ *  before paying for `JSON.parse` (a tool-heavy transcript is mostly tool results). */
+const WORD_LINE = /"type":\s*"(?:user|assistant)"|"queued_command"/;
+
+function parseAll(raw: string, opts: TranscriptHistoryOptions): ChatHistoryItem[] {
+  const wordsOnly = !!opts.kinds && opts.kinds.every((k) => k === 'user' || k === 'text');
   const items: ChatHistoryItem[] = [];
   const toolPos = new Map<string, number>(); // tool_use_id -> index in items
   for (const line of raw.split('\n')) {
     const s = line.trim();
     if (!s) continue;
+    if (wordsOnly && !WORD_LINE.test(s)) continue;
     let obj: {
       type?: unknown; uuid?: unknown; isMeta?: unknown; isSynthetic?: unknown;
       isSidechain?: unknown; timestamp?: unknown; subtype?: unknown; isCompactSummary?: unknown;
@@ -234,7 +265,7 @@ export function parseTranscriptHistory(raw: string, opts: { sidechain?: boolean 
     }
     // Every other entry type (system, summary, file-history-snapshot, …) — not transcript UI.
   }
-  return items.length > HISTORY_MAX_ITEMS ? items.slice(-HISTORY_MAX_ITEMS) : items;
+  return items;
 }
 
 /**
