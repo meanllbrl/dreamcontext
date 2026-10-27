@@ -4,6 +4,14 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.35.3] - 2026-10-27
+
+Three features on top of 0.35.2. Local build; not published.
+
+- **Open a whole group of pictures at once.** A stage group of images opens all together (Open all, double-click, back to the group); `super present <group>` does the same.
+- **Pictures are chips in the composer.** Each picture sits inline as a chip with a thumbnail, and on send every comment is paired with its own picture (Chat, Super, the phone's Hands-free). The agent briefing knows the pairing.
+- **A child's question reaches you at once.** A child job's question goes straight to the owner's job bar (Open its chat), a finished child reaches the Super within about 2 seconds, and the owner-message hold ends with the turn. Super briefing rev 14.
+
 ## [0.35.2] - 2026-10-27
 
 Two features on top of 0.35.1, plus two voice fixes. Local build; not published.
