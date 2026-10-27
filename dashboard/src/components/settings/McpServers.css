@@ -2,7 +2,9 @@
    grouped by where it lives; one column per Claude account; a status dot per cell. The table
    scrolls sideways on a narrow window rather than squeezing the dots. */
 
-.mcpm { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+/* `contain: inline-size`: the table's own min-width must not widen the settings column (on a
+   phone-width window it did, and the section clipped the account columns instead of scrolling). */
+.mcpm { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; width: 100%; contain: inline-size; }
 .mcpm-lede { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-sm, 13px); }
 .mcpm-muted { color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
 

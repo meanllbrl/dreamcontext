@@ -744,8 +744,10 @@ export const DEVICE_REVOKED_CLOSE = 4401;
 export interface DeviceTag { store: 'mac'; idHash: string }
 
 const socketDevice = new WeakMap<object, DeviceTag>();
-/** How long a chat waits on a browser sign-in, and how often it asks meanwhile. */
-const MCP_CONNECT_WINDOW_MS = 5 * 60_000;
+/** How long a chat waits on a browser sign-in (5 min), and how often it asks meanwhile. The env
+ *  knob exists for the browser verify script, which cannot wait five minutes for the fallback;
+ *  it is never shorter than 5 s. */
+const MCP_CONNECT_WINDOW_MS = Math.max(5000, Number(process.env.DREAMCONTEXT_MCP_CONNECT_WINDOW_MS) || 5 * 60_000);
 const MCP_CONNECT_POLL_MS = 3000;
 /** Sockets that were a desktop loopback peer AT THEIR UPGRADE (task mcp-management): the only
  *  ones that may start an MCP sign-in. `socketDevice` tags phone sockets only, so this is the
