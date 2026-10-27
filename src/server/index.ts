@@ -231,7 +231,7 @@ import { handleSuperPhoneAnswer, handleSuperPhoneQuestions } from './routes/supe
 import { handleSuperStageGet, handleSuperStageLayout, handleSuperStageSeen } from './routes/super-remote.js';
 import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentPhoneGrant, handleLoopbackGrantsGet, handleLoopbackGrantSet, handleWebSessionOpen, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
-import { handleAgentDrop } from './routes/agent-drop.js';
+import { handleAgentDrop, handleAgentDropPath } from './routes/agent-drop.js';
 import { handleNotificationsGet, handleNotifyPost } from './routes/notifications.js';
 import { handleAgentSecret } from './routes/agent-secret.js';
 import {
@@ -676,6 +676,8 @@ export function buildRouter(): Router {
   // Image drop → write under the active vault's temp dir (desktop-gated, vault-scoped:
   // NOT vault-agnostic, so it resolves contextRoot from the X-Dreamcontext-Vault header).
   router.post('/api/agent/drop', handleAgentDrop);
+  // A picture picked with the composer's "Attach files…": copied into the same drop dir.
+  router.post('/api/agent/drop-path', handleAgentDropPath);
   // The app's own routable banners + the machine's banner history (the Notifications
   // window). Desktop-gated like /drop; VAULT-AGNOSTIC — the history belongs to the
   // machine and a link names its own vault.

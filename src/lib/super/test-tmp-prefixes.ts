@@ -170,6 +170,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-doctor-shape-',
   'dc-doctor-snapshot-',
   'dc-download-',
+  'dc-droppath-',
   'dc-ds-',
   'dc-e2e-code-a-',
   'dc-e2e-code-b-',

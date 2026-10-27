@@ -217,6 +217,38 @@ export function stageUpload(convId: string, file: File, upload: (f: File) => Pro
   trackUpload(convId, upload(file).catch(() => null).then((path) => { settleAttachment(convId, id, path); }));
 }
 
+/** A picked path that is a picture: the kinds the drop route recognises by their bytes. */
+const PICKED_PICTURE_RE = /\.(png|jpe?g|gif|webp)$/i;
+
+/**
+ * Stage what the composer's "Attach files…" / "Attach folders…" picked (owner 2026-10-28). A
+ * picture becomes a chip IN the text at the caret, exactly as a pasted one: `copy` puts a picture
+ * from outside the project into its drop folder (where the chip and the sent bubble can show it;
+ * one inside the project comes back as its own path, the file the agent must work on) and
+ * `preview` names its thumbnail. A copy that is refused keeps the ORIGINAL path, so the agent still
+ * gets the picture it was given and only the thumbnail is missing. Anything else (a PDF, a zip, a
+ * folder) stays a path chip in the row above the box, as before. A send waits for the copies
+ * through {@link pendingUploads}.
+ */
+export function stagePicked(
+  convId: string, paths: readonly string[], kind: 'file' | 'folder',
+  copy: (path: string) => Promise<string | null>, preview: (path: string) => string,
+): void {
+  const baseName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
+  for (const p of paths) {
+    const id = nextAttachmentId();
+    if (kind !== 'file' || !PICKED_PICTURE_RE.test(p)) {
+      addAttachments(convId, [{ id, kind, path: p, name: baseName(p) }]);
+      continue;
+    }
+    addAttachments(convId, [{ id, kind: 'image', name: baseName(p), uploading: true, inline: true, pending: true }]);
+    trackUpload(convId, copy(p).catch(() => null).then((copied) => {
+      if (copied) setAttachmentPreview(convId, id, preview(copied));
+      settleAttachment(convId, id, copied ?? p);
+    }));
+  }
+}
+
 /** Drop one chip (its ✕), revoking its preview. */
 export function removeAttachment(convId: string, id: string): void {
   const cur = readScratch(convId);
@@ -376,6 +408,13 @@ export function setPageContext(convId: string, page: Attachment | null): void {
   commit(convId, { ...cur, attachments: page ? [...rest, { ...page, kind: 'page' }] : rest });
 }
 
+/** A quoted message as it always went (`> ` before its first line), and each picture line inside
+ *  it marked too: quoted text, never a picture of THIS message (the bubble and the agent would
+ *  both read a bare `[Picture N: …]` line as one). */
+function blockquote(quote: string): string {
+  return `> ${quote.replace(/^(?=\[Picture \d+: )/gm, '> ')}`;
+}
+
 /**
  * The message a send writes, from what is in the box. The About block opens it, then the reply
  * quote, then the typed text with its chips (`foldAttachments`). A slash command is sent as
@@ -420,7 +459,7 @@ function composeBody(
   if (!slash && placed.size) return composeInline(text, all, byId, rest, quote, quotePath, guard);
   if (slash || !spans.length) {
     const bodyText = foldAttachments(guard(plain), rest, quotePath);
-    const quoted = quote ? `> ${quote}\n\n${bodyText}` : bodyText;
+    const quoted = quote ? `${blockquote(quote)}\n\n${bodyText}` : bodyText;
     // A draft with no tokens keeps today's single staged About (a caller still on `setAbout`).
     const about = slash || parseRefTokens(text).length ? undefined : abouts[0];
     return { message: about?.text ? `${about.text}\n\n${quoted}` : quoted, quoted, slash };
@@ -450,12 +489,12 @@ function composeBody(
     // (c) One chip: today's bytes, his words joined at the chip's former place.
     const joined = [pre, parts[0].words].filter(Boolean).join(' ');
     const bodyText = foldAttachments(joined, attachments, quotePath);
-    const quoted = quote ? `> ${quote}\n\n${bodyText}` : bodyText;
+    const quoted = quote ? `${blockquote(quote)}\n\n${bodyText}` : bodyText;
     return { message: `${parts[0].block}\n\n${quoted}`, quoted, slash: false };
   }
   // Two or more: the files and picked elements are for the whole message, so they open it.
   const head = foldAttachments(pre, attachments, quotePath);
-  const opening = quote ? `> ${quote}${head ? `\n\n${head}` : ''}` : head;
+  const opening = quote ? `${blockquote(quote)}${head ? `\n\n${head}` : ''}` : head;
   const message = [opening, ...parts.flatMap((p) => [p.block, p.words])].filter(Boolean).join('\n\n');
   const quoted = [opening, ...parts.map((p) => p.words)].filter(Boolean).join('\n\n');
   return { message, quoted, slash: false };
@@ -474,7 +513,7 @@ function composeInline(
 ): { message: string; quoted: string; slash: boolean } {
   const tidy = (w: string) => stripTokens(w).trim();
   const head = foldAttachments(guard(tidy(text.slice(0, spans[0].start))), rest, quotePath);
-  const opening = quote ? `> ${quote}${head ? `\n\n${head}` : ''}` : head;
+  const opening = quote ? `${blockquote(quote)}${head ? `\n\n${head}` : ''}` : head;
   let n = 0;
   const parts = spans.map((t, i) => {
     const att = byId.get(t.id) as Attachment;

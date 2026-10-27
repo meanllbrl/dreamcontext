@@ -2462,6 +2462,43 @@ export function splitUserMedia(raw: string): UserMedia {
   return { text, media };
 }
 
+/**
+ * A message with picture chips (owner 2026-10-27) carries each picture as a line of its own,
+ * `[Picture N: <path>]`, with the words written after that chip on the next line — the agent
+ * reads that. The owner's bubble must not (owner 2026-10-28: the sent bubble showed the raw
+ * marker): it draws the picture where the chip stood, its words beside it. Pure; the path is
+ * unquoted the way `quotePath` quoted it. Null when the text has no such line.
+ */
+export interface PicturePart { n: number; path: string; words: string }
+const PICTURE_LINE_RE = /^\[Picture (\d+): ('(?:[^']|'\\'')*'|[^\n\]]+)\]$/gm;
+
+export function splitPictureParts(text: string): { preamble: string; parts: PicturePart[] } | null {
+  const marks = [...text.matchAll(PICTURE_LINE_RE)];
+  if (!marks.length) return null;
+  const unquote = (p: string) => (p.length > 1 && p.startsWith("'") && p.endsWith("'") ? p.slice(1, -1).replace(/'\\''/g, "'") : p);
+  const parts = marks.map((m, i) => {
+    const end = (m.index ?? 0) + m[0].length;
+    const next = i + 1 < marks.length ? (marks[i + 1].index ?? text.length) : text.length;
+    return { n: Number(m[1]), path: unquote(m[2]), words: text.slice(end, next).trim() };
+  });
+  return { preamble: text.slice(0, marks[0].index ?? 0).trim(), parts };
+}
+
+/**
+ * {@link splitUserMedia} for a message that may hold picture lines: only the words before the
+ * first picture line can end in folded file paths (the composer puts the message's files there),
+ * so only they are read for trailing media; the picture lines stay in the text for
+ * {@link splitPictureParts} to draw.
+ */
+export function splitUserMediaAndPictures(raw: string): UserMedia {
+  PICTURE_LINE_RE.lastIndex = 0;
+  const first = PICTURE_LINE_RE.exec(raw);
+  PICTURE_LINE_RE.lastIndex = 0;
+  if (!first) return splitUserMedia(raw);
+  const head = splitUserMedia(raw.slice(0, first.index));
+  return { text: [head.text.trim(), raw.slice(first.index)].filter(Boolean).join('\n\n'), media: head.media };
+}
+
 interface Token { value: string; start: number; quoted: boolean }
 
 /**

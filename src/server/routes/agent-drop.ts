@@ -1,12 +1,15 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, realpathSync, writeFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { basename, join, resolve, sep } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { sanitizeDropFilename } from '../../lib/filename.js';
 import { sniffImageType as sniffImage, EXT_BY_IMAGE_TYPE, type ImageMimeType } from '../../lib/image-sniff.js';
 import { randomBytes } from 'node:crypto';
 import { isPhoneSocket } from '../phone-origin.js';
+import { isLoopbackPeer } from '../network-auth.js';
+import { projectRootOf } from './agent-spawn-shared.js';
 import { authFor, deviceIdHash } from '../handsfree-auth.js';
 import {
   PHONE_DROPS_MAX_BYTES, PHONE_MAX_FILE_BYTES, PHONE_MAX_PHOTO_BYTES, PHONE_PHOTO_PREFIX, acquirePhonePhoto, releasePhonePhoto,
@@ -262,5 +265,83 @@ export async function handleAgentDrop(
     return;
   }
 
+  sendJson(res, 200, { path: finalPath, contentType: sniffed });
+}
+
+/**
+ * POST /api/agent/drop-path `{ path }` — a picture the owner picked with the composer's
+ * "Attach files…" (owner 2026-10-28). The native picker hands back a PATH, and a path outside the
+ * project is something the page can neither show nor read; a pasted picture's bytes, though, land
+ * in this project's drop folder, where its chip shows a thumbnail and the sent bubble draws it.
+ * So a picked picture is copied there too, and from then on it IS a pasted picture: one chip, one
+ * message line, one bubble.
+ *
+ * Desktop only and never the phone (whose socket the tunnel dials from 127.0.0.1). The path must
+ * be absolute and literal (no climb, no null byte, no `//host` spelling on Windows), a regular
+ * file within the drop cap, and a picture by its BYTES (PNG/JPEG/WebP/GIF): anything else is
+ * refused, so this copies nothing a paste could not have. A picture already inside the project is
+ * not copied: its own path comes back, so the agent edits the real file. The copy gets the server's canonical
+ * extension and lands only in the gitignored temp dir, pruned after a week like every drop.
+ */
+export async function handleAgentDropPath(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  // A loopback peer only: a server bound off loopback (`--host`) must not let a token holder stage
+  // any picture on the Mac into the project, where `/api/agent/file` would serve it ungranted.
+  if (isPhoneSocket(req) || !isDesktop() || !isLoopbackPeer(req)) {
+    sendError(res, 403, 'desktop_only', 'Attaching a picked file is only available in the desktop app.');
+    return;
+  }
+  const raw = await readCappedBody(req, res, 16 * 1024, 'Request too large.');
+  if (!raw) return;
+  let target = '';
+  try {
+    const body = JSON.parse(raw.toString('utf-8')) as { path?: unknown };
+    if (typeof body.path === 'string') target = body.path;
+  } catch { /* invalid body → the guard below */ }
+  const win = process.platform === 'win32';
+  const absolute = win ? /^[A-Za-z]:[\\/]/.test(target) : target.startsWith('/');
+  const climb = win ? /(^|[\\/])\.\.([\\/]|$)/ : /(^|\/)\.\.(\/|$)/;
+  if (!absolute || target.includes('\0') || climb.test(target)) {
+    sendError(res, 400, 'invalid_path', 'An absolute, literal file path is required.');
+    return;
+  }
+  let st: ReturnType<typeof statSync>;
+  try { st = statSync(target); } catch { sendError(res, 404, 'not_found', 'File not found.'); return; }
+  if (!st.isFile()) { sendError(res, 400, 'not_a_file', 'Only a file can be attached here.'); return; }
+  if (st.size > MAX_DROP_BYTES) { sendError(res, 413, 'too_large', 'The picture exceeds the 25 MB limit.'); return; }
+  let buf: Buffer;
+  try { buf = await readFile(target); } catch { sendError(res, 404, 'not_found', 'File could not be read.'); return; }
+  const sniffed = sniffImageType(buf);
+  if (!sniffed) { sendError(res, 415, 'not_a_picture', 'Only a picture can be attached as a chip.'); return; }
+  // A picture already inside the project is not copied: the agent must get THAT file (to edit,
+  // resize, use), and the page can already show it from where it is.
+  // Real paths on both sides, as `/api/agent/file` decides inside/outside (a symlinked project).
+  const real = (p: string) => { try { return realpathSync.native(p); } catch { return resolve(p); } };
+  const root = real(projectRootOf(contextRoot));
+  if (real(target).startsWith(root + sep)) { sendJson(res, 200, { path: target, contentType: sniffed }); return; }
+
+  const dropDir = join(contextRoot, 'tmp', 'agent-drops');
+  try {
+    mkdirSync(dropDir, { recursive: true });
+    ensureTmpGitignored(contextRoot);
+    pruneDrops(dropDir);
+  } catch (err) {
+    console.error('[agent-drop] could not prepare drop dir', err);
+    sendError(res, 500, 'mkdir_failed', 'Could not prepare the drop directory.');
+    return;
+  }
+  const safeName = clampName(sanitizeDropFilename(basename(target), EXT_BY_TYPE[sniffed]));
+  const finalPath = join(dropDir, `${Date.now()}-${randomBytes(3).toString('hex')}-${safeName}`);
+  try {
+    writeFileSync(finalPath, buf, { flag: 'wx' });
+  } catch (err) {
+    console.error('[agent-drop] could not copy picked picture', err);
+    sendError(res, 500, 'write_failed', 'Could not save the picture.');
+    return;
+  }
   sendJson(res, 200, { path: finalPath, contentType: sniffed });
 }

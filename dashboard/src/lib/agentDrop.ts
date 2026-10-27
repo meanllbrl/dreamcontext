@@ -38,3 +38,28 @@ export async function uploadAgentFile(vault: string | null, file: File | Blob, n
     return null;
   }
 }
+
+/**
+ * A picture picked with "Attach files…" (a PATH, from the native picker), copied into the same
+ * drop folder a pasted picture's bytes go to (`POST /api/agent/drop-path`), so from here on it is
+ * one: a chip with a thumbnail, a `[Picture N: <path>]` line, a picture in the sent bubble.
+ * Resolves the copy's absolute path, or null on any refusal (not a picture, not the desktop app,
+ * gone) — the caller then keeps the original path.
+ */
+export async function copyPickedPicture(vault: string | null, path: string): Promise<string | null> {
+  try {
+    const res = await fetch('/api/agent/drop-path', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(vault ? { 'X-Dreamcontext-Vault': vault } : {}) },
+      body: JSON.stringify({ path }),
+      // A file the Mac cannot read promptly (an offline network drive, an iCloud placeholder) must
+      // not hold the send forever: past this the chip keeps the original path.
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) return null;
+    const { path: copied } = await res.json() as { path?: string };
+    return copied || null;
+  } catch {
+    return null;
+  }
+}
