@@ -11,7 +11,7 @@ import {
 } from '../../dashboard/src/components/sleepy/chat/composerRefs.js';
 import {
   __resetScratchForTests, addAttachments, composeOutgoing, dropRefs, dropSentAttachments, markInserted, nextAttachmentId,
-  pendingUploads, readScratch, restoreRefs, stageUpload, type Attachment,
+  pendingUploads, readScratch, repend, restoreRefs, settleAttachment, stageRefs, stageUpload, type Attachment,
 } from '../../dashboard/src/components/sleepy/chat/composerScratch.js';
 import { refMirrorSegments, refsInOrder } from '../../dashboard/src/components/sleepy/chat/ComposerRefLayer.js';
 
@@ -145,5 +145,45 @@ describe('the mirror', () => {
     expect(segs[0].text.slice(1, segs[0].lead)).toBe(GLYPH_IMAGE);
     expect(segs[1]).toMatchObject({ refId: n.id, slot: 1 });
     expect(refsInOrder(draft, [n, a]).map((x) => x.id)).toEqual([a.id, n.id]);
+  });
+});
+
+describe('end review r1: nothing staged is lost', () => {
+  it('a picture cut mid-upload settles in recent, and pastes back with its path', () => {
+    const a: Attachment = { ...pic('slow.png'), uploading: true };
+    addAttachments('c', [a]);
+    dropRefs('c', [a.id]);
+    settleAttachment('c', a.id, '/v/slow.png');
+    expect(readScratch('c').recent?.[0]).toMatchObject({ id: a.id, path: '/v/slow.png', uploading: false });
+    restoreRefs('c', readScratch('c').recent ?? []);
+    expect(readScratch('c').attachments[0]).toMatchObject({ id: a.id, path: '/v/slow.png', kind: 'image' });
+  });
+
+  it('a cut of twelve pictures keeps all twelve for the paste back (the recent cap is for About chips)', () => {
+    const many = Array.from({ length: 12 }, (_, i) => pic(`p${i}.png`, `/v/${i}.png`));
+    addAttachments('c', many);
+    dropRefs('c', many.map((a) => a.id));
+    expect(readScratch('c').recent).toHaveLength(12);
+  });
+
+  it('a draft replaced wholesale puts its pictures back pending instead of dropping them', () => {
+    const a = pic('one.png', '/v/1.png');
+    const n = note('n1', 'line');
+    addAttachments('c', [a, n]);
+    stageRefs('c', [], 'no chips here');
+    const sc = readScratch('c').attachments;
+    expect(sc.find((x) => x.id === a.id)).toMatchObject({ pending: true });
+    expect(sc.some((x) => x.id === n.id)).toBe(false);
+    repend('c', [a.id]);
+    expect(readScratch('c').attachments.find((x) => x.id === a.id)?.pending).toBe(true);
+  });
+
+  it('a picture that is still uploading at send is left out of the message, and its chip is what stays', () => {
+    const a: Attachment = { ...pic('wait.png'), uploading: true };
+    const b = pic('ok.png', '/v/ok.png');
+    const draft = `${refToken(b)} fine ${refToken(a)} later`;
+    expect(composeOutgoing(draft, [b, a], null, q).message).toBe('[Picture 1: /v/ok.png]\nfine\n\nlater');
+    const unsent = new Set([a].map((x) => parseRefTokens(refToken(x))[0].id));
+    expect(parseRefTokens(tokensOnly(draft, (s) => unsent.has(s.id)))).toHaveLength(1);
   });
 });

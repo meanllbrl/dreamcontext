@@ -322,7 +322,7 @@ A message with \`<voice-take ref=…>\` was dictated. Nonsense, an unexpected la
  *  comment per photo that the agent could not pair). Written by composerScratch.composeInline. */
 const BRIEFING_PICTURES = `## Pictures in a message
 
-A line \`[Picture N: <path>]\` is a picture the user put at that place in the message; the lines after it, up to the next picture or blank line, are what they wrote about THAT picture. Open each path, and answer each picture by its number.`;
+A line \`[Picture N: <path>]\` is a picture the user put at that place in the message; everything after it, up to the next picture line or \`[About\`/\`[Reply\` header, is what they wrote about THAT picture. Open each path, and answer each picture by its number.`;
 
 export const CHAT_SURFACE_BRIEFING = `${BRIEFING_HEAD}
 ${BRIEFING_DRAW_HTML}

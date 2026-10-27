@@ -381,10 +381,10 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * This file is the only way a chat agent learns the verb exists. Actual 14,007; 14,150 keeps
    * ~140 of headroom.
    *
-   * 14150 -> 14420 on 2026-10-27, a RAISE for 'Pictures in a message' (265 characters),
+   * 14150 -> 14420 on 2026-10-27, a RAISE for 'Pictures in a message' (284 characters),
    * owner-asked (task composer-photos-are-inline-chips…): each picture in the composer goes out
    * as `[Picture N: <path>]` with his words after it, and the agent has to know those words are
-   * about that picture. Actual 14,272; 14,420 keeps ~150 of headroom.
+   * about that picture. Actual 14,291; 14,420 keeps ~130 of headroom.
    */
   it('stays small enough to ride in every chat turn', () => {
     expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(14420);
@@ -398,7 +398,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 14272)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 14291)).toBeLessThanOrEqual(20);
   });
 
   /**

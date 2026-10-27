@@ -49,7 +49,7 @@ import {
 } from './chatEntities';
 import {
   addAttachments, composeOutgoing, countsAsContent, dropRefs, dropSentAttachments, markInserted, nextAttachmentId, pendingUploads,
-  readScratch, removeAttachment, restoreRefs, setAttachmentPreview, settleAttachment, stageRefs, stageUpload, subscribeScratch, trackUpload, type Attachment,
+  readScratch, removeAttachment, repend, restoreRefs, setAttachmentPreview, settleAttachment, stageRefs, stageUpload, subscribeScratch, trackUpload, type Attachment,
 } from './composerScratch';
 import {
   GLYPH_IMAGE, deleteTokenAt, draftFromMessage, insertTakeAt, insertTokenAt, isTokenRef, parseRefTokens, reconcileRefs, refLabel, refToken,
@@ -225,11 +225,13 @@ const MemoUsageMenu = memo(UsageMenu);
 
 /** The quote strip and the attachment row. A fragment, so both stay direct children of
  *  `.chat-cmp-body` — `measureBodyChrome` sums the body's children. */
-const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, onClearQuote, photoMeta }: {
+const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, onClearQuote, onRemoveChip, photoMeta }: {
   quote: string | null;
   attachments: Attachment[];
   convId: string;
   onClearQuote: () => void;
+  /** A picture that is also a chip in the text: its ✕ takes the chip out with it. */
+  onRemoveChip: (attId: string) => void;
   /** The hands-free phone's one line under its photo chips ("2 photos · 1 uploading…"). */
   photoMeta?: string | null;
 }) {
@@ -271,7 +273,7 @@ const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, 
                 {a.uploading && <span className="chat-cmp-attachment-note">attaching…</span>}
                 {a.failed && <span className="chat-cmp-attachment-note">{a.note ?? (a.kind === 'element' ? 'sent without its picture' : 'couldn\'t attach — not sent')}</span>}
               </span>
-              <button type="button" className="chat-cmp-chip-x" aria-label={`Remove ${a.name}`} onClick={() => removeAttachment(convId, a.id)}>✕</button>
+              <button type="button" className="chat-cmp-chip-x" aria-label={`Remove ${a.name}`} onClick={() => (a.kind === 'image' && a.inline ? onRemoveChip(a.id) : removeAttachment(convId, a.id))}>✕</button>
             </div>
           ))}
         </div>
@@ -845,9 +847,18 @@ export function Composer({
         } else {
           // An external append (a dropped file, a respawn's carried draft): its tokens are
           // matched by id against what this conversation has staged (pictures in every view).
-          const r = reconcileRefs(adopted, readScratch(convId).attachments);
-          if (r.draft !== adopted) { adopted = r.draft; session.syncDraft(adopted); }
-          if (r.dropped.length) dropRefs(convId, r.dropped.map((a) => a.id));
+          // A normal chat reads chips only while a picture is staged or a token is in (isolates
+          // he pasted are never mistaken for a damaged chip).
+          const staged = readScratch(convId).attachments;
+          if (superView || parseRefTokens(adopted).length > 0 || staged.some((a) => a.kind === 'image' && a.inline && !a.pending)) {
+            const r = reconcileRefs(adopted, staged);
+            if (r.draft !== adopted) { adopted = r.draft; session.syncDraft(adopted); }
+            // A picture whose chip the new draft lacks (a rewind's prefill) is put back, not lost.
+            const pics = r.dropped.filter((a) => a.kind === 'image').map((a) => a.id);
+            if (pics.length) repend(convId, pics);
+            const rest = r.dropped.filter((a) => a.kind !== 'image').map((a) => a.id);
+            if (rest.length) dropRefs(convId, rest);
+          }
         }
       }
       setDraft(adopted);
@@ -883,7 +894,8 @@ export function Composer({
    *  chips IN the text, so they leave it. Memoised: the row is a memo'd part and must not
    *  re-render on every keystroke. */
   const chipRow = useMemo(
-    () => attachments.filter((a) => (superView ? !isTokenRef(a) : !(a.kind === 'image' && a.inline))),
+    // A picture that could not attach stays in the row too: there it SAYS it will not be sent.
+    () => attachments.filter((a) => (a.kind === 'image' && a.inline ? !!a.failed : superView ? !isTokenRef(a) : true)),
     [attachments, superView],
   );
   useEffect(() => {
@@ -1714,6 +1726,8 @@ export function Composer({
       session.syncDraft(ins.draft);
       setNavBoth(NO_HISTORY_NAV);
       lastCaretRef.current = ins.caret;
+      // A normal chat's take beside its pictures still names its take (the Super's never did).
+      voiceTakeRef.current = !superView && untouchedWords && take ? { text: ins.draft, ref: take } : null;
       if (!untouchedWords) { setVoiceNotice(ADDED_TO_DRAFT_NOTICE); return; }
       setVoiceSubmitTick((n) => n + 1);
       return;
@@ -1733,7 +1747,7 @@ export function Composer({
       return;
     }
     setVoiceSubmitTick((n) => n + 1);
-  }, [session]);
+  }, [session, superView]);
 
   /**
    * The live input level, fanned out to whoever is drawing it.
@@ -1995,7 +2009,11 @@ export function Composer({
     // than in the handler because from the user's side this WAS a send — it just landed
     // somewhere else. A bare "@acme-payments" with nothing after it is someone mid-sentence, so it
     // falls through untouched rather than opening a session with an empty prompt.
-    const addressed = onPeerMessage ? addressedPeer(quoted, peers) : null;
+    // Read on his words: a picture chip before `@peer` must not hide who the message is for.
+    const toPeer = onPeerMessage ? addressedPeer(words, peers) : null;
+    const addressed = toPeer && !addressedPeer(quoted, peers)
+      ? { ...toPeer, body: quoted.replace(/(^|\n)@\S+[ \t]*/, '$1').trim() }
+      : onPeerMessage ? addressedPeer(quoted, peers) : null;
     if (addressed && addressed.body) {
       onPeerMessage?.(addressed.peer, addressed.body);
       setDraft(keptAbout);
@@ -2034,10 +2052,13 @@ export function Composer({
     if (spoken) session.armSpoken?.(message);
     // The dictated take, only when the draft is still exactly what was heard.
     if (take && take.text === text) session.armVoiceTake?.(message, take.ref);
+    // A picture with no path (it failed, or is still on its way) did not go: its chip stays.
+    const unsent = new Set(readScratch(convId).attachments.filter((a) => a.kind === 'image' && a.inline && !a.path).map(refTokenId));
+    const left = slash ? kept : tokensOnly(text, (s) => unsent.has(s.id));
     const sent = () => {
       // A slash command carried no chip, so its chips stay in the box for the next message.
-      setDraft(slash ? kept : '');
-      session.syncDraft(slash ? kept : '');
+      setDraft(left);
+      session.syncDraft(left);
       setNavBoth(NO_HISTORY_NAV);
       setSlashQuery(null);
       // Sent chips go (their previews with them); anything that could NOT be attached stays, so
@@ -2182,6 +2203,7 @@ export function Composer({
   const stableAccountChange = useStableHandler((id: string) => { onAccountChange?.(id); menu.close(); });
   const stableHandoffChange = useStableHandler((enabled: boolean) => onContextHandoffChange?.(enabled));
   const stableClearQuote = useStableHandler(() => onClearQuote());
+  const stableRemoveChip = useStableHandler((attId: string) => removeRef(attId));
   const stablePick = useStableHandler((kind: 'files' | 'folders', close: () => void) => { void pickPaths(kind, close); });
   const stableTaskPicker = useStableHandler(() => onOpenTaskPicker?.());
   const stablePhonePhotos = useStableHandler((files: File[]) => onPhonePhotos(files));
@@ -2320,7 +2342,7 @@ export function Composer({
           than a JS constant that would drift from the tokens the moment one moved. */}
       <div className="chat-cmp-body" ref={bodyRef} data-instant={instantH ? '1' : undefined} style={bodyHeight == null ? undefined : { ['--chat-cmp-h' as string]: `${bodyHeight}px` }}>
         {/* The Super view's references are chips IN the text (below); the rest stay above. */}
-        <ComposerChips quote={quote} attachments={chipRow} convId={convId} onClearQuote={stableClearQuote} photoMeta={photoMeta} />
+        <ComposerChips quote={quote} attachments={chipRow} convId={convId} onClearQuote={stableClearQuote} onRemoveChip={stableRemoveChip} photoMeta={photoMeta} />
 
         <div className="chat-cmp-row" ref={rowRef}>
           <div className="chat-cmp-field">

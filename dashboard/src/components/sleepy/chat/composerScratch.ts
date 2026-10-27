@@ -172,13 +172,12 @@ export function addAttachments(convId: string, added: Attachment[]): void {
  */
 export function settleAttachment(convId: string, id: string, path: string | null, note?: string): void {
   const cur = readScratch(convId);
-  if (!cur.attachments.some((a) => a.id === id)) return;
-  commit(convId, {
-    ...cur,
-    attachments: cur.attachments.map((a) => (a.id === id
-      ? { ...a, path: path ?? undefined, uploading: false, failed: !path, ...(!path && note ? { note } : {}) }
-      : a)),
-  });
+  const settle = (a: Attachment) => (a.id === id
+    ? { ...a, path: path ?? undefined, uploading: false, failed: !path, ...(!path && note ? { note } : {}) }
+    : a);
+  // A picture cut mid-upload waits in `recent` for a paste back: it settles there too.
+  if (cur.attachments.some((a) => a.id === id)) commit(convId, { ...cur, attachments: cur.attachments.map(settle) });
+  else if (cur.recent?.some((a) => a.id === id)) commit(convId, { ...cur, recent: cur.recent.map(settle) });
 }
 
 /**
@@ -190,9 +189,12 @@ export function settleAttachment(convId: string, id: string, path: string | null
 export function setAttachmentPreview(convId: string, id: string, url: string): void {
   const cur = readScratch(convId);
   const found = cur.attachments.find((a) => a.id === id);
-  if (!found) { try { URL.revokeObjectURL(url); } catch { /* no DOM */ } return; }
-  revoke(found);
-  commit(convId, { ...cur, attachments: cur.attachments.map((a) => (a.id === id ? { ...a, url } : a)) });
+  const away = found ? undefined : cur.recent?.find((a) => a.id === id);
+  if (!found && !away) { try { URL.revokeObjectURL(url); } catch { /* no DOM */ } return; }
+  revoke((found ?? away) as Attachment);
+  const set = (a: Attachment) => (a.id === id ? { ...a, url } : a);
+  if (found) commit(convId, { ...cur, attachments: cur.attachments.map(set) });
+  else commit(convId, { ...cur, recent: (cur.recent ?? []).map(set) });
 }
 
 const IMAGE_NAME_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
@@ -309,6 +311,14 @@ export function markInserted(convId: string, ids: readonly string[], chips: Read
   });
 }
 
+/** These pictures' chips left the box without him (the draft was replaced wholesale: a rewind, an
+ *  adopted draft): staged pending again, so the composer puts their chips back. */
+export function repend(convId: string, ids: readonly string[]): void {
+  const cur = readScratch(convId);
+  if (!cur.attachments.some((a) => ids.includes(a.id))) return;
+  commit(convId, { ...cur, attachments: cur.attachments.map((a) => (ids.includes(a.id) ? { ...a, pending: true } : a)) });
+}
+
 /** These refs left the box (deleted, cut, a damaged token): unstaged, and kept in `recent`
  *  until the next send, so a paste can bring one back. */
 export function dropRefs(convId: string, ids: readonly string[]): void {
@@ -316,9 +326,11 @@ export function dropRefs(convId: string, ids: readonly string[]): void {
   const gone = cur.attachments.filter((a) => isTokenRef(a) && ids.includes(a.id));
   if (!gone.length) return;
   const all = [...(cur.recent ?? []).filter((a) => !ids.includes(a.id)), ...gone.map((a) => ({ ...a, pending: false }))];
-  // A picture pushed out of `recent` will never come back: its preview goes.
-  all.slice(0, Math.max(0, all.length - MAX_RECENT)).forEach(revoke);
-  const recent = all.slice(-MAX_RECENT);
+  // The cap is for About chips; pictures stay until the send (a cut of a whole 40-file drop must
+  // paste back whole), which revokes their previews (`dropSentAttachments`).
+  const abouts = all.filter((a) => a.kind === 'about');
+  const over = new Set(abouts.slice(0, Math.max(0, abouts.length - MAX_RECENT)));
+  const recent = all.filter((a) => !over.has(a));
   commit(convId, { ...withRecent(cur, recent), attachments: cur.attachments.filter((a) => !gone.includes(a)) });
 }
 
@@ -340,7 +352,10 @@ export function restoreRefs(convId: string, refs: readonly Attachment[]): void {
 export function stageRefs(convId: string, refs: readonly Attachment[], draft = ''): void {
   const cur = readScratch(convId);
   const named = new Set(parseRefTokens(draft).map((t) => t.id));
-  const kept = cur.attachments.filter((a) => !isTokenRef(a) || (!a.pending && named.has(refTokenId(a))));
+  // A picture the new draft does not hold is not dropped: its chip is put back (pending).
+  const kept = cur.attachments
+    .filter((a) => a.kind !== 'about' || (!a.pending && named.has(refTokenId(a))))
+    .map((a) => (a.kind === 'image' && a.inline && !named.has(refTokenId(a)) ? { ...a, pending: true } : a));
   const add = refs.filter((r) => !kept.some((a) => a.id === r.id)).map((a) => ({ ...a, kind: 'about' as const, pending: false }));
   commit(convId, { ...cur, attachments: [...kept, ...add] });
 }
