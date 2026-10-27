@@ -13,6 +13,8 @@ import { fileNameOf } from '../appLink/viewerPaths';
 import { WEB_WIDGET_SANDBOX } from '../whiteboard/widgets/WebWidget';
 import { ZOOM_BRIDGE, readZoomMessage } from './frameZoomBridge';
 import { gestureScale, usePanZoom, type Size, type View } from './usePanZoom';
+import { DeviceSwitch } from './DeviceSwitch';
+import { deviceFit, useWebDevice } from '../../lib/webDevice';
 import './ImageViewer.css';
 import './FrameViewer.css';
 
@@ -31,15 +33,21 @@ const FOCUSABLE = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"]
 /**
  * A web page full screen, to be READ (owner 2026-10-22: "I cannot look at these closely"):
  * opened fitted to the screen's width, zoomed by pinch (two pointers, or the trackpad), ctrl/cmd
- * + wheel or + and −, scrolled by the wheel, panned by dragging. In "Inspect" mode a shield over
- * the page takes every pointer, so a drag pans instead of selecting text; "Click" lifts it so
- * the page's own tabs and buttons work, and a bridge inside the page keeps the wheel and the
- * pinch working there.
+ * + wheel or + and −, scrolled by the wheel, panned by dragging. By default a shield over the
+ * page takes every pointer, so a drag pans instead of selecting text; "Use the page" lifts it so
+ * the page's own tabs and buttons work. A project page (and a page on this computer, through
+ * its session proxy) carries a bridge that keeps the wheel and the pinch working there; a site
+ * on the web cannot (the browser keeps another origin's page out of the app's reach), so there
+ * the bar's − and ＋ zoom, and the hint says so.
+ *
+ * A page on the web or this computer can be laid out at a phone, tablet or desktop width
+ * (lib/webDevice.ts), fitted to the screen; `deviceKey` (the Super card's id) shares the choice
+ * with the card.
  *
  * Portalled to `<body>` like ImageViewer (a fixed child of a transformed card would be trapped in
  * it), and its stage is a pinch OWNER: a whiteboard mounted behind it never takes its pinch.
  */
-export function FrameViewer({ subject, onClose }: { subject: FrameSubject; onClose: () => void }) {
+export function FrameViewer({ subject, deviceKey, onClose }: { subject: FrameSubject; deviceKey?: string; onClose: () => void }) {
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -48,6 +56,8 @@ export function FrameViewer({ subject, onClose }: { subject: FrameSubject; onClo
   const [pageHeight, setPageHeight] = useState<number | null>(null);
   const [interact, setInteract] = useState(false);
   const title = subject.kind === 'html' ? fileNameOf(subject.path) : subject.title;
+  const [chosenDevice, setDevice] = useWebDevice(deviceKey ?? null);
+  const device = subject.kind === 'page' ? chosenDevice : null;
 
   useEffect(() => {
     const el = stageRef.current;
@@ -73,13 +83,19 @@ export function FrameViewer({ subject, onClose }: { subject: FrameSubject; onClo
   }, []);
 
   // The page is laid out at the screen's width and its own height (an html page reports it);
-  // a page on the web fills the screen and scrolls itself.
-  const contentH = stage ? (subject.kind === 'html' ? Math.max(stage.h, pageHeight ?? stage.h) : stage.h) : 0;
-  const content: Size | null = useMemo(() => (stage ? { w: stage.w, h: contentH } : null), [stage, contentH]);
+  // a page on the web fills the screen and scrolls itself. With a device: at its width, as tall
+  // as the screen is in the device's px, fitted down to the screen.
+  const devFit = deviceFit(device, stage);
+  const fitScale = devFit?.scale ?? 1;
+  const contentW = devFit?.w ?? stage?.w ?? 0;
+  const contentH = stage ? (subject.kind === 'html' ? Math.max(stage.h, pageHeight ?? stage.h) : devFit?.h ?? stage.h) : 0;
+  const content: Size | null = useMemo(() => (stage ? { w: contentW, h: contentH } : null), [stage, contentW, contentH]);
   /** Fitted: the whole width, the page's top at the top. */
-  const fitView = useCallback((): View => ({ scale: 1, x: 0, y: content && stage ? Math.max(0, (content.h - stage.h) / 2) : 0 }), [content, stage]);
+  const fitView = useCallback((): View => ({
+    scale: fitScale, x: 0, y: content && stage ? Math.max(0, (content.h * fitScale - stage.h) / 2) : 0,
+  }), [content, stage, fitScale]);
   const pz = usePanZoom({
-    stageRef, content, stage, minScale: MIN_SCALE, maxScale: MAX_SCALE, wheel: 'pan', fit: { scale: 1, x: 0, y: 0 },
+    stageRef, content, stage, minScale: Math.min(MIN_SCALE, fitScale), maxScale: MAX_SCALE, wheel: 'pan', fit: { scale: 1, x: 0, y: 0 },
   });
   const { view, setView, zoomAround, applyWheel } = pz;
   const fitRef = useRef(fitView);
@@ -91,11 +107,11 @@ export function FrameViewer({ subject, onClose }: { subject: FrameSubject; onClo
   const fittedFor = useRef<string | null>(null);
   useLayoutEffect(() => {
     if (!stage) return;
-    const key = `${subject.kind === 'html' ? subject.path : subject.href}|${pageHeight === null ? 'unknown' : 'known'}`;
+    const key = `${subject.kind === 'html' ? subject.path : subject.href}|${pageHeight === null ? 'unknown' : 'known'}|${device ?? 'fill'}`;
     if (fittedFor.current === key) return;
     fittedFor.current = key;
     fit();
-  }, [fit, pageHeight, stage, subject]);
+  }, [fit, pageHeight, stage, subject, device]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -199,18 +215,21 @@ export function FrameViewer({ subject, onClose }: { subject: FrameSubject; onClo
       <div className="image-viewer-foot">
         <div className="image-viewer-caption">{title}</div>
         <div className="image-viewer-bar">
-          <button type="button" className="image-viewer-btn" onClick={() => zoomAround((s) => s / STEP)} disabled={view.scale <= MIN_SCALE + 1e-6}
+          <button type="button" className="image-viewer-btn" onClick={() => zoomAround((s) => s / STEP)} disabled={view.scale <= Math.min(MIN_SCALE, fitScale) + 1e-6}
             aria-label={t('imageViewer.zoomOut')} title={t('imageViewer.zoomOut')} data-testid="frame-viewer-zoom-out">−</button>
           <span className="image-viewer-level frame-viewer-level" data-testid="frame-viewer-level">{percent}%</span>
           <button type="button" className="image-viewer-btn" onClick={() => zoomAround((s) => s * STEP)} disabled={view.scale >= MAX_SCALE - 1e-6}
             aria-label={t('imageViewer.zoomIn')} title={t('imageViewer.zoomIn')} data-testid="frame-viewer-zoom-in">＋</button>
           <button type="button" className="image-viewer-level" onClick={fit} title={t('imageViewer.fit')} data-testid="frame-viewer-fit">{t('frameViewer.fit')}</button>
+          {subject.kind === 'page' && <DeviceSwitch device={device} onChange={setDevice} btnClass="image-viewer-btn" />}
           <button type="button" className="image-viewer-level" aria-pressed={interact} onClick={() => setInteract((v) => !v)}
-            title={interact ? t('frameViewer.inspectHint') : t('frameViewer.clickHint')} data-testid="frame-viewer-mode">
-            {interact ? t('frameViewer.inspect') : t('frameViewer.click')}
+            title={interact ? t('frameViewer.inspectHint') : t('frameViewer.usePageHint')} data-testid="frame-viewer-mode">
+            {t('frameViewer.usePage')}
           </button>
         </div>
-        <p className="image-viewer-hint">{interact ? t('frameViewer.clickHint') : t('frameViewer.hint')}</p>
+        <p className="image-viewer-hint" data-testid="frame-viewer-hint">
+          {interact ? t(subject.kind === 'page' ? 'frameViewer.clickHintRemote' : 'frameViewer.clickHint') : t('frameViewer.hint')}
+        </p>
       </div>
       <button type="button" className="image-viewer-close" onClick={onClose} aria-label={t('common.close')} title={t('common.close')} data-testid="frame-viewer-close">✕</button>
     </div>,

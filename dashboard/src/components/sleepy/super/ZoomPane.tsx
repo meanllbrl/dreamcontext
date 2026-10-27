@@ -3,6 +3,8 @@ import { useI18n } from '../../../context/I18nContext';
 import { readZoomMessage } from '../../layout/frameZoomBridge';
 import { gestureScale, usePanZoom, type Size } from '../../layout/usePanZoom';
 import { useWebFrameControl, type WebFrameControl } from '../../../lib/webFrameControl';
+import type { WebDevice } from '../../../lib/webDevice';
+import { DeviceSwitch } from '../../layout/DeviceSwitch';
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 5;
@@ -20,21 +22,29 @@ const FIT = { scale: 1, x: 0, y: 0 };
  * A project web page (the card's DocumentReader with its zoom bridge) posts its wheel, pinch and
  * double click from inside its frame; only messages from a frame INSIDE this pane are read. A
  * page from a server (`live`: a dev server, a site) cannot carry the bridge, so it gets the bar
- * (−, %, ＋, Fit) and Inspect, a shield over the page that takes the pinch and the drag while it
- * is on (the page takes no clicks meanwhile).
+ * (−, %, ＋, Fit) and "Pan & zoom", a shield over the page that takes the pinch and the drag while
+ * it is on (the page takes no clicks meanwhile).
  *
  * The stage is a pinch OWNER (`data-pinch-owner`): a whiteboard mounted elsewhere on the stage
  * lets the gesture through to it instead of zooming its own board.
  *
  * A live page with a `control` (owner 2026-10-22) also gets Reload and, once the page is served by
  * its session proxy, Clear cache (asked first in the bar itself: a browser confirm() does nothing
- * in the desktop app). On such a page Inspect PICKS instead of shielding: hover outlines an
- * element, a click adds it to the Super Agent's message, Esc leaves; the page's bridge posts its
- * pinch, so zooming still works. `interactive` false (the card floating, or parked off the stage
- * to keep its page alive): no bar, no gestures, the view fitted.
+ * in the desktop app). On such a page the button is "Pick element" and PICKS instead of
+ * shielding: hover outlines an element, a click adds it to the Super Agent's message, Esc leaves;
+ * the page's bridge posts its pinch, so zooming still works. Picking needs that bridge INSIDE the
+ * page, and only a page the app serves itself (a dev server through its session proxy) has one: a
+ * site on the web is another origin, which the browser keeps out of the app's reach (owner
+ * 2026-10-27, "Inspect does not work, is it because it isn't localhost?" — yes). There the button
+ * is the shield, named for what it does, and turning it on says why picking is not offered.
+ *
+ * `onDevice` (a live page's card): phone / tablet / desktop widths in the bar (lib/webDevice.ts).
+ * `interactive` false (the card floating, or parked off the stage to keep its page alive): no
+ * bar, no gestures, the view fitted.
  */
-export function ZoomPane({ children, live = false, interactive = true, control }: {
+export function ZoomPane({ children, live = false, interactive = true, control, device = null, onDevice }: {
   children: ReactNode; live?: boolean; interactive?: boolean; control?: WebFrameControl;
+  device?: WebDevice | null; onDevice?: (d: WebDevice | null) => void;
 }) {
   const { t } = useI18n();
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -161,6 +171,9 @@ export function ZoomPane({ children, live = false, interactive = true, control }
         {children}
       </div>
       {interactive && inspect && !picker && <div className="super-zoom-shield" data-testid="super-zoom-shield" {...pz.handlers} />}
+      {interactive && live && inspect && !picker && !control?.proxied && !askClear && (
+        <p className="super-zoom-note" role="status" data-testid="super-zoom-nopick">{t('super.zoom.noPick')}</p>
+      )}
       {interactive && (zoomed || live) && (
         <div className="super-zoom-bar" role="toolbar" aria-label={t('super.zoom.label')} onPointerDown={(e) => e.stopPropagation()}>
           {askClear ? (
@@ -188,10 +201,12 @@ export function ZoomPane({ children, live = false, interactive = true, control }
                 <button ref={clearBtnRef} type="button" className="super-zoom-btn super-zoom-btn--text" onClick={() => setAskClear(true)}
                   title={t('super.zoom.clearHint')} data-testid="super-zoom-clear">{t('super.zoom.clear')}</button>
               )}
+              {live && onDevice && <DeviceSwitch device={device} onChange={onDevice} btnClass="super-zoom-btn" />}
               {live && (
                 <button type="button" className="super-zoom-btn super-zoom-btn--text" aria-pressed={inspect} onClick={() => setInspect((v) => !v)}
+                  data-mode={picker ? 'pick' : 'pan'}
                   title={inspect ? t('super.zoom.clickHint') : picker ? t('super.zoom.pickHint') : t('super.zoom.inspectHint')} data-testid="super-zoom-inspect">
-                  {t('super.zoom.inspect')}
+                  {picker ? t('super.zoom.pick') : t('super.zoom.pan')}
                 </button>
               )}
             </>

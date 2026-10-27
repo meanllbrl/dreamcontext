@@ -101,6 +101,8 @@ export class WebFrameControl {
   get attached(): boolean { return !!this.frame; }
   /** The page answered through its bridge: Inspect can pick in it. */
   get bridged(): boolean { return this.bridgedNow; }
+  /** Served by the session proxy (a page on this computer): its bridge is on its way. */
+  get proxied(): boolean { return !!this.frame && !!this.info?.proxyOrigin; }
   /** The page is served by the session proxy: Clear can reach its storage. */
   get canClear(): boolean { return !!this.frame && !!this.info?.proxyOrigin && !!this.info.clearToken; }
 

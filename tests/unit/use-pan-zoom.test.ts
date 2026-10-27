@@ -68,8 +68,8 @@ describe('the viewers\' settings', () => {
     expect(image).toMatch(/onDoubleClick=/);
   });
 
-  it('the page viewer scrolls on a plain wheel and zooms 25-400 %', () => {
-    expect(frame).toMatch(/minScale: MIN_SCALE, maxScale: MAX_SCALE, wheel: 'pan'/);
+  it('the page viewer scrolls on a plain wheel and zooms 25-400 % (lower only to fit a device width)', () => {
+    expect(frame).toMatch(/minScale: Math\.min\(MIN_SCALE, fitScale\), maxScale: MAX_SCALE, wheel: 'pan'/);
     expect(frame).toMatch(/const MIN_SCALE = 0\.25;/);
     expect(frame).toMatch(/const MAX_SCALE = 4;/);
   });

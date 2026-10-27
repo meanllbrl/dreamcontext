@@ -896,7 +896,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
         );
       })()}
       <div ref={layerRef} className="super-stage-layer" aria-hidden />
-      {full && <CardFullscreenView subject={full.subject} onClose={() => setFull(null)} />}
+      {full && <CardFullscreenView subject={full.subject} cardId={full.id} onClose={() => setFull(null)} />}
     </div>
   );
 }
