@@ -9,7 +9,7 @@ import { randomBytes } from 'node:crypto';
 import { isPhoneSocket } from '../phone-origin.js';
 import { authFor, deviceIdHash } from '../handsfree-auth.js';
 import {
-  PHONE_DROPS_MAX_BYTES, PHONE_MAX_PHOTO_BYTES, PHONE_PHOTO_PREFIX, acquirePhonePhoto, releasePhonePhoto,
+  PHONE_DROPS_MAX_BYTES, PHONE_MAX_FILE_BYTES, PHONE_MAX_PHOTO_BYTES, PHONE_PHOTO_PREFIX, acquirePhonePhoto, releasePhonePhoto,
 } from '../../lib/handsfree/mac/photo-limits.js';
 
 /**
@@ -119,6 +119,13 @@ function readCappedBody(
   });
 }
 
+/** A phone file's sanitized name, kept under the file system's 255-byte limit with its extension. */
+export function clampName(name: string, max = 120): string {
+  if (name.length <= max) return name;
+  const ext = /\.[A-Za-z0-9]{1,12}$/.exec(name)?.[0] ?? '';
+  return `${name.slice(0, max - ext.length)}${ext}`;
+}
+
 /** Bytes of phone photos already in the drop folder (the per-project ceiling). */
 function phoneDropBytes(dir: string): number {
   let total = 0;
@@ -132,23 +139,27 @@ function phoneDropBytes(dir: string): number {
 }
 
 /**
- * The hands-free PHONE's photo (task hands-free-phone-shows-every-picture…, D5): the one remote
+ * The hands-free PHONE's photo or file (task hands-free-phone-shows-every-picture…, D5; any file
+ * type since the owner's 2026-10-27 report, "zip ve dosya da yükleyebilelim"): the one remote
  * caller this route takes, decided per socket (the tunnel dials from 127.0.0.1, so never by
  * address), with caps of its own (lib/handsfree/mac/photo-limits.ts):
- *   • a declared size over the cap is refused before a byte is read; the stream is capped too;
+ *   • a declared size over the file cap (25 MB) is refused before a byte is read; the stream is
+ *     capped too, and a body that turns out to be an image is held to the photo cap (10 MB);
  *   • the device's gate is taken BEFORE the body (2 in flight, 30 a minute) and always released;
- *   • images only, by their BYTES (PNG/JPEG/WebP/GIF) — the client's type and file name are
- *     ignored, the server names the file, and it lands only in this project's gitignored tmp;
- *   • the folder holds at most 500 MB of phone photos; the 7-day prune applies as for any drop.
- * The server never decodes the image. The answer is the absolute path the chat quotes into the
- * message, exactly as a desktop drop's.
+ *   • an image is recognised by its BYTES (PNG/JPEG/WebP/GIF) and named by the server alone;
+ *     anything else keeps its sanitized basename (a zip must still read `.zip` to the agent)
+ *     behind the server's own unique prefix. The client's content type is ignored;
+ *   • the bytes are written as they came: never decoded, never extracted (a zip stays a zip);
+ *   • it lands only in this project's gitignored tmp, which holds at most 500 MB from the phone;
+ *     the 7-day prune applies as for any drop.
+ * The answer is the absolute path the chat quotes into the message, exactly as a desktop drop's.
  */
 async function handlePhoneDrop(req: IncomingMessage, res: ServerResponse, contextRoot: string): Promise<void> {
   const device = authFor(req) ? deviceIdHash(req) : null;
   if (!device) { sendError(res, 401, 'unauthenticated', 'Sign in first.'); return; }
   const declared = Number(req.headers['content-length']);
-  if (Number.isFinite(declared) && declared > PHONE_MAX_PHOTO_BYTES) {
-    sendError(res, 413, 'too_large', 'A photo from the phone can be at most 10 MB.');
+  if (Number.isFinite(declared) && declared > PHONE_MAX_FILE_BYTES) {
+    sendError(res, 413, 'too_large', 'A file from the phone can be at most 25 MB.');
     req.destroy();
     return;
   }
@@ -162,11 +173,14 @@ async function handlePhoneDrop(req: IncomingMessage, res: ServerResponse, contex
     return;
   }
   try {
-    const buf = await readCappedBody(req, res, PHONE_MAX_PHOTO_BYTES, 'A photo from the phone can be at most 10 MB.');
+    const buf = await readCappedBody(req, res, PHONE_MAX_FILE_BYTES, 'A file from the phone can be at most 25 MB.');
     if (!buf) return;
-    if (buf.length === 0) { sendError(res, 400, 'empty', 'No photo data was received.'); return; }
+    if (buf.length === 0) { sendError(res, 400, 'empty', 'No file data was received.'); return; }
     const sniffed = sniffImageType(buf);
-    if (!sniffed) { sendError(res, 415, 'not_an_image', 'Only a photo (PNG, JPEG, WebP or GIF) can be sent from the phone.'); return; }
+    if (sniffed && buf.length > PHONE_MAX_PHOTO_BYTES) {
+      sendError(res, 413, 'too_large', 'A photo from the phone can be at most 10 MB.');
+      return;
+    }
 
     const dropDir = join(contextRoot, 'tmp', 'agent-drops');
     try {
@@ -179,15 +193,18 @@ async function handlePhoneDrop(req: IncomingMessage, res: ServerResponse, contex
       return;
     }
     if (phoneDropBytes(dropDir) + buf.length > PHONE_DROPS_MAX_BYTES) {
-      sendError(res, 507, 'drops_full', 'Too many phone photos are waiting in this project; older ones are removed after a week.');
+      sendError(res, 507, 'drops_full', 'Too many phone uploads are waiting in this project; older ones are removed after a week.');
       return;
     }
-    const finalPath = join(dropDir, `${PHONE_PHOTO_PREFIX}${Date.now()}-${randomBytes(4).toString('hex')}${EXT_BY_TYPE[sniffed]}`);
+    const stem = `${PHONE_PHOTO_PREFIX}${Date.now()}-${randomBytes(4).toString('hex')}`;
+    const finalPath = join(dropDir, sniffed
+      ? `${stem}${EXT_BY_TYPE[sniffed]}`
+      : `${stem}-${clampName(sanitizeDropFilename(decodeFilenameHeader(req.headers['x-dreamcontext-filename']), '.bin'))}`);
     try {
       writeFileSync(finalPath, buf, { flag: 'wx' });
     } catch (err) {
-      console.error('[agent-drop] could not write phone photo', err);
-      sendError(res, 500, 'write_failed', 'Could not save the photo.');
+      console.error('[agent-drop] could not write phone upload', err);
+      sendError(res, 500, 'write_failed', 'Could not save the file.');
       return;
     }
     sendJson(res, 200, { path: finalPath, contentType: sniffed });

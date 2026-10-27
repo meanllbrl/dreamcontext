@@ -26,6 +26,10 @@
  *   3. Photos: the phone's composer has a photo button and no "+"; a JPEG and a PNG picked from the
  *      "gallery" become chips, upload as JPEGs into the project's gitignored tmp, show in the
  *      owner's bubble, reach the agent as paths — and show in the SAME bubble on the Mac (AC10).
+ *   3b. Files (owner 2026-10-27, "zip ve dosya da yükleyebilelim"): the phone's file input has no
+ *      `accept` filter; a .zip, a .pdf and a .txt picked at once become FILE chips (name + size,
+ *      no thumbnail), land in the project's tmp byte for byte (the zip not extracted) under their
+ *      own names, and reach the agent as paths.
  *   4. The Mac's composer still has its "+" (1440 screenshot).
  *   Across the run: no console error on the phone; no 400; every 403 is one of the phone's own
  *   deliberate answers (needs_phone_grant, other_project).
@@ -110,7 +114,8 @@ process.stdin.on('data', (c) => {
     const text = (typeof content === 'string' ? content : content.filter((b) => b.type === 'text').map((b) => b.text).join('\\n')).trim();
     if (!inited) { inited = true; out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: [] }); }
     row({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
-    let said; try { said = answer(text); } catch (e) { said = 'error ' + e; }
+    // An owner's message ends with its <owner-msg ref/> marker (0.35.0): answer the words before it.
+    let said; try { said = answer(text.replace(/\\n?<owner-msg [^>]*\\/>\\s*$/, '').trim()); } catch (e) { said = 'error ' + e; }
     const message = { role: 'assistant', content: [{ type: 'text', text: said }] };
     row({ type: 'assistant', message }); out({ type: 'assistant', message });
     out({ type: 'result', subtype: 'success', is_error: false, result: said, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 }, session_id: sid });
@@ -403,6 +408,40 @@ try {
   await desk.locator('.chat-msg-user-media:visible').last().scrollIntoViewIfNeeded().catch(() => {});
   await desk.waitForTimeout(400);
   await desk.screenshot({ path: join(SHOTS, '1440-mac-same-bubble.png') });
+
+  console.log('\n── 3b. Files from the phone (zip, pdf, txt)');
+  report.check('the phone\'s file input offers every file type (no accept filter)', (await phone.locator('[data-testid="phone-photo-input"]').getAttribute('accept')) === null);
+  const FILES = {
+    'site-export.zip': Buffer.concat([Buffer.from('PK\x03\x04', 'binary'), Buffer.alloc(2048, 5)]),
+    'Q3 report.pdf': Buffer.from('%PDF-1.7\n% fictional report\n' + 'x'.repeat(30_000)),
+    'notes.txt': Buffer.from('the sync button is cut off at 390\n'),
+  };
+  for (const [n, b] of Object.entries(FILES)) writeFileSync(join(UPLOADS, n), b);
+  const before = new Set(drops());
+  await phone.locator('[data-testid="phone-photo-input"]').setInputFiles(Object.keys(FILES).map((n) => join(UPLOADS, n)));
+  const fileChips = () => phone.locator('.chat-cmp-attachment-file:visible').evaluateAll((els) => els.map((e) => ({
+    text: e.querySelector('.chat-cmp-attachment-name')?.textContent ?? '', size: e.querySelector('[data-testid="phone-file-size"]')?.textContent ?? '',
+    img: !!e.querySelector('img'), state: e.getAttribute('data-state'),
+  })));
+  let fc = [];
+  report.check('three file chips appear, each with its name and size and no picture', await until(async () => {
+    fc = await fileChips();
+    return fc.length === 3 && fc.every((c) => c.size && !c.img) && ['site-export.zip', 'Q3 report.pdf', 'notes.txt'].every((n) => fc.some((c) => c.text.includes(n)));
+  }, 10000), JSON.stringify(fc));
+  report.check('the count line says 3 files', /3/.test(await vis('[data-testid="phone-photo-meta"]').first().innerText().catch(() => '')));
+  report.check('all three finish uploading', await until(async () => (await fileChips()).filter((c) => c.state === 'ready').length === 3, 30000), JSON.stringify(await fileChips()));
+  await phone.screenshot({ path: join(SHOTS, '390x844-file-chips.png') });
+  const added = drops().filter((n) => !before.has(n));
+  const onDisk = (n) => readFileSync(join(PROJ, '_dream_context', 'tmp', 'agent-drops', n));
+  report.check('the Mac saved each file byte for byte under its own name (the zip stays one file)', added.length === 3
+    && Object.entries(FILES).every(([n, b]) => added.some((a) => a.endsWith(`-${n.replace(/ /g, '_')}`) && onDisk(a).equals(b))), JSON.stringify(added));
+  await send('please look at these');
+  report.check('the agent receives the three files as paths in the message', await until(async () => {
+    const t = (await vis(pane).first().innerText().catch(() => '')).replace(/\s+/g, ' ');
+    return /ECHO please look at these .*site-export\.zip/.test(t) && /ECHO please look at these .*Q3_report\.pdf/.test(t) && /ECHO please look at these .*notes\.txt/.test(t);
+  }, 20000));
+  await phone.waitForTimeout(400);
+  await phone.screenshot({ path: join(SHOTS, '390x844-files-sent.png') });
 
   console.log('\n── The second width');
   await phone.setViewportSize({ width: 375, height: 667 });
