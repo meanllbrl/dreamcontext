@@ -681,6 +681,8 @@ export function Composer({
   const [mcpOpen, setMcpOpen] = useState(false);
   useEffect(() => {
     if (mcpPicker && /^\/mcp$/.test(draft.trim())) setMcpOpen(true);
+    // The draft moved on (backspaced, kept typing): the popover is not what is being typed any more.
+    else if (!isMcpCommand(draft)) setMcpOpen(false);
   }, [draft, mcpPicker]);
   const closeMcp = useCallback(() => {
     setMcpOpen(false);
@@ -1805,7 +1807,7 @@ export function Composer({
         </div>
       )}
 
-      {mcpOpen && asMcpHost(session) && <McpPicker session={asMcpHost(session)!} onClose={closeMcp} />}
+      {mcpOpen && asMcpHost(session) && <McpPicker session={asMcpHost(session)!} onClose={closeMcp} inputRef={taRef} />}
 
       {slashOpen && !mcpOpen && (
         <div className="chat-cmp-slash" role="listbox" id={slashListId} aria-label="Slash commands" ref={slashListRef}>

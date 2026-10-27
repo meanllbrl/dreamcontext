@@ -6,9 +6,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import {
-  McpControl, displayTarget, errorKindOf, isMcpControlLine, isSafeAuthUrl, liveChildArgs, redactStatus,
-  routeChildLine, startLiveChild,
+  McpControl, connectStatus, displayTarget, errorKindOf, isMcpControlLine, isSafeAuthUrl, liveChildArgs, readStatusCache,
+  redactStatus, resetMcpLiveForTests, routeChildLine, startConnect, startLiveChild, writeStatusCache,
 } from '../../src/lib/mcp-live.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const SECRETS = {
   header: 'hdr-SECRET-7f3a9c',
@@ -173,5 +176,50 @@ describe('the Settings child', () => {
     expect(opts.env?.DREAMCONTEXT_MCP_PROBE).toBe('1');
     expect(opts.env?.CLAUDE_CONFIG_DIR).toBe('/sb');
     expect((opts.stdio as unknown[])[2]).toBe('ignore');
+  });
+});
+
+describe('end-review fixes', () => {
+  it('displayTarget never shows a command line written into `command`', () => {
+    expect(displayTarget({ type: 'stdio', command: 'sh -c "API_KEY=sk-live-0123456789 npx x"' })).toBe('sh');
+  });
+
+  it('a chat reading MERGES into the account row; only a probe moves "checked at"', () => {
+    const home = mkdtempSync(join(tmpdir(), 'dc-mcp-cache-'));
+    try {
+      const ctx = { computer: new Map(), project: new Map() };
+      writeStatusCache('acc', [{ name: 'a', status: 'connected', home: 'claudeai', transport: 'http' }, { name: 'b', status: 'failed', home: 'claudeai', transport: 'http' }], ctx, home, 100, { full: true });
+      writeStatusCache('acc', [{ name: 'a', status: 'needs-auth', home: 'claudeai', transport: 'http' }], ctx, home, 200);
+      const row = readStatusCache(home).acc;
+      expect(row.at).toBe(100);
+      expect(row.cells['a|claudeai']).toMatchObject({ status: 'needs-auth', at: 200 });
+      expect(row.cells['b|claudeai']).toMatchObject({ status: 'failed', at: 100 });
+      // A chat reading on an account never probed creates its cells but no "checked at".
+      writeStatusCache('fresh', [{ name: 'a', status: 'connected', home: 'claudeai', transport: 'http' }], ctx, home, 300);
+      expect(readStatusCache(home).fresh.at).toBe(0);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it('a Settings sign-in whose child died ends as failed instead of holding every later one at busy', async () => {
+    resetMcpLiveForTests();
+    const children: Array<EventEmitter & Record<string, unknown>> = [];
+    const spawnImpl = vi.fn(() => {
+      const child = new EventEmitter() as EventEmitter & Record<string, unknown>;
+      child.pid = 99999999;
+      child.stdin = Object.assign(new EventEmitter(), { write: vi.fn(), writable: true, destroyed: false });
+      child.stdout = new EventEmitter();
+      child.kill = vi.fn();
+      children.push(child);
+      return child as never;
+    });
+    const t = startConnect({ files: [], cwd: '/p', env: {}, spawnImpl, accountId: 'a', name: 'posthog', projectRoot: '/p', home: tmpdir(), everyMs: 5, windowMs: 60_000 });
+    expect(t).not.toBe('busy');
+    const id = (t as { id: string }).id;
+    // The child answers nothing and dies.
+    children[0].emit('exit', 1);
+    for (let i = 0; i < 100 && connectStatus(id)?.state !== 'failed'; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(connectStatus(id)?.state).toBe('failed');
+    expect(startConnect({ files: [], cwd: '/p', env: {}, spawnImpl, accountId: 'a', name: 'x', projectRoot: '/p', home: tmpdir() })).not.toBe('busy');
+    resetMcpLiveForTests();
   });
 });

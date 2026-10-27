@@ -1983,7 +1983,7 @@ export function startChatSession(
       mode,
     })
     : null;
-  const childEnv = { PATH: claudeAwarePath(), ...storeMcp.env, ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...(envelope?.env ?? {}) } as Record<string, string | undefined>;
+  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...storeMcp.env, ...(envelope?.env ?? {}) } as Record<string, string | undefined>;
   // Its own process group, so the whole tree can be ended at once.
   const child: ChildProcessWithoutNullStreams = spawn(process.env.SHELL || '/bin/zsh', ['-ilc', script], {
     cwd: projectRoot,
@@ -2411,7 +2411,8 @@ export function startChatSession(
     mcpLastAt = Date.now();
     sendMeta({ subtype: 'mcp_status', servers, at: mcpLastAt });
     if (mcpTab) writeMcpHealth(contextRoot, mcpTab, servers);
-    if (mcpAccount) {
+    // A lean child sees only its subset: not the account's truth, so it writes no cell.
+    if (mcpAccount && !opts.leanMcp) {
       try { writeStatusCache(mcpAccount, servers, redactContextFor(projectRoot)); } catch { /* shown anyway */ }
     }
   };
@@ -2484,7 +2485,7 @@ export function startChatSession(
   /** The socket's MCP verbs. Refused unless the socket holding the chat RIGHT NOW is the desktop. */
   const onMcpMessage = (msg: { type?: string; name?: unknown }): void => {
     if (!mcpSocketAllowed(ws)) {
-      sendMeta({ subtype: 'mcp_error', code: 'mcp_desktop_only', message: 'MCP sign-in runs from the desktop app only.' });
+      sendMeta({ subtype: 'mcp_error', code: 'mcp_desktop_only', ...(isUsableServerName(msg.name) ? { name: msg.name } : {}), message: 'MCP sign-in runs from the desktop app only.' });
       return;
     }
     if (msg.type === 'mcpRefresh') { mcpSettle(); return; }

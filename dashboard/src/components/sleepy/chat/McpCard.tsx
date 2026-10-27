@@ -27,17 +27,20 @@ import './mcpCard.css';
  * the 5-minute window the row turns into the fallback: reconnect it on claude.ai as the
  * expected account, then "I've connected it, check again".
  */
-export function McpCard({ spec, session, conversationId, report }: {
+export function McpCard({ spec, session, conversationId, report, placeKey }: {
   spec: McpViewSpec;
   session?: ChatSession;
   conversationId?: string;
   report?: (text: string) => void;
+  /** This card's place in the transcript: its report is remembered there (a later card the
+   *  agent sends with the same id is a new card). */
+  placeKey?: string;
 }) {
   const { status, auth } = useMcpLive(session);
   // The account this chat runs on, named because the browser may be signed in as another.
   const accountEmail = useChatAccountEmail(session);
   const servers: McpLiveServer[] = status?.servers ?? [];
-  const key = reportedKey(conversationId, spec.id);
+  const key = reportedKey(conversationId, `${placeKey ?? ''}:${spec.id}`);
   const memory = useRef<CardReportState>({
     sawBroken: false,
     reported: (() => { try { return localStorage.getItem(key) as CardReportState['reported']; } catch { return null; } })(),
@@ -49,7 +52,9 @@ export function McpCard({ spec, session, conversationId, report }: {
   const ready = allConnected(spec.servers, servers);
 
   const send = (kind: 'connected' | 'skipped') => {
-    if (memory.current.reported || !report) return;
+    // Re-read: another copy of this same card (a second pane on the conversation) may have sent it.
+    try { if (localStorage.getItem(key)) memory.current = { ...memory.current, reported: localStorage.getItem(key) as CardReportState['reported'] }; } catch { /* this mount's memory */ }
+    if (memory.current.reported || !report) { setReported(memory.current.reported); return; }
     memory.current = { ...memory.current, reported: kind };
     try { localStorage.setItem(key, kind); } catch { /* remembered for this mount only */ }
     setReported(kind);

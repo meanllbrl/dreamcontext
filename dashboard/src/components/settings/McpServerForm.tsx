@@ -61,11 +61,13 @@ export function McpServerForm({ initial, onCancel, onSaved }: {
     const definition: Record<string, unknown> = { type };
     const keep: string[] = [];
     if (type === 'stdio') {
-      if (command.trim()) {
-        definition.command = command.trim();
-        definition.args = args.split('\n').map((a) => a.trim()).filter(Boolean);
-      } else if (editing) keep.push('command', 'args');
+      // Command and arguments are kept or replaced each on its own (a blank field = unchanged).
+      if (command.trim()) definition.command = command.trim();
+      else if (editing) keep.push('command');
       else { setError('A command is needed.'); return; }
+      const list = args.split('\n').map((a) => a.trim()).filter(Boolean);
+      if (list.length || !editing) definition.args = list;
+      else keep.push('args');
     } else if (url.trim()) {
       definition.url = url.trim();
     } else if (editing) keep.push('url');

@@ -171,7 +171,9 @@ export function displayTarget(def: McpDefinition): string {
       return scrub(`${u.protocol}//${u.host}${maskTarget(u.pathname === '/' ? '' : u.pathname)}`, secrets);
     } catch { return MASK; }
   }
-  const command = typeof def.command === 'string' ? basename(def.command) : '';
+  // The program only: a whole command line written into `command` (`sh -c "KEY=… x"`) is cut at
+  // its first space, so nothing after the program name is ever shown.
+  const command = typeof def.command === 'string' ? basename(def.command.trim().split(/\s+/)[0] ?? '') : '';
   const n = Array.isArray(def.args) ? def.args.length : 0;
   return scrub(`${command || 'command'}${n ? ` · ${n} arg${n === 1 ? '' : 's'}` : ''}`, secrets);
 }
@@ -308,14 +310,22 @@ export function readStatusCache(home: string = homedir()): StatusCache {
 }
 
 /** Record one account's reading. 0600, atomic, O_EXCL temp. Never a value: status words only. */
-export function writeStatusCache(accountId: string, servers: McpLiveServer[], ctx: RedactContext, home: string = homedir(), now: number = Date.now()): void {
+export function writeStatusCache(
+  accountId: string, servers: McpLiveServer[], ctx: RedactContext, home: string = homedir(), now: number = Date.now(),
+  o: { full?: boolean } = {},
+): void {
   const cache = readStatusCache(home);
-  const cells: Record<string, CachedCell> = Object.create(null) as Record<string, CachedCell>;
+  const id = accountId || 'default';
+  // MERGED, never replaced (end review): a chat sees only its own project's servers, a lean
+  // child a subset, so its reading updates the cells it has and leaves every other one as the
+  // last probe left it. Only a Settings probe (`full`) moves the account's "checked at".
+  const prev = cache[id];
+  const cells: Record<string, CachedCell> = Object.assign(Object.create(null), prev?.cells ?? {}) as Record<string, CachedCell>;
   for (const s of servers) {
     const key = serverKey(s.name, definitionFor(s.name, s.home, ctx), s.home);
     cells[key] = { status: s.status, ...(s.errorKind ? { errorKind: s.errorKind } : {}), at: now };
   }
-  cache[accountId || 'default'] = { at: now, cells };
+  cache[id] = { at: o.full ? now : prev?.at ?? 0, cells };
   const path = statusCachePath(home);
   mkdirSync(join(mcpFilesHome(home), '.dreamcontext'), { recursive: true });
   const tmp = `${path}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
@@ -415,7 +425,19 @@ const PROBE_LIMIT = 2;
  * Settings' "Check": one transient child for one account, polled until nothing is pending (or
  * 20 s), written to the status cache, killed. At most two at once.
  */
-export async function probeAccount(o: LiveChildOptions & { accountId: string; projectRoot: string; home?: string }): Promise<McpLiveServer[] | null> {
+/** One probe in flight per account and project, machine-wide: a second "Check" waits for it. */
+const probesInFlight = new Map<string, Promise<McpLiveServer[] | null>>();
+
+export function probeAccount(o: LiveChildOptions & { accountId: string; projectRoot: string; home?: string }): Promise<McpLiveServer[] | null> {
+  const key = `${o.accountId}\0${o.projectRoot}`;
+  const running = probesInFlight.get(key);
+  if (running) return running;
+  const p = runProbe(o).finally(() => probesInFlight.delete(key));
+  probesInFlight.set(key, p);
+  return p;
+}
+
+async function runProbe(o: LiveChildOptions & { accountId: string; projectRoot: string; home?: string }): Promise<McpLiveServer[] | null> {
   while (probesRunning >= PROBE_LIMIT) await sleep(250);
   probesRunning += 1;
   const child = startLiveChild(o);
@@ -424,7 +446,7 @@ export async function probeAccount(o: LiveChildOptions & { accountId: string; pr
     const ctx = redactContextFor(o.projectRoot, o.home);
     const servers = await pollUntilSettled(child.control, ctx);
     if (servers) {
-      try { writeStatusCache(o.accountId, servers, ctx, o.home); } catch { /* a reading not kept is still shown */ }
+      try { writeStatusCache(o.accountId, servers, ctx, o.home, Date.now(), { full: true }); } catch { /* a reading not kept is still shown */ }
     }
     return servers;
   } finally {
@@ -484,11 +506,16 @@ export function startConnect(o: LiveChildOptions & {
       ticket.state = 'waiting';
       const deadline = Date.now() + (o.windowMs ?? 5 * 60_000);
       let reconnected = false;
+      // A child that died ends the wait now; a silent one still meets the deadline (end review:
+      // a failed status read used to skip the deadline, holding every later sign-in at 409).
+      let dead = false;
+      void child.exited.then(() => { dead = true; });
       while (!stopped) {
         await sleep(o.everyMs ?? 3000);
         if (stopped) break;
+        if (dead) { ticket.state = 'failed'; break; }
         let servers: McpLiveServer[] = [];
-        try { servers = redactStatus(await child.control.status(), ctx); } catch { continue; }
+        try { servers = redactStatus(await child.control.status(), ctx); } catch { servers = []; }
         const row = servers.find((s) => s.name === o.name);
         if (row?.status === 'connected') {
           ticket.state = 'connected';
@@ -519,4 +546,5 @@ export function startConnect(o: LiveChildOptions & {
 export function resetMcpLiveForTests(): void {
   activeTicket = null;
   probesRunning = 0;
+  probesInFlight.clear();
 }

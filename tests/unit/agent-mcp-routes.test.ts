@@ -118,7 +118,7 @@ describe('the overview never carries a value', () => {
     writeStatusCache('default', [
       { name: 'posthog', status: 'needs-auth', home: 'computer', transport: 'http' },
       { name: 'claude.ai Gmail', status: 'connected', home: 'claudeai', transport: 'http' },
-    ], { computer: new Map(Object.entries(store.mcpServers)), project: new Map() }, home, 1234);
+    ], { computer: new Map(Object.entries(store.mcpServers)), project: new Map() }, home, 1234, { full: true });
     const r = await call(handleMcpOverview, { method: 'GET' });
     const cells = r.json.cells as Record<string, Record<string, { status: string; at?: number }>>;
     const ph = (r.json.servers as Array<{ name: string; key: string }>).find((s) => s.name === 'posthog')!;

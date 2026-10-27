@@ -124,6 +124,15 @@ function setupScratch() {
       'apple-mail': { type: 'stdio', command: '/nonexistent/apple-mail-mcp', args: [`--token=${CANARY}`] },
     },
   }));
+  // Two registered accounts: the Mac's own (#0) and a sandboxed second one, so the matrix has a
+  // column per account and the card can name the account the CLI expects.
+  writeFileSync(join(HOME, '.dreamcontext', 'claude-accounts.json'), JSON.stringify({
+    autoSwitch: false,
+    accounts: [
+      { id: 'me', email: 'me@personal.test', configDir: null, preferred: true },
+      { id: 'work', email: 'work@acme.test', configDir: join(HOME, '.dreamcontext', 'claude-accounts', 'work') },
+    ],
+  }));
   const bin = join(HOME, '.local', 'bin', 'claude');
   writeFileSync(bin, STANDIN);
   chmodSync(bin, 0o755);
@@ -255,19 +264,32 @@ async function run(chromium, base, where, viewport) {
   await gmCard.getByRole('button', { name: 'Reconnect' }).click();
   check(where, 'Reconnect on a claude.ai connector opens its auth URL too', await until(async () => (await openedNow()).some((u) => u.includes('server=claude.ai%20Gmail')), 8000));
   check(where, 'not connected in the window → the claude.ai fallback with the connectors link', await until(async () => (await gmCard.locator('.chat-mcpcard-fallback').count()) === 1, 30000));
+  const fbText = (await gmCard.locator('.chat-mcpcard-fallback').innerText().catch(() => '')).replace(/\s+/g, ' ');
+  check(where, 'the fallback names the account the CLI expects', fbText.includes('me@personal.test'), fbText.slice(0, 160));
   await shot('04-card-claudeai-fallback', gmCard.locator('.chat-mcpcard-fallback'));
 
-  // §5 — Settings, through the popover's own "Manage in Settings" link.
+  // §5 — Settings, through the popover's own "Manage in Settings" link. Every probe reading is
+  // forgotten first, so what the matrix shows next can only come from probes it starts.
+  rmSync(join(HOME, '.dreamcontext', 'mcp-status.json'), { force: true });
   await input.click();
   await input.fill('/mcp');
   await until(async () => (await vis('.mcp-picker').count()) > 0, 3000);
   await vis('.mcp-picker-link').first().dispatchEvent('mousedown');
   await page.waitForTimeout(1500);
   check(where, 'Settings → MCP draws the matrix', await until(async () => (await vis('.mcpm-table').count()) > 0, 15000));
-  const before = await vis('.mcpm-dot[data-status="connected"], .mcpm-dot[data-status="needs-auth"], .mcpm-dot[data-status="failed"]').count();
+  // Opened with no probe reading at all (removed before navigating): Settings checks every
+  // account in the background on its own, then the owner's click checks again.
+  check(where, 'opened with no reading, it starts checking every account by itself', await until(async () => (await page.getByRole('button', { name: /Checking every account/ }).count()) > 0, 5000));
+  const columns = await vis('.mcpm-table thead .mcpm-acc').allInnerTexts();
+  check(where, 'a column per registered account', JSON.stringify(columns) === JSON.stringify(['me@personal.test', 'work@acme.test']), JSON.stringify(columns));
+  await until(async () => (await page.getByRole('button', { name: 'Check all accounts' }).count()) > 0, 60000);
   await page.getByRole('button', { name: 'Check all accounts' }).click();
-  check(where, '"Check all accounts" fills the cells from a probe', await until(async () => (await vis('.mcpm-table .mcpm-dot[data-status="failed"]').count()) > 0
-    && (await vis('.mcpm-table .mcpm-dot[data-status="connected"]').count()) > 0, 30000), `before ${before}`);
+  await until(async () => (await page.getByRole('button', { name: 'Check all accounts' }).count()) > 0, 90000);
+  const filled = await vis('.mcpm-table .mcpm-dot[data-status="failed"]').count();
+  const green = await vis('.mcpm-table .mcpm-dot[data-status="connected"]').count();
+  const unchecked = await vis('.mcpm-table .mcpm-dot[data-status="unchecked"]').count();
+  check(where, '"Check all accounts" fills every account\'s cells from its probe, with the check time', filled >= 2 && green >= 2 && unchecked === 0
+    && /checked just now/.test(await vis('.mcpm-toolbar-when').first().innerText()), `failed ${filled}, connected ${green}, unchecked ${unchecked}`);
   const groups = await vis('.mcpm-group th').allInnerTexts();
   check(where, 'grouped by where servers live', groups.some((g) => /This computer/i.test(g)) && groups.some((g) => /claude\.ai/i.test(g)), JSON.stringify(groups));
   const scroll = vis('.mcpm-scroll').first();

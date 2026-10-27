@@ -292,10 +292,19 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agent/accounts/remove': deny(SIGN_IN),
   'POST /api/agent/accounts/auto-switch': agnostic(`${CHAT}: switch accounts at a limit`),
   'POST /api/agent/accounts/switch-policy': agnostic(`${CHAT}: how accounts are switched`),
-  'GET /api/agent/mcp': allow(`${CHAT}: the MCP servers and their state (no credentials); side-effect free`),
-  'POST /api/agent/mcp/login': deny(SIGN_IN),
-  'POST /api/agent/mcp/logout': deny(SIGN_IN),
-  'GET /api/agent/mcp/project': allow(`${CHAT}: this project's MCP servers; side-effect free`),
+  // MCP management (task mcp-management): Settings' matrix, probes, sign-ins and store edits are
+  // the owner window's alone (they spawn `claude` and save commands that run on every spawn).
+  'GET /api/agent/mcp/overview': deny(SETTINGS),
+  'POST /api/agent/mcp/check': deny(SETTINGS),
+  'POST /api/agent/mcp/connect': deny(SIGN_IN),
+  'GET /api/agent/mcp/connect/:ticket': deny(SIGN_IN),
+  'DELETE /api/agent/mcp/connect/:ticket': deny(SIGN_IN),
+  'POST /api/agent/mcp/server': deny(SETTINGS),
+  'POST /api/agent/mcp/server/remove': deny(SETTINGS),
+  'POST /api/agent/mcp/server/move': deny(SETTINGS),
+  'POST /api/agent/mcp/import': deny(SETTINGS),
+  // Owner window only since task mcp-management (requireOwnerWindow), so never the phone's.
+  'GET /api/agent/mcp/project': deny(SETTINGS),
   'POST /api/agent/mcp/project/adopt': deny(SETTINGS),
   'POST /api/agent/mcp/project/remove': deny(SETTINGS),
   'GET /api/agent/session-model': allow(`${CHAT}: one chat's model; side-effect free`),

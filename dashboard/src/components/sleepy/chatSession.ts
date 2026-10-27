@@ -22,6 +22,7 @@ import { leanMcpParam, superEventText } from './super/superHandover';
 import { createChildAlarmGate } from './super/childAlarm';
 import { openExternalUrl } from '../../lib/desktop';
 import type { McpConnectState, McpLiveServer } from '../../lib/mcpWire';
+import { clearRefused } from './chat/mcpRows';
 
 /** The chat's own live MCP status (task mcp-management): the server's last `mcp_status`. */
 export interface McpChatStatus { servers: McpLiveServer[]; at: number }
@@ -2636,8 +2637,9 @@ export function createChatSession(
       const prev = session.mcpAuth[f.name];
       session.mcpAuth = { ...session.mcpAuth, [f.name]: { state: f.state as McpConnectState, host: prev?.host } };
     } else if (f.subtype === 'mcp_error') {
-      // A refusal (a phone-held socket, a bad name): the rows simply stay as they are.
-      return true;
+      // A refusal (a phone-held socket, a bad name): the sign-in it answers did not start, so its
+      // row (or every row still "opening") goes back to a button instead of waiting forever.
+      session.mcpAuth = clearRefused(session.mcpAuth, typeof f.name === 'string' ? f.name : undefined);
     } else {
       return true;
     }

@@ -140,3 +140,15 @@ export function nextIndex(index: number, length: number, key: string): number {
   if (key === 'ArrowUp') return (index + length - 1) % length;
   return Math.min(index, length - 1);
 }
+
+/**
+ * A refused MCP verb (`mcp_error`): the sign-in it answers never started, so that row — or,
+ * when the server named none, every row still "opening" — goes back to a usable button.
+ */
+export function clearRefused<T extends Record<string, { state: McpConnectState; host?: string }>>(auth: T, name?: string): T {
+  const next = { ...auth } as Record<string, { state: McpConnectState; host?: string }>;
+  for (const [n, v] of Object.entries(next)) {
+    if ((name === undefined || n === name) && v.state === 'opening') next[n] = { state: 'failed' };
+  }
+  return next as T;
+}

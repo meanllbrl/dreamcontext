@@ -77,7 +77,7 @@
 .mcpm-dot[data-status='connected'] { background: var(--color-success); opacity: 1; }
 .mcpm-dot[data-status='needs-auth'] { background: var(--color-warning); opacity: 1; }
 .mcpm-dot[data-status='failed'] { background: var(--color-error); opacity: 1; }
-.mcpm-dot[data-status='pending'] { background: var(--color-accent); opacity: 0.7; }
+.mcpm-dot[data-status='pending'] { background: var(--color-text-secondary); opacity: 0.8; }
 .mcpm-absent { color: var(--color-text-tertiary); }
 
 .mcpm-actions { white-space: nowrap; text-align: right !important; }

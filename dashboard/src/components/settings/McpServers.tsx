@@ -104,8 +104,9 @@ export function McpServers() {
   useEffect(() => {
     if (!data || autoChecked.current) return;
     autoChecked.current = true;
-    const newest = Math.max(0, ...data.accounts.map((a) => a.checkedAt ?? 0));
-    if (Date.now() - newest > STALE_MS) void check();
+    // The OLDEST account decides: one never probed (or probed long ago) is checked with the rest.
+    const oldest = Math.min(...data.accounts.map((a) => a.checkedAt ?? 0));
+    if (Date.now() - oldest > STALE_MS) void check();
   }, [data, check]);
 
   // A sign-in in flight: follow its ticket, open the browser once at the CLI's own URL.

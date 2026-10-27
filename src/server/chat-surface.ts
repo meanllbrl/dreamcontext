@@ -247,15 +247,12 @@ the keyboard. One line; \`cwd\` is project-relative; \`why\` says what makes it 
 {"type":"run","id":"fb-login","command":"firebase login","why":"it opens a browser and waits for you to sign in"}
 \`\`\`
 
-**A connection your task needs** — an MCP server this chat cannot use (a prompt line names
-them: needs sign-in or failed). Send this ONLY when your work needs that server: one card, the
-servers by name (1-8), \`why\` one sentence. Each row gets the button that brings it back
-(Connect, Reconnect, Restart) and turns green live; when all are connected you receive one
-\`MCP connected: …\` message and carry on, or \`MCP skipped: …\` if the owner went on without.
-Never ask for a sign-in in prose, never fail silently.
+**An MCP server your task needs** that a prompt line says this chat cannot use — ONLY then;
+never ask in prose. One card, 1-8 server names; you get \`MCP connected: …\` (or
+\`MCP skipped: …\`) back and carry on.
 
 \`\`\`dream-view
-{"type":"mcp","id":"report-sources","why":"PostHog numbers for the weekly report","servers":["posthog","claude.ai Gmail"]}
+{"type":"mcp","id":"report-sources","why":"PostHog numbers for the report","servers":["posthog"]}
 \`\`\`
 
 **A fact that must not scroll away** — a row on the shelf docked to the composer. \`weight\`

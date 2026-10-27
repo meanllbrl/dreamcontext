@@ -50,13 +50,10 @@ function guard(req: IncomingMessage, res: ServerResponse, contextRoot: string | 
 function accountsOf(home: string): McpOverviewAccount[] {
   const cache = readStatusCache(home);
   const list = listClaudeAccounts(home);
-  if (!list.length) return [{ id: DEFAULT_ACCOUNT, label: 'this Mac', email: '', ...(cache[DEFAULT_ACCOUNT] ? { checkedAt: cache[DEFAULT_ACCOUNT].at } : {}) }];
-  return list.map((a) => ({
-    id: a.id,
-    label: a.email || a.id,
-    email: a.email,
-    ...(cache[a.id] ? { checkedAt: cache[a.id].at } : {}),
-  }));
+  // `checkedAt` is the last Settings PROBE only (0 = a chat's partial reading, never a probe).
+  const at = (id: string) => (cache[id]?.at ? { checkedAt: cache[id].at } : {});
+  if (!list.length) return [{ id: DEFAULT_ACCOUNT, label: 'this Mac', email: '', ...at(DEFAULT_ACCOUNT) }];
+  return list.map((a) => ({ id: a.id, label: a.email || a.id, email: a.email, ...at(a.id) }));
 }
 
 /** An account id from a request, resolved through the one gate. */

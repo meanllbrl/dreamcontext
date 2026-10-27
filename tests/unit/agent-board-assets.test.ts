@@ -373,9 +373,14 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * characters), owner-asked: a Basic chat answered 'planla' with Claude's native plan mode;
    * the deny flag removes the tool, this section says where the request goes instead.
    * Actual 13,605; 13,750 keeps ~145 of headroom.
+   *
+   * 13750 -> 14100 on 2026-10-27, a RAISE for the `mcp` card (325 characters), owner-asked (task
+   * mcp-management: "when a connection goes stale the agent sends a click-here-and-connect card,
+   * like the secret card"). Cut from a 650-character first draft to when-to-send, what comes
+   * back, one example; the rest (rows, buttons) is the card's own. Actual 13,930.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(13750);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(14100);
   });
 
   /**
@@ -386,7 +391,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 13605)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 13930)).toBeLessThanOrEqual(20);
   });
 
   /**

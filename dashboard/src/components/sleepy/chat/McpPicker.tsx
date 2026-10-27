@@ -20,9 +20,12 @@ import './mcpPicker.css';
  * control channel), which is the only process that can sign a `--mcp-config` server in. A
  * failed server offers Restart, never Sign in.
  */
-export function McpPicker({ session, onClose }: {
+export function McpPicker({ session, onClose, inputRef }: {
   session: McpHost;
   onClose: () => void;
+  /** The composer's textarea: the popover's keys are taken ONLY while it has the focus, so
+   *  Enter or Esc anywhere else in the app is never captured (end review). */
+  inputRef?: { current: HTMLElement | null };
 }) {
   const { bus } = useVault();
   const accountEmail = useChatAccountEmail(session);
@@ -51,6 +54,7 @@ export function McpPicker({ session, onClose }: {
   stateRef.current = { servers, index, act, onClose };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!inputRef?.current || e.target !== inputRef.current) return;
       const { servers: list, index: i, act: run, onClose: close } = stateRef.current;
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return; }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -65,7 +69,7 @@ export function McpPicker({ session, onClose }: {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, []);
+  }, [inputRef]);
 
   useEffect(() => {
     listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -104,6 +108,7 @@ export function McpPicker({ session, onClose }: {
               className={`chat-btn pill${i === index && a !== 'restart' ? ' primary' : ''}`}
               disabled={flight?.state === 'opening' || flight?.state === 'waiting'}
               onMouseDown={(e) => { e.preventDefault(); act(s); }}
+              onClick={(e) => { if (e.detail === 0) act(s); }}
             >
               {actionLabel(a)}
             </button>
@@ -115,6 +120,7 @@ export function McpPicker({ session, onClose }: {
               aria-label="Manage on claude.ai"
               title="Manage on claude.ai"
               onMouseDown={(e) => { e.preventDefault(); void openExternalUrl(CLAUDE_AI_CONNECTORS_URL); }}
+              onClick={(e) => { if (e.detail === 0) void openExternalUrl(CLAUDE_AI_CONNECTORS_URL); }}
             >
               ↗
             </button>
@@ -146,7 +152,7 @@ export function McpPicker({ session, onClose }: {
         <span className="mcp-picker-keys">
           <kbd>↑↓</kbd> move <kbd>↵</kbd> connect <kbd>esc</kbd> close
         </span>
-        <button type="button" className="mcp-picker-link" onMouseDown={(e) => { e.preventDefault(); manage(); }}>
+        <button type="button" className="mcp-picker-link" onMouseDown={(e) => { e.preventDefault(); manage(); }} onClick={(e) => { if (e.detail === 0) manage(); }}>
           Manage in Settings
         </button>
       </div>

@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  actionLabel, allConnected, findServer, mcpReport, nextCardReport, nextIndex, rowAction, sortNeedsYouFirst, statusLabel,
+  actionLabel, allConnected, clearRefused, reportedKey, findServer, mcpReport, nextCardReport, nextIndex, rowAction, sortNeedsYouFirst, statusLabel,
   type CardReportState,
 } from '../../dashboard/src/components/sleepy/chat/mcpRows.js';
 import type { McpLiveServer } from '../../dashboard/src/lib/mcpWire.js';
@@ -74,5 +74,17 @@ describe('the card reports exactly once', () => {
     expect(t).toContain('continue without: claude.ai Gmail');
     expect(allConnected(names, [s('posthog', 'connected')])).toBe(false);
     expect(findServer('PostHog', [s('posthog', 'connected')])?.name).toBe('posthog');
+  });
+});
+
+describe('end-review fixes', () => {
+  it('a refused verb puts its row (or every opening row) back to a button', () => {
+    const auth = { posthog: { state: 'opening' as const }, gmail: { state: 'opening' as const }, stitch: { state: 'connected' as const } };
+    expect(clearRefused(auth, 'posthog')).toEqual({ posthog: { state: 'failed' }, gmail: { state: 'opening' }, stitch: { state: 'connected' } });
+    expect(clearRefused(auth)).toEqual({ posthog: { state: 'failed' }, gmail: { state: 'failed' }, stitch: { state: 'connected' } });
+  });
+
+  it('a card remembers its report by its place in the transcript, not the id the agent chose', () => {
+    expect(reportedKey('conv', 'msg-1:2:report-sources')).not.toBe(reportedKey('conv', 'msg-9:0:report-sources'));
   });
 });
