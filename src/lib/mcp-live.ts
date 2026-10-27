@@ -320,7 +320,9 @@ export function writeStatusCache(
   // child a subset, so its reading updates the cells it has and leaves every other one as the
   // last probe left it. Only a Settings probe (`full`) moves the account's "checked at".
   const prev = cache[id];
-  const cells: Record<string, CachedCell> = Object.assign(Object.create(null), prev?.cells ?? {}) as Record<string, CachedCell>;
+  const cells: Record<string, CachedCell> = Object.create(null) as Record<string, CachedCell>;
+  // A cell no reading has touched in 30 days (an edited definition's old hash) is dropped.
+  for (const [k, c] of Object.entries(prev?.cells ?? {})) if (now - (c?.at ?? 0) < 30 * 86_400_000) cells[k] = c;
   for (const s of servers) {
     const key = serverKey(s.name, definitionFor(s.name, s.home, ctx), s.home);
     cells[key] = { status: s.status, ...(s.errorKind ? { errorKind: s.errorKind } : {}), at: now };

@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  actionLabel, allConnected, clearRefused, reportedKey, findServer, mcpReport, nextCardReport, nextIndex, rowAction, sortNeedsYouFirst, statusLabel,
+  actionLabel, allConnected, cardPlace, clearRefused, reportedKey, findServer, mcpReport, nextCardReport, nextIndex, rowAction, sortNeedsYouFirst, statusLabel,
   type CardReportState,
 } from '../../dashboard/src/components/sleepy/chat/mcpRows.js';
 import type { McpLiveServer } from '../../dashboard/src/lib/mcpWire.js';
@@ -84,7 +84,18 @@ describe('end-review fixes', () => {
     expect(clearRefused(auth)).toEqual({ posthog: { state: 'failed' }, gmail: { state: 'failed' }, stitch: { state: 'connected' } });
   });
 
-  it('a card remembers its report by its place in the transcript, not the id the agent chose', () => {
-    expect(reportedKey('conv', 'msg-1:2:report-sources')).not.toBe(reportedKey('conv', 'msg-9:0:report-sources'));
+  it('a card\'s place survives a replay (new item ids, same texts); a re-sent id is a new card', () => {
+    const card = (id: string) => '```dream-view\n' + JSON.stringify({ type: 'mcp', id, servers: ['posthog'] }) + '\n```';
+    const live = [
+      { id: 'item-1', kind: 'user', text: 'go' },
+      { id: 'item-2', kind: 'text', text: `need it\n\n${card('connect-x')}` },
+      { id: 'item-3', kind: 'user', text: 'MCP connected: posthog' },
+      { id: 'item-4', kind: 'text', text: `expired again\n\n${card('connect-x')}` },
+    ];
+    const replayed = live.map((it, i) => ({ ...it, id: `hist-${40 + i}` }));
+    expect(cardPlace(live, 'item-2', 'connect-x')).toBe(cardPlace(replayed, 'hist-41', 'connect-x'));
+    expect(cardPlace(live, 'item-4', 'connect-x')).toBe(cardPlace(replayed, 'hist-43', 'connect-x'));
+    expect(cardPlace(live, 'item-2', 'connect-x')).not.toBe(cardPlace(live, 'item-4', 'connect-x'));
+    expect(reportedKey('conv', 'connect-x#0:1')).not.toBe(reportedKey('conv', 'connect-x#1:1'));
   });
 });

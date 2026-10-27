@@ -682,7 +682,8 @@ export function Composer({
   useEffect(() => {
     if (mcpPicker && /^\/mcp$/.test(draft.trim())) setMcpOpen(true);
     // The draft moved on (backspaced, kept typing): the popover is not what is being typed any more.
-    else if (!isMcpCommand(draft)) setMcpOpen(false);
+    // An empty draft is the command having been SENT (it clears the draft): the popover stays.
+    else if (draft.trim() && !isMcpCommand(draft)) setMcpOpen(false);
   }, [draft, mcpPicker]);
   const closeMcp = useCallback(() => {
     setMcpOpen(false);

@@ -259,7 +259,6 @@ async function run(chromium, base, where, viewport) {
   const mentions = paneText.split('MCP connected: posthog').length - 1;
   check(where, 'reported exactly once (one owner message, one agent continuation)', continued === 1 && mentions === 2, `continued ${continued}, mentions ${mentions}`);
   await shot('03-card-connected', phCard);
-
   const gmCard = vis('.chat-mcpcard[data-view-id="mail-source"]').first();
   await gmCard.getByRole('button', { name: 'Reconnect' }).click();
   check(where, 'Reconnect on a claude.ai connector opens its auth URL too', await until(async () => (await openedNow()).some((u) => u.includes('server=claude.ai%20Gmail')), 8000));

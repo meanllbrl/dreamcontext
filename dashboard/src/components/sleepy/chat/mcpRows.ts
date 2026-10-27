@@ -152,3 +152,33 @@ export function clearRefused<T extends Record<string, { state: McpConnectState; 
   }
   return next as T;
 }
+
+/** The `mcp` card ids a text holds, in order (whole fences only; malformed ones skipped). */
+function mcpCardIdsIn(text: string): string[] {
+  const out: string[] = [];
+  if (!text.includes('dream-view')) return out;
+  for (const m of text.matchAll(/```dream-view[^\S\r\n]*\r?\n([\s\S]*?)```/g)) {
+    try {
+      const o = JSON.parse(m[1]) as { type?: unknown; id?: unknown };
+      if (o && o.type === 'mcp' && typeof o.id === 'string') out.push(o.id.trim());
+    } catch { /* not a card */ }
+  }
+  return out;
+}
+
+/**
+ * A card's place, stable across every rebuild of the transcript (a reload, a reconnect's
+ * replay): its id plus how many earlier messages already sent a card with that id. Item ids are
+ * per-session counters and change on replay; message TEXT does not. A card the agent re-sends
+ * later with the same id is the next ordinal, so it is a new card with its own one report.
+ */
+export function cardPlace(
+  items: ReadonlyArray<{ id: string; kind: string; text?: string }>, itemId: string, cardId: string,
+): string {
+  let n = 0;
+  for (const it of items) {
+    if (it.id === itemId) break;
+    if (it.kind === 'text' && typeof it.text === 'string') n += mcpCardIdsIn(it.text).filter((x) => x === cardId).length;
+  }
+  return `${cardId}#${n}`;
+}
