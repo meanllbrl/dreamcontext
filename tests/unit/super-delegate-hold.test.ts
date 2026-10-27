@@ -250,7 +250,8 @@ describe('delegate --mcp (lean children, plan r5 D14)', () => {
     write();
     const r = await verb('delegate', { prompt: 'x', mcp: 'posthog' });
     expect(r.status).toBe(400);
-    expect(r.json).toMatchObject({ error: 'unknown_mcp', known: ['whatsapp', 'fathom'] });
+    // The stores keep names sorted (mcp-store.ts), so the known list reads alphabetically.
+    expect(r.json).toMatchObject({ error: 'unknown_mcp', known: ['fathom', 'whatsapp'] });
     expect((await verb('delegate', { prompt: 'x', mcp: '__proto__' })).json.error).toBe('invalid_args');
     expect((await verb('pool-add', { prompt: 'x', mcp: 'posthog' })).json.error).toBe('unknown_mcp');
     expect(commands()).toHaveLength(0);
@@ -266,6 +267,6 @@ describe('delegate --mcp (lean children, plan r5 D14)', () => {
 
   it('super state lists the servers it can grant, names only', async () => {
     write();
-    expect(result(await verb('state'))).toMatchObject({ mcpServers: ['whatsapp', 'fathom'] });
+    expect(result(await verb('state'))).toMatchObject({ mcpServers: ['fathom', 'whatsapp'] });
   });
 });

@@ -1,0 +1,82 @@
+/* The `mcp` card (task mcp-management, card-b): one card, a row per server the agent needs. */
+
+.chat-mcpcard { display: flex; flex-direction: column; gap: 0; padding: 0; overflow: hidden; }
+
+.chat-mcpcard-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  min-width: 0;
+  /* A narrow pane puts the status pill on its own line rather than squeezing the title. */
+  flex-wrap: wrap;
+}
+.chat-mcpcard-glyph {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--color-bg-secondary);
+  font-size: 13px;
+}
+.chat-mcpcard-title { flex: 1 1 160px; min-width: 0; font-weight: 600; color: var(--color-text); overflow-wrap: anywhere; }
+.chat-mcpcard-account { flex: 0 1 auto; min-width: 0; font-size: var(--font-size-xs); color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-mcpcard-why { margin: 0; padding: 0 var(--space-4) var(--space-3); font-size: var(--font-size-sm, 13px); color: var(--color-text-secondary); }
+
+.chat-mcpcard-rows { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--color-border); }
+.chat-mcpcard-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+.chat-mcpcard-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--color-bg-secondary);
+  font-size: 12px;
+  color: var(--color-text);
+}
+.chat-mcpcard-text { flex: 1 1 160px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.chat-mcpcard-name { font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; }
+.chat-mcpcard-sub { font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.chat-mcpcard-actions { flex: 0 0 auto; display: flex; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
+
+.chat-mcpcard-pill {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  border: 1px solid currentColor;
+}
+.chat-mcpcard-pill[data-tone='good'] { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 10%, transparent); }
+.chat-mcpcard-pill[data-tone='bad'] { color: var(--color-error); background: color-mix(in srgb, var(--color-error) 10%, transparent); }
+.chat-mcpcard-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+.chat-mcpcard-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  flex-wrap: wrap;
+}
+.chat-mcpcard-foot--end { justify-content: flex-end; }
+.chat-mcpcard-progress { flex: 1 1 200px; min-width: 0; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+
+.chat-mcpcard-fallback { border-top: 1px solid var(--color-border); }
+.chat-mcpcard-fallback .chat-mcpcard-why { padding-bottom: 0; }

@@ -141,6 +141,20 @@ describe('owner-wait: what a child leaves for the owner, and his answer', () => 
     expect(persistentBackground({ task_type: 'local_agent', description: 'Review the diff' })).toBe(false);
   });
 
+  it('an mcp card is an owner wait; its own report clears only it, never a run or secret wait (task mcp-management)', async () => {
+    const { mcpReport } = await import('../../dashboard/src/components/sleepy/chat/mcpRows.js');
+    const MCP = { type: 'mcp', id: 'report-sources', why: 'PostHog numbers for the weekly report', servers: ['posthog', 'claude.ai Gmail'] };
+    const cards = ownerCardsIn(`${fence(MCP)}\n${fence(RUN)}\n${fence(SECRET)}\n${fence({ type: 'mcp', id: 'other', servers: ['linear'] })}`);
+    expect(cards[0]).toEqual({ kind: 'mcp', id: 'report-sources', line: MCP.why, key: 'posthog, claude.ai Gmail' });
+    expect(cards[3]).toEqual({ kind: 'mcp', id: 'other', line: 'Connect: linear', key: 'linear' });
+    // The card's REAL report formats (mcpRows.ts), connected and skipped.
+    expect(answeredBy(mcpReport('connected', MCP.servers), cards).map((w) => w.id)).toEqual(['report-sources']);
+    expect(answeredBy(mcpReport('skipped', ['linear'], []), cards).map((w) => w.id)).toEqual(['other']);
+    // Malformed: no servers, or more than 8.
+    expect(ownerCardsIn(fence({ type: 'mcp', id: 'x', servers: [] }))).toEqual([]);
+    expect(ownerCardsIn(fence({ type: 'mcp', id: 'x', servers: Array.from({ length: 9 }, (_, i) => `s${i}`) }))).toEqual([]);
+  });
+
   it('the record keeps an owner item only with a well-formed wait', () => {
     const s = sanitizeSuperState({
       ...emptySuperState(), session: SUPER, enabled: true,
@@ -149,9 +163,10 @@ describe('owner-wait: what a child leaves for the owner, and his answer', () => 
         { id: 'q-ok', sessionId: 'c1', kind: 'owner', state: 'pending', createdAt: 1, wait: { kind: 'run', id: 'gcloud-login' }, ownerText: 'sign in' },
         { id: 'q-nowait', sessionId: 'c1', kind: 'owner', state: 'pending', createdAt: 1 },
         { id: 'q-badkind', sessionId: 'c1', kind: 'owner', state: 'pending', createdAt: 1, wait: { kind: 'shell', id: 'x' } },
+        { id: 'q-mcp', sessionId: 'c1', kind: 'owner', state: 'pending', createdAt: 1, wait: { kind: 'mcp', id: 'report-sources', key: 'posthog' }, ownerText: 'connect' },
       ],
     });
-    expect(s.queue.map((q) => q.id)).toEqual(['q-ok']);
+    expect(s.queue.map((q) => q.id)).toEqual(['q-ok', 'q-mcp']);
     expect(s.queue[0].wait).toEqual({ kind: 'run', id: 'gcloud-login' });
     expect(s.children.c1.row).toBe('waiting');
   });

@@ -630,9 +630,6 @@ type SlideOverState =
   /** A background shell's live output — a separate mode from `subagent` because a shell has
    *  no sidechain transcript to render; it has an output file and a stop action. */
   | { mode: 'shell'; run: SubAgentRun }
-  /** The MCP server list behind `/mcp`. Carries no subject of its own — its subject is the
-   *  account this conversation runs on, read at open time. */
-  | { mode: 'mcp' }
   | null;
 
 interface LightboxState { src: string; caption?: string; path?: string }
@@ -2831,10 +2828,9 @@ export function ChatPane({
           superView={superView}
           onRefJump={superView ? (ref, from) => replyJumpRef.current.jumpToReplied(ref, from, '') : undefined}
           onSignIn={fireSignIn}
-          // `/mcp` opens the panel instead of being sent. The engine DOES answer that command
-          // — with a sentence telling the user to go and use a terminal — so forwarding it
-          // spends a turn to deliver a dead end. See `isMcpCommand`.
-          onMcpPanel={() => setSlideOver({ mode: 'mcp' })}
+          // `/mcp` opens the MCP popover above the composer instead of being sent: this
+          // chat's own live servers, Connect / Restart through its own process.
+          mcpPicker
           // `@acme-payments …` opens a live session in that project instead of sending here — see
           // the peerSessions note above and PeerSessionCard.
           onPeerMessage={(peer, body) => {
@@ -2848,15 +2844,6 @@ export function ChatPane({
           onOpenTaskPicker={() => {}}
         />
         </>
-      )}
-      {slideOver?.mode === 'mcp' && (
-        <SlideOver
-          mode="mcp"
-          // The account this conversation is actually billed to and spawned under — the panel
-          // must report on THAT Claude install, not on whichever one the machine defaults to.
-          accountId={runningAccountId}
-          onClose={() => setSlideOver(null)}
-        />
       )}
       {slideOver?.mode === 'file' && (
         <SlideOver

@@ -206,8 +206,11 @@ describe('the spawn', () => {
     expect(JSON.parse(readFileSync(f, 'utf-8'))).toEqual({ mcpServers: { whatsapp: USER_SERVERS.whatsapp } });
     if (process.platform !== 'win32') expect(statSync(f).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     if (process.platform !== 'win32') expect(statSync(leanMcpDir(fakeHome)).mode & 0o777).toBe(0o700); // Windows has no POSIX mode bits
-    // The shared config (every user server) never rides along.
+    // No store (every user server) rides along: no path, no env reference (task mcp-management).
     expect(a.join(' ')).not.toContain('mcp-config.json');
+    expect(a.join(' ')).not.toContain(join(fakeHome, '.dreamcontext', 'mcp.json'));
+    expect(child!.script).not.toContain('DREAMCONTEXT_MCP_CFG');
+    expect(child!.env.DREAMCONTEXT_MCP_CFG_0).toBeUndefined();
     // Removed when the child exits.
     child!.emit('close', 0);
     expect(existsSync(f)).toBe(false);

@@ -1,4 +1,6 @@
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, type ReactNode } from 'react';
+import { McpPicker } from './McpPicker';
+import { asMcpHost } from './useMcpLive';
 import { pickFiles, pickFolders, isDesktop } from '../../../lib/desktop';
 import { useVoiceCapture, PHONE_MAX_TAKE_MS, STT_RETRIES } from '../../../lib/voice/useVoiceCapture';
 import { publishVoiceActivity, publishVoiceLevel } from '../../../lib/voice/voiceActivity';
@@ -542,7 +544,7 @@ const UsageRingButton = memo(function UsageRingButton({ ctx, nudgeAt, hardAt, op
 export function Composer({
   session, model, effort, modelConfig, onModelChange, onEffortChange, busy, connected,
   quote, onClearQuote, onOpenTaskPicker, permissionMode = 'auto', projectPermissionMode,
-  onPermissionModeChange, onSignIn, onMcpPanel, onPeerMessage,
+  onPermissionModeChange, onSignIn, mcpPicker, onPeerMessage,
   mode = DEFAULT_CHAT_MODE, onModeChange, agent = '', onAgentPick, onSetModelDefault, shelved = false,
   mentions, renderMentionFace, mentionsLabel = 'Connected projects',
   idlePlaceholder, unavailable,
@@ -614,14 +616,11 @@ export function Composer({
    *  nothing. The handler opens an interactive terminal Claude tab that CAN run the flow. */
   onSignIn: () => void;
   /**
-   * Open the MCP panel — what `/mcp` does here instead of being sent.
-   *
-   * OPTIONAL, and the optionality is the rule: a host with nowhere to put the panel (the
-   * agents channel, a peer session card) leaves the command alone and lets it travel, which is
-   * today's behaviour. Swallowing `/mcp` into a handler that does not exist would be worse
-   * than the dead end it replaces.
+   * `/mcp` opens the MCP popover above the composer (task mcp-management) instead of being
+   * sent: the engine ANSWERS that command with a sentence pointing at a terminal. OPTIONAL: a
+   * host with no live chat behind it (a peer session card) leaves the command alone.
    */
-  onMcpPanel?: () => void;
+  mcpPicker?: boolean;
   /**
    * Take over a message ADDRESSED to a connected project (`@acme-payments …`). Like `onSignIn`, this
    * is a message this session must not send: it belongs to another project's agent, and
@@ -756,6 +755,22 @@ export function Composer({
   // is the live conversation model, not a snapshot.
   const conv = session.getModel();
   const [draft, setDraft] = useState(() => conv.draft);
+  // `/mcp` — the popover opens as soon as the draft IS the command (typed, not sent).
+  const [mcpOpen, setMcpOpen] = useState(false);
+  /** The popover was opened by SENDING `/mcp` (which clears the draft), not by typing it. */
+  const mcpSentRef = useRef(false);
+  useEffect(() => {
+    if (mcpPicker && /^\/mcp$/.test(draft.trim())) setMcpOpen(true);
+    // The draft moved on (backspaced, kept typing): the popover is not what is being typed any more.
+    // An empty draft right after SENDING the command keeps the popover; emptied by hand, it closes.
+    else if (!isMcpCommand(draft) && !(mcpSentRef.current && !draft.trim())) setMcpOpen(false);
+    if (draft.trim()) mcpSentRef.current = false;
+  }, [draft, mcpPicker]);
+  const closeMcp = useCallback(() => {
+    setMcpOpen(false);
+    mcpSentRef.current = false;
+    if (isMcpCommand(draft)) { setDraft(''); session.syncDraft(''); }
+  }, [draft, session]);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   // ── Caret after a PROGRAMMATIC draft replacement ─────────────────────────────────
@@ -1972,8 +1987,9 @@ export function Composer({
     // `/mcp` is the other one, and it fails worse: the engine ANSWERS it, with a result frame
     // whose text tells the user to use a terminal for the details. So it opens the MCP panel
     // instead of spending a turn to deliver that.
-    if (onMcpPanel && isMcpCommand(words)) {
-      onMcpPanel();
+    if (mcpPicker && isMcpCommand(words)) {
+      mcpSentRef.current = true;
+      setMcpOpen(true);
       // Cleared, unlike the sign-in above, and the difference is the message itself: `/login`
       // may be sitting in front of a half-written sentence worth keeping, while a draft that
       // IS the command has nothing left in it once the command has been obeyed. Leaving it
@@ -2221,7 +2237,9 @@ export function Composer({
         </div>
       )}
 
-      {slashOpen && (
+      {mcpOpen && asMcpHost(session) && <McpPicker session={asMcpHost(session)!} onClose={closeMcp} inputRef={taRef} />}
+
+      {slashOpen && !mcpOpen && (
         <div className="chat-cmp-slash" role="listbox" id={slashListId} aria-label="Slash commands" ref={slashListRef}>
           {slashMatches.map((cmd, i) => (
             <button

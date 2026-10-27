@@ -380,9 +380,14 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * that finds it garbled retries the SAME audio once (`dreamcontext voice retry`), then asks.
    * This file is the only way a chat agent learns the verb exists. Actual 14,007; 14,150 keeps
    * ~140 of headroom.
+   *
+   * 14150 -> 14500 on 2026-10-27, a RAISE for the `mcp` card (325 characters), owner-asked (task
+   * mcp-management: "when a connection goes stale the agent sends a click-here-and-connect card,
+   * like the secret card"). Cut from a 650-character first draft to when-to-send, what comes
+   * back, one example; the rest (rows, buttons) is the card's own. Actual 13,930.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(14150);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(14500);
   });
 
   /**
@@ -394,6 +399,11 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    */
   it('is the length its docstring claims — within a wording tweak', () => {
     expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 14007)).toBeLessThanOrEqual(20);
+   *
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 13930)).toBeLessThanOrEqual(20);
+   */
+  it('stays small enough to ride in every chat turn', () => {
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(14500);
   });
 
   /**

@@ -43,8 +43,9 @@
  *                             unstyled markup, which is exactly the broken promise this
  *                             file's standing rule forbids.
  *   • `dream-view`          — `lib/chatViewSpec.ts` (`parseViewBlock`, the schema + caps) and
- *                             `chat/ChatViews.tsx` (insight + checklist + secret + run +
- *                             agent-thread). `secret` submits to `POST /api/agent/secret`
+ *                             `chat/ChatViews.tsx` (insight + checklist + secret + run + mcp +
+ *                             agent-thread). `mcp` draws the chat's live MCP status
+ *                             (`chat/McpCard.tsx`, task mcp-management). `secret` submits to `POST /api/agent/secret`
  *                             (`lib/env-secrets.ts` owns every guard) and `run` opens a PTY
  *                             over `/api/agent/terminal?kind=exec` (`chat/InlineTerminal.tsx`).
  *                             `agent-thread` is DERIVED FROM DISK like `insight`: the agent
@@ -205,7 +206,7 @@ const BRIEFING_REST = `## The rest of the surface
   the composer; \`url\` opens an https \`url\`; \`develop\` takes a task \`id\` and hands that task
   to a NEW session in Develop mode — the one button that opens a chat instead of a view.
 
-## \`dream-view\` — the nine things HTML must NOT be
+## \`dream-view\` — the ten things HTML must NOT be
 
 **A tracked metric.** If the number lives in a dreamcontext Lab insight, name the slug and we
 draw the real card — current cache, canonical render, honest "as of". Never retype tracked
@@ -244,6 +245,14 @@ the keyboard. One line; \`cwd\` is project-relative; \`why\` says what makes it 
 
 \`\`\`dream-view
 {"type":"run","id":"fb-login","command":"firebase login","why":"it opens a browser and waits for you to sign in"}
+\`\`\`
+
+**An MCP server your task needs** that a prompt line says this chat cannot use — ONLY then;
+never ask in prose. One card, 1-8 server names; you get \`MCP connected: …\` (or
+\`MCP skipped: …\`) back and carry on.
+
+\`\`\`dream-view
+{"type":"mcp","id":"report-sources","why":"PostHog numbers for the report","servers":["posthog"]}
 \`\`\`
 
 **A fact that must not scroll away** — a row on the shelf docked to the composer. \`weight\`

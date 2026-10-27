@@ -442,6 +442,11 @@ export type ClientControl =
   | { type: 'user'; text: string; voice?: true; voiceTake?: string }
   | { type: 'answer'; requestId: string; behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }
   | { type: 'interrupt' }
+  /** MCP (task mcp-management): sign a server in / restart it / read the status again, through
+   *  this chat's own CLI process. The server refuses them unless a desktop window holds the chat. */
+  | { type: 'mcpConnect'; name: string }
+  | { type: 'mcpReconnect'; name: string }
+  | { type: 'mcpRefresh' }
   /** Live model switch — the server translates this into a `set_model` control_request
    *  (verified on CLI 2.1.218: accepts aliases AND full ids, re-emits `system:init` with
    *  the new model). `requestId` is CLIENT-generated so the `control-ack` can be matched. */

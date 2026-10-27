@@ -265,6 +265,11 @@ export function SettingsPage({ focus }: SettingsPageProps) {
     if (focus?.id === 'brain' || focus?.id === 'teamsync') setActiveSection('teamsync');
     else if (focus?.id === 'github') setActiveSection('github');
     else if (focus?.id === 'system') setActiveSection('system');
+    // `/mcp` → "Manage in Settings": the Agents section, scrolled to its MCP matrix.
+    else if (focus?.id === 'mcp') {
+      setActiveSection('agents');
+      requestAnimationFrame(() => document.getElementById('settings-mcp')?.scrollIntoView({ block: 'start' }));
+    }
   }, [focus?.id, focus?.nonce]);
 
   if (configLoading) {
@@ -363,10 +368,12 @@ export function SettingsPage({ focus }: SettingsPageProps) {
           </SettingGroup>
 
           {/* Directly under the accounts, because it answers the question the accounts raise:
-              an account is per person, so what do all of them SHARE? The repo's servers. */}
-          <SettingGroup title="MCP servers">
-            <McpServers />
-          </SettingGroup>
+              which servers does each account have, and which need a sign-in (the matrix). */}
+          <div id="settings-mcp">
+            <SettingGroup title="MCP servers">
+              <McpServers />
+            </SettingGroup>
+          </div>
 
           {!agentCfg ? (
             <p className="settings-field-hint">{t('common.loading')}</p>

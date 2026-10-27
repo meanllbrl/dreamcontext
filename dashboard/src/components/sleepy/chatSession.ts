@@ -25,6 +25,14 @@ import { createChildAlarmGate } from './super/childAlarm';
 import { readSuperDigest, type SuperDigestWire } from '../../lib/superTypes';
 import { dropSettledSurveyDrafts } from './chat/surveyDrafts';
 import { recordPhoneEvent } from '../../lib/phoneConnLog';
+import { openExternalUrl } from '../../lib/desktop';
+import type { McpConnectState, McpLiveServer } from '../../lib/mcpWire';
+import { clearRefused } from './chat/mcpRows';
+
+/** The chat's own live MCP status (task mcp-management): the server's last `mcp_status`. */
+export interface McpChatStatus { servers: McpLiveServer[]; at: number }
+/** A sign-in in flight per server name, as the server reports it. */
+export type McpChatAuth = Record<string, { state: McpConnectState; host?: string }>;
 
 /**
  * The imperative engine behind a Chat session (beta) — the headless stream-json peer of
@@ -588,6 +596,19 @@ export interface ChatSession {
   /** The current reduced conversation state (a fresh object per mutating event — see
    *  {@link ConversationModel}'s header note). */
   getModel: () => ConversationModel;
+  /** This chat's MCP servers as its OWN process reports them (null until the first reading). */
+  mcp: McpChatStatus | null;
+  /** Sign-ins in flight, by server name. */
+  mcpAuth: McpChatAuth;
+  /** Bumped on every MCP change, so a component can skip the per-token notifications. */
+  mcpVersion: number;
+  /** Sign a server in through this chat's own CLI (`mcp_authenticate`): the browser opens at the
+   *  CLI's https URL, the row turns green when the CLI says so. Desktop window only. */
+  mcpConnect: (name: string) => void;
+  /** Restart a failed server (`mcp_reconnect`) — never a sign-in. */
+  mcpReconnect: (name: string) => void;
+  /** Ask the process for a fresh reading. */
+  mcpRefresh: () => void;
   /** Submit a user message: sends the `user` control frame and appends it to the
    *  transcript optimistically (the protocol never echoes the user's own text back). */
   send: (text: string) => void;
@@ -1318,6 +1339,12 @@ export function createChatSession(
     dispose,
     subscribe,
     getModel: () => conv,
+    mcp: null,
+    mcpAuth: {},
+    mcpVersion: 0,
+    mcpConnect: (name: string) => mcpAction('mcpConnect', name),
+    mcpReconnect: (name: string) => mcpAction('mcpReconnect', name),
+    mcpRefresh: () => { sendControl({ type: 'mcpRefresh' }); },
     send,
     steer,
     canSteer: steerable,
@@ -2351,6 +2378,10 @@ export function createChatSession(
   function onSocketMessage(e: MessageEvent): void {
     const raw = typeof e.data === 'string' ? e.data : '';
     if (!raw) return;
+    // The chat's MCP status and sign-ins (task mcp-management): session state, never transcript.
+    if (raw.includes('"subtype":"mcp_')) {
+      if (applyMcpFrame(raw)) return;
+    }
     // The server's answer to a reattach — not a protocol event, so it never reaches the parser.
     if (raw.includes('"reattached"') || raw.includes('"turn_state"')) {
       const frame = readReattachedFrame(raw);
@@ -2886,6 +2917,44 @@ export function createChatSession(
     sendControl(out.ok
       ? { type: 'super_command_result', id: cmd.id, ok: true, result: out.result ?? null }
       : { type: 'super_command_result', id: cmd.id, ok: false, error: out.error });
+  }
+
+  /** One `_meta` MCP frame from the server. True when it was one (and was applied). */
+  function applyMcpFrame(raw: string): boolean {
+    let f: { type?: unknown; subtype?: unknown; servers?: unknown; at?: unknown; name?: unknown; url?: unknown; host?: unknown; state?: unknown; message?: unknown };
+    try { f = JSON.parse(raw) as typeof f; } catch { return false; }
+    if (f.type !== '_meta' || typeof f.subtype !== 'string' || !f.subtype.startsWith('mcp_')) return false;
+    if (f.subtype === 'mcp_status' && Array.isArray(f.servers)) {
+      session.mcp = { servers: f.servers as McpLiveServer[], at: typeof f.at === 'number' ? f.at : Date.now() };
+      // A server the CLI now calls connected ends its sign-in, whatever the last frame said.
+      for (const s of session.mcp.servers) {
+        if (s.status === 'connected' && session.mcpAuth[s.name]) session.mcpAuth = { ...session.mcpAuth, [s.name]: { state: 'connected' } };
+      }
+    } else if (f.subtype === 'mcp_auth_url' && typeof f.name === 'string' && typeof f.url === 'string') {
+      // https only, and only once per sign-in: the server already refused anything else.
+      if (/^https:\/\//.test(f.url)) void openExternalUrl(f.url);
+      session.mcpAuth = { ...session.mcpAuth, [f.name]: { state: 'opening', host: typeof f.host === 'string' ? f.host : undefined } };
+    } else if (f.subtype === 'mcp_connect' && typeof f.name === 'string' && typeof f.state === 'string') {
+      const prev = session.mcpAuth[f.name];
+      session.mcpAuth = { ...session.mcpAuth, [f.name]: { state: f.state as McpConnectState, host: prev?.host } };
+    } else if (f.subtype === 'mcp_error') {
+      // A refusal (a phone-held socket, a bad name): the sign-in it answers did not start, so its
+      // row (or every row still "opening") goes back to a button instead of waiting forever.
+      session.mcpAuth = clearRefused(session.mcpAuth, typeof f.name === 'string' ? f.name : undefined);
+    } else {
+      return true;
+    }
+    session.mcpVersion += 1;
+    applyAndNotify(() => { /* MCP state lives on the session, not the transcript */ });
+    return true;
+  }
+
+  function mcpAction(type: 'mcpConnect' | 'mcpReconnect', name: string): void {
+    if (!name) return;
+    if (!sendControl({ type, name })) return;
+    session.mcpAuth = { ...session.mcpAuth, [name]: { state: 'opening' } };
+    session.mcpVersion += 1;
+    applyAndNotify(() => { /* MCP state lives on the session */ });
   }
 
   function sendControl(frame: ClientControl): boolean {

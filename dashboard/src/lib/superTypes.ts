@@ -363,7 +363,7 @@ export interface SuperQueueItem {
 }
 
 /** What an `owner` item waits on (MIRROR of src/lib/super/owner-wait.ts `OWNER_WAIT_KINDS`). */
-export const OWNER_WAIT_KINDS = ['run', 'secret', 'checklist'] as const;
+export const OWNER_WAIT_KINDS = ['run', 'secret', 'checklist', 'mcp'] as const;
 export type OwnerWaitKind = typeof OWNER_WAIT_KINDS[number];
 
 /** `super ask` in AskUserQuestion's shape (MIRROR of src/lib/super/types.ts). */

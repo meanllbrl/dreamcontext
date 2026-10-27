@@ -218,7 +218,8 @@ import {
   handleAgentAccountsReorder, handleAgentAccountsRemove,
 } from './routes/agent-accounts.js';
 import {
-  handleAgentMcpList, handleAgentMcpLogin, handleAgentMcpLogout,
+  handleMcpOverview, handleMcpCheck, handleMcpConnect, handleMcpConnectStatus, handleMcpConnectCancel,
+  handleMcpServerSave, handleMcpServerRemove, handleMcpServerMove, handleMcpImport,
 } from './routes/agent-mcp.js';
 import {
   handleAgentMcpProjectGet, handleAgentMcpProjectAdopt, handleAgentMcpProjectRemove,
@@ -597,12 +598,18 @@ export function buildRouter(): Router {
   router.post('/api/agent/accounts/switch-policy', handleAgentAccountsSwitchPolicy);
   router.post('/api/agent/accounts/owner-only', handleAgentAccountsOwnerOnly);
   router.post('/api/agent/accounts/agent-threshold', handleAgentAccountsAgentThreshold);
-  // The MCP panel behind `/mcp` in Chat. Deliberately NOT vault-agnostic: a server can be
-  // PROJECT-scoped (the repo's `.mcp.json`, how a team shares servers), and that scope is
-  // resolved from the working directory — so every leg needs the project.
-  router.get('/api/agent/mcp', handleAgentMcpList);
-  router.post('/api/agent/mcp/login', handleAgentMcpLogin);
-  router.post('/api/agent/mcp/logout', handleAgentMcpLogout);
+  // Settings → MCP (task mcp-management): every server × every Claude account, the probes that
+  // fill it, a sign-in per account, and the store edits. Owner window only, reads included.
+  // `/mcp` in Chat talks to its OWN process over the chat socket instead (agent-chat.ts).
+  router.get('/api/agent/mcp/overview', handleMcpOverview);
+  router.post('/api/agent/mcp/check', handleMcpCheck);
+  router.post('/api/agent/mcp/connect', handleMcpConnect);
+  router.get('/api/agent/mcp/connect/:ticket', handleMcpConnectStatus);
+  router.delete('/api/agent/mcp/connect/:ticket', handleMcpConnectCancel);
+  router.post('/api/agent/mcp/server', handleMcpServerSave);
+  router.post('/api/agent/mcp/server/remove', handleMcpServerRemove);
+  router.post('/api/agent/mcp/server/move', handleMcpServerMove);
+  router.post('/api/agent/mcp/import', handleMcpImport);
   // Settings → MCP servers: the repo's `.mcp.json`, the only scope a TEAM can share.
   router.get('/api/agent/mcp/project', handleAgentMcpProjectGet);
   router.post('/api/agent/mcp/project/adopt', handleAgentMcpProjectAdopt);

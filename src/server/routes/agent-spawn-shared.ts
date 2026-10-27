@@ -69,6 +69,20 @@ export function requireLocalDesktop(req: IncomingMessage, res: ServerResponse): 
  * request: the read can run pending `git init`s, so another site must not be able to
  * trigger it. `Sec-Fetch-Site: cross-site` and any non-loopback `Origin` are refused.
  */
+/**
+ * The owner's own window: desktop app, this machine, a loopback Host, and this very origin
+ * (port included), not cross-site. A page on another loopback port (an approved dev server in
+ * a web card) or a DNS-rebinding page is not the app. Sends the 403.
+ */
+export function requireOwnerWindow(req: IncomingMessage, res: ServerResponse, message = 'Only this app\'s own window can do this.'): boolean {
+  if (!requireLocalDesktop(req, res)) return false;
+  if (!isSameOriginStrict(req) || isCrossSiteRequest(req)) {
+    sendError(res, 403, 'forbidden', message);
+    return false;
+  }
+  return true;
+}
+
 export function requireLocalRead(req: IncomingMessage, res: ServerResponse): boolean {
   if (isLoopback(req) && isLoopbackHostHeader(req) && !isCrossSiteRequest(req)) return true;
   sendError(res, 403, 'forbidden', 'This is only available on this computer.');

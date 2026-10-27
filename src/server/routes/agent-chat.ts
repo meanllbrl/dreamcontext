@@ -64,7 +64,11 @@ import {
   accountEnvFor, autoSwitchEnabled, isRealHomeConfigDir, listClaudeAccounts, resolveConfigDir, sandboxDirFor,
   switchStrategyFor, switchWeightsFor,
 } from '../../lib/claude-accounts.js';
-import { ensureSandbox, ensureSharedMcpConfig } from '../../lib/claude-account-sandbox.js';
+import { ensureSandbox } from '../../lib/claude-account-sandbox.js';
+import { mcpStoreFiles, storeFileRefs } from '../../lib/mcp-store.js';
+import { McpControl, isSafeAuthUrl, redactContextFor, redactStatus, routeChildLine, writeStatusCache } from '../../lib/mcp-live.js';
+import { removeMcpHealth, writeMcpHealth } from '../../lib/mcp-health.js';
+import { isUsableServerName, type McpLiveServer } from '../../lib/mcp-wire.js';
 import { probeAccountForDecision, type ProbeOutcome } from '../../lib/claude-usage-probe.js';
 import { readUsageLimits, usageReadingIsCurrent, type UsageLimitsResponse } from '../../lib/claude-usage.js';
 import {
@@ -112,7 +116,7 @@ import {
 } from './agent-chat-live.js';
 import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOptions, type ParkOutcome } from '../chat-park.js';
 import {
-  isLoopback, isSameOriginStrict, isCrossSiteRequest, requireLocalDesktop, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
+  isLoopback, isSameOriginStrict, isCrossSiteRequest, requireLocalDesktop, requireOwnerWindow, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizeChatMode, sanitizePrompt, sanitizeAccountId,
   claudeConversationExists, redeemPromptToken, findFirstTranscriptPath,
 } from './agent-spawn-shared.js';
@@ -392,7 +396,7 @@ export function chatDeniedToolArgs(scopedCard: boolean): string[] {
  * owner's global ones. Owner, 2026-10-14: every notch turn carried the global plugins and user
  * settings — measured ~9.6k tokens of a ~42k context, for a two-sentence answer — and none of
  * them is something the Assistant uses. Dropping the `user` source also drops the user-scope MCP
- * servers, which the owner KEEPS, so those ride by reference instead ({@link sharesUserMcp}).
+ * servers, which the owner KEEPS, so those ride in the stores instead ({@link chatStoreMcp}).
  * The model and effort are argv already, so the global `model`/`effortLevel` never applied here.
  */
 export function assistantSettingArgs(isAssistant: boolean): string[] {
@@ -400,12 +404,14 @@ export function assistantSettingArgs(isAssistant: boolean): string[] {
 }
 
 /**
- * Does this spawn get the user's MCP servers through the shared `--mcp-config` file? A sandboxed
- * account always does (its own config has none). So does the Assistant on the real account,
- * because {@link assistantSettingArgs} cut it off from `~/.claude.json`'s user scope.
+ * The MCP stores a chat spawn carries (task mcp-management): every account, #0 included, gets
+ * `--mcp-config <computer> [<project>]` so one list of servers reaches all of them. The paths
+ * ride in env vars and the argv names the variable ({@link storeFileRefs}): the login-shell
+ * script never contains HOME's text. A scoped card and a lean child get none.
  */
-export function sharesUserMcp(o: { isAssistant: boolean; isRealHomeAccount: boolean }): boolean {
-  return !o.isRealHomeAccount || o.isAssistant;
+export function chatStoreMcp(o: { scopedCard: boolean; lean: boolean; projectRoot: string; home?: string }): { refs: string[]; env: Record<string, string> } {
+  if (o.scopedCard || o.lean) return { refs: [], env: {} };
+  return storeFileRefs(mcpStoreFiles({ home: o.home, projectRoot: o.projectRoot }).files);
 }
 
 /**
@@ -831,6 +837,21 @@ export const DEVICE_REVOKED_CLOSE = 4401;
 export interface DeviceTag { store: 'mac'; idHash: string }
 
 const socketDevice = new WeakMap<object, DeviceTag>();
+/** How long a chat waits on a browser sign-in (5 min), and how often it asks meanwhile. The env
+ *  knob exists for the browser verify script, which cannot wait five minutes for the fallback;
+ *  it is never shorter than 5 s. */
+const MCP_CONNECT_WINDOW_MS = Math.max(5000, Number(process.env.DREAMCONTEXT_MCP_CONNECT_WINDOW_MS) || 5 * 60_000);
+const MCP_CONNECT_POLL_MS = 3000;
+/** Sockets that were a desktop loopback peer AT THEIR UPGRADE (task mcp-management): the only
+ *  ones that may start an MCP sign-in. `socketDevice` tags phone sockets only, so this is the
+ *  positive mark; a tailnet peer or a phone never gets it. */
+const socketLoopback = new WeakMap<object, boolean>();
+/** May the socket holding a chat right now drive its MCP actions? Desktop + loopback only. */
+export function mcpSocketAllowed(ws: object): boolean {
+  return !socketDevice.has(ws) && socketLoopback.get(ws) === true;
+}
+/** Tests only. */
+export function markSocketLoopbackForTests(ws: object, loopback: boolean): void { socketLoopback.set(ws, loopback); }
 /** Whether a phone socket last said its chat is visible on screen (`{type:'visibility'}`). */
 const socketVisible = new WeakMap<object, boolean>();
 
@@ -1427,6 +1448,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       };
       wss.handleUpgrade(req, socket, head, (ws) => {
         if (deviceTag) tagDeviceSocket(ws, deviceTag);
+        socketLoopback.set(ws, !phone && isLoopback(req));
         if (adoptable && passive) {
           void passiveAdopt(adoptable, ws, () => childNow() !== null).then((outcome) => {
             if (outcome === 'handed_over') { toWatch(ws, childNow()); return; }
@@ -1801,7 +1823,6 @@ export function startChatSession(
   }
   const accountEnv = accountEnvFor(accountConfigDir);
   const isRealHomeAccount = isRealHomeConfigDir(accountConfigDir);
-  const mcpConfigPath = sharesUserMcp({ isAssistant, isRealHomeAccount }) ? ensureSharedMcpConfig() : null;
   // The Assistant's hands (mouse, keyboard, screen — computer-mcp.ts): its spawn ONLY, macOS
   // only. Each call is an MCP tool call, so under `ask` the owner approves it in the notch.
   const computerMcpPath = isAssistant && process.platform === 'darwin' ? ensureComputerMcpConfig() : null;
@@ -1932,6 +1953,8 @@ export function startChatSession(
     }
   }
   const browserOverride = scopedCard ? null : prepareBrowserOverride(projectRoot);
+  // The MCP stores every account shares (task mcp-management), by env reference.
+  const storeMcp = chatStoreMcp({ scopedCard, lean: !!opts.leanMcp, projectRoot });
 
   const heldConversation = resumeTarget || freshPin;
   if (heldConversation) liveConversations.add(heldConversation);
@@ -2151,22 +2174,23 @@ export function startChatSession(
     // Variadic, but every later element is a `--` flag, so it swallows nothing.
     ...chatDeniedToolArgs(scopedCard),
     ...assistantSettingArgs(isAssistant),
-    // A SANDBOXED session reaches the user's MCP servers BY REFERENCE. Its own config is
-    // seeded with no MCP keys at any depth, so without this flag it would silently lose every
-    // server the user has; copying them per account would multiply the secrets instead.
-    // Account #0 reads the real config directly and needs nothing. `--strict-mcp-config` is
-    // deliberately NOT passed, so a project's own `.mcp.json` still applies.
+    // Every account (#0 included) reaches the MCP stores BY REFERENCE (`mcp-store.ts`): the
+    // computer file, then the project file (the later one wins a name). They are named as env
+    // variables, never as text, because this whole argv becomes a login-shell string.
+    // `--strict-mcp-config` is deliberately NOT passed, so a project's own `.mcp.json` still applies.
     // No MCP for a scoped card (its allowlist names no MCP tool; out of scope by decision).
     // The browser override rides LAST: between two `--mcp-config` files the later one wins,
-    // and the shared config may carry the owner's headed `playwright` too.
+    // and the stores may carry the owner's headed `playwright` too.
     // A LEAN child (D14) instead: strict, and only its subset, the project's own `.mcp.json`
-    // (strict would drop it) and the browser override, LAST as above. Never the shared config.
-    ...(scopedCard ? [] : leanChildMcpArgs(opts.leanMcp ? { leanMcpPath, projectMcp: leanProjectMcpSafe, browser: browserOverride?.configPath ?? null } : null, [mcpConfigPath, computerMcpPath, browserOverride?.configPath ?? null])),
+    // (strict would drop it) and the browser override, LAST as above. Never a store.
+    ...(scopedCard ? [] : leanChildMcpArgs(opts.leanMcp ? { leanMcpPath, projectMcp: leanProjectMcpSafe, browser: browserOverride?.configPath ?? null } : null, [...storeMcp.refs, computerMcpPath, browserOverride?.configPath ?? null])),
   ];
   // Quoted for the login-shell script string exactly like the terminal/title/capture
   // spawns: every element here is either a fixed flag literal or a whitelist-sanitized
   // value (UUID / model alias / effort level), so plain double-quoting is sufficient —
-  // none of them can contain a shell metacharacter. (`Bash(dreamcontext assistant:*)` is a
+  // none of them can contain a shell metacharacter. The one deliberate expansion is a store
+  // reference (`$DREAMCONTEXT_MCP_CFG_n`, a fixed name): it expands to a path held in the env,
+  // so HOME's text never enters the script. (`Bash(dreamcontext assistant:*)` is a
   // fixed literal whose parens, colon, space and star are all inert inside double quotes.)
   const script = `exec claude ${argv.map((a) => `"${a}"`).join(' ')}`;
 
@@ -2234,7 +2258,7 @@ export function startChatSession(
       mode,
     })
     : null;
-  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...(envelope?.env ?? {}) } as Record<string, string | undefined>;
+  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...storeMcp.env, ...(envelope?.env ?? {}) } as Record<string, string | undefined>;
   // Its own process group on POSIX, so the whole tree can be ended at once (win32: see chatSpawnCommand).
   const spawnCmd = chatSpawnCommand({ argv, script });
   const child: ChildProcessWithoutNullStreams = spawn(spawnCmd.file, spawnCmd.args, {
@@ -2690,6 +2714,120 @@ export function startChatSession(
     catch { return false; /* stream torn down between the alive check and the write — best-effort */ }
   };
 
+  /** This child's MCP control channel (task mcp-management): `mcp_status`, `mcp_authenticate`,
+   *  `mcp_reconnect`. Its replies are consumed by the stdout loop, never relayed. */
+  const mcpControl = new McpControl((frame) => writeStdin(frame));
+
+  // ── MCP live status (task mcp-management) ─────────────────────────────────────────────
+  // Read from THIS child (`mcp_status`), redacted, then: pushed to the socket, written to the
+  // tab's health file (the hook's source; pinned chats only), and recorded in the account's
+  // status cache. Polled at spawn until nothing is still connecting (20 s), after each turn,
+  // and while a sign-in is in flight. None for a scoped card (it has no MCP).
+  const mcpTab = !isAssistant && !card && pinId && idArg.length ? pinId : '';
+  const mcpAccount = activeAccountId || (listClaudeAccounts().length ? '' : 'default');
+  let mcpLast: McpLiveServer[] | null = null;
+  let mcpLastAt = 0;
+  let mcpSettleTimer: ReturnType<typeof setTimeout> | null = null;
+  let mcpTurnTimer: ReturnType<typeof setTimeout> | null = null;
+  let mcpConnecting: string | null = null;
+  const mcpPublish = (servers: McpLiveServer[]): void => {
+    mcpLast = servers;
+    mcpLastAt = Date.now();
+    sendMeta({ subtype: 'mcp_status', servers, at: mcpLastAt });
+    if (mcpTab) writeMcpHealth(contextRoot, mcpTab, servers);
+    // A lean child sees only its subset: not the account's truth, so it writes no cell.
+    if (mcpAccount && !opts.leanMcp) {
+      try { writeStatusCache(mcpAccount, servers, redactContextFor(projectRoot)); } catch { /* shown anyway */ }
+    }
+  };
+  const mcpPoll = async (): Promise<McpLiveServer[] | null> => {
+    if (!alive || scopedCard) return null;
+    try {
+      const servers = redactStatus(await mcpControl.status(), redactContextFor(projectRoot));
+      if (alive) mcpPublish(servers);
+      return servers;
+    } catch { return null; }
+  };
+  /** Poll every 2 s until nothing is `pending`, for at most `windowMs`. One loop at a time. */
+  const mcpSettle = (windowMs = 20_000): void => {
+    if (scopedCard) return;
+    if (mcpSettleTimer) clearTimeout(mcpSettleTimer);
+    const until = Date.now() + windowMs;
+    const tick = async () => {
+      mcpSettleTimer = null;
+      const servers = await mcpPoll();
+      if (!alive) return;
+      if ((!servers || servers.some((x) => x.status === 'pending')) && Date.now() < until) mcpSettleTimer = setTimeout(() => { void tick(); }, 2000);
+    };
+    void tick();
+  };
+  const mcpStop = (): void => {
+    if (mcpSettleTimer) { clearTimeout(mcpSettleTimer); mcpSettleTimer = null; }
+    if (mcpTurnTimer) { clearTimeout(mcpTurnTimer); mcpTurnTimer = null; }
+    mcpConnecting = null;
+    if (mcpTab) removeMcpHealth(contextRoot, mcpTab);
+  };
+  /** A sign-in through this child's own CLI: the browser URL it waits on, then its status every
+   *  3 s for 5 min; one `mcp_reconnect` at the end, then `timeout`. One at a time per chat. */
+  const mcpConnect = async (name: string): Promise<void> => {
+    if (mcpConnecting) { sendMeta({ subtype: 'mcp_connect', name, state: 'busy' }); return; }
+    mcpConnecting = name;
+    sendMeta({ subtype: 'mcp_connect', name, state: 'opening' });
+    try {
+      let authUrl: unknown = null;
+      try { authUrl = (await mcpControl.request('mcp_authenticate', { serverName: name })).authUrl; } catch { authUrl = null; }
+      const host = isSafeAuthUrl(authUrl);
+      // Only the desktop window opens it: a socket a phone took over meanwhile gets no URL.
+      if (host && mcpSocketAllowed(ws)) sendMeta({ subtype: 'mcp_auth_url', name, url: String(authUrl), host });
+      sendMeta({ subtype: 'mcp_connect', name, state: 'waiting' });
+      const deadline = Date.now() + MCP_CONNECT_WINDOW_MS;
+      let reconnected = false;
+      while (alive && mcpConnecting === name) {
+        await new Promise((r) => setTimeout(r, MCP_CONNECT_POLL_MS));
+        const servers = await mcpPoll();
+        if (servers?.find((x) => x.name === name)?.status === 'connected') {
+          sendMeta({ subtype: 'mcp_connect', name, state: 'connected' });
+          return;
+        }
+        if (Date.now() >= deadline) {
+          if (!reconnected) {
+            reconnected = true;
+            try { await mcpControl.request('mcp_reconnect', { serverName: name }); } catch { /* reported below */ }
+            continue;
+          }
+          sendMeta({ subtype: 'mcp_connect', name, state: 'timeout' });
+          return;
+        }
+      }
+    } finally {
+      if (mcpConnecting === name) mcpConnecting = null;
+    }
+  };
+  // Right after spawn most servers are still `pending`: read until they settle (≤ 20 s).
+  if (!scopedCard) setImmediate(() => mcpSettle());
+
+  /** The socket's MCP verbs. Refused unless the socket holding the chat RIGHT NOW is the desktop. */
+  const onMcpMessage = (msg: { type?: string; name?: unknown }): void => {
+    if (!mcpSocketAllowed(ws)) {
+      sendMeta({ subtype: 'mcp_error', code: 'mcp_desktop_only', ...(isUsableServerName(msg.name) ? { name: msg.name } : {}), message: 'MCP sign-in runs from the desktop app only.' });
+      return;
+    }
+    if (msg.type === 'mcpRefresh') { mcpSettle(); return; }
+    if (!isUsableServerName(msg.name)) {
+      sendMeta({ subtype: 'mcp_error', code: 'bad_server_name', message: 'That is not a usable MCP server name.' });
+      return;
+    }
+    const name = msg.name;
+    if (msg.type === 'mcpConnect') { void mcpConnect(name); return; }
+    void (async () => {
+      sendMeta({ subtype: 'mcp_connect', name, state: 'opening' });
+      try { await mcpControl.request('mcp_reconnect', { serverName: name }); } catch { /* the status says how it went */ }
+      mcpSettle();
+      const servers = await mcpPoll();
+      sendMeta({ subtype: 'mcp_connect', name, state: servers?.find((x) => x.name === name)?.status === 'connected' ? 'connected' : 'failed' });
+    })();
+  };
+
   /** Hand one OWNER message to the CLI as a turn — the socket's user frame, and a held message
    *  released by `releaseStalledSwitch`. */
   const writeOwnerTurn = (text: string): void => {
@@ -3025,6 +3163,7 @@ export function startChatSession(
       try { ws.send(line); } catch { /* closing */ }
     }
     if (handoffRun) sendMeta(handoffProgressFrame(handoffRun));
+    if (mcpLast) sendMeta({ subtype: 'mcp_status', servers: mcpLast, at: mcpLastAt });
     browserMirror?.replay();
     // A switch announced to the socket that went away is still owed: the client that just
     // arrived never read it, and without it the held messages wait for a restart nobody asks for.
@@ -3100,19 +3239,17 @@ export function startChatSession(
     while ((nl = buf.indexOf('\n')) !== -1) {
       const line = buf.slice(0, nl);
       buf = buf.slice(nl + 1);
-      const trimmed = line.trim();
-      if (!trimmed) continue;
 
-      if (ws.readyState === ws.OPEN) {
-        try { ws.send(line); } catch { /* closing */ }
-      }
-      mirrors?.line(line);
-
-      // Light local parse (type/subtype only — full typed parsing is the CLIENT's job,
+      // Parsed BEFORE anything is relayed (task mcp-management): an MCP control reply carries
+      // every server's live config, so it goes to `mcpControl` and nowhere else — no socket, no
+      // phone mirror, no observer below, no interrupt watchdog. Everything else relays verbatim
+      // and comes back parsed (type/subtype only — full typed parsing is the CLIENT's job,
       // chatProtocol.ts) so the server knows when an interrupt has actually resolved.
-      // Never throws on non-JSON/partial lines.
-      let obj: Record<string, unknown> | null = null;
-      try { obj = JSON.parse(trimmed) as Record<string, unknown>; } catch { /* partial line */ }
+      const obj = routeChildLine(line, {
+        send: (l) => { if (ws.readyState === ws.OPEN) { try { ws.send(l); } catch { /* closing */ } } },
+        mirror: (l) => mirrors?.line(l),
+        control: (o) => mcpControl.handle(o),
+      });
       if (!obj) continue;
 
       registry?.observe(obj);
@@ -3195,6 +3332,11 @@ export function startChatSession(
 
       if (mainResult) {
         closeTurn();
+        // The turn may have used, broken or fixed an MCP server: read again once it settles.
+        if (!scopedCard) {
+          if (mcpTurnTimer) clearTimeout(mcpTurnTimer);
+          mcpTurnTimer = setTimeout(() => { mcpTurnTimer = null; mcpSettle(10_000); }, 2000);
+        }
         // An autonomy change waited for this boundary.
         // Through scheduleRespawn, never straight to respawnInPlace: a message may still be
         // deciding in the switch gate (an account probe takes seconds), and ending stdin under
@@ -3328,6 +3470,8 @@ export function startChatSession(
   });
 
   child.on('close', (code) => {
+    mcpStop();
+    mcpControl.close();
     teardown();
     // Before the respawn's early return too: a successor starts with no handoff run, so nothing
     // would ever end this process's rotation hold but the 120 s cap.
@@ -4070,6 +4214,9 @@ export function startChatSession(
     // The client is closing this pane on purpose (a closed tab, a respawn): the socket's close
     // that follows ends the child as it always did, instead of detaching it for a reattach.
     if (msg.type === 'end') { endOnSocketGone = true; return; }
+
+    // MCP status and sign-in (task mcp-management), desktop-held sockets only.
+    if (msg.type === 'mcpConnect' || msg.type === 'mcpReconnect' || msg.type === 'mcpRefresh') { onMcpMessage(msg as { type: string; name?: unknown }); return; }
 
     // The phone says whether this chat is on its screen (D2): a push for it skips that device
     // while it is. Only a phone socket's word counts; the laptop sends none.
@@ -5079,16 +5226,9 @@ export async function handleAgentPhoneGrant(
   sendJson(res, 200, { granted: true, path: v.abs });
 }
 
-/** The owner's own window: desktop app, this machine, a loopback Host, and this very origin
- *  (port included). A page on another loopback port (an approved dev server in a web card)
- *  can neither read nor write a grant (T0, AC3). Sends the 403. */
+/** A web card's grants are the owner window's alone (T0, AC3): `requireOwnerWindow`. */
 function requireGrantOwner(req: IncomingMessage, res: ServerResponse): boolean {
-  if (!requireLocalDesktop(req, res)) return false;
-  if (!isSameOriginStrict(req) || isCrossSiteRequest(req)) {
-    sendError(res, 403, 'forbidden', 'Only this app\'s own window can change what a web card may load.');
-    return false;
-  }
-  return true;
+  return requireOwnerWindow(req, res, 'Only this app\'s own window can change what a web card may load.');
 }
 
 function vaultRealPath(contextRoot: string): string {

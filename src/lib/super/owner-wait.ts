@@ -2,7 +2,8 @@
  * A child that waits on the OWNER (task a-super-child-waiting-on-the-owner-or-still-running-…).
  *
  * Some things only the owner can do: run a command that opens a browser sign-in (a `run` card),
- * type a credential (a `secret` card), work through a procedure in another app (a `checklist`).
+ * type a credential (a `secret` card), work through a procedure in another app (a `checklist`),
+ * connect an MCP server only he can sign into (an `mcp` card, task mcp-management).
  * A child that leaves one of those open is not done:
  * nothing will move until he acts (Tilki 2026-10-22: a `gcloud auth login` run card sat under a
  * "done" row for hours while the agenda said nothing waits on him). CARDS ONLY (owner 2026-10-22):
@@ -18,7 +19,7 @@
  * wait. Everything else here is pure.
  */
 
-export const OWNER_WAIT_KINDS = ['run', 'secret', 'checklist'] as const;
+export const OWNER_WAIT_KINDS = ['run', 'secret', 'checklist', 'mcp'] as const;
 export type OwnerWaitKind = typeof OWNER_WAIT_KINDS[number];
 
 export interface OwnerWait {
@@ -66,6 +67,11 @@ export function ownerCardsIn(text: string): OwnerWait[] {
       const title = str(o.title);
       if (!title) continue;
       w = { kind: 'secret', id, line: oneLine(title), key: title };
+    } else if (o.type === 'mcp') {
+      const servers = Array.isArray(o.servers) ? o.servers.filter((x): x is string => typeof x === 'string' && !!x.trim()).map((x) => x.trim()) : [];
+      if (!servers.length || servers.length > 8) continue;
+      const names = servers.join(', ');
+      w = { kind: 'mcp', id, line: oneLine(str(o.why) || `Connect: ${names}`), key: names };
     } else if (o.type === 'checklist') {
       const title = str(o.title);
       if (!title || !Array.isArray(o.items) || !o.items.length) continue;
@@ -83,6 +89,7 @@ export function ownerCardsIn(text: string): OwnerWait[] {
  *  - a run card:    `[ran in chat]` then `$ <command>` (chat/runReport.ts `buildRunReport`);
  *  - a secret card: `[secret submitted · <title>]` (env-secrets.ts `secretReceipt`);
  *  - a checklist:   `Checklist: <title> — n of m done.` (checklistMarkdown.ts `buildSubmitMarkdown`).
+ *  - an mcp card:   `MCP connected: <names>` or `MCP skipped: <names>` (chat/mcpRows.ts `mcpReport`).
  * Returns the waits it answers: a card's own receipt (matched by its command or title; with one
  * card of that kind open, any receipt of the kind). Any other message HE writes to the child
  * answers every wait: he dealt with it his own way ("done, I signed in in my terminal", "use the
@@ -94,10 +101,12 @@ export function answeredBy(text: string, open: readonly OwnerWait[]): OwnerWait[
   const first = lines[0]?.trim() ?? '';
   const kind: OwnerWaitKind | null = /^\[ran in chat\]/i.test(first) ? 'run'
     : /^\[secret submitted\b/i.test(first) ? 'secret'
-      : /^Checklist:\s/.test(first) ? 'checklist' : null;
+      : /^Checklist:\s/.test(first) ? 'checklist'
+        : /^MCP (connected|skipped):\s/.test(first) ? 'mcp' : null;
   const subject = kind === 'run' ? (lines.find((l) => l.startsWith('$ '))?.slice(2).trim() ?? '')
     : kind === 'secret' ? (/·\s*(.*?)\]\s*$/.exec(first)?.[1]?.trim() ?? '')
-      : kind === 'checklist' ? first.replace(/^Checklist:\s*/, '').replace(/\s+—\s+\d+\s+of\s+\d+\s+done\.?\s*$/, '').trim() : '';
+      : kind === 'checklist' ? first.replace(/^Checklist:\s*/, '').replace(/\s+—\s+\d+\s+of\s+\d+\s+done\.?\s*$/, '').trim()
+        : kind === 'mcp' ? first.replace(/^MCP (connected|skipped):\s*/, '').trim() : '';
   // Not a receipt: his own words to the child answer everything it waited on him for.
   if (!kind) return [...open];
   return open.filter((w) => {
