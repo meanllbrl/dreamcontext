@@ -901,6 +901,8 @@ export function superEventText(contextRoot: string, state: SuperState, item: Sup
       `[super handover] item=${item.id} children=${ids.length}`,
       ...ids.flatMap((sid) => childLine(vault, state, sid, now)),
       `The owner handed the Chat screen over to you; every chat above is a card around you and a row in the job list. Write EVERY child's row line now with \`dreamcontext super brief <child> "<doing / next>"\`, arrange the cards if it helps, then tell the owner what is running (${OWNER_VOICE}). End your turn.`,
+      // The agenda he is about to read (pad.ts): what moved by itself or went stale, keep or close each.
+      ...padNotice(state, now).lines,
     ].join('\n');
   }
   if (item.kind === 'fresh') {
@@ -921,6 +923,7 @@ export function superEventText(contextRoot: string, state: SuperState, item: Sup
       `[super recap] item=${item.id} children=${ids.length}`,
       ...ids.flatMap((sid) => childLine(vault, state, sid, now)),
       `The owner is back. Tell him what finished, what waits on him and what still runs, unless you told him already (${OWNER_VOICE}). End your turn.`,
+      ...padNotice(state, now).lines,
     ].join('\n');
   }
   return superBatchText(contextRoot, state, [item], batch, now);
@@ -1220,7 +1223,8 @@ async function pumpOnce(key: string): Promise<void> {
     // A result he waits on, or a job waiting on HIM (`owner`): the super tells him, in full.
     const tells = !solo && (!!held || items.some((q) => awaitedItem(state, q) || q.kind === 'owner' || (!!q.team && q.kind === 'question')));
     const fresh = solo && items[0].kind === 'fresh';
-    const toldPad = solo ? [] : padNotice(state, now).ids;
+    // Every turn that carried the agenda lines marks them told: a batch, a recap, a handover.
+    const toldPad = fresh ? [] : padNotice(state, now).ids;
     await writeSuper(key, (s) => {
       markPadTold(s, toldPad, now);
       for (const it of s.queue) if (ids.has(it.id) && it.state === 'pending') { it.state = 'delivered'; it.batch = batch; }

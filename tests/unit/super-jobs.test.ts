@@ -42,7 +42,7 @@ describe('superNotepad: the agenda is the super\'s own notepad', () => {
         { id: 'n3', section: 'done', text: 'Release 0.34.1 installed', at: 9 },
         { id: 'n4', section: 'now', text: 'Moving the agenda into a card', at: 3 },
       ],
-    }), look());
+    }), look(), 100);
     expect(s.now.map((r) => [r.note, r.text])).toEqual([['n1', 'Fixing how pictures group on the stage'], ['n4', 'Moving the agenda into a card']]);
     expect(s.done.map((r) => r.note)).toEqual(['n3', 'n2']);
     expect(s.waiting).toEqual([]);

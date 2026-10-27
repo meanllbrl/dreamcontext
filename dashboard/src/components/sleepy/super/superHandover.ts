@@ -502,7 +502,7 @@ export interface AgendaRow {
   note?: string;
   /** A note the server moved to Done because its job finished (owner 2026-10-27). */
   auto?: boolean;
-  /** A Now note no job keeps true, unchanged for PAD_STALE_MS. */
+  /** A note no job keeps true, unchanged for PAD_STALE_MS: a Now note, or a Waiting note from an earlier day. */
   stale?: boolean;
   /** A child's own question (`directChildQuestion`): pressing it opens that child's chat. */
   direct?: boolean;
@@ -567,11 +567,18 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
       out.waiting.push({ key: `q:${q.id}`, section: 'waiting', item: q.id, sid: q.sessionId, text: nameOf(q.sessionId), line: '', chip: 'queued', at: q.createdAt });
     }
   }
+  // Mirrors src/lib/super/pad.ts (padRolledOff, padStale): a new day drops an earlier day's
+  // Done line (not one he moved himself); a line no job keeps true goes stale.
+  const day = new Date(now); day.setHours(0, 0, 0, 0);
+  const dayStart = day.getTime();
   for (const p of state.pad ?? []) {
+    if (p.section === 'done' && p.by !== 'owner' && p.at < dayStart) continue;
+    const stale = (!p.for || p.by === 'owner') && now - p.at >= PAD_STALE_MS
+      && (p.section === 'now' || (p.section === 'waiting' && p.at < dayStart));
     out[p.section].push({
       key: `n:${p.id}`, section: p.section, text: p.text, note: p.id, at: p.at,
       ...(p.section === 'done' && p.by === 'auto' ? { auto: true } : {}),
-      ...(p.section === 'now' && (!p.for || p.by === 'owner') && now - p.at >= PAD_STALE_MS ? { stale: true } : {}),
+      ...(stale ? { stale: true } : {}),
     });
   }
   out.done.sort((a, b) => b.at - a.at);

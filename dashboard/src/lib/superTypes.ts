@@ -850,7 +850,12 @@ export function readSuperDigest(v: unknown): SuperDigestWire | null {
     for (const [sid, name] of Object.entries(v.names).slice(0, 40)) if (typeof name === 'string' && name) names[sid] = name;
   }
   return {
-    pad: pad.map((p) => ({ id: p.id, section: p.section, text: p.text, at: p.at })),
+    // `for` and `by` roll a day over and flag a stale line on the phone as the desktop does.
+    pad: pad.map((p) => ({
+      id: p.id, section: p.section, text: p.text, at: p.at,
+      ...(typeof p.for === 'string' && p.for ? { for: p.for } : {}),
+      ...(p.by === 'auto' || p.by === 'owner' ? { by: p.by } : {}),
+    })),
     waiting: waiting.map((q) => ({ id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId, text: q.text })),
     ownerBatches, names, key: v.key,
   };

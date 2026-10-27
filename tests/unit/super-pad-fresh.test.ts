@@ -15,10 +15,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ServerResponse } from 'node:http';
 import { readSuperState, resetSuperIndex, SUPER_STATE_REL } from '../../src/lib/super/store.js';
-import { _resetSuperInbox, superBatchText, writeSuper } from '../../src/lib/super/inbox.js';
+import { _resetSuperInbox, superBatchText, superEventText, writeSuper } from '../../src/lib/super/inbox.js';
 import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
-import { markPadTold, padNotice, padStale, settlePad } from '../../src/lib/super/pad.js';
+import { markPadTold, padDayStart, padNotice, padRolledOff, padStale, settlePad } from '../../src/lib/super/pad.js';
 import { PAD_STALE_MS, emptySuperState, type SuperChild, type SuperPadItem, type SuperState } from '../../src/lib/super/types.js';
 import { SUPER_OWNER_HANDLERS, SUPER_VERB_HANDLERS, type SuperCaller } from '../../src/server/routes/super.js';
 import { superNotepad } from '../../dashboard/src/components/sleepy/super/superHandover.js';
@@ -152,6 +152,64 @@ describe('the card reads the same record', () => {
     ] }, look, NOW);
     expect(rows.now.map((r) => [r.note, !!r.stale])).toEqual([['n1', true], ['n2', false]]);
     expect(rows.done.map((r) => [r.note, !!r.auto])).toEqual([['n3', true]]);
+  });
+});
+
+// ─── A new day (owner 2026-10-28: "is the agenda current?" — yesterday's Done sat under today) ──
+
+describe('a new day keeps the agenda current', () => {
+  // 10:00 local on a real day; the day before, 15:00.
+  const TODAY = new Date(2026, 9, 28, 10, 0).getTime();
+  const YESTERDAY = new Date(2026, 9, 27, 15, 0).getTime();
+  const look = { live: () => null, titleFor: (s: string) => s, superTitle: 'Super' };
+
+  it('padDayStart is local midnight', () => {
+    expect(padDayStart(TODAY)).toBe(new Date(2026, 9, 28).getTime());
+  });
+
+  it('drops an earlier day\'s Done line on the next write; today\'s and the owner\'s own move stay', () => {
+    const s = state({ children: {}, pad: [
+      line({ id: 'n1', section: 'done', at: YESTERDAY }),
+      line({ id: 'n2', section: 'done', by: 'auto', why: 'done', at: YESTERDAY }),
+      line({ id: 'n3', section: 'done', at: TODAY - 1000 }),
+      line({ id: 'n4', section: 'done', by: 'owner', at: YESTERDAY }),
+      line({ id: 'n5', section: 'waiting', at: YESTERDAY }),
+    ] });
+    expect(padRolledOff(s.pad![0], TODAY)).toBe(true);
+    expect(settlePad(s, TODAY)).toBe(true);
+    expect(s.pad!.map((p) => p.id)).toEqual(['n3', 'n4', 'n5']);
+    expect(settlePad(s, TODAY)).toBe(false);
+  });
+
+  it('a Waiting line with no job left from an earlier day is stale; today\'s and a linked one are not', () => {
+    expect(padStale(line({ section: 'waiting', at: YESTERDAY }), TODAY)).toBe(true);
+    expect(padStale(line({ section: 'waiting', at: TODAY - PAD_STALE_MS - 1 }), TODAY)).toBe(false);
+    expect(padStale(line({ section: 'waiting', at: YESTERDAY, for: KID }), TODAY)).toBe(false);
+    // Just before midnight is not a day old: it still needs PAD_STALE_MS.
+    expect(padStale(line({ section: 'waiting', at: padDayStart(TODAY) - 1000 }), padDayStart(TODAY) + 1000)).toBe(false);
+    const told = padNotice(state({ pad: [line({ id: 'n7', section: 'waiting', at: YESTERDAY, text: 'Restart the app' })] }), TODAY);
+    expect(told.ids).toEqual(['n7']);
+    expect(told.lines.join('\n')).toContain('note=n7 has stood in Waiting unchanged');
+  });
+
+  it('the card hides an earlier day\'s Done line and flags a day-old Waiting line, like the server', () => {
+    const rows = superNotepad({ queue: [], pad: [
+      line({ id: 'n1', section: 'done', at: YESTERDAY }),
+      line({ id: 'n2', section: 'done', at: TODAY - 1000 }),
+      line({ id: 'n3', section: 'done', by: 'owner', at: YESTERDAY }),
+      line({ id: 'n4', section: 'waiting', at: YESTERDAY }),
+    ] }, look, TODAY);
+    expect(rows.done.map((r) => r.note)).toEqual(['n2', 'n3']);
+    expect(rows.waiting.map((r) => [r.note, !!r.stale])).toEqual([['n4', true]]);
+  });
+
+  it('a recap and a handover turn carry the agenda check; a fresh turn does not', () => {
+    const s = state({ children: {}, pad: [line({ id: 'n8', at: TODAY - 3 * PAD_STALE_MS })] });
+    const item = (kind: 'recap' | 'handover' | 'fresh') => ({ id: 'q-9', sessionId: SESSION, kind, state: 'pending' as const, createdAt: 1 });
+    expect(superEventText('/tmp/acme/_dream_context', s, item('recap'), TODAY)).toContain('note=n8 has stood in Now');
+    expect(superEventText('/tmp/acme/_dream_context', s, item('handover'), TODAY)).toContain('[agenda]');
+    expect(superEventText('/tmp/acme/_dream_context', s, item('fresh'), TODAY)).not.toContain('[agenda]');
+    expect(superEventText('/tmp/acme/_dream_context', state({ children: {}, pad: [] }), item('recap'), TODAY)).not.toContain('[agenda]');
   });
 });
 

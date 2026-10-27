@@ -210,7 +210,7 @@ describe('the notepad: `super note`', () => {
   });
 
   it('a full pad gives up its oldest Done line first, and refuses when it holds none', async () => {
-    const lines = (section: 'now' | 'done') => Array.from({ length: MAX_PAD }, (_, i) => ({ id: `n${i + 1}`, section, text: `line ${i}`, at: i }));
+    const lines = (section: 'now' | 'done') => Array.from({ length: MAX_PAD }, (_, i) => ({ id: `n${i + 1}`, section, text: `line ${i}`, at: Date.now() - 1000 + i }));
     makeVault({ pad: lines('done'), padSeq: MAX_PAD });
     expect((await verb('note-add', { section: 'now', text: 'one more' })).status).toBe(200);
     let s = await readSuperState(root);
@@ -263,7 +263,7 @@ describe('the agenda row\'s Write about this icon', () => {
       pad: [
         { id: 'n1', section: 'waiting', text: 'Your pick between the two paywalls', at: 1 },
         { id: 'n2', section: 'now', text: 'Fixing how pictures group', at: 2 },
-        { id: 'n3', section: 'done', text: 'Released the login fix', at: 3 },
+        { id: 'n3', section: 'done', text: 'Released the login fix', at: Date.now() },
       ],
     };
     const look = { live: () => null, titleFor: (s: string) => `Job ${s}`, superTitle: 'Super Agent' };
