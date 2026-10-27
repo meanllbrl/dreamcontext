@@ -4,10 +4,23 @@ import { isLightMode } from '../../../lib/lightMode';
 import { IconButton } from './SuperContainer';
 import { prefersReducedMotion } from './motionRunner';
 import { STAGE, type Rect } from './superLayout';
+import { MAX_FILMSTRIP } from '../../../lib/superTypes';
 
 /** A double-click's second press lands on the panel the first one opened: within this long of
  *  opening, a press with a click count of 2+ means "open them all", not a card or a dismissal. */
 export const DOUBLE_OPEN_MS = 500;
+
+/** "Open all", or "Open first 8" for a group bigger than a filmstrip (its first 8 cards open). */
+export function openAllLabel(t: (k: string) => string, n: number): string {
+  return n > MAX_FILMSTRIP ? t('super.group.openFirst').replace('{n}', String(MAX_FILMSTRIP)) : t('super.group.openAll');
+}
+
+/** The open-all button's hint; a group bigger than a filmstrip says which of its cards open. */
+export function openAllHint(t: (k: string) => string, n: number): string {
+  return n > MAX_FILMSTRIP
+    ? t('super.group.openFirstHint').replace('{n}', String(MAX_FILMSTRIP)).replace('{total}', String(n))
+    : t('super.group.openAllHint');
+}
 
 /** Is this press the second half of the double-click that opened the panel? */
 export function isDoubleOpen(openedAt: number, now: number, clicks: number): boolean {
@@ -150,8 +163,9 @@ export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngro
             </button>
           )}
           {!system && onPresentAll && (
-            <button type="button" className="super-group-panel-btn" data-testid="super-group-panel-open-all" title={t('super.group.openAllHint')} onClick={() => onPresentAll()}>
-              {t('super.group.openAll')}
+            <button type="button" className="super-group-panel-btn" data-testid="super-group-panel-open-all" data-first={ids.length > MAX_FILMSTRIP ? MAX_FILMSTRIP : undefined}
+              title={openAllHint(t, ids.length)} onClick={() => onPresentAll()}>
+              {openAllLabel(t, ids.length)}
             </button>
           )}
           {system && onCloseGroups && (closableCards ?? 0) > 0 && (
