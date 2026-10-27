@@ -97,5 +97,11 @@ describe('end-review fixes', () => {
     expect(cardPlace(live, 'item-4', 'connect-x')).toBe(cardPlace(replayed, 'hist-43', 'connect-x'));
     expect(cardPlace(live, 'item-2', 'connect-x')).not.toBe(cardPlace(live, 'item-4', 'connect-x'));
     expect(reportedKey('conv', 'connect-x#0:1')).not.toBe(reportedKey('conv', 'connect-x#1:1'));
+    // After a reload the earlier messages are HISTORY and only the newest are live items: the
+    // card reads both, in order, so a re-sent id still counts the restored one.
+    const history = replayed.slice(0, 3);
+    const items = [{ id: 'item-1', kind: 'text', text: `expired again\n\n${card('connect-x')}` }];
+    expect(cardPlace([...history, ...items], 'item-1', 'connect-x')).toBe('connect-x#1');
+    expect(cardPlace([...history, ...items], 'hist-41', 'connect-x')).toBe('connect-x#0');
   });
 });

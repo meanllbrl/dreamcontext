@@ -40,11 +40,12 @@ export function McpCard({ spec, session, conversationId, report, placeKey }: {
   // The account this chat runs on, named because the browser may be signed in as another.
   const accountEmail = useChatAccountEmail(session);
   const servers: McpLiveServer[] = status?.servers ?? [];
-  // Its place in the conversation, the same after a reload or a reconnect's replay: the item
+  // Its place in the conversation (restored history + live items), the same after a reload or a
+  // reconnect's replay: the item
   // (placeKey = `<item id>:<segment>`) only says which message to count up to.
   const itemId = placeKey ? placeKey.slice(0, placeKey.lastIndexOf(':')) : '';
   const segment = placeKey ? placeKey.slice(placeKey.lastIndexOf(':') + 1) : '';
-  const key = reportedKey(conversationId, `${session ? cardPlace(session.getModel().items, itemId, spec.id) : spec.id}:${segment}`);
+  const key = reportedKey(conversationId, `${session ? cardPlace([...session.getModel().history, ...session.getModel().items], itemId, spec.id) : spec.id}:${segment}`);
   const memory = useRef<CardReportState>({
     sawBroken: false,
     reported: (() => { try { return localStorage.getItem(key) as CardReportState['reported']; } catch { return null; } })(),

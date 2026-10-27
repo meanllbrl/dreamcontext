@@ -679,14 +679,18 @@ export function Composer({
   const [draft, setDraft] = useState(() => conv.draft);
   // `/mcp` — the popover opens as soon as the draft IS the command (typed, not sent).
   const [mcpOpen, setMcpOpen] = useState(false);
+  /** The popover was opened by SENDING `/mcp` (which clears the draft), not by typing it. */
+  const mcpSentRef = useRef(false);
   useEffect(() => {
     if (mcpPicker && /^\/mcp$/.test(draft.trim())) setMcpOpen(true);
     // The draft moved on (backspaced, kept typing): the popover is not what is being typed any more.
-    // An empty draft is the command having been SENT (it clears the draft): the popover stays.
-    else if (draft.trim() && !isMcpCommand(draft)) setMcpOpen(false);
+    // An empty draft right after SENDING the command keeps the popover; emptied by hand, it closes.
+    else if (!isMcpCommand(draft) && !(mcpSentRef.current && !draft.trim())) setMcpOpen(false);
+    if (draft.trim()) mcpSentRef.current = false;
   }, [draft, mcpPicker]);
   const closeMcp = useCallback(() => {
     setMcpOpen(false);
+    mcpSentRef.current = false;
     if (isMcpCommand(draft)) { setDraft(''); session.syncDraft(''); }
   }, [draft, session]);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1588,6 +1592,7 @@ export function Composer({
     // whose text tells the user to use a terminal for the details. So it opens the MCP panel
     // instead of spending a turn to deliver that.
     if (mcpPicker && isMcpCommand(message)) {
+      mcpSentRef.current = true;
       setMcpOpen(true);
       // Cleared, unlike the sign-in above, and the difference is the message itself: `/login`
       // may be sitting in front of a half-written sentence worth keeping, while a draft that
