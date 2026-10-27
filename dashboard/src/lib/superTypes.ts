@@ -228,6 +228,22 @@ export function resolvePresent(raw: { cards?: unknown; layout?: unknown; layoutB
   };
 }
 
+/**
+ * A group shown all at once (owner 2026-10-27: "open every picture of the group together"): its
+ * cards the record still holds, in group order, at most {@link MAX_FILMSTRIP}. `super present
+ * <group>` and the window's "open all" both present these.
+ */
+export function groupPresentCards(g: Pick<SuperGroup, 'cards'>, containers: readonly Pick<SuperContainer, 'id'>[]): string[] {
+  const known = new Set(containers.map((c) => c.id));
+  return [...new Set(g.cards)].filter((id) => known.has(id)).slice(0, MAX_FILMSTRIP);
+}
+
+/** The group a presentation shows whole, if any: "back to the group" returns there. */
+export function presentedGroup<G extends Pick<SuperGroup, 'id' | 'cards'>>(shown: readonly string[], groups: readonly G[], containers: readonly Pick<SuperContainer, 'id'>[]): G | undefined {
+  if (shown.length < 2) return undefined;
+  return groups.find((g) => sameCardSet(groupPresentCards(g, containers), shown));
+}
+
 /** Two card lists name the same cards (in any order). */
 export function sameCardSet(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;

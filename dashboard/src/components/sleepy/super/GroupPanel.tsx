@@ -5,6 +5,15 @@ import { IconButton } from './SuperContainer';
 import { prefersReducedMotion } from './motionRunner';
 import { STAGE, type Rect } from './superLayout';
 
+/** A double-click's second press lands on the panel the first one opened: within this long of
+ *  opening, a press with a click count of 2+ means "open them all", not a card or a dismissal. */
+export const DOUBLE_OPEN_MS = 500;
+
+/** Is this press the second half of the double-click that opened the panel? */
+export function isDoubleOpen(openedAt: number, now: number, clicks: number): boolean {
+  return clicks >= 2 && now - openedAt >= 0 && now - openedAt <= DOUBLE_OPEN_MS;
+}
+
 /** The panel a group (or Others) opens into: its rect on the stage, anchored to the tile it grew
  *  from (a group: over its tile; Others: above its stack, right-aligned), always inside the stage. */
 export function panelRect(anchor: Rect, n: number, stage: { width: number; height: number }, system: boolean): Rect {
@@ -30,9 +39,10 @@ export function panelRect(anchor: Rect, n: number, stage: { width: number; heigh
  * opened from (one transform + opacity animation, a crossfade under reduced motion, nothing in
  * Light mode). A click on a card shows it side by side; dragging one out takes it out of the
  * group (the surface arms that drag). Escape, the close button or a press on the scrim closes it
- * and focus goes back to the tile.
+ * and focus goes back to the tile. A group's "Open all" (or a double-click on its tile, whose second
+ * press lands here) shows every card at once (owner 2026-10-27).
  */
-export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngroup, closableCards, onCloseGroups, onOpenItem, onPressItem, renderItem, itemTestId, returnFocus, hidden = false }: {
+export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngroup, closableCards, onCloseGroups, onOpenItem, onPressItem, onPresentAll, doubleOpens = false, renderItem, itemTestId, returnFocus, hidden = false }: {
   title: string;
   ids: readonly string[];
   anchor: Rect;
@@ -46,6 +56,10 @@ export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngro
   onCloseGroups?: () => void;
   onOpenItem: (id: string) => void;
   onPressItem: (e: PointerEvent<HTMLDivElement>, id: string) => void;
+  /** A group: show all its cards at once (absent: no button, no double-click). */
+  onPresentAll?: () => void;
+  /** Opened by a click on its tile: that click's double finishes here (not after "back to the group"). */
+  doubleOpens?: boolean;
   renderItem: (id: string) => ReactNode;
   itemTestId: string;
   returnFocus: () => void;
@@ -59,6 +73,15 @@ export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngro
   const [closeAsk, setCloseAsk] = useState(false);
   const askRef = useRef(false);
   askRef.current = closeAsk;
+  const openedAt = useRef(performance.now());
+  /** The tile's double-click finishing on the panel: every card at once, nothing else happens. */
+  const doubleOpen = (e: { detail: number; preventDefault: () => void; stopPropagation: () => void }): boolean => {
+    if (!onPresentAll || !doubleOpens || !isDoubleOpen(openedAt.current, performance.now(), e.detail)) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    onPresentAll();
+    return true;
+  };
 
   // Grow out of the tile: the one entrance animation (transform + opacity, one shot).
   useLayoutEffect(() => {
@@ -103,7 +126,8 @@ export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngro
 
   return (
     <>
-      <div ref={scrimRef} className="super-panel-scrim" data-testid="super-panel-scrim" data-hidden={hidden ? 'true' : undefined} onPointerDown={() => onClose()} aria-hidden />
+      <div ref={scrimRef} className="super-panel-scrim" data-testid="super-panel-scrim" data-hidden={hidden ? 'true' : undefined} onPointerDown={() => { if (!onPresentAll || !doubleOpens || performance.now() - openedAt.current > DOUBLE_OPEN_MS) onClose(); }}
+        onClickCapture={(e) => { doubleOpen(e); }} aria-hidden />
       <div
         ref={panelRef}
         className="super-group-panel"
@@ -112,6 +136,7 @@ export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngro
         data-hidden={hidden ? 'true' : undefined}
         role="dialog"
         aria-label={title}
+        onClickCapture={(e) => { doubleOpen(e); }}
         style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
       >
         <div className="super-group-panel-head">
@@ -122,6 +147,11 @@ export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngro
           {!system && onUngroup && (
             <button type="button" className="super-group-panel-btn" data-testid="super-group-panel-ungroup" onClick={() => { onUngroup(); returnFocus(); }}>
               {t('super.group.ungroup')}
+            </button>
+          )}
+          {!system && onPresentAll && (
+            <button type="button" className="super-group-panel-btn" data-testid="super-group-panel-open-all" title={t('super.group.openAllHint')} onClick={() => onPresentAll()}>
+              {t('super.group.openAll')}
             </button>
           )}
           {system && onCloseGroups && (closableCards ?? 0) > 0 && (

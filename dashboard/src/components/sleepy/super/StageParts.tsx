@@ -61,8 +61,10 @@ export function OrbitPath({ plan }: { plan: StagePlan }) {
  * A presentation's controls at the top band's right end (plan-r2 D11, D12): the layouts these
  * cards can take (only when there is a choice), then the way back to the floating stage.
  */
-export function StageControls({ rect, layouts, current, onPick, onExit }: {
+export function StageControls({ rect, layouts, current, onPick, onExit, toGroup = false }: {
   rect: Rect; layouts: readonly PresentLayout[]; current: PresentLayout; onPick: (l: PresentLayout) => void; onExit: () => void;
+  /** The presentation shows one group whole: leaving it goes back to that group's panel. */
+  toGroup?: boolean;
 }) {
   const { t } = useI18n();
   return (
@@ -77,7 +79,7 @@ export function StageControls({ rect, layouts, current, onPick, onExit }: {
           ))}
         </div>
       )}
-      <button type="button" className="super-stage-exit" data-testid="super-stage-exit" onClick={onExit} title="Esc">{t('super.stage.exit')}</button>
+      <button type="button" className="super-stage-exit" data-testid="super-stage-exit" data-to-group={toGroup ? 'true' : undefined} onClick={onExit} title="Esc">{t(toGroup ? 'super.stage.backToGroup' : 'super.stage.exit')}</button>
     </div>
   );
 }
