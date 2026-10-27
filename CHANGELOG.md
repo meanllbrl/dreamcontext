@@ -4,6 +4,18 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.35.1] - 2026-10-27
+
+Seven fixes on top of 0.35.0. Local build; not published.
+
+- **Composer chips stay on their words.** The chip bands in the composer drifted when the field scrolled; they now move with the text.
+- **A whiteboard card says why it cannot draw.** It shows the reason with a Retry, draws a board written after the card opened, and `super open whiteboard` refuses an unknown board slug.
+- **Phone, tablet and desktop width on the web card.** The width is remembered per card and the full-screen view follows it; the element picker is now honest about being "Inspect" and says why it only works on pages the app serves itself.
+- **The phone's Hands-free accepts a zip or any file**, not only photos.
+- **The agenda keeps itself true.** A Now line linked to a job (`super note add --for`, `delegate --note`) closes by itself when the job finishes; a line nothing keeps true is marked unchanged after two hours; the owner can move a line by hand (Done / Put back).
+- **Finished, told jobs end on their own.** A delegated child that is done, whose result the Super or the owner saw, untouched for 60 minutes, is ended like `super end` (transcript kept, `super resume` reopens it).
+- **AI Team: an empty pane is fixed.** A teammate now opens where its roster row's messages are.
+
 ## [0.35.0] - 2026-10-26
 
 The first release since 0.32.0. It carries everything cut locally as 0.33.0 and 0.34.0-0.34.6 (none of those was ever published), plus the first Windows build. The desktop app, the npm package and the Windows installer ship together.
