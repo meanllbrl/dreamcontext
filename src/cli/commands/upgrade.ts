@@ -8,7 +8,15 @@ import { dreamcontextVersion } from '../../lib/manifest.js';
 import { readVersionCache, writeVersionCache } from '../../lib/version-check.js';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { listVaults, type Vault } from '../../lib/vaults.js';
-import { readAppManifest } from './app.js';
+import { appUpdatesItself, readAppManifest } from './app.js';
+import {
+  npmInstallCommand,
+  pathWithNode,
+  resolveNpmTarget,
+  targetCliEntry,
+  upgradedCliCommand,
+  type NpmTarget,
+} from '../../lib/npm-target.js';
 import {
   buildNotifierApp,
   inspectNotifier,
@@ -47,6 +55,8 @@ export interface UpgradeOpts {
   appInstalledCheck?: () => boolean;
   /** Injected desktop-app updater (testing); defaults to spawning the upgraded CLI's `app update`. */
   appUpdater?: () => { ok: boolean; error?: string };
+  /** Injected "the app updates itself" check (testing); defaults to {@link appOwnsItsUpdate}. */
+  appSelfUpdating?: () => boolean;
   /** Injected notifier state (testing); defaults to inspectNotifier(). MUST be
    *  injected by tests — the real one reads the developer's own ~/.dreamcontext. */
   notifierState?: () => NotifierState;
@@ -58,16 +68,43 @@ export interface UpgradeOpts {
 
 // ─── Default implementations ─────────────────────────────────────────────────
 
+/** The global install this upgrade writes to (src/lib/npm-target.ts), read once per process. */
+let cachedTarget: NpmTarget | null | undefined;
+function upgradeTarget(): NpmTarget | null {
+  if (cachedTarget === undefined) cachedTarget = resolveNpmTarget(targetCliEntry());
+  return cachedTarget;
+}
+
 function defaultInstaller(args: string[]): void {
-  execFileSync('npm', args, { stdio: 'inherit' });
+  const target = upgradeTarget();
+  if (target) console.log(chalk.dim(`  into ${target.prefix} (the install this dreamcontext runs from)`));
+  const cmd = npmInstallCommand(args, target);
+  execFileSync(cmd.file, cmd.args, { stdio: 'inherit', env: { ...process.env, PATH: pathWithNode() } });
+}
+
+/** The upgraded CLI running `subArgs`: itself by path when the install is known, else npx. */
+function upgradedCli(subArgs: string[]): { file: string; args: string[] } {
+  return upgradedCliCommand(subArgs, upgradeTarget()) ?? { file: 'npx', args: ['dreamcontext', ...subArgs] };
+}
+
+/**
+ * Inside the desktop app, a published Developer ID release updates itself (the in-app updater,
+ * desktop/src-tauri/src/updater.rs): downloading it here as well would race that updater for
+ * the same bundle. A local build, or a run from a terminal, still updates the app here.
+ */
+function appOwnsItsUpdate(): boolean {
+  if (process.env.DREAMCONTEXT_DESKTOP !== '1') return false;
+  const installed = readAppManifest();
+  return installed !== null && appUpdatesItself(installed);
 }
 
 /**
  * Refresh one project's installed files using the NEWLY upgraded global CLI.
  *
  * We cannot call the update logic in-process — this process is still the OLD
- * version. Spawning `npx dreamcontext update --yes` in the vault directory runs
- * the freshly-installed binary's update flow (skill + agents + hooks + packs +
+ * version. Spawning the freshly-installed CLI by path (`node <entry> update
+ * --yes`, or `npx dreamcontext update --yes` when the install is unknown) in the
+ * vault directory runs the new binary's update flow (skill + agents + hooks + packs +
  * references). `--yes` skips the stale-file delete prompts so it is unattended.
  * Never throws — failures are captured per-vault so one bad project does not
  * abort the rest.
@@ -77,9 +114,11 @@ function defaultProjectUpdater(vault: Vault): ProjectUpdateResult {
     return { vault, ok: false, error: 'project folder no longer exists' };
   }
   try {
-    execFileSync('npx', ['dreamcontext', 'update', '--yes'], {
+    const cmd = upgradedCli(['update', '--yes']);
+    execFileSync(cmd.file, cmd.args, {
       cwd: vault.path,
       stdio: 'inherit',
+      env: { ...process.env, PATH: pathWithNode() },
     });
     return { vault, ok: true };
   } catch (e) {
@@ -110,7 +149,8 @@ async function defaultConfirmAll(count: number): Promise<boolean> {
  */
 function defaultAppUpdater(): { ok: boolean; error?: string } {
   try {
-    execFileSync('npx', ['dreamcontext', 'app', 'update'], { stdio: 'inherit' });
+    const cmd = upgradedCli(['app', 'update']);
+    execFileSync(cmd.file, cmd.args, { stdio: 'inherit', env: { ...process.env, PATH: pathWithNode() } });
     return { ok: true };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
@@ -178,6 +218,10 @@ function defaultLiveLatest(): string | null {
 async function maybeUpdateApp(opts?: UpgradeOpts): Promise<void> {
   const installed = (opts?.appInstalledCheck ?? (() => readAppManifest() !== null))();
   if (!installed) return;
+  if ((opts?.appSelfUpdating ?? appOwnsItsUpdate)()) {
+    console.log(chalk.dim('The desktop app updates itself in-app; not downloading it here.'));
+    return;
+  }
 
   const auto = opts?.yes === true;
   const interactive = process.stdin.isTTY === true;

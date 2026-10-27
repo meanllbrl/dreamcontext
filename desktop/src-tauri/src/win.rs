@@ -8,7 +8,8 @@
 //   (every published version) reads it as "the desktop app owns the dashboard" and stops
 //   spawning its own detached server on each Claude session — the console flashes and the
 //   second, non-desktop server behind "chat sometimes missing".
-// - CLI resolution prefers the bundled CLI over an older global one (see `prefer_global`).
+// - CLI resolution prefers the bundled CLI over an older global one (`prefer_global` in
+//   src/cli_choice.rs, shared with macOS).
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -109,26 +110,6 @@ pub(crate) fn global_cli_entry() -> Option<PathBuf> {
     entry.exists().then_some(entry)
 }
 
-/// The version in the package.json next to a `dist\index.js` entry.
-pub(crate) fn cli_version(entry: &Path) -> Option<String> {
-    let pkg = entry.parent()?.parent()?.join("package.json");
-    let raw = std::fs::read_to_string(pkg).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    v.get("version")?.as_str().map(str::to_string)
-}
-
-/// Is the global CLI STRICTLY newer than the one bundled in the app? Only then does it win:
-/// an older global (0.28.0 here) predates the Windows fixes the bundled one carries.
-pub(crate) fn prefer_global(global_version: Option<&str>, bundled_version: &str) -> bool {
-    match global_version {
-        Some(g) => {
-            crate::node_runtime::version_at_least(g, bundled_version)
-                && !crate::node_runtime::version_at_least(bundled_version, g)
-        }
-        None => false,
-    }
-}
-
 /// Strip the verbatim prefix (`\\?\`) `resource_dir` can carry, so node gets a normal path.
 pub(crate) fn plain_path(p: &str) -> String {
     p.strip_prefix(r"\\?\").unwrap_or(p).to_string()
@@ -162,15 +143,6 @@ pub(crate) fn focus_existing(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn prefers_global_only_when_strictly_newer() {
-        assert!(!prefer_global(None, "0.31.0"));
-        assert!(!prefer_global(Some("0.28.0"), "0.31.0"));
-        assert!(!prefer_global(Some("0.31.0"), "0.31.0"));
-        assert!(prefer_global(Some("0.32.0"), "0.31.0"));
-        assert!(prefer_global(Some("0.31.10"), "0.31.9"));
-    }
 
     #[test]
     fn plain_path_strips_only_the_verbatim_prefix() {

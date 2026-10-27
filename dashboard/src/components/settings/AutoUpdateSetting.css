@@ -1,0 +1,6 @@
+/* Set off from the dependency list above it, the way one setting group follows another. */
+.settings-self-update {
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--color-border);
+}
