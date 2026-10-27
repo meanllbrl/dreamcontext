@@ -240,6 +240,8 @@ describe('the stage entry (AC11, AC14, AC16)', () => {
     await flush();
     deselectStage(V, A);
     expect(peekStageSession(V, A)).toBeNull();
+    // React runs the stage's effects BEFORE the page's open: with no feed left, the stage waits.
+    expect(stageFeed(V, A)).toBeNull();
     beginStageOpen(V, A, null);
     const s2 = open();
     expect(s2.claudeId).not.toBe(s1.claudeId);

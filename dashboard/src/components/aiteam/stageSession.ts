@@ -184,6 +184,9 @@ export function deselectStage(vault: string, agent: string): void {
   e.session.dispose();
   e.session = null;
   e.level = null;
+  // The feed belonged to that open. Without one the stage waits for the next OPEN before it starts
+  // a session (React runs the stage's effects before the page's), so the open decides "new".
+  e.feed = null;
   notify(e);
 }
 

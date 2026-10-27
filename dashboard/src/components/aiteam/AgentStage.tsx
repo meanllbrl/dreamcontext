@@ -19,6 +19,9 @@ import { TeamApproval } from './TeamApproval';
 import type { PanelTab } from './TeamPanel';
 import { TeamIcon } from './TeamIcons';
 import { isPhoneSurface } from '../../lib/phoneSurface';
+import { ApiClient } from '../../api/client';
+import type { AutomationDetail, AutomationSession } from '../../hooks/useAutomations';
+import { openAutomationRunChat, runChatUnavailableReason } from '../../lib/automationRunChat';
 import '../sleepy/ChatPane.css';
 import '../sleepy/chat/composer.css';
 import '../sleepy/chat/cards.css';
@@ -52,6 +55,7 @@ export function AgentStage({
   onActivity,
   onToast,
   feedNewestId = null,
+  inActivity,
 }: {
   row: TeamRow;
   agent: AgentSummary;
@@ -65,6 +69,9 @@ export function AgentStage({
   onToast: (msg: string) => void;
   /** The roster feed's newest entry id for this agent: a change re-reads the history's page 1. */
   feedNewestId?: string | null;
+  /** Is this run (`<slug>::<runId>`) in the activity view's window? Outside it, a boundary click
+   *  opens the run's own session instead. */
+  inActivity?: (key: string) => boolean;
 }) {
   const { t } = useI18n();
   const { vault, bus } = useVault();
@@ -162,7 +169,7 @@ export function AgentStage({
             : t('aiteam.elsewhere.chat').replace('{machine}', elsewhere?.name ?? '').replace('{name}', agent.title)}</p>
         </div>
       ) : (
-        <StageChat agent={agent} level={autonomy} ready={!!stage} vault={vault ?? ''} bus={bus} feedNewestId={feedNewestId} onActivity={onActivity} />
+        <StageChat agent={agent} level={autonomy} ready={!!stage} vault={vault ?? ''} bus={bus} feedNewestId={feedNewestId} onActivity={onActivity} inActivity={inActivity} />
       )}
     </section>
   );
@@ -194,7 +201,38 @@ function hhmm(iso: string | number): string {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity }: {
+/**
+ * A run older than the activity view's window: open its own recorded session in a Chat tab, as
+ * the activity's "Open session" does. False when the run has no session to open.
+ */
+async function openRunSession(vault: string, bus: EventTarget, meta: FeedMeta): Promise<boolean> {
+  if (!meta.runId) return false;
+  try {
+    const api = new ApiClient(vault || null);
+    const slug = encodeURIComponent(meta.source);
+    const detail = await api.get<AutomationDetail>(`/automations/${slug}`);
+    const idx = (detail.cache?.history ?? []).findIndex((e) => e.firedAt === meta.runId);
+    if (idx < 0) return false;
+    const { session } = await api.get<{ session: AutomationSession | null }>(`/automations/${slug}/session?run=${idx + 1}`);
+    if (!session || runChatUnavailableReason(session)) return false;
+    return openAutomationRunChat(bus, {
+      slug: meta.source,
+      automationTitle: meta.title,
+      runNumber: session.runNumber,
+      sessionId: session.sessionId as string,
+      firedAt: session.firedAt,
+      status: session.status,
+      costUsd: session.costUsd,
+      numTurns: session.numTurns,
+      durationMs: meta.durationMs,
+      outputPath: session.outputPath,
+    });
+  } catch {
+    return false;
+  }
+}
+
+function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, inActivity }: {
   agent: AgentSummary;
   level: string;
   ready: boolean;
@@ -202,6 +240,7 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity }
   bus: EventTarget;
   feedNewestId: string | null;
   onActivity: (at?: { slug: string; runId: string | null }) => void;
+  inActivity?: (key: string) => boolean;
 }) {
   const { t } = useI18n();
   const { session, open } = useStageSession(vault, agent, level);
@@ -275,6 +314,7 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t, agent.title, liveKind, liveStarted, dayTick]);
   const onActivityRef = useLatest(onActivity);
+  const inActivityRef = useLatest(inActivity);
   const feed = useMemo<ChatFeed | undefined>(() => {
     if (!snap) return undefined;
     return {
@@ -296,12 +336,15 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity }
           emitInstance(bus, OPEN_SESSION_EVENT, detail);
           return;
         }
-        onActivityRef.current({ slug: meta.source, runId: meta.runId });
+        const at = { slug: meta.source, runId: meta.runId };
+        if (!inActivityRef.current || inActivityRef.current(meta.sessionKey)) { onActivityRef.current(at); return; }
+        // Outside the activity's window: the run's own session, else the routine's newest message.
+        void openRunSession(vault, bus, meta).then((opened) => { if (!opened) onActivityRef.current(at); });
       },
       onDividerScrolled: () => markStageDividerScrolled(vault, agent.slug),
       onPinned: (pinned) => setStageFeedPinned(vault, agent.slug, pinned),
     };
-  }, [snap, labels, vault, agent.slug, bus, onActivityRef]);
+  }, [snap, labels, vault, agent.slug, bus, onActivityRef, inActivityRef]);
 
   if (!agent.approvedForChat) {
     return (

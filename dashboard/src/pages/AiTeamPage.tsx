@@ -237,6 +237,7 @@ export function AiTeamPage({
     for (const m of messages) if (m.newestId && (max === null || m.newestId > max)) max = m.newestId;
     return max;
   }, [messages]);
+  const inActivity = useCallback((key: string) => messages.some((m) => m.key === key), [messages]);
   // An OPEN of a teammate (the pick changed): the one picked before ends its idle session, the new
   // one opens fresh (a new session unless its entry still holds one) and reads its history anew.
   // A link landing on the teammate already open is not an open (the pick did not change).
@@ -375,6 +376,7 @@ export function AiTeamPage({
             onActivity={openActivity}
             onToast={setToast}
             feedNewestId={feedNewestId}
+            inActivity={inActivity}
           />
         ) : current && agent ? (
           <TeamConversation

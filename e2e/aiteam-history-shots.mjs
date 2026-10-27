@@ -47,6 +47,8 @@ const check = (name, ok, detail) => {
 };
 
 const STANDIN = `#!${process.execPath}
+import { appendFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const argv = process.argv.slice(2);
 const flag = (name) => { const i = argv.indexOf(name); return i === -1 ? null : (argv[i + 1] ?? null); };
@@ -60,6 +62,13 @@ process.stdin.on('data', (c) => {
     if (!line) continue;
     let o; try { o = JSON.parse(line); } catch { continue; }
     if (o.type !== 'user') continue;
+    // Like the real CLI: the conversation's transcript is written once it has a turn.
+    const dir = join(process.env.HOME, '.claude', 'projects', '-fictional-acme');
+    mkdirSync(dir, { recursive: true });
+    const said = typeof o.message?.content === 'string' ? o.message.content : (o.message?.content ?? []).map((b) => b.text ?? '').join('');
+    const now = new Date().toISOString();
+    appendFileSync(join(dir, sid + '.jsonl'), JSON.stringify({ type: 'user', uuid: 'u' + Date.now(), timestamp: now, message: { content: said || 'hi' } }) + '\\n'
+      + JSON.stringify({ type: 'assistant', timestamp: now, message: { content: [{ type: 'text', text: 'Done: the Acme summary is posted.' }] } }) + '\\n');
     out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: [] });
     out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Done: the Acme summary is posted.' }] } });
     out({ type: 'result', subtype: 'success', is_error: false, result: 'DONE', num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 }, session_id: sid });
@@ -72,6 +81,7 @@ const cli = (...args) => spawnSync(process.execPath, [distIndex(REPO), ...args],
 const must = (label, r) => { if (r.status !== 0) throw new Error(`${label} failed: ${r.stderr || r.stdout}`); return r; };
 
 let seq = 0;
+const RUNS = {};
 /** A sortable thread entry id for an instant (the store's own shape). */
 const idAt = (ms) => `${Math.floor(ms).toString(36).padStart(9, '0')}_${(seq++ % 1296).toString(36).padStart(2, '0')}v${String(seq).padStart(3, '0')}`;
 const localDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -110,14 +120,15 @@ function setupScratch() {
   chmodSync(bin, 0o755);
   must('vaults add', cli('vaults', 'add', 'acme', PROJ));
   must('agents create', cli('agents', 'create', 'herodot', '--title', 'Herodot', '--prompt', 'Herodot summarises the fictional Acme channel.'));
+  must('agents create galileo', cli('agents', 'create', 'galileo', '--title', 'Galileo', '--prompt', 'Galileo watches the fictional Acme competitors.'));
   must('routine', cli('automations', 'create', 'herodot-daily', '--title', 'Herodot daily', '--agent', 'herodot', '--job', 'Summarise yesterday in #acme.', '--days', 'daily', '--at', '09:00'));
 
   // Ten older days (so the history pages), then the last three days.
   for (let d = 12; d >= 3; d--) run('herodot-daily', d, 9, 0, [`Day ${d} ago: #acme was quiet, nothing to act on.`]);
   run('herodot-daily', 2, 9, 0, ['Morning round: 6 new messages in #acme, nothing needs action.']);
-  const read = run('herodot-daily', 1, 12, 0, ['Yesterday\'s thread decided: the player "skip" button moves to 15 s. I opened `acme-player-skip`.']);
+  const read = RUNS.yesterday = run('herodot-daily', 1, 12, 0, ['Yesterday\'s thread decided: the player "skip" button moves to 15 s. I opened `acme-player-skip`.']);
   run('herodot-daily', 0, 9, 0, ['Morning round: 6 new messages in #acme, no action needed.']);
-  run('herodot-daily', 0, 12, 28, ['Anil wants a roadmap: skip/quotes done, video series, story mode, leaderboard, mascot.', 'Draft: `roadmap/acme-q4.md`. Approve it and I post the summary to Slack.']);
+  RUNS.today = run('herodot-daily', 0, 12, 28, ['Anil wants a roadmap: skip/quotes done, video series, story mode, leaderboard, mascot.', 'Draft: `roadmap/acme-q4.md`. Approve it and I post the summary to Slack.']);
   for (const [path, text] of files) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, text); }
   // Read up to yesterday's run: today's two runs are the 3 unread messages.
   // Keyed by the project root as the server spells it (the vault's path, and its realpath).
@@ -172,11 +183,12 @@ async function browserLeg(port, consoleErrors) {
   const base = `http://127.0.0.1:${port}`;
   const browser = await chromium.launch();
   try {
-    for (const width of [1440, 390]) {
+    // The phone first: the desktop pass ends with steps that change the history (new posts).
+    for (const width of [390, 1440]) {
       const tag = String(width);
       const phone = width === 390;
-      // The badge is cleared by the first width's reading: the second width starts unread again.
-      if (phone) writeFileSync(join(HOME, '.dreamcontext', 'automations-threads-read.json'), READ_BACK);
+      // Each width starts with the same 3 unread (the previous width's reading cleared them).
+      writeFileSync(join(HOME, '.dreamcontext', 'automations-threads-read.json'), READ_BACK);
       const context = await browser.newContext({ viewport: { width, height: phone ? 844 : 900 }, colorScheme: 'light', deviceScaleFactor: 2 });
       await setTheme(context, 'light');
       await markAnnouncementsSeen(context, base);
@@ -278,16 +290,101 @@ async function browserLeg(port, consoleErrors) {
       const order = await pane.evaluate((el) => {
         const live = el.querySelector('[data-feed-live]');
         const all = [...el.querySelectorAll('*')];
-        const mine = all.find((n) => n.textContent?.trim() === 'I approve the draft, post the summary to Slack.');
+        // The newest copy: an earlier width's same message is already history above.
+        const mine = all.filter((n) => n.textContent?.trim() === 'I approve the draft, post the summary to Slack.').pop();
         return !!live && !!mine && (live.compareDocumentPosition(mine) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
       });
       check(`${tag}: a message sent lands at the bottom, under "New conversation · now"`, answered && order);
       await shot('5-sent');
+      if (!phone) await deepLeg(page, pane, tag, wait, until, shot);
       await context.close();
     }
   } finally {
     await browser.close();
   }
+}
+
+/** Criteria 11, 15, 16, 18 at 1440: live merges, boundary clicks, reopen vs continue, a respawn. */
+async function deepLeg(page, pane, tag, wait, until, shot) {
+  const boundaryKeys = () => page.locator('.aiteam-stage [data-feed-boundary]').evaluateAll((ns) => ns.map((n) => n.getAttribute('data-feed-boundary')));
+  const todayKey = `herodot-daily::${RUNS.today.runId}`;
+  const yKey = `herodot-daily::${RUNS.yesterday.runId}`;
+  let historyReads = 0;
+  page.on('request', (r) => { if (/\/api\/agents\/herodot\/history/.test(r.url())) historyReads++; });
+
+  // AC15: a run that posts again while the pane is open: the post lands in place, under its run.
+  must('post again', cli('automations', 'post', '--run', RUNS.today.runId, 'herodot-daily', '--', 'Second post: the Slack summary is ready.'));
+  const inPlace = await until(async () => (await pane.innerText()).includes('Second post: the Slack summary is ready.'), 45000);
+  const place = await pane.evaluate((el, key) => {
+    const post = [...el.querySelectorAll('*')].find((n) => n.children.length === 0 && n.textContent?.includes('Second post: the Slack'));
+    const b = el.querySelector(`[data-feed-boundary="${CSS.escape(key)}"]`);
+    const live = el.querySelector('[data-feed-live]');
+    const after = (a, z) => !!a && !!z && (a.compareDocumentPosition(z) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    return after(b, post) && after(post, live);
+  }, todayKey);
+  check(`${tag}: a second post of a run lands in place, under its run`, inPlace && place);
+  // A late reply to yesterday's run moves that run to the end, above the live boundary.
+  must('late reply', cli('automations', 'post', '--run', RUNS.yesterday.runId, 'herodot-daily', '--', 'Late follow-up: the skip change shipped.'));
+  const moved = await until(async () => { const k = await boundaryKeys(); return k[k.length - 1] === yKey; }, 45000);
+  check(`${tag}: a late reply moves its run to the end`, moved, (await boundaryKeys()).slice(-3).join(' | '));
+  await shot('6-live-merge');
+
+  // AC18: a run boundary lands the activity view on that run; back keeps the same session.
+  await page.locator(`.aiteam-stage [data-feed-boundary="${todayKey}"]`).click();
+  const landed = await until(async () => (await page.locator(`[data-item-key^="${todayKey}:"]`).count()) > 0, 10000);
+  check(`${tag}: a run boundary click opens the activity at that run`, landed);
+  await shot('7-run-boundary-activity');
+  await page.locator('[data-team-stage]').click();
+  const back = await until(async () => (await pane.innerText()).includes('I approve the draft, post the summary to Slack.'), 10000);
+  check(`${tag}: stage → activity → back keeps the same session (its turn still live, no new boundary)`,
+    back && (await page.locator('.aiteam-stage [data-feed-live]').innerText()).includes('New conversation · now'));
+
+  // AC11: a level respawn keeps the loaded pages without refetch and reopens pinned.
+  const rowsBefore = await page.locator('.aiteam-stage [data-feed-boundary]').count();
+  const readsBefore = historyReads;
+  await page.locator('.aiteam-stage .aiteam-convo-head .aiteam-autonomy').click();
+  await page.locator('.aid-segment[data-autonomy="ask"]').waitFor({ timeout: 10000 });
+  await page.locator('.aid-segment[data-autonomy="ask"]').click();
+  await page.locator('.aid-btn--primary').click();
+  await until(async () => /Ask/.test(await page.locator('.aiteam-stage .aiteam-convo-head .aiteam-autonomy').innerText()), 10000);
+  await wait(2500);
+  check(`${tag}: a level respawn keeps the loaded feed with no refetch, pinned to the bottom`,
+    (await page.locator('.aiteam-stage [data-feed-boundary]').count()) === rowsBefore && historyReads === readsBefore
+      && (await page.locator('.aiteam-stage .chat-jump').count()) === 0,
+    `boundaries ${rowsBefore}→${await page.locator('.aiteam-stage [data-feed-boundary]').count()}, reads +${historyReads - readsBefore}`);
+
+  // AC16: deselect an IDLE stage that had a turn and reopen: a new session, that talk above it.
+  const talksBefore = (await boundaryKeys()).filter((k) => k.startsWith('talk::')).length;
+  await page.locator('[data-team-row="galileo"]').click();
+  await until(() => page.locator('.aiteam-stage[data-stage="galileo"]').isVisible());
+  await page.locator('[data-team-row="herodot"]').click();
+  const reopened = await until(async () => {
+    const keys = await boundaryKeys();
+    return keys.filter((k) => k.startsWith('talk::')).length === talksBefore + 1
+      && (await page.locator('.aiteam-stage [data-feed-live]').innerText()).includes('New conversation · now');
+  }, 15000);
+  check(`${tag}: deselecting an idle stage and reopening starts a new session, its talk now history`, reopened, `talks ${talksBefore} → ${(await boundaryKeys()).filter((k) => k.startsWith('talk::')).length}`);
+  await shot('8-reopened-new');
+  // With a typed draft, the session is kept and continues, the draft still in the composer.
+  const input = page.locator('.aiteam-stage .chat-cmp-input').first();
+  await input.click();
+  await page.keyboard.type('half a thought');
+  await page.locator('[data-team-row="galileo"]').click();
+  await until(() => page.locator('.aiteam-stage[data-stage="galileo"]').isVisible());
+  await page.locator('[data-team-row="herodot"]').click();
+  const continuing = await until(async () => /Continuing · started/.test(await page.locator('.aiteam-stage [data-feed-live]').innerText()), 15000);
+  const draft = await page.locator('.aiteam-stage .chat-cmp-input').first().evaluate((el) => el.value ?? el.textContent ?? '');
+  check(`${tag}: deselecting with a draft and reopening continues ("Continuing"), the draft kept`, continuing && draft.includes('half a thought'), draft);
+  await shot('9-continuing');
+
+  // AC18: a talk boundary opens that conversation in a Chat tab.
+  await page.locator('.aiteam-stage [data-feed-boundary^="talk::"]').first().click();
+  const tabbed = await until(async () => {
+    const texts = await page.locator('.chat-pane').evaluateAll((ps) => ps.filter((p) => !p.closest('.aiteam-stage')).map((p) => p.innerText));
+    return texts.some((t) => t.includes('Can you add this decision to the roadmap?'));
+  }, 20000);
+  check(`${tag}: a talk boundary click opens that conversation in a Chat tab`, tabbed);
+  await shot('10-talk-in-chat');
 }
 
 let READ_BACK = '';
