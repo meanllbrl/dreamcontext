@@ -57,6 +57,22 @@ describe('runSelfUpdateCheck', () => {
     expect(existsSync(selfUpdateLockPath(home))).toBe(false);
   });
 
+  it('NEVER downgrades: a local build newer than npm latest (0.35.1 vs 0.35.0) runs nothing, every tick', async () => {
+    for (const installed of ['0.35.1', '0.35.1-local', '0.36.0', '1.0.0']) {
+      const { deps, runUpgrade } = machine({ installed, latest: '0.35.0', lands: '0.35.0' });
+      for (let i = 0; i < 3; i++) {
+        clock += SELF_UPDATE_INTERVAL_MS + 1;
+        const r = await runSelfUpdateCheck({}, deps);
+        expect(r.state).toBe('current');
+      }
+      // Forced checks too: "check now" must not downgrade either.
+      expect((await runSelfUpdateCheck({ force: true }, deps)).state).toBe('current');
+      expect(runUpgrade).not.toHaveBeenCalled();
+      expect(readSelfUpdateRecord(home)).toMatchObject({ state: 'current', installed });
+      expect(log()).not.toContain('updating:');
+    }
+  });
+
   it('a current CLI runs nothing', async () => {
     const { deps, runUpgrade } = machine({ installed: '0.36.0' });
     expect(await runSelfUpdateCheck({}, deps)).toMatchObject({ ran: true, state: 'current' });

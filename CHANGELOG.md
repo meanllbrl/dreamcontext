@@ -6,7 +6,7 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [0.35.1] - 2026-10-27
 
-Seven fixes on top of 0.35.0. Local build; not published.
+Eight fixes on top of 0.35.0. Local build; not published.
 
 - **Composer chips stay on their words.** The chip bands in the composer drifted when the field scrolled; they now move with the text.
 - **A whiteboard card says why it cannot draw.** It shows the reason with a Retry, draws a board written after the card opened, and `super open whiteboard` refuses an unknown board slug.
@@ -15,6 +15,7 @@ Seven fixes on top of 0.35.0. Local build; not published.
 - **The agenda keeps itself true.** A Now line linked to a job (`super note add --for`, `delegate --note`) closes by itself when the job finishes; a line nothing keeps true is marked unchanged after two hours; the owner can move a line by hand (Done / Put back).
 - **Finished, told jobs end on their own.** A delegated child that is done, whose result the Super or the owner saw, untouched for 60 minutes, is ended like `super end` (transcript kept, `super resume` reopens it).
 - **AI Team: an empty pane is fixed.** A teammate now opens where its roster row's messages are.
+- **The app keeps dreamcontext current by itself.** The Mac app writes `app.json`, the server upgrades the CLI on its own (opt-out in Settings), and a newer bundled CLI wins. It never downgrades: a build newer than npm's latest does nothing.
 
 ## [0.35.0] - 2026-10-26
 
