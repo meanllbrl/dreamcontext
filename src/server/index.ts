@@ -28,7 +28,7 @@ import { startSuperInbox } from '../lib/super/inbox.js';
 import { parkedSince } from './chat-park.js';
 import { armSuperOutbox } from '../lib/super/outbox.js';
 import { handleWindowCommand } from './routes/window-control.js';
-import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperStateGet, handleSuperVerb } from './routes/super.js';
+import { armSuperSuccession, handleSuperActivity, handleSuperDisable, handleSuperEnable, handleSuperEnd, handleSuperLayout, handleSuperRecap, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperStateGet, handleSuperVerb } from './routes/super.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksReadiness, handleTasksObjection, handleTasksUpdate, handleTasksChangelog, handleTasksAssignAgent, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField, handleTaskOverrideAddStatus, handleTaskOverrideRemoveStatus } from './routes/tasks.js';
@@ -511,6 +511,7 @@ export function buildRouter(): Router {
   router.post('/api/super/fresh', handleSuperFresh);
   router.post('/api/super/end', handleSuperEnd);
   router.post('/api/super/seen', handleSuperSeen);
+  router.post('/api/super/pad', handleSuperPad);
   router.post('/api/assistant/look', handleAssistantLook);
   router.post('/api/launcher/scaffold', handleLauncherScaffold);
   router.get('/api/launcher/agent-settings', handleAgentSettingsGet);

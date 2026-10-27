@@ -52,6 +52,12 @@ export async function postSuperEnd(api: ApiClient, child: string): Promise<Super
   return readSuperStateView(r?.state);
 }
 
+/** `POST /api/super/pad` — the owner moved an agenda line by hand; the server never moves it again. */
+export async function postSuperPad(api: ApiClient, id: string, section: 'now' | 'done'): Promise<SuperStateView | null> {
+  const r = await api.post<{ state?: unknown }>('/super/pad', { id, section });
+  return readSuperStateView(r?.state);
+}
+
 /** `POST /api/super/recap` — the window came back after a long absence. */
 export async function postSuperRecap(api: ApiClient): Promise<boolean> {
   const r = await api.post<{ queued?: unknown }>('/super/recap', {});

@@ -16,8 +16,13 @@ import './SuperAgenda.css';
  * (large, wide, side by side) is the notepad itself. An open question's row is live even on a
  * floating card: it brings its card in the centre into view (a child's permission shows that
  * child beside the centre). Nothing polls: the record is pushed.
+ *
+ * The notepad keeps itself true (owner 2026-10-27: "the agenda goes stale"): a Now line about a
+ * job moves to Done by itself when that job finishes, marked "closed by itself"; a Now line with
+ * no job behind it that has not changed for two hours is marked "unchanged". The owner moves a
+ * note by hand with its own small button (Done / Put back): the server never moves it again.
  */
-export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, onShowChild, onShowQuestion }: {
+export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, onShowChild, onShowQuestion, onMoveNote }: {
   state: SuperStateView;
   /** `tile`: the three counts (a small or medium card); `full`: the notepad. */
   variant?: 'tile' | 'full';
@@ -29,6 +34,8 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   /** A question waiting on the owner (the super's own `ask`, a child's it escalated, an approval):
    *  bring its card into view. */
   onShowQuestion: (item: string) => void;
+  /** The owner moves a note by hand (`POST /api/super/pad`); absent = the notes are only read. */
+  onMoveNote?: (id: string, section: 'now' | 'done') => void;
 }) {
   const { t } = useI18n();
   const sections = superNotepad(state, look);
@@ -75,6 +82,21 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
                   <span className="super-agenda-name" title={r.text}>{r.text}</span>
                   <span className="super-agenda-meta">
                     {r.chip && <span className="super-agenda-chip" data-kind={r.chip}>{t(`super.jobs.chip.${r.chip}`)}</span>}
+                    {r.auto && <span className="super-agenda-chip" data-kind="auto" data-testid="super-agenda-auto">{t('super.agenda.auto')}</span>}
+                    {r.stale && <span className="super-agenda-chip" data-kind="stale" data-testid="super-agenda-stale" title={t('super.agenda.staleTitle')}>{t('super.agenda.stale')}</span>}
+                    {r.note && onMoveNote && (r.section === 'now' || r.section === 'done') && (
+                      <button
+                        type="button"
+                        className="super-agenda-move"
+                        data-testid="super-agenda-move"
+                        data-to={r.section === 'now' ? 'done' : 'now'}
+                        title={t(r.section === 'now' ? 'super.agenda.moveDoneTitle' : 'super.agenda.moveBackTitle')}
+                        aria-label={t(r.section === 'now' ? 'super.agenda.moveDoneTitle' : 'super.agenda.moveBackTitle')}
+                        onClick={() => onMoveNote(r.note as string, r.section === 'now' ? 'done' : 'now')}
+                      >
+                        {t(r.section === 'now' ? 'super.agenda.moveDone' : 'super.agenda.moveBack')}
+                      </button>
+                    )}
                   </span>
                   {r.line && <span className="super-agenda-line" title={r.line}>{r.line}</span>}
                 </>
@@ -88,6 +110,8 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
                   data-state={r.section}
                   data-kind={r.note ? 'note' : 'question'}
                   data-chip={r.chip ?? undefined}
+                  data-auto={r.auto ? 'true' : undefined}
+                  data-stale={r.stale ? 'true' : undefined}
                 >
                   {clickable(r)
                     ? <button type="button" className="super-agenda-row-btn" onClick={() => press(r)}>{body}</button>
