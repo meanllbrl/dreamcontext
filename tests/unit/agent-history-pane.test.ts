@@ -289,6 +289,11 @@ describe('the stage entry (AC11, AC14, AC16)', () => {
     markStageSeen(V, A, meta);
     markStageSeen(V, A, meta);
     expect(posted).toEqual([['daily', newer.newestId]]);
+    // The same run posting again after it was seen: its new newest id is sent too.
+    markStageSeen(V, A, { ...meta, newestId: 'id-daily-100-zz' });
+    expect(posted).toEqual([['daily', newer.newestId], ['daily', 'id-daily-100-zz']]);
+    posted.length = 0;
+    posted.push(['daily', newer.newestId]);
     snap = stageFeed(V, A)!;
     // One monotonic mark per slug: the older run is read with it. The divider stays put.
     expect(snap.sessions.every((s) => !s.unread)).toBe(true);

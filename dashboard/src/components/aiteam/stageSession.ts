@@ -56,7 +56,9 @@ interface FeedState {
   /** The live boundary under the feed. */
   live: { kind: 'new' | 'continuing'; startedAt: number };
   /** Read marks already sent this open, by session key. */
-  seen: Set<string>;
+  /** Read marks already sent this open: session key → the newest id sent (a run that posts again
+   *  after it was seen sends its new newest id). */
+  seen: Map<string, string>;
 }
 
 interface Entry {
@@ -290,7 +292,7 @@ export function beginStageOpen(vault: string, agent: string, newestId: string | 
     unreadCount: 0, newestId, deferred: [], pendingReplace: null, pinned: true, version: 0, seq: 0, appliedSeq: 0,
     divider: null, decided: false, dividerScrolled: false,
     live: e.session ? { kind: 'continuing', startedAt: e.startedAt } : { kind: 'new', startedAt: Date.now() },
-    seen: new Set(),
+    seen: new Map(),
   };
   setFeed(e, feed);
   void readFirst(vault, agent, genOf(key), 0);
@@ -450,9 +452,16 @@ export async function loadOlderStageFeed(vault: string, agent: string): Promise<
 export function markStageSeen(vault: string, agent: string, meta: FeedMeta): void {
   const e = entries.get(keyOf(vault, agent));
   const f = e?.feed;
-  if (!e || !f || meta.sessionKind !== 'run' || !meta.unread || !meta.newestId || f.seen.has(meta.sessionKey)) return;
-  f.seen.add(meta.sessionKey);
-  void postRead(vault, meta.source, meta.newestId).catch(() => { f.seen.delete(meta.sessionKey); });
+  if (!e || !f || meta.sessionKind !== 'run' || !meta.unread || !meta.newestId) return;
+  const sent = f.seen.get(meta.sessionKey);
+  if (sent !== undefined && sent >= meta.newestId) return;
+  f.seen.set(meta.sessionKey, meta.newestId);
+  const upToId = meta.newestId;
+  void postRead(vault, meta.source, upToId).catch(() => {
+    if (f.seen.get(meta.sessionKey) === upToId) {
+      if (sent === undefined) f.seen.delete(meta.sessionKey); else f.seen.set(meta.sessionKey, sent);
+    }
+  });
   // The read mark is one monotonic id per slug: every older run of that slug is read with it.
   const upTo = meta.newestId;
   const sessions = f.sessions.map((s) => (s.unread && s.source === meta.source && (s.newestId ?? '') <= upTo ? { ...s, unread: false } : s));

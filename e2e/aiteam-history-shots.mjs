@@ -327,6 +327,11 @@ async function deepLeg(page, pane, tag, wait, until, shot) {
   must('late reply', cli('automations', 'post', '--run', RUNS.yesterday.runId, 'herodot-daily', '--', 'Late follow-up: the skip change shipped.'));
   const moved = await until(async () => { const k = await boundaryKeys(); return k[k.length - 1] === yKey; }, 45000);
   check(`${tag}: a late reply moves its run to the end`, moved, (await boundaryKeys()).slice(-3).join(' | '));
+  // A run already read that posts again: once its new post is on screen the badge clears again.
+  await page.locator('.aiteam-stage .chat-scroll').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  const badgeAgain = page.locator('[data-team-row="herodot"] .sidebar-badge');
+  const clearedAgain = await until(async () => (await badgeAgain.count()) === 0, 40000);
+  check(`${tag}: after new posts in already-read runs, the badge clears once they are on screen`, clearedAgain, clearedAgain ? '' : await badgeAgain.innerText().catch(() => ''));
   await shot('6-live-merge');
 
   // AC18: a run boundary lands the activity view on that run; back keeps the same session.
