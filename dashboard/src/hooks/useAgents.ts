@@ -343,6 +343,44 @@ export interface AgentStageView {
   taskJobs?: { taskId: string; taskSlug: string; taskName: string; step: string; role: string; round: number; phase: string; sessionId: string | null; claimedAt: string }[];
 }
 
+/** One past session in an agent's history (`GET /api/agents/:slug/history`). Mirrors
+ *  `HistorySession` (src/lib/agents/history.ts). */
+export interface AgentHistorySession {
+  key: string;
+  kind: 'run' | 'talk';
+  source: string;
+  title: string;
+  startedAt: string;
+  lastAt: string;
+  status: 'ok' | 'failed' | 'skipped' | 'running' | null;
+  durationMs: number | null;
+  newestId: string | null;
+  unread: boolean;
+  truncated?: true;
+  missing?: true;
+  rows: Array<{ id: string; kind: 'user' | 'agent'; text: string; at: string; files?: string[] }>;
+}
+
+/** One page of an agent's history, newest activity first. */
+export interface AgentHistoryPage {
+  sessions: AgentHistorySession[];
+  nextBefore: string | null;
+  unreadCount: number;
+}
+
+/** Read one page of an agent's history. `exclude` = the stage's own live session. */
+export function fetchAgentHistory(
+  api: { get: <T>(path: string) => Promise<T> },
+  slug: string,
+  opts: { before?: string | null; exclude?: string | null } = {},
+): Promise<AgentHistoryPage> {
+  const q = new URLSearchParams();
+  if (opts.before) q.set('before', opts.before);
+  if (opts.exclude) q.set('exclude', opts.exclude);
+  const qs = q.toString();
+  return api.get<AgentHistoryPage>(`/agents/${encodeURIComponent(slug)}/history${qs ? `?${qs}` : ''}`);
+}
+
 /** How often the stage re-reads its cards while it is on screen. */
 export const STAGE_POLL_MS = 5000;
 

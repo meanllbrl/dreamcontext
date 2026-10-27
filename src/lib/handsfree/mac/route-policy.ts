@@ -447,6 +447,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agents/:slug/approve': allow('the owner approves this project\'s agent, as on the laptop'),
   'POST /api/agents/:slug/place': allow(PROJECT_WRITE),
   'GET /api/agents/:slug/stage': allow('read: an agent\'s stage (its live work, reports, files, routines); side-effect free'),
+  'GET /api/agents/:slug/history': allow('read: one page of an agent\'s runs and talks (the stage pane); side-effect free beyond pruning its own machine-local index of glances'),
   'GET /api/agents/:slug/photo': allow('read: an agent photo (png/jpeg/gif/webp by magic bytes); side-effect free', 'media'),
   'POST /api/agents/:slug/photo': allow(PROJECT_WRITE),
 

@@ -33,8 +33,9 @@ import { cadenceLabel, getRunTarget, listAutomations, parsePattern, resolveAutom
 import { readThread } from '../../lib/automations/threads.js';
 import { listInboxRows, type InboxRow } from '../../lib/owner-inbox.js';
 import { findTaskHead, readTaskJobs } from '../../lib/agents/task-jobs.js';
-import { readStageHomeSession } from '../../lib/local-store.js';
-import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
+import { latestStageSession, readStageHomeSession } from '../../lib/local-store.js';
+import { listAgentHistory } from '../../lib/agents/history.js';
+import { sanitizeUuid } from './agent-spawn-shared.js';
 import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
 import { agentActivity } from '../automation-job.js';
 import { isAgentRequest } from '../desktop.js';
@@ -688,20 +689,6 @@ const STAGE_FILES = 8;
 /** How many day files of each thread a stage read looks at: a bound, not a filter. */
 const STAGE_THREAD_DAYS = 14;
 
-/**
- * Home conversations known to have a transcript. Only the positive is kept: a transcript, once
- * written, stays, so the stage poll scans `~/.claude/projects` only while a home is still empty.
- */
-const HOME_WITH_TURNS = new Set<string>();
-
-function homeHasTurns(home: string | null): boolean {
-  if (!home) return false;
-  if (HOME_WITH_TURNS.has(home)) return true;
-  if (findTranscriptBySessionId([home]) === null) return false;
-  HOME_WITH_TURNS.add(home);
-  return true;
-}
-
 export type StageFileKind = 'doc' | 'board' | 'image' | 'data' | 'other';
 
 /** A posted file's kind, from its brain-relative path. */
@@ -723,10 +710,6 @@ export interface StageView {
   homeSessionId: string | null;
   /** A live, ATTACHED process holds the home session right now (a stage, or a Chat tab). */
   homeLive: boolean;
-  /** The home conversation has at least one turn: Claude keeps a transcript only after the first
-   *  one, so a stage that was opened and never spoken to has none. The page opens such an agent on
-   *  its activity, where its routines' messages are, instead of an empty chat. */
-  homeHasTurns: boolean;
   /** Whose agent it is (arrives with the brain sync); null on this build. */
   owner: string | null;
   /** What it is doing right now: one row per target of it holding its run lock. */
@@ -779,7 +762,8 @@ export function buildStageView(contextRoot: string, slug: string, now: Date = ne
     if (files.length >= STAGE_FILES) break;
   }
 
-  const home = readStageHomeSession(dirname(contextRoot), slug);
+  // The stage's latest session from the history index, falling back to the older single record.
+  const home = latestStageSession(dirname(contextRoot), slug) ?? readStageHomeSession(dirname(contextRoot), slug);
   return {
     slug,
     title: target.agentTitle || target.title,
@@ -789,7 +773,6 @@ export function buildStageView(contextRoot: string, slug: string, now: Date = ne
     // Held = a live child with a socket bound to it right now. A detached one (its pane closed a
     // moment ago) is not held: the stage adopts it.
     homeLive: !!home && !!findLiveChat(home)?.holder?.(),
-    homeHasTurns: homeHasTurns(home),
     owner: null,
     liveJobs,
     reports,
@@ -836,5 +819,44 @@ export async function handleAgentsStage(
   } catch (err) {
     console.error('[agents] stage failed', err);
     sendError(res, 500, 'stage_failed', 'Failed to read the agent\'s stage.');
+  }
+}
+
+/**
+ * GET /api/agents/:slug/history?before=<lastAt>|<key>&exclude=<claudeId> — one page of the agent's
+ * history for its stage pane: every routine run and every talk with the owner, newest activity
+ * first (lib/agents/history.ts). Desktop only, like the stage. A talk a live socket holds (a Chat
+ * tab in use) waits until it ends; `exclude` is the stage's own live session.
+ */
+export async function handleAgentsHistory(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!isAgentRequest(req)) {
+    sendError(res, 403, 'forbidden', 'An agent\'s history is available in the desktop app only.');
+    return;
+  }
+  if (!agentTarget(contextRoot, params.slug)) {
+    sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
+    return;
+  }
+  try {
+    const url = new URL(req.url || '/', 'http://localhost');
+    const before = url.searchParams.get('before');
+    const exclude = sanitizeUuid(url.searchParams.get('exclude')) || null;
+    const page = listAgentHistory(contextRoot, params.slug, {
+      audience: 'owner',
+      before: before && before.length <= 512 ? before : null,
+      exclude,
+      markTurns: true,
+      isLive: (id) => findLiveChat(id) !== null,
+      isHeld: (id) => !!findLiveChat(id)?.holder?.(),
+    });
+    sendJson(res, 200, page);
+  } catch (err) {
+    console.error('[agents] history failed', err);
+    sendError(res, 500, 'history_failed', 'Failed to read the agent\'s history.');
   }
 }

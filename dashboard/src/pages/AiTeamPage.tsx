@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { TeamRoster } from '../components/aiteam/TeamRoster';
 import { TeamSyncStrip } from '../components/aiteam/TeamSyncStrip';
 import { TeamConversation } from '../components/aiteam/TeamConversation';
 import { AgentStage } from '../components/aiteam/AgentStage';
-import { dropStageSessions } from '../components/aiteam/stageSession';
+import { beginStageOpen, deselectStage, dropStageSessions, forgetStage } from '../components/aiteam/stageSession';
 import { TeamPanel, type PanelTab } from '../components/aiteam/TeamPanel';
 import { NewTeammate, TEAM_STARTERS, type TeamStarter } from '../components/aiteam/NewTeammate';
 import { buildRoster, messagesOf, openingView, type TeamAgent } from '../components/aiteam/teamModel';
@@ -18,7 +18,7 @@ import { BrandMark } from '../components/brand/BrandMark';
 import { BrainFileViewer } from '../components/agents/BrainFileViewer';
 import { useVault } from '../context/VaultContext';
 import { useI18n } from '../context/I18nContext';
-import { useAgents, useAgentStage } from '../hooks/useAgents';
+import { useAgents } from '../hooks/useAgents';
 import { useAgentFeed, useAutomationDispatcher, useAutomations } from '../hooks/useAutomations';
 import { nextFireWords } from '../lib/agentDraft';
 import type { AgentsFocus } from '../lib/openAgents';
@@ -88,11 +88,10 @@ export function AiTeamPage({
   const [toast, setToast] = useState<string | null>(null);
   const [openFile, setOpenFile] = useState<string | null>(null);
   /** A notification or link landed: which routine's newest message to bring into view. */
-  const [landing, setLanding] = useState<{ slug: string; nonce: number } | null>(null);
-  /** A teammate opens on its conversation (the real Chat pane) or its activity (the routines'
-   *  runs and posts), whichever holds what its roster row shows (`openingView`); the other is one
-   *  step away. `auto` = just picked, decided once the stage view says whether its home has turns. */
-  const [teamView, setTeamView] = useState<'auto' | 'stage' | 'activity'>('auto');
+  const [landing, setLanding] = useState<{ slug: string; nonce: number; runId?: string | null } | null>(null);
+  /** A teammate opens on its conversation (the stage: its whole history above the composer),
+   *  or on its activity when a routine question waits there (`openingView`). */
+  const [teamView, setTeamView] = useState<'stage' | 'activity'>('stage');
   /** Phone width: which of the two halves is on screen. */
   const [mobileShow, setMobileShow] = useState<'list' | 'convo'>('list');
 
@@ -115,19 +114,19 @@ export function AiTeamPage({
 
   // The first teammate is open when nothing else is asked for, so the page never opens blank.
   const current = rows.find((r) => r.slug === selected) ?? null;
+  const viewFor = useCallback((slug: string) => {
+    const row = rows.find((r) => r.slug === slug);
+    return row ? openingView(row) : 'stage';
+  }, [rows]);
+  // The first teammate is open when nothing else is asked for (a deleted one is skipped).
+  const deletedRef = useRef<string | null>(null);
   useEffect(() => {
     if (current || rows.length === 0) return;
-    setSelected(rows[0].slug);
-    setTeamView('auto');
+    const first = rows.find((r) => r.slug !== deletedRef.current) ?? null;
+    if (!first) return;
+    setSelected(first.slug);
+    setTeamView(openingView(first));
   }, [current, rows]);
-  // The same query (and cache) as the stage itself: deciding here costs no second read.
-  const stageQ = useAgentStage(current?.slug ?? null);
-  const stageSettled = stageQ.data ?? (stageQ.isError ? { homeHasTurns: false } : null);
-  useEffect(() => {
-    if (teamView !== 'auto' || !current) return;
-    const view = openingView(current, stageSettled);
-    if (view) setTeamView(view);
-  }, [teamView, current, stageSettled]);
 
   // A link or a caller asked for one teammate, the create flow, or its profile.
   useEffect(() => {
@@ -137,13 +136,13 @@ export function AiTeamPage({
       setMobileShow('convo');
     } else if (agentsFocus.slug) {
       setSelected(agentsFocus.slug);
-      setTeamView('auto');
+      setTeamView(viewFor(agentsFocus.slug));
       setCreating(null);
       setPanel('profile');
       setMobileShow('convo');
     }
     onAgentsFocusDone?.();
-  }, [agentsFocus, onAgentsFocusDone]);
+  }, [agentsFocus, onAgentsFocusDone, viewFor]);
   useEffect(() => {
     if (!automationFocus || !automationsQ.data) return;
     const a = automations.find((x) => x.slug === automationFocus.slug);
@@ -157,8 +156,8 @@ export function AiTeamPage({
 
   // The composer drafts and staged chips die with the PAGE, not with one conversation.
   useEffect(() => () => dropThreadScratch(), []);
-  // So do the stages' live sessions: each stage resumes its home conversation when the page
-  // opens again (its child adopted while it still runs detached).
+  // So do the stages' live sessions: the next visit opens each agent fresh, and the talk that just
+  // ended is in its history.
   useEffect(() => () => dropStageSessions(vault ?? ''), [vault]);
 
   useEffect(() => {
@@ -177,13 +176,13 @@ export function AiTeamPage({
     setSelected(slug);
     setLanding(null);
     setCreating(null);
-    setTeamView('auto');
+    setTeamView(viewFor(slug));
     setMobileShow('convo');
-  }, []);
-  /** From the stage: its activity, at a routine's newest message when one is named. */
-  const openActivity = useCallback((slug: string | null) => {
+  }, [viewFor]);
+  /** From the stage: its activity, at one run (a boundary clicked) or a routine's newest message. */
+  const openActivity = useCallback((at?: { slug: string; runId: string | null }) => {
     setTeamView('activity');
-    setLanding(slug ? { slug, nonce: Date.now() } : null);
+    setLanding(at ? { slug: at.slug, runId: at.runId, nonce: Date.now() } : null);
   }, []);
   /** Org chart: a click opens the teammate's Team tab beside the chart. */
   const selectInOrg = useCallback((slug: string) => {
@@ -232,6 +231,29 @@ export function AiTeamPage({
     () => (current ? messagesOf(current.slug, automations, feed?.messages ?? []) : []),
     [current, automations, feed],
   );
+  /** The roster feed's newest entry for the open teammate: a change re-reads its history. */
+  const feedNewestId = useMemo(() => {
+    let max: string | null = null;
+    for (const m of messages) if (m.newestId && (max === null || m.newestId > max)) max = m.newestId;
+    return max;
+  }, [messages]);
+  const inActivity = useCallback((key: string) => messages.some((m) => m.key === key), [messages]);
+  // An OPEN of a teammate (the pick changed): the one picked before ends its idle session, the new
+  // one opens fresh (a new session unless its entry still holds one) and reads its history anew.
+  // A link landing on the teammate already open is not an open (the pick did not change).
+  const openedRef = useRef<string | null>(null);
+  const newestRef = useRef(feedNewestId);
+  newestRef.current = feedNewestId;
+  useEffect(() => {
+    const v = vault ?? '';
+    const now = selected ? `${v}\u0000${selected}` : null;
+    const prev = openedRef.current;
+    if (prev === now) return;
+    openedRef.current = now;
+    if (prev && prev.startsWith(`${v}\u0000`)) deselectStage(v, prev.slice(v.length + 1));
+    if (selected) beginStageOpen(v, selected, newestRef.current);
+  }, [selected, vault]);
+
   /** Who the open teammate reports through, top first. */
   const managers = useMemo(() => {
     if (!current) return [];
@@ -256,7 +278,7 @@ export function AiTeamPage({
       routines={current.routines}
       messages={messages}
       onEdit={setEditing}
-      onDeleted={() => { setPanel(null); setSelected(null); }}
+      onDeleted={() => { forgetStage(vault ?? '', current.slug); deletedRef.current = current.slug; setPanel(null); setSelected(null); }}
       onOpenFile={setOpenFile}
       onToast={setToast}
       onSelectAgent={org ? selectInOrg : select}
@@ -316,7 +338,7 @@ export function AiTeamPage({
             onCreated={(slug, message) => {
               setCreating(null);
               setSelected(slug);
-              setTeamView('auto');
+              setTeamView('stage');
               setToast(message);
             }}
           />
@@ -341,11 +363,6 @@ export function AiTeamPage({
               </div>
             </div>
           </section>
-        ) : current && agent && teamView === 'auto' ? (
-          // Not the stage yet: mounting it opens (and records) a home session the pick may not need.
-          <section className="aiteam-convo" data-team-opening>
-            <p className="aiteam-roster-empty">{t('common.loading')}</p>
-          </section>
         ) : current && agent && teamView === 'stage' && agentsQ.data?.find((a) => a.slug === current.slug) ? (
           <AgentStage
             key={current.slug}
@@ -356,8 +373,10 @@ export function AiTeamPage({
             onPanel={(tab) => setPanel((p) => (p === tab ? null : tab))}
             onTogglePanel={() => setPanel((p) => (p ? null : 'profile'))}
             onEdit={setEditing}
-            onActivity={() => openActivity(null)}
+            onActivity={openActivity}
             onToast={setToast}
+            feedNewestId={feedNewestId}
+            inActivity={inActivity}
           />
         ) : current && agent ? (
           <TeamConversation

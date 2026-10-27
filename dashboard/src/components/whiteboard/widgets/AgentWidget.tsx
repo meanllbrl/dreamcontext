@@ -17,6 +17,7 @@ import { showAgentInPanel, useAgentPanelOpen, useCardFlash, useDropTarget } from
 import { useAgentSession, useBoardAgents } from '../useBoardAgents';
 import { WidgetFrame, WidgetNotice } from './WidgetFrame';
 import type { WidgetProps } from './types';
+import type { ChatFeed } from '../../sleepy/chat/chatFeed';
 import './agentWidget.css';
 
 type Tx = (key: string, fallback: string) => string;
@@ -232,10 +233,12 @@ function CardLines({ lines, name, tx }: { lines: readonly SaidLine[]; name: stri
  * portaled into it (the notch's own mount). `bare`: the agent's envelope is the server's to
  * decide, so the composer offers no mode, permission or model switch.
  */
-export function CardChat({ session, reopen, placeholder, pane = false }: {
+export function CardChat({ session, reopen, placeholder, pane = false, feed }: {
   session: ChatSession;
   reopen: () => void;
   placeholder: string;
+  /** The agent's past sessions above the conversation (the AI Team stage). */
+  feed?: ChatFeed;
   /** The full Chat pane (the AI Team page's conversation), not a board card's slim one: only the
    *  controls that cannot reach an agent-bound session stay out (ChatPane `agentBound`). */
   pane?: boolean;
@@ -280,6 +283,7 @@ export function CardChat({ session, reopen, placeholder, pane = false }: {
           bare={!pane}
           agentBound={pane}
           idlePlaceholder={placeholder}
+          feed={feed}
         />,
         session.container,
       )}

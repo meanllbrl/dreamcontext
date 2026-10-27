@@ -1456,46 +1456,46 @@ describe('nextFirstShown — reveal', () => {
 describe('splitWindow', () => {
   it('items only (a fresh conversation): the head indexes straight into items', () => {
     expect(splitWindow(0, 100, 60)).toEqual({
-      hiddenCount: 60, historyFrom: 0, itemsFrom: 60, showsHistory: false,
+      feedFrom: 0, showsFeed: false, hiddenCount: 60, historyFrom: 0, itemsFrom: 60, showsHistory: false,
     });
   });
 
   it('history only (a resumed conversation with no new turn yet)', () => {
     expect(splitWindow(100, 0, 60)).toEqual({
-      hiddenCount: 60, historyFrom: 60, itemsFrom: 0, showsHistory: true,
+      feedFrom: 0, showsFeed: false, hiddenCount: 60, historyFrom: 60, itemsFrom: 0, showsHistory: true,
     });
   });
 
   it('straddling: the window starts inside history and runs through into items', () => {
     expect(splitWindow(100, 50, 80)).toEqual({
-      hiddenCount: 80, historyFrom: 80, itemsFrom: 0, showsHistory: true,
+      feedFrom: 0, showsFeed: false, hiddenCount: 80, historyFrom: 80, itemsFrom: 0, showsHistory: true,
     });
   });
 
   it('history entirely below the window: no divider, items sliced from their own offset', () => {
     expect(splitWindow(100, 50, 120)).toEqual({
-      hiddenCount: 120, historyFrom: 100, itemsFrom: 20, showsHistory: false,
+      feedFrom: 0, showsFeed: false, hiddenCount: 120, historyFrom: 100, itemsFrom: 20, showsHistory: false,
     });
   });
 
   it('exactly at the history/items boundary hides all history and no items', () => {
     expect(splitWindow(100, 50, 100)).toEqual({
-      hiddenCount: 100, historyFrom: 100, itemsFrom: 0, showsHistory: false,
+      feedFrom: 0, showsFeed: false, hiddenCount: 100, historyFrom: 100, itemsFrom: 0, showsHistory: false,
     });
   });
 
   it('a zero head shows everything, and the divider only when history exists', () => {
     expect(splitWindow(0, 0, 0)).toEqual({
-      hiddenCount: 0, historyFrom: 0, itemsFrom: 0, showsHistory: false,
+      feedFrom: 0, showsFeed: false, hiddenCount: 0, historyFrom: 0, itemsFrom: 0, showsHistory: false,
     });
     expect(splitWindow(3, 4, 0)).toEqual({
-      hiddenCount: 0, historyFrom: 0, itemsFrom: 0, showsHistory: true,
+      feedFrom: 0, showsFeed: false, hiddenCount: 0, historyFrom: 0, itemsFrom: 0, showsHistory: true,
     });
   });
 
   it('clamps a head past the end rather than producing negative slices', () => {
     expect(splitWindow(10, 10, 999)).toEqual({
-      hiddenCount: 20, historyFrom: 10, itemsFrom: 10, showsHistory: false,
+      feedFrom: 0, showsFeed: false, hiddenCount: 20, historyFrom: 10, itemsFrom: 10, showsHistory: false,
     });
   });
 });

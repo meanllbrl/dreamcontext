@@ -23,6 +23,7 @@ import { agentSyncPreview, agentSyncState, confirmAgentSyncHere } from '../../li
 import { writeActiveHere } from '../../lib/agents/active.js';
 import { scanOutsideAssignments } from '../../lib/agents/outside-assignments.js';
 import { listInboxRows } from '../../lib/owner-inbox.js';
+import { listAgentHistory, searchAgentHistory } from '../../lib/agents/history.js';
 import { getRunTarget, parsePattern, setAutomationShared } from '../../lib/automations/store.js';
 import { SOUL_TEMPLATE_IDS, soulTemplate } from '../../lib/agents/soul-templates.js';
 import { shareAgent, shareAutomation, unshareAgent, unshareAutomation } from '../../lib/automations/sharing.js';
@@ -575,4 +576,52 @@ export function registerAgentsCommand(program: Command): void {
       for (const r of rows) console.log(`  ${chalk.bold(r.kind)}  ${r.title}${r.detail ? chalk.dim(` (${r.detail})`) : ''}`);
       console.log(chalk.dim('  Answer them on the AI Team page.'));
     });
+
+  agents
+    .command('history <slug>')
+    .description('An agent\'s past runs and conversations, newest first (what the agent itself reads to remember)')
+    .option('--search <words>', 'Only lines containing these words (case-insensitive), newest first, at most 50')
+    .option('--before <cursor>', 'Continue below this cursor (printed at the end of a page)')
+    .option('--limit <n>', 'Sessions per page (default 8), or hits for --search (max 50)')
+    .option('--json', 'Emit as JSON')
+    .action((slug: string, opts: { search?: string; before?: string; limit?: string; json?: boolean }) => {
+      const root = ensureContextRoot();
+      if (!getAgent(root, slug)) {
+        error(`No agent named "${slug}" in this project.`);
+        process.exitCode = 1;
+        return;
+      }
+      const n = opts.limit !== undefined ? Number.parseInt(opts.limit, 10) : undefined;
+      const limit = n !== undefined && Number.isFinite(n) && n > 0 ? n : undefined;
+      // The agent's own view: its private sources and this machine's entries, plus its talks here.
+      // Read-only: the CLI never writes or prunes the session index (it cannot see live chats).
+      if (opts.search !== undefined) {
+        const found = searchAgentHistory(root, slug, opts.search, { audience: 'agent', before: opts.before ?? null, limit });
+        if (opts.json) { console.log(JSON.stringify(found, null, 2)); return; }
+        if (found.hits.length === 0) { console.log(chalk.dim('Nothing found.')); return; }
+        for (const h of found.hits) {
+          const who = h.who === 'owner' ? 'the owner' : 'you';
+          const where = h.kind === 'talk' ? 'a conversation' : h.title;
+          console.log(`${chalk.dim(h.at)}  ${chalk.bold(who)} ${chalk.dim(`(${where})`)}: ${oneLine(h.text, 400)}`);
+        }
+        if (found.nextBefore) console.log(chalk.dim(`  more: --before '${found.nextBefore}'`));
+        return;
+      }
+      const page = listAgentHistory(root, slug, { audience: 'agent', before: opts.before ?? null, maxSessions: limit });
+      if (opts.json) { console.log(JSON.stringify(page, null, 2)); return; }
+      if (page.sessions.length === 0) { console.log(chalk.dim('No history.')); return; }
+      for (const s of page.sessions) {
+        const head = s.kind === 'talk' ? `Conversation with the owner · ${s.startedAt}` : `${s.title} ran · ${s.startedAt}${s.status ? ` · ${s.status}` : ''}`;
+        console.log(header(head));
+        if (s.missing) console.log(chalk.dim('  (no longer on this machine)'));
+        for (const r of s.rows) console.log(`  ${chalk.bold(r.kind === 'user' ? 'owner' : 'you')}: ${oneLine(r.text, 400)}`);
+      }
+      if (page.nextBefore) console.log(chalk.dim(`  older: --before '${page.nextBefore}'`));
+    });
+}
+
+/** A message flattened to one line of at most `max` characters. */
+function oneLine(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }

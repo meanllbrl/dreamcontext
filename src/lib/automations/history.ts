@@ -4,6 +4,7 @@ import { listAutomationJobs } from './store.js';
 import { plainPostText, readThread } from './threads.js';
 import type { ThreadEntry } from './types.js';
 import { threadEntriesHere } from '../agents/agent-sync.js';
+import { recentTalkRows } from '../agents/talks.js';
 
 /**
  * An agent's RECENT HISTORY, as notes in its next fresh run.
@@ -42,6 +43,11 @@ export interface RecentHistoryOptions {
   /** The run this prompt is for: its own entries (the owner's message that started it) are
    *  already in the prompt as the ask, so they are not repeated as history. */
   excludeRunId?: string | null;
+  /** Add this machine's TALKS with the agent (its stage and Chat-tab conversations). A new agent
+   *  chat's briefing sets it; a scheduled run's prompt does not, so it stays as it was. */
+  includeTalks?: boolean;
+  /** The session this briefing is for: never its own history. */
+  excludeSession?: string | null;
 }
 
 export const HISTORY_DAYS = 14;
@@ -49,11 +55,14 @@ export const HISTORY_MAX_ITEMS = 8;
 export const HISTORY_ITEM_CHARS = 300;
 export const HISTORY_MAX_BYTES = 4096;
 
+/** The source name a talk's line carries (never a valid automation slug). */
+const TALK_SOURCE = '\0talk';
+
 const bytes = (s: string): number => Buffer.byteLength(s, 'utf-8');
 
 /** The thread slugs an agent speaks in: its own (its call target), and every automation that
  *  runs as it. Only the private ones. */
-function privateSources(contextRoot: string, agentSlug: string): string[] {
+export function privateSources(contextRoot: string, agentSlug: string): string[] {
   const sharedAutomations = new Set(listSharedSlugs(contextRoot));
   const sources = new Set<string>();
   if (!sharedAutomations.has(agentSlug)) sources.add(agentSlug);
@@ -76,7 +85,7 @@ function lineFor(e: ThreadEntry & { source: string }, agentSlug: string, perItem
   const rows = e.summary?.map((r) => `${r.key}: ${r.value}`).join('; ') ?? '';
   let text = [plainPostText(e.text), rows].filter(Boolean).join(' — ');
   if (text.length > perItem) text = `${text.slice(0, Math.max(0, perItem - 1)).trimEnd()}…`;
-  const where = e.source === agentSlug ? '' : ` (in ${e.source})`;
+  const where = e.source === TALK_SOURCE ? ' (in a chat with you)' : e.source === agentSlug ? '' : ` (in ${e.source})`;
   const who = e.kind === 'user' ? `the owner${where}` : `you${where}`;
   return `${stamp(e.at)} · ${who}: ${text}`;
 }
@@ -89,6 +98,7 @@ export function buildRecentHistoryBlock(
   const {
     nonce, now = new Date(), days = HISTORY_DAYS, max = HISTORY_MAX_ITEMS,
     perItem = HISTORY_ITEM_CHARS, totalBytes = HISTORY_MAX_BYTES, excludeRunId = null,
+    includeTalks = false, excludeSession = null,
   } = opts;
   if (totalBytes <= 0 || max <= 0) return '';
   try {
@@ -114,6 +124,15 @@ export function buildRecentHistoryBlock(
     }
     // Ids sort as time across every thread, so one sort interleaves the sources.
     entries.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    if (includeTalks) {
+      // Talks have no thread id: they join by time. Machine-local transcripts, so no ledger rule.
+      for (const r of recentTalkRows(contextRoot, agentSlug, { sinceMs: since, excludeSession })) {
+        const at = Date.parse(r.at);
+        if (Number.isNaN(at) || at > now.getTime() || !r.text.trim()) continue;
+        entries.push({ id: '', runId: '', kind: r.kind, at: r.at, text: r.text, via: 'chat' as ThreadEntry['via'], source: TALK_SOURCE });
+      }
+      entries.sort((a, b) => (Date.parse(a.at) - Date.parse(b.at)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    }
 
     const head = [
       `--- YOUR RECENT HISTORY (what you and the owner said lately, oldest first) ${nonce} ---`,

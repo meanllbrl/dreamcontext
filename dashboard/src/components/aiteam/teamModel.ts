@@ -176,25 +176,12 @@ export function buildRoster(
 }
 
 /**
- * WHERE A PICKED TEAMMATE OPENS: its conversation (the stage, the agent's home Chat session) or
- * its activity (its routines' runs and posts, the thread the roster row previews).
- *
- * The roster's preview and unread count come from the activity. Opening on an empty stage hid
- * exactly what the row promised (owner 2026-10-27: "the messages are missing"), so:
- *  - unread messages: the activity, where reading them clears the count;
- *  - nothing ever said: the stage, to start talking;
- *  - otherwise the stage only when its home conversation has a turn, else the activity;
- *  - null while the stage view is still loading and the answer depends on it.
- * Decided once per pick: a count reaching 0 while the owner reads never moves the view.
+ * WHERE A PICKED TEAMMATE OPENS: its conversation (the stage), where its whole history — every
+ * routine run and every talk — is one flow above the composer (AI Team history, 2026-10-27).
+ * Only an open routine QUESTION opens the activity, where its answer block lives.
  */
-export function openingView(
-  row: Pick<TeamRow, 'unread' | 'lastAt'>,
-  stage: { homeHasTurns?: boolean } | null | undefined,
-): 'stage' | 'activity' | null {
-  if (row.unread > 0) return 'activity';
-  if (row.lastAt === null) return 'stage';
-  if (!stage) return null;
-  return stage.homeHasTurns ? 'stage' : 'activity';
+export function openingView(row: Pick<TeamRow, 'status'>): 'stage' | 'activity' {
+  return row.status === 'needs' ? 'activity' : 'stage';
 }
 
 /**
@@ -409,7 +396,15 @@ export function buildConversation(
  * newest message, preferring what was said over the bookkeeping around it. Null when the
  * conversation holds nothing of it (the reader stays at the end).
  */
-export function focusTargetKey(items: readonly ConversationItem[], slug: string): string | null {
+export function focusTargetKey(items: readonly ConversationItem[], slug: string, runId?: string | null): string | null {
+  // A landing on ONE run (a boundary clicked in the stage's history): that run's post, else its
+  // first row; a run outside the activity's window falls back to the routine's newest message.
+  if (runId) {
+    const run = `${slug}::${runId}:`;
+    const rows = items.filter((it) => it.key.startsWith(run));
+    const hit = rows.find((it) => it.kind === 'agent' || it.kind === 'live') ?? rows[0];
+    if (hit) return hit.key;
+  }
   const prefix = `${slug}::`;
   let fallback: string | null = null;
   for (let i = items.length - 1; i >= 0; i--) {

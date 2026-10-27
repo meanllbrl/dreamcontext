@@ -90,6 +90,10 @@ describe('focusTargetKey: where a notification lands', () => {
   it("the routine's newest post, not the owner's later turn", () => {
     expect(focusTargetKey(items, 'sentinel-daily')).toBe('sentinel-daily::2026-10-21T09:00:00.000Z:post');
   });
+  it('a landing on ONE run (a history boundary clicked) lands on that run; an unknown run on the newest', () => {
+    expect(focusTargetKey(items, 'sentinel-daily', '2026-10-19T09:00:00.000Z')).toBe('sentinel-daily::2026-10-19T09:00:00.000Z:post');
+    expect(focusTargetKey(items, 'sentinel-daily', '2026-01-01T00:00:00.000Z')).toBe('sentinel-daily::2026-10-21T09:00:00.000Z:post');
+  });
   it('a slug with no message in the conversation lands nowhere (the reader stays at the end)', () => {
     expect(focusTargetKey(items, 'other')).toBeNull();
     // A prefix of another slug is not that slug.

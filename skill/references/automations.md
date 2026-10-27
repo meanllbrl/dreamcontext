@@ -86,6 +86,7 @@ One brain-level switch, `agentSync` in `state/.config.json`, sends agents and au
 - **Several machines, one login:** `agents/.active/<slug>.json` names the machine that runs it; only that machine runs it. `dreamcontext agents bring-here <slug>` (or "Bring it here" on the stage) moves it; the other machine stops at its next pull.
 - **Nothing starts from synced fields alone.** A task's `agent:` / `reviewer:` set by a hand edit or a teammate starts nothing: it raises an inbox row ("assigned outside the app: Start / Ignore"). Only an assignment made on this machine starts work (a machine-local ledger, `~/.dreamcontext/local/<project>/`).
 - **The owner inbox** (`dreamcontext agents inbox`, the AI Team list) holds those rows: held secrets, assignments made outside the app, renamed agents, patterns to adopt.
+- **An agent's history** (`dreamcontext agents history <slug> [--search <words>]`): every run and every conversation with the owner is its own fresh Claude session; the AI Team pane shows them as one flow, and a new conversation's briefing carries the recent ones plus the line to search the rest.
 
 ### Sharing an agent
 

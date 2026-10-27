@@ -160,7 +160,7 @@ import {
   handleAgentsDelete,
   handleAgentsApprove,
   handleAgentsPlace,
-  handleAgentsPhotoGet, handleAgentsStage,
+  handleAgentsPhotoGet, handleAgentsStage, handleAgentsHistory,
   handleAgentsPhotoUpload,
 } from './routes/agents.js';
 import {
@@ -826,6 +826,7 @@ export function buildRouter(): Router {
   router.post('/api/agents/:slug/place', handleAgentsPlace);
   router.get('/api/agents/:slug/photo', handleAgentsPhotoGet);
   router.get('/api/agents/:slug/stage', handleAgentsStage);
+  router.get('/api/agents/:slug/history', handleAgentsHistory);
   router.post('/api/agents/:slug/photo', handleAgentsPhotoUpload);
   router.get('/api/automations', handleAutomationsList);
   // Create is a POST on the COLLECTION, so it shares no shape with any `/:slug`

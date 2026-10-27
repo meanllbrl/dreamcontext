@@ -1934,6 +1934,8 @@ export interface AutoRevealMetrics {
   /** Has the scroller been quiet for {@link SCROLL_SETTLE_MS}? See rule below — in motion,
    *  the offset is the animator's, not ours. */
   settled: boolean;
+  /** An older page of the pane's feed can still be loaded. Absent: no feed. */
+  feedHasMore?: boolean;
 }
 
 /**
@@ -1962,15 +1964,23 @@ export interface AutoRevealMetrics {
  * the event that asked for it.
  */
 export function shouldAutoReveal(m: AutoRevealMetrics): boolean {
-  if (m.hiddenCount <= 0) return false;
+  // Older pages the pane can still load (an agent's history) count as hidden: the same gesture
+  // that reveals mounted-but-hidden entries asks for the next page once none are left.
+  if (m.hiddenCount <= 0 && !m.feedHasMore) return false;
   if (m.scrollTop >= WINDOW_REVEAL_PX) return false;
   if (m.dragging) return false;
   if (!m.settled) return false;
   return m.userDriven;
 }
 
-/** Where each array's rendered slice starts, and how much is hidden above it. */
+/** Where each array's rendered slice starts, and how much is hidden above it. With a FEED (an
+ *  agent's past sessions, drawn above its live conversation) the index space is
+ *  `feed ++ history ++ items`. */
 export interface WindowSplit {
+  /** `feed.slice(feedFrom)`. Equal to the feed's length when none of it is mounted. */
+  feedFrom: number;
+  /** Whether any feed row is mounted. */
+  showsFeed: boolean;
   /** Entries not mounted at all — what the "Show earlier messages (N)" button offers. */
   hiddenCount: number;
   /** `history.slice(historyFrom)`. Equal to `historyLen` when history is entirely hidden. */
@@ -2029,15 +2039,20 @@ export function anchorHoldCorrection(m: AnchorHoldMetrics): number {
 }
 
 /** Project a combined-index window head onto the two arrays it actually spans. */
-export function splitWindow(historyLen: number, itemsLen: number, firstShown: number): WindowSplit {
-  const total = Math.max(0, historyLen) + Math.max(0, itemsLen);
+export function splitWindow(historyLen: number, itemsLen: number, firstShown: number, feedLen = 0): WindowSplit {
+  const f = Math.max(0, feedLen);
+  const h = Math.max(0, historyLen);
+  const total = f + h + Math.max(0, itemsLen);
   const head = Math.min(Math.max(0, firstShown), total);
-  const historyFrom = Math.min(head, Math.max(0, historyLen));
+  const feedFrom = Math.min(head, f);
+  const historyFrom = Math.min(Math.max(0, head - f), h);
   return {
     hiddenCount: head,
+    feedFrom,
+    showsFeed: feedFrom < f,
     historyFrom,
-    itemsFrom: Math.max(0, head - Math.max(0, historyLen)),
-    showsHistory: historyFrom < Math.max(0, historyLen),
+    itemsFrom: Math.max(0, head - f - h),
+    showsHistory: historyFrom < h,
   };
 }
 

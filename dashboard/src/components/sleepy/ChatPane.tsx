@@ -28,6 +28,7 @@ import { isQuestOnlyCommand, stepStretches, type StretchProbe } from './chat/too
 import { chatLineage, deriveChatQuest, partyBatches, type Party } from './chat/questModel';
 import { ChatQuestBar } from './chat/ChatQuestBar';
 import { ItemView } from './chat/TranscriptItem';
+import { feedMarks, feedShift, type ChatFeed, type FeedItem } from './chat/chatFeed';
 import { ToolRunCard } from './chat/ToolRunCard';
 import { SurveyCard } from './chat/SurveyCard';
 import { PermissionCard } from './chat/PermissionCard';
@@ -109,6 +110,9 @@ import './ChatPane.css';
  *  the wait is never silent, long enough that a question which routes promptly never flashes
  *  a loading pill on its way in. */
 const ASK_PREPARING_MS = 600;
+/** A pane with no feed: one stable empty list, so the window math reads no new array per render. */
+const NO_FEED: readonly FeedItem[] = [];
+const NO_IDS: readonly string[] = [];
 
 /** How long an `AskUserQuestion` may be routing before it is treated as BROKEN rather than
  *  slow. Was 4s, which a healthy-but-slow route (a long questions payload, a busy machine)
@@ -644,7 +648,7 @@ export function ChatPane({
   taskSlug, onContinueInTerminal,
   permissionMode, onPermissionModeChange, mode, onModeChange, onAgentPick, onHandoffToDevelop,
   onResume, automation, onOpenAppPage, onSignIn,
-  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, readOnly = false, aboveComposer,
+  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, readOnly = false, aboveComposer, feed,
 }: {
   session: ChatSession;
   modelConfig: ModelConfig;
@@ -730,6 +734,9 @@ export function ChatPane({
   readOnly?: boolean | 'finished';
   /** One line right above the composer, never over it (the phone's waiting toast, W3). */
   aboveComposer?: React.ReactNode;
+  /** An agent's PAST sessions drawn above this conversation (the AI Team stage, chatFeed.ts):
+   *  read-only rows at the head of the window. Absent (every Chat tab): exactly as before. */
+  feed?: ChatFeed;
 }) {
   // A computer or landscape tablet on Mac mode's tunnel (hands-free sekmeler W2).
   const remoteDesktop = useRemoteDesktop();
@@ -1192,14 +1199,27 @@ export function ChatPane({
   // (Read at render time, not reactively: if no event arrives after the quiet elapses, the
   // snap simply waits for the next one — a delay in a memory optimization, not a leak.)
   const [firstShownState, setFirstShownState] = useState(0);
-  const windowTotal = conv.history.length + conv.items.length;
+  const feedItems: readonly FeedItem[] = feed?.items ?? NO_FEED;
+  const feedLen = feedItems.length;
+  // The feed changed under the window (a page prepended, a live merge, a session moved to the
+  // end): the head follows the ROW it pointed at, in this same render, so the mounted rows and
+  // the reader's place do not move (`feedShift`). A chained reveal then continues the gesture.
+  const [feedIds, setFeedIds] = useState<readonly string[]>(NO_IDS);
+  if (feedIds.length !== feedLen || feedItems.some((it, i) => feedIds[i] !== it.id)) {
+    const nextIds = feedItems.map((it) => it.id);
+    const shifted = feedShift(feedIds, nextIds, firstShownState);
+    setFeedIds(nextIds);
+    if (shifted !== firstShownState) setFirstShownState(shifted);
+  }
+  const windowTotal = feedLen + conv.history.length + conv.items.length;
   const settledNow = remainingSettleMs(performance.now(), lastActivityAtRef.current) === 0;
   // The conversation as ONE index space for the card walk — the concatenation the window has
   // always been an index into, read without ever building it (a resumed history is thousands
   // of entries and this runs per streamed token).
   const cardWindow: CardWindow<ChatItem> = {
     total: windowTotal,
-    entryAt: (i) => (i < conv.history.length ? conv.history[i] : conv.items[i - conv.history.length]),
+    entryAt: (i) => (i < feedLen ? feedItems[i]
+      : i < feedLen + conv.history.length ? conv.history[i - feedLen] : conv.items[i - feedLen - conv.history.length]),
     isGroupable: isPlainToolCard,
     rendersNothing,
     minRun: MIN_TOOL_RUN,
@@ -1213,9 +1233,10 @@ export function ChatPane({
     total: windowTotal, pinned: stickRef.current && settledNow, tailHead,
   });
   if (firstShown !== firstShownState) setFirstShownState(firstShown);
-  const { hiddenCount, historyFrom, itemsFrom, showsHistory } = splitWindow(
-    conv.history.length, conv.items.length, firstShown,
+  const { hiddenCount, historyFrom, itemsFrom, showsHistory, feedFrom } = splitWindow(
+    conv.history.length, conv.items.length, firstShown, feedLen,
   );
+  const feedHasMore = !!feed && feed.hasMore && !feed.loading && !feed.failed;
 
   // ── The hold: what keeps an unpinned reader exactly where they are ──────────────────
   //
@@ -1381,8 +1402,19 @@ export function ChatPane({
     );
     const next = nextFirstShown(firstShown, { total: windowTotal, pinned: false, reveal: true, tailHead, revealHead });
     // Nothing left to reveal → leave the hold as it is, rather than re-arming it as a prepend
-    // that is not coming.
-    if (next === firstShown) return;
+    // that is not coming. With an agent's feed, the gesture asks for its next page instead: the
+    // page lands above the window (the head follows its row) and one reveal is chained to it.
+    if (next === firstShown) {
+      if (feed && feedHasMore && !feed.olderLoading) {
+        setStick(false);
+        chainRevealRef.current = true;
+        // Hold the reader's rows NOW: a short history is mounted whole, so the page lands in the
+        // same commit that mounts it, above the reader — the hold settles it before paint.
+        captureAnchor(true);
+        feed.onLoadOlder();
+      }
+      return;
+    }
     // Asking for older messages is explicit intent to go and read them — so it releases
     // stick-to-bottom. Without this the render below would re-normalize under the pinned
     // rule and slide the window straight back to the tail, making the button do nothing.
@@ -1391,6 +1423,15 @@ export function ChatPane({
     setFirstShownState(next);
   };
   revealEarlierRef.current = revealEarlier;
+  // The chained reveal: an older page just landed above the window (the head moved by its rows).
+  const chainRevealRef = useRef(false);
+  // Any change of the feed's rows above an unpinned reader (an older page, a live merge) is held.
+  useLayoutEffect(() => { holdAnchorSteady(); }, [feedLen, feedItems, holdAnchorSteady]);
+  useLayoutEffect(() => {
+    if (!chainRevealRef.current || feed?.olderLoading) return;
+    chainRevealRef.current = false;
+    if (firstShown > 0) revealEarlierRef.current();
+  }, [feedLen, feed?.olderLoading, firstShown]);
 
   /** The INPUT-side arm for the settled reveal — the path that works when there is nothing
    *  to scroll. When the whole window folds into one collapsed run card the content can be
@@ -1403,7 +1444,7 @@ export function ChatPane({
    *  handlers that call it. */
   const armRevealFromInput = (intent: ScrollIntent) => {
     if (intent !== 'up') return;
-    if (hiddenCount <= 0 || draggingRef.current) return;
+    if ((hiddenCount <= 0 && !feedHasMore) || draggingRef.current) return;
     const el = scrollRef.current;
     if (!el || el.clientHeight === 0 || el.scrollTop >= WINDOW_REVEAL_PX) return;
     armSettledReveal();
@@ -1425,9 +1466,10 @@ export function ChatPane({
    *  and flashes that part's chip too. */
   const jumpToReplyTarget = (itemId: string, part?: number) => {
     let idx = conv.history.findIndex((it) => it.id === itemId);
+    if (idx >= 0) idx += feedLen;
     if (idx < 0) {
       const live = conv.items.findIndex((it) => it.id === itemId);
-      idx = live < 0 ? -1 : conv.history.length + live;
+      idx = live < 0 ? -1 : feedLen + conv.history.length + live;
     }
     if (idx < 0) return;
     setStick(false);
@@ -2230,7 +2272,7 @@ export function ChatPane({
   // divider is something the reader sees, so a stretch never runs across it.
   const stretches = stepStretches([
     ...historySegments.flatMap((seg) => [...stripProbes(seg), ...probesOf(seg, false), ...questionProbes(seg)]),
-    { key: 'history-divider', step: false, invisible: !showsHistory, actor: 'lead', running: false },
+    { key: 'history-divider', step: false, invisible: !showsHistory || !!feed, actor: 'lead', running: false },
     ...liveSegments.flatMap((seg, i) => [...noticeProbes(i), ...stripProbes(seg), ...probesOf(seg, accruingAt(i)), ...questionProbes(seg)]),
     ...noticeProbes(liveSegments.length),
   ]);
@@ -2268,7 +2310,123 @@ export function ChatPane({
   const working = !ended && session.busy
     && !turnHasVisibleProgress(conv.items, conv.pending.length);
   const isEmpty = !working
-    && conv.history.length === 0 && conv.items.length === 0 && conv.pending.length === 0;
+    && conv.history.length === 0 && conv.items.length === 0 && conv.pending.length === 0
+    && (!feed || (feedLen === 0 && !feed.loading && !feed.failed));
+
+  // ── The feed segment: an agent's past sessions above this conversation (chatFeed.ts) ──
+  const feedNodes: React.ReactNode[] = [];
+  if (feed) {
+    if (feed.loading) {
+      feedNodes.push(<div key="feed-loading" className="chat-feed-note" data-feed-loading>{feed.labels.loading}</div>);
+    } else if (feed.failed) {
+      feedNodes.push(
+        <div key="feed-failed" className="chat-feed-note" data-feed-failed>
+          {feed.labels.error}{' '}
+          <button type="button" className="chat-feed-link" onClick={feed.onRetry}>{feed.labels.retry}</button>
+        </div>,
+      );
+    }
+    if (feedLen > 0 && feedFrom === 0 && !feed.hasMore) {
+      feedNodes.push(<div key="feed-end" className="chat-feed-end" data-feed-end>{feed.labels.end}</div>);
+    }
+    const dividerKey = feed.divider?.key ?? null;
+    for (let i = feedFrom; i < feedLen; i++) {
+      const it = feedItems[i];
+      const meta = it.feed;
+      const marks = feedMarks(feedItems, i, dividerKey, feedFrom);
+      if (marks.day !== null) {
+        feedNodes.push(<div key={`fday-${it.id}`} className="agents-feed-day chat-feed-day" data-feed-day><span>{feed.labels.day(meta.lastAt)}</span></div>);
+      }
+      if (marks.divider && feed.divider) {
+        feedNodes.push(
+          <div key="feed-new" className="agents-feed-new chat-feed-new" data-feed-divider>
+            <span>{feed.labels.divider(feed.divider.count, feed.divider.moreAbove)}</span>
+          </div>,
+        );
+      }
+      if (marks.boundary) {
+        feedNodes.push(
+          <button
+            key={`fbound-${meta.sessionKey}`}
+            type="button"
+            className={`chat-history-divider chat-feed-boundary${meta.status === 'failed' ? ' chat-feed-boundary--failed' : ''}`}
+            data-feed-boundary={meta.sessionKey}
+            onClick={() => feed.onBoundary(meta)}
+          >
+            {feed.labels.boundary(meta)}
+          </button>,
+        );
+        if (meta.missing) feedNodes.push(<div key={`fmiss-${meta.sessionKey}`} className="chat-feed-note" data-feed-missing>{feed.labels.missing}</div>);
+        if (meta.truncated) {
+          feedNodes.push(
+            <button key={`ftrunc-${meta.sessionKey}`} type="button" className="chat-feed-note chat-feed-link" onClick={() => feed.onBoundary(meta)}>
+              {feed.labels.truncated}
+            </button>,
+          );
+        }
+      }
+      if (!meta.empty) {
+        feedNodes.push(
+          <ItemView key={it.id} item={it} onOpenFile={handleOpenFile} onOpenBoard={handleOpenBoard} actor="lead" readOnly />,
+        );
+      }
+      // What the read observer watches: a run session's end (its last row, or its boundary).
+      if (marks.last && meta.sessionKind === 'run') {
+        feedNodes.push(<div key={`fseen-${meta.sessionKey}`} className="chat-feed-seen" data-feed-seen={meta.sessionKey} aria-hidden />);
+      }
+    }
+    if (!feed.loading && (feedLen > 0 || feed.failed)) {
+      feedNodes.push(<div key="feed-live" className="chat-history-divider" data-feed-live aria-hidden>{feed.labels.live}</div>);
+    }
+  }
+
+  // The read observer: a run session whose end has been on screen (half of its sentinel inside
+  // the scroller) tells the host, which advances that slug's read mark (the roster badge).
+  const feedRef = useRef(feed);
+  feedRef.current = feed;
+  const hasFeed = !!feed;
+  useEffect(() => {
+    const root = scrollRef.current;
+    const inner = contentRef.current;
+    if (!hasFeed || !root || !inner || typeof IntersectionObserver === 'undefined') return;
+    const byKey = new Map(feedItems.map((it) => [it.feed.sessionKey, it.feed]));
+    const io = new IntersectionObserver((seen) => {
+      for (const en of seen) {
+        if (!en.isIntersecting) continue;
+        const meta = byKey.get((en.target as HTMLElement).dataset.feedSeen ?? '');
+        if (meta?.unread) feedRef.current?.onSeen(meta);
+      }
+    }, { root, threshold: 0.5 });
+    inner.querySelectorAll('[data-feed-seen]').forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, [hasFeed, feedItems, feedFrom]);
+  // With unread, the pane opens with the "N new" divider at the top of the viewport, unpinned —
+  // once per open (a remount within the open, a respawn, reopens pinned to the bottom).
+  const dividerKeyNow = feed?.divider?.key ?? null;
+  const wantsDivider = !!feed?.scrollToDivider && !feed.loading;
+  // The pane can mount before its box has a size (a phone's slide-in): the scroll waits for one.
+  const [dividerTry, setDividerTry] = useState(0);
+  useLayoutEffect(() => {
+    if (!wantsDivider || !dividerKeyNow) return;
+    const idx = feedItems.findIndex((it) => it.feed.sessionKey === dividerKeyNow);
+    if (idx >= 0 && idx < firstShown) {
+      setStick(false);
+      setFirstShownState(idx);
+      return;
+    }
+    const sc = scrollRef.current;
+    const el = contentRef.current?.querySelector<HTMLElement>('[data-feed-divider]');
+    if (!sc || !el || sc.clientHeight === 0) {
+      if (dividerTry < 40) { const t = setTimeout(() => setDividerTry((n) => n + 1), 50); return () => clearTimeout(t); }
+      return undefined;
+    }
+    setStick(false);
+    sc.scrollTop = Math.max(0, contentTopOf(el, sc) - 8);
+    captureAnchor();
+    feedRef.current?.onDividerScrolled();
+    return undefined;
+  }, [wantsDivider, dividerKeyNow, feedItems, firstShown, setStick, captureAnchor, dividerTry]);
+  useEffect(() => { feedRef.current?.onPinned(pinned); }, [pinned]);
 
   // A stage strip is not something the owner sent (ChatUserItem.stageMedia).
   const lastUserItem = [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user' && !it.stageMedia);
@@ -2394,7 +2552,7 @@ export function ChatPane({
             if (shouldAutoReveal({
               hiddenCount, scrollTop: el.scrollTop,
               userDriven: metrics.userDriven, dragging: draggingRef.current,
-              settled: true,
+              settled: true, feedHasMore,
             })) {
               armSettledReveal();
             }
@@ -2469,10 +2627,16 @@ export function ChatPane({
                 ↑ Show earlier messages ({hiddenCount})
               </button>
             )}
+            {feed && hiddenCount === 0 && feedHasMore && (
+              <button type="button" className="chat-window-more" onClick={revealEarlier} disabled={feed.olderLoading} data-feed-older>
+                {feed.olderLoading ? feed.labels.loadingOlder : '↑ Show earlier messages'}
+              </button>
+            )}
+            {feed && feedNodes}
             {showsHistory && (
               <>
                 {historyNodes}
-                <div className="chat-history-divider" aria-hidden>earlier conversation ↑ · resumed</div>
+                {!feed && <div className="chat-history-divider" aria-hidden>earlier conversation ↑ · resumed</div>}
               </>
             )}
             {liveNodes}

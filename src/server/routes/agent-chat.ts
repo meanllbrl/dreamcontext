@@ -36,7 +36,7 @@ import { safeChildPath } from '../safe-path.js';
 import { sessionWorktreeRoot } from '../session-worktree.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js';
-import { recordStageHomeSession } from '../../lib/local-store.js';
+import { recordAgentSession, recordStageHomeSession } from '../../lib/local-store.js';
 import { getRunTarget } from '../../lib/automations/store.js';
 import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.js';
 import { parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
@@ -1463,7 +1463,11 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         const onAccepted = (): void => {
           accepted = true;
           const conversation = sessionId || resumeId;
-          if (!stageAgent || !conversation) return;
+          if (!chatAgent || !conversation) return;
+          // Every accepted conversation with an agent joins its history index (an upsert: a
+          // respawn of the same session adds nothing). The stage's also stays its home.
+          try { recordAgentSession(projectRoot, chatAgent, conversation, stageAgent ? 'stage' : 'chat'); } catch { /* history misses this talk */ }
+          if (!stageAgent) return;
           try { recordStageHomeSession(projectRoot, stageAgent, conversation); } catch { /* the stage opens a fresh one next time */ }
         };
         startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
@@ -1886,7 +1890,7 @@ export function startChatSession(
   // ── An agent in a Chat tab: the same envelope, decided the same way at every spawn ──────
   let agentChat: Extract<ReturnType<typeof prepareAgentChat>, { ok: true }> | null = null;
   if (opts.agent && !opts.card) {
-    const prep = prepareAgentChat(contextRoot, opts.agent);
+    const prep = prepareAgentChat(contextRoot, opts.agent, undefined, { excludeSession: sessionId || resumeId || null });
     const unsafe = prep.ok && prep.permissionArgs?.some((a) => /[$`]/.test(a));
     if (!prep.ok || unsafe) {
       if (prep.ok) prep.dispose();

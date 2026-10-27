@@ -10,6 +10,7 @@ import {
 import { AGENT_BOARD_ENV, AGENT_CHAT_ENV, AGENT_SELF_ENV, DEFAULT_AGENT_AUTONOMY, type AutomationManifest } from '../automations/types.js';
 import { levelBrief, levelPermissionArgs } from '../agents/permission.js';
 import { resolveWhiteboardPath } from './store.js';
+import { buildRecentHistoryBlock, HISTORY_MAX_BYTES } from '../automations/history.js';
 import { isValidWhiteboardSlug } from './validate.js';
 
 /**
@@ -163,7 +164,7 @@ export function parseChatAgent(agent: unknown): string | null {
 }
 
 /** An agent's system-prompt append in a Chat tab. Same order as the card's, for the same reason. */
-export function agentChatBriefing(m: AutomationManifest, scope: BoardScope | null): string {
+export function agentChatBriefing(m: AutomationManifest, scope: BoardScope | null, recent: string = ''): string {
   const soul = buildSoulBlock(m);
   const pattern = buildPatternBlock(m);
   const learning = buildTurnLearningDirective(m);
@@ -192,7 +193,25 @@ export function agentChatBriefing(m: AutomationManifest, scope: BoardScope | nul
     levelBrief(m.autonomy ?? DEFAULT_AGENT_AUTONOMY),
     ...(pattern ? ['', pattern] : []),
     ...(learning ? ['', learning] : []),
+    ...(recent ? ['', recent] : []),
   ].join('\n');
+}
+
+/** The one line that tells a new conversation where its past lives. */
+export function agentHistorySearchLine(slug: string): string {
+  return `Your earlier runs and conversations: \`dreamcontext agents history ${slug} --search <words>\` (\`--before <cursor>\` for older).`;
+}
+
+/**
+ * What a NEW agent conversation remembers: the recent-history block (its runs AND its talks with
+ * the owner on this machine, never its own session) and the line that searches the rest. Every
+ * talk is its own fresh Claude session, so without this the agent has never seen yesterday.
+ */
+export function agentRecentBlock(contextRoot: string, slug: string, excludeSession: string | null): string {
+  const history = buildRecentHistoryBlock(contextRoot, slug, {
+    nonce: newTurnNonce(), includeTalks: true, excludeSession, totalBytes: HISTORY_MAX_BYTES,
+  });
+  return [history, agentHistorySearchLine(slug)].filter(Boolean).join('\n\n');
 }
 
 /**
@@ -200,14 +219,19 @@ export function agentChatBriefing(m: AutomationManifest, scope: BoardScope | nul
  * account switch, a relaunch). A home-board agent's card env names its home board, so the
  * UserPromptSubmit hook hands it the board in full with every owner message.
  */
-export function prepareAgentChat(contextRoot: string, slug: string, home?: string): CardChatPrep {
+export function prepareAgentChat(
+  contextRoot: string,
+  slug: string,
+  home?: string,
+  opts: { excludeSession?: string | null } = {},
+): CardChatPrep {
   const target = getRunTarget(contextRoot, slug, 'agent');
   if (!target) return { ok: false, reason: `no agent named "${slug}" in this project` };
   const prep = prepareEnvelope(
     contextRoot,
     target,
     (scope): Record<string, string> => (scope ? { [CARD_AGENT_ENV]: slug, [CARD_BOARD_ENV]: scope.board } : {}),
-    (m, scope) => agentChatBriefing(m, scope),
+    (m, scope) => agentChatBriefing(m, scope, agentRecentBlock(contextRoot, slug, opts.excludeSession ?? null)),
     home,
   );
   // The level decides the mode, on the server, from the approved manifest: the pane's own

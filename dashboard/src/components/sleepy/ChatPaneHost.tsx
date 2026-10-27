@@ -5,6 +5,7 @@ import type { AutomationRunRef } from '../../lib/automationRunChat';
 import type { ChatMode } from '../../lib/chatModes';
 import type { ChatSession } from './chatSession';
 import type { ChatAgentPick } from './chat/ComposerMenus';
+import type { ChatFeed } from './chat/chatFeed';
 
 /**
  * The MEMO BOUNDARY between AgentSurface and a chat transcript.
@@ -70,7 +71,7 @@ export interface ChatSurfaceActions {
 
 function ChatPaneHostInner({
   session, actions, modelConfig, model, effort, mode, automation, permissionMode, canSignInInApp,
-  signInCommand, bare, agentBound, idlePlaceholder, readOnly, aboveComposer,
+  signInCommand, bare, agentBound, idlePlaceholder, readOnly, aboveComposer, feed,
 }: {
   session: ChatSession;
   actions: ChatSurfaceActions;
@@ -99,6 +100,9 @@ function ChatPaneHostInner({
   readOnly?: boolean | 'finished';
   /** One line drawn right above the composer (the phone's waiting toast, hands-free W3). */
   aboveComposer?: ReactNode;
+  /** An agent's past sessions above the conversation (the AI Team stage). Its identity changes
+   *  only when the feed does (the stage entry's snapshot), so the memo boundary holds. */
+  feed?: ChatFeed;
 }) {
   const onModelChange = useCallback((id: string) => actions.changeModel(session.id, id), [actions, session]);
   const onEffortChange = useCallback((level: string) => actions.changeEffort(session.id, level), [actions, session]);
@@ -145,6 +149,7 @@ function ChatPaneHostInner({
       idlePlaceholder={idlePlaceholder}
       readOnly={readOnly}
       aboveComposer={aboveComposer}
+      feed={feed}
     />
   );
 }

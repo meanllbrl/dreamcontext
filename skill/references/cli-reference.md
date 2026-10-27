@@ -272,6 +272,7 @@ Who does the work: `_dream_context/agents/<slug>.md` (title, prompt, model, effo
 | `agents sync [--confirm] [--json]` | Agents ride the brain sync: the brain switch, this machine's confirmation, how many files would start to sync and each secret-scan hit by path. `--confirm` turns the switch on (never off) and confirms it on THIS machine (refused inside an agent run). |
 | `agents bring-here <slug>` | Run your agent on THIS machine from now on (same login, several machines); the other machine stops at its next pull. Owner only; refused inside an agent run. |
 | `agents inbox [--json]` | What waits for you on this machine: held secrets, tasks assigned outside the app, renamed agents, patterns to adopt. Answer on the AI Team page. |
+| `agents history <slug> [--search <words>] [--before <cursor>] [--limit <n>] [--json]` | An agent's past runs and conversations with the owner, newest first, paged (`--before` takes the cursor a page prints). `--search`: case-insensitive, at most 50 hits. The agent's own view: its private routines, this machine's entries and talks. Read-only. |
 
 `doctor` adds an **Agents split** check: automation files still in the old format (they work as before; `update` splits them), a conflicting `agents/<slug>.md`, unreadable files, a stray `## Prompt`/`## Pattern` in a split automation (ignored), and skipped symlinks. All advisory. The split itself is migration `0.31.0`, step `split-automation-agents`.
 
