@@ -12,33 +12,30 @@ import { PHONE_MAX_FILE_BYTES as SERVER_MAX_FILE_BYTES } from '../../src/lib/han
 const f = (name: string, type: string, size = 100) => ({ name, type, size });
 
 describe('isPhonePhoto', () => {
-  it('takes raster images, including the iPhone\'s HEIC', () => {
-    for (const t of ['image/jpeg', 'image/png', 'image/heic', 'image/webp']) expect(isPhonePhoto({ type: t }), t).toBe(true);
+  it('takes the photo types a phone decodes, including the iPhone\'s HEIC', () => {
+    for (const t of ['image/jpeg', 'image/png', 'image/heic', 'image/heif', 'image/webp', 'image/gif', 'image/avif']) expect(isPhonePhoto({ type: t }), t).toBe(true);
   });
-  it('sends everything else as a file', () => {
-    for (const t of ['application/zip', 'application/pdf', 'text/plain', 'video/mp4', 'image/svg+xml', '']) expect(isPhonePhoto({ type: t }), t).toBe(false);
+  it('sends everything else as a file, including image types a browser cannot decode', () => {
+    for (const t of ['application/zip', 'application/pdf', 'text/plain', 'video/mp4', 'image/svg+xml', 'image/vnd.adobe.photoshop', 'image/x-adobe-dng', 'image/tiff', '']) expect(isPhonePhoto({ type: t }), t).toBe(false);
   });
 });
 
 describe('splitPhonePicks', () => {
-  it('splits a mixed pick into photos and files, in order', () => {
-    const picks = [f('a.zip', 'application/zip'), f('p.jpg', 'image/jpeg'), f('r.pdf', 'application/pdf'), f('n.txt', 'text/plain')];
-    const out = splitPhonePicks(picks, 6);
-    expect(out.photos.map((x) => x.name)).toEqual(['p.jpg']);
-    expect(out.files.map((x) => x.name)).toEqual(['a.zip', 'r.pdf', 'n.txt']);
-    expect(out.tooLarge).toEqual([]);
+  const routes = (p: ReturnType<typeof splitPhonePicks<ReturnType<typeof f>>>) => p.picks.map((x) => `${x.file.name}:${x.route}`);
+  it('routes a mixed pick, keeping the pick order', () => {
+    const out = splitPhonePicks([f('a.zip', 'application/zip'), f('p.jpg', 'image/jpeg'), f('r.pdf', 'application/pdf'), f('d.psd', 'image/vnd.adobe.photoshop')], 6);
+    expect(routes(out)).toEqual(['a.zip:file', 'p.jpg:photo', 'r.pdf:file', 'd.psd:file']);
     expect(out.overCap).toBe(false);
   });
-  it('refuses a file over the cap before upload, but never a photo (the phone shrinks it)', () => {
-    const out = splitPhonePicks([f('big.zip', 'application/zip', PHONE_MAX_FILE_BYTES + 1), f('huge.heic', 'image/heic', 40e6)], 6);
-    expect(out.tooLarge.map((x) => x.name)).toEqual(['big.zip']);
-    expect(out.photos.map((x) => x.name)).toEqual(['huge.heic']);
+  it('refuses a file over the cap or an empty one before upload, never a photo (the phone shrinks it)', () => {
+    const out = splitPhonePicks([f('big.zip', 'application/zip', PHONE_MAX_FILE_BYTES + 1), f('huge.heic', 'image/heic', 40e6), f('e.txt', 'text/plain', 0), f('max.zip', 'application/zip', PHONE_MAX_FILE_BYTES)], 6);
+    expect(routes(out)).toEqual(['big.zip:too-large', 'huge.heic:photo', 'e.txt:empty', 'max.zip:file']);
   });
   it('keeps at most the room left and says some were dropped', () => {
     const out = splitPhonePicks([f('a', 'text/plain'), f('b', 'text/plain'), f('c', 'text/plain')], 2);
-    expect(out.files.map((x) => x.name)).toEqual(['a', 'b']);
+    expect(routes(out)).toEqual(['a:file', 'b:file']);
     expect(out.overCap).toBe(true);
-    expect(splitPhonePicks([f('a', 'text/plain')], -1).files).toEqual([]);
+    expect(splitPhonePicks([f('a', 'text/plain')], -1).picks).toEqual([]);
   });
 });
 

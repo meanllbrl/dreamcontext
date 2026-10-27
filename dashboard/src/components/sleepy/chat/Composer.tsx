@@ -1119,23 +1119,27 @@ export function Composer({
   const phonePhotos = isMacPhoneSurface();
   const [photoCapNote, setPhotoCapNote] = useState(false);
   const onPhonePhotos = (picked: File[]) => {
-    const staged = readScratch(convId).attachments.filter((a) => a.kind === 'image' || a.kind === 'file').length;
-    const { photos, files, tooLarge, overCap } = splitPhonePicks(picked, PHONE_PHOTOS_PER_MESSAGE - staged);
+    // A refused chip holds no room: only what can still be sent counts toward the six.
+    const staged = readScratch(convId).attachments.filter((a) => (a.kind === 'image' || a.kind === 'file') && !a.failed).length;
+    const { picks, overCap } = splitPhonePicks(picked, PHONE_PHOTOS_PER_MESSAGE - staged);
     setPhotoCapNote(overCap);
-    // Not a photo (a zip, a PDF, a text file, a video): its own bytes under its own name, so the
-    // agent's path still says what it is. The Mac stores it as it came, never extracted.
-    for (const file of tooLarge) {
-      addAttachments(convId, [{ id: nextAttachmentId(), kind: 'file', name: file.name || 'file', size: file.size, failed: true, note: t('chat.file.tooLarge') }]);
-    }
-    for (const file of files) {
+    // In pick order, so the chips and the paths in the message read as he picked them.
+    for (const { file, route } of picks) {
       const id = nextAttachmentId();
-      const name = file.name || 'file';
-      addAttachments(convId, [{ id, kind: 'file', name, size: file.size, uploading: true }]);
-      trackUpload(convId, withPhotoUploadSlot(() => uploadAgentFile(vault, file, name, photoUploadSignal(PHONE_FILE_UPLOAD_TIMEOUT_MS)))
-        .then((path) => { settleAttachment(convId, id, path); }));
-    }
-    for (const file of photos) {
-      const id = nextAttachmentId();
+      if (route !== 'photo') {
+        // Not a photo (a zip, a PDF, a text file, a video, a PSD): its own bytes under its own
+        // name, so the agent's path still says what it is. The Mac stores it as it came, never
+        // extracted. Too large or empty: refused here, before a byte crosses the tunnel.
+        const name = file.name || 'file';
+        if (route !== 'file') {
+          addAttachments(convId, [{ id, kind: 'file', name, size: file.size, failed: true, note: t(route === 'empty' ? 'chat.file.empty' : 'chat.file.tooLarge') }]);
+          continue;
+        }
+        addAttachments(convId, [{ id, kind: 'file', name, size: file.size, uploading: true }]);
+        trackUpload(convId, withPhotoUploadSlot(() => uploadAgentFile(vault, file, name, photoUploadSignal(PHONE_FILE_UPLOAD_TIMEOUT_MS)))
+          .then((path) => { settleAttachment(convId, id, path); }));
+        continue;
+      }
       const name = jpegName(file.name || 'photo');
       // No preview from the original (a 24 MP decode per chip): the small JPEG becomes it.
       addAttachments(convId, [{ id, kind: 'image', name, uploading: true }]);

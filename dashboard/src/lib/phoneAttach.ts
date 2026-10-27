@@ -19,30 +19,29 @@ export const PHONE_MAX_FILE_BYTES = 25 * 1024 * 1024;
  *  90 s a re-encoded photo gets. */
 export const PHONE_FILE_UPLOAD_TIMEOUT_MS = 5 * 60_000;
 
-/** A picked file the phone can re-encode as a photo. SVG is markup, not pixels: it goes as a file. */
+/** The photo types a phone browser decodes, so they can be re-encoded. ANY other image type (a
+ *  PSD, a DNG, a TIFF, an SVG, which is markup) goes as a file: refusing it as "can't be opened"
+ *  would undo the point of taking any file. */
+const PHOTO_TYPE_RE = /^image\/(jpeg|pjpeg|png|webp|gif|heic|heif|avif|bmp)$/i;
+
+/** A picked file the phone re-encodes as a photo. */
 export function isPhonePhoto(file: { type: string }): boolean {
-  return /^image\//i.test(file.type) && !/svg/i.test(file.type);
+  return PHOTO_TYPE_RE.test(file.type);
 }
 
-export interface PhonePicks<F> {
-  photos: F[];
-  files: F[];
-  /** Files over the cap: staged as refused chips, never uploaded. */
-  tooLarge: F[];
-  /** Some picks were dropped because the message already holds its maximum. */
-  overCap: boolean;
-}
+/** How one pick is sent: re-encoded as a photo, uploaded as its bytes, or refused before upload. */
+export type PhonePickRoute = 'photo' | 'file' | 'too-large' | 'empty';
 
-/** Split `picked` into what to send and how, keeping at most `room` of them in pick order. */
-export function splitPhonePicks<F extends { type: string; size: number }>(picked: readonly F[], room: number): PhonePicks<F> {
+export interface PhonePick<F> { file: F; route: PhonePickRoute }
+
+/** Route `picked`, in pick order, keeping at most `room` of them; `overCap` says some were dropped. */
+export function splitPhonePicks<F extends { type: string; size: number }>(picked: readonly F[], room: number): { picks: PhonePick<F>[]; overCap: boolean } {
   const kept = picked.slice(0, Math.max(0, room));
-  const out: PhonePicks<F> = { photos: [], files: [], tooLarge: [], overCap: picked.length > kept.length };
-  for (const f of kept) {
-    if (isPhonePhoto(f)) out.photos.push(f);
-    else if (f.size > PHONE_MAX_FILE_BYTES) out.tooLarge.push(f);
-    else out.files.push(f);
-  }
-  return out;
+  const picks = kept.map((file): PhonePick<F> => ({
+    file,
+    route: isPhonePhoto(file) ? 'photo' : file.size === 0 ? 'empty' : file.size > PHONE_MAX_FILE_BYTES ? 'too-large' : 'file',
+  }));
+  return { picks, overCap: picked.length > kept.length };
 }
 
 /** A file size the way a chip reads it: "812 B", "14 KB", "3.4 MB". */
