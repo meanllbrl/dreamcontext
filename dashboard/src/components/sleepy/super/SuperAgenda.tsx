@@ -70,7 +70,8 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   // A question opens its card in the centre chat (where the band's Answer takes him too); a
   // child's permission, or a child waiting on something only he can do (`needsYou`), shows that
   // child beside the centre, its card in view (SuperSurface.showChild). A note is only read.
-  const showsChild = (r: AgendaRow) => r.chip === 'permission' || r.chip === 'queued' || r.chip === 'needsYou';
+  // A child's own question (`direct`) opens that child: its card is in its chat.
+  const showsChild = (r: AgendaRow) => r.chip === 'permission' || r.chip === 'queued' || r.chip === 'needsYou' || !!r.direct;
   const press = (r: AgendaRow) => {
     if (!r.item) return;
     if (showsChild(r)) { if (r.sid && canShowChild(r.sid)) onShowChild(r.sid); return; }

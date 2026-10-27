@@ -76,6 +76,8 @@ export function noteNotchPoll(now = Date.now()): void {
 }
 
 const BODY_CHARS = 180;
+/** A job's name in a direct question's banner title. */
+const JOB_CHARS = 60;
 const ANNOUNCED_CAP = 500;
 /** Item id → what reached him. Insertion-ordered, the oldest dropped first. */
 const announced = new Map<string, OwnerQuestionReach>();
@@ -89,6 +91,8 @@ function remember(id: string, reach: OwnerQuestionReach): void {
 /** Does the owner answer this item (not a permission: the window rings that one)? */
 function announces(item: SuperQueueItem | null): item is SuperQueueItem {
   if (item?.kind === 'owner') return item.state !== 'done';
+  // A child's question shown to him from birth (`direct`): announced when it is asked.
+  if (item?.kind === 'question' && item.direct === true && !item.team) return item.state !== 'done';
   return !!item && item.state === 'escalated' && (item.kind === 'question' || item.kind === 'ask' || item.kind === 'approval');
 }
 
@@ -127,7 +131,7 @@ function aheadOf(state: Pick<SuperState, 'queue'>, item: SuperQueueItem): number
  * A write left `head` at the head of a handed-over vault's queue: announce it, once. Called from
  * every record write (`afterSuperWrite`); `vaultOf` is read only past the cheap guards.
  */
-export function announceOwnerHead(vaultOf: () => string, state: Pick<SuperState, 'enabled' | 'session' | 'queue'>, head: SuperQueueItem | null): void {
+export function announceOwnerHead(vaultOf: () => string, state: Pick<SuperState, 'enabled' | 'session' | 'queue'> & { children?: SuperState['children'] }, head: SuperQueueItem | null): void {
   if (!state.enabled || !state.session || !announces(head) || announced.has(head.id)) return;
   const session = state.session;
   const vault = vaultOf();
@@ -139,11 +143,15 @@ export function announceOwnerHead(vaultOf: () => string, state: Pick<SuperState,
   const here = looking.vault === vault;
   if (here && looking.session === session) via.push('screen');
   if (Date.now() - notchPolledAt <= NOTCH_LIVE_MS) via.push('notch');
-  const title = head.kind === 'owner' ? `A job needs you · ${vault}` : `Super Agent asks · ${vault}`;
+  // A child's own question names its job and opens ITS chat, one click (owner 2026-10-27).
+  const direct = head.kind === 'question' && head.direct === true;
+  const job = direct ? clip(state.children?.[head.sessionId]?.brief ?? '').slice(0, JOB_CHARS) : '';
+  const title = head.kind === 'owner' ? `A job needs you · ${vault}`
+    : direct ? `${job || 'A job'} asks · ${vault}` : `Super Agent asks · ${vault}`;
   const body = bodyOf(head);
   if (!here) {
     let link: string | null = null;
-    try { link = buildAppLink({ kind: 'session', vault, claudeId: session }); } catch { link = null; }
+    try { link = buildAppLink({ kind: 'session', vault, claudeId: direct ? head.sessionId : session }); } catch { link = null; }
     try { if (sinks.banner(title, body, link)) via.push('banner'); } catch { /* the other channels still stand */ }
   }
   try { if (sinks.push({ vault, sessionId: session, key: `super-ask:${head.id}`, title, body }) > 0) via.push('phone'); } catch { /* idem */ }

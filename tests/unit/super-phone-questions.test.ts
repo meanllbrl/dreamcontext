@@ -4,7 +4,7 @@
 // route is laptop-only. The fix carries the child's own card to the phone and its answer back.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { getChat, readPendingQuestion, registerChat, registryQuestions, MAX_QUESTION_BYTES } from '../../src/lib/assistant/chat-registry.js';
-import { cleanPhoneAnswer, phoneSuperQuestions } from '../../src/server/routes/super-phone-questions.js';
+import { cleanPhoneAnswer, phoneAnswerOpen, phoneSuperQuestions } from '../../src/server/routes/super-phone-questions.js';
 import { ROUTE_POLICY } from '../../src/lib/handsfree/mac/route-policy.js';
 import type { SuperQueueItem } from '../../src/lib/super/types.js';
 import { ownerAnswerPicks } from '../../dashboard/src/components/sleepy/super/superHandover.js';
@@ -82,6 +82,19 @@ describe('GET /api/agent/super-questions: what the phone draws', () => {
     expect(phoneSuperQuestions(state([item({})]), () => null).questions[0].card).toBeNull();
     expect(phoneSuperQuestions(state([item({ state: 'pending' }), item({ id: 'p', kind: 'permission' })]), () => []).questions).toEqual([]);
     expect(phoneSuperQuestions(state([item({})], false), () => []).session).toBeNull();
+  });
+
+  it('a child\'s own question (direct) is drawn AND answerable from birth, before the Super saw it (owner 2026-10-27)', () => {
+    const direct = item({ state: 'pending', direct: true });
+    expect(phoneSuperQuestions(state([direct]), () => registryQuestions(FOUR)!).questions.map((q) => q.id)).toEqual(['q1']);
+    expect(phoneAnswerOpen(direct, 'r1')).toBe(true);
+    expect(phoneAnswerOpen(item({ state: 'delivered', direct: true }), 'r1')).toBe(true);
+    expect(phoneAnswerOpen(item({}), 'r1')).toBe(true);
+    // Answered (done), another request, a legacy pending item, a permission: nothing to answer.
+    expect(phoneAnswerOpen(item({ state: 'done', direct: true }), 'r1')).toBe(false);
+    expect(phoneAnswerOpen(direct, 'r2')).toBe(false);
+    expect(phoneAnswerOpen(item({ state: 'pending' }), 'r1')).toBe(false);
+    expect(phoneAnswerOpen(item({ kind: 'permission', state: 'pending' }), 'r1')).toBe(false);
   });
 
   it('the phone may call both routes (the phone listener\'s default-deny policy)', () => {

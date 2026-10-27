@@ -586,6 +586,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'super-clean-home-',
   'super-clean-proj-',
   'super-clean-tmp-',
+  'super-direct-q-',
+  'super-direct-q-home-',
   'super-disk-base-',
   'super-effort-',
   'super-effort-home-',

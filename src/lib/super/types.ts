@@ -572,6 +572,11 @@ export interface SuperQueueItem {
   /** A team job's `done`/`stuck`/`question` item: the job's id (`SuperTeamJob.id`). Its
    *  `sessionId` is the super's own: a team member is not a child. */
   team?: string;
+  /** A child's `question` shown to the OWNER from birth (owner 2026-10-27): its card is on his
+   *  bar at once, with a button that opens the child's chat, while the Super hears it in its next
+   *  event turn and may answer it first. Whoever answers, the child leaves `asking` and the item
+   *  closes for both. It never holds the single-question rule. Never on a team item. */
+  direct?: true;
 }
 
 /**
@@ -1065,8 +1070,15 @@ export const MAX_OWNER_BATCHES = 100;
 /** `super ask`: at most this many options, each at most this many characters (refused, never cut). */
 export const MAX_ASK_OPTIONS = 4;
 export const MAX_ASK_OPTION = 24;
-/** A child's turn end is "done" once it has stayed idle this long (plan r4 D5). */
-export const DONE_SETTLE_MS = 30_000;
+/** A child's turn end is "done" once it has stayed idle this long (plan r4 D5). Short: the
+ *  registry flips to idle on the turn's own `result` frame, and a turn that goes on (a queued
+ *  message, a background job's notification) starts within it or closes a pending `done` before
+ *  it is delivered. Owner 2026-10-27: 30 s made the Super hear every finished job half a minute
+ *  late (measured: done item 30.5 s after the turn end at the median, 61 s at p90). */
+export const DONE_SETTLE_MS = 2_000;
+/** The window for a turn the OWNER stopped (or a limit switch ended): he is about to write the
+ *  correction, or the account is being switched, so the job is not done; the old long window. */
+export const STOPPED_SETTLE_MS = 30_000;
 /** The longest card subject (a run card's command, a title) an owner item keeps to match his
  *  receipt by after a restart; longer ones match by kind alone. */
 export const MAX_WAIT_KEY = 300;
@@ -1312,7 +1324,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 13;
+export const SUPER_BRIEF_REV = 14;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

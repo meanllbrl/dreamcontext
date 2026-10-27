@@ -376,6 +376,9 @@ export interface SuperQueueItem {
   wait?: { kind: OwnerWaitKind; id: string };
   /** A team job's ending item: the job's id (its `sessionId` is the super's own). */
   team?: string;
+  /** A child's question shown to the owner from birth: his bar opens the child's chat, where its
+   *  own card answers it (MIRROR of src/lib/super/types.ts `SuperQueueItem.direct`). */
+  direct?: true;
 }
 
 /** What an `owner` item waits on (MIRROR of src/lib/super/owner-wait.ts `OWNER_WAIT_KINDS`). */

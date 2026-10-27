@@ -4,7 +4,7 @@ import { isAgentRequest } from '../desktop.js';
 import { isSameOriginStrict } from './agent-spawn-shared.js';
 import { isPhoneSocket } from '../phone-origin.js';
 import { isReservedId, readSuperState } from '../../lib/super/store.js';
-import { superSanitizeOpts, superVaultName, writeSuper } from '../../lib/super/inbox.js';
+import { directQuestion, superSanitizeOpts, superVaultName, writeSuper } from '../../lib/super/inbox.js';
 import { askSpecFromLegacy, type SuperAskSpec, type SuperQueueItem, type SuperState } from '../../lib/super/types.js';
 import { getChat, type RegistryQuestion } from '../../lib/assistant/chat-registry.js';
 import { sendSuperCommand, superTokenOfSession } from '../../lib/window-control.js';
@@ -77,7 +77,8 @@ export function phoneSuperQuestions(state: Pick<SuperState, 'enabled' | 'session
 }): PhoneSuperQuestions {
   if (!state.enabled || !state.session) return { session: null, questions: [] };
   const open = state.queue
-    .filter((q) => q.state === 'escalated' && (q.kind === 'ask' || q.kind === 'question'))
+    // A child's question is his from birth (`direct`), not only once the Super escalated it.
+    .filter((q) => (q.state === 'escalated' && (q.kind === 'ask' || q.kind === 'question')) || directQuestion(q))
     .sort((a, b) => a.createdAt - b.createdAt);
   const questions: PhoneSuperQuestion[] = [];
   for (const q of open) {
@@ -133,6 +134,12 @@ export function cleanPhoneAnswer(questions: readonly RegistryQuestion[], raw: un
   return out;
 }
 
+/** Does the phone's answer still have an open question to go to: a child question escalated to
+ *  him, or his from birth (`direct`: answerable before the Super ever saw it), on this request. */
+export function phoneAnswerOpen(item: SuperQueueItem, requestId: string): boolean {
+  return item.kind === 'question' && (item.state === 'escalated' || directQuestion(item)) && item.requestId === requestId;
+}
+
 /** POST /api/agent/super-answer {item, requestId, picked?, notes?, unclear?} */
 export async function handleSuperPhoneAnswer(req: IncomingMessage, res: ServerResponse, _params: unknown, contextRoot: string): Promise<void> {
   // The phone gate already judged a phone write's Origin (the tunnel's own); on the laptop only
@@ -151,7 +158,7 @@ export async function handleSuperPhoneAnswer(req: IncomingMessage, res: ServerRe
   }
   if (!state.enabled || !state.session) { sendError(res, 409, 'not_handed_over', 'The Super Agent is not handed over.'); return; }
   const item = state.queue.find((q) => q.id === id);
-  if (!item || item.kind !== 'question' || item.state !== 'escalated' || item.requestId !== requestId) {
+  if (!item || !phoneAnswerOpen(item, requestId)) {
     sendError(res, 409, 'stale_request', 'That question is no longer open.');
     return;
   }

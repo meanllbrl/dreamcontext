@@ -5,7 +5,7 @@ import { requestOpenAgents } from '../../../lib/openAgents';
 import type { SuperQueueItem, SuperStateView } from '../../../lib/superTypes';
 import type { ChatSession, PendingPermission } from '../chatSession';
 import {
-  optionsFit, permissionSummary, type JobLook, type OptionsFit,
+  directChildQuestion, optionsFit, permissionSummary, type JobLook, type OptionsFit,
 } from './superHandover';
 import {
   claimOwnerAnswer, noteOwnerPending, openOwnerQuestions, ownerAnswerKey, ownerAnswerLocked, ownerPendingPresent,
@@ -151,6 +151,8 @@ export function JobBar({ state, head, waiting, rect, look, superSession, session
                 ? <ApprovalHead item={head} onReplyToSuper={onReplyToSuper} />
               : head.kind === 'owner'
                 ? <OwnerHead text={head.ownerText ?? ''} onOpen={() => onShowChild(head.sessionId)} />
+              : directChildQuestion(head)
+                ? <ChildQuestionHead text={head.ownerText ?? t('super.queue.escalatedAlarm')} onOpen={() => onShowChild(head.sessionId)} />
               : <QuestionHead item={head} text={head.ownerText ?? t('super.queue.escalatedAlarm')} root={superSession?.container} onReplyToSuper={onReplyToSuper} />}
           {waiting > 1 && <span className="super-queue-more">{t('super.queue.more').replace('{n}', String(waiting - 1))}</span>}
       </div>
@@ -195,6 +197,26 @@ function OwnerHead({ text, onOpen }: { text: string; onOpen: () => void }) {
       <span className="super-queue-actions">
         <button type="button" className="super-queue-btn super-queue-btn--option" data-testid="super-queue-open-owner" onClick={onOpen}>
           {t('super.queue.openCard')}
+        </button>
+      </span>
+    </>
+  );
+}
+
+/**
+ * A child's own question, his from birth (`direct`, owner 2026-10-27): its words, and ONE button
+ * that brings that child beside the centre, where the child's own AskUserQuestion card answers it
+ * through the child's session. The Super hears it too; whoever answers first, the other's item
+ * closes (the child leaves `asking`).
+ */
+function ChildQuestionHead({ text, onOpen }: { text: string; onOpen: () => void }) {
+  const { t } = useI18n();
+  return (
+    <>
+      <QueueText full={text}>{text}</QueueText>
+      <span className="super-queue-actions">
+        <button type="button" className="super-queue-btn super-queue-btn--option" data-testid="super-queue-open-chat" onClick={onOpen}>
+          {t('super.queue.openChat')}
         </button>
       </span>
     </>

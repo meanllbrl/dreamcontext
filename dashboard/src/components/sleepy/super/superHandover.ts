@@ -199,7 +199,13 @@ export function latchSeen(latch: AnswerLatch, key: string | null, pendingPresent
  *  with words of its own. */
 export function needsOwner(item: SuperQueueItem): boolean {
   if (item.state === 'done') return false;
-  return item.kind === 'permission' || item.kind === 'owner' || item.state === 'escalated';
+  return item.kind === 'permission' || item.kind === 'owner' || item.state === 'escalated' || directChildQuestion(item);
+}
+
+/** A child's question that is the owner's from birth (the server's `direct`), still open: the bar
+ *  and the agenda open the CHILD's chat, where its own card answers it. */
+export function directChildQuestion(item: SuperQueueItem): boolean {
+  return item.kind === 'question' && item.direct === true && !item.team && item.state !== 'done';
 }
 
 /**
@@ -498,6 +504,8 @@ export interface AgendaRow {
   auto?: boolean;
   /** A Now note no job keeps true, unchanged for PAD_STALE_MS. */
   stale?: boolean;
+  /** A child's own question (`directChildQuestion`): pressing it opens that child's chat. */
+  direct?: boolean;
   at: number;
 }
 export interface JobLook {
@@ -549,12 +557,13 @@ export function superNotepad(state: Pick<SuperState, 'queue' | 'pad'>, look: Job
       text: own ? look.superTitle : nameOf(q.sessionId),
       // A permission row shows only the child's own request (the bar draws it); never the super's words.
       line: q.kind === 'permission' ? '' : (q.ownerText ?? ''),
-      chip: chipOf(q.kind), at: q.createdAt,
+      chip: chipOf(q.kind), at: q.createdAt, ...(directChildQuestion(q) ? { direct: true } : {}),
     });
   }
   if (isQuestionOpen(state)) {
     // A team job's question is the member's, asked of him in AI Team: no child here to name.
-    for (const q of state.queue.filter((x) => x.kind === 'question' && x.state === 'pending' && !x.team).sort((a, b) => a.createdAt - b.createdAt)) {
+    // A direct one is listed already, above, as his own.
+    for (const q of state.queue.filter((x) => x.kind === 'question' && x.state === 'pending' && !x.team && !x.direct).sort((a, b) => a.createdAt - b.createdAt)) {
       out.waiting.push({ key: `q:${q.id}`, section: 'waiting', item: q.id, sid: q.sessionId, text: nameOf(q.sessionId), line: '', chip: 'queued', at: q.createdAt });
     }
   }

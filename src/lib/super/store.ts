@@ -310,6 +310,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(count(q.exits) ? { exits: count(q.exits) } : {}),
       ...(batch ? { batch } : {}),
       ...(team ? { team } : {}),
+      ...(q.kind === 'question' && !team && q.direct === true ? { direct: true as const } : {}),
       ...(options.length ? { options } : {}),
       ...(askSpec && askSpec.ok ? { ask: askSpec.spec } : {}),
     });
