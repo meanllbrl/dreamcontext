@@ -329,6 +329,8 @@ export interface AgentStageView {
   autonomy: AgentAutonomy;
   homeSessionId: string | null;
   homeLive: boolean;
+  /** The home conversation has a turn (a transcript). Absent from an older server: read as none. */
+  homeHasTurns?: boolean;
   owner: string | null;
   liveJobs: { slug: string; title: string; since: number; runId: string | null; lastLine: string | null }[];
   reports: { slug: string; id: string; runId: string; at: string; text: string; files: string[] }[];

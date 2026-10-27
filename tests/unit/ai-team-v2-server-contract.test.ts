@@ -441,6 +441,17 @@ describe('AC-A1-4 the stage', () => {
     expect(stageFileKind('shots/a.png')).toBe('image');
   });
 
+  it('homeHasTurns: false with no home and for a home opened but never spoken to, true once it has a transcript', () => {
+    makeAgent();
+    expect(buildStageView(contextRoot, 'scout', NOW)!.homeHasTurns).toBe(false);
+    recordStageHomeSession(projectRoot, 'scout', 'sess-quiet-home');
+    expect(buildStageView(contextRoot, 'scout', NOW)!.homeHasTurns).toBe(false);
+    const dir = join(home, '.claude', 'projects', '-tmp-fictional-project');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'sess-quiet-home.jsonl'), '{"type":"user"}\n');
+    expect(buildStageView(contextRoot, 'scout', NOW)!.homeHasTurns).toBe(true);
+  });
+
   it('the route is desktop-gated and 404s an unknown agent', async () => {
     makeAgent();
     const shut = fakeRes();
@@ -451,7 +462,7 @@ describe('AC-A1-4 the stage', () => {
     await handleAgentsStage(fakeReq(), open, { slug: 'scout' }, contextRoot);
     expect(open.status).toBe(200);
     expect(Object.keys(open.json().stage as object).sort()).toEqual(
-      ['autonomy', 'face', 'files', 'homeLive', 'homeSessionId', 'inbox', 'liveJobs', 'owner', 'reports', 'routines', 'slug', 'taskJobs', 'title'].sort(),
+      ['autonomy', 'face', 'files', 'homeHasTurns', 'homeLive', 'homeSessionId', 'inbox', 'liveJobs', 'owner', 'reports', 'routines', 'slug', 'taskJobs', 'title'].sort(),
     );
     const missing = fakeRes();
     await handleAgentsStage(fakeReq(), missing, { slug: 'nobody' }, contextRoot);
