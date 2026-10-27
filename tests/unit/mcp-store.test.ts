@@ -131,6 +131,34 @@ describe('syncImports — copy, never move', () => {
     expect(Object.hasOwn(computer().mcpServers, 'posthog')).toBe(true);
   });
 
+  it('a ledgered name never moves to another source: unreadable own source + a conflicting second one (W1 review)', () => {
+    sandboxJson({ mcpServers: { posthog: { type: 'http', url: 'https://old.example.test/mcp', headers: { Authorization: 'OLD-sandbox-key' } } } });
+    syncImports(home, project);
+    expect(computer().ledger.posthog.source).toBe('user');
+    const good = readFileSync(join(home, '.claude.json'), 'utf-8');
+    writeFileSync(join(home, '.claude.json'), '{ mid-write');
+    syncImports(home, project);
+    expect(computer().ledger.posthog.source).toBe('user');
+    expect((computer().mcpServers.posthog.headers as Record<string, string>).Authorization).toBe('Bearer user-secret-1');
+    writeFileSync(join(home, '.claude.json'), good);
+    syncImports(home, project);
+    expect(computer().ledger.posthog.source).toBe('user');
+    expect((computer().mcpServers.posthog.headers as Record<string, string>).Authorization).toBe('Bearer user-secret-1');
+  });
+
+  it('removed at its own source while another source has it: dropped, never re-homed in the same sync', () => {
+    sandboxJson({ mcpServers: { posthog: { type: 'http', url: 'https://old.example.test/mcp' } } });
+    syncImports(home, project);
+    const blob = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf-8'));
+    delete blob.mcpServers.posthog;
+    claudeJson(blob);
+    syncImports(home, project);
+    expect(Object.hasOwn(computer().mcpServers, 'posthog')).toBe(false);
+    // The next sync sees a name no ledger holds: a plain copy from the source that has it.
+    syncImports(home, project);
+    expect(computer().ledger.posthog.source).toBe('sandbox:work');
+  });
+
   it('the same name with two definitions: the first source wins, the other is a conflict', () => {
     sandboxJson({ mcpServers: { posthog: { type: 'http', url: 'https://other.example.test/mcp' } } });
     const r = syncImports(home, project);

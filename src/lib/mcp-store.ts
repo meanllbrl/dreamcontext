@@ -73,12 +73,23 @@ export const IMPORT_NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
+/** Test seam (the suite's setup file): writes aimed at the developer's REAL home land in a
+ *  throwaway dir instead, so `npm test` never migrates anyone's stores. Production never sets it. */
+let homeRedirect: { from: string; to: string } | null = null;
+export function setMcpHomeRedirectForTests(from: string | null, to?: string): void {
+  homeRedirect = from && to ? { from: resolve(from), to } : null;
+}
+/** The home whose `.dreamcontext/` holds the MCP files (the test seam above, else `home`). */
+export function mcpFilesHome(home: string): string {
+  return homeRedirect && resolve(home) === homeRedirect.from ? homeRedirect.to : home;
+}
+
 export function computerStorePath(home: string = homedir()): string {
-  return join(home, '.dreamcontext', 'mcp.json');
+  return join(mcpFilesHome(home), '.dreamcontext', 'mcp.json');
 }
 
 export function projectStoresDir(home: string = homedir()): string {
-  return join(home, '.dreamcontext', 'mcp', 'projects');
+  return join(mcpFilesHome(home), '.dreamcontext', 'mcp', 'projects');
 }
 
 /** The real path of a project root, falling back to its resolved form when it does not exist. */
@@ -93,7 +104,7 @@ export function projectStorePath(projectRoot: string, home: string = homedir()):
 
 /** The retired sandbox mirror: a stale copy of every top-level secret. Deleted on first sync. */
 export function legacyMirrorPath(home: string = homedir()): string {
-  return join(home, '.dreamcontext', 'claude-accounts', 'mcp-config.json');
+  return join(mcpFilesHome(home), '.dreamcontext', 'claude-accounts', 'mcp-config.json');
 }
 
 // ─── Small helpers ────────────────────────────────────────────────────────────
@@ -220,11 +231,12 @@ function ensureDir(dir: string, mode: number | null): void {
  * rename. A reader never sees a half file; a planted temp name is never followed.
  */
 export function writeStoreFile(path: string, body: McpStoreBody, scope: McpScope, home: string): void {
+  const base = mcpFilesHome(home);
   if (scope === 'project') {
-    ensureDir(join(home, '.dreamcontext', 'mcp'), 0o700);
+    ensureDir(join(base, '.dreamcontext', 'mcp'), 0o700);
     ensureDir(projectStoresDir(home), 0o700);
   } else {
-    ensureDir(join(home, '.dreamcontext'), null);
+    ensureDir(join(base, '.dreamcontext'), null);
   }
   const tmp = `${path}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
   const fd = openSync(tmp, 'wx', 0o600);
@@ -314,8 +326,12 @@ export function reconcileStore(
       continue;
     }
     const led = next.ledger[name];
-    // The governing source: the one the ledger names when it still has the name, else the first.
-    const gov = (led && having.find((s) => s.id === led.source)) || having[0];
+    // A ledgered name stays with ITS source, always (W1 review): an unreadable source (a
+    // `~/.claude.json` caught mid-write) leaves the entry as it is, and a source that no longer
+    // has the name is "removed at source" (the loop below) — another source never takes over.
+    const ledSrc = led && led.source !== 'app' ? sources.find((s) => s.id === led.source) : undefined;
+    if (led && led.source !== 'app' && (!ledSrc || !ledSrc.readable || !(name in ledSrc.servers))) continue;
+    const gov = ledSrc ?? having[0];
     const def = gov.servers[name];
     const hash = defHash(def);
     for (const s of having) {
@@ -349,10 +365,11 @@ export function reconcileStore(
     }
   }
 
-  // Names the ledger copied from a source that, read cleanly, no longer has them.
+  // Names the ledger copied from a source that, read cleanly, no longer has them (another
+  // source still having the name does not keep the entry: it is imported anew next sync).
   for (const name of Object.keys(next.ledger)) {
-    if (names.has(name)) continue;
     const led = next.ledger[name];
+    if (led.source !== 'app' && sources.find((s) => s.id === led.source)?.servers[name]) continue;
     if (led.source === 'app' || led.removedInApp) continue;
     const src = sources.find((s) => s.id === led.source);
     if (!src || !src.readable) continue;
@@ -538,14 +555,24 @@ export function storedDefinition(scope: McpScope, name: string, o: { projectRoot
   return body && Object.hasOwn(body.mcpServers, name) ? body.mcpServers[name] : null;
 }
 
-/** Bring back an import the owner removed, or import a renamed/conflicting one as-is. */
-export function restoreImport(scope: McpScope, name: string, o: { projectRoot?: string | null; home?: string } = {}): void {
+/**
+ * Make one name follow Claude Code again: forget the store's entry and its ledger (an entry the
+ * owner removed or edited here), then sync, which copies the source's definition back in.
+ */
+export function resetToSource(scope: McpScope, name: string, o: { projectRoot?: string | null; home?: string } = {}): void {
   const home = o.home ?? homedir();
   editScope(scope, o.projectRoot ?? null, home, (body) => {
-    const led = body.ledger[name];
-    if (led?.removedInApp) delete body.ledger[name];
+    delete body.mcpServers[name];
+    delete body.ledger[name];
   });
   syncImports(home, o.projectRoot ?? null);
+}
+
+/** The raw definition a Claude Code source holds for `name` (server-side only: secrets). */
+export function sourceDefinition(sourceId: string, name: string, o: { projectRoot?: string | null; home?: string } = {}): McpDefinition | null {
+  const { top, local } = readSources(o.home ?? homedir(), o.projectRoot ?? null);
+  const src = [...top, ...local].find((s) => s.id === sourceId);
+  return src && Object.hasOwn(src.servers, name) ? src.servers[name] : null;
 }
 
 // ─── Store paths inside a shell string ────────────────────────────────────────

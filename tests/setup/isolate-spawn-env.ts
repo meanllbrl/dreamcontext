@@ -1,5 +1,9 @@
 import { scrubSpawnEnv } from '../../src/lib/session-origin.js';
 import { setCapacityFactsForTests } from '../../src/lib/super/capacity.js';
+import { setMcpHomeRedirectForTests } from '../../src/lib/mcp-store.js';
+import { mkdtempSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // The suite must score sessions the same whether a human or a spawned builder runs `npm test`.
 //
@@ -21,3 +25,9 @@ process.env.DREAMCONTEXT_SERVER_PID = String(process.pid);
 setCapacityFactsForTests({
   availMemGb: 12, diskFreeGb: 200, load1: 1, totalMemGb: 32, swapUsedGb: 0, swapTotalGb: 4, claudeSessions: 1, heavySteps: 0,
 });
+
+// 4. Every chat, terminal or automation spawn syncs the MCP stores (task mcp-management). A test
+//    that spawns without faking HOME must not migrate the developer's REAL stores or delete the
+//    retired mirror: writes aimed at the real home land in a throwaway dir. Tests that fake HOME
+//    (or pass one) are untouched.
+setMcpHomeRedirectForTests(homedir(), mkdtempSync(join(tmpdir(), 'dc-test-mcp-home-')));

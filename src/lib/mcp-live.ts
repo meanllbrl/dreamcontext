@@ -4,7 +4,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, write
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { claudeAwarePath, findClaudeBin } from './claude-path.js';
-import { defHash, readScope, type McpDefinition } from './mcp-store.js';
+import { defHash, mcpFilesHome, readScope, type McpDefinition } from './mcp-store.js';
 import { maskTarget } from './mcp-project.js';
 import type { McpErrorKind, McpHome, McpLiveServer, McpLiveStatus } from './mcp-wire.js';
 
@@ -285,7 +285,7 @@ export interface CachedCell { status: McpLiveStatus; errorKind?: McpErrorKind; a
 export type StatusCache = Record<string, { at: number; cells: Record<string, CachedCell> }>;
 
 export function statusCachePath(home: string = homedir()): string {
-  return join(home, '.dreamcontext', 'mcp-status.json');
+  return join(mcpFilesHome(home), '.dreamcontext', 'mcp-status.json');
 }
 
 /** The cache key of one server: `name|defHash` for a stored definition, `name|<home>` else. */
@@ -317,7 +317,7 @@ export function writeStatusCache(accountId: string, servers: McpLiveServer[], ct
   }
   cache[accountId || 'default'] = { at: now, cells };
   const path = statusCachePath(home);
-  mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+  mkdirSync(join(mcpFilesHome(home), '.dreamcontext'), { recursive: true });
   const tmp = `${path}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
   const fd = openSync(tmp, 'wx', 0o600);
   try { writeSync(fd, `${JSON.stringify(cache)}\n`); } finally { closeSync(fd); }
