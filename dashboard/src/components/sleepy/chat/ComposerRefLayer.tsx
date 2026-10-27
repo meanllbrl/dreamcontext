@@ -5,7 +5,7 @@ import { mentionSegments, type PeerMention } from '../../../lib/agentComposer';
 import { REPLY_TO_RE } from '../../../lib/superTypes';
 import { splitAbout } from '../super/superHandover';
 import { useDismissOnOutside } from '../../../lib/useDismissOnOutside';
-import { parseRefTokens, refTokenId } from './composerRefs';
+import { isTokenRef, parseRefTokens, refTokenId } from './composerRefs';
 import type { Attachment } from './composerScratch';
 
 /**
@@ -15,21 +15,42 @@ import type { Attachment } from './composerScratch';
  * after a trailing one, the popover a chip opens, and the list a screen reader reads.
  */
 
-/** One run of the mirror: plain text, an `@mention`, or a reference token (its slot, its ref). */
-export interface MirrorSegment { text: string; kind: 'text' | 'mention' | 'ref'; slot?: number; refId?: string }
+/** One run of the mirror: plain text, an `@mention`, or a reference token (its slot, its ref).
+ *  A picture's token also carries its preview (`img`), its glyph's length (`lead`, the room the
+ *  thumbnail is painted in) and its upload state. */
+export interface MirrorSegment {
+  text: string;
+  kind: 'text' | 'mention' | 'ref';
+  slot?: number;
+  refId?: string;
+  img?: string;
+  lead?: number;
+  state?: 'uploading' | 'failed' | 'ready';
+}
 
-/** The mirror's runs: tokens first (slot = order among the chips), mentions inside the rest. */
+/** The mirror's runs: tokens first, mentions inside the rest. An About chip's slot is its order
+ *  among the About chips (the hue its bubble section wears); a picture wears no slot. */
 export function refMirrorSegments(draft: string, peers: PeerMention[], staged: readonly Attachment[]): MirrorSegment[] {
-  const byId = new Map(staged.filter((a) => a.kind === 'about').map((a) => [refTokenId(a), a] as const));
+  const byId = new Map(staged.filter(isTokenRef).map((a) => [refTokenId(a), a] as const));
   const out: MirrorSegment[] = [];
   const text = (t: string) => {
     if (!t) return;
     for (const m of mentionSegments(t, peers)) out.push({ text: m.text, kind: m.mention ? 'mention' : 'text' });
   };
   let pos = 0;
-  parseRefTokens(draft).forEach((t, i) => {
+  let about = 0;
+  parseRefTokens(draft).forEach((t) => {
     text(draft.slice(pos, t.start));
-    out.push({ text: draft.slice(t.start, t.end), kind: 'ref', slot: Math.min(i + 1, 5), refId: byId.get(t.id)?.id });
+    const att = byId.get(t.id);
+    if (att?.kind === 'image') {
+      out.push({
+        text: draft.slice(t.start, t.end), kind: 'ref', refId: att.id, img: att.url, lead: 1 + t.glyph.length,
+        state: att.uploading ? 'uploading' : att.failed ? 'failed' : 'ready',
+      });
+    } else {
+      about += 1;
+      out.push({ text: draft.slice(t.start, t.end), kind: 'ref', slot: Math.min(about, 5), refId: att?.id });
+    }
     pos = t.end;
   });
   text(draft.slice(pos));
@@ -38,7 +59,7 @@ export function refMirrorSegments(draft: string, peers: PeerMention[], staged: r
 
 /** The staged refs in the order their tokens stand in the draft. */
 export function refsInOrder(draft: string, staged: readonly Attachment[]): Attachment[] {
-  const byId = new Map(staged.filter((a) => a.kind === 'about').map((a) => [refTokenId(a), a] as const));
+  const byId = new Map(staged.filter(isTokenRef).map((a) => [refTokenId(a), a] as const));
   return parseRefTokens(draft).map((t) => byId.get(t.id)).filter((a): a is Attachment => !!a);
 }
 
@@ -70,7 +91,8 @@ export function RefPopover({ att, slot, left, bottom, onRemove, onGoTo, onClose 
   const ref = useRef<HTMLDivElement | null>(null);
   useDismissOnOutside(true, onClose, [ref]);
   const d = refDetail(att);
-  const source = d.from === 'agenda' ? t('super.ref.fromAgenda') : d.from === 'super' ? t('super.ref.fromSuper') : t('super.ref.fromOwn');
+  const picture = att.kind === 'image';
+  const source = picture ? t('chat.photo.chip') : d.from === 'agenda' ? t('super.ref.fromAgenda') : d.from === 'super' ? t('super.ref.fromSuper') : t('super.ref.fromOwn');
   return createPortal(
     <div
       ref={ref}
@@ -83,12 +105,17 @@ export function RefPopover({ att, slot, left, bottom, onRemove, onGoTo, onClose 
       onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); } }}
     >
       <div className="chat-cmp-ref-pop-source">
-        <span className="chat-cmp-ref-pop-glyph" aria-hidden>{REPLY_TO_RE.test(att.text ?? '') ? '↩' : '●'}</span>
+        {!picture && <span className="chat-cmp-ref-pop-glyph" aria-hidden>{REPLY_TO_RE.test(att.text ?? '') ? '↩' : '●'}</span>}
         {source}
       </div>
-      <div className="chat-cmp-ref-pop-text">{d.text}</div>
+      {picture && att.url && <img className="chat-cmp-ref-pop-img" src={att.url} alt={att.name} data-testid="chat-cmp-ref-pop-img" />}
+      <div className="chat-cmp-ref-pop-text">
+        {picture ? att.name : d.text}
+        {picture && att.uploading && <span className="chat-cmp-attachment-note">{t('chat.photo.attaching')}</span>}
+        {picture && att.failed && <span className="chat-cmp-attachment-note">{att.note ?? t('chat.photo.notAttached')}</span>}
+      </div>
       <div className="chat-cmp-ref-pop-actions">
-        {d.reply && onGoTo && (
+        {!picture && d.reply && onGoTo && (
           <button type="button" className="chat-cmp-ref-pop-btn" onClick={() => { const r = d.reply!; onClose(); onGoTo(r.ref, r.from); }}>
             {t('super.ref.goTo')}
           </button>
