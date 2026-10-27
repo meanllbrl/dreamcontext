@@ -134,6 +134,12 @@ export function cleanPhoneAnswer(questions: readonly RegistryQuestion[], raw: un
   return out;
 }
 
+/** Does the phone's answer still have an open question to go to: a child question escalated to
+ *  him, or his from birth (`direct`: answerable before the Super ever saw it), on this request. */
+export function phoneAnswerOpen(item: SuperQueueItem, requestId: string): boolean {
+  return item.kind === 'question' && (item.state === 'escalated' || directQuestion(item)) && item.requestId === requestId;
+}
+
 /** POST /api/agent/super-answer {item, requestId, picked?, notes?, unclear?} */
 export async function handleSuperPhoneAnswer(req: IncomingMessage, res: ServerResponse, _params: unknown, contextRoot: string): Promise<void> {
   // The phone gate already judged a phone write's Origin (the tunnel's own); on the laptop only
@@ -152,7 +158,7 @@ export async function handleSuperPhoneAnswer(req: IncomingMessage, res: ServerRe
   }
   if (!state.enabled || !state.session) { sendError(res, 409, 'not_handed_over', 'The Super Agent is not handed over.'); return; }
   const item = state.queue.find((q) => q.id === id);
-  if (!item || item.kind !== 'question' || item.state !== 'escalated' || item.requestId !== requestId) {
+  if (!item || !phoneAnswerOpen(item, requestId)) {
     sendError(res, 409, 'stale_request', 'That question is no longer open.');
     return;
   }

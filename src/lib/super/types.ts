@@ -1060,6 +1060,9 @@ export const MAX_ASK_OPTION = 24;
  *  it is delivered. Owner 2026-10-27: 30 s made the Super hear every finished job half a minute
  *  late (measured: done item 30.5 s after the turn end at the median, 61 s at p90). */
 export const DONE_SETTLE_MS = 2_000;
+/** The window for a turn the OWNER stopped (or a limit switch ended): he is about to write the
+ *  correction, or the account is being switched, so the job is not done; the old long window. */
+export const STOPPED_SETTLE_MS = 30_000;
 /** The longest card subject (a run card's command, a title) an owner item keeps to match his
  *  receipt by after a restart; longer ones match by kind alone. */
 export const MAX_WAIT_KEY = 300;

@@ -182,7 +182,12 @@ describe('the composer and the server use it', () => {
   it('the server parses the header and hands it to the digest and the owner-spoke bookkeeping', () => {
     expect(chat).toMatch(/const abouts = isSuper \? aboutHeads\(text\)\.map\(\(\{ kind, id \}\) => \(\{ kind, id \}\)\) : \[\];/);
     expect(chat).toMatch(/superAnswerDigest\(chatRegistryId, Date\.now\(\), abouts\)/);
-    expect(chat).toMatch(/superOwnerSpoke\(chatRegistryId, Date\.now\(\), held\?\.items \?\? \[\], abouts\)/);
+    expect(chat).toMatch(/superOwnerSpoke\(chatRegistryId, Date\.now\(\), held\?\.items \?\? \[\], abouts, midTurn\)/);
+    // `midTurn` is read before his own turn is counted, or every message would look mid-turn
+    // and keep the 15 s lease (verify run 2026-10-27).
+    const writer = chat.slice(chat.indexOf('const writeOwnerTurn = '));
+    expect(writer.indexOf('const midTurn = turnsInFlight > 0;')).toBeGreaterThan(-1);
+    expect(writer.indexOf('const midTurn = turnsInFlight > 0;')).toBeLessThan(writer.indexOf('openTurn();'));
   });
 });
 

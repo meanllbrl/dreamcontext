@@ -2689,6 +2689,9 @@ export function startChatSession(
   /** Hand one OWNER message to the CLI as a turn — the socket's user frame, and a held message
    *  released by `releaseStalledSwitch`. */
   const writeOwnerTurn = (text: string): void => {
+    // A turn already in flight when his frame goes in (read BEFORE his own turn is counted): the
+    // Super's lease must then outlive that turn's end (inbox.ts superOwnerSpoke).
+    const midTurn = turnsInFlight > 0;
     openTurn();
     lastSentText = text;
     turnProgressed = false;
@@ -2741,7 +2744,7 @@ export function startChatSession(
     const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
     // Written, and not a slash command: the owner's lease, the running event turn marked
     // steered, an open `ask` answered, the held events it carried delivered (plan r4 D4, D7, D18).
-    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts);
+    if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn);
     if (note && wrote) {
       void clearSuperNote(superRootOfChild(chatRegistryId) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }

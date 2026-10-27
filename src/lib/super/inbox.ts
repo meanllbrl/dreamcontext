@@ -24,7 +24,7 @@ import {
   updateSuperState, type SanitizeOpts,
 } from './store.js';
 import {
-  DONE_SETTLE_MS, MAX_BATCH, MAX_CONTAINERS, MAX_FLOAT, MAX_WAIT_KEY, MAX_OWNER_BATCHES, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS,
+  DONE_SETTLE_MS, STOPPED_SETTLE_MS, MAX_BATCH, MAX_CONTAINERS, MAX_FLOAT, MAX_WAIT_KEY, MAX_OWNER_BATCHES, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS,
   SUPER_FRAME_STATE, floatCount, leaveGroups, AGENDA_REF, AGENDA_SIZE,
   type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
   MAX_HELD, PAD_ID_RE, type SuperHeldEvent, type SuperQueueItem, type SuperState, type SuperStateView,
@@ -660,14 +660,20 @@ export function clearOwnerLease(contextRoot: string): void {
  * open `ask` is closed: this message is its answer (D7), unless every part it is written
  * `about` is another agenda line (`aboutKeepsAsks`).
  */
-export function superOwnerSpoke(sessionId: string, now = Date.now(), told: readonly string[] = [], abouts: readonly AgendaAbout[] = []): void {
+export function superOwnerSpoke(sessionId: string, now = Date.now(), told: readonly string[] = [], abouts: readonly AgendaAbout[] = [], midTurn = false): void {
   const root = superRootOfSession(sessionId);
   if (!root) return;
   const key = keyOf(root);
   leases.set(key, now);
-  // Steered into a running turn: that turn is his. Written while idle: the next one is.
-  const st = getChat(sessionId)?.status;
-  spokeTurns.set(key, st === 'working' || st === 'asking' ? 'running' : 'waiting');
+  // Written while the super was idle (`midTurn` false: the bridge had no turn in flight): the
+  // turn it starts is his, and its end ends the lease. Written into a running turn, it may be
+  // folded in or race that turn's `result` and run as its own turn after it: no registry edge
+  // tells the two apart, so the timed lease stands (review 2026-10-27, D18).
+  if (midTurn) spokeTurns.delete(key);
+  else {
+    const st = getChat(sessionId)?.status;
+    spokeTurns.set(key, st === 'working' || st === 'asking' ? 'running' : 'waiting');
+  }
   scheduleRetry(key, now + OWNER_LEASE_MS + 50);
   const ob = openBatch.get(sessionId);
   if (ob) {
@@ -1339,7 +1345,7 @@ async function settleChild(root: string, sid: string): Promise<void> {
   const e = getChat(sid);
   if (!e || !settledIdle(e, Date.now())) return;
   // The window counts from the later of its turn end and its background work's end.
-  const left = DONE_SETTLE_MS - (Date.now() - quietSince(e));
+  const left = settleWindow(e) - (Date.now() - quietSince(e));
   if (left > 0) { armSettle(root, sid, left); return; }
   let added = false;
   await writeSuper(root, (s) => {
@@ -1349,7 +1355,13 @@ async function settleChild(root: string, sid: string): Promise<void> {
   if (added) void pumpSuper(root);
 }
 
-function armSettle(root: string, sid: string, ms = DONE_SETTLE_MS): void {
+/** How long a finished turn settles: short, unless the owner stopped it or a limit switch ended
+ *  it (review 2026-10-27: a Stop to redirect a child became a false `done` 2 s later). */
+function settleWindow(e: ChatEntry | null): number {
+  return e?.lastTurn?.interrupted || e?.lastTurn?.limited ? STOPPED_SETTLE_MS : DONE_SETTLE_MS;
+}
+
+function armSettle(root: string, sid: string, ms = settleWindow(getChat(sid))): void {
   clearTimer(settleTimers, sid);
   const t = setTimeout(() => {
     settleTimers.delete(sid);
@@ -1410,11 +1422,12 @@ export function reconcileDraft(s: SuperState, now: number, armed: (sid: string) 
         if (setRow(ch, 'working', undefined, now)) changed = true;
       } else if (act === 'idle' && !armed(sid)) {
         const ended = quietSince(e);
-        if (Number.isFinite(ended) && now - ended >= DONE_SETTLE_MS) {
+        const window = settleWindow(e);
+        if (Number.isFinite(ended) && now - ended >= window) {
           if (settleDraft(s, sid, now)) added = true;
           changed = true;
         } else {
-          arm.push({ sid, ms: Number.isFinite(ended) ? DONE_SETTLE_MS - (now - ended) : DONE_SETTLE_MS });
+          arm.push({ sid, ms: Number.isFinite(ended) ? window - (now - ended) : window });
           if (setRow(ch, 'working', undefined, now)) changed = true;
           if (!ch.settling) { ch.settling = true; changed = true; }
         }

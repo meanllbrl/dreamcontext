@@ -28,7 +28,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { STALE_MS, _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
-import { DONE_SETTLE_MS, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
+import { DONE_SETTLE_MS, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS, STOPPED_SETTLE_MS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
 import { GONE_DEBOUNCE_MS } from '../../src/lib/assistant/delegations.js';
 import { REASK_TEXT, readOutbox } from '../../src/lib/super/outbox.js';
 import { superRestoreHold } from '../../src/lib/super/restore.js';
@@ -195,7 +195,8 @@ describe('only decisions reach the super (AC2)', { timeout: 30_000 }, () => {
     hs[1].observe({ type: 'result', is_error: true });
     hs[2].markLimited();
     hs[2].observe({ type: 'result', is_error: true });
-    await advance(DONE_SETTLE_MS + 100);
+    // An owner Stop and a limit switch settle on the long window (not done while he redirects).
+    await advance(STOPPED_SETTLE_MS + 100);
     const s = await readSuperState(root);
     expect(s.children.err).toMatchObject({ row: 'stuck', stuckReason: 'error' });
     expect(s.children.stop.row).toBe('done');
@@ -374,6 +375,44 @@ describe('instant events (owner 2026-10-27)', { timeout: 30_000 }, () => {
     sup.observe({ type: 'result' });
     await drain();
     expect(delivered).toHaveLength(1);
+  });
+
+  it('his message written INTO a running turn keeps the full lease: it may run as its own turn after that end (D18)', async () => {
+    const { sup, hs, delivered } = await boot(['c1']);
+    sup.userSent('an event turn');
+    superOwnerSpoke(SUPER, Date.now(), [], [], true);
+    hs[0].observe({ type: 'result' });
+    // The running turn ends; his frame raced its result and has not opened its own turn yet.
+    sup.observe({ type: 'result' });
+    await advance(DONE_SETTLE_MS + 100, 100);
+    expect(delivered).toHaveLength(0);
+    await advance(OWNER_LEASE_MS, 1_000);
+    expect(delivered).toHaveLength(1);
+  });
+
+  it('a turn the owner STOPPED is not done 2 s later: it keeps the long window (he is writing the correction)', async () => {
+    const { hs, delivered } = await boot(['c1']);
+    hs[0].interrupted();
+    hs[0].observe({ type: 'result', is_error: true });
+    await advance(DONE_SETTLE_MS * 3, 500);
+    expect(await items('done', 'c1')).toHaveLength(0);
+    expect(delivered).toHaveLength(0);
+    // He writes the correction: it works again, no done ever went out.
+    hs[0].userSent('no, do it the other way');
+    await advance(STOPPED_SETTLE_MS, 5_000);
+    expect(await items('done', 'c1')).toHaveLength(0);
+    // That turn ends normally: done in the short window.
+    hs[0].observe({ type: 'result' });
+    await advance(DONE_SETTLE_MS + 200, 100);
+    expect(await items('done', 'c1')).toHaveLength(1);
+  });
+
+  it('a stopped turn left alone is done after the long window', async () => {
+    const { hs } = await boot(['c1']);
+    hs[0].interrupted();
+    hs[0].observe({ type: 'result', is_error: true });
+    await advance(STOPPED_SETTLE_MS + 1_000);
+    expect(await items('done', 'c1')).toHaveLength(1);
   });
 
   it('his typing still holds the pump the full lease, even after a turn ends', async () => {
