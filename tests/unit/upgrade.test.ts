@@ -318,3 +318,25 @@ describe('runUpgrade refreshes a stale automations notifier', () => {
   });
 });
 
+
+describe('runUpgrade — inside the desktop app', () => {
+  it('leaves a self-updating app to its in-app updater and still refreshes every project', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const order: string[] = [];
+    try {
+      await runUpgrade(false, {
+        installer: () => { order.push('cli'); },
+        yes: true,
+        appInstalledCheck: () => true,
+        appSelfUpdating: () => true,
+        appUpdater: () => { order.push('app'); return { ok: true }; },
+        vaultLister: () => [{ name: 'alpha', path: '/tmp/alpha' }],
+        projectUpdater: (v) => { order.push(v.name); return { vault: v, ok: true }; },
+        notifierState: () => ({ supported: false, bundlePresent: false, scriptCurrent: true }) as never,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(order).toEqual(['cli', 'alpha']);
+  });
+});

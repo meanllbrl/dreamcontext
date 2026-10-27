@@ -65,6 +65,8 @@ import {
   handleLauncherUpdate,
   handleLauncherUpgrade,
   handleLauncherUpgradeStatus,
+  handleLauncherSelfUpdateGet,
+  handleLauncherSelfUpdatePost,
   handleLauncherRelaunch,
   handleLauncherFederationGraph,
   handleLauncherConnectionCreate,
@@ -281,6 +283,7 @@ import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, 
 import { startOrphanSweep } from './orphan-sweep.js';
 import { startTaskJobLoop } from './task-job-loop.js';
 import { startClaudeUpdateJob } from './claude-update-job.js';
+import { readyVersionOnDisk, startSelfUpdateJob } from './self-update-job.js';
 import { configureMacListener, macSession, registerHandsfreeMacRoutes, writeMacServerHint } from './routes/handsfree-mac.js';
 import { authFor, handleHandsfreeLogin, handleHandsfreeLogout } from './handsfree-auth.js';
 import { handleHandsfreePhone, handlePhonePages } from './handsfree-login.js';
@@ -553,6 +556,8 @@ export function buildRouter(): Router {
   router.post('/api/launcher/update', handleLauncherUpdate);
   router.post('/api/launcher/upgrade', handleLauncherUpgrade);
   router.get('/api/launcher/upgrade/status', handleLauncherUpgradeStatus);
+  router.get('/api/launcher/self-update', handleLauncherSelfUpdateGet);
+  router.post('/api/launcher/self-update', handleLauncherSelfUpdatePost);
   router.post('/api/launcher/relaunch', handleLauncherRelaunch);
   router.get('/api/launcher/federation-graph', handleLauncherFederationGraph);
   router.post('/api/launcher/connection', handleLauncherConnectionCreate);
@@ -1404,11 +1409,13 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
 
       let shuttingDown = false;
       let stopClaudeUpdate: (() => void) | undefined;
+      let stopSelfUpdate: (() => void) | undefined;
       const shutdown = () => {
         if (shuttingDown) return; // SIGTERM + watchdog can both fire; reap once
         shuttingDown = true;
         console.log('\n  Shutting down...');
         stopClaudeUpdate?.();
+        stopSelfUpdate?.();
         // Mac mode: a graceful shutdown is a Return — the tunnel closes, phones are signed out,
         // sleep and Low Power Mode are restored. Bounded by the 5 s exit below.
         const macDone = isDesktop() && macSession().isOn() ? macSession().stop({ shutdown: true }).catch(() => undefined) : Promise.resolve();
@@ -1444,7 +1451,10 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // blank a live window with nothing to respawn it), so instead FLAG the on-disk
       // upgrade — GET /api/health surfaces it and the dashboard bundle auto-relaunches
       // the app onto the new version. Self-gates to DREAMCONTEXT_DESKTOP=1.
-      startUpgradeReadyWatch(dreamcontextVersion(), readDreamcontextVersionFromDisk);
+      // While the shell runs its bundled copy (newer than the global CLI, desktop/src-tauri
+      // src/cli_choice.rs), the copy on disk never changes: the GLOBAL install is what the
+      // self-update moves, so a global strictly newer than this process is an upgrade too.
+      startUpgradeReadyWatch(dreamcontextVersion(), () => readyVersionOnDisk());
       startOrphanSweep();
       // Voice takes older than 24 h (or past 200 MB) go now, not at the next take.
       pruneTakes();
@@ -1459,6 +1469,9 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       }
       // Headless claude spawns never run the CLI's TUI-only updater; this does. Self-gates to desktop.
       stopClaudeUpdate = startClaudeUpdateJob();
+      // The CLI itself: upgraded from the app (launch + every 6 h), not only from a Claude
+      // prompt, then every project refreshed. Self-gates to the app-owned desktop server.
+      stopSelfUpdate = startSelfUpdateJob();
     };
     // The Super Agent's in-memory index and inbox come up BEFORE the server listens, so before
     // any chat can register (plan-r7 D16): a handed-over child's first question is already

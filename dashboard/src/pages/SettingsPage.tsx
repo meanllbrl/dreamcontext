@@ -19,6 +19,7 @@ import { useTheses, useSetLearningEnabled } from '../hooks/useTheses';
 import { GitHubLogin } from '../components/brain/GitHubLogin';
 import { OriginSetup } from '../components/brain/OriginSetup';
 import { SystemDependencies, FeatureDepsNotice } from '../components/settings/SystemDependencies';
+import { AutoUpdateSetting } from '../components/settings/AutoUpdateSetting';
 import { ClaudeAccounts } from '../components/settings/ClaudeAccounts';
 import { McpServers } from '../components/settings/McpServers';
 import { LinkedRepos } from '../components/brain/LinkedRepos';
@@ -836,6 +837,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
       <section className="settings-section">
         <SectionHead titleKey="settings.nav.system" descKey="settings.desc.system" />
         <SystemDependencies />
+        <AutoUpdateSetting />
       </section>
       )}
 

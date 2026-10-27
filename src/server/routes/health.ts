@@ -2,6 +2,9 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { sendJson } from '../middleware.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { getUpgradeReadyVersion } from '../lifecycle.js';
+import { anyChatBusy } from '../chat-activity.js';
+import { getUpgradeRun } from '../upgrade-job.js';
+import { selfUpdateInFlight } from '../../lib/self-update.js';
 import { isPhoneSocket } from '../phone-origin.js';
 
 /**
@@ -49,6 +52,23 @@ export async function handleHealthGet(
     // Desktop self-heal: the newer on-disk version when an upgrade landed under
     // this running server (else null). The bundle uses it to auto-relaunch the
     // app onto the new version without any manual quit/reopen.
-    upgradeReady: getUpgradeReadyVersion(),
+    upgradeReady: relaunchableUpgrade(getUpgradeReadyVersion()),
   });
+}
+
+/**
+ * The relaunch quits the app, which reaps the server's whole process group: every chat process,
+ * and the `upgrade --yes` job itself, still refreshing projects after npm already rewrote the
+ * package.json the ready watch reads. So the upgrade is reported only while no in-app chat is
+ * mid-turn AND no upgrade run (the badge's or the self-update's) is still going; the next health
+ * poll after both settle brings it, and the relaunch countdown, back.
+ */
+export function relaunchableUpgrade(
+  ready: string | null,
+  busy: () => boolean = anyChatBusy,
+  upgrading: () => boolean = () => getUpgradeRun()?.state === 'running' || selfUpdateInFlight(),
+): string | null {
+  if (!ready) return null;
+  if (upgrading()) return null;
+  return busy() ? null : ready;
 }

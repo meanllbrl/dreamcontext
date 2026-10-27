@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { execFileSync, spawn } from 'node:child_process';
+import { npmInstallCommand, resolveNpmTarget, type NpmTarget } from './npm-target.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -248,13 +249,26 @@ export interface AutoUpgradeMarker {
 }
 
 /** Fire-and-forget detached spawner. Injectable for tests. */
-export type DetachedSpawner = (cmd: string, args: string[]) => void;
+/** Returns the started child's pid when it has one. */
+export type DetachedSpawner = (cmd: string, args: string[]) => number | void;
 
 export interface AutoUpgradeDeps {
   readMarker?: (root: string) => AutoUpgradeMarker | null;
   writeMarker?: (root: string, m: AutoUpgradeMarker) => void;
   spawner?: DetachedSpawner;
   now?: number;
+  /** The desktop app's self-update is running (default: {@link selfUpdateLockHeld}). */
+  lockHeld?: () => boolean;
+  /** Where the install goes (default: the npm prefix of the running CLI, src/lib/self-update.ts). */
+  target?: NpmTarget | null;
+  /**
+   * Hold the desktop self-update's lock for the detached install: `claim()` takes it (false =
+   * someone holds it, so stand back), `stamp(pid)` hands it to the install's own pid, so the app's
+   * server job waits until npm is done instead of installing into the same prefix beside it.
+   * Default: the real lock in ~/.dreamcontext, used only with the real spawner (a test that
+   * injects a spawner never touches the developer's home).
+   */
+  lock?: { claim: () => boolean; stamp: (pid: number) => void } | null;
 }
 
 function markerPath(root: string): string {
@@ -287,13 +301,49 @@ export function writeAutoUpgradeMarker(root: string, marker: AutoUpgradeMarker):
 }
 
 /**
- * Whether background auto-upgrade is enabled. ON BY DEFAULT.
- * Opt out with DREAMCONTEXT_AUTO_UPGRADE=0, or the master kill-switch
- * DREAMCONTEXT_VERSION_CHECK=0 (which also disables the network refresh).
+ * The persisted opt-out Settings → This machine → "Update dreamcontext automatically" writes.
+ * A Finder-started app never sees a shell's variables, so this file is the switch it can read;
+ * the prompt hook below honours it too.
  */
-export function autoUpgradeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+export function cliAutoUpdateOffPath(home: string = homedir()): string {
+  return join(home, '.dreamcontext', 'cli-auto-update-off');
+}
+
+/**
+ * Held while the desktop app's self-update (src/lib/self-update.ts) runs `upgrade --yes`. The
+ * prompt hook's own background install stands back while it is held, so two `npm install -g`
+ * never race on one prefix.
+ */
+export function selfUpdateLockPath(home: string = homedir()): string {
+  return join(home, '.dreamcontext', 'self-update.lock');
+}
+
+/** Is the self-update lock held by a live process? A lock left by a dead one is not. */
+export function selfUpdateLockHeld(home: string = homedir()): boolean {
+  try {
+    const info = JSON.parse(readFileSync(selfUpdateLockPath(home), 'utf-8')) as { pid?: unknown };
+    if (typeof info.pid !== 'number' || !Number.isFinite(info.pid) || info.pid <= 0) return true;
+    try {
+      process.kill(info.pid, 0);
+      return true;
+    } catch (err) {
+      return (err as NodeJS.ErrnoException)?.code !== 'ESRCH';
+    }
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether background auto-upgrade is enabled. ON BY DEFAULT.
+ * Opt out with DREAMCONTEXT_AUTO_UPGRADE=0, the master kill-switch
+ * DREAMCONTEXT_VERSION_CHECK=0 (which also disables the network refresh), or the
+ * Settings switch ({@link cliAutoUpdateOffPath}).
+ */
+export function autoUpgradeEnabled(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): boolean {
   if (env.DREAMCONTEXT_VERSION_CHECK === '0') return false;
-  return env.DREAMCONTEXT_AUTO_UPGRADE !== '0';
+  if (env.DREAMCONTEXT_AUTO_UPGRADE === '0') return false;
+  return !existsSync(cliAutoUpdateOffPath(home));
 }
 
 /**
@@ -384,10 +434,31 @@ export function autoUpgradeLaunch(
 }
 
 /** Default detached spawner: `npm install -g dreamcontext@latest`, fire-and-forget. */
-function defaultSpawner(cmd: string, args: string[]): void {
+function defaultSpawner(cmd: string, args: string[]): number | void {
   const launch = autoUpgradeLaunch(cmd, args);
   const child = spawn(launch.file, launch.args, launch.options);
   child.unref();
+  return child.pid;
+}
+
+/** The self-update lock, written with O_EXCL (`wx`), then rewritten with the install's pid. A lock
+ *  whose holder is dead is free (see {@link selfUpdateLockHeld}). */
+function defaultUpgradeLock(home: string = homedir()): { claim: () => boolean; stamp: (pid: number) => void } {
+  const path = selfUpdateLockPath(home);
+  const write = (pid: number, flag: 'wx' | 'w') => writeFileSync(path, JSON.stringify({ pid, at: Date.now() }) + '\n', { flag });
+  return {
+    claim: () => {
+      try {
+        mkdirSync(dirname(path), { recursive: true });
+        if (existsSync(path) && !selfUpdateLockHeld(home)) rmSync(path, { force: true });
+        write(process.pid, 'wx');
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    stamp: (pid) => { try { write(pid, 'w'); } catch { /* the lock then dies with this process */ } },
+  };
 }
 
 /**
@@ -408,6 +479,8 @@ export function maybeAutoUpgrade(
   try {
     const target = shouldAutoUpgrade(installedCli, cache, env);
     if (!target) return null;
+    // The desktop app is upgrading this machine right now; its run covers this one too.
+    if ((deps.lockHeld ?? selfUpdateLockHeld)()) return null;
 
     const now = deps.now ?? Date.now();
     const readMarker = deps.readMarker ?? readAutoUpgradeMarker;
@@ -430,10 +503,17 @@ export function maybeAutoUpgrade(
     // Trade-off: if the spawn below throws, we've recorded an attempt that did
     // not happen — but the in-flight-window fallback re-surfaces the manual
     // nudge after AUTO_UPGRADE_INFLIGHT_MS, so the user is not stranded.
+    const lock = deps.lock !== undefined ? deps.lock : (deps.spawner ? null : defaultUpgradeLock());
+    if (lock && !lock.claim()) return null;
     writeMarker(root, { attemptedFor: target, at: now });
 
+    // Into the npm prefix this CLI was installed in (nvm, Homebrew, the app's private Node), not
+    // whichever `npm` comes first on PATH: with both nvm and brew, that one can be the other.
+    const npmTarget = deps.target !== undefined ? deps.target : resolveNpmTarget(process.argv[1]);
+    const install = npmInstallCommand(['install', '-g', 'dreamcontext@latest'], npmTarget);
     const spawner = deps.spawner ?? defaultSpawner;
-    spawner('npm', ['install', '-g', 'dreamcontext@latest']);
+    const pid = spawner(install.file, install.args);
+    if (lock && typeof pid === 'number' && pid > 0) lock.stamp(pid);
 
     return `⬆ Auto-upgrading dreamcontext v${installedCli} → v${target} in the background (takes effect next session).`;
   } catch {

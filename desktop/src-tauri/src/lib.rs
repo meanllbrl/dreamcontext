@@ -26,11 +26,15 @@
 
 mod app_link;
 #[cfg(target_os = "macos")]
+mod app_manifest;
+mod applog;
+#[cfg(target_os = "macos")]
 mod assistant;
 // Off macOS the notch's commands answer from a stub (no NSPanel there).
 #[cfg(not(target_os = "macos"))]
 #[path = "assistant_stub.rs"]
 mod assistant;
+mod cli_choice;
 mod frames;
 mod mic;
 mod node_runtime;
@@ -155,6 +159,12 @@ pub fn run() {
             #[cfg(windows)]
             if let Some(home) = node_runtime::home_dir() {
                 win::write_app_manifest(&home);
+            }
+            // macOS: the same record, so a DMG install can relaunch after a CLI upgrade
+            // (src/app_manifest.rs).
+            #[cfg(target_os = "macos")]
+            if let Some(home) = node_runtime::home_dir() {
+                app_manifest::record_launch(&home);
             }
             updater::start(&handle);
             // The opening screen plays while the server boots. A Login Item launch that
@@ -637,61 +647,66 @@ fn write_cli_path_cache(path: &str) {
     }
 }
 
-/// Resolve the dreamcontext CLI entry to run.
+/// Resolve the dreamcontext CLI entry to run, and the global CLI when one was found (the
+/// server's self-update upgrades THAT install, even while the bundled copy runs).
 ///
-/// THIN-SHELL MODEL: prefer the GLOBALLY-installed CLI over the bundled copy.
-/// The global CLI auto-upgrades (npm), so the dashboard server / routes / all
-/// `dist/` logic stay fresh with NO app rebuild — most updates ride the CLI and
-/// never touch the .app. The bundled copy is only a first-run fallback for when
-/// no global CLI is present yet. Order:
+/// THIN-SHELL MODEL: the globally-installed CLI auto-upgrades (npm, and the server's own
+/// self-update job), so the dashboard server / routes / all `dist/` logic stay fresh with NO
+/// app rebuild. The bundled copy runs when there is no global CLI yet, and when it is strictly
+/// NEWER than the global one: the in-app updater replaces only the bundle, and deferring to an
+/// older global CLI hid every in-app update (src/cli_choice.rs). Order:
 ///   1. DREAMCONTEXT_CLI env (explicit dev/test override).
-///   2. Global CLI (login-shell `command -v dreamcontext`) — the canonical, auto-updating source.
-///   3. Bundled `dist/index.js` resource (fallback until the global CLI is installed).
+///   2. Windows: the bundled CLI unless the global one is strictly newer.
+///      Elsewhere: the global CLI unless the bundled one is strictly newer.
+///   3. Bundled `dist/index.js` resource (no global CLI installed yet).
 ///   4. Dev `<cwd>/dist/index.js` (running `npm run tauri dev` from the repo).
-fn resolve_cli(app: &AppHandle) -> Result<String, String> {
+fn resolve_cli(app: &AppHandle) -> Result<(String, Option<String>), String> {
+    let global = find_global_cli();
     if let Ok(p) = std::env::var("DREAMCONTEXT_CLI") {
         if Path::new(&p).exists() {
-            return Ok(p);
+            return Ok((p, global));
         }
     }
+    let bundled = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|d| d.join("dist").join("index.js"))
+        .filter(|p| p.exists());
+    let bundled_version = env!("CARGO_PKG_VERSION");
+    let global_version = global.as_deref().and_then(|g| cli_choice::cli_version(Path::new(g)));
     // Windows: the bundled CLI wins unless the global one is STRICTLY newer. The bundled copy
     // carries this build's Windows fixes; an older global (an npm install from before them)
-    // would start a server whose chat cannot spawn claude. See src/win.rs `prefer_global`.
+    // would start a server whose chat cannot spawn claude.
     #[cfg(windows)]
     {
-        let global = find_global_cli();
-        let bundled = app
-            .path()
-            .resource_dir()
-            .ok()
-            .map(|d| d.join("dist").join("index.js"))
-            .filter(|p| p.exists());
-        let global_newer = win::prefer_global(
-            global.as_deref().and_then(|g| win::cli_version(Path::new(g))).as_deref(),
-            env!("CARGO_PKG_VERSION"),
-        );
-        if let Some(bundled) = bundled.filter(|_| !global_newer) {
-            return Ok(win::plain_path(&bundled.to_string_lossy()));
+        let global_newer = cli_choice::prefer_global(global_version.as_deref(), bundled_version);
+        if let Some(bundled) = bundled.as_ref().filter(|_| !global_newer) {
+            return Ok((win::plain_path(&bundled.to_string_lossy()), global));
         }
-        if let Some(global) = global {
-            return Ok(win::plain_path(&global));
+        if let Some(g) = global.as_ref() {
+            return Ok((win::plain_path(g), global.clone()));
         }
     }
     #[cfg(not(windows))]
-    if let Some(global) = find_global_cli() {
-        return Ok(global);
-    }
-    if let Ok(res) = app.path().resource_dir() {
-        let cli = res.join("dist").join("index.js");
-        if cli.exists() {
-            return Ok(cli.to_string_lossy().into_owned());
+    if let Some(g) = global.as_ref() {
+        if let Some(b) = bundled.as_ref().filter(|_| cli_choice::bundled_beats_global(global_version.as_deref(), bundled_version)) {
+            applog::log(&format!(
+                "[cli] the bundled CLI {bundled_version} is newer than the global {} at {g}: running the bundled copy",
+                global_version.as_deref().unwrap_or("?")
+            ));
+            return Ok((b.to_string_lossy().into_owned(), global.clone()));
         }
+        return Ok((g.clone(), global.clone()));
+    }
+    if let Some(b) = bundled {
+        return Ok((b.to_string_lossy().into_owned(), global));
     }
     // Dev fallback: <cwd>/dist/index.js (when running `npm run tauri dev` from the repo).
     if let Ok(cwd) = std::env::current_dir() {
         let cli = cwd.join("dist").join("index.js");
         if cli.exists() {
-            return Ok(cli.to_string_lossy().into_owned());
+            return Ok((cli.to_string_lossy().into_owned(), global));
         }
     }
     Err("The dreamcontext CLI was not found in the app bundle.\nRebuild the desktop app after `npm run build`.".to_string())
@@ -739,7 +754,7 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
         Ok(choice) => (choice.path, false),
         Err(problem) => (node_setup::run_blocking(&app, problem)?, true),
     };
-    let cli = resolve_cli(&app)?;
+    let (cli, global_cli) = resolve_cli(&app)?;
     let port = pick_free_port()?;
 
     // Boot the server in LAUNCHER mode — vault-agnostic. Each window pins its
@@ -763,6 +778,9 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
         // is the orphaned-dashboard-server safety net; see `startParentDeathWatch`
         // in src/server/lifecycle.ts.
         .env("DREAMCONTEXT_PARENT_PID", std::process::id().to_string())
+        // The global CLI install the server's self-update upgrades (src/lib/self-update.ts),
+        // also when the bundled copy is the one running. Absent = no global CLI found.
+        .envs(global_cli.map(|g| ("DREAMCONTEXT_GLOBAL_CLI".to_string(), g)))
         // Where the bundled Sleepy mascot clips live (Resources/sleepy/*.mp4), so
         // the dashboard can serve them for the Sleep page and the debt tracker.
         // Desktop-only (never shipped to npm). Absent → those surfaces draw no mascot.

@@ -28,7 +28,7 @@ const EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// Only a CI release build updates itself: the workflow compiles with
 /// `DREAMCONTEXT_UPDATER=1`. A local build would otherwise replace itself with the published
 /// release the first time it checked.
-fn compiled_in() -> bool {
+pub(crate) fn compiled_in() -> bool {
     option_env!("DREAMCONTEXT_UPDATER") == Some("1")
 }
 
@@ -121,7 +121,14 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) {
         loop {
             // Asked every round: the opt-out and Mac mode both change while the app stays open.
             let home = home_dir();
-            let allowed = !opted_out(home.as_deref()) && home.as_deref().map_or(true, mac_mode_allows_update);
+            let opted = opted_out(home.as_deref());
+            let mac_mode_ok = home.as_deref().map_or(true, mac_mode_allows_update);
+            let allowed = !opted && mac_mode_ok;
+            if opted {
+                crate::applog::log("[updater] skipped: app auto-update is turned off");
+            } else if !mac_mode_ok {
+                crate::applog::log("[updater] held: Mac mode is on");
+            }
             // Once a new bundle is on disk, checking again would fetch it a second time:
             // this process still reports the old version until it is reopened.
             if allowed && check_and_install(&app).await {
@@ -137,25 +144,29 @@ async fn check_and_install<R: Runtime>(app: &AppHandle<R>) -> bool {
     let update = match app.updater().map_err(|e| e.to_string()) {
         Ok(updater) => match updater.check().await {
             Ok(Some(update)) => update,
-            Ok(None) => return false,
+            Ok(None) => {
+                crate::applog::log(&format!("[updater] checked: {} is the latest", app.package_info().version));
+                return false;
+            }
             Err(e) => {
-                eprintln!("[updater] check failed: {e}");
+                crate::applog::log(&format!("[updater] check failed: {e}"));
                 return false;
             }
         },
         Err(e) => {
-            eprintln!("[updater] unavailable: {e}");
+            crate::applog::log(&format!("[updater] unavailable: {e}"));
             return false;
         }
     };
     let version = update.version.clone();
+    crate::applog::log(&format!("[updater] {version} is available; downloading"));
     #[cfg(not(windows))]
     {
         if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
-            eprintln!("[updater] {version} failed to install: {e}");
+            crate::applog::log(&format!("[updater] {version} failed to install: {e}"));
             return false;
         }
-        eprintln!("[updater] {version} installed; it starts on the next launch");
+        crate::applog::log(&format!("[updater] {version} installed; it starts on the next launch"));
         let _ = app
             .notification()
             .builder()
@@ -169,7 +180,7 @@ async fn check_and_install<R: Runtime>(app: &AppHandle<R>) -> bool {
         let bytes = match update.download(|_, _| {}, || {}).await {
             Ok(bytes) => bytes,
             Err(e) => {
-                eprintln!("[updater] {version} failed to download: {e}");
+                crate::applog::log(&format!("[updater] {version} failed to download: {e}"));
                 return false;
             }
         };
@@ -177,7 +188,7 @@ async fn check_and_install<R: Runtime>(app: &AppHandle<R>) -> bool {
             Ok(mut parked) => *parked = Some((update, bytes)),
             Err(_) => return false,
         }
-        eprintln!("[updater] {version} downloaded; it installs when the app quits");
+        crate::applog::log(&format!("[updater] {version} downloaded; it installs when the app quits"));
         let _ = app
             .notification()
             .builder()
@@ -215,7 +226,7 @@ pub fn install_parked_on_exit() {
             let version = update.version.clone();
             let reopen = RESTARTING.load(std::sync::atomic::Ordering::Relaxed);
             if let Err(e) = update.restart_after_install(reopen).install(bytes) {
-                eprintln!("[updater] {version} failed to start its installer: {e}");
+                crate::applog::log(&format!("[updater] {version} failed to start its installer: {e}"));
             }
         }
     }

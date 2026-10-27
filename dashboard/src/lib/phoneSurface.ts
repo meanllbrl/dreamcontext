@@ -97,6 +97,8 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/launcher/update',
   'POST /api/launcher/upgrade',
   'GET /api/launcher/upgrade/status',
+  'GET /api/launcher/self-update',
+  'POST /api/launcher/self-update',
   'POST /api/launcher/relaunch',
   'GET /api/launcher/federation-graph',
   'POST /api/launcher/connection',

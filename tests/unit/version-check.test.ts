@@ -14,6 +14,9 @@ import {
   maybeAutoUpgrade,
   readAutoUpgradeMarker,
   writeAutoUpgradeMarker,
+  cliAutoUpdateOffPath,
+  selfUpdateLockHeld,
+  selfUpdateLockPath,
   type VersionCache,
   type AutoUpgradeMarker,
 } from '../../src/lib/version-check.js';
@@ -573,5 +576,90 @@ describe('auto-upgrade marker', () => {
     mkdirSync(join(tmpDir, '_dream_context', 'state'), { recursive: true });
     writeFileSync(path, '{ not valid json', 'utf-8');
     expect(readAutoUpgradeMarker(tmpDir)).toBeNull();
+  });
+});
+
+// ─── The desktop self-update's switch and lock (src/lib/self-update.ts) ─────────
+
+describe('auto-upgrade and the desktop self-update', () => {
+  let home: string;
+  beforeEach(() => {
+    home = join(tmpdir(), `dc-vc-selfupdate-${process.pid}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+  });
+  afterEach(() => { rmSync(home, { recursive: true, force: true }); });
+
+  const cache: VersionCache = { checkedAt: 0, latestCli: '0.6.0', availablePacks: [], ttlHours: 24 };
+
+  it('the Settings switch turns the prompt hook\'s auto-upgrade off too', () => {
+    expect(autoUpgradeEnabled({}, home)).toBe(true);
+    writeFileSync(cliAutoUpdateOffPath(home), '');
+    expect(autoUpgradeEnabled({}, home)).toBe(false);
+  });
+
+  it('the hook stands back while the app\'s self-update holds the lock', () => {
+    const calls: string[][] = [];
+    const notice = maybeAutoUpgrade('/root', '0.5.0', cache, {}, {
+      spawner: (cmd, args) => calls.push([cmd, ...args]),
+      readMarker: () => null,
+      writeMarker: () => {},
+      lockHeld: () => true,
+      target: null,
+    });
+    expect(notice).toBeNull();
+    expect(calls).toEqual([]);
+  });
+
+  it('the hook installs into the prefix of the CLI it runs from', () => {
+    const calls: string[][] = [];
+    maybeAutoUpgrade('/root', '0.5.0', cache, {}, {
+      spawner: (cmd, args) => calls.push([cmd, ...args]),
+      readMarker: () => null,
+      writeMarker: () => {},
+      lockHeld: () => false,
+      target: { prefix: '/opt/homebrew', npm: '/opt/homebrew/bin/npm-real', npmViaNode: false, entry: '/opt/homebrew/lib/node_modules/dreamcontext/dist/index.js' },
+    });
+    expect(calls).toEqual([['/opt/homebrew/bin/npm-real', 'install', '-g', 'dreamcontext@latest', '--prefix', '/opt/homebrew']]);
+  });
+
+  it('the hook takes the lock for its install and hands it to the install\'s pid', () => {
+    const calls: string[][] = [];
+    const stamped: number[] = [];
+    let claimed = false;
+    maybeAutoUpgrade('/root', '0.5.0', cache, {}, {
+      spawner: (cmd, args) => { calls.push([cmd, ...args]); return 4321; },
+      readMarker: () => null,
+      writeMarker: () => {},
+      lockHeld: () => false,
+      target: null,
+      lock: { claim: () => { claimed = true; return true; }, stamp: (pid) => stamped.push(pid) },
+    });
+    expect(claimed).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(stamped).toEqual([4321]);
+  });
+
+  it('the hook stands back when it loses the race for the lock', () => {
+    const calls: string[][] = [];
+    let wrote = false;
+    const notice = maybeAutoUpgrade('/root', '0.5.0', cache, {}, {
+      spawner: (cmd, args) => { calls.push([cmd, ...args]); },
+      readMarker: () => null,
+      writeMarker: () => { wrote = true; },
+      lockHeld: () => false,
+      target: null,
+      lock: { claim: () => false, stamp: () => {} },
+    });
+    expect(notice).toBeNull();
+    expect(calls).toEqual([]);
+    expect(wrote).toBe(false);
+  });
+
+  it('a lock is held only by a live process', () => {
+    expect(selfUpdateLockHeld(home)).toBe(false);
+    writeFileSync(selfUpdateLockPath(home), JSON.stringify({ pid: process.pid, at: 1 }));
+    expect(selfUpdateLockHeld(home)).toBe(true);
+    writeFileSync(selfUpdateLockPath(home), JSON.stringify({ pid: 2 ** 22 + 12345, at: 1 }));
+    expect(selfUpdateLockHeld(home)).toBe(false);
   });
 });

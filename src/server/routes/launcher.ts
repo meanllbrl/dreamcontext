@@ -59,6 +59,8 @@ import { ApiError } from '../../lib/task-backend/api-adapter.js';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import { SLEEP_ROSTER_CLAUSE } from '../../lib/sleep-prompt.js';
 import { readAppManifest } from '../../cli/commands/app.js';
+import { getUpgradeRun, startUpgradeRun } from '../upgrade-job.js';
+import { readSelfUpdateRecord, selfUpdateDisabledBy, selfUpdateLogPath, selfUpdateMarkerOff, setSelfUpdateEnabled } from '../../lib/self-update.js';
 import {
   consolidationDepth,
   inspectSleepLock,
@@ -1705,36 +1707,14 @@ export async function handleLauncherUpdate(
 
 // ─── Full-machine upgrade (CLI + desktop app + every project, in one job) ────────
 //
-// The header "Update available" badge triggers this. It runs the SAME
-// `dreamcontext upgrade --yes` the CLI exposes — npm-installs the latest CLI,
-// updates the installed desktop app, then refreshes every registered project —
-// as ONE background job the badge polls. Singleton: only one upgrade runs
-// machine-wide at a time (it mutates the global npm install AND the shared .app
-// bundle, so a second concurrent run would race). State is lost on server
-// restart, which is fine — the on-disk result is what matters, and a re-poll
-// after restart simply reports `idle`.
-
-interface UpgradeRun {
-  state: 'running' | 'done' | 'error';
-  /** Combined stdout+stderr tail — a live log for the badge popover. */
-  output: string;
-  startedAt: number;
-  endedAt?: number;
-}
-let upgradeRun: UpgradeRun | null = null;
-/** Safety ceiling: npm install + app download + N project refreshes. */
-const UPGRADE_MAX_MS = 12 * 60 * 1000;
+// The header "Update available" badge triggers this. The job itself (`dreamcontext upgrade
+// --yes` as ONE singleton background run) lives in src/server/upgrade-job.ts, shared with the
+// desktop app's scheduled self-update so there is one upgrade path, not two.
 
 /**
  * POST /api/launcher/upgrade — start (or no-op re-attach to) the one-shot full
  * upgrade. Mutation; behind the CSRF guard. Vault-agnostic. Returns immediately
  * with `{ ok, state: 'running' }`; progress is polled via `/upgrade/status`.
- *
- * The CLI is spawned inside an INTERACTIVE LOGIN shell (`$SHELL -ilc`) so `npm`
- * and `npx` resolve even when the desktop app was launched from Finder/Spotlight
- * (which do NOT inherit the user's interactive-shell PATH) — the same PATH fix
- * used by the agent-terminal and Sleepy capture. `$0`/`$1` are argv positionals,
- * never interpolated into the command string (no shell injection).
  */
 export async function handleLauncherUpgrade(
   _req: IncomingMessage,
@@ -1742,65 +1722,15 @@ export async function handleLauncherUpgrade(
   _params: Record<string, string>,
   _contextRoot: string | null,
 ): Promise<void> {
-  if (upgradeRun?.state === 'running') {
-    sendJson(res, 200, { ok: true, state: 'running' });
-    return;
-  }
-  const cliEntry = process.env.DREAMCONTEXT_CLI || process.argv[1];
-  if (!cliEntry) {
+  const started = startUpgradeRun({ trigger: 'manual' });
+  if ('error' in started) {
     sendError(res, 500, 'no_cli', 'Could not locate the dreamcontext CLI entry to upgrade.');
     return;
   }
-
-  const run: UpgradeRun = { state: 'running', output: '', startedAt: Date.now() };
-  upgradeRun = run;
-
-  try {
-    const shell = process.env.SHELL || '/bin/zsh';
-    const child = spawn(
-      shell,
-      ['-ilc', 'exec "$0" "$1" upgrade --yes', process.execPath, cliEntry],
-      { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } },
-    );
-    // Keep only the tail so a chatty npm/update run can't grow memory unbounded.
-    const append = (chunk: Buffer) => {
-      run.output = (run.output + chunk.toString('utf-8')).slice(-8000);
-    };
-    child.stdout?.on('data', append);
-    child.stderr?.on('data', append);
-
-    const guard = setTimeout(() => {
-      if (run.state !== 'running') return;
-      run.state = 'error';
-      run.output = (run.output + '\n\nUpgrade timed out.').slice(-8000);
-      run.endedAt = Date.now();
-      try { child.kill('SIGKILL'); } catch { /* already gone */ }
-    }, UPGRADE_MAX_MS);
-
-    child.on('error', (err) => {
-      clearTimeout(guard);
-      if (run.state !== 'running') return;
-      run.state = 'error';
-      run.output = `Couldn't start the upgrade: ${err.message}`;
-      run.endedAt = Date.now();
-    });
-    child.on('close', (code) => {
-      clearTimeout(guard);
-      if (run.state !== 'running') return;
-      run.state = code === 0 ? 'done' : 'error';
-      if (code !== 0 && !run.output.trim()) run.output = `Upgrade exited with code ${code}`;
-      run.endedAt = Date.now();
-    });
-  } catch (err) {
-    run.state = 'error';
-    run.output = `Couldn't start the upgrade: ${err instanceof Error ? err.message : 'spawn failed'}`;
-    run.endedAt = Date.now();
-  }
-
-  // Reflect the ACTUAL state: a synchronous spawn failure above already flipped run.state to
-  // 'error', so don't hardcode 'running' (that made the badge show a spinner for one poll
-  // cycle before /upgrade/status corrected it).
-  sendJson(res, 200, { ok: run.state !== 'error', state: run.state });
+  // Reflect the ACTUAL state: a synchronous spawn failure already flipped the run to 'error',
+  // so don't hardcode 'running' (that made the badge show a spinner for one poll cycle before
+  // /upgrade/status corrected it).
+  sendJson(res, 200, { ok: started.run.state !== 'error', state: started.run.state });
 }
 
 /**
@@ -1814,11 +1744,54 @@ export async function handleLauncherUpgradeStatus(
   _params: Record<string, string>,
   _contextRoot: string | null,
 ): Promise<void> {
+  const upgradeRun = getUpgradeRun();
   if (!upgradeRun) {
     sendJson(res, 200, { state: 'idle', output: '' });
     return;
   }
   sendJson(res, 200, { state: upgradeRun.state, output: upgradeRun.output.trim() });
+}
+
+// ─── Automatic dreamcontext updates (Settings → This machine) ──────────────────────
+
+/** What Settings shows: the switch, what else turns it off, and the last recorded outcome. */
+export function selfUpdateView(home?: string, env: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
+  return {
+    // The switch is its marker alone; an env opt-out is reported beside it, never as its state
+    // (reading it through selfUpdateDisabledBy hid the marker whenever a variable was set).
+    enabled: !selfUpdateMarkerOff(home),
+    disabledBy: selfUpdateDisabledBy(env, home),
+    desktop: process.env.DREAMCONTEXT_DESKTOP === '1',
+    record: readSelfUpdateRecord(home),
+    logPath: selfUpdateLogPath(home),
+  };
+}
+
+/** GET /api/launcher/self-update — the automatic-update switch and the last result. Read-only. */
+export async function handleLauncherSelfUpdateGet(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  sendJson(res, 200, selfUpdateView());
+}
+
+/** POST /api/launcher/self-update `{ enabled }` — flip the switch (a marker file in
+ *  ~/.dreamcontext). Mutation; behind the CSRF guard. */
+export async function handleLauncherSelfUpdatePost(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (typeof body?.enabled !== 'boolean') {
+    sendError(res, 400, 'invalid_body', '`enabled` must be true or false.');
+    return;
+  }
+  setSelfUpdateEnabled(body.enabled);
+  sendJson(res, 200, selfUpdateView());
 }
 
 /**
