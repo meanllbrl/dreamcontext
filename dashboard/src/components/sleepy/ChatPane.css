@@ -283,6 +283,50 @@
   border-top: 1px dashed var(--color-border);
 }
 
+/* ── An agent's past sessions above its conversation (chatFeed.ts, the AI Team stage) ── */
+
+/* A session's boundary: the dashed divider, clickable (a run opens its activity, a talk its tab). */
+.chat-feed-boundary {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--font-size-xs, 11px);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  margin: var(--space-3, 12px) 0 var(--space-2, 8px);
+}
+.chat-feed-boundary:hover,
+.chat-feed-boundary:focus-visible { color: var(--color-text-secondary); }
+.chat-feed-boundary--failed { color: var(--color-error); }
+/* The day rule and the unread divider sit in the transcript's own column. */
+.chat-scroll-inner > .chat-feed-day { margin: var(--space-4, 16px) 0 var(--space-1, 4px); }
+.chat-scroll-inner > .chat-feed-new { margin: var(--space-3, 12px) 0 var(--space-1, 4px); }
+.chat-feed-note {
+  align-self: center;
+  margin: var(--space-2, 8px) 0;
+  font-size: var(--font-size-xs, 11px);
+  color: var(--color-text-tertiary);
+}
+.chat-feed-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--color-text-secondary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.chat-feed-end {
+  align-self: center;
+  margin: var(--space-4, 16px) 0 var(--space-2, 8px);
+  font-size: var(--font-size-xs, 11px);
+  color: var(--color-text-tertiary);
+}
+/* What the read observer watches: a session's end. Takes no room. */
+.chat-feed-seen { height: 1px; margin-top: -1px; pointer-events: none; }
+
 /* ── The transcript window's ceiling (see ChatPane's window section) ───────────────── */
 
 .chat-window-more {

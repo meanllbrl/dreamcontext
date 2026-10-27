@@ -96,7 +96,7 @@ export function TeamConversation({
   /** Phone width: back to the list. */
   onBack?: () => void;
   /** A notification or link landed here for this routine's (or agent's) newest message. */
-  focus?: { slug: string; nonce: number } | null;
+  focus?: { slug: string; nonce: number; runId?: string | null } | null;
   /** The landing happened: the page forgets it, so coming back here opens at the newest end. */
   onFocusDone?: () => void;
   /** Who it reports through, top first (the team tree's chain without itself); [] for a root. */
@@ -190,7 +190,7 @@ export function TeamConversation({
   // A notification or link for this teammate: bring that routine's newest message into view
   // and mark it for a moment, instead of leaving the reader wherever the list was.
   const [flash, setFlash] = useState<string | null>(null);
-  const focusKey = focus ? focusTargetKey(items, focus.slug) : null;
+  const focusKey = focus ? focusTargetKey(items, focus.slug, focus.runId) : null;
   useEffect(() => {
     if (!focus || !focusKey) return;
     const el = scrollRef.current?.querySelector<HTMLElement>(`[data-item-key="${CSS.escape(focusKey)}"]`);

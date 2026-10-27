@@ -184,6 +184,16 @@ function runStatus(entries: readonly ThreadEntry[], run: RunEvent | null): Histo
   return entries.some((e) => e.kind === 'system' && e.event === 'started') ? 'running' : null;
 }
 
+/** A run's duration from its own thread (started → its terminal entry), when the run cache — the
+ *  usual source — has no row for it (another machine's run, a pruned cache). */
+function threadDuration(entries: readonly ThreadEntry[]): number | null {
+  const started = entries.find((e) => e.kind === 'system' && e.event === 'started');
+  const end = entries.find((e) => e.kind === 'system' && e.event && TERMINAL[e.event]);
+  if (!started || !end) return null;
+  const ms = timeOf(end.at) - timeOf(started.at);
+  return ms > 0 ? ms : null;
+}
+
 function postText(e: ThreadEntry): string {
   const rows = e.summary?.map((r) => `- **${r.key}:** ${r.value}`).join('\n') ?? '';
   return [e.text, rows].filter((s) => s && s.trim()).join('\n\n');
@@ -247,7 +257,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
           startedAt: runEntries[0].at,
           lastAt,
           status: runStatus(runEntries, run),
-          durationMs: run?.durationMs ?? null,
+          durationMs: run?.durationMs ?? threadDuration(runEntries),
           newestId,
           unread,
           rows: posts.map((e) => ({

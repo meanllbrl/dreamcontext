@@ -224,22 +224,15 @@ describe('small words', () => {
   });
 });
 
-describe('openingView: a picked teammate opens where its roster row\'s messages are', () => {
-  const at = '2026-10-27T12:28:00.000Z';
-  it('unread messages open the activity, whatever the stage holds', () => {
-    expect(openingView({ unread: 1, lastAt: at }, null)).toBe('activity');
-    expect(openingView({ unread: 3, lastAt: at }, { homeHasTurns: true })).toBe('activity');
+describe('openingView: a picked teammate opens on its stage (its whole history above the composer)', () => {
+  it('opens the stage, whatever it has said or left unread', () => {
+    for (const status of ['working', 'approval', 'paused', 'idle'] as const) expect(openingView({ status })).toBe('stage');
   });
-  it('a teammate that never said anything opens on the stage, without waiting for it', () => {
-    expect(openingView({ unread: 0, lastAt: null }, null)).toBe('stage');
+  it('only an open routine question opens the activity, where its answer block lives', () => {
+    expect(openingView({ status: 'needs' })).toBe('activity');
   });
-  it('read messages: the stage only when its home conversation has a turn', () => {
-    expect(openingView({ unread: 0, lastAt: at }, { homeHasTurns: true })).toBe('stage');
-    expect(openingView({ unread: 0, lastAt: at }, { homeHasTurns: false })).toBe('activity');
-    // An older server says nothing about turns: the messages are what is certain to be there.
-    expect(openingView({ unread: 0, lastAt: at }, {})).toBe('activity');
-  });
-  it('undecided while the stage view loads', () => {
-    expect(openingView({ unread: 0, lastAt: at }, undefined)).toBeNull();
+  it('homeHasTurns is gone from the stage view type', async () => {
+    const src = (await import('node:fs')).readFileSync('dashboard/src/hooks/useAgents.ts', 'utf-8');
+    expect(src).not.toContain('homeHasTurns');
   });
 });
