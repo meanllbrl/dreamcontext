@@ -1715,8 +1715,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       if (ch.worktree && isLiveChat(sid)) live.set(ch.worktree, `child ${sid} runs right now`);
     }
     const take = async () => machineGuards(wtRoot, root, homedir(), live);
-    const { guards, warnings } = await take();
-    const plan = await planSweep({ root: wtRoot, guards, testTmp: await oldTestTmp(tmpdir()), warnings });
+    const { guards, warnings, root: realRoot } = await take();
+    const plan = await planSweep({ root: realRoot, guards, testTmp: await oldTestTmp(tmpdir()), warnings });
     if (!apply) { ok(res, { dryRun: true, ...publicPlan(plan) }); return; }
     const fresh = (await take()).guards;
     const result = await applySweep(plan, fresh, {

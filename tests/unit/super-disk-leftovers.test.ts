@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PassThrough } from 'node:stream';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { TEST_TMP_PREFIXES } from '../../src/lib/super/test-tmp-prefixes.js';
@@ -171,6 +171,9 @@ describe('super clean', () => {
       return out;
     };
 
+    // The sweep plans in the worktree root's real spelling (lsof reports real paths).
+    const R = (p: string) => realpathSync(p);
+    const mergedReal = R(merged.path);
     // No flag is a dry run (an older CLI sent `dryRun: false`: still only a list).
     for (const body of [{}, { dryRun: false }, { dryRun: true }]) {
       const dry = await call(body);
@@ -178,18 +181,18 @@ describe('super clean', () => {
       const plan = dry.json.result as { dryRun: boolean; items: Array<{ path: string; category: string }>; kept: Array<{ path: string; reason: string }> };
       expect(plan.dryRun).toBe(true);
       // Our old test temp is ONE row for all its folders (thousands on a real machine).
-      expect(plan.items.map((i) => i.path).sort()).toEqual([merged.path, fakeTmp].sort());
+      expect(plan.items.map((i) => i.path).sort()).toEqual([R(merged.path), fakeTmp].sort());
       expect(plan.items.find((i) => i.category === 'test-tmp')).toMatchObject({ count: 1 });
       expect(plan.items.find((i) => i.category === 'test-tmp')).not.toHaveProperty('remove');
-      expect(plan.items.find((i) => i.path === merged.path)?.category).toBe('child-worktree');
-      expect(plan.kept.find((k) => k.path === unmerged.path)?.reason).toBe('unmerged');
-      expect(plan.kept.find((k) => k.path === live.path)?.reason).toBe('live-child');
+      expect(plan.items.find((i) => i.path === R(merged.path))?.category).toBe('child-worktree');
+      expect(plan.kept.find((k) => k.path === R(unmerged.path))?.reason).toBe('unmerged');
+      expect(plan.kept.find((k) => k.path === R(live.path))?.reason).toBe('live-child');
       expect(existsSync(merged.path)).toBe(true);
       expect(existsSync(ours)).toBe(true);
     }
 
     const real = await call({ apply: true });
-    expect((real.json.result as { removed: string[] }).removed.sort()).toEqual([merged.path, ours].sort());
+    expect((real.json.result as { removed: string[] }).removed.sort()).toEqual([mergedReal, ours].sort());
     expect(existsSync(merged.path)).toBe(false);
     expect(existsSync(ours)).toBe(false);
     // Kept: the branch, unmerged work, a live child's worktree, Chrome's folder.

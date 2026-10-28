@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { git } from './worktrees.js';
 import { diskUsage, rustTargets } from './disk-leftovers.js';
-import { listVaults } from '../vaults.js';
+import { listVaults, vaultsFilePath } from '../vaults.js';
 
 /**
  * `super clean`'s sweep of `~/.claude-worktrees/` (CPU RCA K1, 2026-10-29: 122 GB in 211 folders,
@@ -133,6 +133,9 @@ export interface SweepGuards {
   held: ReadonlyMap<string, string>;
   /** Worktree → the ENDED child of this vault whose record names it. */
   ended: ReadonlyMap<string, { child: string; branch?: string; endedAt?: number }>;
+  /** Set when a child record could not be read: which worktrees children hold is unknown, so
+   *  nothing may go (fail toward keeping). */
+  unsure?: string;
 }
 
 const under = (p: string, dir: string) => p === dir || p.startsWith(dir + sep);
@@ -149,6 +152,7 @@ export function classify(f: WorktreeFacts, g: SweepGuards, now: number): Verdict
   if (f.shape === 'not-a-worktree') return { action: 'keep', reason: 'not-a-worktree', why: 'no .git here: not a worktree git knows, report only' };
   if (f.shape === 'main-checkout') return { action: 'keep', reason: 'main-checkout', why: 'a repository\'s own checkout, never removed' };
   if (f.shape === 'broken') return { action: 'keep', reason: 'unreadable', why: 'its git admin dir is gone (`git worktree prune` territory), report only' };
+  if (g.unsure) return { action: 'keep', reason: 'unreadable', why: g.unsure };
   if (g.inUse === null) return { action: 'keep', reason: 'in-use', why: 'could not list running processes, so nothing is removed' };
   if (g.inUse.some((p) => under(p, f.path)) || g.commands.some((c) => c.includes(f.path + sep) || c.includes(f.path + ' ') || c.endsWith(f.path))) {
     return { action: 'keep', reason: 'in-use', why: 'a running process works in it' };
@@ -175,21 +179,35 @@ export function classify(f: WorktreeFacts, g: SweepGuards, now: number): Verdict
 
 // ─── Reading the machine ────────────────────────────────────────────────────────
 
+/**
+ * Did a listing command give the WHOLE list? A clean exit, or lsof's normal exit 1 (one process
+ * it may not read) with output. A timeout, a signal or a full buffer hands over a PARTIAL
+ * listing: a failure, never a list (a missing process would make its worktree look unused).
+ */
+export function listingComplete(cmd: string, err: unknown, out: string): boolean {
+  if (!err) return true;
+  const e = err as { killed?: boolean; signal?: string | null; code?: unknown };
+  const partial = e.killed === true || !!e.signal || e.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+  return cmd === 'lsof' && e.code === 1 && !partial && out.length > 0;
+}
+
 const run = (cmd: string, args: readonly string[], timeout = 30_000): Promise<{ ok: boolean; out: string }> => new Promise((done) => {
   execFile(cmd, args, { timeout, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => {
     const out = String(stdout ?? '');
-    // lsof exits 1 on a process it may not read but still prints the rest.
-    done({ ok: !err || out.length > 0, out });
+    done({ ok: listingComplete(cmd, err, out), out });
   });
 });
 
 /** Every path a running process holds under `root` (lsof: cwd, txt, open files) and every
- *  command line naming `root`. `inUse: null` when neither listing worked. */
-export async function runningUses(root: string): Promise<{ inUse: string[] | null; commands: string[] }> {
+ *  command line naming `root`. `inUse: null` when either listing failed or came back partial. */
+export async function runningUses(root: string, realRoot: string = root): Promise<{ inUse: string[] | null; commands: string[] }> {
   const [lsof, ps] = await Promise.all([run('lsof', ['-n', '-P', '-w', '-F', 'n']), run('ps', ['-axww', '-o', 'command='])]);
   if (!lsof.ok || !ps.ok) return { inUse: null, commands: [] };
-  const inUse = [...new Set(lsof.out.split('\n').filter((l) => l.startsWith('n') && l.includes(root)).map((l) => l.slice(1)))];
-  const commands = ps.out.split('\n').filter((l) => l.includes(root));
+  // Either spelling of the root, always handed on in the real one (what the plan's paths use).
+  const real = (l: string) => (root === realRoot ? l : l.split(root + sep).join(realRoot + sep));
+  const names = (l: string) => l.includes(root) || l.includes(realRoot);
+  const inUse = [...new Set(lsof.out.split('\n').filter((l) => l.startsWith('n') && names(l)).map((l) => real(l.slice(1))))];
+  const commands = ps.out.split('\n').filter(names).map(real);
   return { inUse, commands };
 }
 
@@ -234,28 +252,49 @@ export function childHolds(records: ReadonlyArray<{ vault: string; state: RawSta
   return { held, ended };
 }
 
-/** Every registered vault's Super Agent record (raw; an unreadable one is a warning). */
-export function readSuperRecords(ownContextRoot: string, home: string = homedir()): { records: Array<{ vault: string; state: RawState; own: boolean }>; warnings: string[] } {
+/** Every registered vault's Super Agent record (raw). `unsure` names any record, or the vault
+ *  registry, that exists but cannot be read: then which worktrees children hold is unknown. */
+export function readSuperRecords(ownContextRoot: string, home: string = homedir()): {
+  records: Array<{ vault: string; state: RawState; own: boolean }>; warnings: string[]; unsure?: string;
+} {
   const roots = new Map<string, string>([[resolve(ownContextRoot), 'this vault']]);
+  const warnings: string[] = [];
+  let unsure: string | undefined;
+  const doubt = (why: string) => { warnings.push(why); unsure ??= `${why}, so nothing is removed`; };
+  try {
+    const raw = JSON.parse(readFileSync(vaultsFilePath(home), 'utf-8')) as { vaults?: unknown };
+    if (!Array.isArray(raw?.vaults)) doubt('the vault registry (vaults.json) has no vault list');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') doubt('the vault registry (vaults.json) cannot be read');
+  }
   for (const v of listVaults(home)) roots.set(resolve(v.path, '_dream_context'), v.name);
   const records: Array<{ vault: string; state: RawState; own: boolean }> = [];
-  const warnings: string[] = [];
   for (const [root, vault] of roots) {
     let raw: string;
-    try { raw = readFileSync(join(root, 'state', '.super-agent.json'), 'utf-8'); } catch { continue; }
+    try { raw = readFileSync(join(root, 'state', '.super-agent.json'), 'utf-8'); } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') doubt(`${vault}: its Super Agent record cannot be read`);
+      continue;
+    }
     try { records.push({ vault, state: JSON.parse(raw) as RawState, own: root === resolve(ownContextRoot) }); }
-    catch { warnings.push(`${vault}: its Super Agent record does not parse, so its children's worktrees are not known`); }
+    catch { doubt(`${vault}: its Super Agent record does not parse`); }
   }
-  return { records, warnings };
+  return { records, warnings, unsure };
 }
 
-export async function machineGuards(root: string, ownContextRoot: string, home: string = homedir(), extraHeld: ReadonlyMap<string, string> = new Map()): Promise<{ guards: SweepGuards; warnings: string[] }> {
-  const [uses, cliTargets] = await Promise.all([runningUses(root), globalCliTargets(home)]);
-  const { records, warnings } = readSuperRecords(ownContextRoot, home);
-  const { held, ended } = childHolds(records);
-  for (const [w, why] of extraHeld) { held.set(w, why); ended.delete(w); }
+/** Everything the sweep must not touch, read from the machine. `root` comes back in its REAL
+ *  spelling (lsof reports real paths): plan with that one. */
+export async function machineGuards(root: string, ownContextRoot: string, home: string = homedir(), extraHeld: ReadonlyMap<string, string> = new Map()): Promise<{ guards: SweepGuards; warnings: string[]; root: string }> {
+  const realRoot = await fsp.realpath(root).catch(() => root);
+  const [uses, cliTargets] = await Promise.all([runningUses(root, realRoot), globalCliTargets(home)]);
+  const { records, warnings, unsure } = readSuperRecords(ownContextRoot, home);
+  const { held: rawHeld, ended: rawEnded } = childHolds(records);
+  for (const [w, why] of extraHeld) { rawHeld.set(w, why); rawEnded.delete(w); }
+  // A record names a tree in the spelling it was made with; the plan's paths are real ones.
+  const realKey = (w: string) => (dirname(w) === root || dirname(w) === realRoot ? join(realRoot, basename(w)) : w);
+  const held = new Map([...rawHeld].map(([w, why]) => [realKey(w), why] as const));
+  const ended = new Map([...rawEnded].map(([w, e]) => [realKey(w), e] as const));
   if (uses.inUse === null) warnings.push('lsof/ps failed: every worktree is kept');
-  return { guards: { inUse: uses.inUse, commands: uses.commands, cliTargets, held, ended }, warnings };
+  return { guards: { inUse: uses.inUse, commands: uses.commands, cliTargets, held, ended, ...(unsure ? { unsure } : {}) }, warnings, root: realRoot };
 }
 
 // ─── The plan ───────────────────────────────────────────────────────────────────

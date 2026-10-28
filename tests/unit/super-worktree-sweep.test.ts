@@ -5,12 +5,12 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   BUILD_IDLE_MS, RELEASE_IDLE_MS, STALE_IDLE_MS, applySweep, childHolds, classify, globalCliTargets, inspectWorktree,
-  nodeModulesDirs, planSweep, renderPlan, type SweepGuards, type WorktreeFacts,
+  listingComplete, machineGuards, nodeModulesDirs, planSweep, readSuperRecords, renderPlan, type SweepGuards, type WorktreeFacts,
 } from '../../src/lib/super/worktree-sweep.js';
 
 const NOW = 1_800_000_000_000;
@@ -37,6 +37,7 @@ describe('classify', () => {
     ['a main checkout', facts('a', { shape: 'main-checkout' }), guards(), 'main-checkout'],
     ['no .git', facts('a', { shape: 'not-a-worktree' }), guards(), 'not-a-worktree'],
     ['admin dir gone', facts('a', { shape: 'broken' }), guards(), 'unreadable'],
+    ['a child record it could not read', facts('a'), guards({ unsure: 'other: its Super Agent record does not parse' }), 'unreadable'],
   ] as const)('keeps a worktree with %s', (_label, f, g, reason) => {
     const v = classify(f, g, NOW);
     expect(v).toMatchObject({ action: 'keep', reason });
@@ -60,6 +61,56 @@ describe('classify', () => {
     expect(classify(facts('app-super-pano', { lastActive: at(RELEASE_IDLE_MS) }), guards(), NOW)).toMatchObject({ action: 'keep', reason: 'recent' });
     expect(classify(facts('app-super-pano', { lastActive: at(STALE_IDLE_MS), merged: false }), guards(), NOW)).toMatchObject({ action: 'remove', category: 'stale-worktree' });
     expect(classify(facts('app-super-pano', { lastActive: at(BUILD_IDLE_MS), heavy: [`${W}/app-super-pano/node_modules`] }), guards(), NOW)).toMatchObject({ action: 'strip' });
+  });
+});
+
+describe('listingComplete', () => {
+  it.each([
+    ['a clean exit', 'ps', null, 'x', true],
+    ['lsof exit 1 with output', 'lsof', { code: 1 }, 'n/x', true],
+    ['lsof exit 1 without output', 'lsof', { code: 1 }, '', false],
+    ['a timeout (killed)', 'lsof', { code: null, killed: true, signal: 'SIGTERM' }, 'n/x', false],
+    ['a full buffer', 'lsof', { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' }, 'n/x', false],
+    ['ps failing', 'ps', { code: 1 }, 'x', false],
+  ] as const)('%s: %s', (_label, cmd, err, out, want) => {
+    expect(listingComplete(cmd, err, out)).toBe(want);
+  });
+});
+
+describe('reading child records fails toward keeping', () => {
+  let home: string;
+  beforeEach(() => { home = mkdtempSync(join(tmpdir(), 'super-sweep-rec-')); mkdirSync(join(home, '.dreamcontext')); });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+  const vault = (name: string, record?: string) => {
+    const p = join(home, name);
+    mkdirSync(join(p, '_dream_context', 'state'), { recursive: true });
+    if (record !== undefined) writeFileSync(join(p, '_dream_context', 'state', '.super-agent.json'), record);
+    return p;
+  };
+
+  it('a missing record or registry is fine; one that does not parse makes the sweep unsure', () => {
+    const own = join(vault('own'), '_dream_context');
+    expect(readSuperRecords(own, home).unsure).toBeUndefined();
+    const other = vault('other', '{"children": {"a": {"worktree": "/w/a"}}}');
+    writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: 'other', path: other }] }));
+    const ok = readSuperRecords(own, home);
+    expect(ok.unsure).toBeUndefined();
+    expect(ok.records.map((r) => r.vault)).toContain('other');
+    writeFileSync(join(other, '_dream_context', 'state', '.super-agent.json'), '{ broken');
+    expect(readSuperRecords(own, home).unsure).toContain('other');
+    writeFileSync(join(home, '.dreamcontext', 'vaults.json'), '{ broken');
+    expect(readSuperRecords(own, home).unsure).toContain('vaults.json');
+  });
+
+  it('plans in the root\'s real spelling and keys a record\'s worktree by it', async () => {
+    const real = join(home, 'disk', 'wts');
+    mkdirSync(join(real, 'app-super-a'), { recursive: true });
+    const link = join(home, '.claude-worktrees');
+    symlinkSync(real, link);
+    const own = join(vault('own', JSON.stringify({ children: { kid: { worktree: join(link, 'app-super-a') } } })), '_dream_context');
+    const { root, guards: g } = await machineGuards(link, own, home);
+    expect(root).toBe(realpathSync(real));
+    expect(g.held.has(join(realpathSync(real), 'app-super-a'))).toBe(true);
   });
 });
 
