@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import {
   CONTEXT_TIGHT_PCT,
   contextBands,
-  effortAt, effortIndex, effortLabel, fmtCost, fmtTokens, modelNoteFor, splitModels,
+  effortAt, effortIndex, effortLabel, fmtClock, fmtCost, fmtResetIn, fmtTokens, modelNoteFor, splitModels,
   type ModelConfig, type ModelOption, type UsageLimit,
 } from '../../../lib/agentComposer';
 import { CHAT_MODE_ROWS, type ChatMode } from '../../../lib/chatModes';
@@ -426,22 +426,6 @@ export function ModelMenu({
 }
 
 // ── Usage ────────────────────────────────────────────────────────────────────────────
-
-/** "2h 40m" / "12m" — how long this cap's window has left. Coarse on purpose: the reading it
- *  labels is itself a cached percentage, so minute precision would imply an accuracy the
- *  number does not have. */
-function fmtResetIn(resetsAt: number, now: number): string {
-  const mins = Math.max(0, Math.round((resetsAt - now) / 60_000));
-  if (mins < 60) return `${mins}m`;
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return m === 0 ? `${h}h` : `${h}h ${m}m`;
-}
-
-/** Local time, for the "as of" caption on a stale account reading. */
-function fmtClock(ms: number): string {
-  return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-}
 
 /** One connected account, as the picker draws it. */
 export interface AccountOption {

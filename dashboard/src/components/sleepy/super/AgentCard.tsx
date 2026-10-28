@@ -6,6 +6,8 @@ import type { SessionStatusInfo, SessionStatusKind } from '../agentStatus';
 import type { ChatSession } from '../chatSession';
 import { useSpinSlot } from './spinSlots';
 import { useLiveSession } from './liveSession';
+import { AccountLimitRing } from '../chat/UsageRings';
+import { chatAccountOf } from '../../../lib/agentComposer';
 import { backgroundOf, doingOf, elapsedLabel, lastLineOf, lastLinesOf, modelChip, toneOfStatus, type DoingLine } from './superHandover';
 
 /** What a child's card says it waits on the owner for: a question it asks (`ask`), or something
@@ -21,7 +23,7 @@ const asksKey = (a: AsksOwner) => (a === 'owner' ? 'super.card.needsYou' : 'supe
  * title and the line sit at the top, the state at the foot, so a quiet card still reads whole.
  *
  * Everything comes from the child's LIVE `ChatSession` in this window: 0 network requests per
- * card. The card frame (SuperContainer) re-renders it at most once a frame on a token; the
+ * card (the rate-limit ring rides the per-account usage poll the composers already share). The card frame (SuperContainer) re-renders it at most once a frame on a token; the
  * elapsed label ticks on a slow clock that follows `pollMs`.
  */
 export function AgentCard({ session, child, title, asksOwner, status, tall }: {
@@ -55,6 +57,7 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
       <div className="super-card-top">
         <span className="super-card-dot" data-kind={status.kind} aria-hidden />
         <span className="super-card-brief" title={title}>{title}</span>
+        <AccountLimitRing accountId={chatAccountOf(session)} />
       </div>
       <div className="super-card-line" data-testid="super-card-doing">{line || t(`super.card.state.${status.kind}`)}</div>
       {lines.length > 0 && (
@@ -85,9 +88,10 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
 
 /**
  * A child chat as a floating TILE (owner decision 2026-10-20, direction "Cam HUD"): a 1:1 glass
- * tile with its status ring and kind, the title (two lines), what it is doing (two lines) and, at
- * the foot, its state, how long, and a chip while something runs in the background. The corner
- * brackets light while it works or asks. Same live reads as the card above: 0 requests.
+ * tile with its account's rate-limit ring and model, the title (two lines), what it is doing (two lines) and, at
+ * the foot, its state (dot + word), how long, and a chip while something runs in the background.
+ * The corner brackets light while it works or asks. Same live reads as the card above; the ring
+ * shares the composer's per-account usage poll, so a tile adds no request of its own.
  */
 export function ChatTile({ session, child, title, asksOwner, status }: {
   session: ChatSession | undefined;
@@ -122,7 +126,10 @@ export function ChatTile({ session, child, title, asksOwner, status }: {
       <span className="super-tile-corners" aria-hidden />
       {working && <span className="super-tile-spin" data-spin={spin ? 'on' : 'closed'} data-testid="super-tile-spin" aria-hidden />}
       <div className="super-tile-top">
-        <StatusRing kind={status.kind} />
+        {/* The REAL rate limit of the account this chat runs on (owner 2026-10-28), drawn like
+            the composer's ring. The chat's state, which this ring used to draw, is the dot and
+            the toned state word at the foot. */}
+        <AccountLimitRing accountId={chatAccountOf(session)} />
         {chip
           ? <span className="super-tile-model" data-testid="super-card-model" title={session?.model || undefined}>{chip}</span>
           : <span className="super-tile-kind">{t('super.tile.kind.chat')}</span>}
@@ -130,6 +137,7 @@ export function ChatTile({ session, child, title, asksOwner, status }: {
       <div className="super-tile-title">{title}</div>
       <div className="super-tile-line" data-testid="super-card-doing">{line || state}</div>
       <div className="super-tile-foot">
+        <span className="super-card-dot" data-kind={status.kind} data-testid="super-tile-status" aria-hidden />
         {/* What the owner must answer takes the state word's place: the same word, once. */}
         {asksOwner ? <span className="super-tile-asks" data-asks={asksOwner} data-testid="super-tile-asks">{t(asksKey(asksOwner))}</span> : <span className="super-tile-state">{state}</span>}
         {since ? <span>· {elapsedLabel(Date.now() - since)}</span> : null}
@@ -183,6 +191,8 @@ export function cardKeyOf(session: ChatSession | undefined, tall: boolean): stri
     doing ? `${doing.verb}\u0001${doing.subject}` : lastLineOf(model.items),
     tall ? lastLinesOf(model.items, 4).join('\u0001') : '',
     bg.shells, bg.agents, session?.busy ? model.turnStartedAt ?? 0 : 0, session?.model ?? '', session?.effort ?? '',
+    // The rate-limit ring follows the account: a move to another account redraws at once.
+    model.activeAccountId ?? '',
   ].join('\u0002');
 }
 
