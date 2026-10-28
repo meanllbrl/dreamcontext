@@ -29,7 +29,7 @@ import {
 import { ownerQuestionReach } from '../../lib/super/owner-question.js';
 import { freshInFlight, isSuperEventTurn, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
-import { padJobOver, padStale } from '../../lib/super/pad.js';
+import { padJobOver, padRolledOff, padStale } from '../../lib/super/pad.js';
 import { childDefaultEffort } from '../../lib/model-facts.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
@@ -840,8 +840,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // `teamLive` is the owner window's (member text, unfenced): the agent reads each team job's
     // status and last line from `team` below, fenced (D10).
     const { teamLive: _ownerOnly, ...view } = superStateView(root, settled);
-    // A Now line no job keeps true, unchanged for PAD_STALE_MS (pad.ts): keep it or close it.
-    const pad = (view.pad ?? []).map((p) => (padStale(p, now) ? { ...p, stale: true, staleMin: Math.floor((now - p.at) / 60_000) } : p));
+    // A line no job keeps true, unchanged for PAD_STALE_MS (pad.ts): keep it or close it. An
+    // earlier day's Done line is gone even before the next write drops it.
+    const pad = (view.pad ?? []).filter((p) => !padRolledOff(p, now)).map((p) => (padStale(p, now) ? { ...p, stale: true, staleMin: Math.floor((now - p.at) / 60_000) } : p));
     const stalePad = pad.filter((p) => 'stale' in p).map((p) => p.id);
     ok(res, {
       ...view, children, ...(view.pad ? { pad } : {}),

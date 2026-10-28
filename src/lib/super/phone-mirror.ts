@@ -314,7 +314,7 @@ export const DIGEST_MAX_NAME = 80;
 
 /** The slice of the super record a digest reads (`SuperState` satisfies it). */
 export interface SuperDigestSource {
-  pad?: ReadonlyArray<{ id: string; section: string; text: string; at: number }>;
+  pad?: ReadonlyArray<{ id: string; section: string; text: string; at: number; for?: string; by?: 'auto' | 'owner' }>;
   queue: ReadonlyArray<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string; direct?: true }>;
   ownerBatches: readonly string[];
   containers: ReadonlyArray<{ kind: string; ref: string; title?: string }>;
@@ -329,7 +329,9 @@ export interface SuperDigestSource {
  * child's brief), never the chat registry's title (the prompt's first 80 characters).
  */
 export interface SuperDigest {
-  pad: Array<{ id: string; section: string; text: string; at: number }>;
+  /** `for` and `by` ride along so the phone's card rolls a day over and flags a stale line the
+   *  way the desktop does (pad.ts: the owner's own move stays, a linked line is not stale). */
+  pad: Array<{ id: string; section: string; text: string; at: number; for?: string; by?: 'auto' | 'owner' }>;
   /** What waits on the owner (`needsOwner`) and the questions queued behind an open one. `text`
    *  is the item's `ownerText` (an `owner` item's is the child's card: untrusted plain text),
    *  '' on a permission. */
@@ -356,7 +358,11 @@ function fnv(s: string): string {
 /** The digest of `state`. Pure. */
 export function superDigest(state: SuperDigestSource): SuperDigest {
   const pad = (state.pad ?? []).slice(-DIGEST_MAX_PAD)
-    .map((p) => ({ id: digestText(p.id, 12), section: p.section, text: digestText(p.text, DIGEST_MAX_PAD_TEXT), at: p.at }))
+    .map((p) => ({
+      id: digestText(p.id, 12), section: p.section, text: digestText(p.text, DIGEST_MAX_PAD_TEXT), at: p.at,
+      ...(typeof p.for === 'string' && p.for ? { for: digestText(p.for, 80) } : {}),
+      ...(p.by === 'auto' || p.by === 'owner' ? { by: p.by } : {}),
+    }))
     .filter((p) => p.id && p.text);
   const owes = (q: SuperDigestSource['queue'][number]) => q.state !== 'done'
     && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && (q.state === 'pending' || q.direct === true)));

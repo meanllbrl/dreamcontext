@@ -77,14 +77,31 @@ describe('the phone agenda is the desktop notepad', () => {
   it('from one record: the same three sections, the same rows, in the same order as the stage', () => {
     const rec = record();
     const { state, look } = digestToNotepadInput(wire(rec), 'Claude');
-    const phone = superNotepad(state, look);
+    const phone = superNotepad(state, look, 100);
     // The stage's look names a job by its card title too (SuperSurface titleFor).
-    const desk = superNotepad(rec as never, { live: () => null, titleFor: (c) => rec.containers.find((k) => k.ref === c)?.title ?? rec.children[c]?.brief ?? c, superTitle: 'Claude' });
+    const desk = superNotepad(rec as never, { live: () => null, titleFor: (c) => rec.containers.find((k) => k.ref === c)?.title ?? rec.children[c]?.brief ?? c, superTitle: 'Claude' }, 100);
     expect(phone).toEqual(desk);
     expect(phone.waiting.map((r) => r.key)).toEqual(['q:q-p', 'q:q-e', 'q:q-a', 'q:q-o', 'q:q-w', 'n:n3']);
     expect(phone.waiting.find((r) => r.item === 'q-e')!.text).toBe('Pricing card');
     expect(phone.now.map((r) => r.note)).toEqual(['n1', 'n5']);
     expect(phone.done.map((r) => r.note)).toEqual(['n4', 'n2']);
+  });
+
+  it('a new day reads the same on the phone: the owner\'s own Done stays, a linked Waiting line is not stale', () => {
+    const TODAY = new Date(2026, 9, 28, 10, 0).getTime();
+    const YESTERDAY = new Date(2026, 9, 27, 15, 0).getTime();
+    const rec = record({ pad: [
+      { id: 'n1', section: 'done', text: 'Moved by him', at: YESTERDAY, by: 'owner' },
+      { id: 'n2', section: 'done', text: 'Closed by itself', at: YESTERDAY, for: 'c1', by: 'auto', why: 'done' },
+      { id: 'n3', section: 'waiting', text: 'Linked wait', at: YESTERDAY, for: 'c1' },
+      { id: 'n4', section: 'waiting', text: 'Plain wait', at: YESTERDAY },
+    ] } as Partial<SuperState>);
+    const { state, look } = digestToNotepadInput(wire(rec), 'Claude');
+    const phone = superNotepad(state, look, TODAY);
+    const desk = superNotepad(rec as never, { live: () => null, titleFor: (c) => rec.containers.find((k) => k.ref === c)?.title ?? rec.children[c]?.brief ?? c, superTitle: 'Claude' }, TODAY);
+    expect(phone).toEqual(desk);
+    expect(phone.done.map((r) => r.note)).toEqual(['n1']);
+    expect(phone.waiting.filter((r) => r.note).map((r) => [r.note, !!r.stale])).toEqual([['n3', false], ['n4', true]]);
   });
 
   it('the strip counts what the sheet holds; an empty agenda says so; no digest, no strip', () => {

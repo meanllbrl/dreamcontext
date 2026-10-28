@@ -41,7 +41,7 @@ describe('superBriefing', () => {
     // The job list is gone: the agenda card is the super's notepad (owner 2026-10-22 19:15).
     expect(brief).not.toContain('row in the job list');
     expect(brief).toContain('## The agenda (your notepad)');
-    for (const verb of ['super note add now', 'add waiting', 'super note done <id>', 'drop <id>', 'super note\n  clear']) expect(brief).toContain(verb);
+    for (const verb of ['super note add now', 'add waiting', 'super note done <id>', 'drop <id>', 'super note clear']) expect(brief).toContain(verb);
     expect(brief).toContain('never a list of children');
     expect(brief).toContain('dreamcontext super brief <child> "<line>"');
     expect(brief).toContain('super pool add');
@@ -176,10 +176,12 @@ describe('superBriefing', () => {
   // The owner, 2026-10-27: a child's question reaches him at once; one marked `shown=owner` is
   // already on his bar, so the Super leaves one it cannot settle (measured +73 characters).
   const SHOWN_OWNER_2026_10_27 = 80;
+  // The agenda stays current (owner 2026-10-28): a past day's Done goes by itself, dates not "today", close lines on a recap/handover (measured +49).
+  const AGENDA_CURRENT_2026_10_28 = 50;
   it('stays short: within 15 % of the plan-r7 briefing (2529 characters) plus the 2026-10-21 rules, lifecycle, jarvis sections and AI Team line, with or without a guide', () => {
     for (const b of [brief, superBriefing('/Users/someone/projects/acme/_dream_context/knowledge/orchestration-guide.md')]) {
       expect(b.length).toBeGreaterThanOrEqual(Math.floor(2529 * 0.85));
-      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22 + SUPER_HANDOFF_FILE_2026_10_22 + ASK_AS_ANY_AGENT_2026_10_22 + AWAITED_EVERY_RESULT_2026_10_22 + IMAGE_GROUP_2026_10_22 + CARD_NAMES_TIDY_2026_10_22 + AGENDA_NOTEPAD_2026_10_22 + OWNER_WAIT_EVENT_2026_10_22 + CARD_NOT_OPENED_2026_10_23 + LIVE_CARD_FLOATS_2026_10_23 + PRESENT_LAYOUTS_2026_10_23 + PICTURE_JOB_2026_10_23 + AGENDA_ABOUT_2026_10_23 + REPLY_LINKS_2026_10_23 + REPLY_SECTIONS_2026_10_24 + ASK_IN_CARD_2026_10_24 + EFFORT_POLICY_2026_10_24 + MULTI_REF_2026_10_24 + HEAT_STEPS_2026_10_24 + PAGE_CONTEXT_2026_10_25 + PDF_VIDEO_2026_10_25 + MERGE_SLACK_2026_10_25 + MERGE_SLACK_2026_10_27 + SHOWN_OWNER_2026_10_27);
+      expect(b.length).toBeLessThanOrEqual(Math.ceil(2529 * 1.15) + OWNER_RULES_2026_10_21 + CHILD_LIFECYCLE_2026_10_21 + JARVIS_SHOW_VOICE_2026_10_21 + AI_TEAM_2026_10_21 + OWNER_QUESTION_2026_10_21 + AWAITED_EVENT_2026_10_21 + CHILD_EFFORT_2026_10_22 + CARD_SIZES_2026_10_22 + SUPER_HANDOFF_FILE_2026_10_22 + ASK_AS_ANY_AGENT_2026_10_22 + AWAITED_EVERY_RESULT_2026_10_22 + IMAGE_GROUP_2026_10_22 + CARD_NAMES_TIDY_2026_10_22 + AGENDA_NOTEPAD_2026_10_22 + OWNER_WAIT_EVENT_2026_10_22 + CARD_NOT_OPENED_2026_10_23 + LIVE_CARD_FLOATS_2026_10_23 + PRESENT_LAYOUTS_2026_10_23 + PICTURE_JOB_2026_10_23 + AGENDA_ABOUT_2026_10_23 + REPLY_LINKS_2026_10_23 + REPLY_SECTIONS_2026_10_24 + ASK_IN_CARD_2026_10_24 + EFFORT_POLICY_2026_10_24 + MULTI_REF_2026_10_24 + HEAT_STEPS_2026_10_24 + PAGE_CONTEXT_2026_10_25 + PDF_VIDEO_2026_10_25 + MERGE_SLACK_2026_10_25 + MERGE_SLACK_2026_10_27 + SHOWN_OWNER_2026_10_27 + AGENDA_CURRENT_2026_10_28);
       expect(b).toContain('small|medium|large|wide');
       expect(b).toContain('409 owner_sized');
       expect(b).toContain('`card: "not_opened"` (delegate, resume, adopt) or a `no-card` warning');

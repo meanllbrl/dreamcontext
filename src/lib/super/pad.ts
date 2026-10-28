@@ -7,8 +7,11 @@
  *   server's to move: Done once the job is done, ended or gone (`by: 'auto'`, `why`), back to
  *   Now when the job works again. A line the owner moved by hand (`by: 'owner'`) is never moved
  *   by the server again; a line the super moved itself (`note done`) is its own.
- * - A Now line with NO job behind it that has not changed for PAD_STALE_MS is stale: `super
- *   state` flags it and the next event batch asks the super to keep it or close it.
+ * - A Now line with NO job behind it that has not changed for PAD_STALE_MS is stale, and so is
+ *   such a Waiting line left from an earlier day: `super state` flags it and the next event
+ *   batch (or recap / handover turn) asks the super to keep it or close it.
+ * - A new day: a Done line from before today drops off by itself (owner 2026-10-28: yesterday's
+ *   results still sat on the card as today's). A line the owner moved by hand stays.
  *
  * Every auto move and every stale line is told to the super once, in the next event batch
  * (`padNotice`), so it can reverse a wrong move (`note keep` / `note add`); the owner sees the
@@ -28,23 +31,41 @@ export function padJobOver(s: Pick<SuperState, 'children'>, sid: string): PadAut
   return null;
 }
 
-/** A Now line nobody has touched for PAD_STALE_MS and no job keeps true: one with no job, or
- *  one the owner put back by hand (the server no longer moves it, so only this flag can). */
+/** The start of `now`'s day, local time (the owner's day, on his machine). */
+export function padDayStart(now: number): number {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/** A line nobody has touched for PAD_STALE_MS and no job keeps true (one with no job, or one the
+ *  owner put back by hand: the server no longer moves it, so only this flag can): a Now line, or
+ *  a Waiting line left from an earlier day (what he was to do yesterday has often been done). */
 export function padStale(p: SuperPadItem, now: number): boolean {
-  return p.section === 'now' && (!p.for || p.by === 'owner') && now - p.at >= PAD_STALE_MS;
+  if (p.for && p.by !== 'owner') return false;
+  if (now - p.at < PAD_STALE_MS) return false;
+  return p.section === 'now' || (p.section === 'waiting' && p.at < padDayStart(now));
+}
+
+/** A Done line from an earlier day that the server drops: its day is over. The owner's own move stays. */
+export function padRolledOff(p: SuperPadItem, now: number): boolean {
+  return p.section === 'done' && p.by !== 'owner' && p.at < padDayStart(now);
 }
 
 /** The job is plainly running again: a row that is only cleared for a moment (a gone child
  *  starting again) is not, so a closed line never flips back and forth. */
 const WORKS = new Set(['working', 'asking', 'waiting', 'stuck']);
 
-/** Move linked lines with their jobs. Mutates `s`; true when the pad changed. */
+/** Move linked lines with their jobs and drop an earlier day's Done lines. Mutates `s`; true
+ *  when the pad changed. */
 export function settlePad(s: SuperState, now = Date.now()): boolean {
   const pad = s.pad;
   if (!pad?.length) return false;
   const stay: SuperPadItem[] = [];
   const moved: SuperPadItem[] = [];
+  let dropped = false;
   for (const p of pad) {
+    if (padRolledOff(p, now)) { dropped = true; continue; }
     if (!p.for || p.by === 'owner') { stay.push(p); continue; }
     const over = padJobOver(s, p.for);
     if (p.section === 'now' && over) {
@@ -59,7 +80,7 @@ export function settlePad(s: SuperState, now = Date.now()): boolean {
       stay.push(p);
     }
   }
-  if (!moved.length) return false;
+  if (!moved.length && !dropped) return false;
   s.pad = [...stay, ...moved];
   return true;
 }
@@ -75,7 +96,7 @@ export function padNotice(s: Pick<SuperState, 'pad'>, now = Date.now()): { lines
       lines.push(`- note=${p.id} moved Now -> Done by itself: its job (child=${p.for}) is ${p.why}. Line: "${p.text}"`);
       ids.push(p.id);
     } else if (padStale(p, now) && !(p.toldAt !== undefined && now - p.toldAt < PAD_STALE_MS)) {
-      lines.push(`- note=${p.id} has stood in Now unchanged for ${Math.floor((now - p.at) / 60_000)} min and nothing moves it by itself. Line: "${p.text}"`);
+      lines.push(`- note=${p.id} has stood in ${p.section === 'now' ? 'Now' : 'Waiting'} unchanged for ${Math.floor((now - p.at) / 60_000)} min and nothing moves it by itself. Line: "${p.text}"`);
       ids.push(p.id);
     }
   }
@@ -84,7 +105,7 @@ export function padNotice(s: Pick<SuperState, 'pad'>, now = Date.now()): { lines
     lines: [
       '[agenda] The owner reads these lines on his agenda card:',
       ...lines,
-      'For each: a line moved to Done whose work really goes on → `dreamcontext super note drop <id>`, then write it again without a job, `super note add now "<line>"`; a stale line that still holds → `dreamcontext super note keep <id>`; one that is over → `super note done <id>` (or `drop <id>`). No text to the owner for this.',
+      'For each: a line moved to Done whose work really goes on → `dreamcontext super note drop <id>`, then write it again without a job, `super note add now "<line>"`; a stale line that still holds → `dreamcontext super note keep <id>` (a line that says "today" or "tomorrow" from an earlier day: drop it and write it again with the day or date); one that is over or that he did → `super note done <id>` (or `drop <id>`). No text to the owner for this.',
     ],
     ids,
   };
