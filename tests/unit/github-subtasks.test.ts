@@ -255,6 +255,48 @@ describe('github sub-tasks', () => {
     expect(mirror('child-step').data.parent_task ?? null).toBeNull();
   });
 
+  it('a parent in ANOTHER repo is never read as this repo\'s issue with the same number', async () => {
+    await backend.create({ name: 'Unrelated', variant: 'cli' });
+    await backend.sync('push');
+    await backend.sync('pull');
+    expect(numberOf('unrelated')).toBe(1);
+
+    const made = fake.seedIssue({ title: 'Cross Repo Child' });
+    fake.editIssue(made.number, {
+      parent_issue_url: 'https://api.github.com/repos/example-org/other-repo/issues/1',
+    } as never);
+    const report = await backend.sync('pull');
+    expect(report.errors).toEqual([]);
+    expect(mirror('cross-repo-child').data.parent_task ?? null).toBeNull();
+  });
+
+  it('a link made through the fallback list survives a pull that sees "no parent" on the child', async () => {
+    fake.subIssuesUnavailable = true;
+    await makeParentAndChild();
+    await backend.sync('push');
+    await backend.sync('pull');
+
+    // The child alone changes remotely; GitHub's own field says no parent.
+    fake.editIssue(numberOf('child-step'), { title: 'Child Step', parent_issue_url: null } as never);
+    const report = await backend.sync('pull');
+    expect(report.errors).toEqual([]);
+    expect(mirror('child-step').data.parent_task).toBe('parent-job');
+  });
+
+  it('a local unlink is still pushed when the same issue changed on GitHub first', async () => {
+    await makeParentAndChild();
+    await backend.sync('push');
+    await backend.sync('pull');
+    const child = numberOf('child-step');
+
+    await backend.updateFields('child-step', { parent_task: null, updated_at: '2026-10-28' });
+    fake.editIssue(child, { title: 'Child Step' });
+    const report = await backend.sync('both');
+    expect(report.errors).toEqual([]);
+    expect(mirror('child-step').data.parent_task ?? null).toBeNull();
+    expect(fake.parentOf.has(child)).toBe(false);
+  });
+
   it('fallback: without the sub-issues API the parent body lists the sub-task, and the pull reads it back', async () => {
     fake.subIssuesUnavailable = true;
     await makeParentAndChild();

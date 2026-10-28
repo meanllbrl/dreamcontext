@@ -61,6 +61,10 @@ export interface GitHubIssue {
   parent_issue_url?: string | null;
   /** Sub-issue counts; `total > 0` marks a parent worth listing. */
   sub_issues_summary?: { total?: number } | null;
+  /** API URL of the issue's repo — a sub-issue may live in ANOTHER repo of the owner. */
+  repository_url?: string | null;
+  /** API URL of the issue itself (`…/repos/:o/:r/issues/:n`). */
+  url?: string | null;
 }
 
 /** GitHub issue comment — one changelog entry rides as one comment. */
@@ -530,6 +534,18 @@ export function stripSubtasksBlock(body: string | null | undefined): string {
 export function issueNumberFromUrl(url: string | null | undefined): number | null {
   const m = typeof url === 'string' ? /\/issues\/(\d+)\/?$/.exec(url) : null;
   return m ? Number(m[1]) : null;
+}
+
+/**
+ * Is this API URL (an issue URL or a `repository_url`) in `owner/repo`? Sub-issues
+ * can cross repos of one owner, and an issue NUMBER means nothing outside its
+ * repo. A URL that names no repo is taken as this one (fakes, old payloads).
+ */
+export function urlInRepo(url: string | null | undefined, owner: string, repo: string): boolean {
+  if (typeof url !== 'string') return true;
+  const m = /\/repos\/([^/]+)\/([^/]+)(?:\/|$)/.exec(url);
+  if (!m) return true;
+  return m[1].toLowerCase() === owner.toLowerCase() && m[2].toLowerCase() === repo.toLowerCase();
 }
 
 /**

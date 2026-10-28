@@ -49,6 +49,12 @@ export interface TaskSyncEntry {
    * never turns into a request loop. Cleared (null) once a link lands.
    */
   remote_parent_refused?: string | null;
+  /**
+   * True while `remote_parent` rides only in the parent's fallback task list (the
+   * sub-issues API was unavailable): the remote's own "no parent" then says
+   * nothing about this link, and a pull must not read it as an unlink.
+   */
+  remote_parent_via_list?: boolean;
 }
 
 export interface SyncStateFile {
