@@ -24,7 +24,7 @@ import { DEFAULT_PUSH_TO_TALK } from '../../../lib/voice/hotkeyDefaults';
 
 import { useVault } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
-import { uploadAgentFile } from '../../../lib/agentDrop';
+import { copyPickedPicture, uploadAgentFile } from '../../../lib/agentDrop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { PHONE_PHOTOS_PER_MESSAGE, jpegName, photoUploadSignal, preparePhonePhotoQueued, withPhotoUploadSlot } from '../../../lib/phonePhoto';
 import { PHONE_FILE_UPLOAD_TIMEOUT_MS, formatFileSize, splitPhonePicks } from '../../../lib/phoneAttach';
@@ -36,7 +36,7 @@ import {
   mentionQueryAt, filterPeerMentions, applyPeerMention, addressedPeer,
   type PeerMention,
 } from '../../../lib/agentComposer';
-import { peerLogoUrl } from '../../../api/client';
+import { agentFileUrl, peerLogoUrl } from '../../../api/client';
 import { usePeerMentions } from '../../../hooks/usePeerMentions';
 import { chatModeRow, DEFAULT_CHAT_MODE, type ChatMode } from '../../../lib/chatModes';
 import { patchAgentSettings } from '../../../lib/agentSettings';
@@ -51,7 +51,7 @@ import {
 } from './chatEntities';
 import {
   addAttachments, composeOutgoing, countsAsContent, dropRefs, dropSentAttachments, markInserted, nextAttachmentId, pendingUploads,
-  readScratch, removeAttachment, repend, restoreRefs, setAttachmentPreview, settleAttachment, stageRefs, stageUpload, subscribeScratch, trackUpload, type Attachment,
+  readScratch, removeAttachment, repend, stagePicked, restoreRefs, setAttachmentPreview, settleAttachment, stageRefs, stageUpload, subscribeScratch, trackUpload, type Attachment,
 } from './composerScratch';
 import {
   GLYPH_IMAGE, deleteTokenAt, draftFromMessage, insertTakeAt, insertTokenAt, isTokenRef, parseRefTokens, reconcileRefs, refLabel, refToken,
@@ -101,8 +101,8 @@ import { REPLY_TO_RE } from '../../../lib/superTypes';
  * changes, so there is nothing to carry (see composerScratch.ts).
  *
  * ── Attachments (state 7) ───────────────────────────────────────────────────────────
- * Attachments (file/folder picks, pasted images) are held as SEPARATE "chips" above the
- * textarea rather than being merged into the draft text character-by-character — they're
+ * Attachments (file/folder picks) are held as SEPARATE "chips" above the textarea — a picture
+ * (pasted, dropped, picked with "Attach files…", the phone's) is instead a chip IN the text — rather than being merged into the draft text character-by-character — they're
  * folded into the outgoing message only at submit time. This is a deliberate departure from
  * the old composer's `insert()` (which spliced path text directly into the draft): the brief
  * asks for a distinct attachments row.
@@ -140,12 +140,6 @@ import { REPLY_TO_RE } from '../../../lib/superTypes';
  *             rules that keep it from eating a half-typed draft are pure and tested in
  *             chatEntities.ts (`canRecallHistory`, `stepHistory`).
  */
-
-function basenameOf(path: string): string {
-  const clean = path.replace(/\/+$/, '');
-  const i = clean.lastIndexOf('/');
-  return i === -1 ? clean : clean.slice(i + 1);
-}
 
 function truncateQuote(text: string): string {
   return text.length > 140 ? `${text.slice(0, 140)}…` : text;
@@ -1080,13 +1074,10 @@ export function Composer({
     const paths = kind === 'folders' ? await pickFolders() : await pickFiles();
     close();
     if (!paths.length) return;
-    const attKind: Attachment['kind'] = kind === 'folders' ? 'folder' : 'file';
-    addAttachments(convId, paths.map((p): Attachment => ({
-      id: nextAttachmentId(),
-      kind: attKind,
-      path: p,
-      name: basenameOf(p),
-    })));
+    // A picked picture is a chip in the text at the caret, the same as a pasted one; files and
+    // folders stay path chips in the row (owner 2026-10-28).
+    stagePicked(convId, paths, kind === 'folders' ? 'folder' : 'file',
+      (p) => copyPickedPicture(vault, p), (p) => agentFileUrl(vault, p, { raw: true }));
   };
 
   // Clipboard-paste image capture (drag/drop of real files is handled at the surface

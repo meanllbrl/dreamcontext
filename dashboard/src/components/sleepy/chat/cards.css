@@ -2317,3 +2317,26 @@ video.chat-msg-user-media-el { cursor: default; }
    text colour for a solid accent) and would be unreadable over this strip's own accent tint. */
 .chat-queue-btn.accent { border-color: var(--color-accent); color: var(--color-accent); }
 .chat-queue-btn.accent:hover { background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent)); color: var(--color-accent); }
+
+/* A sent message with picture chips (owner 2026-10-28): each picture where its chip stood, the
+   words written after it beside it. The `[Picture N: <path>]` line itself is never drawn. */
+.chat-msg-pics {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.chat-msg-pic-part {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.chat-msg-pic-words { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; }
+.chat-msg-pic-preamble { white-space: pre-wrap; }
+.chat-msg-user-media-el.chat-msg-pic-thumb {
+  flex: 0 0 auto;
+  width: 96px;
+  height: 96px;
+  max-width: 96px;
+  max-height: 96px;
+  border-radius: var(--radius-md);
+}

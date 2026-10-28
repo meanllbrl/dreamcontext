@@ -5,7 +5,7 @@ import { agentFileUrl, type ApiClient } from '../../../api/client';
 import { useApi, useVault } from '../../../context/VaultContext';
 import {
   useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateTokens,
-  inlineMediaKind, splitUserBoardRefs, splitUserMedia, revealPath,
+  inlineMediaKind, splitPictureParts, splitUserBoardRefs, splitUserMediaAndPictures, revealPath,
 } from './chatEntities';
 import { parseChatActions, type ChatAction, type ChatSegment } from './chatActions';
 import type { ReplyHead } from './replyLinks';
@@ -67,7 +67,7 @@ function grantFile(api: ApiClient, path: string): Promise<boolean> {
  * drop dir prunes after ~7 days) degrades to a named chip that still opens, never a broken
  * image icon.
  */
-function UserMediaItem({ path, onOpenFile }: { path: string; onOpenFile?: (path: string) => void }) {
+function UserMediaItem({ path, onOpenFile, inline }: { path: string; onOpenFile?: (path: string) => void; inline?: boolean }) {
   const { vault } = useVault();
   const api = useApi();
   const [failed, setFailed] = useState(false);
@@ -104,7 +104,7 @@ function UserMediaItem({ path, onOpenFile }: { path: string; onOpenFile?: (path:
   }
   return (
     <img
-      className="chat-msg-user-media-el"
+      className={inline ? 'chat-msg-user-media-el chat-msg-pic-thumb' : 'chat-msg-user-media-el'}
       src={agentFileUrl(vault, path, { raw: true })}
       alt={name}
       title={name}
@@ -139,7 +139,7 @@ function UserMessage({
     const multi = superView ? splitAboutParts(splitPageContext(item.text).text) : null;
     if (multi && multi.parts.length >= 2) {
       const board = splitUserBoardRefs(multi.preamble);
-      return { ...splitUserMedia(board.text), refs: board.refs, about: null, parts: multi.parts, page: splitPageContext(item.text).page };
+      return { ...splitUserMediaAndPictures(board.text), refs: board.refs, about: null, parts: multi.parts, page: splitPageContext(item.text).page };
     }
     // A message written about an agenda line, or replying to one message (owner 2026-10-23),
     // opens with its block: drawn as a strip above the bubble, the bubble keeps only his words.
@@ -147,7 +147,7 @@ function UserMessage({
     const paged = splitPageContext(item.text);
     const split = splitAbout(paged.text);
     const board = splitUserBoardRefs(split.text);
-    return { ...splitUserMedia(board.text), refs: board.refs, about: split.about, parts: null, page: paged.page };
+    return { ...splitUserMediaAndPictures(board.text), refs: board.refs, about: split.about, parts: null, page: paged.page };
   }, [item.text, superView]);
   return (
     <div className="chat-msg-user-row" data-item-id={item.id} tabIndex={-1}>
@@ -174,8 +174,10 @@ function UserMessage({
         </div>
       )}
       {parts
-        ? <PartsBubble preamble={text} parts={parts} itemId={item.id} superSid={superView && session ? session.claudeId : null} onReplyJump={onReplyJump} />
-        : text && <div className="chat-msg-user-bubble">{text}</div>}
+        ? <PartsBubble preamble={text} parts={parts} itemId={item.id} superSid={superView && session ? session.claudeId : null} onReplyJump={onReplyJump} onOpenFile={onOpenFile} />
+        : text && (splitPictureParts(text)
+          ? <div className="chat-msg-user-bubble chat-msg-user-bubble--pictures"><PictureWords text={text} onOpenFile={onOpenFile} /></div>
+          : <div className="chat-msg-user-bubble">{text}</div>)}
       {/* The one item whose position in the transcript runs ahead of the truth: a steered
           message appears the instant it goes on the wire, while the CLI only folds it in at
           its next tool boundary — so the tool calls rendered just below it were decided
@@ -210,23 +212,47 @@ function UserMessage({
 }
 
 /**
+ * His words with the pictures he put in them (owner 2026-10-28): each `[Picture N: <path>]` line
+ * is drawn as the picture, where its chip stood, with the words he wrote after it beside it. The
+ * marker never reaches the DOM; a click on a picture opens it large. Text without a picture line
+ * is returned as it is.
+ */
+function PictureWords({ text, onOpenFile }: { text: string; onOpenFile?: (path: string) => void }) {
+  const split = splitPictureParts(text);
+  if (!split) return <>{text}</>;
+  return (
+    <span className="chat-msg-pics" data-testid="chat-msg-pictures">
+      {split.preamble && <span className="chat-msg-pic-preamble">{split.preamble}</span>}
+      {split.parts.map((p, i) => (
+        // eslint-disable-next-line react/no-array-index-key -- parts are positional in one sent text
+        <span key={i} className="chat-msg-pic-part" data-testid="chat-msg-picture">
+          <UserMediaItem path={p.path} onOpenFile={onOpenFile} inline />
+          {p.words && <span className="chat-msg-pic-words">{p.words}</span>}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/**
  * A sent message with several references (owner 2026-10-24): one bubble, his words in his order,
  * each part's chip inline where he put it, in its slot. Chips are in the flow, so they wrap with
  * the text. A reply chip lands on its message; an agenda chip opens its whole line under it.
  * No header text ever reaches the DOM: the chip is drawn from the parsed part.
  */
-function PartsBubble({ preamble, parts, itemId, superSid, onReplyJump }: {
+function PartsBubble({ preamble, parts, itemId, superSid, onReplyJump, onOpenFile }: {
   preamble: string;
   parts: MessagePart[];
   itemId: string;
   superSid: string | null;
   onReplyJump?: (ref: string, from: 'super' | 'owner', beforeId: string) => void;
+  onOpenFile?: (path: string) => void;
 }) {
   const [open, setOpen] = useState<number | null>(null);
   const shown = open != null ? parts[open]?.about : null;
   return (
     <div className="chat-msg-user-bubble chat-msg-user-bubble--parts" data-testid="chat-msg-parts">
-      {preamble && <span className="chat-msg-part-words">{preamble} </span>}
+      {preamble && <span className="chat-msg-part-words"><PictureWords text={preamble} onOpenFile={onOpenFile} /> </span>}
       {parts.map((p, i) => {
         const a = p.about;
         const onClick = a.kind === 'reply'
@@ -237,7 +263,7 @@ function PartsBubble({ preamble, parts, itemId, superSid, onReplyJump }: {
           // eslint-disable-next-line react/no-array-index-key -- parts are positional in one sent text
           <span key={i} className="chat-msg-part">
             <RefChip about={a} slot={i + 1} part={i + 1} superSid={superSid} onClick={onClick} pressed={open === i} />
-            {p.words && <span className="chat-msg-part-words"> {p.words} </span>}
+            {p.words && <span className="chat-msg-part-words"> <PictureWords text={p.words} onOpenFile={onOpenFile} /> </span>}
           </span>
         );
       })}
