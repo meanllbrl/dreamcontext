@@ -40,3 +40,16 @@ export class WhiteboardNotFoundError extends WhiteboardError {
 export class WhiteboardLockError extends WhiteboardError {
   constructor(message: string) { super(message, 503); }
 }
+
+/**
+ * A write that would undo someone else's: `stale_group` (the board moved since the caller
+ * looked) or `owner_grouped` (the owner placed it; an agent needs `--force`). 409, with the
+ * code as the body's `error` so a client can tell the two apart.
+ */
+export class WhiteboardConflictError extends WhiteboardError {
+  readonly code: string;
+  constructor(code: 'stale_group' | 'owner_grouped', message: string) {
+    super(message, 409);
+    this.code = code;
+  }
+}

@@ -40,6 +40,7 @@
     "verify:super-web-session": "node scripts/verify/super-web-session.mjs",
     "verify:super-live-card": "node scripts/verify/super-live-card.mjs",
     "verify:super-layouts": "node scripts/verify/super-layouts.mjs",
+    "verify:whiteboard-explorer": "node scripts/verify/whiteboard-explorer.mjs",
     "verify:super-ask-show": "node scripts/verify/super-ask-show.mjs",
     "verify:super-web-file-steady": "node scripts/verify/super-web-file-steady.mjs",
     "eval:super-show": "vite-node eval/super-show/run.mjs",

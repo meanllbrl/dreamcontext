@@ -83,6 +83,7 @@ export const BOARD_AGENT_READ_VERBS = [
   // The drawing kit's reference: how a skill-less agent learns `draw --spec`.
   'whiteboard kit',
   'whiteboard nav list',
+  'whiteboard group list',
   'automations list',
   'automations show',
   'automations thread',
@@ -104,6 +105,9 @@ export const BOARD_AGENT_BOARD_VERBS = [
   'whiteboard nav add',
   'whiteboard nav remove',
   'whiteboard nav move',
+  // Its own board's explorer group; `group rename` (every board) is not a scoped verb.
+  'whiteboard group set',
+  'whiteboard group clear',
 ] as const;
 
 /** Verbs that act as the agent itself; its own slug is part of each rule. */

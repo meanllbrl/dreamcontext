@@ -28,6 +28,7 @@ export {
   WhiteboardTooLargeError,
   WhiteboardNotFoundError,
   WhiteboardLockError,
+  WhiteboardConflictError,
   WhiteboardError,
 } from './errors.js';
 
@@ -287,4 +288,56 @@ export function validatePutBody(
   const extra = keys.filter((k) => k !== 'elements');
   if (extra.length > 0) throw new WhiteboardValidationError(`unexpected body keys: ${extra.join(', ')}`);
   return { elements: validateIncomingElements((body as { elements?: unknown }).elements, opts) };
+}
+
+// ─── board groups (the explorer) ──────────────────────────────────────────
+
+/** The longest group name, in code points (not UTF-16 units). Mirrored in the dashboard's
+ *  `explorerLogic.ts`; `tests/unit/whiteboard-explorer.test.ts` holds the two together. */
+export const GROUP_MAX = 60;
+
+/** A group name's length the way a reader counts it: code points, so "ğ" or an emoji is one. */
+export function groupLength(s: string): number {
+  return [...s].length;
+}
+
+/**
+ * Case-, accent- and Turkish-ı-free form of a group name: "Satış", "satis" and "SATIS" all
+ * fold to one key, so near-duplicate spellings show and rename as ONE group. The same
+ * expression as the dashboard's `boardSwitcherLogic.ts` `fold` (separate build roots).
+ */
+export function foldGroup(s: string): string {
+  return s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/ı/g, 'i');
+}
+
+const GROUP_BAD_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\/]/;
+
+function cleanGroup(raw: string): string | null {
+  const s = raw.normalize('NFC').trim();
+  if (!s || groupLength(s) > GROUP_MAX || GROUP_BAD_CHARS.test(s)) return null;
+  return s;
+}
+
+/**
+ * A board's group as READ from disk. Anything that is not a valid name (absent, a number, a
+ * list from Obsidian's List property, a name with `/`) reads as no group. Reading never
+ * rewrites the file. A YAML date arrives as its ISO string (format.ts) and is read as that.
+ */
+export function readGroup(raw: unknown): string | null {
+  return typeof raw === 'string' ? cleanGroup(raw) : null;
+}
+
+/**
+ * A group name given to a WRITE (the PATCH, a create, the CLI). JSON `null` means "no group";
+ * anything else that is not a valid name is refused, so a bad name can never quietly take a
+ * board out of its group.
+ */
+export function parseGroupInput(raw: unknown): string | null {
+  if (raw === null) return null;
+  if (typeof raw !== 'string') throw new WhiteboardValidationError('a group name is a string (or null to take the board out of its group)');
+  const s = cleanGroup(raw);
+  if (s === null) {
+    throw new WhiteboardValidationError(`a group name is 1-${GROUP_MAX} characters on one line, without "/" or control characters`);
+  }
+  return s;
 }

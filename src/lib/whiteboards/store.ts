@@ -18,8 +18,9 @@ import { acquireFileLockWithin, releaseFileLock } from '../file-lock.js';
 import { safeChildPath } from '../../server/safe-path.js';
 import { emptyWhiteboard, parseWhiteboard, serializeWhiteboard, sortElements, type Whiteboard } from './format.js';
 import { stripTombstones } from './merge.js';
-import { isValidWhiteboardSlug, validateElement } from './validate.js';
+import { foldGroup, isValidWhiteboardSlug, parseGroupInput, readGroup, validateElement } from './validate.js';
 import {
+  WhiteboardConflictError,
   WhiteboardCorruptError,
   WhiteboardLockError,
   WhiteboardNotFoundError,
@@ -192,6 +193,8 @@ export interface WhiteboardSummary {
   corrupt?: string;
   /** The default "Control Panel" board ({@link DEFAULT_WHITEBOARD}). */
   isDefault?: true;
+  /** The explorer group the board sits in (frontmatter `group`, read with `readGroup`). */
+  group?: string;
 }
 
 export interface ReadWhiteboard {
@@ -275,6 +278,7 @@ export function listWhiteboards(root: string): WhiteboardSummary[] {
         name: boardName(board, slug),
         description: typeof board.frontmatter.description === 'string' ? board.frontmatter.description : '',
         elements: board.elements.filter((e) => e.isDeleted !== true).length,
+        ...(readGroup(board.frontmatter.group) ? { group: readGroup(board.frontmatter.group) as string } : {}),
       };
     } catch (err) {
       summary = { name: slug, description: '', elements: 0, corrupt: (err as Error).message };
@@ -292,7 +296,7 @@ export function listWhiteboards(root: string): WhiteboardSummary[] {
 }
 
 /** What a list row reads out of the board's bytes; the rest comes from the folder and a stat. */
-type BoardSummaryBody = Pick<WhiteboardSummary, 'name' | 'description' | 'elements' | 'corrupt'>;
+type BoardSummaryBody = Pick<WhiteboardSummary, 'name' | 'description' | 'elements' | 'corrupt' | 'group'>;
 
 /**
  * A board's list row, cached by mtime + size like {@link whiteboardRev}: the dashboard re-pulls
@@ -312,9 +316,17 @@ function slugBase(name: string): string {
  * Create a board (D15): slug from `slugify` cut to 64 chars, `board` when the name folds to
  * nothing, `-2`, `-3`… on collision. The display name is kept verbatim in the frontmatter.
  */
-export function createWhiteboard(root: string, name: string, description = ''): { slug: string; path: string } {
+export function createWhiteboard(
+  root: string,
+  name: string,
+  description = '',
+  opts: { group?: string | null; by?: GroupAuthor } = {},
+): { slug: string; path: string } {
   const display = name.trim();
   if (!display) throw new WhiteboardValidationError('a whiteboard needs a name');
+  // Checked before any folder is made: a refused group must not leave an empty folder holding the slug.
+  const asked = opts.group === undefined ? null : parseGroupInput(opts.group);
+  const group = asked === null ? null : adoptGroupSpelling(root, asked, null);
   const base = ensureWhiteboardsDir(root);
   const stem = slugBase(display);
   for (let n = 1; n < 10_000; n++) {
@@ -331,7 +343,9 @@ export function createWhiteboard(root: string, name: string, description = ''): 
       throw err;
     }
     const file = join(dir, `${slug}${BOARD_SUFFIX}`);
-    writeFileSync(file, serializeWhiteboard(emptyWhiteboard(display, description)), { encoding: 'utf-8', flag: 'wx' });
+    const board = emptyWhiteboard(display, description);
+    if (group) board.frontmatter = { ...board.frontmatter, group, [GROUP_BY_KEY]: opts.by ?? 'owner' };
+    writeFileSync(file, serializeWhiteboard(board), { encoding: 'utf-8', flag: 'wx' });
     return { slug, path: file };
   }
   throw new WhiteboardValidationError(`could not find a free slug for '${display}'`);
@@ -480,7 +494,7 @@ export async function mutateWhiteboard(
  * Rename a board: its display name (frontmatter `name`, verbatim) changes, its slug does not,
  * so tabs, agent homes (`whiteboard:` in a manifest) and links keep pointing at it.
  */
-export async function renameWhiteboard(root: string, slug: string, name: string): Promise<{ slug: string; name: string; rev: string }> {
+function checkBoardName(name: string): string {
   const display = name.trim();
   if (!display) throw new WhiteboardValidationError('a whiteboard needs a name');
   if (display.length > 200) throw new WhiteboardValidationError('a whiteboard name is at most 200 characters');
@@ -488,10 +502,162 @@ export async function renameWhiteboard(root: string, slug: string, name: string)
   if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(display)) {
     throw new WhiteboardValidationError('a whiteboard name is one line of text, without control characters');
   }
+  return display;
+}
+
+export async function renameWhiteboard(root: string, slug: string, name: string): Promise<{ slug: string; name: string; rev: string }> {
+  const display = checkBoardName(name);
   const { board, rev } = await mutateWhiteboard(root, slug, (b) => {
     b.frontmatter = { ...b.frontmatter, name: display };
   });
   return { slug, name: boardName(board, slug), rev };
+}
+
+// ─── groups (the board explorer) ─────────────────────────────────────────
+
+/**
+ * A board's explorer group is its own frontmatter (`group`), so the team, another machine and
+ * agents all see it, and brain sync merges it per key. `group-by` records who placed it
+ * (pattern: the agent must not undo what the owner just did): an agent's write over an owner's
+ * placement is refused with `owner_grouped` unless forced, and the owner taking a board out of
+ * a group keeps `group-by: owner`, so the board stays his choice.
+ */
+export const GROUP_KEY = 'group';
+export const GROUP_BY_KEY = 'group-by';
+export type GroupAuthor = 'owner' | 'agent';
+
+/**
+ * The spelling a new group name lands under: an existing group that folds the same way
+ * ("tilki metrics" → "Tilki metrics") wins, so near-duplicates do not pile up. Among several
+ * spellings of one fold, the one most boards carry, then the smallest string — the same rule
+ * the explorer uses to show it. `skip` is the board being written, which never votes.
+ */
+export function adoptGroupSpelling(root: string, name: string, skip: string | null): string {
+  const key = foldGroup(name);
+  const votes = new Map<string, number>();
+  for (const b of listWhiteboards(root)) {
+    if (b.slug === skip || !b.group || foldGroup(b.group) !== key) continue;
+    votes.set(b.group, (votes.get(b.group) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestN = 0;
+  for (const [spelling, n] of votes) {
+    if (n > bestN || (n === bestN && best !== null && spelling < best)) { best = spelling; bestN = n; }
+  }
+  return best ?? name;
+}
+
+export interface SetGroupOptions {
+  by: GroupAuthor;
+  /** The group the caller saw (`null` = ungrouped). A mismatch is `stale_group`; absent = no check. */
+  expect?: string | null;
+  /** Let an agent write over the owner's placement. */
+  force?: boolean;
+  /** Use an existing group's spelling (default). A rename resolves its name once and passes false. */
+  adopt?: boolean;
+}
+
+function applyGroup(b: Whiteboard, slug: string, group: string | null, opts: SetGroupOptions): void {
+  const current = readGroup(b.frontmatter[GROUP_KEY]);
+  if (opts.expect !== undefined && opts.expect !== current) {
+    throw new WhiteboardConflictError('stale_group', `'${slug}' is in ${current === null ? 'no group' : `'${current}'`} now, not ${opts.expect === null ? 'ungrouped' : `'${opts.expect}'`}; look again`);
+  }
+  if (opts.by === 'agent' && b.frontmatter[GROUP_BY_KEY] === 'owner' && !opts.force) {
+    throw new WhiteboardConflictError('owner_grouped', `the owner placed '${slug}' ${current === null ? 'outside any group' : `in '${current}'`}; pass --force only if the owner asked for this move`);
+  }
+  if (current === group && b.frontmatter[GROUP_KEY] === group) return;
+  const fm = { ...b.frontmatter };
+  if (group === null) {
+    delete fm[GROUP_KEY];
+    // The owner's "out of the group" is still his placement; only an agent's clear forgets who.
+    if (opts.by === 'owner') fm[GROUP_BY_KEY] = 'owner';
+    else delete fm[GROUP_BY_KEY];
+  } else {
+    fm[GROUP_KEY] = group;
+    fm[GROUP_BY_KEY] = opts.by;
+  }
+  b.frontmatter = fm;
+}
+
+/** Put a board in a group (`null` = out of its group). One locked write; see {@link SetGroupOptions}. */
+export async function setWhiteboardGroup(
+  root: string,
+  slug: string,
+  group: unknown,
+  opts: SetGroupOptions,
+): Promise<{ slug: string; group: string | null; rev: string }> {
+  const asked = parseGroupInput(group);
+  const target = asked !== null && opts.adopt !== false ? adoptGroupSpelling(root, asked, slug) : asked;
+  const { board, rev } = await mutateWhiteboard(root, slug, (b) => applyGroup(b, slug, target, opts));
+  return { slug, group: readGroup(board.frontmatter[GROUP_KEY]), rev };
+}
+
+/**
+ * A board's name and group in ONE write (the dashboard's PATCH), so the two never land apart.
+ * `name` / `group` absent = left alone.
+ */
+export async function patchWhiteboardMeta(
+  root: string,
+  slug: string,
+  patch: { name?: string; group?: unknown; expectGroup?: string | null; by: GroupAuthor },
+): Promise<{ slug: string; name: string; group: string | null; rev: string }> {
+  const display = patch.name === undefined ? undefined : checkBoardName(patch.name);
+  const hasGroup = 'group' in patch;
+  const asked = hasGroup ? parseGroupInput(patch.group) : null;
+  const target = hasGroup && asked !== null ? adoptGroupSpelling(root, asked, slug) : asked;
+  const { board, rev } = await mutateWhiteboard(root, slug, (b) => {
+    if (display !== undefined) b.frontmatter = { ...b.frontmatter, name: display };
+    if (hasGroup) applyGroup(b, slug, target, { by: patch.by, expect: patch.expectGroup });
+  });
+  return { slug, name: boardName(board, slug), group: readGroup(board.frontmatter[GROUP_KEY]), rev };
+}
+
+/**
+ * Rename a group (`to: null` = take every board out of it). The new name is resolved ONCE,
+ * before any board is touched: a case-, accent- or ı-only change ("Satis" → "Satış") is taken
+ * as typed, and only a name that folds to a DIFFERENT existing group adopts its spelling. The
+ * boards are found by fold, so every spelling of the group moves, and each is written with its
+ * own current value as `expect`, under its own lock: a board the owner dragged out meanwhile
+ * is skipped, never overwritten. Idempotent: a retry moves whatever is left.
+ */
+export async function renameWhiteboardGroup(
+  root: string,
+  from: unknown,
+  to: unknown,
+  opts: { by: GroupAuthor; force?: boolean },
+): Promise<{ from: string; to: string | null; moved: string[]; skipped: string[]; failed: { slug: string; reason: string }[] }> {
+  if (from === null) throw new WhiteboardValidationError('name the group to rename');
+  const source = parseGroupInput(from) as string;
+  const asked = parseGroupInput(to);
+  const key = foldGroup(source);
+  const boards = listWhiteboards(root);
+  let target = asked;
+  if (asked !== null && foldGroup(asked) !== key) {
+    // Adopt against groups other than the one being renamed.
+    const votes = new Map<string, number>();
+    for (const b of boards) {
+      if (!b.group || foldGroup(b.group) !== foldGroup(asked)) continue;
+      votes.set(b.group, (votes.get(b.group) ?? 0) + 1);
+    }
+    let best: string | null = null;
+    let bestN = 0;
+    for (const [sp, n] of votes) if (n > bestN || (n === bestN && best !== null && sp < best)) { best = sp; bestN = n; }
+    target = best ?? asked;
+  }
+  const moved: string[] = [];
+  const skipped: string[] = [];
+  const failed: { slug: string; reason: string }[] = [];
+  for (const b of boards) {
+    if (!b.group || foldGroup(b.group) !== key) continue;
+    try {
+      await setWhiteboardGroup(root, b.slug, target, { by: opts.by, force: opts.force, expect: b.group, adopt: false });
+      moved.push(b.slug);
+    } catch (err) {
+      if (err instanceof WhiteboardConflictError && err.code === 'stale_group') { skipped.push(b.slug); continue; }
+      failed.push({ slug: b.slug, reason: err instanceof WhiteboardConflictError ? err.code : (err as Error).message });
+    }
+  }
+  return { from: source, to: target, moved, skipped, failed };
 }
 
 // ─── trash ────────────────────────────────────────────────────────────────

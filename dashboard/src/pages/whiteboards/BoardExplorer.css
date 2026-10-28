@@ -1,0 +1,385 @@
+/*
+ * The board explorer: the Whiteboard page's left sidebar (BoardExplorer.tsx). Tokens only,
+ * both themes. The open board is the one accent on it (accent-soft row, accent-ink name);
+ * a drop target borrows the same accent for as long as a drag hovers it.
+ */
+
+.wbx {
+  position: relative;
+  flex: 0 0 264px;
+  width: 264px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+/* Phone: a drawer over the page, closed until asked for. */
+.wbx[data-phone] {
+  position: absolute;
+  z-index: 20;
+  inset: 0 auto 0 0;
+  width: min(320px, 88vw);
+  box-shadow: var(--shadow-xl);
+}
+
+.wbp-shell-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+  border: 0;
+  /* Obsidian in both themes: a dark veil, never a white wash on the dark theme. */
+  background: color-mix(in oklch, var(--color-obsidian) 32%, transparent);
+}
+
+.wbx-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--space-12);
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.wbx-title {
+  flex: 1;
+  margin: 0;
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.wbx-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.wbx-icon--sm { width: 24px; height: 24px; margin-left: auto; }
+
+.wbx-icon:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+
+.wbx-search {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 32px;
+  margin: var(--space-3) var(--space-3) var(--space-1);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+}
+
+.wbx-search:focus-within { border-color: var(--color-border-focus); box-shadow: var(--shadow-glow); }
+
+.wbx-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+}
+
+.wbx-search-input:focus, .wbx-search-input:focus-visible { border: 0; outline: none; box-shadow: none; }
+
+.wbx-search-input::placeholder { color: var(--color-text-placeholder, var(--color-text-secondary)); }
+
+.wbx-note {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-2) var(--space-3) 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-error-subtle);
+  color: var(--color-error-ink);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-relaxed);
+}
+
+.wbx-note > span { flex: 1; }
+
+.wbx-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: var(--font-weight-semibold);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.wbx-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--space-2) var(--space-3);
+}
+
+.wbx-sec { margin-top: var(--space-3); }
+
+.wbx-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 24px;
+  padding: 0 var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.wbx-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  transition: background var(--transition-fast);
+}
+
+.wbx-row:hover, .wbx-row:focus-within { background: var(--color-bg-tertiary); }
+
+.wbx-row[data-current='true'] { background: var(--color-accent-soft); }
+.wbx-row[data-current='true'] .wbx-name { color: var(--color-accent-ink); font-weight: var(--font-weight-semibold); }
+.wbx-row[data-current='true'] .wbs-glyph { color: var(--color-accent-ink); }
+.wbx-row[data-dragging] { opacity: 0.45; }
+
+.wbx-row-open {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-1) 0 var(--space-2);
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wbx-row-open:focus-visible, .wbx-more:focus-visible, .wbx-icon:focus-visible, .wbx-foot-btn:focus-visible, .wbx-menu-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
+
+.wbx-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wbx-row--group .wbx-name { font-weight: var(--font-weight-medium); }
+
+.wbx-count {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.wbx-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-2xs);
+}
+
+.wbx-badge--bad { color: var(--color-error-ink); }
+
+.wbx-twisty {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  color: var(--color-text-secondary);
+  transition: transform var(--transition-fast);
+}
+
+.wbx-twisty[data-open] { transform: rotate(90deg); }
+
+/* The ⋯ and + appear on hover or keyboard focus; the open row keeps them reachable. */
+.wbx-more {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-right: var(--space-1);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.wbx-row:hover .wbx-more, .wbx-row:focus-within .wbx-more, .wbx-more[aria-expanded='true'], .wbx[data-phone] .wbx-more { opacity: 1; }
+.wbx-more:hover { background: var(--color-bg-secondary); color: var(--color-text); }
+
+.wbx-kids {
+  margin-left: 15px;
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--color-border);
+}
+
+.wbx-group, .wbx-ungrouped { border-radius: var(--radius-sm); }
+
+.wbx-group[data-drop] > .wbx-row--group,
+.wbx-ungrouped[data-drop] {
+  background: var(--color-accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--color-accent);
+}
+
+.wbx-ungrouped { min-height: var(--space-4); }
+
+.wbx-hint {
+  margin: var(--space-1) 0;
+  padding: 0 var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-relaxed);
+}
+
+.wbx-hint--bad { color: var(--color-error-ink); }
+
+.wbx-field {
+  width: 100%;
+  height: 32px;
+  margin: 2px 0;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border-focus);
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: var(--color-bg-secondary);
+  box-shadow: var(--shadow-glow);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.wbx-foot {
+  flex-shrink: 0;
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.wbx-foot-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.wbx-foot-btn--primary { background: var(--color-bg-tertiary); color: var(--color-text); }
+.wbx-foot-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.wbx-foot-btn:active, .wbx-row-open:active { transform: scale(0.98); }
+
+.wbx-menu {
+  position: absolute;
+  z-index: 30;
+  right: var(--space-2);
+  left: var(--space-8);
+  max-height: calc(100% - var(--space-8));
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-xl);
+}
+
+.wbx-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wbx-menu-item:hover:not(:disabled) { background: var(--color-bg-tertiary); }
+.wbx-menu-item:disabled { opacity: 0.5; cursor: not-allowed; }
+.wbx-menu-item--danger { color: var(--color-error-ink); }
+
+.wbx-menu-label {
+  margin: var(--space-1) 0 0;
+  padding: 0 var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.wbx-menu-sep { height: 1px; margin: var(--space-1) 0; background: var(--color-border); }
+
+.wbx-confirm { padding: var(--space-2); }
+.wbx-confirm p { margin: 0 0 var(--space-2); line-height: var(--line-height-relaxed); }
+.wbx-confirm-actions { display: flex; gap: var(--space-1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .wbx-twisty, .wbx-row, .wbx-icon { transition: none; }
+}
+
+/* Phone: every row and button is a finger's size (WCAG 2.5.5, the phone sidebar's own rule). */
+.wbx[data-phone] .wbx-row { height: var(--touch-target); }
+.wbx[data-phone] .wbx-more,
+.wbx[data-phone] .wbx-icon { width: var(--touch-target); height: var(--touch-target); margin-right: 0; }
+.wbx[data-phone] .wbx-menu-item,
+.wbx[data-phone] .wbx-foot-btn,
+.wbx[data-phone] .wbx-field { min-height: var(--touch-target); }
+.wbx[data-phone] .wbx-search { height: var(--touch-target); margin-bottom: var(--space-2); }

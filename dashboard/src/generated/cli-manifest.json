@@ -4268,7 +4268,9 @@
       ],
       "valueFlags": [
         "-d",
-        "--description"
+        "--description",
+        "-g",
+        "--group"
       ]
     },
     {
@@ -4285,6 +4287,40 @@
         "--right-of",
         "--align-left",
         "--tag"
+      ]
+    },
+    {
+      "path": "whiteboard group",
+      "desc": "The explorer groups boards sit in (frontmatter `group`). A board the owner placed is refused without --force.",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "whiteboard group clear",
+      "desc": "Take a board out of its group",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "whiteboard group list",
+      "desc": "List the groups and how many boards each holds",
+      "args": []
+    },
+    {
+      "path": "whiteboard group rename",
+      "desc": "Rename a group on every board in it (all spellings of it); owner-placed boards are skipped without --force",
+      "args": [
+        "<from>",
+        "<to>"
+      ]
+    },
+    {
+      "path": "whiteboard group set",
+      "desc": "Put a board in a group (an existing group with the same letters keeps its spelling)",
+      "args": [
+        "<slug>",
+        "<name>"
       ]
     },
     {
