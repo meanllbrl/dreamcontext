@@ -833,14 +833,18 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     if (!parentRemote && remoteParent === undefined) return { remoteParent, pending: false };
     if (parentRemote === remoteParent) return { remoteParent, pending: false };
 
-    if (this.subIssuesFallback()) {
-      // The link lives in the parent's task list: rewrite the list it joins and
-      // the one it leaves; no sub-issues call is made.
-      if (parentRemote) this.parentsToRefresh.add(parentSlug!);
-      const oldParent = typeof remoteParent === 'string' ? this.ledger.slugForRemoteId(remoteParent) : null;
-      if (oldParent && oldParent !== parentSlug) this.parentsToRefresh.add(oldParent);
-      return { remoteParent: parentRemote ?? null, pending: false };
+    // Leaving a parent we recorded: re-send that parent's body in EITHER mode, so
+    // a fallback task list naming this issue (from a fallback window now over,
+    // or never noticed) cannot bring the old link back on a later pull.
+    const leaving = typeof remoteParent === 'string' ? this.ledger.slugForRemoteId(remoteParent) : null;
+    if (leaving && leaving !== parentSlug) this.parentsToRefresh.add(leaving);
+    if (parentRemote && this.subIssuesFallback()) {
+      // The link lives in the parent's task list: no sub-issues call is made.
+      this.parentsToRefresh.add(parentSlug!);
+      return { remoteParent: parentRemote, pending: false };
     }
+    // An unlink still tries the API in fallback mode: the old link may have been a
+    // real sub-issue (a 404 below means it was not, which is done too).
     if (remoteParent === undefined) remoteParent = await this.fetchParentNumber(adapter, owner, repo, remoteId);
     if (remoteParent === undefined) {
       report.warnings.push(`push ${slug}: could not read its parent issue on GitHub — the sub-issue link is retried next sync.`);

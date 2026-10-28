@@ -231,6 +231,30 @@ describe('github sub-tasks', () => {
     expect(fake.requests.filter((r) => r.method !== 'GET')).toHaveLength(0);
   });
 
+  it('unlink after the fallback window: the old task list is rewritten, so a pull cannot bring the link back', async () => {
+    fake.subIssuesUnavailable = true;
+    await makeParentAndChild();
+    await backend.sync('push');
+    const parent = numberOf('parent-job');
+    const child = numberOf('child-step');
+
+    // The fallback window is over (the server still has no sub-issues API).
+    const syncPath = join(contextRoot, 'state', '.tasks-sync.json');
+    const state = JSON.parse(readFileSync(syncPath, 'utf-8'));
+    state.subIssuesUnavailableAt = -10 * 24 * 60 * 60 * 1000;
+    writeFileSync(syncPath, JSON.stringify(state, null, 2));
+
+    await backend.updateFields('child-step', { parent_task: null, updated_at: '2026-10-28' });
+    const report = await backend.sync('push');
+    expect(report.errors).toEqual([]);
+    expect(fake.issues.get(parent)!.body).not.toContain('dc:subtasks');
+
+    fake.editIssue(parent, { title: 'Parent Job' });
+    fake.editIssue(child, { title: 'Child Step' });
+    await backend.sync('pull');
+    expect(mirror('child-step').data.parent_task ?? null).toBeNull();
+  });
+
   it('fallback: without the sub-issues API the parent body lists the sub-task, and the pull reads it back', async () => {
     fake.subIssuesUnavailable = true;
     await makeParentAndChild();
