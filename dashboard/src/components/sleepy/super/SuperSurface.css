@@ -313,6 +313,12 @@
 .super-card-glyph { flex: none; color: var(--color-text-tertiary); font-size: var(--font-size-xs); }
 .super-card-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); font-weight: 600; color: var(--color-text); }
 .super-card-view { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+/* A board fills its card (owner 2026-10-28: the board drew in a 340px strip at the top of a tall
+   card). The chat's board card is sized like a transcript entry (cards.css: a 340px canvas);
+   on the stage the card IS the frame, so the canvas takes all of it and the board fits that. */
+.super-card-view--board { height: 100%; }
+.super-card-view--board > .chat-board { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; margin: 0; border: 0; border-radius: 0; }
+.super-card-view--board > .chat-board > .chat-board-canvas { flex: 1 1 auto; height: auto; min-height: 0; }
 .super-card-large { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .super-card-large-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
 

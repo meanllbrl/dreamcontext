@@ -500,7 +500,7 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
 }
 
 /** One embeddable's widget. Re-renders only when its element or its active state changed. */
-const WidgetSlot = memo(function WidgetSlot({ element, active }: WidgetSlotProps<NonDeleted<ExcalidrawEmbeddableElement>>) {
+export const WidgetSlot = memo(function WidgetSlot({ element, active }: WidgetSlotProps<NonDeleted<ExcalidrawEmbeddableElement>>) {
   const tx = useWbText();
   const payload = readWidgetPayload(element);
   // Never null: a null hands the element to Excalidraw's own iframe.
