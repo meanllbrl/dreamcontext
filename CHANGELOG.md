@@ -16,6 +16,9 @@ The first published release since 0.35.0. It carries everything cut locally as 0
 - **Whiteboards.** A board explorer with groups, search and recents; boards are lighter and opening one no longer changes it; a deleted board leaves the list at once.
 - **A tidier Super Agent.** A child's question reaches you right away, finished jobs close on their own, the agenda keeps itself current, and every Others tile has a ×.
 - **Dictation asks first.** Voice never downloads or loads a model without your OK, picks a size that fits your Mac (or the cloud), and unloads when idle. Fixes a crash on 8 GB Macs.
+- **Subtasks are real subtasks in ClickUp and GitHub.** A dreamcontext subtask now syncs as a ClickUp subtask or a GitHub sub-issue and back, instead of a separate task; ones that already went over separately are moved under their parent, nothing is deleted.
+- **A whiteboard on the Super stage fits its card.** It fills the card, stays right after a page switch, and shows its pictures and widgets (read-only).
+- **The Super chat header stays on one row** at every card width: long names end with an ellipsis and the buttons shrink to their icons.
 
 ## [0.35.5] - 2026-10-28
 
