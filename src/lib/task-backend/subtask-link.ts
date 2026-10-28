@@ -72,6 +72,12 @@ export interface PulledParent {
   parent: string | null;
   /** Set when the remote said something this pull could not apply. */
   warning?: string;
+  /**
+   * The remote parent id this pull did NOT mirror (unmapped, too deep). The
+   * remote keeps that link and the push must never undo it: the local "no
+   * parent" here is a refusal to mirror, not an unlink.
+   */
+  refused?: string;
 }
 
 /**
@@ -99,15 +105,15 @@ export function pulledParent(i: PulledParentInput): PulledParent {
   }
   const parentSlug = i.slugForRemoteId(i.remoteParentId);
   if (!parentSlug) {
-    return { ...keep, warning: `pull ${i.slug}: its remote parent (${i.remoteParentId}) is not synced to this project — the sub-task link was left as it was.` };
+    return { ...keep, refused: i.remoteParentId, warning: `pull ${i.slug}: its remote parent (${i.remoteParentId}) is not synced to this project — the sub-task link was left as it was.` };
   }
   if (parentSlug === i.slug) return keep;
   const grand = i.parentOfLocal(parentSlug);
   if (grand && grand !== parentSlug) {
-    return { ...keep, warning: `pull ${i.slug}: its remote parent '${parentSlug}' is itself a sub-task of '${grand}'; sub-tasks go two levels deep at most here, so the link was left as it was.` };
+    return { ...keep, refused: i.remoteParentId, warning: `pull ${i.slug}: its remote parent '${parentSlug}' is itself a sub-task of '${grand}'; sub-tasks go two levels deep at most here, so the link was left as it was.` };
   }
   if (parentSlug !== i.localParent && i.hasLocalChildren(i.slug)) {
-    return { ...keep, warning: `pull ${i.slug}: it was put under '${parentSlug}' remotely, but it has sub-tasks of its own here; sub-tasks go two levels deep at most, so the link was left as it was.` };
+    return { ...keep, refused: i.remoteParentId, warning: `pull ${i.slug}: it was put under '${parentSlug}' remotely, but it has sub-tasks of its own here; sub-tasks go two levels deep at most, so the link was left as it was.` };
   }
   return { parent: parentSlug };
 }

@@ -328,6 +328,56 @@ describe('github sub-tasks', () => {
     expect(fake.requests.filter((r) => r.method !== 'GET')).toHaveLength(0);
   });
 
+  it('a three-level tree on GitHub is mirrored two levels deep and never unlinked by the push', async () => {
+    const a = fake.seedIssue({ title: 'Epic A' });
+    const b = fake.seedIssue({ title: 'Feature B' });
+    const c = fake.seedIssue({ title: 'Task C' });
+    fake.linkSubIssue(a.number, b.number);
+    fake.linkSubIssue(b.number, c.number);
+
+    const pulled = await backend.sync('pull');
+    expect(pulled.errors).toEqual([]);
+    expect(mirror('feature-b').data.parent_task).toBe('epic-a');
+    expect(mirror('task-c').data.parent_task ?? null).toBeNull();
+
+    fake.requests.length = 0;
+    const pushed = await backend.sync('push');
+    expect(pushed.errors).toEqual([]);
+    expect(fake.requests.some((r) => r.method === 'DELETE')).toBe(false);
+    expect(fake.parentOf.get(c.number)).toBe(b.number);
+    expect(fake.parentOf.get(b.number)).toBe(a.number);
+
+    // Even a local edit of that task leaves the teammate's link alone.
+    await backend.updateFields('task-c', { status: 'in_progress', updated_at: '2026-10-28' });
+    await backend.sync('push');
+    expect(fake.parentOf.get(c.number)).toBe(b.number);
+  });
+
+  it('fallback: a teammate who pulled the task list keeps it in the parent body when editing the parent', async () => {
+    fake.subIssuesUnavailable = true;
+    await makeParentAndChild();
+    await backend.sync('push');
+    const parent = numberOf('parent-job');
+    const child = numberOf('child-step');
+
+    const otherRoot = join(projectRoot, 'teammate', '_dream_context');
+    mkdirSync(join(otherRoot, 'state'), { recursive: true });
+    const now = () => (localClock += 7);
+    const sleep = async () => { localClock += 1; };
+    const other = new GitHubTaskBackend(otherRoot, CONFIG, {
+      adapter: new ApiAdapter({ baseUrl: 'https://api.github.com', authHeaders: () => ({}), fetchImpl: fake.fetchImpl, now, sleep }),
+      now,
+      sleep,
+    });
+    await other.sync('pull');
+    expect(matter(readFileSync(join(otherRoot, 'state', 'child-step.md'), 'utf-8')).data.parent_task).toBe('parent-job');
+
+    await other.updateFields('parent-job', { status: 'in_progress', updated_at: '2026-10-28' });
+    const report = await other.sync('push');
+    expect(report.errors).toEqual([]);
+    expect(fake.issues.get(parent)!.body).toContain(`#${child}`);
+  });
+
   it('fallback: without the sub-issues API the parent body lists the sub-task, and the pull reads it back', async () => {
     fake.subIssuesUnavailable = true;
     await makeParentAndChild();

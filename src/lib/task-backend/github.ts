@@ -836,6 +836,8 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     remoteId: string;
     issueId: number | undefined;
     remoteParent: string | null | undefined;
+    /** The ledger's `remote_parent_refused`: a parent we refused to mirror is never unlinked. */
+    refusedParent: string | null | undefined;
     created: boolean;
     adapter: ApiAdapter;
     owner: string;
@@ -855,6 +857,11 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // Leaving a parent we recorded: re-send that parent's body in EITHER mode, so
     // a fallback task list naming this issue (from a fallback window now over,
     // or never noticed) cannot bring the old link back on a later pull.
+    // A remote parent the pull refused to mirror (too deep, unmapped) while the task
+    // has no parent here: the remote's link is a teammate's fact, never undone.
+    if (!parentRemote && typeof remoteParent === 'string' && remoteParent === a.refusedParent) {
+      return { remoteParent, pending: false };
+    }
     const leaving = typeof remoteParent === 'string' ? this.ledger.slugForRemoteId(remoteParent) : null;
     if (leaving && leaving !== parentSlug) this.parentsToRefresh.add(leaving);
     if (parentRemote && this.subIssuesFallback()) {
@@ -1142,6 +1149,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
 
     const link = await this.settleSubIssue({
       slug, parentSlug, parentRemote, remoteId, issueId, remoteParent,
+      refusedParent: entry?.remote_parent_refused,
       created: !wasMapped, adapter, owner, repo, report,
     });
     remoteParent = link.remoteParent === FOREIGN_PARENT ? undefined : link.remoteParent;
@@ -1574,6 +1582,10 @@ export class GitHubTaskBackend extends LocalTaskBackend {
 
   /** Issue number → parent issue number (null = top-level) for the current pull; absent = unknown. */
   private pullParentHints = new Map<string, string | null>();
+  /** Issues whose hint came from a fallback task list (the link lives only there). */
+  private pullHintsFromList = new Set<string>();
+  /** Issue number → the remote parent this pull refused to mirror (subtask-link.ts `refused`). */
+  private pullRefusals = new Map<string, string>();
 
   /**
    * What GitHub says about each pulled issue's parent: `parent_issue_url` when
@@ -1589,6 +1601,8 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     issues: GitHubIssue[],
   ): Promise<Map<string, string | null>> {
     const hints = new Map<string, string | null>();
+    this.pullHintsFromList.clear();
+    this.pullRefusals.clear();
     for (const issue of issues) {
       if (issue.parent_issue_url === undefined) continue;
       const n = issueNumberFromUrl(issue.parent_issue_url);
@@ -1623,7 +1637,10 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // cannot know about (the link never went through the sub-issues API).
     for (const issue of issues) {
       for (const n of parseSubtasksBlock(issue.body)) {
-        if (!hints.get(String(n))) hints.set(String(n), String(issue.number));
+        if (!hints.get(String(n))) {
+          hints.set(String(n), String(issue.number));
+          this.pullHintsFromList.add(String(n));
+        }
       }
     }
     return hints;
@@ -1649,12 +1666,26 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       hasLocalChildren: (s) => this.hasLiveChildren(s),
     });
     if (res.warning) report.warnings.push(res.warning);
+    if (res.refused) this.pullRefusals.set(remoteId, res.refused);
     return res.parent;
   }
 
   /** The ledger patch recording what this pull saw of the issue's parent (nothing when unknown). */
-  private remoteParentPatch(remoteId: string): { remote_parent?: string | null } {
-    return this.pullParentHints.has(remoteId) ? { remote_parent: this.pullParentHints.get(remoteId)! } : {};
+  private remoteParentPatch(remoteId: string): {
+    remote_parent?: string | null;
+    remote_parent_via_list?: boolean;
+    remote_parent_refused?: string;
+  } {
+    if (!this.pullParentHints.has(remoteId)) return {};
+    const refused = this.pullRefusals.get(remoteId);
+    return {
+      remote_parent: this.pullParentHints.get(remoteId)!,
+      // Every machine that READ a link from the fallback list keeps writing that
+      // list, not only the machine that made it.
+      remote_parent_via_list: this.pullHintsFromList.has(remoteId),
+      // A parent the pull refused to mirror is never "unlinked" by the push.
+      ...(refused ? { remote_parent_refused: refused } : {}),
+    };
   }
 
   protected async applyRemoteIssue(
