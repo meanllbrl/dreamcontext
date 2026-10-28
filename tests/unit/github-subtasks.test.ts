@@ -297,6 +297,37 @@ describe('github sub-tasks', () => {
     expect(fake.parentOf.has(child)).toBe(false);
   });
 
+  it('a fallback link stays in the parent body after the window, through a later parent edit', async () => {
+    fake.subIssuesUnavailable = true;
+    await makeParentAndChild();
+    await backend.sync('push');
+    const syncPath = join(contextRoot, 'state', '.tasks-sync.json');
+    const state = JSON.parse(readFileSync(syncPath, 'utf-8'));
+    state.subIssuesUnavailableAt = -10 * 24 * 60 * 60 * 1000;
+    writeFileSync(syncPath, JSON.stringify(state, null, 2));
+
+    await backend.updateFields('parent-job', { status: 'in_progress', updated_at: '2026-10-28' });
+    await backend.sync('push');
+    expect(fake.issues.get(numberOf('parent-job'))!.body).toContain(`#${numberOf('child-step')}`);
+  });
+
+  it('an unlink from a parent in another repo is not re-pushed every sync', async () => {
+    await makeParentAndChild();
+    await backend.sync('push');
+    const child = numberOf('child-step');
+    // Moved on GitHub under an issue of another repo; the ledger still names #1.
+    fake.parentOf.delete(child);
+    fake.editIssue(child, { parent_issue_url: 'https://api.github.com/repos/example-org/other-repo/issues/1' } as never);
+
+    await backend.updateFields('child-step', { parent_task: null, updated_at: '2026-10-28' });
+    const first = await backend.sync('push');
+    expect(first.errors).toEqual([]);
+    fake.requests.length = 0;
+    await backend.sync('push');
+    await backend.sync('push');
+    expect(fake.requests.filter((r) => r.method !== 'GET')).toHaveLength(0);
+  });
+
   it('fallback: without the sub-issues API the parent body lists the sub-task, and the pull reads it back', async () => {
     fake.subIssuesUnavailable = true;
     await makeParentAndChild();

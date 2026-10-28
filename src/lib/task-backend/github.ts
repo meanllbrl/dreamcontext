@@ -789,12 +789,20 @@ export class GitHubTaskBackend extends LocalTaskBackend {
 
   /** The fallback task list for a parent: its mapped sub-tasks' issue numbers. */
   protected subtasksBlockFor(slug: string): string {
+    // While the fallback is on, every mapped sub-task is listed. After its window,
+    // the list still carries each link that was MADE through it (`remote_parent_via_list`):
+    // those links exist nowhere else on GitHub, so dropping them from the body
+    // would lose them for every teammate.
+    const inWindow = this.subIssuesFallback();
+    const state = this.ledger.readSyncState();
+    if (!inWindow && !Object.values(state.tasks).some((e) => e.remote_parent_via_list)) return '';
     const children: Array<{ number: number; done: boolean }> = [];
     for (const file of this.taskFiles()) {
       const child = basename(file, '.md');
       if (child === slug || this.liveParentFor(child) !== slug) continue;
       const remote = this.ledger.remoteIdFor(child);
       if (!remote) continue;
+      if (!inWindow && !state.tasks[child]?.remote_parent_via_list) continue;
       let status = 'todo';
       try { status = String((matter(readFileSync(file, 'utf-8')).data as Record<string, unknown>).status ?? 'todo'); } catch { /* keep todo */ }
       children.push({ number: Number(remote), done: isTerminal(this.statusDefs(), status) });
@@ -913,8 +921,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       }
     }
 
-    // Under a parent in another repo: not ours to change.
-    if (remoteParent === FOREIGN_PARENT) return { remoteParent: undefined, pending: false };
+    // Under a parent in another repo: not ours to change. Recorded as "no parent of
+    // ours", so the unlink re-select stops matching instead of re-pushing every sync.
+    if (remoteParent === FOREIGN_PARENT) return { remoteParent: null, pending: false, viaList: false };
     // No parent here any more, but GitHub still holds one: take it out (never deleted).
     try {
       await adapter.request('DELETE', `${this.issuesPath(owner, repo)}/${remoteParent}/sub_issue`, {
@@ -1027,7 +1036,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     const prose = await this.uploadAndRewriteImages(bodyToIssueBody(task.body), adapter, owner, repo, report);
     const body = composeIssueBody(
       prose, startLocal, dueLocal, fieldsBlock,
-      this.subIssuesFallback() ? this.subtasksBlockFor(slug) : '',
+      this.subtasksBlockFor(slug),
     );
 
     // GitHub rejects issue bodies over 65,536 chars with a 422 — and pushing a
