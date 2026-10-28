@@ -39,6 +39,7 @@
     "verify:super-jarvis": "node scripts/verify/super-jarvis.mjs",
     "verify:super-web-session": "node scripts/verify/super-web-session.mjs",
     "verify:super-live-card": "node scripts/verify/super-live-card.mjs",
+    "verify:super-head": "node scripts/verify/super-head.mjs",
     "verify:super-layouts": "node scripts/verify/super-layouts.mjs",
     "verify:whiteboard-explorer": "node scripts/verify/whiteboard-explorer.mjs",
     "verify:super-ask-show": "node scripts/verify/super-ask-show.mjs",
