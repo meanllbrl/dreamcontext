@@ -4,6 +4,19 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-10-28
+
+The first published release since 0.35.0. It carries everything cut locally as 0.35.1 to 0.35.5 (none of those was published), plus pictures as chips in the sent message. The desktop app (Mac and Windows) and the npm package ship together.
+
+- **The app keeps itself up to date.** The app now updates dreamcontext on its own when it opens and every few hours, refreshes your projects, and offers a one-click relaunch. Mac users on 0.35.0 get the new app through the built-in updater: quit and reopen once.
+- **MCP management.** See every MCP server for every Claude account in one place, with live status, sign-ins and a `/mcp` popover in Chat.
+- **AI Team: one continuous history.** A teammate shows its whole history, every routine run and every talk, as one flow.
+- **Pictures are chips.** In the composer, with "Attach files…", and now in the sent message too, each picture sits inline where you put it.
+- **Open a whole group at once.** Pictures, PDFs, files, tasks and pages in a group open together.
+- **Whiteboards.** A board explorer with groups, search and recents; boards are lighter and opening one no longer changes it; a deleted board leaves the list at once.
+- **A tidier Super Agent.** A child's question reaches you right away, finished jobs close on their own, the agenda keeps itself current, and every Others tile has a ×.
+- **Dictation asks first.** Voice never downloads or loads a model without your OK, picks a size that fits your Mac (or the cloud), and unloads when idle. Fixes a crash on 8 GB Macs.
+
 ## [0.35.5] - 2026-10-28
 
 Five branches merged on top of 0.35.4. Local build; not published.
