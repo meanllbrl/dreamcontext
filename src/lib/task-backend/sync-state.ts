@@ -37,6 +37,30 @@ export interface TaskSyncEntry {
   lastLocalChangeAt?: number;
   /** True while local changes await a push. */
   pendingPush?: boolean;
+  /**
+   * The remote id of this task's PARENT as last seen or written (the remote's
+   * native subtask link); null = seen top-level; absent = never observed.
+   * See subtask-link.ts.
+   */
+  remote_parent?: string | null;
+  /**
+   * A parent link the remote REFUSED (the parent's remote id): the push does not
+   * re-select the task for it again until the local parent changes, so a refusal
+   * never turns into a request loop. Cleared (null) once a link lands.
+   */
+  remote_parent_refused?: string | null;
+  /**
+   * A remote parent the PULL declined to mirror (too deep, unmapped): the local
+   * "no parent" is then not an unlink, and the push never removes that link.
+   * Cleared (null) once local and remote agree.
+   */
+  remote_parent_unmirrored?: string | null;
+  /**
+   * True while `remote_parent` rides only in the parent's fallback task list (the
+   * sub-issues API was unavailable): the remote's own "no parent" then says
+   * nothing about this link, and a pull must not read it as an unlink.
+   */
+  remote_parent_via_list?: boolean;
 }
 
 export interface SyncStateFile {
@@ -65,6 +89,12 @@ export interface SyncStateFile {
   lastLabelProvisionAt?: number;
   /** Fingerprint of the status set the labels were last provisioned for (GitHub). */
   labelProvisionStatusSet?: number;
+  /**
+   * When the remote's native sub-task API last answered "not available here".
+   * While recent, the backend falls back to a task list in the parent's body;
+   * it is retried once a day.
+   */
+  subIssuesUnavailableAt?: number;
   /**
    * Local-image → hosted-asset bridge (GitHub task images). Push uploads a local
    * image once and rewrites the wire reference to the hosted URL; pull maps that
@@ -523,11 +553,11 @@ export class SyncLedger {
     this.writeSyncState(state);
   }
 
-  readThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt' | 'labelProvisionStatusSet'): number | null {
+  readThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt' | 'labelProvisionStatusSet' | 'subIssuesUnavailableAt'): number | null {
     return this.readSyncState()[key] ?? null;
   }
 
-  writeThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt' | 'labelProvisionStatusSet', at: number): void {
+  writeThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt' | 'labelProvisionStatusSet' | 'subIssuesUnavailableAt', at: number): void {
     const state = this.readSyncState();
     state[key] = at;
     this.writeSyncState(state);

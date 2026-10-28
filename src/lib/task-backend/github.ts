@@ -13,6 +13,11 @@ import {
   renderFieldsBlock,
   parseFieldsBlock,
   stripFieldsBlock,
+  renderSubtasksBlock,
+  parseSubtasksBlock,
+  stripSubtasksBlock,
+  issueNumberFromUrl,
+  urlInRepo,
   deleteToGitHub,
   githubTimeMs,
   githubTimeIso,
@@ -47,6 +52,7 @@ import { resolveGitHubToken, writeGitHubToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { changelogEntriesMissingFrom, changelogEntriesToPost, merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
 import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
+import { liveParentOf, parentsFirst, pulledParent, withBaseParent } from './subtask-link.js';
 import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
 import {
   BOOTSTRAP_PUSH_THRESHOLD,
@@ -155,6 +161,40 @@ function githubAuthHeaders(token: string): Record<string, string> {
     'X-GitHub-Api-Version': '2022-11-28',
   };
 }
+
+interface SettleInput {
+  slug: string;
+  parentSlug: string | null;
+  parentRemote: string | null;
+  remoteId: string;
+  issueId: number | undefined;
+  /** What GitHub holds now (from the PATCH response, else the ledger). */
+  remoteParent: string | null | undefined;
+  /** The ledger's `remote_parent` BEFORE this push: what this machine last saw or wrote. */
+  recordedParent: string | null | undefined;
+  /** The ledger's `remote_parent_refused` (a push refusal: a parent id, or `unlink:<id>`). */
+  refusedParent: string | null | undefined;
+  /** The ledger's `remote_parent_unmirrored` (a parent the pull declined to mirror). */
+  unmirrored: string | null | undefined;
+  created: boolean;
+  adapter: ApiAdapter;
+  owner: string;
+  repo: string;
+  report: SyncReport;
+}
+
+interface SettleResult {
+  remoteParent: string | null | undefined;
+  pending: boolean;
+  refused?: string | null;
+  unmirrored?: null;
+  viaList?: boolean;
+  /** Drop the ledger's `remote_parent`: GitHub showed a parent we never recorded. */
+  forget?: boolean;
+}
+
+/** A parent issue in ANOTHER repo of the owner: never mapped, never changed, never recorded. */
+const FOREIGN_PARENT = '#foreign';
 
 export class GitHubTaskBackend extends LocalTaskBackend {
   readonly name: string = 'github';
@@ -683,9 +723,31 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       const entry = state.tasks[slug];
       const hash = hashContent(readFileSync(file, 'utf-8'));
       if (!entry?.localHash || entry.localHash !== hash) candidates.add(slug);
+      // A synced sub-task GitHub does not hold under its parent (pushed as a
+      // separate item before sub-tasks synced, or never checked): push it so the
+      // link is settled, even with no local edit.
+      else if (this.ledger.remoteIdFor(slug)) {
+        const parent = this.liveParentFor(slug);
+        const parentRemote = parent ? this.ledger.remoteIdFor(parent) : null;
+        if (parentRemote && entry.remote_parent !== parentRemote && entry.remote_parent_refused !== parentRemote) {
+          candidates.add(slug);
+        }
+        // …and one no longer a sub-task here that GitHub still holds under a parent
+        // (an unlink whose push a pull got to first).
+        else if (
+          !parent && typeof entry.remote_parent === 'string'
+          && entry.remote_parent_refused !== `unlink:${entry.remote_parent}`
+          && entry.remote_parent_unmirrored !== entry.remote_parent
+        ) {
+          candidates.add(slug);
+        }
+      }
     }
 
-    const sorted = [...candidates].sort();
+    // Parents before their sub-tasks: a sub-issue is attached to its parent's
+    // issue, so the parent has to exist on GitHub first.
+    const sorted = parentsFirst([...candidates].sort(), (s) => this.liveParentFor(s));
+    this.parentsToRefresh.clear();
     // Bulk first sync (connecting a repo to a mature brain): with this many
     // never-synced tasks, pushTask keeps pre-existing changelog history local —
     // months of entries as issue comments would flood every subscriber's
@@ -721,6 +783,220 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       }
       this.progress?.({ phase: 'push', current: ++done, total: sorted.length, slug, bootstrap });
     }
+    // Sub-issues fallback only: a parent whose task list gained a sub-task this
+    // run re-sends its body so the list names it.
+    for (const parent of [...this.parentsToRefresh]) {
+      try {
+        await this.pushTask(parent, adapter, owner, repo, report, bootstrap);
+      } catch (err) {
+        report.errors.push(`push ${parent} (sub-task list): ${(err as Error).message ?? err}`);
+      }
+    }
+    this.parentsToRefresh.clear();
+  }
+
+  /** Parents whose fallback sub-task list must be re-sent at the end of this push. */
+  private parentsToRefresh = new Set<string>();
+
+  /** Does any task here sit under `slug`? */
+  protected hasLiveChildren(slug: string): boolean {
+    return this.taskFiles().some((f) => this.liveParentFor(basename(f, '.md')) === slug);
+  }
+
+  /** The live parent a task pushes under (subtask-link.ts), null for a top-level or dangling link. */
+  protected liveParentFor(slug: string): string | null {
+    const path = this.taskPath(slug);
+    if (!existsSync(path)) return null;
+    try {
+      const raw = matter(readFileSync(path, 'utf-8')).data as Record<string, unknown>;
+      return liveParentOf(slug, raw, (s) => existsSync(this.taskPath(s)));
+    } catch {
+      return null;
+    }
+  }
+
+  /** The sub-issues API said "not here" within the last day → use the body task list. */
+  private static readonly SUB_ISSUES_RETRY_MS = 24 * 60 * 60 * 1000;
+  protected subIssuesFallback(): boolean {
+    const at = this.ledger.readThrottle('subIssuesUnavailableAt');
+    return at !== null && this.nowMs() - at < GitHubTaskBackend.SUB_ISSUES_RETRY_MS;
+  }
+
+  /** The fallback task list for a parent: its mapped sub-tasks' issue numbers. */
+  protected subtasksBlockFor(slug: string): string {
+    // While the fallback is on, every mapped sub-task is listed. After its window,
+    // the list still carries each link that was MADE through it (`remote_parent_via_list`):
+    // those links exist nowhere else on GitHub, so dropping them from the body
+    // would lose them for every teammate.
+    const inWindow = this.subIssuesFallback();
+    const state = this.ledger.readSyncState();
+    if (!inWindow && !Object.values(state.tasks).some((e) => e.remote_parent_via_list)) return '';
+    const children: Array<{ number: number; done: boolean }> = [];
+    for (const file of this.taskFiles()) {
+      const child = basename(file, '.md');
+      if (child === slug || this.liveParentFor(child) !== slug) continue;
+      const remote = this.ledger.remoteIdFor(child);
+      if (!remote) continue;
+      if (!inWindow && !state.tasks[child]?.remote_parent_via_list) continue;
+      let status = 'todo';
+      try { status = String((matter(readFileSync(file, 'utf-8')).data as Record<string, unknown>).status ?? 'todo'); } catch { /* keep todo */ }
+      children.push({ number: Number(remote), done: isTerminal(this.statusDefs(), status) });
+    }
+    children.sort((a, b) => a.number - b.number);
+    return renderSubtasksBlock(children);
+  }
+
+  /** The parent issue number GitHub holds for an issue: a string, null (none), or undefined (could not tell). */
+  private async fetchParentNumber(adapter: ApiAdapter, owner: string, repo: string, remoteId: string): Promise<string | null | undefined> {
+    try {
+      const parent = await adapter.request<GitHubIssue>('GET', `${this.issuesPath(owner, repo)}/${remoteId}/parent`);
+      if (parent?.number === undefined) return null;
+      // A parent in ANOTHER repo is not one of ours: never touched, never mapped.
+      return urlInRepo(parent.repository_url ?? parent.url, owner, repo) ? String(parent.number) : FOREIGN_PARENT;
+    } catch (err) {
+      return (err as { kind?: string }).kind === 'not_found' ? null : undefined;
+    }
+  }
+
+  /**
+   * Put the issue where its task sits: a sub-issue of its parent's issue, or
+   * top-level. Both ids come from this project's own map, so the target is never
+   * a guess, and nothing is ever deleted or re-created. Returns the parent
+   * GitHub now holds and whether the link still has to be retried.
+   */
+  private async settleSubIssue(a: SettleInput): Promise<SettleResult> {
+    const res = await this.settleSubIssueOnce(a);
+    // A push refusal is about ONE target (link to X, or unlink from Y). Once the
+    // task wants something else, the refusal is over, so a later return to that
+    // target is pushed again instead of being held back for good.
+    const want = a.parentRemote ?? (typeof a.remoteParent === 'string' ? `unlink:${a.remoteParent}` : null);
+    if (res.refused === undefined && a.refusedParent && a.refusedParent !== want) res.refused = null;
+    return res;
+  }
+
+  private async settleSubIssueOnce(a: SettleInput): Promise<SettleResult> {
+    const { slug, parentSlug, parentRemote, remoteId, adapter, owner, repo, report } = a;
+    let remoteParent = a.remoteParent;
+    if (parentSlug && !parentRemote) {
+      report.warnings.push(`push ${slug}: its parent '${parentSlug}' is not on GitHub yet — it becomes a sub-issue once the parent syncs.`);
+      return { remoteParent, pending: true };
+    }
+    // Top-level here and nothing recorded about GitHub: nothing to settle, no request spent.
+    if (!parentRemote && remoteParent === undefined) return { remoteParent, pending: false };
+    // Local and GitHub agree: any earlier refusal of this parent is over.
+    if (parentRemote === remoteParent) {
+      return { remoteParent, pending: false, ...(parentRemote ? { refused: null, unmirrored: null } : {}) };
+    }
+
+    if (!parentRemote && typeof remoteParent === 'string' && remoteParent !== FOREIGN_PARENT) {
+      // A remote parent the pull declined to mirror (too deep, unmapped): the
+      // local "no parent" is not an unlink. The teammate's link is never undone.
+      if (remoteParent === a.unmirrored) return { remoteParent, pending: false };
+      // GitHub shows a parent this machine never recorded: a remote change not
+      // pulled yet, not something the user removed here. Never undone; the record
+      // is dropped so the next pull reads it fresh (adopts or declines it).
+      if (remoteParent !== a.recordedParent) return { remoteParent: undefined, pending: false, forget: true };
+    }
+
+    // Leaving a parent we recorded: re-send that parent's body in EITHER mode, so
+    // a fallback task list naming this issue (from a fallback window now over,
+    // or never noticed) cannot bring the old link back on a later pull.
+    const leaving = typeof remoteParent === 'string' ? this.ledger.slugForRemoteId(remoteParent) : null;
+    if (leaving && leaving !== parentSlug) this.parentsToRefresh.add(leaving);
+    if (parentRemote && this.subIssuesFallback()) {
+      // The link lives in the parent's task list: no sub-issues call is made.
+      this.parentsToRefresh.add(parentSlug!);
+      return { remoteParent: parentRemote, pending: false, unmirrored: null, viaList: true };
+    }
+    // An unlink still tries the API in fallback mode: the old link may have been a
+    // real sub-issue (a 404 below means it was not, which is done too).
+    if (remoteParent === undefined) remoteParent = await this.fetchParentNumber(adapter, owner, repo, remoteId);
+    if (remoteParent === undefined) {
+      report.warnings.push(`push ${slug}: could not read its parent issue on GitHub — the sub-issue link is retried next sync.`);
+      return { remoteParent, pending: true };
+    }
+    // Local and GitHub agree: any earlier refusal of this parent is over.
+    if (parentRemote === remoteParent) {
+      return { remoteParent, pending: false, ...(parentRemote ? { refused: null, unmirrored: null } : {}) };
+    }
+
+    let issueId = a.issueId;
+    if (issueId === undefined) {
+      const fresh = await adapter.request<GitHubIssue>('GET', `${this.issuesPath(owner, repo)}/${remoteId}`);
+      issueId = fresh.id;
+    }
+    if (issueId === undefined) {
+      report.warnings.push(`push ${slug}: GitHub returned no issue id — the sub-issue link is retried next sync.`);
+      return { remoteParent, pending: true };
+    }
+
+    if (parentRemote) {
+      try {
+        await adapter.request('POST', `${this.issuesPath(owner, repo)}/${parentRemote}/sub_issues`, {
+          body: { sub_issue_id: issueId, ...(remoteParent ? { replace_parent: true } : {}) },
+        });
+        if (!a.created) {
+          report.warnings.push(
+            `relinked: ${slug} is now a sub-issue of '${parentSlug}' (#${parentRemote}); it was ${remoteParent ? `under #${remoteParent}` : 'a separate issue'}.`,
+          );
+        }
+        return { remoteParent: parentRemote, pending: false, refused: null, unmirrored: null, viaList: false };
+      } catch (err) {
+        const kind0 = (err as { kind?: string }).kind;
+        // A 404 means "no sub-issues API here" ONLY when the parent issue itself
+        // is there; a deleted or transferred parent (404/410) is a refusal.
+        const apiMissing = kind0 === 'not_found' && await this.issueExists(adapter, owner, repo, parentRemote);
+        const kind = kind0 === 'not_found' && !apiMissing ? 'invalid' : kind0;
+        if (apiMissing) {
+          // The repo's GitHub has no sub-issues API (an older Enterprise Server):
+          // list the sub-task in the parent's body instead, and say so.
+          this.ledger.writeThrottle('subIssuesUnavailableAt', this.nowMs());
+          this.parentsToRefresh.add(parentSlug!);
+          report.warnings.push(
+            `push ${slug}: GitHub's sub-issues API is not available for this repo — listed it as a task in ` +
+            `'${parentSlug}' (#${parentRemote}) body instead of a real sub-issue (retried as a sub-issue after a day).`,
+          );
+          return { remoteParent: parentRemote, pending: false, unmirrored: null, viaList: true };
+        }
+        // A 4xx is GitHub refusing this link (a limit, a cycle, a stale record):
+        // retrying the same call changes nothing, so it is recorded as refused and
+        // not re-selected until the parent changes. A transport failure retries.
+        const refused = kind === 'invalid';
+        report.warnings.push(
+          `push ${slug}: could not make it a sub-issue of '${parentSlug}' (#${parentRemote}): ${(err as Error).message ?? err} — ` +
+          `it stays where it is; ${refused ? 'not retried until its parent changes' : 'retried next sync'}.`,
+        );
+        return refused ? { remoteParent, pending: false, refused: parentRemote } : { remoteParent, pending: true };
+      }
+    }
+
+    // Under a parent in another repo: not ours to change. Recorded as "no parent of
+    // ours", so the unlink re-select stops matching instead of re-pushing every sync.
+    if (remoteParent === FOREIGN_PARENT) return { remoteParent: null, pending: false, viaList: false };
+    // No parent here any more, but GitHub still holds one: take it out (never deleted).
+    try {
+      await adapter.request('DELETE', `${this.issuesPath(owner, repo)}/${remoteParent}/sub_issue`, {
+        body: { sub_issue_id: issueId },
+      });
+      return { remoteParent: null, pending: false, viaList: false };
+    } catch (err) {
+      const kind = (err as { kind?: string }).kind;
+      // Not there any more: already done.
+      if (kind === 'not_found') return { remoteParent: null, pending: false, viaList: false };
+      report.warnings.push(`push ${slug}: could not take it out of #${remoteParent} on GitHub: ${(err as Error).message ?? err}.`);
+      // A refused unlink is recorded so the push does not re-select it every sync.
+      return kind === 'invalid' ? { remoteParent, pending: false, refused: `unlink:${remoteParent}` } : { remoteParent, pending: true };
+    }
+  }
+
+  /** Does issue #n exist in this repo? (False on any failure: never read as "API missing" on a guess.) */
+  private async issueExists(adapter: ApiAdapter, owner: string, repo: string, n: string): Promise<boolean> {
+    try {
+      await adapter.request<GitHubIssue>('GET', `${this.issuesPath(owner, repo)}/${n}`);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   protected async pushTask(
@@ -735,6 +1011,20 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     if (!existsSync(path)) return;
     const task = (await super.get(slug))!;
     const enqueueCutoff = this.nowMs();
+
+    // SUB-TASKS ride as GitHub sub-issues of their parent's issue, never as a
+    // second top-level issue. The parent is pushed first (pushLocal orders it);
+    // when it still has no issue (its own push failed), a NEW sub-task waits
+    // rather than land top-level — it stays drifted and retries next sync.
+    const parentSlug = liveParentOf(slug, task.raw, (s) => existsSync(this.taskPath(s)));
+    const parentRemote = parentSlug ? this.ledger.remoteIdFor(parentSlug) : null;
+    if (parentSlug && !parentRemote && !this.ledger.remoteIdFor(slug) && !this.ledger.entryForDcId(task.id)) {
+      report.warnings.push(
+        `push ${slug}: waits for its parent '${parentSlug}', which is not on GitHub yet — ` +
+        `it is created as a sub-issue of it on a later sync, never as a separate issue.`,
+      );
+      return;
+    }
 
     const entry = this.ledger.taskSync(slug);
     const baseEntries = entry?.base_snapshot
@@ -793,7 +1083,10 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // on GitHub — upload them to the assets branch and rewrite each reference to
     // its hosted URL, WIRE-ONLY (the mirror keeps the canonical local path).
     const prose = await this.uploadAndRewriteImages(bodyToIssueBody(task.body), adapter, owner, repo, report);
-    const body = composeIssueBody(prose, startLocal, dueLocal, fieldsBlock);
+    const body = composeIssueBody(
+      prose, startLocal, dueLocal, fieldsBlock,
+      this.subtasksBlockFor(slug),
+    );
 
     // GitHub rejects issue bodies over 65,536 chars with a 422 — and pushing a
     // TRUNCATED body instead would read back as a remote edit on the next pull,
@@ -826,6 +1119,8 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // matching rule in the ClickUp adapter).
     const wasMapped = remoteId !== null && remoteId !== undefined;
     let serverTime: number | null = null;
+    let issueId: number | undefined;
+    let remoteParent: string | null | undefined = entry?.remote_parent;
 
     if (!remoteId) {
       // CREATE: one POST carries title + body + labels + assignees. A brand-new
@@ -836,6 +1131,8 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       remoteId = String(created.number);
       this.ledger.recordMapping({ slug, dcId: task.id, backend: this.name, remoteId });
       serverTime = githubTimeMs(created.updated_at);
+      issueId = created.id;
+      remoteParent = null; // a fresh issue is top-level until attached below
       report.created++;
 
       // If the local status closes the issue, PATCH it now (a fresh issue is
@@ -881,8 +1178,25 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         },
       );
       serverTime = githubTimeMs(updated.updated_at) ?? serverTime;
+      issueId = updated.id;
+      if (updated.parent_issue_url !== undefined) {
+        const n = issueNumberFromUrl(updated.parent_issue_url);
+        remoteParent = n === null
+          // A fallback link is not visible here: "no parent" says nothing about it.
+          ? (entry?.remote_parent_via_list ? remoteParent : null)
+          : (urlInRepo(updated.parent_issue_url, owner, repo) ? String(n) : FOREIGN_PARENT);
+      }
       report.pushed++;
     }
+
+    const link = await this.settleSubIssue({
+      slug, parentSlug, parentRemote, remoteId, issueId, remoteParent,
+      recordedParent: entry?.remote_parent,
+      refusedParent: entry?.remote_parent_refused,
+      unmirrored: entry?.remote_parent_unmirrored,
+      created: !wasMapped, adapter, owner, repo, report,
+    });
+    remoteParent = link.remoteParent === FOREIGN_PARENT ? undefined : link.remoteParent;
 
     // Changelog → issue comments (union-merged remotely; only entries the remote
     // hasn't seen yet, so re-runs post nothing). Bulk first sync keeps a
@@ -912,17 +1226,29 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     }
 
     const raw = readFileSync(path, 'utf-8');
+    // A link left to retry has not landed: the base keeps the old parent (see withBaseParent).
+    const newBase = link.pending ? withBaseParent(raw, entry?.base_snapshot?.body ?? null) : raw;
     this.ledger.updateTaskSync(slug, {
       last_synced_at: serverTime ?? entry?.last_synced_at ?? 0,
-      base_snapshot: { hash: hashContent(raw), body: raw },
+      base_snapshot: { hash: hashContent(newBase), body: newBase },
       localHash: hashContent(raw),
-      pendingPush: false,
+      pendingPush: link.pending,
+      ...(remoteParent !== undefined ? { remote_parent: remoteParent } : {}),
+      ...(link.refused !== undefined ? { remote_parent_refused: link.refused } : {}),
+      ...(link.unmirrored !== undefined ? { remote_parent_unmirrored: link.unmirrored } : {}),
+      // Forget a parent GitHub showed but this machine never recorded (see settleSubIssue).
+      ...(link.forget ? { remote_parent: undefined } : {}),
+      ...(link.viaList !== undefined ? { remote_parent_via_list: link.viaList } : {}),
     });
     // Same rule as the ClickUp backend (#185): a push must not advance the global
     // pull watermark. "I wrote at T" is not "I have pulled everything up to T",
     // and conflating them silently drops a collaborator's older, unpulled change
     // out of every future delta pull. Echo is absorbed by base_snapshot/localHash.
     this.ledger.dequeueFor(slug, enqueueCutoff);
+    // A sub-issue link that did not land: re-queue so the next sync retries it.
+    if (link.pending) {
+      this.ledger.enqueue({ id: `parent-retry-${slug}-${enqueueCutoff}`, kind: 'push', slug, ts: enqueueCutoff + 1 });
+    }
   }
 
   // ── Image assets (local task images → hosted GitHub URLs) ─────────────────
@@ -1155,6 +1481,13 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       if (items.length < perPage) break;
     }
 
+    // Where each pulled issue sits: a sub-issue of which parent, or top-level.
+    // Top-level issues go first, so a sub-issue new in this batch finds its
+    // parent already mapped.
+    this.pullParentHints = await this.collectParentHints(adapter, owner, repo, remoteIssues);
+    remoteIssues.sort((a, b) =>
+      (this.pullParentHints.get(String(a.number)) ? 1 : 0) - (this.pullParentHints.get(String(b.number)) ? 1 : 0));
+
     const pendingDeletes = this.ledger.pendingDeleteRemoteIds();
     this.progress?.({ phase: 'pull', current: 0, total: remoteIssues.length });
     let pullDone = 0;
@@ -1296,6 +1629,130 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     if (remapMode) this.ledger.clearPendingContainerRemap();
   }
 
+  /** Issue number → parent issue number (null = top-level) for the current pull; absent = unknown. */
+  private pullParentHints = new Map<string, string | null>();
+  /** Issues whose hint came from a fallback task list (the link lives only there). */
+  private pullHintsFromList = new Set<string>();
+  /** Issue number → the remote parent this pull refused to mirror (subtask-link.ts `refused`). */
+  private pullRefusals = new Map<string, string>();
+  /** Issues whose local link this pull found (or made) equal to GitHub's. */
+  private pullAgreed = new Set<string>();
+  /** Issues whose local link changed since the last sync and was kept (subtask-link.ts `localWins`). */
+  private pullLocalWins = new Set<string>();
+
+  /**
+   * What GitHub says about each pulled issue's parent: `parent_issue_url` when
+   * the payload carries it, the sub-issue list of every pulled parent
+   * (`sub_issues_summary.total > 0`), and, in the fallback, the task list in a
+   * parent's body. An issue none of these mention stays unknown, and an unknown
+   * parent never changes a local link.
+   */
+  private async collectParentHints(
+    adapter: ApiAdapter,
+    owner: string,
+    repo: string,
+    issues: GitHubIssue[],
+  ): Promise<Map<string, string | null>> {
+    const hints = new Map<string, string | null>();
+    this.pullHintsFromList.clear();
+    this.pullRefusals.clear();
+    this.pullAgreed.clear();
+    this.pullLocalWins.clear();
+    for (const issue of issues) {
+      if (issue.parent_issue_url === undefined) continue;
+      const n = issueNumberFromUrl(issue.parent_issue_url);
+      if (n !== null) {
+        // A parent in another repo is unknown here, never this repo's same number.
+        if (urlInRepo(issue.parent_issue_url, owner, repo)) hints.set(String(issue.number), String(n));
+        continue;
+      }
+      // "No parent" cannot see a link that lives only in a fallback task list.
+      const slug = this.ledger.slugForRemoteId(String(issue.number));
+      if (slug && this.ledger.taskSync(slug)?.remote_parent_via_list) continue;
+      hints.set(String(issue.number), null);
+    }
+    for (const issue of issues) {
+      if (!issue.sub_issues_summary?.total) continue;
+      try {
+        for (let page = 1; ; page++) {
+          const batch = await adapter.request<GitHubIssue[]>(
+            'GET',
+            `${this.issuesPath(owner, repo)}/${issue.number}/sub_issues`,
+            { query: { per_page: 100, page } },
+          );
+          const items = Array.isArray(batch) ? batch : [];
+          for (const child of items) {
+            if (urlInRepo(child.repository_url ?? child.url, owner, repo)) hints.set(String(child.number), String(issue.number));
+          }
+          if (items.length < 100) break;
+        }
+      } catch { /* this parent's children stay unknown — never read as top-level */ }
+    }
+    // The fallback task list names a parent that a `null` parent_issue_url
+    // cannot know about (the link never went through the sub-issues API).
+    for (const issue of issues) {
+      for (const n of parseSubtasksBlock(issue.body)) {
+        if (!hints.get(String(n))) {
+          hints.set(String(n), String(issue.number));
+          this.pullHintsFromList.add(String(n));
+        }
+      }
+    }
+    return hints;
+  }
+
+  /** The `parent_task` a pulled issue ends with (subtask-link.ts pulledParent). */
+  protected pulledParentFor(
+    slug: string,
+    remoteId: string,
+    localParent: string | null,
+    baseParent: string | null | undefined,
+    lastRemoteParent: string | null | undefined,
+    report: SyncReport,
+  ): string | null {
+    const res = pulledParent({
+      slug,
+      localParent,
+      baseParent,
+      remoteParentId: this.pullParentHints.has(remoteId) ? this.pullParentHints.get(remoteId)! : undefined,
+      lastRemoteParent,
+      slugForRemoteId: (id) => this.ledger.slugForRemoteId(id),
+      parentOfLocal: (s) => this.liveParentFor(s),
+      hasLocalChildren: (s) => this.hasLiveChildren(s),
+    });
+    if (res.warning) report.warnings.push(res.warning);
+    if (res.refused) this.pullRefusals.set(remoteId, res.refused);
+    if (res.localWins) this.pullLocalWins.add(remoteId);
+    // The local link now matches GitHub's: an earlier refusal of that parent is over.
+    const hint = this.pullParentHints.get(remoteId);
+    if (!res.refused && res.parent && hint && this.ledger.remoteIdFor(res.parent) === hint) this.pullAgreed.add(remoteId);
+    return res.parent;
+  }
+
+  /** The ledger patch recording what this pull saw of the issue's parent (nothing when unknown). */
+  private remoteParentPatch(remoteId: string): {
+    remote_parent?: string | null;
+    remote_parent_via_list?: boolean;
+    remote_parent_unmirrored?: string | null;
+  } {
+    if (!this.pullParentHints.has(remoteId)) return {};
+    const refused = this.pullRefusals.get(remoteId);
+    const hint = this.pullParentHints.get(remoteId)!;
+    // GitHub shows no parent: any earlier "declined to mirror" mark is over.
+    const unmirroredOver = hint === null || this.pullAgreed.has(remoteId);
+    // A local re-parent waiting to push keeps what this machine had recorded, so
+    // the push never mistakes a remote change for the link the user removed.
+    if (this.pullLocalWins.has(remoteId)) return unmirroredOver ? { remote_parent_unmirrored: null } : {};
+    return {
+      remote_parent: hint,
+      // Every machine that READ a link from the fallback list keeps writing that
+      // list, not only the machine that made it.
+      remote_parent_via_list: this.pullHintsFromList.has(remoteId),
+      // A parent the pull refused to mirror is never "unlinked" by the push.
+      ...(refused ? { remote_parent_unmirrored: refused } : unmirroredOver ? { remote_parent_unmirrored: null } : {}),
+    };
+  }
+
   protected async applyRemoteIssue(
     issue: GitHubIssue,
     adapter: ApiAdapter,
@@ -1375,7 +1832,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // an image reference reads identically on both sides and never churns merge.
     // (For an EXISTING mirror the bridge is first re-derived from local — see the
     // re-map below — so a wiped `assets` cache can't manufacture a false conflict.)
-    const remoteStripped = stripFieldsBlock(stripDatesBlock(normalizedIssueBody)).trim();
+    const remoteStripped = stripSubtasksBlock(stripFieldsBlock(stripDatesBlock(normalizedIssueBody))).trim();
     let remoteBody = this.mapRemoteImagesToLocal(remoteStripped);
     // Every assignee login maps back to a person:<slug> tag. Guard the resolve
     // path so a non-collaborator / unknown login is skipped, not a crash.
@@ -1441,6 +1898,8 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       // everything only the mirror ever knew.
       const rebuiltFrom = slug ? localOnlyFieldsFromSnapshot(this.ledger.taskSync(slug)?.base_snapshot?.body) : {};
       slug = slug ?? this.uniqueSlugFor(issue.title);
+      // A sub-issue lands as a sub-task of its parent's mirror, never as a new top-level task.
+      const linked = this.pulledParentFor(slug, remoteId, null, undefined, undefined, report);
       const fm: Record<string, unknown> = {
         id: generateId('task'),
         name: issue.title,
@@ -1451,7 +1910,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         created_at: dateOf(githubTimeMs(issue.created_at) ?? remoteTime),
         updated_at: dateOf(remoteTime),
         tags: withPersonTags(remoteTags, remoteAssignees),
-        parent_task: null,
+        parent_task: linked,
         related_feature: null,
         version: remoteVersion,
         rice: null,
@@ -1476,6 +1935,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         base_snapshot: { hash: hashContent(written), body: written },
         localHash: hashContent(written),
         pendingPush: false,
+        ...this.remoteParentPatch(remoteId),
       });
       this.ledger.advanceWatermark(remoteTime);
       report.pulled++;
@@ -1646,6 +2106,16 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       );
     }
     const fm = guarded.fm;
+    // The sub-task link is the one local field GitHub DOES carry (sub-issues);
+    // it moves only when GitHub moved it (subtask-link.ts).
+    fm.parent_task = this.pulledParentFor(
+      slug,
+      remoteId,
+      local.parent_task ?? null,
+      baseFm ? ((baseFm.parent_task as string | null | undefined) ?? null) : undefined,
+      entry?.remote_parent,
+      report,
+    );
 
     // The mirror is about to be rewritten with remote-derived content and has no
     // git history to fall back on — keep the pre-pull bytes first. Only when the
@@ -1655,11 +2125,18 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     if (rendered !== localRaw) this.ledger.backupMirror(slug, localRaw);
     const written = this.writeMirrorContent(slug, rendered);
 
-    const keptLocal = anyLocalWin || proseLocalKept || localOnlyEntries.length > 0;
+    // A local re-parent waiting to push (subtask-link.ts `localWins`): the base keeps
+    // the OLD parent, so every later pull still sees the move as local and pending.
+    // Writing the merged parent into the base would let a second pull before the
+    // push read GitHub's parent as a fresh remote change and drop the move.
+    const parentPending = this.pullLocalWins.has(remoteId);
+    const baseParentKept = parentPending ? { parent_task: (baseFm?.parent_task as string | null | undefined) ?? null } : {};
+    const keptLocal = anyLocalWin || proseLocalKept || localOnlyEntries.length > 0 || parentPending;
     if (keptLocal) {
       const remoteRender = this.renderMirror(
         {
           ...fm,
+          ...baseParentKept,
           name: issue.title,
           status: remoteStatus,
           priority: remotePriority,
@@ -1682,6 +2159,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         base_snapshot: { hash: hashContent(remoteRender), body: remoteRender },
         localHash: hashContent(remoteRender),
         pendingPush: true,
+        ...this.remoteParentPatch(remoteId),
       });
     } else {
       this.ledger.updateTaskSync(slug, {
@@ -1689,6 +2167,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         base_snapshot: { hash: hashContent(written), body: written },
         localHash: hashContent(written),
         pendingPush: false,
+        ...this.remoteParentPatch(remoteId),
       });
       this.ledger.dequeueFor(slug, this.nowMs());
     }

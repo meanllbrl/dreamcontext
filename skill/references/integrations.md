@@ -170,6 +170,17 @@ can express), plus `rice`, `parent_task`, `related_feature`, `description`, and 
 field a project's own override adds. This matters more than it sounds: `state/*.md` is
 **gitignored**, so a field a pull drops has no history to restore it from.
 
+**Sub-tasks are the one exception that rides natively.** A task with a `parent_task`
+syncs as a **ClickUp subtask** of its parent's task / a **GitHub sub-issue** of its
+parent's issue — never as a second top-level item. The parent is pushed first; a new
+sub-task whose parent has no remote item yet waits (`push <slug>: waits for its parent …`).
+A sub-task synced earlier as a separate item is moved under its parent on the next sync
+(`relinked: …` in the report), never deleted. A pull moves `parent_task` only when the
+remote moved the item since the last sync, so a local re-parent waiting to push is kept.
+ClickUp's API cannot turn a subtask back into a task (the report says so); a GitHub
+without the sub-issues API falls back to a `<!-- dc:subtasks -->` task list in the
+parent's body (the report says so too).
+
 Two guards enforce it, and both are LOUD rather than silent:
 - The merge re-applies any local-only field it would have dropped and **names it in the
   sync report** (`warning: pull <slug>: local-only field(s) … were preserved`). Seeing

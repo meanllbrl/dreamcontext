@@ -51,6 +51,7 @@ import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { changelogEntriesMissingFrom, changelogEntriesToPost, merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
 import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
 import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
+import { liveParentOf, parentsFirst, pulledParent, withBaseParent } from './subtask-link.js';
 import {
   BOOTSTRAP_PUSH_THRESHOLD,
   type AddChangelogOptions,
@@ -745,9 +746,21 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       const entry = state.tasks[slug];
       const hash = hashContent(readFileSync(file, 'utf-8'));
       if (!entry?.localHash || entry.localHash !== hash) candidates.add(slug);
+      // A synced sub-task ClickUp does not hold under its parent (pushed as a
+      // separate item before sub-tasks synced, or never checked): push it so the
+      // link is settled, even with no local edit.
+      else if (this.ledger.remoteIdFor(slug)) {
+        const parent = this.liveParentFor(slug);
+        const parentRemote = parent ? this.ledger.remoteIdFor(parent) : null;
+        if (parentRemote && entry.remote_parent !== parentRemote && entry.remote_parent_refused !== parentRemote) {
+          candidates.add(slug);
+        }
+      }
     }
 
-    const sorted = [...candidates].sort();
+    // Parents before their sub-tasks: a subtask's create names its parent's
+    // ClickUp id, so the parent has to exist remotely first.
+    const sorted = parentsFirst([...candidates].sort(), (s) => this.liveParentFor(s));
     // Bulk first sync (connecting a backend to a mature brain): with this many
     // never-synced tasks, pushTask switches to its low-request-count shape —
     // fields inline on the create, pre-existing changelog history kept local.
@@ -787,6 +800,23 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     }
   }
 
+  /** Does any task here sit under `slug`? */
+  protected hasLiveChildren(slug: string): boolean {
+    return this.taskFiles().some((f) => this.liveParentFor(basename(f, '.md')) === slug);
+  }
+
+  /** The live parent a task pushes under (subtask-link.ts), null for a top-level or dangling link. */
+  protected liveParentFor(slug: string): string | null {
+    const path = this.taskPath(slug);
+    if (!existsSync(path)) return null;
+    try {
+      const raw = matter(readFileSync(path, 'utf-8')).data as Record<string, unknown>;
+      return liveParentOf(slug, raw, (s) => existsSync(this.taskPath(s)));
+    } catch {
+      return null;
+    }
+  }
+
   protected async pushTask(
     slug: string,
     adapter: ApiAdapter,
@@ -798,6 +828,21 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     if (!existsSync(path)) return;
     const task = (await super.get(slug))!;
     const enqueueCutoff = this.nowMs();
+
+    // SUB-TASKS ride as ClickUp subtasks of their parent's task, never as a
+    // second top-level task. The parent is pushed first (pushLocal orders it);
+    // when it still has no ClickUp id (its own push failed), a NEW sub-task
+    // waits rather than land top-level — it stays drifted and retries next sync.
+    const parentSlug = liveParentOf(slug, task.raw, (s) => existsSync(this.taskPath(s)));
+    const parentRemote = parentSlug ? this.ledger.remoteIdFor(parentSlug) : null;
+    if (parentSlug && !parentRemote && !this.ledger.remoteIdFor(slug) && !this.ledger.entryForDcId(task.id)) {
+      report.warnings.push(
+        `push ${slug}: waits for its parent '${parentSlug}', which is not on ClickUp yet — ` +
+        `it is created as a subtask of it on a later sync, never as a separate task.`,
+      );
+      return;
+    }
+    let remoteParent: string | null | undefined = this.ledger.taskSync(slug)?.remote_parent;
 
     const entry = this.ledger.taskSync(slug);
     const baseEntries = entry?.base_snapshot
@@ -900,6 +945,10 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     let needsTimestampRefetch = false;
     /** A tag add/remove that genuinely failed — the task stays pending (see below). */
     let tagOpsFailed = false;
+    /** A sub-task move that failed — the task stays pending so it is retried. */
+    let parentLinkPending = false;
+    /** The parent link ClickUp refused this push (null = a link landed; undefined = no attempt). */
+    let refusedParent: string | null | undefined;
     const bindings = this.fieldBindings();
     // True once a CREATE carried its custom fields inline — the per-field
     // fallback loop below must then skip them (they're already on the task).
@@ -920,6 +969,8 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         // dcproject: stamps the row so a shared-list pull can tell it apart (#177).
         tags: this.withProjectStamp(tagsToClickUp(stripPersonTags(task.tags), task.version, task.status, this.statusDefs())),
         assignees: assigneeIds,
+        // A sub-task is created as a ClickUp subtask of its parent (same list).
+        ...(parentRemote ? { parent: parentRemote } : {}),
       };
       let created: ClickUpTask;
       try {
@@ -942,6 +993,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       remoteId = created.id;
       this.ledger.recordMapping({ slug, dcId: task.id, backend: this.name, remoteId });
       serverTime = serverTimeMs(created.date_updated);
+      remoteParent = created.parent !== undefined ? (created.parent ?? null) : (parentRemote ?? null);
       report.created++;
     } else {
       // Diff against the base snapshot: assignees and tags are the only
@@ -968,6 +1020,56 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       });
       serverTime = serverTimeMs(updated.date_updated);
       report.pushed++;
+      if (updated.parent !== undefined) remoteParent = updated.parent ?? null;
+
+      // SUB-TASK LINK. The PUT response says where the task sits now. A sub-task
+      // that is top-level on ClickUp (pushed before subtasks synced) or under
+      // another parent is moved under its parent's task — both ids come from
+      // this project's own map, so the target is never a guess. Never deleted,
+      // never re-created: a failed move is reported and retried next sync.
+      if (parentRemote && remoteParent !== parentRemote) {
+        try {
+          const moved = await adapter.request<ClickUpTask>('PUT', `/task/${remoteId}`, { body: { parent: parentRemote } });
+          serverTime = serverTimeMs(moved.date_updated) ?? serverTime;
+          // Record what ClickUp SAYS it holds, never what was asked: a recorded
+          // parent the remote does not have would let a later pull clear the
+          // local link (subtask-link.ts).
+          const now = moved.parent !== undefined ? (moved.parent ?? null) : parentRemote;
+          if (now === parentRemote) {
+            report.warnings.push(
+              `relinked: ${slug} is now a ClickUp subtask of '${parentSlug}' (it was ${remoteParent ? 'under another task' : 'a separate task'}).`,
+            );
+            refusedParent = null;
+          } else {
+            report.warnings.push(
+              `push ${slug}: ClickUp accepted the move under '${parentSlug}' but did not make it a subtask — ` +
+              `it stays where it is (not retried until its parent changes).`,
+            );
+            refusedParent = parentRemote;
+          }
+          remoteParent = now;
+        } catch (err) {
+          // A rejected move (4xx) is ClickUp's answer: not retried until the parent
+          // changes. A transport failure (already retried by the adapter) is.
+          const refused = (err as { kind?: string }).kind === 'invalid';
+          report.warnings.push(
+            `push ${slug}: could not make it a subtask of '${parentSlug}' on ClickUp (${(err as Error).message ?? err}) — ` +
+            `it stays where it is; ${refused ? 'not retried until its parent changes' : 'retried next sync'}.`,
+          );
+          if (refused) refusedParent = parentRemote;
+          else parentLinkPending = true;
+        }
+      } else if (parentSlug && !parentRemote) {
+        report.warnings.push(
+          `push ${slug}: its parent '${parentSlug}' is not on ClickUp yet — it becomes a subtask once the parent syncs.`,
+        );
+        parentLinkPending = true;
+      } else if (!parentSlug && typeof remoteParent === 'string') {
+        report.warnings.push(
+          `push ${slug}: it is no longer a sub-task here, but ClickUp's API cannot turn a subtask back into a task — ` +
+          `move it out in ClickUp if you want it top-level there.`,
+        );
+      }
 
       // Tag deltas: ClickUp's PUT carries no tags — changed tags go through
       // the per-tag endpoints. person: tags stay local (assignees above).
@@ -1136,12 +1238,16 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // the next sync recomputes exactly the tag delta that did not land. Replaying
     // it is safe: the tag ops above tolerate an already-applied op.
     const raw = readFileSync(path, 'utf-8');
-    const newBase = tagOpsFailed ? renderWithBaseTags(raw, entry?.base_snapshot?.body ?? null) : raw;
+    const withTags = tagOpsFailed ? renderWithBaseTags(raw, entry?.base_snapshot?.body ?? null) : raw;
+    // A subtask move left to retry has not landed: the base keeps the old parent.
+    const newBase = parentLinkPending ? withBaseParent(withTags, entry?.base_snapshot?.body ?? null) : withTags;
     this.ledger.updateTaskSync(slug, {
       last_synced_at: serverTime ?? entry?.last_synced_at ?? 0,
       base_snapshot: { hash: hashContent(newBase), body: newBase },
       localHash: hashContent(raw),
-      pendingPush: tagOpsFailed,
+      pendingPush: tagOpsFailed || parentLinkPending,
+      ...(remoteParent !== undefined ? { remote_parent: remoteParent } : {}),
+      ...(refusedParent !== undefined ? { remote_parent_refused: refusedParent } : {}),
     });
     // NOTE: the push must NOT advance the global pull watermark (#185). The
     // watermark's contract is "I have PULLED everything up to T" — it gates
@@ -1161,6 +1267,10 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // together with the op that triggered this push.
     if (tagOpsFailed) {
       this.ledger.enqueue({ id: `tag-retry-${slug}-${enqueueCutoff}`, kind: 'push', slug, ts: enqueueCutoff + 1 });
+    }
+    // Same for a sub-task link that did not land: the queue re-selects the task.
+    if (parentLinkPending && !tagOpsFailed) {
+      this.ledger.enqueue({ id: `parent-retry-${slug}-${enqueueCutoff}`, kind: 'push', slug, ts: enqueueCutoff + 1 });
     }
   }
 
@@ -1224,6 +1334,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
           query: {
             page,
             include_closed: true,
+            // A ClickUp subtask is left OUT of a list read unless asked for, so a
+            // synced sub-task would read as remotely deleted without this.
+            subtasks: true,
             ...(watermark !== null ? { date_updated_gt: watermark } : {}),
           },
         },
@@ -1242,6 +1355,10 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       );
       if (res.last_page !== false || batch.length === 0) break;
     }
+
+    // Top-level tasks before subtasks: a subtask new in this batch resolves its
+    // parent through the map, so the parent has to be mapped first.
+    remoteTasks.sort((a, b) => (a.parent ? 1 : 0) - (b.parent ? 1 : 0));
 
     const pendingDeletes = this.ledger.pendingDeleteRemoteIds();
     this.progress?.({ phase: 'pull', current: 0, total: remoteTasks.length });
@@ -1309,7 +1426,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
           const res = await adapter.request<{ tasks?: ClickUpTask[]; last_page?: boolean }>(
             'GET',
             `/list/${listId}/task`,
-            { query: { page, include_closed: true } },
+            { query: { page, include_closed: true, subtasks: true } },
           );
           const batch = res.tasks ?? [];
           for (const t of batch) remoteIds.add(t.id);
@@ -1522,6 +1639,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       // holds the last synced bytes of that exact mirror, so rebuild from BOTH.
       const rebuiltFrom = slug ? localOnlyFieldsFromSnapshot(this.ledger.taskSync(slug)?.base_snapshot?.body) : {};
       slug = slug ?? this.uniqueSlugFor(remote.name);
+      // A ClickUp subtask lands as a sub-task of its parent's mirror, never as a
+      // new top-level task.
+      const linked = this.pulledParentFor(slug, remote, null, undefined, undefined, report);
       const fm: Record<string, unknown> = {
         id: generateId('task'),
         name: remote.name,
@@ -1532,7 +1652,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         created_at: dateOf(serverTimeMs(remote.date_created) ?? remoteTime),
         updated_at: dateOf(remoteTime),
         tags: withPersonTags(remoteTags, remoteAssignees),
-        parent_task: null,
+        parent_task: linked,
         related_feature: null,
         version: remoteVersion,
         rice: null,
@@ -1560,6 +1680,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         base_snapshot: { hash: hashContent(written), body: written },
         localHash: hashContent(written),
         pendingPush: false,
+        ...(remote.parent !== undefined ? { remote_parent: remote.parent ?? null } : {}),
       });
       this.ledger.advanceWatermark(remoteTime);
       report.pulled++;
@@ -1761,6 +1882,16 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         `${this.name} merge and were preserved — these have no remote representation; please report this.`,
       );
     }
+    // The sub-task link is the one local field ClickUp DOES carry (a subtask's
+    // `parent`); it moves only when ClickUp moved it (subtask-link.ts).
+    fm.parent_task = this.pulledParentFor(
+      slug,
+      remote,
+      local.parent_task ?? null,
+      baseFm ? ((baseFm.parent_task as string | null | undefined) ?? null) : undefined,
+      entry?.remote_parent,
+      report,
+    );
 
     // The mirror is about to be rewritten with remote-derived content and has no
     // git history to fall back on — keep the pre-pull bytes first. Only when the
@@ -1772,7 +1903,10 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
     // ── bookkeeping: base reflects the REMOTE state so surviving local
     //    changes still diff (and push) against it. ──
-    const keptLocal = anyLocalWin || proseLocalKept || localOnlyEntries.length > 0;
+    // A local re-parent waiting to push: the base keeps the OLD parent, so a second
+    // pull before the push still sees the move as local (same rule as GitHub).
+    const parentPending = this.pullParentPending;
+    const keptLocal = anyLocalWin || proseLocalKept || localOnlyEntries.length > 0 || parentPending;
     if (keptLocal) {
       const remoteFmOverrides: Record<string, unknown> = {};
       const remoteCustom: Record<string, unknown> = {};
@@ -1792,7 +1926,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         ? { custom_fields: { ...((fm.custom_fields as Record<string, unknown>) ?? {}), ...remoteCustom } }
         : {};
       const remoteRender = this.renderMirror(
-        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTags(remoteTags, remoteAssignees), version: remoteVersion, start_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteStart, due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteDue, ...remoteFmOverrides, ...remoteCustomOverride, rice: remoteRice },
+        { ...fm, ...(parentPending ? { parent_task: (baseFm?.parent_task as string | null | undefined) ?? null } : {}), name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTags(remoteTags, remoteAssignees), version: remoteVersion, start_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteStart, due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteDue, ...remoteFmOverrides, ...remoteCustomOverride, rice: remoteRice },
         remoteDesc,
         remoteEntries,
       );
@@ -1801,6 +1935,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         base_snapshot: { hash: hashContent(remoteRender), body: remoteRender },
         localHash: hashContent(remoteRender),
         pendingPush: true,
+        ...(remote.parent !== undefined ? { remote_parent: remote.parent ?? null } : {}),
       });
     } else {
       this.ledger.updateTaskSync(slug, {
@@ -1808,6 +1943,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         base_snapshot: { hash: hashContent(written), body: written },
         localHash: hashContent(written),
         pendingPush: false,
+        ...(remote.parent !== undefined ? { remote_parent: remote.parent ?? null } : {}),
       });
       this.ledger.dequeueFor(slug, this.nowMs());
     }
@@ -1897,7 +2033,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       const res = await adapter.request<{ tasks?: ClickUpTask[]; last_page?: boolean }>(
         'GET',
         `/list/${listId}/task`,
-        { query: { page, include_closed: true } }, // closed tasks drift too
+        { query: { page, include_closed: true, subtasks: true } }, // closed tasks and subtasks drift too
       );
       const batch = res.tasks ?? [];
       all.push(...batch);
@@ -2082,6 +2218,33 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
   }
 
   /** Read the mirror without any remote bookkeeping (super.get under a clear name). */
+  /** Set by the last {@link pulledParentFor}: a local re-parent waiting to push was kept. */
+  private pullParentPending = false;
+
+  /** The `parent_task` a pulled task ends with (subtask-link.ts pulledParent). */
+  protected pulledParentFor(
+    slug: string,
+    remote: ClickUpTask,
+    localParent: string | null,
+    baseParent: string | null | undefined,
+    lastRemoteParent: string | null | undefined,
+    report: SyncReport,
+  ): string | null {
+    const res = pulledParent({
+      slug,
+      localParent,
+      baseParent,
+      remoteParentId: remote.parent === undefined ? undefined : (remote.parent ?? null),
+      lastRemoteParent,
+      slugForRemoteId: (id) => this.ledger.slugForRemoteId(id),
+      parentOfLocal: (s) => this.liveParentFor(s),
+      hasLocalChildren: (s) => this.hasLiveChildren(s),
+    });
+    if (res.warning) report.warnings.push(res.warning);
+    this.pullParentPending = res.localWins === true;
+    return res.parent;
+  }
+
   protected getLocal(slug: string): Promise<TaskData | null> {
     return super.get(slug);
   }

@@ -1,7 +1,8 @@
 /**
  * In-memory fake of the ClickUp REST v2 surface the backend uses.
  * Implements: POST /list/:id/task, PUT /task/:id, GET /task/:id,
- * GET /list/:id/task (delta by date_updated_gt), POST/GET /task/:id/comment,
+ * GET /list/:id/task (delta by date_updated_gt; subtasks only with `subtasks=true`,
+ * like the real API), POST/GET /task/:id/comment,
  * GET /user. Keeps its own SERVER clock (distinct from any local clock the
  * backend uses) so watermark tests can prove server-time-only behavior.
  */
@@ -33,6 +34,8 @@ export interface FakeTask {
   due_date?: string | null;
   /** def + value merged, like the real API's task payload. */
   custom_fields: Array<FakeFieldDef & { value?: unknown }>;
+  /** The parent task's id when this is a subtask (real payloads carry `parent`). */
+  parent?: string | null;
 }
 
 export interface FakeComment {
@@ -183,7 +186,13 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
             const sent = (body.custom_fields ?? []).find((cf: { id: string }) => cf.id === f.id);
             return { ...f, ...(sent ? { value: sent.value } : {}) };
           }),
+          parent: null,
         };
+        if (body.parent !== undefined && body.parent !== null) {
+          const parent = tasks.get(body.parent);
+          if (!parent || parent.listId !== m[1]) return jsonResponse(400, { err: 'Parent not in list' });
+          task.parent = body.parent;
+        }
         tasks.set(id, task);
         return jsonResponse(200, task);
       }
@@ -206,8 +215,11 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
         // Real ClickUp treats date_updated_gt as >= (observed live) — the
         // fake mirrors that so the backend's client-side strictly-greater
         // watermark guard stays under test.
+        // Real ClickUp leaves subtasks OUT of a list read unless `subtasks=true`.
+        const withSubtasks = u.searchParams.get('subtasks') === 'true';
         const all = [...tasks.values()].filter(
-          (t) => t.listId === m![1] && (gt === null || Number(t.date_updated) >= Number(gt)),
+          (t) => t.listId === m![1] && (gt === null || Number(t.date_updated) >= Number(gt))
+            && (withSubtasks || !t.parent),
         );
         // single-page fake (last_page signals no more)
         return jsonResponse(200, { tasks: page === 0 ? all : [], last_page: true });
@@ -226,7 +238,13 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
           return jsonResponse(200, {});
         }
         if (method === 'PUT') {
+          if (body.parent !== undefined) {
+            // A subtask can move under another task; it cannot become a task again.
+            if (body.parent === null) return jsonResponse(400, { err: 'Cannot convert subtask to task' });
+            if (!tasks.has(body.parent) || body.parent === task.id) return jsonResponse(400, { err: 'Bad parent' });
+          }
           serverTime += 1000;
+          if (body.parent !== undefined) task.parent = body.parent;
           if (body.name !== undefined) task.name = body.name;
           if (body.description !== undefined) task.description = body.description;
           if (body.status !== undefined) task.status = { status: body.status };
