@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { delimiter, isAbsolute, join, win32, resolve } from 'node:path';
 
@@ -70,6 +70,28 @@ function run(
     const detail = stderr.trim() || stdout.trim() || e.message || 'unknown error';
     throw new GitSyncError(`git ${args.join(' ')} failed: ${detail}`, stderr || undefined);
   }
+}
+
+/**
+ * One LOCAL git read off the event loop: its trimmed stdout, or null on any failure (non-zero
+ * exit, missing git, not a repo, timeout). For request paths the dashboard polls, where a
+ * synchronous `run` would stall every HTTP request and WebSocket frame while git starts.
+ */
+export function readAsync(cwd: string, args: string[], timeoutMs = 5_000): Promise<string | null> {
+  return new Promise((done) => {
+    execFile('git', args, { cwd, encoding: 'utf-8', timeout: timeoutMs }, (err, stdout) => {
+      if (err) { done(null); return; }
+      done(String(stdout).trim() || null);
+    });
+  });
+}
+
+/**
+ * {@link getRemoteUrl}, off the event loop. One fork: outside a repo `remote get-url` fails
+ * on its own, so no `isGitRepo` probe in front of it.
+ */
+export function getRemoteUrlAsync(cwd: string, name: string): Promise<string | null> {
+  return readAsync(cwd, ['remote', 'get-url', name]);
 }
 
 /** Ceiling for one networked fetch/ls-remote — bounded, never a hung dashboard. */

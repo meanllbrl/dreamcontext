@@ -91,7 +91,7 @@ function openPlan(
 
 export function ReadinessChecklist({ scope, onReady, showSkip = true, onBusyChange }: Props) {
   const { t } = useI18n();
-  const { report, checks, isLoading, error, refresh } = useReadiness(scope);
+  const { report, checks, isLoading, error, refresh } = useReadiness(scope, { shown: true });
   const fixRuns = useFixRuns();
   const setup = useSetEverythingUp(fixRuns, refresh);
   const [agentRunning, setAgentRunning] = useState(false);

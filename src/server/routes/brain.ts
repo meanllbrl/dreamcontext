@@ -90,14 +90,16 @@ export async function handleBrainStatus(
   // PROJECT's own `origin` (the whole folder is the synced unit). `in-tree` is
   // commit-only and never pushes, so it has NO sync remote; the code origin
   // still goes out as `codeOrigin` (display context only).
+  //
+  // Polled every 15 s per window, so ONE async `git remote get-url origin` answers both
+  // (they are the same remote) instead of four synchronous forks on the event loop.
+  const codeOrigin = await git.getRemoteUrlAsync(projectRoot, 'origin');
   let remote: string | null = null;
   let mergeInProgress = false;
   if (mode === 'full-repo') {
-    try { remote = git.isGitRepo(projectRoot) ? git.getRemoteUrl(projectRoot, 'origin') : null; } catch { remote = null; }
+    remote = codeOrigin;
     try { mergeInProgress = git.hasMergeHead(projectRoot); } catch { mergeInProgress = false; }
   }
-  let codeOrigin: string | null = null;
-  try { codeOrigin = git.isGitRepo(projectRoot) ? git.getRemoteUrl(projectRoot, 'origin') : null; } catch { codeOrigin = null; }
 
   // Distinguish OUR deferred team-merge (agent), a full-repo CODE conflict (human's
   // editor), and the user's OWN unrelated git merge — so the sidebar shows the right
@@ -278,9 +280,7 @@ export async function handleBrainSettingsGet(
   const config = healStaleBrainConfig(projectRoot, readSetupConfig(projectRoot));
   const enabled = resolveBrainSyncEnabled(projectRoot, config);
   const mode = resolveMode(config);
-  const remote = mode === 'full-repo' && git.isGitRepo(projectRoot)
-    ? (git.getRemoteUrl(projectRoot, 'origin') ?? null)
-    : null;
+  const remote = mode === 'full-repo' ? await git.getRemoteUrlAsync(projectRoot, 'origin') : null;
   sendJson(res, 200, {
     enabled: enabled.enabled,
     source: enabled.source,

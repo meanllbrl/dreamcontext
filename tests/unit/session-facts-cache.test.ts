@@ -17,8 +17,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   forgetSessionFacts, readSessionFactsAsync, resetSessionFactsCaches, sessionFactsGitRuns,
-  SESSION_FACTS_ASYNC_MAX_AGE_MS, UNKNOWN_SESSION_FACTS,
+  SESSION_FACTS_ASYNC_MAX_AGE_MS, UNKNOWN_SESSION_FACTS, gitCommonDir, COMMON_DIR_TTL_MS,
 } from '../../src/lib/session-facts.js';
+import { getRemoteUrlAsync } from '../../src/lib/git-sync/git.js';
 
 function gitAvailable(): boolean {
   try { execFileSync('git', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
@@ -141,5 +142,37 @@ describe.skipIf(!HAS_GIT)('readSessionFactsAsync', () => {
     const before = sessionFactsGitRuns();
     expect(await readSessionFactsAsync(bare, t0 + 15_000)).toEqual(UNKNOWN_SESSION_FACTS);
     expect(sessionFactsGitRuns()).toBe(before);
+  });
+});
+
+describe.skipIf(!HAS_GIT)('gitCommonDir after its TTL', () => {
+  it('serves the expired answer and refreshes off the event loop (one sync fork per directory, ever)', async () => {
+    const repo = makeRepo('common-swr');
+    const t0 = Date.now();
+    const first = gitCommonDir(repo, t0);
+    expect(first).toBeTruthy();
+    const before = sessionFactsGitRuns();
+    // Expired: same answer, and the re-read went through the ASYNC runner (counted), not a sync fork.
+    expect(gitCommonDir(repo, t0 + COMMON_DIR_TTL_MS + 1)).toBe(first);
+    expect(sessionFactsGitRuns()).toBe(before + 1);
+    // A second expired read while the refresh runs does not start another.
+    gitCommonDir(repo, t0 + COMMON_DIR_TTL_MS + 2);
+    expect(sessionFactsGitRuns()).toBe(before + 1);
+    await new Promise((r) => setTimeout(r, 300));
+    // Refreshed: fresh again at the refresh's clock, no new read.
+    expect(gitCommonDir(repo, t0 + COMMON_DIR_TTL_MS + 3)).toBe(first);
+    expect(sessionFactsGitRuns()).toBe(before + 1);
+  });
+});
+
+describe.skipIf(!HAS_GIT)('getRemoteUrlAsync', () => {
+  it('answers the origin, and null outside a repo or without one', async () => {
+    const repo = makeRepo('remote-async');
+    expect(await getRemoteUrlAsync(repo, 'origin')).toBeNull();
+    git(repo, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git');
+    expect(await getRemoteUrlAsync(repo, 'origin')).toBe('https://github.com/acme/widgets.git');
+    const plainDir = join(SCRATCH, 'not-a-repo');
+    mkdirSync(plainDir, { recursive: true });
+    expect(await getRemoteUrlAsync(plainDir, 'origin')).toBeNull();
   });
 });
