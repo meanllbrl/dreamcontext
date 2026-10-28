@@ -35,11 +35,12 @@
   .super-handover-btn[data-state='panes'] { padding: 0 7px; }
   .super-handover-btn[data-state='panes'] .super-handover-btn-label { display: none; }
 }
-/* Handed over, the tab strip has left; this slot holds the same tab in the same spot. */
+/* Handed over (the tab strip has left) or with no pane (every chat minimized): this slot
+   holds the same tab in the same spot. */
 .agent-overlay-super-slot {
   display: flex;
   align-items: center;
-  padding-left: var(--head-clear-start);
+  padding-left: calc(var(--head-clear-start) + var(--space-2)); /* the tab bar's own inset, so it does not move */
 }
 .super-handover-btn-dot {
   position: absolute;

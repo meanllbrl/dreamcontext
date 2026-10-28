@@ -801,6 +801,8 @@
   scrollbar-width: none;
 }
 .agent-pane-tabbar::-webkit-scrollbar { display: none; }
+/* The tablist inside the bar: no box of its own, its tabs stay the bar's flex items. */
+.agent-pane-tablist { display: contents; }
 .agent-pane-tabbar.active {
   background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg));
   border-bottom-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));

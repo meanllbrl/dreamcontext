@@ -315,7 +315,7 @@ function setupScratch() {
   writeFileSync(join(HOME, '.dreamcontext', 'agent-ui.json'), `${JSON.stringify({
     enabled: true, restoreTabs: true, defaultAgent: 'claude', autoTitle: false, hotkey: 'Ctrl+A', renderer: 'dom',
     chatView: true, screenMigrated: true, chatPermissionMode: 'auto', chatDefaultModel: '', chatDefaultEffort: '', lightMode: 'off',
-    superAgent: true,
+    superAgent: false, // an old blob: the Super Agent must show anyway (on for everyone since 2026-10-29)
   }, null, 2)}\n`);
   writeFileSync(join(PROJ, 'docs', 'hero.png'), PNG);
   const git = (cwd, ...a) => spawnSync('git', ['-C', cwd, ...a], { encoding: 'utf-8' });
@@ -413,7 +413,7 @@ const until = async (page, fn, ms = 20000) => {
 };
 
 /** The panes as the owner sees them: each pane's tab titles, left to right. */
-const paneLayout = (page) => page.evaluate(() => [...document.querySelectorAll('[role="tablist"]')]
+const paneLayout = (page) => page.evaluate(() => [...document.querySelectorAll('.agent-pane-tabbar')]
   .filter((p) => p.getBoundingClientRect().width > 0 && p.querySelector('.agent-tab-title'))
   .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)
   .map((p) => [...p.querySelectorAll('.agent-tab-title')].map((t) => (t.textContent || '').trim())));
@@ -1037,41 +1037,21 @@ async function flow(browser, base) {
     && before2.every((tabs, i) => tabs.every((t, j) => after2[i]?.[j] === t)) && after2.length === before2.length, `${JSON.stringify(before2)} → ${JSON.stringify(after2)}`);
   await page.screenshot({ path: join(OUT, 'flow-07-second-take-back.png') });
 
-  console.log('\n── Settings → Chat → Super Agent (off by default; the owner turns it on)');
-  // The owner's path: the rail's Settings, the Chat section, the last row's switch, back to Chat.
-  const setSuper = async (on, shot) => {
-    await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
-    await page.locator('.settings-nav-item').filter({ hasText: /^\s*Chat/ }).first().click();
-    const sw = page.getByRole('switch', { name: 'Show the Super Agent' });
-    await sw.evaluate((el) => el.scrollIntoView({ block: 'center' }));
-    if ((await sw.isChecked()) !== on) await sw.click();
-    await until(page, async () => (await sw.isChecked()) === on, 5000);
-    await page.waitForTimeout(400); // the switch's own transition, so the shot shows where it landed
-    if (shot) await page.screenshot({ path: join(OUT, shot) });
-    await page.locator('aside button, nav button').filter({ hasText: /^\s*Chat\s*\d*\s*$/ }).first().click();
-    await until(page, async () => (await page.locator('.agent-surface.expanded').count()) > 0, 5000);
-    await page.waitForTimeout(600);
-  };
-  await setSuper(false, 'settings-super-off.png');
+  console.log('\n── Settings → Chat → Super Agent (no on/off since 2026-10-29: on for everyone)');
+  await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
+  await page.locator('.settings-nav-item').filter({ hasText: /^\s*Chat/ }).first().click();
+  await page.waitForTimeout(600);
   const lastGroup = await page.evaluate(() => [...document.querySelectorAll('.settings-section .setting-group')].pop()?.textContent ?? '');
   ok('the Super Agent group is the last one in Settings → Chat', /Super Agent/.test(lastGroup), lastGroup.slice(0, 80));
-  ok('Super Agent off in Settings: the Chat header shows no hand-over button', (await page.getByTestId('super-handover-btn').count()) === 0);
-  const savedSuper = () => JSON.parse(readFileSync(join(HOME, '.dreamcontext', 'agent-ui.json'), 'utf-8')).superAgent;
-  ok('…and it is saved off (agent-ui.json)', await until(page, async () => savedSuper() === false, 5000), String(savedSuper()));
-  await setSuper(true, 'settings-super-on.png');
-  ok('Super Agent on in Settings: the hand-over button is back', await until(page, async () => (await page.getByTestId('super-handover-btn').count()) > 0, 5000));
-  // Switched off DURING a hand-over: Take back stays, and once the chats are back the button goes.
-  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
-  await until(page, async () => (await page.locator('[data-testid="super-surface"]:visible').count()) > 0, 20000);
-  await page.waitForTimeout(1200);
-  await setSuper(false);
-  const stays = await until(page, async () => (await page.locator('[data-testid="super-surface"]:visible').count()) > 0 && (await page.getByTestId('super-handover-btn').count()) > 0, 5000);
-  ok('switched off while handed over: Take back is still there', stays);
-  await page.screenshot({ path: join(OUT, 'settings-super-off-handed-over.png') });
-  if (stays) await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
-  ok('…taken back, the button is gone (the switch is off)', await until(page, async () => (await page.locator('.agent-pane:visible').count()) > 0 && (await page.getByTestId('super-handover-btn').count()) === 0, 20000));
-  await setSuper(true);
-  ok('…switched on again, the hand-over button is back', await until(page, async () => (await page.getByTestId('super-handover-btn').count()) > 0, 5000));
+  ok('…and it has no on/off switch any more', (await page.getByRole('switch', { name: 'Show the Super Agent' }).count()) === 0);
+  await page.screenshot({ path: join(OUT, 'settings-super-group.png') });
+  await page.locator('aside button, nav button').filter({ hasText: /^\s*Chat\s*\d*\s*$/ }).first().click();
+  await until(page, async () => (await page.locator('.agent-surface.expanded').count()) > 0, 5000);
+  ok('the Super Agent tab is pinned at the start of the chat tabs', await until(page, async () => page.evaluate(() => {
+    const bar = [...document.querySelectorAll('.agent-pane-tabbar')].find((b) => b.getClientRects().length);
+    const first = bar && [...bar.children].find((c) => c.getClientRects().length);
+    return !!first && first.matches('[data-testid="super-handover-btn"]');
+  }), 5000));
 
   const result = { page, context, before, adopted, ho, errors };
   return result;

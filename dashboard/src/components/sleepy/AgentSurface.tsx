@@ -5608,7 +5608,8 @@ export function AgentSurface() {
           <div className="agent-overlay-tabs" data-split={paneVMs.length > 1 ? 'true' : undefined}>
             {/* Handed over, the strip has left (D18): the panes are not on screen. Only the
                 Super Agent's own tab stays, in the same spot, as Take back. */}
-            {handedOver && superTab && <div className="agent-overlay-super-slot">{superTab}</div>}
+            {/* Also with no pane at all (every chat minimized): hand-over adopts those too. */}
+            {superTab && (handedOver || paneVMs.length === 0) && <div className="agent-overlay-super-slot">{superTab}</div>}
             {panesLive && !handedOver && paneVMs.map((paneVM, i) => (
               <AgentTabs
                 key={paneVM.id}

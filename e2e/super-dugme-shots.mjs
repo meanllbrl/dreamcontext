@@ -6,7 +6,8 @@
  *   OUT_DIR=<dir> SHOT_TAG=before node e2e/super-dugme-shots.mjs
  * SHOT_TAG names the files; SHOT_THEMES=dark,light picks the themes; SHOT_INJECT=<file.js>
  * runs a script in the page before each shot (used to mock a placement); SHOT_HANDOVER=1 also
- * presses the Super Agent tab and shoots the handed-over screen (desktop only).
+ * presses the Super Agent tab and shoots the handed-over screen (desktop only); SHOT_MINIMIZE=1
+ * first minimizes every chat and checks the tab is still there (desktop only).
  */
 import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
@@ -107,6 +108,15 @@ try {
       const btn = page.locator('[data-testid="super-handover-btn"]:visible');
       const firstTab = page.locator('.agent-tab:visible').first();
       const row = { theme, form, handoverButtonVisible: await btn.count(), rect: (await btn.count()) ? await btn.first().boundingBox() : null, firstChatTab: (await firstTab.count()) ? await firstTab.boundingBox() : null };
+      if (process.env.SHOT_MINIMIZE && form === 'desktop') {
+        for (let i = 0; i < 5 && (await page.locator('.agent-tab:visible').count()); i++) {
+          await page.locator('.agent-tab:visible').first().hover();
+          await page.locator('.agent-tab:visible .agent-tab-btn.minimize').first().click().catch(() => {});
+          await sleep(800);
+        }
+        row.minimized = { chatTabs: await page.locator('.agent-tab:visible').count(), superTab: await btn.count() };
+        await page.screenshot({ path: join(OUT, `${TAG}-minimized-${form}-${theme}.png`) });
+      }
       if (process.env.SHOT_HANDOVER && form === 'desktop' && row.handoverButtonVisible) {
         await btn.first().click();
         await page.locator('[data-testid="super-handover-btn"][data-state="handed-over"]:visible').waitFor({ timeout: 60000 }).catch(() => {});

@@ -270,12 +270,13 @@ export function AgentTabs({
   return (
     <div
       className={'agent-pane-tabbar' + (isActivePane ? ' active' : '')}
-      role="tablist"
-      aria-label="Agent sessions"
       data-pane-id={pane.id}
       data-over={groupOver ? 'true' : undefined}
     >
       {leading}
+      {/* The tabs alone are the tablist (a tablist owns only tabs, never the pinned button
+          before them); `display: contents` keeps them flex items of the bar, laid out as before. */}
+      <div className="agent-pane-tablist" role="tablist" aria-label="Agent sessions">
       {pane.tabs.map((tab) => {
             const active = tab.id === pane.active;
             const renaming = renamingId === tab.id;
@@ -397,6 +398,7 @@ export function AgentTabs({
               </div>
             );
       })}
+      </div>
 
       {menu && createPortal(
         // Hidden until the layout effect measures + places it — no first frame at 0,0.
