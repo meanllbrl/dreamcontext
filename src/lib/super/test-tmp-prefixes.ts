@@ -657,6 +657,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'super-store-',
   'super-succ-',
   'super-succ-home-',
+  'super-sweep-base-',
+  'super-sweep-cli-',
   'super-tail-',
   'super-team-',
   'super-team-home-',
