@@ -353,6 +353,27 @@ describe('github sub-tasks', () => {
     expect(fake.parentOf.get(c.number)).toBe(b.number);
   });
 
+  it('a refused parent the user later accepts can still be unlinked', async () => {
+    const a = fake.seedIssue({ title: 'Epic A' });
+    const b = fake.seedIssue({ title: 'Feature B' });
+    const c = fake.seedIssue({ title: 'Task C' });
+    fake.linkSubIssue(a.number, b.number);
+    fake.linkSubIssue(b.number, c.number);
+    await backend.sync('pull');
+    expect(mirror('task-c').data.parent_task ?? null).toBeNull();
+
+    // Flatten as the warning suggests: B leaves A, C goes under B.
+    await backend.updateFields('feature-b', { parent_task: null, updated_at: '2026-10-28' });
+    await backend.updateFields('task-c', { parent_task: 'feature-b', updated_at: '2026-10-28' });
+    await backend.sync('push');
+    expect(fake.parentOf.get(c.number)).toBe(b.number);
+
+    await backend.updateFields('task-c', { parent_task: null, updated_at: '2026-10-28' });
+    const report = await backend.sync('push');
+    expect(report.errors).toEqual([]);
+    expect(fake.parentOf.has(c.number)).toBe(false);
+  });
+
   it('fallback: a teammate who pulled the task list keeps it in the parent body when editing the parent', async () => {
     fake.subIssuesUnavailable = true;
     await makeParentAndChild();

@@ -852,7 +852,8 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     }
     // Top-level here and nothing recorded about GitHub: nothing to settle, no request spent.
     if (!parentRemote && remoteParent === undefined) return { remoteParent, pending: false };
-    if (parentRemote === remoteParent) return { remoteParent, pending: false };
+    // Local and GitHub agree: any earlier refusal of this parent is over.
+    if (parentRemote === remoteParent) return { remoteParent, pending: false, ...(parentRemote ? { refused: null } : {}) };
 
     // Leaving a parent we recorded: re-send that parent's body in EITHER mode, so
     // a fallback task list naming this issue (from a fallback window now over,
@@ -876,7 +877,8 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       report.warnings.push(`push ${slug}: could not read its parent issue on GitHub — the sub-issue link is retried next sync.`);
       return { remoteParent, pending: true };
     }
-    if (parentRemote === remoteParent) return { remoteParent, pending: false };
+    // Local and GitHub agree: any earlier refusal of this parent is over.
+    if (parentRemote === remoteParent) return { remoteParent, pending: false, ...(parentRemote ? { refused: null } : {}) };
 
     let issueId = a.issueId;
     if (issueId === undefined) {
@@ -1586,6 +1588,8 @@ export class GitHubTaskBackend extends LocalTaskBackend {
   private pullHintsFromList = new Set<string>();
   /** Issue number → the remote parent this pull refused to mirror (subtask-link.ts `refused`). */
   private pullRefusals = new Map<string, string>();
+  /** Issues whose local link this pull found (or made) equal to GitHub's. */
+  private pullAgreed = new Set<string>();
 
   /**
    * What GitHub says about each pulled issue's parent: `parent_issue_url` when
@@ -1603,6 +1607,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     const hints = new Map<string, string | null>();
     this.pullHintsFromList.clear();
     this.pullRefusals.clear();
+    this.pullAgreed.clear();
     for (const issue of issues) {
       if (issue.parent_issue_url === undefined) continue;
       const n = issueNumberFromUrl(issue.parent_issue_url);
@@ -1667,6 +1672,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     });
     if (res.warning) report.warnings.push(res.warning);
     if (res.refused) this.pullRefusals.set(remoteId, res.refused);
+    // The local link now matches GitHub's: an earlier refusal of that parent is over.
+    const hint = this.pullParentHints.get(remoteId);
+    if (!res.refused && res.parent && hint && this.ledger.remoteIdFor(res.parent) === hint) this.pullAgreed.add(remoteId);
     return res.parent;
   }
 
@@ -1674,7 +1682,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
   private remoteParentPatch(remoteId: string): {
     remote_parent?: string | null;
     remote_parent_via_list?: boolean;
-    remote_parent_refused?: string;
+    remote_parent_refused?: string | null;
   } {
     if (!this.pullParentHints.has(remoteId)) return {};
     const refused = this.pullRefusals.get(remoteId);
@@ -1684,7 +1692,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       // list, not only the machine that made it.
       remote_parent_via_list: this.pullHintsFromList.has(remoteId),
       // A parent the pull refused to mirror is never "unlinked" by the push.
-      ...(refused ? { remote_parent_refused: refused } : {}),
+      ...(refused ? { remote_parent_refused: refused } : this.pullAgreed.has(remoteId) ? { remote_parent_refused: null } : {}),
     };
   }
 
