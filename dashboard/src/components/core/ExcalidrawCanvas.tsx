@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Excalidraw } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
-import { registerPinchTarget, type BoardViewport, type BoardViewportPatch } from '../../lib/excalidrawPinch';
+import { registerPinchTarget, type BoardViewport, type PinchPatch } from '../../lib/excalidrawPinch';
 import './ExcalidrawCanvas.css';
 
 interface Props {
@@ -15,7 +15,7 @@ type ExcalidrawAPI = {
   scrollToContent: (target?: unknown, opts?: unknown) => void;
   refresh?: () => void;
   getAppState?: () => BoardViewport;
-  updateScene?: (scene: { appState: BoardViewportPatch }) => void;
+  updateScene?: (scene: { appState: PinchPatch }) => void;
 };
 
 /**

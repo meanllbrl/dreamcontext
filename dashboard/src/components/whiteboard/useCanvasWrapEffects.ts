@@ -75,7 +75,7 @@ export function useCanvasWrapEffects(
       el,
       getViewport: () => apiRef.current?.getAppState() ?? null,
       setViewport: (patch) => apiRef.current?.updateScene({
-        appState: patch as unknown as Pick<AppState, 'scrollX' | 'scrollY' | 'zoom'>,
+        appState: patch as unknown as Pick<AppState, 'scrollX' | 'scrollY' | 'zoom' | 'shouldCacheIgnoreZoom'>,
       }),
     });
   }, []);

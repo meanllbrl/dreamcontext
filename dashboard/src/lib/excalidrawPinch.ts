@@ -18,6 +18,15 @@
  * pinch IS the zoom gesture, so it has to keep working rather than merely stop leaking.
  * Wheel/trackpad pan and ctrl+wheel zoom are untouched: those listeners are already bound
  * to each editor's own container, so they were never shared.
+ *
+ * The replay zooms the way Excalidraw's ctrl+wheel and touch pinch do (its Safari gesture
+ * handler does not): while the fingers move, `shouldCacheIgnoreZoom` is on, so every element
+ * is drawn from the bitmap it already has, scaled. Without it each step at a new zoom
+ * re-rasterises every element on screen: on a board of tables that took WKWebView from 60 to
+ * 23 fps, and a two-finger pan that jitters the scale a hair (83 % stays "83 %") cost the
+ * same (2026-10-28). The flag drops when the
+ * gesture ends, or PINCH_SETTLE_MS after its last step if WebKit never sends `gestureend`,
+ * and that one frame redraws the board sharp at its final zoom.
  */
 
 /** The slice of Excalidraw's appState the zoom math reads. */
@@ -30,6 +39,17 @@ export interface BoardViewport {
 }
 
 export type BoardViewportPatch = Pick<BoardViewport, 'scrollX' | 'scrollY' | 'zoom'>;
+
+/**
+ * What a pinch hands a board, straight into `updateScene({ appState })`: a step (the new
+ * viewport, drawn from the cached bitmaps) or the settle that drops the flag again.
+ */
+export type PinchPatch =
+  | (BoardViewportPatch & { shouldCacheIgnoreZoom: true })
+  | { shouldCacheIgnoreZoom: false };
+
+/** Excalidraw's own wait before it redraws sharp after a zoom (`resetShouldCacheIgnoreZoomDebounced`). */
+export const PINCH_SETTLE_MS = 300;
 
 // Excalidraw's own bounds and rounding, mirrored rather than imported — neither
 // `getNormalizedZoom` nor MIN/MAX_ZOOM is reachable from the package's public entry.
@@ -69,7 +89,7 @@ export interface PinchTarget {
   /** The board's own DOM subtree — decides which gestures belong to it. */
   el: HTMLElement;
   getViewport: () => BoardViewport | null;
-  setViewport: (patch: BoardViewportPatch) => void;
+  setViewport: (patch: PinchPatch) => void;
 }
 
 /**
@@ -98,6 +118,18 @@ const GESTURE_EVENTS = ['gesturestart', 'gesturechange', 'gestureend'] as const;
 const targets = new Set<PinchTarget>();
 let active: { target: PinchTarget; baseZoom: number; x: number; y: number } | null = null;
 let installed = false;
+/** The board drawn from cached bitmaps until it settles, and the backstop timer. */
+let unsettled: PinchTarget | null = null;
+let settleTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Redraw the board sharp at the zoom it ended on (once, whatever ended the gesture). */
+function settle(): void {
+  if (settleTimer !== null) clearTimeout(settleTimer);
+  settleTimer = null;
+  const target = unsettled;
+  unsettled = null;
+  if (target && targets.has(target)) target.setViewport({ shouldCacheIgnoreZoom: false });
+}
 
 /** Anchor the whole gesture on where it STARTED: `gesturechange` carries coordinates too,
  *  but a fixed anchor is what makes a pinch feel like it pins the scene under the fingers
@@ -138,6 +170,7 @@ function onGesture(event: Event) {
 
   if (gesture.type === 'gestureend') {
     active = null;
+    settle();
     return;
   }
   if (gesture.type === 'gesturestart') {
@@ -152,7 +185,13 @@ function onGesture(event: Event) {
   const viewport = active.target.getViewport();
   if (!viewport) return;
   const nextZoom = normalizeBoardZoom(active.baseZoom * (gesture.scale ?? 1));
-  active.target.setViewport(zoomAroundPoint(viewport, active.x, active.y, nextZoom));
+  // A step that lands on the zoom the board already has moves nothing: no render at all.
+  if (nextZoom === viewport.zoom.value) return;
+  if (unsettled && unsettled !== active.target) settle();
+  unsettled = active.target;
+  active.target.setViewport({ ...zoomAroundPoint(viewport, active.x, active.y, nextZoom), shouldCacheIgnoreZoom: true });
+  if (settleTimer !== null) clearTimeout(settleTimer);
+  settleTimer = setTimeout(settle, PINCH_SETTLE_MS);
 }
 
 function setInstalled(next: boolean) {
@@ -171,6 +210,11 @@ export function registerPinchTarget(target: PinchTarget): () => void {
   return () => {
     targets.delete(target);
     if (active?.target === target) active = null;
+    if (unsettled === target) {
+      unsettled = null;
+      if (settleTimer !== null) clearTimeout(settleTimer);
+      settleTimer = null;
+    }
     if (targets.size === 0) setInstalled(false);
   };
 }
