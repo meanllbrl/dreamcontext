@@ -4,6 +4,16 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.35.5] - 2026-10-28
+
+Five branches merged on top of 0.35.4. Local build; not published.
+
+- **Whiteboard board explorer.** A left list of boards with groups (kept in each board's frontmatter, CLI `whiteboard group …`), search and recents; a deleted board leaves it at once.
+- **Whiteboards are lighter.** Widgets no longer re-render on pan and zoom, the board list no longer re-reads every file, opening a board writes nothing back, and a deleted board leaves the list and its tab within one poll.
+- **× on every Others tile.** Each kind closes by its own stage close path; the Others columns fit a phone's width.
+- **"Attach files…" pictures are inline chips** (new desktop-only loopback route `POST /api/agent/drop-path`), and the sent bubble draws the pictures instead of the raw `[Picture N: path]` line.
+- **A tidier agenda.** Earlier days' Done lines drop off, stale Waiting lines are flagged, and recap/handover check the agenda. Super briefing text updated.
+
 ## [0.35.4] - 2026-10-28
 
 One fix on top of 0.35.3. Local build; not published.
