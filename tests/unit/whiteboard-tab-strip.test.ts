@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  GROUP_COLORS, addToGroup, addToNewGroup, closeGroup, closeOtherTabs, closeTab, emptyLayout, moveTab,
+  GROUP_COLORS, addToGroup, addToNewGroup, closeGoneTab, closeGroup, closeOtherTabs, closeTab, emptyLayout, moveTab,
   neighbourAfterClose, nextGroupColor, normalizeLayout, openTab, pruneTabs, removeFromGroup, sanitizeLayout,
   stripItems, ungroup, updateGroup, type TabLayout,
 } from '../../dashboard/src/pages/whiteboards/tabStripLogic';
@@ -36,6 +36,27 @@ describe('opening and closing tabs', () => {
     const l = open('a', 'b', 'c');
     expect(slugs(pruneTabs(l, new Set(['a', 'c'])))).toEqual(['a', 'c']);
     expect(pruneTabs(l, new Set(['a', 'b', 'c']))).toBe(l);
+  });
+});
+
+describe('the open board deleted from disk (closeGoneTab)', () => {
+  it('closes its tab and opens the right neighbour, else the left one', () => {
+    const l = open('a', 'b', 'c');
+    expect(closeGoneTab(l, 'b', null, 'home')).toEqual({ layout: closeTab(l, 'b'), next: 'c' });
+    expect(closeGoneTab(l, 'c', null, 'home').next).toBe('b');
+  });
+
+  it('skips neighbours the list no longer has, and drops their tabs too', () => {
+    const l = open('a', 'b', 'c', 'd');
+    const out = closeGoneTab(l, 'b', new Set(['a', 'd']), 'home');
+    expect(out.next).toBe('d');
+    expect(slugs(out.layout)).toEqual(['a', 'd']);
+  });
+
+  it('falls back when no tab survives, and a board with no tab still moves on', () => {
+    expect(closeGoneTab(open('a'), 'a', null, 'home')).toEqual({ layout: closeTab(open('a'), 'a'), next: 'home' });
+    const l = open('a', 'b');
+    expect(closeGoneTab(l, 'x', null, 'home')).toEqual({ layout: l, next: 'home' });
   });
 });
 

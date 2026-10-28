@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import {
-  reconcileRemoteScene,
+  reconcileRemoteScene, sceneSignature,
 } from '../../dashboard/src/components/whiteboard/sceneSync.js';
 import { createWhiteboard, mutateWhiteboard, nextIndices, readWhiteboard } from '../../src/lib/whiteboards/store.js';
 import { sortElements } from '../../src/lib/whiteboards/format.js';
@@ -217,5 +217,44 @@ describe('an element the CLI adds loads on real Excalidraw 0.18 with its version
 describe('the Excalidraw bundle', () => {
   it('loaded (a load failure fails here, it is never a skip)', () => {
     expect(typeof excalidraw().restoreElements).toBe('function');
+  });
+});
+
+describe('sceneSignature: what the save loop compares an open against', () => {
+  const el = (id: string, version: number, versionNonce: number, isDeleted = false) => ({ ...BASE, id, x: 0, version, versionNonce, index: null, isDeleted });
+
+  it('a board the CLI wrote signs the same once Excalidraw has restored it (an open is not a change)', async () => {
+    const { restoreElements: restore } = excalidraw();
+    const root = mkdtempSync(join(tmpdir(), 'wb-sign-'));
+    try {
+      const { slug } = createWhiteboard(root, 'Signed');
+      await mutateWhiteboard(root, slug, (b) => {
+        b.elements.push({ ...BASE, id: 'r1', version: 3, versionNonce: 77, index: 'a0', x: 10 });
+      });
+      await mutateWhiteboard(root, slug, (b) => {
+        const [index] = nextIndices(b.elements, 1);
+        b.elements.push(makeWidgetElement('todo', { title: 'Todo', items: [newTodoItem('ship it')] }, autoPlace(b.elements), index));
+      });
+      const onDisk = readWhiteboard(root, slug).board.elements;
+      expect(onDisk.length).toBe(2);
+      expect(sceneSignature(restore(onDisk, null))).toBe(sceneSignature(onDisk));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('moves with any version, nonce, delete or add, and not with the element order', () => {
+    const a = el('a', 1, 10);
+    const b = el('b', 4, 20);
+    const base = sceneSignature([a, b]);
+    expect(sceneSignature([b, a])).toBe(base);
+    expect(sceneSignature([{ ...a, version: 2 }, b])).not.toBe(base);
+    expect(sceneSignature([{ ...a, versionNonce: 11 }, b])).not.toBe(base);
+    expect(sceneSignature([{ ...a, isDeleted: true }, b])).not.toBe(base);
+    expect(sceneSignature([a])).not.toBe(base);
+    expect(sceneSignature([a, b, el('c', 1, 1)])).not.toBe(base);
+    // A version sum ties here; the signature does not.
+    expect(sceneSignature([{ ...a, version: 2 }, { ...b, version: 3 }])).not.toBe(base);
+    expect(Number.isSafeInteger(base)).toBe(true);
   });
 });

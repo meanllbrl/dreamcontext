@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   createWhiteboard, ensureDefaultWhiteboard, listTrashedWhiteboards, listWhiteboards, mutateWhiteboard, nextIndices,
-  readWhiteboard, renameWhiteboard, restoreWhiteboard, trashWhiteboard, whiteboardRev, whiteboardsDir, DEFAULT_WHITEBOARD,
+  readWhiteboard, renameWhiteboard, restoreWhiteboard, trashWhiteboard, whiteboardRev, whiteboardSlugs, whiteboardsDir, DEFAULT_WHITEBOARD,
 } from '../../src/lib/whiteboards/store.js';
 import { parseWhiteboard, serializeWhiteboard } from '../../src/lib/whiteboards/format.js';
 import { mergeElements } from '../../src/lib/whiteboards/merge.js';
@@ -412,5 +412,87 @@ describe('rename and card colour', () => {
     const bad = makeWidgetElement('insight', { ref: 'mrr' }, { x: 0, y: 0 }, 'a1');
     (bad.customData as { dc: Record<string, unknown> }).dc.color = 'orange';
     expect(() => validateElement(bad)).toThrow(/invalid card color/);
+  });
+});
+
+describe('whiteboard store: the list reads a board only when its file changed', () => {
+  const fileOf = (slug: string) => join(whiteboardsDir(root), slug, `${slug}.excalidraw.md`);
+
+  it('an unchanged file (same mtime + size) is served from the cache, not re-parsed', () => {
+    const { slug } = createWhiteboard(root, 'Aaaa');
+    const file = fileOf(slug);
+    // A whole-second mtime, so it can be put back exactly (a Date drops the sub-ms part).
+    const at = new Date(Math.floor(Date.now() / 1000) * 1000);
+    utimesSync(file, at, at);
+    expect(listWhiteboards(root)[0].name).toBe('Aaaa');
+    // Same length, same mtime: only a re-parse could see the new name.
+    const st = statSync(file);
+    writeFileSync(file, readFileSync(file, 'utf-8').replace('name: "Aaaa"', 'name: "Bbbb"'));
+    utimesSync(file, at, at);
+    expect(statSync(file).size).toBe(st.size);
+    expect(readFileSync(file, 'utf-8')).toContain('Bbbb');
+    expect(listWhiteboards(root)[0].name).toBe('Aaaa');
+  });
+
+  it('a write (new mtime) is seen at once: rename, new elements, a corrupt file and its repair', async () => {
+    const { slug } = createWhiteboard(root, 'Revenue');
+    expect(listWhiteboards(root)[0]).toMatchObject({ name: 'Revenue', elements: 0 });
+    await renameWhiteboard(root, slug, 'Revenue board');
+    expect(listWhiteboards(root)[0].name).toBe('Revenue board');
+    await mutateWhiteboard(root, slug, (b) => ({ ...b, elements: [...b.elements, note('a0'), note('a1')] }));
+    expect(listWhiteboards(root)[0].elements).toBe(2);
+    const file = fileOf(slug);
+    const good = readFileSync(file, 'utf-8');
+    writeFileSync(file, 'not a board');
+    expect(listWhiteboards(root)[0].corrupt).toBeTruthy();
+    writeFileSync(file, good);
+    const fixed = listWhiteboards(root)[0];
+    expect(fixed.corrupt).toBeUndefined();
+    expect(fixed.elements).toBe(2);
+  });
+
+  it('updatedAt follows the file even when the row comes from the cache', () => {
+    const { slug } = createWhiteboard(root, 'Clock');
+    listWhiteboards(root);
+    const file = fileOf(slug);
+    const later = new Date(Date.now() + 60_000);
+    utimesSync(file, later, later);
+    expect(listWhiteboards(root)[0].updatedAt).toBe(statSync(file).mtime.toISOString());
+  });
+});
+
+describe('whiteboard store: a deleted board leaves the list at once (A16)', () => {
+  it('whiteboardSlugs is the list\'s slugs, and both drop a board trashed or removed from disk', async () => {
+    const a = createWhiteboard(root, 'Alpha').slug;
+    const b = createWhiteboard(root, 'Beta').slug;
+    const c = createWhiteboard(root, 'Gamma').slug;
+    expect(whiteboardSlugs(root)).toEqual(listWhiteboards(root).map((x) => x.slug));
+    await trashWhiteboard(root, a);
+    rmSync(join(whiteboardsDir(root), c), { recursive: true, force: true });
+    expect(whiteboardSlugs(root)).toEqual([b]);
+    expect(listWhiteboards(root).map((x) => x.slug)).toEqual([b]);
+  });
+
+  it('skips the same folders the list skips (no board file, dot folders)', () => {
+    createWhiteboard(root, 'Real');
+    mkdirSync(join(whiteboardsDir(root), 'empty-folder'));
+    expect(whiteboardSlugs(root)).toEqual(['real']);
+    expect(whiteboardSlugs(root)).toEqual(listWhiteboards(root).map((x) => x.slug));
+  });
+
+  it('a board made again under a deleted one\'s slug is read fresh, not from the cached row', () => {
+    const { slug, path } = createWhiteboard(root, 'Same');
+    const st = statSync(path);
+    const bytes = readFileSync(path, 'utf-8');
+    expect(bytes).toContain('Same');
+    expect(listWhiteboards(root)[0].name).toBe('Same');
+    rmSync(join(whiteboardsDir(root), slug), { recursive: true, force: true });
+    expect(listWhiteboards(root)).toEqual([]);
+    // Same path, same size, same mtime: only the eviction keeps the old row from coming back.
+    mkdirSync(join(whiteboardsDir(root), slug));
+    writeFileSync(path, bytes.replace('Same', 'Emas'));
+    utimesSync(path, st.atime, st.mtime);
+    expect(statSync(path).size).toBe(st.size);
+    expect(listWhiteboards(root)[0].name).toBe('Emas');
   });
 });

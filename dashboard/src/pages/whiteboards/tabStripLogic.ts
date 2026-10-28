@@ -219,6 +219,29 @@ export function pruneTabs(layout: TabLayout, existing: ReadonlySet<string>): Tab
   return normalizeLayout({ ...layout, tabs: layout.tabs.filter((t) => existing.has(t.slug)) });
 }
 
+/**
+ * The open board `slug` is gone from disk: its tab closes, along with any other tab the list
+ * no longer has, and the board to show next is its nearest surviving neighbour (right, then
+ * left), else `fallback`. `existing` null (no list yet) keeps the other tabs as they are.
+ */
+export function closeGoneTab(
+  layout: TabLayout,
+  slug: string,
+  existing: ReadonlySet<string> | null,
+  fallback: string,
+): { layout: TabLayout; next: string } {
+  const i = layout.tabs.findIndex((t) => t.slug === slug);
+  const alive = (s: string) => s !== slug && (!existing || existing.has(s));
+  let next: string | null = null;
+  if (i >= 0) {
+    next = layout.tabs.slice(i + 1).find((t) => alive(t.slug))?.slug
+      ?? [...layout.tabs.slice(0, i)].reverse().find((t) => alive(t.slug))?.slug
+      ?? null;
+  }
+  const kept = normalizeLayout({ ...layout, tabs: layout.tabs.filter((t) => alive(t.slug)) });
+  return { layout: kept.tabs.length === layout.tabs.length ? layout : kept, next: next ?? fallback };
+}
+
 /** The strip, left to right: each group's chip before its tabs. */
 export function stripItems(layout: TabLayout, active: string | null): StripItem[] {
   const byId = new Map(layout.groups.map((g) => [g.id, g]));

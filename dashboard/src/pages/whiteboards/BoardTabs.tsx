@@ -5,7 +5,7 @@ import { useRenameWhiteboard, useWhiteboardList } from '../../hooks/useWhiteboar
 import { BoardGlyph, BoardsPanel, ChevronGlyph, CreatePanel, PlusGlyph } from './BoardSwitcher';
 import { DEFAULT_BOARD_SLUG } from './boardSwitcherLogic';
 import {
-  addToGroup, addToNewGroup, closeGroup, closeOtherTabs, closeTab, moveTab, neighbourAfterClose,
+  addToGroup, addToNewGroup, closeGoneTab, closeGroup, closeOtherTabs, closeTab, moveTab, neighbourAfterClose,
   openTab, pruneTabs, removeFromGroup, stripItems, ungroup, updateGroup,
   type StripItem, type TabGroup, type TabLayout,
 } from './tabStripLogic';
@@ -38,6 +38,11 @@ interface BoardTabsProps {
   onOpen: (slug: string) => void;
   /** A rename the server refused (the reason), or null once one succeeds. */
   onRenameNote?: (board: string, note: string | null) => void;
+  /** The open board is gone from disk and closing it loses nothing (useWhiteboardEditor): its
+   *  tab closes and the strip opens its neighbour. */
+  gone?: boolean;
+  /** Told once that tab closed, with the board it moved to. */
+  onGone?: (next: string) => void;
 }
 
 /** The last tab click, kept across the strip's remount: a first click on another board's tab
@@ -52,7 +57,7 @@ const DOUBLE_CLICK_MS = 450;
  * away. Closing a tab only takes it off the strip; deleting a board is in "All boards" (⌄),
  * which also opens any board not on the strip. "+" names and creates a new one.
  */
-export function BoardTabs({ slug, name, onOpen, onRenameNote }: BoardTabsProps) {
+export function BoardTabs({ slug, name, onOpen, onRenameNote, gone, onGone }: BoardTabsProps) {
   const { t } = useI18n();
   const { data: boards } = useWhiteboardList();
   const [layout, change] = useTabLayout();
@@ -87,6 +92,21 @@ export function BoardTabs({ slug, name, onOpen, onRenameNote }: BoardTabsProps) 
   useEffect(() => {
     if (existing) change((l) => pruneTabs(l, new Set([...existing, slug])));
   }, [change, existing, slug]);
+  // The open board itself went: its tab closes and a surviving neighbour opens. Never the
+  // default board, which the server makes again on the next ask (no close-reopen loop).
+  const onGoneRef = useRef(onGone);
+  onGoneRef.current = onGone;
+  useEffect(() => {
+    if (!gone || slug === DEFAULT_BOARD_SLUG) return;
+    let next = DEFAULT_BOARD_SLUG;
+    change((l) => {
+      const out = closeGoneTab(l, slug, existing, DEFAULT_BOARD_SLUG);
+      next = out.next;
+      return out.layout;
+    });
+    onGoneRef.current?.(next);
+    onOpen(next);
+  }, [gone]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The open tab scrolls into view when it changes or its group unfolds.
   useEffect(() => {

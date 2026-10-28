@@ -8,6 +8,8 @@ import { BoardPictures, isPictureOf, liveFileIds, type PictureFile } from '../co
 import { readViewport, viewportShowsAny, writeViewport } from '../components/whiteboard/boardPlace';
 import { adoptBoardCards } from '../components/whiteboard/boardAgentScratch';
 import { agentCardsOf, setBoardCards } from '../components/whiteboard/agentPanelState';
+import { sceneSignature } from '../components/whiteboard/sceneSync';
+import { boardIsGone, listIsStale } from './whiteboardListSync';
 import {
   POLL_INTERVAL_MS, WhiteboardSaveLoop, fitWhenReady, reasonOf, type SaveState, type SceneResponse,
 } from './whiteboardSaveLoop';
@@ -209,6 +211,7 @@ export type WhiteboardLoad =
  */
 export function useWhiteboardEditor(slug: string) {
   const api = useApi();
+  const qc = useQueryClient();
   const { isActive, vault } = useVault();
   const [load, setLoad] = useState<WhiteboardLoad>({ kind: 'loading' });
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'saved' });
@@ -299,14 +302,23 @@ export function useWhiteboardEditor(slug: string) {
         }
         return api.put<{ rev: string; elements?: unknown[] }>(url, { elements: out });
       },
-      getRev: async () => (await api.get<{ rev: string }>(`${url}/rev`)).rev,
+      getRev: async () => {
+        const res = await api.get<{ rev: string; boards?: string[] }>(`${url}/rev`);
+        // A board deleted or made elsewhere: the list (tabs, All boards, explorer) follows now,
+        // not at its next slow refresh (whiteboardListSync.ts).
+        if (listIsStale(qc.getQueryData<WhiteboardSummary[]>(LIST_KEY), res.boards)) {
+          void qc.invalidateQueries({ queryKey: LIST_KEY, exact: true });
+        }
+        return res.rev;
+      },
       getScene: async (): Promise<SceneResponse> => {
         const doc = await api.get<WhiteboardDoc>(url);
         return { rev: doc.rev, elements: Array.isArray(doc.elements) ? doc.elements : [] };
       },
       applyRemote: (elements) => canvasRef.current?.applyRemoteElements(elements),
       onState: setSaveState,
-    }, ready.rev);
+    // What is on disk, signed like the snapshots: an open that changes nothing saves nothing.
+    }, ready.rev, sceneSignature(ready.scene.elements));
     loopRef.current = loop;
 
     const visible = () => document.visibilityState === 'visible' && isActiveRef.current;
@@ -330,7 +342,14 @@ export function useWhiteboardEditor(slug: string) {
       loop.dispose();
       if (loopRef.current === loop) loopRef.current = null;
     };
-  }, [api, slug, ready, saveViewport, pictures]);
+  }, [api, qc, slug, ready, saveViewport, pictures]);
+
+  // The open board itself is gone (deleted elsewhere, or never there): the list drops it too.
+  const gone = boardIsGone(load, saveState);
+  const goneFromDisk = load.kind === 'missing' || saveState.kind === 'deleted';
+  useEffect(() => {
+    if (goneFromDisk) void qc.invalidateQueries({ queryKey: LIST_KEY, exact: true });
+  }, [qc, goneFromDisk]);
 
   // The final save on close runs in a LAYOUT cleanup: on unmount React runs this component's
   // layout cleanups before it unmounts the children, so the canvas (and its scene) is still
@@ -389,8 +408,7 @@ export function useWhiteboardEditor(slug: string) {
     // this is what the final save sends, whatever the torn-down canvas reads by then.
     const canvas = canvasRef.current;
     if (canvas) pictures.remember(canvas.excalidraw.getFiles());
-    const version = canvas ? canvas.getSceneVersion()
-      : elements.reduce((sum: number, el) => sum + ((el as { version?: number }).version ?? 0), 0);
+    const version = canvas ? canvas.getSceneVersion() : sceneSignature(elements);
     loopRef.current?.notifyChange({ elements, version });
   }, [pictures]);
 
@@ -419,5 +437,7 @@ export function useWhiteboardEditor(slug: string) {
     }
   }, [slug]);
 
-  return { load, saveState, onApi, onSceneChange, exportFile, pictures };
+  /** `gone`: the board is gone and closing it loses nothing (whiteboardListSync.ts): the page
+   *  closes its tab and moves on. */
+  return { load, saveState, gone, onApi, onSceneChange, exportFile, pictures };
 }

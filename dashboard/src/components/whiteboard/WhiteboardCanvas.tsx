@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CaptureUpdateAction, Excalidraw, getCommonBounds, getSceneVersion, newElementWith,
   reconcileElements, restoreElements,
@@ -16,7 +16,7 @@ import { openExternalUrl } from '../../lib/desktop';
 import { DEFAULT_WIDGET_BOXES, DEFAULT_WIDGET_SIZES, isCardColor, nearestWidgetSize, type CardColor, type WidgetPayload, type WidgetSize } from '../../lib/whiteboardWidgets';
 import { handleLinkOpen, installHyperlinkGuard } from './linkRouting';
 import { usePagePopup } from './PagePopup';
-import { reconcileRemoteScene } from './sceneSync';
+import { reconcileRemoteScene, sceneSignature } from './sceneSync';
 import { isPictureOf, type BoardPictures } from './boardPictures';
 import { WidgetPalette } from './WidgetPalette';
 import {
@@ -36,6 +36,7 @@ import { useCanvasWrapEffects } from './useCanvasWrapEffects';
 import { WhiteboardHostContext, useDataTheme, useWbText, type WhiteboardHost } from './whiteboardHost';
 import { WIDGET_REGISTRY } from './widgets/registry';
 import { WidgetFrame, WidgetNotice } from './widgets/WidgetFrame';
+import { sameWidgetSlot, widgetSlotProps, type WidgetSlotProps } from './widgetSlot';
 import './WhiteboardCanvas.css';
 
 /** The scene the page hands in once, at mount. The page remounts (via `key`) for another board. */
@@ -58,6 +59,7 @@ export interface WhiteboardCanvasApi {
   dropPictures: (fileIds: readonly string[], reason: string) => void;
   /** Every element, tombstones included: the list a save sends. */
   getElements: () => readonly OrderedExcalidrawElement[];
+  /** {@link sceneSignature} of that list: equal means a save would write nothing new. */
   getSceneVersion: () => number;
 }
 
@@ -106,6 +108,8 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
   const { bus, vault } = useVault();
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  // The loaded scene's version: the first settle of an untouched board reports nothing. One that
+  // Excalidraw's restore changed (a repaired or re-indexed element bumps its version) does.
   const lastVersion = useRef<number>(-1);
   const [sizePicker, setSizePicker] = useState<SizePickerState | null>(null);
   /** The selection is only widgets: Excalidraw's properties panel and link popup are hidden. */
@@ -182,6 +186,7 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
       },
     };
   });
+  if (lastVersion.current === -1) lastVersion.current = getSceneVersion(initial.data.elements);
 
   // ── the widget host: how a widget writes its own payload ──────────────────────────────────
   const host = useMemo<WhiteboardHost>(() => ({
@@ -309,7 +314,7 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
         toast(reason ? `${said}: ${reason}` : said);
       },
       getElements: () => api.getSceneElementsIncludingDeleted(),
-      getSceneVersion: () => getSceneVersion(api.getSceneElementsIncludingDeleted()),
+      getSceneVersion: () => sceneSignature(api.getSceneElementsIncludingDeleted()),
     });
     loadPictures(initial.data.elements);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -358,8 +363,9 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
     lastVersion.current = version;
     // An undo can bring back a picture whose bytes this canvas never held.
     loadPictures(elements);
-    // Also fires once as the mounted scene first settles. A save of an unchanged scene is a
-    // byte-level no-op on the server, and one that `restoreElements` repaired is worth saving.
+    // Not for an untouched open (`lastVersion` starts at the loaded scene's version), and the
+    // save loop drops a change whose signature is the loaded one's, so opening or switching to
+    // a board never writes it back. One that the restore repaired still saves.
     onSceneChangeRef.current?.(elements);
   }, [vault, boardSlug, loadPictures]);
 
@@ -437,26 +443,11 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
   }, [onLinkOpen]);
 
   // ── widgets ───────────────────────────────────────────────────────────────────────────────
+  // Excalidraw calls this on every render of its App (each pan / zoom frame); the memoised slot
+  // is what keeps a frame from re-rendering every widget on the board (widgetSlot.ts).
   const renderEmbeddable = useCallback((element: NonDeleted<ExcalidrawEmbeddableElement>, appState: AppState) => {
     const active = appState.activeEmbeddable?.element === element && appState.activeEmbeddable.state === 'active';
-    const payload = readWidgetPayload(element);
-    // Never null: a null hands the element to Excalidraw's own iframe.
-    if (!payload) {
-      return (
-        <WidgetFrame kind="unknown" title={txRef.current('whiteboard.widget.unknown', 'Unknown widget')} active={active}>
-          <WidgetNotice tone="missing">{txRef.current('whiteboard.widget.unknownBody', 'This widget has no readable content.')}</WidgetNotice>
-        </WidgetFrame>
-      );
-    }
-    const Widget = WIDGET_REGISTRY[payload.kind];
-    const size = widgetSizeOf(payload.size, element.width, element.height);
-    // Keyed by what makes a widget a different thing, so e.g. a web widget whose URL changed
-    // under it does not keep the previous URL's "loaded" state.
-    const widget = <Widget key={`${payload.kind}:${payload.ref ?? ''}:${payload.url ?? ''}`} elementId={element.id} payload={payload} active={active} size={size} height={element.height} />;
-    // The wrapper takes no box (`display: contents`); it carries the card's colour, which the
-    // card's own CSS mixes into its surface (widgets.css). Always there, so a colour change
-    // never remounts the widget (an agent card would lose its session).
-    return <div className="wb-widget-tint" data-card-color={isCardColor(payload.color) ? payload.color : undefined}>{widget}</div>;
+    return <WidgetSlot {...widgetSlotProps(element, active)} />;
   }, []);
 
   const renderTopRightUI = useCallback(() => (
@@ -507,3 +498,26 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
     </WhiteboardHostContext.Provider>
   );
 }
+
+/** One embeddable's widget. Re-renders only when its element or its active state changed. */
+const WidgetSlot = memo(function WidgetSlot({ element, active }: WidgetSlotProps<NonDeleted<ExcalidrawEmbeddableElement>>) {
+  const tx = useWbText();
+  const payload = readWidgetPayload(element);
+  // Never null: a null hands the element to Excalidraw's own iframe.
+  if (!payload) {
+    return (
+      <WidgetFrame kind="unknown" title={tx('whiteboard.widget.unknown', 'Unknown widget')} active={active}>
+        <WidgetNotice tone="missing">{tx('whiteboard.widget.unknownBody', 'This widget has no readable content.')}</WidgetNotice>
+      </WidgetFrame>
+    );
+  }
+  const Widget = WIDGET_REGISTRY[payload.kind];
+  const size = widgetSizeOf(payload.size, element.width, element.height);
+  // Keyed by what makes a widget a different thing, so e.g. a web widget whose URL changed
+  // under it does not keep the previous URL's "loaded" state.
+  const widget = <Widget key={`${payload.kind}:${payload.ref ?? ''}:${payload.url ?? ''}`} elementId={element.id} payload={payload} active={active} size={size} height={element.height} />;
+  // The wrapper takes no box (`display: contents`); it carries the card's colour, which the
+  // card's own CSS mixes into its surface (widgets.css). Always there, so a colour change
+  // never remounts the widget (an agent card would lose its session).
+  return <div className="wb-widget-tint" data-card-color={isCardColor(payload.color) ? payload.color : undefined}>{widget}</div>;
+}, sameWidgetSlot);
