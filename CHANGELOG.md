@@ -19,6 +19,8 @@ The first published release since 0.35.0. It carries everything cut locally as 0
 - **Subtasks are real subtasks in ClickUp and GitHub.** A dreamcontext subtask now syncs as a ClickUp subtask or a GitHub sub-issue and back, instead of a separate task; ones that already went over separately are moved under their parent, nothing is deleted.
 - **A whiteboard on the Super stage fits its card.** It fills the card, stays right after a page switch, and shows its pictures and widgets (read-only).
 - **The Super chat header stays on one row** at every card width: long names end with an ellipsis and the buttons shrink to their icons.
+- **A chat card's ring shows its account's real usage limit.** The ring on a Super chat card now draws the 5-hour and weekly limits of the Claude account that chat runs on (unknown data shows a neutral mark, never 0%); the chat's status moved to a dot at the card's foot.
+- **Smooth zoom and pan on busy whiteboards.** On a board full of tables, trackpad pinch zoom and two-finger pan in the desktop app now run at about 60 fps instead of about 22.
 
 ## [0.35.5] - 2026-10-28
 
