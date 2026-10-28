@@ -35,6 +35,8 @@ let fake: FakeGitHub;
 let backend: GitHubTaskBackend;
 let localClock: number;
 let refuse: ((method: string, body: Record<string, unknown> | undefined) => boolean) | null;
+/** The HTTP status a refused request answers with (400 = GitHub refusing it; 5xx = a transport failure). */
+let refuseStatus = 400;
 
 function makeBackend(): GitHubTaskBackend {
   const now = () => (localClock += 7);
@@ -42,7 +44,7 @@ function makeBackend(): GitHubTaskBackend {
   const fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     if (refuse?.((init?.method ?? 'GET').toUpperCase(), body)) {
-      return { ok: false, status: 400, headers: { get: () => null }, text: async () => '{"message":"refused"}' } as unknown as Response;
+      return { ok: false, status: refuseStatus, headers: { get: () => null }, text: async () => '{"message":"refused"}' } as unknown as Response;
     }
     return fake.fetchImpl(url, init);
   }) as typeof fetch;
@@ -65,6 +67,7 @@ beforeEach(() => {
   mkdirSync(join(contextRoot, 'state'), { recursive: true });
   localClock = 1000;
   refuse = null;
+  refuseStatus = 400;
   fake = makeFakeGitHub();
   backend = makeBackend();
 });
@@ -480,6 +483,33 @@ describe('github sub-tasks', () => {
     expect(report.errors).toEqual([]);
     expect(fake.parentOf.get(kid)).toBe(two);
     expect(mirror('kid').data.parent_task).toBe('parent-two');
+  });
+
+  it('a re-parent whose link failed in transit survives a teammate\'s change before the retry', async () => {
+    await backend.create({ name: 'Parent One', variant: 'cli' });
+    await backend.create({ name: 'Parent Two', variant: 'cli' });
+    await backend.create({ name: 'Kid', variant: 'cli', local_fields: { parent_task: 'parent-one' } });
+    await backend.sync('push');
+    await backend.sync('pull');
+    const kid = numberOf('kid');
+    const one = numberOf('parent-one');
+    const two = numberOf('parent-two');
+    fake.editIssue(kid, { parent_issue_url: `https://api.github.com/repos/example-org/example-repo/issues/${one}` } as never);
+    await backend.sync('pull');
+
+    await backend.updateFields('kid', { parent_task: 'parent-two', updated_at: '2026-10-28' });
+    refuse = (method, body) => method === 'POST' && body?.sub_issue_id !== undefined;
+    refuseStatus = 500;
+    await backend.sync('push');
+    expect(fake.parentOf.get(kid)).toBe(one);
+    refuse = null;
+
+    fake.parentOf.delete(kid);
+    fake.editIssue(kid, { title: 'Kid', parent_issue_url: null } as never);
+    const report = await backend.sync('both');
+    expect(report.errors).toEqual([]);
+    expect(mirror('kid').data.parent_task).toBe('parent-two');
+    expect(fake.parentOf.get(kid)).toBe(two);
   });
 
   it('fallback: a teammate who pulled the task list keeps it in the parent body when editing the parent', async () => {

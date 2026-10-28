@@ -15,6 +15,25 @@
  * Pure: the backends hand in what they read.
  */
 
+import matter from 'gray-matter';
+
+/**
+ * `raw` with its `parent_task` set back to the one in `previousBase` (null when
+ * there is none): the base a sync stores while a local re-parent has NOT landed
+ * on the remote yet. Kept that way, every later pull still sees the move as local
+ * and pending, instead of reading the remote's parent as a fresh change to adopt.
+ */
+export function withBaseParent(raw: string, previousBase: string | null): string {
+  try {
+    const prev = previousBase ? ((matter(previousBase).data as Record<string, unknown>).parent_task ?? null) : null;
+    const current = matter(raw);
+    if (((current.data as Record<string, unknown>).parent_task ?? null) === prev) return raw;
+    return matter.stringify(current.content, { ...(current.data as Record<string, unknown>), parent_task: prev });
+  } catch {
+    return raw;
+  }
+}
+
 /**
  * The parent a task pushes under: its `parent_task`, or null when that names
  * itself or a task that no longer exists (a dangling link reads as top-level,

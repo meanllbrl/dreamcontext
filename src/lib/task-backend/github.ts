@@ -52,7 +52,7 @@ import { resolveGitHubToken, writeGitHubToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { changelogEntriesMissingFrom, changelogEntriesToPost, merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
 import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
-import { liveParentOf, parentsFirst, pulledParent } from './subtask-link.js';
+import { liveParentOf, parentsFirst, pulledParent, withBaseParent } from './subtask-link.js';
 import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
 import {
   BOOTSTRAP_PUSH_THRESHOLD,
@@ -1226,9 +1226,11 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     }
 
     const raw = readFileSync(path, 'utf-8');
+    // A link left to retry has not landed: the base keeps the old parent (see withBaseParent).
+    const newBase = link.pending ? withBaseParent(raw, entry?.base_snapshot?.body ?? null) : raw;
     this.ledger.updateTaskSync(slug, {
       last_synced_at: serverTime ?? entry?.last_synced_at ?? 0,
-      base_snapshot: { hash: hashContent(raw), body: raw },
+      base_snapshot: { hash: hashContent(newBase), body: newBase },
       localHash: hashContent(raw),
       pendingPush: link.pending,
       ...(remoteParent !== undefined ? { remote_parent: remoteParent } : {}),

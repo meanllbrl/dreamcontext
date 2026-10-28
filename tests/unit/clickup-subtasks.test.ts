@@ -173,6 +173,27 @@ describe('clickup sub-tasks', () => {
     expect(fake.tasks.get(remoteIdOf('kid'))!.parent).toBe(remoteIdOf('parent-a'));
   });
 
+  it('a local re-parent survives a teammate\'s move between two pulls, then lands', async () => {
+    await backend.create({ name: 'Parent One', variant: 'cli' });
+    await backend.create({ name: 'Parent Two', variant: 'cli' });
+    await backend.create({ name: 'Parent Three', variant: 'cli' });
+    await backend.create({ name: 'Kid', variant: 'cli', local_fields: { parent_task: 'parent-one' } });
+    await backend.sync('push');
+    await backend.sync('pull');
+
+    await backend.updateFields('kid', { parent_task: 'parent-two', updated_at: '2026-10-28' });
+    fake.editTask(remoteIdOf('kid'), { name: 'Kid' });
+    await backend.sync('pull');
+    expect(parentTaskOf('kid')).toBe('parent-two');
+    fake.editTask(remoteIdOf('kid'), { parent: remoteIdOf('parent-three') });
+    await backend.sync('pull');
+    expect(parentTaskOf('kid')).toBe('parent-two');
+
+    await backend.sync('both');
+    expect(fake.tasks.get(remoteIdOf('kid'))!.parent).toBe(remoteIdOf('parent-two'));
+    expect(parentTaskOf('kid')).toBe('parent-two');
+  });
+
   it('parent not yet synced: the sub-task waits instead of landing top-level, then syncs under it', async () => {
     await makeParentAndChild();
     refuse = (method, body) => method === 'POST' && body?.name === 'Parent Job';

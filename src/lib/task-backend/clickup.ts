@@ -51,7 +51,7 @@ import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { changelogEntriesMissingFrom, changelogEntriesToPost, merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
 import { localOnlyFieldsFromSnapshot, preserveLocalOnlyFields } from './local-only.js';
 import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
-import { liveParentOf, parentsFirst, pulledParent } from './subtask-link.js';
+import { liveParentOf, parentsFirst, pulledParent, withBaseParent } from './subtask-link.js';
 import {
   BOOTSTRAP_PUSH_THRESHOLD,
   type AddChangelogOptions,
@@ -1238,7 +1238,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // the next sync recomputes exactly the tag delta that did not land. Replaying
     // it is safe: the tag ops above tolerate an already-applied op.
     const raw = readFileSync(path, 'utf-8');
-    const newBase = tagOpsFailed ? renderWithBaseTags(raw, entry?.base_snapshot?.body ?? null) : raw;
+    const withTags = tagOpsFailed ? renderWithBaseTags(raw, entry?.base_snapshot?.body ?? null) : raw;
+    // A subtask move left to retry has not landed: the base keeps the old parent.
+    const newBase = parentLinkPending ? withBaseParent(withTags, entry?.base_snapshot?.body ?? null) : withTags;
     this.ledger.updateTaskSync(slug, {
       last_synced_at: serverTime ?? entry?.last_synced_at ?? 0,
       base_snapshot: { hash: hashContent(newBase), body: newBase },
@@ -1901,7 +1903,10 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
     // ── bookkeeping: base reflects the REMOTE state so surviving local
     //    changes still diff (and push) against it. ──
-    const keptLocal = anyLocalWin || proseLocalKept || localOnlyEntries.length > 0;
+    // A local re-parent waiting to push: the base keeps the OLD parent, so a second
+    // pull before the push still sees the move as local (same rule as GitHub).
+    const parentPending = this.pullParentPending;
+    const keptLocal = anyLocalWin || proseLocalKept || localOnlyEntries.length > 0 || parentPending;
     if (keptLocal) {
       const remoteFmOverrides: Record<string, unknown> = {};
       const remoteCustom: Record<string, unknown> = {};
@@ -1921,7 +1926,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         ? { custom_fields: { ...((fm.custom_fields as Record<string, unknown>) ?? {}), ...remoteCustom } }
         : {};
       const remoteRender = this.renderMirror(
-        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTags(remoteTags, remoteAssignees), version: remoteVersion, start_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteStart, due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteDue, ...remoteFmOverrides, ...remoteCustomOverride, rice: remoteRice },
+        { ...fm, ...(parentPending ? { parent_task: (baseFm?.parent_task as string | null | undefined) ?? null } : {}), name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTags(remoteTags, remoteAssignees), version: remoteVersion, start_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteStart, due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteDue, ...remoteFmOverrides, ...remoteCustomOverride, rice: remoteRice },
         remoteDesc,
         remoteEntries,
       );
@@ -2213,6 +2218,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
   }
 
   /** Read the mirror without any remote bookkeeping (super.get under a clear name). */
+  /** Set by the last {@link pulledParentFor}: a local re-parent waiting to push was kept. */
+  private pullParentPending = false;
+
   /** The `parent_task` a pulled task ends with (subtask-link.ts pulledParent). */
   protected pulledParentFor(
     slug: string,
@@ -2233,6 +2241,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       hasLocalChildren: (s) => this.hasLiveChildren(s),
     });
     if (res.warning) report.warnings.push(res.warning);
+    this.pullParentPending = res.localWins === true;
     return res.parent;
   }
 
