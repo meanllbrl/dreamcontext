@@ -93,6 +93,8 @@ export function useReadiness(scope: CheckScope = 'machine', { shown = false }: {
     // the server's memo (it rate-limits fresh probes to one per 2 s).
     queryFn: () => fetchReadiness(shown || readinessPollPlan(queryClient.getQueryData<ReadinessReport>(READINESS_QUERY_KEY)).fresh),
     refetchOnWindowFocus: shown,
+    // A checklist coming on screen reads afresh even over a settled (10 min) cached report.
+    refetchOnMount: shown ? 'always' : true,
     staleTime: (q) => (readinessSettled(q.state.data) ? SETTLED_STALE_MS : 2000),
     refetchInterval: (q) => {
       const ms = readinessPollPlan(q.state.data).intervalMs;
