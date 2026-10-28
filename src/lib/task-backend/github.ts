@@ -906,7 +906,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     if (parentRemote && this.subIssuesFallback()) {
       // The link lives in the parent's task list: no sub-issues call is made.
       this.parentsToRefresh.add(parentSlug!);
-      return { remoteParent: parentRemote, pending: false, viaList: true };
+      return { remoteParent: parentRemote, pending: false, unmirrored: null, viaList: true };
     }
     // An unlink still tries the API in fallback mode: the old link may have been a
     // real sub-issue (a 404 below means it was not, which is done too).
@@ -940,7 +940,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
             `relinked: ${slug} is now a sub-issue of '${parentSlug}' (#${parentRemote}); it was ${remoteParent ? `under #${remoteParent}` : 'a separate issue'}.`,
           );
         }
-        return { remoteParent: parentRemote, pending: false, refused: null, viaList: false };
+        return { remoteParent: parentRemote, pending: false, refused: null, unmirrored: null, viaList: false };
       } catch (err) {
         const kind0 = (err as { kind?: string }).kind;
         // A 404 means "no sub-issues API here" ONLY when the parent issue itself
@@ -956,7 +956,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
             `push ${slug}: GitHub's sub-issues API is not available for this repo — listed it as a task in ` +
             `'${parentSlug}' (#${parentRemote}) body instead of a real sub-issue (retried as a sub-issue after a day).`,
           );
-          return { remoteParent: parentRemote, pending: false, viaList: true };
+          return { remoteParent: parentRemote, pending: false, unmirrored: null, viaList: true };
         }
         // A 4xx is GitHub refusing this link (a limit, a cycle, a stale record):
         // retrying the same call changes nothing, so it is recorded as refused and
@@ -1635,6 +1635,8 @@ export class GitHubTaskBackend extends LocalTaskBackend {
   private pullRefusals = new Map<string, string>();
   /** Issues whose local link this pull found (or made) equal to GitHub's. */
   private pullAgreed = new Set<string>();
+  /** Issues whose local link changed since the last sync and was kept (subtask-link.ts `localWins`). */
+  private pullLocalWins = new Set<string>();
 
   /**
    * What GitHub says about each pulled issue's parent: `parent_issue_url` when
@@ -1653,6 +1655,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     this.pullHintsFromList.clear();
     this.pullRefusals.clear();
     this.pullAgreed.clear();
+    this.pullLocalWins.clear();
     for (const issue of issues) {
       if (issue.parent_issue_url === undefined) continue;
       const n = issueNumberFromUrl(issue.parent_issue_url);
@@ -1717,6 +1720,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     });
     if (res.warning) report.warnings.push(res.warning);
     if (res.refused) this.pullRefusals.set(remoteId, res.refused);
+    if (res.localWins) this.pullLocalWins.add(remoteId);
     // The local link now matches GitHub's: an earlier refusal of that parent is over.
     const hint = this.pullParentHints.get(remoteId);
     if (!res.refused && res.parent && hint && this.ledger.remoteIdFor(res.parent) === hint) this.pullAgreed.add(remoteId);
@@ -1731,13 +1735,19 @@ export class GitHubTaskBackend extends LocalTaskBackend {
   } {
     if (!this.pullParentHints.has(remoteId)) return {};
     const refused = this.pullRefusals.get(remoteId);
+    const hint = this.pullParentHints.get(remoteId)!;
+    // GitHub shows no parent: any earlier "declined to mirror" mark is over.
+    const unmirroredOver = hint === null || this.pullAgreed.has(remoteId);
+    // A local re-parent waiting to push keeps what this machine had recorded, so
+    // the push never mistakes a remote change for the link the user removed.
+    if (this.pullLocalWins.has(remoteId)) return unmirroredOver ? { remote_parent_unmirrored: null } : {};
     return {
-      remote_parent: this.pullParentHints.get(remoteId)!,
+      remote_parent: hint,
       // Every machine that READ a link from the fallback list keeps writing that
       // list, not only the machine that made it.
       remote_parent_via_list: this.pullHintsFromList.has(remoteId),
       // A parent the pull refused to mirror is never "unlinked" by the push.
-      ...(refused ? { remote_parent_unmirrored: refused } : this.pullAgreed.has(remoteId) ? { remote_parent_unmirrored: null } : {}),
+      ...(refused ? { remote_parent_unmirrored: refused } : unmirroredOver ? { remote_parent_unmirrored: null } : {}),
     };
   }
 

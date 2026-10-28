@@ -413,6 +413,47 @@ describe('github sub-tasks', () => {
     expect(fake.parentOf.get(child)).toBe(parent);
   });
 
+  it('a declined parent the user later links and then unlinks is really unlinked', async () => {
+    const a = fake.seedIssue({ title: 'Epic A' });
+    const b = fake.seedIssue({ title: 'Feature B' });
+    const c = fake.seedIssue({ title: 'Task C' });
+    fake.linkSubIssue(a.number, b.number);
+    fake.linkSubIssue(b.number, c.number);
+    await backend.sync('pull'); // C under B is declined (three levels)
+
+    // A teammate takes C out of B on GitHub.
+    fake.parentOf.delete(c.number);
+    fake.editIssue(c.number, { parent_issue_url: null } as never);
+    await backend.sync('pull');
+
+    // Locally: flatten, link C under B, then unlink it.
+    await backend.updateFields('feature-b', { parent_task: null, updated_at: '2026-10-28' });
+    await backend.updateFields('task-c', { parent_task: 'feature-b', updated_at: '2026-10-28' });
+    await backend.sync('push');
+    expect(fake.parentOf.get(c.number)).toBe(b.number);
+    await backend.updateFields('task-c', { parent_task: null, updated_at: '2026-10-28' });
+    await backend.sync('push');
+    await backend.sync('both');
+    expect(fake.parentOf.has(c.number)).toBe(false);
+  });
+
+  it('a local unlink racing a teammate\'s move never removes the link the teammate made', async () => {
+    await backend.create({ name: 'Parent One', variant: 'cli' });
+    await backend.create({ name: 'Parent Two', variant: 'cli' });
+    await backend.create({ name: 'Kid', variant: 'cli', local_fields: { parent_task: 'parent-one' } });
+    await backend.sync('push');
+    await backend.sync('pull');
+    const kid = numberOf('kid');
+    const two = numberOf('parent-two');
+
+    fake.linkSubIssue(two, kid); // teammate moves it under Parent Two
+    fake.editIssue(kid, { parent_issue_url: `https://api.github.com/repos/example-org/example-repo/issues/${two}` } as never);
+    await backend.updateFields('kid', { parent_task: null, updated_at: '2026-10-28' });
+    const report = await backend.sync('both');
+    expect(report.errors).toEqual([]);
+    expect(fake.parentOf.get(kid)).toBe(two);
+  });
+
   it('fallback: a teammate who pulled the task list keeps it in the parent body when editing the parent', async () => {
     fake.subIssuesUnavailable = true;
     await makeParentAndChild();

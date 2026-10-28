@@ -78,6 +78,12 @@ export interface PulledParent {
    * parent" here is a refusal to mirror, not an unlink.
    */
   refused?: string;
+  /**
+   * The local link changed since the last sync and was kept: the pull must not
+   * record the remote's (different) parent as seen, or the push would take the
+   * remote's link for one the user removed here.
+   */
+  localWins?: boolean;
 }
 
 /**
@@ -98,7 +104,7 @@ export interface PulledParent {
 export function pulledParent(i: PulledParentInput): PulledParent {
   const keep = { parent: i.localParent };
   if (i.remoteParentId === undefined) return keep;
-  if (i.baseParent !== undefined && (i.baseParent ?? null) !== i.localParent) return keep;
+  if (i.baseParent !== undefined && (i.baseParent ?? null) !== i.localParent) return { ...keep, localWins: true };
   if (i.lastRemoteParent !== undefined && i.lastRemoteParent === i.remoteParentId) return keep;
   if (i.remoteParentId === null) {
     return typeof i.lastRemoteParent === 'string' ? { parent: null } : keep;
