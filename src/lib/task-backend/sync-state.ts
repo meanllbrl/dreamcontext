@@ -37,6 +37,12 @@ export interface TaskSyncEntry {
   lastLocalChangeAt?: number;
   /** True while local changes await a push. */
   pendingPush?: boolean;
+  /**
+   * The remote id of this task's PARENT as last seen or written (the remote's
+   * native subtask link); null = seen top-level; absent = never observed.
+   * See subtask-link.ts.
+   */
+  remote_parent?: string | null;
 }
 
 export interface SyncStateFile {
@@ -65,6 +71,12 @@ export interface SyncStateFile {
   lastLabelProvisionAt?: number;
   /** Fingerprint of the status set the labels were last provisioned for (GitHub). */
   labelProvisionStatusSet?: number;
+  /**
+   * When the remote's native sub-task API last answered "not available here".
+   * While recent, the backend falls back to a task list in the parent's body;
+   * it is retried once a day.
+   */
+  subIssuesUnavailableAt?: number;
   /**
    * Local-image → hosted-asset bridge (GitHub task images). Push uploads a local
    * image once and rewrites the wire reference to the hosted URL; pull maps that
@@ -523,11 +535,11 @@ export class SyncLedger {
     this.writeSyncState(state);
   }
 
-  readThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt' | 'labelProvisionStatusSet'): number | null {
+  readThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt' | 'labelProvisionStatusSet' | 'subIssuesUnavailableAt'): number | null {
     return this.readSyncState()[key] ?? null;
   }
 
-  writeThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt' | 'labelProvisionStatusSet', at: number): void {
+  writeThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt' | 'labelProvisionStatusSet' | 'subIssuesUnavailableAt', at: number): void {
     const state = this.readSyncState();
     state[key] = at;
     this.writeSyncState(state);

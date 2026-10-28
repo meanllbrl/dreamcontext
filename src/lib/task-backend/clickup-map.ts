@@ -34,6 +34,8 @@ export interface ClickUpTask {
   start_date?: string | number | null;
   due_date?: string | number | null;
   custom_fields?: Array<Record<string, unknown>> | null;
+  /** The parent task's id when this is a subtask; null on a top-level task. */
+  parent?: string | null;
 }
 
 export interface ClickUpComment {

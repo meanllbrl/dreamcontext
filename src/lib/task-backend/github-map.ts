@@ -55,6 +55,12 @@ export interface GitHubIssue {
   created_at?: string | null;
   updated_at?: string | null;
   user?: { login?: string } | null;
+  /** The issue's database id — what the sub-issues API takes (`sub_issue_id`), not `number`. */
+  id?: number;
+  /** API URL of the parent issue when this is a sub-issue; null when top-level. Absent on payloads that predate it. */
+  parent_issue_url?: string | null;
+  /** Sub-issue counts; `total > 0` marks a parent worth listing. */
+  sub_issues_summary?: { total?: number } | null;
 }
 
 /** GitHub issue comment — one changelog entry rides as one comment. */
@@ -482,10 +488,55 @@ export function stripFieldsBlock(body: string | null | undefined): string {
   return before || after;
 }
 
+// ─── Sub-task list — the FALLBACK when the sub-issues API is unavailable ──────
+// A sub-task normally rides as a real GitHub sub-issue. Only when that API
+// answers "not here" (an older GitHub Enterprise Server) does the parent's body
+// carry a marked task list of its sub-tasks' issue numbers instead. Stripped
+// before any merge, like the dates block; read back on pull as parent links.
+
+const SUBTASKS_OPEN = '<!-- dc:subtasks -->';
+const SUBTASKS_CLOSE = '<!-- /dc:subtasks -->';
+
+/** The task-list block for a parent's sub-tasks, or '' when it has none. */
+export function renderSubtasksBlock(children: Array<{ number: number; done: boolean }>): string {
+  if (children.length === 0) return '';
+  const lines = children.map((c) => `- [${c.done ? 'x' : ' '}] #${c.number}`);
+  return `${SUBTASKS_OPEN}\n**Sub-tasks**\n${lines.join('\n')}\n${SUBTASKS_CLOSE}`;
+}
+
+/** The issue numbers the sub-task block lists, in order. No block → []. */
+export function parseSubtasksBlock(body: string | null | undefined): number[] {
+  if (!body) return [];
+  const open = body.indexOf(SUBTASKS_OPEN);
+  const close = body.indexOf(SUBTASKS_CLOSE);
+  if (open === -1 || close === -1 || close < open) return [];
+  const inner = body.slice(open + SUBTASKS_OPEN.length, close);
+  return [...inner.matchAll(/^- \[[ xX]\] #(\d+)\s*$/gm)].map((m) => Number(m[1]));
+}
+
+/** Remove the sub-task block (and the blank lines hugging it) from a body. */
+export function stripSubtasksBlock(body: string | null | undefined): string {
+  if (!body) return '';
+  const open = body.indexOf(SUBTASKS_OPEN);
+  const close = body.indexOf(SUBTASKS_CLOSE);
+  if (open === -1 || close === -1 || close < open) return body;
+  const before = body.slice(0, open).replace(/\n+$/, '');
+  const after = body.slice(close + SUBTASKS_CLOSE.length).replace(/^\n+/, '');
+  if (before && after) return `${before}\n\n${after}`;
+  return before || after;
+}
+
+/** The parent issue number in a `parent_issue_url`, or null. */
+export function issueNumberFromUrl(url: string | null | undefined): number | null {
+  const m = typeof url === 'string' ? /\/issues\/(\d+)\/?$/.exec(url) : null;
+  return m ? Number(m[1]) : null;
+}
+
 /**
  * Compose the full issue body for a push: the dates block (when any date is set)
- * above the changelog-free prose. `prose` is expected to already be the output
- * of {@link bodyToIssueBody}. Idempotent — strips any stray block from `prose`
+ * above the changelog-free prose, and the sub-task fallback block (when given)
+ * below it. `prose` is expected to already be the output of
+ * {@link bodyToIssueBody}. Idempotent — strips any stray block from `prose`
  * first so re-pushes never stack duplicate blocks.
  */
 export function composeIssueBody(
@@ -493,12 +544,14 @@ export function composeIssueBody(
   start: string | null | undefined,
   due: string | null | undefined,
   fieldsBlock = '',
+  subtasksBlock = '',
 ): string {
-  const cleanProse = stripFieldsBlock(stripDatesBlock(prose)).trimEnd();
+  const cleanProse = stripSubtasksBlock(stripFieldsBlock(stripDatesBlock(prose))).trimEnd();
   const datesBlock = renderDatesBlock(start, due);
   const blocks = [datesBlock, fieldsBlock].filter(Boolean).join('\n\n');
-  if (!blocks) return cleanProse ? `${cleanProse}\n` : '';
-  return cleanProse ? `${blocks}\n\n${cleanProse}\n` : `${blocks}\n`;
+  const top = !blocks ? (cleanProse ? `${cleanProse}\n` : '') : (cleanProse ? `${blocks}\n\n${cleanProse}\n` : `${blocks}\n`);
+  if (!subtasksBlock) return top;
+  return top ? `${top.trimEnd()}\n\n${subtasksBlock}\n` : `${subtasksBlock}\n`;
 }
 
 // ─── Server time / watermark ──────────────────────────────────────────────────
