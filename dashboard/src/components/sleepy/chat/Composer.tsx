@@ -58,7 +58,7 @@ import {
   refTokenId, sanitizePaste, snapSelection, stripTokens, tokensOnly,
 } from './composerRefs';
 import { MIRROR_TAIL, syncMirror } from './composerMirror';
-import { RefPopover, RefSrList, refMirrorSegments, refsInOrder } from './ComposerRefLayer';
+import { PictureChip, RefPopover, RefSrList, refMirrorSegments, refsInOrder } from './ComposerRefLayer';
 import { Popover } from '../SkillPickerPopover';
 import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
 import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
@@ -2363,17 +2363,16 @@ export function Composer({
                 if (s.kind === 'ref' && s.lead) {
                   // A picture: its thumbnail fills the blank room its glyph keeps in the text.
                   return (
-                    <mark
+                    <PictureChip
                       // eslint-disable-next-line react/no-array-index-key -- positional split of one string
                       key={i}
-                      className={`chat-cmp-hl-ref chat-cmp-hl-img${s.refId && s.refId === flashing ? ' is-flash' : ''}`}
-                      data-ref-id={s.refId}
-                      data-state={s.state}
-                      data-testid="chat-cmp-hl-img"
-                    >
-                      <span className="chat-cmp-hl-thumb" style={s.img ? { backgroundImage: `url("${s.img}")` } : undefined}>{s.text.slice(0, s.lead)}</span>
-                      {s.text.slice(s.lead)}
-                    </mark>
+                      img={s.img}
+                      lead={s.text.slice(0, s.lead)}
+                      rest={s.text.slice(s.lead)}
+                      state={s.state}
+                      flash={!!s.refId && s.refId === flashing}
+                      refId={s.refId}
+                    />
                   );
                 }
                 if (s.kind === 'ref') {

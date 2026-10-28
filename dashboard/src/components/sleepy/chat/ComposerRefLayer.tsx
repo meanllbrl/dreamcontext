@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
 import { mentionSegments, type PeerMention } from '../../../lib/agentComposer';
@@ -55,6 +55,44 @@ export function refMirrorSegments(draft: string, peers: PeerMention[], staged: r
   });
   text(draft.slice(pos));
   return out;
+}
+
+/**
+ * A picture chip, the ONE look it has (owner 2026-10-28: the sent bubble must read exactly like
+ * the composer): the accent tint, its thumbnail painted in the blank room its glyph keeps, then
+ * its name. The composer's mirror draws it behind the textarea (the words transparent, the
+ * textarea paints them); a sent bubble draws it with `sent` (the words visible, a click opens
+ * the picture). `lead` is the glyph's text (the thumbnail's room), `rest` everything after it.
+ */
+export function PictureChip({ img, lead, rest, state, flash, refId, sent, title, onOpen }: {
+  img?: string;
+  lead: string;
+  rest: string;
+  state?: MirrorSegment['state'];
+  flash?: boolean;
+  refId?: string;
+  sent?: boolean;
+  title?: string;
+  onOpen?: () => void;
+}) {
+  return (
+    <mark
+      className={`chat-cmp-hl-ref chat-cmp-hl-img${flash ? ' is-flash' : ''}${sent ? ' is-sent' : ''}`}
+      data-ref-id={refId}
+      data-state={state}
+      data-testid={sent ? 'chat-msg-picture' : 'chat-cmp-hl-img'}
+      title={title}
+      {...(sent && onOpen ? {
+        role: 'button',
+        tabIndex: 0,
+        onClick: onOpen,
+        onKeyDown: (e: ReactKeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } },
+      } : {})}
+    >
+      <span className="chat-cmp-hl-thumb" style={img ? { backgroundImage: `url("${img}")` } : undefined}>{lead}</span>
+      {rest}
+    </mark>
+  );
 }
 
 /** The staged refs in the order their tokens stand in the draft. */
