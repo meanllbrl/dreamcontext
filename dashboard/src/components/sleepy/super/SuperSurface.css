@@ -139,7 +139,10 @@
   flex: none;
   min-width: 0;
 }
-.super-centre-name { font-weight: 700; color: var(--color-text); }
+/* One row at every card width (owner 2026-10-28, the name wrapped and spilled under the border):
+   the name never wraps, it is cut with an ellipsis only after the subtitle has given way. */
+.super-centre-name { font-weight: 700; color: var(--color-text); flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.super-centre-head > img { flex: none; }
 /* "Yeni oturum" (task super-agent-devrini-…): the head's last item, pushed right. On a narrow
    centre the sub line goes first, then the button keeps only its glyph (label in aria/title). */
 .super-centre-clip { container-type: inline-size; container-name: super-centre; }
@@ -167,16 +170,27 @@
 .super-fresh-btn[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
 .super-fresh-glyph { flex: none; }
 .super-fresh-error { font-size: var(--font-size-xs); color: var(--color-error-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-@container super-centre (max-width: 420px) {
+/* The subtitle takes only what the name and the buttons leave (basis 0), so it shrinks first; it
+   goes before it is a stub, earlier when Agenda shares the row. Then both buttons keep only their
+   glyph (the word stays in aria-label and title). */
+@container super-centre (max-width: 479px) {
   .super-centre-sub { display: none; }
 }
-@container super-centre (max-width: 320px) {
-  .super-fresh-btn { padding: 0 4px; }
+@container super-centre (max-width: 559px) {
+  .super-centre-head:has(.super-agenda-open) .super-centre-sub { display: none; }
+}
+@container super-centre (max-width: 399px) {
+  .super-fresh-btn { padding: 0 var(--space-1); }
   .super-fresh-btn-label { display: none; }
+}
+@container super-centre (max-width: 479px) {
+  .super-centre-head:has(.super-agenda-open) .super-fresh-btn { padding: 0 var(--space-1); }
+  .super-centre-head:has(.super-agenda-open) .super-fresh-btn-label { display: none; }
 }
 
 .super-centre-sub,
 .super-card-large-note { font-size: var(--font-size-xs); color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.super-centre-sub { flex: 1 1 0; text-align: right; }
 .super-card-large-title { font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0; }
 .super-card-large-note { flex: 1 1 auto; }
 .super-slot {
