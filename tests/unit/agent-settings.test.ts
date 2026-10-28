@@ -84,20 +84,20 @@ describe('lightMode (Settings → Performance → Light mode)', () => {
   });
 });
 
-describe('superAgent (Settings → Chat → Super Agent)', () => {
-  it('is OFF by default on both sides, and for an old blob without the key', () => {
-    expect(DEFAULT_AGENT_SETTINGS.superAgent).toBe(false);
-    expect(coerceAgentSettings({}).superAgent).toBe(false);
-    expect(coerceAgentSettings(null).superAgent).toBe(false);
-    expect(coerceServerAgentSettings({}).superAgent).toBe(false);
+describe('superAgent: no switch any more (on for everyone since 2026-10-29)', () => {
+  it('has no superAgent key on either side', () => {
+    expect(DEFAULT_AGENT_SETTINGS).not.toHaveProperty('superAgent');
+    expect(coerceAgentSettings({})).not.toHaveProperty('superAgent');
+    expect(coerceServerAgentSettings({})).not.toHaveProperty('superAgent');
   });
 
-  it('runs one input table through BOTH coercers (lockstep): only an explicit true turns it on', () => {
-    const table: Array<[unknown, boolean]> = [[true, true], [false, false], ['true', false], [1, false], [null, false], [undefined, false], ['', false]];
-    for (const [input, want] of table) {
-      expect(coerceAgentSettings({ superAgent: input as never }).superAgent).toBe(want);
-      expect(coerceServerAgentSettings({ superAgent: input }).superAgent).toBe(want);
+  it('drops an old stored superAgent:false (or true) on both coercers, so nothing can hide it', () => {
+    for (const input of [false, true, 'false', null]) {
+      expect(coerceAgentSettings({ superAgent: input } as never)).not.toHaveProperty('superAgent');
+      expect(coerceServerAgentSettings({ superAgent: input })).not.toHaveProperty('superAgent');
     }
+    // The rest of an old blob still reads normally.
+    expect(coerceServerAgentSettings({ superAgent: false, superModel: 'sonnet' }).superModel).toBe('sonnet');
   });
 });
 

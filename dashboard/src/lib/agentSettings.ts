@@ -95,10 +95,6 @@ export interface AgentSettings {
   titleMigrated: boolean;
   /** Light mode: Auto / On / Off. Default `auto`; anything but `on` / `off` reads as `auto`. */
   lightMode: LightModeSetting;
-  /** The Super Agent's hand-over button in the Chat header (Settings → Chat, last row). OFF by
-   *  default for everyone while it is being tried: only an explicit `true` shows it. Off never
-   *  strands a hand-over already running: its Take back stays until the chats are back. */
-  superAgent: boolean;
   /** Settings → Chat "Park idle chats under load": the server ends chats idle for 10 min
    *  (3 under hard pressure) when memory, swap or disk run short; the tab stays, dormant, and
    *  Resume brings the conversation back. ON by default: only an explicit `false` turns it off. */
@@ -130,7 +126,6 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   chatDefaultModel: '',
   chatDefaultEffort: '',
   lightMode: 'auto',
-  superAgent: false,
   parkIdleChats: true,
   superModel: 'opus',
   superEffort: 'high',
@@ -184,8 +179,8 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     chatDefaultEffort: typeof r.chatDefaultEffort === 'string' && CHAT_DEFAULT_EFFORT_LEVELS.includes(r.chatDefaultEffort)
       ? r.chatDefaultEffort : '',
     lightMode: r.lightMode === 'on' || r.lightMode === 'off' ? r.lightMode : 'auto',
-    // Default-FALSE: only an explicit `true` turns the Super Agent on.
-    superAgent: r.superAgent === true,
+    // No `superAgent` key any more: the Super Agent is on for everyone (2026-10-29). An old
+    // blob's `superAgent:false` is dropped here like any unknown key, so it hides nothing.
     // Default-TRUE: only an explicit `false` stops parking idle chats under load.
     parkIdleChats: r.parkIdleChats !== false,
     superModel: typeof r.superModel === 'string' && CHAT_DEFAULT_MODEL_RE.test(r.superModel) ? r.superModel : DEFAULT_AGENT_SETTINGS.superModel,

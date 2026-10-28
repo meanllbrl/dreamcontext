@@ -949,9 +949,6 @@ interface AgentUiSettings {
   /** Light mode (Settings → Performance): 'auto' (on for ≤ 8 GB or on battery), 'on', 'off'.
    *  Mirrors dashboard/src/lib/agentSettings (the effective value is computed client-side). */
   lightMode: 'auto' | 'on' | 'off';
-  /** The Super Agent's hand-over button (Settings → Chat, last row): OFF by default, only an
-   *  explicit `true` shows it. Mirrors dashboard/src/lib/agentSettings. */
-  superAgent: boolean;
   /** Park idle chats under machine load (default true). */
   parkIdleChats: boolean;
   /** The Super Agent session's own model and effort (plan r4 D3, D12): `SUPER_AGENT_DEFAULT`
@@ -977,7 +974,6 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   chatDefaultModel: '',
   chatDefaultEffort: '',
   lightMode: 'auto',
-  superAgent: false,
   parkIdleChats: true,
   superModel: SUPER_AGENT_DEFAULT.model,
   superEffort: SUPER_AGENT_DEFAULT.effort,
@@ -1033,8 +1029,8 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
     chatDefaultEffort: sanitizeEffort(typeof raw.chatDefaultEffort === 'string' ? raw.chatDefaultEffort : null),
     // Only an explicit 'on' / 'off' pins Light mode; anything else is Auto.
     lightMode: raw.lightMode === 'on' || raw.lightMode === 'off' ? raw.lightMode : 'auto',
-    // Default-FALSE: only an explicit `true` turns the Super Agent on.
-    superAgent: raw.superAgent === true,
+    // No `superAgent` key any more: the Super Agent is on for everyone (2026-10-29). An old
+    // agent-ui.json's `superAgent:false` is not picked, so the next write drops it.
     // Default-TRUE: only an explicit `false` stops parking idle chats under load
     // (src/server/chat-park.ts reads the same rule straight from the file).
     parkIdleChats: raw.parkIdleChats !== false,

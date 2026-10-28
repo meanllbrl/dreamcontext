@@ -5621,9 +5621,9 @@ export function AgentSurface() {
                 not node-pty — loosened so the control cluster is reachable on a
                 node-pty-broken machine that can still run Chat. */}
             {/* The Super Agent's ONE button (owner decision 9): hand over every open chat, or
-                take it back. Chat screen only (the agent is a chat), desktop only, and only once
-                Settings → Chat → Super Agent is on (off by default); Take back never hides. */}
-            {panesLive && (handedOver || (chatMode && agentSettings.superAgent && !isMacPhoneSurface())) && (
+                take it back. Chat screen only (the agent is a chat), desktop only; on for everyone
+                (no Settings switch since 2026-10-29). Take back never hides. */}
+            {panesLive && (handedOver || (chatMode && !isMacPhoneSurface())) && (
               <HandoverButton
                 handedOver={handedOver}
                 busy={superBusy || superMotion === 'running'}
