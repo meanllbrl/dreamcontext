@@ -50,6 +50,12 @@ export interface TaskSyncEntry {
    */
   remote_parent_refused?: string | null;
   /**
+   * A remote parent the PULL declined to mirror (too deep, unmapped): the local
+   * "no parent" is then not an unlink, and the push never removes that link.
+   * Cleared (null) once local and remote agree.
+   */
+  remote_parent_unmirrored?: string | null;
+  /**
    * True while `remote_parent` rides only in the parent's fallback task list (the
    * sub-issues API was unavailable): the remote's own "no parent" then says
    * nothing about this link, and a pull must not read it as an unlink.

@@ -374,6 +374,45 @@ describe('github sub-tasks', () => {
     expect(fake.parentOf.has(c.number)).toBe(false);
   });
 
+  it('push-only: a sub-issue link a teammate made on GitHub is never removed, and the next pull adopts it', async () => {
+    await backend.create({ name: 'Parent Job', variant: 'cli' });
+    await backend.create({ name: 'Loose Task', variant: 'cli' });
+    await backend.sync('push');
+    const parent = numberOf('parent-job');
+    const loose = numberOf('loose-task');
+
+    fake.linkSubIssue(parent, loose);
+    fake.editIssue(loose, { parent_issue_url: `https://api.github.com/repos/example-org/example-repo/issues/${parent}` } as never);
+    await backend.updateFields('loose-task', { status: 'in_progress', updated_at: '2026-10-28' });
+    const report = await backend.sync('push');
+    expect(report.errors).toEqual([]);
+    expect(fake.requests.some((r) => r.method === 'DELETE')).toBe(false);
+    expect(fake.parentOf.get(loose)).toBe(parent);
+
+    fake.editIssue(loose, { title: 'Loose Task' });
+    await backend.sync('pull');
+    expect(mirror('loose-task').data.parent_task).toBe('parent-job');
+  });
+
+  it('a refused link does not hold back a later return to the same parent', async () => {
+    await makeParentAndChild();
+    refuse = (method, body) => method === 'POST' && body?.sub_issue_id !== undefined;
+    await backend.sync('push');
+    const parent = numberOf('parent-job');
+    const child = numberOf('child-step');
+    expect(fake.parentOf.has(child)).toBe(false);
+    refuse = null;
+
+    await backend.updateFields('child-step', { parent_task: null, updated_at: '2026-10-28' });
+    await backend.sync('both');
+    await backend.updateFields('child-step', { parent_task: 'parent-job', updated_at: '2026-10-28' });
+    fake.editIssue(child, { title: 'Child Step' });
+    await backend.sync('both');
+    await backend.sync('both');
+    expect(mirror('child-step').data.parent_task).toBe('parent-job');
+    expect(fake.parentOf.get(child)).toBe(parent);
+  });
+
   it('fallback: a teammate who pulled the task list keeps it in the parent body when editing the parent', async () => {
     fake.subIssuesUnavailable = true;
     await makeParentAndChild();

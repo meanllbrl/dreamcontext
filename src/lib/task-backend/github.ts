@@ -162,6 +162,37 @@ function githubAuthHeaders(token: string): Record<string, string> {
   };
 }
 
+interface SettleInput {
+  slug: string;
+  parentSlug: string | null;
+  parentRemote: string | null;
+  remoteId: string;
+  issueId: number | undefined;
+  /** What GitHub holds now (from the PATCH response, else the ledger). */
+  remoteParent: string | null | undefined;
+  /** The ledger's `remote_parent` BEFORE this push: what this machine last saw or wrote. */
+  recordedParent: string | null | undefined;
+  /** The ledger's `remote_parent_refused` (a push refusal: a parent id, or `unlink:<id>`). */
+  refusedParent: string | null | undefined;
+  /** The ledger's `remote_parent_unmirrored` (a parent the pull declined to mirror). */
+  unmirrored: string | null | undefined;
+  created: boolean;
+  adapter: ApiAdapter;
+  owner: string;
+  repo: string;
+  report: SyncReport;
+}
+
+interface SettleResult {
+  remoteParent: string | null | undefined;
+  pending: boolean;
+  refused?: string | null;
+  unmirrored?: null;
+  viaList?: boolean;
+  /** Drop the ledger's `remote_parent`: GitHub showed a parent we never recorded. */
+  forget?: boolean;
+}
+
 /** A parent issue in ANOTHER repo of the owner: never mapped, never changed, never recorded. */
 const FOREIGN_PARENT = '#foreign';
 
@@ -703,7 +734,11 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         }
         // …and one no longer a sub-task here that GitHub still holds under a parent
         // (an unlink whose push a pull got to first).
-        else if (!parent && typeof entry.remote_parent === 'string' && entry.remote_parent_refused !== entry.remote_parent) {
+        else if (
+          !parent && typeof entry.remote_parent === 'string'
+          && entry.remote_parent_refused !== `unlink:${entry.remote_parent}`
+          && entry.remote_parent_unmirrored !== entry.remote_parent
+        ) {
           candidates.add(slug);
         }
       }
@@ -829,21 +864,17 @@ export class GitHubTaskBackend extends LocalTaskBackend {
    * a guess, and nothing is ever deleted or re-created. Returns the parent
    * GitHub now holds and whether the link still has to be retried.
    */
-  private async settleSubIssue(a: {
-    slug: string;
-    parentSlug: string | null;
-    parentRemote: string | null;
-    remoteId: string;
-    issueId: number | undefined;
-    remoteParent: string | null | undefined;
-    /** The ledger's `remote_parent_refused`: a parent we refused to mirror is never unlinked. */
-    refusedParent: string | null | undefined;
-    created: boolean;
-    adapter: ApiAdapter;
-    owner: string;
-    repo: string;
-    report: SyncReport;
-  }): Promise<{ remoteParent: string | null | undefined; pending: boolean; refused?: string | null; viaList?: boolean }> {
+  private async settleSubIssue(a: SettleInput): Promise<SettleResult> {
+    const res = await this.settleSubIssueOnce(a);
+    // A push refusal is about ONE target (link to X, or unlink from Y). Once the
+    // task wants something else, the refusal is over, so a later return to that
+    // target is pushed again instead of being held back for good.
+    const want = a.parentRemote ?? (typeof a.remoteParent === 'string' ? `unlink:${a.remoteParent}` : null);
+    if (res.refused === undefined && a.refusedParent && a.refusedParent !== want) res.refused = null;
+    return res;
+  }
+
+  private async settleSubIssueOnce(a: SettleInput): Promise<SettleResult> {
     const { slug, parentSlug, parentRemote, remoteId, adapter, owner, repo, report } = a;
     let remoteParent = a.remoteParent;
     if (parentSlug && !parentRemote) {
@@ -853,16 +884,23 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // Top-level here and nothing recorded about GitHub: nothing to settle, no request spent.
     if (!parentRemote && remoteParent === undefined) return { remoteParent, pending: false };
     // Local and GitHub agree: any earlier refusal of this parent is over.
-    if (parentRemote === remoteParent) return { remoteParent, pending: false, ...(parentRemote ? { refused: null } : {}) };
+    if (parentRemote === remoteParent) {
+      return { remoteParent, pending: false, ...(parentRemote ? { refused: null, unmirrored: null } : {}) };
+    }
+
+    if (!parentRemote && typeof remoteParent === 'string' && remoteParent !== FOREIGN_PARENT) {
+      // A remote parent the pull declined to mirror (too deep, unmapped): the
+      // local "no parent" is not an unlink. The teammate's link is never undone.
+      if (remoteParent === a.unmirrored) return { remoteParent, pending: false };
+      // GitHub shows a parent this machine never recorded: a remote change not
+      // pulled yet, not something the user removed here. Never undone; the record
+      // is dropped so the next pull reads it fresh (adopts or declines it).
+      if (remoteParent !== a.recordedParent) return { remoteParent: undefined, pending: false, forget: true };
+    }
 
     // Leaving a parent we recorded: re-send that parent's body in EITHER mode, so
     // a fallback task list naming this issue (from a fallback window now over,
     // or never noticed) cannot bring the old link back on a later pull.
-    // A remote parent the pull refused to mirror (too deep, unmapped) while the task
-    // has no parent here: the remote's link is a teammate's fact, never undone.
-    if (!parentRemote && typeof remoteParent === 'string' && remoteParent === a.refusedParent) {
-      return { remoteParent, pending: false };
-    }
     const leaving = typeof remoteParent === 'string' ? this.ledger.slugForRemoteId(remoteParent) : null;
     if (leaving && leaving !== parentSlug) this.parentsToRefresh.add(leaving);
     if (parentRemote && this.subIssuesFallback()) {
@@ -878,7 +916,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       return { remoteParent, pending: true };
     }
     // Local and GitHub agree: any earlier refusal of this parent is over.
-    if (parentRemote === remoteParent) return { remoteParent, pending: false, ...(parentRemote ? { refused: null } : {}) };
+    if (parentRemote === remoteParent) {
+      return { remoteParent, pending: false, ...(parentRemote ? { refused: null, unmirrored: null } : {}) };
+    }
 
     let issueId = a.issueId;
     if (issueId === undefined) {
@@ -945,7 +985,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       if (kind === 'not_found') return { remoteParent: null, pending: false, viaList: false };
       report.warnings.push(`push ${slug}: could not take it out of #${remoteParent} on GitHub: ${(err as Error).message ?? err}.`);
       // A refused unlink is recorded so the push does not re-select it every sync.
-      return kind === 'invalid' ? { remoteParent, pending: false, refused: remoteParent } : { remoteParent, pending: true };
+      return kind === 'invalid' ? { remoteParent, pending: false, refused: `unlink:${remoteParent}` } : { remoteParent, pending: true };
     }
   }
 
@@ -1151,7 +1191,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
 
     const link = await this.settleSubIssue({
       slug, parentSlug, parentRemote, remoteId, issueId, remoteParent,
+      recordedParent: entry?.remote_parent,
       refusedParent: entry?.remote_parent_refused,
+      unmirrored: entry?.remote_parent_unmirrored,
       created: !wasMapped, adapter, owner, repo, report,
     });
     remoteParent = link.remoteParent === FOREIGN_PARENT ? undefined : link.remoteParent;
@@ -1191,6 +1233,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       pendingPush: link.pending,
       ...(remoteParent !== undefined ? { remote_parent: remoteParent } : {}),
       ...(link.refused !== undefined ? { remote_parent_refused: link.refused } : {}),
+      ...(link.unmirrored !== undefined ? { remote_parent_unmirrored: link.unmirrored } : {}),
+      // Forget a parent GitHub showed but this machine never recorded (see settleSubIssue).
+      ...(link.forget ? { remote_parent: undefined } : {}),
       ...(link.viaList !== undefined ? { remote_parent_via_list: link.viaList } : {}),
     });
     // Same rule as the ClickUp backend (#185): a push must not advance the global
@@ -1682,7 +1727,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
   private remoteParentPatch(remoteId: string): {
     remote_parent?: string | null;
     remote_parent_via_list?: boolean;
-    remote_parent_refused?: string | null;
+    remote_parent_unmirrored?: string | null;
   } {
     if (!this.pullParentHints.has(remoteId)) return {};
     const refused = this.pullRefusals.get(remoteId);
@@ -1692,7 +1737,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       // list, not only the machine that made it.
       remote_parent_via_list: this.pullHintsFromList.has(remoteId),
       // A parent the pull refused to mirror is never "unlinked" by the push.
-      ...(refused ? { remote_parent_refused: refused } : this.pullAgreed.has(remoteId) ? { remote_parent_refused: null } : {}),
+      ...(refused ? { remote_parent_unmirrored: refused } : this.pullAgreed.has(remoteId) ? { remote_parent_unmirrored: null } : {}),
     };
   }
 
