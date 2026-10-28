@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useApi } from '../../../context/VaultContext';
+import { useApi, useVault } from '../../../context/VaultContext';
 import { boardFailure, boardRetryDelay, type BoardFailure } from '../../../lib/boardFailure';
+import { loadWhiteboardPictures, whiteboardSlugOf, type BoardPictureFile } from '../../../lib/boardFit';
 import { ExcalidrawPreview } from '../../core/ExcalidrawPreview';
 import { FullscreenOverlay } from '../../layout/FullscreenOverlay';
 
@@ -28,6 +29,26 @@ interface BoardScene {
   failed: boolean;
   /** Why it failed, in a few words, for the card (null while it has not). */
   failure: BoardFailure | null;
+  /** A whiteboard (`whiteboards/<slug>/<slug>.excalidraw.md`): drawn with its widgets. */
+  whiteboard: boolean;
+}
+
+/** One stored picture of a whiteboard, from the route the Whiteboards page reads it from
+ *  (`GET /api/whiteboards/<slug>/files/<id>`, raw bytes, the vault header as the API client
+ *  sends it), as a data URL. */
+async function downloadBoardPicture(slug: string, vault: string | null, id: string): Promise<BoardPictureFile> {
+  const res = await fetch(`/api/whiteboards/${encodeURIComponent(slug)}/files/${encodeURIComponent(id)}`, {
+    headers: vault ? { 'X-Dreamcontext-Vault': vault } : {},
+  });
+  if (!res.ok) throw Object.assign(new Error(`picture ${id}: ${res.status}`), { status: res.status });
+  const blob = await res.blob();
+  const dataURL = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+  return { id, mimeType: blob.type, dataURL };
 }
 
 /**
@@ -40,25 +61,37 @@ interface BoardScene {
  */
 export function useBoardScene(path: string): BoardScene {
   const api = useApi();
+  const { vault } = useVault();
+  const slug = whiteboardSlugOf(path);
+  const whiteboard = slug !== null;
   const [scene, setScene] = useState<BoardScene>({
-    content: null, assets: undefined, assetsLoading: false, failed: false, failure: null,
+    content: null, assets: undefined, assetsLoading: false, failed: false, failure: null, whiteboard,
   });
 
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let tries = 0;
-    setScene({ content: null, assets: undefined, assetsLoading: false, failed: false, failure: null });
+    setScene({ content: null, assets: undefined, assetsLoading: false, failed: false, failure: null, whiteboard });
 
     const load = () => api.get<{ content: string }>(`/agent/file?path=${encodeURIComponent(path)}`)
       .then((data) => {
         if (cancelled) return;
         const content = data?.content ?? '';
-        if (!content.includes('## Embedded Files')) {
-          setScene({ content, assets: {}, assetsLoading: false, failed: false, failure: null });
+        if (slug) {
+          setScene({ content, assets: undefined, assetsLoading: true, failed: false, failure: null, whiteboard });
+          // A whiteboard keeps its pictures in its own `files/` folder, never under `## Embedded
+          // Files`: fetched by id, the way the Whiteboards page gets them (lib/boardFit.ts).
+          loadWhiteboardPictures(content, (id) => downloadBoardPicture(slug, vault, id))
+            .then((files) => { if (!cancelled) setScene((s) => ({ ...s, assets: files, assetsLoading: false })); })
+            .catch(() => { if (!cancelled) setScene((s) => ({ ...s, assets: {}, assetsLoading: false })); });
           return;
         }
-        setScene({ content, assets: undefined, assetsLoading: true, failed: false, failure: null });
+        if (!content.includes('## Embedded Files')) {
+          setScene({ content, assets: {}, assetsLoading: false, failed: false, failure: null, whiteboard });
+          return;
+        }
+        setScene({ content, assets: undefined, assetsLoading: true, failed: false, failure: null, whiteboard });
         api.get<{ files: AssetFiles }>(`/agent/board-assets?path=${encodeURIComponent(path)}`)
           .then((r) => { if (!cancelled) setScene((s) => ({ ...s, assets: r?.files ?? {}, assetsLoading: false })); })
           .catch(() => { if (!cancelled) setScene((s) => ({ ...s, assets: {}, assetsLoading: false })); });
@@ -66,7 +99,7 @@ export function useBoardScene(path: string): BoardScene {
       .catch((err: unknown) => {
         if (cancelled) return;
         const failure = boardFailure(err);
-        setScene({ content: null, assets: {}, assetsLoading: false, failed: true, failure });
+        setScene({ content: null, assets: {}, assetsLoading: false, failed: true, failure, whiteboard });
         // A board not written yet draws once it lands (boardFailure.ts).
         const wait = boardRetryDelay(failure, tries++);
         if (wait !== null) timer = setTimeout(load, wait);
@@ -74,7 +107,7 @@ export function useBoardScene(path: string): BoardScene {
     load();
 
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, [api, path]);
+  }, [api, path, slug, vault, whiteboard]);
 
   return scene;
 }
@@ -96,7 +129,7 @@ export function boardName(path: string): string {
  * closing leaves the card exactly where the reader had panned it.
  */
 export function BoardFullscreen({ path, onClose }: { path: string; onClose: () => void }) {
-  const { content, assets, assetsLoading, failed, failure } = useBoardScene(path);
+  const { content, assets, assetsLoading, failed, failure, whiteboard } = useBoardScene(path);
   return createPortal(
     <FullscreenOverlay label={boardName(path)} onClose={onClose}>
       <div className="chat-board-full">
@@ -104,7 +137,7 @@ export function BoardFullscreen({ path, onClose }: { path: string; onClose: () =
           ? <p className="chat-slideover-status error">{failure?.missing ? 'This board is not in the project yet.' : `Couldn't read this board: ${failure?.detail ?? ''}`}</p>
           : content === null
             ? <div className="chat-board-loading">Loading board…</div>
-            : <ExcalidrawPreview content={content} boardKey={`${path}#full`} assets={assets} assetsLoading={assetsLoading} />}
+            : <ExcalidrawPreview content={content} boardKey={`${path}#full`} assets={assets} assetsLoading={assetsLoading} whiteboard={whiteboard} />}
       </div>
     </FullscreenOverlay>,
     document.body,
@@ -119,7 +152,7 @@ export function BoardEmbed({
   /** Open this board fullscreen — the "bigger" affordance. */
   onOpenBoard: (path: string) => void;
 }) {
-  const { content, assets, assetsLoading, failed, failure } = useBoardScene(path);
+  const { content, assets, assetsLoading, failed, failure, whiteboard } = useBoardScene(path);
 
   if (failed) {
     return (
@@ -149,7 +182,7 @@ export function BoardEmbed({
       <div className="chat-board-canvas">
         {content === null
           ? <div className="chat-board-loading">Loading board…</div>
-          : <ExcalidrawPreview content={content} boardKey={path} assets={assets} assetsLoading={assetsLoading} />}
+          : <ExcalidrawPreview content={content} boardKey={path} assets={assets} assetsLoading={assetsLoading} whiteboard={whiteboard} />}
       </div>
     </div>
   );

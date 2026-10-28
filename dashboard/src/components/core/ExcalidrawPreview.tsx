@@ -9,6 +9,8 @@ import './ExcalidrawPreview.css';
 // board is actually opened. `lazyWithReload` self-heals a stale-chunk 404 after a
 // republish by forcing a one-time reload instead of showing the error page.
 const ExcalidrawCanvas = lazyWithReload('ExcalidrawCanvas', () => import('./ExcalidrawCanvas'));
+// A whiteboard's: the same canvas, with the board's widgets drawn (WhiteboardReadCanvas.tsx).
+const WhiteboardReadCanvas = lazyWithReload('WhiteboardReadCanvas', () => import('../whiteboard/WhiteboardReadCanvas'));
 
 interface Props {
   content: string;
@@ -27,6 +29,8 @@ interface Props {
    *  transcript draws boards from anywhere in the project). Identity has to name the board,
    *  never the slot: see {@link boardInstanceKey}. */
   boardKey?: string;
+  /** The board is a whiteboard: draw its widgets the way the Whiteboards page does. */
+  whiteboard?: boolean;
 }
 
 const Spinner = () => (
@@ -48,7 +52,7 @@ const Spinner = () => (
  * so panning/zooming never re-renders or reloads it, and swapping the board inside
  * one slot gets a fresh canvas instead of inheriting the previous board's viewport.
  */
-export function ExcalidrawPreview({ content, slug, assets, assetsLoading, boardKey }: Props) {
+export function ExcalidrawPreview({ content, slug, assets, assetsLoading, boardKey, whiteboard }: Props) {
   const { resolved } = useTheme();
 
   const scene = useMemo(() => extractExcalidrawScene(content), [content]);
@@ -77,6 +81,8 @@ export function ExcalidrawPreview({ content, slug, assets, assetsLoading, boardK
     return f;
   }, [scene, assetFiles]);
 
+  const Canvas = whiteboard ? WhiteboardReadCanvas : ExcalidrawCanvas;
+
   if (!scene) {
     return <div className="excalidraw-error">Could not read the Excalidraw drawing in this file.</div>;
   }
@@ -87,7 +93,7 @@ export function ExcalidrawPreview({ content, slug, assets, assetsLoading, boardK
         <Spinner />
       ) : (
         <Suspense fallback={<Spinner />}>
-          <ExcalidrawCanvas
+          <Canvas
             key={boardInstanceKey(boardKey ?? slug)}
             elements={scene.elements}
             files={files}
