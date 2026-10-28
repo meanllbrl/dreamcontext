@@ -232,6 +232,7 @@ import { handleSuperStageGet, handleSuperStageLayout, handleSuperStageSeen } fro
 import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentPhoneGrant, handleLoopbackGrantsGet, handleLoopbackGrantSet, handleWebSessionOpen, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentChatSessions } from './routes/agent-chat-sessions.js';
 import { handleAgentDrop, handleAgentDropPath } from './routes/agent-drop.js';
+import { handleAgentPickPaths } from './routes/agent-pick.js';
 import { handleNotificationsGet, handleNotifyPost } from './routes/notifications.js';
 import { handleAgentSecret } from './routes/agent-secret.js';
 import {
@@ -678,6 +679,9 @@ export function buildRouter(): Router {
   router.post('/api/agent/drop', handleAgentDrop);
   // A picture picked with the composer's "Attach files…": copied into the same drop dir.
   router.post('/api/agent/drop-path', handleAgentDropPath);
+  // The composer's picker in a separate process (osascript): the browser dashboard's only real
+  // picker, and the desktop's fallback when AppKit refuses its own panel. Owner window only.
+  router.post('/api/agent/pick-paths', (req, res, params, root) => handleAgentPickPaths(req, res, params, root));
   // The app's own routable banners + the machine's banner history (the Notifications
   // window). Desktop-gated like /drop; VAULT-AGNOSTIC — the history belongs to the
   // machine and a link names its own vault.
@@ -990,7 +994,7 @@ export function buildRouter(): Router {
  * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
  * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

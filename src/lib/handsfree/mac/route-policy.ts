@@ -361,6 +361,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   // 2 in flight, 30 a minute, 500 MB of phone files per project).
   'POST /api/agent/drop': allow(`${CHAT}: a photo or file from the phone (stored as bytes, never extracted, in this project's gitignored tmp under a server-chosen prefix; phone caps: photo 10 MB, file 25 MB, 2 in flight, 30/min per device)`),
   'POST /api/agent/drop-path': deny('the desktop composer\'s "Attach files…": it reads a file by its path on the Mac, which a phone must never name'),
+  'POST /api/agent/pick-paths': deny('the composer\'s file picker opens a dialog on the Mac; the phone has its own sheet'),
   'GET /api/notifications': deny(DESKTOP),
   'POST /api/notify': deny(DESKTOP),
   'POST /api/agent/secret': deny(SECRET),

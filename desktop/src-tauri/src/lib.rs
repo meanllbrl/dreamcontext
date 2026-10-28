@@ -39,6 +39,8 @@ mod frames;
 mod mic;
 mod node_runtime;
 mod node_setup;
+#[cfg(target_os = "macos")]
+mod open_panel_guard;
 mod page_focus;
 mod splash;
 mod updater;
@@ -132,6 +134,13 @@ pub fn run() {
         .manage(splash::SplashGate::default())
         // The Node setup screen a first run with no usable Node stops at (src/node_setup.rs).
         .manage(node_setup::NodeSetupState::default());
+    // Every web view's `<input type="file">` goes through wry's open-panel delegate, which aborts
+    // the app when AppKit hands back a nil panel (crash report 2026-10-28). Swapped for a
+    // nil-safe one on the first page load, once wry has registered the class (src/open_panel_guard.rs).
+    #[cfg(target_os = "macos")]
+    let builder = builder.on_page_load(|_, _| {
+        open_panel_guard::install();
+    });
     // The dreamcontext Assistant: the notch panel, the Rust-owned hotkey (both edges),
     // and the Login Item. See src/assistant.rs.
     #[cfg(target_os = "macos")]
