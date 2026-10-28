@@ -422,7 +422,7 @@ describe('useWhiteboards request paths', () => {
       // The local trash: list it, restore from it.
       'get TRASH_PATH', 'post restoreUrl(id',
     ]));
-    for (const call of calls) expect(call, call).toMatch(/ (LIST_PATH|TRASH_PATH|restoreUrl\(id|boardUrl\(slug|url|`\$\{url\}\/rev`|`\$\{LIST_PATH\}\/default`)$/);
+    for (const call of calls) expect(call, call).toMatch(/ (LIST_PATH|TRASH_PATH|restoreUrl\(id|boardUrl\(slug|url|`\$\{url\}\/rev`|`\$\{LIST_PATH\}\/default`|`\$\{LIST_PATH\}\/groups\/rename`)$/);
   });
 });
 

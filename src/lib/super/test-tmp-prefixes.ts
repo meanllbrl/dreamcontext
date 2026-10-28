@@ -672,6 +672,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'vault-logo-',
   'voice-take-ref-home-',
   'wb-reconcile-',
+  'wb-sign-',
   'websess-',
   'websess-other-',
   'window-super-',
