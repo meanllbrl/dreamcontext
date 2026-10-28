@@ -5,6 +5,7 @@ import { useOptionalI18n } from '../../../context/I18nContext';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { readScopedRaw, writeScopedRaw } from '../../../lib/scopedStorage';
 import type { Attachment } from './composerScratch';
+import { refLabel } from './composerRefs';
 
 /**
  * Pure, framework-light logic shared by the Agent Chat (beta) redesign's card
@@ -2482,6 +2483,36 @@ export function splitPictureParts(text: string): { preamble: string; parts: Pict
     return { n: Number(m[1]), path: unquote(m[2]), words: text.slice(end, next).trim() };
   });
   return { preamble: text.slice(0, marks[0].index ?? 0).trim(), parts };
+}
+
+/** One run of a sent bubble with pictures: his words, or a picture chip (its path and its name). */
+export type PictureRun = { kind: 'text'; text: string } | { kind: 'picture'; path: string; label: string };
+
+/** The name a sent picture's chip wears: the file's name without the drop folder's
+ *  `<ms>-` / `<ms>-<hex>-` prefix, clipped the way the composer clips a chip's name. */
+export function sentPictureLabel(path: string): string {
+  const base = path.replace(/\/+$/, '').split('/').pop() || path;
+  return refLabel({ name: base.replace(/^\d{12,}-(?:[0-9a-f]{6}-)?/, '') || base });
+}
+
+/**
+ * A sent message's pictures as the composer showed them (owner 2026-10-28: the bubble must read
+ * exactly like the composer, not a stack of big thumbnails): one inline flow, each picture a chip
+ * where it stood, the words he wrote after it continuing on the same line. The line breaks the
+ * send put around a picture line are the composer's, not his, so they fold to one space; his own
+ * line breaks inside the words stay. Null when the text has no picture line.
+ */
+export function pictureRuns(text: string): PictureRun[] | null {
+  const split = splitPictureParts(text);
+  if (!split) return null;
+  const runs: PictureRun[] = [];
+  if (split.preamble) runs.push({ kind: 'text', text: `${split.preamble} ` });
+  split.parts.forEach((p, i) => {
+    runs.push({ kind: 'picture', path: p.path, label: sentPictureLabel(p.path) });
+    const tail = i + 1 < split.parts.length ? ' ' : '';
+    runs.push({ kind: 'text', text: p.words ? ` ${p.words}${tail}` : tail });
+  });
+  return runs.filter((r) => r.kind === 'picture' || r.text);
 }
 
 /**

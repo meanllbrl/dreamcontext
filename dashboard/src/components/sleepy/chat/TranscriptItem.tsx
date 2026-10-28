@@ -5,11 +5,14 @@ import { agentFileUrl, type ApiClient } from '../../../api/client';
 import { useApi, useVault } from '../../../context/VaultContext';
 import {
   useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateTokens,
-  inlineMediaKind, splitPictureParts, splitUserBoardRefs, splitUserMediaAndPictures, revealPath,
+  inlineMediaKind, pictureRuns, splitPictureParts, splitUserBoardRefs, splitUserMediaAndPictures, revealPath,
 } from './chatEntities';
 import { parseChatActions, type ChatAction, type ChatSegment } from './chatActions';
 import type { ReplyHead } from './replyLinks';
 import { ActionRow } from './ActionRow';
+import { PictureChip } from './ComposerRefLayer';
+import { GLYPH_IMAGE } from './composerRefs';
+import './composer.css';
 import { BoardEmbed } from './BoardEmbed';
 import { MediaEmbed } from './MediaEmbed';
 import { ChatBlockSegment, ChatViewNotices } from './ChatViews';
@@ -67,7 +70,7 @@ function grantFile(api: ApiClient, path: string): Promise<boolean> {
  * drop dir prunes after ~7 days) degrades to a named chip that still opens, never a broken
  * image icon.
  */
-function UserMediaItem({ path, onOpenFile, inline }: { path: string; onOpenFile?: (path: string) => void; inline?: boolean }) {
+function UserMediaItem({ path, onOpenFile }: { path: string; onOpenFile?: (path: string) => void }) {
   const { vault } = useVault();
   const api = useApi();
   const [failed, setFailed] = useState(false);
@@ -104,7 +107,7 @@ function UserMediaItem({ path, onOpenFile, inline }: { path: string; onOpenFile?
   }
   return (
     <img
-      className={inline ? 'chat-msg-user-media-el chat-msg-pic-thumb' : 'chat-msg-user-media-el'}
+      className="chat-msg-user-media-el"
       src={agentFileUrl(vault, path, { raw: true })}
       alt={name}
       title={name}
@@ -176,7 +179,7 @@ function UserMessage({
       {parts
         ? <PartsBubble preamble={text} parts={parts} itemId={item.id} superSid={superView && session ? session.claudeId : null} onReplyJump={onReplyJump} onOpenFile={onOpenFile} />
         : text && (splitPictureParts(text)
-          ? <div className="chat-msg-user-bubble chat-msg-user-bubble--pictures"><PictureWords text={text} onOpenFile={onOpenFile} /></div>
+          ? <div className="chat-msg-user-bubble"><PictureWords text={text} onOpenFile={onOpenFile} /></div>
           : <div className="chat-msg-user-bubble">{text}</div>)}
       {/* The one item whose position in the transcript runs ahead of the truth: a steered
           message appears the instant it goes on the wire, while the CLI only folds it in at
@@ -212,24 +215,32 @@ function UserMessage({
 }
 
 /**
- * His words with the pictures he put in them (owner 2026-10-28): each `[Picture N: <path>]` line
- * is drawn as the picture, where its chip stood, with the words he wrote after it beside it. The
- * marker never reaches the DOM; a click on a picture opens it large. Text without a picture line
- * is returned as it is.
+ * His words with the pictures he put in them (owner 2026-10-28: "exactly like in the composer"):
+ * one line of text, each `[Picture N: <path>]` drawn as the composer's own picture chip where it
+ * stood, his words continuing after it. The marker never reaches the DOM; a click on a chip opens
+ * the picture large. Text without a picture line is returned as it is.
  */
 function PictureWords({ text, onOpenFile }: { text: string; onOpenFile?: (path: string) => void }) {
-  const split = splitPictureParts(text);
-  if (!split) return <>{text}</>;
+  const { vault } = useVault();
+  const runs = pictureRuns(text);
+  if (!runs) return <>{text}</>;
   return (
     <span className="chat-msg-pics" data-testid="chat-msg-pictures">
-      {split.preamble && <span className="chat-msg-pic-preamble">{split.preamble}</span>}
-      {split.parts.map((p, i) => (
-        // eslint-disable-next-line react/no-array-index-key -- parts are positional in one sent text
-        <span key={i} className="chat-msg-pic-part" data-testid="chat-msg-picture">
-          <UserMediaItem path={p.path} onOpenFile={onOpenFile} inline />
-          {p.words && <span className="chat-msg-pic-words">{p.words}</span>}
-        </span>
-      ))}
+      {runs.map((r, i) => (r.kind === 'text'
+        // eslint-disable-next-line react/no-array-index-key -- runs are positional in one sent text
+        ? <span key={i}>{r.text}</span>
+        : (
+          <PictureChip
+            // eslint-disable-next-line react/no-array-index-key -- runs are positional in one sent text
+            key={i}
+            sent
+            img={agentFileUrl(vault, r.path, { raw: true })}
+            lead={GLYPH_IMAGE}
+            rest={`\u00A0${r.label}`}
+            title={r.path.split('/').pop()}
+            onOpen={onOpenFile ? () => onOpenFile(r.path) : undefined}
+          />
+        )))}
     </span>
   );
 }

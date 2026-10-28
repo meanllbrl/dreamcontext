@@ -12,8 +12,9 @@
  * Chat: type, + → Attach files… one picture: a chip at the caret, thumbnail, none in the row.
  * Then + → three pictures at once: three chips; a PDF picked stays in the row. A comment after
  * each chip; sent: four `[Picture N: <copy in agent-drops>]` + its comment, the PDF's path too.
- * The sent bubble: four thumbnails, each with its comment, no `[Picture` text; a click opens the
- * viewer. Super: one picture via its + menu, sent and drawn the same. 1440 and 390 screenshots.
+ * The sent bubble (owner 2026-10-28: exactly like the composer): a long prompt, then four of the
+ * composer's own chips inline, each with its comment after it, no `[Picture` text; a click opens
+ * the viewer. Super: one picture via its + menu, sent and drawn the same. 1440 and 390 screenshots.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -37,6 +38,7 @@ const REPORTS = join(SCRATCH, 'reports.ndjson');
 const RECORD = join(PROJ, '_dream_context', 'state', '.super-agent.json');
 const W = 1440; const H = 900;
 const NOTES = [['now', 'Açılış sayfası']];
+const LONG = 'Onboarding akışını baştan sona gözden geçirmeni istiyorum; özellikle butonların hizası, metinlerin uzunluğu ve geçişlerin hızı dikkatimi çekti, önce bak:';
 
 // ─── the stand-in `claude` ──────────────────────────────────────────────────────────────
 const STANDIN = `#!${process.execPath}
@@ -255,19 +257,37 @@ async function attachVia(page, scope, paths) {
 }
 const tokenEnds = (v) => [...v].map((ch, i) => (ch === '⁩' ? i : -1)).filter((i) => i >= 0);
 
+/** The last sent bubble: each picture is the composer's own chip (owner 2026-10-28), inline in
+ *  his words; its thumbnail's bytes are probed, its comment is the words right after it. */
 async function bubbleState(page, scope) {
-  return page.evaluate((sc) => {
+  return page.evaluate(async (sc) => {
     const rows = [...document.querySelectorAll(`${sc} .chat-msg-user-row`)];
     const last = rows[rows.length - 1];
     if (!last) return null;
+    const bubble = last.querySelector('.chat-msg-user-bubble');
     const pics = [...last.querySelectorAll('[data-testid="chat-msg-picture"]')];
+    const load = (u) => new Promise((r) => { const i = new Image(); i.onload = () => r(i.naturalWidth > 0); i.onerror = () => r(false); i.src = u; });
+    const lineH = bubble ? parseFloat(getComputedStyle(bubble).lineHeight) : 0;
     return {
       text: last.innerText,
-      pics: pics.map((p) => {
-        const img = p.querySelector('img');
-        const r = img?.getBoundingClientRect();
-        return { loaded: !!img && img.complete && img.naturalWidth > 0, w: Math.round(r?.width ?? 0), words: p.querySelector('.chat-msg-pic-words')?.textContent ?? '' };
-      }),
+      bubbleH: Math.round(bubble?.getBoundingClientRect().height ?? 0),
+      bubbleW: Math.round(bubble?.getBoundingClientRect().width ?? 0),
+      lineH,
+      pics: await Promise.all(pics.map(async (p) => {
+        const th = p.querySelector('.chat-cmp-hl-thumb');
+        const bg = th ? getComputedStyle(th).backgroundImage : '';
+        const url = (/url\("?(.*?)"?\)/.exec(bg) || [])[1] || '';
+        const r = th?.getBoundingClientRect();
+        return {
+          chip: p.tagName === 'MARK' && p.classList.contains('chat-cmp-hl-ref') && p.classList.contains('chat-cmp-hl-img'),
+          loaded: url ? await load(url) : false,
+          w: Math.round(r?.width ?? 0), h: Math.round(r?.height ?? 0),
+          lines: p.getClientRects().length,
+          label: p.textContent.trim(),
+          words: (p.nextElementSibling && !p.nextElementSibling.matches('[data-testid="chat-msg-picture"]') ? p.nextElementSibling.textContent : '').trim(),
+          imgs: p.querySelectorAll('img').length,
+        };
+      })),
       overflow: document.documentElement.scrollWidth > window.innerWidth + 1,
     };
   }, scope);
@@ -317,7 +337,7 @@ async function main() {
 
     // 1. One picture via + at the caret, after typed words.
     await input.click();
-    await page.keyboard.type('önce bak:', { delay: 6 });
+    await page.keyboard.type(LONG, { delay: 2 });
     await attachVia(page, SCOPE, [pA]);
     const one = await until(page, async () => { const s = await chipState(page, SCOPE); return s.marks.length === 1 && s.marks[0].state === 'ready'; }, 15000);
     const s1 = await chipState(page, SCOPE);
@@ -325,7 +345,7 @@ async function main() {
     ok('the chip shows its thumbnail, on one line', s1.marks.length === 1 && s1.marks[0].bg.startsWith('url(') && s1.marks[0].w >= 24 && s1.marks[0].lines === 1, JSON.stringify(s1.marks));
     ok('no picture in the row above the box', s1.stripImages === 0, String(s1.stripImages));
     const v1 = await input.inputValue();
-    ok('the chip stands at the caret, after the typed words', /^önce bak: ?⁨[^⁩]*⁩/.test(v1), JSON.stringify(v1));
+    ok('the chip stands at the caret, after the typed words', v1.startsWith(LONG) && /^ ?⁨[^⁩]*⁩/.test(v1.slice(LONG.length)), JSON.stringify(v1));
     await input.evaluate((el) => { el.focus(); el.setSelectionRange(el.value.length, el.value.length); });
     await page.keyboard.type(' birinci yorum', { delay: 6 });
     await page.keyboard.press('Shift+Enter');
@@ -362,23 +382,32 @@ async function main() {
     ok('each picture path is a real copy in the project\'s agent-drops', pics.length === 4 && pics.every((p) => p.path.includes('/_dream_context/tmp/agent-drops/') && existsSync(p.path)), JSON.stringify(pics.map((p) => p.path)));
     ok('the picked PDF\'s own path rides the message', msg.includes(pdf), JSON.stringify(msg));
 
-    // 4. The sent bubble: four thumbnails with their comments, never the marker.
+    // 4. The sent bubble: the composer's own chips, inline in his words, never the marker.
     const drawn = await until(page, async () => { const b = await bubbleState(page, SCOPE); return b && b.pics.length === 4 && b.pics.every((p) => p.loaded); }, 15000);
     const b = await bubbleState(page, SCOPE);
+    writeFileSync(join(OUT, 'bubble-1440.json'), JSON.stringify(b, null, 2));
     ok('the sent bubble draws four pictures, each loaded', drawn, JSON.stringify(b));
-    ok('each picture has its own comment beside it', b && b.pics.map((p) => p.words).join('|') === want.map((e) => e[1]).join('|'), JSON.stringify(b?.pics));
+    ok('each picture is the composer\'s chip (mark.chat-cmp-hl-ref.chat-cmp-hl-img), no big <img>', b && b.pics.every((p) => p.chip && p.imgs === 0), JSON.stringify(b?.pics));
+    ok('each chip is small and on one line (thumbnail no taller than two text lines)', b && b.pics.every((p) => p.lines === 1 && p.w >= 16 && p.h <= b.lineH * 2 && p.w <= 60), JSON.stringify({ lineH: b?.lineH, pics: b?.pics }));
+    ok('each chip wears the picture\'s name (the drop copy\'s, its time prefix dropped)', b && b.pics.map((p) => p.label).join('|') === 'kirmizi_ekran.png|mavi.png|yesil.png|mor.png', JSON.stringify(b?.pics.map((p) => p.label)));
+    ok('the words after each chip are its comment, in the text flow', b && b.pics.map((p) => p.words).join('|') === want.map((e) => e[1]).join('|'), JSON.stringify(b?.pics.map((p) => p.words)));
+    ok('the long prompt opens the bubble, before the first chip', b && b.text.trim().startsWith(LONG), JSON.stringify(b?.text.slice(0, 200)));
     ok('no raw [Picture N: path] text in the bubble', b && !/\[Picture/.test(b.text) && !b.text.includes('agent-drops'), JSON.stringify(b?.text));
+    ok('a 4-picture long message reads as text, not a stack (bubble at most 5 lines tall at 1440)', b && b.bubbleH <= b.lineH * 5 + 40, JSON.stringify({ h: b?.bubbleH, lineH: b?.lineH }));
     await page.waitForTimeout(800);
+    await page.locator(`${SCOPE} .chat-msg-user-row`).last().scrollIntoViewIfNeeded();
     await shot(page, '3-chat-sent-bubble-1440.png');
-    await page.locator(`${SCOPE} [data-testid="chat-msg-picture"] img`).first().click();
-    ok('a click on a sent picture opens it large', await until(page, async () => (await page.locator('.image-viewer').count()) > 0, 5000));
+    await page.locator(`${SCOPE} [data-testid="chat-msg-picture"]`).first().click();
+    ok('a click on a sent chip opens the picture large', await until(page, async () => (await page.locator('.image-viewer').count()) > 0, 5000));
     await shot(page, '4-chat-viewer-1440.png');
     await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(800);
     const bp = await bubbleState(page, SCOPE);
-    ok('at 390 px the bubble keeps its pictures, no horizontal overflow', bp && bp.pics.length === 4 && !bp.overflow, JSON.stringify(bp));
+    writeFileSync(join(OUT, 'bubble-390.json'), JSON.stringify(bp, null, 2));
+    ok('at 390 px the bubble keeps its four chips on one line each, no horizontal overflow', bp && bp.pics.length === 4 && bp.pics.every((p) => p.lines === 1) && !bp.overflow, JSON.stringify(bp));
+    await page.locator(`${SCOPE} .chat-msg-user-row`).last().scrollIntoViewIfNeeded();
     await shot(page, '5-chat-sent-bubble-390.png');
     await page.setViewportSize({ width: W, height: H });
     await page.waitForTimeout(500);
@@ -407,7 +436,7 @@ async function main() {
     ok('the super reads Picture 1 + its comment', sp.length === 1 && sp[0].words.trim() === 'hero kesik görünüyor' && existsSync(sp[0].path), JSON.stringify(smsg));
     const sdrawn = await until(page, async () => { const x = await bubbleState(page, SUPER); return x && x.pics.length === 1 && x.pics[0].loaded; }, 15000);
     const sbub = await bubbleState(page, SUPER);
-    ok('Super: the sent bubble draws the picture with its comment, no marker', sdrawn && sbub.pics[0].words === 'hero kesik görünüyor' && !/\[Picture/.test(sbub.text), JSON.stringify(sbub));
+    ok('Super: the sent bubble draws the same chip with its comment after it, no marker', sdrawn && sbub.pics[0].chip && sbub.pics[0].words === 'hero kesik görünüyor' && !/\[Picture/.test(sbub.text), JSON.stringify(sbub));
     await page.waitForTimeout(800);
     await shot(page, '7-super-sent-1440.png');
 
