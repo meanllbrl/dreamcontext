@@ -189,6 +189,27 @@ describe('clickup sub-tasks', () => {
     expect(fake.tasks.get(remoteIdOf('child-step'))!.parent).toBe(remoteIdOf('parent-job'));
   });
 
+  it('a move ClickUp refuses is reported once, not re-sent every sync, and the local link stays', async () => {
+    await makeParentAndChild();
+    await backend.sync('push');
+    const childId = remoteIdOf('child-step');
+    fake.tasks.get(childId)!.parent = null;
+    const syncPath = join(contextRoot, 'state', '.tasks-sync.json');
+    const state = JSON.parse(readFileSync(syncPath, 'utf-8'));
+    delete state.tasks['child-step'].remote_parent;
+    writeFileSync(syncPath, JSON.stringify(state, null, 2));
+
+    refuse = (method, body) => method === 'PUT' && body?.parent !== undefined;
+    const first = await backend.sync('push');
+    expect(first.warnings.some((w) => w.includes('child-step') && w.includes('not retried until its parent changes'))).toBe(true);
+    fake.requests.length = 0;
+    const second = await backend.sync('push');
+    expect(second.pushed).toBe(0);
+    expect(fake.requests.filter((r) => r.method !== 'GET')).toHaveLength(0);
+    await backend.sync('pull');
+    expect(parentTaskOf('child-step')).toBe('parent-job');
+  });
+
   it('re-link: a sub-task pushed earlier as a separate task is moved under its parent, never deleted or re-created', async () => {
     await makeParentAndChild();
     await backend.sync('push');

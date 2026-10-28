@@ -694,7 +694,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       else if (this.ledger.remoteIdFor(slug)) {
         const parent = this.liveParentFor(slug);
         const parentRemote = parent ? this.ledger.remoteIdFor(parent) : null;
-        if (parentRemote && entry.remote_parent !== parentRemote) candidates.add(slug);
+        if (parentRemote && entry.remote_parent !== parentRemote && entry.remote_parent_refused !== parentRemote) {
+          candidates.add(slug);
+        }
       }
     }
 
@@ -751,6 +753,11 @@ export class GitHubTaskBackend extends LocalTaskBackend {
 
   /** Parents whose fallback sub-task list must be re-sent at the end of this push. */
   private parentsToRefresh = new Set<string>();
+
+  /** Does any task here sit under `slug`? */
+  protected hasLiveChildren(slug: string): boolean {
+    return this.taskFiles().some((f) => this.liveParentFor(basename(f, '.md')) === slug);
+  }
 
   /** The live parent a task pushes under (subtask-link.ts), null for a top-level or dangling link. */
   protected liveParentFor(slug: string): string | null {
@@ -815,7 +822,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     owner: string;
     repo: string;
     report: SyncReport;
-  }): Promise<{ remoteParent: string | null | undefined; pending: boolean }> {
+  }): Promise<{ remoteParent: string | null | undefined; pending: boolean; refused?: string | null }> {
     const { slug, parentSlug, parentRemote, remoteId, adapter, owner, repo, report } = a;
     let remoteParent = a.remoteParent;
     if (parentSlug && !parentRemote) {
@@ -826,9 +833,13 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     if (!parentRemote && remoteParent === undefined) return { remoteParent, pending: false };
     if (parentRemote === remoteParent) return { remoteParent, pending: false };
 
-    if (parentRemote && this.subIssuesFallback()) {
-      this.parentsToRefresh.add(parentSlug!);
-      return { remoteParent: parentRemote, pending: false };
+    if (this.subIssuesFallback()) {
+      // The link lives in the parent's task list: rewrite the list it joins and
+      // the one it leaves; no sub-issues call is made.
+      if (parentRemote) this.parentsToRefresh.add(parentSlug!);
+      const oldParent = typeof remoteParent === 'string' ? this.ledger.slugForRemoteId(remoteParent) : null;
+      if (oldParent && oldParent !== parentSlug) this.parentsToRefresh.add(oldParent);
+      return { remoteParent: parentRemote ?? null, pending: false };
     }
     if (remoteParent === undefined) remoteParent = await this.fetchParentNumber(adapter, owner, repo, remoteId);
     if (remoteParent === undefined) {
@@ -857,7 +868,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
             `relinked: ${slug} is now a sub-issue of '${parentSlug}' (#${parentRemote}); it was ${remoteParent ? `under #${remoteParent}` : 'a separate issue'}.`,
           );
         }
-        return { remoteParent: parentRemote, pending: false };
+        return { remoteParent: parentRemote, pending: false, refused: null };
       } catch (err) {
         const status = (err as { status?: number }).status;
         const kind = (err as { kind?: string }).kind;
@@ -872,11 +883,15 @@ export class GitHubTaskBackend extends LocalTaskBackend {
           );
           return { remoteParent: parentRemote, pending: false };
         }
+        // A 4xx is GitHub refusing this link (a limit, a cycle, a stale record):
+        // retrying the same call changes nothing, so it is recorded as refused and
+        // not re-selected until the parent changes. A transport failure retries.
+        const refused = kind === 'invalid';
         report.warnings.push(
-          `push ${slug}: could not make it a sub-issue of '${parentSlug}' (#${parentRemote}): ${(err as Error).message ?? err} — it stays where it is.`,
+          `push ${slug}: could not make it a sub-issue of '${parentSlug}' (#${parentRemote}): ${(err as Error).message ?? err} — ` +
+          `it stays where it is; ${refused ? 'not retried until its parent changes' : 'retried next sync'}.`,
         );
-        // A 422 is GitHub refusing this link (a limit, a cycle): retrying the same call changes nothing.
-        return { remoteParent, pending: status !== 422 };
+        return refused ? { remoteParent, pending: false, refused: parentRemote } : { remoteParent, pending: true };
       }
     }
 
@@ -887,8 +902,11 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       });
       return { remoteParent: null, pending: false };
     } catch (err) {
+      const kind = (err as { kind?: string }).kind;
+      // Not there any more: already done.
+      if (kind === 'not_found') return { remoteParent: null, pending: false };
       report.warnings.push(`push ${slug}: could not take it out of #${remoteParent} on GitHub: ${(err as Error).message ?? err}.`);
-      return { remoteParent, pending: (err as { status?: number }).status !== 422 };
+      return { remoteParent, pending: kind !== 'invalid' };
     }
   }
 
@@ -1119,6 +1137,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       localHash: hashContent(raw),
       pendingPush: link.pending,
       ...(remoteParent !== undefined ? { remote_parent: remoteParent } : {}),
+      ...(link.refused !== undefined ? { remote_parent_refused: link.refused } : {}),
     });
     // Same rule as the ClickUp backend (#185): a push must not advance the global
     // pull watermark. "I wrote at T" is not "I have pulled everything up to T",
@@ -1547,9 +1566,11 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         }
       } catch { /* this parent's children stay unknown — never read as top-level */ }
     }
+    // The fallback task list names a parent that a `null` parent_issue_url
+    // cannot know about (the link never went through the sub-issues API).
     for (const issue of issues) {
       for (const n of parseSubtasksBlock(issue.body)) {
-        if (!hints.has(String(n))) hints.set(String(n), String(issue.number));
+        if (!hints.get(String(n))) hints.set(String(n), String(issue.number));
       }
     }
     return hints;
@@ -1572,6 +1593,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       lastRemoteParent,
       slugForRemoteId: (id) => this.ledger.slugForRemoteId(id),
       parentOfLocal: (s) => this.liveParentFor(s),
+      hasLocalChildren: (s) => this.hasLiveChildren(s),
     });
     if (res.warning) report.warnings.push(res.warning);
     return res.parent;

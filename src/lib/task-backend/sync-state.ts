@@ -43,6 +43,12 @@ export interface TaskSyncEntry {
    * See subtask-link.ts.
    */
   remote_parent?: string | null;
+  /**
+   * A parent link the remote REFUSED (the parent's remote id): the push does not
+   * re-select the task for it again until the local parent changes, so a refusal
+   * never turns into a request loop. Cleared (null) once a link lands.
+   */
+  remote_parent_refused?: string | null;
 }
 
 export interface SyncStateFile {

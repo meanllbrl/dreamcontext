@@ -178,6 +178,59 @@ describe('github sub-tasks', () => {
     expect(fake.requests.filter((r) => r.method !== 'GET')).toHaveLength(0);
   });
 
+  it('a refused link is reported once and not re-sent on every sync', async () => {
+    await makeParentAndChild();
+    refuse = (method, body) => method === 'POST' && body?.sub_issue_id !== undefined;
+    const first = await backend.sync('push');
+    expect(first.warnings.some((w) => w.includes('child-step') && w.includes('not retried until its parent changes'))).toBe(true);
+    expect(fake.parentOf.size).toBe(0);
+
+    fake.requests.length = 0;
+    const second = await backend.sync('push');
+    expect(second.pushed).toBe(0);
+    expect(fake.requests.filter((r) => r.method !== 'GET')).toHaveLength(0);
+  });
+
+  it('unlink: clearing the local parent takes the sub-issue out; one already gone counts as done', async () => {
+    await makeParentAndChild();
+    await backend.sync('push');
+    const child = numberOf('child-step');
+
+    await backend.updateFields('child-step', { parent_task: null, updated_at: '2026-10-28' });
+    await backend.sync('push');
+    expect(fake.parentOf.has(child)).toBe(false);
+
+    // Linked again, then removed on GitHub behind our back before a local clear.
+    await backend.updateFields('child-step', { parent_task: 'parent-job', updated_at: '2026-10-28' });
+    await backend.sync('push');
+    expect(fake.parentOf.get(child)).toBe(numberOf('parent-job'));
+    fake.parentOf.delete(child);
+    await backend.updateFields('child-step', { parent_task: null, updated_at: '2026-10-28' });
+    const report = await backend.sync('push');
+    expect(report.errors).toEqual([]);
+    fake.requests.length = 0;
+    const again = await backend.sync('push');
+    expect(again.pushed).toBe(0);
+    expect(fake.requests.filter((r) => r.method !== 'GET')).toHaveLength(0);
+  });
+
+  it('fallback unlink: the old parent body drops the sub-task, with no request loop', async () => {
+    fake.subIssuesUnavailable = true;
+    await makeParentAndChild();
+    await backend.sync('push');
+    const parent = numberOf('parent-job');
+    expect(fake.issues.get(parent)!.body).toContain(`#${numberOf('child-step')}`);
+
+    await backend.updateFields('child-step', { parent_task: null, updated_at: '2026-10-28' });
+    const report = await backend.sync('push');
+    expect(report.errors).toEqual([]);
+    expect(fake.issues.get(parent)!.body).not.toContain('dc:subtasks');
+    fake.requests.length = 0;
+    const again = await backend.sync('push');
+    expect(again.pushed).toBe(0);
+    expect(fake.requests.filter((r) => r.method !== 'GET')).toHaveLength(0);
+  });
+
   it('fallback: without the sub-issues API the parent body lists the sub-task, and the pull reads it back', async () => {
     fake.subIssuesUnavailable = true;
     await makeParentAndChild();

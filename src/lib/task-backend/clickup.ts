@@ -752,7 +752,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       else if (this.ledger.remoteIdFor(slug)) {
         const parent = this.liveParentFor(slug);
         const parentRemote = parent ? this.ledger.remoteIdFor(parent) : null;
-        if (parentRemote && entry.remote_parent !== parentRemote) candidates.add(slug);
+        if (parentRemote && entry.remote_parent !== parentRemote && entry.remote_parent_refused !== parentRemote) {
+          candidates.add(slug);
+        }
       }
     }
 
@@ -796,6 +798,11 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       }
       this.progress?.({ phase: 'push', current: ++done, total: sorted.length, slug, bootstrap });
     }
+  }
+
+  /** Does any task here sit under `slug`? */
+  protected hasLiveChildren(slug: string): boolean {
+    return this.taskFiles().some((f) => this.liveParentFor(basename(f, '.md')) === slug);
   }
 
   /** The live parent a task pushes under (subtask-link.ts), null for a top-level or dangling link. */
@@ -940,6 +947,8 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     let tagOpsFailed = false;
     /** A sub-task move that failed — the task stays pending so it is retried. */
     let parentLinkPending = false;
+    /** The parent link ClickUp refused this push (null = a link landed; undefined = no attempt). */
+    let refusedParent: string | null | undefined;
     const bindings = this.fieldBindings();
     // True once a CREATE carried its custom fields inline — the per-field
     // fallback loop below must then skip them (they're already on the task).
@@ -1022,16 +1031,33 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         try {
           const moved = await adapter.request<ClickUpTask>('PUT', `/task/${remoteId}`, { body: { parent: parentRemote } });
           serverTime = serverTimeMs(moved.date_updated) ?? serverTime;
-          report.warnings.push(
-            `relinked: ${slug} is now a ClickUp subtask of '${parentSlug}' (it was ${remoteParent ? 'under another task' : 'a separate task'}).`,
-          );
-          remoteParent = parentRemote;
+          // Record what ClickUp SAYS it holds, never what was asked: a recorded
+          // parent the remote does not have would let a later pull clear the
+          // local link (subtask-link.ts).
+          const now = moved.parent !== undefined ? (moved.parent ?? null) : parentRemote;
+          if (now === parentRemote) {
+            report.warnings.push(
+              `relinked: ${slug} is now a ClickUp subtask of '${parentSlug}' (it was ${remoteParent ? 'under another task' : 'a separate task'}).`,
+            );
+            refusedParent = null;
+          } else {
+            report.warnings.push(
+              `push ${slug}: ClickUp accepted the move under '${parentSlug}' but did not make it a subtask — ` +
+              `it stays where it is (not retried until its parent changes).`,
+            );
+            refusedParent = parentRemote;
+          }
+          remoteParent = now;
         } catch (err) {
+          // A rejected move (4xx) is ClickUp's answer: not retried until the parent
+          // changes. A transport failure (already retried by the adapter) is.
+          const refused = (err as { kind?: string }).kind === 'invalid';
           report.warnings.push(
             `push ${slug}: could not make it a subtask of '${parentSlug}' on ClickUp (${(err as Error).message ?? err}) — ` +
-            `it stays where it is; retried next sync.`,
+            `it stays where it is; ${refused ? 'not retried until its parent changes' : 'retried next sync'}.`,
           );
-          parentLinkPending = true;
+          if (refused) refusedParent = parentRemote;
+          else parentLinkPending = true;
         }
       } else if (parentSlug && !parentRemote) {
         report.warnings.push(
@@ -1219,6 +1245,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       localHash: hashContent(raw),
       pendingPush: tagOpsFailed || parentLinkPending,
       ...(remoteParent !== undefined ? { remote_parent: remoteParent } : {}),
+      ...(refusedParent !== undefined ? { remote_parent_refused: refusedParent } : {}),
     });
     // NOTE: the push must NOT advance the global pull watermark (#185). The
     // watermark's contract is "I have PULLED everything up to T" — it gates
@@ -2203,6 +2230,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       lastRemoteParent,
       slugForRemoteId: (id) => this.ledger.slugForRemoteId(id),
       parentOfLocal: (s) => this.liveParentFor(s),
+      hasLocalChildren: (s) => this.hasLiveChildren(s),
     });
     if (res.warning) report.warnings.push(res.warning);
     return res.parent;

@@ -64,6 +64,8 @@ export interface PulledParentInput {
   slugForRemoteId: (remoteId: string) => string | null;
   /** The local `parent_task` of another task (for the two-levels rule), null when top-level or missing. */
   parentOfLocal: (slug: string) => string | null;
+  /** Does this task have sub-tasks of its own here? (It then cannot become a sub-task.) */
+  hasLocalChildren: (slug: string) => boolean;
 }
 
 export interface PulledParent {
@@ -84,7 +86,8 @@ export interface PulledParent {
  *   for a local sub-task is a link not pushed yet, never an instruction to drop
  *   the local one;
  * - the remote shows a parent we map → adopt it, unless that would nest three
- *   levels deep or point at the task itself.
+ *   levels deep (the parent is a sub-task, or this task has sub-tasks) or point
+ *   at the task itself.
  */
 export function pulledParent(i: PulledParentInput): PulledParent {
   const keep = { parent: i.localParent };
@@ -102,6 +105,9 @@ export function pulledParent(i: PulledParentInput): PulledParent {
   const grand = i.parentOfLocal(parentSlug);
   if (grand && grand !== parentSlug) {
     return { ...keep, warning: `pull ${i.slug}: its remote parent '${parentSlug}' is itself a sub-task of '${grand}'; sub-tasks go two levels deep at most here, so the link was left as it was.` };
+  }
+  if (parentSlug !== i.localParent && i.hasLocalChildren(i.slug)) {
+    return { ...keep, warning: `pull ${i.slug}: it was put under '${parentSlug}' remotely, but it has sub-tasks of its own here; sub-tasks go two levels deep at most, so the link was left as it was.` };
   }
   return { parent: parentSlug };
 }

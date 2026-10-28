@@ -10,6 +10,7 @@ const base = (over: Partial<PulledParentInput>): PulledParentInput => ({
   lastRemoteParent: undefined,
   slugForRemoteId: (id) => ids[id] ?? null,
   parentOfLocal: (s) => (s === 'nested' ? 'parent-a' : null),
+  hasLocalChildren: () => false,
   ...over,
 });
 
@@ -51,5 +52,11 @@ describe('subtask-link', () => {
     const deep = pulledParent(base({ remoteParentId: 'r3' }));
     expect(deep.parent).toBeNull();
     expect(deep.warning).toContain('two levels');
+  });
+
+  it('pulledParent: a task with its own sub-tasks is never put under another (three levels)', () => {
+    const res = pulledParent(base({ remoteParentId: 'r1', hasLocalChildren: (s) => s === 'kid' }));
+    expect(res.parent).toBeNull();
+    expect(res.warning).toContain('sub-tasks of its own');
   });
 });
