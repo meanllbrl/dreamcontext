@@ -718,18 +718,20 @@ export function Composer({
   const [mcpOpen, setMcpOpen] = useState(false);
   /** The popover was opened by SENDING `/mcp` (which clears the draft), not by typing it. */
   const mcpSentRef = useRef(false);
-  /** Read by the effect below so a closed popover is not closed again on every keystroke: that
-   *  same-value set cost React a second commit per key (verify:idle-load k). */
-  const mcpOpenRef = useRef(mcpOpen);
-  mcpOpenRef.current = mcpOpen;
+  /** Whether an open was asked for since the last close — read by the effect below so a closed
+   *  popover is not closed again on every keystroke (that same-value set cost React a second
+   *  commit per key, verify:idle-load k). Written WITH every open and close, never from render:
+   *  a keystroke rendering before a queued open lands must still see it and close it. */
+  const mcpOpenRef = useRef(false);
   useEffect(() => {
-    if (mcpPicker && /^\/mcp$/.test(draft.trim())) setMcpOpen(true);
+    if (mcpPicker && /^\/mcp$/.test(draft.trim())) { mcpOpenRef.current = true; setMcpOpen(true); }
     // The draft moved on (backspaced, kept typing): the popover is not what is being typed any more.
     // An empty draft right after SENDING the command keeps the popover; emptied by hand, it closes.
-    else if (mcpOpenRef.current && !isMcpCommand(draft) && !(mcpSentRef.current && !draft.trim())) setMcpOpen(false);
+    else if (mcpOpenRef.current && !isMcpCommand(draft) && !(mcpSentRef.current && !draft.trim())) { mcpOpenRef.current = false; setMcpOpen(false); }
     if (draft.trim()) mcpSentRef.current = false;
   }, [draft, mcpPicker]);
   const closeMcp = useCallback(() => {
+    mcpOpenRef.current = false;
     setMcpOpen(false);
     mcpSentRef.current = false;
     if (isMcpCommand(draft)) { setDraft(''); session.syncDraft(''); }
@@ -1973,7 +1975,7 @@ export function Composer({
     // instead of spending a turn to deliver that.
     if (mcpPicker && isMcpCommand(words)) {
       mcpSentRef.current = true;
-      setMcpOpen(true);
+      mcpOpenRef.current = true; setMcpOpen(true);
       // Cleared, unlike the sign-in above, and the difference is the message itself: `/login`
       // may be sitting in front of a half-written sentence worth keeping, while a draft that
       // IS the command has nothing left in it once the command has been obeyed. Leaving it
