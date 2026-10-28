@@ -1961,9 +1961,12 @@ export function ChatPane({
       }
       return <SuperEventChip key={item.id} text={item.text} />;
     }
-    // Pictures the Super Agent opened on the Mac's stage, as the phone sees them: a strip.
+    // Pictures the Super Agent opened on the Mac's stage, as the phone sees them: a strip. A remote
+    // computer draws that stage itself, live, so a strip there only repeats it and goes stale
+    // (owner 2026-10-29: "On the Mac's stage now" under pictures long gone from the stage).
     if (item.kind === 'user' && item.stageMedia) {
-      return <StageMediaStrip key={item.id} items={item.stageMedia} snapshot={!!item.stageSnapshot} onOpenFile={handleOpenFile} />;
+      if (remoteDesktop) return null;
+      return <StageMediaStrip key={item.id} items={item.stageMedia} snapshot={item.stageSnapshot ? item.ts : undefined} onOpenFile={handleOpenFile} />;
     }
     // The owner's answer to a question card in the super chat: the card's receipt, never a bubble.
     if (item.kind === 'user' && superView && parseSuperAnswer(item.text)) {

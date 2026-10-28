@@ -467,7 +467,8 @@ try {
   report.check('AC9: the child card, the picture, the task are on the stage (floating)', ['chat-kid', 'img-1', 'task-1'].every((id) => stage.cards.some(([c, w]) => c === id && w === 'float')), JSON.stringify(stage.cards));
   report.check('AC14: the brief never reaches the remote page', !stage.body.includes('BRIEF-NEVER-REMOTE'));
   const kid2Text = await page.locator('.super-card-frame[data-container-id="chat-kid2"]').innerText().catch(() => '');
-  report.check('AC14: a card titled from its brief shows no brief, named by its place ("Alt sohbet 2")', !stage.body.includes('BRIEF-AS-TITLE') && /Alt sohbet 2|Child chat 2/.test(kid2Text), JSON.stringify(kid2Text.slice(0, 80)));
+  // Named as the digest on the same socket names it (owner 2026-10-29), never "Alt sohbet 2".
+  report.check('AC14: a card titled from its brief is named by its job (the digest\'s name), not by its place', kid2Text.includes(KID2_BRIEF) && !/Alt sohbet 2|Child chat 2/.test(kid2Text), JSON.stringify(kid2Text.slice(0, 80)));
   await page.screenshot({ path: join(SHOTS, 'computer-1440-stage.png') });
 
   // AC9: an agent `super open` appears within 2 s, without reload.

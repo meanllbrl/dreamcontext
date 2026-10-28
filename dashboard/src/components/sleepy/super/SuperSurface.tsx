@@ -17,7 +17,7 @@ import { SuperAgenda } from './SuperAgenda';
 import { onOpenJobRow, publishSuperEventContext } from './superJobsStore';
 import { AgendaButton, AgendaPill } from './AgendaButton';
 import { childModelChip, type AsksOwner } from './AgentCard';
-import { SuperContainer, chatStatus, childBusyOf, isLivePage, superCentreStatus } from './SuperContainer';
+import { SuperContainer, chatStatus, childBusyOf, isLivePage, superCentreStatus, type RemoteRow } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
 import { LOOK_RENEW_MS, anchoredPos, childIsLive, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
@@ -318,10 +318,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const live = state.teamLive?.[job.id];
     return { job, status: live?.status ?? null, lastLine: live?.lastLine ?? '' };
   }, [state.team, state.teamLive]);
+  /** A remote stage's child (no live session here): the row its status is read from. Null on the Mac. */
+  const remoteRowOf = (sid: string): RemoteRow | null => (remote && hasOwnKey(state.children, sid) ? state.children[sid] : null);
   /** A group's cards as its tile shows them: kind, title and (a chat's) live state. */
   const membersOf = (g: SuperGroup): GroupMember[] => g.cards.flatMap((id) => {
     const c = byId.get(id);
-    return c ? [{ id, kind: c.kind, title: titleOf(c), ...(c.kind === 'chat' ? { status: chatStatus(props.sessionFor(c.ref)).kind } : {}) }] : [];
+    return c ? [{ id, kind: c.kind, title: titleOf(c), ...(c.kind === 'chat' ? { status: chatStatus(props.sessionFor(c.ref), remoteRowOf(c.ref)).kind } : {}) }] : [];
   });
 
   // ── Groups (2026-10-20): the one open panel (a group's, or Others'), and the drop target ──
@@ -632,7 +634,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const c = byId.get(id);
     if (!c) return null;
     if (c.kind === 'chat') {
-      return <PanelChatTile session={props.sessionFor(c.ref)} child={state.children[c.ref]} title={titleOf(c)} asksOwner={asking.get(c.ref) ?? false} />;
+      return <PanelChatTile session={props.sessionFor(c.ref)} child={state.children[c.ref]} title={titleOf(c)} asksOwner={asking.get(c.ref) ?? false} remoteChild={remoteRowOf(c.ref)} />;
     }
     const team = teamCardOf(c);
     if (team) return <div className="super-panel-tile"><div className="super-panel-clip"><TeamTile card={team} /></div></div>;
@@ -754,7 +756,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       return { id, title: g.name, kind: 'group' as const, status: gs === 'asking' ? 'asking' as const : gs === 'working' ? 'working' as const : 'idle' as const };
     }
     const c = byId.get(id)!;
-    const st = c.kind === 'chat' ? chatStatus(props.sessionFor(c.ref)).kind : null;
+    const st = c.kind === 'chat' ? chatStatus(props.sessionFor(c.ref), remoteRowOf(c.ref)).kind : null;
     const tone = st ? toneOfStatus(st) : null;
     return { id, title: titleOf(c), kind: c.kind, status: tone === null ? undefined : tone === 'starting' ? 'idle' : tone };
   });
@@ -828,6 +830,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               plan={topped.includes(c.id) ? { ...cp, z: cp.z + 2 * MAX_CONTAINERS + topped.indexOf(c.id) } : cp}
               child={c.kind === 'chat' ? state.children[c.ref] : undefined}
               session={c.kind === 'chat' ? props.sessionFor(c.ref) : undefined}
+              remoteChild={c.kind === 'chat' ? remoteRowOf(c.ref) : null}
               title={titleOf(c)}
               pending={pending.has(c.id) || stageCues.held.has(c.id)}
               webLive={liveWeb.has(c.id) || !!ghost?.webLive}

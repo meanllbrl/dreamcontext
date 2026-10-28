@@ -1,7 +1,7 @@
 import type {
   RemoteChild, RemoteContainer, RemoteGroup, RemoteView, SuperRemoteView,
 } from '../handsfree/mac/contract.js';
-import { superDigest } from './phone-mirror.js';
+import { childDigestName, superDigest } from './phone-mirror.js';
 import { superQueueHead } from './inbox.js';
 import type { SuperState } from './types.js';
 
@@ -10,7 +10,7 @@ import type { SuperState } from './types.js';
  * or landscape tablet on the tunnel draws the stage from this, never from the record.
  *
  * Built from an ALLOWLIST, field by field, so a field added to `SuperState` later never reaches
- * the tunnel by default. Never carried: a child's brief, branch, worktree, prompt, MCP servers or
+ * the tunnel by default. Never carried: a child's brief (beyond its 80-character name), branch, worktree, prompt, MCP servers or
  * settings; the pool; the AI Team's jobs; the dismissed list; notes; the held ledger; raw owner
  * text (the waiting rows carry the question as the owner reads it, as the phone's digest does);
  * an absolute path; a web address only the Mac can reach.
@@ -18,7 +18,9 @@ import type { SuperState } from './types.js';
  * A web card shows an `https:` page on another host; anything else (loopback, private, link-local,
  * the tunnel's own host, an `http:` page, a project file) becomes a placeholder
  * (`blocked: 'mac_only'`) with no address at all. The live browser card is always a placeholder.
- * A child is named by its card's title only (never the Super's brief).
+ * A child is named exactly as the digest on the same socket names it (`childDigestName`: its
+ * card's title, else its brief, cut to 80 characters), never by the brief itself: a card with no
+ * name read "Child chat 53" on the remote while the Mac named the job (owner 2026-10-29).
  */
 
 /** Container kinds whose ref is a slug or a project-relative path. */
@@ -86,8 +88,10 @@ export function titleFromBrief(title: string | undefined, brief: string | undefi
 const briefOf = (state: SuperState, sid: string): string | undefined =>
   (Object.prototype.hasOwnProperty.call(state.children, sid) ? state.children[sid].brief : undefined);
 
-function remoteContainer(c: SuperState['containers'][number], tunnelHost: string | null, brief?: string): RemoteContainer {
-  const title = c.title && !(c.kind === 'chat' && titleFromBrief(c.title, brief)) ? c.title : undefined;
+function remoteContainer(c: SuperState['containers'][number], tunnelHost: string | null, brief?: string, name?: string): RemoteContainer {
+  // A chat card keeps a title of its own; one written from the brief is named as the digest names it.
+  const title = c.kind !== 'chat' ? c.title
+    : c.title && !titleFromBrief(c.title, brief) ? c.title.slice(0, 80) : (name || undefined);
   const base: RemoteContainer = {
     id: c.id, kind: c.kind, shape: c.shape, place: c.place,
     ...(c.size ? { size: c.size } : {}),
@@ -141,12 +145,8 @@ function remoteChild(sid: string, ch: SuperState['children'][string]): RemoteChi
 export function superRemoteView(state: SuperState, vault: string, tunnelHost: string | null, rotating = false): SuperRemoteView {
   const digest = superDigest(state);
   const head = superQueueHead(state);
-  // The agenda's child names: the Mac's card titles, never a brief (the digest falls back to it).
-  const names: Record<string, string> = {};
-  for (const sid of Object.keys(digest.names)) {
-    const title = state.containers.find((c) => c.kind === 'chat' && c.ref === sid)?.title;
-    if (title && !titleFromBrief(title, briefOf(state, sid))) names[sid] = title.slice(0, 80);
-  }
+  // The agenda's child names: the digest's, the same the `super_digest` frame carries.
+  const names: Record<string, string> = { ...digest.names };
   const children: Record<string, RemoteChild> = {};
   for (const [sid, ch] of Object.entries(state.children)) if (ID_RE.test(sid)) children[sid] = remoteChild(sid, ch);
   const groups: RemoteGroup[] = state.groups.map((g) => ({
@@ -156,7 +156,7 @@ export function superRemoteView(state: SuperState, vault: string, tunnelHost: st
     vault,
     session: state.session,
     enabled: state.enabled,
-    containers: state.containers.map((c) => remoteContainer(c, tunnelHost, c.kind === 'chat' ? briefOf(state, c.ref) : undefined)),
+    containers: state.containers.map((c) => (c.kind === 'chat' ? remoteContainer(c, tunnelHost, briefOf(state, c.ref), childDigestName(state, c.ref)) : remoteContainer(c, tunnelHost))),
     groups,
     view: remoteView(state.view),
     children,
