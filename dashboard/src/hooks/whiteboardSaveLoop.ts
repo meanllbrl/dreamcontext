@@ -49,8 +49,9 @@ export type SaveState =
   | { kind: 'retrying'; reason: string; attempt: number; delayMs: number }
   /** Refused for good (400/413/422): "Not saved: <reason>" and an Export button. */
   | { kind: 'failed'; reason: string }
-  /** The board is gone from disk. The local scene is kept so it can be exported. */
-  | { kind: 'deleted' };
+  /** The board is gone from disk. The local scene is kept so it can be exported. `unsaved`:
+   *  this window holds changes that never reached the disk (they go if the board closes). */
+  | { kind: 'deleted'; unsaved: boolean };
 
 export interface SaveResponse {
   rev: string;
@@ -115,8 +116,9 @@ export class WhiteboardSaveLoop<E> {
   private rev: string;
   /** Bumped whenever a PUT's rev is adopted; a poll started under an older epoch is stale. */
   private revEpoch = 0;
-  /** The scene version known to be on disk. Null until the first save or clean poll. */
-  private savedVersion: number | null = null;
+  /** The scene version known to be on disk: the loaded scene's, when the page passed it.
+   *  Null until the first save or clean poll otherwise. */
+  private savedVersion: number | null;
   /** Local changes not yet included in a sent PUT. */
   private dirty = false;
   private inFlight = false;
@@ -128,7 +130,7 @@ export class WhiteboardSaveLoop<E> {
   private retryHandle: unknown = null;
   private attempt = 0;
   private lastReason = '';
-  private stopped: { kind: 'failed'; reason: string } | { kind: 'deleted' } | null = null;
+  private stopped: { kind: 'failed'; reason: string } | { kind: 'deleted'; unsaved: boolean } | null = null;
   private polling = false;
   private disposed = false;
   private lastState: SaveState = { kind: 'saved' };
@@ -136,10 +138,13 @@ export class WhiteboardSaveLoop<E> {
    *  sends when the live canvas reads empty or gone during teardown. */
   private latest: SceneSnapshot<E> | null = null;
 
-  constructor(deps: SaveLoopDeps<E>, initialRev: string) {
+  /** `savedVersion`: the version (signature) of the scene `initialRev` holds. Given, a change
+   *  that leaves the scene as it was loaded (an open settling) sends nothing. */
+  constructor(deps: SaveLoopDeps<E>, initialRev: string, savedVersion: number | null = null) {
     this.deps = deps;
     this.timers = deps.timers ?? defaultTimers;
     this.rev = initialRev;
+    this.savedVersion = savedVersion;
   }
 
   get currentRev(): string {
@@ -308,7 +313,7 @@ export class WhiteboardSaveLoop<E> {
   }
 
   private markDeleted(): void {
-    this.stopped = { kind: 'deleted' };
+    this.stopped = { kind: 'deleted', unsaved: this.dirty || this.queued || this.debounceHandle !== null };
     this.clearDebounce();
     this.clearRetry();
     this.emit();
@@ -354,6 +359,8 @@ export class WhiteboardSaveLoop<E> {
   }
 
   private computeState(): SaveState {
+    // An edit made after the delete was seen is unsaved too.
+    if (this.stopped?.kind === 'deleted') return { kind: 'deleted', unsaved: this.stopped.unsaved || this.dirty };
     if (this.stopped) return this.stopped;
     if (this.attempt > 0) {
       return { kind: 'retrying', reason: this.lastReason, attempt: this.attempt, delayMs: retryDelay(this.attempt) };

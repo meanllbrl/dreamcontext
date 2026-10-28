@@ -1287,7 +1287,8 @@ async function main() {
     // ── A16: the board switcher ────────────────────────────────────────────────────────────
     dc(['whiteboard', 'create', 'Scratch board']);
     await waitRow('Scratch board');
-    const rowNames = async () => (await panel.locator('.wbs-row-name').allInnerTexts()).map((t) => t.trim());
+    // The list's rows only: the folded "Recently deleted" section under it has `.wbs-row-name`s too.
+    const rowNames = async () => (await panel.locator('.wbs-list .wbs-row-name').allInnerTexts()).map((t) => t.trim());
     const allRows = await rowNames();
     ok('A16 the board name opens "All boards" listing every board',
       allRows.length === 5 && ['Control Panel', 'Verify board', 'Sandbox', 'broken', 'Scratch board']
@@ -1362,6 +1363,43 @@ async function main() {
     await page.keyboard.press('Enter');
     const byKeys = await until(async () => (await currentName()) === 'Verify board' && (await scene())?.width > 0, 10000);
     ok('A16 search + Enter opens the highlighted board', !!byKeys, await currentName());
+
+    // Opening or switching to a board nobody touched writes nothing back (no PUT of the scene).
+    const openPuts = [];
+    const onOpenPut = (req) => {
+      const m = /^\/api\/whiteboards\/([^/]+)$/.exec(new URL(req.url()).pathname);
+      if (req.method() === 'PUT' && m) openPuts.push(decodeURIComponent(m[1]));
+    };
+    await page.waitForTimeout(1500);
+    page.on('request', onOpenPut);
+    await openBoard('Sandbox');
+    await page.waitForTimeout(2500);
+    await openBoard('Verify board');
+    await page.waitForTimeout(2500);
+    page.off('request', onOpenPut);
+    ok('A16 switching to an untouched board and back sends no save', openPuts.length === 0, JSON.stringify(openPuts));
+
+    // A board deleted on disk (the CLI's or an agent's `rm`, another window) leaves its tab and
+    // the list within a poll, without a reload.
+    const tabNames = async () => (await page.locator('.wbt-tab-name').allInnerTexts()).map((t) => t.trim());
+    ok('A16 fixture: Günlük has a tab', (await tabNames()).includes('Günlük'), JSON.stringify(await tabNames()));
+    rmSync(join(BOARDS, 'gunluk'), { recursive: true, force: true });
+    const tabGone = await until(async () => !(await tabNames()).includes('Günlük'), 6000);
+    ok('A16 a board deleted on disk loses its tab within a poll', !!tabGone, JSON.stringify(await tabNames()));
+    await openSwitcher();
+    ok('A16 …and is gone from All boards', !(await panel.locator('.wbs-list .wbs-row-name').allInnerTexts()).some((n) => n.trim() === 'Günlük'),
+      JSON.stringify(await panel.locator('.wbs-list .wbs-row-name').allInnerTexts()));
+    await page.keyboard.press('Escape');
+    // The OPEN board deleted on disk, nothing unsaved: its tab closes and a neighbour opens.
+    dc(['whiteboard', 'create', 'Doomed board']);
+    await openBoard('Doomed board');
+    ok('A16 fixture: Doomed board is open', await currentName() === 'Doomed board', await currentName());
+    rmSync(join(BOARDS, 'doomed-board'), { recursive: true, force: true });
+    const movedOn = await until(async () => (await currentName()) !== 'Doomed board' && !(await tabNames()).includes('Doomed board'), 8000);
+    ok('A16 the open board deleted on disk closes its tab and opens another', !!movedOn,
+      `${await currentName()} tabs=${JSON.stringify(await tabNames())}`);
+    const goneBanner = await page.locator('.wbp-banner[role="status"]').innerText().catch(() => '');
+    ok('A16 …and says why', /Doomed board/.test(goneBanner) && /deleted/i.test(goneBanner), goneBanner);
 
     // ── A17: CLI sizes; an S insight is a number, L+ a chart ───────────────────────────────
     dc(['whiteboard', 'create', 'Sizes']);

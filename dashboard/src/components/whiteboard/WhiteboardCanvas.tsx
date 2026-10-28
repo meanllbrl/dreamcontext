@@ -16,7 +16,7 @@ import { openExternalUrl } from '../../lib/desktop';
 import { DEFAULT_WIDGET_BOXES, DEFAULT_WIDGET_SIZES, isCardColor, nearestWidgetSize, type CardColor, type WidgetPayload, type WidgetSize } from '../../lib/whiteboardWidgets';
 import { handleLinkOpen, installHyperlinkGuard } from './linkRouting';
 import { usePagePopup } from './PagePopup';
-import { reconcileRemoteScene } from './sceneSync';
+import { reconcileRemoteScene, sceneSignature } from './sceneSync';
 import { isPictureOf, type BoardPictures } from './boardPictures';
 import { WidgetPalette } from './WidgetPalette';
 import {
@@ -59,6 +59,7 @@ export interface WhiteboardCanvasApi {
   dropPictures: (fileIds: readonly string[], reason: string) => void;
   /** Every element, tombstones included: the list a save sends. */
   getElements: () => readonly OrderedExcalidrawElement[];
+  /** {@link sceneSignature} of that list: equal means a save would write nothing new. */
   getSceneVersion: () => number;
 }
 
@@ -107,6 +108,8 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
   const { bus, vault } = useVault();
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  // The loaded scene's version: the first settle of an untouched board reports nothing. One that
+  // Excalidraw's restore changed (a repaired or re-indexed element bumps its version) does.
   const lastVersion = useRef<number>(-1);
   const [sizePicker, setSizePicker] = useState<SizePickerState | null>(null);
   /** The selection is only widgets: Excalidraw's properties panel and link popup are hidden. */
@@ -183,6 +186,7 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
       },
     };
   });
+  if (lastVersion.current === -1) lastVersion.current = getSceneVersion(initial.data.elements);
 
   // ── the widget host: how a widget writes its own payload ──────────────────────────────────
   const host = useMemo<WhiteboardHost>(() => ({
@@ -310,7 +314,7 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
         toast(reason ? `${said}: ${reason}` : said);
       },
       getElements: () => api.getSceneElementsIncludingDeleted(),
-      getSceneVersion: () => getSceneVersion(api.getSceneElementsIncludingDeleted()),
+      getSceneVersion: () => sceneSignature(api.getSceneElementsIncludingDeleted()),
     });
     loadPictures(initial.data.elements);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -359,8 +363,9 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
     lastVersion.current = version;
     // An undo can bring back a picture whose bytes this canvas never held.
     loadPictures(elements);
-    // Also fires once as the mounted scene first settles. A save of an unchanged scene is a
-    // byte-level no-op on the server, and one that `restoreElements` repaired is worth saving.
+    // Not for an untouched open (`lastVersion` starts at the loaded scene's version), and the
+    // save loop drops a change whose signature is the loaded one's, so opening or switching to
+    // a board never writes it back. One that the restore repaired still saves.
     onSceneChangeRef.current?.(elements);
   }, [vault, boardSlug, loadPictures]);
 

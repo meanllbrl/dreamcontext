@@ -227,7 +227,8 @@ describe('WhiteboardSaveLoop — failures', () => {
     const h = harness();
     h.edit(); h.timers.advance(SAVE_DEBOUNCE_MS);
     h.puts[0].d.reject(httpError(404)); await flush();
-    expect(h.loop.state).toEqual({ kind: 'deleted' });
+    // The edit never reached the disk: closing this board would lose it.
+    expect(h.loop.state).toEqual({ kind: 'deleted', unsaved: true });
     await h.loop.poll();
     expect(h.revs).toHaveLength(0);
     h.edit(); h.timers.advance(SAVE_DEBOUNCE_MS);
@@ -239,7 +240,76 @@ describe('WhiteboardSaveLoop — failures', () => {
     const p = h.loop.poll();
     h.revs[0].reject(httpError(404));
     await p;
-    expect(h.loop.state).toEqual({ kind: 'deleted' });
+    // Nothing was pending: the window holds exactly what the disk had.
+    expect(h.loop.state).toEqual({ kind: 'deleted', unsaved: false });
+  });
+
+  it('a delete seen while an edit waits on the debounce is unsaved', async () => {
+    const h = harness();
+    h.edit();
+    const p = h.loop.poll();
+    h.revs[0].reject(httpError(404));
+    await p;
+    expect(h.loop.state).toEqual({ kind: 'deleted', unsaved: true });
+  });
+
+  it('an edit made after the delete was seen makes it unsaved', async () => {
+    const h = harness();
+    const p = h.loop.poll();
+    h.revs[0].reject(httpError(404));
+    await p;
+    h.edit();
+    expect(h.loop.state).toEqual({ kind: 'deleted', unsaved: true });
+    expect(h.puts).toHaveLength(0);
+  });
+});
+
+describe('an open that changes nothing saves nothing (the loaded scene\'s version given)', () => {
+  /** A loop told the disk holds version 1, the scene's version at load. */
+  function opened() {
+    const timers = fakeTimers();
+    const scene = { elements: [{ id: 'a', version: 1 }] as El[], version: 1 };
+    const puts: (readonly El[])[] = [];
+    const loop = new WhiteboardSaveLoop<El>({
+      snapshot: () => ({ elements: scene.elements, version: scene.version }),
+      put: async (elements) => { puts.push(elements); return { rev: 'r1' }; },
+      getRev: async () => 'r0',
+      getScene: async () => ({ rev: 'r0', elements: [] }),
+      applyRemote: () => {},
+      timers: timers.api,
+    }, 'r0', 1);
+    return { loop, timers, scene, puts };
+  }
+
+  it('the canvas settling on the loaded scene sends no PUT, and the state ends saved', () => {
+    const h = opened();
+    h.loop.notifyChange({ elements: h.scene.elements, version: 1 });
+    h.timers.advance(SAVE_DEBOUNCE_MS * 2);
+    expect(h.puts).toHaveLength(0);
+    expect(h.loop.state).toEqual({ kind: 'saved' });
+  });
+
+  it('a switch away (dispose) and an app close (flush) right after opening send nothing', () => {
+    const h = opened();
+    h.loop.flush();
+    h.loop.notifyChange({ elements: h.scene.elements, version: 1 });
+    h.loop.dispose();
+    expect(h.puts).toHaveLength(0);
+  });
+
+  it('a real change still saves, debounced and on a fast switch alike', async () => {
+    const h = opened();
+    h.scene.version = 2; h.scene.elements = [{ id: 'a', version: 2 }];
+    h.loop.notifyChange({ elements: h.scene.elements, version: 2 });
+    h.timers.advance(SAVE_DEBOUNCE_MS);
+    await flush();
+    expect(h.puts).toEqual([[{ id: 'a', version: 2 }]]);
+
+    const fast = opened();
+    fast.scene.version = 3; fast.scene.elements = [{ id: 'a', version: 3 }];
+    fast.loop.notifyChange({ elements: fast.scene.elements, version: 3 });
+    fast.loop.dispose();
+    expect(fast.puts).toEqual([[{ id: 'a', version: 3 }]]);
   });
 });
 

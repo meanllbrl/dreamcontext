@@ -213,7 +213,12 @@ export function boardName(board: Whiteboard, slug: string): string {
   return typeof n === 'string' && n ? n : slug;
 }
 
-export function listWhiteboards(root: string): WhiteboardSummary[] {
+/**
+ * Every board on disk, as its slug and file, in slug order: the one rule for which folders are
+ * boards, shared by {@link listWhiteboards} and {@link whiteboardSlugs} so the list and the
+ * poll's board set never disagree (a disagreement would re-pull the list on every poll).
+ */
+function boardFiles(root: string): { slug: string; file: string }[] {
   const base = whiteboardsDir(root);
   let entries: string[];
   try {
@@ -222,17 +227,40 @@ export function listWhiteboards(root: string): WhiteboardSummary[] {
   } catch {
     return [];
   }
-  const out: WhiteboardSummary[] = [];
+  const out: { slug: string; file: string }[] = [];
   for (const slug of entries) {
     if (slug.startsWith('.') || !isValidWhiteboardSlug(slug)) continue;
     // lstat every entry: a symlinked board folder is never followed.
-    let file: string;
     try {
-      ({ file } = resolveWhiteboardPath(root, slug));
+      out.push({ slug, file: resolveWhiteboardPath(root, slug).file });
     } catch {
       continue;
     }
-    const st = statSync(file);
+  }
+  return out;
+}
+
+/**
+ * The slugs of every board on disk, cheaply (a readdir and an lstat each, no read). The open
+ * board's 2 s rev poll carries it, so a board deleted or made elsewhere (another window, the
+ * CLI, an agent, the disk) reaches the list, the tabs and the explorer within one poll.
+ */
+export function whiteboardSlugs(root: string): string[] {
+  return boardFiles(root).map((b) => b.slug);
+}
+
+export function listWhiteboards(root: string): WhiteboardSummary[] {
+  const out: WhiteboardSummary[] = [];
+  const seen = new Set<string>();
+  for (const { slug, file } of boardFiles(root)) {
+    // Gone between the readdir and here (a delete racing the list): skipped, never a 500.
+    let st;
+    try {
+      st = statSync(file);
+    } catch {
+      continue;
+    }
+    seen.add(file);
     const updatedAt = st.mtime.toISOString();
     const mark = slug === DEFAULT_WHITEBOARD.slug ? { isDefault: true as const } : {};
     const cached = summaryCache.get(file);
@@ -253,6 +281,12 @@ export function listWhiteboards(root: string): WhiteboardSummary[] {
     }
     summaryCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, summary });
     out.push({ slug, ...summary, updatedAt, ...mark });
+  }
+  // A deleted board's row leaves the cache with it: a board made again under the same slug is
+  // read fresh, and the cache never outgrows the boards that exist (this root's, at least).
+  const prefix = whiteboardsDir(root) + sep;
+  for (const file of summaryCache.keys()) {
+    if (file.startsWith(prefix) && !seen.has(file)) summaryCache.delete(file);
   }
   return out;
 }

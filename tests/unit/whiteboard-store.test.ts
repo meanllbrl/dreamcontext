@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   createWhiteboard, ensureDefaultWhiteboard, listTrashedWhiteboards, listWhiteboards, mutateWhiteboard, nextIndices,
-  readWhiteboard, renameWhiteboard, restoreWhiteboard, trashWhiteboard, whiteboardRev, whiteboardsDir, DEFAULT_WHITEBOARD,
+  readWhiteboard, renameWhiteboard, restoreWhiteboard, trashWhiteboard, whiteboardRev, whiteboardSlugs, whiteboardsDir, DEFAULT_WHITEBOARD,
 } from '../../src/lib/whiteboards/store.js';
 import { parseWhiteboard, serializeWhiteboard } from '../../src/lib/whiteboards/format.js';
 import { mergeElements } from '../../src/lib/whiteboards/merge.js';
@@ -458,5 +458,41 @@ describe('whiteboard store: the list reads a board only when its file changed', 
     const later = new Date(Date.now() + 60_000);
     utimesSync(file, later, later);
     expect(listWhiteboards(root)[0].updatedAt).toBe(statSync(file).mtime.toISOString());
+  });
+});
+
+describe('whiteboard store: a deleted board leaves the list at once (A16)', () => {
+  it('whiteboardSlugs is the list\'s slugs, and both drop a board trashed or removed from disk', async () => {
+    const a = createWhiteboard(root, 'Alpha').slug;
+    const b = createWhiteboard(root, 'Beta').slug;
+    const c = createWhiteboard(root, 'Gamma').slug;
+    expect(whiteboardSlugs(root)).toEqual(listWhiteboards(root).map((x) => x.slug));
+    await trashWhiteboard(root, a);
+    rmSync(join(whiteboardsDir(root), c), { recursive: true, force: true });
+    expect(whiteboardSlugs(root)).toEqual([b]);
+    expect(listWhiteboards(root).map((x) => x.slug)).toEqual([b]);
+  });
+
+  it('skips the same folders the list skips (no board file, dot folders)', () => {
+    createWhiteboard(root, 'Real');
+    mkdirSync(join(whiteboardsDir(root), 'empty-folder'));
+    expect(whiteboardSlugs(root)).toEqual(['real']);
+    expect(whiteboardSlugs(root)).toEqual(listWhiteboards(root).map((x) => x.slug));
+  });
+
+  it('a board made again under a deleted one\'s slug is read fresh, not from the cached row', () => {
+    const { slug, path } = createWhiteboard(root, 'Same');
+    const st = statSync(path);
+    const bytes = readFileSync(path, 'utf-8');
+    expect(bytes).toContain('Same');
+    expect(listWhiteboards(root)[0].name).toBe('Same');
+    rmSync(join(whiteboardsDir(root), slug), { recursive: true, force: true });
+    expect(listWhiteboards(root)).toEqual([]);
+    // Same path, same size, same mtime: only the eviction keeps the old row from coming back.
+    mkdirSync(join(whiteboardsDir(root), slug));
+    writeFileSync(path, bytes.replace('Same', 'Emas'));
+    utimesSync(path, st.atime, st.mtime);
+    expect(statSync(path).size).toBe(st.size);
+    expect(listWhiteboards(root)[0].name).toBe('Emas');
   });
 });

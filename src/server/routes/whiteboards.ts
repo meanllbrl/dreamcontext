@@ -15,6 +15,7 @@ import {
   restoreWhiteboard,
   TRASH_DIR,
   trashWhiteboard,
+  whiteboardSlugs,
   whiteboardRev,
 } from '../../lib/whiteboards/store.js';
 import { mergeElements } from '../../lib/whiteboards/merge.js';
@@ -211,7 +212,11 @@ export async function handleWhiteboardPages(
   sendJson(res, 200, searchPages(contextRoot, q, { limit: Number.isFinite(rawLimit) ? rawLimit : undefined, kind }));
 }
 
-/** GET /api/whiteboards/:slug/rev → `{rev}` — the D5 poll, cached by mtime + size in the store. */
+/**
+ * GET /api/whiteboards/:slug/rev → `{rev, boards}` — the D5 poll, cached by mtime + size in the
+ * store. `boards` is every board's slug, so the open page learns at once that a board was
+ * deleted or made elsewhere, without re-pulling the list every 2 s.
+ */
 export async function handleWhiteboardRev(
   _req: IncomingMessage,
   res: ServerResponse,
@@ -219,7 +224,7 @@ export async function handleWhiteboardRev(
   contextRoot: string,
 ): Promise<void> {
   try {
-    sendJson(res, 200, { rev: whiteboardRev(contextRoot, params.slug) });
+    sendJson(res, 200, { rev: whiteboardRev(contextRoot, params.slug), boards: whiteboardSlugs(contextRoot) });
   } catch (err) {
     sendWhiteboardError(res, err);
   }

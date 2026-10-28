@@ -79,6 +79,11 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   const onRenameNote = useCallback((board: string, text: string | null) => {
     setRenameNote((prev) => (text ? { board, text } : prev?.board === board ? null : prev));
   }, []);
+  // A board that was deleted while open (or opened after it was): its tab closed and the page
+  // moved on; this says so on the board it moved to, until the owner moves again.
+  const [goneNote, setGoneNote] = useState<{ board: string; text: string } | null>(null);
+  useEffect(() => { setGoneNote((prev) => (prev && prev.board === openSlug ? prev : null)); }, [openSlug]);
+  const onGone = useCallback((next: string, text: string) => { setGoneNote({ board: next, text }); }, []);
   const fallback = useDefaultWhiteboard(openSlug === null);
 
   useEffect(() => {
@@ -116,7 +121,16 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   if (openSlug) {
     // Keyed on the slug: switching boards unmounts this editor first, so its save loop's
     // dispose flushes the unsaved scene while the canvas handle is still there.
-    return <WhiteboardEditor key={openSlug} slug={openSlug} onOpen={setOpenSlug} renameNote={renameNote?.text ?? null} onRenameNote={onRenameNote} />;
+    return (
+      <WhiteboardEditor key={openSlug}
+        slug={openSlug}
+        onOpen={setOpenSlug}
+        renameNote={renameNote?.text ?? null}
+        onRenameNote={onRenameNote}
+        goneNote={goneNote?.board === openSlug ? goneNote.text : null}
+        onGone={onGone}
+      />
+    );
   }
   if (fallback.isError) {
     return (
@@ -136,14 +150,16 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
 
 // ── one board, full-bleed ────────────────────────────────────────────────────────────────────
 
-function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote }: {
+function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote, goneNote, onGone }: {
   slug: string;
   onOpen: (slug: string) => void;
   renameNote: string | null;
   onRenameNote: (board: string, note: string | null) => void;
+  goneNote: string | null;
+  onGone: (next: string, text: string) => void;
 }) {
   const { t } = useI18n();
-  const { load, saveState, onApi, onSceneChange, exportFile, pictures } = useWhiteboardEditor(slug);
+  const { load, saveState, gone, onApi, onSceneChange, exportFile, pictures } = useWhiteboardEditor(slug);
   const { vault } = useVault();
   const panelOpen = useAgentPanelOpen(vault);
   const [exportNote, setExportNote] = useState<ExportNote | null>(null);
@@ -151,14 +167,23 @@ function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote }: {
   useBoardHash(slug);
 
   const doExport = async () => setExportNote(await exportFile());
+  // The list first, as the tabs do: a rename patches it, never the loaded board.
+  const listed = boards.data?.find((b) => b.slug === slug)?.name;
 
+  const goneName = listed || (load.kind === 'ready' ? load.name : slug);
   const switcher = (
-    <BoardTabs slug={slug} name={load.kind === 'ready' ? load.name : undefined} onOpen={onOpen} onRenameNote={onRenameNote} />
+    <BoardTabs
+      slug={slug}
+      name={load.kind === 'ready' ? load.name : undefined}
+      onOpen={onOpen}
+      onRenameNote={onRenameNote}
+      gone={gone}
+      // A function replacement: a `$` in the name is text, never a pattern.
+      onGone={(next) => onGone(next, t('whiteboard.tabs.goneNote').replace('{board}', () => goneName))}
+    />
   );
   // The same first child in every state, so the strip keeps its place (and its state) when
   // the board finishes loading.
-  // The list first, as the tabs do: a rename patches it, never the loaded board.
-  const listed = boards.data?.find((b) => b.slug === slug)?.name;
   const heading = <h1 className="wbp-sr-only">{listed || (load.kind === 'ready' ? load.name : slug)}</h1>;
 
   if (load.kind === 'loading') {
@@ -170,6 +195,7 @@ function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote }: {
       <div className="wbp-editor">
         {heading}
         <div className="wbp-bar">{switcher}</div>
+        {goneNote && <div className="wbp-banner wbp-banner--quiet" role="status">{goneNote}</div>}
         <div className="wbp-card-state" role="alert">
           {load.kind === 'corrupt' && (
             <>
@@ -219,6 +245,7 @@ function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote }: {
       )}
       {exportNote && <div className="wbp-banner wbp-banner--quiet" role="status">{exportNote.text}</div>}
       {renameNote && <div className="wbp-banner" role="alert">{renameNote}</div>}
+      {goneNote && <div className="wbp-banner wbp-banner--quiet" role="status">{goneNote}</div>}
       <div className="wbp-body">
         {/* Pages open in a panel on the board's right; the board stays in view on its left. */}
         <PagePopupProvider>
