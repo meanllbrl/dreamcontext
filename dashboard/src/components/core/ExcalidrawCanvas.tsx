@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { Excalidraw } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
-import { registerPinchTarget, type BoardViewport, type BoardViewportPatch } from '../../lib/excalidrawPinch';
+import { registerPinchTarget, type BoardViewport, type PinchPatch } from '../../lib/excalidrawPinch';
 import { FIT_MAX_SETTLE_FRAMES, planFit, type FitBox, type FitRecord } from '../../lib/boardFit';
 import './ExcalidrawCanvas.css';
 
@@ -22,7 +22,7 @@ type ExcalidrawAPI = {
   scrollToContent: (target?: unknown, opts?: unknown) => void;
   refresh?: () => void;
   getAppState?: () => BoardViewport & { width: number; height: number };
-  updateScene?: (scene: { appState: BoardViewportPatch | FitRecord }) => void;
+  updateScene?: (scene: { appState: PinchPatch | FitRecord }) => void;
 };
 
 /**

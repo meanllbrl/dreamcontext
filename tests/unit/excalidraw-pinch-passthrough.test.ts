@@ -14,8 +14,8 @@
  * with `closest` / `contains`, and a dispatcher that runs the document's capture listeners, the
  * path's own listeners, then the document's bubble listeners, honouring stopPropagation.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { isPinchOwnerTarget, registerPinchTarget, type BoardViewport } from '../../dashboard/src/lib/excalidrawPinch.js';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { isPinchOwnerTarget, registerPinchTarget, PINCH_SETTLE_MS, type BoardViewport, type PinchPatch } from '../../dashboard/src/lib/excalidrawPinch.js';
 import { gestureScale } from '../../dashboard/src/components/layout/usePanZoom.js';
 
 type Listener = (e: FakeEvent) => void;
@@ -171,5 +171,68 @@ describe('everything else is as before', () => {
     expect(isPinchOwnerTarget(new FakeNode(owner) as unknown as Node)).toBe(true);
     expect(isPinchOwnerTarget(new FakeNode(root) as unknown as Node)).toBe(false);
     expect(isPinchOwnerTarget(null)).toBe(false);
+  });
+});
+
+/**
+ * A pinch draws from the bitmaps the board already has (2026-10-28), the way Excalidraw's
+ * ctrl+wheel zoom does with `shouldCacheIgnoreZoom`. Without it every step at a new zoom
+ * re-rasterised every element on screen (WKWebView, a board of tables: 60 -> 23 fps).
+ */
+describe('a pinch over a board keeps the board drawing from its cached bitmaps', () => {
+  let calls: PinchPatch[];
+  let board: FakeNode;
+  let un: () => void;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    unregister();
+    calls = [];
+    board = new FakeNode(root);
+    un = registerPinchTarget({
+      el: board as unknown as HTMLElement,
+      getViewport: () => viewport,
+      setViewport: (p) => { calls.push(p); if ('zoom' in p) viewport = { ...viewport, ...p }; },
+    });
+  });
+  afterEach(() => { un(); vi.useRealTimers(); });
+  const pinch = (type: string, scale: number) => dispatch(new FakeEvent(type, new FakeNode(board), scale));
+
+  it('every step carries shouldCacheIgnoreZoom; gestureend drops it once', () => {
+    pinch('gesturestart', 1);
+    pinch('gesturechange', 1.2);
+    pinch('gesturechange', 1.5);
+    expect(calls.map((c) => c.shouldCacheIgnoreZoom)).toEqual([true, true]);
+    expect(viewport.zoom.value).toBe(1.5);
+    pinch('gestureend', 1.5);
+    expect(calls.at(-1)).toEqual({ shouldCacheIgnoreZoom: false });
+    vi.advanceTimersByTime(PINCH_SETTLE_MS * 2);
+    expect(calls.filter((c) => !c.shouldCacheIgnoreZoom)).toHaveLength(1);
+  });
+
+  it('a gesture whose gestureend never comes settles PINCH_SETTLE_MS after its last step', () => {
+    pinch('gesturestart', 1);
+    pinch('gesturechange', 1.1);
+    vi.advanceTimersByTime(PINCH_SETTLE_MS - 1);
+    pinch('gesturechange', 1.2);
+    vi.advanceTimersByTime(PINCH_SETTLE_MS - 1);
+    expect(calls.some((c) => !c.shouldCacheIgnoreZoom)).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(calls.at(-1)).toEqual({ shouldCacheIgnoreZoom: false });
+  });
+
+  it('a step that lands on the zoom the board has moves nothing, and nothing needs settling', () => {
+    pinch('gesturestart', 1);
+    pinch('gesturechange', 1);
+    pinch('gesturechange', 1.0000001);
+    pinch('gestureend', 1);
+    expect(calls).toEqual([]);
+  });
+
+  it('a board unmounted mid-gesture is never written to again', () => {
+    pinch('gesturestart', 1);
+    pinch('gesturechange', 2);
+    un();
+    vi.advanceTimersByTime(PINCH_SETTLE_MS * 2);
+    expect(calls).toHaveLength(1);
   });
 });
