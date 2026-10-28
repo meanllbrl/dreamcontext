@@ -323,3 +323,38 @@ describe('the agenda keeps its place when the owner\'s cards take its column', (
     }
   });
 });
+
+describe('end review r1 regressions', () => {
+  it('a sized agenda that cannot be seated is drawn 1x1, never sent to Others (review M1)', () => {
+    const cs = [card('c0'), agenda('large'), card('c1'), card('c2', { pos: { x: 0.85, y: 0.49 } }), card('c3'), card('c4'), card('c5'), card('c6')];
+    const p = plan(cs, { width: 1833, height: 874 });
+    expect(p.cards.ag.where).toBe('float');
+    expectSound(p, cs, '1833x874');
+    // The reviewer's sweep: one owner card on an 11 x 11 grid of drops, the agenda always on the stage.
+    for (const s of [WINDOWS.small, WINDOWS.mid, WINDOWS.large, { width: 1833, height: 874 }]) {
+      for (let gx = 0; gx <= 10; gx += 2) for (let gy = 0; gy <= 10; gy += 2) {
+        const rec = [card('c0'), agenda('large'), card('c1'), card('c2', { pos: { x: gx / 10, y: gy / 10 } }), card('c3'), card('c4')];
+        const q = plan(rec, s);
+        expect(q.cards.ag.where, `${s.width} ${gx},${gy}`).toBe('float');
+        expectSound(q, rec, `${s.width} ${gx},${gy}`);
+      }
+    }
+  });
+
+  it('two columns a side never overlap: the outer column stands out by the orbit\'s depth (review M2)', () => {
+    for (let n = 5; n <= 14; n++) {
+      for (const s of [{ width: 1918, height: 670 }, { width: 1940, height: 700 }, { width: 1900, height: 620 }]) {
+        const cs = Array.from({ length: n }, (_, i) => card(`c${i}`));
+        expectSound(plan(cs, s), cs, `${n} @ ${s.width}x${s.height}`);
+      }
+    }
+  });
+
+  it('compare on a 968 px touch stage keeps both cards at FIT_MIN', () => {
+    const cs = [card('a', { kind: 'task' }), card('b', { kind: 'task' })];
+    const v = { mode: 'present' as const, cards: ['a', 'b'], layout: 'compare' as const };
+    const p = planStage(stageItems(cs, [], v), v, { width: 968, height: 700 }, { narrowPx: 940, centreMin: 480 });
+    for (const id of ['a', 'b']) expect(p.cards[id].rect.width).toBeGreaterThanOrEqual(STAGE.FIT_MIN.w - EPS);
+    expect(p.centre.width).toBeGreaterThanOrEqual(STAGE.REGION_MIN - EPS);
+  });
+});

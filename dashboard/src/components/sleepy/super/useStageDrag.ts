@@ -174,6 +174,8 @@ export function useStageDrag(depsRef: RefObject<StageDragDeps | null>) {
     const box = sizePx(c ? sizeOf(c) : 'small');
     const at = (x: number, y: number): Rect => ({ x: x - origin.left - box.width / 2, y: y - origin.top - box.height / 2, ...box });
     const targetAt = (x: number, y: number) => {
+      // Outside the float view a tile is a live job's rail tile: no group target there (as onPressCard).
+      if (planRef.current.mode !== 'float') return null;
       const tg = dropTargetAt(planRef.current, x - origin.left, y - origin.top, id);
       return tg && tg !== from ? tg : null;
     };
@@ -214,6 +216,9 @@ export function useStageDrag(depsRef: RefObject<StageDragDeps | null>) {
         if (drop && h === 'centre') actions.onAskAbout(id);
         else if (drop && h === 'others') { if (from !== 'others') onLayout({ ...leave, cards: [{ id, place: 'others' }] }); }
         else if (drop && tg) groupOnto(id, tg);
+        // A job out of the rail's "more" tile exists only beside a page or a presentation: a drop
+        // elsewhere there is no move (no hidden position for when the view ends).
+        else if (drop && from === 'more' && p.mode !== 'float') { /* no move */ }
         else if (drop && dropTargetAt(p, x - origin.left, y - origin.top, id) !== from) {
           onLayout({ ...leave, cards: [{ id, place: 'float', pos: posFromRect(p.free, at(x, y)) }] });
           liftOnTop(id);

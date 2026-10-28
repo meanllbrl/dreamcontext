@@ -397,7 +397,9 @@ function solveFloat(f: Frame, left: readonly Slot[], right: readonly Slot[]): Fl
       col.forEach((s, i) => {
         const y = y0 + i * (T + GAP);
         const dy = y + T / 2 - mid;
-        const off = ymax > 0 ? depth * (1 - (dy / ymax) ** 2) : 0;
+        // The inner column bends into the orbit; an outer one stands out by the orbit's whole depth,
+        // so the inner column's middle never reaches it (owner 2026-10-28: no card under another).
+        const off = k > 0 ? depth : ymax > 0 ? depth * (1 - (dy / ymax) ** 2) : 0;
         rects.set(s.id, { x: x0 + dir * off, y, width: T, height: T });
       });
       if (k === 0 && col.length >= 2 && depth > 0) orbit.push({ side, x0: x0 + T / 2, cy: mid, ymax, depth, dir });
@@ -860,6 +862,9 @@ function planWith(
   /** Sized cards a first float pass could not seat: drawn in Others, and the sides are solved
    *  without them (a side never stays wide, narrowing the centre, for a card it does not show). */
   demoted: ReadonlySet<string> = new Set(),
+  /** The same for the agenda or a live job, which never give way for their size: planned again
+   *  at 1x1 instead. */
+  compact: ReadonlySet<string> = new Set(),
 ): StagePlan {
   // Items: at most the record's MAX_CONTAINERS cards, plus a grouped card the view presents beside its group.
   const list = containers.slice(0, MAX_CONTAINERS + MAX_FILMSTRIP);
@@ -1003,7 +1008,10 @@ function planWith(
     if (layout === 'compare' || layout === 'grid') {
       // The centre as a left column, the cards in a grid on the right (as before layouts); the
       // centre's share is of what the rail leaves (the rail narrows the centre and the cards alike).
-      const w = Math.min(STAGE.PRESENT_MAX, Math.max(STAGE.PRESENT_MIN, STAGE.PRESENT_FRAC * (content.width + 2 * STAGE.MARGIN)));
+      // The chat's floor gives way (down to REGION_MIN) only so two cards keep FIT_MIN side by side
+      // (a 968 px touch stage).
+      const share = Math.min(STAGE.PRESENT_MAX, Math.max(STAGE.PRESENT_MIN, STAGE.PRESENT_FRAC * (content.width + 2 * STAGE.MARGIN)));
+      const w = Math.max(STAGE.REGION_MIN, Math.min(share, content.width - 2 * STAGE.GAP - 2 * STAGE.FIT_MIN.w));
       const centre: Rect = { x: content.x, y: content.y, width: w, height: content.height };
       const region: Rect = { x: content.x + w + STAGE.GAP, y: content.y, width: content.width - w - STAGE.GAP, height: content.height };
       const { rects } = fitArrange(region, ordered.map((id) => ({ aspect: list.find((x) => x.id === id)?.aspect })));
@@ -1084,7 +1092,7 @@ function planWith(
   const keeps = (c: StageItem) => !!c.live || c.kind === 'agenda';
   const slotsOn = (side: 'left' | 'right'): Slot[] =>
     floating.filter((c) => sideOf.get(c.id) === side).map((c) => ({ id: c.id, owner: isOwner(c), chat: c.kind === 'chat' || c.kind === 'group' || c.kind === 'agenda', ...(keeps(c) ? { live: true } : {}) }));
-  const sizeById = new Map(floating.map((c) => [c.id, sizeOf(c)] as const));
+  const sizeById = new Map(floating.map((c) => [c.id, compact.has(c.id) ? 'small' as const : sizeOf(c)] as const));
   const agendaIds = new Set(floating.filter((c) => c.kind === 'agenda').map((c) => c.id));
   const withSize = (sl: Slot): SizedSlot => ({ ...sl, size: sizeById.get(sl.id) ?? 'small', z: z.get(sl.id) ?? 0, ...(agendaIds.has(sl.id) ? { agenda: true } : {}) });
 
@@ -1092,7 +1100,7 @@ function planWith(
   // it sets the stage. An owner tile is drawn at the one tile size wherever he dropped it.
   // A stage of small cards keeps the orbit exactly as it was; one sized card packs the sides by
   // size (solveSized).
-  const sized = floating.some((c) => sizeOf(c) !== 'small');
+  const sized = floating.some((c) => sizeById.get(c.id) !== 'small');
   const sol = sized
     ? solveSized(f, slotsOn('left').map(withSize), slotsOn('right').map(withSize))
     : { ...solveFloat(f, slotsOn('left'), slotsOn('right')), drawn: new Map<string, ContainerSize>(), uRight: undefined };
@@ -1195,7 +1203,11 @@ function planWith(
   }
   // A sized card the solve gave its width but the placement could not seat: plan again without it.
   const unseated = floating.filter((c) => cards[c.id]?.where === 'others' && !sol.overflow.has(c.id) && SIZE_UNITS[drawnOf(c.id)].w > 1);
-  if (unseated.length && demoted.size < MAX_CONTAINERS) return planWith(containers, view, stage, opts, bottomBand, new Set([...demoted, ...unseated.map((c) => c.id)]));
+  if (unseated.length) {
+    const kept = unseated.filter(keeps).map((c) => c.id);
+    const out = unseated.filter((c) => !keeps(c)).map((c) => c.id);
+    return planWith(containers, view, stage, opts, bottomBand, new Set([...demoted, ...out]), new Set([...compact, ...kept]));
+  }
   // A card in Others flies to the stack where it is drawn (narrowed beside a tall centre).
   for (const id of others) cards[id] = { ...cards[id], rect: f.othersRect };
   const width = (side: 'left' | 'right') => (floating.some((c) => sideOf.get(c.id) === side && cards[c.id]?.where === 'float')

@@ -182,6 +182,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const layerRef = useRef<HTMLDivElement>(null);
   const underRef = useRef<HTMLDivElement>(null);
   const stackRef = useRef<HTMLButtonElement>(null);
+  // The rail's "more" tile's pill: its panel gives focus back to it on close.
+  const moreRef = useRef<HTMLButtonElement>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -620,7 +622,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
     else actions.onSideBySide(id);
   };
   const returnFocusTo = useCallback((key: string) => () => requestAnimationFrame(() => {
-    const el = key === 'others' ? stackRef.current : rootRef.current?.querySelector<HTMLElement>(`[data-stage-key="${cssEsc(key)}"]`);
+    const el = key === 'others' ? stackRef.current : key === 'more' ? moreRef.current ?? stackRef.current
+      : rootRef.current?.querySelector<HTMLElement>(`[data-stage-key="${cssEsc(key)}"]`);
     el?.focus();
   }), []);
   const returnFocus = useMemo(() => returnFocusTo(openGroup ?? 'others'), [returnFocusTo, openGroup]);
@@ -946,7 +949,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       )}
       {agendaPill && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
       <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={() => setOpenGroup((o) => (o === 'others' ? null : 'others'))} stackRef={stackRef} />
-      {plan.more && <OthersStack more items={moreItems} rect={plan.more.rect} open={openGroup === 'more'} onToggle={() => setOpenGroup((o) => (o === 'more' ? null : 'more'))} />}
+      {plan.more && <OthersStack more stackRef={moreRef} items={moreItems} rect={plan.more.rect} open={openGroup === 'more'} onToggle={() => setOpenGroup((o) => (o === 'more' ? null : 'more'))} />}
       {openGroup && (() => {
         // The rail's "more" tile opens like Others (its cards are live jobs: no close-all there).
         const moreOpen = openGroup === 'more';

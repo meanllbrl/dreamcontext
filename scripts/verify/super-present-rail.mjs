@@ -273,6 +273,8 @@ try {
     await shot(page, '1600x1100-more-open');
     await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
+    const focused = await page.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.tagName);
+    check('Escape closes the panel and gives focus back to the "more" tile', focused === 'super-more-stack', focused);
   } else check('the "more" tile is there at 1600x1100', false, 'none');
 
   console.log('\n── leaving the presentation');
