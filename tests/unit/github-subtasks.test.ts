@@ -454,6 +454,34 @@ describe('github sub-tasks', () => {
     expect(fake.parentOf.get(kid)).toBe(two);
   });
 
+  it('a local re-parent survives several pulls before its push, then lands', async () => {
+    await backend.create({ name: 'Parent One', variant: 'cli' });
+    await backend.create({ name: 'Parent Two', variant: 'cli' });
+    await backend.create({ name: 'Kid', variant: 'cli', local_fields: { parent_task: 'parent-one' } });
+    await backend.sync('push');
+    await backend.sync('pull');
+    const kid = numberOf('kid');
+    const one = numberOf('parent-one');
+    const two = numberOf('parent-two');
+    fake.editIssue(kid, { parent_issue_url: `https://api.github.com/repos/example-org/example-repo/issues/${one}` } as never);
+    await backend.sync('pull');
+
+    await backend.updateFields('kid', { parent_task: 'parent-two', updated_at: '2026-10-28' });
+    // A teammate takes it out of One and keeps editing it; two pulls run before any push.
+    fake.parentOf.delete(kid);
+    fake.editIssue(kid, { title: 'Kid', parent_issue_url: null } as never);
+    await backend.sync('pull');
+    expect(mirror('kid').data.parent_task).toBe('parent-two');
+    fake.editIssue(kid, { title: 'Kid' });
+    await backend.sync('pull');
+    expect(mirror('kid').data.parent_task).toBe('parent-two');
+
+    const report = await backend.sync('both');
+    expect(report.errors).toEqual([]);
+    expect(fake.parentOf.get(kid)).toBe(two);
+    expect(mirror('kid').data.parent_task).toBe('parent-two');
+  });
+
   it('fallback: a teammate who pulled the task list keeps it in the parent body when editing the parent', async () => {
     fake.subIssuesUnavailable = true;
     await makeParentAndChild();

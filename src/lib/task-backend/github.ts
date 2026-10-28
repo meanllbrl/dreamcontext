@@ -2123,11 +2123,18 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     if (rendered !== localRaw) this.ledger.backupMirror(slug, localRaw);
     const written = this.writeMirrorContent(slug, rendered);
 
-    const keptLocal = anyLocalWin || proseLocalKept || localOnlyEntries.length > 0;
+    // A local re-parent waiting to push (subtask-link.ts `localWins`): the base keeps
+    // the OLD parent, so every later pull still sees the move as local and pending.
+    // Writing the merged parent into the base would let a second pull before the
+    // push read GitHub's parent as a fresh remote change and drop the move.
+    const parentPending = this.pullLocalWins.has(remoteId);
+    const baseParentKept = parentPending ? { parent_task: (baseFm?.parent_task as string | null | undefined) ?? null } : {};
+    const keptLocal = anyLocalWin || proseLocalKept || localOnlyEntries.length > 0 || parentPending;
     if (keptLocal) {
       const remoteRender = this.renderMirror(
         {
           ...fm,
+          ...baseParentKept,
           name: issue.title,
           status: remoteStatus,
           priority: remotePriority,
