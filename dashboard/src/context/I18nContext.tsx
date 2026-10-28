@@ -2933,7 +2933,7 @@ const translations: Record<string, Record<string, string>> = {
     // owner's own words, "Süper Ajana devret" / "Geri al" in Turkish.
     'super.button.handOver': 'Hand over to the Super Agent',
     'super.button.takeBack': 'Take it back',
-    'super.button.handOverShort': 'Hand over',
+    'super.button.handOverShort': 'Super Agent',
     'super.button.takeBackShort': 'Take back',
     'super.button.handOverTitle': 'Claude in the cape takes every open chat of this project; you talk only to it',
     'super.button.takeBackTitle': 'Your chats come back as tabs, still running; the Super Agent waits',
@@ -4893,7 +4893,7 @@ const TR_PARTIAL: Record<string, string> = {
   // ─── Süper Ajan ───────────────────────────────────────────────────────────
   'super.button.handOver': 'Süper Ajana devret',
   'super.button.takeBack': 'Geri al',
-  'super.button.handOverShort': 'Devret',
+  'super.button.handOverShort': 'Süper Ajan',
   'super.button.takeBackShort': 'Geri al',
   'super.button.handOverTitle': 'Pelerinli Claude bu projenin açık sohbetlerini devralır; sen yalnızca onunla konuşursun',
   'super.button.takeBackTitle': 'Sohbetlerin sekme olarak geri gelir, çalışmaya devam eder; Süper Ajan bekler',

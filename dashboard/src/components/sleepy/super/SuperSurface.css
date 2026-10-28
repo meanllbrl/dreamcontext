@@ -9,21 +9,38 @@
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  flex: 0 0 auto;
+  gap: 6px;
   height: 28px;
-  padding: 0 12px 0 8px;
-  border-radius: var(--radius-full);
-  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
-  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg));
-  color: var(--color-text);
+  padding: 0 12px 0 10px;
+  margin-right: var(--space-2);
+  /* A tab pinned at the start of the chat tabs (owner pick 2026-10-29): the tab's shape, a
+     dashed accent edge so it reads as "not one of your chats", its name in the accent. */
+  border-radius: var(--radius-md);
+  border: 1px dashed color-mix(in srgb, var(--color-accent) 60%, var(--color-border));
+  background: transparent;
+  color: var(--color-accent);
   font-size: var(--font-size-sm);
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast);
 }
-.super-handover-btn:hover { background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg)); border-color: var(--color-accent); }
-.super-handover-btn[data-state='handed-over'] { background: var(--color-accent-soft); }
+.super-handover-btn:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); border-style: solid; border-color: var(--color-accent); }
+.super-handover-btn:focus-visible { outline: none; border-style: solid; border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent-soft); }
+.super-handover-btn[data-state='handed-over'] { background: var(--color-accent-soft); border-style: solid; color: var(--color-text); }
+/* Narrow window: the glyph alone while it points at the hand-over, so the chat tabs keep room;
+   Take back keeps its word (it is the only way back). */
+@media (max-width: 700px) {
+  .super-handover-btn[data-state='panes'] { padding: 0 7px; }
+  .super-handover-btn[data-state='panes'] .super-handover-btn-label { display: none; }
+}
+/* Handed over, the tab strip has left; this slot holds the same tab in the same spot. */
+.agent-overlay-super-slot {
+  display: flex;
+  align-items: center;
+  padding-left: var(--head-clear-start);
+}
 .super-handover-btn-dot {
   position: absolute;
   top: 2px;

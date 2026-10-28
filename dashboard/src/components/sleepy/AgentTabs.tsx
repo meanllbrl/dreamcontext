@@ -109,6 +109,7 @@ export function AgentTabs({
   drag, onTabDrop,
   chatConvertEnabled = false, onOpenInChat = () => {},
   autoTitle = false, onToggleAutoTitle = () => {},
+  leading,
 }: {
   pane: PaneVM;
   isActivePane: boolean;
@@ -139,6 +140,9 @@ export function AgentTabs({
   /** Flip that preference. The surface writes it through `patchAgentSettings`, so the new
    *  value comes back down as a prop — this component never holds its own copy. */
   onToggleAutoTitle?: (next: boolean) => void;
+  /** Pinned before the first tab, never dragged or closed: the Super Agent's tab (owner
+   *  2026-10-29). Only the first pane's group gets it, so it always sits at the strip's start. */
+  leading?: React.ReactNode;
 }) {
   const stop = (e: React.MouseEvent) => e.stopPropagation();
   /*
@@ -271,6 +275,7 @@ export function AgentTabs({
       data-pane-id={pane.id}
       data-over={groupOver ? 'true' : undefined}
     >
+      {leading}
       {pane.tabs.map((tab) => {
             const active = tab.id === pane.active;
             const renaming = renamingId === tab.id;
