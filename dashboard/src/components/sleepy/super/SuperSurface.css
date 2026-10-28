@@ -706,6 +706,7 @@
   overflow: hidden;
 }
 .super-tile-foot--name { font-family: var(--font-family-text); font-size: var(--font-size-xs); color: var(--color-text-secondary); white-space: normal; }
+.super-tile-foot .super-card-dot { width: 6px; height: 6px; }
 .super-tile-state { color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.06em; }
 .super-tile[data-super-tone] .super-tile-state { color: var(--tone); }
 .super-tile-chip {

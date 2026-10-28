@@ -995,6 +995,17 @@
 .chat-cmp-usagering-fill { stroke: var(--chat-band-calm); }
 .chat-cmp-usagering-fill[data-band='caution'] { stroke: var(--chat-band-caution); }
 .chat-cmp-usagering-fill[data-band='danger'] { stroke: var(--chat-band-danger); }
+/* A reading we do not have (a chat card's rate-limit ring): a neutral track, never a tinted
+   one, so "unknown" can never be mistaken for "0% used". */
+.chat-cmp-usagering-track[data-band='none'] { stroke: color-mix(in srgb, var(--color-text-tertiary) 35%, transparent); }
+/* A chat card's rate-limit ring (UsageRings.tsx): the same rings, on a card instead of the composer. */
+.chat-limitring {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
 /* The threshold notch — a tertiary-toned tick on the ring, matching the bar's marker. */
 .chat-cmp-usagering-notch {
   stroke: var(--color-text-tertiary);
@@ -1002,7 +1013,7 @@
 }
 /* The three band tones. Declared on the composer card so the gauge and the popover that
    hangs off it cannot disagree about what "caution" looks like. */
-.chat-cmp-card, .chat-cmp-usagemenu {
+.chat-cmp-card, .chat-cmp-usagemenu, .chat-limitring {
   --chat-band-calm: var(--color-accent);
   --chat-band-caution: var(--color-warning);
   --chat-band-danger: var(--color-error);

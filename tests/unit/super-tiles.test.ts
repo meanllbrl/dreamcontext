@@ -25,7 +25,10 @@ const { StatusRing, ChatTile } = await import('../../dashboard/src/components/sl
 const { GroupTile, groupStatus } = await import('../../dashboard/src/components/sleepy/super/SuperTiles.js');
 const { panelRect } = await import('../../dashboard/src/components/sleepy/super/GroupPanel.js');
 const { I18nProvider } = await import('../../dashboard/src/context/I18nContext.js');
-const inI18n = (el: ReturnType<typeof createElement>) => renderToStaticMarkup(createElement(I18nProvider, null, el));
+const { QueryClient, QueryClientProvider } = await import('../../dashboard/node_modules/@tanstack/react-query/build/modern/index.js');
+// A chat tile's rate-limit ring reads the usage query, so it renders under a QueryClient as in the app.
+const inI18n = (el: ReturnType<typeof createElement>) => renderToStaticMarkup(
+  createElement(QueryClientProvider, { client: new QueryClient() }, createElement(I18nProvider, null, el)));
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const SUPER = 'dashboard/src/components/sleepy/super';
@@ -132,6 +135,9 @@ describe('the status ring and the tiles', () => {
     expect(html).toContain('data-testid="super-card-doing"');
     expect(html).toContain('super-tile-asks');
     expect(html).toContain('data-kind="asking"');
+    // No live session: the account is not known, so the ring says unknown and the state moved to the foot's dot.
+    expect(html).toContain('data-testid="chat-limit-ring" data-known="false"');
+    expect(html).toMatch(/data-testid="super-tile-status"/);
   });
 
   it('a group tile: its name, its count, its first cards, and the state of its loudest one', () => {

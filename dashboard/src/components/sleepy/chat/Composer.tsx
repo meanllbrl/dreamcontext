@@ -62,6 +62,7 @@ import { PictureChip, RefPopover, RefSrList, refMirrorSegments, refsInOrder } fr
 import { Popover } from '../SkillPickerPopover';
 import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
 import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
+import { ConcentricRings } from './UsageRings';
 import { SleepyMascot } from '../SleepyMascot';
 import type { ComposerHost } from './composerHost';
 import './composer.css';
@@ -437,17 +438,7 @@ const ModelTrigger = memo(function ModelTrigger({ modelLabel, effortValue, disab
   );
 });
 
-// Apple Health's activity rings: three CONCENTRIC rings, one per band, each filling its own
-// 0→100% and each carrying its own tone. What makes that shape legible at this size is not
-// the count of rings — it is the thickness and the air between them, plus a track tinted in
-// the ring's OWN colour rather than a neutral grey, so an empty ring still says which band
-// it is. Geometry is derived, not typed: `r` marches inward by exactly stroke + gap, so the
-// spacing can never drift as the numbers are tuned.
-const RING_W = 2.6;
-const RING_GAP = 1.1;
-const RING_R0 = 10.2;          // outer radius; outer edge lands at 11.5 inside a 24 box
-const ringR = (i: number) => RING_R0 - i * (RING_W + RING_GAP);
-
+// The ring geometry and drawing live in UsageRings.tsx, shared with a chat card's rate-limit ring.
 /** The context meter, demoted to a ring — see the call site. `nudgeAt`/`hardAt` are the
  *  handoff thresholds when handoff is ON, else null. */
 const UsageRingButton = memo(function UsageRingButton({ ctx, nudgeAt, hardAt, open, onToggle }: {
@@ -484,55 +475,27 @@ const UsageRingButton = memo(function UsageRingButton({ ctx, nudgeAt, hardAt, op
       aria-haspopup="menu"
       aria-expanded={open}
     >
-      <svg
-        width="24" height="24" viewBox="0 0 24 24" fill="none"
+      <ConcentricRings
         role={ctx ? 'meter' : undefined}
         aria-valuemin={ctx ? 0 : undefined}
         aria-valuemax={ctx ? 100 : undefined}
         aria-valuenow={ctx ? ctx.pct : undefined}
         aria-valuetext={ctx ? ctxReading : undefined}
         aria-hidden={ctx ? undefined : true}
-      >
-        {(bands.length ? bands : [null, null, null]).map((band, i) => {
-          const r = ringR(i);
-          const c = 2 * Math.PI * r;
+        rings={(bands.length ? bands : [null, null, null]).map((band) => ({
+          band: band?.key,
+          frac: band?.frac ?? 0,
           // The notch rides whichever ring's band actually CONTAINS the threshold, so
           // the mark and the arc it qualifies can never drift apart. On the SHIPPED
           // ladder it therefore draws nothing at all, and that is the correct answer:
           // the default threshold IS the first band edge, so the seam between ring 1
           // and ring 2 already marks it and a second tick on top would be noise. The
           // branch stays live for a vault that has tuned `--nudge-at` off an edge.
-          const notchFrac = band && handoffOn && nudgeAt! > band.from
-            && nudgeAt! < band.to
+          notchFrac: band && handoffOn && nudgeAt! > band.from && nudgeAt! < band.to
             ? (nudgeAt! - band.from) / (band.to - band.from)
-            : null;
-          return (
-            <g key={i} transform="rotate(-90 12 12)">
-              <circle
-                className="chat-cmp-usagering-track"
-                data-band={band?.key}
-                cx="12" cy="12" r={r} strokeWidth={RING_W}
-              />
-              {band && band.frac > 0 && (
-                <circle
-                  className="chat-cmp-usagering-fill"
-                  data-band={band.key}
-                  cx="12" cy="12" r={r} strokeWidth={RING_W} strokeLinecap="round"
-                  strokeDasharray={`${(c * band.frac).toFixed(2)} ${c.toFixed(2)}`}
-                />
-              )}
-              {notchFrac !== null && (
-                <circle
-                  className="chat-cmp-usagering-notch"
-                  cx="12" cy="12" r={r} strokeWidth={RING_W}
-                  strokeDasharray={`1 ${c.toFixed(2)}`}
-                  strokeDashoffset={`${(-c * notchFrac).toFixed(2)}`}
-                />
-              )}
-            </g>
-          );
-        })}
-      </svg>
+            : null,
+        }))}
+      />
     </button>
   );
 });

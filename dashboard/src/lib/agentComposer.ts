@@ -888,6 +888,69 @@ export function usageLimits(
   return { limits, staleAsOf: account.length > 0 && age > USAGE_STALE_MS ? fetchedAtMs : null };
 }
 
+/** "2h 40m" / "12m" — how long this cap's window has left. Coarse on purpose: the reading it
+ *  labels is itself a cached percentage, so minute precision would imply an accuracy the
+ *  number does not have. */
+export function fmtResetIn(resetsAt: number, now: number): string {
+  const mins = Math.max(0, Math.round((resetsAt - now) / 60_000));
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+/** Local time, for the "as of" caption on a stale account reading. */
+export function fmtClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+/** One ring of a chat card's rate-limit mark: an account window that SURVIVED `usageLimits`. */
+export interface LimitRing {
+  key: 'session' | 'weekly';
+  title: string;
+  percent: number;
+  resetsAt: number;
+  /** The usage popover's own "running out" rule, so the card and the bar can never disagree. */
+  tight: boolean;
+}
+
+/** What a chat card's rate-limit ring draws. `rings` empty ⇒ UNKNOWN: drawn as an empty
+ *  neutral mark and worded as unknown, never as 0%. */
+export interface AccountLimitReading {
+  rings: LimitRing[];
+  staleAsOf: number | null;
+  /** The hover and the screen-reader text: each window, its percent and when it resets. */
+  label: string;
+}
+
+/**
+ * A chat card's rate-limit ring, from the SAME response the composer's usage popover reads
+ * (`useUsageLimits` for that chat's account) through the SAME filter (`usageLimits` with no
+ * context reading): a missing, stale or rolled-over window is absent here too. Pure, `now`
+ * injected, like `usageLimits`.
+ */
+export function accountLimitReading(res: UsageLimitsResponse | null, now: number): AccountLimitReading {
+  const { limits, staleAsOf } = usageLimits(null, res, now);
+  const rings = limits
+    .filter((l): l is UsageLimit & { key: LimitRing['key']; resetsAt: number } => l.key !== 'context' && l.resetsAt !== null)
+    .map((l) => ({ key: l.key, title: l.title, percent: l.percent, resetsAt: l.resetsAt, tight: l.percent >= CONTEXT_TIGHT_PCT }));
+  if (rings.length === 0) return { rings, staleAsOf: null, label: 'Rate limit unknown — no recent reading for this account' };
+  const parts = rings.map((r) => `${r.title} ${Math.round(r.percent)}% · resets in ${fmtResetIn(r.resetsAt, now)}`);
+  return {
+    rings,
+    staleAsOf,
+    label: `Rate limits — ${parts.join(' · ')}${staleAsOf != null ? ` (as of ${fmtClock(staleAsOf)})` : ''}`,
+  };
+}
+
+/** The account a chat REALLY runs on: the spawned one, else the one it asked for ('' = the
+ *  default account, exactly what the composer's usage popover keys on). `null` when there is
+ *  no live session to ask, because then the account is not known. */
+export function chatAccountOf(session: { accountId: string; getModel: () => { activeAccountId?: string } } | undefined): string | null {
+  if (!session) return null;
+  return session.getModel().activeAccountId || session.accountId || '';
+}
+
 /**
  * POSIX-safe rendering of a file path for injection into the terminal input: strip control
  * chars (a newline would submit early), leave a simple path bare, single-quote-escape one
