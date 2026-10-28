@@ -38,6 +38,11 @@
  *   h  webgl   four Terminal panes: live WebGL contexts (wrapped getContext)
  *   i  notch   `claude` children of the server right after the notch boots
  *   j  notch   DOM mutations/min in the idle notch
+ *   stream7    (opt-in) seven panes stream a long answer at once (the stand-in streams on
+ *              GO-STREAM, DC_IDLE_STREAM_MS long): server RSS idle / streaming / after, V8 heap
+ *              snapshots (idle, streaming, after) with their top holders, rAF frame times, and on
+ *              macOS WebKit a `sample` of WebContent counting the text-paint path (CPU RCA K3).
+ *              STREAM_ENGINES=webkit,chromium · STREAM_HIDE=<selector> hides a candidate, STREAM_CSS=<rules> adds one (A/B)
  *
  * Unfocused is simulated the way a browser reports it (Tauri is absent here): `blur` with
  * `document.hasFocus()` false; hidden through a `visibilityState` override + the event.
@@ -123,6 +128,7 @@ process.stdin.on('data', (c) => {
     if (o.type === 'control_request') {
       out({ type: 'control_response', response: { subtype: 'success', request_id: o.request_id, response: {} } });
     }
+    if (o.type === 'user' && JSON.stringify(o.message ?? '').includes('GO-STREAM')) stream('idle-stream-' + process.pid);
     if (o.type === 'user' && JSON.stringify(o.message ?? '').includes('GO-SUPER-SETUP')) {
       const sid = 'idle-super-' + process.pid;
       out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: [] });
@@ -132,6 +138,32 @@ process.stdin.on('data', (c) => {
     }
   }
 });
+const STREAM_MS = Number(process.env.DC_IDLE_STREAM_MS || 60000);
+const WORDS = 'okuma yolu tek kaynağa bağlanıyor sonra yazma yolu aynı kilide alınıyor testler tek gözlemle doğrulanıyor ve akış sürüyor'.split(' ');
+function stream(sid) {
+  const ev = (event) => out({ type: 'stream_event', session_id: sid, event });
+  out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: [] });
+  ev({ type: 'message_start', message: { id: 'msg_' + sid, role: 'assistant', content: [] } });
+  ev({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+  let text = '';
+  let n = 0;
+  const t0 = Date.now();
+  // ~20 deltas/s of 3 words, a new paragraph every ~90 words: the shape of a long answer.
+  const timer = setInterval(() => {
+    let piece = '';
+    for (let k = 0; k < 3; k++) { piece += WORDS[n % WORDS.length] + ' '; n++; }
+    if (n % 90 < 3) piece += '\\n\\n';
+    text += piece;
+    ev({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: piece } });
+    if (Date.now() - t0 >= STREAM_MS) {
+      clearInterval(timer);
+      ev({ type: 'content_block_stop', index: 0 });
+      ev({ type: 'message_stop' });
+      out({ type: 'assistant', session_id: sid, message: { id: 'msg_' + sid, role: 'assistant', content: [{ type: 'text', text }] } });
+      out({ type: 'result', subtype: 'success', is_error: false, result: text, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: n }, session_id: sid });
+    }
+  }, 50);
+}
 process.stdin.on('end', () => process.exit(0));
 `;
 
@@ -1011,6 +1043,259 @@ async function sectionNotch(server, browser) {
   await ctx.close();
 }
 
+// ─── stream7: seven chats streaming at once (K3 paint, K4 server memory) ────────────────
+/** One V8 heap snapshot of the server over the inspector, written to `file`, and its top
+ *  holders by constructor (self size), plus the largest strings' heads. */
+async function heapSnapshot(inspectPort, file) {
+  const list = await (await fetch(`http://127.0.0.1:${inspectPort}/json/list`)).json();
+  const ws = new WebSocket(list[0].webSocketDebuggerUrl, { maxPayload: 1024 * MB });
+  await new Promise((r, j) => { ws.once('open', r); ws.once('error', j); });
+  let id = 0;
+  const pending = new Map();
+  const fd = openSync(file, 'w');
+  ws.on('message', (d) => {
+    const m = JSON.parse(String(d));
+    if (m.method === 'HeapProfiler.addHeapSnapshotChunk') { writeSync(fd, m.params.chunk); return; }
+    if (m.id && pending.has(m.id)) { pending.get(m.id)(m.result); pending.delete(m.id); }
+  });
+  const send = (method, params = {}) => new Promise((r) => { id += 1; pending.set(id, r); ws.send(JSON.stringify({ id, method, params })); });
+  await send('HeapProfiler.enable');
+  await send('HeapProfiler.collectGarbage');
+  await send('HeapProfiler.takeHeapSnapshot', { reportProgress: false });
+  ws.close();
+  closeSync(fd);
+  return summarizeHeap(JSON.parse(readFileSync(file, 'utf-8')));
+}
+
+/** Server allocation sampling over `ms` — INCLUDING objects GC already collected, so churn
+ *  shows up, not just what survives. Top allocating functions (MB allocated, sampled). */
+async function allocationSampling(inspectPort, ms) {
+  const list = await (await fetch(`http://127.0.0.1:${inspectPort}/json/list`)).json();
+  const ws = new WebSocket(list[0].webSocketDebuggerUrl, { maxPayload: 1024 * MB });
+  await new Promise((r, j) => { ws.once('open', r); ws.once('error', j); });
+  let id = 0;
+  const pending = new Map();
+  ws.on('message', (d) => { const m = JSON.parse(String(d)); if (m.id && pending.has(m.id)) { pending.get(m.id)(m.result); pending.delete(m.id); } });
+  const send = (method, params = {}) => new Promise((r) => { id += 1; pending.set(id, r); ws.send(JSON.stringify({ id, method, params })); });
+  await send('HeapProfiler.enable');
+  await send('HeapProfiler.startSampling', { samplingInterval: 32768, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true });
+  await sleep(ms);
+  const { profile } = await send('HeapProfiler.stopSampling');
+  ws.close();
+  const self = new Map();
+  const incl = new Map();
+  const walk = (node, stack) => {
+    const cf = node.callFrame;
+    const key = `${cf.functionName || '(anon)'} ${(cf.url || '').split('/').pop()}:${cf.lineNumber}`;
+    self.set(key, (self.get(key) || 0) + node.selfSize);
+    let sub = node.selfSize;
+    const next = [...stack, key];
+    for (const c of node.children || []) sub += walk(c, next);
+    if (!stack.includes(key)) incl.set(key, (incl.get(key) || 0) + sub);
+    return sub;
+  };
+  const total = walk(profile.head, []);
+  const mb = (b) => Math.round(b / MB * 10) / 10;
+  return {
+    allocatedMb: mb(total),
+    topSelf: Object.fromEntries([...self].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([k, v]) => [k, mb(v)])),
+    topInclusive: Object.fromEntries([...incl].filter(([k]) => !/^\(root\)|^\(anon\) :-1/.test(k)).sort((a, b) => b[1] - a[1]).slice(0, 25).map(([k, v]) => [k, mb(v)])),
+  };
+}
+
+/** The page's own JS profile (Chromium CDP) over `ms`: top self and inclusive functions. */
+async function pageProfile(ctx, page, ms) {
+  const cdp = await ctx.newCDPSession(page);
+  await cdp.send('Profiler.enable');
+  await cdp.send('Profiler.setSamplingInterval', { interval: 500 });
+  await cdp.send('Profiler.start');
+  await page.waitForTimeout(ms);
+  const { profile } = await cdp.send('Profiler.stop');
+  const byId = new Map(profile.nodes.map((n) => [n.id, n]));
+  const parent = new Map();
+  for (const n of profile.nodes) for (const c of n.children || []) parent.set(c, n.id);
+  const self = new Map();
+  const incl = new Map();
+  const total = profile.endTime - profile.startTime;
+  let idle = 0;
+  profile.samples.forEach((sid, k) => {
+    const dt = profile.timeDeltas[k] || 0;
+    const n = byId.get(sid);
+    const key = (x) => `${x.callFrame.functionName || '(anon)'} ${(x.callFrame.url || '').split('/').pop().split('?')[0]}:${x.callFrame.lineNumber}`;
+    if (n.callFrame.functionName === '(idle)') { idle += dt; return; }
+    self.set(key(n), (self.get(key(n)) || 0) + dt);
+    const seen = new Set();
+    for (let cur = sid; cur !== undefined; cur = parent.get(cur)) {
+      const k2 = key(byId.get(cur));
+      if (seen.has(k2)) continue;
+      seen.add(k2);
+      incl.set(k2, (incl.get(k2) || 0) + dt);
+    }
+  });
+  const pct = (t) => Math.round((t / total) * 1000) / 10;
+  return {
+    busyPct: pct(total - idle),
+    topSelf: Object.fromEntries([...self].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([k, v]) => [k, pct(v)])),
+    topInclusive: Object.fromEntries([...incl].filter(([k]) => !/^\(root\)|^\(program\)|^\(anon\) :-1/.test(k)).sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, v]) => [k, pct(v)])),
+  };
+}
+
+function summarizeHeap(snap) {
+  const f = snap.snapshot.meta.node_fields;
+  const types = snap.snapshot.meta.node_types[0];
+  const N = f.length;
+  const iType = f.indexOf('type'), iName = f.indexOf('name'), iSelf = f.indexOf('self_size');
+  const by = new Map();
+  const bigStrings = [];
+  let total = 0;
+  for (let i = 0; i < snap.nodes.length; i += N) {
+    const type = types[snap.nodes[i + iType]];
+    const size = snap.nodes[i + iSelf];
+    total += size;
+    const name = type === 'object' || type === 'closure' ? snap.strings[snap.nodes[i + iName]] : `(${type})`;
+    by.set(name, (by.get(name) || 0) + size);
+    if ((type === 'string' || type === 'concatenated string' || type === 'sliced string') && size > 256 * 1024) {
+      bigStrings.push({ kb: Math.round(size / 1024), head: String(snap.strings[snap.nodes[i + iName]] || '').slice(0, 90) });
+    }
+  }
+  const mb = (b) => Math.round(b / MB * 10) / 10;
+  return {
+    totalMb: mb(total),
+    top: Object.fromEntries([...by].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([k, v]) => [k, mb(v)])),
+    bigStrings: bigStrings.sort((a, b) => b.kb - a.kb).slice(0, 12),
+  };
+}
+
+/** Native stacks of the browser's WebContent process (macOS `sample`): how many samples sit in
+ *  the text-painting path the CPU RCA found (K3). */
+function sampleWebContent(engine, seconds, file) {
+  if (process.platform !== 'darwin' || engine !== 'webkit') return null;
+  const ps = spawnSync('ps', ['-axo', 'pid=,%cpu=,command='], { encoding: 'utf-8' }).stdout.split('\n');
+  const rows = ps.map((l) => l.trim().match(/^(\d+)\s+([\d.]+)\s+(.*)$/)).filter(Boolean)
+    .filter((m) => /ms-playwright\/webkit/.test(m[3]) && /WebContent/.test(m[3]))
+    .sort((a, b) => Number(b[2]) - Number(a[2]));
+  if (!rows.length) return null;
+  spawnSync('sample', [rows[0][1], String(seconds), '-file', file], { encoding: 'utf-8' });
+  const text = existsSync(file) ? readFileSync(file, 'utf-8') : '';
+  // `sample`'s call graph prints each frame with its INCLUSIVE count first: take the largest
+  // count seen on any line naming the symbol (its outermost occurrence).
+  const inclusive = (sym) => {
+    let best = 0;
+    for (const line of text.split('\n')) {
+      if (!line.includes(sym)) continue;
+      const m = line.match(/^[\s+!:|]*(\d+)\s/);
+      if (m) best = Math.max(best, Number(m[1]));
+    }
+    return best;
+  };
+  const main = text.match(/Thread_\d+\s+DispatchQueue_1: com\.apple\.main-thread[^\n]*\n\s*\+?\s*(\d+)/);
+  return {
+    pid: Number(rows[0][1]),
+    mainThreadSamples: main ? Number(main[1]) : null,
+    updateRendering: inclusive('updateRendering'),
+    textBoxPaint: inclusive('TextBoxPainter'),
+    layoutSimpleText: inclusive('layoutSimpleText'),
+    widthIteratorAdvance: inclusive('WidthIterator::advance'),
+    styleUpdate: inclusive('updateStyleIfNeeded'),
+    layout: inclusive('LocalFrameView::layout'),
+  };
+}
+
+const STREAMERS = 7;
+
+async function sectionStream(server, engine) {
+  const browserType = engine === 'webkit' ? webkit : chromium;
+  const browser = await browserType.launch();
+  const ctx = await browser.newContext({ viewport: { width: 2000, height: 1200 }, colorScheme: 'dark', reducedMotion: 'no-preference' });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e.message || e)));
+  try {
+    await openVault(page, server.base, 'proj');
+    await untilPanes(page, PANES, 90_000);
+    await page.waitForTimeout(Number(process.env.SETTLE_MS || 45_000));
+    await setFocused(page);
+    if (process.env.STREAM_HIDE) {
+      await page.addStyleTag({ content: `${process.env.STREAM_HIDE} { display: none !important; }` });
+    }
+    if (process.env.STREAM_CSS) await page.addStyleTag({ content: process.env.STREAM_CSS });
+    const rssIdle = rssKb(server.srv.pid);
+    const heapIdle = process.env.HEAP === '0' ? null : await heapSnapshot(server.inspect, join(OUT, 'heap-idle.heapsnapshot'));
+
+    // Seven panes start a long answer, each through its own composer.
+    const panes = page.locator('.agent-panes > .agent-pane');
+    let started = 0;
+    for (let i = 0; i < STREAMERS; i += 1) {
+      const input = panes.nth(i).locator('.chat-cmp-input');
+      if (!(await input.count())) continue;
+      await input.first().click();
+      await page.keyboard.type('GO-STREAM');
+      await page.keyboard.press('Enter');
+      started += 1;
+      await page.waitForTimeout(150);
+    }
+    const streamMs = Number(process.env.DC_IDLE_STREAM_MS || 60_000);
+    await page.waitForTimeout(5_000);
+    const streaming = await page.evaluate(() => document.querySelectorAll('.chat-msg-assistant-row[data-done="false"]').length);
+
+    // Frames + RSS over a 20 s window in the middle of the stream.
+    await page.evaluate(() => {
+      window.__dcFrames = [];
+      window.__dcFramesOn = true;
+      let last = performance.now();
+      const f = (t) => { window.__dcFrames.push(t - last); last = t; if (window.__dcFramesOn) requestAnimationFrame(f); };
+      requestAnimationFrame(f);
+    });
+    const rss = [];
+    const sampler = setInterval(() => rss.push(rssKb(server.srv.pid)), 1000);
+    const allocP = process.env.ALLOC === '0' ? null : allocationSampling(server.inspect, 15_000);
+    let jsProfile = null;
+    const sampled = process.env.SAMPLE === '0' ? null : sampleWebContent(engine, 15, join(OUT, `sample-webcontent-${engine}.txt`));
+    if (!sampled) {
+      if (engine === 'chromium') jsProfile = await pageProfile(ctx, page, 15_000);
+      else await page.waitForTimeout(15_000);
+    }
+    const alloc = allocP ? await allocP : null;
+    await page.waitForTimeout(5_000);
+    const frames = await page.evaluate(() => { window.__dcFramesOn = false; return window.__dcFrames; });
+    const heapStreaming = process.env.HEAP === '0' ? null : await heapSnapshot(server.inspect, join(OUT, 'heap-streaming.heapsnapshot'));
+    clearInterval(sampler);
+    // Let every answer finish, then a quiet half minute: what the server keeps afterwards.
+    // Started ~25 s ago (plus the snapshot): waiting one more stream length ends every answer
+    // and leaves >= 25 s of quiet before the after-reading.
+    await page.waitForTimeout(streamMs);
+    const rssAfter = [];
+    for (let i = 0; i < 10; i += 1) { rssAfter.push(rssKb(server.srv.pid)); await sleep(1000); }
+    const heapAfter = process.env.HEAP === '0' ? null : await heapSnapshot(server.inspect, join(OUT, 'heap-after.heapsnapshot'));
+
+    const sorted = [...frames].sort((a, b) => a - b);
+    const pick = (q) => Math.round(sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))] || 0);
+    const mb = (xs) => xs.filter(Boolean).map((k) => Math.round(k / 1024));
+    const during = mb(rss);
+    const after = mb(rssAfter);
+    numbers[`stream7_${engine}`] = {
+      started, streaming, hide: process.env.STREAM_HIDE || null, css: process.env.STREAM_CSS || null,
+      frames: { n: frames.length, fps: Math.round(frames.length / 20), p50: pick(0.5), p95: pick(0.95), over50: frames.filter((d) => d > 50).length },
+      webcontent: sampled,
+      rssIdleMb: Math.round(rssIdle / 1024),
+      rssStreamingMb: { min: Math.min(...during), max: Math.max(...during) },
+      rssAfterMb: { min: Math.min(...after), max: Math.max(...after) },
+      heapIdle, heapStreaming, heapAfter,
+      serverAlloc15s: alloc, pageJs: jsProfile,
+      pageErrors: errors.slice(0, 5),
+    };
+    console.log(`      stream7 ${engine}: ${JSON.stringify({ ...numbers[`stream7_${engine}`], heapIdle: heapIdle?.totalMb, heapStreaming: heapStreaming?.totalMb, heapAfter: heapAfter?.totalMb, serverAlloc15s: alloc?.allocatedMb, pageJs: jsProfile?.busyPct })}`);
+    if (alloc) console.log(`      server alloc 15 s: ${JSON.stringify(alloc)}`);
+    if (jsProfile) console.log(`      page js: ${JSON.stringify(jsProfile)}`);
+    if (heapStreaming) console.log(`      heap top (streaming): ${JSON.stringify(heapStreaming.top)}`);
+    if (heapAfter) console.log(`      heap top (after): ${JSON.stringify(heapAfter.top)}`);
+    check('stream7 seven answers streamed at once', streaming >= STREAMERS, `${streaming}/${STREAMERS}`);
+  } finally {
+    await ctx.close();
+    await browser.close();
+  }
+}
+
 function readBefore() {
   const p = join(REPO, 'tmp', 'verify-idle-load', 'before', 'numbers.json');
   if (!existsSync(p)) return null;
@@ -1051,6 +1336,7 @@ try {
     await browser.close();
   }
   if (SECTIONS.has('g')) for (const e of ENGINES) await sectionDrag(server, e);
+  if (SECTIONS.has('stream7')) for (const e of (process.env.STREAM_ENGINES || 'webkit').split(',')) await sectionStream(server, e.trim());
 } catch (e) {
   console.error(`[idle-load] aborted: ${e.stack || e}`);
   exitCode = 2;

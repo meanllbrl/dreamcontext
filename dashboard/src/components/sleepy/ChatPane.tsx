@@ -16,7 +16,7 @@ import { isJudgeRole } from '../../lib/agentRoles';
 import type { QuestLineage, QuestView } from '../../lib/quest';
 import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
-  nextStickToBottom, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent,
+  nextStickToBottom, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent, isStreamGrowth,
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
   remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem, MIN_TOOL_RUN,
   countCards, headForCards, noticeCut, WINDOW_TAIL_CARDS, WINDOW_STEP_CARDS, WINDOW_MAX_ENTRIES,
@@ -1563,7 +1563,18 @@ export function ChatPane({
   // scroll events fire BEFORE ResizeObserver callbacks, so the observer's re-pin can only
   // ever clean up after a wrong decision has been made. It also drops the frame of visible
   // lag behind every streamed token.
-  useLayoutEffect(() => { if (stickRef.current) scrollToBottom(); }, [conv, scrollToBottom]);
+  //
+  // EXCEPT a commit that only grew a streaming text (see isStreamGrowth): growth cannot clamp,
+  // so the ResizeObserver below re-pins it after the browser's own layout, once per frame. The
+  // synchronous re-pin read `clientHeight` per token per pane, a forced full style + layout each
+  // time — with seven chats streaming, a third of the page's JS time (CPU RCA K3).
+  const pinnedConvRef = useRef(conv);
+  useLayoutEffect(() => {
+    const prev = pinnedConvRef.current;
+    pinnedConvRef.current = conv;
+    if (!stickRef.current || isStreamGrowth(prev, conv)) return;
+    scrollToBottom();
+  }, [conv, scrollToBottom]);
 
   // ── Sub-agent rail: the group card, pinned once you have scrolled past it ────────────
   //
