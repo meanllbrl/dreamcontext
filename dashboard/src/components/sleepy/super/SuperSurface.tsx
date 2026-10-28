@@ -35,6 +35,7 @@ import { NewSessionButton } from './NewSessionButton';
 import { MAX_KEPT_FRAMES, MAX_LIVE_BROWSERS, MAX_LIVE_IFRAMES, autoFrames, keptWebIds, liveWebIds, touchLru, dropFromLru } from './webBudget';
 import { LIGHT_POLL_FACTOR, pollMs, useWindowActivity } from '../../../lib/windowActivity';
 import { useStageCues, withGhosts } from './useStageCues';
+import { deviceAspect, isWebDevice, useWebDevices } from '../../../lib/webDevice';
 import './SuperSurface.css';
 import './superTone.css';
 import './superCentre.css';
@@ -239,12 +240,18 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // ── The plan ──
   // A live job's card is the last to be drawn in Others and stays beside a page (superLayout).
   // Its key changes only when a child's liveness does, so the plan is not redone per frame.
+  // The device width the owner picked on each web card: side by side, the card takes its shape.
+  const devicesKey = useWebDevices();
   const liveJobsKey = state.containers.filter((c) => c.kind === 'chat'
     && childIsLive(state, c.ref, props.sessionFor(c.ref) ? chatStatus(props.sessionFor(c.ref)).kind : null)).map((c) => c.id).join(',');
   const items = useMemo(() => {
     const live = new Set(liveJobsKey ? liveJobsKey.split(',') : []);
-    return stageItems(state.containers, state.groups, view, (c) => live.has(c.id));
-  }, [state.containers, state.groups, view, liveJobsKey]);
+    const devices = new Map(devicesKey ? devicesKey.split(',').map((e) => e.split('=') as [string, string]) : []);
+    return stageItems(state.containers, state.groups, view, (c) => live.has(c.id), (c) => {
+      const d = devices.get(c.id);
+      return isWebDevice(d) ? deviceAspect(d) : undefined;
+    });
+  }, [state.containers, state.groups, view, liveJobsKey, devicesKey]);
   // The agenda minimised to its corner pill (owner 2026-10-22 23:44): not a card on the stage
   // (stageItems leaves it out) unless the view shows it side by side or presented.
   const agendaPill = useMemo(() => {
@@ -275,8 +282,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const exitPatch = (): LayoutPatch => ({ exit: { cards: presented, closing: props.pendingCloses() } });
   const queueUp = !!queueHead(state);
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, asking: ownerAsk, layoutChoices: layoutChoices.length, queueUp, narrowPx, centreMin }),
-    [items, view, size, pinned, props.terminals.length, agendaPill, selected, ownerAsk, layoutChoices.length, queueUp, narrowPx, centreMin],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, asking: ownerAsk, layoutChoices: layoutChoices.length, queueUp, narrowPx, centreMin, recent: topped }),
+    [items, view, size, pinned, props.terminals.length, agendaPill, selected, ownerAsk, layoutChoices.length, queueUp, narrowPx, centreMin, topped],
   );
   cuesPlanRef.current = plan;
   const planRef = useRef(plan);
@@ -329,7 +336,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   useEffect(() => {
     // A panel whose group left the stage (dissolved, put in Others, a view change) closes.
     if (!openGroup) return;
-    if (openGroup === 'others' ? !plan.others.length : plan.cards[openGroup]?.where !== 'float') setOpenGroup(null);
+    if (openGroup === 'others' ? !plan.others.length : openGroup === 'more' ? !plan.more : plan.cards[openGroup]?.where !== 'float') setOpenGroup(null);
   }, [openGroup, plan]);
   const closePanel = useCallback(() => setOpenGroup(null), []);
   // The panel a tile click opened (its double-click may finish on it), not one reopened by "back to the group".
@@ -360,7 +367,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const timer = setInterval(look, Math.min(pollMs(LOOK_RENEW_MS), LOOK_RENEW_MS * LIGHT_POLL_FACTOR));
     return () => { clearInterval(timer); if (last.length) layoutRef.current({ touch: last }); };
   };
-  useEffect(() => lookAt(openGroup !== 'others' ? openGroup : null), [openGroup]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => lookAt(openGroup !== 'others' && openGroup !== 'more' ? openGroup : null), [openGroup]); // eslint-disable-line react-hooks/exhaustive-deps
   // A stage that is no longer on screen (the overlay folded by a click or the hotkey) closes its
   // panel: a hidden panel would keep Escape and focus for the whole app.
   useEffect(() => { if (!props.visible) setOpenGroup(null); }, [props.visible]);
@@ -747,7 +754,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       onMoveNote={props.onMoveNote}
     />
   );
-  const othersItems: OthersItem[] = plan.others.map((id) => {
+  const pillItem = (id: string): OthersItem => {
     const g = groupsById.get(id);
     if (g) {
       const gs = groupStatus(membersOf(g));
@@ -757,7 +764,10 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const st = c.kind === 'chat' ? chatStatus(props.sessionFor(c.ref)).kind : null;
     const tone = st ? toneOfStatus(st) : null;
     return { id, title: titleOf(c), kind: c.kind, status: tone === null ? undefined : tone === 'starting' ? 'idle' : tone };
-  });
+  };
+  const othersItems: OthersItem[] = plan.others.map(pillItem);
+  // The live jobs the rail's one column cannot hold, beside a page or a presentation.
+  const moreItems: OthersItem[] = (plan.more?.ids ?? []).filter((id) => byId.has(id)).map(pillItem);
 
   return (
     <div
@@ -936,16 +946,19 @@ export function SuperSurface(props: SuperSurfaceProps) {
       )}
       {agendaPill && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
       <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={() => setOpenGroup((o) => (o === 'others' ? null : 'others'))} stackRef={stackRef} />
+      {plan.more && <OthersStack more items={moreItems} rect={plan.more.rect} open={openGroup === 'more'} onToggle={() => setOpenGroup((o) => (o === 'more' ? null : 'more'))} />}
       {openGroup && (() => {
+        // The rail's "more" tile opens like Others (its cards are live jobs: no close-all there).
+        const moreOpen = openGroup === 'more';
         const system = openGroup === 'others';
-        const g = system ? undefined : groupsById.get(openGroup);
-        const ids = system ? plan.others : (g?.cards ?? []).filter((id) => byId.has(id));
-        const anchor = system ? plan.othersRect : plan.cards[openGroup]?.rect;
-        if (!anchor || !ids.length || (!system && !g)) return null;
+        const g = system || moreOpen ? undefined : groupsById.get(openGroup);
+        const ids = system ? plan.others : moreOpen ? moreItems.map((i) => i.id) : (g?.cards ?? []).filter((id) => byId.has(id));
+        const anchor = system ? plan.othersRect : moreOpen ? plan.more?.rect : plan.cards[openGroup]?.rect;
+        if (!anchor || !ids.length || (!system && !moreOpen && !g)) return null;
         return (
           <GroupPanel
             key={openGroup}
-            title={g ? g.name : t('super.others.name')}
+            title={g ? g.name : t(moreOpen ? 'super.more.name' : 'super.others.name')}
             ids={ids}
             anchor={anchor}
             stage={size}
@@ -955,7 +968,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
             closableCards={system ? closableIn(othersGroupIds).length : undefined}
             onCloseGroups={system ? () => closeGroups(othersGroupIds) : undefined}
             closeOf={system ? panelCloseFor : undefined}
-            sessionOf={system ? panelSessionOf : undefined}
+            sessionOf={system || moreOpen ? panelSessionOf : undefined}
             onCloseItem={system ? closeFromPanel : undefined}
             onOpenItem={openFromPanel}
             onPressItem={(e, id) => onPressPanelItem(e, id, openGroup)}
@@ -965,6 +978,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
             itemTestId={system ? 'super-others-item' : 'super-group-item'}
             returnFocus={returnFocus}
             hidden={panelDrag}
+            upLeft={moreOpen}
+            hint={moreOpen ? t('super.more.hint') : undefined}
           />
         );
       })()}

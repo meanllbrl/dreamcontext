@@ -116,8 +116,9 @@ export function panelCols(n: number, stageWidth: number): number {
 }
 
 /** The panel a group (or Others) opens into: its rect on the stage, anchored to the tile it grew
- *  from (a group: over its tile; Others: above its stack, right-aligned), always inside the stage. */
-export function panelRect(anchor: Rect, n: number, stage: { width: number; height: number }, system: boolean): Rect {
+ *  from (a group: over its tile; Others: above its stack, right-aligned; the rail's "more" tile,
+ *  `upLeft`: above it, left-aligned), always inside the stage. */
+export function panelRect(anchor: Rect, n: number, stage: { width: number; height: number }, system: boolean, upLeft = false): Rect {
   const { TILE: T, MARGIN } = STAGE;
   const GAP = PANEL_GAP;
   const cols = panelCols(n, stage.width);
@@ -125,10 +126,11 @@ export function panelRect(anchor: Rect, n: number, stage: { width: number; heigh
   const width = cols * T + (cols - 1) * GAP + 2 * GAP;
   // Taller than the room it has (the stage, or for Others the space above its stack): the panel
   // stops there and its grid scrolls inside it, so the stack never covers a row.
-  const room = (system ? anchor.y - 12 : stage.height - MARGIN) - MARGIN;
+  const above = system || upLeft;
+  const room = (above ? anchor.y - 12 : stage.height - MARGIN) - MARGIN;
   const height = Math.min(48 + rows * T + (rows - 1) * GAP + GAP, Math.max(48 + T + GAP, room));
   let x = system ? anchor.x + anchor.width - width : anchor.x;
-  let y = system ? anchor.y - height - 12 : anchor.y + (anchor.height - height) / 2;
+  let y = above ? anchor.y - height - 12 : anchor.y + (anchor.height - height) / 2;
   x = Math.min(Math.max(x, MARGIN), Math.max(MARGIN, stage.width - MARGIN - width));
   y = Math.min(Math.max(y, MARGIN), Math.max(MARGIN, stage.height - MARGIN - height));
   return { x, y, width, height };
@@ -143,7 +145,7 @@ export function panelRect(anchor: Rect, n: number, stage: { width: number; heigh
  * and focus goes back to the tile. A group's "Open all" (or a double-click on its tile, whose second
  * press lands here) shows every card at once (owner 2026-10-27).
  */
-export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngroup, closableCards, onCloseGroups, closeOf, sessionOf, onCloseItem, onOpenItem, onPressItem, onPresentAll, doubleOpens = false, renderItem, itemTestId, returnFocus, hidden = false }: {
+export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngroup, closableCards, onCloseGroups, closeOf, sessionOf, onCloseItem, onOpenItem, onPressItem, onPresentAll, doubleOpens = false, renderItem, itemTestId, returnFocus, hidden = false, upLeft = false, hint }: {
   title: string;
   ids: readonly string[];
   anchor: Rect;
@@ -171,11 +173,15 @@ export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngro
   returnFocus: () => void;
   /** A card is being dragged out of it: still mounted (the item holds the pointer), not drawn. */
   hidden?: boolean;
+  /** Opens above its tile, left-aligned (the rail's "more" tile, owner 2026-10-28). */
+  upLeft?: boolean;
+  /** The line under the title, when it is neither a group's nor Others'. */
+  hint?: string;
 }) {
   const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement>(null);
   const scrimRef = useRef<HTMLDivElement>(null);
-  const rect = panelRect(anchor, ids.length, stage, system);
+  const rect = panelRect(anchor, ids.length, stage, system, upLeft);
   const [closeAsk, setCloseAsk] = useState(false);
   // The tile whose × asks its question now (one at a time).
   const [itemAsk, setItemAsk] = useState<string | null>(null);
@@ -273,7 +279,7 @@ export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngro
           <span className="super-tile-glyph" aria-hidden>{system ? '⧉' : '▤'}</span>
           <span className="super-group-panel-title">{title}</span>
           <span className="super-tile-count">{ids.length}</span>
-          <span className="super-group-panel-hint">{system ? t('super.others.hint') : t('super.group.hint')}</span>
+          <span className="super-group-panel-hint">{hint ?? (system ? t('super.others.hint') : t('super.group.hint'))}</span>
           {!system && onUngroup && (
             <button type="button" className="super-group-panel-btn" data-testid="super-group-panel-ungroup" onClick={() => { onUngroup(); returnFocus(); }}>
               {t('super.group.ungroup')}

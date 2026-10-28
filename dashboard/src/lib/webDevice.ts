@@ -16,6 +16,15 @@ export type WebDevice = 'phone' | 'tablet' | 'desktop';
 export const WEB_DEVICES: readonly WebDevice[] = ['phone', 'tablet', 'desktop'];
 
 export const DEVICE_WIDTH: Record<WebDevice, number> = { phone: 390, tablet: 820, desktop: 1440 };
+/** The screen each width stands for (a 390x844 phone, an 820x1180 tablet, a 1440x900 laptop):
+ *  on the Super stage a card shown side by side takes this shape (owner 2026-10-28: "the device
+ *  switch changes the CARD, like presentation mode", superLayout's fitCard). */
+export const DEVICE_HEIGHT: Record<WebDevice, number> = { phone: 844, tablet: 1180, desktop: 900 };
+
+/** A device's width / height. */
+export function deviceAspect(device: WebDevice): number {
+  return DEVICE_WIDTH[device] / DEVICE_HEIGHT[device];
+}
 
 export interface DeviceFit {
   /** The viewport the page is laid out in, px. */
@@ -55,6 +64,21 @@ export function withDevice(store: Store, id: string, device: WebDevice | null): 
 }
 
 const listeners = new Set<() => void>();
+
+/** Every remembered card's device, by card id (the stage plans side by side by them); follows
+ *  every set. A stable string key, so a re-render that changed nothing changes nothing. */
+export function useWebDevices(): string {
+  const { vault } = useVault();
+  const read = useCallback(() => readStore(vault).map(([k, d]) => `${k}=${d}`).sort().join(','), [vault]);
+  const [key, setKey] = useState(read);
+  useEffect(() => {
+    setKey(read());
+    const l = () => setKey(read());
+    listeners.add(l);
+    return () => { listeners.delete(l); };
+  }, [read]);
+  return key;
+}
 
 /** A card's device width, read and set; every view of the same card follows. `id` null: kept in
  *  memory only (nothing to remember it by). */

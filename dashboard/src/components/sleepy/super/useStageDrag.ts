@@ -209,7 +209,8 @@ export function useStageDrag(depsRef: RefObject<StageDragDeps | null>) {
         const p = planRef.current;
         const h = drop ? hotAt(p, x - origin.left, y - origin.top) : null;
         const tg = drop && !h ? targetAt(x, y) : null;
-        const leave = from !== 'others' ? { leave: [id] } : {};
+        // A card out of Others or the rail's "more" tile (owner 2026-10-28) is in no group: nothing to leave.
+        const leave = from !== 'others' && from !== 'more' ? { leave: [id] } : {};
         if (drop && h === 'centre') actions.onAskAbout(id);
         else if (drop && h === 'others') { if (from !== 'others') onLayout({ ...leave, cards: [{ id, place: 'others' }] }); }
         else if (drop && tg) groupOnto(id, tg);

@@ -18,33 +18,36 @@ export interface OthersItem {
  * opens the same panel a group opens (GroupPanel, drawn by the surface); the dots are the first
  * few cards' states, the count how many it holds.
  */
-export function OthersStack({ items, rect, open, onToggle, stackRef }: {
+export function OthersStack({ items, rect, open, onToggle, stackRef, more = false }: {
   items: readonly OthersItem[];
   rect: Rect;
   open: boolean;
   onToggle: () => void;
-  stackRef: RefObject<HTMLButtonElement | null>;
+  stackRef?: RefObject<HTMLButtonElement | null>;
+  /** The rail's temporary "more" tile beside a page or a presentation (owner 2026-10-28): the same
+   *  pill, its own name, its live jobs' dots; it lives only as long as that view. */
+  more?: boolean;
 }) {
   const { t } = useI18n();
   if (!items.length) return null;
   const asking = items.some((i) => i.status === 'asking');
   return (
     <div
-      className="super-others"
-      data-testid="super-others"
+      className={more ? 'super-others super-others--more' : 'super-others'}
+      data-testid={more ? 'super-more' : 'super-others'}
       data-open={open ? 'true' : undefined}
       style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
     >
       <StagePill
         buttonRef={stackRef}
-        testId="super-others-stack"
+        testId={more ? 'super-more-stack' : 'super-others-stack'}
         lead={<span className="super-others-sheets" aria-hidden><span /><span /><span /></span>}
-        name={t('super.others.name')}
+        name={t(more ? 'super.more.name' : 'super.others.name')}
         dots={items.slice(0, 4).map((it) => ({ id: it.id, status: it.status }))}
         count={items.length}
         asking={asking}
         expanded={open}
-        label={t('super.others.label').replace('{n}', String(items.length))}
+        label={t(more ? 'super.more.label' : 'super.others.label').replace('{n}', String(items.length))}
         onClick={onToggle}
       />
     </div>

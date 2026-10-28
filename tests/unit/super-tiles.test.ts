@@ -211,7 +211,7 @@ describe('the surface wiring (source rules)', () => {
     // A card brought out of Others onto a tile is no longer put aside.
     expect(surface).toMatch(/byId\.get\(held\)\?\.place === 'others' \? \{ cards: \[\{ id: held, place: 'float' as const \}\] \} : \{\}/);
     // Dragged out of a group, a card leaves it wherever it lands.
-    expect(surface).toMatch(/const leave = from !== 'others' \? \{ leave: \[id\] \} : \{\};/);
+    expect(surface).toMatch(/const leave = from !== 'others' && from !== 'more' \? \{ leave: \[id\] \} : \{\};/);
   });
 
   it('a stage that leaves the screen closes its panel, so a hidden panel never keeps Escape (end review)', () => {
