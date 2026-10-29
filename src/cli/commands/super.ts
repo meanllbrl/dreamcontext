@@ -78,6 +78,19 @@ function print(r: CallResult): void {
 }
 
 const run = (verb: string, body: Record<string, unknown>) => callSuper(verb, body).then(print);
+
+/** What each `super open` kind takes as its ref (2026-10-29: `board <whiteboard slug>` drew a dead card). */
+export const OPEN_REF_HELP = [
+  'ref per kind:',
+  '  whiteboard  a slug from `dreamcontext whiteboard list` (a dreamcontext whiteboard: always this kind, never board)',
+  '  board       a project .excalidraw.md file OUTSIDE _dream_context/whiteboards/, project-relative; it must exist',
+  '  chat, browser  one of your children\'s session ids',
+  '  team        an AI Team job id (`super state`)',
+  '  task, knowledge, insight  its slug',
+  '  web         an https URL, a dev server on localhost, or a project file',
+  '  image, pdf, video  a project-relative file path',
+  '  agenda      no ref: brings back the owner\'s agenda card (Waiting on you, Now, Done, Up next)',
+].join('\n');
 const usage = (message: string) => print({ status: 400, body: { error: 'invalid_args', message } });
 
 const KINDS = 'chat | insight | task | knowledge | whiteboard | board | web | image | pdf | video | browser | team | agenda';
@@ -119,7 +132,7 @@ export function registerSuperCommand(program: Command): void {
     });
 
   s.command('open <kind> [refs...]')
-    .description(`Open floating cards: ${KINDS}. ref = a session id (chat, browser), a team job id (team), a slug, a URL (https, a dev server on localhost) or a project path (image, pdf, video: a project file); up to 12 refs of one kind at once. \`open agenda\` (no ref) brings back the owner's agenda card (Waiting on you, Now, Done, Up next)`)
+    .description(`Open floating cards: ${KINDS}. Up to 12 refs of one kind at once.\n${OPEN_REF_HELP}`)
     .option('--group <name>', 'Put every card opened here in ONE group of this name (a set the owner asked to see)')
     .option('--no-group', 'Images, PDFs and videos only: leave them as separate cards (they group themselves: 2+ in one call are a new group; one within 2 minutes of the last of its kind joins its group)')
     .option('--shape <shape>', 'small | medium | large | wide (the card\'s size, 1x1 2x1 2x2 3x2 tiles; a size the owner chose is kept), or square | tall (recorded only)')

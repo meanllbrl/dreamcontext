@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop } from './agent-spawn-shared.js';
 import {
@@ -50,7 +50,8 @@ import { DEFAULT_READ_BYTES, readLastReply, readTail, renderTail } from '../../l
 import { expandChildRefs } from '../../lib/super/child-ref.js';
 import { validateSuperWebUrl } from '../../lib/super/web-url.js';
 import { ownedLoopbackPorts } from '../owned-ports.js';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
+import { BOARD_EXT_RE, boardRerouteNote, whiteboardSlugOfBoardRef } from '../../lib/super/board-ref.js';
 import { insightPath } from '../../lib/lab/store.js';
 import { DEFAULT_WHITEBOARD, ensureDefaultWhiteboard, listWhiteboards, resolveWhiteboardPath } from '../../lib/whiteboards/store.js';
 import { noteDismissed } from '../../lib/super/proactive.js';
@@ -282,8 +283,12 @@ function refFor(c: Pick<SuperCaller, 'state'>, kind: ContainerKind, raw: unknown
       // The window's own rule for a whiteboard's slug (`whiteboardPath` in SuperContainer.tsx).
       return /^[a-z0-9][a-z0-9-]{0,80}$/.test(ref) ? { ref } : { error: 'a whiteboard container names its slug (lowercase letters, digits and dashes)' };
     case 'board':
-      if (!SLUG_REF_RE.test(ref) || ref.split('/').some((s) => s === '..' || s === '.' || s === '')) return { error: 'a board container names a board file, project-relative (no ".." steps)' };
-      return { ref };
+      // Any project-relative path (a `_dream_context/…` or `.hidden/…` one too, refused by the
+      // slug rule until 2026-10-29), ending in a board extension.
+      if (ref.length > 1024 || ref.startsWith('/') || ref.includes('\\') || ref.split('/').some((s) => s === '..' || s === '.' || s === '')) {
+        return { error: 'a board container names a board file, project-relative (no ".." steps)' };
+      }
+      return BOARD_EXT_RE.test(ref) ? { ref } : { error: 'a board is a .excalidraw.md file (a dreamcontext whiteboard opens with `super open whiteboard <slug>`)' };
     case 'task':
       // Any slug `tasks create` can write (task-slug.ts), not the generic 200-character ref.
       return TASK_SLUG_RE.test(ref) ? { ref } : { error: 'a task container names its slug (lowercase letters, digits and dashes)' };
@@ -365,6 +370,11 @@ function tooMany(res: ServerResponse, s: Pick<SuperState, 'containers' | 'groups
 /** An insight the vault really has (a card naming none would draw an empty tile). */
 function insightExists(contextRoot: string, slug: string): boolean {
   try { return existsSync(insightPath(contextRoot, slug)); } catch { return false; }
+}
+
+/** A regular file under the project root (what `/agent/file` serves a board card from). */
+function projectFileExists(projectRoot: string, rel: string): boolean {
+  try { return statSync(join(projectRoot, rel)).isFile(); } catch { return false; }
 }
 
 /** A whiteboard the vault really has: its card reads `whiteboards/<slug>/<slug>.excalidraw.md`,
@@ -908,13 +918,27 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // ONE named group (`group`): the owner asked to see a set of things (S8, AC11b). All or
     // nothing, in one locked write. Only NEW refs need room: a ref already on the record is
     // the same card (brought back from Others), and a group is one floating item.
-    const kind = str(b.kind);
+    let kind = str(b.kind);
     if (!kind || !(CONTAINER_KINDS as readonly string[]).includes(kind)) { refuse(res, 400, 'invalid_args', `kind must be one of ${CONTAINER_KINDS.join(' | ')}`); return; }
     const look = shapeOrSize(b);
     if ('error' in look) { refuse(res, 400, 'invalid_args', look.error); return; }
     const { shape: shapeArg, size: sizeArg } = look;
-    const rawRefs: unknown[] = Array.isArray(b.refs) ? b.refs : [b.ref];
+    let rawRefs: unknown[] = Array.isArray(b.refs) ? b.refs : [b.ref];
     if (!rawRefs.length || rawRefs.length > MAX_OPEN_REFS) { refuse(res, 400, 'invalid_args', `name 1 to ${MAX_OPEN_REFS} refs of one kind`); return; }
+    // A whiteboard named through `board` (its slug, folder or file) opens as the whiteboard it
+    // is (board-ref.ts, 2026-10-29: a `board <slug>` card read "not in this project yet" forever).
+    let note: string | undefined;
+    if (kind === 'board') {
+      const slugs = rawRefs.map((r) => (typeof r === 'string' ? whiteboardSlugOfBoardRef(r, basename(c.who.contextRoot)) : null));
+      if (slugs.every((x): x is string => !!x)) {
+        kind = 'whiteboard';
+        rawRefs = slugs;
+        note = boardRerouteNote(slugs);
+      } else if (slugs.some(Boolean)) {
+        refuse(res, 400, 'invalid_ref', 'whiteboards and board files mixed in one open: open the whiteboards with `super open whiteboard <slug>` and the files with `super open board <path>`');
+        return;
+      }
+    }
     // `--titles "a|b|c"`: one label per ref, in order (an empty one leaves that card's label).
     const rawTitles: unknown[] = Array.isArray(b.titles) ? b.titles : [];
     if (rawTitles.length > rawRefs.length || rawTitles.some((t) => typeof t !== 'string')) { refuse(res, 400, 'invalid_args', 'titles: at most one label per ref, in the refs\' order'); return; }
@@ -926,7 +950,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       if (kind === 'insight' && !insightExists(c.who.contextRoot, r.ref)) { refuse(res, 404, 'unknown_insight', `no insight named ${r.ref} (\`dreamcontext insight list\`)`); return; }
       // The default board is made on first ask, as the whiteboards page makes it.
       if (kind === 'whiteboard' && r.ref === DEFAULT_WHITEBOARD.slug) await ensureDefaultWhiteboard(c.who.contextRoot).catch(() => {});
-      if (kind === 'whiteboard' && !whiteboardExists(c.who.contextRoot, r.ref)) { refuse(res, 404, 'unknown_whiteboard', unknownWhiteboardMessage(c.who.contextRoot, r.ref)); return; }
+      if (kind === 'whiteboard' && !whiteboardExists(c.who.contextRoot, r.ref)) { refuse(res, 404, 'unknown_whiteboard', (note ? 'read as a whiteboard: ' : '') + unknownWhiteboardMessage(c.who.contextRoot, r.ref)); return; }
+      // A board file that is not there would draw a card retrying "not in this project yet" forever.
+      if (kind === 'board' && !projectFileExists(dirname(c.who.contextRoot), r.ref)) {
+        refuse(res, 404, 'unknown_board', `no file ${r.ref} in this project: a board card draws an existing .excalidraw.md file, project-relative (a dreamcontext whiteboard opens with \`super open whiteboard <slug>\`)`);
+        return;
+      }
       if (!refs.includes(r.ref)) refs.push(r.ref);
       const t = oneLine(String(rawTitles[i] ?? '')).slice(0, MAX_TITLE).trim();
       if (t && !titles.has(r.ref)) titles.set(r.ref, t);
@@ -1084,7 +1113,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const frame = stageMediaFrame(made.map((k) => ({ ref: k.ref, ...(k.title ? { title: k.title } : {}) })));
       if (frame) findLiveChat(state.session)?.mirrorFrame?.(frame);
     }
-    ok(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(group && autoGrouped ? { autoGroup: true } : {}), ...(kept.length ? { kept } : {}), view: state.view });
+    ok(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(group && autoGrouped ? { autoGroup: true } : {}), ...(kept.length ? { kept } : {}), view: state.view, ...(note ? { kind, note } : {}) });
   },
 
   shape: async (c, b, res) => {

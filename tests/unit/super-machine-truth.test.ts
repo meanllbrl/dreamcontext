@@ -160,7 +160,7 @@ describe('notes never send RAM or swap pressure to disk cleanup', () => {
     // 2026-10-23 for a child's pictures (`--for <child>`), +1,200 on 2026-10-23 for the agenda
     // About and reply links, +380 on 2026-10-24 for one section per message and a choice asked in
     // the card, never only in the text (measured +377), +770 on 2026-10-24 for several references in
-    // one message, a section per part (measured +768), +100 on 2026-10-24 for heat limiting heavy steps, +400 on 2026-10-25 for a verify script run once per wave.
-    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(19_500);
+    // one message, a section per part (measured +768), +100 on 2026-10-24 for heat limiting heavy steps, +400 on 2026-10-25 for a verify script run once per wave, +100 on 2026-10-29 for a whiteboard opening as `whiteboard`, never `board`.
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(19_600);
   });
 });

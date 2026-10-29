@@ -1324,7 +1324,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 14;
+export const SUPER_BRIEF_REV = 15;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */
@@ -1339,6 +1339,8 @@ export const SUPER_SHOW_SECTION = `## Show, don't tell
   moved to make room: never name or count what went to Others, never say that nothing was
   closed. Only when the record itself is full (\`limit: record\`), open what fits and say in
   one sentence how many did not.
+- A dreamcontext whiteboard opens with \`super open whiteboard <slug>\`, never \`board\` (a
+  project .excalidraw.md file).
 - A set of pictures is always ONE group: \`super open image <a> <b> …\` in one call (the server
   groups them; a picture opened within 2 minutes of the last joins its group). \`--no-group\` only
   when the owner wants them apart. Pictures of a child's work: always \`--for <child>\`, so they

@@ -3266,7 +3266,7 @@
     },
     {
       "path": "super open",
-      "desc": "Open floating cards: chat | insight | task | knowledge | whiteboard | board | web | image | pdf | video | browser | team | agenda. ref = a session id (chat, browser), a team job id (team), a slug, a URL (https, a dev server on localhost) or a project path (image, pdf, video: a project file); up to 12 refs of one kind at once. `open agenda` (no ref) brings back the owner's agenda card (Waiting on you, Now, Done, Up next)",
+      "desc": "Open floating cards: chat | insight | task | knowledge | whiteboard | board | web | image | pdf | video | browser | team | agenda. Up to 12 refs of one kind at once.\nref per kind:\n  whiteboard  a slug from `dreamcontext whiteboard list` (a dreamcontext whiteboard: always this kind, never board)\n  board       a project .excalidraw.md file OUTSIDE _dream_context/whiteboards/, project-relative; it must exist\n  chat, browser  one of your children's session ids\n  team        an AI Team job id (`super state`)\n  task, knowledge, insight  its slug\n  web         an https URL, a dev server on localhost, or a project file\n  image, pdf, video  a project-relative file path\n  agenda      no ref: brings back the owner's agenda card (Waiting on you, Now, Done, Up next)",
       "args": [
         "<kind>",
         "[refs...]"

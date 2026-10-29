@@ -168,9 +168,12 @@ describe('card verbs (AC4, plan-r8 F2)', () => {
     writeFileSync(insightPath(root, 'daily-signups'), '---\nname: Daily signups\n---\n');
     // So does a whiteboard card (owner 2026-10-27).
     createWhiteboard(root, 'Roadmap');
+    // A board card names a project .excalidraw.md file that exists (2026-10-29).
+    mkdirSync(join(dirname(root), 'docs'), { recursive: true });
+    writeFileSync(join(dirname(root), 'docs', 'growth.excalidraw.md'), '# board');
     const cases: Array<[string, string]> = [
       ['chat', 'c1'], ['insight', 'daily-signups'], ['task', 'fix-login'], ['knowledge', 'architecture/overview'],
-      ['whiteboard', 'roadmap'], ['board', 'growth'], ['web', 'https://example.com/page'], ['image', 'assets/shot.png'],
+      ['whiteboard', 'roadmap'], ['board', 'docs/growth.excalidraw.md'], ['web', 'https://example.com/page'], ['image', 'assets/shot.png'],
     ];
     for (const [kind, ref] of cases) {
       const r = await verb('open', { kind, ref, title: kind });
@@ -482,6 +485,50 @@ describe('jarvis r9: many refs at once, one group, the cue, the owner\'s "no"', 
     expect((await verb('open', { kind: 'whiteboard', ref: 'growth-plan' })).status).toBe(200);
     // The default board is made on first ask, never refused.
     expect((await verb('open', { kind: 'whiteboard', ref: 'control-panel' })).status).toBe(200);
+  });
+
+  // 2026-10-29: `super open board ana-sayfa-tasarimlari` drew a card that read "not in this
+  // project yet" forever, and the whiteboard's own path was refused as invalid_ref.
+  it('a whiteboard named through board opens as a whiteboard, with a note', async () => {
+    makeVault();
+    createWhiteboard(root, 'Growth Plan');
+    for (const ref of ['growth-plan', '_dream_context/whiteboards/growth-plan/growth-plan.excalidraw.md', 'whiteboards/growth-plan']) {
+      const r = await verb('open', { kind: 'board', ref });
+      expect(r.status).toBe(200);
+      expect(r.json.result).toMatchObject({ kind: 'whiteboard', container: { kind: 'whiteboard', ref: 'growth-plan' } });
+      expect(String(r.json.result.note)).toContain('super open whiteboard growth-plan');
+    }
+    expect((await readSuperState(root)).containers.map((k) => k.kind)).toEqual(['whiteboard']);
+    // A slug naming no whiteboard is refused, never drawn as a dead board card.
+    const missing = await verb('open', { kind: 'board', ref: 'key-metrics' });
+    expect(missing.status).toBe(404);
+    expect(missing.json).toMatchObject({ error: 'unknown_whiteboard' });
+    expect(String(missing.json.message)).toContain('read as a whiteboard');
+  });
+
+  it('a board names an existing .excalidraw.md file; a missing one, a non-board file or a mix is refused', async () => {
+    makeVault();
+    createWhiteboard(root, 'Growth Plan');
+    const project = dirname(root);
+    mkdirSync(join(project, 'docs'), { recursive: true });
+    writeFileSync(join(project, 'docs', 'flow.excalidraw.md'), '# board');
+    mkdirSync(join(project, '.boards'), { recursive: true });
+    writeFileSync(join(project, '.boards', 'x.excalidraw.md'), '# board');
+    const okOpen = await verb('open', { kind: 'board', ref: 'docs/flow.excalidraw.md' });
+    expect(okOpen.status).toBe(200);
+    expect(okOpen.json.result).toMatchObject({ container: { kind: 'board', ref: 'docs/flow.excalidraw.md' } });
+    expect(okOpen.json.result.note).toBeUndefined();
+    // A dot-folder path was refused by the old slug rule.
+    expect((await verb('open', { kind: 'board', ref: '.boards/x.excalidraw.md' })).status).toBe(200);
+    const gone = await verb('open', { kind: 'board', ref: 'docs/nope.excalidraw.md' });
+    expect(gone.status).toBe(404);
+    expect(gone.json).toMatchObject({ error: 'unknown_board' });
+    expect(String(gone.json.message)).toContain('super open whiteboard <slug>');
+    expect((await verb('open', { kind: 'board', ref: 'docs/notes.md' })).json).toMatchObject({ error: 'invalid_ref' });
+    expect((await verb('open', { kind: 'board', ref: '../out.excalidraw.md' })).json).toMatchObject({ error: 'invalid_ref' });
+    const mixed = await verb('open', { kind: 'board', refs: ['growth-plan', 'docs/flow.excalidraw.md'] });
+    expect(mixed.status).toBe(400);
+    expect(String(mixed.json.message)).toContain('super open whiteboard');
   });
 
   it('the owner closing an automatic card records it as dismissed (G5)', async () => {
