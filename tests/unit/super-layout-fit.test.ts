@@ -126,6 +126,17 @@ describe('the agenda sizes itself (problem 2)', () => {
     }
   });
 
+  it('on a touch remote (a lower floor) the agenda never pushes the centre off the middle (review r1)', () => {
+    for (const width of [1264, 1280, 1300, 1632, 1700]) {
+      for (const size of ['large', 'wide'] as const) {
+        const cs = [agenda(size), card('a'), card('b'), card('c')];
+        const p = plan(cs, { width, height: 900 }, { centreMin: 480 });
+        expect(p.centre.x + p.centre.width / 2, `${width}/${size}`).toBeCloseTo(width / 2, 6);
+        expectSound(p, cs, `touch ${width}/${size}`);
+      }
+    }
+  });
+
   it('a window too small for the list beside the centre still draws the counts (1140x710)', () => {
     for (const size of ['large', 'medium'] as const) {
       const p = plan([agenda(size, { sizeBy: 'owner' }), card('a'), card('b')], WINDOWS.small);

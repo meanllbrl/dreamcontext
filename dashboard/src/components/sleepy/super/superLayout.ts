@@ -475,7 +475,9 @@ function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedS
     const sidePx = (n: number) => (n > 0 ? unitsPx(n) + GAP : 0);
     const rest = live(side).filter((s) => s !== ag).reduce((m, s) => Math.max(m, SIZE_UNITS[drawn.get(s.id)!].w), 0);
     let cap = SIZE_UNITS[drawn.get(ag.id)!].w;
-    while (cap > 1 && cap > rest && W - 2 * MARGIN - 2 * Math.max(sidePx(Math.max(cap, rest)), sidePx(cols[other])) < f.centreMin - 1e-9) cap -= 1;
+    // The floor the centring below holds to (a touch remote's lower floor would push it off the middle).
+    const floor = Math.max(f.centreMin, STAGE.CENTRE_MIN);
+    while (cap > 1 && cap > rest && W - 2 * MARGIN - 2 * Math.max(sidePx(Math.max(cap, rest)), sidePx(cols[other])) < floor - 1e-9) cap -= 1;
     drawn.set(ag.id, shrinkToWidth(drawn.get(ag.id)!, cap));
     cols[side] = widest(side);
   }
