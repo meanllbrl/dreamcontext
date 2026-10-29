@@ -145,7 +145,7 @@ describe('the × as drawn', () => {
     expect(src).toContain('<PanelItemClose closeOf={() => closeOf(id)} session={sessionOf?.(id)}');
     // The press reads it again: a child that started working since is ended when done.
     expect(src).toMatch(/const closeItem = \(id: string\) => \{[\s\S]*?const close = closeOf\?\.\(id\);[\s\S]*?onCloseItem\(id, close\);/);
-    expect(read('dashboard/src/components/sleepy/super/SuperSurface.tsx')).toContain('sessionOf={system ? panelSessionOf : undefined}');
+    expect(read('dashboard/src/components/sleepy/super/SuperSurface.tsx')).toContain('sessionOf={system || moreOpen ? panelSessionOf : undefined}');
   });
 
   it('shows on hover or focus, and always on a touch screen', () => {

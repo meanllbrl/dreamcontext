@@ -57,12 +57,19 @@ export const STAGE = {
   MAX_COLS: 2,
   /** `present`: the centre's left column. */
   PRESENT_FRAC: 0.34,
-  PRESENT_MIN: 400,
+  /** The chat's floor beside cards or a page (owner 2026-10-28: "a comfortable minimum width",
+   *  its head keeps one row with Agenda and New session); the cards' region keeps it too. */
+  PRESENT_MIN: 480,
+  /** The page's (or the presented cards' region's) floor beside the chat when live jobs share the row. */
+  REGION_MIN: 400,
   PRESENT_MAX: 560,
   /** The Others drop target in the bottom-right corner (lit during a drag), and the stack. */
   OTHERS_ZONE_W: 168,
   OTHERS_ZONE_H: 128,
   OTHERS_W: 172,
+  /** The narrowest the Others stack (and the agenda's pill) may be drawn so it fits BESIDE the
+   *  centre and the centre keeps the stage's height (owner 2026-10-28, a windowed app). */
+  OTHERS_MIN_W: 128,
   /** The minimised agenda's pill in the bottom-left corner (owner 2026-10-22 23:44), mirroring
    *  the Others stack; the terminals dock starts after it. */
   AGENDA_PILL_W: 172,
@@ -184,6 +191,9 @@ export interface StagePlan {
   strip?: { rect: Rect; big: string };
   /** While presenting: the top band's switcher and exit, at its right end. */
   controls?: Rect;
+  /** Beside a page or a presentation: the live jobs the one rail column cannot hold, in a
+   *  temporary tile at its foot (its cards are drawn 'others' at its rect, never in `others`). */
+  more?: { rect: Rect; ids: string[] };
 }
 
 /** A side's orbit: x = x0 + dir * depth * (1 - ((y - cy) / ymax)^2), through tile centres. */
@@ -203,7 +213,8 @@ export interface StageItem {
   /** A live child's chat card, or a group holding one (task super-canli-kart-sahnede): the last
    *  to be drawn in Others, and kept beside a side-by-side page or a presentation. */
   live?: boolean;
-  /** A picture's width/height, server-read from its file header (images only; absent = unknown). */
+  /** A picture's width/height, server-read from its file header; a web page's, from the device
+   *  width the owner picked on it (phone, tablet, desktop). Absent = unknown / fills its box. */
   aspect?: number;
 }
 
@@ -242,6 +253,8 @@ export function childIsLive(
 export function stageItems(
   containers: readonly SuperContainer[], groups: readonly SuperGroup[], view: SuperView,
   isLive: (c: SuperContainer) => boolean = () => false,
+  /** A web card's shape from its device width (window state, never the record); absent = none. */
+  pageAspect: (c: SuperContainer) => number | undefined = () => undefined,
 ): StageItem[] {
   const shown = new Set(view.mode === 'half' && view.card ? [view.card] : view.mode === 'present' ? view.cards ?? [] : []);
   const index = new Map(containers.map((c, i) => [c.id, i] as const));
@@ -255,7 +268,9 @@ export function stageItems(
     // A minimised agenda is its pill in the corner, not a card on the stage (unless the view shows it).
     if (c.min && !shown.has(c.id)) return;
     const live = c.kind === 'chat' && isLive(c);
-    const aspect = c.kind === 'image' && typeof c.aspect === 'number' && Number.isFinite(c.aspect) && c.aspect > 0 ? c.aspect : undefined;
+    const page = c.kind === 'web' ? pageAspect(c) : undefined;
+    const aspect = c.kind === 'image' && typeof c.aspect === 'number' && Number.isFinite(c.aspect) && c.aspect > 0 ? c.aspect
+      : typeof page === 'number' && Number.isFinite(page) && page > 0 ? page : undefined;
     if (!g || shown.has(c.id)) out.push({ id: c.id, kind: c.kind, shape: c.shape, place: c.place, ...(c.pos ? { pos: c.pos } : {}), slot: i, ...(size !== 'small' ? { size } : {}), ...(live ? { live } : {}), ...(aspect ? { aspect } : {}) });
     if (g && !placed.has(g.id) && g.cards[0] !== undefined && index.has(g.cards[0])) {
       placed.add(g.id);
@@ -283,13 +298,15 @@ export interface PlanOptions {
   layoutChoices?: number;
   /** The queue pill is showing in the top band: the float centre keeps its place under it. */
   queueUp?: boolean;
+  /** The owner's drops this window session, the last dropped last: when two of his cards would
+   *  overlap, the one he dropped later keeps its place (window state, never the record). */
+  recent?: readonly string[];
   /** The narrow line for this screen; absent = {@link NARROW_STAGE_PX}. */
   narrowPx?: number;
   /** The centre's floor for this screen; absent = `STAGE.CENTRE_MIN`. */
   centreMin?: number;
 }
 
-const EMPTY: Rect = { x: 0, y: 0, width: 0, height: 0 };
 
 /** A floating tile's height: every tile is 1:1 (2026-10-20). Kept for callers sizing a ghost. */
 export function heightOf(_shape: ContainerShape, u: number): number {
@@ -380,7 +397,9 @@ function solveFloat(f: Frame, left: readonly Slot[], right: readonly Slot[]): Fl
       col.forEach((s, i) => {
         const y = y0 + i * (T + GAP);
         const dy = y + T / 2 - mid;
-        const off = ymax > 0 ? depth * (1 - (dy / ymax) ** 2) : 0;
+        // The inner column bends into the orbit; an outer one stands out by the orbit's whole depth,
+        // so the inner column's middle never reaches it (owner 2026-10-28: no card under another).
+        const off = k > 0 ? depth : ymax > 0 ? depth * (1 - (dy / ymax) ** 2) : 0;
         rects.set(s.id, { x: x0 + dir * off, y, width: T, height: T });
       });
       if (k === 0 && col.length >= 2 && depth > 0) orbit.push({ side, x0: x0 + T / 2, cy: mid, ymax, depth, dir });
@@ -391,7 +410,7 @@ function solveFloat(f: Frame, left: readonly Slot[], right: readonly Slot[]): Fl
 
 // ─── Sized cards (owner 2026-10-22) ──────────────────────────────────────────────
 
-interface SizedSlot extends Slot { size: ContainerSize; z: number }
+interface SizedSlot extends Slot { size: ContainerSize; z: number; agenda?: boolean }
 
 /** The largest size, at most `cap` tiles wide, a card of `size` may be drawn at. */
 function shrinkToWidth(size: ContainerSize, cap: number): ContainerSize {
@@ -444,6 +463,21 @@ function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedS
     cols[side] = cap;
     for (const s of live(side)) drawn.set(s.id, shrinkToWidth(drawn.get(s.id)!, cap));
   };
+  // The agenda sizes itself (owner 2026-10-28: "the agenda hurts the centre"): its size, the
+  // default or the owner's, is its LARGEST; it is drawn at the widest that still leaves the centre
+  // its preferred width IN THE MIDDLE (the centre stays centred, below), down to the 1x1 counts.
+  // A side another card already makes wide costs the centre nothing more: the agenda keeps it.
+  const ag = [...left, ...right].find((s) => s.agenda);
+  if (ag) {
+    const side = left.includes(ag) ? 'left' : 'right';
+    const other = side === 'left' ? 'right' : 'left';
+    const sidePx = (n: number) => (n > 0 ? unitsPx(n) + GAP : 0);
+    const rest = live(side).filter((s) => s !== ag).reduce((m, s) => Math.max(m, SIZE_UNITS[drawn.get(s.id)!].w), 0);
+    let cap = SIZE_UNITS[drawn.get(ag.id)!].w;
+    while (cap > 1 && cap > rest && W - 2 * MARGIN - 2 * Math.max(sidePx(Math.max(cap, rest)), sidePx(cols[other])) < preferred - 1e-9) cap -= 1;
+    drawn.set(ag.id, shrinkToWidth(drawn.get(ag.id)!, cap));
+    cols[side] = widest(side);
+  }
   // Width: narrow the wider side until the centre keeps its floor.
   while (avail() < f.centreMin && (cols.left > 1 || cols.right > 1)) {
     const lastWide = (side: 'left' | 'right') => Math.max(-1, ...live(side).filter((s) => SIZE_UNITS[drawn.get(s.id)!].w === cols[side]).map((s) => s.z));
@@ -583,6 +617,43 @@ function reseat(want: Rect, f: Frame, blocks: readonly Rect[]): Rect | null {
     if (!pick || Math.abs(y - want.y) < Math.abs(pick.y - want.y)) pick = { ...want, y };
   }
   return pick;
+}
+
+/** Clear of every block by at least the gap. */
+function clear(r: Rect, blocks: readonly Rect[]): boolean {
+  return !blocks.some((b) => overlaps(r, inflate(b, STAGE.GAP - 0.5)));
+}
+
+/**
+ * The free spot for `want` (its size) inside `area` nearest where it stands, a gap clear of every
+ * block, or null when there is none. The candidates are its own spot, the area's edges, a gap
+ * beside each block's edges and in line with them, on both axes.
+ */
+export function findFree(want: Rect, area: Rect, blocks: readonly Rect[]): Rect | null {
+  const { GAP } = STAGE;
+  const { width: w, height: h } = want;
+  if (w > area.width + 0.01 || h > area.height + 0.01) return null;
+  const xs = new Set<number>([want.x, area.x, area.x + area.width - w]);
+  const ys = new Set<number>([want.y, area.y, area.y + area.height - h]);
+  for (const b of blocks) {
+    xs.add(b.x - GAP - w); xs.add(b.x + b.width + GAP); xs.add(b.x); xs.add(b.x + b.width - w);
+    ys.add(b.y - GAP - h); ys.add(b.y + b.height + GAP); ys.add(b.y); ys.add(b.y + b.height - h);
+  }
+  const inX = (x: number) => Math.min(Math.max(x, area.x), area.x + area.width - w);
+  const inY = (y: number) => Math.min(Math.max(y, area.y), area.y + area.height - h);
+  let best: Rect | null = null;
+  let bestD = Infinity;
+  for (const x0 of xs) {
+    const x = inX(x0);
+    for (const y0 of ys) {
+      const y = inY(y0);
+      const d = (x - want.x) ** 2 + (y - want.y) ** 2;
+      if (d >= bestD) continue;
+      const r = { x, y, width: w, height: h };
+      if (clear(r, blocks)) { best = r; bestD = d; }
+    }
+  }
+  return best;
 }
 
 // ─── Owner placement ────────────────────────────────────────────────────────────
@@ -788,6 +859,12 @@ function planWith(
   stage: { width: number; height: number },
   opts: PlanOptions,
   bottomBand: boolean,
+  /** Sized cards a first float pass could not seat: drawn in Others, and the sides are solved
+   *  without them (a side never stays wide, narrowing the centre, for a card it does not show). */
+  demoted: ReadonlySet<string> = new Set(),
+  /** The same for the agenda or a live job, which never give way for their size: planned again
+   *  at 1x1 instead. */
+  compact: ReadonlySet<string> = new Set(),
 ): StagePlan {
   // Items: at most the record's MAX_CONTAINERS cards, plus a grouped card the view presents beside its group.
   const list = containers.slice(0, MAX_CONTAINERS + MAX_FILMSTRIP);
@@ -812,7 +889,7 @@ function planWith(
     return {
       width: f.width, height: f.height, narrow, mode, centre, cards, others,
       othersRect: f.othersRect, othersZone: f.othersZone, agendaPill: f.agendaPill, pill: opts.agendaPill ?? null, ...bands(f, centre, !!opts.agendaPill, extra.controls), free: f.free,
-      centreWidth, unit, order: list.map((c) => c.id), orbit, layout: null, chat: 'column', ...extra,
+      centreWidth, unit, order: list.map((c) => c.id), orbit, layout: null, chat: 'column', ...(more ? { more } : {}), ...extra,
     };
   };
   const place = (id: string, rect: Rect, where: CardWhere) => {
@@ -820,27 +897,34 @@ function planWith(
     cards[id] = { id, rect, where, shape: c.shape, owner: false, z: z.get(id) ?? 0 };
   };
 
-  // Live jobs stay on the stage beside a page or a presentation (owner 2026-10-23): a column of
-  // tiles at the left edge (two at most), and what they leave is the content the view draws in.
+  // Live jobs stay on the stage beside a page or a presentation (owner 2026-10-23): ONE column of
+  // tiles at the left edge (owner 2026-10-28: a second column squeezed the chat), and what it leaves
+  // is the content the view draws in. Jobs past what the column holds wait in a temporary "more"
+  // tile at its foot (Others' pill, lit by their live status), gone when the view ends.
+  let more: StagePlan['more'];
   const besideRail = (picked: readonly string[]): Rect => {
     const rail = narrow ? [] : list.filter((c) => c.live && c.kind === 'chat' && c.place === 'float' && !picked.includes(c.id));
-    const perCol = capacity(f.content.height);
-    let railCols = perCol > 0 ? Math.min(2, Math.ceil(rail.length / perCol)) : 0;
-    // The rail never squeezes what the owner looks at: the centre and the page (or the presented
-    // cards' region) keep at least PRESENT_MIN wide each, else the rail gives up a column and the
-    // jobs it cannot hold lead Others.
-    const keep = 2 * STAGE.PRESENT_MIN + STAGE.GAP;
-    while (railCols > 0 && f.content.width - railCols * (STAGE.TILE + STAGE.GAP) < keep) railCols -= 1;
-    const railW = railCols ? railCols * (STAGE.TILE + STAGE.GAP) : 0;
-    rail.slice(0, railCols * perCol).forEach((c, i) => {
-      const col = Math.floor(i / perCol);
-      const inCol = Math.min(perCol, rail.length - col * perCol);
-      const total = inCol * STAGE.TILE + (inCol - 1) * STAGE.GAP;
-      const y = f.content.y + (f.content.height - total) / 2 + (i % perCol) * (STAGE.TILE + STAGE.GAP);
-      const rect = { x: f.content.x + col * (STAGE.TILE + STAGE.GAP), y, width: STAGE.TILE, height: STAGE.TILE };
-      cards[c.id] = { id: c.id, rect, where: 'float', shape: 'square', size: 'small', owner: false, z: z.get(c.id) ?? 0 };
-    });
-    return { ...f.content, x: f.content.x + railW, width: f.content.width - railW };
+    const { TILE: T, GAP, BAND } = STAGE;
+    // The rail never squeezes what the owner looks at: the centre keeps PRESENT_MIN and the page
+    // (or the presented cards' region) REGION_MIN, else there is no rail and its jobs lead Others.
+    const keep = STAGE.PRESENT_MIN + GAP + STAGE.REGION_MIN;
+    if (!rail.length || capacity(f.content.height) < 1 || f.content.width - (T + GAP) < keep) return f.content;
+    const over = rail.length > capacity(f.content.height);
+    const shown = over ? rail.slice(0, capacity(f.content.height - BAND - GAP)) : rail;
+    const rest = rail.slice(shown.length);
+    const total = shown.length * T + Math.max(0, shown.length - 1) * GAP + (rest.length ? (shown.length ? GAP : 0) + BAND : 0);
+    let y = f.content.y + (f.content.height - total) / 2;
+    for (const c of shown) {
+      cards[c.id] = { id: c.id, rect: { x: f.content.x, y, width: T, height: T }, where: 'float', shape: 'square', size: 'small', owner: false, z: z.get(c.id) ?? 0 };
+      y += T + GAP;
+    }
+    if (rest.length) {
+      const rect: Rect = { x: f.content.x, y: shown.length ? y : f.content.y + (f.content.height - BAND) / 2, width: T, height: BAND };
+      more = { rect, ids: rest.map((c) => c.id) };
+      // Drawn inside the tile (as a card in Others is drawn in the stack), never in Others.
+      for (const c of rest) cards[c.id] = { id: c.id, rect, where: 'others', shape: c.shape, owner: false, z: z.get(c.id) ?? 0 };
+    }
+    return { ...f.content, x: f.content.x + T + GAP, width: f.content.width - T - GAP };
   };
 
   // ── half (a narrow stage opens it as a sheet over the centre) ──
@@ -854,9 +938,18 @@ function planWith(
       const i = STAGE.SHEET_INSET;
       region = { x: centre.x + i, y: centre.y + i, width: centre.width - 2 * i, height: centre.height - 2 * i };
     } else {
-      const w = (content.width - STAGE.GAP) / 2;
-      centre = { x: content.x, y: content.y, width: w, height: content.height };
-      region = { x: content.x + w + STAGE.GAP, y: content.y, width: w, height: content.height };
+      // A web page with a device width picked (owner 2026-10-28): the CARD takes the device's shape,
+      // as presentation's fitCard does for a picture: a phone is a narrow tall card and the centre
+      // takes the width it frees, a desktop a wide one and the centre narrows beside it, never under
+      // PRESENT_MIN. No device: the two halves, as before.
+      const item = list.find((x) => x.id === half)!;
+      const C = STAGE.CARD_CHROME;
+      const w = item.kind === 'web' && item.aspect
+        ? Math.max(Math.min(STAGE.FIT_MIN.w, content.width / 2), Math.min(content.width - STAGE.GAP - STAGE.PRESENT_MIN, (content.height - C.h) * item.aspect + C.w))
+        : (content.width - STAGE.GAP) / 2;
+      centre = { x: content.x, y: content.y, width: content.width - w - STAGE.GAP, height: content.height };
+      region = { x: content.x + content.width - w, y: content.y, width: w, height: content.height };
+      if (item.kind === 'web' && item.aspect) region = fitCard(region, item.aspect);
     }
     place(half, region, narrow ? 'sheet' : 'half');
     for (const c of list) if (!cards[c.id]) toOthers(c);
@@ -915,7 +1008,10 @@ function planWith(
     if (layout === 'compare' || layout === 'grid') {
       // The centre as a left column, the cards in a grid on the right (as before layouts); the
       // centre's share is of what the rail leaves (the rail narrows the centre and the cards alike).
-      const w = Math.min(STAGE.PRESENT_MAX, Math.max(STAGE.PRESENT_MIN, STAGE.PRESENT_FRAC * (content.width + 2 * STAGE.MARGIN)));
+      // The chat's floor gives way (down to REGION_MIN) only so two cards keep FIT_MIN side by side
+      // (a 968 px touch stage).
+      const share = Math.min(STAGE.PRESENT_MAX, Math.max(STAGE.PRESENT_MIN, STAGE.PRESENT_FRAC * (content.width + 2 * STAGE.MARGIN)));
+      const w = Math.max(STAGE.REGION_MIN, Math.min(share, content.width - 2 * STAGE.GAP - 2 * STAGE.FIT_MIN.w));
       const centre: Rect = { x: content.x, y: content.y, width: w, height: content.height };
       const region: Rect = { x: content.x + w + STAGE.GAP, y: content.y, width: content.width - w - STAGE.GAP, height: content.height };
       const { rects } = fitArrange(region, ordered.map((id) => ({ aspect: list.find((x) => x.id === id)?.aspect })));
@@ -966,8 +1062,8 @@ function planWith(
   }
 
   // ── float ──
-  const floating = list.filter((c) => c.place === 'float');
-  for (const c of list) if (c.place !== 'float') toOthers(c);
+  const floating = list.filter((c) => c.place === 'float' && !demoted.has(c.id));
+  for (const c of list) if (c.place !== 'float' || demoted.has(c.id)) toOthers(c);
   const drag = opts.dragging && ids.has(opts.dragging.id) ? opts.dragging : null;
   const isOwner = (c: StageItem) => !!c.pos || c.id === drag?.id;
   const owned = floating.filter(isOwner);
@@ -991,39 +1087,71 @@ function planWith(
     if (!mover) break;
     sideOf.set(mover.id, to);
   }
+  // The agenda stays on the stage like a live job (owner 2026-10-28: on a small window it is the
+  // compact counts, never sent to Others): it gives way as late as a live job does.
+  const keeps = (c: StageItem) => !!c.live || c.kind === 'agenda';
   const slotsOn = (side: 'left' | 'right'): Slot[] =>
-    floating.filter((c) => sideOf.get(c.id) === side).map((c) => ({ id: c.id, owner: isOwner(c), chat: c.kind === 'chat' || c.kind === 'group', ...(c.live ? { live: true } : {}) }));
-  const sizeById = new Map(floating.map((c) => [c.id, sizeOf(c)] as const));
-  const withSize = (sl: Slot): SizedSlot => ({ ...sl, size: sizeById.get(sl.id) ?? 'small', z: z.get(sl.id) ?? 0 });
+    floating.filter((c) => sideOf.get(c.id) === side).map((c) => ({ id: c.id, owner: isOwner(c), chat: c.kind === 'chat' || c.kind === 'group' || c.kind === 'agenda', ...(keeps(c) ? { live: true } : {}) }));
+  const sizeById = new Map(floating.map((c) => [c.id, compact.has(c.id) ? 'small' as const : sizeOf(c)] as const));
+  const agendaIds = new Set(floating.filter((c) => c.kind === 'agenda').map((c) => c.id));
+  const withSize = (sl: Slot): SizedSlot => ({ ...sl, size: sizeById.get(sl.id) ?? 'small', z: z.get(sl.id) ?? 0, ...(agendaIds.has(sl.id) ? { agenda: true } : {}) });
 
   // One pass with every item on its side's orbit, the owner's included where they would stand:
   // it sets the stage. An owner tile is drawn at the one tile size wherever he dropped it.
   // A stage of small cards keeps the orbit exactly as it was; one sized card packs the sides by
   // size (solveSized).
-  const sized = floating.some((c) => sizeOf(c) !== 'small');
+  const sized = floating.some((c) => sizeById.get(c.id) !== 'small');
   const sol = sized
     ? solveSized(f, slotsOn('left').map(withSize), slotsOn('right').map(withSize))
     : { ...solveFloat(f, slotsOn('left'), slotsOn('right')), drawn: new Map<string, ContainerSize>(), uRight: undefined };
   const drawnOf = (id: string): ContainerSize => sol.drawn.get(id) ?? 'small';
-  // The float centre takes the stage's height (owner 2026-10-25): from the top margin to the
-  // bottom margin, its width unchanged, the side cards where they were. It keeps the bands only
-  // while something sits over them: the queue pill above, a dock or the agenda pill below, the
-  // Others stack or its drop corner when the centre reaches that far right, an empty stage's hint.
-  const tallCentre = !narrow && list.length > 0 && !opts.queueUp && !(opts.terminals ?? 0) && !opts.agendaPill
-    && sol.centre.x + sol.centre.width + STAGE.GAP <= Math.min(f.othersRect.x, f.othersZone.x);
-  const centre: Rect = tallCentre
-    ? { ...sol.centre, y: STAGE.MARGIN, height: f.height - 2 * STAGE.MARGIN }
-    : sol.centre;
+  // The float centre takes the stage's height (owner 2026-10-25; 2026-10-28 for a windowed app):
+  // from the top margin to the bottom margin, its width unchanged, the side cards where they were.
+  // The top band is kept only while the queue pill shows there. The bottom band's corners (the
+  // Others stack, the agenda's pill) narrow into the side room beside the centre, down to
+  // OTHERS_MIN_W, so they never take the centre's height; it keeps the band only while the
+  // terminals dock runs under it, a corner cannot fit beside it, or the stage is empty (its hint).
+  const sc = sol.centre;
+  const rightRoom = f.width - STAGE.MARGIN - (sc.x + sc.width + STAGE.GAP);
+  const leftRoom = sc.x - STAGE.GAP - STAGE.MARGIN;
+  const cornersFit = rightRoom >= STAGE.OTHERS_MIN_W - 1e-9 && (!opts.agendaPill || leftRoom >= STAGE.OTHERS_MIN_W - 1e-9);
+  const tallBottom = list.length > 0 && !(opts.terminals ?? 0) && cornersFit;
+  if (tallBottom) {
+    const ow = Math.min(STAGE.OTHERS_W, rightRoom);
+    f.othersRect = { ...f.othersRect, x: f.width - STAGE.MARGIN - ow, width: ow };
+    const zx = Math.max(f.othersZone.x, sc.x + sc.width + STAGE.GAP);
+    f.othersZone = { ...f.othersZone, x: zx, width: f.width - zx };
+    f.agendaPill = { ...f.agendaPill, width: Math.min(STAGE.AGENDA_PILL_W, leftRoom) };
+  }
+  const top = list.length > 0 && !opts.queueUp ? STAGE.MARGIN : sc.y;
+  const bottom = tallBottom ? f.height - STAGE.MARGIN : sc.y + sc.height;
+  const centre: Rect = { ...sc, y: top, height: Math.max(0, bottom - top) };
+
+  // The owner's cards sit where he dropped them, pushed out of the centre and into the stage.
+  // Two of his cards never overlap (owner 2026-10-28: "a card ends up under another"): the one
+  // he dropped later this session (else the later in the record) keeps its place, an earlier
+  // one moves to the nearest free spot, else it is drawn in Others. A running drag holds its
+  // drag-start rect and is never moved.
+  const recent = opts.recent ?? [];
+  const rank = (id: string) => { const i = recent.indexOf(id); return i >= 0 ? MAX_CONTAINERS * 2 + i : (z.get(id) ?? 0); };
   const ownerRects = new Map<string, Rect>();
-  for (const c of owned) {
-    if (c.id === drag?.id) { ownerRects.set(c.id, drag.rect); continue; }
+  const autoSpots = [...sol.rects.entries()].filter(([id]) => !sol.overflow.has(id) && !owned.some((c) => c.id === id)).map(([, r]) => r);
+  const ownerBlocks: Rect[] = [centre];
+  if (drag && owned.some((c) => c.id === drag.id)) { ownerRects.set(drag.id, drag.rect); ownerBlocks.push(drag.rect); }
+  for (const c of [...owned].filter((c) => c.id !== drag?.id).sort((a, b) => rank(b.id) - rank(a.id))) {
     const px = sizePx(drawnOf(c.id));
-    ownerRects.set(c.id, pushOut(rectFromPos(f.free, c.pos!, px.width, px.height), centre, f.free));
+    const want = pushOut(rectFromPos(f.free, c.pos!, px.width, px.height), centre, f.free);
+    // Free of his other cards: where he dropped it; else the nearest spot clear of the auto
+    // cards too (so it moves as few of them as it can), else the nearest clear of his alone.
+    const rect = clear(want, ownerBlocks) ? want : findFree(want, f.free, [...ownerBlocks, ...autoSpots]) ?? findFree(want, f.free, ownerBlocks);
+    if (!rect) { toOthers(c); continue; }
+    ownerRects.set(c.id, rect);
+    ownerBlocks.push(rect);
   }
 
-  // The owner's cards sit where they were dropped. An auto card clear of them keeps its place;
-  // one they cover moves to the free spot of its own column nearest where it stood (at its
-  // size, else 1:1), else it is drawn in Others: the stage moves as few cards as it can.
+  // An auto card clear of the owner's keeps its place; one they cover moves to the free spot of
+  // its own column nearest where it stood (at its size, else 1:1), else to the nearest free spot
+  // anywhere on the stage, else it is drawn in Others: the stage moves as few cards as it can.
   const owners = [...ownerRects.values()];
   const covered = (r: Rect) => owners.some((b) => overlaps(r, inflate(b, STAGE.GAP - 0.5)));
   const blocks: Rect[] = [...owners];
@@ -1038,19 +1166,50 @@ function planWith(
     else if (covered(at)) moved.push(c);
     else { blocks.push(at); auto(c, at); }
   }
-  // A live job finds its free spot first: it is the last to be drawn in Others.
-  moved.sort((a, b) => Number(!!b.live) - Number(!!a.live));
+  // A live job (and the agenda) finds its free spot first: it is the last to be drawn in Others.
+  moved.sort((a, b) => Number(keeps(b)) - Number(keeps(a)));
+  // Every one first tries its own column (as before), then the ones left over try the stage.
+  const homeless: StageItem[] = [];
   for (const c of moved) {
     const rect = reseat(sol.rects.get(c.id)!, f, blocks);
+    if (!rect) { homeless.push(c); continue; }
+    blocks.push(rect);
+    auto(c, rect);
+  }
+  for (const c of homeless) {
+    const want = sol.rects.get(c.id)!;
+    let rect = findFree(want, f.free, [centre, ...blocks]);
+    // No room left for the agenda or a live job: the latest ordinary auto card gives it its place
+    // and is drawn in Others instead (they give way last, owner 2026-10-23 and 2026-10-28).
+    if (!rect && keeps(c)) {
+      const victims = floating
+        .filter((v) => cards[v.id]?.where === 'float' && !cards[v.id].owner && !keeps(v))
+        .sort((a, b) => (z.get(b.id) ?? 0) - (z.get(a.id) ?? 0));
+      for (const v of victims) {
+        const freed = cards[v.id].rect;
+        rect = findFree(want, f.free, [centre, ...blocks.filter((b) => b !== freed)]);
+        if (rect) { blocks.splice(blocks.indexOf(freed), 1); toOthers(v); break; }
+      }
+    }
     if (!rect) { toOthers(c); continue; }
     blocks.push(rect);
     auto(c, rect);
   }
   for (const c of owned) {
-    const rect = ownerRects.get(c.id) ?? EMPTY;
-    // Owner-placed cards paint above the auto-placed ones (they may sit over each other).
+    const rect = ownerRects.get(c.id);
+    if (!rect) continue;
+    // Owner-placed cards paint above the auto-placed ones.
     cards[c.id] = { id: c.id, rect, where: 'float', shape: drawnShape(rect), size: drawnOf(c.id), owner: true, z: MAX_CONTAINERS + (z.get(c.id) ?? 0) };
   }
+  // A sized card the solve gave its width but the placement could not seat: plan again without it.
+  const unseated = floating.filter((c) => cards[c.id]?.where === 'others' && !sol.overflow.has(c.id) && SIZE_UNITS[drawnOf(c.id)].w > 1);
+  if (unseated.length) {
+    const kept = unseated.filter(keeps).map((c) => c.id);
+    const out = unseated.filter((c) => !keeps(c)).map((c) => c.id);
+    return planWith(containers, view, stage, opts, bottomBand, new Set([...demoted, ...out]), new Set([...compact, ...kept]));
+  }
+  // A card in Others flies to the stack where it is drawn (narrowed beside a tall centre).
+  for (const id of others) cards[id] = { ...cards[id], rect: f.othersRect };
   const width = (side: 'left' | 'right') => (floating.some((c) => sideOf.get(c.id) === side && cards[c.id]?.where === 'float')
     ? (side === 'right' ? sol.uRight ?? sol.u : sol.u) : 0);
   return finish(centre, centre.width, 'float', { left: width('left'), right: width('right') }, sol.orbit);

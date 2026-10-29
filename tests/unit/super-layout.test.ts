@@ -489,8 +489,10 @@ describe('half, present, narrow (O5, O8, §0 C2)', () => {
 
 describe('bands and hit tests (F7, F12, FE1)', () => {
   it('the job bar sits above the centre; with terminals in the dock, the dock and Others sit below it, in the reserved band', () => {
-    const p = planStage([card('a')], FLOAT, STAGES[1], { terminals: 2 });
+    const p = planStage([card('a')], FLOAT, STAGES[1], { terminals: 2, queueUp: true });
     expect(p.queue.y + p.queue.height).toBeLessThanOrEqual(p.centre.y);
+    // Without the queue pill the empty top band is the centre's (owner 2026-10-28).
+    expect(planStage([card('a')], FLOAT, STAGES[1], { terminals: 2 }).centre.y).toBeCloseTo(STAGE.MARGIN, 6);
     expect(p.othersRect.y).toBeGreaterThanOrEqual(p.centre.y + p.centre.height);
     expect(p.dock.y).toBeGreaterThanOrEqual(p.centre.y + p.centre.height);
     expect(p.dock.x + p.dock.width).toBeLessThanOrEqual(p.othersRect.x);
@@ -502,7 +504,8 @@ describe('bands and hit tests (F7, F12, FE1)', () => {
       const tall = planStage([card('a'), card('b')], FLOAT, s);
       const banded = planStage([card('a'), card('b')], FLOAT, s, { terminals: 1 });
       expectCentred(tall, false);
-      expect(tall.centre.height - banded.centre.height).toBeCloseTo(2 * STAGE.BAND, 6);
+      // The dock holds only the bottom band: the top one is the centre's while no queue shows.
+      expect(tall.centre.height - banded.centre.height).toBeCloseTo(STAGE.BAND, 6);
       expect(tall.centre.width).toBeCloseTo(banded.centre.width, 6);
       expect(tall.centre.x).toBeCloseTo(banded.centre.x, 6);
       // With the queue pill up the centre keeps its place under it; the tiles stay inside the centre's height.

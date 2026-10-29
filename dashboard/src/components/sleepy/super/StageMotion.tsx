@@ -69,6 +69,8 @@ export class StageMotion extends Component<StageMotionProps> {
       before.set(key, { rect: this.run?.standInRect(key, origin) ?? rectIn(el, origin), where });
     }
     for (const id of prev.plan.others) before.set(id, { rect: prev.plan.othersRect, where: 'others' });
+    // A job waiting in the rail's "more" tile flies out of it the same way.
+    for (const id of prev.plan.more?.ids ?? []) before.set(id, { rect: prev.plan.more!.rect, where: 'others' });
     // The minimised agenda rests in its corner pill: it flies out of it like a card out of Others.
     if (prev.plan.pill && !before.has(prev.plan.pill)) before.set(prev.plan.pill, { rect: prev.plan.agendaPill, where: 'others' });
     return { snap: false, before };
