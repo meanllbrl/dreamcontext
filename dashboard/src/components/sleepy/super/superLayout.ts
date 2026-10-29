@@ -89,6 +89,10 @@ export const STAGE = {
   /** Filmstrip: the strip of thumbs under the big card; a thumb at most this wide. */
   STRIP_H: 112,
   THUMB_MAX_W: 168,
+  /** A thumb never narrower than this: more cards than fit scroll (owner 2026-10-29). */
+  THUMB_MIN_W: 120,
+  /** The strip's scroll buttons at its two ends, while it holds more than fit. */
+  STRIP_NAV_W: 32,
   /** Review: the row of the child's own cards under its page. */
   REVIEW_ROW_FRAC: 0.34,
   REVIEW_ROW_MIN: 200,
@@ -151,6 +155,26 @@ export interface CardPlan {
   /** Paint order: record order, owner-placed cards above the auto-placed ones (the window lifts
    *  the card dropped last on top of those for the session). */
   z: number;
+  /** A filmstrip thumb scrolled out of the strip's window: drawn nowhere until scrolled back. */
+  hidden?: boolean;
+}
+
+/** A filmstrip's strip (owner 2026-10-29: "every time I select one, it swaps places"): every
+ *  presented card has ONE slot, in the order presented, the big one's included; selecting never
+ *  reorders. More than fit: a window of `visible` slots from `start`, scrolled by the window. */
+export interface StripPlan {
+  rect: Rect;
+  big: string;
+  /** Every card of the strip, in its fixed order. */
+  ids: string[];
+  /** The first slot shown, and how many show at once. */
+  start: number;
+  visible: number;
+  /** The big card's own slot, marked (absent while scrolled out of view). */
+  current?: Rect;
+  /** The scroll buttons' rects, while the strip holds more than fit. */
+  prev?: Rect;
+  next?: Rect;
 }
 
 export interface StagePlan {
@@ -188,7 +212,7 @@ export interface StagePlan {
    *  selected one is drawn `sheet`, the rest `tab` (kept, not shown). */
   tabs?: { rect: Rect; ids: string[] };
   /** Filmstrip: the strip under the big card, and which card is big. */
-  strip?: { rect: Rect; big: string };
+  strip?: StripPlan;
   /** While presenting: the top band's switcher and exit, at its right end. */
   controls?: Rect;
   /** Beside a page or a presentation: the live jobs the one rail column cannot hold, in a
@@ -291,6 +315,8 @@ export interface PlanOptions {
   /** The card the owner made big (filmstrip) or picked in a narrow sheet's tabs; the first when
    *  absent or no longer presented. Window state, never the record. */
   selected?: string | null;
+  /** A filmstrip's first slot shown, while it holds more than fit (window state; clamped). */
+  stripStart?: number;
   /** A Super question for the owner is open: a chat folded to its bar is drawn as the mini. */
   asking?: boolean;
   /** How many layouts the switcher offers (the window knows the cards' kinds); absent = those
@@ -1016,14 +1042,35 @@ function planWith(
     const choices = opts.layoutChoices ?? PRESENT_LAYOUTS.filter((p) => p !== 'review' && shown.length >= presentRange(p).min && shown.length <= presentRange(p).max).length;
     const cw = STAGE.EXIT_W + (choices > 1 ? STAGE.GAP / 2 + choices * STAGE.SWITCH_SEG_W : 0);
     const controls: Rect = { x: f.content.x + Math.max(0, f.content.width - cw), y: f.bandTop, width: Math.min(cw, f.content.width), height: STAGE.BAND };
-    const strip = (main: Rect): StagePlan['strip'] => {
-      // The big card over one row of thumbs, the rest in their order.
-      const thumbs = ordered.filter((id) => id !== selected);
+    const strip = (main: Rect): StripPlan => {
+      // The big card over one row holding a slot for EVERY card, in their fixed order: the big
+      // one's slot is marked, never given to another card (selecting never reorders).
       const row: Rect = { x: main.x, y: main.y + main.height - STAGE.STRIP_H, width: main.width, height: STAGE.STRIP_H };
       place(selected, { x: main.x, y: main.y, width: main.width, height: Math.max(0, main.height - STAGE.STRIP_H - STAGE.GAP) }, narrow ? 'sheet' : 'present');
-      const tw = thumbs.length ? Math.min(STAGE.THUMB_MAX_W, (row.width - (thumbs.length - 1) * STAGE.GAP) / thumbs.length) : 0;
-      thumbs.forEach((id, i) => place(id, { x: row.x + i * (tw + STAGE.GAP), y: row.y, width: tw, height: row.height }, 'thumb'));
-      return { rect: row, big: selected };
+      const n = ordered.length;
+      const fitW = (w: number) => (w - (n - 1) * STAGE.GAP) / n;
+      const overflow = fitW(row.width) < STAGE.THUMB_MIN_W;
+      // More than fit: scroll buttons at both ends, the slots at their floor width between them.
+      const nav = overflow ? STAGE.STRIP_NAV_W + STAGE.GAP / 2 : 0;
+      const inner: Rect = { x: row.x + nav, y: row.y, width: Math.max(0, row.width - 2 * nav), height: row.height };
+      const tw = overflow ? STAGE.THUMB_MIN_W : Math.min(STAGE.THUMB_MAX_W, fitW(inner.width));
+      const visible = overflow ? Math.max(1, Math.floor((inner.width + STAGE.GAP) / (tw + STAGE.GAP))) : n;
+      const start = Math.min(Math.max(0, Math.round(opts.stripStart ?? 0)), n - visible);
+      let current: Rect | undefined;
+      ordered.forEach((id, i) => {
+        const k = i - start;
+        const rect: Rect = { x: inner.x + k * (tw + STAGE.GAP), y: row.y, width: tw, height: row.height };
+        if (id === selected) { if (k >= 0 && k < visible) current = rect; return; }
+        place(id, rect, 'thumb');
+        if (k < 0 || k >= visible) cards[id] = { ...cards[id], hidden: true };
+      });
+      return {
+        rect: row, big: selected, ids: ordered, start, visible, ...(current ? { current } : {}),
+        ...(overflow ? {
+          prev: { x: row.x, y: row.y, width: STAGE.STRIP_NAV_W, height: row.height },
+          next: { x: row.x + row.width - STAGE.STRIP_NAV_W, y: row.y, width: STAGE.STRIP_NAV_W, height: row.height },
+        } : {}),
+      };
     };
 
     if (narrow) {

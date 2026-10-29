@@ -13,7 +13,7 @@ import {
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
   MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
-  MAX_FILMSTRIP, PRESENT_LAYOUTS, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
+  MAX_ASK_PICTURES, MAX_FILMSTRIP, PRESENT_LAYOUTS, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
 import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, noteTeamJobEnd, recordTeamJob, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobEnding, teamJobOwed, teamJobStatus, type LiveSayJob } from '../../lib/super/team.js';
@@ -451,8 +451,8 @@ async function prepareAskShow(
   let show: string[] = [];
   if (b.show !== undefined) {
     const raw = Array.isArray(b.show) ? b.show : [];
-    if (!raw.length || raw.length > MAX_FILMSTRIP || raw.some((x) => typeof x !== 'string')) {
-      refuse(res, 400, 'invalid_args', `--show names 1-${MAX_FILMSTRIP} cards`);
+    if (!raw.length || raw.length > MAX_ASK_PICTURES || raw.some((x) => typeof x !== 'string')) {
+      refuse(res, 400, 'invalid_args', `--show names 1-${MAX_ASK_PICTURES} cards`);
       return null;
     }
     show = [...new Set(raw as string[])];
@@ -974,6 +974,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       refuse(res, 404, 'unknown_child', '--for names none of your children (`dreamcontext super state` lists them)');
       return;
     }
+    // `--present` (owner 2026-10-29: "why do you create the group but not present it"): media
+    // shown as a result open AND present in the same write, laid out as `present` lays them.
+    if (b.present !== undefined && typeof b.present !== 'boolean') { refuse(res, 400, 'invalid_args', 'present is true or false'); return; }
+    const presentNow = b.present === true;
+    if (presentNow && !isMediaKind(kind as ContainerKind)) { refuse(res, 400, 'invalid_args', '--present opens media only (kind image, pdf or video); other cards: `super present <card…>`'); return; }
     const ids = refs.map((ref) => containerIdFor(kind, ref));
     // A live job is never opened into a group: its card floats on its own (live.ts).
     if (groupName && kind === 'chat') {
@@ -1028,6 +1033,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // Cards whose size the owner chose: the agent's size is not written (decided inside the
     // locked write, so an owner resize landing meanwhile still wins).
     let kept: string[] = [];
+    // `--present`: whether the owner's own layout for these same cards was kept (presentCards).
+    let layoutKept = false;
     // Touched before the write too, so a tidy pass racing it never moves what is being opened.
     touchCards(root, ids.filter((id) => c.state.containers.some((k) => k.id === id)));
     // A picture's shape, read from its header before the write (image-aspect.ts): re-read every
@@ -1094,6 +1101,13 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         const g = s.groups.find((x) => x.id === groupId);
         if (g) g.place = 'float';
       }
+      // `--present`: the group they went into is shown whole (as `super present <group>`), else
+      // the cards opened, first 8; no layout named, so the cards pick it.
+      if (presentNow) {
+        const g = groupId ? s.groups.find((x) => x.id === groupId) : undefined;
+        const shown = g ? groupPresentCards(g, s.containers) : ids.slice(0, MAX_FILMSTRIP);
+        layoutKept = presentCards(s, shown).kept;
+      }
       // The picture chain: the next image open within the window joins where this one went.
       if (isMediaKind(kind as ContainerKind)) {
         if (noGroup) imageChains.delete(chainKey);
@@ -1113,7 +1127,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const frame = stageMediaFrame(made.map((k) => ({ ref: k.ref, ...(k.title ? { title: k.title } : {}) })));
       if (frame) findLiveChat(state.session)?.mirrorFrame?.(frame);
     }
-    ok(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(group && autoGrouped ? { autoGroup: true } : {}), ...(kept.length ? { kept } : {}), view: state.view, ...(note ? { kind, note } : {}) });
+    ok(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(group && autoGrouped ? { autoGroup: true } : {}), ...(kept.length ? { kept } : {}), view: state.view,
+      ...(presentNow && state.view.mode === 'present' ? { presented: { cards: state.view.cards, ...(state.view.layout ? { layout: state.view.layout } : {}), ...(layoutKept ? { kept: 'owner_layout' } : {}) } } : {}),
+      ...(note ? { kind, note } : {}) });
   },
 
   shape: async (c, b, res) => {

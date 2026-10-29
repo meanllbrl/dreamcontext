@@ -140,10 +140,13 @@ export function registerSuperCommand(program: Command): void {
     .option('--title <text>', 'Its label (one ref only)')
     .option('--titles <a|b|c>', 'One label per ref, in order, separated by | (several refs)')
     .option('--for <child>', 'Images, PDFs and videos only: the child whose job these show; they go to Others once that job moves on (you send it new work, it is ended, or the owner saw a newer result)')
-    .action((kind: string, refs: string[], o: { shape?: string; size?: string; title?: string; titles?: string; group?: string | false; for?: string }) =>
-      kind !== 'agenda' && !refs.length ? usage('name at least one ref') : run('open', refs.length <= 1
-        ? { kind, ref: refs[0] ?? '', shape: o.shape, size: o.size, title: o.title ?? o.titles?.split('|')[0], group: o.group, for: o.for }
-        : { kind, refs, shape: o.shape, size: o.size, group: o.group, for: o.for, ...(o.titles ? { titles: o.titles.split('|').map((t) => t.trim()) } : {}) }));
+    .option('--present', 'Images, PDFs and videos only: open AND present them at once (their group whole, else the cards, first 8; the layout the cards pick; the owner\'s own layout for the same cards is kept). Pictures you show as a result: always')
+    .action((kind: string, refs: string[], o: { shape?: string; size?: string; title?: string; titles?: string; group?: string | false; for?: string; present?: boolean }) => {
+      const present = o.present ? { present: true } : {};
+      return kind !== 'agenda' && !refs.length ? usage('name at least one ref') : run('open', refs.length <= 1
+        ? { kind, ref: refs[0] ?? '', shape: o.shape, size: o.size, title: o.title ?? o.titles?.split('|')[0], group: o.group, for: o.for, ...present }
+        : { kind, refs, shape: o.shape, size: o.size, group: o.group, for: o.for, ...present, ...(o.titles ? { titles: o.titles.split('|').map((t) => t.trim()) } : {}) });
+    });
 
   s.command('shape <card> <shape>')
     .description('Size a card: small | medium | large | wide (1x1 2x1 2x2 3x2 tiles); 409 owner_sized when the owner chose its size. square | tall are recorded only (older scripts)')

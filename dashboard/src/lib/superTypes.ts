@@ -141,8 +141,11 @@ export function viewWithout(view: SuperView, ids: ReadonlySet<string>): SuperVie
  */
 export const PRESENT_LAYOUTS = ['spotlight', 'compare', 'grid', 'filmstrip', 'review'] as const;
 export type PresentLayout = typeof PRESENT_LAYOUTS[number];
-/** A filmstrip shows at most this many cards; every other layout {@link MAX_PRESENT}. */
-export const MAX_FILMSTRIP = 8;
+/** A filmstrip shows at most this many cards (owner 2026-10-29: "the strip must not be limited":
+ *  a group is presented whole, its strip scrolls); every other layout {@link MAX_PRESENT}. */
+export const MAX_FILMSTRIP = MAX_CONTAINERS;
+/** A picture at least this much wider than tall is landscape (16:9 is 1.78, 4:3 1.33). */
+export const LANDSCAPE_ASPECT = 1.3;
 
 /** How many cards a layout shows. */
 export function presentRange(layout: PresentLayout): { min: number; max: number } {
@@ -155,7 +158,7 @@ export function presentRange(layout: PresentLayout): { min: number; max: number 
   }
 }
 
-type LayoutCard = Pick<SuperContainer, 'kind' | 'ref' | 'of'>;
+type LayoutCard = Pick<SuperContainer, 'kind' | 'ref' | 'of'> & { aspect?: number };
 
 /**
  * A child's page under review: exactly one chat, plus that child's site (a web card it owns,
@@ -186,12 +189,16 @@ export function layoutFits(layout: PresentLayout, cards: readonly LayoutCard[]):
 }
 
 /** The layout the cards pick when none is given: 1 spotlight, a child's page with its chat
- *  review, 2 compare, 3-4 grid, 5-8 filmstrip; 2+ clips (all video) a filmstrip. */
+ *  review, 2 compare, 3-4 grid, 5+ filmstrip; 2+ clips (all video) or 2+ landscape pictures a
+ *  filmstrip. */
 export function defaultLayout(cards: readonly LayoutCard[]): PresentLayout {
   if (cards.length <= 1) return 'spotlight';
   // Clips: one big player over a strip of the rest.
   if (cards.length <= MAX_FILMSTRIP && cards.every((c) => c.kind === 'video')) return 'filmstrip';
   if (isReviewSet(cards)) return 'review';
+  // Landscape pictures (owner 2026-10-29: "if they are 16:9 use filmstrip, not grid, so we can see
+  // them"): a grid cell is too small for a wide shot, one big over a strip shows it.
+  if (cards.every((c) => c.kind === 'image' && (c.aspect ?? 0) >= LANDSCAPE_ASPECT)) return 'filmstrip';
   if (cards.length === 2) return 'compare';
   return cards.length <= MAX_PRESENT ? 'grid' : 'filmstrip';
 }

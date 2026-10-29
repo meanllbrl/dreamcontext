@@ -16,7 +16,8 @@ const REVIEW = [item('web', 'web'), item('chat', 'chat'), item('br', 'browser')]
 
 const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.width - 0.5 && b.x < a.x + a.width - 0.5 && a.y < b.y + b.height - 0.5 && b.y < a.y + a.height - 0.5;
 const inside = (r: Rect, o: Rect) => r.x >= o.x - 0.5 && r.y >= o.y - 0.5 && r.x + r.width <= o.x + o.width + 0.5 && r.y + r.height <= o.y + o.height + 0.5;
-const drawn = (p: StagePlan) => Object.values(p.cards).filter((c) => c.where !== 'others' && c.where !== 'tab');
+// A thumb scrolled out of a long strip's window is drawn nowhere (owner 2026-10-29).
+const drawn = (p: StagePlan) => Object.values(p.cards).filter((c) => c.where !== 'others' && c.where !== 'tab' && !c.hidden);
 
 /** Every preset with a card set it takes. */
 const CASES: [PresentLayout, StageItem[]][] = [
@@ -103,20 +104,49 @@ describe('the wide stage (not narrow)', () => {
     expect(w).toBeLessThanOrEqual(1010);
   });
 
-  it('filmstrip: one row of thumbs under the big card; the agenda is never the big one; a selection swaps', () => {
+  it('filmstrip: one row holding a slot for every card in a fixed order; the agenda is never the big one; selecting never reorders', () => {
     const list = [item('ag', 'agenda'), ...items(7)];
     const p = plan('filmstrip', list, STAGES[0]);
     expect(p.strip!.big).toBe('c0');
-    const thumbs = Object.values(p.cards).filter((c) => c.where === 'thumb');
-    expect(thumbs).toHaveLength(7);
+    // Every card has its slot, the big one's included (owner 2026-10-29: "the selected one must
+    // also show in the strip"); the agenda last.
+    expect(p.strip!.ids).toEqual(['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'ag']);
+    const thumbs = Object.values(p.cards).filter((c) => c.where === 'thumb' && !c.hidden);
     expect(new Set(thumbs.map((t) => t.rect.y)).size).toBe(1);
     expect(thumbs.every((t) => inside(t.rect, p.strip!.rect))).toBe(true);
+    expect(p.strip!.current && inside(p.strip!.current, p.strip!.rect)).toBe(true);
     const sel = plan('filmstrip', list, STAGES[0], {}, { selected: 'c4' });
     expect(sel.strip!.big).toBe('c4');
     expect(sel.cards.c4.where).toBe('present');
     expect(sel.cards.c0.where).toBe('thumb');
+    // Order stability: the same ids in the same order; every other card keeps its exact slot,
+    // and the big card's mark sits in c4's own slot (where c4's thumb was).
+    expect(sel.strip!.ids).toEqual(p.strip!.ids);
+    for (const id of ['c1', 'c2', 'c3', 'c5', 'c6', 'ag']) expect(sel.cards[id].rect).toEqual(p.cards[id].rect);
+    expect(sel.strip!.current).toEqual(p.cards.c4.rect);
+    expect(sel.cards.c0.rect).toEqual(p.strip!.current);
     // A selection no longer presented resets to the first.
     expect(plan('filmstrip', list, STAGES[0], {}, { selected: 'gone' }).strip!.big).toBe('c0');
+  });
+
+  it('filmstrip: more cards than fit scroll (no cap); the window clamps; the big card\'s slot stays its own', () => {
+    const list = items(20);
+    const p = plan('filmstrip', list, STAGES[0]);
+    const st = p.strip!;
+    expect(st.ids).toHaveLength(20);
+    expect(st.visible).toBeLessThan(20);
+    expect(st.prev && st.next).toBeTruthy();
+    const shown = Object.values(p.cards).filter((c) => c.where === 'thumb' && !c.hidden);
+    // The big card's slot is in view (start 0) and is not a thumb: visible - 1 thumbs show.
+    expect(shown).toHaveLength(st.visible - 1);
+    expect(shown.every((t) => inside(t.rect, st.rect))).toBe(true);
+    expect(Object.values(p.cards).filter((c) => c.where === 'thumb')).toHaveLength(19);
+    // Scrolled to the end: the window clamps, the big card's mark scrolls out with its slot.
+    const end = plan('filmstrip', list, STAGES[0], {}, { stripStart: 99 });
+    expect(end.strip!.start).toBe(20 - st.visible);
+    expect(end.strip!.current).toBeUndefined();
+    expect(end.cards.c19.hidden).toBeFalsy();
+    expect(end.cards.c1.hidden).toBe(true);
   });
 
   it('compare: two equal widths; review: the page big on top, the child\'s cards in a row under it', () => {

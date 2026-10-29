@@ -204,7 +204,7 @@ describe('hostile fields are dropped (D2)', () => {
     expect(sanitizeSuperState(raw({ containers: many, view: { mode: 'present', cards: many.map((c) => c.id) } })).view).toEqual({ mode: 'present', cards: many.map((c) => c.id), layout: 'filmstrip' });
     const nine = Array.from({ length: 9 }, (_, i) => ({ id: `q${i}`, kind: 'task', ref: `t-q${i}` }));
     expect(sanitizeSuperState(raw({ containers: nine, view: { mode: 'present', cards: nine.map((c) => c.id), layout: 'grid' } })).view)
-      .toEqual({ mode: 'present', cards: nine.slice(0, 8).map((c) => c.id), layout: 'filmstrip' });
+      .toEqual({ mode: 'present', cards: nine.map((c) => c.id), layout: 'filmstrip' });
   });
 
   it('closing a card the view names drops it from the view on the next write', async () => {

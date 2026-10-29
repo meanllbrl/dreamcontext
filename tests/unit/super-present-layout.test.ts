@@ -135,7 +135,7 @@ describe('defaults: without --layout the cards pick it', () => {
 });
 
 describe('the route refuses what a layout cannot take', () => {
-  it('a wrong count names the range; an unknown name lists the five; more than 8 is refused', async () => {
+  it('a wrong count names the range; an unknown name lists the five; nine are a filmstrip', async () => {
     makeVault();
     let r = await present(ids(3), 'compare');
     expect(r.status).toBe(400);
@@ -149,10 +149,11 @@ describe('the route refuses what a layout cannot take', () => {
     r = await present(ids(2), 'carousel');
     expect(r.status).toBe(400);
     expect(message(r)).toContain('spotlight, compare, grid, filmstrip, review');
-    r = await present(ids(9));
-    expect(r.status).toBe(400);
-    expect(r.json.error ?? r.json.code ?? message(r)).toBeTruthy();
     expect(onDisk().view).toEqual({ mode: 'float' });
+    // No 8-card cap since 2026-10-29: nine cards are a filmstrip.
+    r = await present(ids(9));
+    expect(r.status).toBe(200);
+    expect(onDisk().view).toMatchObject({ mode: 'present', layout: 'filmstrip' });
   });
 
   it('review on cards that are not one page plus that child\'s chat answers 400', async () => {

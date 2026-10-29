@@ -41,6 +41,7 @@
     "verify:super-live-card": "node scripts/verify/super-live-card.mjs",
     "verify:super-head": "node scripts/verify/super-head.mjs",
     "verify:super-layouts": "node scripts/verify/super-layouts.mjs",
+    "verify:super-filmstrip": "node scripts/verify/super-filmstrip.mjs",
     "verify:whiteboard-explorer": "node scripts/verify/whiteboard-explorer.mjs",
     "verify:super-ask-show": "node scripts/verify/super-ask-show.mjs",
     "verify:super-web-file-steady": "node scripts/verify/super-web-file-steady.mjs",

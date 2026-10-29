@@ -7,7 +7,7 @@
 import { promises as fsp } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import {
-  MAX_FILMSTRIP, MAX_FLOAT, applyGroupOp, defaultShape, floatCount, leaveGroups,
+  MAX_ASK_PICTURES, MAX_FLOAT, applyGroupOp, defaultShape, floatCount, leaveGroups,
   type PreviewImage, type SuperState,
 } from './types.js';
 import { planImageGroup, picturesToPull, type ImageChain } from './image-group.js';
@@ -57,7 +57,7 @@ export async function resolvePreviewImages(
   const skipped: string[] = [];
   let realRoot: string;
   try { realRoot = await fs.realpath(projectRoot); } catch { return { found, skipped: images.map((i) => i.src) }; }
-  for (const img of images.slice(0, MAX_FILMSTRIP)) {
+  for (const img of images.slice(0, MAX_ASK_PICTURES)) {
     let src = decodeEntities(img.src).trim();
     if (!src || /^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith('//') || src.includes('\\') || /[\u0000-\u001f]/.test(src)) { skipped.push(img.src); continue; }
     while (src.startsWith('./')) src = src.slice(2);
@@ -98,7 +98,7 @@ export function openImageCards(
   opts: { forChild?: string; now: number; chain?: ImageChain },
 ): OpenedImages {
   const forChild = opts.forChild && s.children[opts.forChild] ? opts.forChild : undefined;
-  const all = refs.slice(0, MAX_FILMSTRIP);
+  const all = refs.slice(0, MAX_ASK_PICTURES);
   const idsOf = (k: number) => all.slice(0, k).map((r) => containerIdFor('image', r.ref));
   const pull = (d: SuperState, ids: readonly string[]) => { const out = picturesToPull(d, ids, forChild); if (out.length) leaveGroups(d, out); return d; };
   const fits = (k: number): boolean => {

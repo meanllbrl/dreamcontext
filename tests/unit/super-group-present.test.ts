@@ -26,7 +26,7 @@ import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
-import { MAX_FILMSTRIP, defaultLayout as serverDefault, emptySuperState, groupPresentCards, presentedGroup, type SuperContainer, type SuperState } from '../../src/lib/super/types.js';
+import { LANDSCAPE_ASPECT, MAX_FILMSTRIP, defaultLayout as serverDefault, emptySuperState, groupPresentCards, presentedGroup, type SuperContainer, type SuperState } from '../../src/lib/super/types.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
 import { DOUBLE_OPEN_MS, isDoubleOpen, openAllHint, openAllLabel } from '../../dashboard/src/components/sleepy/super/GroupPanel.js';
 import { PRESENT_KEY_OWNERS } from '../../dashboard/src/components/sleepy/super/StageParts.js';
@@ -46,7 +46,7 @@ describe('the group a presentation shows (pure, both sides of the wire)', () => 
   it('a group stands for its known cards, in order, at most a filmstrip', () => {
     for (const f of [groupPresentCards, client.groupPresentCards]) {
       expect(f(g, containers)).toEqual(['image-a', 'image-b', 'image-c']);
-      const many = Array.from({ length: 11 }, (_, i) => img(`image-${i}`));
+      const many = Array.from({ length: MAX_FILMSTRIP + 3 }, (_, i) => img(`image-${i}`));
       expect(f({ cards: many.map((c) => c.id) }, many)).toHaveLength(MAX_FILMSTRIP);
     }
   });
@@ -122,14 +122,14 @@ describe('super present <group>', () => {
     expect(s.groups[0].cards).toEqual(['image-a', 'image-b', 'image-c']);
   });
 
-  it('a group bigger than a filmstrip shows its first 8; a layout that does not fit is refused', async () => {
+  it('a group of 10 is presented whole (no 8-card cap since 2026-10-29); a layout that does not fit is refused', async () => {
     const many = Array.from({ length: 10 }, (_, i) => img(`image-${i}`));
     makeVault({ containers: many, groups: [{ id: 'grp-many', name: 'many', cards: many.map((c) => c.id), place: 'float' }] });
     const r = await present({ containers: ['grp-many'] });
     expect(r.status).toBe(200);
     const s = await readSuperState(root);
     expect(s.view).toMatchObject({ mode: 'present', layout: 'filmstrip' });
-    expect(s.view.cards).toEqual(many.slice(0, 8).map((c) => c.id));
+    expect(s.view.cards).toEqual(many.map((c) => c.id));
     expect((await present({ containers: ['grp-many'], layout: 'compare' })).status).toBe(400);
   });
 
@@ -170,6 +170,27 @@ const KIND_CASES: { name: string; cards: SuperContainer[]; layout: string; state
     state: { children: { 'kid-1': { sessionId: 'kid-1', brief: 'the ledger site', adopted: true, startedAt: 1 } } } },
 ];
 
+describe('landscape pictures default to a filmstrip (owner 2026-10-29), the same on both sides', () => {
+  const pic = (aspect?: number): SuperContainer => img(`image-${aspect}`, aspect === undefined ? {} : { aspect });
+  it('2+ pictures all at least LANDSCAPE_ASPECT wide: filmstrip; square, portrait, unknown or mixed: as before', () => {
+    const cases: [SuperContainer[], string][] = [
+      [[pic(16 / 9), pic(1.6)], 'filmstrip'],
+      [[pic(16 / 9), pic(16 / 9), pic(4 / 3)], 'filmstrip'],
+      [[pic(16 / 9)], 'spotlight'],
+      [[pic(1), pic(1)], 'compare'],
+      [[pic(0.46), pic(0.46), pic(0.46)], 'grid'],
+      [[pic(16 / 9), pic(0.46), pic(16 / 9)], 'grid'],
+      [[pic(), pic(), pic()], 'grid'],
+      [[pic(16 / 9), { ...pic(16 / 9), id: 'pdf-x', kind: 'pdf' }], 'compare'],
+    ];
+    for (const [cards, want] of cases) {
+      expect(serverDefault(cards)).toBe(want);
+      expect(client.defaultLayout(cards)).toBe(want);
+    }
+    expect(LANDSCAPE_ASPECT).toBe(client.LANDSCAPE_ASPECT);
+  });
+});
+
 describe('every kind of group opens whole', () => {
   it('the layout the cards pick, the same on both sides of the wire', () => {
     for (const { cards, layout } of KIND_CASES) {
@@ -199,8 +220,9 @@ describe('every kind of group opens whole', () => {
     const t = (k: string) => ({ 'super.group.openAll': 'Open all', 'super.group.openFirst': 'Open first {n}', 'super.group.openAllHint': 'all', 'super.group.openFirstHint': '{total}: first {n}' } as Record<string, string>)[k] ?? k;
     expect(openAllLabel(t, 3)).toBe('Open all');
     expect(openAllLabel(t, MAX_FILMSTRIP)).toBe('Open all');
-    expect(openAllLabel(t, 11)).toBe('Open first 8');
-    expect(openAllHint(t, 11)).toBe('11: first 8');
+    expect(openAllLabel(t, 11)).toBe('Open all');
+    expect(openAllLabel(t, MAX_FILMSTRIP + 1)).toBe(`Open first ${MAX_FILMSTRIP}`);
+    expect(openAllHint(t, MAX_FILMSTRIP + 1)).toBe(`${MAX_FILMSTRIP + 1}: first ${MAX_FILMSTRIP}`);
     expect(openAllHint(t, 2)).toBe('all');
   });
 });
@@ -261,5 +283,115 @@ describe('super present <group> of any kind', () => {
     const s = await readSuperState(root);
     expect(s.groups[0].place).toBe('float');
     expect(s.view).toMatchObject({ mode: 'present', cards: three.map((c) => c.id), layout: 'filmstrip' });
+  });
+});
+
+// ── `super open image … --present` (owner 2026-10-29: "why do you create the group but not
+//    present it"): media shown as a result open AND present in one call. ──
+describe('super open … --present', () => {
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'super-group-present-'));
+    _resetChatRegistry();
+    resetSuperIndex();
+    _resetSuperInbox();
+    resetWindowControl();
+    process.env.DREAMCONTEXT_DESKTOP = '1';
+  });
+  afterEach(() => {
+    if (savedDesktop === undefined) delete process.env.DREAMCONTEXT_DESKTOP; else process.env.DREAMCONTEXT_DESKTOP = savedDesktop;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  async function open(body: Record<string, unknown>) {
+    const r = res();
+    await handleSuperVerb(req(body, { 'x-dreamcontext-window-token': token }), r, { verb: 'open' });
+    return r;
+  }
+  const shots = ['d3-work', 'd3-busy', 'd3-calm', 'd3-dark'].map((n) => `tmp/shots/${n}.png`);
+  function withShots(state: Partial<SuperState> = {}): void {
+    makeVault(state);
+    mkdirSync(join(dir, 'acme', 'tmp', 'shots'), { recursive: true });
+    for (const f of shots) writeFileSync(join(dir, 'acme', f), '');
+  }
+
+  it('4 pictures open as one group AND are presented whole (a grid); the reply carries the view', async () => {
+    withShots();
+    const r = await open({ kind: 'image', refs: shots, present: true });
+    expect(r.status).toBe(200);
+    const s = await readSuperState(root);
+    expect(s.groups).toHaveLength(1);
+    const ids = s.groups[0].cards;
+    expect(ids).toHaveLength(4);
+    expect(s.view).toMatchObject({ mode: 'present', cards: ids, layout: 'grid' });
+    const out = r.json.result as Record<string, unknown>;
+    expect(out.view).toMatchObject({ mode: 'present', cards: ids });
+    expect(out.presented).toMatchObject({ cards: ids });
+    expect((out.presented as Record<string, unknown>).kept).toBeUndefined();
+  });
+
+  it('without --present the group only floats (unchanged)', async () => {
+    withShots();
+    const r = await open({ kind: 'image', refs: shots });
+    expect(r.status).toBe(200);
+    expect((await readSuperState(root)).view.mode).toBe('float');
+    expect((r.json.result as Record<string, unknown>).presented).toBeUndefined();
+  });
+
+  it('--no-group --present presents the cards themselves; one picture is a spotlight', async () => {
+    withShots();
+    const r = await open({ kind: 'image', refs: shots.slice(0, 2), group: false, present: true });
+    expect(r.status).toBe(200);
+    let s = await readSuperState(root);
+    expect(s.groups).toHaveLength(0);
+    expect(s.view).toMatchObject({ mode: 'present', layout: 'compare' });
+    expect(s.view.cards).toHaveLength(2);
+    expect((await open({ kind: 'image', ref: shots[3], group: false, present: true })).status).toBe(200);
+    s = await readSuperState(root);
+    expect(s.view).toMatchObject({ mode: 'present', layout: 'spotlight' });
+  });
+
+  it('the owner\'s own layout for the same cards is kept (kept: owner_layout)', async () => {
+    withShots();
+    await open({ kind: 'image', refs: shots, present: true });
+    let s = await readSuperState(root);
+    const ids = s.groups[0].cards;
+    writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({ ...s, view: { mode: 'present', cards: ids, layout: 'filmstrip', layoutBy: 'owner' } }));
+    resetSuperIndex();
+    const r = await open({ kind: 'image', refs: shots, present: true });
+    expect(r.status).toBe(200);
+    expect((r.json.result as Record<string, unknown>).presented).toMatchObject({ kept: 'owner_layout' });
+    s = await readSuperState(root);
+    expect(s.view).toMatchObject({ mode: 'present', layout: 'filmstrip', layoutBy: 'owner' });
+  });
+
+  // A PNG's header alone: what image-aspect.ts reads for the shape.
+  const png = (w: number, h: number): Buffer => {
+    const b = Buffer.alloc(33);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
+    b.writeUInt32BE(13, 8);
+    b.write('IHDR', 12, 'ascii');
+    b.writeUInt32BE(w, 16);
+    b.writeUInt32BE(h, 20);
+    return b;
+  };
+
+  it('landscape pictures (16:9) present as a filmstrip, not a grid; portrait ones keep the grid', async () => {
+    withShots();
+    for (const f of shots) writeFileSync(join(dir, 'acme', f), png(1600, 900));
+    expect((await open({ kind: 'image', refs: shots, present: true })).status).toBe(200);
+    let s = await readSuperState(root);
+    expect(s.view).toMatchObject({ mode: 'present', layout: 'filmstrip' });
+    // The strip keeps the order they were opened in.
+    expect(s.view.cards).toEqual(s.groups[0].cards);
+    const tall = ['p1', 'p2', 'p3'].map((n) => `tmp/shots/${n}.png`);
+    for (const f of tall) writeFileSync(join(dir, 'acme', f), png(390, 844));
+    expect((await open({ kind: 'image', refs: tall, group: false, present: true })).status).toBe(200);
+    s = await readSuperState(root);
+    expect(s.view).toMatchObject({ mode: 'present', layout: 'grid' });
+  });
+
+  it('--present is media only, and a boolean', async () => {
+    withShots();
+    expect((await open({ kind: 'task', ref: 'ledger-export', present: true })).status).toBe(400);
+    expect((await open({ kind: 'image', ref: shots[0], present: 'yes' })).status).toBe(400);
   });
 });

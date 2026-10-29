@@ -15,7 +15,7 @@
  * Pure: never imports inbox.js (inbox imports this).
  */
 import {
-  ASK_SHOW_RECENT_MS, MAX_ASK_SHOWS, MAX_FILMSTRIP, leaveGroups, presentCards, sameCardSet,
+  ASK_SHOW_RECENT_MS, MAX_ASK_SHOWS, MAX_ASK_PICTURES, leaveGroups, presentCards, sameCardSet,
   type AskShow, type SuperQueueItem, type SuperState,
 } from './types.js';
 import type { ImageChain } from './image-group.js';
@@ -81,7 +81,7 @@ export function settleAskShows(s: SuperState, head: SuperQueueItem | null): void
   // b. The head question, once.
   const e = head ? entries.find((x) => x.item === head.id) : undefined;
   if (e && !e.presented && !e.skipped) {
-    const cards = e.cards.filter((id) => s.containers.some((c) => c.id === id)).slice(0, MAX_FILMSTRIP);
+    const cards = e.cards.filter((id) => s.containers.some((c) => c.id === id)).slice(0, MAX_ASK_PICTURES);
     if (!cards.length) entries = entries.filter((x) => x !== e);
     else if (ownerArranged(s, cards)) entries = entries.map((x) => (x === e ? { ...x, skipped: 'owner_layout' as const } : x));
     else {
@@ -105,18 +105,18 @@ export function askShowState(s: SuperState, item: string): 'presented' | 'waitin
 /**
  * The recent pictures a question falls back on (D1.3): for a child's question, the pictures shown
  * for that child within ASK_SHOW_RECENT_MS; for the super's own, its last picture set (the image
- * chain: its group's pictures, or the lone one) within the same window. At most MAX_FILMSTRIP.
+ * chain: its group's pictures, or the lone one) within the same window. At most MAX_ASK_PICTURES.
  */
 export function recentAskCards(s: SuperState, from: { child: string } | { chain: ImageChain | undefined }, now: number): string[] {
   const images = s.containers.filter((c) => c.kind === 'image');
   if ('child' in from) {
-    return images.filter((c) => c.forChild === from.child && (c.forAt ?? 0) >= now - ASK_SHOW_RECENT_MS).map((c) => c.id).slice(0, MAX_FILMSTRIP);
+    return images.filter((c) => c.forChild === from.child && (c.forAt ?? 0) >= now - ASK_SHOW_RECENT_MS).map((c) => c.id).slice(0, MAX_ASK_PICTURES);
   }
   const chain = from.chain;
   if (!chain || now - chain.at > ASK_SHOW_RECENT_MS) return [];
   const g = chain.group ? s.groups.find((x) => x.id === chain.group) : undefined;
   const ids = g ? g.cards : [chain.card];
-  return ids.filter((id) => images.some((c) => c.id === id)).slice(0, MAX_FILMSTRIP);
+  return ids.filter((id) => images.some((c) => c.id === id)).slice(0, MAX_ASK_PICTURES);
 }
 
 /**
