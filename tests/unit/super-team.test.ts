@@ -285,12 +285,16 @@ describe('a team job\'s status, from the member\'s thread', () => {
     expect(teamJobAnswer(root, job(), null)).toBe('Result: 3 errors since midnight.\nAll in checkout.\n\nLooking at the logs.');
   });
 
-  it('a run\'s answer ends at the next ask on its run: a follow-up queued into it is not this job\'s (review E2)', () => {
+  it('a run\'s answer ends at its own ending: a follow-up queued into it mid-run is not this job\'s, the run\'s result after that ask is (review E2)', () => {
     ask(1);
-    entry(2, { runId: RUN, kind: 'agent', text: 'MRR this month: $51,900.', via: 'cli' });
+    entry(2, { runId: RUN, kind: 'agent', text: 'Pulling the numbers.', via: 'cli' });
     entry(3, { runId: RUN, kind: 'user', text: 'and churn?', via: 'super' });
-    entry(4, { runId: RUN, kind: 'agent', text: 'Churn: 2.1%.', via: 'cli' });
-    expect(teamJobAnswer(root, job(), null)).toBe('MRR this month: $51,900.');
+    entry(4, { runId: RUN, kind: 'agent', text: 'MRR this month: $51,900.', via: 'cli' });
+    entry(5, { runId: RUN, kind: 'system', event: 'ok', text: 'ok', via: 'runner' });
+    entry(6, { runId: RUN, kind: 'agent', text: 'Churn: 2.1%.', via: 'cli' });
+    entry(7, { runId: RUN, kind: 'system', event: 'replied', text: 'Reply delivered.', via: 'runner' });
+    expect(teamJobAnswer(root, job(), null)).toBe('MRR this month: $51,900.\n\nPulling the numbers.');
+    expect(teamJobLive(root, job(), null)).toEqual({ status: 'done', lastLine: 'MRR this month: $51,900.' });
   });
 
   it('a run that posted nothing answers with its document; a reply only with its own posts', () => {

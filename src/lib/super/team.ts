@@ -168,7 +168,7 @@ export function teamJobLive(
     return { status: 'failed', lastLine: lastLine || (unknown ? firstLine(unknown.text, 300) : '') };
   }
 
-  let lastLine = lastAgentLine(after);
+  let lastLine = lastAgentLine(runWindow(after));
   // A fresh run that posted nothing answered in its document (what AI Team draws as its report):
   // its opening line, read through the same symlink-refusing reader.
   if (!lastLine) {
@@ -202,6 +202,18 @@ function replyWindow(job: SuperTeamJob, liveReply: Extract<LiveSayJob, { kind: '
 }
 
 /**
+ * A RUN's own entries among what came after its ask: up to and including its own terminal event.
+ * A follow-up ask to a member still running is queued INTO the run (its `user` entry lands at
+ * once, mid-run) and delivered only once the run ended, so the run's result can follow that ask,
+ * and the follow-up's posts always follow the run's ending: they are that job's, never this one's.
+ * Still running: everything after the ask (a queued reply has posted nothing yet).
+ */
+function runWindow(after: ThreadEntry[]): ThreadEntry[] {
+  const end = after.findIndex((e) => e.kind === 'system' && !!e.event && (DONE.has(e.event) || FAILED.has(e.event) || e.id.endsWith('~r')));
+  return end >= 0 ? after.slice(0, end + 1) : after;
+}
+
+/**
  * The member's whole answer to a team job (`super read <team-id>`, and the head of its `event=done`
  * item): its LAST post first (the one the last line reads, usually the result), then the earlier
  * posts after the ask in order, from the same window `teamJobLive` reads; a fresh run that posted
@@ -210,12 +222,7 @@ function replyWindow(job: SuperTeamJob, liveReply: Extract<LiveSayJob, { kind: '
  */
 export function teamJobAnswer(contextRoot: string, job: SuperTeamJob, live: LiveSayJob | null): string {
   const { after } = jobThread(contextRoot, job);
-  // A run's window ends at the next ask on its run: a follow-up `team ask` to a member still
-  // running is queued INTO that run, and its answer is that job's, never this one's.
-  const nextAsk = after.findIndex((e) => e.kind === 'user');
-  const window = job.jobKind === 'reply'
-    ? replyWindow(job, live?.kind === 'reply' ? live : null, after)
-    : nextAsk >= 0 ? after.slice(0, nextAsk) : after;
+  const window = job.jobKind === 'reply' ? replyWindow(job, live?.kind === 'reply' ? live : null, after) : runWindow(after);
   const posts = window.filter((e) => e.kind === 'agent' && e.text.trim()).map((e) => e.text.trim());
   let text = '';
   if (posts.length) text = [posts[posts.length - 1], ...posts.slice(0, -1)].join('\n\n');
