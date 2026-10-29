@@ -1839,3 +1839,47 @@
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
+
+/* ── Saved drafts shelf (composerDrafts.ts) ──────────────────────────────────────────────
+   One slim row above the card. Chips, not cards: a draft is a reminder of something to send,
+   and the row must never cost the transcript more than a line until there are many. */
+.chat-cmp-menu-list button:disabled { color: var(--color-text-tertiary); cursor: default; background: transparent; }
+.chat-cmp-menu-kbd { float: right; margin-left: 16px; color: var(--color-text-tertiary); }
+.chat-cmp-drafts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  padding: 0 4px 6px;
+  max-height: 72px;
+  overflow-y: auto;
+}
+.chat-cmp-drafts-label {
+  font-size: var(--font-size-xs, 12px);
+  color: var(--color-text-tertiary);
+  margin-right: 2px;
+}
+.chat-cmp-draft {
+  display: inline-flex;
+  align-items: center;
+  max-width: 260px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  border: 1px dashed var(--color-border);
+}
+.chat-cmp-draft-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 4px 3px 8px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs, 12px);
+  cursor: pointer;
+}
+.chat-cmp-draft-open:hover { color: var(--color-text); }
+.chat-cmp-draft-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-cmp-draft-extra { flex: 0 0 auto; color: var(--color-text-tertiary); }
+.chat-cmp-drafts-notice { font-size: var(--font-size-xs, 12px); color: var(--color-warning, var(--color-text-secondary)); }

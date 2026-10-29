@@ -46,8 +46,9 @@ import {
 } from './chatEntities';
 import {
   addAttachments, dropSentAttachments, foldAttachments, nextAttachmentId, pendingUploads, readScratch, removeAttachment,
-  settleAttachment, subscribeScratch, wasSent, type Attachment,
+  setQuote, settleAttachment, subscribeScratch, wasSent, type Attachment,
 } from './composerScratch';
+import { deleteDraft, draftLabel, readDrafts, saveDraft, subscribeDrafts, takeDraft, type SavedDraft } from './composerDrafts';
 import { Popover } from '../SkillPickerPopover';
 import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
 import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
@@ -242,10 +243,10 @@ const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, 
               className={`chat-cmp-attachment chat-cmp-attachment-${a.kind}`}
               data-state={a.uploading ? 'uploading' : a.failed ? 'failed' : 'ready'}
             >
-              {(a.kind === 'image' || (a.kind === 'element' && a.url)) ? (
+              {((a.kind === 'image' || a.kind === 'element') && a.url) ? (
                 <img src={a.url} alt={a.name} className="chat-cmp-thumb" />
               ) : (
-                <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : a.kind === 'ref' ? '📌' : a.kind === 'element' ? '◎' : '📄'}</span>
+                <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : a.kind === 'ref' ? '📌' : a.kind === 'element' ? '◎' : a.kind === 'image' ? '🖼' : '📄'}</span>
               )}
               {/* An attachment says what will happen to it. A picture that can't be sent
                   must never look like one that can — that is the whole bug this row grew
@@ -313,15 +314,18 @@ const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto
 });
 
 /** The Attach `+` and its menu. */
-const AttachButton = memo(function AttachButton({ onPick, onOpenTaskPicker }: {
+const AttachButton = memo(function AttachButton({ onPick, onOpenTaskPicker, onSaveDraft, canSaveDraft }: {
   onPick: (kind: 'files' | 'folders', close: () => void) => void;
   onOpenTaskPicker?: () => void;
+  /** "Save as draft" — the menu's copy of ⌘S (composerDrafts.ts). */
+  onSaveDraft?: () => void;
+  canSaveDraft?: boolean;
 }) {
   return (
     <Popover
       align="left"
       trigger={(open, toggle) => (
-        <button type="button" className="chat-cmp-iconbtn" onClick={toggle} title="Attach files, folders or a task" aria-label="Attach" aria-haspopup="menu" aria-expanded={open}>
+        <button type="button" className="chat-cmp-iconbtn" onClick={toggle} title="Attach files, folders or a task · save as draft (⌘S)" aria-label="Attach" aria-haspopup="menu" aria-expanded={open}>
           <PlusIcon />
         </button>
       )}
@@ -333,9 +337,55 @@ const AttachButton = memo(function AttachButton({ onPick, onOpenTaskPicker }: {
           {onOpenTaskPicker && (
             <button type="button" role="menuitem" onClick={() => { onOpenTaskPicker(); close(); }}>Attach task…</button>
           )}
+          {onSaveDraft && (
+            <button type="button" role="menuitem" disabled={!canSaveDraft} onClick={() => { onSaveDraft(); close(); }}>
+              Save as draft <span className="chat-cmp-menu-kbd" aria-hidden>{SAVE_DRAFT_KEY}</span>
+            </button>
+          )}
         </div>
       )}
     </Popover>
+  );
+});
+
+/** The draft shortcut as this platform writes it. */
+const SAVE_DRAFT_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘S' : 'Ctrl+S';
+
+/**
+ * The saved drafts shelf (composerDrafts.ts): one slim row above the card, a chip per draft.
+ * A click puts the draft back in the box (swapping out whatever is there); ✕ deletes it.
+ * OUTSIDE `.chat-cmp-body` on purpose — the body's height math sums its children, and a
+ * shelf row is not part of what the user is typing.
+ */
+const ComposerDrafts = memo(function ComposerDrafts({ drafts, notice, onOpen, onDelete }: {
+  drafts: readonly SavedDraft[];
+  notice: string | null;
+  onOpen: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  if (!drafts.length && !notice) return null;
+  return (
+    <div className="chat-cmp-drafts" role="group" aria-label="Saved drafts">
+      {drafts.length > 0 && <span className="chat-cmp-drafts-label">Drafts</span>}
+      {drafts.map((d) => {
+        const extra = d.chips.length + (d.quote ? 1 : 0);
+        return (
+          <span key={d.id} className="chat-cmp-draft">
+            <button
+              type="button"
+              className="chat-cmp-draft-open"
+              onClick={() => onOpen(d.id)}
+              title={`${d.text || draftLabel(d, 200)}\n\nClick to put it back in the box — what is there now is kept as a draft.`}
+            >
+              <span className="chat-cmp-draft-text">{draftLabel(d) || 'Draft'}</span>
+              {extra > 0 && <span className="chat-cmp-draft-extra" aria-label={`${extra} attached`}>+{extra}</span>}
+            </button>
+            <button type="button" className="chat-cmp-chip-x" aria-label={`Delete draft: ${draftLabel(d)}`} onClick={() => onDelete(d.id)}>✕</button>
+          </span>
+        );
+      })}
+      {notice && <span className="chat-cmp-drafts-notice" role="status">{notice}</span>}
+    </div>
   );
 });
 
@@ -776,6 +826,15 @@ export function Composer({
     setAttachments(readScratch(convId).attachments);
     return subscribeScratch(convId, (next) => setAttachments(next.attachments));
   }, [convId]);
+
+  // Saved drafts — keyed exactly like the chips, so a respawn keeps them (composerDrafts.ts).
+  const [savedDrafts, setSavedDrafts] = useState<readonly SavedDraft[]>(() => readDrafts(convId));
+  useEffect(() => {
+    setSavedDrafts(readDrafts(convId));
+    return subscribeDrafts(convId, setSavedDrafts);
+  }, [convId]);
+  /** Why a save or an open was refused — shown on the shelf, cleared on the next keystroke. */
+  const [draftNotice, setDraftNotice] = useState<string | null>(null);
 
   const pickPaths = async (kind: 'files' | 'folders', close: () => void) => {
     const paths = kind === 'folders' ? await pickFolders() : await pickFiles();
@@ -1643,6 +1702,49 @@ export function Composer({
     onClearQuote();
   };
 
+  /**
+   * ⌘S / "Save as draft": keep the box's content as a draft and empty it. The box is cleared
+   * ONLY when `saveDraft` says the draft was kept — a refusal leaves every character, chip and
+   * quote exactly where it was and says why (refuse-before-the-caller-cleans-up).
+   */
+  const saveAsDraft = () => {
+    if (sendingRef.current) return;
+    const { draft: text, quote: liveQuote } = liveRef.current;
+    const kept = saveDraft(convId, { text, attachments: readScratch(convId).attachments, quote: liveQuote });
+    if (!kept.ok) { setDraftNotice(kept.reason); return; }
+    setDraftNotice(null);
+    setDraft('');
+    session.syncDraft('');
+    setNavBoth(NO_HISTORY_NAV);
+    setSlashQuery(null);
+    setMentionQuery(null);
+    dropSentAttachments(convId);
+    onClearQuote();
+    taRef.current?.focus();
+  };
+
+  /** Put a draft back in the box. What is in the box now is kept as a draft in its place. */
+  const openDraft = (id: string) => {
+    if (sendingRef.current) return;
+    const { draft: text, quote: liveQuote } = liveRef.current;
+    const res = takeDraft(convId, id, { text, attachments: readScratch(convId).attachments, quote: liveQuote });
+    if (!res.ok) { setDraftNotice(res.reason); return; }
+    setDraftNotice(null);
+    const d = res.draft;
+    // The box's chips and quote went into the swapped draft (or there were none to keep).
+    dropSentAttachments(convId);
+    onClearQuote();
+    if (d.chips.length) {
+      addAttachments(convId, d.chips.map((c): Attachment => ({ id: nextAttachmentId(), ...c })));
+    }
+    if (d.quote) setQuote(convId, d.quote);
+    setDraft(d.text);
+    session.syncDraft(d.text);
+    setNavBoth(NO_HISTORY_NAV);
+    pendingCaret.current = { pos: d.text.length, scrollToEnd: true };
+    taRef.current?.focus();
+  };
+
   const submit = (mode: SubmitMode = 'auto') => {
     if (!canCompose || !hasSendableContent || sendingRef.current) return;
     // Nothing in flight — the common case, and it stays synchronous. A picked element's picture
@@ -1756,6 +1858,10 @@ export function Composer({
   const stableClearQuote = useStableHandler(() => onClearQuote());
   const stablePick = useStableHandler((kind: 'files' | 'folders', close: () => void) => { void pickPaths(kind, close); });
   const stableTaskPicker = useStableHandler(() => onOpenTaskPicker?.());
+  const stableSaveDraft = useStableHandler(() => saveAsDraft());
+  const stableOpenDraft = useStableHandler((id: string) => openDraft(id));
+  const stableDeleteDraft = useStableHandler((id: string) => { deleteDraft(convId, id); setDraftNotice(null); });
+  const canSaveDraft = !!convId && (!!draft.trim() || sendableAttachments.length > 0 || !!quote) && uploadingCount === 0;
 
   return (
     <div className="chat-cmp" ref={rootRef}>
@@ -1867,6 +1973,10 @@ export function Composer({
         </div>
       )}
 
+      {convId && (
+        <ComposerDrafts drafts={savedDrafts} notice={draftNotice} onOpen={stableOpenDraft} onDelete={stableDeleteDraft} />
+      )}
+
       {/* `data-voice` is the WHOLE state machine as far as the card is concerned: the left
           rail is an inset shadow keyed off it, so changing state costs no element, no
           layout and no re-flow of anything below the composer. */}
@@ -1933,6 +2043,7 @@ export function Composer({
             value={draft}
             disabled={disabled}
             onChange={(e) => {
+              if (draftNotice) setDraftNotice(null);
               setDraft(e.target.value);
               session.syncDraft(e.target.value);
               // Editing a recalled prompt ends the walk: the text is the user's own draft from
@@ -2007,6 +2118,14 @@ export function Composer({
                   return;
                 }
               }
+              // ⌘S (Ctrl+S off the Mac) — keep this as a draft. Nothing else in the app claims it,
+              // and inside the box it would otherwise reach the webview's own "Save page".
+              if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                e.stopPropagation();
+                saveAsDraft();
+                return;
+              }
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
             }}
             // Keep the mirror aligned when the field scrolls (a draft past the height cap).
@@ -2042,7 +2161,12 @@ export function Composer({
             Drawn only inside a project (`showAttach`) — every attachment becomes a path, and
             a pasted image's bytes need that project's temp dir. */}
         {showAttach && (
-          <AttachButton onPick={stablePick} onOpenTaskPicker={onOpenTaskPicker ? stableTaskPicker : undefined} />
+          <AttachButton
+            onPick={stablePick}
+            onOpenTaskPicker={onOpenTaskPicker ? stableTaskPicker : undefined}
+            onSaveDraft={convId ? stableSaveDraft : undefined}
+            canSaveDraft={canSaveDraft}
+          />
         )}
 
         <div className="chat-cmp-spacer" />
