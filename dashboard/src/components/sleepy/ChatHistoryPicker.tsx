@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApi } from '../../context/VaultContext';
 import { useOverlayId } from '../../lib/useOverlayId';
 import { CommandModal, useListKeyboardNav } from '../search/CommandModal';
+import { highlight, queryTokens } from './phoneList';
 import './ChatHistoryPicker.css';
 
 /**
@@ -14,10 +15,12 @@ import './ChatHistoryPicker.css';
  * chosen row comes back as a real tab with its transcript replayed above the composer.
  *
  * Search is SERVER-side (`GET /api/agent/chat-sessions?q=`), because the haystack it
- * matches — every prompt harvested from a session's head — is far too big to ship to the
- * client for a list view (see `lib/transcript-sessions.ts`). The index is memoized per
- * transcript, so the first open pays the scan and every keystroke after it is a filter
- * over warm memory.
+ * matches — every prompt harvested from a session's head, and the full text of what was said
+ * (your messages and the agent's replies) — is far too big to ship to the client for a list
+ * view (see `lib/transcript-sessions.ts`, `lib/transcript-content-index.ts`). The index is
+ * memoized per transcript, so the first open pays the scan and every keystroke after it is a
+ * pass over warm memory. A queried list comes back RANKED (title hits first), so it drops the
+ * day headers; each row shows the line that matched, with the words marked.
  *
  * Rendered as a SIBLING of `.agent-surface`, never a child: the surface declares
  * `contain: layout paint`, which would make it the containing block for the modal's
@@ -32,8 +35,10 @@ export interface PastSession {
    *  older server, which reads as a first prompt. */
   named?: boolean;
   preview: string;
-  /** A queried listing only: the title or message line that holds the first word. */
+  /** A queried listing only: the title or message line that holds the query. */
   match?: string;
+  /** A queried listing only: where it matched — the row's name, a prompt, or deeper content. */
+  matchIn?: 'title' | 'prompt' | 'content';
   /** ms epoch — last write to the transcript. */
   updatedAt: number;
   startedAt: number | null;
@@ -47,6 +52,31 @@ interface ChatHistoryResponse {
   /** Matching conversations the server withheld as machine-spawned agent runs. */
   agentRuns: number;
   truncated: boolean;
+  /** Present while the server is still reading transcripts' content: the list is partial. */
+  indexing?: { done: number; total: number };
+}
+
+/** How soon a partial (still-indexing) search result is asked for again. */
+const INDEXING_RETRY_MS = 700;
+
+/** Characters kept before the first marked word: a one-line row is cut at its END, so a long
+ *  lead-in would push the hit itself behind the ellipsis on a narrow window. */
+const LEAD_CHARS = 24;
+
+/** `line` with its lead-in shortened to {@link LEAD_CHARS} before the first query word. */
+function leadToHit(line: string, tokens: readonly string[]): string {
+  const runs = highlight(line, tokens);
+  let at = 0;
+  for (const r of runs) { if (r.hit) break; at += r.text.length; }
+  if (at >= line.length || at <= LEAD_CHARS + 1) return line;
+  const from = line.indexOf(' ', at - LEAD_CHARS);
+  const cut = from >= 0 && from < at ? from + 1 : at - LEAD_CHARS;
+  return `…${line.slice(cut).replace(/^…/, '')}`;
+}
+
+/** `text` with the query's words marked. */
+function Marked({ text, tokens }: { text: string; tokens: readonly string[] }) {
+  return <>{highlight(text, tokens).map((p, k) => (p.hit ? <mark key={k} className="chp-hit">{p.text}</mark> : <span key={k}>{p.text}</span>))}</>;
 }
 
 interface ChatHistoryPickerProps {
@@ -117,6 +147,11 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
   /** Monotonic request id — a slow response for an older query must never overwrite a
    *  newer one's results (typing fast outruns the fetches). */
   const reqRef = useRef(0);
+  /** Bumped to ask again while the server is still indexing content. */
+  const [retry, setRetry] = useState(0);
+  /** A re-asked (still-indexing) result can reorder the rows: keep the keyboard on the same
+   *  conversation, not on the same row number. Set below, once the focus state exists. */
+  const keepFocusRef = useRef<(r: ChatHistoryResponse) => void>(() => {});
 
   // One clock reading per open, so every row's "2h ago" is measured from the same
   // instant and no row re-renders just because the minute rolled over mid-scroll.
@@ -130,23 +165,26 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
     if (!open) return;
     const seq = ++reqRef.current;
     setLoading(true);
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const handle = setTimeout(() => {
       api.get<ChatHistoryResponse>(
         `/agent/chat-sessions?limit=${PAGE_LIMIT}&q=${encodeURIComponent(q.trim())}${showAgentRuns ? '&agentRuns=1' : ''}`,
       )
         .then((r) => {
           if (reqRef.current !== seq) return;
+          if (retry) keepFocusRef.current(r);
           setData(r);
           setFailed(false);
+          if (r.indexing && q.trim()) retryTimer = setTimeout(() => setRetry((n) => n + 1), INDEXING_RETRY_MS);
         })
         .catch(() => {
           if (reqRef.current !== seq) return;
           setFailed(true);
         })
         .finally(() => { if (reqRef.current === seq) setLoading(false); });
-    }, q ? 140 : 0);
-    return () => clearTimeout(handle);
-  }, [api, open, q, showAgentRuns]);
+    }, q && !retry ? 140 : 0);
+    return () => { clearTimeout(handle); clearTimeout(retryTimer); };
+  }, [api, open, q, showAgentRuns, retry]);
 
   const sessions = data?.sessions ?? [];
 
@@ -159,6 +197,14 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
     length: sessions.length,
     onEnter: activate,
   });
+
+  keepFocusRef.current = (r) => {
+    // Untouched (still on the top row): let it follow the new best match instead.
+    if (focused === 0) return;
+    const id = sessions[focused]?.id;
+    const at = id ? r.sessions.findIndex((s) => s.id === id) : -1;
+    if (at >= 0) setFocused(at);
+  };
 
   // Keep the keyboard-focused row in view as ↑/↓ walk past the fold.
   useEffect(() => {
@@ -173,6 +219,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
   useEffect(() => {
     if (!open) return;
     setQ('');
+    setRetry(0);
     setFocused(0);
     setData(null);
     setFailed(false);
@@ -183,6 +230,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
   }, [open, setFocused]);
 
   const trimmed = q.trim();
+  const tokens = useMemo(() => queryTokens(trimmed), [trimmed]);
   const hiddenRuns = data?.agentRuns ?? 0;
 
   return (
@@ -197,7 +245,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
           spellCheck={false}
           autoComplete="off"
           aria-label="Search past chats"
-          onChange={(e) => { setQ(e.target.value); setFocused(0); }}
+          onChange={(e) => { setQ(e.target.value); setRetry(0); setFocused(0); }}
           onKeyDown={onKeyDown}
         />
         {loading && <span className="chp-spin" aria-hidden="true" />}
@@ -211,7 +259,9 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
           // A group header is drawn only where the bucket CHANGES, and it is not a row —
           // list indices stay one-per-session so ↑/↓ never land on a heading.
           const label = groupLabel(s.updatedAt, now);
-          const showHeader = i === 0 || groupLabel(sessions[i - 1].updatedAt, now) !== label;
+          // A queried list is ranked by match, not by date, so day headers would lie.
+          const showHeader = !trimmed && (i === 0 || groupLabel(sessions[i - 1].updatedAt, now) !== label);
+          const matchLine = trimmed && s.match && s.match !== s.title ? leadToHit(s.match, tokens) : '';
           return (
             <div key={s.id} className="chp-group">
               {showHeader && <div className="chp-group-label">{label}</div>}
@@ -226,8 +276,10 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
               >
                 <span className="chp-row-glyph" aria-hidden="true">◆</span>
                 <span className="chp-row-main">
-                  <span className="chp-row-title">{s.title}</span>
-                  {s.preview && <span className="chp-row-preview">{s.preview}</span>}
+                  <span className="chp-row-title"><Marked text={s.title} tokens={tokens} /></span>
+                  {matchLine
+                    ? <span className="chp-row-preview chp-row-match" data-testid="chp-match"><Marked text={matchLine} tokens={tokens} /></span>
+                    : s.preview && <span className="chp-row-preview">{s.preview}</span>}
                 </span>
                 <span className="chp-row-meta">
                   <span className="chp-row-when">{whenLabel(s.updatedAt, now)}</span>
@@ -268,12 +320,17 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
             type="button"
             className="chp-foot-toggle"
             aria-pressed={showAgentRuns}
-            onClick={() => { setShowAgentRuns((v) => !v); setFocused(0); }}
+            onClick={() => { setShowAgentRuns((v) => !v); setRetry(0); setFocused(0); }}
           >
             {showAgentRuns
               ? 'hide agent runs'
               : `${hiddenRuns} agent run${hiddenRuns === 1 ? '' : 's'} hidden — show`}
           </button>
+        )}
+        {trimmed && data?.indexing && (
+          <span className="chp-foot-count" data-testid="chp-indexing">
+            searching inside {data.indexing.done}/{data.indexing.total}…
+          </span>
         )}
         {data && data.total > 0 && (
           <span className="chp-foot-count">

@@ -31,8 +31,8 @@ import {
  * It takes over the drawer's other duties too: switching between the chosen projects, the
  * notifications row, and the way out to the rest of the dashboard.
  *
- * Closed chats are searched on the Mac (`/agent/chat-sessions?q=`: titles and your messages,
- * never Claude's answers — the index the desktop picker already keeps); open ones here, over
+ * Closed chats are searched on the Mac (`/agent/chat-sessions?q=`: titles, your messages and
+ * Claude's replies — the index the desktop picker already keeps); open ones here, over
  * their title, last line and, for this phone's own tabs, the loaded conversation.
  *
  * A project whose Super Agent is handed over (`live.supers`) shows ONE row and nothing else: the
