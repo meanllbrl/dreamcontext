@@ -302,10 +302,10 @@ describe('the owner wins for his card set (D9, D10)', () => {
 });
 
 describe('the CLI', () => {
-  it('present takes --layout and its help names the five and 1-8', () => {
+  it('present takes --layout and its help names the five and that the strip scrolls', () => {
     const present = createProgram().commands.find((c) => c.name() === 'super')!.commands.find((c) => c.name() === 'present')!;
     expect(present.options.map((o) => o.long)).toContain('--layout');
     const help = present.helpInformation();
-    for (const name of ['spotlight', 'compare', 'grid', 'filmstrip', 'review', '1-8']) expect(help).toContain(name);
+    for (const name of ['spotlight', 'compare', 'grid', 'filmstrip', 'review', 'its strip scrolls']) expect(help).toContain(name);
   });
 });

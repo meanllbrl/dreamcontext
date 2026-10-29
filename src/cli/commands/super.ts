@@ -140,7 +140,7 @@ export function registerSuperCommand(program: Command): void {
     .option('--title <text>', 'Its label (one ref only)')
     .option('--titles <a|b|c>', 'One label per ref, in order, separated by | (several refs)')
     .option('--for <child>', 'Images, PDFs and videos only: the child whose job these show; they go to Others once that job moves on (you send it new work, it is ended, or the owner saw a newer result)')
-    .option('--present', 'Images, PDFs and videos only: open AND present them at once (their group whole, else the cards, first 8; the layout the cards pick; the owner\'s own layout for the same cards is kept). Pictures you show as a result: always')
+    .option('--present', 'Images, PDFs and videos only: open AND present them at once (their group whole, else the cards; the layout the cards pick; the owner\'s own layout for the same cards is kept). Pictures you show as a result: always')
     .action((kind: string, refs: string[], o: { shape?: string; size?: string; title?: string; titles?: string; group?: string | false; for?: string; present?: boolean }) => {
       const present = o.present ? { present: true } : {};
       return kind !== 'agenda' && !refs.length ? usage('name at least one ref') : run('open', refs.length <= 1
@@ -161,11 +161,11 @@ export function registerSuperCommand(program: Command): void {
     });
 
   s.command('present [cards...]')
-    .description('Presentation of 1-8 cards in a named layout: spotlight (1), compare (2), grid (2-4), filmstrip (2-8), review (a page with its child\'s chat); a group id (grp-…) stands for its cards, so `super present <group>` opens the whole group at once; without --layout the cards pick it; --off returns to the floating cards')
+    .description('Presentation of cards in a named layout: spotlight (1), compare (2), grid (2-4), filmstrip (2+, its strip scrolls), review (a page with its child\'s chat); a group id (grp-…) stands for its cards, so `super present <group>` opens the whole group at once; without --layout the cards pick it; --off returns to the floating cards')
     .option('--layout <name>', 'spotlight | compare | grid | filmstrip | review')
     .option('--off', 'Leave the presentation')
     .action((containers: string[], o: { off?: boolean; layout?: string }) => {
-      if (!o.off && containers.length === 0) return usage('name 1-8 cards or a group, or pass --off');
+      if (!o.off && containers.length === 0) return usage('name cards or a group, or pass --off');
       return run('present', o.off ? { containers: [] } : { containers, ...(o.layout ? { layout: o.layout } : {}) });
     });
 

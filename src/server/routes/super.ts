@@ -1102,7 +1102,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         if (g) g.place = 'float';
       }
       // `--present`: the group they went into is shown whole (as `super present <group>`), else
-      // the cards opened, first 8; no layout named, so the cards pick it.
+      // the cards opened; no layout named, so the cards pick it.
       if (presentNow) {
         const g = groupId ? s.groups.find((x) => x.id === groupId) : undefined;
         const shown = g ? groupPresentCards(g, s.containers) : ids.slice(0, MAX_FILMSTRIP);
@@ -1189,7 +1189,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       return;
     }
     // A group (`grp-…`) stands for its cards (owner 2026-10-27: "open every picture of the
-    // group at once"): `super present <group>` lays the whole group out, first 8 cards.
+    // group at once"): `super present <group>` lays the whole group out.
     const named = raw.flatMap((x) => {
       const g = typeof x === 'string' ? c.state.groups.find((y) => y.id === x) : undefined;
       return g ? groupPresentCards(g, c.state.containers) : [x];
