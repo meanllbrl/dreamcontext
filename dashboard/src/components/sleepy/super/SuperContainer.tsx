@@ -80,13 +80,37 @@ export function childBusyOf(session: ChatSession | undefined): boolean {
   return kind === 'working' || kind === 'asking' || session.hasLiveWork();
 }
 
-export function chatStatus(session: ChatSession | undefined): SessionStatusInfo {
+export function chatStatus(session: ChatSession | undefined, remoteChild?: RemoteRow | null): SessionStatusInfo {
+  if (!session && remoteChild) return remoteChildStatus(remoteChild);
   return deriveSessionStatus({
     dormant: !session, status: session?.status, busy: session?.busy, asking: session?.asking,
     // A shell it left running in the background is work still under way: its turn ended, its
     // job did not (field 2026-10-22: "done" over a 10-minute script with its own ⧉ 1 chip).
     agentsWorking: !!session?.agentsWorking || backgroundShellsRunning(session),
   });
+}
+
+/** What a remote screen knows of a child: the record's row, which the server keeps in line with the
+ *  Mac's registry and pushes on every move (inbox.ts `reconcileDraft`, the `super_stage` frame). */
+export type RemoteRow = Pick<SuperChild, 'row' | 'endedAt'>;
+
+/**
+ * A child's status on a REMOTE stage, which has no live session of its own (owner 2026-10-29: every
+ * card read "saved" from another computer while the Mac showed them working). Read from its row:
+ * working, asking (or waiting on something only the owner can do), done (or stuck: its turn
+ * ended), ended (`super end`); gone or no row is what the Mac draws for a chat with no process,
+ * saved.
+ */
+export function remoteChildStatus(child: RemoteRow): SessionStatusInfo {
+  if (child.endedAt !== undefined) return deriveSessionStatus({ status: 'closed' });
+  switch (child.row) {
+    case 'working': return deriveSessionStatus({ status: 'open', busy: true });
+    case 'asking':
+    case 'waiting': return deriveSessionStatus({ status: 'open', asking: true });
+    case 'done':
+    case 'stuck': return deriveSessionStatus({ status: 'open' });
+    default: return deriveSessionStatus({ dormant: true });
+  }
 }
 
 function backgroundShellsRunning(session: ChatSession | undefined): boolean {
@@ -181,6 +205,8 @@ export interface SuperContainerProps extends SuperCardActions {
   desktopViewport?: boolean;
   /** A filmstrip thumb pressed: it becomes the big card. */
   onSelectThumb?: (id: string) => void;
+  /** A remote stage's child chat (no live session here): its status comes from the row. */
+  remoteChild?: RemoteRow | null;
 }
 
 /**
@@ -199,7 +225,7 @@ export function SuperContainer(props: SuperContainerProps) {
   // the session's every change themselves (liveSession.ts).
   const liveChat = c.kind === 'chat' ? session : undefined;
   useLiveSession(liveChat, () => frameKeyOf(liveChat));
-  const status = c.kind === 'chat' ? chatStatus(session) : null;
+  const status = c.kind === 'chat' ? chatStatus(session, props.remoteChild) : null;
   const floating = plan.where === 'float';
   const large = plan.where === 'half' || plan.where === 'present' || plan.where === 'sheet';
   // A filmstrip thumb (plan-r2 D13): a static tile, never a live page, never dragged; a press

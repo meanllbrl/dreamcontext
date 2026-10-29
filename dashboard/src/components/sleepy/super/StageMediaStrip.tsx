@@ -13,14 +13,16 @@ import { useI18n } from '../../../context/I18nContext';
  * inside-project rule of `GET /api/agent/file`; a picture that has gone since degrades to its
  * name, never a broken image icon.
  */
-export function StageMediaStrip({ items, snapshot = false, onOpenFile }: {
+export function StageMediaStrip({ items, snapshot, onOpenFile }: {
   items: ReadonlyArray<{ ref: string; title?: string }>;
-  /** What the stage held as the phone joined: "on the Mac's stage now", not "Super opened…". */
-  snapshot?: boolean;
+  /** What the stage held as the phone joined, and when (epoch ms): "on the Mac's stage at 14:05",
+   *  never "now", which a strip left in the transcript stops being the moment the stage moves. */
+  snapshot?: number;
   onOpenFile?: (path: string) => void;
 }) {
   const { t } = useI18n();
-  const head = snapshot ? t('chat.stageMedia.snapshot')
+  const head = snapshot !== undefined
+    ? t('chat.stageMedia.snapshot').replace('{time}', new Date(snapshot).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
     : items.length === 1 ? t('chat.stageMedia.one') : t('chat.stageMedia.many').replace('{n}', String(items.length));
   return (
     <div className="super-stage-media" role="group" aria-label={head} data-testid="stage-media-strip">

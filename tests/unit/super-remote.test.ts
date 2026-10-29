@@ -16,6 +16,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { superRemoteView, isMacOnlyHost, titleFromBrief } from '../../src/lib/super/remote-view.js';
+import { superDigest } from '../../src/lib/super/phone-mirror.js';
 import { checkRemoteLayout } from '../../src/server/routes/super-remote.js';
 import { SUPER_VERB_HANDLERS, type SuperCaller } from '../../src/server/routes/super.js';
 import type { ServerResponse } from 'node:http';
@@ -118,15 +119,23 @@ describe('superRemoteView is an allowlist (AC14)', () => {
     for (const h of ['100.63.0.1', '100.128.0.1', '198.20.0.1', 'corp.example.com', 'internal.example.com']) expect(isMacOnlyHost(h, TUNNEL), h).toBe(false);
   });
 
-  it('a chat card titled from its child\'s brief carries no title, and the agenda never names a child by it', () => {
+  it('a chat card is named as the digest on the same socket names it: never "Child chat N", never the whole brief', () => {
     const rec = fullRecord();
-    rec.children.kid.brief = 'BRIEF-MARKER fix the login page for the owner';
-    rec.containers[0].title = 'BRIEF-MARKER fix the login';
+    const tail = 'TAIL-OF-BRIEF-MARKER';
+    rec.children.kid.brief = `Fix the login page for the owner, then ${'x'.repeat(60)} ${tail}`;
+    delete rec.containers[0].title;
     rec.queue[0] = { ...rec.queue[0], state: 'pending', kind: 'question' } as SuperState['queue'][number];
     const v = superRemoteView(rec, 'acme', TUNNEL);
-    expect(v.containers.find((c) => c.id === 'chat-kid')?.title).toBeUndefined();
-    expect(JSON.stringify(v.names)).not.toContain('BRIEF-MARKER');
-    expect(JSON.stringify(v)).not.toContain('BRIEF-MARKER');
+    const title = v.containers.find((c) => c.id === 'chat-kid')?.title;
+    expect(title).toBe(superDigest(rec).names.kid);
+    expect(title?.startsWith('Fix the login page')).toBe(true);
+    expect(Array.from(title ?? '').length).toBeLessThanOrEqual(80);
+    expect(v.names).toEqual(superDigest(rec).names);
+    // The brief beyond the name never travels.
+    expect(JSON.stringify(v)).not.toContain(tail);
+    // A card the Super titled keeps its own title.
+    rec.containers[0].title = 'Pricing page';
+    expect(superRemoteView(rec, 'acme', TUNNEL).containers.find((c) => c.id === 'chat-kid')?.title).toBe('Pricing page');
   });
 
   it('titleFromBrief: the brief, a cut of it, or a title that opens with it; never an unrelated title', () => {
@@ -293,7 +302,7 @@ describe('the remote stage routes', () => {
     expect(JSON.parse(r.body).state.containers.find((c: { id: string }) => c.id === 'pic')).toMatchObject({ place: 'float' });
   });
 
-  it('a `brief` change re-titles a card titled from the OLD brief, so the old brief never reaches the view', async () => {
+  it('a `brief` change re-titles a card titled from the OLD brief: the view names it by the new line, never the old brief', async () => {
     const kid = 'bbbbbbbb-0000-4000-8000-00000000000b';
     await seed({
       enabled: true,
@@ -312,7 +321,8 @@ describe('the remote stage routes', () => {
     expect(titles).toEqual(['Waiting on the login fix', 'Owner named this']);
     const r = await phone('GET', '/api/agent/super-stage');
     expect(r.body).not.toContain('OLD-BRIEF-MARKER');
-    expect(r.body).not.toContain('Waiting on the login fix');
+    // Named as the Mac names it now (owner 2026-10-29), never by the old brief.
+    expect(JSON.parse(r.body).containers.find((c: { id: string }) => c.id === 'c-kid').title).toBe('Waiting on the login fix');
     expect(r.body).toContain('Owner named this');
   });
 
@@ -335,7 +345,9 @@ describe('the remote stage routes', () => {
     const r = await phone('POST', '/api/agent/super-stage/seen', { children: [{ id: 'kid', at: 50 }] });
     expect(r.status).toBe(200);
     expect(record().children.kid.seenAt).toBe(50);
-    expect(r.body).not.toContain('BRIEF-MARKER');
+    // The child is named as the digest on the same socket names it, and nothing else of the record travels.
+    expect(JSON.parse(r.body).state.names).toEqual({ kid: 'BRIEF-MARKER' });
+    expect(JSON.parse(r.body).state.children.kid).toEqual({ sessionId: 'kid', startedAt: 1, finishedAt: 50, seenAt: 50 });
   });
 
   it('/api/super/* stays laptop-only on the phone', async () => {

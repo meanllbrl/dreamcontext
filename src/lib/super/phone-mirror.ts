@@ -355,6 +355,15 @@ function fnv(s: string): string {
   return h.toString(36);
 }
 
+/** A child's name as a remote screen is told it: its chat card's title, else its brief, flattened
+ *  and cut to {@link DIGEST_MAX_NAME}. The ONE name every mirror frame carries (the digest's
+ *  `names`, the remote stage's chat card); the brief beyond it never travels. */
+export function childDigestName(state: Pick<SuperDigestSource, 'containers' | 'children'>, sid: string): string {
+  const card = state.containers.find((c) => c.kind === 'chat' && c.ref === sid);
+  const brief = Object.prototype.hasOwnProperty.call(state.children, sid) ? state.children[sid].brief : undefined;
+  return digestText(card?.title || brief, DIGEST_MAX_NAME);
+}
+
 /** The digest of `state`. Pure. */
 export function superDigest(state: SuperDigestSource): SuperDigest {
   const pad = (state.pad ?? []).slice(-DIGEST_MAX_PAD)
@@ -378,8 +387,7 @@ export function superDigest(state: SuperDigestSource): SuperDigest {
   ])].slice(0, DIGEST_MAX_NAMES);
   const names: Record<string, string> = {};
   for (const sid of sids) {
-    const card = state.containers.find((c) => c.kind === 'chat' && c.ref === sid);
-    const name = digestText(card?.title || state.children[sid]?.brief, DIGEST_MAX_NAME);
+    const name = childDigestName(state, sid);
     if (name) names[sid] = name;
   }
   const body = { pad, waiting, ownerBatches, names };
