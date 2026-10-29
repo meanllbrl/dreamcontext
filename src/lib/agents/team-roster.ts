@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { listAgentTargets } from './store.js';
 import { identityOnly } from './compose.js';
 import { nameOf, summaryOf } from './agent-summary.js';
+import { foreignOwner } from './owner.js';
 import { getAutomation } from '../automations/store.js';
 import { checkApproval, type ApprovalVerdict } from '../automations/registry.js';
 import { chatSubagents, type ChatSubagents } from '../automations/chat-subagents.js';
@@ -103,6 +104,9 @@ export function collectTeam(contextRoot: string, home?: string): TeamMember[] {
     try {
       const call = memberCallState(contextRoot, m.slug, home);
       if (call.state === 'missing' || call.state === 'not_owner') continue;
+      // A colleague's member is never listed, turned off too: `memberCallState` says `off` before
+      // it reaches the owner (sayToAgent's order: disabled before not_owner), so ask the slot here.
+      if (call.manifest && foreignOwner(call.manifest)) continue;
       const own = identityOnly(m);
       out.push({ slug: m.slug, title: nameOf(m), role: summaryOf(own), state: call.state, watches: watchedInsights(own.prompt, slugs) });
     } catch { /* one unreadable member costs its line */ }
@@ -309,10 +313,15 @@ export function teamRouteOf(raw: string | undefined): TeamRoute | null {
  * The owner's own words in a prompt: the first text block with every reference header
  * (`aboutHeads`: a ↩ reply's quote, an agenda line) cut out, up to the first server-written block
  * (a line opening `<super-`, `<owner-` or `[super `). Null for a server-written Super turn
- * (`[super events]` …): a team result naming a member must never ask that member again.
+ * (`[super events]` …, the rotation's `Handoff:` turn): a team result naming a member must never
+ * ask that member again.
  */
+/** The fixed opening of the server's handoff turn after a rotation's `/clear`
+ *  (context-watch.ts `handoffContinuePrompt`): server-written, never the owner's words. */
+export const HANDOFF_TURN_PREFIX = 'Handoff: ';
+
 export function ownerWords(prompt: string): string | null {
-  if (SUPER_EVENT_PREFIXES.some((p) => prompt.startsWith(p))) return null;
+  if (SUPER_EVENT_PREFIXES.some((p) => prompt.startsWith(p)) || prompt.startsWith(HANDOFF_TURN_PREFIX)) return null;
   let text = prompt;
   const cut = /(^|\n)(<super-|<owner-|\[super )/.exec(text);
   if (cut) text = text.slice(0, cut.index);

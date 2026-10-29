@@ -14,8 +14,9 @@ import { chatSubagents } from '../../src/lib/automations/chat-subagents.js';
 import {
   EMPTY_TEAM_TEXT, TEAM_BLOCK_MAX_CHARS, chatSpawnRoster, collectTeam, memberCallState, ownerWords, renderSuperTeamBlock,
   stripSuperTeamBlocks, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
-  teamFit, teamPromptDirectives, teamRouteOf, watchedInsights, type TeamMember,
+  teamFit, teamPromptDirectives, teamRouteOf, watchedInsights, HANDOFF_TURN_PREFIX, type TeamMember,
 } from '../../src/lib/agents/team-roster.js';
+import { handoffContinuePrompt } from '../../src/lib/context-watch.js';
 import { BUILDER_ENV_UNSET } from '../../src/lib/builder-spawn.js';
 import { makeTeamProject, type TeamProject } from '../../eval/super-team-routing/setup.js';
 
@@ -60,6 +61,14 @@ describe('memberCallState / collectTeam', () => {
     expect(memberCallState(contextRoot, 'colleague-bot', home).state).toBe('not_owner');
     expect(collectTeam(contextRoot, home).map((m) => m.slug)).toEqual(['ledger']);
     expect(superSpawnTeamBlock(contextRoot, 'v', home)).not.toContain('colleague');
+  });
+
+  it('a colleague\'s member stays unlisted when its slot is turned off too (review S1)', () => {
+    writeAgent('cbot', 'Colleague bot', 'Their private field.', 'owner: someone-else-entirely\n');
+    mkdirSync(join(contextRoot, 'automations'), { recursive: true });
+    writeFileSync(join(contextRoot, 'automations', 'cbot.md'), "---\nid: auto_cbot\ntitle: Cbot job\nagent: cbot\nowner: someone-else-entirely\nmode: call\nenabled: false\n---\n## Job\n\nx\n");
+    expect(memberCallState(contextRoot, 'cbot', home).state).toBe('off');
+    expect(collectTeam(contextRoot, home)).toEqual([]);
   });
 
   it('a same-slug pair takes the SLOT\'s enabled and approval, as super team ask does', () => {
@@ -206,6 +215,14 @@ describe('teamFit and the hook line, on the eval fixture (TEAM_FIT_MIN_SCORE cal
     expect(ownerWords('[Reply to message ref=abc123 from=super]\nquote: "Ledger found $48,200 revenue"\nthanks, and the typo?')).toBe('thanks, and the typo?');
     expect(ownerWords('fix it\n<owner-msg ref="abc123"/>\n<super-while-you-asked>member=ledger Answer: revenue</super-while-you-asked>')).toBe('fix it');
     expect(ownerWords('fix it<owner-msg ref="abc123"/>revenue revenue')).toBe('fix it');
+  });
+
+  it('the rotation\'s Handoff: turn is server-written: no member line (review E1)', () => {
+    const handoff = handoffContinuePrompt({ kind: 'super', task: '', title: '' } as never);
+    expect(handoff.startsWith(HANDOFF_TURN_PREFIX)).toBe(true);
+    expect(handoffContinuePrompt({ kind: 'super', task: '', title: '' } as never, { fallback: true }).startsWith(HANDOFF_TURN_PREFIX)).toBe(true);
+    expect(ownerWords(handoff)).toBeNull();
+    expect(teamPromptDirectives({ prompt: handoff, contextRoot: team.contextRoot, route: 'super', home: team.home })).toEqual([]);
   });
 
   it('super route: a ready member\'s line naming super team ask; an insight it watches', () => {

@@ -2037,6 +2037,13 @@ export function startChatSession(
   // Which team the Super session holds (its fingerprint): the block in THIS spawn's system prompt
   // once the briefing file really carried it; a resume reads its transcript instead (below).
   const superTeam: { inPrompt: string | null; delivered: string | null } = { inPrompt: null, delivered: null };
+  /** The block's fingerprint once this spawn's briefing file really carried it. */
+  let spawnTeamFp: string | null = null;
+  /** A `/clear` (the owner's, or a rotation's) began a new conversation on this spawn's prompt. */
+  const superTeamCleared = (): void => {
+    superTeam.inPrompt = spawnTeamFp;
+    superTeam.delivered = spawnTeamFp;
+  };
   let agentsArg: string[] = [];
   let cleanupAgents = () => { /* nothing written */ };
   if (subagents) {
@@ -2082,8 +2089,10 @@ export function startChatSession(
     const briefing = modeBrief ? `${surface}\n${modeBrief}` : surface;
     writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
     briefingArg = ['--append-system-prompt-file', brief];
-    // Written with the block in it: a fresh session holds this team from its first turn.
-    if (superTeamBlock && !resumeTarget) superTeam.inPrompt = superTeam.delivered = teamBlockFingerprint(superTeamBlock);
+    // Written with the block in it: a fresh session (and any conversation a `/clear` starts on this
+    // spawn) holds this team from its first turn.
+    if (superTeamBlock) spawnTeamFp = teamBlockFingerprint(superTeamBlock);
+    if (spawnTeamFp && !resumeTarget) superTeam.inPrompt = superTeam.delivered = spawnTeamFp;
     cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };
     
   } catch { /* no briefing this session — the chat still works, just terminal-flavoured */ }
@@ -2933,6 +2942,7 @@ export function startChatSession(
     }
     if (brief && wrote) superBrief.due = false;
     if (teamTurn && wrote) superTeam.delivered = teamTurn.delivered;
+    if (isSuper && wrote && text.trim() === '/clear') superTeamCleared();
     if (voice && wrote && !voiceArmed) { voiceArmed = true; sendMeta({ subtype: 'voice_turn' }); }
     lastSentSpoken = voice && wrote;
   };
@@ -3412,7 +3422,10 @@ export function startChatSession(
             lastMainContext,
             writeUserTurn: (text) => {
               openTurn();
-              writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+              const wroteTurn = writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+              // `/clear` starts a fresh conversation on THIS spawn's system prompt: it holds this
+              // spawn's team block, whatever an earlier message delivered.
+              if (isSuper && text === '/clear' && wroteTurn) superTeamCleared();
             },
             // Its own frame, not the branch notice's one-liner: the chat draws the run as it
             // happens (handoff-progress.ts), so "it is happening" is on screen from now on.

@@ -285,6 +285,14 @@ describe('a team job\'s status, from the member\'s thread', () => {
     expect(teamJobAnswer(root, job(), null)).toBe('Result: 3 errors since midnight.\nAll in checkout.\n\nLooking at the logs.');
   });
 
+  it('a run\'s answer ends at the next ask on its run: a follow-up queued into it is not this job\'s (review E2)', () => {
+    ask(1);
+    entry(2, { runId: RUN, kind: 'agent', text: 'MRR this month: $51,900.', via: 'cli' });
+    entry(3, { runId: RUN, kind: 'user', text: 'and churn?', via: 'super' });
+    entry(4, { runId: RUN, kind: 'agent', text: 'Churn: 2.1%.', via: 'cli' });
+    expect(teamJobAnswer(root, job(), null)).toBe('MRR this month: $51,900.');
+  });
+
   it('a run that posted nothing answers with its document; a reply only with its own posts', () => {
     ask(1);
     const docDir = join(root, 'automations', 'doctor', 'out');

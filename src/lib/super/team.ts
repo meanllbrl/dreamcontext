@@ -210,7 +210,12 @@ function replyWindow(job: SuperTeamJob, liveReply: Extract<LiveSayJob, { kind: '
  */
 export function teamJobAnswer(contextRoot: string, job: SuperTeamJob, live: LiveSayJob | null): string {
   const { after } = jobThread(contextRoot, job);
-  const window = job.jobKind === 'reply' ? replyWindow(job, live?.kind === 'reply' ? live : null, after) : after;
+  // A run's window ends at the next ask on its run: a follow-up `team ask` to a member still
+  // running is queued INTO that run, and its answer is that job's, never this one's.
+  const nextAsk = after.findIndex((e) => e.kind === 'user');
+  const window = job.jobKind === 'reply'
+    ? replyWindow(job, live?.kind === 'reply' ? live : null, after)
+    : nextAsk >= 0 ? after.slice(0, nextAsk) : after;
   const posts = window.filter((e) => e.kind === 'agent' && e.text.trim()).map((e) => e.text.trim());
   let text = '';
   if (posts.length) text = [posts[posts.length - 1], ...posts.slice(0, -1)].join('\n\n');

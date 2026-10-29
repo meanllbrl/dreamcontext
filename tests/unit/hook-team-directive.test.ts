@@ -20,7 +20,7 @@ let root: string;
 let team: TeamProject;
 let bare: TeamProject;
 
-function hook(tp: TeamProject, prompt: string, route?: string): string {
+function hook(tp: TeamProject, prompt: string, route?: string, extra: Record<string, string> = {}): string {
   const env: NodeJS.ProcessEnv = {
     ...process.env, HOME: tp.home, DREAMCONTEXT_VERSION_CHECK: '0', DREAMCONTEXT_RECALL_MODE: 'raw', DREAMCONTEXT_AUTO_UPGRADE: '0',
     // The walk for a nested claude stops at this process: the hook is not nested in a test.
@@ -28,6 +28,9 @@ function hook(tp: TeamProject, prompt: string, route?: string): string {
   };
   delete env.DREAMCONTEXT_TEAM_ROUTE;
   delete env.CLAUDE_CODE_SESSION_ID;
+  delete env.DREAMCONTEXT_AUTO_SLEEP;
+  delete env.DREAMCONTEXT_AUTOMATION_SLUG;
+  Object.assign(env, extra);
   if (route !== undefined) env.DREAMCONTEXT_TEAM_ROUTE = route;
   return runCliWithStdin(CLI, ['hook', 'user-prompt-submit'], JSON.stringify({ session_id: 'sess-team', prompt }), { cwd: tp.proj, env, timeout: 20_000, withStderr: true });
 }
@@ -55,6 +58,11 @@ describe('hook user-prompt-submit: the AI TEAM MEMBER line', () => {
   it('nothing without the env, or with it empty (terminals, runs, a Super child)', () => {
     expect(teamLines(hook(team, 'Run the signup funnel test end to end'))).toEqual([]);
     expect(teamLines(hook(team, 'Run the signup funnel test end to end', ''))).toEqual([]);
+  });
+
+  it('nothing in a background sleep cycle or an automation run that inherited the route (review S2)', () => {
+    expect(teamLines(hook(team, 'Run the signup funnel test end to end', 'super', { DREAMCONTEXT_AUTO_SLEEP: '1' }))).toEqual([]);
+    expect(teamLines(hook(team, 'Run the signup funnel test end to end', 'super', { DREAMCONTEXT_AUTOMATION_SLUG: 'probe' }))).toEqual([]);
   });
 
   it('the multi-block owner message as the hook really gets it: matched on his words only', () => {

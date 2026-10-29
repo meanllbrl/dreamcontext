@@ -191,6 +191,13 @@ describe('the Super Agent\'s spawn: its own team block, no --agents, the super r
     owner(ws, 'again');
     await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(3), { timeout: 10_000 });
     expect(lastFrame(proc).some((t) => t.startsWith('<super-team'))).toBe(false);
+    // A `/clear` starts a conversation on the SPAWN's prompt (the old team): the new one rides again (review E3).
+    owner(ws, '/clear');
+    await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(4), { timeout: 10_000 });
+    expect(lastFrame(proc)).toEqual(['/clear']);
+    owner(ws, 'fresh conversation');
+    await vi.waitFor(() => expect(userFrames(proc)).toHaveLength(5), { timeout: 10_000 });
+    expect(lastFrame(proc).filter((t) => t.startsWith('<super-team fp=') && t.includes('- `atlas` Atlas · ready:'))).toHaveLength(1);
   });
 
   it('resume -> compaction -> the next owner message: a Super born before the change gets the block, again after a compaction', { timeout: 30_000 }, async () => {

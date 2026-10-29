@@ -69,7 +69,7 @@ function prepare(sc: Scenario, arm: Arm, cli: string, root: string): Vault {
   const models = join(homedir(), '.dreamcontext', 'models');
   if (existsSync(models)) symlinkSync(models, join(tp.home, '.dreamcontext', 'models'));
   mkdirSync(join(tp.proj, '.claude'), { recursive: true });
-  const real = [join(homedir(), 'projects'), join(homedir(), '.claude-worktrees'), join(homedir(), '.dreamcontext')];
+  const real = denyDirs([join(homedir(), 'projects'), join(homedir(), '.claude-worktrees'), join(homedir(), '.dreamcontext')], REPO);
   writeFileSync(join(tp.proj, '.claude', 'settings.json'), JSON.stringify(scratchSettings(real), null, 2) + '\n');
   const guide = join(tp.proj, SUPER_ORCHESTRATION_GUIDE_PATH);
   mkdirSync(dirname(guide), { recursive: true });
@@ -85,6 +85,27 @@ function prepare(sc: Scenario, arm: Arm, cli: string, root: string): Vault {
   writeFileSync(shim, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(join(HERE, 'shim', 'dreamcontext.mjs'))} "$@"\n`);
   chmodSync(shim, 0o755);
   return { dir, tp, evalDir, bin };
+}
+
+/**
+ * The real brains and checkouts the scratch vault must never touch, minus THIS checkout: the
+ * `dreamcontext` shim and the CLI build it passes through to live here (a copy of `dist/` cannot
+ * run: its runtime deps are not bundled). A root that holds this checkout is denied child by
+ * child, every other child still denied; no Edit or Write tool is granted either way.
+ */
+function denyDirs(roots: string[], keep: string): string[] {
+  const out: string[] = [];
+  for (const r of roots) {
+    if (!keep.startsWith(`${r}/`)) { out.push(r); continue; }
+    let names: string[] = [];
+    try { names = readdirSync(r); } catch { names = []; }
+    for (const n of names) {
+      const p = join(r, n);
+      if (keep === p || keep.startsWith(`${p}/`)) continue;
+      out.push(p);
+    }
+  }
+  return out;
 }
 
 interface ClaudeRun { sessionId: string; costUsd: number; stream: string[] }

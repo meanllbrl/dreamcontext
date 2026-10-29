@@ -1992,6 +1992,8 @@ function spawnAutoSleep(): void {
   const env = { ...process.env };
   delete env.DREAMCONTEXT_TAB_SESSION;
   delete env.CLAUDE_CODE_SESSION_ID;
+  // Nor the chat's AI Team route: a headless cycle must never be told to `super team ask`.
+  delete env.DREAMCONTEXT_TEAM_ROUTE;
   const child = spawn(process.execPath, [cliEntry, 'sleep', 'auto-run'], {
     detached: true,
     stdio: 'ignore',
@@ -3089,7 +3091,9 @@ export function registerHookCommand(program: Command): void {
       // never on a quote or a held digest (team-roster.ts `ownerWords`). Own try/catch.
       {
         const route = teamRouteOf(process.env.DREAMCONTEXT_TEAM_ROUTE);
-        if (route && !isNestedClaudeHook()) {
+        // A background sleep cycle or an automation run a chat started is no chat, whatever it
+        // inherited (the spawns strip the route too; neither gate alone is load-bearing).
+        if (route && !isNestedClaudeHook() && !isBackgroundAutoSleep() && !process.env.DREAMCONTEXT_AUTOMATION_SLUG) {
           try {
             const lines = teamPromptDirectives({ prompt: String((input as Record<string, unknown>).prompt ?? ''), contextRoot: root, route });
             if (lines.length) console.log(['', '— AI Team —', ...lines.map((l) => `  ${l}`)].join('\n'));
