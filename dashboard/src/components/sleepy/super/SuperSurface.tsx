@@ -20,7 +20,7 @@ import { childModelChip, type AsksOwner } from './AgentCard';
 import { SuperContainer, chatStatus, childBusyOf, isLivePage, superCentreStatus, type RemoteRow } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import { LOOK_RENEW_MS, anchoredPos, childIsLive, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
+import { LOOK_RENEW_MS, anchoredPos, childIsLive, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { cardTitle } from './superTitles';
@@ -490,19 +490,36 @@ export function SuperSurface(props: SuperSurfaceProps) {
     onOpenPage: props.onOpenPage,
     /** The owner's size (the menu, the corner handle): his choice, written once. A card he
      *  placed keeps its inner top corner (anchoredPos), so it grows away from the centre. */
-    onSize: (id: string, next: ContainerSize) => {
+    onSize: (id: string, next: ContainerSize, pin?: boolean) => {
       const c = byId.get(id);
       const cp = planRef.current.cards[id];
       if (!c || !cp) return;
       if (sizeOf(c) === next && c.sizeBy === 'owner') return;
-      const side = c.pos ? (c.pos.x < 0.5 ? 'left' : 'right') : null;
-      const pos = side && cp.where === 'float' ? anchoredPos(planRef.current.free, cp.rect, next, side) : undefined;
+      const at = growAt(id, pin);
+      const pos = at ? anchoredPos(at.free, at.rect, next, at.side) : undefined;
       if (next === 'large' || next === 'wide') { if (c.kind === 'web') setLru((prev) => touchLru(prev, id)); }
+      // A card he grew in place is his latest act: it keeps its spot over his earlier drops, as `fitsNow` asked.
+      if (pos) liftOnTop(id);
       onLayout({ cards: [{ id, size: next, ...(pos ? { pos } : {}) }] });
     },
     onFullscreen: (id: string, subject: CardFullscreen) => setFull({ id, subject }),
   };
-  const canFit = (id: string, next: ContainerSize) => fitsNow(items, view, size, id, next, { terminals: props.terminals.length, narrowPx, centreMin });
+  /**
+   * Where a card grows (owner 2026-10-29, "alan var mı?"): a card he placed, or one he grows by its
+   * corner (`pin`), grows from its inner top corner where it is drawn; an auto card sized from the
+   * menu stays in its column. Asked the same way by the check and by the write.
+   */
+  function growAt(id: string, pin?: boolean): { free: Rect; rect: Rect; side: 'left' | 'right' } | undefined {
+    const c = byId.get(id);
+    const p = planRef.current;
+    const cp = p.cards[id];
+    if (!c || !cp || cp.where !== 'float' || (!c.pos && !pin)) return undefined;
+    const side = c.pos ? (c.pos.x < 0.5 ? 'left' : 'right') : cp.rect.x + cp.rect.width / 2 < p.centre.x + p.centre.width / 2 ? 'left' : 'right';
+    return { free: p.free, rect: cp.rect, side };
+  }
+  /** Whether a size can be drawn for this card now: the plan the window draws (its options), asked with that size. */
+  const canFit = (id: string, next: ContainerSize, pin?: boolean) => fitsNow(items, view, size, id, next,
+    { terminals: props.terminals.length, agendaPill, asking: ownerAsk, queueUp, narrowPx, centreMin, recent: topped }, growAt(id, pin));
   // A card closed meanwhile takes its full-screen view with it.
   useEffect(() => { if (full && !byId.has(full.id)) setFull(null); }, [byId, full]);
 
