@@ -463,10 +463,11 @@ function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedS
     cols[side] = cap;
     for (const s of live(side)) drawn.set(s.id, shrinkToWidth(drawn.get(s.id)!, cap));
   };
-  // The agenda sizes itself (owner 2026-10-28: "the agenda hurts the centre"): its size, the
-  // default or the owner's, is its LARGEST; it is drawn at the widest that still leaves the centre
-  // its preferred width IN THE MIDDLE (the centre stays centred, below), down to the 1x1 counts.
-  // A side another card already makes wide costs the centre nothing more: the agenda keeps it.
+  // The agenda sizes itself (owner 2026-10-28: "the agenda hurts the centre"; 2026-10-29: "Agenda
+  // büyümüyor?" with half the stage free): its size, the default or the owner's, is its LARGEST;
+  // it is drawn at the widest that still leaves the centre its FLOOR in the middle (the centre
+  // stays centred, below), down to the 1x1 counts only on a window too small for that. A side
+  // another card already makes wide costs the centre nothing more: the agenda keeps it.
   const ag = [...left, ...right].find((s) => s.agenda);
   if (ag) {
     const side = left.includes(ag) ? 'left' : 'right';
@@ -474,7 +475,7 @@ function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedS
     const sidePx = (n: number) => (n > 0 ? unitsPx(n) + GAP : 0);
     const rest = live(side).filter((s) => s !== ag).reduce((m, s) => Math.max(m, SIZE_UNITS[drawn.get(s.id)!].w), 0);
     let cap = SIZE_UNITS[drawn.get(ag.id)!].w;
-    while (cap > 1 && cap > rest && W - 2 * MARGIN - 2 * Math.max(sidePx(Math.max(cap, rest)), sidePx(cols[other])) < preferred - 1e-9) cap -= 1;
+    while (cap > 1 && cap > rest && W - 2 * MARGIN - 2 * Math.max(sidePx(Math.max(cap, rest)), sidePx(cols[other])) < f.centreMin - 1e-9) cap -= 1;
     drawn.set(ag.id, shrinkToWidth(drawn.get(ag.id)!, cap));
     cols[side] = widest(side);
   }

@@ -62,6 +62,8 @@ export interface StageDragDeps {
   onSize: (id: string, size: ContainerSize) => void;
   /** Whether a size can be drawn for this card on the stage now. */
   canFit: (id: string, size: ContainerSize) => boolean;
+  /** The resize outline's words when the size it reaches cannot be drawn (owner's language). */
+  noRoom: string;
 }
 
 /**
@@ -232,9 +234,12 @@ export function useStageDrag(depsRef: RefObject<StageDragDeps | null>) {
    * A floating card's corner handle (owner 2026-10-22): drag to a size. An outline at the snapped
    * preset follows, grown from the card's inner top corner (the one toward the centre); release
    * writes the size only when it changed. Esc, a cancel or a lost pointer writes nothing.
+   * A preset the stage cannot draw now (the centre chat would lose its floor) is still where the
+   * outline goes, marked "no room", and its release writes nothing (owner 2026-10-29: "Agenda
+   * büyümüyor?", the outline stuck at the card's own size said nothing).
    */
   const onPressResize = (e: ReactPointerEvent<HTMLElement>, id: string) => {
-    const { rootRef, layerRef, planRef, byId, onSize, canFit } = deps();
+    const { rootRef, layerRef, planRef, byId, onSize, canFit, noRoom } = deps();
     if (e.button !== 0) return;
     e.stopPropagation();
     const el = e.currentTarget;
@@ -246,6 +251,7 @@ export function useStageDrag(depsRef: RefObject<StageDragDeps | null>) {
     const side: 'left' | 'right' = card.rect.x + card.rect.width / 2 < planRef.current.centre.x + planRef.current.centre.width / 2 ? 'left' : 'right';
     const from = card.size ?? sizeOf(c);
     let snapped: ContainerSize = from;
+    let fits = true;
     let outline: HTMLElement | null = null;
     // What can be drawn does not change during the gesture: asked once (a plan per size), not
     // on every pointer frame.
@@ -258,6 +264,20 @@ export function useStageDrag(depsRef: RefObject<StageDragDeps | null>) {
       outline.style.width = `${px.width}px`;
       outline.style.height = `${px.height}px`;
       outline.dataset.size = size;
+      outline.dataset.fits = fits ? 'true' : 'false';
+      outline.dataset.side = side;
+      // The note sits at the outline's inner edge (toward the centre), which stays on the stage.
+      outline.replaceChildren();
+      if (!fits) {
+        const note = document.createElement('span');
+        note.className = 'super-resize-note';
+        note.setAttribute('role', 'status');
+        note.textContent = noRoom;
+        // As wide as the part of the outline still on the stage (a left card grows off its edge).
+        const onStage = side === 'left' ? Math.min(px.width, x + px.width) : Math.min(px.width, layer.clientWidth - x);
+        note.style.maxWidth = `${Math.max(96, onStage - 24)}px`;
+        outline.appendChild(note);
+      }
     };
     armPointerDrag({ pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY }, el, {
       win: window,
@@ -273,14 +293,15 @@ export function useStageDrag(depsRef: RefObject<StageDragDeps | null>) {
       },
       onRemeasure: () => {},
       onFrame: (_x, _y, dx, dy) => {
-        const next = snapSize(card.rect, dx, dy, side, (size) => fitting.has(size));
-        if (next !== snapped) { snapped = next; place(next); }
+        const next = snapSize(card.rect, dx, dy, side, () => true);
+        const ok = next === 'small' || fitting.has(next);
+        if (next !== snapped || ok !== fits) { snapped = next; fits = ok; place(next); }
       },
       onEnd: (drop) => {
         delete root.dataset.resizing;
         outline?.remove();
         outline = null;
-        if (drop && snapped !== from) onSize(id, snapped);
+        if (drop && fits && snapped !== from) onSize(id, snapped);
       },
     });
   };

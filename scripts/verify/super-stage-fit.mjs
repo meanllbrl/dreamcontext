@@ -13,8 +13,8 @@
  * the agenda sized medium, two cards dropped on nearly one spot, one card put in Others.
  *
  * WHAT IT PROVES, at 1140x710, 1440x900 and 1920x1080: (1) the centre chat runs the stage's
- * height, margin to margin; (2) the agenda is drawn no wider than leaves the centre its share
- * (the 1x1 counts on a small window); (3) no floating card overlaps another or the centre, none
+ * height, margin to margin; (2) the agenda is drawn no wider than leaves the centre its 560 px
+ * floor in the middle (the 1x1 counts on a small window); (3) no floating card overlaps another or the centre, none
  * is off the stage, and every card is on the stage or in Others; (4) side by side, the web card's
  * phone / tablet / desktop switch reshapes the CARD (narrow tall → wide) and the centre takes
  * what it leaves, nothing overlapping. Screenshots: $OUT/<tag>-<engine>-*.png. Exit 0 iff all pass
@@ -368,9 +368,9 @@ try {
     check(`${name}: the centre runs the stage's height (24 px margins)`, Math.abs(m.centre.y - 24) <= 2 && Math.abs(m.stage.h - (m.centre.y + m.centre.h) - 24) <= 2, JSON.stringify({ centre: m.centre, stage: m.stage }));
     const share = Math.min(1120, Math.max(560, 0.56 * m.stage.w));
     const a = m.cards.find((c) => c.id === ag);
-    // Another card the owner or the agent sized keeps the old rule (it may narrow the centre);
-    // the agenda never does: it is the 1x1 counts, or the centre keeps its share.
-    check(`${name}: the agenda is on the stage and never what narrows the centre (share ${Math.round(share)} px)`, a?.where === 'float' && (a.w <= 160 || m.centre.w >= share - 2), JSON.stringify({ centre: m.centre.w, agenda: a }));
+    // The agenda (owner 2026-10-29, "Agenda büyümüyor?"): as wide as leaves the centre its 560 px
+    // floor in the middle; the 1x1 counts only when even that does not fit.
+    check(`${name}: the agenda is on the stage and leaves the centre its floor, centred (share ${Math.round(share)} px)`, a?.where === 'float' && (a.w <= 160 || (m.centre.w >= 560 - 2 && Math.abs(m.centre.x + m.centre.w / 2 - m.stage.w / 2) <= 2)), JSON.stringify({ centre: m.centre, agenda: a }));
     if (m.stage.w < 1300) check(`${name}: on a small window the agenda is the 1x1 counts`, a?.size === 'small', JSON.stringify(a));
     const bad = [];
     for (const c of fl) {

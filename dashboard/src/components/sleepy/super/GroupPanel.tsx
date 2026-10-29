@@ -291,17 +291,19 @@ export function GroupPanel({ title, ids, anchor, stage, system, onClose, onUngro
               {openAllLabel(t, ids.length)}
             </button>
           )}
-          {system && onCloseGroups && (closableCards ?? 0) > 0 && (
-            <button type="button" className="super-group-panel-btn" data-testid="super-others-close-groups" onClick={() => setCloseAsk((v) => !v)}>
-              {t('super.group.closeOthers')}
+          {/* Others closes its groups; an open group closes its own cards (owner 2026-10-29: "why
+              can't I close this whole group?"). The same close path as the group tile's ×. */}
+          {onCloseGroups && (closableCards ?? 0) > 0 && (
+            <button type="button" className="super-group-panel-btn" data-testid={system ? 'super-others-close-groups' : 'super-group-panel-close-group'} onClick={() => setCloseAsk((v) => !v)}>
+              {t(system ? 'super.group.closeOthers' : 'super.group.closeCards')}
             </button>
           )}
           <IconButton icon="close" label={t('super.group.close')} onClick={() => { onClose(); returnFocus(); }} testId="super-group-panel-close" />
         </div>
-        {closeAsk && system && onCloseGroups && (
-          <div className="super-close-choice" role="group" aria-label={t('super.group.closeOthersAsk')} data-testid="super-others-close-choice">
-            <span className="super-close-choice-q">{t('super.group.closeOthersAsk')}</span>
-            <button type="button" className="super-close-choice-btn super-close-choice-btn--end" data-testid="super-others-close-end"
+        {closeAsk && onCloseGroups && (
+          <div className="super-close-choice" role="group" aria-label={t(system ? 'super.group.closeOthersAsk' : 'super.group.closeAsk')} data-testid={system ? 'super-others-close-choice' : 'super-group-panel-close-choice'}>
+            <span className="super-close-choice-q">{t(system ? 'super.group.closeOthersAsk' : 'super.group.closeAsk')}</span>
+            <button type="button" className="super-close-choice-btn super-close-choice-btn--end" data-testid={system ? 'super-others-close-end' : 'super-group-panel-close-end'}
               onClick={() => { setCloseAsk(false); onCloseGroups(); }}>
               {t('super.group.closeEnd').replace('{n}', String(closableCards ?? 0))}
             </button>

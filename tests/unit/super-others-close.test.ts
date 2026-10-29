@@ -155,6 +155,41 @@ describe('the × as drawn', () => {
   });
 });
 
+describe('an open group closes in one go (owner 2026-10-29: "why can\'t I close this whole group?")', () => {
+  const panel = async (extra: Record<string, unknown>) => {
+    const { createElement } = await import('../../dashboard/node_modules/react/index.js');
+    const { renderToStaticMarkup } = await import('../../dashboard/node_modules/react-dom/server.node.js');
+    const { I18nProvider } = await import('../../dashboard/src/context/I18nContext.js');
+    const { GroupPanel } = await import('../../dashboard/src/components/sleepy/super/GroupPanel.js');
+    return renderToStaticMarkup(createElement(I18nProvider, null, createElement(GroupPanel as never, {
+      title: 'Bakery shots', ids: ['img-cake', 'img-bread', 'chat-oven'], anchor: { x: 300, y: 200, width: 160, height: 160 }, stage: { width: 1500, height: 900 },
+      system: false, onClose: () => {}, onUngroup: () => {}, onOpenItem: () => {}, onPressItem: () => {}, onPresentAll: () => {},
+      renderItem: (id: string) => createElement('span', null, id), itemTestId: 'super-group-item', returnFocus: () => {}, ...extra,
+    })));
+  };
+
+  it('its head offers "Close the group" beside Ungroup, and its × says it only closes the panel', async () => {
+    const html = await panel({ closableCards: 2, onCloseGroups: () => {} });
+    expect(html).toMatch(/data-testid="super-group-panel-close-group">Close the group</);
+    expect(html).toContain('data-testid="super-group-panel-ungroup"');
+    expect(html).toMatch(/data-testid="super-group-panel-close" aria-label="Close the panel"/);
+  });
+
+  it('has nothing to offer when all its cards are running jobs, or no close is wired (a remote screen)', async () => {
+    expect(await panel({ closableCards: 0, onCloseGroups: () => {} })).not.toContain('super-group-panel-close-group');
+    expect(await panel({ closableCards: 2 })).not.toContain('super-group-panel-close-group');
+  });
+
+  it('is wired to the stage\'s own group close-all, for that group, never on a remote screen', () => {
+    const src = read('dashboard/src/components/sleepy/super/SuperSurface.tsx');
+    expect(src).toContain('closableCards={system ? closableIn(othersGroupIds).length : g && !remote ? closableIn([g.id]).length : undefined}');
+    expect(src).toContain('onCloseGroups={system ? () => closeGroups(othersGroupIds) : g && !remote ? () => closeGroups([g.id]) : undefined}');
+    // The question it asks is the group tile's own: running jobs stay.
+    const gp = read('dashboard/src/components/sleepy/super/GroupPanel.tsx');
+    expect(gp).toContain("t(system ? 'super.group.closeOthersAsk' : 'super.group.closeAsk')");
+  });
+});
+
 describe('the panel on a phone-width stage', () => {
   it('holds as many columns as the stage fits (up to 4), so no tile and no × is cut off', () => {
     expect(panelCols(7, 1440)).toBe(4);

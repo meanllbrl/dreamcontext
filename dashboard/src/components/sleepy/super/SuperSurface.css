@@ -1365,6 +1365,27 @@
   pointer-events: none;
   z-index: var(--sz-lifted);
 }
+/* A size the stage cannot draw now: the outline still follows, says so, and its release changes nothing. */
+.super-resize-outline[data-fits='false'] {
+  border-color: var(--color-warning);
+  background: var(--color-warning-subtle);
+}
+.super-resize-note {
+  position: absolute;
+  top: var(--space-3);
+  max-width: 220px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-warning);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+  color: var(--color-warning-ink);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  line-height: 1.35;
+}
+.super-resize-outline[data-side='left'] .super-resize-note { right: var(--space-3); }
+.super-resize-outline[data-side='right'] .super-resize-note { left: var(--space-3); }
 
 /* ── Zoom in place (owner 2026-10-22: a picture or a page side by side or presented zooms where
       it is: pinch or ⌘/Ctrl + scroll, drag once zoomed, double click to fit) ───────────── */

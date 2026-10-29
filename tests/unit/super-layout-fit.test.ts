@@ -4,8 +4,10 @@
  *  - the float centre runs the stage's height, margin to margin: the Others stack and the agenda's
  *    pill narrow into the side room beside it instead of taking its height; only the terminals dock
  *    (or the queue pill on top) keeps a band;
- *  - the agenda sizes itself: its size (the default or the owner's) is its largest, drawn only as
- *    wide as leaves the centre its preferred width; other sized cards keep their rule;
+ *  - the agenda sizes itself: its size (the default or the owner's) is its largest, drawn as wide
+ *    as leaves the centre its FLOOR in the middle (owner 2026-10-29, "Agenda büyümüyor?": the full
+ *    list whenever there is room, the counts only on a window too small for it); other sized cards
+ *    keep their rule;
  *  - no floating card overlaps another, the agenda or the centre, none sits off the stage, and every
  *    card is either on the stage or in Others, at every size the window is dragged through.
  */
@@ -19,6 +21,8 @@ const FLOAT = { mode: 'float' as const };
 const EPS = 1e-6;
 /** The stage a window of this size leaves (the app's rail and head taken off), and the owner's. */
 const WINDOWS = { small: { width: 1090, height: 640 }, owner: { width: 1224, height: 717 }, mid: { width: 1390, height: 830 }, large: { width: 1870, height: 1010 } };
+/** The stage of the owner's ~1630x1000 window in his 2026-10-29 video (measured in the app). */
+const OWNER_1630 = { width: 1574, height: 914 };
 
 const overlaps = (a: Rect, b: Rect, gap = 0) =>
   a.x < b.x + b.width + gap - EPS && b.x < a.x + a.width + gap - EPS && a.y < b.y + b.height + gap - EPS && b.y < a.y + a.height + gap - EPS;
@@ -90,18 +94,43 @@ describe('the agenda sizes itself (problem 2)', () => {
     }
   });
 
-  it('it grows when there is room, never past its own size, never narrowing the centre under its share', () => {
+  it('it grows whenever there is room, never past its own size, never taking the centre under its floor', () => {
     const at = (size: ContainerSize, s: { width: number; height: number }) => plan([agenda(size), card('a'), card('b'), card('c')], s);
     expect(at('large', WINDOWS.large).cards.ag.size).toBe('large');
     expect(at('medium', WINDOWS.large).cards.ag.size).toBe('medium');
-    // A 1440 window: two tiles a side would take the centre under its share, so the counts.
-    expect(at('medium', WINDOWS.mid).cards.ag.size).toBe('small');
-    for (const [name, s] of Object.entries(WINDOWS)) {
+    // A 1440 window (owner 2026-10-29): two tiles a side still leave the centre its floor, so the list.
+    expect(at('medium', WINDOWS.mid).cards.ag.size).toBe('medium');
+    expect(at('large', WINDOWS.mid).cards.ag.size).toBe('large');
+    for (const [name, s] of Object.entries({ ...WINDOWS, owner1630: OWNER_1630 })) {
       for (const size of ['medium', 'large', 'wide'] as const) {
         const p = at(size, s);
-        expect(p.centre.width, `${name}/${size}`).toBeGreaterThanOrEqual(preferredCentre(s.width) - EPS);
+        expect(p.centre.width, `${name}/${size}`).toBeGreaterThanOrEqual(STAGE.CENTRE_MIN - EPS);
+        expect(p.centre.x + p.centre.width / 2, `${name}/${size} centred`).toBeCloseTo(s.width / 2, 6);
         expectSound(p, [agenda(size), card('a'), card('b'), card('c')], `${name}/${size}`);
       }
+    }
+  });
+
+  it('on the owner\'s ~1630x1000 window the default agenda is its full list, beside his chats and a group (owner 2026-10-29)', () => {
+    // His stage: two chat cards and a group on the left with the agenda, the default (large) agenda.
+    const cs = [card('c1'), card('c2'), agenda('large'), card('p1', { kind: 'image' }), card('p2', { kind: 'image' }), card('t1', { kind: 'task' })];
+    const groups = [{ id: 'grp-changes', name: 'Changes', cards: ['p1', 'p2'] }];
+    const p = planStage(stageItems(cs, groups as never, FLOAT), FLOAT, OWNER_1630, {});
+    expect(p.cards.ag.where).toBe('float');
+    expect(p.cards.ag.size).toBe('large');
+    expect(p.centre.width).toBeGreaterThanOrEqual(STAGE.CENTRE_MIN - EPS);
+    // The owner's own size is kept the same way: large drawn large, medium drawn medium.
+    for (const size of ['large', 'medium'] as const) {
+      const q = plan([agenda(size, { sizeBy: 'owner' }), card('a'), card('b')], OWNER_1630);
+      expect(q.cards.ag.size, size).toBe(size);
+    }
+  });
+
+  it('a window too small for the list beside the centre still draws the counts (1140x710)', () => {
+    for (const size of ['large', 'medium'] as const) {
+      const p = plan([agenda(size, { sizeBy: 'owner' }), card('a'), card('b')], WINDOWS.small);
+      expect(p.cards.ag.size, size).toBe('small');
+      expect(p.centre.width, size).toBeGreaterThanOrEqual(STAGE.CENTRE_MIN - EPS);
     }
   });
 

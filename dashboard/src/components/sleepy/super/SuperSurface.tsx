@@ -615,7 +615,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const othersGroupIds = plan.others.filter(isGroupId);
   dragDeps.current = {
     rootRef, layerRef, planRef, stateRef, byId, groupsById, titleOf, onLayout, actions, liftOnTop, setOpenGroup,
-    groupWord: t('super.group.word'), onSize: actions.onSize, canFit,
+    groupWord: t('super.group.word'), onSize: actions.onSize, canFit, noRoom: t('super.size.noRoomDrag'),
   };
   /** A card clicked in a panel: side by side; a group in Others: back on the stage. */
   const openFromPanel = (id: string) => {
@@ -971,8 +971,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
             system={system}
             onClose={closePanel}
             onUngroup={g ? () => onUngroup(g.id) : undefined}
-            closableCards={system ? closableIn(othersGroupIds).length : undefined}
-            onCloseGroups={system ? () => closeGroups(othersGroupIds) : undefined}
+            closableCards={system ? closableIn(othersGroupIds).length : g && !remote ? closableIn([g.id]).length : undefined}
+            onCloseGroups={system ? () => closeGroups(othersGroupIds) : g && !remote ? () => closeGroups([g.id]) : undefined}
             closeOf={system ? panelCloseFor : undefined}
             sessionOf={system || moreOpen ? panelSessionOf : undefined}
             onCloseItem={system ? closeFromPanel : undefined}
