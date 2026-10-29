@@ -2840,11 +2840,6 @@ export function ChatPane({
             peerKeyRef.current += 1;
             setPeerSessions((list) => [...list, { key: peerKeyRef.current, peer, prompt: body }]);
           }}
-          // No task-picker mechanism exists anywhere in this codebase yet (there is no
-          // native "pick a task" dialog — TasksPage has no picker widget to open). The
-          // button stays visible (Composer.tsx is frozen T6 ownership; it has no gate to
-          // omit it) but is inert until one is built.
-          onOpenTaskPicker={() => {}}
         />
         </>
       )}

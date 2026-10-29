@@ -4,8 +4,9 @@
  * attach-files-pictures-become-inline-chips-and-sent-bubble-draws-pictures, owner 2026-10-28).
  * The real dashboard server from this checkout's dist (scratch HOME, DREAMCONTEXT_DESKTOP=1), the
  * stand-in `claude` of composer-picture-chips.mjs (no tokens), fictional project "orbit". The
- * browser build's picker is a prompt (desktop.ts `pickFiles`), answered with real PNGs that live
- * OUTSIDE the project, as a native pick would.
+ * browser build's picker is the separate-process route (`POST /api/agent/pick-paths`, desktop.ts
+ * `pickFiles`), intercepted here and answered with real PNGs that live OUTSIDE the project, as a
+ * native pick would.
  *
  *   npm run build && node scripts/verify/composer-attach-picked.mjs
  *
@@ -306,7 +307,8 @@ async function main() {
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
-  page.on('dialog', (d) => { void d.accept(answer); });
+  // The browser's picker (no dialog opens on the Mac): answered with the paths `attachVia` set.
+  await page.route('**/api/agent/pick-paths', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ paths: answer.split(',').filter(Boolean) }) }));
   try {
     await page.goto(`${base}/?vault=orbit`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(3000);

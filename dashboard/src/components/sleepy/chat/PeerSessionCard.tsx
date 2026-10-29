@@ -384,7 +384,6 @@ function PeerSessionPanel({
             connected={session.status === 'open'}
             quote={null}
             onClearQuote={() => {}}
-            onOpenTaskPicker={() => {}}
             permissionMode="auto"
             projectPermissionMode="auto"
             // Inert on purpose, and now explicit on both halves: the composer draws its

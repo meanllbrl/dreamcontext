@@ -1958,6 +1958,33 @@
 }
 /* Buttons never inherit font — force the menu's terminal face onto every row/chip. */
 .agent-composer-menu button { font-family: inherit; letter-spacing: normal; }
+/* The composer's Attach menu on the app's frosted glass (owner 2026-10-29): the shared
+   `--glass-*` overlay tokens, which carry their own light and dark values, the specular top
+   hairline and soft lift of the project tabs' glass (ProjectTabs.css), and the UI face instead
+   of the terminal one. Low-power mode turns the blur off globally; the fill still reads. */
+.agent-composer-menu.agent-composer-menu--glass {
+  min-width: 188px;
+  padding: var(--space-1);
+  font-family: var(--font-family);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur) saturate(1.5);
+  backdrop-filter: var(--glass-blur) saturate(1.5);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--color-bg) 60%, transparent),
+    var(--shadow-xl);
+}
+.agent-composer-menu--glass .chat-cmp-menu-list button {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+.agent-composer-menu--glass .chat-cmp-menu-list button:hover,
+.agent-composer-menu--glass .chat-cmp-menu-list button:focus-visible {
+  outline: none;
+  background: color-mix(in oklab, var(--color-text) 8%, transparent);
+}
 
 /* ── Composer responsiveness (per-pane, via the `.agent-pane` size container) ──────────
    As a pane narrows we degrade the strip in stages so it always fits and never clips:

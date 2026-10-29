@@ -367,16 +367,49 @@ export function pickerOpen(): boolean {
   return pickersOpen > 0;
 }
 
-/** Run a picker, recording — never throwing — a failure to present the panel. */
+/**
+ * The picker in a SEPARATE process on the Mac (`POST /api/agent/pick-paths`, osascript's
+ * `choose file` / `choose folder`). The browser dashboard's picker, and the desktop's second try
+ * when AppKit refuses this process a panel: `+[NSOpenPanel openPanel]` can come back nil in a
+ * long-lived app and every in-process retry then fails the same way (owner 2026-10-29: "file
+ * picking mostly does not work"). Resolves [] on cancel; throws when it could not open.
+ */
+async function pickInSeparateProcess(directory: boolean, multiple: boolean): Promise<string[]> {
+  const res = await fetch('/api/agent/pick-paths', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ directory, multiple }),
+  });
+  const data = await res.json().catch(() => ({})) as { paths?: unknown; message?: unknown };
+  if (!res.ok) {
+    throw new Error(typeof data.message === 'string' && data.message ? data.message : `The file picker could not be opened (${res.status}).`);
+  }
+  return Array.isArray(data.paths) ? data.paths.filter((p): p is string => typeof p === 'string') : [];
+}
+
+/**
+ * Run a picker, recording — never throwing — a failure to present it. The desktop app tries its
+ * own sheet first and falls back to the separate-process picker; a browser has only the latter.
+ */
 async function pickSafely(directory: boolean, multiple: boolean): Promise<string[]> {
   pickersOpen += 1;
   try {
-    const picked = await pickNative(directory, multiple);
+    let picked: string[];
+    if (isDesktop()) {
+      try {
+        picked = await pickNative(directory, multiple);
+      } catch (err) {
+        console.warn('[picker] native panel refused, using the separate-process picker:', err instanceof Error ? err.message : String(err));
+        picked = await pickInSeparateProcess(directory, multiple);
+      }
+    } else {
+      picked = await pickInSeparateProcess(directory, multiple);
+    }
     lastPickerError = null;
     return picked;
   } catch (err) {
     lastPickerError = err instanceof Error ? err.message : String(err);
-    console.error('[picker] native file picker failed:', lastPickerError);
+    console.error('[picker] file picker failed:', lastPickerError);
     return [];
   } finally {
     pickersOpen -= 1;
@@ -398,28 +431,23 @@ export async function openFolderPicker(): Promise<string | null> {
 }
 
 /**
- * Pick one or more FILES via the native macOS file picker (multi-select), returning
- * their absolute paths. In the desktop app these are real on-disk paths — so callers
- * can hand them straight to a Claude session (no byte upload needed, unlike a webview
- * drag-drop which hides the OS path). In a browser (dev) it falls back to a prompt so
- * the flow stays exercisable. Returns [] if the user cancelled or picked nothing.
+ * Pick one or more FILES (multi-select), returning their absolute paths — real on-disk paths, so
+ * callers can hand them straight to a Claude session (no byte upload needed, unlike a web view
+ * drag-drop which hides the OS path). The desktop app's own sheet, else the separate-process
+ * picker (also the browser dashboard's). Returns [] if the user cancelled or nothing could open
+ * (see {@link pickerError}).
  */
 export async function pickFiles(): Promise<string[]> {
-  if (isDesktop()) return pickSafely(false, true);
-  const entered = window.prompt('Enter absolute file path(s), comma-separated:');
-  return entered ? entered.split(',').map((s) => s.trim()).filter(Boolean) : [];
+  return pickSafely(false, true);
 }
 
 /**
- * Pick one or more FOLDERS via the native macOS picker (multi-select), returning their
- * absolute paths. A separate call from {@link pickFiles} because NSOpenPanel exposes
- * "choose directories" as a flag — one native panel cannot offer files AND folders
- * mixed. Returns [] if the user cancelled or picked nothing.
+ * Pick one or more FOLDERS (multi-select), returning their absolute paths. A separate call from
+ * {@link pickFiles} because NSOpenPanel exposes "choose directories" as a flag — one native panel
+ * cannot offer files AND folders mixed. Returns [] if the user cancelled or picked nothing.
  */
 export async function pickFolders(): Promise<string[]> {
-  if (isDesktop()) return pickSafely(true, true);
-  const entered = window.prompt('Enter absolute folder path(s), comma-separated:');
-  return entered ? entered.split(',').map((s) => s.trim()).filter(Boolean) : [];
+  return pickSafely(true, true);
 }
 
 /**

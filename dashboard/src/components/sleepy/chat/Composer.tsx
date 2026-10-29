@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, type ReactNode } from 'react';
 import { McpPicker } from './McpPicker';
 import { asMcpHost } from './useMcpLive';
-import { pickFiles, pickFolders, isDesktop } from '../../../lib/desktop';
+import { pickFiles, pickFolders, pickerError, isDesktop } from '../../../lib/desktop';
 import { useVoiceCapture, PHONE_MAX_TAKE_MS, STT_RETRIES } from '../../../lib/voice/useVoiceCapture';
 import { publishVoiceActivity, publishVoiceLevel } from '../../../lib/voice/voiceActivity';
 import { VoiceMeter } from './VoiceMeter';
@@ -341,16 +341,16 @@ const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto
   );
 });
 
-/** The Attach `+` and its menu. */
-const AttachButton = memo(function AttachButton({ onPick, onOpenTaskPicker }: {
+/** The Attach `+` and its menu: files and folders, on the app's frosted glass. */
+const AttachButton = memo(function AttachButton({ onPick }: {
   onPick: (kind: 'files' | 'folders', close: () => void) => void;
-  onOpenTaskPicker?: () => void;
 }) {
   return (
     <Popover
       align="left"
+      menuClassName="agent-composer-menu--glass"
       trigger={(open, toggle) => (
-        <button type="button" className="chat-cmp-iconbtn" onClick={toggle} title="Attach files, folders or a task" aria-label="Attach" aria-haspopup="menu" aria-expanded={open}>
+        <button type="button" className="chat-cmp-iconbtn" onClick={toggle} title="Attach files or folders" aria-label="Attach" aria-haspopup="menu" aria-expanded={open}>
           <PlusIcon />
         </button>
       )}
@@ -359,9 +359,6 @@ const AttachButton = memo(function AttachButton({ onPick, onOpenTaskPicker }: {
         <div className="chat-cmp-menu-list">
           <button type="button" role="menuitem" onClick={() => { onPick('files', close); }}>Attach files…</button>
           <button type="button" role="menuitem" onClick={() => { onPick('folders', close); }}>Attach folders…</button>
-          {onOpenTaskPicker && (
-            <button type="button" role="menuitem" onClick={() => { onOpenTaskPicker(); close(); }}>Attach task…</button>
-          )}
         </div>
       )}
     </Popover>
@@ -502,7 +499,7 @@ const UsageRingButton = memo(function UsageRingButton({ ctx, nudgeAt, hardAt, op
 
 export function Composer({
   session, model, effort, modelConfig, onModelChange, onEffortChange, busy, connected,
-  quote, onClearQuote, onOpenTaskPicker, permissionMode = 'auto', projectPermissionMode,
+  quote, onClearQuote, permissionMode = 'auto', projectPermissionMode,
   onPermissionModeChange, onSignIn, mcpPicker, onPeerMessage,
   mode = DEFAULT_CHAT_MODE, onModeChange, agent = '', onAgentPick, onSetModelDefault, shelved = false,
   mentions, renderMentionFace, mentionsLabel = 'Connected projects',
@@ -562,14 +559,6 @@ export function Composer({
   /** Dismiss the queued quote WITHOUT sending (the chip's ✕). Also called by this
    *  composer itself right after a successful submit, since sending consumes the quote. */
   onClearQuote: () => void;
-  /** Open the task picker (state 7's "📋 Task" attachment). The picker itself, and how a
-   *  chosen task reaches this composer as an attachment chip, is a later wave's concern —
-   *  no such channel exists yet, so this composer only ever fires the request to open one.
-   *
-   *  OPTIONAL: without it the Attach menu drops its "Attach task…" row and keeps the other
-   *  two — a task belongs to one project's board, so a surface that is not in a project has
-   *  no board to pick from. */
-  onOpenTaskPicker?: () => void;
   /** Take over a submitted `/login` (or `/logout`): this engine is headless and answers both
    *  with "isn't available in this environment", so sending them would spend a turn to be told
    *  nothing. The handler opens an interactive terminal Claude tab that CAN run the flow. */
@@ -862,6 +851,8 @@ export function Composer({
   /** `refused` as last seen: a NEW refusal (a sixth ↩) shows the max notice, a remount does not. */
   const refusedSeenRef = useRef(readScratch(convId).refused ?? 0);
   const [maxNotice, setMaxNotice] = useState(0);
+  /** Why the last Attach files…/folders… opened nothing (null: it opened, or was cancelled). */
+  const [pickNotice, setPickNotice] = useState<string | null>(null);
   /** The row above the box: the Super view's references and every view's inline pictures are
    *  chips IN the text, so they leave it. Memoised: the row is a memo'd part and must not
    *  re-render on every keystroke. */
@@ -1026,7 +1017,12 @@ export function Composer({
       }
     }
   };
-  // Not past this many milliseconds: the max notice says its sentence, then goes.
+  // Not past this many milliseconds: each notice says its sentence, then goes.
+  useEffect(() => {
+    if (!pickNotice) return;
+    const id = window.setTimeout(() => setPickNotice(null), 6000);
+    return () => window.clearTimeout(id);
+  }, [pickNotice]);
   useEffect(() => {
     if (!maxNotice) return;
     const id = window.setTimeout(() => setMaxNotice(0), 3000);
@@ -1036,7 +1032,9 @@ export function Composer({
   const pickPaths = async (kind: 'files' | 'folders', close: () => void) => {
     const paths = kind === 'folders' ? await pickFolders() : await pickFiles();
     close();
-    if (!paths.length) return;
+    // A picker that could not open says so here, never a click that does nothing.
+    if (!paths.length) { setPickNotice(pickerError()); return; }
+    setPickNotice(null);
     // A picked picture is a chip in the text at the caret, the same as a pasted one; files and
     // folders stay path chips in the row (owner 2026-10-28).
     stagePicked(convId, paths, kind === 'folders' ? 'folder' : 'file',
@@ -2175,7 +2173,6 @@ export function Composer({
   const stableClearQuote = useStableHandler(() => onClearQuote());
   const stableRemoveChip = useStableHandler((attId: string) => removeRef(attId));
   const stablePick = useStableHandler((kind: 'files' | 'folders', close: () => void) => { void pickPaths(kind, close); });
-  const stableTaskPicker = useStableHandler(() => onOpenTaskPicker?.());
   const stablePhonePhotos = useStableHandler((files: File[]) => onPhonePhotos(files));
 
   return (
@@ -2542,6 +2539,7 @@ export function Composer({
             never squeezes the textarea its mirror is aligned to. */}
         <RefSrList id={srListId} refs={srRefs} onRemove={removeRef} />
         {maxNotice > 0 && <div className="chat-cmp-ref-notice" role="status" data-testid="chat-cmp-ref-notice">{t('super.ref.max')}</div>}
+        {pickNotice && <div className="chat-cmp-ref-notice" role="status" data-testid="chat-cmp-pick-notice">{pickNotice}</div>}
       </div>
 
       <div className="chat-cmp-toolbar">
@@ -2562,8 +2560,7 @@ export function Composer({
           />
         )}
 
-        {/* One control for every kind of attachment — files, folders and (once a picker
-            exists) a task. A bare `+` now that its labelled Skills neighbour is gone: it is
+        {/* One control for every kind of attachment — files and folders. A bare `+` now that its labelled Skills neighbour is gone: it is
             the only icon control on this side of the row, so there is nothing for it to read
             as a loose part OF. Still a `Popover` (not one of the three panels above): its
             menu is a short list that clamps to its trigger rather than spanning the card.
@@ -2571,7 +2568,7 @@ export function Composer({
             a pasted image's bytes need that project's temp dir. */}
         {showAttach && (phonePhotos
           ? <PhotoButton onFiles={stablePhonePhotos} label={t('chat.photo.add')} />
-          : <AttachButton onPick={stablePick} onOpenTaskPicker={onOpenTaskPicker ? stableTaskPicker : undefined} />
+          : <AttachButton onPick={stablePick} />
         )}
 
         <div className="chat-cmp-spacer" />

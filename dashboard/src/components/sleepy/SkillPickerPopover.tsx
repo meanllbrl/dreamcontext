@@ -23,11 +23,13 @@ import {
 // rendered in-pane can never out-grow a narrow or right-edge pane. From <body> it is placed
 // above the trigger and clamped to the viewport, so it always fits — in any pane, any split.
 export function Popover({
-  trigger, align = 'right', children,
+  trigger, align = 'right', menuClassName, children,
 }: {
   trigger: (open: boolean, toggle: () => void) => React.ReactNode;
   /** Which trigger edge the menu prefers to grow from (it clamps to the viewport either way). */
   align?: 'left' | 'right';
+  /** A modifier on the menu shell (the Attach menu's `agent-composer-menu--glass`). */
+  menuClassName?: string;
   children: (close: () => void) => React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -87,7 +89,7 @@ export function Popover({
       {trigger(open, () => setOpen((v) => !v))}
       {open && createPortal(
         // Hidden until the layout effect measures + places it — no first-frame flash at 0,0.
-        <div className="agent-composer-menu" role="menu" ref={menuRef} style={{ visibility: 'hidden' }}>
+        <div className={menuClassName ? `agent-composer-menu ${menuClassName}` : 'agent-composer-menu'} role="menu" ref={menuRef} style={{ visibility: 'hidden' }}>
           {children(() => setOpen(false))}
         </div>,
         document.body,

@@ -5236,6 +5236,53 @@ export function AgentSurface() {
   const superAttentionNow = !!superChatSession?.attention;
   useEffect(() => { if (dockOpen && superAttentionNow) superChatRef.current?.clearAttention(); }, [dockOpen, superAttentionNow]);
 
+  // ── File drop on the Super dock (owner 2026-10-29: "drag and drop must work wherever the
+  // Super Agent is open") ── The dock (its window and its pill) is a SIBLING of the surface host,
+  // so the host's drop listener below never sees a file dropped on it, and the page under it (a
+  // whiteboard, a board) took the drop or the web view threw it away. Window-level and in the
+  // CAPTURE phase, so no page handler runs first; only a drop whose target is inside the dock is
+  // taken, everything else passes untouched. A drop on the pill opens the window and attaches
+  // there once the Super session has landed.
+  const openSuperDockRef = useRef(openSuperDock);
+  openSuperDockRef.current = openSuperDock;
+  const superDropReady = !!started && !!(caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView));
+  useEffect(() => {
+    if (!dockOn || !superDropReady) return;
+    const inDock = (e: DragEvent) => e.target instanceof Element && !!e.target.closest('[data-testid="super-dock"]');
+    const hasFiles = (e: DragEvent) => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
+    const onOver = (e: DragEvent) => {
+      if (!hasFiles(e) || !inDock(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    };
+    let cancelled = false;
+    const onDrop = (e: DragEvent) => {
+      if (!inDock(e)) return;
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (files.length === 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openSuperDockRef.current();
+      // The session may still be spawning (a dock opened for the first time): wait for it.
+      const t0 = Date.now();
+      const deliver = () => {
+        if (cancelled) return;
+        const sid = superSidRef.current;
+        if (sid && sessions.current.get(sid)) { void deliverDrops(files, sid); return; }
+        if (Date.now() - t0 < 5000) window.setTimeout(deliver, 50);
+      };
+      deliver();
+    };
+    window.addEventListener('dragover', onOver, true);
+    window.addEventListener('drop', onDrop, true);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('dragover', onOver, true);
+      window.removeEventListener('drop', onDrop, true);
+    };
+  }, [dockOn, superDropReady, deliverDrops]);
+
   // Rows for the corner dock that floats over the EXPANDED overlay — only the sessions the
   // user minimized out of the panes (in minimize order). Empty → no corner dock shown.
   const minimizedRows: SessionRow[] = minimizedIds
