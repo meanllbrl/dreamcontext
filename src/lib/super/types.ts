@@ -243,8 +243,13 @@ export function viewWithout(view: SuperView, ids: ReadonlySet<string>): SuperVie
  */
 export const PRESENT_LAYOUTS = ['spotlight', 'compare', 'grid', 'filmstrip', 'review'] as const;
 export type PresentLayout = typeof PRESENT_LAYOUTS[number];
-/** A filmstrip shows at most this many cards; every other layout {@link MAX_PRESENT}. */
-export const MAX_FILMSTRIP = 8;
+/** A filmstrip shows at most this many cards (owner 2026-10-29: "the strip must not be limited":
+ *  a group is presented whole, its strip scrolls); every other layout {@link MAX_PRESENT}. */
+export const MAX_FILMSTRIP = MAX_CONTAINERS;
+/** A picture question shows at most this many pictures (its previews, `--show`, the last set). */
+export const MAX_ASK_PICTURES = 8;
+/** A picture at least this much wider than tall is landscape (16:9 is 1.78, 4:3 1.33). */
+export const LANDSCAPE_ASPECT = 1.3;
 
 /** How many cards a layout shows. */
 export function presentRange(layout: PresentLayout): { min: number; max: number } {
@@ -257,7 +262,7 @@ export function presentRange(layout: PresentLayout): { min: number; max: number 
   }
 }
 
-type LayoutCard = Pick<SuperContainer, 'kind' | 'ref' | 'of'>;
+type LayoutCard = Pick<SuperContainer, 'kind' | 'ref' | 'of'> & { aspect?: number };
 
 /**
  * A child's page under review: exactly one chat, plus that child's site (a web card it owns,
@@ -288,12 +293,16 @@ export function layoutFits(layout: PresentLayout, cards: readonly LayoutCard[]):
 }
 
 /** The layout the cards pick when none is given: 1 spotlight, a child's page with its chat
- *  review, 2 compare, 3-4 grid, 5-8 filmstrip; 2+ clips (all video) a filmstrip. */
+ *  review, 2 compare, 3-4 grid, 5+ filmstrip; 2+ clips (all video) or 2+ landscape pictures a
+ *  filmstrip. */
 export function defaultLayout(cards: readonly LayoutCard[]): PresentLayout {
   if (cards.length <= 1) return 'spotlight';
   // Clips: one big player over a strip of the rest.
   if (cards.length <= MAX_FILMSTRIP && cards.every((c) => c.kind === 'video')) return 'filmstrip';
   if (isReviewSet(cards)) return 'review';
+  // Landscape pictures (owner 2026-10-29: "if they are 16:9 use filmstrip, not grid, so we can see
+  // them"): a grid cell is too small for a wide shot, one big over a strip shows it.
+  if (cards.every((c) => c.kind === 'image' && (c.aspect ?? 0) >= LANDSCAPE_ASPECT)) return 'filmstrip';
   if (cards.length === 2) return 'compare';
   return cards.length <= MAX_PRESENT ? 'grid' : 'filmstrip';
 }
@@ -1139,7 +1148,7 @@ const TAG_SRC_RE = /(?:^|\s)src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
 const MAX_IMG_TAG = 4096;
 
 /**
- * Every `<img src>` in these options' previews, in option order, deduped, at most MAX_FILMSTRIP
+ * Every `<img src>` in these options' previews, in option order, deduped, at most MAX_ASK_PICTURES
  * (D1.2): the raw src (≤ 1024 characters) and the option's label. `srcset` is not read. Pure;
  * the route normalises and checks each src against the project. A child's previews reach here
  * uncapped (`readPendingQuestion`), so only the first MAX_ASK_PREVIEW characters of each and
@@ -1165,7 +1174,7 @@ export function imagesInPreviews(questions: readonly { options?: readonly { labe
         const src = (m?.[1] ?? m?.[2] ?? m?.[3] ?? '').trim();
         if (!src || src.length > 1024 || out.some((x) => x.src === src)) continue;
         out.push({ src, label });
-        if (out.length >= MAX_FILMSTRIP) return out;
+        if (out.length >= MAX_ASK_PICTURES) return out;
       }
     }
   }
@@ -1324,7 +1333,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 15;
+export const SUPER_BRIEF_REV = 16;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */
@@ -1361,6 +1370,8 @@ export const SUPER_SHOW_SECTION = `## Show, don't tell
 - A site or a long document to look at: \`super present <card>\` (one card: the wide spotlight, the
   site at its desktop width, you a small chat beside it). Pictures, slides or 5+ screenshots:
   \`super present <c1…c8>\` (a filmstrip). A metric stays a large card, never a presentation.
+- Pictures you show the owner as a result (a child's screenshots, a design): open them with
+  \`--present\`, so he sees them at once; a group card alone is not showing.
 - Your answer would describe something he can look at: open it and write one line.
 - The server opens a child's dev-server site and its live browser as cards by itself; you see
   them in \`super state\`. Do not reopen or describe them. A child says its dev server runs but

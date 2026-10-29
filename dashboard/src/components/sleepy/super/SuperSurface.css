@@ -1552,6 +1552,34 @@
   background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
 }
 .super-sheet-tab { max-width: calc(var(--space-28) + var(--space-16)); overflow: hidden; text-overflow: ellipsis; }
+/* A filmstrip's big card, in its own fixed slot of the strip (owner 2026-10-29): its tile, raised
+   and ringed in the accent, so the strip says which one is big without moving anything. */
+.super-strip-current {
+  position: absolute;
+  z-index: var(--sz-centre);
+  border-radius: var(--radius-lg);
+  transform: translateY(calc(-1 * var(--space-1)));
+  pointer-events: none;
+}
+.super-strip-current .super-card-clip {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent), var(--shadow-md);
+}
+.super-strip-nav {
+  position: absolute;
+  z-index: var(--sz-centre);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: var(--font-size-lg);
+  cursor: pointer;
+}
+.super-strip-nav:disabled { opacity: 0.4; cursor: default; }
+.super-strip-nav:focus-visible { outline: 2px solid var(--color-accent); outline-offset: var(--space-1); }
 /* A filmstrip thumb: a static tile the owner presses to make it big. */
 .super-card-frame[data-where='thumb'] { cursor: pointer; }
 .super-card-frame[data-where='thumb']:hover .super-card-clip {

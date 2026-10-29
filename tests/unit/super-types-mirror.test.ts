@@ -150,7 +150,8 @@ describe('super types — server record <-> window mirror', () => {
   it('the presentation layouts are one list, one limit and one resolver on both sides', () => {
     expect([...client.PRESENT_LAYOUTS]).toEqual([...server.PRESENT_LAYOUTS]);
     expect([...server.PRESENT_LAYOUTS]).toEqual(['spotlight', 'compare', 'grid', 'filmstrip', 'review']);
-    expect([client.MAX_FILMSTRIP, server.MAX_FILMSTRIP]).toEqual([8, 8]);
+    expect([client.MAX_FILMSTRIP, server.MAX_FILMSTRIP]).toEqual([server.MAX_CONTAINERS, server.MAX_CONTAINERS]);
+    expect(client.LANDSCAPE_ASPECT).toBe(server.LANDSCAPE_ASPECT);
     for (const l of server.PRESENT_LAYOUTS) {
       expect(client.presentRange(l)).toEqual(server.presentRange(l));
       expect(client.layoutRule(l)).toBe(server.layoutRule(l));

@@ -162,4 +162,13 @@ describe('superBriefState', () => {
       expect(t).toContain('never `board`');
     }
   });
+
+  it('rev 16 (2026-10-29): pictures shown as a result open with `--present`; a group card alone is not showing', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(16);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('Pictures you show the owner as a result');
+      expect(t).toContain('`--present`');
+      expect(t).toContain('a group card alone is not showing.');
+    }
+  });
 });

@@ -1,6 +1,7 @@
 import type { KeyboardEvent } from 'react';
-import { STAGE, type Rect, type StagePlan } from './superLayout';
-import type { PresentLayout, SuperStateView } from '../../../lib/superTypes';
+import { STAGE, type Rect, type StagePlan, type StripPlan } from './superLayout';
+import { KindTile } from './SuperTiles';
+import type { PresentLayout, SuperContainer, SuperStateView } from '../../../lib/superTypes';
 import { useI18n } from '../../../context/I18nContext';
 import type { ChatSession } from '../chatSession';
 import { ChatTile, type AsksOwner } from './AgentCard';
@@ -115,4 +116,47 @@ export function SheetTabs({ rect, ids, selected, titleOf, onSelect }: {
       ))}
     </div>
   );
+}
+
+/**
+ * A filmstrip's own marks (owner 2026-10-29: "the selected one must also show in the strip"):
+ * the big card's slot, in its fixed place, drawn as its tile and marked current; the scroll
+ * buttons while the strip holds more than fit. The other slots are the cards themselves.
+ */
+export function StripMarks({ strip, big, title, viewReady, onScroll }: {
+  strip: StripPlan; big: SuperContainer | undefined; title: string; viewReady: boolean; onScroll: (start: number) => void;
+}) {
+  const { t } = useI18n();
+  const at = strip.ids.indexOf(strip.big);
+  const step = Math.max(1, strip.visible - 1);
+  const last = strip.ids.length - strip.visible;
+  return (
+    <>
+      {strip.current && big && (
+        <div className="super-strip-current" data-testid="super-strip-current" data-card-id={big.id} aria-current="true"
+          aria-label={t('super.layout.current').replace('{title}', title).replace('{n}', String(at + 1)).replace('{total}', String(strip.ids.length))}
+          style={{ left: strip.current.x, top: strip.current.y, width: strip.current.width, height: strip.current.height }}>
+          <div className="super-card-clip"><div className="super-card-body" data-inert="true"><KindTile container={big} title={title} viewReady={viewReady} /></div></div>
+        </div>
+      )}
+      {strip.prev && (
+        <button type="button" className="super-strip-nav" data-testid="super-strip-prev" aria-label={t('super.layout.stripPrev')} disabled={strip.start <= 0}
+          style={{ left: strip.prev.x, top: strip.prev.y, width: strip.prev.width, height: strip.prev.height }}
+          onClick={() => onScroll(Math.max(0, strip.start - step))}>‹</button>
+      )}
+      {strip.next && (
+        <button type="button" className="super-strip-nav" data-testid="super-strip-next" aria-label={t('super.layout.stripNext')} disabled={strip.start >= last}
+          style={{ left: strip.next.x, top: strip.next.y, width: strip.next.width, height: strip.next.height }}
+          onClick={() => onScroll(Math.min(last, strip.start + step))}>›</button>
+      )}
+    </>
+  );
+}
+
+/** The strip's first slot that keeps `index` in view (a selection moved by the keys or the Super). */
+export function stripStartFor(start: number, visible: number, index: number): number {
+  if (index < 0) return start;
+  if (index < start) return index;
+  if (index >= start + visible) return index - visible + 1;
+  return start;
 }

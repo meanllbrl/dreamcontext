@@ -299,13 +299,16 @@ export function SuperContainer(props: SuperContainerProps) {
       data-super-tone={status ? toneOfStatus(status.kind) : props.team ? toneOfStatus(teamRingKind(teamStatusOf(props.team))) : undefined}
       data-drop-target={props.dropTarget ? 'card' : undefined}
       data-cue={props.cue?.kind}
-      inert={props.cue?.kind === 'close' || props.parked ? true : undefined}
-      aria-hidden={props.parked ? true : undefined}
+      inert={props.cue?.kind === 'close' || props.parked || plan.hidden ? true : undefined}
+      aria-hidden={props.parked || plan.hidden ? true : undefined}
+      data-strip-hidden={plan.hidden ? 'true' : undefined}
       role={thumb ? 'button' : 'group'}
       aria-label={thumb ? t('super.layout.thumb').replace('{title}', props.title) : props.title}
-      tabIndex={(floating || thumb) && !props.parked ? 0 : -1}
+      tabIndex={(floating || thumb) && !props.parked && !plan.hidden ? 0 : -1}
       style={{
         left: plan.rect.x, top: plan.rect.y, width: plan.rect.width, height: plan.rect.height, zIndex: cardZIndex(plan.z, c.kind === 'agenda'),
+        // A thumb scrolled out of the strip's window is drawn nowhere until scrolled back.
+        ...(plan.hidden ? { visibility: 'hidden' as const } : {}),
         ...(props.cue ? { ['--cue-dx' as string]: `${props.cue.dx}px`, ['--cue-dy' as string]: `${props.cue.dy}px` } : {}),
       }}
       onPointerDown={floating && !props.parked ? (e) => { if (!inFullscreen(e.target)) props.onPress(e, c.id); } : undefined}

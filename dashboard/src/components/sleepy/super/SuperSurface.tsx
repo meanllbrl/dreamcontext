@@ -10,7 +10,7 @@ import { SuperGroupCard } from './SuperGroupCard';
 import { GroupTile, KindTile, TileSheets, groupStatus, type GroupMember } from './SuperTiles';
 import { StageMotion, cssEsc } from './StageMotion';
 import { useStageDrag, type StageDragDeps } from './useStageDrag';
-import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, SheetTabs, StageControls } from './StageParts';
+import { OrbitPath, PRESENT_KEY_OWNERS, PanelChatTile, SheetTabs, StageControls, StripMarks, stripStartFor } from './StageParts';
 import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { remoteLayoutPatch } from './remoteStage';
 import { SuperAgenda } from './SuperAgenda';
@@ -20,7 +20,7 @@ import { childModelChip, type AsksOwner } from './AgentCard';
 import { SuperContainer, chatStatus, childBusyOf, isLivePage, superCentreStatus, type RemoteRow } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
-import { LOOK_RENEW_MS, anchoredPos, childIsLive, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
+import { LOOK_RENEW_MS, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
 import { cardTitle } from './superTitles';
@@ -263,6 +263,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // A presentation's window state (plan-r2 D13, D14): the card made big in a filmstrip, or picked
   // in a narrow sheet's tabs. Never the record; a card no longer presented falls back to the first.
   const [selected, setSelected] = useState<string | null>(null);
+  // A filmstrip's first slot shown, while it holds more than fit (window state, like `selected`).
+  const [stripStart, setStripStart] = useState(0);
   // A question the Super Agent put to the owner (its own `ask`, a child's question it escalated,
   // an AI Team approval) is ITS question while it waits, like an AskUserQuestion is a chat's: the
   // centre asks, not spins (owner, 2026-10-22). A child's permission stays on the child's card.
@@ -272,7 +274,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const presented = useMemo(() => (view.mode === 'present' ? (view.cards ?? []).filter((id) => state.containers.some((c) => c.id === id)) : []), [view, state.containers]);
   // A selection belongs to one presentation: another card set starts on its first card.
   const presentedKey = [...presented].sort().join('\n');
-  useEffect(() => { setSelected(null); }, [presentedKey]);
+  useEffect(() => { setSelected(null); setStripStart(0); }, [presentedKey]);
   const layoutChoices = useMemo<PresentLayout[]>(() => {
     const cards = presented.map((id) => state.containers.find((c) => c.id === id)!);
     return cards.length ? PRESENT_LAYOUTS.filter((l) => resolveLayout(l, cards) === l) : [];
@@ -284,10 +286,35 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const exitPatch = (): LayoutPatch => ({ exit: { cards: presented, closing: props.pendingCloses() } });
   const queueUp = !!queueHead(state);
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, asking: ownerAsk, layoutChoices: layoutChoices.length, queueUp, narrowPx, centreMin, recent: topped }),
-    [items, view, size, pinned, props.terminals.length, agendaPill, selected, ownerAsk, layoutChoices.length, queueUp, narrowPx, centreMin, topped],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, asking: ownerAsk, layoutChoices: layoutChoices.length, queueUp, narrowPx, centreMin, recent: topped }),
+    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, ownerAsk, layoutChoices.length, queueUp, narrowPx, centreMin, topped],
   );
   cuesPlanRef.current = plan;
+  // The big card's slot scrolls into view whenever the selection moves (keys, a press, the Super).
+  const stripBig = plan.strip?.big;
+  useEffect(() => {
+    const st = plan.strip;
+    if (!st) return;
+    const next = stripStartFor(st.start, st.visible, st.ids.indexOf(st.big));
+    if (next !== st.start) setStripStart(next);
+  }, [stripBig]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A wheel or trackpad over a strip that holds more than fit scrolls it, one slot a notch.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return undefined;
+    const onWheel = (e: WheelEvent) => {
+      const st = planRef.current.strip;
+      if (!st?.prev) return;
+      const box = el.getBoundingClientRect();
+      if (!contains(st.rect, e.clientX - box.left, e.clientY - box.top)) return;
+      const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (Math.abs(d) < 4) return;
+      e.preventDefault();
+      setStripStart(Math.min(st.ids.length - st.visible, Math.max(0, st.start + (d > 0 ? 1 : -1))));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
   const planRef = useRef(plan);
   planRef.current = plan;
 
@@ -558,9 +585,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
       const p = presentKeysRef.current.plan;
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); presentKeysRef.current.exit(); return; }
       // ←/→: the next big card of a filmstrip, the next tab of a narrow sheet.
-      const order = p.strip ? [p.strip.big, ...Object.values(p.cards).filter((c) => c.where === 'thumb').sort((a, b) => a.rect.x - b.rect.x).map((c) => c.id)] : p.tabs?.ids;
-      if (!order || order.length < 2 || !rootRef.current?.contains(ae)) return;
-      const ids = p.tabs?.ids ?? (view.cards ?? []).filter((id) => order.includes(id));
+      // The strip's own fixed order: the selection walks it, nothing reorders.
+      const ids = p.strip?.ids ?? p.tabs?.ids;
+      if (!ids || ids.length < 2 || !rootRef.current?.contains(ae)) return;
       const at = ids.indexOf(p.strip?.big ?? ids.find((id) => p.cards[id]?.where === 'sheet') ?? ids[0]);
       e.preventDefault();
       setSelected(ids[(at + (e.key === 'ArrowRight' ? 1 : ids.length - 1)) % ids.length]);
@@ -947,6 +974,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
       )}
       {plan.controls && plan.layout && (
         <StageControls rect={plan.controls} layouts={layoutChoices} current={plan.layout} onPick={pickLayout} onExit={exitPresentation} toGroup={!!shownGroup} />
+      )}
+      {plan.strip && (
+        <StripMarks strip={plan.strip} big={byId.get(plan.strip.big)} title={(() => { const c = byId.get(plan.strip.big); return c ? titleOf(c) : plan.strip.big; })()} viewReady={viewsReady} onScroll={setStripStart} />
       )}
       {plan.tabs && (
         <SheetTabs rect={plan.tabs.rect} ids={plan.tabs.ids} selected={plan.tabs.ids.find((id) => plan.cards[id]?.where === 'sheet') ?? plan.tabs.ids[0]}

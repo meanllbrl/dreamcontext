@@ -232,11 +232,12 @@ describe('card verbs (AC4, plan-r8 F2)', () => {
     expect((await verb('half', { container: 'nope' })).status).toBe(404);
   });
 
-  it('present: 1-8 cards, deduped; a ninth is refused, a fifth only as a filmstrip; stacking or closing a presented card leaves the presentation', async () => {
+  it('present: cards deduped; nine are a filmstrip (no 8-card cap since 2026-10-29), a fifth only as a filmstrip; stacking or closing a presented card leaves the presentation', async () => {
     makeVault();
     const ids = [];
     for (const r of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']) ids.push(await idOf('task', r));
-    expect((await verb('present', { containers: ids })).status).toBe(400);
+    expect((await verb('present', { containers: ids })).status).toBe(200);
+    expect((await readSuperState(root)).view).toMatchObject({ mode: 'present', layout: 'filmstrip' });
     expect((await verb('present', { containers: ids.slice(0, 5), layout: 'grid' })).status).toBe(400);
     expect((await verb('present', { containers: [ids[0], ids[1], ids[0]] })).status).toBe(200);
     expect((await readSuperState(root)).view).toEqual({ mode: 'present', cards: [ids[0], ids[1]], layout: 'compare' });

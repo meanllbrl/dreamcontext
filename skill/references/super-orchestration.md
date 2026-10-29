@@ -227,10 +227,12 @@ U1 and U3 both edit `orbit-app` but not the same file; each has its own worktree
 merges them. Reply: "Started 6 (one messages Ayla), 2 wait for the invites API. Releasing 1.4 needs your yes."
 
 ## 7. Presentation layouts
-`super present <card…> [--layout <name>]` takes 1-8 cards or a group (`grp-…`, all its cards). Leave `--layout` off and the cards pick it:
-1 spotlight, 2 compare, 3-4 grid, 5-8 filmstrip (2+ clips: filmstrip), and a page with its own child's chat (and browser) is
+`super present <card…> [--layout <name>]` takes cards or a group (`grp-…`, all its cards). Leave `--layout` off and the cards pick it:
+1 spotlight, 2 compare, 3-4 grid, 5+ filmstrip (2+ clips or landscape pictures: filmstrip), and a page with its own child's chat (and browser) is
 review. A wrong count for a named layout answers 400 naming the range. The owner can switch the layout
 from the stage's top band; an answer with `kept: owner_layout` means he chose it: leave it.
+Pictures you show the owner as a result (a child's screenshots, a design): `open image … --present`
+opens and presents them in one call, so he sees them at once; a group card alone is not showing.
 A picture question presents itself: `super ask`/`queue ask` shows its pictures (`--show`, previews'
 `<img src>`, your last set) and puts them back after his answer; no `present`/`--off` around it.
 
