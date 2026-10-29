@@ -119,82 +119,70 @@ export interface SavedMeta {
   titleByAgent?: boolean;
 }
 
-/** One saved composer draft (⌘S, the dashboard's `chat/composerDrafts.ts`). Mirrors its
- *  `SavedDraft`. Text the user wrote: coerced to the client's caps, never trusted. */
+/** A conversation's unsent composer content, kept across restarts (the dashboard's
+ *  `chat/composerDrafts.ts`; mirrors its `SavedDraft`). Text the user wrote: coerced to the
+ *  client's caps, never trusted. */
 export interface SavedDraft {
-  id: string;
   text: string;
   chips: Array<{ kind: 'image' | 'file' | 'folder' | 'ref' | 'element'; name: string; path?: string; text?: string }>;
   quote: string | null;
   savedAt: number;
 }
 
-/** Mirrored from the dashboard's composerDrafts.ts (drift test: agent-sessions-drafts.test.ts). */
-export const MAX_DRAFTS = 10;
-export const MAX_DRAFT_TEXT = 8000;
+/** Mirrored from the dashboard's composerDrafts.ts (drift test: composer-drafts.test.ts). */
+export const MAX_DRAFT_TEXT = 20000;
 export const MAX_DRAFT_QUOTE = 4000;
 export const MAX_DRAFT_CHIPS = 20;
-const MAX_DRAFT_ID = 64;
+export const MAX_DRAFT_CONVERSATIONS = 200;
 const MAX_CHIP_NAME = 300;
 const MAX_CHIP_PATH = 4096;
 const MAX_CHIP_TEXT = 8000;
 const DRAFT_CHIP_KINDS: readonly string[] = ['image', 'file', 'folder', 'ref', 'element'];
-/** Conversations whose drafts are kept. The client's byte budget binds long before this. */
-export const MAX_DRAFT_CONVERSATIONS = 200;
+
+/** One stored draft, or null. Over-long text is DROPPED, never cut: a truncated draft restored
+ *  into the box would read as what the user wrote. */
+export function coerceDraft(raw: unknown): SavedDraft | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.text !== 'string' || o.text.length > MAX_DRAFT_TEXT) return null;
+  const chips: SavedDraft['chips'] = [];
+  if (Array.isArray(o.chips)) {
+    for (const c of o.chips.slice(0, MAX_DRAFT_CHIPS)) {
+      if (!c || typeof c !== 'object') continue;
+      const r = c as Record<string, unknown>;
+      if (typeof r.kind !== 'string' || !DRAFT_CHIP_KINDS.includes(r.kind) || typeof r.name !== 'string') continue;
+      chips.push({
+        kind: r.kind as SavedDraft['chips'][number]['kind'],
+        name: r.name.slice(0, MAX_CHIP_NAME),
+        ...(typeof r.path === 'string' && r.path && r.path.length <= MAX_CHIP_PATH ? { path: r.path } : {}),
+        ...(typeof r.text === 'string' && r.text && r.text.length <= MAX_CHIP_TEXT ? { text: r.text } : {}),
+      });
+    }
+  }
+  const quote = typeof o.quote === 'string' && o.quote && o.quote.length <= MAX_DRAFT_QUOTE ? o.quote : null;
+  if (!o.text.trim() && chips.length === 0 && !quote) return null;
+  return { text: o.text, chips, quote, savedAt: typeof o.savedAt === 'number' && Number.isFinite(o.savedAt) ? o.savedAt : 0 };
+}
 
 /**
- * The surface's `drafts` map — conversation UUID → its saved drafts — coerced. Keyed by
- * CONVERSATION, not carried on a tab entry, so a draft outlives its tab: a closed chat reopened
- * from Past chats, the Super Agent (never a tab), an automation tab and a launch with "Reopen
- * past tabs" off all keep theirs.
+ * The surface's `drafts` map — conversation UUID → its unsent composer content — coerced.
+ * Keyed by CONVERSATION, not carried on a tab entry, so a draft outlives its tab: a closed chat
+ * reopened from Past chats, the Super Agent (never a tab), an automation tab and a launch with
+ * "Reopen past tabs" off all keep theirs.
  */
-export function coerceDraftMap(raw: unknown): Record<string, SavedDraft[]> | undefined {
+export function coerceDraftMap(raw: unknown): Record<string, SavedDraft> | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
-  const out: Record<string, SavedDraft[]> = {};
+  const out: Record<string, SavedDraft> = {};
   let n = 0;
-  for (const [id, list] of Object.entries(raw as Record<string, unknown>)) {
+  for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
     if (n >= MAX_DRAFT_CONVERSATIONS) break;
     if (!UUID_RE.test(id)) continue;
-    const drafts = coerceDrafts(list);
-    if (!drafts.length) continue;
-    out[id] = drafts;
+    const d = coerceDraft(v);
+    if (!d) continue;
+    out[id] = d;
     n++;
   }
   return n ? out : undefined;
-}
-
-/** A roster's `drafts` value, coerced: anything malformed is dropped, the rest capped. */
-export function coerceDrafts(raw: unknown): SavedDraft[] {
-  if (!Array.isArray(raw)) return [];
-  const out: SavedDraft[] = [];
-  const seen = new Set<string>();
-  for (const d of raw) {
-    if (out.length >= MAX_DRAFTS) break;
-    if (!d || typeof d !== 'object' || Array.isArray(d)) continue;
-    const o = d as Record<string, unknown>;
-    if (typeof o.id !== 'string' || !o.id || o.id.length > MAX_DRAFT_ID || seen.has(o.id)) continue;
-    if (typeof o.text !== 'string') continue;
-    const chips: SavedDraft['chips'] = [];
-    if (Array.isArray(o.chips)) {
-      for (const c of o.chips.slice(0, MAX_DRAFT_CHIPS)) {
-        if (!c || typeof c !== 'object') continue;
-        const r = c as Record<string, unknown>;
-        if (typeof r.kind !== 'string' || !DRAFT_CHIP_KINDS.includes(r.kind) || typeof r.name !== 'string') continue;
-        chips.push({
-          kind: r.kind as SavedDraft['chips'][number]['kind'],
-          name: r.name.slice(0, MAX_CHIP_NAME),
-          ...(typeof r.path === 'string' && r.path ? { path: r.path.slice(0, MAX_CHIP_PATH) } : {}),
-          ...(typeof r.text === 'string' && r.text ? { text: r.text.slice(0, MAX_CHIP_TEXT) } : {}),
-        });
-      }
-    }
-    const text = o.text.slice(0, MAX_DRAFT_TEXT);
-    const quote = typeof o.quote === 'string' && o.quote ? o.quote.slice(0, MAX_DRAFT_QUOTE) : null;
-    if (!text.trim() && chips.length === 0 && !quote) continue;
-    seen.add(o.id);
-    out.push({ id: o.id, text, chips, quote, savedAt: typeof o.savedAt === 'number' && Number.isFinite(o.savedAt) ? o.savedAt : 0 });
-  }
-  return out;
 }
 
 /** Hard ceiling on rostered sessions (extras are dropped, not rejected). */
@@ -205,7 +193,7 @@ const MIN_SIZE = 0.1;
 const MAX_SIZE = 10;
 const DEFAULT_SIZE = 1;
 /** Generous cap on the serialized roster; a runaway client can't write an unbounded file.
- *  Sized for saved drafts: the client keeps all of them under 512 KB (composerDrafts.ts
+ *  Sized for kept composer drafts: the client keeps all of them under 512 KB (composerDrafts.ts
  *  DRAFTS_BUDGET_BYTES), so the tab metadata keeps its old 64 KB of headroom on top. */
 const MAX_BYTES = 1024 * 1024;
 /** Generous ceiling on `automation.runFiredAt` — an ISO timestamp is well under this; the
@@ -364,7 +352,7 @@ export interface SavedSurface {
   activePane?: number;
   chatPermissionMode: ChatPermissionMode;
   /** Saved composer drafts by conversation UUID ({@link coerceDraftMap}). */
-  drafts?: Record<string, SavedDraft[]>;
+  drafts?: Record<string, SavedDraft>;
 }
 
 function coerceActivePane(raw: unknown): number | undefined {

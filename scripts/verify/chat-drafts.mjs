@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 /**
- * Saved composer drafts (Slack-style) — end-to-end in the real app.
+ * The composer keeps its unsent content per conversation (Slack's draft behaviour) — end-to-end
+ * in the real app.
  *
  *   npm run build && node scripts/verify/chat-drafts.mjs
  *
- *   1. ⌘S keeps the box as a draft and empties it; the shelf shows it
- *   2. "Save as draft" in the + menu does the same
- *   3. clicking a draft with text in the box SWAPS (the box's text becomes a draft)
- *   4. the drafts reach the roster file and come back after a reload
- *   5. ✕ deletes a draft
+ *   1. text typed in chat 1 is still there after switching to chat 2 and back
+ *   2. it reaches the roster file, keyed by conversation
+ *   3. after a reload it is back in the box
+ *   4. sending clears the box AND the kept record
+ *   5. no draft shelf, no "Save as draft" menu row (the earlier shape is gone)
  *
  * Same harness as chat-composer-ui.mjs: isolated scratch HOME, scripted `claude`.
  * Screenshots go to VERIFY_SHOTS (default tmp/verify-shots).
@@ -234,85 +235,73 @@ async function run(chromium, base, report) {
         if (await page.locator('.agent-surface.expanded').count()) break;
       }
     }
+    if (!(await vis('.chat-cmp-input').count())) {
+      for (const loc of [page.locator('nav, aside').getByText('Chat', { exact: true }).first(), page.getByText('Chat 1', { exact: true }).first()]) {
+        if (await vis('.chat-cmp-input').count()) break;
+        await loc.click({ force: true }).catch(() => {});
+        await page.waitForTimeout(2000);
+      }
+    }
   };
   const input = () => vis('.chat-cmp-input').first();
-  const draftTexts = async () => (await vis('.chat-cmp-draft-text').allInnerTexts()).map((s) => s.trim());
   const shot = async (name) => { await page.screenshot({ path: join(SHOTS, name) }); report.note(`📸 ${join(SHOTS, name)}`); };
-  const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
+  const roster = () => { try { return JSON.parse(readFileSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), 'utf-8')); } catch { return {}; } };
+  const tab = (name) => page.locator('.agent-tab').filter({ hasText: name }).first();
+  const NOTE = 'Ajan bitince: testleri yeniden çalıştır ve sonucu özetle';
 
   await page.goto(`${base}/?vault=proj`, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(3500);
   await openSurface();
-  if (!(await vis('.chat-cmp-input').count())) {
-    await page.getByRole('button', { name: /Start chat/ }).click().catch(() => {});
-  }
+  if (!(await vis('.chat-cmp-input').count())) await page.getByRole('button', { name: /Start chat/ }).click().catch(() => {});
   ok('a chat session opens', await until(async () => (await vis('.chat-cmp-input').count()) > 0, 20000));
-  // One real turn so the conversation exists on disk (a real conversation id in the roster).
+  // One real turn, so the conversation exists on disk.
   await input().click();
   await input().fill('hello');
   await page.keyboard.press('Enter');
   await until(async () => (await vis('.chat-pane').first().innerText()).includes('FACTS'), 20000);
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(400);
 
-  ok('no drafts shelf while there are no drafts', (await vis('.chat-cmp-drafts').count()) === 0);
-  await shot('1-bos-alan.png');
-
-  // §1 ⌘S
+  // §1 type, switch away, come back
   await input().click();
-  await input().fill('Ajan bitince: testleri yeniden çalıştır ve sonucu özetle');
-  await page.keyboard.press(`${mod}+s`);
-  await page.waitForTimeout(300);
-  ok('⌘S empties the box', (await input().inputValue()) === '', await input().inputValue());
-  ok('…and the shelf shows the draft', (await draftTexts()).length === 1, JSON.stringify(await draftTexts()));
-
-  // §2 the + menu
-  await input().fill('Sonra: PR açıklamasına ekran görüntülerini ekle');
+  await input().pressSequentially(NOTE, { delay: 5 });
+  await shot('1-alana-yazildi.png');
   await vis('.chat-cmp-iconbtn').first().click();
   await page.waitForTimeout(250);
-  const item = page.getByRole('menuitem', { name: /Save as draft/ });
-  ok('the + menu offers Save as draft', (await item.count()) === 1);
-  await item.click();
-  await page.waitForTimeout(300);
-  ok('…which empties the box too', (await input().inputValue()) === '');
-  ok('two drafts on the shelf', (await draftTexts()).length === 2, JSON.stringify(await draftTexts()));
-  await input().fill('Şu an yazdığım başka bir mesaj');
-  await shot('2-iki-taslak-saklandi.png');
+  ok('no "Save as draft" row in the + menu', (await page.getByRole('menuitem', { name: /Save as draft/ }).count()) === 0);
+  await page.keyboard.press('Escape');
+  ok('no draft shelf', (await page.locator('.chat-cmp-drafts').count()) === 0);
+  await page.locator('.agent-add-btn').first().click().catch(() => {});
+  ok('a second chat opens', await until(async () => (await tab('Chat 2').count()) > 0, 20000));
+  await page.waitForTimeout(800);
+  ok('…with an empty box of its own', (await input().inputValue()) === '', await input().inputValue().catch(() => '?'));
+  await shot('2-baska-sohbete-gecildi.png');
+  await tab('Chat 1').click();
+  await page.waitForTimeout(800);
+  ok('back on chat 1, the text is where it was', (await input().inputValue()) === NOTE, await input().inputValue());
+  await shot('3-geri-donuldu-metin-yerinde.png');
 
-  // §3 open with text in the box → swap
-  await vis('.chat-cmp-draft-open').first().click();
-  await page.waitForTimeout(300);
-  ok('clicking a draft puts it back in the box',
-    (await input().inputValue()) === 'Ajan bitince: testleri yeniden çalıştır ve sonucu özetle', await input().inputValue());
-  const afterSwap = await draftTexts();
-  ok('…and what was in the box is kept as a draft in its place',
-    afterSwap.length === 2 && afterSwap[0].startsWith('Şu an yazdığım'), JSON.stringify(afterSwap));
-  await shot('3-taslak-geri-acildi.png');
+  // §2 on disk
+  await until(async () => Object.values(roster().drafts ?? {}).some((d) => d.text === NOTE), 5000);
+  const kept = Object.values(roster().drafts ?? {}).map((d) => d.text);
+  ok('the roster file keeps it, by conversation', kept.includes(NOTE), JSON.stringify(kept));
 
-  // §4 persisted + survives reload
-  await page.waitForTimeout(1200);
-  let roster = {};
-  try { roster = JSON.parse(readFileSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), 'utf-8')); } catch {}
-  const onDisk = Object.values(roster.drafts ?? {}).flat().map((d) => d.text);
-  ok('the drafts reach the roster file', onDisk.length === 2, JSON.stringify(onDisk));
+  // §3 reload
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(3500);
   await openSurface();
-  // The restored tab may sit collapsed behind its card; open it.
-  if (!(await vis('.chat-cmp-input').count())) {
-    for (const loc of [page.locator('nav, aside').getByText('Chat', { exact: true }).first(), page.getByText('Chat 1', { exact: true }).first()]) {
-      if (await vis('.chat-cmp-input').count()) break;
-      await loc.click({ force: true }).catch(() => {});
-      await page.waitForTimeout(2000);
-    }
-  }
-  ok('after a reload the drafts are back on the shelf',
-    await until(async () => (await draftTexts()).length === 2, 20000), JSON.stringify(await draftTexts().catch(() => [])));
-  await shot('4-yeniden-yuklemeden-sonra.png');
+  if ((await tab('Chat 1').count())) { await tab('Chat 1').click().catch(() => {}); await page.waitForTimeout(800); }
+  ok('after a reload the text is back in the box',
+    await until(async () => (await input().inputValue()) === NOTE, 20000), await input().inputValue().catch(() => '?'));
+  await shot('4-yeniden-yuklemeden-sonra-yerinde.png');
 
-  // §5 delete
-  await vis('.chat-cmp-draft .chat-cmp-chip-x').first().click();
+  // §4 send clears both
+  await input().click();
+  await page.keyboard.press('Enter');
   await page.waitForTimeout(300);
-  ok('✕ deletes a draft', (await draftTexts()).length === 1, JSON.stringify(await draftTexts()));
+  ok('sending empties the box', (await input().inputValue()) === '');
+  ok('…and the kept record goes with it',
+    await until(async () => !Object.values(roster().drafts ?? {}).some((d) => d.text === NOTE), 5000),
+    JSON.stringify(roster().drafts ?? {}));
 
   await browser.close();
 }

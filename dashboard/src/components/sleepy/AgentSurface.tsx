@@ -67,7 +67,7 @@ import {
 import { useI18n } from '../../context/I18nContext';
 import { ReadinessChecklist } from '../../pages/onboarding/ReadinessChecklist';
 import { clearPins } from '../../lib/pinStore';
-import { allDrafts, seedAllDrafts, subscribeAnyDrafts, type SavedDraft } from './chat/composerDrafts';
+import { allDrafts, clearDraft, seedAllDrafts, subscribeAnyDrafts, type SavedDraft } from './chat/composerDrafts';
 import { traceRespawn, traceOrphan, clearOrphan, installRespawnTraceGlobal } from '../../lib/respawnTrace';
 import { addAttachments, dropScratch, nextAttachmentId, settleAttachment, trackUpload } from './chat/composerScratch';
 import { dataUrlBlob, pickBlock, pickChipName, type WebPick } from '../../lib/webPick';
@@ -302,8 +302,8 @@ interface SavedSurface {
   chatPermissionMode?: ChatPermissionMode;
   /** Bumped only by a hands-free Return's merge; every PUT names the one it was based on. */
   generation?: number;
-  /** Saved composer drafts by conversation id (chat/composerDrafts.ts). */
-  drafts?: Record<string, SavedDraft[]>;
+  /** Each conversation's unsent composer content (chat/composerDrafts.ts). */
+  drafts?: Record<string, SavedDraft>;
 }
 
 /**
@@ -730,7 +730,7 @@ export function AgentSurface() {
   // the persist effect so a pre-hydrate render can't PUT [] and clobber the saved names.
   const hydratedRef = useRef(false);
   // Bumped on every saved-draft change, so the roster PUT below (which carries each chat tab's
-  // drafts) re-runs: a draft saved with ⌘S has to reach disk without waiting for a tab change.
+  // drafts) re-runs: what is typed in a box has to reach disk without waiting for a tab change.
   const [draftsRev, setDraftsRev] = useState(0);
   // True once a roster GET has answered and its drafts are seeded. Until then a PUT OMITS the
   // map, which the server reads as "keep what is stored": a launch whose GET failed must not
@@ -1088,7 +1088,7 @@ export function AgentSurface() {
         // draft is text the user wrote, keyed by conversation and never by tab, so a chat
         // reopened later from Past chats (or the Super Agent) finds it waiting — and every PUT
         // sends the whole map back, so a tab that is not open does not drop them from disk.
-        if (!cancelled) { seedAllDrafts(res.drafts); draftsLoadedRef.current = true; }
+        if (!cancelled) { seedAllDrafts(vault, res.drafts); draftsLoadedRef.current = true; }
         // The remembered permission mode is restored REGARDLESS of "Reopen past tabs": it is a
         // preference about how the next chat opens, not a tab. localStorage cannot carry it —
         // the desktop app picks a fresh loopback port every launch, so the origin (and the
@@ -1343,7 +1343,7 @@ export function AgentSurface() {
         // is always the one this surface is actually running under.
         chatPermissionMode,
         // Every conversation's saved drafts, not only the open tabs' (composerDrafts.ts).
-        ...(draftsLoadedRef.current ? { drafts: allDrafts() } : {}),
+        ...(draftsLoadedRef.current ? { drafts: allDrafts(vault) } : {}),
         ...(activePaneIndex >= 0 ? { activePane: activePaneIndex } : {}),
         sessions: [...sessionList
           .filter((m) => m.kind !== 'shell')
@@ -1937,6 +1937,8 @@ export function AgentSurface() {
     }
     const s = spawn(chat.bypass, claudeId, false, 'chat', '', modelForSession(chat), true, '', false, effortForSession(chat), true, chat.mode, chat.accountId) as ChatSession;
     carryDraftInto(s, carried);
+    // The box moved to the new conversation; its kept copy under the old id would be orphaned.
+    if (carried) clearDraft(vault, chat.claudeId);
     const meta: SessionMeta = {
       id: s.id, title: agent ? agent.title : titleFor(s), titleByAgent: true, kind: 'chat', bypass: s.bypass, claudeId,
       ...(chat.mode !== DEFAULT_CHAT_MODE ? { mode: chat.mode } : {}),
