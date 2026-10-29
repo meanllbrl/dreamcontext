@@ -15,6 +15,9 @@ Seven branches merged on top of 0.36.0. Local build; not published.
 - **Typing stays light.** A keystroke no longer re-styles the pane or commits twice.
 - **Lighter while streaming and idle.** No forced layout per streamed token, session stats memoized, readiness probes only where the checklist shows, polled git reads are async.
 - **`super clean` sweeps all of `~/.claude-worktrees`**, dry run by default, and fails toward keeping on partial listings, unreadable records or a linked root.
+- **The agenda grows again.** On the Super stage it shows its full list whenever the centre chat keeps its width (counts only on a small window), and dragging its corner always works; a size with no room says so on the outline instead of snapping back.
+- **Close a whole group.** An open group has "Close the group": it asks, then closes all its cards at once; running jobs stay.
+- **`super open board <whiteboard>` opens it as a whiteboard**, and a board file that does not exist is refused.
 
 ## [0.36.0] - 2026-10-28
 
