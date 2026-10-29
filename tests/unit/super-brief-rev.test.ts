@@ -149,9 +149,17 @@ describe('superBriefState', () => {
     expect(superBriefState(j(old, owner('x', SUPER_BRIEF_TEXT), compact, summary), SUPER_BRIEF_REV).due).toBe(true);
   });
   it('rev 14 (2026-10-27): a child\'s question (`shown=owner`) is already on the owner\'s bar: leave it unless settled', () => {
-    expect(SUPER_BRIEF_REV).toBe(14);
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(14);
     for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
       expect(t).toContain('one marked `shown=owner` is already on his\n  bar: else leave it, silent.');
+    }
+  });
+
+  it('rev 15 (2026-10-29): a dreamcontext whiteboard opens with `super open whiteboard <slug>`, never board', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(15);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('A dreamcontext whiteboard opens with `super open whiteboard <slug>`');
+      expect(t).toContain('never `board`');
     }
   });
 });

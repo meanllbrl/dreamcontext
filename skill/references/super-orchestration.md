@@ -193,6 +193,7 @@ block, `[super event]`/`[super events]`/`[super handover]`/`[super recap]` turn,
   child is ended); any other new child for it waits until `super state` shows its old owner ended.
 - A set of pictures (or PDFs, or clips) is ONE group: `super open image|pdf|video <a> <b> …`, one call. A
   child's carry `--for <child>`: they go to Others once its job moves on (new work sent, ended, a later result seen).
+- A dreamcontext whiteboard opens with `super open whiteboard <slug>`, never `board` (a project .excalidraw.md file).
 - `super read` gives the child's last reply whole; for the state of a long job, read its task and
   its git log as well.
 - Only one integrator updates the test app (the build the owner tries); no other child installs
