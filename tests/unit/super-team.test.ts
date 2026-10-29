@@ -285,6 +285,16 @@ describe('a team job\'s status, from the member\'s thread', () => {
     expect(teamJobAnswer(root, job(), null)).toBe('Result: 3 errors since midnight.\nAll in checkout.\n\nLooking at the logs.');
   });
 
+  it('a run that asked the owner (propose): its resumed turn\'s result leads the answer', () => {
+    ask(1);
+    entry(2, { runId: RUN, kind: 'agent', text: 'Draft ready, asking to publish.', via: 'cli' });
+    entry(3, { runId: RUN, kind: 'system', event: 'ok', text: 'ok', via: 'runner' });
+    entry(4, { runId: RUN, kind: 'agent', text: 'Published to the team.', via: 'cli' });
+    entry(5, { runId: RUN, kind: 'system', event: 'replied', text: 'Question answered via dashboard. Session resumed.', via: 'runner' });
+    expect(teamJobAnswer(root, job(), null)).toBe('Published to the team.\n\nDraft ready, asking to publish.');
+    expect(teamJobLive(root, job(), null)).toEqual({ status: 'done', lastLine: 'Published to the team.' });
+  });
+
   it('a run that posted nothing answers with its document; a reply only with its own posts', () => {
     ask(1);
     const docDir = join(root, 'automations', 'doctor', 'out');
