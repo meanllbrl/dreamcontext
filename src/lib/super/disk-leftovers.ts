@@ -65,7 +65,7 @@ async function dirs(dir: string): Promise<string[]> {
 }
 
 /** Rust build dirs a few levels down a worktree (a `target/` beside a Cargo.toml). */
-async function rustTargets(root: string, depth = 3): Promise<string[]> {
+export async function rustTargets(root: string, depth = 3): Promise<string[]> {
   const found: string[] = [];
   const walk = async (d: string, left: number): Promise<void> => {
     let entries: import('node:fs').Dirent[];

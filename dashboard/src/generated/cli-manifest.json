@@ -3130,7 +3130,7 @@
     },
     {
       "path": "super clean",
-      "desc": "Give disk back: remove ended children's worktrees that are merged and clean (branches kept) and this repo's own test temp folders older than a day. Chrome and system files are never touched",
+      "desc": "Give disk back from ~/.claude-worktrees. A DRY RUN by default: JSON of what would go (ended children's merged worktrees, release worktrees idle 2+ days, any worktree idle 7+ days, node_modules / Rust target of worktrees idle 1+ day, this repo's old test temp), totals per category, and what stays with the reason (in use by a process, the global CLI's target, a live or asking child, uncommitted changes, commits on no other branch or remote, recent). Deletes only with --apply; ask the owner first. Branches are always kept",
       "args": []
     },
     {

@@ -1,14 +1,15 @@
 /**
  * Finished super work gives the disk back (task biten-super-isi-diski-geri-verir-…):
- *  - `super clean` removes ONLY an ended child's merged, clean worktree (branch kept) and this
- *    repo's own test temp folders older than a day; `--dry-run` only lists them with sizes;
+ *  - `super clean` lists by default; `--apply` removes an ended child's merged, clean worktree
+ *    (branch kept) and this repo's own test temp folders older than a day (the full sweep:
+ *    super-worktree-sweep.test.ts);
  *  - `super state` machine shows the 5 largest leftovers, Chrome copies measured, never removed;
  *  - the test temp prefixes it trusts are exactly the ones this repo's tests use (drift test).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PassThrough } from 'node:stream';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { TEST_TMP_PREFIXES } from '../../src/lib/super/test-tmp-prefixes.js';
@@ -170,14 +171,28 @@ describe('super clean', () => {
       return out;
     };
 
-    const dry = await call({ dryRun: true });
-    expect(dry.status).toBe(200);
-    const items = (dry.json.result as { items: Array<{ path: string }> }).items.map((i) => i.path);
-    expect(items.sort()).toEqual([merged.path, ours].sort());
-    expect(existsSync(merged.path)).toBe(true);
+    // The sweep plans in the worktree root's real spelling (lsof reports real paths).
+    const R = (p: string) => realpathSync(p);
+    const mergedReal = R(merged.path);
+    // No flag is a dry run (an older CLI sent `dryRun: false`: still only a list).
+    for (const body of [{}, { dryRun: false }, { dryRun: true }]) {
+      const dry = await call(body);
+      expect(dry.status).toBe(200);
+      const plan = dry.json.result as { dryRun: boolean; items: Array<{ path: string; category: string }>; kept: Array<{ path: string; reason: string }> };
+      expect(plan.dryRun).toBe(true);
+      // Our old test temp is ONE row for all its folders (thousands on a real machine).
+      expect(plan.items.map((i) => i.path).sort()).toEqual([R(merged.path), fakeTmp].sort());
+      expect(plan.items.find((i) => i.category === 'test-tmp')).toMatchObject({ count: 1 });
+      expect(plan.items.find((i) => i.category === 'test-tmp')).not.toHaveProperty('remove');
+      expect(plan.items.find((i) => i.path === R(merged.path))?.category).toBe('child-worktree');
+      expect(plan.kept.find((k) => k.path === R(unmerged.path))?.reason).toBe('unmerged');
+      expect(plan.kept.find((k) => k.path === R(live.path))?.reason).toBe('live-child');
+      expect(existsSync(merged.path)).toBe(true);
+      expect(existsSync(ours)).toBe(true);
+    }
 
-    const real = await call({});
-    expect((real.json.result as { removed: string[] }).removed.sort()).toEqual([merged.path, ours].sort());
+    const real = await call({ apply: true });
+    expect((real.json.result as { removed: string[] }).removed.sort()).toEqual([mergedReal, ours].sort());
     expect(existsSync(merged.path)).toBe(false);
     expect(existsSync(ours)).toBe(false);
     // Kept: the branch, unmerged work, a live child's worktree, Chrome's folder.

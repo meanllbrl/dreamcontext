@@ -7,7 +7,7 @@ import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop
 import {
   WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, type WindowIdentity,
 } from '../../lib/window-control.js';
-import { PhoneHeldError, SuperStoreRefused, isReservedId, okMember, phoneHeld, readSuperState, superRootOfChild } from '../../lib/super/store.js';
+import { PhoneHeldError, SuperStoreRefused, isReservedId, okMember, phoneHeld, readSuperState, superRootOfChild, superWorktreeRoot } from '../../lib/super/store.js';
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, groupPresentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
@@ -66,8 +66,9 @@ import { readLimitSignal } from '../../lib/claude-limit-signal.js';
 import { SUCCESSOR_STOP_TEXT, ownershipWarnings, succeedChild } from '../../lib/super/succession.js';
 import { addToOutbox } from '../../lib/super/outbox.js';
 import { cachedLeftovers, defaultPlaces, diskUsage, forgetLeftovers, oldTestTmp } from '../../lib/super/disk-leftovers.js';
+import { applySweep, machineGuards, planSweep, publicPlan } from '../../lib/super/worktree-sweep.js';
 import { readMachineFacts } from './machine.js';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { picturesToPull, planImageGroup, type ImageChain, type ImageGroupPlan } from '../../lib/super/image-group.js';
 import { ensureTidy, keepOwnerLooked, noteSeenClick, retireClockFrom, retireKeep, seenClickAt, touchCards, touchedAt, viewShows, type RetireLive, type TidyIo } from '../../lib/super/tidy.js';
 import { titleFromBrief } from '../../lib/super/remote-view.js';
@@ -1702,42 +1703,33 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
 
   clean: async (c, b, res) => {
     const root = c.who.contextRoot;
-    const dry = b.dryRun === true;
-    // Only an ENDED child's worktree that git reports merged and clean, and our own old test
-    // temp folders. Live children, unmerged or dirty work, Chrome and system files: never.
-    const worktrees: Array<{ child: string; worktree: string; branch: string; repoPath: string }> = [];
-    // A tree any child not ended still holds (a successor) is in use, whoever started it.
-    const inUse = new Set(Object.values(c.state.children).filter((x) => x.endedAt === undefined && x.worktree).map((x) => x.worktree as string));
+    // A DRY RUN unless the caller says `apply: true` (deleting is irreversible; an older CLI
+    // that sent `{ dryRun: false }` only lists). The sweep covers every folder under
+    // ~/.claude-worktrees (worktree-sweep.ts): what goes, what stays and why.
+    const apply = b.apply === true;
+    const wtRoot = superWorktreeRoot();
+    // This server's own view of a child is the freshest: a chat it runs is live, whatever the
+    // record says yet.
+    const live = new Map<string, string>();
     for (const [sid, ch] of Object.entries(c.state.children)) {
-      if (ch.endedAt === undefined || !ch.worktree || !ch.branch || isLiveChat(sid) || inUse.has(ch.worktree)) continue;
-      const repo = await repoOfWorktree(dirname(root), ch.worktree).catch(() => null);
-      if (!repo) continue;
-      const st = await worktreeStatus(repo.path, ch.worktree, ch.branch).catch(() => null);
-      if (st?.listed && st.dirty === false && st.merged === true) worktrees.push({ child: sid, worktree: ch.worktree, branch: ch.branch, repoPath: repo.path });
+      if (ch.worktree && isLiveChat(sid)) live.set(ch.worktree, `child ${sid} runs right now`);
     }
-    const tmp = await oldTestTmp(tmpdir());
-    const sizes = await diskUsage([...worktrees.map((w) => w.worktree), ...tmp]);
-    const items = [
-      ...worktrees.map((w) => ({ kind: 'worktree', path: w.worktree, child: w.child, branch: w.branch, bytes: sizes.get(w.worktree) ?? 0 })),
-      ...tmp.map((t) => ({ kind: 'test-tmp', path: t, bytes: sizes.get(t) ?? 0 })),
-    ];
-    const total = items.reduce((n, i) => n + i.bytes, 0);
-    if (dry) { ok(res, { dryRun: true, items, bytes: total }); return; }
-    const removed: string[] = [];
-    const failed: Array<{ path: string; message: string }> = [];
-    for (const w of worktrees) {
-      try {
-        await removeChildWorktree({ repoPath: w.repoPath, worktree: w.worktree, branch: w.branch });
-        await writeSuper(root, (s) => { const x = s.children[w.child]; if (x) { delete x.worktree; delete x.branch; } });
-        removed.push(w.worktree);
-      } catch (err) { failed.push({ path: w.worktree, message: (err as Error).message }); }
-    }
-    for (const t of tmp) {
-      try { await fsp.rm(t, { recursive: true, force: true }); removed.push(t); } catch (err) { failed.push({ path: t, message: (err as Error).message }); }
-    }
+    const take = async () => machineGuards(wtRoot, root, homedir(), live);
+    const { guards, warnings, root: realRoot } = await take();
+    const plan = await planSweep({ root: realRoot, guards, testTmp: await oldTestTmp(tmpdir()), warnings });
+    if (!apply) { ok(res, { dryRun: true, ...publicPlan(plan) }); return; }
+    const fresh = (await take()).guards;
+    const result = await applySweep(plan, fresh, {
+      onRemoved: async (item) => {
+        if (!item.child || item.category === 'build-output') return;
+        await writeSuper(root, (s) => { const x = s.children[item.child!]; if (x) { delete x.worktree; delete x.branch; } });
+      },
+    });
     forgetLeftovers();
-    const freed = items.filter((i) => removed.includes(i.path)).reduce((n, i) => n + i.bytes, 0);
-    ok(res, { removed, failed, bytesFreed: freed, branchesKept: worktrees.filter((w) => removed.includes(w.worktree)).map((w) => w.branch) });
+    ok(res, {
+      dryRun: false, ...result,
+      branchesKept: plan.items.filter((i) => result.removed.includes(i.path) && i.category !== 'build-output' && i.branch).map((i) => i.branch),
+    });
   },
 
   'worktree-remove': async (c, b, res) => {

@@ -314,9 +314,13 @@ export function registerSuperCommand(program: Command): void {
     .action((children: string[], o: { into: string }) => run('merge', { children, into: o.into }));
 
   s.command('clean')
-    .description('Give disk back: remove ended children\'s worktrees that are merged and clean (branches kept) and this repo\'s own test temp folders older than a day. Chrome and system files are never touched')
-    .option('--dry-run', 'Only list what would go, with sizes')
-    .action((o: { dryRun?: boolean }) => run('clean', { dryRun: o.dryRun === true }));
+    .description('Give disk back from ~/.claude-worktrees. A DRY RUN by default: JSON of what would go (ended children\'s merged worktrees, release worktrees idle 2+ days, any worktree idle 7+ days, node_modules / Rust target of worktrees idle 1+ day, this repo\'s old test temp), totals per category, and what stays with the reason (in use by a process, the global CLI\'s target, a live or asking child, uncommitted changes, commits on no other branch or remote, recent). Deletes only with --apply; ask the owner first. Branches are always kept')
+    .option('--apply', 'Really remove what the dry run lists (each row re-checked first)')
+    .option('--dry-run', 'Only list (the default; kept for older callers)')
+    .action((o: { apply?: boolean; dryRun?: boolean }) => {
+      if (o.apply && o.dryRun) { usage('--apply and --dry-run contradict each other: pick one'); return; }
+      return run('clean', { apply: o.apply === true });
+    });
 
   // The Super Agent's own handoff: a LOCAL write, like `tasks handoff` (no server round trip),
   // into its file — never a task (super/handoff-file.ts).
