@@ -308,6 +308,9 @@ export interface PlanOptions {
   /** The agenda drawn at most this many tiles wide: set by `planStage` itself while it picks the
    *  agenda's width (callers leave it out). */
   agendaCap?: number;
+  /** An owner's card a side is too tall for leaves the column at his size instead of shrinking:
+   *  set by `planStage` itself, which keeps that plan only when it is no worse (callers leave it out). */
+  ownerAside?: boolean;
 }
 
 
@@ -449,12 +452,12 @@ interface SizedSolution extends FloatSolution {
  * card before a chat); only then the owner's own cards, the same way. A one-column side of
  * small cards keeps its orbit.
  */
-function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[], agendaCap?: number): SizedSolution {
-  return solveSizedAt(f, left, right, agendaCap ?? null);
+function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[], agendaCap?: number, ownerAside = false): SizedSolution {
+  return solveSizedAt(f, left, right, agendaCap ?? null, ownerAside);
 }
 
 /** `solveSized` with the agenda drawn at most `agendaCap` tiles wide (null: its own size). */
-function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[], agendaCap: number | null): SizedSolution {
+function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[], agendaCap: number | null, ownerAside: boolean): SizedSolution {
   const { GAP, MARGIN, TILE: T, ORBIT_DEPTH } = STAGE;
   const W = f.width;
   const span = f.content.height;
@@ -462,8 +465,13 @@ function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly Size
   const drawn = new Map<string, ContainerSize>();
   for (const s of [...left, ...right]) drawn.set(s.id, s.size);
   const overflow = new Set<string>();
+  // An owner's card set aside from its column (owner 2026-10-29, "alan var mı?"): it stands where
+  // he dropped it, not in the column, so a side too tall for it no longer shrinks or drops it; it
+  // keeps its size and its width, and the placement below seats it at its spot or in Others.
+  const aside = new Set<string>();
   const sides = { left: [...left], right: [...right] };
   const live = (side: 'left' | 'right') => sides[side].filter((s) => !overflow.has(s.id));
+  const inColumn = (side: 'left' | 'right') => live(side).filter((s) => !aside.has(s.id));
   const widest = (side: 'left' | 'right') => live(side).reduce((m, s) => Math.max(m, SIZE_UNITS[drawn.get(s.id)!].w), 0);
   const cols = { left: widest('left'), right: widest('right') };
   const avail = () => W - 2 * MARGIN - unitsPx(cols.left) - unitsPx(cols.right) - (cols.left ? GAP : 0) - (cols.right ? GAP : 0);
@@ -501,7 +509,7 @@ function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly Size
   const rowsOf = (side: 'left' | 'right'): Row[] => {
     const rows: Row[] = [];
     let run: Row | null = null;
-    for (const s of live(side)) {
+    for (const s of inColumn(side)) {
       const u = SIZE_UNITS[drawn.get(s.id)!];
       if (u.w === 1 && u.h === 1) {
         if (run && run.items.length < Math.max(1, cols[side])) run.items.push(s);
@@ -516,7 +524,7 @@ function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly Size
   const heightOfRows = (rows: Row[]) => rows.reduce((t, r) => t + unitsPx(r.h), 0) + Math.max(0, rows.length - 1) * GAP;
   for (const side of ['left', 'right'] as const) {
     for (let guard = 0; guard < 200 && heightOfRows(rowsOf(side)) > span; guard++) {
-      const items = live(side);
+      const items = inColumn(side);
       const smalls = items.filter((s) => drawn.get(s.id) === 'small').length;
       // 1. Widen, when the centre can spare a tile and there are small cards to pair up.
       if (cols[side] < STAGE.MAX_COLS + 1 && smalls >= 2 && avail() - T - GAP >= f.centreMin && cols[side] >= 1) {
@@ -526,6 +534,9 @@ function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly Size
       // 2. The auto-placed cards give way first, the latest first: their height, then their place
       //    (to Others, any card before a chat). Only then does the owner's own card give up
       //    height, and last its place: he chose its size and where it stands.
+      //    `ownerAside` (asked by planStage only, owner 2026-10-29 "alan var mı?"): instead of
+      //    giving up height, the owner's card leaves the column at the size he chose (it stands
+      //    where he dropped it, not in the column), when that height fits the stage at all.
       const latest = [...items].reverse();
       const shrink = (owner: boolean) => latest.find((s) => s.owner === owner && SIZE_UNITS[drawn.get(s.id)!].h > 1)
         ?? latest.find((s) => s.owner === owner && drawn.get(s.id) === 'medium' && cols[side] >= 2);
@@ -536,6 +547,10 @@ function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly Size
       if (step) { drawn.set(step.id, HEIGHT_STEP[drawn.get(step.id)!]!); continue; }
       const auto = drop(false, false);
       if (auto) { overflow.add(auto.id); continue; }
+      if (ownerAside) {
+        const out = latest.find((s) => s.owner && sizePx(drawn.get(s.id)!).height <= span + 1e-9);
+        if (out) { aside.add(out.id); continue; }
+      }
       const own = shrink(true);
       if (own) { drawn.set(own.id, HEIGHT_STEP[drawn.get(own.id)!]!); continue; }
       const last = drop(true, false) ?? drop(false, true) ?? drop(true, true);
@@ -585,13 +600,24 @@ function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly Size
 }
 
 /** Whether `id` would be drawn floating at `size` on this stage now: the plan with that size,
- *  asked (the size menu and the corner handle offer only what this says). */
+ *  asked (the size menu and the corner handle offer only what this says). `at`: the card grows
+ *  where the owner sees it (its inner top corner held, {@link anchoredPos}) and is his latest
+ *  act, exactly what the write will record (owner 2026-10-29, "alan var mı?": the plan asked at
+ *  the card's old spot refused a size the empty column beside it could take). */
 export function fitsNow(
   containers: readonly StageItem[], view: SuperView, stage: { width: number; height: number }, id: string, size: ContainerSize, opts: PlanOptions = {},
+  at?: { free: Rect; rect: Rect; side: 'left' | 'right' },
 ): boolean {
-  const next = containers.map((c) => (c.id === id ? { ...c, ...(size === 'small' ? { size: undefined } : { size }) } : c));
-  const p = planStage(next, view, stage, opts).cards[id];
-  return !!p && p.where === 'float' && (p.size ?? 'small') === size;
+  const pos = at ? anchoredPos(at.free, at.rect, size, at.side) : undefined;
+  const next = containers.map((c) => (c.id === id ? { ...c, ...(size === 'small' ? { size: undefined } : { size }), ...(pos ? { pos } : {}) } : c));
+  const recent = at ? [...(opts.recent ?? []).filter((x) => x !== id), id] : opts.recent;
+  const after = planStage(next, view, stage, { ...opts, recent });
+  const p = after.cards[id];
+  if (!p || p.where !== 'float' || (p.size ?? 'small') !== size) return false;
+  // A live job gives its place last of all (owner 2026-10-23): a size that would send one now on
+  // the stage to Others does not fit.
+  const now = planStage(containers, view, stage, opts);
+  return containers.every((c) => !c.live || c.id === id || now.cards[c.id]?.where !== 'float' || after.cards[c.id]?.where === 'float');
 }
 
 /**
@@ -852,6 +878,39 @@ export function planStage(
   view: SuperView,
   stage: { width: number; height: number },
   opts: PlanOptions = {},
+): StagePlan {
+  // A card the owner placed and sized is drawn at his size wherever it fits (owner 2026-10-29,
+  // "alan var mı?": a 2x2 he grew into an empty column was drawn smaller, so refused, for a column
+  // it does not stand in). The plan that sets such a card aside from its column is kept only when
+  // it costs nothing: no card more in Others, none off the stage or over another, the centre no
+  // further off the middle. Otherwise the stage is exactly as before.
+  const base = planStageAgenda(containers, view, stage, opts);
+  if (opts.ownerAside !== undefined) return base;
+  const shrunk = containers.some((c) => c.pos && c.place === 'float' && (c.size ?? 'small') !== 'small'
+    && base.cards[c.id] && (base.cards[c.id].where !== 'float' || (base.cards[c.id].size ?? 'small') !== c.size));
+  if (!shrunk) return base;
+  const alt = planStageAgenda(containers, view, stage, { ...opts, ownerAside: true });
+  const was = new Set(base.others);
+  const a = stageCost(alt);
+  const b = stageCost(base);
+  const inFree = (r: Rect) => r.x >= alt.free.x - 1e-6 && r.y >= alt.free.y - 1e-6
+    && r.x + r.width <= alt.free.x + alt.free.width + 1e-6 && r.y + r.height <= alt.free.y + alt.free.height + 1e-6;
+  const sideOf = (p: StagePlan, r: Rect) => r.x + r.width / 2 < p.centre.x + p.centre.width / 2;
+  const calm = Object.values(alt.cards).every((c) => {
+    if (c.where !== 'float') return true;
+    const before = base.cards[c.id];
+    // Nothing crosses to the other side of the centre, and a card drawn anew stays in the free area.
+    if (before?.where === 'float' && sideOf(base, before.rect) !== sideOf(alt, c.rect)) return false;
+    return (before?.where === 'float' && before.rect.x === c.rect.x && before.rect.y === c.rect.y) || inFree(c.rect);
+  });
+  return calm && alt.others.every((id) => was.has(id)) && a.unsound === 0 && a.offMid <= b.offMid + 1e-6 ? alt : base;
+}
+
+function planStageAgenda(
+  containers: readonly StageItem[],
+  view: SuperView,
+  stage: { width: number; height: number },
+  opts: PlanOptions,
 ): StagePlan {
   // The agenda's width (owner 2026-10-29, "Agenda büyümüyor?": its list whenever there is room) is
   // judged on the WHOLE plan, the owner's dropped cards and every re-plan included: the widest,
@@ -1150,7 +1209,7 @@ function planWith(
   // size (solveSized).
   const sized = floating.some((c) => sizeById.get(c.id) !== 'small');
   const sol = sized
-    ? solveSized(f, slotsOn('left').map(withSize), slotsOn('right').map(withSize), opts.agendaCap)
+    ? solveSized(f, slotsOn('left').map(withSize), slotsOn('right').map(withSize), opts.agendaCap, !!opts.ownerAside)
     : { ...solveFloat(f, slotsOn('left'), slotsOn('right')), drawn: new Map<string, ContainerSize>(), uRight: undefined };
   const drawnOf = (id: string): ContainerSize => sol.drawn.get(id) ?? 'small';
   // The float centre takes the stage's height (owner 2026-10-25; 2026-10-28 for a windowed app):

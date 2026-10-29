@@ -59,9 +59,10 @@ export interface StageDragDeps {
   /** "Group" in the owner's language: a new group's default name is "<word> N". */
   groupWord: string;
   /** The owner's size for a card (the menu and the corner handle). */
-  onSize: (id: string, size: ContainerSize) => void;
-  /** Whether a size can be drawn for this card on the stage now. */
-  canFit: (id: string, size: ContainerSize) => boolean;
+  /** `pin`: the corner gesture, the card grows where it is drawn (its inner top corner held). */
+  onSize: (id: string, size: ContainerSize, pin?: boolean) => void;
+  /** Whether a size can be drawn for this card on the stage now (`pin`: grown where it is drawn). */
+  canFit: (id: string, size: ContainerSize, pin?: boolean) => boolean;
   /** The resize outline's words when the size it reaches cannot be drawn (owner's language). */
   noRoom: string;
 }
@@ -282,7 +283,7 @@ export function useStageDrag(depsRef: RefObject<StageDragDeps | null>) {
     armPointerDrag({ pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY }, el, {
       win: window,
       onBegin: () => {
-        fitting = new Set(CONTAINER_SIZES.filter((size) => size === 'small' || canFit(id, size)));
+        fitting = new Set(CONTAINER_SIZES.filter((size) => size === 'small' || canFit(id, size, true)));
         // The surface's own Esc (AgentSurface) yields while a resize is held, as it does to a drag.
         root.dataset.resizing = 'true';
         outline = document.createElement('div');
@@ -301,7 +302,7 @@ export function useStageDrag(depsRef: RefObject<StageDragDeps | null>) {
         delete root.dataset.resizing;
         outline?.remove();
         outline = null;
-        if (drop && fits && snapped !== from) onSize(id, snapped);
+        if (drop && fits && snapped !== from) onSize(id, snapped, true);
       },
     });
   };
