@@ -23,6 +23,11 @@
    rather than a tray of pills, and the session's context/cost readout sits in that
    toolbar's middle rather than on a line of its own. */
 .chat-cmp {
+  /* The field's type, read by the textarea, its mirror and the two-line fallback alike (owner
+     2026-10-30: inline chips sit between the lines with room above and below, never touching
+     the line next to them; the words read easier). */
+  --chat-cmp-fs: var(--font-size-md, 15px);
+  --chat-cmp-lh: 1.75;
   position: relative;   /* anchors the slash-command menu, which must escape the card */
   flex: 0 0 auto;
   display: flex;
@@ -169,11 +174,11 @@
 
    The fallback below is only ever on screen before the first measurement (a layout effect,
    so it never paints), and it is expressed in the SAME tokens the measurement reads —
-   `.chat-cmp-input`'s font-size and 1.45 line-height, its 4px padding, this box's 8px
+   `.chat-cmp-input`'s font-size and line-height (`--chat-cmp-fs`, `--chat-cmp-lh`), its 4px padding, this box's 8px
    bottom padding — so the two can't disagree. */
 
 .chat-cmp-body {
-  --chat-cmp-min-h: calc(2 * 1.45 * var(--font-size-md, 14px) + 16px);
+  --chat-cmp-min-h: calc(2 * var(--chat-cmp-lh) * var(--chat-cmp-fs) + 16px);
   height: var(--chat-cmp-h, var(--chat-cmp-min-h));
   display: flex;
   flex-direction: column;
@@ -303,6 +308,24 @@
   color: var(--color-error);
 }
 .chat-cmp-attachment[data-state='failed'] .chat-cmp-thumb { opacity: 0.5; }
+
+/* The Super dock's page chip, in the toolbar beside the attach button (owner 2026-10-30:
+   nothing sits above the text). It gives way first: the page name stays, the item clips. */
+.chat-cmp-page-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: 40%;
+  padding: 2px 2px 2px 8px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  font-size: var(--font-size-xs, 11px);
+  color: var(--color-text-secondary);
+}
+.chat-cmp-page-chip-name { min-width: 0; overflow: hidden; white-space: nowrap; }
 
 /* ── Shared "remove" (✕) button for quote/skill/attachment chips ─────────────────── */
 
@@ -450,8 +473,8 @@
   background: transparent;
   color: var(--color-text);
   font-family: var(--font-family-text);
-  font-size: var(--font-size-md, 14px);
-  line-height: 1.45;
+  font-size: var(--chat-cmp-fs);
+  line-height: var(--chat-cmp-lh);
   resize: none;
   overflow-y: auto;
 }
@@ -470,8 +493,8 @@
   overflow-wrap: break-word;
   color: transparent;
   font-family: var(--font-family-text);
-  font-size: var(--font-size-md, 14px);
-  line-height: 1.45;
+  font-size: var(--chat-cmp-fs);
+  line-height: var(--chat-cmp-lh);
   pointer-events: none;
   user-select: none;
 }
@@ -484,6 +507,9 @@
 .chat-cmp-hl-ref[data-slot="4"] { --ref-slot: var(--ref-slot-4); }
 .chat-cmp-hl-ref[data-slot="5"] { --ref-slot: var(--ref-slot-5); }
 .chat-cmp-hl-ref {
+  /* Paints only (inline): the tint reaches a little above and below the letters, inside the
+     room the line height leaves, so a chip never meets the line next to it. */
+  padding-block: 0.12em;
   color: transparent;
   background: color-mix(in srgb, var(--ref-slot) 18%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ref-slot) 45%, transparent);
@@ -511,6 +537,20 @@
   background-size: cover;
   background-position: center;
   border-radius: var(--radius-sm);
+}
+/* An inline chip with no thumbnail (a file, a folder, a board item, an element with no picture,
+   owner 2026-10-30): its kind's icon, centred in the same room. The mirror's text is
+   transparent, so the icon names its own colour. */
+.chat-cmp-hl-thumb[data-icon] { position: relative; }
+.chat-cmp-hl-thumb[data-icon]::after {
+  content: attr(data-icon);
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-secondary);
+  font-size: 0.85em;
+  line-height: 1;
 }
 .chat-cmp-hl-img[data-state="uploading"] .chat-cmp-hl-thumb { opacity: 0.55; }
 .chat-cmp-hl-img[data-state="failed"] { box-shadow: inset 0 0 0 1px var(--color-error); }

@@ -12,7 +12,9 @@
  *
  * - glyph `●` for an agenda line, `↩` for a reply: the KIND (the hue, by order, is the identity);
  *   two EM SPACEs for a picture (owner 2026-10-27: each photo a chip with his words after it),
- *   blank in the textarea so the mirror's thumbnail behind them shows through;
+ *   blank in the textarea so the mirror's thumbnail behind them shows through; every other
+ *   attachment (a file, a folder, a picked element, a board item) wears the same room, its
+ *   thumbnail or its icon painted there (owner 2026-10-30: nothing staged sits above the text);
  * - FSI/PDI (U+2068/U+2069) are zero-width isolates, NBSPs keep the token from wrapping inside;
  * - the id digits are the staged ref's id (this run's nonce + its attachment sequence) in base 4,
  *   written with the invisible format characters U+2061..U+2064, so labels may repeat freely
@@ -70,19 +72,33 @@ export function refTokenId(att: Pick<Attachment, 'id'>): string {
 const encodeId = (id: string) => Array.from(id, (d) => DIGITS[Number(d)] ?? '').join('');
 const decodeId = (digits: string) => Array.from(digits, (c) => String(c.charCodeAt(0) - 0x2061)).join('');
 
-/** A staged attachment drawn as a token in the draft: an About line, or a picture staged inline
- *  (pasted, dropped or picked into the composer, `inline`). */
+/** A staged attachment drawn as a token in the draft: an About line (or a chat's reply quote), or
+ *  anything staged `inline` (a picture, a file, a folder, a picked element, a board item). The
+ *  page the Super dock is open on is context, never a chip in the text. */
 export function isTokenRef(a: Pick<Attachment, 'kind' | 'inline'>): boolean {
-  return a.kind === 'about' || (a.kind === 'image' && !!a.inline);
+  return a.kind === 'about' || (!!a.inline && a.kind !== 'page');
 }
 
-/** What a ref names, for "the same target twice": `note:n7`, `item:q-1`, `reply:k3f9q0`. */
+/** An inline chip that is not an About line: drawn in the picture's room (a thumbnail or an icon). */
+export function isMediaRef(a: Pick<Attachment, 'kind' | 'inline'>): boolean {
+  return isTokenRef(a) && a.kind !== 'about';
+}
+
+/** A normal chat's ↩ on a message: an About ref whose block is the quote itself (`> …`). */
+export function isChatReply(a: Pick<Attachment, 'kind' | 'text'>): boolean {
+  return a.kind === 'about' && (a.text ?? '').startsWith('> ');
+}
+
+/** What a ref names, for "the same target twice": `note:n7`, `item:q-1`, `reply:k3f9q0`, a chat
+ *  reply's `quote:> …`. */
 export function refKey(att: Pick<Attachment, 'text'>): string | null {
   const text = att.text ?? '';
   const a = ABOUT_AGENDA_RE.exec(text);
   if (a) return `${a[1]}:${a[2]}`;
   const r = REPLY_TO_RE.exec(text);
-  return r ? `reply:${r[1]}` : null;
+  if (r) return `reply:${r[1]}`;
+  // A normal chat's ↩: the quote is the target (the same message twice is one chip).
+  return text.startsWith('> ') ? `quote:${text}` : null;
 }
 
 function graphemes(s: string): string[] {
@@ -108,10 +124,11 @@ export function refLabel(att: Pick<Attachment, 'name' | 'chip'>, fits?: (label: 
   return clip(Math.max(n, Math.min(g.length, 2)));
 }
 
-/** The glyph a ref's chip opens with: ↩ for a reply, ● for an agenda line, a picture's room. */
+/** The glyph a ref's chip opens with: ↩ for a reply, ● for an agenda line, a picture's room (any
+ *  inline attachment). */
 export function refGlyph(att: Pick<Attachment, 'text'> & { kind?: Attachment['kind'] }): string {
-  if (att.kind === 'image') return GLYPH_IMAGE;
-  return REPLY_TO_RE.test(att.text ?? '') ? GLYPH_REPLY : GLYPH_NOTE;
+  if (att.kind && att.kind !== 'about') return GLYPH_IMAGE;
+  return REPLY_TO_RE.test(att.text ?? '') || (att.text ?? '').startsWith('> ') ? GLYPH_REPLY : GLYPH_NOTE;
 }
 
 /** The token a staged ref is drawn as in the draft (`fits`: see {@link refLabel}). */

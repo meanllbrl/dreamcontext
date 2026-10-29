@@ -27,7 +27,7 @@ import { useI18n } from '../../../context/I18nContext';
 import { copyPickedPicture, uploadAgentFile } from '../../../lib/agentDrop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { PHONE_PHOTOS_PER_MESSAGE, jpegName, photoUploadSignal, preparePhonePhotoQueued, withPhotoUploadSlot } from '../../../lib/phonePhoto';
-import { PHONE_FILE_UPLOAD_TIMEOUT_MS, formatFileSize, splitPhonePicks } from '../../../lib/phoneAttach';
+import { PHONE_FILE_UPLOAD_TIMEOUT_MS, splitPhonePicks } from '../../../lib/phoneAttach';
 import { useAgentSessionStats, useClaudeAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
 import {
   effortLabel, modelLabelFor, quotePath, isSignInCommand, isMcpCommand, contextLimitFor, usageLimits,
@@ -51,10 +51,10 @@ import {
 } from './chatEntities';
 import {
   addAttachments, composeOutgoing, countsAsContent, dropRefs, dropSentAttachments, markInserted, nextAttachmentId, pendingUploads,
-  readScratch, removeAttachment, repend, stagePicked, restoreRefs, setAttachmentPreview, settleAttachment, stageRefs, stageUpload, subscribeScratch, trackUpload, type Attachment,
+  readScratch, removeAttachment, repend, stagePicked, restoreRefs, setAttachmentPreview, settleAttachment, stageRefs, stageUpload, subscribeScratch, trackUpload, wasSent, type Attachment,
 } from './composerScratch';
 import {
-  GLYPH_IMAGE, deleteTokenAt, draftFromMessage, insertTakeAt, insertTokenAt, isTokenRef, parseRefTokens, reconcileRefs, refLabel, refToken,
+  GLYPH_IMAGE, deleteTokenAt, draftFromMessage, insertTakeAt, insertTokenAt, isChatReply, isMediaRef, isTokenRef, parseRefTokens, reconcileRefs, refLabel, refToken,
   refTokenId, sanitizePaste, snapSelection, stripTokens, tokensOnly,
 } from './composerRefs';
 import { MIRROR_TAIL, syncMirror } from './composerMirror';
@@ -102,11 +102,10 @@ import { REPLY_TO_RE } from '../../../lib/superTypes';
  * changes, so there is nothing to carry (see composerScratch.ts).
  *
  * ── Attachments (state 7) ───────────────────────────────────────────────────────────
- * Attachments (file/folder picks) are held as SEPARATE "chips" above the textarea — a picture
- * (pasted, dropped, picked with "Attach files…", the phone's) is instead a chip IN the text — rather than being merged into the draft text character-by-character — they're
- * folded into the outgoing message only at submit time. This is a deliberate departure from
- * the old composer's `insert()` (which spliced path text directly into the draft): the brief
- * asks for a distinct attachments row.
+ * Everything he attaches — a picture, a file, a folder, a picked element, a board item, the
+ * message he replies to — is a chip IN the text at the caret (owner 2026-10-30: nothing sits
+ * above the text), a token composerRefs.ts draws; the message is built from the chips where
+ * they stand only at submit time, each followed by the words he wrote after it.
  *
  * They live in `composerScratch`, keyed by CONVERSATION id, not in this component's state —
  * along with the reply quote, which `ChatPane` reads from the same place. That is what makes
@@ -141,10 +140,6 @@ import { REPLY_TO_RE } from '../../../lib/superTypes';
  *             rules that keep it from eating a half-typed draft are pure and tested in
  *             chatEntities.ts (`canRecallHistory`, `stepHistory`).
  */
-
-function truncateQuote(text: string): string {
-  return text.length > 140 ? `${text.slice(0, 140)}…` : text;
-}
 
 /** Drawn rather than typed as "+": a text plus inherits the label's font weight and optical
  *  size, so it sat heavier than the ✦ beside it. This one is stroked to match. */
@@ -220,63 +215,19 @@ const MemoModeMenu = memo(ModeMenu);
 const MemoModelMenu = memo(ModelMenu);
 const MemoUsageMenu = memo(UsageMenu);
 
-/** The quote strip and the attachment row. A fragment, so both stay direct children of
- *  `.chat-cmp-body` — `measureBodyChrome` sums the body's children. */
-const ComposerChips = memo(function ComposerChips({ quote, attachments, convId, onClearQuote, onRemoveChip, photoMeta }: {
-  quote: string | null;
-  attachments: Attachment[];
-  convId: string;
-  onClearQuote: () => void;
-  /** A picture that is also a chip in the text: its ✕ takes the chip out with it. */
-  onRemoveChip: (attId: string) => void;
-  /** The hands-free phone's one line under its photo chips ("2 photos · 1 uploading…"). */
-  photoMeta?: string | null;
-}) {
+/**
+ * The Super dock's page chip (owner 2026-10-25): the page the next message is written from. It is
+ * context the dock stages, never something he attached, so it is not a chip in the text; and
+ * nothing sits above the text any more (owner 2026-10-30), so it lives in the toolbar, beside
+ * the attach button.
+ */
+const PageChip = memo(function PageChip({ page, convId }: { page: Attachment; convId: string }) {
   return (
-    <>
-      {quote && (
-        <div className="chat-cmp-quote">
-          <span className="chat-cmp-quote-bar" aria-hidden />
-          <div className="chat-cmp-quote-body">
-            <span className="chat-cmp-quote-label"><span aria-hidden>↩</span> Replying to Claude</span>
-            <span className="chat-cmp-quote-text">{truncateQuote(quote)}</span>
-          </div>
-          <button type="button" className="chat-cmp-chip-x" aria-label="Cancel reply" onClick={onClearQuote}>✕</button>
-        </div>
-      )}
-
-      {attachments.length > 0 && (
-        <div className="chat-cmp-attachments">
-          {attachments.map((a) => (
-            <div
-              key={a.id}
-              className={`chat-cmp-attachment chat-cmp-attachment-${a.kind}${a.kind === 'image' && a.uploading && !a.url ? ' chat-cmp-photo-pending' : ''}`}
-              data-state={a.uploading ? 'uploading' : a.failed ? 'failed' : 'ready'}
-            >
-              {((a.kind === 'image' || a.kind === 'element') && a.url) ? (
-                <img src={a.url} alt={a.name} className="chat-cmp-thumb" />
-              ) : a.kind === 'about' ? (
-                // The agenda line the message is about: the agenda's Waiting dot.
-                <span className="chat-cmp-attachment-dot" aria-hidden />
-              ) : (
-                <span className="chat-cmp-attachment-glyph" aria-hidden>{a.kind === 'folder' ? '📁' : a.kind === 'ref' ? '📌' : a.kind === 'element' ? '◎' : a.kind === 'page' ? '⌖' : a.kind === 'image' ? '🖼' : '📄'}</span>
-              )}
-              {/* An attachment says what will happen to it. A picture that can't be sent
-                  must never look like one that can — that is the whole bug this row grew
-                  a state for (a pasted screenshot the agent never received). */}
-              <span className="chat-cmp-attachment-name">
-                {a.kind === 'page' ? <PageChipName name={a.name} /> : a.name}
-                {a.kind === 'file' && a.size !== undefined && <span className="chat-cmp-attachment-size" data-testid="phone-file-size">{formatFileSize(a.size)}</span>}
-                {a.uploading && <span className="chat-cmp-attachment-note">attaching…</span>}
-                {a.failed && <span className="chat-cmp-attachment-note">{a.note ?? (a.kind === 'element' ? 'sent without its picture' : 'couldn\'t attach — not sent')}</span>}
-              </span>
-              <button type="button" className="chat-cmp-chip-x" aria-label={`Remove ${a.name}`} onClick={() => (a.kind === 'image' && a.inline ? onRemoveChip(a.id) : removeAttachment(convId, a.id))}>✕</button>
-            </div>
-          ))}
-        </div>
-      )}
-      {photoMeta && <div className="chat-cmp-photo-meta" data-testid="phone-photo-meta">{photoMeta}</div>}
-    </>
+    <div className="chat-cmp-page-chip" data-testid="chat-cmp-page-chip" title={page.name}>
+      <span className="chat-cmp-attachment-glyph" aria-hidden>⌖</span>
+      <span className="chat-cmp-page-chip-name"><PageChipName name={page.name} /></span>
+      <button type="button" className="chat-cmp-chip-x" aria-label={`Remove ${page.name}`} onClick={() => removeAttachment(convId, page.id)}>✕</button>
+    </div>
   );
 });
 
@@ -687,8 +638,8 @@ export function Composer({
   onAccountChange?: (accountId: string) => void;
   /**
    * The Super view (owner 2026-10-24): an agenda ↩ or a message ↩ drops a reference chip INTO
-   * the text at the caret (composerRefs.ts), several per message. Off everywhere else: a normal
-   * chat's ↩ is still the quote above the box, and its text is sent as typed.
+   * the text at the caret (composerRefs.ts), several per message. A normal chat's ↩ is a
+   * chip at the caret too (owner 2026-10-30), its block the quote; its text is sent as typed.
    */
   superView?: boolean;
   /** A reply chip's "Go to message": scroll the transcript to the message it names. */
@@ -817,13 +768,13 @@ export function Composer({
           // A normal chat reads chips only while a picture is staged or a token is in (isolates
           // he pasted are never mistaken for a damaged chip).
           const staged = readScratch(convId).attachments;
-          if (superView || parseRefTokens(adopted).length > 0 || staged.some((a) => a.kind === 'image' && a.inline && !a.pending)) {
+          if (superView || parseRefTokens(adopted).length > 0 || staged.some((a) => isTokenRef(a) && !a.pending)) {
             const r = reconcileRefs(adopted, staged);
             if (r.draft !== adopted) { adopted = r.draft; session.syncDraft(adopted); }
-            // A picture whose chip the new draft lacks (a rewind's prefill) is put back, not lost.
-            const pics = r.dropped.filter((a) => a.kind === 'image').map((a) => a.id);
+            // An attachment whose chip the new draft lacks (a rewind's prefill) is put back, not lost.
+            const pics = r.dropped.filter(isMediaRef).map((a) => a.id);
             if (pics.length) repend(convId, pics);
-            const rest = r.dropped.filter((a) => a.kind !== 'image').map((a) => a.id);
+            const rest = r.dropped.filter((a) => !isMediaRef(a)).map((a) => a.id);
             if (rest.length) dropRefs(convId, rest);
           }
         }
@@ -859,14 +810,9 @@ export function Composer({
   const [maxNotice, setMaxNotice] = useState(0);
   /** Why the last Attach files…/folders… opened nothing (null: it opened, or was cancelled). */
   const [pickNotice, setPickNotice] = useState<string | null>(null);
-  /** The row above the box: the Super view's references and every view's inline pictures are
-   *  chips IN the text, so they leave it. Memoised: the row is a memo'd part and must not
-   *  re-render on every keystroke. */
-  const chipRow = useMemo(
-    // A picture that could not attach stays in the row too: there it SAYS it will not be sent.
-    () => attachments.filter((a) => (a.kind === 'image' && a.inline ? !!a.failed : superView ? !isTokenRef(a) : true)),
-    [attachments, superView],
-  );
+  /** The Super dock's page chip, drawn in the toolbar: every other attachment is a chip IN the
+   *  text. A staged one with no token yet goes in at the caret (below). */
+  const pageChip = attachments.find((a) => a.kind === 'page');
   useEffect(() => {
     setAttachments(readScratch(convId).attachments);
     refusedSeenRef.current = readScratch(convId).refused ?? 0;
@@ -1041,8 +987,8 @@ export function Composer({
     // A picker that could not open says so here, never a click that does nothing.
     if (!paths.length) { setPickNotice(pickerError()); return; }
     setPickNotice(null);
-    // A picked picture is a chip in the text at the caret, the same as a pasted one; files and
-    // folders stay path chips in the row (owner 2026-10-28).
+    // Each pick is a chip in the text at the caret, the same as a pasted picture (owner
+    // 2026-10-28 for pictures, 10-30 for files and folders).
     stagePicked(convId, paths, kind === 'folders' ? 'folder' : 'file',
       (p) => copyPickedPicture(vault, p), (p) => agentFileUrl(vault, p, { raw: true }));
   };
@@ -1122,10 +1068,10 @@ export function Composer({
         // extracted. Too large or empty: refused here, before a byte crosses the tunnel.
         const name = file.name || 'file';
         if (route !== 'file') {
-          addAttachments(convId, [{ id, kind: 'file', name, size: file.size, failed: true, note: t(route === 'empty' ? 'chat.file.empty' : 'chat.file.tooLarge') }]);
+          addAttachments(convId, [{ id, kind: 'file', name, size: file.size, failed: true, note: t(route === 'empty' ? 'chat.file.empty' : 'chat.file.tooLarge'), inline: true, pending: true }]);
           continue;
         }
-        addAttachments(convId, [{ id, kind: 'file', name, size: file.size, uploading: true }]);
+        addAttachments(convId, [{ id, kind: 'file', name, size: file.size, uploading: true, inline: true, pending: true }]);
         trackUpload(convId, withPhotoUploadSlot(() => uploadAgentFile(vault, file, name, photoUploadSignal(PHONE_FILE_UPLOAD_TIMEOUT_MS)))
           .then((path) => { settleAttachment(convId, id, path); }));
         continue;
@@ -1556,7 +1502,7 @@ export function Composer({
   const nonPage = attachments.filter((a) => a.kind !== 'page');
   const aboutOnly = !plainDraft.trim() && nonPage.length > 0 && nonPage.every((a) => a.kind === 'about');
   // A reply chip (its ↩ on one message, owner 2026-10-23) asks for his answer, not "about".
-  const aboutPlaceholder = attachments.some((a) => a.kind === 'about' && REPLY_TO_RE.test(a.text ?? ''))
+  const aboutPlaceholder = attachments.some((a) => a.kind === 'about' && (REPLY_TO_RE.test(a.text ?? '') || isChatReply(a)))
     ? t('super.reply.placeholder') : t('super.agenda.aboutPlaceholder');
   const uploadingCount = attachments.filter((a) => a.uploading).length;
   // The phone's line under its photo and file chips: how many, how many still on their way, the cap.
@@ -1783,8 +1729,8 @@ export function Composer({
   const srRefs = refsInOrder(draft, attachments);
   const srListId = `${convId}-refs`;
   const refHint = trailingRef && fieldFocused
-    ? (trailingRef.kind === 'image' ? t('chat.photo.inlineHint')
-      : REPLY_TO_RE.test(trailingRef.text ?? '') ? t('super.reply.placeholder') : t('super.agenda.aboutPlaceholder'))
+    ? (trailingRef.kind === 'image' ? t('chat.photo.inlineHint') : isMediaRef(trailingRef) ? t('chat.chip.inlineHint')
+      : REPLY_TO_RE.test(trailingRef.text ?? '') || isChatReply(trailingRef) ? t('super.reply.placeholder') : t('super.agenda.aboutPlaceholder'))
     : '';
 
   useLayoutEffect(() => {
@@ -1959,8 +1905,15 @@ export function Composer({
     // them for the next message (they were not sent) and never hands a token to a peer.
     const words = superView || parseRefTokens(text).length ? stripTokens(text) : text;
     const kept = tokensOnly(text);
-    // A message to a peer takes the pictures with it: only the About chips stay for the next.
-    const keptAbout = tokensOnly(text, (s) => s.glyph !== GLYPH_IMAGE);
+    const staged = readScratch(convId).attachments;
+    // An inline attachment that did not go (no path: it failed, or is still on its way) keeps its chip.
+    const unsent = new Set(staged.filter((a) => isMediaRef(a) && !wasSent(a)).map(refTokenId));
+    // A chat's ↩ goes with the message wherever it goes (a peer too).
+    const replies = staged.filter(isChatReply);
+    const replyIds = new Set(replies.map(refTokenId));
+    // A message to a peer takes the pictures and the ↩ with it: the About chips stay for the
+    // next, and so does anything that could not be sent.
+    const keptAbout = tokensOnly(text, (s) => (s.glyph !== GLYPH_IMAGE && !replyIds.has(s.id)) || unsent.has(s.id));
 
     // `/login` is the one command this surface must not forward. The headless engine replies
     // "/login isn't available in this environment." (verified on CLI 2.1.220) — a dead end for
@@ -2003,6 +1956,7 @@ export function Composer({
       setSlashQuery(null);
       setMentionQuery(null);
       dropSentAttachments(convId, { keepAbout: true });
+      replies.forEach((a) => removeAttachment(convId, a.id));
       onClearQuote();
       return;
     }
@@ -2033,8 +1987,6 @@ export function Composer({
     if (spoken) session.armSpoken?.(message);
     // The dictated take, only when the draft is still exactly what was heard.
     if (take && take.text === text) session.armVoiceTake?.(message, take.ref);
-    // A picture with no path (it failed, or is still on its way) did not go: its chip stays.
-    const unsent = new Set(readScratch(convId).attachments.filter((a) => a.kind === 'image' && a.inline && !a.path).map(refTokenId));
     const left = slash ? kept : tokensOnly(text, (s) => unsent.has(s.id));
     const sent = () => {
       // A slash command carried no chip, so its chips stay in the box for the next message.
@@ -2183,8 +2135,6 @@ export function Composer({
   const stableSaveDefault = useStableHandler(() => saveModelDefault());
   const stableAccountChange = useStableHandler((id: string) => { onAccountChange?.(id); menu.close(); });
   const stableHandoffChange = useStableHandler((enabled: boolean) => onContextHandoffChange?.(enabled));
-  const stableClearQuote = useStableHandler(() => onClearQuote());
-  const stableRemoveChip = useStableHandler((attId: string) => removeRef(attId));
   const stablePick = useStableHandler((kind: 'files' | 'folders', close: () => void) => { void pickPaths(kind, close); });
   const stablePhonePhotos = useStableHandler((files: File[]) => onPhonePhotos(files));
 
@@ -2323,8 +2273,7 @@ export function Composer({
           paint) — composer.css's own two-line fallback holds the box until then, rather
           than a JS constant that would drift from the tokens the moment one moved. */}
       <div className="chat-cmp-body" ref={bodyRef} data-instant={instantH ? '1' : undefined} style={bodyHeight == null ? undefined : { ['--chat-cmp-h' as string]: `${bodyHeight}px` }}>
-        {/* The Super view's references are chips IN the text (below); the rest stay above. */}
-        <ComposerChips quote={quote} attachments={chipRow} convId={convId} onClearQuote={stableClearQuote} onRemoveChip={stableRemoveChip} photoMeta={photoMeta} />
+        {/* Every attachment is a chip IN the text (below): nothing sits above it. */}
 
         <div className="chat-cmp-row" ref={rowRef}>
           <div className="chat-cmp-field">
@@ -2340,6 +2289,7 @@ export function Composer({
                       // eslint-disable-next-line react/no-array-index-key -- positional split of one string
                       key={i}
                       img={s.img}
+                      icon={s.icon}
                       lead={s.text.slice(0, s.lead)}
                       rest={s.text.slice(s.lead)}
                       state={s.state}
@@ -2417,8 +2367,8 @@ export function Composer({
                 const staged = readScratch(convId).attachments;
                 const chips = superView
                   ? /[\u2068\u2069\u2061-\u2064]/.test(value) || staged.some((a) => isTokenRef(a) && !a.pending)
-                  // A normal chat's only chips are pictures: read only while one is staged or in the text.
-                  : staged.some((a) => a.kind === 'image' && a.inline && !a.pending) || parseRefTokens(value).length > 0;
+                  // A normal chat reads its chips only while one is staged or in the text.
+                  : staged.some((a) => isTokenRef(a) && !a.pending) || parseRefTokens(value).length > 0;
                 if (chips) {
                   const r = reconcileRefs(value, staged, e.target.selectionStart ?? value.length);
                   let next = r.draft;
@@ -2553,6 +2503,9 @@ export function Composer({
         <RefSrList id={srListId} refs={srRefs} onRemove={removeRef} />
         {maxNotice > 0 && <div className="chat-cmp-ref-notice" role="status" data-testid="chat-cmp-ref-notice">{t('super.ref.max')}</div>}
         {pickNotice && <div className="chat-cmp-ref-notice" role="status" data-testid="chat-cmp-pick-notice">{pickNotice}</div>}
+        {/* The hands-free phone's one status line for its chips ("2 photos · 1 uploading…"): under
+            the text, never above it. */}
+        {photoMeta && <div className="chat-cmp-photo-meta" data-testid="phone-photo-meta">{photoMeta}</div>}
       </div>
 
       <div className="chat-cmp-toolbar">
@@ -2583,6 +2536,7 @@ export function Composer({
           ? <PhotoButton onFiles={stablePhonePhotos} label={t('chat.photo.add')} />
           : <AttachButton onPick={stablePick} />
         )}
+        {pageChip && <PageChip page={pageChip} convId={convId} />}
 
         <div className="chat-cmp-spacer" />
 

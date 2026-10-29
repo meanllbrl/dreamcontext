@@ -11,14 +11,14 @@ import type {
   ExcalidrawElement, ExcalidrawEmbeddableElement, NonDeleted, OrderedExcalidrawElement,
 } from '@excalidraw/excalidraw/element/types';
 import { isCardColor, type CardColor, type WidgetPayload, type WidgetSize } from '../../lib/whiteboardWidgets';
-import { addAttachments, type Attachment } from '../sleepy/chat/composerScratch';
+import { addAttachments, nextAttachmentId, type Attachment } from '../sleepy/chat/composerScratch';
 import {
   agentCardUnder, dropUnits, movedIds, refToken, restorePatches, snapshotElement, type DropUnit, type PreGesture,
 } from './agentDrop';
 import { cardScratchId } from './boardAgentScratch';
 import { pointOverPanel, panelLandingOf, showAgentInPanel, type DropTarget } from './agentPanelState';
 import { flyChip } from './dropFlight';
-import { newElementId, readWidgetPayload } from './widgetModel';
+import { readWidgetPayload } from './widgetModel';
 import { isPresetBox, placeSizePicker, resizeInPlace, snapAfterGesture, widgetSizeOf, type WidgetGeometry } from './widgetSize';
 
 export interface SizePickerState {
@@ -301,7 +301,7 @@ function dropChips(
   const dragged = new Set([...moved].filter((id) => selected[id]));
   return dropUnits(all, dragged.size > 0 ? dragged : moved).flatMap((unit): Attachment[] => {
     const path = refToken(ctx.board, unit.id);
-    return path ? [{ id: newElementId(), kind: 'ref', name: chipName(unit, ctx.tx), path }] : [];
+    return path ? [{ id: nextAttachmentId(), kind: 'ref', name: chipName(unit, ctx.tx), path, inline: true, pending: true }] : [];
   });
 }
 

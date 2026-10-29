@@ -24,14 +24,15 @@ const note = (id: string, line: string): Attachment => ({
 beforeEach(() => { __resetScratchForTests(); });
 
 describe('staging a picture', () => {
-  it('a pasted or dropped image is staged inline and pending (the composer puts its chip at the caret); a file is not', () => {
+  it('a pasted or dropped image or file is staged inline and pending (the composer puts its chip at the caret)', () => {
     stageUpload('c', new File(['x'], 'shot.png', { type: 'image/png' }), () => new Promise(() => {}));
     stageUpload('c', new File(['x'], 'brief.pdf', { type: 'application/pdf' }), () => new Promise(() => {}));
     const [img, file] = readScratch('c').attachments;
     expect(img).toMatchObject({ kind: 'image', inline: true, pending: true, uploading: true });
     expect(isTokenRef(img)).toBe(true);
-    expect(file.inline).toBeUndefined();
-    expect(isTokenRef(file)).toBe(false);
+    // Owner 2026-10-30: a file is a chip in the text too, never a row above it.
+    expect(file).toMatchObject({ kind: 'file', inline: true, pending: true });
+    expect(isTokenRef(file)).toBe(true);
     expect(pendingUploads('c')).toHaveLength(2);
     markInserted('c', [img.id], { [img.id]: 'shot.png' });
     expect(readScratch('c').attachments[0]).toMatchObject({ pending: false, chip: 'shot.png' });
