@@ -4,6 +4,18 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.36.1] - 2026-10-29
+
+Seven branches merged on top of 0.36.0. Local build; not published.
+
+- **Super Agent for everyone.** No Settings switch any more; the Super Agent is a tab pinned at the start of the chat tabs.
+- **The Super stage fits the window.** Tall centre, a self-sizing agenda, no overlapping cards; presentation runs in one column and web cards keep their device widths.
+- **Hands-free remote stage** names its jobs and shows their live state.
+- **Attaching files never aborts the desktop app.** A guarded open panel, a glass Attach menu, and drops reach the docked Super chat.
+- **Typing stays light.** A keystroke no longer re-styles the pane or commits twice.
+- **Lighter while streaming and idle.** No forced layout per streamed token, session stats memoized, readiness probes only where the checklist shows, polled git reads are async.
+- **`super clean` sweeps all of `~/.claude-worktrees`**, dry run by default, and fails toward keeping on partial listings, unreadable records or a linked root.
+
 ## [0.36.0] - 2026-10-28
 
 The first published release since 0.35.0. It carries everything cut locally as 0.35.1 to 0.35.5 (none of those was published), plus pictures as chips in the sent message. The desktop app (Mac and Windows) and the npm package ship together.
