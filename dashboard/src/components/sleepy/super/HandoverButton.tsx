@@ -2,9 +2,10 @@ import { useI18n } from '../../../context/I18nContext';
 import { SuperAgentIcon } from '../../layout/NavIcons';
 
 /**
- * The Chat header's one button for the whole mode (owner decision 9, plan-r8 F10): the Super
+ * The Chat header's one button for the whole mode (owner decision 9, plan-r8 F10), a tab pinned at
+ * the start of the chat tabs since 2026-10-29: the Super
  * Agent's own glyph ({@link SuperAgentIcon}, the rail's stroke family) and a short label,
- * "Devret" / "Hand over" while the panes show, "Geri al" / "Take back" while the Super Agent
+ * "Süper Ajan" / "Super Agent" while the panes show (the glyph alone in a narrow window), "Geri al" / "Take back" while the Super Agent
  * has the screen. The full sentence ("Süper Ajana devret" / "Hand over to the
  * Super Agent") stays in its accessible name and tooltip, so a header with four tabs keeps them
  * all in view. Pressed during the animation it reverses it (D18) — the caller

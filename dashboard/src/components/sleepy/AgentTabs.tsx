@@ -109,6 +109,7 @@ export function AgentTabs({
   drag, onTabDrop,
   chatConvertEnabled = false, onOpenInChat = () => {},
   autoTitle = false, onToggleAutoTitle = () => {},
+  leading,
 }: {
   pane: PaneVM;
   isActivePane: boolean;
@@ -139,6 +140,9 @@ export function AgentTabs({
   /** Flip that preference. The surface writes it through `patchAgentSettings`, so the new
    *  value comes back down as a prop — this component never holds its own copy. */
   onToggleAutoTitle?: (next: boolean) => void;
+  /** Pinned before the first tab, never dragged or closed: the Super Agent's tab (owner
+   *  2026-10-29). Only the first pane's group gets it, so it always sits at the strip's start. */
+  leading?: React.ReactNode;
 }) {
   const stop = (e: React.MouseEvent) => e.stopPropagation();
   /*
@@ -266,11 +270,13 @@ export function AgentTabs({
   return (
     <div
       className={'agent-pane-tabbar' + (isActivePane ? ' active' : '')}
-      role="tablist"
-      aria-label="Agent sessions"
       data-pane-id={pane.id}
       data-over={groupOver ? 'true' : undefined}
     >
+      {leading}
+      {/* The tabs alone are the tablist (a tablist owns only tabs, never the pinned button
+          before them); `display: contents` keeps them flex items of the bar, laid out as before. */}
+      <div className="agent-pane-tablist" role="tablist" aria-label="Agent sessions">
       {pane.tabs.map((tab) => {
             const active = tab.id === pane.active;
             const renaming = renamingId === tab.id;
@@ -392,6 +398,7 @@ export function AgentTabs({
               </div>
             );
       })}
+      </div>
 
       {menu && createPortal(
         // Hidden until the layout effect measures + places it — no first frame at 0,0.

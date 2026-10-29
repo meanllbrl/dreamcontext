@@ -5257,6 +5257,18 @@ export function AgentSurface() {
   // one const so the header and the body branch below can never disagree about it.
   const panesLive = !capsError && !!caps && caps.desktop && started
     && (caps.embeddedTerminal || (caps.claudeCli && agentSettings.chatView));
+  // The Super Agent's ONE button (owner decision 9), a tab pinned at the START of the chat tabs
+  // (owner pick 2026-10-29): hand over every open chat, or take it back. Chat screen only (the
+  // agent is a chat), desktop only, on for everyone (no Settings switch). Take back never hides.
+  const superTab = panesLive && (handedOver || (chatMode && !isMacPhoneSurface())) ? (
+    <HandoverButton
+      handedOver={handedOver}
+      busy={superBusy || superMotion === 'running'}
+      queueDot={!handedOver && ownerQueueCount(superState) > 0}
+      onClick={onHandoverButton}
+      remote={remoteDesktop}
+    />
+  ) : null;
   let body: React.ReactNode;
   if (capsError) {
     body = <Centered>
@@ -5594,10 +5606,14 @@ export function AgentSurface() {
             onClick={() => setExpanded(false)}
           >–</button>
           <div className="agent-overlay-tabs" data-split={paneVMs.length > 1 ? 'true' : undefined}>
-            {/* Handed over, the strip has left (D18): the panes are not on screen. */}
-            {panesLive && !handedOver && paneVMs.map((paneVM) => (
+            {/* Handed over, the strip has left (D18): the panes are not on screen. Only the
+                Super Agent's own tab stays, in the same spot, as Take back. */}
+            {/* Also with no pane at all (every chat minimized): hand-over adopts those too. */}
+            {superTab && (handedOver || paneVMs.length === 0) && <div className="agent-overlay-super-slot">{superTab}</div>}
+            {panesLive && !handedOver && paneVMs.map((paneVM, i) => (
               <AgentTabs
                 key={paneVM.id}
+                leading={i === 0 ? superTab : undefined}
                 pane={paneVM}
                 isActivePane={paneVM.id === activePane?.id}
                 renamingId={renamingId}
@@ -5620,18 +5636,6 @@ export function AgentSurface() {
             {/* Chat needs only the claude CLI (+ the Settings → Agents screen preference),
                 not node-pty — loosened so the control cluster is reachable on a
                 node-pty-broken machine that can still run Chat. */}
-            {/* The Super Agent's ONE button (owner decision 9): hand over every open chat, or
-                take it back. Chat screen only (the agent is a chat), desktop only, and only once
-                Settings → Chat → Super Agent is on (off by default); Take back never hides. */}
-            {panesLive && (handedOver || (chatMode && agentSettings.superAgent && !isMacPhoneSurface())) && (
-              <HandoverButton
-                handedOver={handedOver}
-                busy={superBusy || superMotion === 'running'}
-                queueDot={!handedOver && ownerQueueCount(superState) > 0}
-                onClick={onHandoverButton}
-                remote={remoteDesktop}
-              />
-            )}
             {started && !handedOver && (caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView)) && (
               <>
                 {/* Split button: the main face opens a Claude session in the CHOSEN Agent

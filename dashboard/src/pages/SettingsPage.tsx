@@ -609,22 +609,10 @@ export function SettingsPage({ focus }: SettingsPageProps) {
               where the key lives. */}
           <VoiceSettings />
 
-          {/* The Super Agent, the very last row (owner, 2026-10-19): OFF by default for everyone
-              while it is being tried; on, the Chat header shows the hand-over button. */}
+          {/* The Super Agent, the very last group. No on/off row since 2026-10-29: it is on for
+              everyone, so the group holds only its own preferences. */}
           {agentCfg && agentCfg.enabled && (
             <SettingGroup title={t('settings.agents.super.title')} badge={<MaturityTag level="beta" />}>
-              <SettingRow
-                title={t('settings.agents.super')}
-                hint={t('settings.agents.super_hint')}
-                more={t('settings.agents.super_more')}
-                control={
-                  <Toggle
-                    label={t('settings.agents.super')}
-                    checked={agentCfg.superAgent}
-                    onChange={(next) => updateAgentCfg({ superAgent: next })}
-                  />
-                }
-              />
               <SettingRow
                 title={t('settings.super.sounds')}
                 hint={t('settings.super.soundsNote')}
@@ -635,44 +623,40 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                 hint={t('settings.super.ports.note')}
                 control={<LoopbackPorts />}
               />
-              {/* Its own model and effort (plan r4 D3, D12): Sonnet at medium unless changed here
+              {/* Its own model and effort (plan r4 D3, D12): Opus at high unless changed here
                   or with the super composer's "Set as default"; never the chat default. */}
-              {agentCfg.superAgent && (
-                <>
-                  <SettingRow
-                    title={t('settings.agents.super_model')}
-                    hint={t('settings.agents.super_model_hint')}
-                    control={
-                      <select
-                        className="settings-text-input"
-                        aria-label={t('settings.agents.super_model')}
-                        data-testid="settings-super-model"
-                        value={agentCfg.superModel}
-                        onChange={(e) => updateAgentCfg({ superModel: e.target.value })}
-                      >
-                        {[...SUPER_MODEL_CHOICES, ...((SUPER_MODEL_CHOICES as readonly string[]).includes(agentCfg.superModel) ? [] : [agentCfg.superModel])].map((m) => (
-                          <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>
-                        ))}
-                      </select>
-                    }
-                  />
-                  <SettingRow
-                    title={t('settings.agents.super_effort')}
-                    hint={t('settings.agents.super_effort_hint')}
-                    control={
-                      <select
-                        className="settings-text-input"
-                        aria-label={t('settings.agents.super_effort')}
-                        data-testid="settings-super-effort"
-                        value={agentCfg.superEffort}
-                        onChange={(e) => updateAgentCfg({ superEffort: e.target.value })}
-                      >
-                        {SUPER_EFFORT_CHOICES.map((e) => <option key={e} value={e}>{e}</option>)}
-                      </select>
-                    }
-                  />
-                </>
-              )}
+              <SettingRow
+                title={t('settings.agents.super_model')}
+                hint={t('settings.agents.super_model_hint')}
+                control={
+                  <select
+                    className="settings-text-input"
+                    aria-label={t('settings.agents.super_model')}
+                    data-testid="settings-super-model"
+                    value={agentCfg.superModel}
+                    onChange={(e) => updateAgentCfg({ superModel: e.target.value })}
+                  >
+                    {[...SUPER_MODEL_CHOICES, ...((SUPER_MODEL_CHOICES as readonly string[]).includes(agentCfg.superModel) ? [] : [agentCfg.superModel])].map((m) => (
+                      <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>
+                    ))}
+                  </select>
+                }
+              />
+              <SettingRow
+                title={t('settings.agents.super_effort')}
+                hint={t('settings.agents.super_effort_hint')}
+                control={
+                  <select
+                    className="settings-text-input"
+                    aria-label={t('settings.agents.super_effort')}
+                    data-testid="settings-super-effort"
+                    value={agentCfg.superEffort}
+                    onChange={(e) => updateAgentCfg({ superEffort: e.target.value })}
+                  >
+                    {SUPER_EFFORT_CHOICES.map((e) => <option key={e} value={e}>{e}</option>)}
+                  </select>
+                }
+              />
             </SettingGroup>
           )}
         </section>
