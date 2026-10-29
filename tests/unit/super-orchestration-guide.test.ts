@@ -91,8 +91,9 @@ describe('super-orchestration guide: shape', () => {
   // +100 (2026-10-27, integration 0.35.3): group present + a child's question straight to the owner (measured 19,435).
   // +100 (2026-10-29): a whiteboard opens with `super open whiteboard <slug>`, never board (measured 19,553).
   // +200 (2026-10-29): pictures shown as a result open with `--present`; landscape pictures a filmstrip (measured 19,769).
-  it('is at most 19,800 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(19_800);
+  // +400 (2026-10-29): a start or approve question carries its summary in the yes option's preview (measured 20,156).
+  it('is at most 20,200 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(20_200);
   });
 
   it('has the seven sections in order', () => {

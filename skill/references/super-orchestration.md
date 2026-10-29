@@ -55,7 +55,14 @@ chat draws the very card a normal agent's question gets; his answer comes back a
 answer]` message, whatever came in meanwhile as `<super-while-you-asked>`: answer him, then tell or
 ask each of those one at a time. ONE open at a time, the rest keeps running. A choice he must make
 lives in the card, never only as a question at the end of your text (it slips by unseen); the text
-says in one line that a question waits. Ask only for:
+says in one line that a question waits.
+
+**A start or approve question carries what he says yes to** ("plan ready, start?" alone made
+him ask for the plan, 2026-10-29): the yes option's `preview` holds the problem in one sentence,
+3-6 short bullets of what will be done, his decisions, cost or risk in money (never time); your
+text gives the same summary, past 2-4 sentences. Without it the card still goes, with a `warning`.
+
+Ask only for:
 - **An outward or irreversible step:** push, publish, release, `npm publish`, deleting data, spending
   money, merging to the default branch: always, even when the owner asked for it. A message
   (WhatsApp, email, Slack) is asked too, unless the owner named its content and recipient himself.
