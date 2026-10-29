@@ -447,6 +447,23 @@ interface SizedSolution extends FloatSolution {
  * small cards keeps its orbit.
  */
 function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[]): SizedSolution {
+  const ag = [...left, ...right].find((s) => s.agenda);
+  if (!ag) return solveSizedAt(f, left, right, null);
+  // The agenda's width is tried from its own down (owner 2026-10-29: its list whenever there is
+  // room): the widest that leaves the centre as near the middle and sends no more cards to Others
+  // than the 1x1 counts do. Room is the whole stage's, not only the width beside the centre: a
+  // side too tall for the stage that must widen past it would push the centre off the middle.
+  const counts = solveSizedAt(f, left, right, 1);
+  const offMid = (r: SizedSolution) => Math.abs(r.centre.x + r.centre.width / 2 - f.width / 2);
+  for (let cap = SIZE_UNITS[ag.size].w; cap > 1; cap--) {
+    const r = solveSizedAt(f, left, right, cap);
+    if (offMid(r) <= offMid(counts) + 1e-6 && r.overflow.size <= counts.overflow.size) return r;
+  }
+  return counts;
+}
+
+/** `solveSized` with the agenda drawn at most `agendaCap` tiles wide (null: no agenda). */
+function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[], agendaCap: number | null): SizedSolution {
   const { GAP, MARGIN, TILE: T, ORBIT_DEPTH } = STAGE;
   const W = f.width;
   const span = f.content.height;
@@ -474,7 +491,8 @@ function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedS
     const other = side === 'left' ? 'right' : 'left';
     const sidePx = (n: number) => (n > 0 ? unitsPx(n) + GAP : 0);
     const rest = live(side).filter((s) => s !== ag).reduce((m, s) => Math.max(m, SIZE_UNITS[drawn.get(s.id)!].w), 0);
-    let cap = SIZE_UNITS[drawn.get(ag.id)!].w;
+    // A tried cap never draws it narrower than its side already is (that costs the centre nothing).
+    let cap = Math.min(SIZE_UNITS[drawn.get(ag.id)!].w, Math.max(agendaCap ?? Infinity, rest));
     // The floor the centring below holds to (a touch remote's lower floor would push it off the middle).
     const floor = Math.max(f.centreMin, STAGE.CENTRE_MIN);
     while (cap > 1 && cap > rest && W - 2 * MARGIN - 2 * Math.max(sidePx(Math.max(cap, rest)), sidePx(cols[other])) < floor - 1e-9) cap -= 1;

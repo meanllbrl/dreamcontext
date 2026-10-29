@@ -137,6 +137,39 @@ describe('the agenda sizes itself (problem 2)', () => {
     }
   });
 
+  it('a side crowded with cards never pays for the agenda\'s list: the centre stays as centred and no more cards go to Others than with the counts (review r2)', () => {
+    const offMid = (p: StagePlan) => Math.abs(p.centre.x + p.centre.width / 2 - p.width / 2);
+    // The reviewer's cases: the default agenda and ten chats at a 1440 window and the owner's 1630.
+    for (const s of [WINDOWS.mid, OWNER_1630, { width: 1500, height: 900 }]) {
+      const cs = [agenda('large'), ...Array.from({ length: 10 }, (_, i) => card(`c${i}`))];
+      const p = plan(cs, s);
+      expect(offMid(p), `${s.width}`).toBeLessThan(1e-6);
+      expect(p.others, `${s.width}`).toEqual([]);
+      expectSound(p, cs, `crowded ${s.width}`);
+    }
+    // The sweep: against the same stage with the agenda as its 1x1 counts, never worse on both.
+    for (let width = 900; width <= 2400; width += 37) {
+      for (const height of [640, 830, 1010]) {
+        for (let n = 0; n <= 10; n += 2) {
+          for (const size of ['medium', 'large', 'wide'] as const) {
+            for (const centreMin of [undefined, 480]) {
+              const chats = Array.from({ length: n }, (_, i) => card(`c${i}`));
+              const opts = centreMin ? { centreMin } : {};
+              const p = plan([agenda(size), ...chats], { width, height }, opts);
+              const q = plan([agenda('small'), ...chats], { width, height }, opts);
+              const at = `${width}x${height} n=${n} ${size} ${centreMin ?? 'desk'}`;
+              // A sized stage may trade the middle for keeping cards out of Others (its old rule);
+              // the agenda's list never costs both, and never costs a card.
+              expect(p.others.length, at).toBeLessThanOrEqual(q.others.length);
+              expect(offMid(p) <= offMid(q) + 1e-6 || p.others.length < q.others.length, at).toBe(true);
+              expect(p.centre.width, at).toBeGreaterThanOrEqual(Math.min(q.centre.width, STAGE.CENTRE_MIN) - 1e-6);
+            }
+          }
+        }
+      }
+    }
+  });
+
   it('a window too small for the list beside the centre still draws the counts (1140x710)', () => {
     for (const size of ['large', 'medium'] as const) {
       const p = plan([agenda(size, { sizeBy: 'owner' }), card('a'), card('b')], WINDOWS.small);
