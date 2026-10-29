@@ -116,7 +116,7 @@ export async function closeCurrentWindow(): Promise<void> {
 export const NOTCH_WINDOW_LABEL = 'assistant';
 
 /**
- * Quit the whole app — the auto-relaunch flow needs a real quit. After the server
+ * Quit the whole app — the update relaunch flow needs a real quit. After the server
  * has armed its detached `open <app>` relauncher, quitting tears down the stale
  * server and the reopened (swapped) bundle spawns a fresh one. No-op off-desktop.
  *

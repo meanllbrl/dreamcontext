@@ -1,11 +1,24 @@
 /**
- * The update relaunch must not cut an agent off mid-work. The countdown is held while the
- * server reports a live tab at work (chat-park.ts `countWorkingAgents`, served on /api/health
- * as `agentsWorking`), and the banner's gate (relaunchGate.ts) reads that number.
+ * An update never closes the app on its own: the owner clicks Relaunch (2026-10-29). A click
+ * while the server reports a live tab at work (chat-park.ts `countWorkingAgents`, served on
+ * /api/health as `agentsWorking`) opens an inline confirm first (relaunchGate.ts).
+ *
+ * The "never on its own" half is checked against the banner's SOURCE: root vitest runs under
+ * plain Node (no jsdom) and the banner is a React module with a CSS import. The rendered strip
+ * is checked in a real Chromium by `scripts/verify/upgrade-relaunch-banner.mjs`.
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { TERMINAL_WORKING_RECENT_MS, countWorkingAgents, type Parkable } from '../../src/server/chat-park.js';
-import { relaunchHeld } from '../../dashboard/src/components/layout/relaunchGate.js';
+import { relaunchClick } from '../../dashboard/src/components/layout/relaunchGate.js';
+
+const BANNER = readFileSync(
+  join(__dirname, '../../dashboard/src/components/layout/UpgradeRelaunchBanner.tsx'),
+  'utf8',
+);
+/** The banner's code with comments stripped, so prose about the old countdown cannot match. */
+const CODE = BANNER.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 
 const tab = (over: Partial<Parkable> = {}): Parkable => ({
   id: Math.random().toString(36).slice(2),
@@ -51,14 +64,48 @@ describe('countWorkingAgents', () => {
   });
 });
 
-describe('relaunchHeld', () => {
-  it('holds while any agent works, runs when none does', () => {
-    expect(relaunchHeld(2)).toBe(true);
-    expect(relaunchHeld(0)).toBe(false);
+describe('relaunchClick', () => {
+  it('asks first while any agent works, relaunches straight away when none does', () => {
+    expect(relaunchClick(2)).toBe('confirm');
+    expect(relaunchClick(1)).toBe('confirm');
+    expect(relaunchClick(0)).toBe('relaunch');
   });
 
-  it('an older server that does not report the count keeps the old countdown', () => {
-    expect(relaunchHeld(undefined)).toBe(false);
-    expect(relaunchHeld(null)).toBe(false);
+  it('an older server that does not report the count relaunches on the click', () => {
+    expect(relaunchClick(undefined)).toBe('relaunch');
+    expect(relaunchClick(null)).toBe('relaunch');
+  });
+});
+
+describe('the update banner never relaunches on its own', () => {
+  it('has no countdown: no ticking timer, no seconds-left state', () => {
+    expect(CODE).not.toMatch(/COUNTDOWN_SECONDS|secondsLeft|setSecondsLeft/);
+    expect(CODE).not.toMatch(/setInterval\s*\(/);
+    // The one timer left is the stuck-relaunch safety net, which only runs AFTER a click.
+    const timers = CODE.match(/setTimeout\s*\(/g) ?? [];
+    expect(timers.length).toBe(1);
+    expect(CODE).toMatch(/if \(!relaunching\) return;\s*const id = setTimeout\(/);
+  });
+
+  it('doRelaunch is reached only from a button the owner clicks', () => {
+    expect(CODE).toMatch(/doRelaunch\(\)/);
+    // Cut out the two click paths: inline onClick handlers, and onRelaunchClick (the
+    // Relaunch button's handler). Nothing else may call it — no effect, no timer.
+    const click = CODE.indexOf('const onRelaunchClick = useCallback(');
+    expect(click).toBeGreaterThan(-1);
+    const clickEnd = CODE.indexOf('}, [', click);
+    const rest = (CODE.slice(0, click) + CODE.slice(clickEnd))
+      .replace(/onClick=\{\(\) => void doRelaunch\(\)\}/g, '');
+    expect(rest).not.toMatch(/doRelaunch\(\)/);
+    expect(CODE).toMatch(/onClick=\{\(\) => void onRelaunchClick\(\)\}/);
+    for (const effect of CODE.match(/useEffect\(\(\) => \{[\s\S]*?\}, \[[^\]]*\]\);/g) ?? []) {
+      expect(effect).not.toMatch(/doRelaunch|onRelaunchClick/);
+    }
+  });
+
+  it('the confirm is inline, never a browser dialog (a no-op in WKWebView)', () => {
+    expect(CODE).not.toMatch(/\b(window\.)?(confirm|alert|prompt)\s*\(/);
+    expect(CODE).toMatch(/upgradeRelaunch\.confirm/);
+    expect(CODE).toMatch(/upgradeRelaunch\.anyway/);
   });
 });

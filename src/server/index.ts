@@ -1403,7 +1403,7 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       });
       // Desktop counterpart: the app is excluded from the self-exit above (it would
       // blank a live window with nothing to respawn it), so instead FLAG the on-disk
-      // upgrade — GET /api/health surfaces it and the dashboard bundle auto-relaunches
+      // upgrade — GET /api/health surfaces it and the dashboard bundle offers to relaunch
       // the app onto the new version. Self-gates to DREAMCONTEXT_DESKTOP=1.
       startUpgradeReadyWatch(dreamcontextVersion(), readDreamcontextVersionFromDisk);
       startOrphanSweep();
