@@ -3,6 +3,7 @@ import { sendJson } from '../middleware.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { getUpgradeReadyVersion } from '../lifecycle.js';
 import { isPhoneSocket } from '../phone-origin.js';
+import { countWorkingAgents } from '../chat-park.js';
 
 /**
  * LEGACY capability list, kept only so OLDER dashboard bundles (which compare
@@ -50,5 +51,8 @@ export async function handleHealthGet(
     // this running server (else null). The bundle uses it to auto-relaunch the
     // app onto the new version without any manual quit/reopen.
     upgradeReady: getUpgradeReadyVersion(),
+    // Live tabs mid-work (a turn, a question, background tasks). The relaunch countdown
+    // waits while this is above zero, so an update never cuts an agent off mid-turn.
+    agentsWorking: countWorkingAgents(),
   });
 }
