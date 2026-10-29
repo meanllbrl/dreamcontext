@@ -168,3 +168,29 @@ export function measureBodyChrome(body: HTMLElement, fieldRow: HTMLElement): num
   });
   return extra;
 }
+
+/**
+ * Stop React re-writing the field's text CHILD on every keystroke.
+ *
+ * For a controlled `<textarea value>` React 19 also sets `defaultValue` to the new value on
+ * every update (`updateTextarea`), and a textarea's `defaultValue` IS its child text node: each
+ * key replaced that node. The child-list mutation invalidates far more than the field — measured
+ * in Chromium with five long panes, 286 elements re-styled per key — and the content measure's
+ * `scrollHeight` read then resolved all of it synchronously inside the key's task (cpu-rca K2:
+ * the WKWebView's `scrollHeight` → `resolveStyle` chain while the owner typed).
+ *
+ * The live text is `value`, which React still sets; `defaultValue` only matters to a form reset,
+ * and the composer is in no form. So this one element's `defaultValue` setter becomes a no-op
+ * (the getter still reads the real one) and the value path stays exactly React's. Idempotent.
+ */
+export function keepFieldTextChildless(ta: HTMLTextAreaElement): void {
+  if (Object.prototype.hasOwnProperty.call(ta, 'defaultValue')) return;
+  const native = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(ta), 'defaultValue');
+  if (!native?.get) return;
+  const get = native.get;
+  Object.defineProperty(ta, 'defaultValue', {
+    configurable: true,
+    get() { return get.call(this); },
+    set() { /* see above: the field's text is `value`; its child text is never rewritten */ },
+  });
+}

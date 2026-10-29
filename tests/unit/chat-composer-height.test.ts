@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-  composerBodyHeight, composerHeightBounds, draftOnlyGrew, fieldContentHeight, measureFieldContent,
+  composerBodyHeight, composerHeightBounds, draftOnlyGrew, fieldContentHeight, keepFieldTextChildless, measureFieldContent,
   COMPOSER_MIN_LINES, COMPOSER_MAX_LINES, COMPOSER_PANE_FRACTION,
   type ComposerHeightInput, type MeasurableField,
 } from '../../dashboard/src/components/sleepy/chat/composerHeight.js';
@@ -317,5 +317,51 @@ describe('Composer.tsx skips the collapse only through draftOnlyGrew (source sca
     const src = readFileSync(new URL('../../dashboard/src/components/sleepy/chat/Composer.tsx', import.meta.url), 'utf8');
     expect(src).toMatch(/if \(draft !== prev\.draft && !draftOnlyGrew\(prev\.draft, draft\)\) needFullRef\.current = true;/);
     expect(src).not.toMatch(/draft\.length <=? prev\.draft\.length/);
+  });
+});
+
+// A stand-in for HTMLTextAreaElement: `defaultValue` is a prototype accessor over the child
+// text, `value` is separate — the shape React's `updateTextarea` writes to.
+class FakeField {
+  text = '';
+  value = '';
+  childWrites = 0;
+  get defaultValue() { return this.text; }
+  set defaultValue(v: string) { this.text = v; this.childWrites += 1; }
+}
+
+describe('keepFieldTextChildless — a keystroke never rewrites the field\'s text child', () => {
+  it('turns this field\'s defaultValue write into a no-op and keeps the getter', () => {
+    const ta = new FakeField();
+    ta.defaultValue = 'restored draft';
+    keepFieldTextChildless(ta as unknown as HTMLTextAreaElement);
+    // What React 19 does on every controlled update: value, then defaultValue = value.
+    for (const v of ['h', 'he', 'hel']) { ta.value = v; if (ta.defaultValue !== v) ta.defaultValue = v; }
+    expect(ta.childWrites).toBe(1);
+    expect(ta.defaultValue).toBe('restored draft');
+    expect(ta.value).toBe('hel');
+  });
+  it('is idempotent and leaves other fields alone', () => {
+    const ta = new FakeField();
+    const other = new FakeField();
+    keepFieldTextChildless(ta as unknown as HTMLTextAreaElement);
+    keepFieldTextChildless(ta as unknown as HTMLTextAreaElement);
+    ta.defaultValue = 'x';
+    other.defaultValue = 'y';
+    expect(ta.childWrites).toBe(0);
+    expect(other.childWrites).toBe(1);
+  });
+});
+
+describe('Composer.tsx keystroke path (source scan)', () => {
+  const src = readFileSync(new URL('../../dashboard/src/components/sleepy/chat/Composer.tsx', import.meta.url), 'utf8');
+  it('shims the field before the measure runs', () => {
+    expect(src).toMatch(/useLayoutEffect\(\(\) => \{ if \(taRef\.current\) keepFieldTextChildless\(taRef\.current\); \}\);/);
+  });
+  it('plain typing with both menus closed sets no menu state on keyup\'s onSelect', () => {
+    expect(src).toMatch(/if \(q === null && mq === null && slashQuery === null && mentionQuery === null\) return;/);
+  });
+  it('a closed /mcp popover is not closed again on every key (one commit a key)', () => {
+    expect(src).toMatch(/else if \(mcpOpenRef\.current && !isMcpCommand\(draft\)/);
   });
 });

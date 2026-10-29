@@ -43,7 +43,7 @@ import { patchAgentSettings } from '../../../lib/agentSettings';
 import { savedDefaultReceipt } from './defaultReceipt';
 import { useAgents, findAgent } from '../../../hooks/useAgents';
 import {
-  composerBodyHeight, composerHeightBounds, draftOnlyGrew, fieldContentHeight, measureBodyChrome, readFieldMetrics,
+  composerBodyHeight, composerHeightBounds, draftOnlyGrew, fieldContentHeight, keepFieldTextChildless, measureBodyChrome, readFieldMetrics,
   type FieldMetrics,
 } from './composerHeight';
 import {
@@ -707,14 +707,20 @@ export function Composer({
   const [mcpOpen, setMcpOpen] = useState(false);
   /** The popover was opened by SENDING `/mcp` (which clears the draft), not by typing it. */
   const mcpSentRef = useRef(false);
+  /** Whether an open was asked for since the last close — read by the effect below so a closed
+   *  popover is not closed again on every keystroke (that same-value set cost React a second
+   *  commit per key, verify:idle-load k). Written WITH every open and close, never from render:
+   *  a keystroke rendering before a queued open lands must still see it and close it. */
+  const mcpOpenRef = useRef(false);
   useEffect(() => {
-    if (mcpPicker && /^\/mcp$/.test(draft.trim())) setMcpOpen(true);
+    if (mcpPicker && /^\/mcp$/.test(draft.trim())) { mcpOpenRef.current = true; setMcpOpen(true); }
     // The draft moved on (backspaced, kept typing): the popover is not what is being typed any more.
     // An empty draft right after SENDING the command keeps the popover; emptied by hand, it closes.
-    else if (!isMcpCommand(draft) && !(mcpSentRef.current && !draft.trim())) setMcpOpen(false);
+    else if (mcpOpenRef.current && !isMcpCommand(draft) && !(mcpSentRef.current && !draft.trim())) { mcpOpenRef.current = false; setMcpOpen(false); }
     if (draft.trim()) mcpSentRef.current = false;
   }, [draft, mcpPicker]);
   const closeMcp = useCallback(() => {
+    mcpOpenRef.current = false;
     setMcpOpen(false);
     mcpSentRef.current = false;
     if (isMcpCommand(draft)) { setDraft(''); session.syncDraft(''); }
@@ -1158,11 +1164,15 @@ export function Composer({
     // suppressing it once at the recall site would not hold.) The first keystroke ends the walk
     // and the menu behaves normally from there.
     const q = navRef.current.index !== null ? null : slashQueryAt(text, caret);
-    setSlashQuery(q);
-    setSlashIndex(0);
     // The `@` menu rides the same caret sync — one `onSelect`/`onChange` pass keeps both
     // menus honest, and they can never both be open (the caret is in at most one token).
     const mq = navRef.current.index !== null ? null : mentionQueryAt(text, caret);
+    // Both closed and staying closed (plain typing): nothing to set. React's `onSelect` also
+    // fires on every key's `keyup`, and re-setting the same nulls there cost a second commit
+    // per key (verify:idle-load k: 2 -> 1).
+    if (q === null && mq === null && slashQuery === null && mentionQuery === null) return;
+    setSlashQuery(q);
+    setSlashIndex(0);
     setMentionQuery(mq);
     setMentionIndex(0);
   };
@@ -1351,6 +1361,9 @@ export function Composer({
   // attachment rows appearing or disappearing. Only a draft that GREW by insertion skips the
   // collapse measure; a chip row change is the only thing that re-reads the body's chrome.
   const prevMeasuredRef = useRef({ draft, quote, attachments });
+  // Before any keystroke reaches React: the field's text child is never rewritten, so the
+  // measure below resolves the field's style, not the pane's (composerHeight.ts).
+  useLayoutEffect(() => { if (taRef.current) keepFieldTextChildless(taRef.current); });
   useLayoutEffect(() => {
     const prev = prevMeasuredRef.current;
     if (draft !== prev.draft && !draftOnlyGrew(prev.draft, draft)) needFullRef.current = true;
@@ -1960,7 +1973,7 @@ export function Composer({
     // instead of spending a turn to deliver that.
     if (mcpPicker && isMcpCommand(words)) {
       mcpSentRef.current = true;
-      setMcpOpen(true);
+      mcpOpenRef.current = true; setMcpOpen(true);
       // Cleared, unlike the sign-in above, and the difference is the message itself: `/login`
       // may be sitting in front of a half-written sentence worth keeping, while a draft that
       // IS the command has nothing left in it once the command has been obeyed. Leaving it

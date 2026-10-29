@@ -33,6 +33,8 @@
  *              layouts/s
  *   f  composer type 60 chars into a pane's composer with five long panes (vault `five`): getComputedStyle
  *              calls on composer elements per key after the first, long tasks > 50 ms (4×)
+ *   k  keys    Chromium + WebKit: 60 keys into a pane's composer with five long panes: ms per key,
+ *              layout-forcing reads per key, React commits per key, forced style recalcs (Chromium trace)
  *   g  drag    Chromium + WebKit: drag a tab across five panes by real mouse: max rAF gap, the
  *              zone under the pointer highlighted, the drop layer gone after release / Escape
  *   h  webgl   four Terminal panes: live WebGL contexts (wrapped getContext)
@@ -650,6 +652,190 @@ async function sectionComposer(server, browser) {
   await ctx.close();
 }
 
+/**
+ * k: what ONE keystroke costs in a pane's composer with five long panes (vault `five`), in
+ * Chromium AND WebKit (the app's engine). Per key: the main-thread ms from keydown to the end of
+ * the key's task (React's render + layout effects included) and to the frame after it, the
+ * layout-forcing reads JS made (scrollHeight & co. — each one makes the engine resolve the whole
+ * dirty document) and their ms, React commits, the components that re-rendered (CENSUS=1, names
+ * need an unminified build), and in Chromium the style recalcs / layouts the trace saw forced
+ * from script (inside an event or a function call, not the frame's own).
+ */
+const KEYCOST = `
+  (() => {
+    const W = window;
+    const K = W.__dcKey = { on: false, keys: [], cur: null, reads: 0, readMs: 0, commits: 0, census: null };
+    const timed = (proto, prop) => {
+      const d = Object.getOwnPropertyDescriptor(proto, prop);
+      if (!d || !d.get) return;
+      Object.defineProperty(proto, prop, { configurable: true, get() {
+        if (!K.on) return d.get.call(this);
+        const s = performance.now(); try { return d.get.call(this); } finally { K.reads += 1; K.readMs += performance.now() - s; }
+      } });
+    };
+    for (const p of ['scrollHeight', 'scrollWidth', 'clientHeight', 'clientWidth', 'scrollTop']) timed(Element.prototype, p);
+    for (const p of ['offsetHeight', 'offsetWidth', 'offsetTop', 'offsetLeft']) timed(HTMLElement.prototype, p);
+    const gbcr = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function () {
+      if (!K.on) return gbcr.call(this);
+      const s = performance.now(); try { return gbcr.call(this); } finally { K.reads += 1; K.readMs += performance.now() - s; }
+    };
+    const gcs = W.getComputedStyle;
+    W.getComputedStyle = function (...a) {
+      if (!K.on) return gcs.apply(W, a);
+      const s = performance.now(); try { return gcs.apply(W, a); } finally { K.reads += 1; K.readMs += performance.now() - s; }
+    };
+    const fiberName = (f) => { const t = f.type; if (!t) return null; if (typeof t === 'function') return t.displayName || t.name || 'anon'; if (typeof t === 'object') { const inner = t.type || t.render; return (t.displayName || (inner && (inner.displayName || inner.name)) || 'memo'); } return null; };
+    const FN = new Set([0, 1, 11, 14, 15]);
+    const walk = (next, counts) => {
+      const prev = next.alternate;
+      if (prev && next.child === prev.child) return;
+      for (let c = next.child; c; c = c.sibling) {
+        if (FN.has(c.tag) && ((c.flags & 1) || (c.alternate && c.memoizedState !== c.alternate.memoizedState))) { const n = fiberName(c) + ((c.flags & 1) ? '' : '(bailed)'); if (n) counts[n] = (counts[n] || 0) + 1; }
+        walk(c, counts);
+      }
+    };
+    W.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+      supportsFiber: true, renderers: new Map(), isDisabled: false,
+      inject() { return 1; },
+      onScheduleFiberRoot() {}, onCommitFiberUnmount() {}, onPostCommitFiberRoot() {}, checkDCE() {},
+      onCommitFiberRoot(_id, root) {
+        if (!K.on) return;
+        K.commits += 1;
+        if (K.census) { try { const c = {}; walk(root.current, c); const key = (window.event ? window.event.type : 'no-event') + ' :: ' + Object.keys(c).sort().join(','); K.census[key] = (K.census[key] || 0) + 1; } catch (e) { K.census['err ' + e] = 1; } }
+      },
+    };
+    K.muts = {};
+    if (W.__dcExp === 'nodefault') {
+      const d = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'defaultValue');
+      Object.defineProperty(HTMLTextAreaElement.prototype, 'defaultValue', { configurable: true, get: d.get, set(v) { if (this.classList.contains('chat-cmp-input')) return; d.set.call(this, v); } });
+    }
+    const desc = (n) => n && n.nodeType === 1 ? (n.tagName.toLowerCase() + (n.className && typeof n.className === 'string' ? '.' + n.className.trim().split(/\\s+/).slice(0, 2).join('.') : '')) : n ? ('#' + n.nodeName) + '<' + desc(n.parentNode) : '?';
+    W.addEventListener('DOMContentLoaded', () => {
+      new MutationObserver((list) => { if (!K.on) return; for (const m of list) { const k = m.type + ' ' + (m.attributeName || '') + ' ' + desc(m.target); K.muts[k] = (K.muts[k] || 0) + 1; } })
+        .observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+    });
+    const ch = new MessageChannel();
+    W.addEventListener('keydown', () => {
+      if (!K.on) return;
+      const rec = { t0: performance.now(), sync: null, frame: null };
+      K.keys.push(rec);
+      // A message posted from keydown runs after the key's own task (keydown → beforeinput →
+      // input → React's discrete render + layout effects).
+      ch.port1.onmessage = () => { rec.sync = performance.now() - rec.t0; };
+      ch.port2.postMessage(0);
+      // setTimeout from the next rAF callback runs after that frame's style + layout + paint.
+      requestAnimationFrame(() => setTimeout(() => { rec.frame = performance.now() - rec.t0; }, 0));
+    }, true);
+  })();
+`;
+
+async function sectionKeyCost(server, engineName) {
+  const browser = await (engineName === 'webkit' ? webkit : chromium).launch();
+  const ctx = await browser.newContext({ viewport: { width: 2000, height: 1200 }, colorScheme: 'dark', reducedMotion: 'no-preference' });
+  if (process.env.EXPERIMENT) await ctx.addInitScript(`window.__dcExp = ${JSON.stringify(process.env.EXPERIMENT)};`);
+  await ctx.addInitScript(KEYCOST);
+  const page = await ctx.newPage();
+  try {
+    await openVault(page, server.base, 'five');
+    await untilPanes(page, 5, 60_000);
+    await page.waitForTimeout(10_000);
+    await setFocused(page);
+    const input = page.locator('.chat-cmp-input:visible').first();
+    if (process.env.EXPERIMENT === 'nospell') await input.evaluate((el) => { el.spellcheck = false; });
+    await input.click();
+    await page.keyboard.type('warm up ');
+    await page.waitForTimeout(600);
+    const cdp = engineName === 'chromium' ? await ctx.newCDPSession(page) : null;
+    const trace = [];
+    if (cdp) {
+      cdp.on('Tracing.dataCollected', (d) => { for (const e of d.value) trace.push(e); });
+      await cdp.send('Tracing.start', { categories: 'devtools.timeline,disabled-by-default-devtools.timeline', transferMode: 'ReportEvents' });
+      if (process.env.PROFILE === '1') { await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 100 }); await cdp.send('Profiler.start'); }
+    }
+    const KEYS = Number(process.env.KEYS || 60);
+    // AppleSpell (macOS's spelling server) is its own process: its CPU seconds before and after.
+    const spellCpu = () => {
+      const r = spawnSync('ps', ['-Ao', 'time=,comm='], { encoding: 'utf-8' });
+      return (r.stdout || '').split('\n').filter((l) => /AppleSpell/.test(l)).reduce((sum, l) => {
+        const t = l.trim().split(/\s+/)[0]; const [m, sec] = t.split(':'); return sum + Number(m) * 60 + Number(sec);
+      }, 0);
+    };
+    const spell0 = spellCpu();
+    const wall0 = Date.now();
+    await page.evaluate((census) => { const K = window.__dcKey; K.keys = []; K.reads = 0; K.readMs = 0; K.commits = 0; K.census = census ? {} : null; K.on = true; }, process.env.CENSUS === '1');
+    // Ten words of six, one line in a pane's composer: the keystroke path, not a wrap.
+    const text = 'typing feels like typing here, one key at a time, no stalls.';
+    for (let i = 0; i < KEYS; i += 1) { await page.keyboard.type(text[i % text.length], { delay: 0 }); await page.waitForTimeout(70); }
+    await page.waitForTimeout(400);
+    const k = await page.evaluate(() => { const K = window.__dcKey; K.on = false; return { keys: K.keys, reads: K.reads, readMs: K.readMs, commits: K.commits, census: K.census, muts: K.muts }; });
+    if (process.env.PROFILE === '1') console.log('      MUTATIONS:\n        ' + Object.entries(k.muts).sort((a, b) => b[1] - a[1]).slice(0, 25).map(([m, c]) => `${c} ${m}`).join('\n        '));
+    const spellMs = Math.round((spellCpu() - spell0) * 1000);
+    const wallMs = Date.now() - wall0;
+    let forced = null;
+    if (cdp && process.env.PROFILE === '1') {
+      const { profile } = await cdp.send('Profiler.stop');
+      const self = new Map();
+      const byId = new Map(profile.nodes.map((n) => [n.id, n]));
+      profile.samples.forEach((sid, i) => { const n = byId.get(sid); const key = `${n.callFrame.functionName || '(anon)'} ${(n.callFrame.url || '').split('/').pop()}:${n.callFrame.lineNumber}`; self.set(key, (self.get(key) || 0) + (profile.timeDeltas[i] || 0)); });
+      console.log('      PROFILE self ms:\n        ' + [...self].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([k2, t]) => `${(t / 1000).toFixed(1)} ${k2}`).join('\n        '));
+    }
+    if (cdp) {
+      const done = new Promise((r) => cdp.once('Tracing.tracingComplete', r));
+      await cdp.send('Tracing.end');
+      await done;
+      // The renderer main thread: the one running the key events.
+      const evts = trace.filter((e) => e.ph === 'X' || e.ph === 'B' || e.ph === 'E');
+      const keyEv = evts.filter((e) => e.name === 'EventDispatch' && e.ph === 'X' && /^(keydown|keypress|beforeinput|input|keyup)$/.test(e.args?.data?.type || ''));
+      const tid = keyEv[0]?.tid;
+      const main = evts.filter((e) => e.tid === tid && e.ph === 'X');
+      const spans = main.filter((e) => e.name === 'EventDispatch' || e.name === 'FunctionCall' || e.name === 'TimerFire' || e.name === 'FireAnimationFrame');
+      const scriptSpans = main.filter((e) => e.name === 'EventDispatch' || e.name === 'FunctionCall' || e.name === 'TimerFire');
+      const inside = (e, set) => set.some((s) => e.ts >= s.ts && e.ts + (e.dur || 0) <= s.ts + s.dur);
+      const recalc = main.filter((e) => e.name === 'UpdateLayoutTree');
+      const layout = main.filter((e) => e.name === 'Layout');
+      const fRecalc = recalc.filter((e) => inside(e, scriptSpans));
+      const fLayout = layout.filter((e) => inside(e, scriptSpans));
+      const ms = (xs) => xs.reduce((s, e) => s + (e.dur || 0), 0) / 1000;
+      const per = (n) => Math.round((n / KEYS) * 100) / 100;
+      if (process.env.PROFILE === '1') {
+        const by = new Map();
+        for (const e of main) { const kk = e.name === 'EventDispatch' ? `EventDispatch:${e.args?.data?.type}` : e.name; const v = by.get(kk) || [0, 0]; v[0] += e.dur || 0; v[1] += 1; by.set(kk, v); }
+        const ec = (xs) => xs.map((e) => e.args?.elementCount ?? e.args?.data?.elementCount ?? '?');
+        console.log('      TRACE forced recalc elementCount (first 30):', ec(fRecalc).slice(0, 30).join(','));
+        console.log('      TRACE all recalc elementCount (first 40):', ec(recalc).slice(0, 40).join(','));
+        console.log('      TRACE forced layout dirty/total:', fLayout.slice(0, 10).map((e) => JSON.stringify(e.args?.beginData ? { d: e.args.beginData.dirtyObjects, t: e.args.beginData.totalObjects } : e.args)).join(' '));
+        console.log('      TRACE ms/key by event:\n        ' + [...by].sort((a, b) => b[1][0] - a[1][0]).slice(0, 30).map(([n, [d, c]]) => `${(d / 1000 / KEYS).toFixed(2)} ms  x${(c / KEYS).toFixed(1)}  ${n}`).join('\n        '));
+      }
+      forced = {
+        styleRecalcsPerKey: per(recalc.length), forcedStyleRecalcsPerKey: per(fRecalc.length), forcedStyleMsPerKey: per(ms(fRecalc)),
+        layoutsPerKey: per(layout.length), forcedLayoutsPerKey: per(fLayout.length), forcedLayoutMsPerKey: per(ms(fLayout)),
+        styleMsPerKey: per(ms(recalc)), layoutMsPerKey: per(ms(layout)), spans: spans.length,
+      };
+    }
+    const done = k.keys.filter((r) => r.sync != null);
+    const avg = (xs) => (xs.length ? Math.round((xs.reduce((s, x) => s + x, 0) / xs.length) * 100) / 100 : null);
+    const p95 = (xs) => { const s = xs.slice().sort((a, b) => a - b); return s.length ? Math.round(s[Math.min(s.length - 1, Math.floor(0.95 * s.length))] * 100) / 100 : null; };
+    const row = {
+      keys: k.keys.length,
+      syncMsPerKey: avg(done.map((r) => r.sync)), syncMsP95: p95(done.map((r) => r.sync)),
+      frameMsPerKey: avg(k.keys.filter((r) => r.frame != null).map((r) => r.frame)),
+      layoutReadsPerKey: Math.round((k.reads / KEYS) * 100) / 100, layoutReadMsPerKey: Math.round((k.readMs / KEYS) * 100) / 100,
+      reactCommitsPerKey: Math.round((k.commits / KEYS) * 100) / 100,
+      appleSpellCpuMsPerKey: Math.round((spellMs / KEYS) * 100) / 100, appleSpellCpuPct: Math.round((spellMs / wallMs) * 1000) / 10,
+      spellcheck: process.env.EXPERIMENT !== 'nospell',
+      ...(forced || {}),
+      ...(k.census ? { census: Object.fromEntries(Object.entries(k.census).sort((a, b) => b[1] - a[1]).slice(0, 40)) } : {}),
+    };
+    (numbers.keyCost ||= {})[engineName] = row;
+    console.log(`      keyCost ${engineName}: ${JSON.stringify(row)}`);
+  } finally {
+    await page.keyboard.press('Meta+a').catch(() => {}); await page.keyboard.press('Backspace').catch(() => {});
+    await ctx.close();
+    await browser.close();
+  }
+}
+
 /** Diagnosis (DIAG_TIMING=1): time every rAF callback and pointer/mouse listener, by source. */
 const TIMING = `
   (() => {
@@ -1051,6 +1237,7 @@ try {
     await browser.close();
   }
   if (SECTIONS.has('g')) for (const e of ENGINES) await sectionDrag(server, e);
+  if (SECTIONS.has('k')) for (const e of ENGINES) await sectionKeyCost(server, e);
 } catch (e) {
   console.error(`[idle-load] aborted: ${e.stack || e}`);
   exitCode = 2;
