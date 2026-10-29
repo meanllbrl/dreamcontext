@@ -170,6 +170,46 @@ describe('the agenda sizes itself (problem 2)', () => {
     }
   });
 
+  it('the agenda is judged on the whole plan, the owner\'s dropped cards included (review r3)', () => {
+    const offMid = (p: StagePlan) => Math.abs(p.centre.x + p.centre.width / 2 - p.width / 2);
+    const offStage = (p: StagePlan) => floats(p).filter((c) => c.rect.x < -EPS || c.rect.y < -EPS || c.rect.x + c.rect.width > p.width + EPS || c.rect.y + c.rect.height > p.height + EPS).length;
+    // The reviewer's cases: one chat the owner dropped, the default agenda; nothing goes to Others.
+    for (const [s, n] of [[OWNER_1630, 3], [OWNER_1630, 4], [OWNER_1630, 8], [WINDOWS.mid, 3]] as const) {
+      for (const pos of [{ x: 0.1, y: 0.3 }, { x: 0.05, y: 0.8 }]) {
+        const cs = [agenda('large'), card('c0', { pos }), ...Array.from({ length: n - 1 }, (_, i) => card(`c${i + 1}`))];
+        const p = plan(cs, s);
+        expect(p.others, `${s.width} n=${n} ${JSON.stringify(pos)}`).toEqual([]);
+      }
+    }
+    // A touch remote: no card drawn off the stage (an owner-sized picture and ten chats).
+    const touch = [agenda('medium'), card('pic', { kind: 'image', size: 'medium', sizeBy: 'owner', pos: { x: 0.9, y: 0.5 } }), ...Array.from({ length: 10 }, (_, i) => card(`c${i}`))];
+    expect(offStage(plan(touch, { width: 1638, height: 640 }, { centreMin: 480 }))).toBe(0);
+    // The sweep: owner drops (none, a chat, the agenda) against the same plan with the agenda capped at 1x1.
+    for (let width = 1000; width <= 2000; width += 41) {
+      for (const height of [717, 830, 1010]) {
+        for (const n of [3, 6, 9]) {
+          for (const size of ['medium', 'large'] as const) {
+            for (const drop of ['none', 'chat', 'agenda'] as const) {
+              for (const centreMin of [undefined, 480]) {
+                const cs = [
+                  agenda(size, drop === 'agenda' ? { pos: { x: 0.85, y: 0.2 } } : {}),
+                  ...Array.from({ length: n }, (_, i) => card(`c${i}`, drop === 'chat' && i === 0 ? { pos: { x: 0.1, y: 0.3 } } : {})),
+                ];
+                const opts = centreMin ? { centreMin } : {};
+                const p = plan(cs, { width, height }, opts);
+                const q = plan(cs, { width, height }, { ...opts, agendaCap: 1 });
+                const at = `${width}x${height} n=${n} ${size} ${drop} ${centreMin ?? 'desk'}`;
+                expect(p.others.length, at).toBeLessThanOrEqual(q.others.length);
+                expect(offMid(p), at).toBeLessThanOrEqual(offMid(q) + 1e-6);
+                expect(offStage(p), at).toBeLessThanOrEqual(offStage(q));
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
   it('a window too small for the list beside the centre still draws the counts (1140x710)', () => {
     for (const size of ['large', 'medium'] as const) {
       const p = plan([agenda(size, { sizeBy: 'owner' }), card('a'), card('b')], WINDOWS.small);

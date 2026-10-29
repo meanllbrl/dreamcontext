@@ -305,6 +305,9 @@ export interface PlanOptions {
   narrowPx?: number;
   /** The centre's floor for this screen; absent = `STAGE.CENTRE_MIN`. */
   centreMin?: number;
+  /** The agenda drawn at most this many tiles wide: set by `planStage` itself while it picks the
+   *  agenda's width (callers leave it out). */
+  agendaCap?: number;
 }
 
 
@@ -446,23 +449,11 @@ interface SizedSolution extends FloatSolution {
  * card before a chat); only then the owner's own cards, the same way. A one-column side of
  * small cards keeps its orbit.
  */
-function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[]): SizedSolution {
-  const ag = [...left, ...right].find((s) => s.agenda);
-  if (!ag) return solveSizedAt(f, left, right, null);
-  // The agenda's width is tried from its own down (owner 2026-10-29: its list whenever there is
-  // room): the widest that leaves the centre as near the middle and sends no more cards to Others
-  // than the 1x1 counts do. Room is the whole stage's, not only the width beside the centre: a
-  // side too tall for the stage that must widen past it would push the centre off the middle.
-  const counts = solveSizedAt(f, left, right, 1);
-  const offMid = (r: SizedSolution) => Math.abs(r.centre.x + r.centre.width / 2 - f.width / 2);
-  for (let cap = SIZE_UNITS[ag.size].w; cap > 1; cap--) {
-    const r = solveSizedAt(f, left, right, cap);
-    if (offMid(r) <= offMid(counts) + 1e-6 && r.overflow.size <= counts.overflow.size) return r;
-  }
-  return counts;
+function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[], agendaCap?: number): SizedSolution {
+  return solveSizedAt(f, left, right, agendaCap ?? null);
 }
 
-/** `solveSized` with the agenda drawn at most `agendaCap` tiles wide (null: no agenda). */
+/** `solveSized` with the agenda drawn at most `agendaCap` tiles wide (null: its own size). */
 function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[], agendaCap: number | null): SizedSolution {
   const { GAP, MARGIN, TILE: T, ORBIT_DEPTH } = STAGE;
   const W = f.width;
@@ -862,6 +853,42 @@ export function planStage(
   stage: { width: number; height: number },
   opts: PlanOptions = {},
 ): StagePlan {
+  // The agenda's width (owner 2026-10-29, "Agenda büyümüyor?": its list whenever there is room) is
+  // judged on the WHOLE plan, the owner's dropped cards and every re-plan included: the widest,
+  // from its own size down, whose stage is no worse than with the 1x1 counts — the centre as near
+  // the middle, no more cards in Others, none more off the stage or over another.
+  const ag = opts.agendaCap === undefined ? containers.find((c) => c.kind === 'agenda' && c.place === 'float') : undefined;
+  const own = ag ? SIZE_UNITS[sizeOf(ag)].w : 1;
+  if (own <= 1) return planStageOnce(containers, view, stage, opts);
+  const counts = planStageOnce(containers, view, stage, { ...opts, agendaCap: 1 });
+  const worse = stageCost(counts);
+  for (let cap = own; cap > 1; cap--) {
+    const p = planStageOnce(containers, view, stage, { ...opts, agendaCap: cap });
+    const c = stageCost(p);
+    if (c.offMid <= worse.offMid + 1e-6 && c.others <= worse.others && c.unsound <= worse.unsound) return p;
+  }
+  return counts;
+}
+
+/** What a plan costs the owner: the centre off the middle, cards in Others, floating cards off the stage or over another. */
+function stageCost(p: StagePlan): { offMid: number; others: number; unsound: number } {
+  const fl = Object.values(p.cards).filter((c) => c.where === 'float');
+  let unsound = 0;
+  for (const c of fl) {
+    const r = c.rect;
+    if (r.x < -1e-6 || r.y < -1e-6 || r.x + r.width > p.width + 1e-6 || r.y + r.height > p.height + 1e-6) unsound++;
+    if (p.mode === 'float' && overlaps(r, p.centre)) unsound++;
+    for (const d of fl) if (c.id < d.id && overlaps(r, d.rect)) unsound++;
+  }
+  return { offMid: Math.abs(p.centre.x + p.centre.width / 2 - p.width / 2), others: p.others.length, unsound };
+}
+
+function planStageOnce(
+  containers: readonly StageItem[],
+  view: SuperView,
+  stage: { width: number; height: number },
+  opts: PlanOptions,
+): StagePlan {
   // The bottom band only while it holds something (owner 2026-10-21): plan with the content down
   // to the margin first; a dock with terminals, a narrow stage, or a plan that draws a card in
   // Others reserves the band and plans again (the same inputs always give the same screen).
@@ -1123,7 +1150,7 @@ function planWith(
   // size (solveSized).
   const sized = floating.some((c) => sizeById.get(c.id) !== 'small');
   const sol = sized
-    ? solveSized(f, slotsOn('left').map(withSize), slotsOn('right').map(withSize))
+    ? solveSized(f, slotsOn('left').map(withSize), slotsOn('right').map(withSize), opts.agendaCap)
     : { ...solveFloat(f, slotsOn('left'), slotsOn('right')), drawn: new Map<string, ContainerSize>(), uRight: undefined };
   const drawnOf = (id: string): ContainerSize => sol.drawn.get(id) ?? 'small';
   // The float centre takes the stage's height (owner 2026-10-25; 2026-10-28 for a windowed app):
