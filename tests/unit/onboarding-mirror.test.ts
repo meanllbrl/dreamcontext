@@ -22,7 +22,8 @@ import {
   MAX_PROMPT_ENCODED,
 } from '../../dashboard/src/lib/agentPrompt.js';
 import { emitStartIntent, openVaultWindow } from '../../dashboard/src/lib/desktop.js';
-import { needsLivePoll, nextPlannedFix, checkForFix, readinessPollPlan, runPlanSequence, type FixRunState } from '../../dashboard/src/hooks/useOnboarding.js';
+import { needsLivePoll, nextPlannedFix, checkForFix, readinessPollPlan, readinessSettled as dashSettled, runPlanSequence, type FixRunState } from '../../dashboard/src/hooks/useOnboarding.js';
+import { readinessSettled as serverSettled } from '../../src/lib/onboarding/readiness.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const I18N = join(ROOT, 'dashboard', 'src', 'context', 'I18nContext.tsx');
@@ -165,6 +166,19 @@ describe('data-layer helpers', () => {
     expect(readinessPollPlan(report())).toEqual({ fresh: false, intervalMs: false });
     expect(readinessPollPlan(report({ online: false }))).toEqual({ fresh: true, intervalMs: 2000 });
     expect(readinessPollPlan(report({ activeFixes: ['git-install'] }))).toEqual({ fresh: true, intervalMs: 2000 });
+  });
+
+  it('readinessSettled (long memo/staleTime) agrees between dashboard and server', () => {
+    const cases = [
+      report({ ready: true }),
+      report({ ready: false }),
+      report({ ready: true, online: false }),
+      report({ ready: true, plan: ['github-signin'] }),
+    ];
+    expect(cases.map((r) => dashSettled(r))).toEqual([true, false, false, false]);
+    expect(cases.map((r) => serverSettled(r as never))).toEqual([true, false, false, false]);
+    expect(dashSettled(report({ ready: true, activeFixes: ['git-install'] }))).toBe(false);
+    expect(dashSettled(undefined)).toBe(false);
   });
 
   it('nextPlannedFix skips tried, skipped and already-running fixes, in plan order', () => {

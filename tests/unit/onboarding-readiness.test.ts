@@ -116,6 +116,38 @@ describe('getReadiness memo + coalescing', () => {
   });
 });
 
+describe('settled memo', () => {
+  it('a report with nothing to fix is reused for 10 min; a fresh read or invalidate still probes', async () => {
+    const { runner, calls } = makeRunner(READY_SHELL);
+    const { deps, tick } = makeDeps({ github: () => ({ connected: true, needsReconnect: false, login: 'ada' }) });
+    const first = await getReadiness(ctxFor(runner), {}, deps);
+    expect(first.plan).toEqual([]);
+    tick(9 * 60_000);
+    await getReadiness(ctxFor(runner), {}, deps);
+    expect(calls.loginShell).toBe(1);
+    tick(2 * 60_000);
+    await getReadiness(ctxFor(runner), {}, deps);
+    expect(calls.loginShell).toBe(2);
+    tick(1_000);
+    await getReadiness(ctxFor(runner), { fresh: true }, deps);
+    expect(calls.loginShell).toBe(3);
+    invalidateReadiness();
+    await getReadiness(ctxFor(runner), {}, deps);
+    expect(calls.loginShell).toBe(4);
+  });
+
+  it('a running fix keeps the short memo even on a settled report', async () => {
+    const { runner, calls } = makeRunner(READY_SHELL);
+    const { deps, tick } = makeDeps({ github: () => ({ connected: true, needsReconnect: false, login: 'ada' }) });
+    await getReadiness(ctxFor(runner), {}, deps);
+    markFixActive('git-install');
+    tick(6_000);
+    await getReadiness(ctxFor(runner), {}, deps);
+    expect(calls.loginShell).toBe(2);
+    markFixDone('git-install');
+  });
+});
+
 describe('cliInstallDeferred', () => {
   it('true while cli-install runs, or when a recent report shows the CLI missing', async () => {
     expect(cliInstallDeferred()).toBe(false);

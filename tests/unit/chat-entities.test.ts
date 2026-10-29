@@ -8,6 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  isStreamGrowth,
   toolGlyph, classifyReference, isPdfPath, parseEditDiff, summarizeSubAgents, subAgentToolUseIds,
   deriveDiffStartLine, estimateTokens, formatTokenCount, formatDuration, classifyOutputLine,
   formatClock, splitInlineCode, isGuardedCommand, avatarHue,
@@ -2558,5 +2559,31 @@ describe('noticeCut — a transcript notice stays where it happened', () => {
   it('waits for the reveal when a finished notice is above the window, but keeps a running one on screen', () => {
     expect(noticeCut(1, 3, 9, false)).toBeNull();
     expect(noticeCut(1, 3, 9, true)).toBe(0);
+  });
+});
+
+describe('isStreamGrowth (CPU RCA K3)', () => {
+  const user = { kind: 'user', id: 'u1', text: 'go' };
+  const text = (t: string, done = false) => ({ kind: 'text', id: 't1', text: t, done });
+  const model = (items: object[], extra: object = {}) => ({ items, history: H, pending: P, ...extra });
+  const H: object[] = [];
+  const P: object[] = [];
+
+  it('true only when one streaming text got longer and nothing else moved', () => {
+    const a = model([user, text('Hel')]);
+    expect(isStreamGrowth(a, model([user, text('Hello')]))).toBe(true);
+    expect(isStreamGrowth(a, { ...a, items: [user, { kind: 'thinking', id: 't1', text: 'Hello' }] })).toBe(false);
+  });
+
+  it('false for anything that may shrink or reshape the transcript', () => {
+    const a = model([user, text('Hello')]);
+    expect(isStreamGrowth(null, a)).toBe(false);
+    expect(isStreamGrowth(a, a)).toBe(false);
+    expect(isStreamGrowth(a, model([user, text('Hell')]))).toBe(false); // shorter
+    expect(isStreamGrowth(a, model([user, text('Hello!', true)]))).toBe(false); // block done
+    expect(isStreamGrowth(a, model([user, text('Hello!'), { kind: 'tool', id: 'x' }]))).toBe(false); // new item
+    expect(isStreamGrowth(a, model([{ ...user }, text('Hello!')]))).toBe(false); // two items changed
+    expect(isStreamGrowth(a, { ...model([user, text('Hello!')]), lastError: 'boom' })).toBe(false); // new field
+    expect(isStreamGrowth(a, { ...model([user, text('Hello!')]), pending: [] })).toBe(false); // field changed
   });
 });

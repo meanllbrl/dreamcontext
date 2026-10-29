@@ -1014,10 +1014,13 @@ interface TranscriptFold {
   lastModel: string;
   /** The last `message.model` on any line, `<synthetic>` skipped, not yet aliased. */
   latestModel: string | null;
+  /** Bumped by every row that changes the stats; {@link statsOfFold} is memoized on it. */
+  rev: number;
+  memo: { rev: number; stats: SessionStats } | null;
 }
 
 function newTranscriptFold(): TranscriptFold {
-  return { turns: new Map(), unkeyed: 0, contextTokens: null, lastModel: '', latestModel: null };
+  return { turns: new Map(), unkeyed: 0, contextTokens: null, lastModel: '', latestModel: null, rev: 0, memo: null };
 }
 
 function foldTranscriptRow(s: TranscriptFold, row: unknown): void {
@@ -1027,6 +1030,7 @@ function foldTranscriptRow(s: TranscriptFold, row: unknown): void {
   if (typeof seen === 'string' && seen && seen !== '<synthetic>') s.latestModel = seen;
   const u = m?.usage;
   if (!u || typeof u !== 'object') return;
+  s.rev += 1;
   const model = typeof m?.model === 'string' && m.model ? m.model : s.lastModel;
   const id = typeof m?.id === 'string' && m.id ? m.id : `line-${s.unkeyed++}`;
   s.turns.set(id, {
@@ -1042,14 +1046,23 @@ function foldTranscriptRow(s: TranscriptFold, row: unknown): void {
   }
 }
 
+/**
+ * The stats of a fold, memoized on its revision. Each live pane polls this every few seconds and
+ * a long transcript holds ~10,000 turns: re-summing them per poll was the server's biggest
+ * allocator while chats streamed (CPU RCA K4: 58 of 78 MB allocated in 15 s with seven streams),
+ * the garbage behind the RSS saw-tooth. The sum only changes when a row with usage folds in.
+ */
 function statsOfFold(s: TranscriptFold): SessionStats {
   if (s.contextTokens === null) return EMPTY_STATS;
+  if (s.memo && s.memo.rev === s.rev) return s.memo.stats;
   let costUsd = 0;
   for (const t of s.turns.values()) {
     const p = priceForModel(t.model);
     costUsd += (t.inp * p.in + t.cw * p.cacheWrite + t.cr * p.cacheRead + t.out * p.out) / 1_000_000;
   }
-  return { contextTokens: s.contextTokens, contextLimit: contextLimitFor(s.contextTokens, s.lastModel), costUsd };
+  const stats = { contextTokens: s.contextTokens, contextLimit: contextLimitFor(s.contextTokens, s.lastModel), costUsd };
+  s.memo = { rev: s.rev, stats };
+  return stats;
 }
 
 /** The stats of the transcript at `path` through the incremental fold. Exported for tests;

@@ -16,6 +16,8 @@ const SHELL_TIMEOUT_MS = 15_000;
 const NETWORK_TIMEOUT_MS = 3_000;
 const GH_AUTH_TIMEOUT_MS = 8_000;
 const MEMO_MS = 5_000;
+/** A settled report (nothing to fix) is reused this long; a fix ending invalidates it anyway. */
+const SETTLED_MEMO_MS = 10 * 60_000;
 const FRESH_MIN_GAP_MS = 2_000;
 const CLI_DEFER_WINDOW_MS = 60_000;
 
@@ -133,12 +135,25 @@ let lastFreshAt = -Infinity;
  */
 let generation = 0;
 
+/**
+ * Nothing waits to be fixed: required checks pass, online, no fix running, empty plan. Such a
+ * report is kept for {@link SETTLED_MEMO_MS}: re-probing it costs a login shell, `gh auth status`
+ * and `claude auth status`, and the only things that change it (a fix run) invalidate the memo.
+ */
+export function readinessSettled(report: ReadinessReport): boolean {
+  return report.ready && report.online && report.plan.length === 0 && activeFixes().length === 0;
+}
+
+function memoMs(report: ReadinessReport): number {
+  return readinessSettled(report) ? SETTLED_MEMO_MS : MEMO_MS;
+}
+
 function withLiveActive(report: ReadinessReport): ReadinessReport {
   return { ...report, activeFixes: activeFixes() };
 }
 
 /**
- * The report, probed at most once at a time and reused for 5 s. `fresh` skips the memo,
+ * The report, probed at most once at a time and reused for 5 s (10 min when settled). `fresh` skips the memo,
  * but at most once per 2 s: a burst of fresh requests (several windows polling) shares
  * one probe. `activeFixes` is always the live registry, even on a reused report.
  * Requests only ever join a probe of the current generation (see {@link generation}).
@@ -151,7 +166,7 @@ export async function getReadiness(
   const now = deps.now();
   if (inflight && inflight.generation === generation) return withLiveActive(await inflight.promise);
   const freshAllowed = o.fresh === true && now - lastFreshAt >= FRESH_MIN_GAP_MS;
-  if (cached && !freshAllowed && now - cached.at < MEMO_MS) return withLiveActive(cached.report);
+  if (cached && !freshAllowed && now - cached.at < memoMs(cached.report)) return withLiveActive(cached.report);
   if (cached && o.fresh && !freshAllowed) return withLiveActive(cached.report);
   if (o.fresh) lastFreshAt = now;
   const startedIn = generation;

@@ -213,10 +213,35 @@ export const COMMON_DIR_TTL_MS = 60_000;
 export function gitCommonDir(cwd: string, now: number = Date.now()): string | null {
   const hit = commonDirCache.get(cwd);
   if (hit && now - hit.at < COMMON_DIR_TTL_MS) return hit.value;
+  // An EXPIRED answer is served as-is and re-read off the event loop: the answer names a
+  // repository, which does not change while the directory exists (a removed worktree is the
+  // caller's `statSync`), so only the very first read of a directory forks synchronously. Before
+  // this every shelf poll past the TTL stalled the server on one `git rev-parse` per pane.
+  if (hit) {
+    refreshCommonDir(cwd, now);
+    return hit.value;
+  }
 
   const raw = gitLine(cwd, ['rev-parse', '--git-common-dir']);
-  const value = raw ? canonical(resolve(cwd, raw)) : null;
+  storeCommonDir(cwd, raw ? canonical(resolve(cwd, raw)) : null, now);
+  return commonDirCache.get(cwd)?.value ?? null;
+}
 
+const commonDirRefreshing = new Set<string>();
+
+function refreshCommonDir(cwd: string, now: number): void {
+  if (commonDirRefreshing.has(cwd)) return;
+  commonDirRefreshing.add(cwd);
+  const gen = asyncGeneration;
+  void gitLineAsync(cwd, ['rev-parse', '--git-common-dir'])
+    .then((raw) => {
+      // A reset while this ran (tests, `forgetSessionFacts`) wins over a read that predates it.
+      if (gen === asyncGeneration) storeCommonDir(cwd, raw ? canonical(resolve(cwd, raw)) : null, now);
+    })
+    .finally(() => { commonDirRefreshing.delete(cwd); });
+}
+
+function storeCommonDir(cwd: string, value: string | null, now: number): void {
   commonDirCache.delete(cwd);
   commonDirCache.set(cwd, { value, at: now });
   while (commonDirCache.size > MAX_COMMON_DIR_CACHE) {
@@ -224,7 +249,6 @@ export function gitCommonDir(cwd: string, now: number = Date.now()): string | nu
     if (oldest.done) break;
     commonDirCache.delete(oldest.value);
   }
-  return value;
 }
 
 /**

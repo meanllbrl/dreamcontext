@@ -54,7 +54,7 @@ import {
   describeCheckoutClaim, describeCheckoutReset, readCheckoutDirective, readEditPaths,
 } from '../checkout-directive.js';
 import { clearSessionEdits, recordSessionEdit } from '../../lib/session-edits.js';
-import { forgetSessionFacts, readSessionFacts } from '../../lib/session-facts.js';
+import { forgetSessionFacts, readSessionFactsAsync } from '../../lib/session-facts.js';
 import { tabSessionEnv } from '../../lib/session-origin.js';
 import { claudeAwarePath, claudeDirectCommand } from '../../lib/claude-path.js';
 import { killPortable } from '../../lib/proc.js';
@@ -3448,15 +3448,15 @@ export function startChatSession(
           const ok = enterSessionCheckout(pinId, said.dir, projectRoot, { claim: true });
           // Re-read rather than trust the memo: a claim is worth a sentence naming the branch
           // it landed on, and that reading is 12s stale exactly when the agent just moved.
-          if (ok) forgetSessionFacts(said.dir);
-          sendMeta({
-            subtype: 'branch_start',
-            kind: ok ? 'moved' : 'failed',
-            message: describeCheckoutClaim(
-              said.dir,
-              ok ? readSessionFacts(said.dir, Date.now(), projectRoot) : null,
-            ),
-          });
+          // Read off the event loop: a sync read here stalled every other stream mid-frame.
+          if (ok) {
+            forgetSessionFacts(said.dir);
+            void readSessionFactsAsync(said.dir, Date.now(), projectRoot).then((facts) => {
+              sendMeta({ subtype: 'branch_start', kind: 'moved', message: describeCheckoutClaim(said.dir, facts) });
+            });
+          } else {
+            sendMeta({ subtype: 'branch_start', kind: 'failed', message: describeCheckoutClaim(said.dir, null) });
+          }
         }
       }
     }

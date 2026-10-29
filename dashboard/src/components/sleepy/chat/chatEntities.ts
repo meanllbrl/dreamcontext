@@ -1568,6 +1568,44 @@ export interface ScrollMetrics {
   userDriven: boolean;
 }
 
+/** The slice of a conversation model {@link isStreamGrowth} reads. */
+interface GrowthModel {
+  items: readonly { id?: unknown; kind?: unknown; text?: unknown; done?: unknown }[];
+}
+
+/**
+ * Did `next` differ from `prev` ONLY by one streaming text or thinking item getting longer?
+ * Every other field the same object, every other item the same object, the changed one the same
+ * id and kind, not done on either side, and its text no shorter.
+ *
+ * Such a commit can only GROW the transcript, and growth never moves `scrollTop` backwards
+ * ({@link nextStickToBottom} rule 3), so the pinned view does not need the synchronous re-pin
+ * the layout effect does for every other change: the ResizeObserver re-pins after the browser's
+ * own layout, once per frame. That synchronous re-pin read `clientHeight` on every token and
+ * forced a full style + layout per token per pane (CPU RCA K3: a third of the page's JS time
+ * with seven chats streaming).
+ */
+export function isStreamGrowth<M extends GrowthModel>(prev: M | null | undefined, next: M): boolean {
+  if (!prev || prev === next || prev.items.length !== next.items.length) return false;
+  const p = prev as unknown as Record<string, unknown>;
+  const n = next as unknown as Record<string, unknown>;
+  const keys = Object.keys(n);
+  if (keys.length !== Object.keys(p).length) return false;
+  for (const key of keys) if (key !== 'items' && n[key] !== p[key]) return false;
+  let changed = -1;
+  for (let i = 0; i < next.items.length; i += 1) {
+    if (next.items[i] === prev.items[i]) continue;
+    if (changed !== -1) return false;
+    changed = i;
+  }
+  if (changed === -1) return false;
+  const a = prev.items[changed];
+  const b = next.items[changed];
+  return a.id === b.id && a.kind === b.kind && (b.kind === 'text' || b.kind === 'thinking')
+    && !a.done && !b.done
+    && typeof a.text === 'string' && typeof b.text === 'string' && b.text.length >= a.text.length;
+}
+
 /**
  * The next stick-to-bottom state for a scroll event. Four rules, in this order:
  *

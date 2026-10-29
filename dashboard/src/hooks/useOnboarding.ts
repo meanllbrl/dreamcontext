@@ -64,20 +64,38 @@ export function checkForFix(report: ReadinessReport | undefined, fix: FixId): Re
 
 // ─── The report ───────────────────────────────────────────────────────────────
 
+/** How long a settled report (see {@link readinessSettled}) counts as fresh. */
+export const SETTLED_STALE_MS = 10 * 60_000;
+
 /**
- * The machine report, filtered to `scope` for display. Refetches on window focus (the person
- * may have finished a macOS dialog or a browser sign-in elsewhere), every 3 s while a fix is
- * active or the machine is offline, and `refresh()` asks the server to probe afresh (call it
- * after a run ends).
+ * Nothing on this machine is waiting to be fixed: required checks pass, the network is up,
+ * no fix runs and the plan is empty. Mirrors the server's long-memo condition.
  */
-export function useReadiness(scope: CheckScope = 'machine') {
+export function readinessSettled(report: ReadinessReport | undefined): boolean {
+  return !!report && report.ready && report.online && report.activeFixes.length === 0 && report.plan.length === 0;
+}
+
+/**
+ * The machine report, filtered to `scope` for display. Polled every 3 s while a fix is active
+ * or the machine is offline, and `refresh()` asks the server to probe afresh (call it after a
+ * run ends).
+ *
+ * `shown`: the checklist is ON SCREEN (onboarding, the agent setup panel). Only then does a
+ * window focus re-read it, past the server's memo (the person may have finished a macOS dialog
+ * or a browser sign-in elsewhere). Everywhere else (the Launcher's "setup left" count) a focus
+ * never probes: each probe is a login shell + `gh auth status` + `claude auth status`.
+ */
+export function useReadiness(scope: CheckScope = 'machine', { shown = false }: { shown?: boolean } = {}) {
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: READINESS_QUERY_KEY,
-    // While the last report says something is moving, read past the server's memo.
-    queryFn: () => fetchReadiness(readinessPollPlan(queryClient.getQueryData<ReadinessReport>(READINESS_QUERY_KEY)).fresh),
-    refetchOnWindowFocus: true,
-    staleTime: 2000,
+    // While the last report says something is moving, or the checklist is on screen, read past
+    // the server's memo (it rate-limits fresh probes to one per 2 s).
+    queryFn: () => fetchReadiness(shown || readinessPollPlan(queryClient.getQueryData<ReadinessReport>(READINESS_QUERY_KEY)).fresh),
+    refetchOnWindowFocus: shown,
+    // A checklist coming on screen reads afresh even over a settled (10 min) cached report.
+    refetchOnMount: shown ? 'always' : true,
+    staleTime: (q) => (readinessSettled(q.state.data) ? SETTLED_STALE_MS : 2000),
     refetchInterval: (q) => {
       const ms = readinessPollPlan(q.state.data).intervalMs;
       return ms === false ? false : pollMs(ms);

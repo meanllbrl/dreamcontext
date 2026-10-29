@@ -142,3 +142,20 @@ describe('transcript fold cost on a 50 MB transcript (AC2)', () => {
     expect(Math.min(...appended)).toBeLessThanOrEqual(Math.max(20, full / 20));
   });
 });
+
+describe('statsOfFold memo (CPU RCA K4)', () => {
+  it('an unchanged transcript answers the same stats object; an appended usage row re-sums', async () => {
+    const path = join(dir, 'memo.jsonl');
+    writeFileSync(path, `${fixtureLong().map((r) => JSON.stringify(r)).join('\n')}\n`);
+    const a = await foldedSessionStats(path);
+    const b = await foldedSessionStats(path);
+    expect(b).toBe(a);
+    // A line without usage does not change the stats, so it does not re-sum either.
+    appendFileSync(path, `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'more' } })}\n`);
+    expect(await foldedSessionStats(path)).toBe(a);
+    appendFileSync(path, `${JSON.stringify(asst('m-new', 'claude-opus-5', usage(9, 9, 9, 300_000)))}\n`);
+    const c = await foldedSessionStats(path);
+    expect(c).not.toBe(a);
+    expect(c).toEqual(sessionStatsFromText(readFileSync(path, 'utf-8')));
+  });
+});
