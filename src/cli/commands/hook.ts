@@ -43,7 +43,7 @@ import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
-import { bm25Search, loadSkillDocs, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
+import { bm25Search, loadSkillDocs, RECALL_STRONG_SCORE, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
 import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import {
   loadPatternsReporting, matchPatterns, selectForInjection, syncPatternShimsIfStale,
@@ -511,8 +511,8 @@ export const RECALL_INJECT_TOP_K = 5;
 export const RECALL_HAIKU_TOP_K = 3;
 /** Ranks printed in full (path, why, excerpt); ranks beyond it are one line each. */
 export const RECALL_FULL_RENDER_RANKS = 3;
-/** Raw BM25 score a printed hit must reach for the block to be injected (threshold unchanged by K=5). */
-export const RECALL_STRONG_SCORE = 2.0;
+/** Raw BM25 score a printed hit must reach for the block to be injected (lives in lib/recall.ts). */
+export { RECALL_STRONG_SCORE };
 
 /**
  * The injection gate. The window is the printed hits (so K=5 widens it from 3), the threshold is the

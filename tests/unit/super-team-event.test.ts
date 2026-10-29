@@ -200,7 +200,7 @@ describe('the team item in a [super events] batch', () => {
     expect(items).toHaveLength(1);
     const text = superBatchText(root, s, items, 'b-1');
     expect(text).toContain(`- item=${items[0].id} team=team-abc member=doctor event=done awaited=owner status=done`);
-    expect(text).toMatch(/<untrusted-project-output[^>]*>\s*Last line: No errors since midnight\./);
+    expect(text).toMatch(/<untrusted-project-output[^>]*>\s*Answer: No errors since midnight\./);
     expect(text).toMatch(/<untrusted-project-output[^>]*>\s*Brief: Error check/);
     expect(text).toContain(AWAITED_LINE);
     expect(text).toContain(TEAM_LINE);
@@ -405,7 +405,7 @@ describe('a member\'s question stays the member\'s', () => {
     expect(after.team[0].open).toBeUndefined();
     const done = superBatchText(root, after, nextBatch(after, root).items, 'b-3');
     expect(done).toMatch(/event=done awaited=owner/);
-    expect(done).toMatch(/<untrusted-project-output[^>]*>\s*Last line: Published both parts\./);
+    expect(done).toMatch(/<untrusted-project-output[^>]*>\s*Answer: Published both parts\./);
   });
 
   it('a member that left the AI Team can never end its job: one stuck, and the watch stops', async () => {

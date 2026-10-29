@@ -1359,6 +1359,10 @@ export interface Bm25Options {
   aliasGroups?: string[][];
 }
 
+/** Raw BM25 score a printed hit must reach for the prompt hook's block to be injected (threshold
+ *  unchanged by K=5). Here, not in the hook, so lib code (team-roster.ts) reads the same number. */
+export const RECALL_STRONG_SCORE = 2.0;
+
 export function bm25Search(
   query: string,
   corpus: CorpusDoc[],

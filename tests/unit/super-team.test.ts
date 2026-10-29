@@ -53,7 +53,7 @@ import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState } from '../../src/lib/super/store.js';
 import { MAX_TEAM_JOBS, emptySuperState, type SuperState, type SuperTeamJob } from '../../src/lib/super/types.js';
 import { _resetSuperInbox, superQueueHead, superView } from '../../src/lib/super/inbox.js';
-import { teamJobLive } from '../../src/lib/super/team.js';
+import { teamJobAnswer, teamJobLive } from '../../src/lib/super/team.js';
 import { handleSuperVerb } from '../../src/server/routes/super.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { createAutomation, getAutomation, removeAutomation, recordRun, setAutomationEnabled } from '../../src/lib/automations/store.js';
@@ -273,6 +273,30 @@ describe('a team job\'s status, from the member\'s thread', () => {
     rmSync(doc);
     symlinkSync(outside, doc);
     expect(teamJobLive(root, job(), null).lastLine).toBe('');
+  });
+
+  it('the whole answer: the last post first, then the earlier posts after the ask; else the run document', () => {
+    entry(0, { runId: RUN, kind: 'agent', text: 'a post before the ask', via: 'cli' });
+    ask(1);
+    expect(teamJobAnswer(root, job(), null)).toBe('');
+    entry(2, { runId: RUN, kind: 'agent', text: 'Looking at the logs.', via: 'cli' });
+    entry(3, { runId: RUN, kind: 'agent', text: 'Result: 3 errors since midnight.\nAll in checkout.', via: 'cli' });
+    entry(4, { runId: RUN, kind: 'system', event: 'ok', text: 'ok', via: 'runner' });
+    expect(teamJobAnswer(root, job(), null)).toBe('Result: 3 errors since midnight.\nAll in checkout.\n\nLooking at the logs.');
+  });
+
+  it('a run that posted nothing answers with its document; a reply only with its own posts', () => {
+    ask(1);
+    const docDir = join(root, 'automations', 'doctor', 'out');
+    mkdirSync(docDir, { recursive: true });
+    const doc = join(docDir, 'report.md');
+    writeFileSync(doc, '## Funnel\n\nThe pricing step dropped 12%.\n');
+    recordRun(root, 'doctor', {
+      firedAt: RUN, startedAt: RUN, finishedAt: RUN, status: 'ok', durationMs: 1000, outputPath: doc,
+      error: null, exitCode: 0, sessionId: null, costUsd: null, numTurns: null, permissionDenials: 0,
+    });
+    expect(teamJobAnswer(root, job(), null)).toContain('The pricing step dropped 12%.');
+    expect(teamJobAnswer(root, job({ jobKind: 'reply', queued: true }), null)).toBe('');
   });
 
   it('a failed or timed-out run is failed; a live run job answers while it is in memory', () => {
