@@ -46,9 +46,9 @@ vi.mock('../../src/server/automation-job.js', async (orig) => {
   };
 });
 
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
@@ -59,7 +59,10 @@ import { noteTeamJobEnd, teamJobStatus, teamLiveRows } from '../../src/lib/super
 import { TEAM_JOB_WATCH_MS, checkTeamJob, handleSuperVerb } from '../../src/server/routes/super.js';
 import { createQuestion, listQuestions, noteResolution, resolveQuestion } from '../../src/lib/automations/hitl.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
-import { createAutomation } from '../../src/lib/automations/store.js';
+import { createAutomation, getRunTarget, lockPathFor } from '../../src/lib/automations/store.js';
+import { createAgent, createGlobalAgent } from '../../src/lib/agents/store.js';
+import { globalAgentPath, globalAgentsDir, globalProjectDir } from '../../src/lib/agents/scope.js';
+import { checkApproval } from '../../src/lib/automations/registry.js';
 import { appendThreadEntry } from '../../src/lib/automations/threads.js';
 import { superNotepad } from '../../dashboard/src/components/sleepy/super/superHandover.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
@@ -650,6 +653,91 @@ describe('a member\'s question stays the member\'s', () => {
     const look = { live: () => null, titleFor: (sid: string) => `Job ${sid}`, superTitle: 'Super Agent' };
     const waiting = superNotepad(s as Parameters<typeof superNotepad>[0], look).waiting;
     expect(waiting.map((w) => [w.item, w.chip])).toEqual([['q-ask', 'ask'], ['q-child', 'queued']]);
+  });
+});
+
+describe('a GLOBAL agent is a member the watch finds where the say path does', () => {
+  const NOW = new Date('2026-10-21T00:00:00.000Z');
+  const scout = { slug: 'scout', title: 'Scout', prompt: 'You find things out.' };
+  // HOME is this file's own temp folder (vi.hoisted above): never the owner's ~/.dreamcontext.
+  afterEach(() => { rmSync(globalAgentsDir(), { recursive: true, force: true }); });
+
+  async function askMember(member: string, jobId: string): Promise<string> {
+    const ask = appendThreadEntry(root, member, { runId: RUN, kind: 'user', text: 'look around', via: 'super', now: at(1) });
+    say.body = { job: { id: jobId, kind: 'run' }, started: true, runId: RUN, entryId: ask.id };
+    const out = await verb('team-ask', { member, text: 'look around' });
+    expect(out.status).toBe(200);
+    return (out.json.result as { job: string }).job;
+  }
+  /** The run holds its lock, where the runner takes it for this member. */
+  function holdLock(member: string): string {
+    const lock = lockPathFor(root, member);
+    mkdirSync(dirname(lock), { recursive: true });
+    writeFileSync(lock, JSON.stringify({ pid: process.pid, at: Date.now() }));
+    return lock;
+  }
+
+  it('its approval is read from the global bucket, the one the say path and the runner check', () => {
+    createGlobalAgent(scout, { approve: { now: NOW } });
+    const target = getRunTarget(root, 'scout', 'agent')!;
+    expect(target.agentScope).toBe('global');
+    expect(checkApproval(dirname(root), target, undefined, 'run').approved).toBe(true);
+  });
+
+  it('its job runs and reaches the super as done, never gone, never lost: its lock and thread are read from its own folder', async () => {
+    createGlobalAgent(scout, { approve: { now: NOW } });
+    expect(existsSync(globalAgentPath('scout'))).toBe(true);
+    expect(existsSync(join(root, 'agents', 'scout.md')) || existsSync(join(root, 'automations', 'scout.md'))).toBe(false);
+    const job = await askMember('scout', 'aj-global');
+    // The run is in flight: its lock lives under the global agent's folder for this project.
+    const lock = holdLock('scout');
+    expect(lock.startsWith(globalProjectDir('scout', dirname(root)))).toBe(true);
+    for (let i = 0; i < 3; i++) expect(await checkTeamJob(root, job)).toBe(true);
+    expect(await teamItems()).toEqual([]);
+    expect((await stored()).team[0].concluded).toBeUndefined();
+    // It ends: its last entries land in its own thread, the lock goes.
+    appendThreadEntry(root, 'scout', { runId: RUN, kind: 'agent', text: 'Found two leads.', via: 'cli', now: at(2) });
+    appendThreadEntry(root, 'scout', { runId: RUN, kind: 'system', event: 'ok', text: 'ok', via: 'runner', now: at(3) });
+    rmSync(lock);
+    expect(await checkTeamJob(root, job)).toBe(false);
+    expect((await teamItems()).map((q) => [q.kind, q.state])).toEqual([['done', 'pending']]);
+    const after = await stored();
+    expect(after.team[0]).toMatchObject({ told: 'done' });
+    expect(after.team[0].concluded).toBeUndefined();
+    expect(superBatchText(root, after, await teamItems(), 'b-gl')).not.toMatch(/no longer in the AI Team/);
+  });
+
+  it('its question reaches the super as a question, never gone', async () => {
+    createGlobalAgent(scout, { approve: { now: NOW } });
+    const job = await askMember('scout', 'aj-global-q');
+    createQuestion(root, { slug: 'scout', runFiredAt: RUN, kind: 'flow-hitl', sessionId: null, channel: 'chat', question: 'Which market first?', choices: [] });
+    expect(await checkTeamJob(root, job)).toBe(true);
+    expect(await checkTeamJob(root, job)).toBe(true);
+    expect((await teamItems()).map((q) => [q.kind, q.state])).toEqual([['question', 'pending']]);
+    expect((await stored()).team[0].concluded).toBeUndefined();
+  });
+
+  it('a project agent really deleted is still gone on the second tick', async () => {
+    createAgent(root, { slug: 'writer', title: 'Writer', prompt: 'You write.' }, { approve: { now: NOW } });
+    const job = await askMember('writer', 'aj-writer');
+    holdLock('writer');
+    expect(await checkTeamJob(root, job)).toBe(true);
+    rmSync(join(root, 'agents', 'writer.md'));
+    expect(await checkTeamJob(root, job)).toBe(true);
+    expect(await teamItems()).toEqual([]);
+    expect(await checkTeamJob(root, job)).toBe(false);
+    expect((await teamItems()).map((q) => [q.kind, q.state])).toEqual([['stuck', 'pending']]);
+    expect((await stored()).team[0].concluded).toBe('gone');
+  });
+
+  it('a global agent deleted from the machine is gone too', async () => {
+    createGlobalAgent(scout, { approve: { now: NOW } });
+    const job = await askMember('scout', 'aj-global-del');
+    holdLock('scout');
+    rmSync(globalAgentPath('scout'));
+    expect(await checkTeamJob(root, job)).toBe(true);
+    expect(await checkTeamJob(root, job)).toBe(false);
+    expect((await stored()).team[0].concluded).toBe('gone');
   });
 });
 

@@ -20,8 +20,8 @@ import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, noteTeamJobEnd,
 import { collectTeam, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
 import { sayToAgent } from './automations.js';
 import { agentActivity, currentAutomationJob, currentReplyJob, whenReplySettles, whenRunSettles } from '../automation-job.js';
-import { automationPath, getAutomation } from '../../lib/automations/store.js';
-import { agentPath } from '../../lib/agents/store.js';
+import { getAutomation } from '../../lib/automations/store.js';
+import { memberScope } from '../../lib/agents/scope.js';
 import { checkApproval } from '../../lib/automations/registry.js';
 import {
   agendaMissing, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, superOpenBatch,
@@ -2193,10 +2193,11 @@ export async function checkTeamJob(root: string, teamJobId: string): Promise<boo
   const key = `${root}\u0000${teamJobId}`;
   const live = liveSayJob(root, j);
   const end = teamJobEnding(root, j, live);
-  // Two endings only the watch can see, each on a second tick in a row: the member's file is gone
-  // (absent, never merely unreadable), or nothing runs the job and none of its endings was written
+  // Two endings only the watch can see, each on a second tick in a row: the member is gone (the
+  // say path's own resolver finds it neither in the project nor among this machine's global agents;
+  // absent, never merely unreadable), or nothing runs the job and none of its endings was written
   // (its turn lost with the server: no lock held, no say job in memory).
-  const seen = !existsSync(automationPath(root, j.member)) && !existsSync(agentPath(root, j.member)) ? 'gone'
+  const seen = memberScope(root, j.member) === null ? 'gone'
     : end.kind === null && !agentActivity(root, j.member) && !sayJobRuns(live) ? 'lost'
     : null;
   if (seen && suspect.get(key) === seen) {
