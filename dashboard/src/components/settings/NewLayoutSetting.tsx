@@ -5,6 +5,7 @@ import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { MaturityTag } from '../common/MaturityTag';
 import { SettingGroup, SettingRow, Toggle } from './SettingRow';
 import { SaveMark, useInstantSave } from './useInstantSave';
+import './AutoUpdateSetting.css';
 
 /**
  * Settings → This machine → "New layout" (beta): the switch for the Codex-style shell. It is
@@ -32,8 +33,8 @@ export function NewLayoutSetting() {
   };
 
   return (
-    <div data-testid="new-layout-setting">
-      <SettingGroup title={t('shell.newLayout')} badge={<MaturityTag level="beta" />}>
+    <div className="settings-self-update" data-testid="new-layout-setting">
+      <SettingGroup title={t('shell.settings.windowGroup')} badge={<MaturityTag level="beta" />}>
       <SettingRow
         labelled
         title={t('shell.newLayout')}
