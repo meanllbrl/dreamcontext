@@ -48,6 +48,8 @@ export interface FeedLabels {
   divider: (count: number, moreAbove: boolean) => string;
   /** "New conversation · now" / "Continuing · started 12:30". */
   live: string;
+  /** Under a routine run still in flight: Chat's working indicator says it. */
+  working: string;
   end: string;
   loading: string;
   error: string;
@@ -76,6 +78,9 @@ export interface ChatFeed {
   /** A run session's last row (or its boundary) has been on screen. */
   onSeen: (meta: FeedMeta) => void;
   onBoundary: (meta: FeedMeta) => void;
+  /** A card in a routine run's row finished (a command the owner ran): its report goes back
+   *  into THAT run — a reply in its thread, which resumes its session. Absent: not drawn. */
+  onRunReport?: (meta: FeedMeta, text: string) => void;
   onDividerScrolled: () => void;
   /** The reader is at the bottom (true) or scrolled up (false): deferred moves wait for true. */
   onPinned: (pinned: boolean) => void;
@@ -91,6 +96,29 @@ export interface FeedMarks {
   divider: boolean;
   /** The last row of its session (what the read observer watches). */
   last: boolean;
+}
+
+/**
+ * A routine run still in flight: its session's end carries Chat's working indicator, so the
+ * stage says what the team list says ("Working · 1m 30s") instead of ending on a still prompt
+ * above the live "New conversation" line.
+ */
+export function feedRunWorking(meta: FeedMeta, marks: Pick<FeedMarks, 'last'>): boolean {
+  return marks.last && meta.sessionKind === 'run' && meta.status === 'running';
+}
+
+/** Any run in the feed still in flight: the host re-reads the history often until it ends. */
+export function feedHasRunning(items: readonly FeedItem[]): boolean {
+  return items.some((it) => it.feed.sessionKind === 'run' && it.feed.status === 'running');
+}
+
+/**
+ * Is the live conversation's line drawn under the feed? Only once that conversation HAS
+ * something: an empty one is said by the composer's placeholder ("New conversation with …"),
+ * so a finished run is never followed by a line that reads as if something just happened.
+ */
+export function liveDividerShown(o: { loading: boolean; failed: boolean; feedLen: number; liveEmpty: boolean }): boolean {
+  return !o.loading && (o.feedLen > 0 || o.failed) && !o.liveEmpty;
 }
 
 /** Local day start of an instant. */

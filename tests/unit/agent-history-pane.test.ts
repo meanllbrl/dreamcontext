@@ -30,7 +30,7 @@ vi.mock('../../dashboard/src/components/sleepy/chatSession', () => ({
 }));
 
 import { splitWindow, shouldAutoReveal, nextFirstShown, WINDOW_MAX_ENTRIES } from '../../dashboard/src/components/sleepy/chat/chatEntities';
-import { feedMarks, feedShift, stripActionFences } from '../../dashboard/src/components/sleepy/chat/chatFeed';
+import { feedHasRunning, feedMarks, feedRunWorking, feedShift, liveDividerShown, stripActionFences } from '../../dashboard/src/components/sleepy/chat/chatFeed';
 import {
   applyDeferred, dividerFor, mergeFresh, overlaps, prependOlder, readingOrder, toFeedItems, type FeedSession,
 } from '../../dashboard/src/components/aiteam/agentHistory';
@@ -116,6 +116,37 @@ describe('feedMarks', () => {
     const empty = items[items.length - 1];
     expect(empty.feed.empty).toBe(true);
     expect(empty.feed.status).toBe('ok');
+  });
+});
+
+describe('a routine run in flight (the list says Working, so the stage does too)', () => {
+  it('the working row goes under the LAST row of a running run only, never a finished run or a talk', () => {
+    const sessions = [run('daily', 0, 1), run('desk', 60, 2, { status: 'running', durationMs: null }), talk('b', 120)];
+    const items = toFeedItems(sessions);
+    const working = items.map((it, i) => feedRunWorking(it.feed, feedMarks(items, i, null)));
+    expect(working).toEqual([false, false, true, false, false]);
+    expect(feedHasRunning(items)).toBe(true);
+  });
+  it('a running run that has posted nothing yet still says it is working (its placeholder row)', () => {
+    const items = toFeedItems([run('desk', 0, 0, { status: 'running', durationMs: null })]);
+    expect(feedRunWorking(items[0].feed, feedMarks(items, 0, null))).toBe(true);
+  });
+  it('once the run ends, the working row leaves and the fast re-read stops', () => {
+    const items = toFeedItems([run('desk', 0, 2)]);
+    expect(items.some((it, i) => feedRunWorking(it.feed, feedMarks(items, i, null)))).toBe(false);
+    expect(feedHasRunning(items)).toBe(false);
+  });
+});
+
+describe('the live line under the history', () => {
+  it('waits for the live conversation\'s first turn: an empty one is said by the composer', () => {
+    expect(liveDividerShown({ loading: false, failed: false, feedLen: 3, liveEmpty: true })).toBe(false);
+    expect(liveDividerShown({ loading: false, failed: false, feedLen: 3, liveEmpty: false })).toBe(true);
+  });
+  it('never while the history loads, nor with no history at all', () => {
+    expect(liveDividerShown({ loading: true, failed: false, feedLen: 3, liveEmpty: false })).toBe(false);
+    expect(liveDividerShown({ loading: false, failed: false, feedLen: 0, liveEmpty: false })).toBe(false);
+    expect(liveDividerShown({ loading: false, failed: true, feedLen: 0, liveEmpty: false })).toBe(true);
   });
 });
 

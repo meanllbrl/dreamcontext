@@ -28,7 +28,7 @@ import { isQuestOnlyCommand, stepStretches, type StretchProbe } from './chat/too
 import { chatLineage, deriveChatQuest, partyBatches, type Party } from './chat/questModel';
 import { ChatQuestBar } from './chat/ChatQuestBar';
 import { ItemView } from './chat/TranscriptItem';
-import { feedMarks, feedShift, type ChatFeed, type FeedItem } from './chat/chatFeed';
+import { feedMarks, feedRunWorking, feedShift, liveDividerShown, type ChatFeed, type FeedItem } from './chat/chatFeed';
 import { ToolRunCard } from './chat/ToolRunCard';
 import { SurveyCard } from './chat/SurveyCard';
 import { PermissionCard } from './chat/PermissionCard';
@@ -1197,6 +1197,9 @@ export function ChatPane({
   // snap simply waits for the next one — a delay in a memory optimization, not a leak.)
   const [firstShownState, setFirstShownState] = useState(0);
   const feedItems: readonly FeedItem[] = feed?.items ?? NO_FEED;
+  const feedLatest = useRef(feed);
+  feedLatest.current = feed;
+  const runReports = useRef(new Map<string, (text: string) => void>());
   const feedLen = feedItems.length;
   // The feed changed under the window (a page prepended, a live merge, a session moved to the
   // end): the head follows the ROW it pointed at, in this same render, so the mounted rows and
@@ -2331,6 +2334,16 @@ export function ChatPane({
     && (!feed || (feedLen === 0 && !feed.loading && !feed.failed));
 
   // ── The feed segment: an agent's past sessions above this conversation (chatFeed.ts) ──
+  // A run row's card hand-back, one stable function per run (the rows are memoized).
+  const runReportFor = (meta: FeedItem['feed']): ((text: string) => void) | undefined => {
+    if (meta.sessionKind !== 'run' || !feed?.onRunReport) return undefined;
+    let fn = runReports.current.get(meta.sessionKey);
+    if (!fn) {
+      fn = (text: string) => feedLatest.current?.onRunReport?.(feedLatest.current.items.find((x) => x.feed.sessionKey === meta.sessionKey)?.feed ?? meta, text);
+      runReports.current.set(meta.sessionKey, fn);
+    }
+    return fn;
+  };
   const feedNodes: React.ReactNode[] = [];
   if (feed) {
     if (feed.loading) {
@@ -2384,7 +2397,14 @@ export function ChatPane({
       }
       if (!meta.empty) {
         feedNodes.push(
-          <ItemView key={it.id} item={it} onOpenFile={handleOpenFile} onOpenBoard={handleOpenBoard} actor="lead" readOnly />,
+          <ItemView key={it.id} item={it} onOpenFile={handleOpenFile} onOpenBoard={handleOpenBoard} report={runReportFor(meta)} actor="lead" readOnly />,
+        );
+      }
+      if (feedRunWorking(meta, marks)) {
+        feedNodes.push(
+          <div key={`fwork-${meta.sessionKey}`} data-feed-working={meta.sessionKey}>
+            <WorkingIndicator label={feed.labels.working} startedAt={Date.parse(meta.startedAt) || undefined} />
+          </div>,
         );
       }
       // What the read observer watches: a run session's end (its last row, or its boundary).
@@ -2392,7 +2412,9 @@ export function ChatPane({
         feedNodes.push(<div key={`fseen-${meta.sessionKey}`} className="chat-feed-seen" data-feed-seen={meta.sessionKey} aria-hidden />);
       }
     }
-    if (!feed.loading && (feedLen > 0 || feed.failed)) {
+    // A typed draft counts: the owner left something there ("Continuing · started …").
+    const liveEmpty = !session.busy && !conv.draft && conv.history.length === 0 && conv.items.length === 0 && conv.pending.length === 0;
+    if (liveDividerShown({ loading: feed.loading, failed: feed.failed, feedLen, liveEmpty })) {
       feedNodes.push(<div key="feed-live" className="chat-history-divider" data-feed-live aria-hidden>{feed.labels.live}</div>);
     }
   }
