@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useI18n } from '../../context/I18nContext';
 import { NEW_SHELL_BOARD, useIsNewShell } from '../../lib/uxMode';
 import { RoadmapToolbar } from './RoadmapToolbar';
 import { ObjectiveCreateModal } from './ObjectiveCreateModal';
@@ -88,6 +89,7 @@ export function RoadmapBoard({ onNavigate, focus }: RoadmapBoardProps = {}) {
   // The new shell's page frame already draws the card (D11): no second border, and the board
   // fills the frame instead of sizing from the viewport.
   const newShell = useIsNewShell();
+  const { t } = useI18n();
   return (
     <div style={{
       // Respect the app-wide zoom (top-bar "− 100% +"). The roadmap is a pixel-
@@ -104,6 +106,7 @@ export function RoadmapBoard({ onNavigate, focus }: RoadmapBoardProps = {}) {
       ...(newShell ? NEW_SHELL_BOARD : {}),
     }}>
       <RoadmapToolbar
+        pageTitle={newShell ? t('nav.roadmap') : undefined}
         search={search} setSearch={setSearch}
         sortBy={sortBy} setSort={setSort} sortDir={sortDir} toggleSortDir={toggleSortDir}
         layout={layout} setLayout={setLayout}

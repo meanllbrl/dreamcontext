@@ -266,6 +266,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   return (
     <div style={{ height: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', maxHeight: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', display: 'flex', flexDirection: 'column', position: 'relative', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 14, overflow: 'hidden', boxShadow: 'var(--shadow-md)', ...(newShell ? NEW_SHELL_BOARD : {}) }}>
       <BoardViewTabs
+        title={newShell ? t('nav.tasks') : undefined}
         views={s.views}
         activeViewId={s.activeViewId}
         counts={viewCounts}

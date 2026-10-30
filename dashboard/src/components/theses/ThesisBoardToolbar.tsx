@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { PageTitle } from '../layout/PageBar';
 import type { ThesisKind, ThesisStatus } from '../../hooks/useTheses';
 import {
   type ThesisMenuKey, type ThesisSortKey, SORT_LABEL, STATUS_META, KIND_META,
@@ -20,6 +21,8 @@ const rowBtn: CSSProperties = { ...optRow, ...btnReset, width: '100%' };
 export interface ObjectiveFilterOption { slug: string; title: string; count: number }
 
 interface ThesisBoardToolbarProps {
+  /** The new shell (W2-B): the page title at the left of this row. Absent in classic. */
+  pageTitle?: string;
   count: number;
   search: string;
   setSearch: (v: string) => void;
@@ -48,7 +51,7 @@ export function ThesisBoardToolbar({
   count, search, setSearch, statusInc, toggleStatus, statusCounts, kind, setKind,
   objectiveOptions, objective, setObjective, blockedOnly, toggleBlocked,
   sort, setSort, archive, toggleArchive,
-  hasActiveFilters, clearAllFilters, openMenu, setOpenMenu, onCreate,
+  hasActiveFilters, clearAllFilters, openMenu, setOpenMenu, onCreate, pageTitle,
 }: ThesisBoardToolbarProps) {
   const toggle = (m: ThesisMenuKey) => setOpenMenu(openMenu === m ? null : m);
   const [objQuery, setObjQuery] = useState('');
@@ -86,8 +89,10 @@ export function ThesisBoardToolbar({
   }, [objectiveOptions, objQuery]);
 
   return (
-    <div ref={rootRef} style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 16px', background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)', flexWrap: 'wrap' }}>
-      <span style={{ fontFamily: 'var(--font-family-display)', fontWeight: 700, fontSize: 15, color: 'var(--color-text)', letterSpacing: '-0.01em' }}>Hypotheses</span>
+    <div ref={rootRef} data-page-row={pageTitle ? '' : undefined} style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 16px', background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)', flexWrap: pageTitle ? 'nowrap' : 'wrap' }}>
+      {pageTitle
+        ? <PageTitle title={pageTitle} />
+        : <span style={{ fontFamily: 'var(--font-family-display)', fontWeight: 700, fontSize: 15, color: 'var(--color-text)', letterSpacing: '-0.01em' }}>Hypotheses</span>}
       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text-tertiary)' }}>{count}</span>
 
       {/* search — claim text only */}

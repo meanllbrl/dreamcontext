@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useI18n } from '../../context/I18nContext';
 import { NEW_SHELL_BOARD, useIsNewShell } from '../../lib/uxMode';
 import { useTheses, type ThesisKind, type ThesisStatus, type ThesisView } from '../../hooks/useTheses';
 import { useObjectives } from '../../hooks/useObjectives';
@@ -194,6 +195,7 @@ export function ThesisBoard({ initialObjective = null, initialDetailSlug = null 
   // The new shell's page frame already draws the card (D11): no second border, and the board
   // fills the frame instead of sizing from the viewport.
   const newShell = useIsNewShell();
+  const { t } = useI18n();
   return (
     <div style={{
       zoom: 'var(--zoom)',
@@ -204,6 +206,7 @@ export function ThesisBoard({ initialObjective = null, initialDetailSlug = null 
       ...(newShell ? NEW_SHELL_BOARD : {}),
     }}>
       <ThesisBoardToolbar
+        pageTitle={newShell ? t('nav.hypotheses') : undefined}
         count={allTheses.length}
         search={search} setSearch={setSearch}
         statusInc={prefs.statusInc} toggleStatus={toggleStatus} statusCounts={statusCounts}

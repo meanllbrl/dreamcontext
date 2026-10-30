@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query';
 import { VaultProvider, emitInstance, useInstanceEvent, useVault } from './context/VaultContext';
 import { ProjectProvider } from './context/ProjectContext';
@@ -36,6 +36,8 @@ import {
 import type { StartIntent } from './lib/desktop';
 import { useI18n } from './context/I18nContext';
 import { RelationsPage } from './pages/RelationsPage';
+import { PageBar, PageOriginContext, type PageOrigin } from './components/layout/PageBar';
+import { PAGE_LABEL_KEY } from './lib/pageLabels';
 import { DrawerFactsBridge } from './components/layout/newshell/DrawerFactsBridge';
 import { DrawerIntentBridge } from './components/layout/newshell/DrawerIntentBridge';
 import type { DrawerFacts } from './components/layout/newshell/drawerModel';
@@ -371,6 +373,27 @@ function AppLinkBridge({
 
 /** Memoized: its props change on a navigation or a focus request, not when the shell around it
  *  re-renders (a rail fold, the palette), so the open page is left alone then. */
+/** Pages with a title and no toolbar of their own: the new shell gives them a title-only bar
+ *  (W2-B). Pages with a toolbar row put the title in that row themselves. */
+const TITLE_BAR_PAGES: ReadonlySet<Page> = new Set<Page>(['core', 'taxonomy', 'sleep', 'packs', 'announcements', 'about']);
+
+/** The new shell's page header around the router (W2-B): "← Chat" for a page a chat opened,
+ *  and the title-only bar. Classic renders the page alone, exactly as before. */
+function NewShellPage({ nav, children }: { nav: ShellNavigation; children: ReactNode }) {
+  const { t } = useI18n();
+  const { bus } = useVault();
+  const origin = useMemo<PageOrigin>(
+    () => ({ fromChat: nav.origin === 'chat', backToChat: () => openAgentSurface(bus) }),
+    [nav.origin, bus],
+  );
+  return (
+    <PageOriginContext.Provider value={origin}>
+      {TITLE_BAR_PAGES.has(nav.page) && <PageBar flush title={t(PAGE_LABEL_KEY[nav.page])} />}
+      {children}
+    </PageOriginContext.Provider>
+  );
+}
+
 const PageRouter = memo(function PageRouter({
   nav, automationFocus, onAutomationFocusDone, agentsFocus, onAgentsFocusDone,
 }: {
@@ -567,13 +590,25 @@ export function ProjectInstance({
               <Shell sidebarCollapsed={sidebarCollapsed} onToggleSidebar={onToggleSidebar}>
                 {(nav) => (
                   <>
-                    <PageRouter
-                      nav={nav}
-                      automationFocus={automationFocus}
-                      onAutomationFocusDone={clearAutomationFocus}
-                      agentsFocus={agentsFocus}
-                      onAgentsFocusDone={clearAgentsFocus}
-                    />
+                    {newShell ? (
+                      <NewShellPage nav={nav}>
+                        <PageRouter
+                          nav={nav}
+                          automationFocus={automationFocus}
+                          onAutomationFocusDone={clearAutomationFocus}
+                          agentsFocus={agentsFocus}
+                          onAgentsFocusDone={clearAgentsFocus}
+                        />
+                      </NewShellPage>
+                    ) : (
+                      <PageRouter
+                        nav={nav}
+                        automationFocus={automationFocus}
+                        onAutomationFocusDone={clearAutomationFocus}
+                        agentsFocus={agentsFocus}
+                        onAgentsFocusDone={clearAgentsFocus}
+                      />
+                    )}
                     <AgentPageNavBridge nav={nav} />
                     <OpenAgentsBridge nav={nav} onAgentsFocus={focusAgents} />
                     <NavFocusAgentsBridge nav={nav} onAgentsFocus={focusAgents} />

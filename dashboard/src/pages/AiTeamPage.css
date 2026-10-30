@@ -427,3 +427,11 @@ button.aiteam-person:not(:disabled):hover { border-color: var(--color-border-hov
 .aiteam-inbox-title { margin: 0; font-size: var(--font-size-sm); color: var(--color-text); overflow-wrap: anywhere; }
 .aiteam-inbox-detail { margin: 0; font-size: var(--font-size-xs); color: var(--color-text-secondary); overflow-wrap: anywhere; }
 .aiteam-inbox-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+
+/* ── The new shell (W2-B): one bar over both panes ── */
+.aiteam-ns { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.aiteam-ns > .aiteam { flex: 1; height: auto; }
+.aiteam-ns-views { display: flex; gap: 2px; padding: 2px; border-radius: var(--radius-md); background: var(--color-bg-tertiary); }
+.aiteam-ns-view { height: var(--space-7); padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary); font-size: var(--font-size-sm); white-space: nowrap; cursor: pointer; }
+.aiteam-ns-view.is-on { background: var(--color-bg); color: var(--color-text); box-shadow: var(--shadow-sm); }
+.aiteam-ns-view:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }

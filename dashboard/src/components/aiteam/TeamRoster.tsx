@@ -37,7 +37,10 @@ export function TeamRoster({
   pageWidth = 0,
   onWidth,
   onWidthCommit,
+  headless = false,
 }: {
+  /** The new shell (W2-B): the page's bar carries the title, the count and the actions. */
+  headless?: boolean;
   rows: TeamRow[];
   selected: string | null;
   /** The new teammate being written, or null. */
@@ -132,30 +135,32 @@ export function TeamRoster({
           onKeyDown={onHandleKey}
         />
       )}
-      <div className="aiteam-roster-head">
-        <h1 className="aiteam-roster-title">{t('aiteam.title')}</h1>
-        {!empty && (
-          <span className="aiteam-roster-count">
-            {(rows.length === 1 ? t('aiteam.count.one') : t('aiteam.count.many')).replace('{n}', String(rows.length))}
-          </span>
-        )}
-        <span className="aiteam-spacer" />
-        {onOrgChart && !empty && (
-          <button
-            type="button"
-            className="aiteam-iconbtn"
-            onClick={onOrgChart}
-            aria-label={t('aiteam.page.org')}
-            title={t('aiteam.page.org')}
-            data-page-view="org"
-          >
-            <TeamIcon name="tree" size={16} />
+      {!headless && (
+        <div className="aiteam-roster-head">
+          <h1 className="aiteam-roster-title">{t('aiteam.title')}</h1>
+          {!empty && (
+            <span className="aiteam-roster-count">
+              {(rows.length === 1 ? t('aiteam.count.one') : t('aiteam.count.many')).replace('{n}', String(rows.length))}
+            </span>
+          )}
+          <span className="aiteam-spacer" />
+          {onOrgChart && !empty && (
+            <button
+              type="button"
+              className="aiteam-iconbtn"
+              onClick={onOrgChart}
+              aria-label={t('aiteam.page.org')}
+              title={t('aiteam.page.org')}
+              data-page-view="org"
+            >
+              <TeamIcon name="tree" size={16} />
+            </button>
+          )}
+          <button type="button" className="aiteam-newbtn" onClick={onNew}>
+            <TeamIcon name="plus" size={12} /> {t('aiteam.new')}
           </button>
-        )}
-        <button type="button" className="aiteam-newbtn" onClick={onNew}>
-          <TeamIcon name="plus" size={12} /> {t('aiteam.new')}
-        </button>
-      </div>
+        </div>
+      )}
       {top}
       {!empty && (
         <label className="aiteam-search">

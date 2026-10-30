@@ -219,3 +219,6 @@
 /* Phone: a compact header, the version list right under it. */
 body[data-phone] .announcements-header { margin-bottom: var(--space-3); }
 body[data-phone] .announcements-subtitle { display: none; } /* the bar and the title already say it */
+
+/* The new shell's page bar carries the title (W2-B): no second one under it. */
+.project-instance[data-shell="new"] .announcements-header .page-title { display: none; }

@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { useIsNewShell } from '../../lib/uxMode';
+import { PageTitle } from '../layout/PageBar';
 import type { DebateIndexEntry } from '../../hooks/useCouncil';
 import { useI18n } from '../../context/I18nContext';
 import { PersonaAvatar } from './PersonaAvatar';
@@ -50,6 +52,7 @@ function statusLabel(status: string): string {
 
 export function CouncilHall({ debates, onOpen, onNew }: Props) {
   const { t } = useI18n();
+  const newShell = useIsNewShell();
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('all');
 
@@ -67,7 +70,8 @@ export function CouncilHall({ debates, onOpen, onNew }: Props) {
   return (
     <div className="council-hall">
       <CouncilBanner />
-      <div className="council-hall-bar">
+      <div className="council-hall-bar" data-page-row={newShell ? '' : undefined}>
+        {newShell && <PageTitle title={t('nav.council')} />}
         <label className="council-hall-search">
           <span aria-hidden>🔍</span>
           <input

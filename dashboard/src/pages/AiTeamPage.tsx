@@ -18,6 +18,9 @@ import { BrandMark } from '../components/brand/BrandMark';
 import { BrainFileViewer } from '../components/agents/BrainFileViewer';
 import { useVault } from '../context/VaultContext';
 import { useI18n } from '../context/I18nContext';
+import { useIsNewShell } from '../lib/uxMode';
+import { PageBar } from '../components/layout/PageBar';
+import { TeamIcon } from '../components/aiteam/TeamIcons';
 import { useAgents } from '../hooks/useAgents';
 import { useAgentFeed, useAutomationDispatcher, useAutomations } from '../hooks/useAutomations';
 import { nextFireWords } from '../lib/agentDraft';
@@ -60,6 +63,7 @@ export function AiTeamPage({
 } = {}) {
   const { t } = useI18n();
   const { vault } = useVault();
+  const newShell = useIsNewShell();
   const agentsQ = useAgents();
   const automationsQ = useAutomations();
   const { data: feed } = useAgentFeed();
@@ -286,7 +290,7 @@ export function AiTeamPage({
     />
   ) : null;
 
-  return (
+  const page = (
     <div
       ref={setPageEl}
       className={`aiteam${panelShown && !panelOverlay ? ' aiteam--panel' : ''}${narrow ? ' aiteam--narrow' : ''}${org ? ' aiteam--org' : ''}`}
@@ -323,6 +327,7 @@ export function AiTeamPage({
           pageWidth={width}
           onWidth={setRosterWidth}
           onWidthCommit={commitRosterWidth}
+          headless={newShell}
           top={<TeamSyncStrip onToast={setToast} />}
         />
       )}
@@ -418,6 +423,25 @@ export function AiTeamPage({
       {openFile && <BrainFileViewer path={openFile} onClose={() => setOpenFile(null)} onOpenPath={setOpenFile} />}
 
       {toast && <div className="aiteam-toast" role="status" onClick={() => setToast(null)}>{toast}</div>}
+    </div>
+  );
+  if (!newShell) return page;
+  // The new shell (W2-B): one bar over both panes, "AI Team · Conversations/Org chart · ＋".
+  return (
+    <div className="aiteam-ns">
+      <PageBar title={t('nav.aiTeam')}>
+        <div className="aiteam-ns-views" role="tablist" aria-label={t('nav.aiTeam')}>
+          <button type="button" role="tab" aria-selected={!org} className={`aiteam-ns-view${org ? '' : ' is-on'}`}
+            onClick={() => pickPageView('conversations')}>{t('aiteam.page.conversations')}</button>
+          <button type="button" role="tab" aria-selected={org} className={`aiteam-ns-view${org ? ' is-on' : ''}`}
+            onClick={() => { pickPageView('org'); setPanel((p) => (p ? 'team' : p)); }}>{t('aiteam.page.org')}</button>
+        </div>
+        <span className="aiteam-spacer" />
+        <button type="button" className="aiteam-newbtn" onClick={() => startNew()}>
+          <TeamIcon name="plus" size={12} /> {t('aiteam.new')}
+        </button>
+      </PageBar>
+      {page}
     </div>
   );
 }

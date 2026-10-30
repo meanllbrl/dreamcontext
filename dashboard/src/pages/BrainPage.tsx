@@ -1,4 +1,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useI18n } from '../context/I18nContext';
+import { useIsNewShell } from '../lib/uxMode';
+import { PageTitle } from '../components/layout/PageBar';
 import { readIsMobile } from '../hooks/useIsMobile';
 import ForceGraph2D from 'react-force-graph-2d';
 import { lazyWithReload } from '../lib/lazyWithReload';
@@ -116,6 +119,8 @@ function colorForNode(
 }
 
 export function BrainPage({ onNavigate }: BrainPageProps) {
+  const newShell = useIsNewShell();
+  const { t } = useI18n();
   const { data, isLoading, error } = useGraph();
   const queryClient = useQueryClient();
   const { settings, patch, setGroups, reset } = useGraphSettings();
@@ -396,11 +401,18 @@ export function BrainPage({ onNavigate }: BrainPageProps) {
 
   return (
     <div className="brain-page">
-      <header className="brain-header">
-        <h1 className="brain-title">
-          <span className="brain-title-mark">◉</span>
-          Brain
-        </h1>
+      <header className="brain-header" data-page-row={newShell ? '' : undefined}>
+        {newShell ? (
+          <>
+            <PageTitle title={t('nav.brain')} />
+            <span className="brain-title brain-title--sub"><span className="brain-title-mark">◉</span>Brain</span>
+          </>
+        ) : (
+          <h1 className="brain-title">
+            <span className="brain-title-mark">◉</span>
+            Brain
+          </h1>
+        )}
         {data && (
           <span className="brain-stats">
             {filteredData.nodes.length}/{data.nodes.length} nodes · {filteredData.links.length} links
