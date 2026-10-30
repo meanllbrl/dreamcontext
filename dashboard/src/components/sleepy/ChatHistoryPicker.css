@@ -228,3 +228,94 @@
 .chp-foot-toggle:hover { color: var(--color-accent); text-decoration-color: var(--color-accent); }
 .chp-foot-toggle:focus-visible { outline: none; color: var(--color-accent); box-shadow: 0 0 0 3px var(--color-accent-soft); border-radius: var(--radius-sm); }
 .chp-foot-toggle[aria-pressed='true'] { color: var(--color-accent); }
+
+/* ── The new shell's cross-project History (D7): a projects column beside the list ─── */
+
+/* Classic draws no column: the wrapper is not a box there, so its layout is unchanged. */
+.chp-body {
+  display: contents;
+}
+
+.chp-modal--projects .chp-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.chp-projects {
+  flex: none;
+  width: 180px;
+  overflow-y: auto;
+  padding: var(--space-2);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chp-project {
+  flex: none;
+  height: 30px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.chp-project:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.chp-project.is-on {
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+}
+
+.chp-project:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: -2px;
+}
+
+.chp-modal--projects .chp-list {
+  flex: 1 1 auto;
+}
+
+.chp-row-vault {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ≤600: a full-screen sheet; the projects column becomes a strip of chips. */
+@media (max-width: 600px) {
+  .chp-modal--projects {
+    --cmd-modal-top: 0px;
+    --cmd-modal-width: 100vw;
+    --cmd-modal-height: 100dvh;
+  }
+  .chp-modal--projects .chp-body {
+    flex-direction: column;
+  }
+  .chp-modal--projects .chp-projects {
+    width: auto;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .chp-modal--projects .chp-project {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-full, 999px);
+  }
+}

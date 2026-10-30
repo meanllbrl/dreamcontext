@@ -1,0 +1,414 @@
+/* The new shell's chat drawer (W2-A): proto.html `.drawer` (r27), on the app's tokens. It sits
+   between the rail and the instances, so the chat overlay bounded to its instance (D4) starts
+   right of it and never covers it. */
+
+.ns-drawer {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  z-index: 25;
+}
+
+.ns-dr-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-3) var(--space-2) var(--space-5);
+}
+
+.ns-dr-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 34px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.ns-dr-row:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.ns-dr-row:focus-visible,
+.ns-dr-act:focus-visible,
+.ns-drawer-menu-item:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: -2px;
+}
+
+.ns-dr-t {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ns-dr-ico {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--color-text-secondary);
+}
+
+.ns-dr-kbd {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.ns-dr-row:hover .ns-dr-kbd {
+  opacity: 0.8;
+}
+
+.ns-dr-sec {
+  padding: var(--space-5) var(--space-2) var(--space-2);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.02em;
+  color: var(--color-text-tertiary);
+}
+
+/* ── A project row ───────────────────────────────────────────────────────────────── */
+
+.ns-dr-project + .ns-dr-project {
+  margin-top: var(--space-1);
+}
+
+.ns-dr-proj {
+  height: 36px;
+  font-weight: var(--font-weight-semibold);
+}
+
+.ns-dr-pic {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+}
+
+.ns-dr-initial {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+}
+
+.ns-dr-note {
+  flex: none;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  color: var(--color-text-tertiary);
+}
+
+.ns-dr-act {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.ns-dr-act:hover {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+}
+
+.ns-dr-chev {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--color-text-tertiary);
+  opacity: 0;
+  transform: rotate(-90deg);
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.ns-dr-chev.is-open {
+  transform: none;
+}
+
+.ns-dr-proj:hover .ns-dr-act,
+.ns-dr-proj:focus-within .ns-dr-act,
+.ns-dr-proj:hover .ns-dr-chev,
+.ns-dr-proj.is-cur .ns-dr-chev {
+  opacity: 0.8;
+}
+
+/* Touch has no hover: the actions stay visible. */
+@media (hover: none) {
+  .ns-dr-act, .ns-dr-chev { opacity: 0.8; }
+}
+
+.ns-dr-project[data-dragging="true"] {
+  opacity: 0.5;
+}
+
+.ns-dr-project[data-drop-before="true"]::before,
+.ns-dr-drop-end {
+  content: '';
+  display: block;
+  height: 2px;
+  margin: 0 var(--space-2);
+  border-radius: 2px;
+  background: var(--color-accent);
+}
+
+/* ── Rows under a project ─────────────────────────────────────────────────────────── */
+
+.ns-dr-children {
+  padding: var(--space-1) 0 var(--space-1);
+}
+
+.ns-dr-child {
+  height: 32px;
+  margin-left: 19px;
+  width: calc(100% - 19px);
+  padding-left: var(--space-4);
+  font-size: var(--font-size-sm);
+}
+
+/* The tree line on the left of every child row. */
+.ns-dr-child::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -1px;
+  bottom: -1px;
+  width: 1px;
+  background: var(--color-border);
+}
+
+.ns-dr-child .ns-dr-t {
+  color: var(--color-text-secondary);
+}
+
+.ns-dr-child:hover .ns-dr-t {
+  color: var(--color-text);
+}
+
+.ns-dr-super .ns-dr-t {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.ns-dr-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-right: var(--space-1);
+  border-radius: 50%;
+  background: var(--color-success);
+  opacity: 0;
+}
+
+.ns-dr-dot.is-on {
+  opacity: 1;
+}
+
+.ns-dr-status {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-right: var(--space-1);
+  border-radius: 50%;
+  background: var(--color-success);
+}
+
+.ns-dr-status[data-status="needs"] {
+  background: var(--mood-waiting);
+}
+
+.ns-dr-status[data-status="approval"] {
+  background: var(--color-warning);
+}
+
+/* Selected (the chat or stage on screen): a soft wash and an accent tick, no other colour. */
+.ns-dr-row.is-sel {
+  background: var(--color-accent-soft);
+}
+
+.ns-dr-row.is-sel .ns-dr-t {
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+}
+
+.ns-dr-child.is-sel::before {
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  left: -0.5px;
+  border-radius: 2px;
+  background: var(--color-accent);
+}
+
+/* ── Resize: a handle on the edge; while dragging only a guide line moves (D4). ───── */
+
+.ns-dr-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.ns-dr-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.ns-dr-handle:hover::after {
+  left: 2.5px;
+  width: 2px;
+  background: var(--color-accent);
+}
+
+.ns-dr-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--color-accent);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* ── Menus: the project's right-click menu, New chat window's project picker ─────── */
+
+.ns-drawer-menu-head {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.ns-drawer-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ns-drawer-menu-item:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+}
+
+.ns-drawer-menu-item:disabled {
+  color: var(--color-text-tertiary);
+  cursor: default;
+}
+
+.ns-drawer-menu-item kbd {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* ── Narrow windows ──────────────────────────────────────────────────────────────── */
+
+.ns-drawer-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 24;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+/* ≤900: the drawer floats over the page; a pick closes it. */
+.ns-drawer[data-floating="true"] {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--space-13);
+  width: min(300px, calc(100vw - var(--space-16)));
+  box-shadow: var(--shadow-lg);
+}
+
+/* ≤600: it slides from the top, over the page, above the bottom bar. */
+@media (max-width: 600px) {
+  .ns-drawer[data-floating="true"] {
+    left: 0;
+    right: 0;
+    bottom: auto;
+    width: auto;
+    max-height: 72%;
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    animation: ns-drawer-down 0.18s ease-out;
+  }
+}
+
+@keyframes ns-drawer-down {
+  from { transform: translateY(-16px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ns-drawer[data-floating="true"] { animation: none; }
+}
+
+/* The floating drawer and its scrim are placed against the body row. */
+.ns-body {
+  position: relative;
+}

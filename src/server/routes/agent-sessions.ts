@@ -661,6 +661,12 @@ export async function handleAgentSessionsGet(
     return;
   }
   const saved = readSurface(contextRoot, phone);
+  // The new shell's drawer polls a project it has not mounted (D7): counts only, never the
+  // tab bodies or the drafts (up to 1 MB a project), so a poll stays a few bytes.
+  if (new URL(_req.url ?? '/', 'http://x').searchParams.get('summary') === '1') {
+    sendJson(res, 200, rosterSummary(saved, superUnread ? emptySuperState() : superState));
+    return;
+  }
   const body = surfaceBody(saved, (id) => isAutomationBoundSession(id, home) !== null);
   for (const m of body.sessions as SessionRosterEntry[]) {
     const hold = m.sessionId ? superRestoreHold(superState, m.sessionId, parkedSince(m.sessionId) !== null) : null;
@@ -691,6 +697,15 @@ export function desktopSeed(saved: Pick<SavedSurface, 'sessions'>, superState: {
     out.push({ title: m.title, sessionId: m.sessionId, pane: m.pane ?? 0, kind, bypass: m.bypass, ...(m.active ? { active: true as const } : {}) });
   }
   return out;
+}
+
+/** `GET /api/agent/sessions?summary=1`: how many chat windows and tabs the project's saved
+ *  surface holds, and whether its Super Agent is handed over. No titles, no drafts. */
+export interface RosterSummary { windows: number; tabs: number; superOn: boolean }
+
+export function rosterSummary(saved: Pick<SavedSurface, 'sessions'>, superState: { enabled: boolean; session: string | null }): RosterSummary {
+  const tabs = saved.sessions.filter((m) => !(superState.session && m.sessionId === superState.session)).length;
+  return { windows: 1, tabs, superOn: superState.enabled };
 }
 
 /** The GET body (also the 409 body): the surface, each entry with its `bound` flag, and the

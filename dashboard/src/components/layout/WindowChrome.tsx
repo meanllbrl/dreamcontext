@@ -40,6 +40,14 @@ import { TitleBar } from './newshell/TitleBar';
 import type { PickerRow } from './newshell/ProjectPicker';
 import { mergeProjectOrder } from './newshell/projectOrder';
 import { chill, liveInstanceCount, oldestEvictable } from './instanceCeiling';
+import { ChatDrawer } from './newshell/ChatDrawer';
+import {
+  buildDrawerRows, dropInOrder, intentLands, moveInOrder, type DrawerFacts,
+} from './newshell/drawerModel';
+import { useDrawerProjects } from '../../hooks/useDrawerProjects';
+import { useIsNarrowWindow } from '../../hooks/useIsNarrowWindow';
+import { ChatHistoryPicker } from '../sleepy/ChatHistoryPicker';
+import type { DrawerIntent, PendingDrawerIntent } from '../../lib/drawerIntents';
 import './newshell/NewShell.css';
 import './ProjectTabs.css';
 import './Header.css';
@@ -905,11 +913,14 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
 
   // Every registered project, in the owner's order (`projectOrder`), for the picker and ⌘1-9.
   const { data: launcherStatus } = useLauncherStatus(newShell);
+  // Bumped when the drawer reorders: `readLayoutPrefs()` already holds the new order.
+  const [orderRev, setOrderRev] = useState(0);
   const projectOrder = useMemo(() => {
     const names = (launcherStatus?.vaults ?? []).filter((v) => v.exists).map((v) => v.name);
     for (const p of open) if (!names.includes(p.vault)) names.push(p.vault);
     return mergeProjectOrder(readLayoutPrefs().projectOrder, names);
-  }, [launcherStatus, open]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [launcherStatus, open, orderRev]);
   const projectOrderRef = useRef(projectOrder);
   projectOrderRef.current = projectOrder;
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -940,6 +951,111 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
     setDrawerOpen((o) => { writeLayoutPrefs({ drawerOpen: !o }); return !o; });
   }, []);
 
+  /* ── The chat drawer (W2-A): facts up, intents down (D5) ── */
+
+  // What each mounted project publishes; dropped when its instance unmounts.
+  const [drawerFacts, setDrawerFacts] = useState<Record<string, DrawerFacts>>({});
+  const handleDrawerFacts = useCallback((vault: string, facts: DrawerFacts) => {
+    setDrawerFacts((prev) => ({ ...prev, [vault]: facts }));
+  }, []);
+  useEffect(() => {
+    setDrawerFacts((prev) => {
+      const live = new Set(open.filter((p) => !p.cold).map((p) => p.vault));
+      const kept = Object.entries(prev).filter(([v]) => live.has(v));
+      return kept.length === Object.keys(prev).length ? prev : Object.fromEntries(kept);
+    });
+  }, [open]);
+
+  const activeOnChat = !!(activeVault && drawerFacts[activeVault]?.chatOpen);
+  // ≤900 the drawer floats over the page and a pick closes it (without forgetting the setting).
+  const narrow = useIsNarrowWindow(900);
+  const [floatingOpen, setFloatingOpen] = useState(false);
+  useEffect(() => { if (!activeOnChat) setFloatingOpen(false); }, [activeOnChat]);
+  const drawerVisible = newShell && activeOnChat && (narrow ? floatingOpen : drawerOpen);
+  const onDrawerToggle = useCallback(() => {
+    if (narrow) setFloatingOpen((o) => !o);
+    else toggleDrawer();
+  }, [narrow, toggleDrawer]);
+
+  const [drawerExpanded, setDrawerExpanded] = useState<string[]>(() => {
+    const stored = readLayoutPrefs().drawerExpanded;
+    return stored.length ? stored : (initialVault ? [initialVault] : []);
+  });
+  const toggleExpanded = useCallback((name: string) => {
+    setDrawerExpanded((cur) => {
+      const next = cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name];
+      writeLayoutPrefs({ drawerExpanded: next });
+      return next;
+    });
+  }, []);
+  const [drawerWidth, setDrawerWidth] = useState(() => readLayoutPrefs().drawerWidth ?? 280);
+  const resizeDrawer = useCallback((w: number) => {
+    setDrawerWidth(w);
+    writeLayoutPrefs({ drawerWidth: w });
+  }, []);
+  const reorder = useCallback((next: string[]) => {
+    writeLayoutPrefs({ projectOrder: next });
+    setOrderRev((n) => n + 1);
+  }, []);
+
+  const mountedNames = useMemo(() => open.filter((p) => !p.cold).map((p) => p.vault), [open]);
+  const fanout = useDrawerProjects(newShell ? drawerExpanded : [], mountedNames, drawerVisible);
+  const drawerRows = useMemo(() => {
+    if (!newShell) return [];
+    const byName = new Map((launcherStatus?.vaults ?? []).map((v) => [v.name, v] as const));
+    return buildDrawerRows({
+      projects: projectOrder.map((name) => {
+        const held = open.find((p) => p.vault === name);
+        const v = byName.get(name);
+        return {
+          name,
+          logo: !!v?.logo,
+          logoStamp: v?.logoStamp ?? null,
+          mounted: !!held && !held.cold,
+          asleep: !!held?.cold,
+          otherWindow: !held && !!findWindowForVault(name),
+          rollup: held?.rollup ?? null,
+        };
+      }),
+      activeVault,
+      expanded: drawerExpanded,
+      facts: drawerFacts,
+      fanout,
+    });
+  }, [newShell, launcherStatus, projectOrder, open, activeVault, drawerExpanded, drawerFacts, fanout]);
+
+  // The queue (D5): a row's click brings its project forward FIRST, and the intent travels
+  // only when that project is now on screen and mounted (the `landLink` rule).
+  const [pendingDrawerIntents, setPendingDrawerIntents] = useState<Record<string, PendingDrawerIntent>>({});
+  const drawerSeqRef = useRef(0);
+  const queueDrawerIntent = useCallback(async (vault: string, intent: DrawerIntent) => {
+    let result: AddTabResult;
+    if (openRef.current.some((p) => p.vault === vault)) {
+      activate(vault);
+      result = 'focused-tab';
+    } else {
+      result = await addTab(vault);
+    }
+    const tab = openRef.current.find((p) => p.vault === vault);
+    if (!intentLands(result, !!tab && !tab.cold)) return;
+    drawerSeqRef.current += 1;
+    const nonce = drawerSeqRef.current;
+    setPendingDrawerIntents((prev) => ({ ...prev, [vault]: { intent, nonce, at: Date.now() } }));
+  }, [activate, addTab]);
+  const consumeDrawerIntent = useCallback((vault: string, nonce: number) => {
+    setPendingDrawerIntents((prev) => {
+      if (prev[vault]?.nonce !== nonce) return prev;
+      const next = { ...prev };
+      delete next[vault];
+      return next;
+    });
+  }, []);
+
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [newWindowNonce, setNewWindowNonce] = useState(0);
+  const newWindowRef = useRef<() => void>(() => {});
+  newWindowRef.current = () => { if (drawerVisible) setNewWindowNonce((n) => n + 1); };
+
   // ⌘P opens the picker, ⌘1-9 pick the Nth project in the picker's order, ⌘B is the drawer
   // button. `ProjectSwitcher` is not mounted in the new shell, so ⌘P has one owner.
   useEffect(() => {
@@ -959,6 +1075,10 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
       } else if (key === 'b' && !editable) {
         e.preventDefault();
         setDrawerToggleNonce((n) => n + 1);
+      } else if (key === 'n' && !inTerminal) {
+        // ⌘N: New chat window's project picker, while the drawer is on screen.
+        e.preventDefault();
+        newWindowRef.current();
       } else if (/^[1-9]$/.test(e.key) && !inChat) {
         const target = projectOrderRef.current[Number(e.key) - 1];
         if (!target) return;
@@ -1053,8 +1173,32 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
           />
           {/* [rail][drawer (W2)][instances]: each instance starts right of the drawer, so the
               chat overlay bounded to it (D4) never covers the rail or the drawer. */}
-          <div className="ns-body" data-drawer={drawerOpen ? 'open' : 'closed'}>
+          <div className="ns-body" data-drawer={drawerVisible ? 'open' : 'closed'}>
             <div className="ns-rail-slot" ref={setRailSlot} />
+            {drawerVisible && narrow && (
+              <div className="ns-drawer-scrim" onClick={() => setFloatingOpen(false)} aria-hidden="true" />
+            )}
+            {drawerVisible && (
+              <ChatDrawer
+                rows={drawerRows}
+                width={drawerWidth}
+                floating={narrow}
+                onClose={() => setFloatingOpen(false)}
+                onResize={resizeDrawer}
+                onToggleExpanded={toggleExpanded}
+                onIntent={(vault, intent) => void queueDrawerIntent(vault, intent)}
+                onHistory={() => { setHistoryOpen(true); setFloatingOpen(false); }}
+                onRelations={() => { if (activeVault) void queueDrawerIntent(activeVault, { kind: 'page', page: 'relations' }); setFloatingOpen(false); }}
+                onMove={(name, delta) => reorder(moveInOrder(projectOrder, name, delta))}
+                onDrop={(name, before) => reorder(dropInOrder(projectOrder, name, before))}
+                onOpenInWindow={(name) => {
+                  if (openRef.current.some((p) => p.vault === name)) void detachToWindow(name);
+                  else void openVaultWindow(name).catch((err) => notify(`Couldn't open a window for ${name}: ${err instanceof Error ? err.message : String(err)}`));
+                }}
+                onCloseProject={(name) => closeTab(name)}
+                newWindowNonce={newWindowNonce}
+              />
+            )}
             <div className="window-chrome-body">
               {open.filter((p) => !p.cold).map((p) => (
                 <ProjectInstance
@@ -1070,12 +1214,25 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
                   pendingStart={pendingStarts[p.vault] ?? null}
                   onStartConsumed={consumeStart}
                   drawerToggleNonce={drawerToggleNonce}
-                  drawerVisible={false}
-                  onDrawerToggle={toggleDrawer}
+                  drawerVisible={drawerVisible}
+                  onDrawerToggle={onDrawerToggle}
+                  onDrawerFacts={handleDrawerFacts}
+                  pendingDrawerIntent={pendingDrawerIntents[p.vault] ?? null}
+                  onDrawerIntentConsumed={consumeDrawerIntent}
                 />
               ))}
             </div>
           </div>
+          {/* History across projects (D7): a pick reopens the chat in ITS OWN project. */}
+          <ChatHistoryPicker
+            open={historyOpen}
+            onClose={() => setHistoryOpen(false)}
+            onPick={() => setHistoryOpen(false)}
+            openIds={[]}
+            projects={projectOrder}
+            currentVault={activeVault}
+            onPickIn={(vault, s) => { setHistoryOpen(false); void queueDrawerIntent(vault, { kind: 'open-session', sessionId: s.id }); }}
+          />
         </div>
         </ChromeSlotsProvider>
       </ChromeContext.Provider>

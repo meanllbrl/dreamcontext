@@ -102,6 +102,10 @@ import { readSuperStateView, type SuperDigestWire, type SuperStateView } from '.
 import { PhoneAgenda, phoneEventContext } from './super/PhoneAgenda';
 import { holdSidebarCollapsed as holdClassicSidebar } from '../../hooks/useSidebarCollapse';
 import { readShellModeFrozen } from '../../lib/uxMode';
+import { DRAWER_INTENT_EVENT, DRAWER_SURFACE_EVENT, type DrawerIntent, type DrawerSurfaceState } from '../../lib/drawerIntents';
+import { planSuperRow, runSuperRow, SUPER_ROW_SPAWN } from './super/superRow';
+/** The new shell opens its first project on Chat once per window (6b), not on every switch. */
+let openedOnRestoreThisWindow = false;
 /** The hand-over folds the classic sidebar; the new shell has none to fold (D4), so it never
  *  holds one. The shell is frozen per window, so this reads one settled answer. */
 function holdSidebarCollapsed(instanceId: string, on: boolean): void {
@@ -1407,7 +1411,7 @@ export function AgentSurface() {
           if (cleanRestore && focusAt >= 0) setActivePaneId(built[focusAt].id);
         }
       } catch { /* no saved roster (or non-desktop 403) — just start fresh */ }
-      finally { if (!cancelled) { hydratedRef.current = true; } }
+      finally { if (!cancelled) { hydratedRef.current = true; openOnRestoreRef.current(); } }
     })();
     return () => { cancelled = true; };
   }, [caps, settingsReady, agentSettings.restoreTabs, agentSettings.chatView, scopedApi, rehydrateNonce]);
@@ -1611,13 +1615,17 @@ export function AgentSurface() {
   // Spawn a fresh session AND append its roster entry — the two steps every "new session"
   // path shares. Callers keep only their pane placement, so the roster-entry shape lives in
   // ONE place (adding a field like `kind` can't drift between add-tab and add-split).
-  const spawnAndRegister = useCallback((kind: SessionKind) => {
+  const spawnAndRegister = useCallback((kind: SessionKind, launch?: { bypass: boolean; explicitBypass: true }) => {
     // A new agent inherits the user's CLI defaults (model/effort from ~/.claude/settings.json);
     // the picker then reflects and can change them per agent. Nothing is forced at launch.
     // A new CHAT starts in Basic — there is deliberately no remembered mode default (the mode
     // menu has no "Set as default"), so `s.mode` is whatever `spawn` defaulted to and the
     // roster records the session's own answer rather than a second copy of the constant.
-    const s = spawn(bypass, undefined, false, kind);
+    // `launch` is the documented exemption (the drawer's Super Agent row, D6): that exact mode,
+    // never the remembered one, and the remembered one is left as it is.
+    const s = launch
+      ? spawn(launch.bypass, undefined, false, kind, '', '', true, '', false, '', true)
+      : spawn(bypass, undefined, false, kind);
     setSessionList((prev) => [...prev, {
       id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId,
       ...(s.kind === 'chat' ? { mode: (s as ChatSession).mode } : {}),
@@ -1627,8 +1635,8 @@ export function AgentSurface() {
 
   // Add a session as a TAB of the action-focused pane (⌘T / ＋ for an agent, ⌃` / menu for
   // a shell), or as the first pane.
-  const addSession = useCallback((kind: SessionKind = 'agent') => {
-    const s = spawnAndRegister(kind);
+  const addSession = useCallback((kind: SessionKind = 'agent', launch?: { bypass: boolean; explicitBypass: true }): string => {
+    const s = spawnAndRegister(kind, launch);
     if (panes.length === 0) {
       const pid = nextPaneId();
       setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
@@ -1638,6 +1646,7 @@ export function AgentSurface() {
       setPanes((prev) => prev.map((p) => (p.id === apid ? { ...p, tabs: [...p.tabs, s.id], active: s.id } : p)));
       setActivePaneId(apid);
     }
+    return s.id;
   }, [spawnAndRegister, panes, activePaneId]);
 
   // Spawn a fresh session into a NEW pane beside the focused one (⌘D agent / ⌘⇧D terminal) → side-by-side.
@@ -4724,6 +4733,9 @@ export function AgentSurface() {
       // The composer's popover menus portal to <body> (outside .agent-composer), so a
       // focused skill chip / model row must also own Esc — close the menu, not the overlay.
       if (ae?.closest('.agent-composer-menu')) return;
+      // The new shell: Chat is a page, not an overlay over one, so Esc never leaves it (D4).
+      // Every in-chat use above (menus, Inspect, a drag) still owns Esc first.
+      if (readShellModeFrozen() === 'new') return;
       e.preventDefault();
       setExpanded(false);
     };
@@ -4837,6 +4849,83 @@ export function AgentSurface() {
   // …and tell the rail whether the overlay is up, so Chat reads as the current place (not the
   // page hidden underneath it).
   useEffect(() => { emitInstance<boolean>(bus, AGENT_SURFACE_EXPANDED_EVENT, expanded); }, [bus, expanded]);
+
+  // ── The new shell's chat drawer (W2-A, D5/D6) ────────────────────────────────────
+  // Facts up: whether this project's Super Agent is handed over and on screen. The instance's
+  // `DrawerFactsBridge` adds the team rows and hands the lot to the window's drawer.
+  const superOn = !!superState?.enabled;
+  const superSelected = expanded && handedOver;
+  useEffect(() => {
+    emitInstance<DrawerSurfaceState>(bus, DRAWER_SURFACE_EVENT, { superOn, superSelected });
+  }, [bus, superOn, superSelected]);
+
+  // A tab the Super Agent row just started: the hand-over waits until the roster it reads
+  // holds it (the ref is set on the render that commits it).
+  const registeredWaitersRef = useRef(new Map<string, () => void>());
+  useEffect(() => {
+    for (const [id, resolve] of registeredWaitersRef.current) {
+      if (sessionList.some((m) => m.id === id)) { registeredWaitersRef.current.delete(id); resolve(); }
+    }
+  }, [sessionList]);
+
+  // Commands down: the window queued an intent for this project. It is held until this surface
+  // knows its tabs and its Super record (a project the click just mounted is still restoring):
+  // read early, an empty roster would make the Super row start a chat the project did not need.
+  const [drawerIntent, setDrawerIntent] = useState<{ intent: DrawerIntent; since: number } | null>(null);
+  const [drawerWait, setDrawerWait] = useState(0);
+  useInstanceEvent<DrawerIntent>(DRAWER_INTENT_EVENT, (intent) => {
+    if (intent) setDrawerIntent({ intent, since: Date.now() });
+  });
+  useEffect(() => {
+    if (!drawerIntent) return undefined;
+    const ready = caps !== null && settingsReady && hydratedRef.current && superKnownRef.current;
+    if (!ready && Date.now() - drawerIntent.since < LINKED_SESSION_WAIT_MS) {
+      const timer = window.setTimeout(() => setDrawerWait((n) => n + 1), LINKED_SESSION_POLL_MS);
+      return () => window.clearTimeout(timer);
+    }
+    setDrawerIntent(null);
+    runDrawerIntentRef.current(drawerIntent.intent);
+    return undefined;
+  }, [drawerIntent, drawerWait, caps, settingsReady]);
+  const runDrawerIntentRef = useRef<(intent: DrawerIntent) => void>(() => {});
+  runDrawerIntentRef.current = (intent) => {
+    if (!caps?.desktop || !agentSettings.enabled) { setExpanded(true); return; }
+    if (intent.kind === 'open-window') {
+      setSuperView('panes');
+      setExpanded(true);
+    } else if (intent.kind === 'new-tab') {
+      if (!canSpawn) { setExpanded(true); return; }
+      setSuperView('panes');
+      addSession(claudeKind);
+      setExpanded(true);
+    } else if (intent.kind === 'super') {
+      setExpanded(true);
+      const plan = planSuperRow({
+        enabled: !!superStateRef.current?.enabled,
+        hasChat: sessionListRef.current.some((m) => !m.dormant && (m.kind ?? 'agent') !== 'shell'),
+        canSpawn,
+      });
+      void runSuperRow(plan, {
+        showStage: () => setSuperView('super'),
+        handOver,
+        spawnChat: () => addSession(SUPER_ROW_SPAWN.kind, { bypass: SUPER_ROW_SPAWN.bypass, explicitBypass: SUPER_ROW_SPAWN.explicitBypass }),
+        whenRegistered: (id) => new Promise<void>((resolve) => {
+          if (sessionListRef.current.some((m) => m.id === id)) { resolve(); return; }
+          registeredWaitersRef.current.set(id, resolve);
+        }),
+      });
+    }
+  };
+
+  // Open on the last chat (6b): in the new shell the window's first project opens on Chat, on
+  // its last-focused tab, once its tabs are restored. Once per window, never on a later switch.
+  const openOnRestoreRef = useRef<() => void>(() => {});
+  openOnRestoreRef.current = () => {
+    if (openedOnRestoreThisWindow || readShellModeFrozen() !== 'new') return;
+    if (!isActive || isMobile || !caps?.desktop || !agentSettings.enabled) return;
+    openedOnRestoreThisWindow = true;
+    setExpanded(true);
+  };
 
   // ── "＋ New ▾" dropdown: close on outside-click or Esc ────────────────────────
   // The menu is opened by clicking the caret and stays open (no hover-close). A

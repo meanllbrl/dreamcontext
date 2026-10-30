@@ -36,6 +36,10 @@ import {
 import type { StartIntent } from './lib/desktop';
 import { useI18n } from './context/I18nContext';
 import { RelationsPage } from './pages/RelationsPage';
+import { DrawerFactsBridge } from './components/layout/newshell/DrawerFactsBridge';
+import { DrawerIntentBridge } from './components/layout/newshell/DrawerIntentBridge';
+import type { DrawerFacts } from './components/layout/newshell/drawerModel';
+import { DRAWER_PAGE_EVENT, type PendingDrawerIntent } from './lib/drawerIntents';
 import { TOGGLE_PAGE_DRAWER_EVENT, useIsNewShell } from './lib/uxMode';
 import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from './lib/agentSettings';
 import './ProjectInstance.css';
@@ -120,6 +124,19 @@ function PageDrawerToggleBridge({ page, nonce, onDrawerToggle }: { page: Page; n
     else if (page === 'whiteboards') emitInstance(bus, TOGGLE_PAGE_DRAWER_EVENT, null);
     else openAgentSurface(bus);
   }, [nonce, isActive, chatOpen, page, bus, onDrawerToggle]);
+  return null;
+}
+
+/**
+ * The drawer's page rows (Project Relations, an AI Team member) as a navigation of THIS
+ * project's Shell. Navigating collapses the chat, as any rail page does. Renders nothing.
+ */
+function DrawerPageBridge({ nav }: { nav: ShellNavigation }) {
+  useInstanceEvent<{ page?: unknown; id?: unknown }>(DRAWER_PAGE_EVENT, (detail) => {
+    const page = detail?.page;
+    if (page !== 'relations' && page !== 'automations') return;
+    nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null, 'other');
+  });
   return null;
 }
 
@@ -463,11 +480,17 @@ export interface ProjectInstanceProps {
   drawerVisible?: boolean;
   /** New shell: the drawer button meant the chat drawer itself. */
   onDrawerToggle?: () => void;
+  /** New shell: this project's drawer facts, for the window's drawer (D5). */
+  onDrawerFacts?: (vault: string, facts: DrawerFacts) => void;
+  /** New shell: a drawer intent queued for this project (D5). */
+  pendingDrawerIntent?: PendingDrawerIntent | null;
+  onDrawerIntentConsumed?: (vault: string, nonce: number) => void;
 }
 
 export function ProjectInstance({
   vault, instanceId, isActive, sidebarCollapsed, onToggleSidebar, onRollup, pendingLink = null, onLinkConsumed,
   pendingStart = null, onStartConsumed, drawerToggleNonce = 0, onDrawerToggle,
+  drawerVisible = false, onDrawerFacts, pendingDrawerIntent = null, onDrawerIntentConsumed,
 }: ProjectInstanceProps) {
   const newShell = useIsNewShell();
   /*
@@ -564,6 +587,7 @@ export function ProjectInstance({
                     />
                     <StartIntentBridge start={pendingStart} onConsumed={consumeStart} />
                     {newShell && <PageDrawerToggleBridge page={nav.page} nonce={drawerToggleNonce} onDrawerToggle={onDrawerToggle} />}
+                    {newShell && <DrawerPageBridge nav={nav} />}
                     {!suppressAnnouncements && (
                       <AnnouncementsModal onOpenPage={(id) => nav.navigate('announcements', id ?? null)} />
                     )}
@@ -577,10 +601,14 @@ export function ProjectInstance({
                   project that had already said what it was doing: its badge would sit blank
                   until the next status flip, and the ceiling would refuse to evict it. */}
               <RollupBridge vault={vault} onRollup={onRollup} />
+              {/* The new shell's drawer facts: before `AgentSurface` for the same reason. */}
+              {newShell && <DrawerFactsBridge vault={vault} drawerVisible={drawerVisible} onFacts={onDrawerFacts} />}
               {/* Mounted OUTSIDE Shell, exactly as it was at the app root: the agent floater
                   keeps its PTY/scrollback alive across navigation and collapse/expand, which
                   only holds while it is not remounted by the page switch. */}
               <AgentSurface />
+              {/* AFTER the surface: an intent rung before it subscribed would be lost. */}
+              {newShell && <DrawerIntentBridge pending={pendingDrawerIntent} onConsumed={onDrawerIntentConsumed} />}
             </I18nProvider>
           </ProjectProvider>
         </VaultProvider>
