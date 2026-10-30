@@ -314,6 +314,43 @@ export function registerParkable(p: Parkable): () => void {
   };
 }
 
+/** A Claude terminal counts as working only with a sign of life this recent: its TUI redraws
+ *  (PTY output) the whole time a turn runs, and a sub-agent writes its transcript. */
+export const TERMINAL_WORKING_RECENT_MS = 60_000;
+
+/**
+ * How many live tabs are doing work a whole-app relaunch would cut off: a turn running, a
+ * question waiting for the owner, or background shells/agents. Read from each process (the
+ * same answers the park sweep trusts), never from a flag the window keeps — the update
+ * banner asks before a Relaunch click on this (UpgradeRelaunchBanner.tsx). A chat probe that throws
+ * counts as working: an unknown chat is not one we may kill.
+ *
+ * A TERMINAL's hook state alone cannot hold it: it reads "not ready" before the first prompt,
+ * after an Esc (no Stop hook fires) and in a hook-less vault, forever. So it also needs a
+ * recent sign of life — PTY output, or a write to its (sub-agent) transcript.
+ */
+export function countWorkingAgents(
+  list: Iterable<Parkable> = parkables.values(),
+  now: number = Date.now(),
+  activity: (p: Parkable) => TranscriptActivity = (p) => transcriptActivity(p.transcriptPath?.() ?? null),
+): number {
+  let n = 0;
+  for (const p of list) {
+    try {
+      if (p.kind === 'terminal') {
+        if (!p.busy()) continue;
+        const last = Math.max(p.idleSince(), activity(p).at);
+        if (now - last < TERMINAL_WORKING_RECENT_MS) n++;
+        continue;
+      }
+      if (p.busy() || p.asking() || p.backgroundTasks() > 0) n++;
+    } catch {
+      n++;
+    }
+  }
+  return n;
+}
+
 /** Tabs parked (dormant, not ended) since their process last registered: `super state` says
  *  `parked` for them instead of `gone`, and a relaunch does not resume a parked super child
  *  (lib/super/restore.ts). Mirrored to `~/.dreamcontext/parked-tabs.json` so a restart keeps it. */
