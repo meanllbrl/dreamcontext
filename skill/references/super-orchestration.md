@@ -59,10 +59,19 @@ ask each of those one at a time. ONE open at a time, the rest keeps running. A c
 lives in the card, never only as a question at the end of your text (it slips by unseen); the text
 says in one line that a question waits.
 
+**Information he must read is a report card, never a question** (2026-10-30: a 7-item plan in a
+preview was cut off in a half-width tile, "okuyamıyorum"). Write it as a page
+(`_dream_context/tmp/super/<topic>.html`, the `dc-` kit), `super open web <path> --title "<name>"`,
+then `super ask … --show <its card>`: the question is the decision in one short line, his card
+reads "To read: <name> →" and brings the report into view, and the report stays on the stage
+after his answer (close it once it is stale). A `preview` is only a look at an option: a mockup,
+a picture.
+
 **A start or approve question carries what he says yes to** ("plan ready, start?" alone made
-him ask for the plan, 2026-10-29): the yes option's `preview` holds the problem in one sentence,
-3-6 short bullets of what will be done, his decisions, cost or risk in money (never time); your
-text gives the same summary, past 2-4 sentences. Without it the card still goes, with a `warning`.
+him ask for the plan, 2026-10-29): its report card holds the problem in one sentence, 3-6 short
+bullets of what will be done, his decisions, cost or risk in money (never time); your text gives
+the same summary, past 2-4 sentences. With no report card shown, or a preview that is a text to
+read, the card still goes, with a `warning`.
 
 Ask only for:
 - **An outward or irreversible step:** push, publish, release, `npm publish`, deleting data, spending

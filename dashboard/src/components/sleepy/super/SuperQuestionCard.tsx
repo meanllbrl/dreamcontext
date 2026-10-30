@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useState } from 'react';
 import type { SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession, PendingQuestion } from '../chatSession';
-import { SurveyCard, SurveyReceipt, type SurveyHost } from '../chat/SurveyCard';
+import { SurveyCard, SurveyReceipt, type SurveyHost, type SurveyRead } from '../chat/SurveyCard';
 import { useSuperQuestions, type SuperRemoteQuestions } from './superJobsStore';
 import { surveyDraftKey } from '../chat/surveyDrafts';
 import {
@@ -39,15 +39,18 @@ export function SuperQuestionCard({ ask, session }: {
       superSession={view.superSession ?? session}
       child={item.kind === 'question' ? view.sessionFor(item.sessionId) : undefined}
       remote={view.remote}
+      reads={item.kind === 'ask' ? view.readsOf?.(item) : undefined}
     />
   );
 }
 
-function OpenQuestion({ item, superSession, child, remote }: {
+function OpenQuestion({ item, superSession, child, remote, reads }: {
   item: SuperQueueItem;
   superSession: ChatSession;
   child: ChatSession | undefined;
   remote?: SuperRemoteQuestions;
+  /** Its report cards on the stage ("To read: <card> →"). */
+  reads?: SurveyRead[];
 }) {
   // A child's pending question is what its card is: follow it.
   const [, force] = useReducer((n: number) => n + 1, 0);
@@ -114,7 +117,7 @@ function OpenQuestion({ item, superSession, child, remote }: {
     answerQuestion: (_requestId, questions, picked, notes) => { send(superAnswerText(item, questions, picked, notes)); return true; },
     answer: (_requestId, opts) => { send(superUnclearText(item, opts.message ?? '')); return true; },
   };
-  return wrap(<SurveyCard key={`${item.id}:${attempt}`} item={pending} session={host} />);
+  return wrap(<SurveyCard key={`${item.id}:${attempt}`} item={pending} session={host} reads={reads} />);
 }
 
 /**

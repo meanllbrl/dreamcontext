@@ -914,7 +914,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
               remote={!!remote}
               agenda={c.kind === 'agenda' ? renderAgenda : undefined}
               // One big page (spotlight, review's site, a filmstrip's big card): at a desktop width.
-              desktopViewport={(plan.layout === 'spotlight' || plan.layout === 'review' || plan.layout === 'filmstrip') && cp.where === 'present'}
+              // A report in the brain is a document, not a site: scaled down it read at 10 px.
+              desktopViewport={(plan.layout === 'spotlight' || plan.layout === 'review' || plan.layout === 'filmstrip') && cp.where === 'present' && !c.ref.startsWith('_dream_context/')}
               onSelectThumb={setSelected}
               {...actions}
             />

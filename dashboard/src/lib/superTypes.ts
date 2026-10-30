@@ -386,6 +386,9 @@ export interface SuperQueueItem {
   /** A child's question shown to the owner from birth: his bar opens the child's chat, where its
    *  own card answers it (MIRROR of src/lib/super/types.ts `SuperQueueItem.direct`). */
   direct?: true;
+  /** A Super `ask`'s report cards, read to answer it: his card points at them (MIRROR of
+   *  src/lib/super/types.ts `SuperQueueItem.read`). */
+  read?: string[];
 }
 
 /** What an `owner` item waits on (MIRROR of src/lib/super/owner-wait.ts `OWNER_WAIT_KINDS`). */

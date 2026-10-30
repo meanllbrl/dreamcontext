@@ -6,7 +6,7 @@ import { isPhoneSocket } from '../phone-origin.js';
 import { isReservedId, readSuperState } from '../../lib/super/store.js';
 import { directQuestion, superSanitizeOpts, superVaultName, writeSuper } from '../../lib/super/inbox.js';
 import { askSpecFromLegacy, type SuperAskSpec, type SuperQueueItem, type SuperState } from '../../lib/super/types.js';
-import { getChat, type RegistryQuestion } from '../../lib/assistant/chat-registry.js';
+import { getChat, pendingRequest, type RegistryQuestion } from '../../lib/assistant/chat-registry.js';
 import { sendSuperCommand, superTokenOfSession } from '../../lib/window-control.js';
 
 /**
@@ -61,9 +61,8 @@ function ownChild(state: Pick<SuperState, 'children'>, vault: string, item: Supe
 /** The child's AskUserQuestion behind an escalated question, while it still asks exactly that. */
 function childQuestions(item: SuperQueueItem): RegistryQuestion[] | null {
   const chat = getChat(item.sessionId);
-  const pq = chat?.pendingQuestion;
+  const pq = pendingRequest(chat, item.requestId);
   if (!chat || chat.status !== 'asking' || !pq || pq.isPermission || pq.toolName !== 'AskUserQuestion') return null;
-  if (!item.requestId || pq.requestId !== item.requestId) return null;
   return pq.questions ?? null;
 }
 
@@ -72,8 +71,7 @@ export function phoneSuperQuestions(state: Pick<SuperState, 'enabled' | 'session
   const qs = childQuestions(item);
   if (qs) return qs;
   // Still asking it, only too large to carry: the words only. Not asking it: nothing to answer.
-  const pq = getChat(item.sessionId)?.pendingQuestion;
-  return pq && pq.requestId === item.requestId ? null : 'gone';
+  return pendingRequest(getChat(item.sessionId), item.requestId) ? null : 'gone';
 }): PhoneSuperQuestions {
   if (!state.enabled || !state.session) return { session: null, questions: [] };
   const open = state.queue
@@ -115,8 +113,7 @@ export async function handleSuperPhoneQuestions(req: IncomingMessage, res: Serve
     if (!ownChild(state, vault, item)) return 'gone';
     const qs = childQuestions(item);
     if (qs) return qs;
-    const pq = getChat(item.sessionId)?.pendingQuestion;
-    return pq && pq.requestId === item.requestId ? null : 'gone';
+    return pendingRequest(getChat(item.sessionId), item.requestId) ? null : 'gone';
   }));
 }
 

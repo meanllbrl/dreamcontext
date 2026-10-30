@@ -93,8 +93,9 @@ describe('super-orchestration guide: shape', () => {
   // +200 (2026-10-29): pictures shown as a result open with `--present`; landscape pictures a filmstrip (measured 19,769).
   // +400 (2026-10-29): a start or approve question carries its summary in the yes option's preview.
   // +700 (2026-10-29): the AI Team: §1's team check, §4's team in the prompt, a member's job's real event (measured 20,446).
-  it('is at most 20,900 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(20_900);
+  // +600 (2026-10-30): what he must read is a report card, the question only the decision (measured 21,451).
+  it('is at most 21,500 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(21_500);
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {

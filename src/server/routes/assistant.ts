@@ -14,7 +14,7 @@ import {
 import { checkAssistantToken, isTainted, markTainted } from '../../lib/assistant/session-state.js';
 import { decide, wrapUntrusted, type AssistantVerb } from '../../lib/assistant/autonomy.js';
 import { abandonProposal, createProposal, listProposals, resolveProposal } from '../../lib/assistant/proposals.js';
-import { getChat, listChats, watchChat, activityOf, chatTopic, CHAT_STATUSES, type ChatEntry, type ChatStatus, type WatchUntil } from '../../lib/assistant/chat-registry.js';
+import { getChat, listChats, pendingRequest, watchChat, activityOf, chatTopic, CHAT_STATUSES, type ChatEntry, type ChatStatus, type WatchUntil } from '../../lib/assistant/chat-registry.js';
 import { collectRoster } from '../../lib/assistant/roster.js';
 import { broadcast, type BroadcastRow } from '../../lib/assistant/broadcast.js';
 import { AvatarError, findAvatar, writeAvatar, AVATAR_MAX_BYTES } from '../../lib/assistant/avatar.js';
@@ -779,8 +779,8 @@ function superGlanceRows(clip: (s: string) => string): Array<Record<string, unkn
   for (const { vault, item } of superAttentionRows()) {
     const c = getChat(item.sessionId);
     if (item.kind === 'permission') {
-      const pq = c?.pendingQuestion;
-      if (!c || !pq || !pq.isPermission || pq.requestId !== item.requestId) continue;
+      const pq = pendingRequest(c, item.requestId);
+      if (!c || !pq || !pq.isPermission) continue;
       rows.push({
         sessionId: c.sessionId, vault, activity: 'asking', since: c.updatedAt, super: true,
         title: c.title ? wrapUntrusted(vault, clip(c.title)) : '',
@@ -952,7 +952,7 @@ export async function handleAssistantOwnerAnswer(req: IncomingMessage, res: Serv
   const chat = getChat(sessionId);
   if (!chat) { sendError(res, 404, 'unknown_session', `No live chat "${sessionId}".`); return; }
   // Only the prompt the registry still shows: a stale row must not answer a newer one.
-  if (chat.pendingQuestion?.requestId !== question) { sendError(res, 409, 'not_waiting', 'that prompt is no longer waiting'); return; }
+  if (!pendingRequest(chat, question)) { sendError(res, 409, 'not_waiting', 'that prompt is no longer waiting'); return; }
   // `by: 'owner'` is what lets the window answer a chat the Assistant may not touch (the Super
   // Agent and, handed over, its children): only this owner-gated route sets it, `pickUiArgs`
   // never passes it through, and the window claims the args from the server, never the doorbell.

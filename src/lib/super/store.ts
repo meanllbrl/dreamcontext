@@ -6,7 +6,7 @@ import {
   AGENDA_REF, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
-  ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, viewWithout,
+  ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, viewWithout,
   type AskShow, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
 import { parseJob, promptHash } from './jobs.js';
@@ -297,6 +297,10 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     // A team job's ending names its job; only an ending kind does.
     const team = (q.kind === 'done' || q.kind === 'stuck' || q.kind === 'question') && typeof q.team === 'string' && TEAM_JOB_ID_RE.test(q.team) ? q.team : undefined;
     const count = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v > 0 ? Math.min(v, 9) : 0);
+    // An ask's report cards, while it is open (nothing points at them after his answer).
+    const read = isAsk && q.state !== 'done' && Array.isArray(q.read)
+      ? [...new Set(q.read.filter((r): r is string => typeof r === 'string' && CONTAINER_ID_RE.test(r)))].slice(0, MAX_ASK_READS)
+      : [];
     ids.add(q.id);
     out.push({
       id: q.id, sessionId: q.sessionId, kind: q.kind, state: q.state, createdAt,
@@ -314,6 +318,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(q.kind === 'question' && !team && q.direct === true ? { direct: true as const } : {}),
       ...(options.length ? { options } : {}),
       ...(askSpec && askSpec.ok ? { ask: askSpec.spec } : {}),
+      ...(read.length ? { read } : {}),
     });
   }
   // Over the cap: the oldest finished items go first, then the oldest of the rest.

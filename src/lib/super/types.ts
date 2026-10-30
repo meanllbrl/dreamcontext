@@ -589,7 +589,20 @@ export interface SuperQueueItem {
    *  event turn and may answer it first. Whoever answers, the child leaves `asking` and the item
    *  closes for both. It never holds the single-question rule. Never on a team item. */
   direct?: true;
+  /** A Super `ask`'s report cards: the `--show` cards the owner READS to answer it (a page, a
+   *  task, knowledge, a board; `isReadKind`), so his question card points at them ("To read:
+   *  <card> →", owner 2026-10-30). Server-written by `super ask`; at most MAX_ASK_READS. */
+  read?: string[];
 }
+
+/** The cards a question can point at to be read: what carries information, never a picture
+ *  set (that is a picture question's own presentation), a chat, a browser or the agenda. */
+export const READ_KINDS = ['web', 'knowledge', 'task', 'insight', 'whiteboard', 'board', 'pdf'] as const;
+export function isReadKind(kind: ContainerKind): boolean {
+  return (READ_KINDS as readonly string[]).includes(kind);
+}
+/** At most this many report cards a question points at. */
+export const MAX_ASK_READS = 3;
 
 /**
  * A job the super gave one of the project's AI Team members (`super team ask`): it went into the
@@ -1340,7 +1353,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 18;
+export const SUPER_BRIEF_REV = 19;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

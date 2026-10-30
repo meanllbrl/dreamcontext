@@ -99,7 +99,9 @@ import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { dropSurveyDraftsFor } from './chat/surveyDrafts';
 import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
-import { readSuperStateView, type SuperDigestWire, type SuperStateView } from '../../lib/superTypes';
+import { readSuperStateView, type SuperDigestWire, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
+import { cardTitle } from './super/superTitles';
+import type { SurveyRead } from './chat/SurveyCard';
 import { PhoneAgenda, phoneEventContext } from './super/PhoneAgenda';
 import { holdSidebarCollapsed } from '../../hooks/useSidebarCollapse';
 import type { PendingQuestion } from './chatSession';
@@ -3437,8 +3439,24 @@ export function AgentSurface() {
   const openSuperQuestions = useMemo(() => openOwnerQuestions(superQueue ?? []), [superQueue]);
   // Keyed on what a card draws, including whether a child's chat is live here (its options
   // come from it): the super chat's pane is memoised, so only a key change re-renders a card.
+  // A Super `ask`'s report cards (`read`), named as the stage names them; a click brings one in
+  // side by side, from Others too (the card's own "side by side"). Through a ref: the layout
+  // editor is declared further down.
+  const superContainers = superState?.containers;
+  const readTitle = (c: Parameters<typeof cardTitle>[0]) => cardTitle(c, { chat: () => '', team: () => undefined, task: () => undefined });
+  const editLayoutRef = useRef<(patch: LayoutPatch) => void>(() => undefined);
+  const readsOf = useCallback((q: SuperQueueItem): SurveyRead[] => (q.read ?? []).flatMap((id) => {
+    const c = superContainers?.find((k) => k.id === id);
+    if (!c) return [];
+    const title = readTitle(c);
+    const onOpen = () => editLayoutRef.current(c.place === 'others'
+      ? { cards: [{ id, place: 'float' }], view: { mode: 'half', card: id } }
+      : { view: { mode: 'half', card: id } });
+    return [{ id, title, onOpen }];
+  }), [superContainers]);
   const superQuestionKey = openSuperQuestions
-    .map((q) => [q.id, q.state, q.requestId ?? '', q.ownerText ?? '', (q.options ?? []).join('\u0002'), q.kind === 'question' ? chatByClaudeId(q.sessionId)?.id ?? '' : ''].join('\u0003'))
+    .map((q) => [q.id, q.state, q.requestId ?? '', q.ownerText ?? '', (q.options ?? []).join('\u0002'), q.kind === 'question' ? chatByClaudeId(q.sessionId)?.id ?? '' : '',
+      (q.read ?? []).map((id) => { const c = superContainers?.find((k) => k.id === id); return c ? `${id}=${c.place}=${readTitle(c)}` : ''; }).join('\u0002')].join('\u0003'))
     .join('\u0001');
   const publishedQuestionSid = useRef<string | null>(null);
   useEffect(() => {
@@ -3450,10 +3468,10 @@ export function AgentSurface() {
     if (!superQuestionSid) return;
     publishSuperQuestions(
       superQuestionSid,
-      { open: openSuperQuestions, superSession: superChatSession, sessionFor: chatByClaudeId },
+      { open: openSuperQuestions, superSession: superChatSession, sessionFor: chatByClaudeId, readsOf },
       `${superQuestionKey}\u0004${superChatSession?.id ?? ''}`,
     );
-  }, [superQuestionSid, superQuestionKey, superQueue, superState?.session, openSuperQuestions, superChatSession, chatByClaudeId]);
+  }, [superQuestionSid, superQuestionKey, superQueue, superState?.session, openSuperQuestions, superChatSession, chatByClaudeId, readsOf]);
   // Withdrawn with this surface (a project going cold): no card keeps a dead session.
   useEffect(() => () => {
     if (publishedQuestionSid.current) publishSuperQuestions(publishedQuestionSid.current, null);
@@ -3807,6 +3825,7 @@ export function AgentSurface() {
       notSaved,
     );
   }, [scopedApi, dropRemoteStage]);
+  editLayoutRef.current = editSuperLayout;
 
   // O11: a card dropped on the centre (or its "Ask about this") becomes the subject of the
   // owner's next message: a reference appended to the Super Agent's draft once, focused.

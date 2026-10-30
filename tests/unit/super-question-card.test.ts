@@ -311,7 +311,7 @@ describe('ONE question component: the chat\'s own card, no look-alike', () => {
   const card = src('dashboard/src/components/sleepy/super/SuperQuestionCard.tsx');
   it('the super chat mounts SurveyCard (its own ask: an adapter to the super; a child\'s: the child\'s session)', () => {
     expect(card).toMatch(/<SurveyCard key=\{own\.requestId\} item=\{pending\} session=\{child\} \/>/);
-    expect(card).toMatch(/<SurveyCard key=\{`\$\{item\.id\}:\$\{attempt\}`\} item=\{pending\} session=\{host\} \/>/);
+    expect(card).toMatch(/<SurveyCard key=\{`\$\{item\.id\}:\$\{attempt\}`\} item=\{pending\} session=\{host\} reads=\{reads\} \/>/);
     // No option buttons, pills or receipts of its own, and no class of its own.
     expect(card).not.toMatch(/<button/);
     expect(card).not.toMatch(/className=/);

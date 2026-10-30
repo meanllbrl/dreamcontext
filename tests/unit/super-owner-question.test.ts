@@ -188,16 +188,16 @@ describe('super ask (the agent\'s own question)', () => {
     const r = await verb('ask', { text: 'Plan hazır. Geliştirmeye başlansın mı?', options: ['Evet', 'Bekle'] });
     expect(r.status).toBe(200);
     expect(result(r)).toMatchObject({ asked: true, reached: true });
-    expect(String(result(r).warning)).toMatch(/carries no summary/);
+    expect(String(result(r).warning)).toMatch(/shows him no report card/);
   });
 
-  it('a start question whose yes option previews the plan carries no warning', async () => {
+  it('a preview no longer stands in for the report card: the start question is still warned (owner 2026-10-30)', async () => {
     const preview = '<ul class="dc-list"><li>Blocked hours show hatched on the calendar</li><li>A lesson put there warns, never blocks</li><li>Existing lessons stay as they are</li><li>Your call: the warning text; no new cost</li></ul>';
     const ask = { title: 'Blocked hours → development', questions: [{ question: 'The plan is ready. Shall it start?', options: [{ label: 'Yes, start', preview }, { label: 'Wait' }] }] };
     const r = await verb('ask', { ask });
     expect(r.status).toBe(200);
     expect(result(r)).toMatchObject({ asked: true });
-    expect(result(r).warning).toBeUndefined();
+    expect(String(result(r).warning)).toMatch(/shows him no report card/);
   });
 });
 

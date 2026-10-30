@@ -495,8 +495,16 @@ export function HtmlPending({ partial }: { partial: string }) {
   );
 }
 
-export function HtmlView({ html }: { html: string }) {
-  const [full, setFull] = useState(false);
+export function HtmlView({ html, full: fullProp, onFull }: {
+  html: string;
+  /** Held by the host when it opens the fullscreen from a door of its own (a question card's
+   *  "Open whole" bar); absent = this block keeps it. */
+  full?: boolean;
+  onFull?: (open: boolean) => void;
+}) {
+  const [fullOwn, setFullOwn] = useState(false);
+  const full = fullProp ?? fullOwn;
+  const setFull = onFull ?? setFullOwn;
   const { data } = useChatKitOverride();
   const overrideCss = data?.css ?? undefined;
 
@@ -522,7 +530,8 @@ export function HtmlView({ html }: { html: string }) {
         <span aria-hidden>⛶</span>
       </button>
       {data?.notice && <p className="chat-htmlview-notice" role="status">{data.notice}</p>}
-      {full && <HtmlFullscreen html={html} overrideCss={overrideCss} onClose={() => setFull(false)} reading={reading} />}
+      {/* A question card's preview is set at card type; open whole, it reads at the pane's size. */}
+      {full && <HtmlFullscreen html={html} overrideCss={overrideCss} onClose={() => setFull(false)} reading={reading?.closest('.chat-surveycard') ?? reading} />}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chatTopic, getChat } from '../assistant/chat-registry.js';
+import { chatTopic, getChat, pendingRequest, pendingRequestIds } from '../assistant/chat-registry.js';
 import { isReservedId, peekSuperNote, phoneHeld, superIndex } from './store.js';
 import { clearFresh } from './fresh-session.js';
 import { MAX_BRIEF, SESSION_ID_RE, type SuperChild, type SuperState } from './types.js';
@@ -131,14 +131,17 @@ export async function enableSuper(
  * answered in its own tab would still lead the strip (w5 Minor 5).
  */
 function queueWhatItAsks(s: SuperState, sid: string, now: number): void {
-  const pq = getChat(sid)?.status === 'asking' ? getChat(sid)?.pendingQuestion : null;
-  resolveAnswered(s, sid, pq?.requestId ?? null);
-  if (!pq) return;
-  if (s.queue.some((q) => q.sessionId === sid && q.requestId === pq.requestId && q.state !== 'done')) return;
-  s.queue.push({
-    id: newQueueId(), sessionId: sid, kind: pq.isPermission ? 'permission' : 'question',
-    requestId: pq.requestId, state: 'pending', createdAt: now,
-  });
+  const chat = getChat(sid);
+  const ids = chat?.status === 'asking' ? pendingRequestIds(chat) : [];
+  resolveAnswered(s, sid, ids);
+  for (const id of ids) {
+    const pq = pendingRequest(chat, id);
+    if (!pq || s.queue.some((q) => q.sessionId === sid && q.requestId === id && q.state !== 'done')) continue;
+    s.queue.push({
+      id: newQueueId(), sessionId: sid, kind: pq.isPermission ? 'permission' : 'question',
+      requestId: id, state: 'pending', createdAt: now,
+    });
+  }
 }
 
 /**
