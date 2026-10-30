@@ -1,0 +1,43 @@
+{
+  "//": "The vendored T3 tree, checked with T3's own strictness (tsconfig.base.json at the vendored commit). Our root tsconfig checks it too, through the bridge's imports.",
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "useDefineForClassFields": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@t3tools/contracts": ["./packages/contracts/src/index.ts"],
+      "@t3tools/contracts/*": ["./packages/contracts/src/*.ts"],
+      "@t3tools/provider-core/*": ["./packages/provider-core/src/*.ts"],
+      "@t3tools/shared/*": ["./packages/shared/src/*.ts"],
+      "@t3tools/provider-testing/*": ["./packages/provider-testing/src/*.ts"],
+      "effect-codex-app-server/*": ["./packages/effect-codex-app-server/src/*.ts"],
+      "vite-plus/test": ["../../../node_modules/vitest"]
+    }
+  },
+  "//files": "The runtime closure: the entry files of scripts/sync-t3.mjs plus the whole packages; tsc follows their imports. T3's tests run in vitest (vitest.t3.config.ts) and are not type-checked here.",
+  "files": [
+    "apps/server/src/provider/ProviderRegistry.ts",
+    "apps/server/src/provider/ProviderInstanceRegistry.ts",
+    "apps/server/src/provider/Drivers/ClaudeDriver.ts",
+    "apps/server/src/provider/Drivers/CodexDriver.ts",
+    "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+    "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",
+    "apps/server/src/textGeneration/ClaudeTextGeneration.ts",
+    "apps/server/src/textGeneration/CodexTextGeneration.ts"
+  ],
+  "include": ["packages/contracts/src", "packages/provider-core/src", "packages/effect-codex-app-server/src"],
+  "exclude": ["**/*.test.ts", "**/*.testkit.ts"]
+}
