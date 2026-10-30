@@ -3435,7 +3435,7 @@ export function startChatSession(
       if (mainResult) {
         closeTurn();
         // The turn may have used, broken or fixed an MCP server: read again once it settles.
-        if (!scopedCard) {
+        if (!scopedCard && !bridgeTool) {
           if (mcpTurnTimer) clearTimeout(mcpTurnTimer);
           mcpTurnTimer = setTimeout(() => { mcpTurnTimer = null; mcpSettle(10_000); }, 2000);
         }

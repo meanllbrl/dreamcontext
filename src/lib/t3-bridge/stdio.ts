@@ -10,7 +10,7 @@
  *   - any other control_request → acked with an error (rewind, stop_task, MCP: not on this tool yet)
  */
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BridgeSession, type BridgeSessionOptions } from './session.js';
@@ -63,7 +63,15 @@ const userText = (frame: Record<string, unknown>): string => {
 /** Run until stdin ends. Resolves with the exit code. */
 export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<number> {
   const home = deps.home ?? homedir();
-  const emit = (frame: WireFrame): void => deps.write(JSON.stringify(frame) + '\n');
+  // Opt-in frame trace for debugging a bridge pane (`DREAMCONTEXT_T3_DEBUG=<file>`): frame types
+  // and subtypes only, never their text.
+  const debugFile = deps.env.DREAMCONTEXT_T3_DEBUG;
+  const trace = (dir: string, f: Record<string, unknown>): void => {
+    if (!debugFile) return;
+    const req = (f.request ?? f.response) as { subtype?: unknown; request_id?: unknown } | undefined;
+    try { appendFileSync(debugFile, `${new Date().toISOString()} ${dir} ${String(f.type)}${f.subtype ? `/${String(f.subtype)}` : ''}${req?.subtype ? ` ${String(req.subtype)}` : ''}${req?.request_id ? ` ${String(req.request_id).slice(-12)}` : ''}\n`); } catch { /* best effort */ }
+  };
+  const emit = (frame: WireFrame): void => { trace('out', frame); deps.write(JSON.stringify(frame) + '\n'); };
   // A private temp folder for this process: Codex's only writable temp (plan §6).
   const privateTmp = mkdtempSync(join(tmpdir(), 'dc-codex-'));
   /** App context owed to the next turn (a handoff banner, an Eco nudge). */
@@ -111,6 +119,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   // One frame at a time: a steer must not race the turn it steers.
   let chain: Promise<void> = Promise.resolve();
   const handle = async (frame: Record<string, unknown>): Promise<void> => {
+    trace('in ', frame.type === 'user' ? { ...frame, subtype: JSON.stringify(userText(frame).slice(0, 40)) } : frame);
     if (frame.type === 'user') {
       const text = userText(frame);
       if (!text) return;

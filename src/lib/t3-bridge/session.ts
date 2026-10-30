@@ -391,11 +391,13 @@ export class BridgeSession {
   async answer(requestId: string, response: { behavior?: string; updatedInput?: unknown; message?: string }): Promise<void> {
     const session = this.session;
     if (!session) return;
-    const questions = this.wire.questionsByRequest.has(requestId);
+    const t3Id = this.wire.t3RequestId(requestId);
+    const questions = this.wire.questionsByRequest.has(t3Id);
     const allow = response.behavior === 'allow';
     const input: ProviderAdapter.ProviderAdapterV2RuntimeRequestResponseInput = questions
-      ? { requestId: requestId as never, ...(allow ? { answers: this.wire.answersFor(requestId, response.updatedInput) } : { decision: 'cancel' as ProviderApprovalDecision }) }
-      : { requestId: requestId as never, decision: (allow ? 'accept' : 'decline') as ProviderApprovalDecision, ...(response.message ? { feedback: response.message } : {}) };
+      // A dismissed question goes back with no answers (T3 takes no decision on a question).
+      ? { requestId: t3Id as never, answers: allow ? this.wire.answersFor(requestId, response.updatedInput) : {} }
+      : { requestId: t3Id as never, decision: (allow ? 'accept' : 'decline') as ProviderApprovalDecision, ...(response.message ? { feedback: response.message } : {}) };
     await this.run(session.respondToRuntimeRequest(input));
   }
 

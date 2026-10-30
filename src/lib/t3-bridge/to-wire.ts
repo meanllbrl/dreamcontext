@@ -96,8 +96,28 @@ export class ToWire {
   /** The tool call a native item started (native item id → call): an approval names it. */
   private readonly toolByNative = new Map<string, ToolCall>();
   private readonly closedItems = new Set<string>();
-  /** Approval / question cards open on the client (runtime request id → request id we sent). */
+  /** Approval / question cards open on the client, by T3 runtime request id. */
   private readonly openAsks = new Set<string>();
+  /**
+   * T3 runtime request ids run past 200 characters, which the chat server refuses as an answer's
+   * id (agent-chat.ts `answer`). The client sees a short one (`t3r-<n>`); `t3RequestId` maps back.
+   */
+  private readonly wireIds = new Map<string, string>();
+  private readonly t3Ids = new Map<string, string>();
+  private nextAsk = 0;
+  private wireIdFor(t3Id: string): string {
+    let id = this.wireIds.get(t3Id);
+    if (!id) {
+      id = `t3r-${++this.nextAsk}`;
+      this.wireIds.set(t3Id, id);
+      this.t3Ids.set(id, t3Id);
+    }
+    return id;
+  }
+  /** The T3 runtime request id behind a card id the client answered (or the id itself). */
+  t3RequestId(wireId: string): string {
+    return this.t3Ids.get(wireId) ?? wireId;
+  }
   /** Questions per request, so an AskUserQuestion answer maps back to T3 question ids. */
   readonly questionsByRequest = new Map<string, ReadonlyArray<{ id: string; question: string }>>();
   private turnOpen = false;
@@ -170,7 +190,7 @@ export class ToWire {
         const req = event.runtimeRequest;
         if (req.status !== 'pending' && this.openAsks.has(req.id)) {
           this.openAsks.delete(req.id);
-          return [{ type: 'control_cancel_request', request_id: req.id }];
+          return [{ type: 'control_cancel_request', request_id: this.wireIdFor(req.id) }];
         }
         return [];
       }
@@ -293,7 +313,8 @@ export class ToWire {
     const native = item.nativeItemRef?.nativeId;
     const call = native ? this.toolByNative.get(native) : undefined;
     const fallback = item.requestKind === 'file-change'
-      ? { name: 'Edit', input: { file_path: item.prompt ?? '' } }
+      // Codex words a file-change prompt as "<add|update|delete> <path>".
+      ? { name: 'Edit', input: { file_path: (item.prompt ?? '').replace(/^(add|update|delete|move)\s+/i, '') } }
       : item.requestKind === 'command'
         ? { name: 'Bash', input: { command: item.prompt ?? '' } }
         : { name: item.appName ? `mcp__${item.appName}` : 'Permission', input: { request: item.prompt ?? item.requestKind } };
@@ -301,7 +322,7 @@ export class ToWire {
     const input = call?.input ?? fallback.input;
     return [{
       type: 'control_request',
-      request_id: item.requestId,
+      request_id: this.wireIdFor(item.requestId),
       request: {
         subtype: 'can_use_tool',
         tool_name: name,
@@ -319,7 +340,7 @@ export class ToWire {
     this.questionsByRequest.set(item.requestId, item.questions.map((q) => ({ id: q.id, question: q.question })));
     return [{
       type: 'control_request',
-      request_id: item.requestId,
+      request_id: this.wireIdFor(item.requestId),
       request: {
         subtype: 'can_use_tool',
         tool_name: 'AskUserQuestion',
@@ -339,7 +360,7 @@ export class ToWire {
   private terminal(event: Extract<ProviderAdapterV2Event, { type: 'turn.terminal' }>, now: number): WireFrame[] {
     const out: WireFrame[] = [];
     // Cards still open when the turn ends can no longer be answered.
-    for (const id of this.openAsks) out.push({ type: 'control_cancel_request', request_id: id });
+    for (const id of this.openAsks) out.push({ type: 'control_cancel_request', request_id: this.wireIdFor(id) });
     this.openAsks.clear();
     const ok = event.status === 'completed';
     const failure = event.status === 'failed' ? event.failure : null;
@@ -367,7 +388,7 @@ export class ToWire {
 
   /** Map an AskUserQuestion answer (`{answers: {questionText: label}}`) back to T3's question ids. */
   answersFor(requestId: string, updatedInput: unknown): Record<string, string> {
-    const qs = this.questionsByRequest.get(requestId) ?? [];
+    const qs = this.questionsByRequest.get(this.t3RequestId(requestId)) ?? [];
     const given = isRecord(updatedInput) && isRecord(updatedInput.answers) ? updatedInput.answers : {};
     const out: Record<string, string> = {};
     for (const q of qs) {

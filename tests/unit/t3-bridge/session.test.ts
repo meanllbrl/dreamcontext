@@ -94,3 +94,16 @@ describe('t3 bridge session (T3 replay)', () => {
     expect(result.usage.input_tokens).toBe(session.wire.contextTokens);
   });
 });
+
+describe('t3 bridge card ids', () => {
+  it('a card id fits the chat server answer gate (<= 200 chars) and maps back to T3', async () => {
+    const { session, frames, fixture } = await openReplaySession('tool_call_read_only_on_request', { paneId: 'pane-ids' });
+    open.push(session);
+    await session.send(fixture.prompt);
+    await waitFor(() => frames.some((f) => f.type === 'control_request'));
+    const ask = frames.find((f) => f.type === 'control_request')!;
+    expect(String(ask.request_id).length).toBeLessThanOrEqual(200);
+    expect(String(ask.request_id)).toMatch(/^t3r-\d+$/);
+    expect(session.wire.t3RequestId(String(ask.request_id))).toMatch(/^runtime-request:/);
+  });
+});

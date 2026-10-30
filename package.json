@@ -36,6 +36,7 @@
     "test:e2e": "playwright test",
     "verify:people": "node scripts/verify/people-first.mjs",
     "verify:chat-steer": "node scripts/verify/chat-steer.mjs",
+    "verify:tool-codex-chat": "node scripts/verify/tool-codex-chat.mjs",
     "verify:assistant": "node scripts/verify/assistant.mjs",
     "verify:super-jarvis": "node scripts/verify/super-jarvis.mjs",
     "verify:super-web-session": "node scripts/verify/super-web-session.mjs",
