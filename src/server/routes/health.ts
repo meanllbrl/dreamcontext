@@ -52,8 +52,10 @@ export async function handleHealthGet(
     version: dreamcontextVersion(),
     // Desktop self-heal: the newer on-disk version when an upgrade landed under
     // this running server (else null). The bundle uses it to offer a relaunch of the
-    // app onto the new version (the owner's click) without any manual quit/reopen.
-    upgradeReady: relaunchableUpgrade(getUpgradeReadyVersion()),
+    // app onto the new version (the owner's click) without any manual quit/reopen. Still held
+    // back while an upgrade run is going (the relaunch would reap it); a chat mid-turn no longer
+    // hides it, because the Relaunch click asks the owner first (`agentsWorking`).
+    upgradeReady: relaunchableUpgrade(getUpgradeReadyVersion(), () => false),
     // Live tabs mid-work (a turn, a question, background tasks). A Relaunch click while
     // this is above zero asks the owner first, so an update never cuts an agent off unseen.
     agentsWorking: countWorkingAgents(),

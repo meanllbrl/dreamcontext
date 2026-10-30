@@ -40,7 +40,8 @@ import {
 import { agentFileUrl, peerLogoUrl } from '../../../api/client';
 import { usePeerMentions } from '../../../hooks/usePeerMentions';
 import { chatModeRow, DEFAULT_CHAT_MODE, type ChatMode } from '../../../lib/chatModes';
-import { patchAgentSettings } from '../../../lib/agentSettings';
+import { patchAgentSettings, readAgentSettings } from '../../../lib/agentSettings';
+import { useIsNewShell } from '../../../lib/uxMode';
 import { savedDefaultReceipt } from './defaultReceipt';
 import { useAgents, findAgent } from '../../../hooks/useAgents';
 import {
@@ -2184,6 +2185,14 @@ export function Composer({
   const stableModelChange = useStableHandler((id: string) => { onModelChange(id); setSavedDefault(false); });
   const stableEffortChange = useStableHandler((lvl: string) => { onEffortChange(lvl); setSavedDefault(false); });
   const stableSaveDefault = useStableHandler(() => saveModelDefault());
+  // The new shell (W2-C): the menu says what new chats start with now (re-read each open).
+  const newShell = useIsNewShell();
+  const newChatsLine = () => {
+    const s = readAgentSettings();
+    const [m, e] = mode === 'super' ? [s.superModel, s.superEffort] : [s.chatDefaultModel, s.chatDefaultEffort];
+    const value = [m || t('shell.settings.models.inherit'), e].filter(Boolean).join(' · ');
+    return t('shell.composer.newChats').replace('{value}', value);
+  };
   const stableAccountChange = useStableHandler((id: string) => { onAccountChange?.(id); menu.close(); });
   const stableHandoffChange = useStableHandler((enabled: boolean) => onContextHandoffChange?.(enabled));
   const stablePick = useStableHandler((kind: 'files' | 'folders', close: () => void) => { void pickPaths(kind, close); });
@@ -2283,6 +2292,7 @@ export function Composer({
             head={modelMenu?.head}
             foot={modelMenu?.foot}
             defaultId={modelMenu?.defaultId}
+            defaultLine={newShell && !modelMenu?.foot && !onSetModelDefault ? newChatsLine() : undefined}
           />
         </div>
       )}

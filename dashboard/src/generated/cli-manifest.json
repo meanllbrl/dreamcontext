@@ -4555,7 +4555,7 @@
     },
     {
       "path": "window state",
-      "desc": "The window's panes and tabs: id, title, kind, mode, model, busy, which one is you",
+      "desc": "Your chat window's name, panes and tabs: id, title, kind, mode, model, busy, which one is you",
       "args": []
     }
   ]

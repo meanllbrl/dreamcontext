@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query';
 import { VaultProvider, emitInstance, useInstanceEvent, useVault } from './context/VaultContext';
 import { ProjectProvider } from './context/ProjectContext';
@@ -35,6 +35,15 @@ import {
 } from './lib/startChatIntent';
 import type { StartIntent } from './lib/desktop';
 import { useI18n } from './context/I18nContext';
+import { RelationsPage } from './pages/RelationsPage';
+import { PageBar, PageOriginContext, type PageOrigin } from './components/layout/PageBar';
+import { PAGE_LABEL_KEY } from './lib/pageLabels';
+import { DrawerFactsBridge } from './components/layout/newshell/DrawerFactsBridge';
+import { DrawerIntentBridge } from './components/layout/newshell/DrawerIntentBridge';
+import type { DrawerFacts } from './components/layout/newshell/drawerModel';
+import { DRAWER_PAGE_EVENT, type PendingDrawerIntent } from './lib/drawerIntents';
+import { TOGGLE_PAGE_DRAWER_EVENT, useIsNewShell } from './lib/uxMode';
+import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from './lib/agentSettings';
 import './ProjectInstance.css';
 
 /**
@@ -77,7 +86,7 @@ function AgentPageNavBridge({ nav }: { nav: ShellNavigation }) {
     (detail) => {
       const page = detail?.page;
       if (page !== 'tasks' && page !== 'knowledge' && page !== 'core' && page !== 'whiteboards' && page !== 'settings') return;
-      nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null);
+      nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null, 'chat');
     },
   );
   return null;
@@ -95,6 +104,44 @@ function AgentPageNavBridge({ nav }: { nav: ShellNavigation }) {
  * from — a hook called in `ProjectInstance`'s own body would subscribe to the off-instance
  * fallback bus and never hear a thing. Renders nothing.
  */
+/**
+ * The new shell's drawer button and ⌘B: ONE route, ONE handler (D12). The window bumps
+ * `nonce` on the active instance; this decides from the instance's own page:
+ *  - on Chat (the overlay expanded): toggle the window's chat drawer;
+ *  - on Whiteboards: toggle that page's own explorer (`TOGGLE_PAGE_DRAWER_EVENT`, W2-B);
+ *  - anywhere else: open Chat, which brings the drawer back.
+ * Rendered inside Shell's children for the page. Renders nothing.
+ */
+function PageDrawerToggleBridge({ page, nonce, onDrawerToggle }: { page: Page; nonce: number; onDrawerToggle?: () => void }) {
+  const { bus, isActive } = useVault();
+  const [chatOpen, setChatOpen] = useState(false);
+  useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => setChatOpen(open === true));
+  const seen = useRef(nonce);
+  useEffect(() => {
+    if (nonce === seen.current) return;
+    seen.current = nonce;
+    // Every instance hears the window's nonce; only the one on screen acts on it.
+    if (!isActive) return;
+    if (chatOpen) onDrawerToggle?.();
+    else if (page === 'whiteboards') emitInstance(bus, TOGGLE_PAGE_DRAWER_EVENT, null);
+    else openAgentSurface(bus);
+  }, [nonce, isActive, chatOpen, page, bus, onDrawerToggle]);
+  return null;
+}
+
+/**
+ * The drawer's page rows (Project Relations, an AI Team member) as a navigation of THIS
+ * project's Shell. Navigating collapses the chat, as any rail page does. Renders nothing.
+ */
+function DrawerPageBridge({ nav }: { nav: ShellNavigation }) {
+  useInstanceEvent<{ page?: unknown; id?: unknown }>(DRAWER_PAGE_EVENT, (detail) => {
+    const page = detail?.page;
+    if (page !== 'relations' && page !== 'automations') return;
+    nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null, 'other');
+  });
+  return null;
+}
+
 function RollupBridge({
   vault, onRollup,
 }: { vault: string; onRollup?: (vault: string, rollup: ProjectRollup) => void }) {
@@ -326,6 +373,27 @@ function AppLinkBridge({
 
 /** Memoized: its props change on a navigation or a focus request, not when the shell around it
  *  re-renders (a rail fold, the palette), so the open page is left alone then. */
+/** Pages with a title and no toolbar of their own: the new shell gives them a title-only bar
+ *  (W2-B). Pages with a toolbar row put the title in that row themselves. */
+const TITLE_BAR_PAGES: ReadonlySet<Page> = new Set<Page>(['core', 'taxonomy', 'sleep', 'packs', 'announcements', 'about']);
+
+/** The new shell's page header around the router (W2-B): "← Chat" for a page a chat opened,
+ *  and the title-only bar. Classic renders the page alone, exactly as before. */
+function NewShellPage({ nav, children }: { nav: ShellNavigation; children: ReactNode }) {
+  const { t } = useI18n();
+  const { bus } = useVault();
+  const origin = useMemo<PageOrigin>(
+    () => ({ fromChat: nav.origin === 'chat', backToChat: () => openAgentSurface(bus) }),
+    [nav.origin, bus],
+  );
+  return (
+    <PageOriginContext.Provider value={origin}>
+      {TITLE_BAR_PAGES.has(nav.page) && <PageBar flush title={t(PAGE_LABEL_KEY[nav.page])} />}
+      {children}
+    </PageOriginContext.Provider>
+  );
+}
+
 const PageRouter = memo(function PageRouter({
   nav, automationFocus, onAutomationFocusDone, agentsFocus, onAgentsFocusDone,
 }: {
@@ -393,6 +461,9 @@ const PageRouter = memo(function PageRouter({
       return <AnnouncementsPage focus={focus} />;
     case 'whiteboards':
       return <WhiteboardsPage focus={focus} />;
+    case 'relations':
+      // New shell only: `Shell` never lands a classic window here.
+      return <RelationsPage />;
   }
 });
 
@@ -425,12 +496,26 @@ export interface ProjectInstanceProps {
   pendingStart?: PendingStartIntent | null;
   /** Reports a pending start intent was taken, so the chrome stops holding it. */
   onStartConsumed?: (vault: string, nonce: number) => void;
+  /** New shell: bumped by the title bar's drawer button and ⌘B; the ACTIVE instance's
+   *  `PageDrawerToggleBridge` decides what it means on its page. */
+  drawerToggleNonce?: number;
+  /** New shell: the window's chat drawer is on screen (W2 polls the drawer's facts faster). */
+  drawerVisible?: boolean;
+  /** New shell: the drawer button meant the chat drawer itself. */
+  onDrawerToggle?: () => void;
+  /** New shell: this project's drawer facts, for the window's drawer (D5). */
+  onDrawerFacts?: (vault: string, facts: DrawerFacts) => void;
+  /** New shell: a drawer intent queued for this project (D5). */
+  pendingDrawerIntent?: PendingDrawerIntent | null;
+  onDrawerIntentConsumed?: (vault: string, nonce: number) => void;
 }
 
 export function ProjectInstance({
   vault, instanceId, isActive, sidebarCollapsed, onToggleSidebar, onRollup, pendingLink = null, onLinkConsumed,
-  pendingStart = null, onStartConsumed,
+  pendingStart = null, onStartConsumed, drawerToggleNonce = 0, onDrawerToggle,
+  drawerVisible = false, onDrawerFacts, pendingDrawerIntent = null, onDrawerIntentConsumed,
 }: ProjectInstanceProps) {
+  const newShell = useIsNewShell();
   /*
    * Both of these are per-instance identities that must survive every re-render: a new
    * QueryClient would drop the project's whole cache mid-session, and a new EventTarget would
@@ -494,6 +579,7 @@ export function ProjectInstance({
     <div
       className="project-instance"
       data-instance={instanceId}
+      data-shell={newShell ? 'new' : undefined}
       hidden={!isActive}
       inert={!isActive}
     >
@@ -504,13 +590,25 @@ export function ProjectInstance({
               <Shell sidebarCollapsed={sidebarCollapsed} onToggleSidebar={onToggleSidebar}>
                 {(nav) => (
                   <>
-                    <PageRouter
-                      nav={nav}
-                      automationFocus={automationFocus}
-                      onAutomationFocusDone={clearAutomationFocus}
-                      agentsFocus={agentsFocus}
-                      onAgentsFocusDone={clearAgentsFocus}
-                    />
+                    {newShell ? (
+                      <NewShellPage nav={nav}>
+                        <PageRouter
+                          nav={nav}
+                          automationFocus={automationFocus}
+                          onAutomationFocusDone={clearAutomationFocus}
+                          agentsFocus={agentsFocus}
+                          onAgentsFocusDone={clearAgentsFocus}
+                        />
+                      </NewShellPage>
+                    ) : (
+                      <PageRouter
+                        nav={nav}
+                        automationFocus={automationFocus}
+                        onAutomationFocusDone={clearAutomationFocus}
+                        agentsFocus={agentsFocus}
+                        onAgentsFocusDone={clearAgentsFocus}
+                      />
+                    )}
                     <AgentPageNavBridge nav={nav} />
                     <OpenAgentsBridge nav={nav} onAgentsFocus={focusAgents} />
                     <NavFocusAgentsBridge nav={nav} onAgentsFocus={focusAgents} />
@@ -523,6 +621,8 @@ export function ProjectInstance({
                       onAgentsFocus={focusAgents}
                     />
                     <StartIntentBridge start={pendingStart} onConsumed={consumeStart} />
+                    {newShell && <PageDrawerToggleBridge page={nav.page} nonce={drawerToggleNonce} onDrawerToggle={onDrawerToggle} />}
+                    {newShell && <DrawerPageBridge nav={nav} />}
                     {!suppressAnnouncements && (
                       <AnnouncementsModal onOpenPage={(id) => nav.navigate('announcements', id ?? null)} />
                     )}
@@ -536,10 +636,14 @@ export function ProjectInstance({
                   project that had already said what it was doing: its badge would sit blank
                   until the next status flip, and the ceiling would refuse to evict it. */}
               <RollupBridge vault={vault} onRollup={onRollup} />
+              {/* The new shell's drawer facts: before `AgentSurface` for the same reason. */}
+              {newShell && <DrawerFactsBridge vault={vault} drawerVisible={drawerVisible} onFacts={onDrawerFacts} />}
               {/* Mounted OUTSIDE Shell, exactly as it was at the app root: the agent floater
                   keeps its PTY/scrollback alive across navigation and collapse/expand, which
                   only holds while it is not remounted by the page switch. */}
               <AgentSurface />
+              {/* AFTER the surface: an intent rung before it subscribed would be lost. */}
+              {newShell && <DrawerIntentBridge pending={pendingDrawerIntent} onConsumed={onDrawerIntentConsumed} />}
             </I18nProvider>
           </ProjectProvider>
         </VaultProvider>

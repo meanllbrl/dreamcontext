@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useApi } from '../../context/VaultContext';
+import { ApiClient } from '../../api/client';
+import { useI18n } from '../../context/I18nContext';
+import { fanOutHistory, historyPath, HISTORY_DEBOUNCE_MS, HISTORY_PER_VAULT } from '../layout/newshell/historyFanout';
 import { useOverlayId } from '../../lib/useOverlayId';
 import { CommandModal, useListKeyboardNav } from '../search/CommandModal';
 import { highlight, queryTokens } from './phoneList';
@@ -44,6 +47,8 @@ export interface PastSession {
   startedAt: number | null;
   sizeBytes: number;
   gitBranch: string;
+  /** The new shell's cross-project History: the project this chat belongs to. */
+  vault?: string;
 }
 
 interface ChatHistoryResponse {
@@ -86,7 +91,21 @@ interface ChatHistoryPickerProps {
   onPick: (session: PastSession) => void;
   /** Conversation UUIDs that already hold a tab — those rows say "open" and focus. */
   openIds: string[];
+  /** The new shell (D7): every project, for a projects column and "All projects". A pick then
+   *  goes to `onPickIn` with the row's own project, never to the one on screen. */
+  projects?: readonly string[];
+  currentVault?: string | null;
+  onPickIn?: (vault: string, session: PastSession) => void;
 }
+
+/** The new shell's list-plus-projects-column box. Classic renders no box at all, so its markup
+ *  stays exactly what it was. */
+function BodyWrap({ on, children }: { on: boolean; children: ReactNode }) {
+  return on ? <div className="chp-body">{children}</div> : <>{children}</>;
+}
+
+/** The projects column's "All projects" entry. */
+const ALL = '\u0000all';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -130,8 +149,14 @@ function sizeLabel(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistoryPickerProps) {
+export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, currentVault = null, onPickIn }: ChatHistoryPickerProps) {
   const api = useApi();
+  const { t } = useI18n();
+  const cross = !!projects;
+  const [scope, setScope] = useState<string>(() => currentVault ?? ALL);
+  /** "All projects": the projects whose read failed, named under the list (never dropped). */
+  const [failedVaults, setFailedVaults] = useState<string[]>([]);
+  const projectsKey = projects?.join('\n') ?? '';
   const overlayId = useOverlayId('chat-history');
   const [q, setQ] = useState('');
   const [data, setData] = useState<ChatHistoryResponse | null>(null);
@@ -166,10 +191,25 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
     const seq = ++reqRef.current;
     setLoading(true);
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const fanned = cross && scope === ALL;
+    if (!fanned) setFailedVaults([]);
     const handle = setTimeout(() => {
-      api.get<ChatHistoryResponse>(
-        `/agent/chat-sessions?limit=${PAGE_LIMIT}&q=${encodeURIComponent(q.trim())}${showAgentRuns ? '&agentRuns=1' : ''}`,
-      )
+      const read: Promise<ChatHistoryResponse> = !cross
+        ? api.get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT))
+        : fanned
+          ? fanOutHistory<PastSession>(
+            projects ?? [],
+            (v) => new ApiClient(v).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, HISTORY_PER_VAULT)),
+            () => reqRef.current === seq,
+          ).then((r) => {
+            if (reqRef.current === seq) setFailedVaults(r.failed);
+            // Every project failed: that is a failure, not "no chats".
+            if (r.failed.length && r.failed.length === (projects ?? []).length) throw new Error('every project failed');
+            return { sessions: r.sessions, total: r.total, agentRuns: r.agentRuns, truncated: false };
+          })
+          : new ApiClient(scope).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT))
+            .then((r) => ({ ...r, sessions: r.sessions.map((x) => ({ ...x, vault: scope })) }));
+      read
         .then((r) => {
           if (reqRef.current !== seq) return;
           if (retry) keepFocusRef.current(r);
@@ -182,16 +222,23 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
           setFailed(true);
         })
         .finally(() => { if (reqRef.current === seq) setLoading(false); });
-    }, q && !retry ? 140 : 0);
+    }, q && !retry ? (fanned ? HISTORY_DEBOUNCE_MS : 140) : 0);
     return () => { clearTimeout(handle); clearTimeout(retryTimer); };
-  }, [api, open, q, showAgentRuns, retry]);
+    // `projects` is read through its key.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, open, q, showAgentRuns, retry, cross, scope, projectsKey]);
+
+  const pick = useCallback((s: PastSession) => {
+    if (onPickIn && s.vault) onPickIn(s.vault, s);
+    else onPick(s);
+  }, [onPick, onPickIn]);
 
   const sessions = data?.sessions ?? [];
 
   const activate = useCallback((i: number) => {
     const s = sessions[i];
-    if (s) onPick(s);
-  }, [sessions, onPick]);
+    if (s) pick(s);
+  }, [sessions, pick]);
 
   const { focused, setFocused, onKeyDown } = useListKeyboardNav({
     length: sessions.length,
@@ -224,9 +271,12 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
     setData(null);
     setFailed(false);
     setShowAgentRuns(false);
+    setScope(currentVault ?? ALL);
     setNow(Date.now());
     const raf = requestAnimationFrame(() => { try { inputRef.current?.focus(); } catch { /* ignore */ } });
     return () => cancelAnimationFrame(raf);
+    // `currentVault` is read at open, not followed while open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, setFocused]);
 
   const trimmed = q.trim();
@@ -234,7 +284,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
   const hiddenRuns = data?.agentRuns ?? 0;
 
   return (
-    <CommandModal id={overlayId} open={open} onClose={onClose} ariaLabel="Past chats" className="chp-modal">
+    <CommandModal id={overlayId} open={open} onClose={onClose} ariaLabel="Past chats" className={cross ? 'chp-modal chp-modal--projects' : 'chp-modal'}>
       <div className="chp-input-row">
         <span className="chp-input-icon" aria-hidden="true">◷</span>
         <input
@@ -252,6 +302,18 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
         <kbd className="chp-kbd">esc</kbd>
       </div>
 
+      <BodyWrap on={cross}>
+      {cross && (
+        <div className="chp-projects" role="tablist" aria-label={t('shell.drawer.projects')} data-testid="chp-projects">
+          {[ALL, ...(projects ?? [])].map((v) => (
+            <button key={v} type="button" role="tab" aria-selected={scope === v}
+              className={`chp-project${scope === v ? ' is-on' : ''}`}
+              onClick={() => { setScope(v); setRetry(0); setFocused(0); setData(null); }}>
+              {v === ALL ? t('shell.history.allProjects') : v}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="chp-list" role="listbox" aria-label="Past chats" ref={listRef}>
         {sessions.map((s, i) => {
           const isFocused = i === focused;
@@ -271,7 +333,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
                 aria-selected={isFocused}
                 data-row-index={i}
                 className={`chp-row${isFocused ? ' chp-row--focused' : ''}${isOpen ? ' chp-row--open' : ''}`}
-                onClick={() => onPick(s)}
+                onClick={() => pick(s)}
                 onMouseEnter={() => setFocused(i)}
               >
                 <span className="chp-row-glyph" aria-hidden="true">◆</span>
@@ -284,6 +346,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
                 <span className="chp-row-meta">
                   <span className="chp-row-when">{whenLabel(s.updatedAt, now)}</span>
                   <span className="chp-row-facts">
+                    {cross && scope === ALL && s.vault && <span className="chp-row-tag chp-row-vault">{s.vault}</span>}
                     {isOpen && <span className="chp-row-tag">open</span>}
                     {s.gitBranch && <span className="chp-row-branch" title={s.gitBranch}>{s.gitBranch}</span>}
                     <span className="chp-row-size">{sizeLabel(s.sizeBytes)}</span>
@@ -299,6 +362,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
             {loading ? 'Reading your conversations…'
               : failed ? 'Could not read past chats.'
                 : trimmed ? `No past chat matches “${trimmed}”.`
+                  : cross && scope === ALL ? t('shell.history.none')
                   : showAgentRuns ? 'No past chats in this project yet.'
                     : hiddenRuns > 0
                       ? `Nothing here but ${hiddenRuns} agent run${hiddenRuns === 1 ? '' : 's'}.`
@@ -306,6 +370,8 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
           </div>
         )}
       </div>
+
+      </BodyWrap>
 
       <div className="chp-foot">
         <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
@@ -326,6 +392,9 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds }: ChatHistor
               ? 'hide agent runs'
               : `${hiddenRuns} agent run${hiddenRuns === 1 ? '' : 's'} hidden — show`}
           </button>
+        )}
+        {cross && scope === ALL && failedVaults.length > 0 && (
+          <span className="chp-foot-count" data-testid="chp-failed">{t('shell.history.failed').replace('{names}', failedVaults.join(', '))}</span>
         )}
         {trimmed && data?.indexing && (
           <span className="chp-foot-count" data-testid="chp-indexing">

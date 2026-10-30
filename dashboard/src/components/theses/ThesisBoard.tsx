@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useI18n } from '../../context/I18nContext';
+import { NEW_SHELL_BOARD, useIsNewShell } from '../../lib/uxMode';
 import { useTheses, type ThesisKind, type ThesisStatus, type ThesisView } from '../../hooks/useTheses';
 import { useObjectives } from '../../hooks/useObjectives';
 import { usePersistedState } from '../../hooks/usePersistedState';
@@ -190,6 +192,10 @@ export function ThesisBoard({ initialObjective = null, initialDetailSlug = null 
   const showReviewBanner = !!candidates && candidates.items.length > 0 && !reviewDismissed;
   const [reviewOpen, setReviewOpen] = useState(false);
 
+  // The new shell's page frame already draws the card (D11): no second border, and the board
+  // fills the frame instead of sizing from the viewport.
+  const newShell = useIsNewShell();
+  const { t } = useI18n();
   return (
     <div style={{
       zoom: 'var(--zoom)',
@@ -197,8 +203,10 @@ export function ThesisBoard({ initialObjective = null, initialDetailSlug = null 
       maxHeight: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))',
       display: 'flex', flexDirection: 'column', position: 'relative', background: 'var(--color-bg)',
       border: '1px solid var(--color-border)', borderRadius: 14, overflow: 'hidden', boxShadow: 'var(--shadow-md)',
+      ...(newShell ? NEW_SHELL_BOARD : {}),
     }}>
       <ThesisBoardToolbar
+        pageTitle={newShell ? t('nav.hypotheses') : undefined}
         count={allTheses.length}
         search={search} setSearch={setSearch}
         statusInc={prefs.statusInc} toggleStatus={toggleStatus} statusCounts={statusCounts}

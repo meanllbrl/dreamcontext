@@ -317,7 +317,7 @@ function ModelRow({
 
 export function ModelMenu({
   config, model, effort, onModelChange, onEffortChange, onSetDefault, savedDefault, close,
-  head, foot, defaultId,
+  head, foot, defaultId, defaultLine,
 }: {
   config: ModelConfig;
   model: string;
@@ -339,6 +339,8 @@ export function ModelMenu({
   foot?: ReactNode;
   /** The model the row list tags "Default". */
   defaultId?: string;
+  /** The new shell (W2-C): what new chats start with now, beside "Set as default". */
+  defaultLine?: string;
 }) {
   const [otherOpen, setOtherOpen] = useState(false);
   const { primary, other } = splitModels(config, model);
@@ -416,6 +418,7 @@ export function ModelMenu({
       {foot && <div className="chat-cmp-menu-foot">{foot}</div>}
       {!foot && onSetDefault && (
         <div className="chat-cmp-menu-foot">
+          {defaultLine && <span className="chat-cmp-default-now" data-testid="composer-default-line">{defaultLine}</span>}
           <button type="button" className="chat-cmp-setdefault" onClick={onSetDefault}>
             {savedDefault ? 'Saved as default' : 'Set as default'}
           </button>

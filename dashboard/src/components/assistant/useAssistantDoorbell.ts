@@ -21,8 +21,9 @@ export interface AssistantDoorbellDeps {
   /** The same lookup for the OWNER's own answer (`by: 'owner'`, a notch Allow / Deny): it also
    *  reaches the Super Agent and its children, which {@link findChat} keeps from the Assistant. */
   findOwnerChat: (claudeId: string) => ChatSession | null;
-  /** Spawn a new chat with the prepared prompt in `mode`, give it a pane and reveal it. */
-  openChat: (inlinePrompt: string, promptToken: string, mode: ChatMode) => ChatSession;
+  /** Spawn a new chat with the prepared prompt in `mode`, give it a pane and reveal it. `null` =
+   *  refused (the project is at its 40-tab ceiling); nothing was started. */
+  openChat: (inlinePrompt: string, promptToken: string, mode: ChatMode) => ChatSession | null;
   /** Bring this project's chat surface to the front (chip + overlay). */
   reveal: () => void;
   /** Bring this project to the front on one of its pages (a notch detail button, `open --page`). */
@@ -73,6 +74,7 @@ export async function runVerb(
     const mode: ChatMode = args.mode === 'plan' || args.mode === 'develop' ? args.mode : 'basic';
     const prepared = await preparePrompt(vault, prompt);
     const s = deps.openChat(prepared.inline, prepared.token, mode);
+    if (!s) return { ok: false, error: '40 chats are open in this project; close one to open another' };
     await focusThisWindow();
     return { ok: true, result: { vault, sessionId: s.claudeId } };
   }

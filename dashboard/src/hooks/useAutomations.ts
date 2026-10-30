@@ -375,13 +375,18 @@ export interface AutomationRunJob {
 
 /** List every automation (for the board). Empty on an older backend / no route. */
 /** `enabled: false` reads nothing (a Chat composer not bound to an agent asks for no list). */
-export function useAutomations(opts: { enabled?: boolean } = {}) {
+export function useAutomations(opts: { enabled?: boolean; pollEveryMs?: number } = {}) {
   const api = useApi();
   return useQuery({
     queryKey: ['automations'],
     queryFn: () => api.get<{ automations: AutomationSummary[] }>('/automations').then((r) => r.automations),
     retry: 0,
     enabled: opts.enabled ?? true,
+    // The new shell's drawer keeps a hidden project's team rows fresh while it is on screen
+    // (D5); every other caller keeps the instance's default cadence.
+    ...(opts.pollEveryMs ? {
+      refetchInterval: () => pollMs(opts.pollEveryMs ?? 0),
+    } : {}),
   });
 }
 

@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import { PageTitle } from '../layout/PageBar';
 import {
   type RoadmapLayout, type RoadmapSortKey, type RoadmapMenuKey,
   SORT_LABEL, STATUS_COLOR, SIGNAL_COLOR,
@@ -19,6 +20,8 @@ export interface RoadmapFilters { status: RoadmapFilterField; signal: RoadmapFil
 export type RoadmapCardProps = Record<'target' | 'forecast' | 'progress' | 'status' | 'dependencies' | 'priority' | 'tasks', boolean>;
 
 interface RoadmapToolbarProps {
+  /** The new shell (W2-B): the page title at the left of this row. Absent in classic. */
+  pageTitle?: string;
   search: string;
   setSearch: (v: string) => void;
   sortBy: RoadmapSortKey;
@@ -61,7 +64,7 @@ const PROP_DEFS: [keyof RoadmapCardProps, string][] = [
 
 export function RoadmapToolbar({
   search, setSearch, sortBy, setSort, sortDir, toggleSortDir, layout, setLayout,
-  cardProps, toggleCardProp, filters, cycleFilter, clearAllFilters, openMenu, setOpenMenu, onNewObjective,
+  cardProps, toggleCardProp, filters, cycleFilter, clearAllFilters, openMenu, setOpenMenu, onNewObjective, pageTitle,
 }: RoadmapToolbarProps) {
   const toggle = (m: RoadmapMenuKey) => setOpenMenu(openMenu === m ? null : m);
   const curVT = VIEW_TYPES.find((x) => x.v === layout) ?? VIEW_TYPES[0];
@@ -83,7 +86,8 @@ export function RoadmapToolbar({
   const spacer: CSSProperties = { flex: 1, minWidth: 8 };
 
   return (
-    <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 16px', background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)', flexWrap: 'nowrap' }}>
+    <div data-page-row={pageTitle ? '' : undefined} style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 16px', background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)', flexWrap: 'nowrap' }}>
+      {pageTitle && <PageTitle title={pageTitle} />}
       {/* search */}
       <div style={{ position: 'relative', flex: '0 1 212px', minWidth: 130 }}>
         <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', fontSize: 14, color: 'var(--color-text-tertiary)', pointerEvents: 'none' }}>⌕</span>

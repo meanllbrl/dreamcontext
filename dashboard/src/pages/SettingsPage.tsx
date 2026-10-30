@@ -1,4 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { useIsNewShell } from '../lib/uxMode';
+import { PageBar } from '../components/layout/PageBar';
+import { ModelsSection } from '../components/settings/ModelsSection';
+import { EcoModeRow } from '../components/settings/EcoModeRow';
+import { applySettingsSearch } from '../components/settings/settingsSearch';
 import { useI18n } from '../context/I18nContext';
 import { useVault } from '../context/VaultContext';
 import { useConfig, useUpdateConfig, type PlatformId } from '../hooks/useConfig';
@@ -7,6 +12,7 @@ import { ConnectionsManager } from '../components/settings/ConnectionsManager';
 import { RecallModeCards } from '../components/settings/RecallModeCards';
 import { TaskOverrideEditor } from '../components/settings/TaskOverrideEditor';
 import { SETTINGS_ICONS } from '../components/settings/SettingsIcons';
+import { NewLayoutSetting } from '../components/settings/NewLayoutSetting';
 import { MaturityTag, type MaturityLevel } from '../components/common/MaturityTag';
 import { CloudTaskSync } from '../components/settings/CloudTaskSync';
 import { SettingGroup, SettingRow, Toggle } from '../components/settings/SettingRow';
@@ -62,7 +68,7 @@ type SettingsSectionId =
   | 'platforms' | 'format' | 'linkedrepos' | 'agents'
   | 'memory' | 'sleep' | 'learning' | 'recall'
   | 'github' | 'teamsync' | 'clickup' | 'connections'
-  | 'system';
+  | 'system' | 'models';
 
 interface SettingsNavItem {
   id: SettingsSectionId;
@@ -70,6 +76,8 @@ interface SettingsNavItem {
   desktopOnly?: boolean;
   beta?: boolean;
   lab?: boolean;
+  /** Only the new shell offers it (Settings → Models, W2-C). */
+  newShellOnly?: boolean;
 }
 
 interface SettingsNavGroup {
@@ -127,6 +135,7 @@ const SETTINGS_NAV: SettingsNavGroup[] = [
     labelKey: 'settings.group.machine',
     items: [
       { id: 'system', labelKey: 'settings.nav.system' },
+      { id: 'models', labelKey: 'shell.settings.models', newShellOnly: true },
     ],
   },
 ];
@@ -195,9 +204,58 @@ export function SettingsPage({ focus }: SettingsPageProps) {
   // In-page section nav: only one settings group is shown at a time so a
   // specific setting is quick to find instead of buried in one long scroll.
   const [activeSection, setActiveSection] = useState<SettingsSectionId>('platforms');
+  const newShell = useIsNewShell();
   const navGroups = SETTINGS_NAV
-    .map((g) => ({ ...g, items: g.items.filter((item) => !item.desktopOnly || desktopSurfaces) }))
+    .map((g) => ({ ...g, items: g.items.filter((item) => (!item.desktopOnly || desktopSurfaces) && (!item.newShellOnly || newShell)) }))
     .filter((g) => g.items.length > 0);
+
+  // The new shell's settings search (W2-C): while a query is typed every section is drawn and
+  // `applySettingsSearch` filters what shows by its own text. Classic has no search, so a
+  // section shows exactly when it is the active one, as before.
+  const [query, setQuery] = useState('');
+  const searching = newShell && query.trim() !== '';
+  const show = (id: SettingsSectionId) => searching || activeSection === id;
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const [shownBlocks, setShownBlocks] = useState(1);
+  useLayoutEffect(() => {
+    if (!newShell || !contentRef.current) return;
+    setShownBlocks(applySettingsSearch(contentRef.current, searching ? query : ''));
+  });
+  useEffect(() => () => { if (contentRef.current) applySettingsSearch(contentRef.current, ''); }, []);
+  // Sections load their own data after the keystroke: re-apply when their rows arrive. Only
+  // nodes and text are watched, never attributes, so the filter's own marks do not re-trigger it.
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!searching || !root || typeof MutationObserver === 'undefined') return undefined;
+    let raf = 0;
+    const obs = new MutationObserver(() => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        setShownBlocks(applySettingsSearch(root, query));
+      });
+    });
+    obs.observe(root, { childList: true, subtree: true, characterData: true });
+    return () => { obs.disconnect(); if (raf) cancelAnimationFrame(raf); };
+  }, [searching, query]);
+  // `/` and ⌘F put the cursor in the search, unless the owner is typing somewhere already.
+  const { isActive } = useVault();
+  useEffect(() => {
+    if (!newShell || !isActive) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target instanceof Element ? e.target : null;
+      if (el?.closest('input, textarea, select, [contenteditable="true"], .xterm, .agent-surface.expanded')) return;
+      if (document.querySelector('.agent-surface.expanded')) return;
+      const slash = e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey;
+      const find = e.key.toLowerCase() === 'f' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+      if (!slash && !find) return;
+      e.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [newShell, isActive]);
 
   // Config-backed switches read straight from the server copy, so a write that
   // fails leaves the control showing what is actually on disk instead of a value
@@ -292,6 +350,25 @@ export function SettingsPage({ focus }: SettingsPageProps) {
 
   return (
     <div className="settings-page">
+      {newShell && (
+        <PageBar flush title={t('nav.settings')}>
+          <label className="settings-search">
+            <span className="settings-search-icon" aria-hidden="true">⌕</span>
+            <input
+              ref={searchRef}
+              type="search"
+              className="settings-search-input"
+              placeholder={t('shell.settings.search')}
+              aria-label={t('shell.settings.search')}
+              value={query}
+              data-testid="settings-search"
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape' && query) { e.preventDefault(); e.stopPropagation(); setQuery(''); } }}
+            />
+            <kbd className="settings-search-kbd">/</kbd>
+          </label>
+        </PageBar>
+      )}
       {config === null && (
         <div className="settings-empty-notice">{t('settings.no_config')}</div>
       )}
@@ -310,7 +387,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                     type="button"
                     className={`settings-nav-item${active ? ' settings-nav-item--active' : ''}`}
                     aria-current={active ? 'page' : undefined}
-                    onClick={() => setActiveSection(item.id)}
+                    onClick={() => { setActiveSection(item.id); setQuery(''); }}
                   >
                     <span className="settings-nav-icon" aria-hidden="true">
                       {NavIcon ? <NavIcon /> : null}
@@ -326,11 +403,11 @@ export function SettingsPage({ focus }: SettingsPageProps) {
           ))}
         </nav>
 
-        <div className="settings-content">
+        <div className="settings-content" ref={newShell ? contentRef : undefined}>
 
       {/* ─── Project ─────────────────────────────────────────────────────── */}
 
-      {activeSection === 'platforms' && (
+      {show('platforms') && (
       <section className="settings-section">
         <SectionHead titleKey="settings.nav.platforms" descKey="settings.desc.platforms" />
         <SettingGroup>
@@ -353,9 +430,9 @@ export function SettingsPage({ focus }: SettingsPageProps) {
         </SettingGroup>
       </section>
       )}
-      {activeSection === 'format' && <TaskOverrideEditor />}
+      {show('format') && <TaskOverrideEditor />}
 
-      {activeSection === 'agents' && desktopSurfaces && (
+      {show('agents') && desktopSurfaces && (
         <section className="settings-section">
           <SectionHead titleKey="settings.nav.agents" descKey="settings.desc.agents" badge="beta" />
           <FeatureDepsNotice feature="agentTerminal" onOpenMachine={openMachine} />
@@ -607,6 +684,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
               carry it): the owner reaches for it while thinking about how they talk to the
               agent, not while auditing what is installed. The card's own text still says
               where the key lives. */}
+          {newShell && <EcoModeRow />}
           <VoiceSettings />
 
           {/* The Super Agent, the very last group. No on/off row since 2026-10-29: it is on for
@@ -623,6 +701,14 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                 hint={t('settings.super.ports.note')}
                 control={<LoopbackPorts />}
               />
+              {newShell ? (
+                <SettingRow
+                  title={t('settings.agents.super_model')}
+                  hint={t('shell.settings.models.moved')}
+                  control={<button type="button" className="settings-models-link" onClick={() => { setActiveSection('models'); setQuery(''); }}>{t('shell.settings.models')} ›</button>}
+                />
+              ) : (
+              <>
               {/* Its own model and effort (plan r4 D3, D12): Opus at high unless changed here
                   or with the super composer's "Set as default"; never the chat default. */}
               <SettingRow
@@ -657,11 +743,13 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                   </select>
                 }
               />
+              </>
+              )}
             </SettingGroup>
           )}
         </section>
       )}
-      {activeSection === 'memory' && (
+      {show('memory') && (
       <section className="settings-section">
         <SectionHead titleKey="settings.nav.memory" descKey="settings.desc.memory" />
         <SettingGroup>
@@ -681,13 +769,13 @@ export function SettingsPage({ focus }: SettingsPageProps) {
         </SettingGroup>
       </section>
       )}
-      {activeSection === 'sleep' && (
+      {show('sleep') && (
       <section className="settings-section">
         <SectionHead titleKey="settings.nav.sleep" descKey="settings.desc.sleep" />
         <SleepSettings />
       </section>
       )}
-      {activeSection === 'learning' && (
+      {show('learning') && (
       <section className="settings-section">
         <SectionHead titleKey="settings.nav.learning" descKey="settings.desc.learning" />
         <SettingGroup>
@@ -707,7 +795,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
         {setLearningEnabled.isError && <p className="settings-test-err">✗ {t('common.error')}</p>}
       </section>
       )}
-      {activeSection === 'recall' && (
+      {show('recall') && (
       <section className="settings-section">
         {/* No SectionHead: the dreamcontext Memory card at the top carries the name and the sentence. */}
         <RecallModeCards
@@ -718,7 +806,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
         {updateSleep.isError && <p className="settings-test-err">✗ {t('common.error')}</p>}
       </section>
       )}
-      {activeSection === 'github' && (
+      {show('github') && (
       <section className="settings-section">
         <SectionHead titleKey="settings.nav.github" descKey="settings.desc.github" />
 
@@ -743,7 +831,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
           it does (pushes the whole project) and when it does it (on open, on demand)
           are all its own. It also has its own entry in the sidebar rail, which is
           where most people meet it. */}
-      {activeSection === 'teamsync' && (
+      {show('teamsync') && (
       <section className="settings-section">
         <SectionHead titleKey="settings.nav.teamsync" descKey="settings.desc.teamsync" />
         <FeatureDepsNotice feature="cloudSync" onOpenMachine={openMachine} />
@@ -807,28 +895,39 @@ export function SettingsPage({ focus }: SettingsPageProps) {
       {/* Linked repos are neither the GitHub account nor team sync: they are the OTHER
           code repos this brain governs. They sat inside the sync panel and were read as
           part of it. */}
-      {activeSection === 'linkedrepos' && (
+      {show('linkedrepos') && (
       <section className="settings-section">
         <SectionHead titleKey="settings.nav.linkedrepos" descKey="settings.desc.linkedrepos" />
         <LinkedRepos compact />
       </section>
       )}
-      {activeSection === 'clickup' && (
+      {show('clickup') && (
       <section className="settings-section">
         <SectionHead titleKey="settings.nav.clickup" descKey="settings.desc.clickup" />
         <CloudTaskSync provider="clickup" />
       </section>
       )}
 
-      {activeSection === 'connections' && <ConnectionsManager />}
+      {show('connections') && <ConnectionsManager />}
 
       {/* ─── This machine ────────────────────────────────────────────────── */}
 
-      {activeSection === 'system' && (
+      {newShell && show('models') && (
+      <section className="settings-section">
+        <SectionHead titleKey="shell.settings.models" descKey="shell.settings.models.hint" />
+        <ModelsSection agentCfg={agentCfg} onOpenSleep={() => { setActiveSection('sleep'); setQuery(''); }} />
+      </section>
+      )}
+      {searching && shownBlocks === 0 && (
+        <div className="settings-search-empty" data-testid="settings-search-empty">{t('shell.settings.noMatch')}</div>
+      )}
+
+      {show('system') && (
       <section className="settings-section">
         <SectionHead titleKey="settings.nav.system" descKey="settings.desc.system" />
         <SystemDependencies />
         <AutoUpdateSetting />
+        <NewLayoutSetting />
       </section>
       )}
 

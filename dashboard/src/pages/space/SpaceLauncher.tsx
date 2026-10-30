@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useVault } from '../../context/VaultContext';
+import { LauncherOpenContext } from '../../lib/uxMode';
 import {
   useFederationGraph,
   useCreateConnection,
@@ -122,6 +124,13 @@ export interface SpaceLauncherProps {
  * projects without crowding, and the whole thing spins, zooms, and pans.
  */
 export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherProps) {
+  // The new shell's embedded Space opens projects in its own window (lib/uxMode.ts).
+  const openOverride = useContext(LauncherOpenContext);
+  // Embedded, Space lives in a project that can be hidden (another project on screen) while it
+  // stays mounted: its window-wide keys and its drift must stop then. The launcher window has no
+  // project around it (`isActive` is the default there), so it always runs.
+  const { isActive } = useVault();
+  const live = !openOverride || isActive;
   const { data, isLoading, isError, error } = useFederationGraph();
   const { data: teamVaults } = useTeamUpdates();
   const createConn = useCreateConnection();
@@ -290,7 +299,7 @@ export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherPro
     const reduced =
       typeof window !== 'undefined' &&
       window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    if (reduced) return;
+    if (reduced || !live) return;
     let raf = 0;
     let last = performance.now();
     const tick = (now: number) => {
@@ -304,7 +313,7 @@ export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherPro
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [live]);
 
   useEffect(() => {
     if (focus?.kind !== 'vault') {
@@ -339,12 +348,13 @@ export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherPro
       // comes back to the launcher, then open. A failed stamp must not block.
       touch.mutate(name);
       try {
-        await openVaultWindow(name);
+        if (openOverride) openOverride(name);
+        else await openVaultWindow(name);
       } catch (err) {
         onError(err instanceof Error ? err.message : String(err));
       }
     },
-    [onError, touch],
+    [onError, touch, openOverride],
   );
 
   const connect = useCallback(
@@ -533,9 +543,16 @@ export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherPro
   );
 
   useEffect(() => {
+    if (!live) return undefined;
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      // Embedded, only keys meant for Space: from inside it, or from nowhere in particular. A
+      // focused button, an editor or the chat elsewhere in the window keeps its arrows and Enter.
+      if (openOverride) {
+        const t = e.target as Node | null;
+        if (t && t !== document.body && !rootRef.current?.contains(t)) return;
+      }
       if (e.key === 'Escape') {
         setFocus(null);
         return;
@@ -576,7 +593,7 @@ export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherPro
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [ordered, focus, open]);
+  }, [ordered, focus, open, live, openOverride]);
 
   // ─── Render ───────────────────────────────────────────────────────────────
   if (isLoading) return <div className="space-status">Charting the sky…</div>;

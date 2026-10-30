@@ -1,0 +1,15 @@
+/* A column the frame's height: the bar, then Space filling the rest. `.launcher`'s own
+   `min-height: 100vh` would otherwise make the page one viewport tall and scroll the frame. */
+.relations-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.project-instance[data-shell="new"] .relations-page .launcher--space {
+  height: auto;
+  min-height: 0;
+  flex: 1;
+  padding: 0;
+}

@@ -130,6 +130,14 @@ export interface SavedMeta {
   model?: string;
   effort?: string;
   account?: string;
+  /**
+   * Which named chat WINDOW of the project this tab belongs to (the new shell's W3, D8): an id
+   * from the surface's {@link SavedSurface.windows}. An unknown or missing id reads as
+   * `windows[0]`, so no tab is ever hidden behind a window that no longer exists. `pane` stays a
+   * position across the WHOLE surface (window after window), so an app that knows nothing of
+   * windows still lays every tab out in its own pane.
+   */
+  window?: string;
 }
 
 /** `claude --effort`'s documented set, the same list `agent-spawn-shared.ts` gates a spawn by. */
@@ -205,8 +213,16 @@ export function coerceDraftMap(raw: unknown): Record<string, SavedDraft> | undef
   return n ? out : undefined;
 }
 
-/** Hard ceiling on rostered sessions (extras are dropped, not rejected). */
-export const MAX_SESSIONS = 20;
+/** Hard ceiling on rostered sessions (extras are dropped, not rejected). Also the ceiling on
+ *  chat windows. 40 since the new shell's named windows (W3, D8); the app refuses a 41st tab
+ *  itself (`admitTab`), so this drop only ever trims the few exempt over-cap tabs. */
+export const MAX_SESSIONS = 40;
+/** A chat window's id and name (D8). The name is shown as React text only. */
+export const WINDOW_ID_RE = /^[a-z0-9-]{1,24}$/;
+export const MAX_WINDOW_NAME = 60;
+/** The one window a roster from before windows reads as, and what an empty list is re-seeded
+ *  with. */
+export const DEFAULT_WINDOW: Readonly<SavedWindow> = Object.freeze({ id: 'main', name: 'Chat' });
 const MAX_TITLE = 200;
 const DEFAULT_TITLE = 'Agent';
 const MIN_SIZE = 0.1;
@@ -328,6 +344,7 @@ function coerceMeta(raw: unknown): SavedMeta {
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
     ...(account ? { account } : {}),
+    ...(typeof o.window === 'string' && WINDOW_ID_RE.test(o.window) ? { window: o.window } : {}),
   };
 }
 
@@ -400,6 +417,62 @@ export interface SavedSurface {
   chatPermissionMode: ChatPermissionMode;
   /** Saved composer drafts by conversation UUID ({@link coerceDraftMap}). */
   drafts?: Record<string, SavedDraft>;
+  /** The project's named chat windows, in drawer order (D8). Never empty once read: a roster
+   *  without them reads as {@link DEFAULT_WINDOW}. */
+  windows?: SavedWindow[];
+}
+
+/** One named chat window. `activePane` is the surface-wide index of its focused pane. */
+export interface SavedWindow {
+  id: string;
+  name: string;
+  activePane?: number;
+}
+
+/**
+ * The `windows` list, coerced: valid ids only, no duplicates, names trimmed to
+ * {@link MAX_WINDOW_NAME} (a blank name reads as the default's), at most {@link MAX_SESSIONS}.
+ * `undefined` when the value is not a list at all (the caller then keeps what it had); an empty
+ * result is re-seeded by {@link withWindows}.
+ */
+export function coerceWindows(raw: unknown): SavedWindow[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: SavedWindow[] = [];
+  const seen = new Set<string>();
+  for (const w of raw) {
+    if (out.length >= MAX_SESSIONS) break;
+    if (!w || typeof w !== 'object' || Array.isArray(w)) continue;
+    const o = w as Record<string, unknown>;
+    if (typeof o.id !== 'string' || !WINDOW_ID_RE.test(o.id) || seen.has(o.id)) continue;
+    seen.add(o.id);
+    const name = typeof o.name === 'string' ? o.name.trim().slice(0, MAX_WINDOW_NAME) : '';
+    const activePane = coerceActivePane(o.activePane);
+    out.push({ id: o.id, name: name || DEFAULT_WINDOW.name, ...(activePane !== undefined ? { activePane } : {}) });
+  }
+  return out;
+}
+
+/**
+ * The surface with its windows settled (D8): never an empty list, and every tab in a window
+ * that exists. A tab with no window, or one that names a window not in the list, goes to
+ * `windows[0]`, whatever its id: the server never makes a window out of a tab's id. Absence
+ * never deletes: `fallback` is the stored surface, consulted for a tab sent without a window
+ * (matched by its conversation) — a client from before windows keeps every tab where it was.
+ */
+export function withWindows<T extends Pick<SavedSurface, 'sessions' | 'windows'>>(surface: T, windows: SavedWindow[] | undefined, fallback?: Pick<SavedSurface, 'sessions' | 'windows'>): T & { windows: SavedWindow[] } {
+  const list = windows && windows.length ? windows : (fallback?.windows?.length ? fallback.windows : [{ ...DEFAULT_WINDOW }]);
+  const ids = new Set(list.map((w) => w.id));
+  const storedWindowOf = new Map<string, string>();
+  for (const m of fallback?.sessions ?? []) if (m.sessionId && m.window) storedWindowOf.set(m.sessionId, m.window);
+  const sessions = surface.sessions.map((m) => {
+    let win = m.window && ids.has(m.window) ? m.window : undefined;
+    if (!win && m.window === undefined && m.sessionId) {
+      const kept = storedWindowOf.get(m.sessionId);
+      if (kept && ids.has(kept)) win = kept;
+    }
+    return { ...m, window: win ?? list[0].id };
+  });
+  return { ...surface, sessions, windows: list };
 }
 
 function coerceActivePane(raw: unknown): number | undefined {
@@ -426,15 +499,17 @@ function parseSurface(text: string | null): StoredSurface {
     const raw = JSON.parse(text) as Record<string, unknown>;
     const activePane = coerceActivePane(raw?.activePane);
     const drafts = coerceDraftMap(raw?.drafts);
-    return {
+    // A roster from before windows (no `windows`) reads as ONE window holding every tab. Nothing
+    // is rewritten here: the file changes shape only at the next normal save.
+    return withWindows({
       sessions: sanitizeRoster(raw) ?? [],
       ...(activePane !== undefined ? { activePane } : {}),
       chatPermissionMode: coercePermissionMode(raw?.chatPermissionMode),
       ...(drafts ? { drafts } : {}),
       generation: coerceGeneration(raw?.generation),
-    };
+    }, coerceWindows(raw?.windows));
   } catch {
-    return { sessions: [], chatPermissionMode: 'auto', generation: 0 };
+    return { sessions: [], chatPermissionMode: 'auto', generation: 0, windows: [{ ...DEFAULT_WINDOW }] };
   }
 }
 
@@ -447,7 +522,7 @@ function readSurface(contextRoot: string, phone = false): StoredSurface {
 /** The persisted file: the surface plus its generation (written only when non-zero, so a
  *  roster that was never bumped stays byte-identical to the legacy shape). */
 function serializeSurface(surface: SavedSurface, generation: number): string {
-  const sessionsFirst = { sessions: surface.sessions, ...(surface.activePane !== undefined ? { activePane: surface.activePane } : {}), chatPermissionMode: surface.chatPermissionMode, ...(surface.drafts ? { drafts: surface.drafts } : {}) };
+  const sessionsFirst = { sessions: surface.sessions, ...(surface.activePane !== undefined ? { activePane: surface.activePane } : {}), chatPermissionMode: surface.chatPermissionMode, ...(surface.drafts ? { drafts: surface.drafts } : {}), ...(surface.windows ? { windows: surface.windows } : {}) };
   return JSON.stringify(generation > 0 ? { ...sessionsFirst, generation } : sessionsFirst, null, 2) + '\n';
 }
 
@@ -554,7 +629,8 @@ export function phoneTabsLanding(desktop: readonly SavedMeta[], phone: readonly 
     if (room === 0) { keep.push(m); continue; }
     onDesktop.add(m.sessionId);
     room--;
-    const { pane: _pane, active: _active, ...entry } = m;
+    // No window either: a landed tab goes to the desktop's first window (D8).
+    const { pane: _pane, active: _active, window: _window, ...entry } = m;
     land.push({ ...entry, bypass: false, pane });
   }
   return { land, keep };
@@ -581,7 +657,7 @@ export async function landPhoneRosterOnDesktop(contextRoot: string, opts: { wait
       const { generation: phoneGen, ...phone } = readSurface(contextRoot, true);
       const { land, keep } = phoneTabsLanding(desk.sessions, phone.sessions);
       if (keep.length === phone.sessions.length) return 0;
-      if (land.length) writeSurface(contextRoot, { ...desk, sessions: [...desk.sessions, ...land] }, deskGen + 1);
+      if (land.length) writeSurface(contextRoot, withWindows({ ...desk, sessions: [...desk.sessions, ...land] }, desk.windows), deskGen + 1);
       writeSurface(contextRoot, { ...phone, sessions: keep }, phoneGen + 1, true);
       return land.length;
     } finally {
@@ -666,6 +742,12 @@ export async function handleAgentSessionsGet(
     return;
   }
   const saved = readSurface(contextRoot, phone);
+  // The new shell's drawer polls a project it has not mounted (D7): counts only, never the
+  // tab bodies or the drafts (up to 1 MB a project), so a poll stays a few bytes.
+  if (new URL(_req.url ?? '/', 'http://x').searchParams.get('summary') === '1') {
+    sendJson(res, 200, rosterSummary(saved, superUnread ? emptySuperState() : superState));
+    return;
+  }
   const body = surfaceBody(saved, (id) => isAutomationBoundSession(id, home) !== null);
   for (const m of body.sessions as SessionRosterEntry[]) {
     const hold = m.sessionId ? superRestoreHold(superState, m.sessionId, parkedSince(m.sessionId) !== null) : null;
@@ -698,6 +780,23 @@ export function desktopSeed(saved: Pick<SavedSurface, 'sessions'>, superState: {
   return out;
 }
 
+/** `GET /api/agent/sessions?summary=1`: how many chat windows and tabs the project's saved
+ *  surface holds, each window's name and tab count, and whether its Super Agent is handed over.
+ *  No tab titles, no drafts. */
+export interface RosterSummary {
+  windows: number;
+  tabs: number;
+  superOn: boolean;
+  perWindow: Array<{ id: string; name: string; tabs: number }>;
+}
+
+export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>, superState: { enabled: boolean; session: string | null }): RosterSummary {
+  const settled = withWindows({ sessions: saved.sessions }, saved.windows);
+  const own = settled.sessions.filter((m) => !(superState.session && m.sessionId === superState.session));
+  const perWindow = settled.windows.map((w) => ({ id: w.id, name: w.name, tabs: own.filter((m) => m.window === w.id).length }));
+  return { windows: perWindow.length, tabs: own.length, superOn: superState.enabled, perWindow };
+}
+
 /** The GET body (also the 409 body): the surface, each entry with its `bound` flag, and the
  *  generation. */
 function surfaceBody(saved: StoredSurface, isBound: (sessionId: string) => boolean): Record<string, unknown> {
@@ -710,6 +809,7 @@ function surfaceBody(saved: StoredSurface, isBound: (sessionId: string) => boole
     ...(saved.activePane !== undefined ? { activePane: saved.activePane } : {}),
     chatPermissionMode: saved.chatPermissionMode,
     ...(saved.drafts ? { drafts: saved.drafts } : {}),
+    windows: saved.windows ?? [{ ...DEFAULT_WINDOW }],
     generation: saved.generation,
   };
 }
@@ -758,6 +858,8 @@ export async function handleAgentSessionsPut(
   const draftsSent = raw.drafts !== undefined;
   const sentDrafts = coerceDraftMap(raw.drafts);
   if (sentDrafts) surface.drafts = sentDrafts;
+  const sentWindows = coerceWindows(raw.windows);
+  if (sentWindows) surface.windows = sentWindows;
   const serialized = JSON.stringify(surface);
   if (Buffer.byteLength(serialized, 'utf-8') > MAX_BYTES) {
     sendError(res, 400, 'too_large', 'session roster payload is too large.');
@@ -784,7 +886,9 @@ export async function handleAgentSessionsPut(
       if (!rosterBaseAccepted(base, stored.generation)) { stale(stored); return; }
       generation = stored.generation;
       if (!draftsSent && stored.drafts) surface.drafts = stored.drafts;
-      writeSurface(contextRoot, surface, generation, phone);
+      // Windows (D8), absence never deletes: a body that does not mention them keeps the stored
+      // list, and a tab sent without a window keeps its stored one.
+      writeSurface(contextRoot, withWindows(surface, sentWindows, stored), generation, phone);
     } finally {
       releaseFileLock(lock);
     }

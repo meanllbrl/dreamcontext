@@ -401,33 +401,7 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
                   bubbles at all, so the strip stays silent when nothing is happening rather
                   than carrying three permanent grey marks.
                 */}
-                {chip.live > 0 && (
-                  <span className="project-tab-bubbles" aria-hidden="true">
-                    {BUBBLES.filter(({ state }) => chip[state] > 0).map(({ state }) => (
-                      <span key={state} className="project-tab-bubble" data-state={state}>
-                        {/*
-                          An element rather than a ::after, so the ring can be positioned
-                          under the number while overflowing the bubble's box. It inherits
-                          the bubble's pill radius, which is what makes a two-digit count
-                          work: the bubble grows sideways into a stadium and the ring simply
-                          follows its shape instead of needing a second drawing.
-                        */}
-                        {state === 'working' && (
-                          <span className="project-tab-bubble-ring" aria-hidden="true" />
-                        )}
-                        <span className="project-tab-bubble-n">{chip[state]}</span>
-                      </span>
-                    ))}
-                    {/*
-                      The unseen dot, AFTER the three counts and outside the partition. It is
-                      the dock tile's badge at strip scale: a chat that finished while you were
-                      elsewhere keeps its real colour (green if it went straight back to work,
-                      grey if it is idle) and grows this beside it, instead of the whole bubble
-                      turning magenta and staying there until clicked.
-                    */}
-                    {chip.flagged > 0 && <span className="project-tab-flag" />}
-                  </span>
-                )}
+                <ProjectChipBubbles chip={chip} />
               </button>
               <button
                 type="button"
@@ -500,5 +474,40 @@ export function ProjectTabs({ chips, onActivate, onClose, onAdd, onDetach }: Pro
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * A chip's status bubbles (asking / working / idle counts and the unseen dot). Exported so
+ * the new shell's drawer (W2) draws a project's state with the SAME marks as the chip.
+ */
+export function ProjectChipBubbles({ chip }: { chip: Pick<ProjectChip, 'live' | 'asking' | 'working' | 'idle' | 'flagged'> }) {
+  if (chip.live <= 0) return null;
+  return (
+    <span className="project-tab-bubbles" aria-hidden="true">
+      {BUBBLES.filter(({ state }) => chip[state] > 0).map(({ state }) => (
+        <span key={state} className="project-tab-bubble" data-state={state}>
+          {/*
+            An element rather than a ::after, so the ring can be positioned
+            under the number while overflowing the bubble's box. It inherits
+            the bubble's pill radius, which is what makes a two-digit count
+            work: the bubble grows sideways into a stadium and the ring simply
+            follows its shape instead of needing a second drawing.
+          */}
+          {state === 'working' && (
+            <span className="project-tab-bubble-ring" aria-hidden="true" />
+          )}
+          <span className="project-tab-bubble-n">{chip[state]}</span>
+        </span>
+      ))}
+      {/*
+        The unseen dot, AFTER the three counts and outside the partition. It is
+        the dock tile's badge at strip scale: a chat that finished while you were
+        elsewhere keeps its real colour (green if it went straight back to work,
+        grey if it is idle) and grows this beside it, instead of the whole bubble
+        turning magenta and staying there until clicked.
+      */}
+      {chip.flagged > 0 && <span className="project-tab-flag" />}
+    </span>
   );
 }

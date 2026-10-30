@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { PageTitle } from '../layout/PageBar';
 import { useRecall, haikuRecallOnce, recallOnce, type RecallHit } from '../../hooks/useRecall';
 import { useRecallMode } from '../../hooks/useSleep';
 import { useApi } from '../../context/VaultContext';
@@ -39,6 +40,8 @@ export interface BrainSearchHit {
 }
 
 interface BrainSearchProps {
+  /** The new shell (W2-B): the page title at the left of the search row. Absent in classic. */
+  pageTitle?: string;
   scope: SearchScope;
   placeholder: string;
   selectedSlug: string | null;
@@ -87,7 +90,7 @@ function Highlight({ text, tokens }: { text: string; tokens: string[] }) {
 }
 
 export function BrainSearch({
-  scope, placeholder, selectedSlug, onOpen, browse, detail, formatTitle,
+  scope, placeholder, selectedSlug, onOpen, browse, detail, formatTitle, pageTitle,
 }: BrainSearchProps) {
   const api = useApi();
   const [q, setQ] = useState('');
@@ -190,39 +193,80 @@ export function BrainSearch({
 
   return (
     <div className="bsearch">
-      {/* ── Search bar ─────────────────────────────────────────────── */}
-      <div className={`bsearch-bar ${hasQuery ? 'bsearch-bar--active' : ''}`}>
-        <span className="bsearch-bar-icon"><SearchIcon size={16} /></span>
-        <input
-          ref={inputRef}
-          className="bsearch-input"
-          placeholder={placeholder}
-          value={q}
-          onChange={e => { setQ(e.target.value); if (intelligent) setIntelliState('idle'); }}
-          onKeyDown={onKeyDown}
-          spellCheck={false}
-          autoComplete="off"
-        />
-        {(bm25Mode && isFetching && hasQuery) && <span className="bsearch-spin" aria-hidden="true" />}
-        {hasQuery && (
-          <button className="bsearch-clear" onClick={clear} title="Clear" aria-label="Clear search">×</button>
-        )}
-        {/* Hybrid mode does semantic recall locally — the Haiku toggle is
-            redundant there, so it's hidden (per the recall-mode setting). */}
-        {!hybridActive && (
-          <button
-            className={`bsearch-intel ${intelligent ? 'bsearch-intel--on' : ''}`}
-            onClick={toggleIntelligent}
-            title={intelligent
-              ? 'Intelligent search is on — reasons over your brain (uses tokens)'
-              : 'Turn on intelligent search — intent-aware, beyond keywords'}
-          >
-            <span className="bsearch-intel-dot" />
-            <SparkIcon size={13} color={intelligent ? '#fff' : 'currentColor'} />
-            Intelligent
-          </button>
-        )}
-      </div>
+      {pageTitle ? (
+        <div className="bsearch-head" data-page-row="">
+          <PageTitle title={pageTitle} />
+          {/* ── Search bar ─────────────────────────────────────────────── */}
+          <div className={`bsearch-bar ${hasQuery ? 'bsearch-bar--active' : ''}`}>
+            <span className="bsearch-bar-icon"><SearchIcon size={16} /></span>
+            <input
+              ref={inputRef}
+              className="bsearch-input"
+              placeholder={placeholder}
+              value={q}
+              onChange={e => { setQ(e.target.value); if (intelligent) setIntelliState('idle'); }}
+              onKeyDown={onKeyDown}
+              spellCheck={false}
+              autoComplete="off"
+            />
+            {(bm25Mode && isFetching && hasQuery) && <span className="bsearch-spin" aria-hidden="true" />}
+            {hasQuery && (
+              <button className="bsearch-clear" onClick={clear} title="Clear" aria-label="Clear search">×</button>
+            )}
+            {/* Hybrid mode does semantic recall locally — the Haiku toggle is
+                redundant there, so it's hidden (per the recall-mode setting). */}
+            {!hybridActive && (
+              <button
+                className={`bsearch-intel ${intelligent ? 'bsearch-intel--on' : ''}`}
+                onClick={toggleIntelligent}
+                title={intelligent
+                  ? 'Intelligent search is on — reasons over your brain (uses tokens)'
+                  : 'Turn on intelligent search — intent-aware, beyond keywords'}
+              >
+                <span className="bsearch-intel-dot" />
+                <SparkIcon size={13} color={intelligent ? '#fff' : 'currentColor'} />
+                Intelligent
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* ── Search bar ─────────────────────────────────────────────── */}
+          <div className={`bsearch-bar ${hasQuery ? 'bsearch-bar--active' : ''}`}>
+            <span className="bsearch-bar-icon"><SearchIcon size={16} /></span>
+            <input
+              ref={inputRef}
+              className="bsearch-input"
+              placeholder={placeholder}
+              value={q}
+              onChange={e => { setQ(e.target.value); if (intelligent) setIntelliState('idle'); }}
+              onKeyDown={onKeyDown}
+              spellCheck={false}
+              autoComplete="off"
+            />
+            {(bm25Mode && isFetching && hasQuery) && <span className="bsearch-spin" aria-hidden="true" />}
+            {hasQuery && (
+              <button className="bsearch-clear" onClick={clear} title="Clear" aria-label="Clear search">×</button>
+            )}
+            {/* Hybrid mode does semantic recall locally — the Haiku toggle is
+                redundant there, so it's hidden (per the recall-mode setting). */}
+            {!hybridActive && (
+              <button
+                className={`bsearch-intel ${intelligent ? 'bsearch-intel--on' : ''}`}
+                onClick={toggleIntelligent}
+                title={intelligent
+                  ? 'Intelligent search is on — reasons over your brain (uses tokens)'
+                  : 'Turn on intelligent search — intent-aware, beyond keywords'}
+              >
+                <span className="bsearch-intel-dot" />
+                <SparkIcon size={13} color={intelligent ? '#fff' : 'currentColor'} />
+                Intelligent
+              </button>
+            )}
+          </div>
+        </>
+      )}
 
       {/* ── Two-column body: results/browse · detail ───────────────── */}
       <div className="bsearch-layout">

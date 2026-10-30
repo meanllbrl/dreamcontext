@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { PageTitle } from '../layout/PageBar';
 import { createPortal } from 'react-dom';
 import type { BoardView } from './boardModel';
 
 interface BoardViewTabsProps {
+  /** The new shell (W2-B): the page title at the left of this row, which becomes the page's
+   *  one-row header. Absent in classic. */
+  title?: string;
   views: BoardView[];
   activeViewId: string;
   counts: Record<string, number>;
@@ -52,8 +56,10 @@ export function BoardViewTabs(p: BoardViewTabsProps) {
   };
 
   return (
-    <div className="bd-scroll" style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 2, padding: '0 14px', height: 46, background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)', overflowX: 'auto' }}>
-      <span style={{ fontSize: 15, color: 'var(--color-text-tertiary)', marginRight: 8, flex: '0 0 auto' }}>⊞</span>
+    <div className="bd-scroll" data-page-row={p.title ? '' : undefined} style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 2, padding: '0 14px', height: 46, background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)', overflowX: 'auto' }}>
+      {p.title
+        ? <PageTitle title={p.title} />
+        : <span style={{ fontSize: 15, color: 'var(--color-text-tertiary)', marginRight: 8, flex: '0 0 auto' }}>⊞</span>}
 
       {p.views.map((v) => {
         const active = v.id === p.activeViewId;

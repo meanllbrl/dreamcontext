@@ -23,6 +23,9 @@ export interface AssistantConfig {
   enabled: boolean;
   conversationId: string | null;
   speak: boolean;
+  /** Its own `--model` / `--effort` (absent = the server's defaults). */
+  model?: string;
+  effort?: string;
 }
 
 export interface AssistantStatus {
@@ -52,6 +55,9 @@ export interface AssistantProfilePatch {
   speak?: boolean;
   hotkey?: AssistantHotkey | null;
   character?: string;
+  /** Settings → Models (W2-C): the server keeps a known level and a model-shaped name only. */
+  model?: string;
+  effort?: string;
 }
 
 /** A refused request, carrying the server's own `error` code and human `message`. */

@@ -3,6 +3,8 @@ import {
   type ComponentType, type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { useIsNewShell } from '../../../lib/uxMode';
+import { PageBar, PageTitle } from '../../layout/PageBar';
 import { useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../../context/I18nContext';
 import { useApi, useVault } from '../../../context/VaultContext';
@@ -217,6 +219,7 @@ export function BoardPage({
   focus,
 }: BoardPageProps) {
   const { t, locale } = useI18n();
+  const newShell = useIsNewShell();
   const api = useApi();
   const { isActive, bus } = useVault();
   const queryClient = useQueryClient();
@@ -675,6 +678,7 @@ export function BoardPage({
   if (list.isSuccess && boards.length === 0) {
     return (
       <div className="board-page board-page--empty">
+        {newShell && <PageBar title={t('nav.labpage')} />}
         {banner}
         <div className="board-canvas">
           <BoardEmptyState
@@ -769,7 +773,8 @@ export function BoardPage({
       data-lab-board-error={board?.error ? 'true' : undefined}
     >
       {banner}
-      <div className="board-bar">
+      <div className="board-bar" data-page-row={newShell ? '' : undefined}>
+        {newShell && <PageTitle title={t('nav.labpage')} />}
         <BoardTabs boards={boards} active={active} onSelect={choose} title={boardTitle} />
         <div className="board-bar-actions">
           {saveStatus === 'saving' && <span className="board-status" data-lab-saving>{t('lab.board.saving')}</span>}

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { PlatformId } from './platforms.js';
 import { sanitizeModel } from './claude-args.js';
@@ -755,13 +755,25 @@ export function readBrainLocal(projectRoot: string): BrainLocalState {
   }
 }
 
-/** Merge-write `.brain-local.json` (0644 — not a secret, but never tracked: brain-repo `.gitignore` covers it). */
+/**
+ * Merge-write `.brain-local.json` (0644 — not a secret, but never tracked: brain-repo `.gitignore` covers it).
+ * Atomic (a unique temp file, then rename): the file also holds the auto-sleep consent and
+ * `codeRepoPath`, and since Settings → Eco mode writes it too, a write cut short must never
+ * leave it half-written, which `readBrainLocal` would read as `{}`.
+ */
 export function writeBrainLocal(projectRoot: string, patch: Partial<BrainLocalState>): BrainLocalState {
   const existing = readBrainLocal(projectRoot);
   const next: BrainLocalState = { ...existing, ...patch };
   const path = brainLocalPath(projectRoot);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(next, null, 2) + '\n', 'utf-8');
+  const tmp = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', 'utf-8');
+    renameSync(tmp, path);
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
   return next;
 }
 

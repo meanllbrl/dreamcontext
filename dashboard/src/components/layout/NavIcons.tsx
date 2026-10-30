@@ -310,3 +310,51 @@ export function NavIcon({ page }: { page: Page }) {
   const Icon = ICONS[page];
   return Icon ? <Icon /> : null;
 }
+
+/* ── The new shell's rail (Settings → New layout) ─────────────────────────────────────────
+   Not in {@link ICONS}: the classic sidebar keeps its own glyphs; these four are the
+   prototype's (r27) where it drew a different one. */
+
+/** Tasks on the new rail — a checked box. */
+export function CheckedBoxIcon() {
+  return (
+    <Svg>
+      <rect x="4" y="4" width="16" height="16" rx="3.5" />
+      <path d="M8.5 12.2 11 14.6l4.6-5" />
+    </Svg>
+  );
+}
+
+/** Whiteboards on the new rail — a canvas holding a circle and a triangle. */
+export function CanvasIcon() {
+  return (
+    <Svg>
+      <rect x="3" y="4" width="18" height="16" rx="3" />
+      <circle cx="9" cy="10" r="2.2" />
+      <path d="M13 17.5 16 12.5l3 5z" />
+    </Svg>
+  );
+}
+
+/** Project Relations — three projects tied together. */
+export function RelationsIcon() {
+  return (
+    <Svg>
+      <circle cx="6" cy="6" r="2.5" />
+      <circle cx="18" cy="6" r="2.5" />
+      <circle cx="12" cy="18" r="2.5" />
+      <path d="M8.3 7.2 10.8 15.8M15.7 7.2 13.2 15.8M8.5 6h7" />
+    </Svg>
+  );
+}
+
+/** More — three dots. */
+export function MoreDotsIcon() {
+  return (
+    <Svg>
+      <circle cx="5.5" cy="12" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="18.5" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}

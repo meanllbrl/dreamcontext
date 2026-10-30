@@ -435,3 +435,33 @@
   font-size: 12.5px;
   color: var(--color-text-secondary);
 }
+
+/* ── The new shell's Settings (W2-C) ── */
+.settings-search {
+  flex: 0 1 280px;
+  min-width: 130px;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--space-8);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+.settings-search:focus-within { border-color: var(--color-border-focus); }
+.settings-search-icon { color: var(--color-text-tertiary); }
+.settings-search-input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--color-text); font: inherit; font-size: var(--font-size-sm); outline: none; }
+.settings-search-input::placeholder { color: var(--color-text-placeholder); }
+.settings-search-input::-webkit-search-cancel-button { display: none; }
+.settings-search-kbd { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--color-text-tertiary); padding: 0 var(--space-1); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+.settings-search-empty { padding: var(--space-8) 0; text-align: center; color: var(--color-text-tertiary); font-size: var(--font-size-sm); }
+.settings-content [data-search-hidden] { display: none !important; }
+::highlight(settings-search) { background-color: var(--color-accent-soft); color: var(--color-text); }
+.settings-models-pair { display: inline-flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; }
+.settings-models-link { border: 0; background: transparent; color: var(--color-accent-ink); font-size: var(--font-size-sm); cursor: pointer; padding: 0 var(--space-1); white-space: nowrap; }
+.settings-models-link:hover { text-decoration: underline; }
+.settings-models-link:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; border-radius: var(--radius-sm); }
+/* Settings' own section nav sticks below the page bar, not under it. */
+.project-instance[data-shell="new"] .settings-nav { top: var(--space-13); }

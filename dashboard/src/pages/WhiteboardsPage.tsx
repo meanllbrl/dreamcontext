@@ -1,6 +1,8 @@
 import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { PageTitle } from '../components/layout/PageBar';
+import { TOGGLE_PAGE_DRAWER_EVENT, useIsNewShell } from '../lib/uxMode';
 import { useI18n } from '../context/I18nContext';
-import { useApi, useVault } from '../context/VaultContext';
+import { useApi, useInstanceEvent, useVault } from '../context/VaultContext';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
 import { useDefaultWhiteboard, useWhiteboardEditor, useWhiteboardList } from '../hooks/useWhiteboards';
 import { useAgents } from '../hooks/useAgents';
@@ -142,6 +144,8 @@ function WhiteboardsPageBody({ focus }: WhiteboardsPageProps) {
   useEffect(() => {
     if (openSlug) changePrefs((p) => touchRecent(p, openSlug));
   }, [openSlug, changePrefs]);
+  // The new shell's drawer button and ⌘B on this page: its own explorer, not the chat drawer.
+  useInstanceEvent(TOGGLE_PAGE_DRAWER_EVENT, () => setExplorerOpen(!explorerOpen));
 
   const toggle = explorerOpen ? null : (
     <button
@@ -225,6 +229,7 @@ function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote, goneNote, on
   explorerToggle?: ReactNode;
 }) {
   const { t } = useI18n();
+  const newShell = useIsNewShell();
   const { load, saveState, gone, onApi, onSceneChange, exportFile, pictures } = useWhiteboardEditor(slug);
   const { vault } = useVault();
   const panelOpen = useAgentPanelOpen(vault);
@@ -288,7 +293,8 @@ function WhiteboardEditor({ slug, onOpen, renameNote, onRenameNote, goneNote, on
   return (
     <div className="wbp-editor">
       {heading}
-      <div className="wbp-bar">
+      <div className="wbp-bar" data-page-row={newShell ? '' : undefined}>
+        {newShell && <PageTitle title={t('nav.whiteboard')} />}
         {explorerToggle}
         {switcher}
         <SaveStatus state={saveState} />

@@ -29,8 +29,8 @@ const valid = (over: Partial<SavedMeta> = {}): SavedMeta => ({
 });
 
 describe('MAX_SESSIONS', () => {
-  it('is 20', () => {
-    expect(MAX_SESSIONS).toBe(20);
+  it('is 40 (named chat windows, W3)', () => {
+    expect(MAX_SESSIONS).toBe(40);
   });
 });
 
@@ -64,7 +64,7 @@ describe('sanitizeRoster — length cap', () => {
     const sessions = Array.from({ length: 50 }, (_, i) => valid({ title: `Agent ${i}` }));
     const out = sanitizeRoster({ sessions });
     expect(out).toHaveLength(MAX_SESSIONS);
-    // Keeps the FIRST 20 (slice from the head), not the tail.
+    // Keeps the FIRST MAX_SESSIONS (slice from the head), not the tail.
     expect(out?.[0].title).toBe('Agent 0');
     expect(out?.[MAX_SESSIONS - 1].title).toBe(`Agent ${MAX_SESSIONS - 1}`);
   });

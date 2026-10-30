@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { useI18n } from '../../context/I18nContext';
 import { BrandMark } from '../brand/BrandMark';
@@ -7,21 +7,14 @@ import { NavIcon, ChatIcon } from './NavIcons';
 import { RailTip } from './RailTip';
 import { GitHubMark } from '../brain/GitHubLogin';
 import { useAuthStatus, useBrainStatus } from '../../hooks/useBrainStatus';
-import { useAnnouncementInbox } from '../../hooks/useAnnouncements';
-import { useAgentFeed } from '../../hooks/useAutomations';
-import { useTheses } from '../../hooks/useTheses';
+import { useNavBadges } from './useNavBadges';
 import { BrainSyncControl } from '../brain/BrainSyncControl';
-import { useVault, useInstanceEvent } from '../../context/VaultContext';
-import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
-import {
-  AGENT_SURFACE_EXPANDED_EVENT, onAgentSettings, openAgentSurface, readAgentSettings,
-} from '../../lib/agentSettings';
-import { PROJECT_ROLLUP_EVENT } from '../sleepy/AgentSurface';
-import type { ProjectRollup } from '../sleepy/agentStatus';
+import { useVault } from '../../context/VaultContext';
+import { openAgentSurface } from '../../lib/agentSettings';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import './Sidebar.css';
 
-export type Page = 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements' | 'whiteboards';
+export type Page = 'relations' | 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements' | 'whiteboards';
 
 interface SidebarProps {
   activePage: Page;
@@ -46,7 +39,7 @@ export const PHONE_HIDDEN_PAGES: readonly Page[] = ['settings'];
  */
 export type MaturityLevel = 'alpha' | 'beta' | 'off';
 
-interface NavItem {
+export interface NavItem {
   page: Page;
   labelKey: string;
   maturity?: MaturityLevel;
@@ -66,8 +59,8 @@ interface NavItem {
  * is the one thing `AgentSurface` exists to never do. So the row only asks the surface to
  * expand, and `activePage` never becomes 'chat'.
  */
-interface NavLauncher { launch: 'chat'; labelKey: string }
-interface NavGroup { labelKey: string; hue: string; items: (NavItem | NavLauncher)[] }
+export interface NavLauncher { launch: 'chat'; labelKey: string }
+export interface NavGroup { labelKey: string; hue: string; items: (NavItem | NavLauncher)[] }
 
 // Grouped by job-to-be-done so the rail reads as a scannable hierarchy rather
 // than one flat list of 9+ items:
@@ -78,7 +71,7 @@ interface NavGroup { labelKey: string; hue: string; items: (NavItem | NavLaunche
 // Naming: "Sleepy" stays the ask/recall surface; the consolidation page is
 // "Sleep Cycle" (not "Sleep State") to avoid colliding with "Sleepy"; the graph
 // is "Map" (not "Brain") to avoid Brain-in-Brain.
-const NAV_GROUPS: NavGroup[] = [
+export const NAV_GROUPS: NavGroup[] = [
   {
     labelKey: 'nav.group.workspace',
     hue: '--nav-hue-workspace',
@@ -186,39 +179,7 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
 
   const { data: authStatus } = useAuthStatus();
   const { data: brainStatus } = useBrainStatus();
-  const { unread } = useAnnouncementInbox();
-  // PROJECT-WIDE unread in the agents channel. The rail is the only place a
-  // message is visible from another page, so without this an agent that fired
-  // while the user was in Tasks is a thing they find out about tomorrow.
-  // Per MACHINE, like every other thread read mark — a teammate reading it on
-  // their laptop must not clear this badge here.
-  const { data: agentFeed } = useAgentFeed();
-  const agentUnread = agentFeed?.unreadTotal ?? 0;
-  // Hypotheses is in the rail for everyone, on or off. It used to be hidden
-  // while the learning layer was disabled, which made the layer undiscoverable
-  // by exactly the people who had never turned it on: the page that explains it
-  // and carries its enable button was only reachable once it was already
-  // enabled. Off now reads as a dimmed item with an "off" tag, and the page
-  // itself is the explainer + switch.
-  // `=== false`, never `!enabled`: the field is undefined until the query
-  // resolves, and a rail that says "off" for a beat before flipping to on is
-  // worse than one that simply doesn't label it yet.
-  const { data: thesesData } = useTheses();
-  const learningOff = thesesData?.enabled === false;
-  // The Chat row shows under the SAME gate as the corner FAB — desktop, and the surface
-  // enabled in Settings — so the rail never offers a launcher that opens nothing.
-  const { data: caps } = useAgentCapabilities();
-  const [chatEnabled, setChatEnabled] = useState<boolean>(() => readAgentSettings().enabled);
-  useEffect(() => onAgentSettings((cfg) => setChatEnabled(cfg.enabled)), []);
-  const showChat = !!caps?.desktop && chatEnabled;
-  // Live chats in THIS project, and whether one of them wants you. The surface publishes the
-  // rollup on change only; it starts at zero sessions, so a rail mounted with it never misses
-  // a count that mattered.
-  const [chatRollup, setChatRollup] = useState<{ live: number; waiting: number }>({ live: 0, waiting: 0 });
-  useInstanceEvent<ProjectRollup>(PROJECT_ROLLUP_EVENT, (r) => setChatRollup({ live: r.live, waiting: r.waiting }));
-  // While the overlay covers the page, Chat is where the user IS — one active row, not two.
-  const [chatOpen, setChatOpen] = useState(false);
-  useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => setChatOpen(open === true));
+  const { unread, agentUnread, learningOff, showChat, chatRollup, chatOpen } = useNavBadges();
   // `agents` is the AI Team too (its old deep links land there), so its row lights up.
   const current: Page | null = chatOpen && showChat ? null : activePage === 'agents' ? 'automations' : activePage;
   const vaultLabel = vault ?? '';

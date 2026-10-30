@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { useIsNewShell } from '../../lib/uxMode';
+import { PageBar, PageTitle } from '../layout/PageBar';
 import type { DebateIndexEntry } from '../../hooks/useCouncil';
 import { useI18n } from '../../context/I18nContext';
 import { PersonaAvatar } from './PersonaAvatar';
@@ -50,6 +52,7 @@ function statusLabel(status: string): string {
 
 export function CouncilHall({ debates, onOpen, onNew }: Props) {
   const { t } = useI18n();
+  const newShell = useIsNewShell();
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('all');
 
@@ -61,13 +64,16 @@ export function CouncilHall({ debates, onOpen, onNew }: Props) {
   // No debates at all → drop the search/filter chrome (it would be empty noise)
   // and show the "What is Council?" explainer with the single relevant action.
   if (debates.length === 0) {
+    // The new shell: no toolbar row here, so the title-only bar (W2-B).
+    if (newShell) return <><PageBar flush title={t('nav.council')} /><CouncilEmptyState onNew={onNew} /></>;
     return <CouncilEmptyState onNew={onNew} />;
   }
 
   return (
     <div className="council-hall">
       <CouncilBanner />
-      <div className="council-hall-bar">
+      <div className="council-hall-bar" data-page-row={newShell ? '' : undefined}>
+        {newShell && <PageTitle title={t('nav.council')} />}
         <label className="council-hall-search">
           <span aria-hidden>🔍</span>
           <input

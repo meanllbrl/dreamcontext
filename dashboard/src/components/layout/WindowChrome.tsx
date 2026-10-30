@@ -33,6 +33,22 @@ import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { COARSE_POINTER_QUERY, useRemoteDesktop } from '../../hooks/useIsMobile';
 import { ChromeSlotsProvider, type ChromeSlots } from './chromeSlots';
 import { ProjectTabs, type ProjectChip } from './ProjectTabs';
+import { useIsNewShell } from '../../lib/uxMode';
+import { readLayoutPrefs, writeLayoutPrefs } from '../../lib/launcherPrefs';
+import { useLauncherStatus } from '../../hooks/useLauncher';
+import { TitleBar } from './newshell/TitleBar';
+import type { PickerRow } from './newshell/ProjectPicker';
+import { mergeProjectOrder } from './newshell/projectOrder';
+import { chill, liveInstanceCount, oldestEvictable } from './instanceCeiling';
+import { ChatDrawer } from './newshell/ChatDrawer';
+import {
+  buildDrawerRows, dropInOrder, intentLands, moveInOrder, type DrawerFacts,
+} from './newshell/drawerModel';
+import { useDrawerProjects } from '../../hooks/useDrawerProjects';
+import { useIsNarrowWindow } from '../../hooks/useIsNarrowWindow';
+import { ChatHistoryPicker } from '../sleepy/ChatHistoryPicker';
+import type { DrawerIntent, PendingDrawerIntent } from '../../lib/drawerIntents';
+import './newshell/NewShell.css';
 import './ProjectTabs.css';
 import './Header.css';
 
@@ -87,6 +103,9 @@ export interface ChromeApi {
   activate(vault: string): void;
   closeTab(vault: string): void;
   detachToWindow(vault: string): Promise<void>;
+  /** The window's zoom (one for every project in it). */
+  zoom: number;
+  setZoom(level: number): void;
 }
 
 /**
@@ -107,6 +126,8 @@ const DETACHED_CHROME: ChromeApi = {
   detachToWindow: async (vault: string) => {
     await openVaultWindow(vault);
   },
+  zoom: 1,
+  setZoom: () => {},
 };
 
 const ChromeContext = createContext<ChromeApi>(DETACHED_CHROME);
@@ -187,44 +208,6 @@ function StaleServerBanner() {
 
 /* ──────────────────────────────────── ceiling rules ──────────────────────────────────── */
 
-/** Instances actually mounted right now (cold chips cost nothing). */
-function liveInstanceCount(open: OpenProject[]): number {
-  return open.reduce((n, p) => (p.cold ? n : n + 1), 0);
-}
-
-/**
- * The oldest instance it is SAFE to tear down, or null when there is none.
- *
- * The null-rollup case is the load-bearing one. `rollup === null` means the instance has not
- * published its state yet — freshly mounted, just revived from a cold chip, or (until T19
- * lands the publisher) simply never.
- * It does **not** mean idle. Reading null as "nothing running here" would tear down an
- * instance holding a live chat, killing its PTY mid-conversation, which is the single thing
- * this whole design is not allowed to do. So an instance is evictable only once it has said,
- * in its own words, that it has nothing live.
- *
- * The active instance is never a candidate either: the user is looking at it.
- *
- * Reads `alive`, never `live`. `live` is a PRESENTATION count for the chip badge — it
- * excludes shells on purpose, because a plain terminal has no agent behind it and isn't an
- * "active chat". A dev server or build watch running in a shell is exactly the kind of PTY
- * this ceiling must never kill, and it would report `live: 0` while still very much alive.
- * `alive` counts every session still holding a live PTY/WebSocket, shells included — it is
- * the only field allowed to gate a teardown.
- */
-function oldestEvictable(open: OpenProject[], keep: readonly string[]): OpenProject | null {
-  for (const p of open) {
-    if (p.cold || keep.includes(p.vault)) continue;
-    if (p.rollup !== null && p.rollup.alive === 0) return p;
-  }
-  return null;
-}
-
-/** Tear an instance down to a cold chip: it unmounts, its chip stays, its rollup is void. */
-function chill(open: OpenProject[], vault: string): OpenProject[] {
-  return open.map((p) => (p.vault === vault ? { ...p, cold: true, rollup: null } : p));
-}
-
 /**
  * Whether two rollups say the same thing — the re-render gate in `handleRollup`.
  *
@@ -260,6 +243,13 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
   initialStart?: StartIntent | null;
 }) {
   const { theme, setTheme, resolved } = useTheme();
+  const { t } = useI18n();
+  // The new shell (Settings → New layout), frozen for this window by `lib/uxMode.ts`.
+  const newShell = useIsNewShell();
+  const newShellRef = useRef(newShell);
+  // The notices are set from stable callbacks (`addTab`, `activate`); a ref keeps them stable.
+  const tRef = useRef(t);
+  tRef.current = t;
   const [zoom, setZoom] = useState(getStoredZoom);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -272,9 +262,10 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
    */
   const [leftSlot, setLeftSlot] = useState<HTMLElement | null>(null);
   const [rightSlot, setRightSlot] = useState<HTMLElement | null>(null);
+  const [railSlot, setRailSlot] = useState<HTMLElement | null>(null);
   const chromeSlots = useMemo<ChromeSlots>(
-    () => ({ left: leftSlot, right: rightSlot }),
-    [leftSlot, rightSlot],
+    () => (newShell ? { left: leftSlot, right: rightSlot, rail: railSlot } : { left: leftSlot, right: rightSlot }),
+    [leftSlot, rightSlot, railSlot, newShell],
   );
 
   /*
@@ -498,10 +489,11 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
       if (liveInstanceCount(current) >= MAX_LIVE_INSTANCES) {
         const victim = oldestEvictable(current, [vault, activeRef.current]);
         if (!victim) {
-          notify(`Can't reopen ${vault} — every other project has a live session.`);
+          notify(newShellRef.current ? tRef.current('shell.notice.ceiling') : `Can't reopen ${vault} — every other project has a live session.`);
           return;
         }
         next = chill(next, victim.vault);
+        if (newShellRef.current) notify(tRef.current('shell.notice.evicted').replace('{name}', victim.vault));
       }
       setOpen(next.map((p) => (
         p.vault === vault ? { ...p, cold: false, rollup: null, instanceId: mintInstanceId() } : p
@@ -688,11 +680,13 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
     if (liveInstanceCount(current) >= MAX_LIVE_INSTANCES) {
       const victim = oldestEvictable(current, [activeRef.current]);
       if (!victim) {
-        notify(`${MAX_LIVE_INSTANCES} projects are open and all of them have a live session — close one first.`);
+        notify(newShellRef.current ? tRef.current('shell.notice.ceiling') : `${MAX_LIVE_INSTANCES} projects are open and all of them have a live session — close one first.`);
         return 'refused-ceiling';
       }
       next = chill(next, victim.vault);
-      notify(`${victim.vault} was idle, so it was put to sleep to make room. Click its chip to reopen it.`);
+      notify(newShellRef.current
+        ? tRef.current('shell.notice.evicted').replace('{name}', victim.vault)
+        : `${victim.vault} was idle, so it was put to sleep to make room. Click its chip to reopen it.`);
     }
 
     // 4. Room to grow.
@@ -899,10 +893,206 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
     };
   }, []);
 
+  const setZoomLevel = useCallback((level: number) => {
+    if (!ZOOM_LEVELS.includes(level)) return;
+    setZoom(level);
+    try { localStorage.setItem(ZOOM_STORAGE_KEY, String(level)); } catch { /* ignore */ }
+  }, []);
+
   const chrome = useMemo<ChromeApi>(
-    () => ({ open, activeVault, addTab, activate, closeTab, detachToWindow }),
-    [open, activeVault, addTab, activate, closeTab, detachToWindow],
+    () => ({ open, activeVault, addTab, activate, closeTab, detachToWindow, zoom, setZoom: setZoomLevel }),
+    [open, activeVault, addTab, activate, closeTab, detachToWindow, zoom, setZoomLevel],
   );
+
+  /* ── The new shell (Settings → New layout) ─────────────────────────────────────────────── */
+
+  // The project this window last showed, for the next launch's "open on the last project".
+  useEffect(() => {
+    if (newShell && activeVault) writeLayoutPrefs({ lastVault: activeVault });
+  }, [newShell, activeVault]);
+
+  // Every registered project, in the owner's order (`projectOrder`), for the picker and ⌘1-9.
+  const { data: launcherStatus } = useLauncherStatus(newShell);
+  // Bumped when the drawer reorders: `readLayoutPrefs()` already holds the new order.
+  const [orderRev, setOrderRev] = useState(0);
+  const projectOrder = useMemo(() => {
+    const names = (launcherStatus?.vaults ?? []).filter((v) => v.exists).map((v) => v.name);
+    for (const p of open) if (!names.includes(p.vault)) names.push(p.vault);
+    return mergeProjectOrder(readLayoutPrefs().projectOrder, names);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [launcherStatus, open, orderRev]);
+  const projectOrderRef = useRef(projectOrder);
+  projectOrderRef.current = projectOrder;
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerRows = useMemo<PickerRow[]>(() => {
+    if (!newShell) return [];
+    const byName = new Map((launcherStatus?.vaults ?? []).map((v) => [v.name, v] as const));
+    return projectOrder.map((name) => {
+      const held = open.find((p) => p.vault === name);
+      const v = byName.get(name);
+      return {
+        name,
+        logo: !!v?.logo,
+        logoStamp: v?.logoStamp ?? null,
+        active: name === activeVault,
+        asleep: !!held?.cold,
+        otherWindow: !held && !!findWindowForVault(name),
+      };
+    });
+    // `pickerOpen` re-reads the other windows' registry each time the picker opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newShell, launcherStatus, projectOrder, open, activeVault, pickerOpen]);
+
+  // The drawer button and ⌘B: one route (D12). The window bumps a nonce on the ACTIVE instance;
+  // its `PageDrawerToggleBridge` decides what it means on that page.
+  const [drawerToggleNonce, setDrawerToggleNonce] = useState(0);
+  const [drawerOpen, setDrawerOpen] = useState(() => readLayoutPrefs().drawerOpen ?? true);
+  const toggleDrawer = useCallback(() => {
+    setDrawerOpen((o) => { writeLayoutPrefs({ drawerOpen: !o }); return !o; });
+  }, []);
+
+  /* ── The chat drawer (W2-A): facts up, intents down (D5) ── */
+
+  // What each mounted project publishes; dropped when its instance unmounts.
+  const [drawerFacts, setDrawerFacts] = useState<Record<string, DrawerFacts>>({});
+  const handleDrawerFacts = useCallback((vault: string, facts: DrawerFacts) => {
+    setDrawerFacts((prev) => ({ ...prev, [vault]: facts }));
+  }, []);
+  useEffect(() => {
+    setDrawerFacts((prev) => {
+      const live = new Set(open.filter((p) => !p.cold).map((p) => p.vault));
+      const kept = Object.entries(prev).filter(([v]) => live.has(v));
+      return kept.length === Object.keys(prev).length ? prev : Object.fromEntries(kept);
+    });
+  }, [open]);
+
+  const activeOnChat = !!(activeVault && drawerFacts[activeVault]?.chatOpen);
+  // ≤900 the drawer floats over the page and a pick closes it (without forgetting the setting).
+  const narrow = useIsNarrowWindow(900);
+  const [floatingOpen, setFloatingOpen] = useState(false);
+  useEffect(() => { if (!activeOnChat) setFloatingOpen(false); }, [activeOnChat]);
+  const drawerVisible = newShell && activeOnChat && (narrow ? floatingOpen : drawerOpen);
+  const onDrawerToggle = useCallback(() => {
+    if (narrow) setFloatingOpen((o) => !o);
+    else toggleDrawer();
+  }, [narrow, toggleDrawer]);
+
+  const [drawerExpanded, setDrawerExpanded] = useState<string[]>(() => {
+    const stored = readLayoutPrefs().drawerExpanded;
+    return stored.length ? stored : (initialVault ? [initialVault] : []);
+  });
+  const toggleExpanded = useCallback((name: string) => {
+    setDrawerExpanded((cur) => {
+      const next = cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name];
+      writeLayoutPrefs({ drawerExpanded: next });
+      return next;
+    });
+  }, []);
+  const [drawerWidth, setDrawerWidth] = useState(() => readLayoutPrefs().drawerWidth ?? 280);
+  const resizeDrawer = useCallback((w: number) => {
+    setDrawerWidth(w);
+    writeLayoutPrefs({ drawerWidth: w });
+  }, []);
+  const reorder = useCallback((next: string[]) => {
+    writeLayoutPrefs({ projectOrder: next });
+    setOrderRev((n) => n + 1);
+  }, []);
+
+  const mountedNames = useMemo(() => open.filter((p) => !p.cold).map((p) => p.vault), [open]);
+  const fanout = useDrawerProjects(newShell ? drawerExpanded : [], mountedNames, drawerVisible);
+  const drawerRows = useMemo(() => {
+    if (!newShell) return [];
+    const byName = new Map((launcherStatus?.vaults ?? []).map((v) => [v.name, v] as const));
+    return buildDrawerRows({
+      projects: projectOrder.map((name) => {
+        const held = open.find((p) => p.vault === name);
+        const v = byName.get(name);
+        return {
+          name,
+          logo: !!v?.logo,
+          logoStamp: v?.logoStamp ?? null,
+          mounted: !!held && !held.cold,
+          asleep: !!held?.cold,
+          otherWindow: !held && !!findWindowForVault(name),
+          rollup: held?.rollup ?? null,
+        };
+      }),
+      activeVault,
+      expanded: drawerExpanded,
+      facts: drawerFacts,
+      fanout,
+    });
+  }, [newShell, launcherStatus, projectOrder, open, activeVault, drawerExpanded, drawerFacts, fanout]);
+
+  // The queue (D5): a row's click brings its project forward FIRST, and the intent travels
+  // only when that project is now on screen and mounted (the `landLink` rule).
+  const [pendingDrawerIntents, setPendingDrawerIntents] = useState<Record<string, PendingDrawerIntent>>({});
+  const drawerSeqRef = useRef(0);
+  const queueDrawerIntent = useCallback(async (vault: string, intent: DrawerIntent) => {
+    let result: AddTabResult;
+    if (openRef.current.some((p) => p.vault === vault)) {
+      activate(vault);
+      result = 'focused-tab';
+    } else {
+      result = await addTab(vault);
+    }
+    const tab = openRef.current.find((p) => p.vault === vault);
+    if (!intentLands(result, !!tab && !tab.cold)) return;
+    drawerSeqRef.current += 1;
+    const nonce = drawerSeqRef.current;
+    setPendingDrawerIntents((prev) => ({ ...prev, [vault]: { intent, nonce, at: Date.now() } }));
+  }, [activate, addTab]);
+  const consumeDrawerIntent = useCallback((vault: string, nonce: number) => {
+    setPendingDrawerIntents((prev) => {
+      if (prev[vault]?.nonce !== nonce) return prev;
+      const next = { ...prev };
+      delete next[vault];
+      return next;
+    });
+  }, []);
+
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [newWindowNonce, setNewWindowNonce] = useState(0);
+  const newWindowRef = useRef<() => boolean>(() => false);
+  newWindowRef.current = () => {
+    if (!drawerVisible) return false;
+    setNewWindowNonce((n) => n + 1);
+    return true;
+  };
+
+  // ⌘P opens the picker, ⌘1-9 pick the Nth project in the picker's order, ⌘B is the drawer
+  // button. `ProjectSwitcher` is not mounted in the new shell, so ⌘P has one owner.
+  useEffect(() => {
+    if (!newShell) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod || e.altKey || e.shiftKey) return;
+      const el = e.target instanceof Element ? e.target : null;
+      const inTerminal = !!el?.closest('.xterm');
+      const editable = !!el?.closest('input, textarea, select, [contenteditable="true"], .xterm');
+      // ⌘1-9 skip the chat too, as the classic switcher does (ProjectSwitcher.tsx).
+      const inChat = editable || !!el?.closest('.agent-surface');
+      const key = e.key.toLowerCase();
+      if (key === 'p' && !inTerminal) {
+        e.preventDefault();
+        setPickerOpen((o) => !o);
+      } else if (key === 'b' && !editable) {
+        e.preventDefault();
+        setDrawerToggleNonce((n) => n + 1);
+      } else if (key === 'n' && !inTerminal && newWindowRef.current()) {
+        // ⌘N: New chat window's project picker, while the drawer is on screen; otherwise the
+        // key is left alone (⌃N moves a line down in the composer).
+        e.preventDefault();
+      } else if (/^[1-9]$/.test(e.key) && !inChat) {
+        const target = projectOrderRef.current[Number(e.key) - 1];
+        if (!target) return;
+        e.preventDefault();
+        void addTab(target);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [newShell, addTab]);
 
   const chips = useMemo<ProjectChip[]>(() => open.map((p) => ({
     vault: p.vault,
@@ -958,6 +1148,100 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
   const tunnel = isMacPhoneSurface();
   const remote = useRemoteDesktop();
   const touch = remote && typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(COARSE_POINTER_QUERY).matches;
+
+  if (newShell) {
+    return (
+      <ChromeContext.Provider value={chrome}>
+        <ChromeSlotsProvider value={chromeSlots}>
+        <div className="window-chrome" data-shell="new">
+          <div className="window-chrome-banners" ref={bannersRef}>
+            <UpgradeRelaunchBanner />
+            <StaleServerBanner />
+          </div>
+          <TitleBar
+            activeVault={activeVault}
+            rows={pickerRows}
+            pickerOpen={pickerOpen}
+            onPickerOpen={setPickerOpen}
+            onPick={(name) => void addTab(name)}
+            notice={notice}
+            onToggleDrawer={() => setDrawerToggleNonce((n) => n + 1)}
+            zoom={zoom}
+            zoomLevels={ZOOM_LEVELS}
+            onZoom={setZoomLevel}
+            onCycleTheme={cycleTheme}
+            themeLabel={themeLabel}
+            dark={resolved === 'dark'}
+            setLeftSlot={setLeftSlot}
+            setRightSlot={setRightSlot}
+          />
+          {/* [rail][drawer (W2)][instances]: each instance starts right of the drawer, so the
+              chat overlay bounded to it (D4) never covers the rail or the drawer. */}
+          <div className="ns-body" data-drawer={drawerVisible ? 'open' : 'closed'}>
+            <div className="ns-rail-slot" ref={setRailSlot} />
+            {drawerVisible && narrow && (
+              <div className="ns-drawer-scrim" onClick={() => setFloatingOpen(false)} aria-hidden="true" />
+            )}
+            {drawerVisible && (
+              <ChatDrawer
+                rows={drawerRows}
+                width={drawerWidth}
+                floating={narrow}
+                onClose={() => setFloatingOpen(false)}
+                onResize={resizeDrawer}
+                onToggleExpanded={toggleExpanded}
+                onIntent={(vault, intent) => void queueDrawerIntent(vault, intent)}
+                onHistory={() => { setHistoryOpen(true); setFloatingOpen(false); }}
+                onRelations={() => { if (activeVault) void queueDrawerIntent(activeVault, { kind: 'page', page: 'relations' }); setFloatingOpen(false); }}
+                onMove={(name, delta) => reorder(moveInOrder(projectOrder, name, delta))}
+                onDrop={(name, before) => reorder(dropInOrder(projectOrder, name, before))}
+                onOpenInWindow={(name) => {
+                  if (openRef.current.some((p) => p.vault === name)) void detachToWindow(name);
+                  else void openVaultWindow(name).catch((err) => notify(`Couldn't open a window for ${name}: ${err instanceof Error ? err.message : String(err)}`));
+                }}
+                onCloseProject={(name) => closeTab(name)}
+                newWindowNonce={newWindowNonce}
+              />
+            )}
+            <div className="window-chrome-body">
+              {open.filter((p) => !p.cold).map((p) => (
+                <ProjectInstance
+                  key={p.instanceId}
+                  vault={p.vault}
+                  instanceId={p.instanceId}
+                  isActive={p.vault === activeVault}
+                  sidebarCollapsed={sidebarCollapsed}
+                  onToggleSidebar={toggleSidebar}
+                  onRollup={handleRollup}
+                  pendingLink={pendingLinks[p.vault] ?? null}
+                  onLinkConsumed={consumeLink}
+                  pendingStart={pendingStarts[p.vault] ?? null}
+                  onStartConsumed={consumeStart}
+                  drawerToggleNonce={drawerToggleNonce}
+                  drawerVisible={drawerVisible}
+                  onDrawerToggle={onDrawerToggle}
+                  onDrawerFacts={handleDrawerFacts}
+                  pendingDrawerIntent={pendingDrawerIntents[p.vault] ?? null}
+                  onDrawerIntentConsumed={consumeDrawerIntent}
+                />
+              ))}
+            </div>
+          </div>
+          {/* History across projects (D7): a pick reopens the chat in ITS OWN project. */}
+          <ChatHistoryPicker
+            open={historyOpen}
+            onClose={() => setHistoryOpen(false)}
+            onPick={() => setHistoryOpen(false)}
+            openIds={[]}
+            projects={projectOrder}
+            currentVault={activeVault}
+            onPickIn={(vault, s) => { setHistoryOpen(false); void queueDrawerIntent(vault, { kind: 'open-session', sessionId: s.id }); }}
+          />
+        </div>
+        </ChromeSlotsProvider>
+      </ChromeContext.Provider>
+    );
+  }
 
   return (
     <ChromeContext.Provider value={chrome}>

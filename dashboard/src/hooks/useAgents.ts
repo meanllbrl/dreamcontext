@@ -146,13 +146,18 @@ function invalidateAgent(queryClient: QueryClient, slug?: string): void {
 }
 
 /** The roster. `enabled: false` reads nothing (a surface that only sometimes needs it). */
-export function useAgents(opts: { enabled?: boolean } = {}) {
+export function useAgents(opts: { enabled?: boolean; pollEveryMs?: number } = {}) {
   const api = useApi();
   return useQuery({
     queryKey: ['agents'],
     queryFn: () => api.get<{ agents: AgentSummary[] }>('/agents').then((r) => r.agents),
     retry: 0,
     enabled: opts.enabled ?? true,
+    // The new shell's drawer keeps a hidden project's team rows fresh while it is on screen
+    // (D5); every other caller keeps the instance's default cadence.
+    ...(opts.pollEveryMs ? {
+      refetchInterval: () => pollMs(opts.pollEveryMs ?? 0),
+    } : {}),
   });
 }
 

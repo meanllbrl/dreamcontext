@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useIsNewShell } from '../lib/uxMode';
 import { useKnowledgeList, useKnowledge, useToggleKnowledgePin, useKnowledgeLiveRefresh } from '../hooks/useKnowledge';
 import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
 import { useI18n } from '../context/I18nContext';
@@ -194,6 +195,7 @@ interface KnowledgePageProps {
 
 export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
   const { t } = useI18n();
+  const newShell = useIsNewShell();
   const { vault } = useVault();
   const { data: entries, isLoading, isError, error } = useKnowledgeList();
   const togglePin = useToggleKnowledgePin();
@@ -458,6 +460,7 @@ export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
     <div className="knowledge-page">
       <BrainSearch
         scope="knowledge"
+        pageTitle={newShell ? t('nav.knowledge') : undefined}
         placeholder={t('knowledge.search')}
         selectedSlug={selected}
         onOpen={(hit) => { setSelected(hit.slug); setViewTab('preview'); }}

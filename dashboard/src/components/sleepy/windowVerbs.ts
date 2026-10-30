@@ -34,9 +34,13 @@ export interface WindowPane {
 export interface WindowVerbDeps {
   /** The calling chat's internal session id. */
   self: string;
+  /** The name of the caller's chat window (the new shell's named windows, W3). Every list and
+   *  move below is already scoped to it: a chat never reaches another window's tabs. */
+  window?: string;
   panes: WindowPane[];
   activePaneId: string;
   tabs: WindowTab[];
+  /** The new tab's id, or '' when the project is at its 40-tab ceiling (nothing started). */
   openNew: (o: { prompt: string; mode: ChatMode; model: string; effort: string; split: boolean; terminal: boolean }) => Promise<string>;
   split: (sid: string, paneId: string) => void;
   join: (sid: string, paneId: string) => void;
@@ -72,6 +76,7 @@ function resolve(deps: WindowVerbDeps, arg: unknown): WindowTab | string {
 export function windowState(deps: WindowVerbDeps): Record<string, unknown> {
   const byId = new Map(deps.tabs.map((t) => [t.sid, t]));
   return {
+    ...(deps.window ? { window: deps.window } : {}),
     panes: deps.panes.map((p, i) => ({
       pane: i + 1,
       focused: p.id === deps.activePaneId,
@@ -101,6 +106,7 @@ export async function runWindowVerb(deps: WindowVerbDeps, verb: string, args: Re
       split: args.split === true,
       terminal: args.terminal === true,
     });
+    if (!tab) return { ok: false, error: '40 chats are open in this project; the owner closes one first' };
     return { ok: true, result: { tab, placed: args.split === true ? 'new pane' : 'tab' } };
   }
 
