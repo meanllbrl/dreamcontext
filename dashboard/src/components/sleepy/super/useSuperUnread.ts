@@ -60,6 +60,9 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
     const load = () => {
       void apiRef.current.get<unknown>('/agent/super-read').then((raw) => {
         const got = readMarksOf(raw);
+        // No record yet: this write starts it, at now.
+        return got ?? apiRef.current.post<unknown>('/agent/super-read', {}).then(readMarksOf);
+      }).then((got) => {
         if (live && got) setMarks((m) => (m ? mergeMarks(m, got) : got));
       }).catch(() => { /* no marks, no dots: the chat itself is unaffected */ });
     };

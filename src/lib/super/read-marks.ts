@@ -12,8 +12,8 @@ import { renameWithRetry } from '../fs-retry.js';
  * chat, which is another origin. Keys are derived from a message's WORDS by the window, never
  * from a session id, so a handoff changes nothing here.
  *
- *  - `since`: everything older than this counts as read. Born at the first read of the file, so
- *    a chat with a long past does not arrive all unread; raised by "mark all read" and by the cap.
+ *  - `since`: everything older than this counts as read. Born at the window's first POST, so a
+ *    chat with a long past does not arrive all unread; raised by "mark all read" and by the cap.
  *  - `read`: the messages read one by one since then, each with the message's own time.
  *
  * Bounded by {@link MAX_READ}: the oldest marks fold into `since`. Dies with the hand-over
@@ -122,18 +122,13 @@ function serial<T>(path: string, run: () => Promise<T>): Promise<T> {
   return next;
 }
 
-/** The vault's record, born here on the first read (`since` = now). */
-export function readReadMarks(contextRoot: string, now: number = Date.now()): Promise<SuperReadMarks> {
+/** The vault's record, or null before its birth. Never writes (the phone's GET rule). */
+export function readReadMarks(contextRoot: string): Promise<SuperReadMarks | null> {
   const path = marksPath(contextRoot);
-  return serial(path, async () => {
-    const held = await loadFile(path);
-    if (held) return held;
-    const born: SuperReadMarks = { since: now, read: [] };
-    await saveFile(path, born);
-    return born;
-  });
+  return serial(path, () => loadFile(path));
 }
 
+/** Any write births the record (an empty patch is how the window does it): `since` = now. */
 export function applyReadMarks(contextRoot: string, patch: ReadPatch, now: number = Date.now()): Promise<SuperReadMarks> {
   const path = marksPath(contextRoot);
   return serial(path, async () => {

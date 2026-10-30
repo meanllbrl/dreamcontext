@@ -10,13 +10,13 @@ import { applyReadMarks, parseReadPatch, readReadMarks } from '../../lib/super/r
  * `/api/agent/`, gated like `super-questions`, because the phone's mirror draws the same marks and
  * every `/api/super/*` route is laptop-only.
  *
- *   GET  /api/agent/super-read — the record, born on first read.
+ *   GET  /api/agent/super-read — the record; `{ since: null }` before its birth. No side effect.
  *   POST /api/agent/super-read — `{ read?: [{ key, ts }], allBefore?: number }`; answers the record.
  */
 export async function handleSuperReadGet(req: IncomingMessage, res: ServerResponse, _params: unknown, contextRoot: string): Promise<void> {
   if (!isAgentRequest(req)) { sendError(res, 403, 'forbidden', 'Available only in the desktop app or a signed-in phone.'); return; }
   try {
-    sendJson(res, 200, await readReadMarks(contextRoot));
+    sendJson(res, 200, (await readReadMarks(contextRoot)) ?? { since: null, read: [] });
   } catch (err) {
     sendError(res, 500, 'read_marks_failed', (err as Error).message);
   }

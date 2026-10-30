@@ -12,24 +12,27 @@ beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'super-read-')); });
 afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
 describe('the read record', () => {
-  it('is born on the first read and survives as written (a restart, a rotated session)', async () => {
-    expect((await readReadMarks(root, 100)).since).toBe(100);
+  it('reading writes nothing; the first write births it, and it survives as written (a restart, a rotated session)', async () => {
+    expect(await readReadMarks(root)).toBeNull();
+    expect(existsSync(join(root, READ_MARKS_REL))).toBe(false);
+    expect((await applyReadMarks(root, {}, 100)).since).toBe(100);
     await applyReadMarks(root, { read: [{ key: 't:abc', ts: 200 }] }, 300);
-    expect(await readReadMarks(root, 999)).toEqual({ since: 100, read: [{ key: 't:abc', ts: 200 }] });
+    expect(await readReadMarks(root)).toEqual({ since: 100, read: [{ key: 't:abc', ts: 200 }] });
     expect(JSON.parse(readFileSync(join(root, READ_MARKS_REL), 'utf8')).read).toHaveLength(1);
   });
 
   it('dies with the hand-over, and the next one starts new', async () => {
-    await readReadMarks(root, 100);
+    await applyReadMarks(root, {}, 100);
     await clearReadMarks(root);
     expect(existsSync(join(root, READ_MARKS_REL))).toBe(false);
-    expect((await readReadMarks(root, 500)).since).toBe(500);
+    expect((await applyReadMarks(root, {}, 500)).since).toBe(500);
   });
 
   it('a broken file is a new record, never a flood of old messages', async () => {
     mkdirSync(join(root, 'state', '.super'), { recursive: true });
     writeFileSync(join(root, READ_MARKS_REL), '{ broken');
-    expect(await readReadMarks(root, 700)).toEqual({ since: 700, read: [] });
+    expect(await readReadMarks(root)).toBeNull();
+    expect(await applyReadMarks(root, {}, 700)).toEqual({ since: 700, read: [] });
   });
 
   it('refuses a symlinked file', async () => {
@@ -40,9 +43,9 @@ describe('the read record', () => {
   });
 
   it('concurrent writes all land', async () => {
-    await readReadMarks(root, 1);
+    await applyReadMarks(root, {}, 1);
     await Promise.all(['a', 'b', 'c', 'd'].map((k, i) => applyReadMarks(root, { read: [{ key: `t:${k}`, ts: 10 + i }] }, 100)));
-    expect((await readReadMarks(root)).read.map((m) => m.key).sort()).toEqual(['t:a', 't:b', 't:c', 't:d']);
+    expect((await readReadMarks(root))!.read.map((m) => m.key).sort()).toEqual(['t:a', 't:b', 't:c', 't:d']);
   });
 });
 
