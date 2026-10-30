@@ -11,7 +11,7 @@ import { PhoneHeldError, SuperStoreRefused, isReservedId, okMember, phoneHeld, r
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, groupPresentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
-  MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
+  MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_FILMSTRIP, PRESENT_LAYOUTS, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
@@ -28,7 +28,7 @@ import {
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation,
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach } from '../../lib/super/owner-question.js';
-import { freshInFlight, isSuperEventTurn, sweepOrphanFresh } from '../../lib/super/inbox.js';
+import { freshInFlight, isSuperEventTurn, superOwnerMsgRef, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { padJobOver, padRolledOff, padStale } from '../../lib/super/pad.js';
 import { childDefaultEffort } from '../../lib/model-facts.js';
@@ -601,7 +601,7 @@ function poolRows(vault: string, pool: readonly SuperPoolItem[]): Array<Record<s
 /** Start `job` as a child (the cap, the worktree, the window), or keep it in the pool when the
  *  cap holds it. `fromRow` is the pool row it came from: removed in the same write that records
  *  the child, kept on any refusal, marked `maybeStarted` when the window did not confirm. */
-async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string, noteText?: string): Promise<void> {
+async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string, noteText?: string, origin?: string): Promise<void> {
   // No effort named: a default by mode, never the owner's global one (often xhigh). It is
   // recorded on the pool row and the child, so `super state` and `resume` show the real value.
   const job: Job = jobIn.effort ? jobIn : { ...jobIn, effort: childDefaultEffort(jobIn.mode) };
@@ -632,8 +632,9 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     return;
   }
   delegating.set(root, inFlight + 1);
-  // Started in the owner's own turn (not an event turn): he waits on its result (`awaited`).
-  const awaited = ownersTurn(c);
+  // Started in the owner's own turn (not an event turn), or named his message (`--origin`): he
+  // waits on its result (`awaited`).
+  const awaited = ownersTurn(c) || !!origin;
   let wt: CreatedWorktree | null = null;
   try {
     if (job.worktree) {
@@ -688,6 +689,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
         ...(wt ? { worktree: wt.path, branch: wt.branch } : {}),
         ...(job.task ? { task: job.task } : {}),
         ...(awaited ? { awaited: true as const } : {}),
+        ...(awaited && origin ? { origin } : {}),
       };
       delete s.notes[sid];
       container = (succeeds ? succeedChild(s, succeeds, sid, { brief: job.brief }) : null) ?? ensureChatContainer(s, sid, job.title, true);
@@ -756,11 +758,28 @@ function ownersTurn(c: SuperCaller): boolean {
   return !!c.state.session && !isSuperEventTurn(c.state.session);
 }
 
-/** His word reached the child (`send`, `resume` in his turn): its next result is his again. */
+/** The owner message a job started now answers: `--origin <ref>` when given (a job the super
+ *  starts for him outside his turn), else the message of the turn this command runs in. An
+ *  event turn has none. `error` for a malformed flag. */
+function jobOrigin(c: SuperCaller, b: Record<string, unknown>): { ref?: string; error?: string } {
+  if (b.origin !== undefined && b.origin !== null && b.origin !== '') {
+    return typeof b.origin === 'string' && MSG_REF_RE.test(b.origin) ? { ref: b.origin } : { error: '--origin is a message ref: six characters from its <owner-msg ref="…">' };
+  }
+  return ownersTurn(c) && c.state.session ? { ref: superOwnerMsgRef(c.state.session) } : {};
+}
+
+/** His word reached the child (`send`, `resume` in his turn): its next result is his again, and
+ *  answers the message he wrote in this turn. */
 async function markOwnersJob(c: SuperCaller, child: string): Promise<void> {
   if (!ownersTurn(c)) return;
+  const origin = c.state.session ? superOwnerMsgRef(c.state.session) : undefined;
   // Set inside the write, never from the caller's snapshot: a `gone` settled since may have cleared it.
-  await writeSuper(c.who.contextRoot, (s) => { const x = s.children[child]; if (x) x.awaited = true; })
+  await writeSuper(c.who.contextRoot, (s) => {
+    const x = s.children[child];
+    if (!x) return;
+    x.awaited = true;
+    if (origin) x.origin = origin; else delete x.origin;
+  })
     // His message already went in: a record that could not be written must not refuse (and resend) it.
     .catch((err) => console.warn(`[super] could not mark ${child} as the owner's job: ${(err as Error).message}`));
 }
@@ -921,6 +940,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // `--note "<line>"`: its Now line on the agenda, linked to the child it starts (pad.ts).
     const note = b.note === undefined ? undefined : cleanPadText(b.note);
     if (note === '') { refuse(res, 400, 'invalid_args', '--note is one line of text'); return; }
+    const origin = jobOrigin(c, b);
+    if (origin.error) { refuse(res, 400, 'invalid_args', origin.error); return; }
     // With no brief of its own, the successor's card keeps the old one's title.
     if (succeeds && !job.brief && c.state.children[succeeds].brief) job.title = c.state.children[succeeds].brief.slice(0, MAX_TITLE);
     const claimed = claims.get(root) ?? new Set<string>();
@@ -930,7 +951,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       claims.set(root, claimed);
     }
     try {
-      await delegateJob(c, res, root, job, fromRow, succeeds, note);
+      await delegateJob(c, res, root, job, fromRow, succeeds, note, origin.ref);
     } finally {
       // Released whatever happened (r2-E5): a refusal leaves the row for the next try.
       if (fromId) { claimed.delete(fromId); if (!claimed.size) claims.delete(root); }
@@ -2061,6 +2082,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     const text = typeof b.text === 'string' ? b.text : '';
     if (!text.trim()) { refuse(res, 400, 'invalid_args', 'write the job for the member'); return; }
+    const origin = jobOrigin(c, b);
+    if (origin.error) { refuse(res, 400, 'invalid_args', origin.error); return; }
     const r = sayToAgent(root, { slug: member, text, via: 'super' });
     if (!r.ok) {
       if (r.code === 'not_found' || r.code === 'say_disabled') {
@@ -2095,8 +2118,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       queued: out.queued === true,
       brief: oneLine(str(b.brief) ?? firstLine(text, MAX_BRIEF)).slice(0, MAX_BRIEF),
       startedAt: Date.now(),
-      // Asked for in the owner's own turn: he waits on its result.
-      ...(ownersTurn(c) ? { awaited: true as const } : {}),
+      // Asked for in the owner's own turn (or for his message, `--origin`): he waits on its
+      // result, and every result of it links under that message.
+      ...(ownersTurn(c) || origin.ref ? { awaited: true as const } : {}),
+      ...(origin.ref ? { origin: origin.ref } : {}),
       // Its ending is owed to the super until its done or stuck is told (watched until then).
       open: true,
     };

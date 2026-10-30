@@ -480,6 +480,9 @@ export interface SuperChild {
    *  not in an event turn. Its done/stuck/gone event asks the super to tell him; spent when that
    *  turn ends. */
   awaited?: true;
+  /** The owner message it answers (`msgRef`, the turn's `<owner-msg ref>`): its awaited=owner
+   *  events carry `origin=<ref>`, so the result the super writes links under that message. */
+  origin?: string;
   /** When its job last FINISHED (epoch ms): stamped by `setRow` only when the row moves from
    *  not finished (working, asking, stuck, none) to done or gone, never on done <-> gone. The
    *  agenda's "new until seen" compares against it (task super-agent-ajandasi-…). */
@@ -621,6 +624,8 @@ export interface SuperTeamJob {
   endedAt?: number;
   /** The owner asked for it through the super, in his own turn: its result goes to him. */
   awaited?: true;
+  /** The owner message it answers (`msgRef`): every awaited=owner event of it says `origin=<ref>`. */
+  origin?: string;
   /** The last event its ending already put on the queue: the same one is never queued twice. */
   told?: TeamJobEvent;
   /** With `told: 'question'`: which of its run's questions that was (each one is its own event). */
@@ -789,6 +794,8 @@ export function msgRef(text: string): string {
   }
   return (h % MSG_REF_SPACE).toString(36).padStart(6, '0');
 }
+/** A message reference as written: six base-36 characters. */
+export const MSG_REF_RE = /^[0-9a-z]{6}$/;
 /** 36^6: every reference is exactly six characters. */
 const MSG_REF_SPACE = 2_176_782_336;
 /** The block every owner message to the Super carries (agent-chat.ts writeOwnerTurn): his

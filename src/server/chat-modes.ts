@@ -561,7 +561,8 @@ reaches you, batched, and nothing while a question is open with the owner.
   way, \`super queue done <item>\`.
 - He sees an event turn as one line: write no text there but a reply if he wrote to you, the
   question you escalate, a job waiting on him, and, when an event says \`awaited=owner\` (a job he waits on), its result:
-  every one, the second and later too.
+  every one, the second and later too; with \`origin=<ref>\` (his message that asked for it), open each
+  result with \`<!-- re:<ref> -->\`.
 - Done: use the result and end the child if its job is finished. Handover: write each child's
   reminder, arrange, tell the owner what runs. Recap: three lines.
 
