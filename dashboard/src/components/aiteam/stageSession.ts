@@ -127,6 +127,11 @@ export function stageSessionLevel(vault: string, agent: string): string | null {
   return entries.get(keyOf(vault, agent))?.level ?? null;
 }
 
+/** Something still shows this agent's stage (a mounted pane is subscribed to it). */
+export function stageWatched(vault: string, agent: string): boolean {
+  return (entries.get(keyOf(vault, agent))?.listeners.size ?? 0) > 0;
+}
+
 /** Hear the stage session change (opened, replaced, busy, asking, its feed). Returns the unsubscribe. */
 export function subscribeStageSession(vault: string, agent: string, fn: () => void): () => void {
   const e = entryFor(vault, agent);
@@ -206,10 +211,12 @@ export function forgetStage(vault: string, agent: string): void {
   if (e.listeners.size === 0) entries.delete(key);
 }
 
-/** End every stage session of `vault` (or of every vault) — leaving the AI Team page. */
-export function dropStageSessions(vault?: string): void {
+/** End every stage session of `vault` (or of every vault) — leaving the AI Team page. `keepWatched`:
+ *  one a pane outside the page still shows (the Super stage's team card) lives on. */
+export function dropStageSessions(vault?: string, opts: { keepWatched?: boolean } = {}): void {
   for (const [key, e] of [...entries]) {
     if (vault !== undefined && !key.startsWith(`${vault}\u0000`)) continue;
+    if (opts.keepWatched && e.listeners.size > 0) continue;
     bumpGen(key);
     justDisposed.delete(key);
     e.session?.dispose();

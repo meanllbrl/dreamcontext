@@ -30,8 +30,8 @@ export function teamStatusOf(card: TeamCard): TeamJobStatus {
 /**
  * A job the Super Agent gave an AI Team member (`super team ask`), as a stage tile: the member's
  * face and name ("Doctor took the job"), the status ring and word in the same tones as a chat
- * tile, and the last line the member wrote for this job (its brief until it wrote one). The card
- * frame opens the member in AI Team on a click (SuperContainer).
+ * tile, and the last line the member wrote for this job (its brief until it wrote one). A click
+ * shows the card side by side with the member's conversation in it (SuperContainer).
  */
 export function TeamTile({ card }: { card: TeamCard }) {
   const { t } = useI18n();

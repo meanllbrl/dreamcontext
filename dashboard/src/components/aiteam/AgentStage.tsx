@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import { emitInstance, useVault } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
-import { useAgentStage, useBringAgentHere, type AgentSummary } from '../../hooks/useAgents';
-import { useReplyToAgentThread } from '../../hooks/useAutomations';
+import { useAgent, useAgentStage, useBringAgentHere, type AgentSummary } from '../../hooks/useAgents';
+import { useAgentFeed, useAutomations, useReplyToAgentThread } from '../../hooks/useAutomations';
 import { THREAD_REPLY_MAX_CHARS } from '../agents/AgentMessage';
 import { fitRunReport } from '../sleepy/chat/runReport';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
@@ -13,10 +13,10 @@ import { AgentAvatar } from '../agents/AgentAvatar';
 import { CardChat } from '../whiteboard/widgets/AgentWidget';
 import { AutonomyChip } from './AutonomyChip';
 import {
-  loadOlderStageFeed, markStageDividerScrolled, markStageSeen, openStageSession, peekStageSession, refreshStageFeed,
-  remountStageFeed, retryStageFeed, setStageFeedPinned, stageFeed, stageSessionLevel, subscribeStageSession,
+  beginStageOpen, deselectStage, loadOlderStageFeed, markStageDividerScrolled, markStageSeen, openStageSession, peekStageSession, refreshStageFeed,
+  remountStageFeed, retryStageFeed, setStageFeedPinned, stageFeed, stageSessionLevel, stageWatched, subscribeStageSession,
 } from './stageSession';
-import { dayRuleLabel, pendingApprovals, routineCountLabel, type TeamRow } from './teamModel';
+import { dayRuleLabel, messagesOf, pendingApprovals, routineCountLabel, type TeamRow } from './teamModel';
 import { feedHasRunning, type ChatFeed, type FeedLabels, type FeedMeta } from '../sleepy/chat/chatFeed';
 import { TeamApproval } from './TeamApproval';
 import type { PanelTab } from './TeamPanel';
@@ -399,6 +399,48 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, 
       pane
       feed={feed}
     />
+  );
+}
+
+/**
+ * An agent's conversation OUTSIDE the AI Team page (the Super stage's team card, owner
+ * 2026-10-30: "it should open like a normal session on the Super screen, not send me to AI
+ * Team"): the same pane as the page's middle, opened and closed the way the page opens and
+ * deselects a teammate. A run boundary opens that run's own session; the page stays one link away.
+ */
+export function AgentConversation({ slug }: { slug: string }) {
+  const { vault, bus } = useVault();
+  const v = vault ?? '';
+  const agent = useAgent(slug).data?.agent ?? null;
+  const stage = useAgentStage(slug).data ?? null;
+  const automations = useAutomations().data;
+  const { data: feed } = useAgentFeed();
+  const feedNewestId = useMemo(() => {
+    let max: string | null = null;
+    for (const m of messagesOf(slug, automations ?? [], feed?.messages ?? [])) if (m.newestId && (max === null || m.newestId > max)) max = m.newestId;
+    return max;
+  }, [slug, automations, feed]);
+  const newestRef = useLatest(feedNewestId);
+  // An OPEN of the agent while mounted (the AI Team page, kept alive, may hold it open already);
+  // its page deselecting or leaving drops the feed, and this one opens again. Unmounted, its idle
+  // session ends like a deselected teammate's, unless a pane still shows it (once every unmount
+  // of this commit has run).
+  useEffect(() => {
+    const reopen = () => { if (stageFeed(v, slug) === null) beginStageOpen(v, slug, newestRef.current); };
+    const off = subscribeStageSession(v, slug, reopen);
+    reopen();
+    return () => { off(); queueMicrotask(() => { if (!stageWatched(v, slug)) deselectStage(v, slug); }); };
+  }, [v, slug, newestRef]);
+  const onActivity = useCallback(() => requestOpenAgents({ slug }), [slug]);
+  // No page toast out here: a failed reply shows as a line under the conversation.
+  const [note, setNote] = useState<string | null>(null);
+  if (!agent) return null;
+  return (
+    <section className="aiteam-convo aiteam-stage" data-stage={slug} data-testid="agent-conversation">
+      <StageChat agent={agent} level={stage?.autonomy ?? agent.autonomy ?? 'balanced'} ready={!!stage} vault={v} bus={bus}
+        feedNewestId={feedNewestId} onActivity={onActivity} inActivity={() => false} onToast={setNote} />
+      {note && <p role="status" className="aiteam-stage-note">{note}</p>}
+    </section>
   );
 }
 

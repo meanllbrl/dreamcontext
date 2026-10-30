@@ -157,8 +157,9 @@ export function AiTeamPage({
   // The composer drafts and staged chips die with the PAGE, not with one conversation.
   useEffect(() => () => dropThreadScratch(), []);
   // So do the stages' live sessions: the next visit opens each agent fresh, and the talk that just
-  // ended is in its history.
-  useEffect(() => () => dropStageSessions(vault ?? ''), [vault]);
+  // ended is in its history. One the Super stage still shows lives on (read once every unmount of
+  // this commit has run, so the page's own panes no longer count).
+  useEffect(() => () => { const v = vault ?? ''; queueMicrotask(() => dropStageSessions(v, { keepWatched: true })); }, [vault]);
 
   useEffect(() => {
     if (!toast) return;
