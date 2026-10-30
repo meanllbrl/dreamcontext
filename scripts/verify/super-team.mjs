@@ -362,11 +362,15 @@ async function run(engineName, base) {
   // Leaving the Super screen hands the conversation back: the AI Team page (Scout still open
   // there) draws the SAME session, the talk had on the stage in it, with its one composer.
   await page.locator('aside a, aside button, nav a, nav button').filter({ hasText: /^\s*AI Team\s*\d*\s*$/ }).first().click();
+  // The surface has shrunk into the dock (280 ms): nothing of the stage is drawn over the page.
+  const folded = () => page.evaluate(() => !document.querySelector('.agent-surface.expanded, .agent-surface.closing'));
+  ok(tag('T4 the Super stage folded away, nothing of it over the AI Team page'), await until(page, folded, 10000));
   const teamStage = page.locator('.aiteam .aiteam-stage[data-stage="scout"]');
   ok(tag('T4 back on AI Team, Scout\'s pane holds the talk from the stage, drawn once'), await until(page, async () =>
     (await page.locator('.aiteam:visible').count()) === 1 && /which step\?/.test(await teamStage.innerText().catch(() => ''))
     && (await teamStage.locator('.chat-cmp-input:visible').count()) === 1, 15000),
     (await teamStage.innerText().catch(() => '')).slice(-300));
+  ok(tag('T4 …the page is on top where Scout talks'), await page.evaluate(() => { const el = document.querySelector('.aiteam .aiteam-stage[data-stage="scout"]'); const b = el.getBoundingClientRect(); return !!document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2)?.closest('.aiteam'); }));
   await page.screenshot({ path: join(OUT, `${engineName}-team-back-on-ai-team.png`) });
 
   ok(tag('no console errors'), errors.length === 0, errors.slice(0, 5).join('\n'));

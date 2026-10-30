@@ -5391,7 +5391,8 @@ export function AgentSurface() {
             vault={vault ?? ''}
             sessionFor={chatByClaudeId}
             childTranscript={renderChildTranscript}
-            teamConversation={renderTeamConversation}
+            // Kept through the shrink to the dock (its card keeps the talk), handed back once folded.
+            teamConversation={(expanded || closing) && !windowActivity.hidden ? renderTeamConversation : undefined}
             titleFor={superTitleFor}
             nameFor={superNameFor}
             terminals={remoteDesktop ? [] : superTerminals}
