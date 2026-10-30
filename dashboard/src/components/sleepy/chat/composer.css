@@ -54,7 +54,8 @@
   flex-direction: column;
   min-width: 0;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg, 14px);
+  /* The prototype's card (owner 2026-10-30, codex-tarzi/proto.html): a 24px radius. */
+  border-radius: var(--radius-2xl, 24px);
   background: var(--color-bg-secondary);
   /* Safe: every menu in here (Files/Skills/model/effort) is PORTALED out — see the file
      header — so clipping the card cannot hide a popover. */
@@ -682,13 +683,17 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
+  margin-left: 4px;
   padding: 0;
   border-radius: 50%;
-  border: 1.5px solid var(--color-border-hover);
-  background: transparent;
-  color: var(--color-text-tertiary);
+  /* The prototype's send (owner 2026-10-30): a filled accent disc, quieter while there is
+     nothing to send. */
+  border: 1.5px solid transparent;
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  opacity: 0.45;
   font-family: inherit;
   font-size: 12px;
   font-weight: 600;
@@ -698,9 +703,7 @@
     color var(--transition-fast), border-color var(--transition-fast);
 }
 .chat-cmp-send.is-enabled {
-  background: var(--color-text);
-  border-color: transparent;
-  color: var(--color-bg);
+  opacity: 1;
   cursor: pointer;
 }
 .chat-cmp-send.is-enabled:hover { filter: brightness(1.15); }
@@ -711,6 +714,7 @@
    now" — and it sits between the red Stop and the solid Send, so it is also what keeps those
    two discs from reading as one control with a broken half. */
 .chat-cmp-send.is-queue:not(:disabled) {
+  opacity: 1;
   background: transparent;
   border-color: var(--color-accent);
   color: var(--color-accent);
@@ -722,6 +726,7 @@
 }
 
 .chat-cmp-send.is-stop {
+  opacity: 1;
   background: var(--color-error);
   border-color: transparent;
   color: #fff;
@@ -736,23 +741,17 @@
    error-ink, ringed in error), not a filled one: the filled red with a white glyph was the
    loudest thing in a dark composer and read as an alarm (owner, 2026-10-21). Tokens only, so
    both themes carry their own red. */
-.chat-cmp-mic:not(:disabled) {
-  cursor: pointer;
-  border-color: var(--color-border-hover);
-  color: var(--color-text-secondary);
-}
-.chat-cmp-mic:not(:disabled):hover {
-  background: var(--color-bg-tertiary);
-  color: var(--color-text);
-}
-.chat-cmp-send.chat-cmp-mic.is-recording {
+.chat-cmp-mic { position: relative; }
+.chat-cmp-mic:disabled { opacity: 0.5; cursor: default; }
+/* Recording: the line mic turns red on a red tint, its ring breathing around it (owner
+   2026-10-30: the prototype's thin mic, red while recording). */
+.chat-cmp-iconbtn.chat-cmp-mic.is-recording,
+.chat-cmp-iconbtn.chat-cmp-mic.is-recording:hover {
   background: var(--color-error-subtle);
-  border-color: var(--color-error);
   color: var(--color-error-ink);
-  position: relative;
 }
 /* The breathing is a ring whose opacity animates: composited, never a repaint per frame. */
-.chat-cmp-send.chat-cmp-mic.is-recording::after {
+.chat-cmp-mic.is-recording::after {
   content: '';
   position: absolute;
   inset: -4px;
@@ -777,7 +776,7 @@
 }
 /* Motion is decoration here — the fill already says "recording". */
 @media (prefers-reduced-motion: reduce) {
-  .chat-cmp-send.chat-cmp-mic.is-recording::after { animation: none; opacity: 0.4; }
+  .chat-cmp-mic.is-recording::after { animation: none; opacity: 0.4; }
   .chat-cmp-mic.is-nudged { animation: none; }
 }
 
@@ -847,9 +846,9 @@
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 7px 10px;
-  border-top: 1px solid var(--color-border);
+  /* The prototype's bar (owner 2026-10-30): no rule above it, 2px between controls. */
+  gap: 2px;
+  padding: 4px 12px 10px 10px;
   flex-wrap: nowrap;
   min-width: 0;
 }
@@ -885,11 +884,12 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
+  height: 30px;
   min-width: 0;
   padding: 0 8px;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 8px;
+  font-size: 13px;
   background: transparent;
   color: var(--color-text-secondary);
   font-family: inherit;
@@ -903,8 +903,9 @@
 }
 .chat-cmp-modeltrigger:disabled { opacity: 0.5; cursor: default; }
 .chat-cmp-modeltrigger-model {
-  font-size: var(--font-size-xs, 12px);
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
   white-space: nowrap;
   /* The row's last-resort give: at the tightest widths a long model name (`Sonnet 4.5`)
      ellipsises rather than pushing Send out of the card. */
@@ -913,32 +914,19 @@
 }
 .chat-cmp-modeltrigger-effort {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
   color: var(--color-text-tertiary);
   white-space: nowrap;
 }
 
-/* The MODE trigger: the mode's face, its name, the version of its brief. It is the control
-   that decides how the agent works, so it is drawn as one (owner, 2026-10-12: "I want people
-   to click it once"). The face sleeps until hover, like the rows in its menu. */
-.chat-cmp-modetrigger { position: relative; gap: 5px; padding-left: 5px; }
-.chat-cmp-modetrigger-face {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 18px;
-  overflow: hidden;
-}
-/* The face holds still until its row is pointed at: a local pause through the motion contract's
-   play variable, restored with `inherit` (so a hidden window still pauses it). */
-.chat-cmp-modetrigger-face .smascot { --dc-motion-play: paused; }
-.chat-cmp-modetrigger:hover .chat-cmp-modetrigger-face .smascot { --dc-motion-play: inherit; }
+/* The MODE trigger: its name and the version of its brief, as plain text (owner 2026-10-30: no
+   face on a calm text button). It is the control that decides how the agent works (owner,
+   2026-10-12: "I want people to click it once"); the first-run ring below still says so. */
+.chat-cmp-modetrigger { position: relative; gap: 6px; }
 .chat-cmp-modetrigger .chat-cmp-modeltrigger-model { color: var(--color-text); }
 .chat-cmp-modetrigger-version {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
   color: var(--color-text-tertiary);
   white-space: nowrap;
 }
@@ -977,23 +965,34 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 8px;
   background: transparent;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 .chat-cmp-iconbtn:hover,
 .chat-cmp-iconbtn[aria-expanded='true'] {
   background: var(--color-bg-tertiary);
-  color: var(--color-accent);
+  color: var(--color-text);
 }
 
-.chat-cmp-caret { font-size: 9px; opacity: 0.55; }
+/* The line icon set (owner 2026-10-30, the prototype's): 16px, a 1.75 stroke, round ends. */
+.chat-cmp-ic {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.chat-cmp-ic.chat-cmp-caret { width: 12px; height: 12px; margin-left: -1px; color: var(--color-text-tertiary); }
 
 .chat-cmp-spacer { flex: 1 1 auto; min-width: 0; }
 
@@ -1012,11 +1011,11 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   border: none;
-  border-radius: 50%;
+  border-radius: 8px;
   background: transparent;
   cursor: pointer;
   transition: background var(--transition-fast);

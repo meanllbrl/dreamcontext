@@ -361,12 +361,55 @@ const chipGeometry = (page, scope) => page.evaluate((s) => {
   const thumbPad = [...hl.querySelectorAll('.chat-cmp-hl-thumb, mark')].map((e) => getComputedStyle(e).paddingLeft + '/' + getComputedStyle(e).paddingRight + '/' + getComputedStyle(e).marginLeft + '/' + getComputedStyle(e).borderLeftWidth);
   return { markDiff, hlFont, thumbPad: [...new Set(thumbPad)], plainDivLines, taContentW: cw(ta), hlContentW: cw(hl), taOverflowY: getComputedStyle(ta).overflowY, taScrollbar: ta.offsetWidth - ta.clientWidth, taLines, mirrorLines, splitChips: split, lineHeightPx: lineH, fontSizePx: parseFloat(getComputedStyle(hl).fontSize), lines, chips: chipBoxes.length, minGapPx: Number.isFinite(minGap) ? Math.round(minGap * 10) / 10 : null, minSideGapPx: Number.isFinite(minSideGap) ? Math.round(minSideGap * 10) / 10 : null, maxBaselineDiffPx: Math.round(maxBaselineDiff * 10) / 10 };
 }, scope);
+/** The composer's toolbar as drawn: which controls show, and its line icons. */
+const toolbarState = (page, scope) => page.evaluate((s) => {
+  const root = [...document.querySelectorAll(`${s} .chat-cmp`)].find((e) => e.offsetParent !== null);
+  const bar = root?.querySelector('.chat-cmp-toolbar');
+  if (!bar) return null;
+  const vis = (sel) => [...bar.querySelectorAll(sel)].filter((e) => e.offsetParent !== null);
+  const card = root.querySelector('.chat-cmp-card');
+  return {
+    mic: vis('.chat-cmp-mic').length, micTitle: vis('.chat-cmp-mic')[0]?.getAttribute('title') ?? null,
+    speaker: vis('.chat-cmp-readaloud').length, ring: vis('.chat-cmp-usagebtn').length,
+    modeFace: bar.querySelectorAll('.chat-cmp-modetrigger-face, .smascot').length,
+    chevrons: vis('svg.chat-cmp-caret').length,
+    restText: /to talk/i.test(bar.textContent ?? ''),
+    modeText: vis('.chat-cmp-modetrigger')[0]?.textContent?.trim() ?? null,
+    modelText: vis('.chat-cmp-model-wrap .chat-cmp-modeltrigger')[0]?.textContent?.trim() ?? null,
+    triggerH: vis('.chat-cmp-modeltrigger')[0]?.getBoundingClientRect().height ?? null,
+    sendW: vis('.chat-cmp-send')[0]?.getBoundingClientRect().width ?? null,
+    cardRadius: card ? getComputedStyle(card).borderTopLeftRadius : null,
+  };
+}, scope);
+const composerShot = async (page, scope, name) => {
+  const cmp = page.locator(`${scope} .chat-cmp`).filter({ has: page.locator('.chat-cmp-input:visible') }).first();
+  const p = join(OUT, name); await cmp.screenshot({ path: p }).catch(() => {}); results.shots.push(p);
+};
+const r3Checks = async (page, scope, where, super_) => {
+  const tb = await toolbarState(page, scope);
+  note(`${where} toolbar: ${JSON.stringify(tb)}`);
+  ok(`R3 ${where}: the mic shows, its tooltip names the chord ("Hold to talk · …")`, tb?.mic === 1 && /^Hold to talk · /.test(tb?.micTitle ?? ''), JSON.stringify(tb));
+  if (super_) ok(`R3 ${where}: the speaker (read aloud) shows`, tb?.speaker === 1, JSON.stringify(tb));
+  ok(`R3 ${where}: no "… to talk" text in the bar`, tb && !tb.restText, JSON.stringify(tb));
+  // The Super chat has no mode button (only the model trigger carries a chevron there).
+  ok(`R3 ${where}: the mode button has no Sleepy glyph; chevrons are line icons`, tb?.modeFace === 0 && (tb?.chevrons ?? 0) >= (super_ ? 1 : 2), JSON.stringify(tb));
+  ok(`R3 ${where}: the usage ring shows`, tb?.ring === 1, JSON.stringify(tb));
+  ok(`R3 ${where}: the prototype's sizes (30px triggers, 32px send, 24px card radius)`, tb?.triggerH === 30 && tb?.sendW === 32 && tb?.cardRadius === '24px', JSON.stringify(tb));
+};
+const R3 = process.env.VERIFY_DESKTOP === '1';
 const shotEl = async (page, name) => { const p = join(OUT, name); await page.screenshot({ path: p }); results.shots.push(p); return p; };
 
 // ─── the flow ───────────────────────────────────────────────────────────────────────────
 async function flow(pw, base) {
-  const browser = await pw[ENGINE].launch();
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark' });
+  const browser = await pw[ENGINE].launch(ENGINE === 'chromium' ? { args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] } : {});
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark', ...(ENGINE === 'chromium' ? { permissions: ['microphone'] } : {}) });
+  // VERIFY_DESKTOP=1: the composer as the desktop app draws it (the mic and the read-aloud switch
+  // need the Tauri shell and local dictation): a stand-in `__TAURI_INTERNALS__` and a server
+  // answer that dictation is installed. Nothing else of the shell is faked.
+  if (process.env.VERIFY_DESKTOP === '1') {
+    await context.addInitScript(() => { window.__TAURI_INTERNALS__ = { invoke: async () => null, transformCallback: () => 0, metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } } }; });
+    await context.route('**/api/agent/voice/dictation', (r) => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ installed: true }) }));
+  }
   const page = await context.newPage();
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -399,11 +442,13 @@ async function flow(pw, base) {
   ok('…the ↩ is a chip in the text', st?.inlineRefs === 1, JSON.stringify(st));
   ok('…the PDF is a chip in the text with its icon', st?.inlineIcons.includes('📄'), JSON.stringify(st));
   await shotEl(page, 'n1-normal-chat-1440.png');
+  if (R3) { await r3Checks(page, '.agent-surface', 'normal 1440', false); await composerShot(page, '.agent-surface', 'r3-normal-composer-1440.png'); }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(900);
   st = await composerState(page, '.agent-surface');
   ok('390 px: still nothing above the text, both chips in the field', st?.rowAbove === 0 && st?.allInField, JSON.stringify(st));
   await shotEl(page, 'n1-normal-chat-390.png');
+  if (R3) { await r3Checks(page, '.agent-surface', 'normal 390', false); await composerShot(page, '.agent-surface', 'r3-normal-composer-390.png'); }
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.waitForTimeout(600);
   const n0 = readNd(FRAMES).filter((f) => f.role === 'child').length;
@@ -511,6 +556,29 @@ async function flow(pw, base) {
   ok('…each element with its picture path', (sent.match(/\npicture: /g) ?? []).length === 2, sent);
   await page.waitForTimeout(800);
   await shotEl(page, 's2-sent-1440.png');
+  if (R3) {
+    await r3Checks(page, SCOPE, 'super 1440', true);
+    await composerShot(page, SCOPE, 'r3-super-composer-1440.png');
+    // The recording look, as CSS draws it: the desktop records through the Tauri shell, which a
+    // browser cannot, so the class is set by hand for this one picture and taken off again.
+    const mic = page.locator(`${SCOPE} .chat-cmp-mic:visible`).first();
+    if (await mic.count()) {
+      await mic.evaluate((e) => e.classList.add('is-recording'));
+      await page.waitForTimeout(400);
+      const recColour = await mic.evaluate((e) => getComputedStyle(e).color);
+      note(`recording-style mic colour: ${recColour}`);
+      ok('R3 super: the recording mic is drawn red (its CSS state)', /^rgb\((\d+), (\d+), (\d+)\)$/.test(recColour) && (([, r, g, b]) => +r > 150 && +g < 140 && +b < 140)(recColour.match(/^rgb\((\d+), (\d+), (\d+)\)$/)), recColour);
+      await composerShot(page, SCOPE, 'r3-super-composer-recording-style-1440.png');
+      await mic.evaluate((e) => e.classList.remove('is-recording'));
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(1200);
+    await page.locator('[data-testid="super-card-minimize"]').first().click({ force: true }).catch(() => {});
+    await page.waitForTimeout(800);
+    await r3Checks(page, SCOPE, 'super 390', true);
+    await composerShot(page, SCOPE, 'r3-super-composer-390.png');
+    await page.setViewportSize({ width: 1440, height: 900 });
+  }
   await context.close();
   await browser.close();
   return { errors };
@@ -527,7 +595,9 @@ try {
   devServer = await startDevServer(await freePort(), port);
   server = await startServer(port);
   const r = await flow(pw, `http://127.0.0.1:${port}`);
-  const errs = r.errors.filter((e) => !/Failed to load resource|WebSocket connection to|blocked by CORS policy|access control checks|not allowed by Access-Control-Allow-Origin/.test(e));
+  const errs = r.errors.filter((e) => !/Failed to load resource|WebSocket connection to|blocked by CORS policy|access control checks|not allowed by Access-Control-Allow-Origin/.test(e)
+    // The stand-in Tauri shell has no event plugin: its listener teardown throws (VERIFY_DESKTOP only).
+    && !(R3 && /unregisterListener/.test(e)));
   ok('no console errors in the dashboard (the dev page\'s refused calls aside)', errs.length === 0, errs.slice(0, 6).join('\n'));
 } catch (err) {
   results.fails.push(`crashed: ${err?.stack || err}`);

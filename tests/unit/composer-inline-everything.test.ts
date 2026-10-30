@@ -251,3 +251,23 @@ describe('the mirror keeps the textarea metrics (round 2)', () => {
     expect(global).toMatch(/\nmark \{[\s\S]*?padding: 0 0\.22em;/);
   });
 });
+
+describe("the toolbar as the prototype draws it (owner 2026-10-30, r3)", () => {
+  const src = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/sleepy/chat/Composer.tsx'), 'utf8');
+  const css = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/sleepy/chat/composer.css'), 'utf8');
+  it('no Sleepy glyph on the mode button, line chevrons, the + first, no resting voice caption', () => {
+    expect(src).not.toMatch(/SleepyMascot/);
+    expect(src).not.toMatch(/chat-cmp-caret" aria-hidden>▾/);
+    expect(src.indexOf('<AttachButton onPick={stablePick} />')).toBeLessThan(src.indexOf('<ModeTrigger'));
+    expect(src).toMatch(/&& voice\.state !== 'idle' && \(/);
+    expect(src).toMatch(/`Hold to talk · \$\{hotkeyLabel\(pushToTalk\)\}`/);
+    expect(src).toMatch(/className=\{`chat-cmp-iconbtn chat-cmp-mic/);
+  });
+  it("the prototype's sizes and radii", () => {
+    expect(css).toMatch(/\.chat-cmp-modeltrigger \{[^}]*height: 30px;[^}]*border-radius: 8px;[^}]*font-size: 13px;/);
+    expect(css).toMatch(/\.chat-cmp-iconbtn \{[^}]*width: 30px;[^}]*height: 30px;[^}]*border-radius: 8px;/);
+    expect(css).toMatch(/\.chat-cmp-send \{[^}]*width: 32px;[^}]*height: 32px;[^}]*background: var\(--color-accent-strong\);/);
+    expect(css).toMatch(/\.chat-cmp-card \{[^}]*border-radius: var\(--radius-2xl, 24px\);/);
+    expect(css).toMatch(/\.chat-cmp-ic \{[^}]*width: 16px;[^}]*stroke-width: 1\.75;/);
+  });
+});

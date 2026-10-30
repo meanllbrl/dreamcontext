@@ -161,7 +161,7 @@ describe('the composer listens for the CONFIGURED chord', () => {
   });
 
   it('names the real chord in the button, so the tooltip cannot lie about the binding', () => {
-    expect(composer).toMatch(/Hold to speak \(\$\{hotkeyLabel\(pushToTalk\)\}\)/);
+    expect(composer).toMatch(/Hold to talk · \$\{hotkeyLabel\(pushToTalk\)\}/);
   });
 });
 

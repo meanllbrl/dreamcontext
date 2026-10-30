@@ -63,7 +63,6 @@ import { Popover } from '../SkillPickerPopover';
 import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
 import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
 import { ConcentricRings } from './UsageRings';
-import { SleepyMascot } from '../SleepyMascot';
 import type { ComposerHost } from './composerHost';
 import './composer.css';
 import { useDictationReady } from '../../../lib/voice/useDictationReady';
@@ -160,34 +159,43 @@ function PlusIcon() {
  * says whether the mode is listening, thinking or idle. `currentColor` is what makes that
  * work, so the colour lives in CSS with every other state in this file.
  */
-/** A speaker with the waves struck through — "stop reading this aloud". Drawn rather than a
- *  🔇, for the reason in {@link MicIcon}: an emoji cannot take the state colour. */
+/** The composer's line icons (owner 2026-10-30: the prototype's thin line set, 16 px at a
+ *  1.75 stroke). The speaker struck through is "replies are not read aloud". */
 function HushIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M7.2 2.2 4.2 4.8H2v4.4h2.2l3 2.6z" />
-      <path d="m9.6 5.4 3.2 3.2M12.8 5.4 9.6 8.6" />
+    <svg className="chat-cmp-ic" viewBox="0 0 24 24" aria-hidden>
+      <path d="M11 5.5 7 9H4.5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1H7l4 3.5z" />
+      <path d="M3 3l18 18" />
     </svg>
   );
 }
 
-/** A plain speaker with its waves — "replies are read aloud". The pair to {@link HushIcon},
- *  which is the same speaker struck through. */
+/** A plain speaker with its waves — "replies are read aloud". */
 function SpeakerIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M7.2 2.2 4.2 4.8H2v4.4h2.2l3 2.6z" />
-      <path d="M9.6 5.2a2.6 2.6 0 0 1 0 3.6M11.4 3.6a5 5 0 0 1 0 6.8" />
+    <svg className="chat-cmp-ic" viewBox="0 0 24 24" aria-hidden>
+      <path d="M11 5.5 7 9H4.5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1H7l4 3.5z" />
+      <path d="M15 9.5a3.5 3.5 0 0 1 0 5" />
+      <path d="M17.8 7a7 7 0 0 1 0 10" />
     </svg>
   );
 }
 
 function MicIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <rect x="5" y="1.4" width="4" height="6.6" rx="2" />
-      <path d="M2.9 6.6a4.1 4.1 0 0 0 8.2 0" />
-      <path d="M7 10.7v1.9M4.9 12.6h4.2" />
+    <svg className="chat-cmp-ic" viewBox="0 0 24 24" aria-hidden>
+      <rect x="9" y="3.5" width="6" height="11" rx="3" />
+      <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" />
+      <path d="M12 18v2.5" />
+    </svg>
+  );
+}
+
+/** A trigger's small chevron: "tap to change it", quieter than the words beside it. */
+function Chevron() {
+  return (
+    <svg className="chat-cmp-ic chat-cmp-caret" viewBox="0 0 24 24" aria-hidden>
+      <path d="M6 9l6 6 6-6" />
     </svg>
   );
 }
@@ -267,17 +275,12 @@ const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        {/* Who you are talking to comes first: an agent's face and name when the chat is
-            bound to one, otherwise the mode's own face. The mode and the version of its
-            brief follow, the way a model picker names a model; for an agent only when
-            the mode is not the default. */}
-        {agent
-          ? <AgentTriggerName slug={agent} title={agentName} hasPhoto={hasPhoto} />
-          : (
-            <span className="chat-cmp-modetrigger-face" aria-hidden>
-              <SleepyMascot size={20} mood="idle" compact mode={mode} />
-            </span>
-          )}
+        {/* Who you are talking to comes first when the chat is bound to an agent: its face
+            and name. Otherwise the mode's name leads, as plain text (owner 2026-10-30: no
+            glyph on a calm text button). The mode and the version of its brief follow, the
+            way a model picker names a model; for an agent only when the mode is not the
+            default. */}
+        {agent && <AgentTriggerName slug={agent} title={agentName} hasPhoto={hasPhoto} />}
         {(!agent || mode !== DEFAULT_CHAT_MODE) && (
           <>
             <span className="chat-cmp-modeltrigger-model">{agent ? `· ${modeRow.name}` : modeRow.name}</span>
@@ -286,7 +289,7 @@ const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto
         )}
         {/* THIS SESSION's permission, handed down already resolved — see the prop's doc. */}
         <span className="chat-cmp-modeltrigger-effort">{permissionMode}</span>
-        <span className="chat-cmp-caret" aria-hidden>▾</span>
+        <Chevron />
       </button>
     </div>
   );
@@ -380,7 +383,7 @@ const ModelTrigger = memo(function ModelTrigger({ modelLabel, effortValue, disab
       >
         <span className="chat-cmp-modeltrigger-model">{modelLabel}</span>
         <span className="chat-cmp-modeltrigger-effort">{effortLabel(effortValue)}</span>
-        <span className="chat-cmp-caret" aria-hidden>▾</span>
+        <Chevron />
       </button>
     </div>
   );
@@ -2516,7 +2519,18 @@ export function Composer({
       </div>
 
       <div className="chat-cmp-toolbar">
-        {/* Leading control, and it answers two questions in one word each: how is this agent
+        {/* One control for every kind of attachment — files and folders. A bare `+` now that its labelled Skills neighbour is gone: it is
+            the only icon control on this side of the row, so there is nothing for it to read
+            as a loose part OF. Still a `Popover` (not one of the three panels above): its
+            menu is a short list that clamps to its trigger rather than spanning the card.
+            Drawn only inside a project (`showAttach`) — every attachment becomes a path, and
+            a pasted image's bytes need that project's temp dir. */}
+        {showAttach && (phonePhotos
+          ? <PhotoButton onFiles={stablePhonePhotos} label={t('chat.photo.add')} />
+          : <AttachButton onPick={stablePick} />
+        )}
+
+        {/* After the `+` (owner 2026-10-30: the prototype's order), and it answers two questions in one word each: how is this agent
             briefed to WORK, and what may it do without asking. Everything after it is about
             composing the message; this is about who you are talking to. Absent on a surface
             with no mode and no permission gate to set — see `showMode`. */}
@@ -2531,17 +2545,6 @@ export function Composer({
             open={menu.open === 'mode'}
             onToggle={toggleMode}
           />
-        )}
-
-        {/* One control for every kind of attachment — files and folders. A bare `+` now that its labelled Skills neighbour is gone: it is
-            the only icon control on this side of the row, so there is nothing for it to read
-            as a loose part OF. Still a `Popover` (not one of the three panels above): its
-            menu is a short list that clamps to its trigger rather than spanning the card.
-            Drawn only inside a project (`showAttach`) — every attachment becomes a path, and
-            a pasted image's bytes need that project's temp dir. */}
-        {showAttach && (phonePhotos
-          ? <PhotoButton onFiles={stablePhonePhotos} label={t('chat.photo.add')} />
-          : <AttachButton onPick={stablePick} />
         )}
         {pageChip && <PageChip page={pageChip} convId={convId} />}
 
@@ -2642,19 +2645,18 @@ export function Composer({
             with every state, and on the mic's right it slid the button out from under a
             holding pointer the moment a take began (pointerleave ended the take, which then
             read as "that was a tap"). On this side only the model trigger moves.
-            Resting, it names the binding ("Shift+V to talk") and a narrow pane drops it
-            (`data-rest`); the phone's mic needs no caption. */}
+            Resting it says nothing (owner 2026-10-30): the binding lives in the mic's own
+            tooltip ("Hold to talk · Shift+V"). */}
         {voiceEnabled && !voiceNotice && voice.state !== 'error' && voice.state !== 'unconfigured'
-          && !(phoneVoice && voice.state === 'idle') && (
-          <span className="chat-cmp-voice-note is-idle" data-rest={voice.state === 'idle' ? '' : undefined} data-garbled={voice.state === 'garbled' ? '' : undefined}
+          && voice.state !== 'idle' && (
+          <span className="chat-cmp-voice-note is-idle" data-garbled={voice.state === 'garbled' ? '' : undefined}
             title={voice.state === 'garbled' && voice.heard ? voice.heard : undefined}>
             {voice.state === 'recording' ? t('voice.note.listening')
               : voice.state === 'transcribing'
                 ? (voice.attempt > 0 ? t('voice.note.retry').replace('{n}', String(voice.attempt)).replace('{max}', String(STT_RETRIES)) : t('voice.note.transcribing'))
                 : voice.state === 'too-short' ? t('voice.note.tap')
                   : voice.state === 'silent' ? t('voice.note.silent')
-                    : voice.state === 'garbled' ? t('voice.note.garbled')
-                      : t('voice.note.rest').replace('{key}', hotkeyLabel(pushToTalk))}
+                    : t('voice.note.garbled')}
           </span>
         )}
         {/* What whisper made of a take nobody could understand: dimmed, plain text (it is the
@@ -2678,7 +2680,7 @@ export function Composer({
         {voiceEnabled && (
           <button
             type="button"
-            className={`chat-cmp-send chat-cmp-mic${voice.state === 'recording' ? ' is-recording' : ''}${micNudge ? ' is-nudged' : ''}`}
+            className={`chat-cmp-iconbtn chat-cmp-mic${voice.state === 'recording' ? ' is-recording' : ''}${micNudge ? ' is-nudged' : ''}`}
             // `onPointerDown`/`onPointerUp`, not `onClick`: press-and-hold has no click.
             // `onPointerLeave` and `onPointerCancel` close the take when the finger slides off
             // the button or the OS takes the pointer away, so the recorder cannot be left open
@@ -2701,7 +2703,7 @@ export function Composer({
                             : voice.state === 'error' ? (voice.error || 'That take did not go through.')
                               : effectiveMode(pushToTalk, pushToTalkMode) === 'toggle'
                                 ? `Press ${hotkeyLabel(pushToTalk)} to start, again to send`
-                                : `Hold to speak (${hotkeyLabel(pushToTalk)})`
+                                : `Hold to talk · ${hotkeyLabel(pushToTalk)}`
             }
             aria-label="Hold to speak"
             aria-pressed={voice.state === 'recording'}

@@ -51,7 +51,7 @@ export function refMirrorSegments(draft: string, peers: PeerMention[], staged: r
     const att = byId.get(t.id);
     if (att && isMediaRef(att)) {
       out.push({
-        text: core, kind: 'ref', refId: att.id, img: att.url, icon: att.url ? undefined : chipIcon(att), lead: core.indexOf('\u00A0'),
+        text: core, kind: 'ref', refId: att.id, img: att.url, icon: att.url ? undefined : chipIcon(att), lead: core.indexOf('\u00A0') >= 0 ? core.indexOf('\u00A0') : t.glyph.length,
         state: att.uploading ? 'uploading' : att.failed ? 'failed' : 'ready',
       });
     } else {
