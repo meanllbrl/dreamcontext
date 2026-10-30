@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import { emitInstance, useVault } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 import { useAgentStage, useBringAgentHere, type AgentSummary } from '../../hooks/useAgents';
+import { useReplyToAgentThread } from '../../hooks/useAutomations';
+import { THREAD_REPLY_MAX_CHARS } from '../agents/AgentMessage';
+import { fitRunReport } from '../sleepy/chat/runReport';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { OPEN_SESSION_EVENT, type OpenSessionDetail } from '../../lib/openSession';
@@ -169,7 +172,7 @@ export function AgentStage({
             : t('aiteam.elsewhere.chat').replace('{machine}', elsewhere?.name ?? '').replace('{name}', agent.title)}</p>
         </div>
       ) : (
-        <StageChat agent={agent} level={autonomy} ready={!!stage} vault={vault ?? ''} bus={bus} feedNewestId={feedNewestId} onActivity={onActivity} inActivity={inActivity} />
+        <StageChat agent={agent} level={autonomy} ready={!!stage} vault={vault ?? ''} bus={bus} feedNewestId={feedNewestId} onActivity={onActivity} inActivity={inActivity} onToast={onToast} />
       )}
     </section>
   );
@@ -234,7 +237,7 @@ async function openRunSession(vault: string, bus: EventTarget, meta: FeedMeta): 
   }
 }
 
-function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, inActivity }: {
+function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, inActivity, onToast }: {
   agent: AgentSummary;
   level: string;
   ready: boolean;
@@ -243,9 +246,15 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, 
   feedNewestId: string | null;
   onActivity: (at?: { slug: string; runId: string | null }) => void;
   inActivity?: (key: string) => boolean;
+  onToast: (msg: string) => void;
 }) {
   const { t } = useI18n();
   const { session, open } = useStageSession(vault, agent, level);
+  // A card in a run's row (a command the owner ran) reports into THAT run: a reply in its thread,
+  // the Agents page's own hand-back, which resumes the run's session — its answer then lands
+  // under the run here. A refusal (the run still working, a newer run took the thread) is told.
+  const { mutate: replyToRun } = useReplyToAgentThread();
+  const onToastRef = useLatest(onToast);
   // Opened like a Chat tab: the conversation is there when its agent is — once the page has
   // OPENED the agent (its feed exists), so the open decides new-or-continuing before a session
   // exists (the page's open effect runs after this stage mounts).
@@ -270,7 +279,13 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, 
     void refreshStageFeed(vault, agent.slug, feedNewestId);
   }, [vault, agent.slug, feedNewestId]);
   const snap = stageFeed(vault, agent.slug);
-  const running = !!snap && feedHasRunning(snap.items);
+  // A card's report resumed a run: its answer is on the way, so the fast re-read holds until that
+  // run has something newer than the report (or two minutes passed).
+  const [awaiting, setAwaiting] = useState<{ key: string; afterId: string; until: number } | null>(null);
+  const answered = !!awaiting && (Date.now() > awaiting.until
+    || !!snap?.items.some((it) => it.feed.sessionKey === awaiting.key && (it.feed.newestId ?? '') > awaiting.afterId));
+  useEffect(() => { if (answered) setAwaiting(null); }, [answered]);
+  const running = !!snap && (feedHasRunning(snap.items) || (!!awaiting && !answered));
   useEffect(() => {
     const every = running ? HISTORY_POLL_RUNNING_MS : HISTORY_POLL_MS;
     const timer = setInterval(() => { void refreshStageFeed(vault, agent.slug, newestRef.current); }, every);
@@ -345,10 +360,23 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, 
         // Outside the activity's window: the run's own session, else the routine's newest message.
         void openRunSession(vault, bus, meta).then((opened) => { if (!opened) onActivityRef.current(at); });
       },
+      onRunReport: (meta, text) => {
+        if (!meta.runId) return;
+        replyToRun(
+          { slug: meta.source, runId: meta.runId, text: fitRunReport(text, THREAD_REPLY_MAX_CHARS) },
+          {
+            onSuccess: ({ entry }) => {
+              setAwaiting({ key: meta.sessionKey, afterId: entry.id, until: Date.now() + 120_000 });
+              void refreshStageFeed(vault, agent.slug, null);
+            },
+            onError: (err) => onToastRef.current((err as Error).message),
+          },
+        );
+      },
       onDividerScrolled: () => markStageDividerScrolled(vault, agent.slug),
       onPinned: (pinned) => setStageFeedPinned(vault, agent.slug, pinned),
     };
-  }, [snap, labels, vault, agent.slug, bus, onActivityRef, inActivityRef]);
+  }, [snap, labels, vault, agent.slug, bus, onActivityRef, inActivityRef, replyToRun, onToastRef]);
 
   if (!agent.approvedForChat) {
     return (

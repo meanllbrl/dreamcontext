@@ -1197,6 +1197,9 @@ export function ChatPane({
   // snap simply waits for the next one — a delay in a memory optimization, not a leak.)
   const [firstShownState, setFirstShownState] = useState(0);
   const feedItems: readonly FeedItem[] = feed?.items ?? NO_FEED;
+  const feedLatest = useRef(feed);
+  feedLatest.current = feed;
+  const runReports = useRef(new Map<string, (text: string) => void>());
   const feedLen = feedItems.length;
   // The feed changed under the window (a page prepended, a live merge, a session moved to the
   // end): the head follows the ROW it pointed at, in this same render, so the mounted rows and
@@ -2325,6 +2328,16 @@ export function ChatPane({
     && (!feed || (feedLen === 0 && !feed.loading && !feed.failed));
 
   // ── The feed segment: an agent's past sessions above this conversation (chatFeed.ts) ──
+  // A run row's card hand-back, one stable function per run (the rows are memoized).
+  const runReportFor = (meta: FeedItem['feed']): ((text: string) => void) | undefined => {
+    if (meta.sessionKind !== 'run' || !feed?.onRunReport) return undefined;
+    let fn = runReports.current.get(meta.sessionKey);
+    if (!fn) {
+      fn = (text: string) => feedLatest.current?.onRunReport?.(feedLatest.current.items.find((x) => x.feed.sessionKey === meta.sessionKey)?.feed ?? meta, text);
+      runReports.current.set(meta.sessionKey, fn);
+    }
+    return fn;
+  };
   const feedNodes: React.ReactNode[] = [];
   if (feed) {
     if (feed.loading) {
@@ -2378,7 +2391,7 @@ export function ChatPane({
       }
       if (!meta.empty) {
         feedNodes.push(
-          <ItemView key={it.id} item={it} onOpenFile={handleOpenFile} onOpenBoard={handleOpenBoard} actor="lead" readOnly />,
+          <ItemView key={it.id} item={it} onOpenFile={handleOpenFile} onOpenBoard={handleOpenBoard} report={runReportFor(meta)} actor="lead" readOnly />,
         );
       }
       if (feedRunWorking(meta, marks)) {

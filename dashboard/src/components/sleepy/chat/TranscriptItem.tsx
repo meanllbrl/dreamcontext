@@ -392,7 +392,7 @@ function unitsOf(segments: ChatSegment[], heads: readonly ReplyHead[] | undefine
 }
 
 function AssistantMessage({
-  item, session, onQuote, onOpenFile, onOpenBoard, onAction, conversationId, readOnly, replyGroup, replyHeads, onReplyTarget,
+  item, session, onQuote, onOpenFile, onOpenBoard, onAction, conversationId, report, readOnly, replyGroup, replyHeads, onReplyTarget,
 }: {
   item: ChatTextItem;
   /** A SECTIONED Super reply's heads (ChatPane's replyHeadsById): present, the answer is parsed
@@ -422,6 +422,10 @@ function AssistantMessage({
    * gate with `onAction`.
    */
   conversationId?: string;
+  /** A host with no conversation that can still continue the work — a routine run's row in an
+   *  agent's history, where a card's hand-back becomes a reply in that run's thread and resumes
+   *  it. With it, views are drawn (a checklist still needs `conversationId`, and says so). */
+  report?: (text: string) => void;
   readOnly: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -452,7 +456,7 @@ function AssistantMessage({
   // with neither (a machine-wide store, a window that holds no project) had an agent's drawn
   // block DROPPED — and dropped in silence, because the notices below rode the same gate. That is the one failure this
   // surface documents that it must never have.
-  const viewsAllowed = !!conversationId;
+  const viewsAllowed = !!conversationId || !!report;
 
   // What this host could not draw, said out loud. The degradation contract is that a dropped
   // block stays VISIBLE — and a capability the host lacks is as much a drop as a payload that
@@ -529,7 +533,7 @@ function AssistantMessage({
             // drawn wherever it was written.
             : unit.segment.kind === 'view' && !viewsAllowed
               ? null
-              : <ChatBlockSegment key={i} segment={unit.segment} conversationId={conversationId} session={session} placeKey={`${item.id}:${i}`} />
+              : <ChatBlockSegment key={i} segment={unit.segment} conversationId={conversationId} session={session} report={report} placeKey={`${item.id}:${i}`} />
       ))}
       {/* UNGATED, on purpose: the strip is what makes a drop honest, so it cannot itself be
           conditional on the capability that caused the drop. */}
@@ -651,7 +655,7 @@ interface StepStretch {
 }
 
 function ItemViewInner({
-  item, session, onOpenFile, onOpenBoard, onAction, conversationId, onQuote, readOnly = false,
+  item, session, onOpenFile, onOpenBoard, onAction, conversationId, report, onQuote, readOnly = false,
   actor, stretch, stretchRunning, replyGroup, onReplyJump, replyHeads, onReplyTarget,
 }: StepStretch & {
   item: ChatItem;
@@ -667,6 +671,8 @@ function ItemViewInner({
   /** This conversation's id, for `ChatViews`' checklist card. Optional — the read-only
    *  drill-in passes neither this nor `onAction`, so it renders no views (plan §T6). */
   conversationId?: string;
+  /** A routine run's row in an agent's history: where its cards' hand-back goes (its thread). */
+  report?: (text: string) => void;
   onQuote?: (item: ChatUserItem | ChatTextItem) => void;
   /** A Super view: the answer group this row belongs to (a thin line beside it). */
   replyGroup?: string;
@@ -702,6 +708,7 @@ function ItemViewInner({
           onOpenBoard={onOpenBoard}
           onAction={onAction}
           conversationId={conversationId}
+          report={report}
           readOnly={readOnly}
           replyGroup={replyGroup}
           replyHeads={replyHeads}

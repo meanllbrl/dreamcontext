@@ -78,6 +78,9 @@ export interface ChatFeed {
   /** A run session's last row (or its boundary) has been on screen. */
   onSeen: (meta: FeedMeta) => void;
   onBoundary: (meta: FeedMeta) => void;
+  /** A card in a routine run's row finished (a command the owner ran): its report goes back
+   *  into THAT run — a reply in its thread, which resumes its session. Absent: not drawn. */
+  onRunReport?: (meta: FeedMeta, text: string) => void;
   onDividerScrolled: () => void;
   /** The reader is at the bottom (true) or scrolled up (false): deferred moves wait for true. */
   onPinned: (pinned: boolean) => void;
