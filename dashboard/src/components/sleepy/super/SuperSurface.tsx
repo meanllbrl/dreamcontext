@@ -60,6 +60,8 @@ export interface SuperSurfaceProps {
   sessionFor: (claudeId: string) => ChatSession | undefined;
   /** A shown child with no live chat: its transcript, read only (SuperContainer's `childTranscript`). */
   childTranscript?: (claudeId: string) => ReactNode;
+  /** A team card shown large: its member's conversation (SuperContainer's `teamConversation`). */
+  teamConversation?: (member: string) => ReactNode;
   titleFor: (claudeId: string) => string;
   /** A child's job NAME for the agenda: its tab title (the brief is its second line). */
   nameFor?: (claudeId: string) => string;
@@ -899,6 +901,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               asksOwner={c.kind === 'chat' ? asking.get(c.ref) ?? false : false}
               shownSlot={shownCard?.id === c.id}
               childTranscript={c.kind === 'chat' ? props.childTranscript : undefined}
+              teamConversation={c.kind === 'team' ? props.teamConversation : undefined}
               onPress={onPressCard}
               dropTarget={target === c.id}
               endPending={c.kind === 'chat' && props.endPending.has(c.ref)}

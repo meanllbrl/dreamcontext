@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import { requestOpenAgents } from '../../../lib/openAgents';
 import { TeamTile, teamRingKind, teamStatusOf, type TeamCard } from './TeamTile';
 import { useI18n } from '../../../context/I18nContext';
 import { CONTAINER_SIZES, SIZE_UNITS, type ContainerSize, type SuperChild, type SuperContainer as Container } from '../../../lib/superTypes';
@@ -182,6 +181,9 @@ export interface SuperContainerProps extends SuperCardActions {
    *  transcript, read only, in the chat pane (AgentSurface's ChildTranscript). A render prop, so
    *  the stage never imports the chat pane itself. */
   childTranscript?: (claudeId: string) => ReactNode;
+  /** `team`, shown large: its member's conversation (AgentStage's AgentConversation), a render
+   *  prop for the same reason. */
+  teamConversation?: (member: string) => ReactNode;
   /** A press on a FLOATING card arms its drag (the card is one grab handle; F6, FE1). */
   onPress: (e: PointerEvent<HTMLDivElement>, id: string) => void;
   /** A card held over this one: releasing groups them (2026-10-20). */
@@ -269,10 +271,9 @@ export function SuperContainer(props: SuperContainerProps) {
     : props.remote ? null : <IconButton icon="close" label={closeLabel} onClick={onCloseClick} testId="super-card-close" />;
   // What only the Mac can show: drawn as a placeholder, never loaded from here.
   const macOnly = !!props.remote && (c.kind === 'browser' || ((c.kind === 'web' || c.kind === 'image') && !c.ref));
-  // A floating card's one action, for a click and for Enter/Space alike: a team card opens its
-  // member in AI Team (where the job is), any other card shows side by side.
+  // A floating card's one action, for a click and for Enter/Space alike: it shows side by side (a
+  // team card with its member's conversation, on the stage like a child's chat).
   const openCard = () => {
-    if (c.kind === 'team') { if (props.team) requestOpenAgents({ slug: props.team.job.member }); return; }
     // The agenda's list is live on its card (its rows are the buttons): a click between them is
     // no "show side by side". Its counts tile opens like any card.
     if (c.kind === 'agenda' && !small && drawnSize !== 'medium') return;
@@ -625,6 +626,9 @@ function LargeBody(p: BodyProps): ReactNode {
       <div className="super-card-large-body">
         {c.kind === 'chat'
           ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} tall />
+          : c.kind === 'team' && p.team
+            // The member's conversation, the AI Team page's own pane: read and written to here.
+            ? (p.viewReady && !p.parked ? p.teamConversation?.(p.team.job.member) ?? viewFor(p) : null)
           : zoomsInPlace(c)
             // A picture or a live browser zooms where it is (owner 2026-10-22); a page does in WebCardBody.
             ? <ZoomPane key={c.id}>{viewFor(p)}</ZoomPane>

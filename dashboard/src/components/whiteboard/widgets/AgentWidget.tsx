@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAgents, findAgent, type AgentSummary } from '../../../hooks/useAgents';
@@ -228,6 +228,26 @@ function CardLines({ lines, name, tx }: { lines: readonly SaidLine[]; name: stri
   );
 }
 
+/** The hosts showing each session, newest last. A session has ONE container, so one host draws
+ *  it: the newest (the Super stage's team card over a kept-alive AI Team page); when it goes, the
+ *  one before takes the container back. */
+const hostClaims = new Map<ChatSession, symbol[]>();
+const claimListeners = new Set<() => void>();
+const subscribeClaims = (fn: () => void) => { claimListeners.add(fn); return () => { claimListeners.delete(fn); }; };
+function useHostClaim(session: ChatSession): boolean {
+  const [me] = useState(() => Symbol('host'));
+  useLayoutEffect(() => {
+    hostClaims.set(session, [...(hostClaims.get(session) ?? []), me]);
+    for (const fn of [...claimListeners]) fn();
+    return () => {
+      const rest = (hostClaims.get(session) ?? []).filter((x) => x !== me);
+      if (rest.length) hostClaims.set(session, rest); else hostClaims.delete(session);
+      for (const fn of [...claimListeners]) fn();
+    };
+  }, [session, me]);
+  return useSyncExternalStore(subscribeClaims, () => hostClaims.get(session)?.at(-1) === me);
+}
+
 /**
  * The card's chat: the session's detached container homed in the card, and the chat pane
  * portaled into it (the notch's own mount). `bare`: the agent's envelope is the server's to
@@ -245,12 +265,14 @@ export function CardChat({ session, reopen, placeholder, pane = false, feed }: {
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
+  const owns = useHostClaim(session);
   useLayoutEffect(() => {
     const el = hostRef.current;
+    if (!owns) return undefined;
     if (el && session.container.parentElement !== el) el.appendChild(session.container);
     // Hand the container back on the way out, so the next host never finds it held here.
     return () => { if (el && session.container.parentElement === el) el.removeChild(session.container); };
-  }, [session]);
+  }, [session, owns]);
 
   const reopenRef = useRef(reopen);
   reopenRef.current = reopen;
@@ -269,7 +291,7 @@ export function CardChat({ session, reopen, placeholder, pane = false, feed }: {
 
   return (
     <div className={pane ? 'agent-chat-pane-host' : 'wb-agent-chat'} ref={hostRef}>
-      {createPortal(
+      {owns && createPortal(
         <ChatPaneHost
           session={session}
           actions={actions}

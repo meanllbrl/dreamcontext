@@ -682,6 +682,9 @@
 .super-team-who img { flex: none; }
 .super-tile[data-tile='team'] .super-tile-line { -webkit-line-clamp: 2; }
 .super-card-view--team { display: flex; height: 100%; }
+/* Shown side by side, its member's conversation (the AI Team pane): it scrolls itself. */
+.super-card-large-body:has(> .aiteam-convo) { overflow: hidden; }
+.super-card-large-body > .aiteam-convo { display: flex; flex-direction: column; height: 100%; min-width: 0; min-height: 0; }
 /* A chat tile's title reads whole (owner 2026-10-21): up to three lines, its doing-line one. */
 .super-tile[data-tile='chat'] .super-tile-title { -webkit-line-clamp: 3; flex: none; }
 .super-tile[data-tile='chat'] .super-tile-line { -webkit-line-clamp: 1; }

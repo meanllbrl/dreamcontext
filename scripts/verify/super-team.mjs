@@ -20,7 +20,8 @@
  *       `super`); its run ends and `super state` shows the team job done, with its last line.
  *   T4  the job's card is on the stage: the member's face and "Scout took the job", done (pushed
  *       when the run ended) with its last line, in the shared tone map's colour on tile and frame
- *       (screenshots at 1280 and 1920 px); a click opens the member in AI Team.
+ *       (screenshots at 1280 and 1920 px); a click shows it side by side ON THE STAGE with the
+ *       member's conversation (the AI Team pane), written to there, never leaving the Super screen.
  *   No console errors.
  */
 
@@ -326,20 +327,38 @@ async function run(engineName, base) {
   }
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.waitForTimeout(500);
-  // The keyboard does what the click does: Enter on the focused card opens the member.
-  await card.evaluate((el) => el.closest('[data-container-id]').focus());
-  await page.keyboard.press('Enter');
-  ok(tag('T4 Enter on the focused card opens the member in AI Team too'), await until(page, async () =>
-    (await page.locator('.aiteam:visible').count()) === 1, 15000));
-  await openChat(page, base);
-  await until(page, async () => (await card.count()) === 1 && await shown(), 20000);
-  // A real mouse click on the card (the card frame takes it: a floating card is one grab handle).
+  // A real mouse click on the card (the card frame takes it: a floating card is one grab handle)
+  // shows it side by side ON THE STAGE with the member's conversation in it, never AI Team.
+  const frame = page.locator('[data-container-id][data-kind="team"]');
+  const convo = frame.getByTestId('agent-conversation');
   const cb = await card.boundingBox();
   await page.mouse.click(cb.x + cb.width / 2, cb.y + cb.height / 2);
-  ok(tag('T4 a click on the card opens the member in AI Team'), await until(page, async () =>
-    (await page.locator('.aiteam:visible').count()) === 1
-    && (await page.locator('.aiteam-stage:visible, .aiteam-convo:visible').filter({ hasText: 'Scout' }).count()) >= 1, 15000));
+  ok(tag('T4 a click on the card opens the member\'s conversation on the stage'), await until(page, async () =>
+    (await frame.getAttribute('data-where').catch(() => null)) !== 'float' && await convo.isVisible().catch(() => false), 15000),
+    await frame.getAttribute('data-where').catch(() => ''));
+  // (The AI Team page stays mounted behind the surface since T2, so what is ON TOP decides.)
+  const onSuper = () => frame.evaluate((f) => { const b = f.getBoundingClientRect(); return !!document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2)?.closest('.super-surface [data-kind="team"]'); });
+  ok(tag('T4 …without leaving the Super screen'), await onSuper());
+  ok(tag('T4 …its history holds the job\'s run'), await until(page, async () => /Scout ran/.test(await convo.innerText().catch(() => '')), 20000),
+    (await convo.innerText().catch(() => '')).slice(0, 400));
+  const memberInput = convo.locator('.chat-cmp-input:visible');
+  ok(tag('T4 …drawn once, though the AI Team page kept Scout open behind it'), (await page.locator('.chat-cmp-input[placeholder*="Scout"]').count()) === 1);
+  ok(tag('T4 …and it can be written to (the Chat composer)'), await until(page, async () => (await memberInput.count()) === 1 && await memberInput.isEnabled(), 20000));
+  await memberInput.click(); await memberInput.fill('which step?'); await page.keyboard.press('Enter');
+  ok(tag('T4 …the member answers there'), await until(page, async () => /CHILD ok/.test(await convo.innerText().catch(() => '')), 20000));
+  // Its opening flight has landed (the frame's fade-in done) before the picture.
+  await until(page, async () => frame.evaluate((f) => !f.getAnimations().length && getComputedStyle(f).opacity === '1'), 5000);
   await page.screenshot({ path: join(OUT, `${engineName}-team-card-opened.png`) });
+  // The keyboard does what the click does: back to its tile, Enter on the focused card opens it too.
+  await frame.getByTestId('super-card-minimize').click();
+  ok(tag('T4 minimized, it is a floating tile again'), await until(page, async () =>
+    (await frame.getAttribute('data-where').catch(() => null)) === 'float' && (await card.count()) === 1 && await shown(), 15000));
+  await page.waitForTimeout(600);
+  await frame.evaluate((el) => el.focus());
+  await page.keyboard.press('Enter');
+  ok(tag('T4 Enter on the focused card opens it on the stage too'), await until(page, async () =>
+    (await frame.getAttribute('data-where').catch(() => null)) !== 'float' && await convo.isVisible().catch(() => false)
+    && await onSuper(), 15000));
 
   ok(tag('no console errors'), errors.length === 0, errors.slice(0, 5).join('\n'));
   await browser.close();

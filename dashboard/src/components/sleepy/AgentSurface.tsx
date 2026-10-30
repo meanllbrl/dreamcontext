@@ -17,6 +17,7 @@ import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
 import { openOwnerQuestions, trimOwnerAnswers } from './super/superQuestions';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import { ChildTranscript } from './super/ChildTranscript';
+import { AgentConversation } from '../aiteam/AgentStage';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
   doubleTapToken, createDoubleTapMatcher,
@@ -3406,6 +3407,8 @@ export function AgentSurface() {
   /** A shown child with no live chat here (it finished; a relaunch keeps it dormant): its saved
    *  transcript, read only, in the same chat pane. Nothing is spawned for it. */
   const renderChildTranscript = useCallback((claudeId: string) => <ChildTranscript key={claudeId} claudeId={claudeId} />, []);
+  // A team card shown large is its member's conversation, the AI Team page's own pane.
+  const renderTeamConversation = useCallback((member: string) => <AgentConversation key={member} slug={member} />, []);
   // The super chat draws the Super Agent's questions to the owner as cards (superQuestions.ts,
   // owner 2026-10-21 "soruyu hep chatta sorsun"). They read the record's open questions from
   // here, where the record lives whether or not the stage is up; no live record = static cards.
@@ -5388,6 +5391,7 @@ export function AgentSurface() {
             vault={vault ?? ''}
             sessionFor={chatByClaudeId}
             childTranscript={renderChildTranscript}
+            teamConversation={renderTeamConversation}
             titleFor={superTitleFor}
             nameFor={superNameFor}
             terminals={remoteDesktop ? [] : superTerminals}
