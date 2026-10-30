@@ -517,6 +517,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'desktop-seed-',
   'dr-home-',
   'dr-root-',
+  'drafts-roster-',
   'escape-',
   'goal-live-',
   'goal-live-adopt-',

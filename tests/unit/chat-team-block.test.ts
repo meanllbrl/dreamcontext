@@ -266,17 +266,29 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
     const after = superBriefing(SUPER_ORCHESTRATION_GUIDE_PATH).split('\n');
     const gone = before.filter((l) => !after.includes(l));
     const added = after.filter((l) => !before.includes(l));
+    // The AI Team bullet and the rev are this test's subject; the other lines are the 0.36.2
+    // branches merged on top (plan summary, global members, `origin=<ref>`), each pinned by its own test.
     expect(gone).toEqual([
+      expect.stringContaining('unseen): the text says in one line that a question waits.'),
       '- The AI Team (`dreamcontext agents list`): `super team ask <member> "<job>"` hands an approved',
       '  member recurring or field work in its own thread; `super state` shows how it goes.',
+      '  every one, the second and later too.',
       expect.stringContaining('<super-brief rev=16>'),
     ]);
     expect(added).toEqual([
+      expect.stringContaining('unseen): the text says in one line that a question waits.'),
+      'or any work: the card carries what he says yes to (the yes option\'s `preview`: the problem in',
+      'one sentence, 3-6 short bullets of what will be done, his decisions, cost or risk in money, never',
+      expect.stringContaining('time) and your text gives the same summary'),
       '- Your AI Team, when the project has one, is listed under `## Your AI Team` (and in `super state`',
       "  members): check it first for every job; a member's field is that member's job",
       '  (`super team ask <member> "<job>"`, in its own thread), never a sub-agent.',
-      expect.stringContaining('<super-brief rev=17>'),
+      '- A global agent (this Mac\'s; `agents list` marks it) is an AI Team member too: `super team ask`',
+      '  it, never a child or a sub-agent.',
+      expect.stringContaining('with `origin=<ref>`'),
+      '  result with `<!-- re:<ref> -->`.',
+      expect.stringContaining('<super-brief rev=18>'),
     ]);
-    expect(after.length).toBe(before.length + 1);
+    expect(after.length).toBe(before.length + 7);
   });
 });
