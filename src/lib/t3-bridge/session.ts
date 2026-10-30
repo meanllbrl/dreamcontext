@@ -68,6 +68,9 @@ export interface BridgeSessionOptions {
   readonly privateTmp?: string | null;
   /** Tests only: the exact policy a recorded transcript expects on `turn/start`. */
   readonly runtimePolicyOverride?: CodexRuntimePolicy;
+  /** The adapter's event stream ended while the session was open (Codex died): the caller ends
+   *  the bridge. An open turn has already been closed with an error `result`. */
+  readonly onFatal?: (message: string) => void;
   /** Tests inject T3's replay client here; production spawns `codex app-server`. */
   readonly clientFactory?: ClientFactory;
   readonly emit: (frame: WireFrame) => void;
@@ -167,14 +170,19 @@ export class BridgeSession {
   private providerThread: OrchestrationV2ProviderThread | null = null;
   private mode: string;
   private model: string;
+  private effort: string;
   private runOrdinal = 0;
   private activeRun: { runId: RunId; providerTurnId: string | null } | null = null;
+  /** Resolves once the active run has its provider turn id (or ended): a Stop or a steer that
+   *  arrives before Codex reported the turn running waits for it instead of being lost. */
+  private turnKnown: { promise: Promise<void>; resolve: () => void } | null = null;
   private closed = false;
 
   private constructor(opts: BridgeSessionOptions) {
     this.opts = opts;
     this.mode = opts.mode;
     this.model = opts.model;
+    this.effort = opts.effort ?? '';
     this.wire = new ToWire({ tool: opts.tool, model: opts.model, cwd: opts.cwd, permissionMode: opts.mode });
   }
 
@@ -192,7 +200,7 @@ export class BridgeSession {
     return {
       instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
       model: this.model,
-      ...(this.opts.effort ? { options: [{ id: 'reasoningEffort', value: this.opts.effort }] } : {}),
+      ...(this.effort ? { options: [{ id: 'reasoningEffort', value: this.effort }] } : {}),
     } as ModelSelection;
   }
 
@@ -245,6 +253,8 @@ export class BridgeSession {
     this.runtime.runFork(
       Stream.runForEach(session.events, (event) => Effect.sync(() => this.onEvent(event))).pipe(
         Effect.catchCause((cause) => Effect.sync(() => this.opts.log?.(`t3 event stream ended: ${String(cause).slice(0, 300)}`))),
+        // Ended while open = Codex is gone: close the open turn loudly, then end the bridge.
+        Effect.ensuring(Effect.sync(() => { if (!this.closed) this.fatal('Codex stopped running (its app-server exited).'); })),
         Effect.provideService(Scope.Scope, scope),
       ),
     );
@@ -279,15 +289,34 @@ export class BridgeSession {
     } as OrchestrationV2ProviderThread;
   }
 
+  private fatal(message: string): void {
+    if (this.activeRun) {
+      this.opts.emit({
+        type: 'result', subtype: 'error_during_execution', is_error: true, result: message,
+        num_turns: 0, total_cost_usd: 0, usage: {}, session_id: this.wire.sessionId, dc_tool: this.opts.tool,
+      });
+      this.activeRun = null;
+      this.turnKnown?.resolve();
+    }
+    this.opts.onFatal?.(message);
+  }
+
+  /** Wait (bounded) until the active run has its provider turn id. */
+  private async awaitTurnId(ms = 15_000): Promise<void> {
+    if (!this.activeRun || this.activeRun.providerTurnId || !this.turnKnown) return;
+    await Promise.race([this.turnKnown.promise, new Promise((r) => setTimeout(r, ms))]);
+  }
+
   private onEvent(event: ProviderAdapter.ProviderAdapterV2Event): void {
     if (event.type === 'provider_turn.updated' && this.activeRun && event.providerTurn.status === 'running') {
       this.activeRun.providerTurnId = event.providerTurn.id;
+      this.turnKnown?.resolve();
     }
     if (event.type === 'provider_thread.updated' && this.providerThread && event.providerThread.id === this.providerThread.id) {
       this.providerThread = event.providerThread;
     }
     for (const frame of this.wire.translate(event)) this.opts.emit(frame);
-    if (event.type === 'turn.terminal') this.activeRun = null;
+    if (event.type === 'turn.terminal') { this.activeRun = null; this.turnKnown?.resolve(); }
   }
 
   private appThread(now: DateTime.Utc): OrchestrationV2AppThread {
@@ -339,6 +368,8 @@ export class BridgeSession {
       createdBy: 'user' as const,
       creationSource: 'web' as const,
     } as ProviderAdapter.ProviderAdapterV2TurnMessage;
+    // A message right after the turn started steers it once Codex reported it running.
+    await this.awaitTurnId();
     if (this.activeRun?.providerTurnId) {
       await this.run(session.steerTurn({
         threadId: this.threadId,
@@ -352,6 +383,8 @@ export class BridgeSession {
     this.runOrdinal += 1;
     const runId = RunId.make(`run-${stamp}`);
     this.activeRun = { runId, providerTurnId: null };
+    let resolveKnown = (): void => undefined;
+    this.turnKnown = { promise: new Promise<void>((r) => { resolveKnown = r; }), resolve: () => resolveKnown() };
     for (const frame of this.wire.beginTurn()) this.opts.emit(frame);
     const now = DateTime.makeUnsafe(Date.now());
     const input: ProviderAdapter.ProviderAdapterV2TurnInput = {
@@ -371,6 +404,7 @@ export class BridgeSession {
     const exit = await this.runtime!.runPromiseExit(session.startTurn(input));
     if (Exit.isFailure(exit)) {
       this.activeRun = null;
+      this.turnKnown?.resolve();
       this.opts.emit({
         type: 'result', subtype: 'error_during_execution', is_error: true,
         result: `Codex could not start the turn: ${String(exit.cause).slice(0, 400)}`,
@@ -382,6 +416,8 @@ export class BridgeSession {
   /** Stop the running turn. Resolves once Codex accepted the interrupt (or nothing was running). */
   async interrupt(): Promise<void> {
     const session = this.session;
+    // A Stop right after a send waits for Codex to report the turn, then stops it.
+    await this.awaitTurnId();
     const run = this.activeRun;
     if (!session || !this.providerThread || !run?.providerTurnId) return;
     await this.run(session.interruptTurn({ providerThread: this.providerThread, providerTurnId: run.providerTurnId as never }));
@@ -430,6 +466,11 @@ export class BridgeSession {
   setMode(mode: string): void {
     this.mode = mode;
     this.wire.setPermissionMode(mode);
+  }
+
+  /** The next turn's reasoning effort (the composer's live effort switch). */
+  setEffort(effort: string): void {
+    this.effort = effort;
   }
 
   setModel(model: string): void {

@@ -120,6 +120,8 @@ import {
 import { BRIDGE_TOOLS, sanitizeTool, type ToolId } from '../../lib/t3-bridge/registry.js';
 import { codexHistoryFor } from '../../lib/t3-bridge/codex-history-route.js';
 import { bridgeChatScript, bridgeResumeTarget } from '../../lib/t3-bridge/spawn.js';
+import { CODEX_THREAD_RE } from '../../lib/t3-bridge/codex-threads.js';
+const isCodexThreadId = (id: string): boolean => CODEX_THREAD_RE.test(id);
 import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOptions, type ParkOutcome } from '../chat-park.js';
 import {
   isLoopback, isSameOriginStrict, isCrossSiteRequest, requireLocalDesktop, requireOwnerWindow, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
@@ -1881,8 +1883,12 @@ export function startChatSession(
   else if (!accountAutoPlaced && activeAccountId) notePane(handPickedAccounts, pinId, activeAccountId);
   // A bridge pane always holds its pane id (its tool's thread is found through the tab map, so
   // there is no Claude transcript to pin): `--session-id` is a Claude flag the bridge never reads.
+  // When the pane's map names a thread this open cannot take (still held by a child shutting down,
+  // or no longer resolvable), it REFUSES below like a Claude resume, rather than starting a fresh
+  // thread whose record would overwrite the map and lose the conversation for good.
+  const bridgeMapped = !!bridgeTool && !!mappedId && mappedId !== resumeId && isCodexThreadId(mappedId);
   const freshPin = bridgeTool
-    ? (resumeTarget ? '' : pinId)
+    ? (resumeTarget || bridgeMapped ? '' : pinId)
     : !resumeTarget && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
       ? pinId : '';
   const idArg = resumeTarget ? ['--resume', resumeTarget] : freshPin ? ['--session-id', freshPin] : [];
@@ -1993,7 +1999,9 @@ export function startChatSession(
   // The MCP stores every account shares (task mcp-management), by env reference.
   const storeMcp = chatStoreMcp({ scopedCard, lean: !!opts.leanMcp, projectRoot });
 
-  const heldConversation = resumeTarget || freshPin;
+  // A bridge pane holds its PANE id (its thread changes on rotation; the pane does not), so a
+  // respawn of the same pane waits for the old child exactly as a Claude resume does.
+  const heldConversation = bridgeTool ? pinId : resumeTarget || freshPin;
   if (heldConversation) liveConversations.add(heldConversation);
   /** The hold was handed to a respawn while this child was detached and busy (`supersedeLive`):
    *  the conversation is not ours to release any more, so `releaseHeld` must leave it alone. */
@@ -4670,7 +4678,7 @@ export async function handleAgentChatHistory(
   const tool = sanitizeTool(url.searchParams.get('tool'));
   const path = tool === 'codex' ? null : findFirstTranscriptPath([liveId, id]);
   if (!path) {
-    const codex = codexHistoryFor({ tool, id, liveId, contextRoot });
+    const codex = await codexHistoryFor({ tool, id, liveId, contextRoot });
     if (codex === 'refuse') { sendError(res, 403, 'thread_not_in_project', 'That Codex thread does not belong to this project.'); return; }
     sendJson(res, 200, { items: codex?.items ?? [] });
     return;

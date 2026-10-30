@@ -62,23 +62,23 @@ describe('codex thread ownership', () => {
     expect(codexThreadOwnership(MINE, join(root, 'acme-app-2'), codexHome)).toBe('foreign');
   });
 
-  it('history: owned thread served without injected context; foreign and unresolvable refused', () => {
+  it('history: owned thread served without injected context; foreign and unresolvable refused', async () => {
     const ctx = join(project, '_dream_context');
-    const ok = codexHistoryFor({ tool: 'codex', id: 'pane', liveId: MINE, contextRoot: ctx, codexHome });
+    const ok = await codexHistoryFor({ tool: 'codex', id: 'pane', liveId: MINE, contextRoot: ctx, codexHome });
     expect(ok).not.toBe('refuse');
     const items = (ok as { items: Array<{ kind: string; text?: string; result?: unknown }> }).items;
     expect(items.map((i) => i.kind)).toEqual(['user', 'tool', 'text']);
     expect(JSON.stringify(items)).not.toContain('BRIEFING SECRET');
     expect(JSON.stringify(items)).not.toContain('environment_context');
-    expect(codexHistoryFor({ tool: 'codex', id: 'pane', liveId: THEIRS, contextRoot: ctx, codexHome })).toBe('refuse');
+    expect(await codexHistoryFor({ tool: 'codex', id: 'pane', liveId: THEIRS, contextRoot: ctx, codexHome })).toBe('refuse');
     // Asked without `tool` (an older client): still refused when the id is a foreign Codex thread.
-    expect(codexHistoryFor({ tool: null, id: THEIRS, liveId: THEIRS, contextRoot: ctx, codexHome })).toBe('refuse');
+    expect(await codexHistoryFor({ tool: null, id: THEIRS, liveId: THEIRS, contextRoot: ctx, codexHome })).toBe('refuse');
     // A mapped id that cannot be found is unresolvable: refused.
-    expect(codexHistoryFor({ tool: 'codex', id: 'pane', liveId: '01a18e98-ffff-7c51-ae13-7cea70b806ff', contextRoot: ctx, codexHome })).toBe('refuse');
+    expect(await codexHistoryFor({ tool: 'codex', id: 'pane', liveId: '01a18e98-ffff-7c51-ae13-7cea70b806ff', contextRoot: ctx, codexHome })).toBe('refuse');
     // A new pane that was never mapped has no history yet (nothing to leak).
-    expect(codexHistoryFor({ tool: 'codex', id: 'pane', liveId: 'pane', contextRoot: ctx, codexHome })).toEqual({ items: [] });
+    expect(await codexHistoryFor({ tool: 'codex', id: 'pane', liveId: 'pane', contextRoot: ctx, codexHome })).toEqual({ items: [] });
     // Not a Codex pane, no Codex thread: the Claude path answers.
-    expect(codexHistoryFor({ tool: null, id: 'x', liveId: 'x', contextRoot: ctx, codexHome })).toBeNull();
+    expect(await codexHistoryFor({ tool: null, id: 'x', liveId: 'x', contextRoot: ctx, codexHome })).toBeNull();
   });
 
   it('a reopened pane resumes only its own project thread, and never one a live pane holds', () => {

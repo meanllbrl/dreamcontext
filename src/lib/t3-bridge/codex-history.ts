@@ -36,7 +36,6 @@ export function parseCodexRolloutHistory(raw: string): ChatHistoryItem[] {
   const items: ChatHistoryItem[] = [];
   const tools = new Map<string, ChatHistoryItem>();
   for (const line of raw.split('\n')) {
-    if (items.length >= MAX_ITEMS) break;
     if (!line.trim()) continue;
     let rec: Rec;
     try { rec = JSON.parse(line) as Rec; } catch { continue; }
@@ -77,5 +76,6 @@ export function parseCodexRolloutHistory(raw: string): ChatHistoryItem[] {
       if (when) item.endAt = when;
     }
   }
-  return items;
+  // The newest items, as a Claude history keeps its newest: a long thread shows where it is now.
+  return items.length > MAX_ITEMS ? items.slice(-MAX_ITEMS) : items;
 }

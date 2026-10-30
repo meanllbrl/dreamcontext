@@ -128,3 +128,26 @@ describe('t3 bridge secrets', () => {
     expect(readdirSync(join(logs, 'provider'))).toEqual([]);
   });
 });
+
+describe('t3 bridge effort', () => {
+  it('a live effort switch rides the next turn as reasoningEffort', async () => {
+    const { session } = await openReplaySession('simple', { paneId: 'pane-effort' });
+    open.push(session);
+    session.setEffort('high');
+    const policy = session.policy();
+    expect(policy.runtimeMode).toBeDefined();
+    expect(JSON.stringify((session as unknown as { modelSelection: () => unknown }).modelSelection())).toContain('"value":"high"');
+  });
+});
+
+describe('t3 bridge turn edges', () => {
+  it('a Stop sent the instant after a send still stops the turn', async () => {
+    const { session, frames, fixture } = await openReplaySession('turn_interrupt', { paneId: 'pane-fast-stop' });
+    open.push(session);
+    // As the stdio loop orders them: the send is handled, then the Stop, before Codex reported running.
+    await session.send(fixture.prompt);
+    await session.interrupt();
+    await waitFor(() => frames.some(isResult));
+    expect(frames.find(isResult)).toMatchObject({ is_error: true, terminal_reason: 'aborted' });
+  });
+});

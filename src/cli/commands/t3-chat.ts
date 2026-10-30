@@ -1,4 +1,17 @@
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import type { Command } from 'commander';
+
+/**
+ * The bridge lives in its own bundle beside this one (dist/t3-bridge.js), never inlined: a
+ * non-literal import keeps the bundler out of it. From source (tests, dev) it is the module itself.
+ */
+async function loadBridge(): Promise<typeof import('../../lib/t3-bridge/main.js')> {
+  const sibling = new URL('./t3-bridge.js', import.meta.url);
+  if (existsSync(fileURLToPath(sibling))) return import(sibling.href);
+  const source = ['../../lib/t3-bridge', 'main.js'].join('/');
+  return import(/* @vite-ignore */ source);
+}
 
 /**
  * `dreamcontext t3-chat` — the bridge child the chat server spawns for a non-Claude tool
@@ -27,31 +40,8 @@ export function registerT3ChatCommand(program: Command): void {
         process.stderr.write(`t3-chat: unknown tool ${o.tool}\n`);
         process.exit(2);
       }
-      const { runBridgeStdio } = await import('../../lib/t3-bridge/stdio.js');
-      const { ecoJoins } = await import('../../lib/t3-bridge/eco.js');
-      const cwd = o.cwd ?? process.cwd();
-      const eco = ecoJoins(cwd, process.env);
-      const code = await runBridgeStdio(
-        {
-          tool: 'codex',
-          cwd,
-          model: o.model,
-          ...(o.effort ? { effort: o.effort } : {}),
-          mode: o.mode,
-          paneId: o.pane ?? '',
-          ...(o.resume ? { resume: o.resume } : {}),
-          ...(o.briefingFile ? { briefingFile: o.briefingFile } : {}),
-          extraRoots: o.extraRoot ?? [],
-        },
-        {
-          input: process.stdin,
-          write: (line) => { process.stdout.write(line); },
-          env: process.env,
-          onReady: (id) => eco.onReady(id),
-          onRotated: (id) => eco.onRotated(id),
-          onResult: (session) => eco.onResult(session.nativeThreadId, session.wire.contextTokens),
-        },
-      );
+      const { runT3Chat } = await loadBridge();
+      const code = await runT3Chat({ ...o, tool: 'codex', cwd: o.cwd ?? process.cwd() });
       process.exit(code);
     });
 }

@@ -3,7 +3,7 @@
  * which thread a reopened pane resumes. No Effect here (the server imports it on every spawn).
  */
 import { homedir } from 'node:os';
-import { codexDefaultModel } from './registry.js';
+import { codexCachedModels, codexDefaultModel } from './registry.js';
 import { CODEX_THREAD_RE, codexThreadOwnership } from './codex-threads.js';
 
 /** A path that may sit inside double quotes in a login-shell script: no quote, `$`, backtick or backslash. */
@@ -33,7 +33,9 @@ export function bridgeChatScript(i: BridgeScriptInput): string | null {
   const node = i.node ?? process.execPath;
   const cli = i.cli ?? (process.env.DREAMCONTEXT_CLI || process.argv[1] || '');
   if (!isScriptSafePath(node) || !isScriptSafePath(cli)) return null;
-  const model = TOKEN_RE.test(i.model) ? i.model : codexDefaultModel(i.home ?? homedir());
+  // No model asked for: the account's own default (config.toml), else the first model Codex
+  // cached for this login. Never a guessed id (a ChatGPT login refuses unknown models).
+  const model = TOKEN_RE.test(i.model) ? i.model : codexDefaultModel(i.home ?? homedir()) ?? codexCachedModels(i.home ?? homedir())[0]?.id ?? null;
   const briefIdx = i.briefingArg.indexOf('--append-system-prompt-file');
   const briefing = briefIdx >= 0 ? i.briefingArg[briefIdx + 1] ?? '' : '';
   const args = ['t3-chat', '--tool', i.tool, '--mode', TOKEN_RE.test(i.mode) ? i.mode : 'default'];

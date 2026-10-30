@@ -28,9 +28,10 @@ export function ecoJoins(projectRoot: string, env: NodeJS.ProcessEnv): EcoJoins 
     if (tab && id) recordAgentSession(contextRoot, tab, id);
   };
   return {
-    onReady: record,
+    // Recorded once a turn has run (`onResult`), never at thread start: Codex writes a thread's
+    // rollout with its first turn, and a mapped thread with no rollout is refused on reopen.
+    onReady: () => undefined,
     onRotated: (id) => {
-      record(id);
       try {
         const picked = selectHandoffForSessionStart(contextRoot, 'clear', tab || null);
         if (!picked) return [];
@@ -42,6 +43,7 @@ export function ecoJoins(projectRoot: string, env: NodeJS.ProcessEnv): EcoJoins 
       }
     },
     onResult: (id, contextTokens) => {
+      record(id);
       const nudge = maybeNudge(contextRoot, { session_id: id, context_tokens: contextTokens }, env);
       return nudge ? [{ key: 'dreamcontext-context', text: nudge }] : [];
     },

@@ -265,6 +265,8 @@ async function main() {
       return !!rec.actedAt && !!rec.consumedAt && now && now !== before;
     }, 30000);
     ok('a handoff record rotates the pane into a fresh Codex thread (record acted on and consumed)', rotated, readFileSync(recPath, 'utf-8'));
+    ok('the handoff card reaches done ("Fresh session"), not stuck on "Resuming task"',
+      await h2.until(async () => (await r2.page.locator('[data-testid="handoff-card"]:visible', { hasText: 'Fresh session' }).count()) > 0, 30000));
     await r2.page.screenshot({ path: join(SHOTS, 'eco-rotation.png') });
     report.notes.push(...r2.errors);
     await r2.page.close();

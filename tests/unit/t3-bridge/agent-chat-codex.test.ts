@@ -109,3 +109,62 @@ describe('a Codex chat pane', () => {
     expect(metas).toEqual([]);
   });
 });
+
+describe('a Codex pane on the server\'s real turn counter', () => {
+  const T1 = '01a0d5eb-f0c0-7481-a417-5e8871805cbc';
+  const T2 = '01a0d5eb-aaaa-7481-a417-5e8871805cbd';
+  const line = (s: { child: FakeChild }, f: Record<string, unknown>) => s.child.stdout.emit('data', Buffer.from(JSON.stringify(f) + '\n'));
+  const metas = (ws: FakeWs) => ws.send.mock.calls.map((c) => String(c[0]));
+
+  it('the bridge announcing its thread opens no turn: a reattach reads the pane idle', () => {
+    const { s } = open('codex');
+    line(s, { type: 'system', subtype: 'dc_thread', session_id: T1, dc_tool: 'codex', dc_ready: true });
+    const next = new FakeWs();
+    startChatSession(next as unknown as import('ws').WebSocket, project, {
+      bypass: false, sessionId: '', resumeId: PANE, model: '', effort: '', mode: 'basic' as never,
+      account: '', initialPrompt: '', deferPrompt: false, tool: 'codex', reattachFallback: true,
+    });
+    const reattached = metas(next).find((m) => m.includes('"reattached"'));
+    if (reattached) expect(reattached).toContain('"busy":false');
+  });
+
+  it('a rotation counted by the server reaches done on the frames the bridge prints', () => {
+    const { ws, s } = open('codex');
+    const contextRoot = join(project, '_dream_context');
+    line(s, { type: 'system', subtype: 'dc_thread', session_id: T1, dc_tool: 'codex', dc_ready: true });
+    ws.emit('message', JSON.stringify({ type: 'user', text: 'hello' }));
+    writeHandoffRecord(contextRoot, PANE, { task: 'acme-checkout', title: 'Checkout redesign', at: new Date().toISOString(), contextTokens: 190_000, fromSession: T1, tab: PANE });
+    // The owner's turn, as the bridge prints it.
+    line(s, { type: 'system', subtype: 'init', session_id: T1, dc_tool: 'codex' });
+    line(s, { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 190000, output_tokens: 0 } }, parent_tool_use_id: null });
+    line(s, { type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: T1 });
+    // The server wrote /clear and the continue prompt; the bridge answers both.
+    line(s, { type: 'system', subtype: 'init', session_id: T2, dc_tool: 'codex', dc_rotated: true });
+    line(s, { type: 'result', subtype: 'success', is_error: false, result: '', num_turns: 0, session_id: T2 });
+    line(s, { type: 'system', subtype: 'init', session_id: T2, dc_tool: 'codex' });
+    line(s, { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'continuing' }], usage: { input_tokens: 20000, output_tokens: 0 } }, parent_tool_use_id: null });
+    line(s, { type: 'result', subtype: 'success', is_error: false, result: 'continuing', session_id: T2 });
+    const progress = metas(ws).filter((m) => m.includes('handoff_progress'));
+    expect(progress.some((m) => m.includes('"stage":"done"'))).toBe(true);
+  });
+
+  it('a live effort switch reaches the bridge as /effort (the bridge answers it locally)', () => {
+    const { ws, s } = open('codex');
+    ws.emit('message', JSON.stringify({ type: 'setEffort', effort: 'high' }));
+    const users = s.child.stdin.write.mock.calls.map((c) => String(c[0])).filter((w) => w.includes('"type":"user"'));
+    expect(users.at(-1)).toContain('/effort high');
+  });
+
+  it('a reopened pane whose mapped thread cannot be taken REFUSES instead of forking a new thread', async () => {
+    const { recordAgentSession } = await import('../../../src/lib/agent-session-map.js');
+    recordAgentSession(join(project, '_dream_context'), PANE, T2); // a thread with no rollout here
+    const before = spawned.length;
+    const ws = new FakeWs();
+    startChatSession(ws as unknown as import('ws').WebSocket, project, {
+      bypass: false, sessionId: '', resumeId: PANE, model: '', effort: '', mode: 'basic' as never,
+      account: '', initialPrompt: '', deferPrompt: false, tool: 'codex',
+    });
+    expect(spawned.length).toBe(before);
+    expect(metas(ws).join('\n')).toMatch(/Nothing was lost/);
+  });
+});

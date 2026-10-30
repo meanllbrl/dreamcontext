@@ -43,6 +43,8 @@ export interface StdioDeps {
   /** Called by `/clear` after the fresh thread opened (consumes the handoff record). What it
    *  returns rides the NEXT turn as untrusted app context (the handoff banner). */
   readonly onRotated?: (nativeThreadId: string) => AppContext[] | void;
+  /** The real child (main.ts): end the session on SIGTERM/SIGINT. Never in tests. */
+  readonly handleSignals?: boolean;
   /** Called once the session holds its thread (records pane → thread for resume). */
   readonly onReady?: (nativeThreadId: string) => void;
   /** Called on every `result` (Eco measurement). What it returns rides the next turn. */
@@ -77,6 +79,9 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   /** App context owed to the next turn (a handoff banner, an Eco nudge). */
   const pending: AppContext[] = [];
   const owe = (ctx: AppContext[] | void): void => { if (ctx) pending.push(...ctx); };
+  /** Codex died: stop reading stdin so the bridge exits (non-zero) and the pane shows it ended. */
+  let endInput: (() => void) | null = null;
+  let fatal = false;
   let session: BridgeSession;
   try {
     session = await BridgeSession.open({
@@ -95,6 +100,10 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       privateTmp,
       ...(deps.clientFactory ? { clientFactory: deps.clientFactory } : {}),
       ...(deps.runtimePolicyOverride ? { runtimePolicyOverride: deps.runtimePolicyOverride } : {}),
+      onFatal: (message) => {
+        emit({ type: 'system', subtype: 'bridge_error', message, dc_tool: args.tool });
+        endInput?.();
+      },
       emit: (frame) => {
         emit(frame);
         if (frame.type === 'result') owe(deps.onResult?.(session, frame));
@@ -106,7 +115,9 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     return 1;
   }
   // The thread id is known before any turn: announce it, so a reopened pane can be resumed.
-  emit(session.wire.init({ dc_ready: true }));
+  // NOT a `system/init`: the server opens a turn on an init it did not ask for ("an idle child
+  // emits no init"), so the thread is announced on its own frame the client ignores.
+  emit({ type: 'system', subtype: 'dc_thread', session_id: session.nativeThreadId, dc_tool: args.tool, dc_ready: true });
   deps.onReady?.(session.nativeThreadId);
 
   const ack = (requestId: unknown, error?: string): void => {
@@ -123,6 +134,15 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     if (frame.type === 'user') {
       const text = userText(frame);
       if (!text) return;
+      // The composer's live effort switch arrives as `/effort <level>`, a CLI-local command that
+      // Claude answers itself: so does the bridge, without a Codex turn (the server opened one).
+      const effort = /^\/effort\s+([a-z]{1,16})\s*$/.exec(text.trim());
+      if (effort) {
+        session.setEffort(effort[1]!);
+        emit({ type: 'assistant', message: { role: 'assistant', model: args.model, content: [{ type: 'text', text: `Set effort level to ${effort[1]}` }] }, parent_tool_use_id: null, session_id: session.nativeThreadId });
+        emit({ type: 'result', subtype: 'success', is_error: false, result: '', num_turns: 0, total_cost_usd: 0, usage: {}, session_id: session.nativeThreadId, dc_tool: args.tool });
+        return;
+      }
       if (text.trim() === '/clear') {
         const id = await session.newThread();
         owe(deps.onRotated?.(id));
@@ -146,8 +166,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       const req = (frame.request ?? {}) as Record<string, unknown>;
       switch (req.subtype) {
         case 'interrupt':
-          await session.interrupt();
-          ack(frame.request_id);
+          // Always acked: an unanswered interrupt would leave the server's watchdog to kill us.
+          try { await session.interrupt(); ack(frame.request_id); } catch (err) { ack(frame.request_id, String(err).slice(0, 200)); }
           return;
         case 'set_model':
           if (typeof req.model === 'string' && req.model) session.setModel(req.model);
@@ -163,6 +183,12 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     }
   };
 
+  // The server ends a pane with SIGTERM (then SIGKILL): close the session first, which ends the
+  // `codex app-server` child T3 spawned in its own group, and remove the private temp folder.
+  const onSignal = (): void => {
+    void session.close().finally(() => { rmSync(privateTmp, { recursive: true, force: true }); process.exit(0); });
+  };
+  if (deps.handleSignals) { process.once('SIGTERM', onSignal); process.once('SIGINT', onSignal); }
   await new Promise<void>((resolve) => {
     let buf = '';
     deps.input.on('data', (chunk: Buffer | string) => {
@@ -180,11 +206,13 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
         });
       }
     });
+    endInput = () => { fatal = true; resolve(); };
     deps.input.on('end', () => resolve());
     deps.input.on('close', () => resolve());
   });
   await chain.catch(() => undefined);
+  if (deps.handleSignals) { process.off('SIGTERM', onSignal); process.off('SIGINT', onSignal); }
   await session.close();
   rmSync(privateTmp, { recursive: true, force: true });
-  return 0;
+  return fatal ? 1 : 0;
 }

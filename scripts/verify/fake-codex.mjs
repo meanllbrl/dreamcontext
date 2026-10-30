@@ -125,6 +125,12 @@ async function onRequest(msg) {
       return;
     case 'turn/start': {
       const text = (msg.params?.input ?? []).map((p) => p.text ?? '').join(' ');
+      // DIE: Codex crashes mid-turn (the bridge must close the turn and end, not hang).
+      if (/\bDIE\b/.test(text)) {
+        out({ id: msg.id, result: { turn: { id: 'turn-dies', items: [], itemsView: 'notLoaded', status: 'inProgress', error: null, startedAt: null, completedAt: null, durationMs: null } } });
+        setTimeout(() => process.exit(9), 300);
+        return;
+      }
       const scenario = SCENARIOS.find(([re]) => re.test(text))?.[1] ?? 'simple';
       log(`turn/start "${text.slice(0, 60)}" → ${scenario}`);
       record({ type: 'message', role: 'user', content: [{ type: 'input_text', text }] });

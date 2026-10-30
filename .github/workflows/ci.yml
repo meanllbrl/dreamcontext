@@ -75,6 +75,8 @@ jobs:
       # Playwright e2e specs under e2e/ are NOT run here.
       - name: Run unit + integration tests
         run: npm test -- run
+      - name: T3 provider layer tests (vendored adapters, vitest.t3.config.ts)
+        run: npm run test:t3
 
   # The same gate on Windows (the desktop app and install.ps1 ship there since PR #437), plus a
   # type-check and the full build (dashboard, then CLI) that the Linux job leaves to the release.

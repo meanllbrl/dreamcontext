@@ -7,14 +7,14 @@
  *                  resolved): the route answers 403, whoever asks (desktop or phone).
  *   - items      → the owned thread's history (an unmapped new pane: none yet).
  */
-import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ChatHistoryItem } from '../transcript-history.js';
 import { CODEX_THREAD_RE, codexThreadOwnership, findCodexRollout } from './codex-threads.js';
 import { parseCodexRolloutHistory } from './codex-history.js';
 import type { ToolId } from './registry.js';
 
-export function codexHistoryFor(o: {
+export async function codexHistoryFor(o: {
   tool: ToolId | null;
   /** The pane id the client asked about. */
   id: string;
@@ -22,7 +22,7 @@ export function codexHistoryFor(o: {
   liveId: string;
   contextRoot: string | null;
   codexHome?: string;
-}): { items: ChatHistoryItem[] } | 'refuse' | null {
+}): Promise<{ items: ChatHistoryItem[] } | 'refuse' | null> {
   const candidates = [o.liveId, o.id].filter((c) => c && CODEX_THREAD_RE.test(c));
   const thread = candidates.find((c) => findCodexRollout(c, o.codexHome));
   if (!thread) {
@@ -36,7 +36,7 @@ export function codexHistoryFor(o: {
   const rollout = findCodexRollout(thread, o.codexHome);
   if (!rollout) return 'refuse';
   try {
-    return { items: parseCodexRolloutHistory(readFileSync(rollout, 'utf-8')) };
+    return { items: parseCodexRolloutHistory(await readFile(rollout, 'utf-8')) };
   } catch {
     return { items: [] };
   }

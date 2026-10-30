@@ -35,7 +35,9 @@ function versionToStamp(): string {
 }
 
 export default defineConfig({
-  entry: ['src/cli/index.ts'],
+  // Two bundles: the CLI, and the T3 bridge child (Effect + the vendored provider layer), which
+  // only `dreamcontext t3-chat` loads, so the CLI every hook starts stays as small as before.
+  entry: { index: 'src/cli/index.ts', 't3-bridge': 'src/lib/t3-bridge/main.ts' },
   format: ['esm'],
   target: 'node22',
   // Keep `node:` on builtins: `node:sea` (T3's HostProcess) has no bare-name form.

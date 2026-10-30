@@ -110,7 +110,7 @@ describe('Eco on a bridge pane', () => {
     const wait = async (pred: () => boolean) => { const end = Date.now() + 15_000; while (!pred()) { if (Date.now() > end) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 20)); } };
     await wait(() => out.some((f) => f.dc_ready));
     expect(out.find((f) => f.dc_ready)!.session_id).toBe(OLD_THREAD);
-    expect(resolveAgentSession(contextRoot, PANE)).toBe(OLD_THREAD);
+    // Mapped only once a turn has run: nothing yet.
     let run: HandoffRun = startHandoffRun({ task: record.task, title: record.title, contextTokens: 190_000, fromSession: OLD_THREAD });
     startRotating(PANE);
     let turnsInFlight = 2; // `/clear` and the continue prompt: both user frames, both open turns
