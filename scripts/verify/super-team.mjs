@@ -359,6 +359,15 @@ async function run(engineName, base) {
   ok(tag('T4 Enter on the focused card opens it on the stage too'), await until(page, async () =>
     (await frame.getAttribute('data-where').catch(() => null)) !== 'float' && await convo.isVisible().catch(() => false)
     && await onSuper(), 15000));
+  // Leaving the Super screen hands the conversation back: the AI Team page (Scout still open
+  // there) draws the SAME session, the talk had on the stage in it, with its one composer.
+  await page.locator('aside a, aside button, nav a, nav button').filter({ hasText: /^\s*AI Team\s*\d*\s*$/ }).first().click();
+  const teamStage = page.locator('.aiteam .aiteam-stage[data-stage="scout"]');
+  ok(tag('T4 back on AI Team, Scout\'s pane holds the talk from the stage, drawn once'), await until(page, async () =>
+    (await page.locator('.aiteam:visible').count()) === 1 && /which step\?/.test(await teamStage.innerText().catch(() => ''))
+    && (await teamStage.locator('.chat-cmp-input:visible').count()) === 1, 15000),
+    (await teamStage.innerText().catch(() => '')).slice(-300));
+  await page.screenshot({ path: join(OUT, `${engineName}-team-back-on-ai-team.png`) });
 
   ok(tag('no console errors'), errors.length === 0, errors.slice(0, 5).join('\n'));
   await browser.close();

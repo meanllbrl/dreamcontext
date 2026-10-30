@@ -211,10 +211,12 @@ export function forgetStage(vault: string, agent: string): void {
   if (e.listeners.size === 0) entries.delete(key);
 }
 
-/** End every stage session of `vault` (or of every vault) — leaving the AI Team page. */
-export function dropStageSessions(vault?: string): void {
+/** End every stage session of `vault` (or of every vault) — leaving the AI Team page. `keepWatched`:
+ *  one a pane outside the page still shows (the Super stage's team card) lives on. */
+export function dropStageSessions(vault?: string, opts: { keepWatched?: boolean } = {}): void {
   for (const [key, e] of [...entries]) {
     if (vault !== undefined && !key.startsWith(`${vault}\u0000`)) continue;
+    if (opts.keepWatched && e.listeners.size > 0) continue;
     bumpGen(key);
     justDisposed.delete(key);
     e.session?.dispose();
