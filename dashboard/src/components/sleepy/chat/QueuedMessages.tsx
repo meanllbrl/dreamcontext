@@ -5,6 +5,7 @@ import { agendaAboutStrip, splitAbout, splitAboutParts } from '../super/superHan
 import { RefChip } from './AgendaAboutStrip';
 import { splitPageContext } from '../../../lib/superTypes';
 import { queueAutoDrainable, visibleQueued } from './chatQueue';
+import { enterSends } from '../../../lib/enterKey';
 
 /**
  * ORGANISM — the message queue: the strip of messages submitted while Claude was working,
@@ -86,8 +87,8 @@ function QueuedRow({
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
             // ⏎ saves and ⇧⏎ adds a line — the same contract as the composer this row came
-            // from, so the muscle memory carries over.
-            if (e.key === 'Enter' && !e.shiftKey) {
+            // from (on a phone ⏎ is a line and Save saves), so the muscle memory carries over.
+            if (enterSends({ key: e.key, shiftKey: e.shiftKey, keyCode: e.nativeEvent.keyCode, isComposing: e.nativeEvent.isComposing })) {
               e.preventDefault();
               onSave(value);
               setEditing(false);

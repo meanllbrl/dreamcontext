@@ -26,6 +26,7 @@ import { useVault } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
 import { copyPickedPicture, uploadAgentFile } from '../../../lib/agentDrop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
+import { enterSends } from '../../../lib/enterKey';
 import { PHONE_PHOTOS_PER_MESSAGE, jpegName, photoUploadSignal, preparePhonePhotoQueued, withPhotoUploadSlot } from '../../../lib/phonePhoto';
 import { PHONE_FILE_UPLOAD_TIMEOUT_MS, formatFileSize, splitPhonePicks } from '../../../lib/phoneAttach';
 import { useAgentSessionStats, useClaudeAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
@@ -2541,7 +2542,11 @@ export function Composer({
                 e.preventDefault();
                 return;
               }
-              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+              // ⏎ sends on a computer; on a phone it is a new line and only the button sends.
+              const n = e.nativeEvent;
+              if (enterSends({ key: e.key, shiftKey: e.shiftKey, keyCode: n.keyCode, isComposing: n.isComposing || composingRef.current })) {
+                e.preventDefault(); submit();
+              }
             }}
             // Keep the mirror aligned when the field scrolls (a draft past the height cap).
             onScroll={(e) => { if (hlRef.current) syncMirror(e.currentTarget, hlRef.current); }}
