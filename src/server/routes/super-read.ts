@@ -12,7 +12,7 @@ import { applyReadMarks, parseReadPatch, readReadMarks } from '../../lib/super/r
  * every `/api/super/*` route is laptop-only.
  *
  *   GET  /api/agent/super-read — the record; `{ since: null }` before its birth. No side effect.
- *   POST /api/agent/super-read — `{ read?: [{ key, ts }], allBefore?: number }`; answers the record.
+ *   POST /api/agent/super-read — `{ read?: [{ key, ts }] }`; answers the record.
  */
 export async function handleSuperReadGet(req: IncomingMessage, res: ServerResponse, _params: unknown, contextRoot: string): Promise<void> {
   if (!isAgentRequest(req)) { sendError(res, 403, 'forbidden', 'Available only in the desktop app or a signed-in phone.'); return; }
@@ -27,10 +27,10 @@ export async function handleSuperReadGet(req: IncomingMessage, res: ServerRespon
 export async function handleSuperReadPost(req: IncomingMessage, res: ServerResponse, _params: unknown, contextRoot: string): Promise<void> {
   if (!isAgentRequest(req)) { sendError(res, 403, 'forbidden', 'Available only in the desktop app or a signed-in phone.'); return; }
   if (!isPhoneSocket(req) && !isSameOriginStrict(req)) { sendError(res, 403, 'forbidden', 'Same origin only.'); return; }
+  const patch = parseReadPatch(await parseJsonBody(req));
+  if (!patch) { sendError(res, 400, 'bad_request', 'The body is { read?: [{ key, ts }] }.'); return; }
   // The record lives as long as the hand-over: a late write must not start a new one.
   if (!superIndex(contextRoot).enabled) { sendError(res, 409, 'not_handed_over', 'The Super Agent is not handed over.'); return; }
-  const patch = parseReadPatch(await parseJsonBody(req));
-  if (!patch) { sendError(res, 400, 'bad_request', 'The body is { read?: [{ key, ts }], allBefore?: number }.'); return; }
   try {
     sendJson(res, 200, await applyReadMarks(contextRoot, patch));
   } catch (err) {

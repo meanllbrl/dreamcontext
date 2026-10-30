@@ -56,7 +56,6 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
   const [marks, setMarks] = useState<ReadMarks | null>(null);
   const [edge, setEdge] = useState<UnreadEdge>(null);
   const pending = useRef<ReadMark[]>([]);
-  const allBefore = useRef(0);
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const apiRef = useRef(api);
   apiRef.current = api;
@@ -74,7 +73,7 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
   }, []);
 
   useEffect(() => {
-    if (!enabled) { setMarks(null); setEdge(null); pending.current = []; allBefore.current = 0; return undefined; }
+    if (!enabled) { setMarks(null); setEdge(null); pending.current = []; return undefined; }
     let live = true;
     const load = () => {
       void apiRef.current.get<unknown>('/agent/super-read').then((raw) => {
@@ -97,10 +96,8 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
     if (flushTimer.current) { clearTimeout(flushTimer.current); flushTimer.current = null; }
     if (!liveRef.current) return;
     const read = pending.current.splice(0, 200);
-    const before = allBefore.current;
-    allBefore.current = 0;
-    if (!read.length && !before) return;
-    void apiRef.current.post<unknown>('/agent/super-read', { ...(read.length ? { read } : {}), ...(before ? { allBefore: before } : {}) })
+    if (!read.length) return;
+    void apiRef.current.post<unknown>('/agent/super-read', { read })
       .then((raw) => {
         retries.current = 0;
         const got = readMarksOf(raw);
@@ -109,7 +106,6 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
       })
       .catch((err) => {
         pending.current.unshift(...read);
-        allBefore.current = Math.max(allBefore.current, before);
         retryLater(flush, err);
       });
   }, [retryLater]);
@@ -147,25 +143,17 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
     queueFlush();
   }, [queueFlush]);
 
-  // Up to the newest thing on the page, not "now": a block still streaming is not a unit yet and
-  // must not be swallowed. Each unit goes as a mark too, for a replay that dates it later.
+  // Every unit, by mark: never "everything before now", which would swallow what lands later.
   const markAll = useCallback(() => {
-    const seen = unreadRef.current;
-    const newest = seen.reduce((n, u) => Math.max(n, u.ts), 0);
-    allBefore.current = Math.max(allBefore.current, newest);
-    setMarks((m) => (m ? { since: Math.max(m.since, newest), read: m.read } : m));
-    markRead(seen);
+    markRead(unreadRef.current);
     setEdge(null);
   }, [markRead]);
 
-  const leadOf = useCallback((root: HTMLElement, units: readonly UnreadUnit[]): number => (
-    leadIndex(units.map((u) => rowOf(root, u)?.getBoundingClientRect().top ?? null))
-  ), []);
   const lead = useCallback((): UnreadUnit | null => {
     const root = contentRef.current;
     const units = unreadRef.current;
-    return (root ? units[leadOf(root, units)] : units[0]) ?? null;
-  }, [contentRef, leadOf]);
+    return (root ? units[leadIndex(units.map((u) => rowOf(root, u)?.getBoundingClientRect().top ?? null))] : units[0]) ?? null;
+  }, [contentRef]);
 
   // Painted after every commit: a row the window just mounted has to get its dot before the
   // browser draws it. Only what differs is touched, so a streaming token costs a lookup.
@@ -180,7 +168,7 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
     if (!root) return;
     const want = new Set<HTMLElement>();
     const rows = unread.map((u) => rowOf(root, u));
-    const first = unread.length ? rows[leadOf(root, unread)] ?? null : null;
+    const first = rows[leadIndex(rows.map((el) => el?.getBoundingClientRect().top ?? null))] ?? null;
     for (const el of rows) if (el) want.add(el);
     for (const el of painted.current) {
       if (!want.has(el)) { el.removeAttribute('data-unread'); el.removeAttribute('data-unread-first'); el.removeAttribute('data-unread-label'); }

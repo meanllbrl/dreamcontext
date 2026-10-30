@@ -13,8 +13,9 @@ import { renameWithRetry } from '../fs-retry.js';
  * from a session id, so a handoff changes nothing here.
  *
  *  - `since`: everything older than this counts as read. Born at the window's first POST, so a
- *    chat with a long past does not arrive all unread; raised by "mark all read" and by the cap.
- *  - `read`: the messages read one by one since then, each with the message's own time.
+ *    chat with a long past does not arrive all unread; raised only by the cap.
+ *  - `read`: the messages read since then, each with the message's own time. "Mark all read"
+ *    sends every unit too: a cut-off time would swallow what lands after it.
  *
  * Bounded by {@link MAX_READ}: the oldest marks fold into `since`. Dies with the hand-over
  * (`clearReadMarks`, called from the take-back): the next hand-over starts a new record.
@@ -28,7 +29,7 @@ export const READ_KEY_RE = /^[A-Za-z0-9:_.-]{1,96}$/;
 
 export interface ReadMark { key: string; ts: number }
 export interface SuperReadMarks { since: number; read: ReadMark[] }
-export interface ReadPatch { read?: ReadMark[]; allBefore?: number }
+export interface ReadPatch { read?: ReadMark[] }
 
 const okTime = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
 
@@ -56,15 +57,10 @@ export function capReadMarks(marks: SuperReadMarks): SuperReadMarks {
 }
 
 /** Marks only ever add: two surfaces reading at once can both be right, never undo each other.
- *  `now` caps `allBefore`, so a wrong clock cannot swallow messages yet to come. */
-export function mergeReadMarks(marks: SuperReadMarks, patch: ReadPatch, now: number): SuperReadMarks {
-  const byKey = new Map(marks.read.map((m) => [m.key, m]));
-  for (const m of patch.read ?? []) {
-    const held = byKey.get(m.key);
-    if (!held || held.ts < m.ts) byKey.set(m.key, m);
-  }
-  const since = Math.max(marks.since, Math.min(patch.allBefore ?? 0, now));
-  return capReadMarks({ since, read: [...byKey.values()] });
+ *  One key may hold several marks: the same words at another time are another message. */
+export function mergeReadMarks(marks: SuperReadMarks, patch: ReadPatch): SuperReadMarks {
+  const byId = new Map([...marks.read, ...(patch.read ?? [])].map((m) => [`${m.key}|${m.ts}`, m]));
+  return capReadMarks({ since: marks.since, read: [...byId.values()] });
 }
 
 /** A request body as a patch, or null when it is not one. */
@@ -72,10 +68,6 @@ export function parseReadPatch(body: unknown): ReadPatch | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
   const o = body as Record<string, unknown>;
   const patch: ReadPatch = {};
-  if (o.allBefore !== undefined) {
-    if (!okTime(o.allBefore)) return null;
-    patch.allBefore = o.allBefore;
-  }
   if (o.read !== undefined) {
     if (!Array.isArray(o.read) || o.read.length > MAX_READ_PATCH) return null;
     const read: ReadMark[] = [];
@@ -139,7 +131,7 @@ export function readReadMarks(contextRoot: string): Promise<SuperReadMarks | nul
 export function applyReadMarks(contextRoot: string, patch: ReadPatch, now: number = Date.now()): Promise<SuperReadMarks> {
   const path = marksPath(contextRoot);
   return serial(path, async () => {
-    const merged = mergeReadMarks((await loadFile(path)) ?? { since: now, read: [] }, patch, now);
+    const merged = mergeReadMarks((await loadFile(path)) ?? { since: now, read: [] }, patch);
     await saveFile(path, merged);
     return merged;
   });

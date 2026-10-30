@@ -27,10 +27,13 @@ describe('what counts as unread', () => {
     expect(unreadOf(replay, marks(0, [{ key: live[0].key, ts: 10 }]))).toEqual([]);
   });
 
-  it('the same words twice are two messages', () => {
-    const all = units([text('a', 'ok', 10), text('b', 'ok', 20)]);
-    expect(all[0].key).not.toBe(all[1].key);
-    expect(unreadOf(all, marks(0, [{ key: all[0].key, ts: 10 }])).map((u) => u.itemId)).toEqual(['b']);
+  it('the same words at another time are another message, however long the list', () => {
+    const gap = SAME_MESSAGE_MS + 1000;
+    const all = units([text('a', 'ok', 1000), text('b', 'ok', 1000 + gap)]);
+    expect(unreadOf(all, marks(0, [{ key: all[0].key, ts: 1000 }])).map((u) => u.itemId)).toEqual(['b']);
+    // The older one fell out of the replay's tail: the read one stays read.
+    const tail = units([text('b', 'ok', 1000 + gap)]);
+    expect(unreadOf(tail, marks(0, [{ key: all[1].key, ts: 1000 + gap }]))).toEqual([]);
   });
 
   it('a reply landing after its line was read flags the line again', () => {

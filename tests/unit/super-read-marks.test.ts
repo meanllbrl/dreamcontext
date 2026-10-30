@@ -57,15 +57,10 @@ describe('the read record', () => {
 });
 
 describe('merging', () => {
-  it('only adds, and mark-all folds what it covers', () => {
-    const m = mergeReadMarks({ since: 10, read: [{ key: 'a', ts: 20 }] }, { read: [{ key: 'b', ts: 30 }] }, 100);
-    expect(m.read.map((x) => x.key)).toEqual(['a', 'b']);
-    expect(mergeReadMarks(m, { allBefore: 25 }, 100)).toEqual({ since: 25, read: [{ key: 'b', ts: 30 }] });
-    expect(mergeReadMarks(m, { allBefore: 5 }, 100).since).toBe(10);
-  });
-
-  it('a wrong clock cannot mark the future read', () => {
-    expect(mergeReadMarks({ since: 0, read: [] }, { allBefore: 9e12 }, 100).since).toBe(100);
+  it('only adds, and keeps the same words at two times apart', () => {
+    const m = mergeReadMarks({ since: 10, read: [{ key: 'a', ts: 20 }] }, { read: [{ key: 'b', ts: 30 }, { key: 'a', ts: 40 }, { key: 'a', ts: 20 }] });
+    expect(m.since).toBe(10);
+    expect(m.read).toEqual([{ key: 'a', ts: 20 }, { key: 'b', ts: 30 }, { key: 'a', ts: 40 }]);
   });
 
   it('stays bounded: the oldest marks fold into since', () => {
@@ -80,8 +75,7 @@ describe('the wire', () => {
   it('refuses a body that is not a patch', () => {
     expect(parseReadPatch({ read: [{ key: '../x', ts: 1 }] })).toBeNull();
     expect(parseReadPatch({ read: 'x' })).toBeNull();
-    expect(parseReadPatch({ allBefore: 'now' })).toBeNull();
-    expect(parseReadPatch({ read: [{ key: 'q:a-1', ts: 1 }], allBefore: 2 })).toEqual({ read: [{ key: 'q:a-1', ts: 1 }], allBefore: 2 });
+    expect(parseReadPatch({ read: [{ key: 'q:a-1', ts: 1 }] })).toEqual({ read: [{ key: 'q:a-1', ts: 1 }] });
   });
 
   it('reads no record out of junk', () => {

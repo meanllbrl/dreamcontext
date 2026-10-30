@@ -80,37 +80,33 @@ export function unreadUnits(
     }
   }
   const units: UnreadUnit[] = [];
-  // The same words twice are two messages: the nth occurrence is part of the key.
-  const seen = new Map<string, number>();
-  const push = (key: string, ts: number, itemId: string) => {
-    const n = seen.get(key) ?? 0;
-    seen.set(key, n + 1);
-    units.push({ key: `${key}.${n}`, ts, itemId, question: null });
-  };
   for (const it of items) {
     const ts = it.ts ?? 0;
     const anchor = anchors.get(it.id);
-    if (anchor) push(anchor, ts, it.id);
-    else if (it.kind === 'text' && it.done && it.text?.trim() && !folded.has(it.id)) push(`t:${keyOf(it)}`, ts, it.id);
+    if (anchor) units.push({ key: anchor, ts, itemId: it.id, question: null });
+    else if (it.kind === 'text' && it.done && it.text?.trim() && !folded.has(it.id)) units.push({ key: `t:${keyOf(it)}`, ts, itemId: it.id, question: null });
   }
   for (const q of opts.openQuestions) units.push({ key: `q:${q.id}`, ts: q.createdAt, itemId: null, question: q.id });
   return units.sort((a, b) => a.ts - b.ts);
 }
 
-/** How far a mark reaches past the time it was read at: a replay dates a message a little
- *  differently from the live stream, but the same words hours later are a new message. */
-export const SAME_MESSAGE_MS = 10 * 60_000;
+/** A mark covers its message at about its time: a replay dates a block by when it was written, the
+ *  live stream by when it began. The same words further apart are another message; a position in
+ *  the list could not say so, the replay keeps only the newest items. */
+export const SAME_MESSAGE_MS = 3 * 60_000;
 
 /** What is still unread. Null marks (not loaded yet) flag nothing: no flash of false dots. A
  *  unit with no time cannot be placed against the record, so it is never flagged. */
 export function unreadOf(units: readonly UnreadUnit[], marks: ReadMarks | null): UnreadUnit[] {
   if (!marks) return [];
-  const newest = new Map<string, number>();
-  for (const m of marks.read) newest.set(m.key, Math.max(newest.get(m.key) ?? 0, m.ts));
+  const times = new Map<string, number[]>();
+  for (const m of marks.read) {
+    const held = times.get(m.key);
+    if (held) held.push(m.ts); else times.set(m.key, [m.ts]);
+  }
   return units.filter((u) => {
     if (u.ts <= marks.since) return false;
-    const m = newest.get(u.key);
-    return m === undefined || u.ts > m + SAME_MESSAGE_MS;
+    return !times.get(u.key)?.some((t) => Math.abs(u.ts - t) <= SAME_MESSAGE_MS);
   });
 }
 
@@ -141,12 +137,8 @@ export function withRead(marks: ReadMarks, read: readonly ReadMark[]): ReadMarks
 }
 
 export function mergeMarks(a: ReadMarks, b: ReadMarks): ReadMarks {
-  const byKey = new Map(a.read.map((m) => [m.key, m]));
-  for (const m of b.read) {
-    const held = byKey.get(m.key);
-    if (!held || held.ts < m.ts) byKey.set(m.key, m);
-  }
-  return { since: Math.max(a.since, b.since), read: [...byKey.values()] };
+  const byId = new Map([...a.read, ...b.read].map((m) => [`${m.key}|${m.ts}`, m]));
+  return { since: Math.max(a.since, b.since), read: [...byId.values()] };
 }
 
 /** A body of the marks or null, read off the wire. */
