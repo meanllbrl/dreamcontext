@@ -51,7 +51,7 @@ import {
 } from './chatEntities';
 import {
   addAttachments, composeOutgoing, countsAsContent, dropRefs, dropSentAttachments, markInserted, nextAttachmentId, pendingUploads,
-  readScratch, removeAttachment, repend, stagePicked, restoreRefs, setAttachmentPreview, settleAttachment, stageRefs, stageUpload, subscribeScratch, trackUpload, wasSent, type Attachment,
+  readScratch, removeAttachment, repend, stagePicked, restoreRefs, setAttachmentPreview, setQuote, settleAttachment, stageRefs, stageUpload, subscribeScratch, trackUpload, wasSent, type Attachment,
 } from './composerScratch';
 import {
   GLYPH_IMAGE, deleteTokenAt, draftFromMessage, insertTakeAt, insertTokenAt, isChatReply, isMediaRef, isTokenRef, parseRefTokens, reconcileRefs, refLabel, refToken,
@@ -59,6 +59,7 @@ import {
 } from './composerRefs';
 import { MIRROR_TAIL, syncMirror } from './composerMirror';
 import { PictureChip, RefPopover, RefSrList, refMirrorSegments, refsInOrder } from './ComposerRefLayer';
+import { persistDraft, readDraft, subscribeDraft, type SavedDraft } from './composerDrafts';
 import { Popover } from '../SkillPickerPopover';
 import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
 import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
@@ -1534,6 +1535,44 @@ export function Composer({
    *  busy) and the message has to be the one that was actually in the box. */
   const liveRef = useRef({ draft, busy, connected: canCompose, quote });
   liveRef.current = { draft, busy, connected: canCompose, quote };
+
+  // ── The kept draft (composerDrafts.ts) ──────────────────────────────────────────────
+  // What is in the box outlives the box: a restart, a closed tab reopened, the Super Agent.
+  // On mount — or when the roster's seed lands after it — an EMPTY box takes the kept draft
+  // back; a box that already has something (a respawn carried it, the user typed) wins, and is
+  // what gets mirrored from then on. Decided once per conversation.
+  const keptAppliedRef = useRef(false);
+  useEffect(() => {
+    keptAppliedRef.current = false;
+    const take = (d: SavedDraft | null) => {
+      if (keptAppliedRef.current || !d) return;
+      keptAppliedRef.current = true;
+      const sc = readScratch(convId);
+      if (liveRef.current.draft.trim() || sc.attachments.length || sc.quote) return;
+      if (d.chips.length) addAttachments(convId, d.chips.map((c): Attachment => ({ id: nextAttachmentId(), ...c })));
+      if (d.quote) setQuote(convId, d.quote);
+      if (d.text) {
+        setDraft(d.text);
+        session.syncDraft(d.text);
+        pendingCaret.current = { pos: d.text.length, scrollToEnd: true };
+      }
+    };
+    take(readDraft(vault, convId));
+    return subscribeDraft(vault, convId, take);
+    // `session` is stable for a mounted pane (a respawn remounts it).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vault, convId]);
+  // Mirror every change of the box into the kept draft; an emptied box (a send) clears it.
+  // The first commit is skipped only when the box is EMPTY: that is the pre-restore box, and
+  // writing it would wipe the very draft the effect above is about to put back. A box that
+  // mounts WITH content (a draft carried onto a new conversation id) is written at once.
+  const keptArmedRef = useRef(false);
+  useEffect(() => {
+    const first = !keptArmedRef.current;
+    keptArmedRef.current = true;
+    if (first && !draft.trim() && !attachments.some(wasSent) && !quote) return;
+    persistDraft(vault, convId, { text: draft, attachments, quote });
+  }, [vault, convId, draft, attachments, quote]);
   /** Guards the window between "⏎ pressed" and "upload settled" against a second submit. */
   const sendingRef = useRef(false);
   /** The next commit is a push-to-talk take sent untouched: it arms the read-aloud with the
