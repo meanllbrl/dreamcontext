@@ -93,6 +93,9 @@ export const OPEN_REF_HELP = [
 ].join('\n');
 const usage = (message: string) => print({ status: 400, body: { error: 'invalid_args', message } });
 
+/** `--origin` on a job verb: in the owner's turn the server records his message by itself. */
+const ORIGIN_HELP = 'The owner message this job answers (its <owner-msg ref>); only outside his turn: in his turn it is recorded by itself. Its results come to you awaited=owner origin=<ref>';
+
 const KINDS = 'chat | insight | task | knowledge | whiteboard | board | web | image | pdf | video | browser | team | agenda';
 
 export function registerSuperCommand(program: Command): void {
@@ -123,12 +126,14 @@ export function registerSuperCommand(program: Command): void {
     .option('--from <pool id>', 'Start a job the pool kept (`super pool list`), exactly as it was kept')
     .option('--force', 'With --from: start a job whose earlier start went unconfirmed')
     .option('--succeeds <child>', 'It takes this child\'s work over (a context handoff): the card, brief and task pass to it, and the old child is ended (told to stop first if busy)')
-    .option('--note <line>', 'Its Now line on the owner\'s agenda, linked to this child: it moves to Done by itself when the job is done, ended or gone'))
-    .action((o: JobOpts & { from?: string; force?: boolean; succeeds?: string; note?: string }) => {
+    .option('--note <line>', 'Its Now line on the owner\'s agenda, linked to this child: it moves to Done by itself when the job is done, ended or gone')
+    .option('--origin <ref>', ORIGIN_HELP))
+    .action((o: JobOpts & { from?: string; force?: boolean; succeeds?: string; note?: string; origin?: string }) => {
       const note = o.note !== undefined ? { note: o.note } : {};
-      if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds, ...note });
+      const origin = o.origin !== undefined ? { origin: o.origin } : {};
+      if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds, ...note, ...origin });
       if (!o.prompt) return usage('give --prompt, or --from <pool id>');
-      return run('delegate', { ...jobBody(o), succeeds: o.succeeds, ...note });
+      return run('delegate', { ...jobBody(o), succeeds: o.succeeds, ...note, ...origin });
     });
 
   s.command('open <kind> [refs...]')
@@ -261,7 +266,8 @@ export function registerSuperCommand(program: Command): void {
   team.command('ask <member> <job>')
     .description('Give an AI Team member a job: it lands in the member\'s own thread and runs on its own model, approval and queue. Refused when the member is off (say_disabled) or not approved here (say_unapproved: the owner approves it in AI Team; his queue strip asks him). A busy member queues it (queued: true)')
     .option('--brief <line>', 'The one-line reminder its card shows (default: the job\'s first line)')
-    .action((member: string, job: string, o: { brief?: string }) => run('team-ask', { member, text: job, brief: o.brief }));
+    .option('--origin <ref>', ORIGIN_HELP)
+    .action((member: string, job: string, o: { brief?: string; origin?: string }) => run('team-ask', { member, text: job, brief: o.brief, ...(o.origin !== undefined ? { origin: o.origin } : {}) }));
 
   const q = s.command('queue').description('The one question queue');
   q.command('list')

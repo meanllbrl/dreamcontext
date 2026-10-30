@@ -349,7 +349,7 @@ export function teamItemLines(contextRoot: string, vault: string, s: Pick<SuperS
   const row = teamJobStatus(contextRoot, job, live);
   const end = teamJobEnding(contextRoot, job, live);
   const status = q.kind === 'question' ? 'asking' : row.status;
-  const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${q.kind}${awaitedTeamItem(s, q) ? ' awaited=owner' : ''} status=${status}`];
+  const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${q.kind}${awaitedTeamItem(s, q) ? ` awaited=owner${job.origin ? ` origin=${job.origin}` : ''}` : ''} status=${status}`];
   if (job.brief) lines.push(wrapUntrusted(vault, `Brief: ${job.brief}`));
   const asked = q.kind === 'question' && end.question?.id === job.toldQuestion ? end.question : undefined;
   if (asked) lines.push(wrapUntrusted(vault, `Question: ${firstLine(asked.question, 300)}`));

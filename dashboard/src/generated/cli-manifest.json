@@ -3152,6 +3152,7 @@
         "--from",
         "--succeeds",
         "--note",
+        "--origin",
         "--brief",
         "--mode",
         "--model",
@@ -3419,7 +3420,8 @@
         "<job>"
       ],
       "valueFlags": [
-        "--brief"
+        "--brief",
+        "--origin"
       ]
     },
     {
