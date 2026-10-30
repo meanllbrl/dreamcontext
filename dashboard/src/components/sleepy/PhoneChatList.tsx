@@ -4,6 +4,7 @@ import { useApi } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 import { useChrome } from '../layout/WindowChrome';
 import { SuperAgentIcon } from '../layout/NavIcons';
+import { useSuperUnreadCount } from './super/superUnreadStore';
 import type { LiveChatWire, LiveChatsWire, SuperChatWire } from '../handsfree/macContract';
 import { clearPendingOpens, setPendingMacAdopt, setPendingPhoneOpen } from '../handsfree/macAdopt';
 import { homeSections, narrowTo, type HomeRow } from './phoneHome';
@@ -262,6 +263,7 @@ export function PhoneChatList({
       </li>
     );
   };
+  const superUnread = useSuperUnreadCount(vault);
   const superItem = (r: HomeRow & { kind: 'super' }) => {
     const superRow = r.row;
     const tapSuper = r.vault === vault ? superTap(superRow, tabs) : (superRow.live ? { open: superRow } : null);
@@ -286,6 +288,7 @@ export function PhoneChatList({
               {superRow.lastLine ? ` · ${superRow.lastLine}` : ''}
             </span>
           </span>
+          {r.vault === vault && superUnread > 0 && <span className="sidebar-badge" data-testid="super-unread-badge" aria-label={t('super.unread.count').replace('{n}', String(superUnread))}>{superUnread}</span>}
           <span className="mlist-age">{age(superRow.updatedAt)}</span>
         </button>
       </li>

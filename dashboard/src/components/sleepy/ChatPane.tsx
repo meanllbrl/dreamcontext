@@ -79,7 +79,9 @@ import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './supe
 import { SuperEventLine } from './super/SuperEventLine';
 import { SuperRecapCard } from './super/SuperRecapCard';
 import { StageMediaStrip } from './super/StageMediaStrip';
-import { useSuperEventContext } from './super/superJobsStore';
+import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
+import { SuperUnreadBar } from './super/SuperUnreadBar';
+import { useSuperUnread } from './super/useSuperUnread';
 import './super/SuperSurface.css';
 import './chat/cards.css';
 import './chat/overlays.css';
@@ -113,6 +115,8 @@ const ASK_PREPARING_MS = 600;
 /** A pane with no feed: one stable empty list, so the window math reads no new array per render. */
 const NO_FEED: readonly FeedItem[] = [];
 const NO_IDS: readonly string[] = [];
+const NO_BATCHES: readonly string[] = [];
+const NO_QUESTIONS: ReadonlyArray<{ id: string; createdAt: number }> = [];
 
 /** How long an `AskUserQuestion` may be routing before it is treated as BROKEN rather than
  *  slow. Was 4s, which a healthy-but-slow route (a long questions payload, a busy machine)
@@ -2467,6 +2471,33 @@ export function ChatPane({
   }, [wantsDivider, dividerKeyNow, feedItems, firstShown, setStick, captureAnchor, dividerTry]);
   useEffect(() => { feedRef.current?.onPinned(pinned); }, [pinned]);
 
+  // The Super chat's unread marks: the rules, the marks and the painting live in the hook.
+  const superQuestionView = useSuperQuestions(superView ? session.claudeId : null);
+  const unreadItems = useMemo(() => [...conv.history, ...conv.items], [conv.history, conv.items]);
+  const superUnread = useSuperUnread({
+    // The view is null once taken back: the record is gone then, and the session may stay.
+    enabled: !!superView && !!superQuestionView,
+    vault: vault ?? null,
+    api,
+    items: unreadItems,
+    fold: !!superCtx,
+    ownerBatches: superCtx?.ownerBatches ?? NO_BATCHES,
+    openQuestions: superQuestionView?.open ?? NO_QUESTIONS,
+    scrollRef,
+    contentRef,
+    dividerLabel: (n) => t('super.unread.divider').replace('{n}', String(n)),
+    onPainted: () => { holdAnchorSteady(); drawReplyLines(); },
+  });
+  const jumpToFirstUnread = () => {
+    const first = superUnread.lead();
+    if (first?.itemId) { replyJumpRef.current.jumpToReplyTarget(first.itemId); return; }
+    const scroller = scrollRef.current;
+    const card = first && scroller?.querySelector<HTMLElement>(`[data-testid="super-question-card"][data-item="${CSS.escape(first.question ?? '')}"]`);
+    if (!scroller || !card) return;
+    setStick(false);
+    scroller.scrollTo({ top: contentTopOf(card, scroller) - RAIL_CLEARANCE, behavior: 'smooth' });
+  };
+
   // A stage strip is not something the owner sent (ChatUserItem.stageMedia).
   const lastUserItem = [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user' && !it.stageMedia);
 
@@ -2504,6 +2535,7 @@ export function ChatPane({
       <BrowserHostProvider value={browserHost}>
       <div className="chat-transcript">
         <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} />
+        {superView && <SuperUnreadBar unread={superUnread} onJump={jumpToFirstUnread} />}
         <div
           className="chat-scroll"
           ref={scrollRef}

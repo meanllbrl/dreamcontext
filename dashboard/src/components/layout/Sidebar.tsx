@@ -11,6 +11,7 @@ import { useNavBadges } from './useNavBadges';
 import { BrainSyncControl } from '../brain/BrainSyncControl';
 import { useVault } from '../../context/VaultContext';
 import { openAgentSurface } from '../../lib/agentSettings';
+import { useSuperUnreadCount } from '../sleepy/super/superUnreadStore';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import './Sidebar.css';
 
@@ -180,6 +181,8 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
   const { data: authStatus } = useAuthStatus();
   const { data: brainStatus } = useBrainStatus();
   const { unread, agentUnread, learningOff, showChat, chatRollup, chatOpen } = useNavBadges();
+  // What the owner has not read in this project's Super Agent chat (the pane publishes it).
+  const superUnread = useSuperUnreadCount(vault);
   // `agents` is the AI Team too (its old deep links land there), so its row lights up.
   const current: Page | null = chatOpen && showChat ? null : activePage === 'agents' ? 'automations' : activePage;
   const vaultLabel = vault ?? '';
@@ -267,21 +270,24 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
                 staggerIndex += 1;
                 const label = t(item.labelKey);
                 const { live, waiting } = chatRollup;
+                const showUnread = superUnread > 0;
                 return (
                   <li key={item.launch} className={`animate-stagger animate-stagger-${staggerIndex}`}>
                     <button
                       className={`sidebar-item sidebar-item--launcher${chatOpen ? ' sidebar-item--active' : ''}`}
                       aria-current={chatOpen ? 'page' : undefined}
                       onClick={() => { openAgentSurface(bus); phone?.onClose(); }}
-                      {...named(live > 0 ? `${label} (${live} open)` : label)}
+                      {...named(showUnread ? `${label} (${t('super.unread.count').replace('{n}', String(superUnread))})` : live > 0 ? `${label} (${live} open)` : label)}
                     >
                       <span className="sidebar-icon"><ChatIcon /></span>
                       <span className="sidebar-label">{label}</span>
                       {/* A COUNT of what is open, not an unread number — so it wears the quiet
                           pill, and only takes the accent when a session is waiting on you. */}
-                      {live > 0 && (
+                      {(live > 0 || showUnread) && (
                         <span className="sidebar-item-end">
-                          <span className={`sidebar-badge${waiting > 0 ? '' : ' sidebar-badge--quiet'}`}>{live}</span>
+                          {showUnread
+                            ? <span className="sidebar-badge sidebar-badge--count" data-testid="super-unread-badge">{superUnread}</span>
+                            : <span className={`sidebar-badge${waiting > 0 ? '' : ' sidebar-badge--quiet'}`}>{live}</span>}
                         </span>
                       )}
                     </button>

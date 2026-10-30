@@ -350,6 +350,18 @@
    borrowed from .sidebar-item--nudge::after above; the count itself is
    dropped (font-size: 0) since a two-digit pill has no room on an icon-only
    button. */
+/* An unread count keeps its number on the icon rail: the number is the message. */
+.sidebar--collapsed .sidebar-badge.sidebar-badge--count {
+  top: 1px;
+  right: 3px;
+  min-width: 16px;
+  width: auto;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 16px;
+}
+
 .sidebar--collapsed .sidebar-badge {
   position: absolute;
   top: 5px;

@@ -30,6 +30,7 @@ import {
 import { ownerQuestionReach } from '../../lib/super/owner-question.js';
 import { freshInFlight, isSuperEventTurn, superOwnerMsgRef, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
+import { clearReadMarks } from '../../lib/super/read-marks.js';
 import { padJobOver, padRolledOff, padStale } from '../../lib/super/pad.js';
 import { childDefaultEffort } from '../../lib/model-facts.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
@@ -2755,6 +2756,8 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
   },
   disable: async (_req, res, contextRoot) => {
     const state = await disableSuper(contextRoot);
+    // Read marks live as long as the hand-over: a failed delete must not fail the take-back.
+    await clearReadMarks(contextRoot).catch(() => {});
     // The phone talked to the Super Agent only while it was handed over: its mirrors go now,
     // whether or not the window keeps the parked child alive. A remote screen watched the
     // children only while handed over too: their watch-only mirrors go, and a reconnect is

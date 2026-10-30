@@ -1,0 +1,92 @@
+/* The Super chat's unread marks (owner 2026-10-30, draft A). useSuperUnread paints these
+   attributes on rows other components own; every look of the feature is here. */
+
+.chat-scroll-inner--reply [data-unread] { position: relative; }
+
+/* The dot, in the gutter left of the message. */
+.chat-scroll-inner--reply [data-unread]::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  pointer-events: none;
+}
+
+/* The line before the first unread: room above the row, the label in the line's gap. */
+.chat-scroll-inner--reply [data-unread-first] { margin-top: 28px; }
+.chat-scroll-inner--reply [data-unread-first]::after {
+  content: attr(data-unread-label);
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -26px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 600;
+  color: var(--color-accent-ink);
+  pointer-events: none;
+  background:
+    linear-gradient(var(--color-accent), var(--color-accent)) left center / calc(50% - 56px) 1px no-repeat,
+    linear-gradient(var(--color-accent), var(--color-accent)) right center / calc(50% - 56px) 1px no-repeat;
+}
+
+.super-unread-bar {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  max-width: calc(100% - 16px);
+  padding: 2px;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  box-shadow: var(--shadow-md, 0 6px 18px rgba(0, 0, 0, 0.35));
+  font-size: var(--font-size-xs, 12px);
+}
+.super-unread-jump,
+.super-unread-all {
+  flex: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+}
+.super-unread-jump {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  gap: 4px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.super-unread-go { overflow: hidden; text-overflow: ellipsis; }
+.super-unread-all {
+  color: var(--color-text-tertiary);
+  border-left: 1px solid var(--color-border);
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
+}
+.super-unread-jump:hover,
+.super-unread-all:hover { color: var(--color-accent); }
+
+/* A phone has room for the count and the two verbs, not the sentence. */
+@media (max-width: 480px) {
+  .super-unread-go { display: none; }
+  .super-unread-jump, .super-unread-all { padding: 6px 10px; }
+  .chat-scroll-inner--reply [data-unread]::before { left: -8px; }
+}
+
+/* A phone's message rows clip sideways (MobileChat.css), so the dot stands inside the row. */
+.agent-surface[data-mobile] .chat-msg-assistant-row[data-unread] { padding-left: 10px; }
+.agent-surface[data-mobile] .chat-msg-assistant-row[data-unread]::before { left: 0; }
