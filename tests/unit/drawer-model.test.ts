@@ -11,6 +11,7 @@ import {
 } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
 import { fanOutHistory, HISTORY_PARALLEL, HISTORY_PER_VAULT } from '../../dashboard/src/components/layout/newshell/historyFanout.js';
 import { chill, oldestEvictable } from '../../dashboard/src/components/layout/instanceCeiling.js';
+import type { ProjectRollup } from '../../dashboard/src/components/sleepy/agentStatus.js';
 
 const rollup = (o: Partial<Record<string, number>> = {}) => ({
   worst: 'idle', live: 0, waiting: 0, asking: 0, working: 0, idle: 0, flagged: 0, alive: 0, ...o,
@@ -73,7 +74,7 @@ describe('drawer rows', () => {
     expect(rows[0].children).toEqual([
       { kind: 'super', on: true, selected: false },
       { kind: 'member', slug: 'digest', title: 'Digest', hasPhoto: false, status: 'working' },
-      { kind: 'window', id: 'main', working: 2, asking: 1, flagged: 1, other: 1, selected: true },
+      { kind: 'window', id: 'main', name: 'Chat', working: 2, asking: 1, flagged: 1, other: 1, selected: true },
     ]);
     expect(rows[1].source).toBe('fanout');
     // No ring for a project that is not mounted: nothing runs there.
@@ -189,5 +190,46 @@ describe('History across projects', () => {
     const r = await fanOutHistory(['a', 'b', 'c', 'd', 'e', 'f'], read, () => live);
     expect(asked.length).toBeLessThan(6);
     expect(r.failed).toContain('b');
+  });
+});
+
+describe('named chat windows in the drawer (W3)', () => {
+  const rollupOf = (o: Partial<ProjectRollup> = {}): ProjectRollup => ({ worst: 'idle', live: 0, waiting: 0, alive: 0, asking: 0, working: 0, idle: 0, flagged: 0, ...o });
+  const proj = (name: string, o: Partial<DrawerProjectInput> = {}): DrawerProjectInput => ({ name, logo: false, logoStamp: null, mounted: false, asleep: false, otherWindow: false, rollup: null, ...o });
+
+  it('one row per window, each with its own ring and count; only the window on screen is selected', () => {
+    const rows = buildDrawerRows({
+      projects: [proj('acme', { mounted: true, rollup: rollupOf({ live: 3 }) })],
+      activeVault: 'acme', expanded: ['acme'], fanout: {},
+      facts: { acme: {
+        superOn: false, superSelected: false, chatOpen: true, team: [],
+        windows: [
+          { id: 'main', name: 'Chat', working: 1, asking: 0, flagged: 0, other: 0 },
+          { id: 'w2', name: 'Refactor', working: 0, asking: 1, flagged: 0, other: 1 },
+        ],
+        activeWindowId: 'w2',
+      } },
+    });
+    expect(rows[0].children.slice(1)).toEqual([
+      { kind: 'window', id: 'main', name: 'Chat', working: 1, asking: 0, flagged: 0, other: 0, selected: false },
+      { kind: 'window', id: 'w2', name: 'Refactor', working: 0, asking: 1, flagged: 0, other: 1, selected: true },
+    ]);
+  });
+
+  it('a far project lists its saved windows with their tab counts, no ring', () => {
+    const rows = buildDrawerRows({
+      projects: [proj('globex')], activeVault: null, expanded: ['globex'], facts: {},
+      fanout: { globex: { tabs: 3, superOn: false, team: [], windows: [{ id: 'main', name: 'Chat', tabs: 1 }, { id: 'w2', name: 'Two', tabs: 2 }] } },
+    });
+    expect(rows[0].children.slice(1).map((c) => c.kind === 'window' && [c.name, c.working, c.other])).toEqual([['Chat', 0, 1], ['Two', 0, 2]]);
+  });
+
+  it('a collapsed mounted project shows the sum of its windows beside its name', () => {
+    const rows = buildDrawerRows({
+      projects: [proj('acme', { mounted: true, rollup: rollupOf({ live: 4, working: 2, asking: 1, flagged: 1 }) })],
+      activeVault: 'acme', expanded: [], facts: {}, fanout: {},
+    });
+    expect(rows[0].sum).toEqual({ live: 4, asking: 1, working: 2, idle: 1, flagged: 1 });
+    expect(rows[0].children).toEqual([]);
   });
 });

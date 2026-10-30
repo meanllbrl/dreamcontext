@@ -4,12 +4,13 @@
  * expanded projects that are not mounted) and `ChatDrawer` draws exactly the rows this returns.
  *
  * Under each expanded project, in order: the Super Agent row (always, D6), the AI Team members
- * that have work (LISTED statuses only, D7), and ONE chat window row with its ring and count
- * (one window per project until W3).
+ * that have work (LISTED statuses only, D7), and one row per named chat window with its own ring
+ * and count (W3, D8). A collapsed project's row carries the sum of its windows.
  */
 import type { ProjectRollup } from '../../sleepy/agentStatus';
 import type { TeamRow, TeamStatus } from '../../aiteam/teamModel';
 import type { AddTabResult } from '../WindowChrome';
+import type { DrawerWindowFact } from '../../../lib/drawerIntents';
 
 /** Team members the drawer lists by name: the ones with work. Everyone else is on AI Team. */
 export const LISTED_TEAM: ReadonlySet<TeamStatus> = new Set<TeamStatus>(['working', 'needs', 'approval']);
@@ -37,6 +38,9 @@ export interface DrawerFacts {
   /** The overlay is expanded: this project is "on Chat". */
   chatOpen: boolean;
   team: DrawerTeamRow[];
+  /** Each chat window with its own ring and count (W3); absent = one window, the rollup's. */
+  windows?: DrawerWindowFact[];
+  activeWindowId?: string;
 }
 
 /** What the fan-out reads for an expanded project that is not mounted (D7). No ring: nothing
@@ -45,6 +49,8 @@ export interface FanoutFacts {
   tabs: number;
   superOn: boolean;
   team: DrawerTeamRow[];
+  /** Each saved window's name and tab count (`?summary=1`'s `perWindow`); absent on an older server. */
+  windows?: Array<{ id: string; name: string; tabs: number }>;
 }
 
 export interface DrawerProjectInput {
@@ -66,6 +72,8 @@ export type DrawerChild =
   | {
     kind: 'window';
     id: string;
+    /** The window's own name (a stored default reads as the localised "Chat"). */
+    name: string;
     /** Live chats mid-turn (the ring). Zero for a project read by fan-out. */
     working: number;
     asking: number;
@@ -88,6 +96,8 @@ export interface DrawerProjectRow {
   /** Where its child rows came from. `none` = expanded, but nothing read yet. */
   source: 'mounted' | 'fanout' | 'none';
   children: DrawerChild[];
+  /** Collapsed and mounted: every window's chats summed, for the ring beside the name. */
+  sum?: { live: number; asking: number; working: number; idle: number; flagged: number };
 }
 
 /** The listed members of a roster, those that want the owner first (needs, approval), then the
@@ -119,7 +129,13 @@ export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout
       name: p.name, logo: p.logo, logoStamp: p.logoStamp, active, held: p.mounted || p.asleep,
       asleep: p.asleep, otherWindow: p.otherWindow, expanded: isOpen,
     };
-    if (!isOpen) return { ...base, source: 'none', children: [] };
+    if (!isOpen) {
+      const r = p.mounted ? p.rollup : null;
+      const sum = r && r.live > 0
+        ? { live: r.live, asking: r.asking, working: r.working, idle: Math.max(0, r.live - r.working - r.asking), flagged: r.flagged }
+        : undefined;
+      return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}) };
+    }
 
     const mine = p.mounted ? facts[p.name] : undefined;
     const far = p.mounted ? undefined : fanout[p.name];
@@ -135,15 +151,26 @@ export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout
       children.push({ kind: 'member', slug: m.slug, title: m.title, hasPhoto: m.hasPhoto, status: m.status });
     }
     const r = p.mounted ? p.rollup : null;
-    children.push({
-      kind: 'window',
-      id: 'main',
-      working: r?.working ?? 0,
-      asking: r?.asking ?? 0,
-      flagged: r?.flagged ?? 0,
-      other: r ? Math.max(0, r.live - r.working - r.asking) : (far?.tabs ?? 0),
-      selected: onChat && !superSelected,
-    });
+    const windowsOn = onChat && !superSelected;
+    if (mine?.windows?.length) {
+      for (const w of mine.windows) {
+        children.push({ kind: 'window', ...w, selected: windowsOn && w.id === mine.activeWindowId });
+      }
+    } else if (far?.windows?.length) {
+      // Nothing runs while a project is not mounted: no ring, only each window's tab count.
+      for (const w of far.windows) children.push({ kind: 'window', id: w.id, name: w.name, working: 0, asking: 0, flagged: 0, other: w.tabs, selected: false });
+    } else {
+      children.push({
+        kind: 'window',
+        id: 'main',
+        name: 'Chat',
+        working: r?.working ?? 0,
+        asking: r?.asking ?? 0,
+        flagged: r?.flagged ?? 0,
+        other: r ? Math.max(0, r.live - r.working - r.asking) : (far?.tabs ?? 0),
+        selected: windowsOn,
+      });
+    }
     return { ...base, source, children };
   });
 }

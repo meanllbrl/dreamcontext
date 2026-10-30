@@ -22,7 +22,7 @@ import { pollMs, useWindowActivity } from '../lib/windowActivity';
 export async function readFanoutFacts(vault: string): Promise<FanoutFacts> {
   const api = new ApiClient(vault);
   const [summary, agents, automations, feed] = await Promise.all([
-    api.get<{ tabs?: unknown; superOn?: unknown }>('/agent/sessions?summary=1').catch(() => null),
+    api.get<{ tabs?: unknown; superOn?: unknown; perWindow?: unknown }>('/agent/sessions?summary=1').catch(() => null),
     api.get<{ agents: AgentSummary[] }>('/agents').then((r) => r.agents).catch(() => []),
     api.get<{ automations: AutomationSummary[] }>('/automations').then((r) => r.automations).catch(() => []),
     api.get<AgentFeed>('/automations/threads').catch(() => null),
@@ -31,7 +31,18 @@ export async function readFanoutFacts(vault: string): Promise<FanoutFacts> {
     tabs: typeof summary?.tabs === 'number' ? summary.tabs : 0,
     superOn: summary?.superOn === true,
     team: teamRowsOf(buildRoster(agents as TeamAgent[], automations, feed)),
+    ...(Array.isArray(summary?.perWindow) ? { windows: perWindowOf(summary.perWindow) } : {}),
   };
+}
+
+/** The summary's windows, each checked (the reply is another project's, read over the wire). */
+export function perWindowOf(raw: unknown[]): Array<{ id: string; name: string; tabs: number }> {
+  return raw.flatMap((w) => {
+    if (!w || typeof w !== 'object') return [];
+    const o = w as Record<string, unknown>;
+    if (typeof o.id !== 'string' || typeof o.name !== 'string') return [];
+    return [{ id: o.id, name: o.name, tabs: typeof o.tabs === 'number' && o.tabs >= 0 ? o.tabs : 0 }];
+  });
 }
 
 export function useDrawerProjects(expanded: readonly string[], mounted: readonly string[], visible: boolean): Record<string, FanoutFacts> {

@@ -10,7 +10,9 @@ import { request } from 'node:http';
  * `/api/window/<verb>`, authenticated by the two env vars the server injects into every
  * project chat's spawn (`DREAMCONTEXT_WINDOW_URL`, `DREAMCONTEXT_WINDOW_TOKEN`). The token
  * names THAT chat's socket, so the verb lands in the window showing the chat that ran it.
- * From a terminal or a `claude -p` it refuses: there is no window to drive.
+ * In the new shell a project holds several named chat windows: every verb is scoped to the
+ * CALLER's one (its tabs, its panes), even while another is on screen, and never reaches the
+ * tabs of another window. From a terminal or a `claude -p` it refuses: there is no window.
  *
  * `--tab` takes a tab id from `window state` (a chat's conversation id); omitted, the verb
  * acts on the calling chat itself.
@@ -74,7 +76,7 @@ export function registerWindowCommand(program: Command): void {
     .description('Drive the chat window this agent is drawn in: tabs, splits, mode, model (only from a dreamcontext chat)');
 
   w.command('state')
-    .description('The window\'s panes and tabs: id, title, kind, mode, model, busy, which one is you')
+    .description('Your chat window\'s name, panes and tabs: id, title, kind, mode, model, busy, which one is you')
     .action(() => run('state', {}));
 
   w.command('new')

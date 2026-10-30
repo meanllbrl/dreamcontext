@@ -365,6 +365,35 @@
   color: var(--color-text-tertiary);
 }
 
+/* Close window: the one item that ends something. */
+.ns-drawer-menu-item.is-danger {
+  color: var(--color-error-ink);
+}
+
+[data-theme="dark"] .ns-drawer-menu-item.is-danger {
+  color: var(--color-error);
+}
+
+/* ── A window row renamed in place (the desktop WebView has no prompt) ───────────── */
+
+.ns-dr-win.is-renaming {
+  padding-right: var(--space-2);
+}
+
+.ns-dr-rename {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+
 /* ── Narrow windows ──────────────────────────────────────────────────────────────── */
 
 .ns-drawer-scrim {

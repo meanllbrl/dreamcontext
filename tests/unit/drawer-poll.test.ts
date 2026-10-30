@@ -82,7 +82,7 @@ describe('GET /agent/sessions?summary=1', () => {
     }
     expect(status).toBe(200);
     const json = JSON.parse(body);
-    expect(json).toEqual({ windows: 1, tabs: 2, superOn: false });
+    expect(json).toEqual({ windows: 1, tabs: 2, superOn: false, perWindow: [{ id: 'main', name: 'Chat', tabs: 2 }] });
     expect(body).not.toContain('Secret plan');
     expect(body).not.toContain('private draft');
   });

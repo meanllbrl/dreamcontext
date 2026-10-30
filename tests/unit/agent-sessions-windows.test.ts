@@ -29,7 +29,7 @@ const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0
 const tab = (title: string, over: Partial<SavedMeta> = {}): SavedMeta => ({ title, bypass: false, minimized: false, size: 1, kind: 'chat', ...over });
 
 beforeEach(() => {
-  scratch = mkdtempSync(join(tmpdir(), 'roster-windows-'));
+  scratch = mkdtempSync(join(tmpdir(), 'hf-roster-gen-'));
   home = join(scratch, 'home');
   contextRoot = join(scratch, 'proj', '_dream_context');
   mkdirSync(join(contextRoot, 'state'), { recursive: true });

@@ -101,7 +101,13 @@ import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
 import { readSuperStateView, type SuperDigestWire, type SuperStateView } from '../../lib/superTypes';
 import { PhoneAgenda, phoneEventContext } from './super/PhoneAgenda';
 import { holdSidebarCollapsed as holdClassicSidebar } from '../../hooks/useSidebarCollapse';
-import { readShellModeFrozen } from '../../lib/uxMode';
+import { readShellModeFrozen, useIsNewShell } from '../../lib/uxMode';
+import {
+  addWindow, cleanWindowName, dropWindow, renameWindow, initialWindows, joinInto, neighbourOf, parkedHomes, placeTab, pruneParked,
+  restoreWindows, rowsByWindow, savePlacement, splitOut, switchWindow, unparkPanes, updateParked, windowOfTab,
+  DEFAULT_WINDOW_ID, TAB_CAP,
+  type RestoredTab, type SavedWindowMeta, type WindowFact, type WindowsState, type WinPane,
+} from './chatWindows';
 import { wasOpenedForLink } from '../../lib/windowLaunch';
 import { DRAWER_INTENT_EVENT, DRAWER_SURFACE_EVENT, type DrawerIntent, type DrawerSurfaceState } from '../../lib/drawerIntents';
 import { planSuperRow, runSuperRow, SUPER_ROW_SPAWN } from './super/superRow';
@@ -336,6 +342,8 @@ interface SavedMeta {
   model?: string;
   effort?: string;
   account?: string;
+  /** The named chat window this tab sits in (W3, D8). Unknown or absent = the first window. */
+  window?: string;
 }
 
 /** The whole `GET /api/agent/sessions` body: the roster plus the two surface-level facts that
@@ -348,6 +356,8 @@ interface SavedSurface {
   generation?: number;
   /** Each conversation's unsent composer content (chat/composerDrafts.ts). */
   drafts?: Record<string, SavedDraft>;
+  /** The project's named chat windows (W3, D8); absent from a server before windows. */
+  windows?: SavedWindowMeta[];
 }
 
 /**
@@ -556,6 +566,30 @@ export function AgentSurface() {
   sessionListRef.current = sessionList;
   const [panes, setPanes] = useState<PaneState[]>([]);
   const [activePaneId, setActivePaneId] = useState('');
+  // Read by handlers that act on the layout as it is NOW (a window switch, a verb), and set
+  // ahead of the render by the window switch so a second action in the same tick sees it.
+  const panesRef = useRef(panes);
+  panesRef.current = panes;
+  const activePaneIdRef = useRef(activePaneId);
+  activePaneIdRef.current = activePaneId;
+
+  // ── Named chat windows (the new shell's W3, D8; chatWindows.ts) ─────────────────────
+  // The selected window's panes ARE `panes`; the others are parked in `chatWindows` by
+  // conversation id, their sessions still mounted and running. Classic draws every window's
+  // tabs in its one surface and only remembers each tab's window, so a save hands it back
+  // unchanged. The phone and Mac mode's tunnel are classic (lib/uxMode.ts).
+  const windowed = useIsNewShell();
+  const [chatWindows, setChatWindows] = useState<WindowsState>(initialWindows);
+  const chatWindowsRef = useRef(chatWindows);
+  chatWindowsRef.current = chatWindows;
+  /** Classic only: the window each restored conversation came from. */
+  const classicHomeRef = useRef(new Map<string, string>());
+  /** The first roster read seeded the windows; a re-hydrate merges into them. */
+  const windowsSeededRef = useRef(false);
+  /** A new (or emptied last) window asks for a fresh chat tab once its empty panes render. */
+  const [freshTabNonce, setFreshTabNonce] = useState(0);
+  /** The 40-tab ceiling was hit: a lasting notice until a tab closes or it is dismissed. */
+  const [tabCapNotice, setTabCapNotice] = useState(false);
 
   // ── A pointer-driven pane switch waits for the click it belongs to ───────────────────
   //
@@ -1196,6 +1230,10 @@ export function AgentSurface() {
         }
         // Everything below restores TABS, which the preference does gate.
         if (!agentSettings.restoreTabs) return;
+        // The project's named chat windows (D8): seeded once, from the first read. A server from
+        // before windows sends none: one window, as before.
+        const savedWindows = Array.isArray(res.windows) && res.windows.length ? res.windows : undefined;
+        const firstSeed = !cancelled && !windowsSeededRef.current;
         // Terminals are never remembered — drop any shell entry, plus any legacy roster
         // row still named "Terminal N" (a stale shell saved before we stopped persisting
         // them; auto-title only ever renames AGENTS, so that default name is a reliable
@@ -1360,6 +1398,7 @@ export function AgentSurface() {
           // back to the server as THE WHOLE ROSTER. One automation tab opening by itself
           // on launch therefore cost the user every past chat they had, permanently, on
           // the first save after. Restored tabs now join whatever is already here.
+          // admitTab: exempt (the relaunch restore).
           setSessionList((prev) => [...prev, ...restored]);
           // THE PLACEMENT, rebuilt — the half this restore used to throw away. Every tab went
           // into ONE pane, so five side-by-side panes reopened as one stack with one chat
@@ -1372,53 +1411,89 @@ export function AgentSurface() {
           // adjacent panes in that order. `restored[i]` and `fresh[i]` are index-aligned by
           // construction (`restored` is `fresh.map`), which is what lets the placement be read
           // off the saved entry while the id comes from the spawned one.
-          const groups = new Map<number, SessionMeta[]>();
-          const activeIds = new Set<string>();
-          restored.forEach((m, i) => {
-            const saved = fresh[i];
-            // The Super Agent is never a tab (plan-r7 D9). Checked HERE, inside the
-            // index-aligned loop, because an unplaced entry would otherwise land in pane 0
-            // through `saved.pane ?? 0`; the hand-over binds the restored session by its id.
-            if (isSuperSession({ mode: m.mode ?? saved.mode, claudeId: saved.sessionId }, superStateRef.current?.session)) return;
-            const idx = Math.max(0, Math.floor(saved.pane ?? 0));
-            const bucket = groups.get(idx);
-            if (bucket) bucket.push(m); else groups.set(idx, [m]);
-            if (saved.active) activeIds.add(m.id);
-          });
-          const ordered = [...groups.entries()].sort((a, b) => a[0] - b[0]);
-          // Which restored pane had focus, as a position in `ordered` — resolved here rather
-          // than stored, because the saved index is pre-gap-closing.
-          const focusAt = res.activePane === undefined
-            ? -1
-            : ordered.findIndex(([idx]) => idx === res.activePane);
-          const built = ordered.map(([, metas]) => ({
-            id: nextPaneId(),
-            tabs: metas.map((m) => m.id),
-            active: (metas.find((m) => activeIds.has(m.id)) ?? metas[0]).id,
-          }));
           // Was anything already on screen when the roster landed? Read from the roster ref
           // rather than from `panes` (which this effect deliberately does not close over, so
           // it can never re-run on a layout change) — a tab and its pane arrive together.
           // The Super Agent's session (re-bound after a reload while handed over) is no tab, so
           // it does not make the restore any less clean.
           const cleanRestore = sessionListRef.current.filter((m) => !isSuperSession(m, superStateRef.current?.session)).length === 0;
-          setPanes((prev) => {
-            if (prev.length === 0) return built;
-            // Something opened a tab while the roster was in flight (the D7 race above). Its
-            // pane keeps the foreground — a launch-time restore is background furniture and
-            // must not steal it — and the restored panes land beside it rather than all
-            // collapsing into it, which is the whole point of persisting the placement.
-            return [...prev, ...built];
-          });
-          // Focus follows the saved pane ONLY on a clean restore, for the same reason the
-          // branch above leaves `prev`'s foreground alone.
-          if (cleanRestore && focusAt >= 0) setActivePaneId(built[focusAt].id);
+          if (windowed) {
+            // The new shell: each tab back in its own named window (chatWindows.ts), the window
+            // that held the focused pane on screen, the others parked with their sessions live.
+            const placed: RestoredTab[] = [];
+            restored.forEach((m, i) => {
+              const saved = fresh[i];
+              if (isSuperSession({ mode: m.mode ?? saved.mode, claudeId: saved.sessionId }, superStateRef.current?.session)) return;
+              placed.push({ id: m.id, claudeId: m.claudeId, window: saved.window, pane: saved.pane, active: saved.active });
+            });
+            if (firstSeed) {
+              const r = restoreWindows(savedWindows, placed, res.activePane, nextPaneId);
+              windowsSeededRef.current = true;
+              chatWindowsRef.current = r.state;
+              setChatWindows(r.state);
+              // Something opened a tab while the roster was in flight (the D7 race): it keeps the
+              // foreground, in the window that comes up.
+              setPanes((prev) => (prev.length === 0 ? r.live : [...prev, ...r.live]));
+              if (cleanRestore && r.activePaneId) setActivePaneId(r.activePaneId);
+            } else {
+              // A re-hydrate (a 409, Mac mode's Return): new tabs land beside the window on screen.
+              const extra = placed.length ? restoreWindows(undefined, placed, undefined, nextPaneId).live : [];
+              setPanes((prev) => [...prev, ...extra]);
+            }
+          } else {
+            const groups = new Map<number, SessionMeta[]>();
+            const activeIds = new Set<string>();
+            restored.forEach((m, i) => {
+              const saved = fresh[i];
+              // The Super Agent is never a tab (plan-r7 D9). Checked HERE, inside the
+              // index-aligned loop, because an unplaced entry would otherwise land in pane 0
+              // through `saved.pane ?? 0`; the hand-over binds the restored session by its id.
+              if (isSuperSession({ mode: m.mode ?? saved.mode, claudeId: saved.sessionId }, superStateRef.current?.session)) return;
+              const idx = Math.max(0, Math.floor(saved.pane ?? 0));
+              const bucket = groups.get(idx);
+              if (bucket) bucket.push(m); else groups.set(idx, [m]);
+              if (saved.active) activeIds.add(m.id);
+              // Classic draws every window's tabs in this one surface; a save hands each back to
+              // the window it came from (D8).
+              classicHomeRef.current.set(m.claudeId, saved.window && savedWindows?.some((w) => w.id === saved.window) ? saved.window : (savedWindows?.[0]?.id ?? DEFAULT_WINDOW_ID));
+            });
+            const ordered = [...groups.entries()].sort((a, b) => a[0] - b[0]);
+            // Which restored pane had focus, as a position in `ordered` — resolved here rather
+            // than stored, because the saved index is pre-gap-closing.
+            const focusAt = res.activePane === undefined
+              ? -1
+              : ordered.findIndex(([idx]) => idx === res.activePane);
+            const built = ordered.map(([, metas]) => ({
+              id: nextPaneId(),
+              tabs: metas.map((m) => m.id),
+              active: (metas.find((m) => activeIds.has(m.id)) ?? metas[0]).id,
+            }));
+            setPanes((prev) => {
+              if (prev.length === 0) return built;
+              // Something opened a tab while the roster was in flight (the D7 race above). Its
+              // pane keeps the foreground — a launch-time restore is background furniture and
+              // must not steal it — and the restored panes land beside it rather than all
+              // collapsing into it, which is the whole point of persisting the placement.
+              return [...prev, ...built];
+            });
+            // Focus follows the saved pane ONLY on a clean restore, for the same reason the
+            // branch above leaves `prev`'s foreground alone.
+            if (cleanRestore && focusAt >= 0) setActivePaneId(built[focusAt].id);
+          }
+        }
+        // Nothing restored into a window (an empty roster, every tab a shell), or classic: the
+        // window list itself still comes back, so a save never drops a name.
+        if (firstSeed && !windowsSeededRef.current && savedWindows) {
+          windowsSeededRef.current = true;
+          const seeded: WindowsState = { list: savedWindows.map((w) => ({ id: w.id, name: w.name, panes: [], activePaneId: '' })), activeId: savedWindows[0].id };
+          chatWindowsRef.current = seeded;
+          setChatWindows(seeded);
         }
       } catch { /* no saved roster (or non-desktop 403) — just start fresh */ }
       finally { if (!cancelled) { hydratedRef.current = true; openOnRestoreRef.current(); } }
     })();
     return () => { cancelled = true; };
-  }, [caps, settingsReady, agentSettings.restoreTabs, agentSettings.chatView, scopedApi, rehydrateNonce]);
+  }, [caps, settingsReady, agentSettings.restoreTabs, agentSettings.chatView, scopedApi, rehydrateNonce, windowed]);
 
   // Persist on every roster OR LAYOUT change (post-hydrate), debounced. AGENTS and CHATS are
   // remembered — plain TERMINALS are session-local and never reopened on launch (the server
@@ -1443,11 +1518,30 @@ export function AgentSurface() {
       // way back in, which is where a restored-from-nothing tab has always gone.
       const paneOf = new Map<string, number>();
       const activeTabs = new Set<string>();
-      panes.forEach((p, i) => {
-        p.tabs.forEach((t) => paneOf.set(t, i));
-        if (p.active) activeTabs.add(p.active);
-      });
-      const activePaneIndex = panes.findIndex((p) => p.id === activePaneId);
+      const windowOf = new Map<string, string>();
+      let activePaneIndex = -1;
+      let windowsOut: SavedWindowMeta[];
+      if (windowed) {
+        // Every window's panes, window after window, ONE index across the surface: an app from
+        // before windows still lays each tab out in its own pane (D8).
+        const sp = savePlacement(chatWindows, { panes, activePaneId }, sessionList);
+        sp.placement.forEach((at, sid) => {
+          windowOf.set(sid, at.window);
+          if (at.pane !== undefined) paneOf.set(sid, at.pane);
+          if (at.active) activeTabs.add(sid);
+        });
+        activePaneIndex = sp.activePane ?? -1;
+        windowsOut = sp.windows;
+      } else {
+        panes.forEach((p, i) => {
+          p.tabs.forEach((t) => paneOf.set(t, i));
+          if (p.active) activeTabs.add(p.active);
+        });
+        activePaneIndex = panes.findIndex((p) => p.id === activePaneId);
+        // Classic hands every tab back to the window it came from, and the windows unchanged.
+        for (const m of sessionList) windowOf.set(m.id, classicHomeRef.current.get(m.claudeId) ?? chatWindows.list[0]?.id ?? DEFAULT_WINDOW_ID);
+        windowsOut = chatWindows.list.map((w) => ({ id: w.id, name: w.name }));
+      }
       const payload = {
         // The remembered permission mode rides with the roster: same per-vault, machine-local,
         // gitignored file, and the same reason for being server-side at all (localStorage dies
@@ -1457,6 +1551,7 @@ export function AgentSurface() {
         // Every conversation's saved drafts, not only the open tabs' (composerDrafts.ts).
         ...(draftsLoadedRef.current ? { drafts: allDrafts(vault) } : {}),
         ...(activePaneIndex >= 0 ? { activePane: activePaneIndex } : {}),
+        windows: windowsOut,
         sessions: [...sessionList
           .filter((m) => m.kind !== 'shell')
           // The Super Agent is never a tab, so it is never saved as one: a relaunch after
@@ -1466,6 +1561,7 @@ export function AgentSurface() {
             title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
             ...(paneOf.has(m.id) ? { pane: paneOf.get(m.id) } : {}),
             ...(activeTabs.has(m.id) ? { active: true } : {}),
+            ...(windowOf.has(m.id) ? { window: windowOf.get(m.id) } : {}),
             ...(m.titleByAgent ? { titleByAgent: true } : {}),
             // Only carried for automation tabs — the server's `coerceMeta` drops it for
             // every other kind anyway, but there's no reason to send it otherwise.
@@ -1500,7 +1596,7 @@ export function AgentSurface() {
     // disk, and the 400ms debounce is what keeps a drag from writing once per frame.
     // `modelForSession`/`effortForSession` too: a model or effort picked on a running chat is
     // part of what a relaunch resumes it on.
-  }, [sessionList, panes, activePaneId, chatPermissionMode, scopedApi, rehydrateRoster, modelForSession, effortForSession, draftsRev]);
+  }, [sessionList, panes, activePaneId, chatPermissionMode, scopedApi, rehydrateRoster, modelForSession, effortForSession, draftsRev, chatWindows, windowed]);
 
   // ── Session actions ────────────────────────────────────────────────────────
   // claudeId omitted → a fresh conversation (new UUID via `--session-id`); provided with
@@ -1619,6 +1715,44 @@ export function AgentSurface() {
   // Spawn a fresh session AND append its roster entry — the two steps every "new session"
   // path shares. Callers keep only their pane placement, so the roster-entry shape lives in
   // ONE place (adding a field like `kind` can't drift between add-tab and add-split).
+  // ── The tab ceiling (D8): ONE join point every path that ADDS a tab passes first ─────
+  // At 40 tabs (the server's MAX_SESSIONS, which silently drops the rest at the next save) a new
+  // tab is refused BEFORE anything is spawned, with a lasting notice. Exempt, because refusing
+  // them mid-operation breaks state: the restore, the Plan→Develop hand-off (opens the new chat
+  // before it closes the old one) and the Super Agent's own session. A source guard
+  // (agent-windows-surface.test.ts) holds every other `setSessionList` add to this.
+  const admitTab = useCallback((): boolean => {
+    const open = sessionListRef.current.filter((m) => !isSuperSession(m, superStateRef.current?.session)).length;
+    if (open < TAB_CAP) return true;
+    setTabCapNotice(true);
+    return false;
+  }, []);
+  useEffect(() => {
+    if (tabCapNotice && sessionList.filter((m) => !isSuperSession(m, superStateRef.current?.session)).length < TAB_CAP) setTabCapNotice(false);
+  }, [tabCapNotice, sessionList]);
+
+  // ── Named chat windows: which one is on screen (D8, chatWindows.ts) ──────────────────
+  /** Show window `id`: its panes come back live, the shown one's are parked. Returns the panes
+   *  now live, or null when nothing switched. The refs move ahead of the render so an action in
+   *  the same tick (a focus, a select) lands on the window it just brought forward. */
+  const showWindow = useCallback((id: string): WinPane[] | null => {
+    const sw = switchWindow(chatWindowsRef.current, id, { panes: panesRef.current, activePaneId: activePaneIdRef.current }, sessionListRef.current);
+    if (!sw) return null;
+    chatWindowsRef.current = sw.state;
+    panesRef.current = sw.panes;
+    activePaneIdRef.current = sw.activePaneId;
+    setChatWindows(sw.state);
+    setPanes(sw.panes);
+    setActivePaneId(sw.activePaneId);
+    return sw.panes;
+  }, []);
+  /** Bring forward the window holding a tab (a link, a notification, a dock chip, History). */
+  const revealTab = useCallback((sid: string): WinPane[] | null => {
+    const key = sessionListRef.current.find((m) => m.id === sid)?.claudeId;
+    const home = key ? parkedHomes(chatWindowsRef.current).get(key) : undefined;
+    return home ? showWindow(home) : null;
+  }, [showWindow]);
+
   const spawnAndRegister = useCallback((kind: SessionKind, launch?: { bypass: boolean; explicitBypass: true }) => {
     // A new agent inherits the user's CLI defaults (model/effort from ~/.claude/settings.json);
     // the picker then reflects and can change them per agent. Nothing is forced at launch.
@@ -1630,6 +1764,7 @@ export function AgentSurface() {
     const s = launch
       ? spawn(launch.bypass, undefined, false, kind, '', '', true, '', false, '', true)
       : spawn(bypass, undefined, false, kind);
+    // Gated by its only callers: `addSession` and `addSplitSession` pass admitTab() first.
     setSessionList((prev) => [...prev, {
       id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId,
       ...(s.kind === 'chat' ? { mode: (s as ChatSession).mode } : {}),
@@ -1640,6 +1775,7 @@ export function AgentSurface() {
   // Add a session as a TAB of the action-focused pane (⌘T / ＋ for an agent, ⌃` / menu for
   // a shell), or as the first pane.
   const addSession = useCallback((kind: SessionKind = 'agent', launch?: { bypass: boolean; explicitBypass: true }): string => {
+    if (!admitTab()) return '';
     const s = spawnAndRegister(kind, launch);
     if (panes.length === 0) {
       const pid = nextPaneId();
@@ -1651,10 +1787,11 @@ export function AgentSurface() {
       setActivePaneId(apid);
     }
     return s.id;
-  }, [spawnAndRegister, panes, activePaneId]);
+  }, [spawnAndRegister, panes, activePaneId, admitTab]);
 
   // Spawn a fresh session into a NEW pane beside the focused one (⌘D agent / ⌘⇧D terminal) → side-by-side.
   const addSplitSession = useCallback((kind: SessionKind = 'agent') => {
+    if (!admitTab()) return;
     const s = spawnAndRegister(kind);
     const pid = nextPaneId();
     if (panes.length === 0) {
@@ -1669,7 +1806,7 @@ export function AgentSurface() {
       });
     }
     setActivePaneId(pid);
-  }, [spawnAndRegister, panes, activePaneId]);
+  }, [spawnAndRegister, panes, activePaneId, admitTab]);
 
   // All mutations are FUNCTIONAL (read `prev`, never a captured list) and read live
   // sessions from the ref — so a stale snapshot can never act on the wrong session.
@@ -1876,6 +2013,7 @@ export function AgentSurface() {
     // its boot output settles (agentSession's armInitialPrompt case b). Bypass is meaningless
     // for a shell and forced off by `spawn` anyway. Titled "Sign in" so the tab says why it
     // exists; that name is outside DEFAULT_TAB_TITLE_RE, so auto-titling leaves it alone.
+    if (!admitTab()) return;
     const s = spawn(false, undefined, false, 'shell', signInCommand);
     setSessionList((prev) => [...prev, { id: s.id, title: 'Sign in', kind: s.kind, bypass: s.bypass, claudeId: s.claudeId }]);
     if (panes.length === 0) {
@@ -2086,6 +2224,8 @@ export function AgentSurface() {
     const slug = agent?.slug ?? '';
     if (chat.agent === slug) return;
     const fresh = !chat.busy && chat.getModel().items.length === 0;
+    // Not fresh = a NEW tab beside this one.
+    if (!fresh && !admitTab()) return;
     const carried = fresh ? chat.getModel().draft : '';
     const claudeId = newClaudeId();
     bindChatAgent(claudeId, slug);
@@ -2281,6 +2421,7 @@ export function AgentSurface() {
       // pane", which is where a new tab goes anyway.
       const planPane = panes.find((p) => p.tabs.includes(cs.id));
       const at = planPane ? planPane.tabs.indexOf(cs.id) : -1;
+      // admitTab: exempt (Plan→Develop opens the new chat before it closes the old one).
       setSessionList((prev) => [...prev, meta]);
       setPanes((prev) => prev.map((p) => {
         if (planPane && p.id !== planPane.id) return p;
@@ -2395,11 +2536,13 @@ export function AgentSurface() {
 
   // Click a collapsed dock chip → expand + bring its session forward in its pane.
   const focusSession = useCallback((sid: string) => {
+    // A tab in another chat window brings that window forward first (D8).
+    const shown = revealTab(sid) ?? panes;
     setPanes((prev) => prev.map((p) => (p.tabs.includes(sid) ? { ...p, active: sid } : p)));
-    const owner = panes.find((p) => p.tabs.includes(sid));
+    const owner = shown.find((p) => p.tabs.includes(sid));
     if (owner) setActivePaneId(owner.id);
     focusTerm(sid);
-  }, [panes, focusTerm]);
+  }, [panes, focusTerm, revealTab]);
 
   // ── Past chats: reopen a conversation that no longer has a tab ────────────────────
   //
@@ -2421,6 +2564,9 @@ export function AgentSurface() {
     if (past.id === superStateRef.current?.session) return;
     const existing = sessionList.find((m) => m.claudeId === past.id);
     if (existing) {
+      // Open in another chat window: that window comes forward (D8). A new resume below lands
+      // in the window on screen.
+      revealTab(existing.id);
       if (existing.dormant) resumeSession(existing.id);
       else if (minimizedIds.includes(existing.id)) restoreMinimized(existing.id);
       else focusSession(existing.id);
@@ -2432,6 +2578,7 @@ export function AgentSurface() {
     // Resumed in the CURRENTLY chosen Agent screen, like every other resume path — the
     // transcript is the conversation, not the surface it was originally typed into. `reattach`
     // '1' (Mac mode's drawer): adopt the live chat even from the screen holding it.
+    if (!admitTab()) return;
     const s = reattach ? spawn(bypass, past.id, true, 'chat', '', '', true, '', false, '', false, DEFAULT_CHAT_MODE, '', '', reattach) : spawn(bypass, past.id, true, claudeKind);
     // Titled with the row's own label rather than "Chat 7": it is the only thing that tells two
     // resumed tabs apart. A remembered tab name (`named`) comes back whole — it was a tab title
@@ -2452,7 +2599,7 @@ export function AgentSurface() {
     }
   }, [
     sessionList, minimizedIds, resumeSession, restoreMinimized, focusSession,
-    spawn, bypass, claudeKind, panes, activePaneId,
+    spawn, bypass, claudeKind, panes, activePaneId, revealTab, admitTab,
   ]);
 
   // ── Mac mode: adopt a chat the Mac runs (the phone drawer's "Mac'te açık") ───────────
@@ -2540,6 +2687,7 @@ export function AgentSurface() {
       resubmitPrompt(existing.id, SLEEP_AGENT_PROMPT);
       return;
     }
+    if (!admitTab()) return;
     const s = spawn(bypass, undefined, false, claudeKind, SLEEP_AGENT_PROMPT, '', serverCurrent);
     setSessionList((prev) => [...prev, { id: s.id, title: SLEEP_AGENT_TITLE, kind: s.kind, bypass: s.bypass, claudeId: s.claudeId }]);
     const pid = nextPaneId();
@@ -2566,6 +2714,7 @@ export function AgentSurface() {
       resubmitPrompt(existing.id, BRAIN_RESOLVE_PROMPT);
       return;
     }
+    if (!admitTab()) return;
     const s = spawn(bypass, undefined, false, claudeKind, BRAIN_RESOLVE_PROMPT, '', serverCurrent);
     setSessionList((prev) => [...prev, { id: s.id, title: BRAIN_RESOLVE_TITLE, kind: s.kind, bypass: s.bypass, claudeId: s.claudeId }]);
     const pid = nextPaneId();
@@ -2597,6 +2746,7 @@ export function AgentSurface() {
     // agent launches on it; `explicitBypass` honours the composer's own checkbox over the
     // remembered chat default (see `spawn`).
     const model = detail.model ?? '';
+    if (!admitTab()) return false;
     const s = spawn(detail.bypass, undefined, false, claudeKind, detail.prompt, model, serverCurrent, detail.promptToken, false, '', true);
     setSessionList((prev) => [...prev, { id: s.id, title, kind: s.kind, bypass: s.bypass, claudeId: s.claudeId }]);
     // Seed the picker's readout so a delegated pane names the model it was actually launched
@@ -2691,6 +2841,7 @@ export function AgentSurface() {
       return true;
     }
 
+    if (!admitTab()) return false;
     const s = spawn(bypass, detail.sessionId, true, claudeKind);
     // Titled from the automation, NOT from the conversation's first prompt: that prompt is
     // the approved brief, which is identical across every run of the same job — the past-chat
@@ -2879,6 +3030,7 @@ export function AgentSurface() {
   const openTrainSession = useCallback((detail: TrainChatDetail): boolean => {
     if (!canSpawn) return false;
     const title = trainTabTitle(detail.automationTitle);
+    if (!admitTab()) return false;
     const open = (inline: string, token: string) => {
       const s = spawn(bypass, undefined, false, 'chat', inline, '', true, token, false, '', false, 'train');
       setSessionList((prev) => [...prev, {
@@ -2946,6 +3098,7 @@ export function AgentSurface() {
   /** Open a new Chat tab speaking as `slug`, in the focused pane, and show it. */
   const openAgentChat = useCallback((slug: string, title: string): boolean => {
     if (!canSpawn) return false;
+    if (!admitTab()) return false;
     const claudeId = newClaudeId();
     bindChatAgent(claudeId, slug);
     const s = spawn(false, claudeId, false, 'chat') as ChatSession;
@@ -3051,6 +3204,8 @@ export function AgentSurface() {
     // the Super Agent's, so the guard above is not his (2026-10-22: "Couldn't reach").
     findOwnerChat: liveChatByClaudeId,
     openChat: (inline, token, mode) => {
+      // Refused at the ceiling before anything starts; the doorbell answers "refused".
+      if (!admitTab()) return null;
       const s = spawn(false, undefined, false, 'chat', inline, '', true, token, false, '', false, mode, '', 'assistant');
       setSessionList((prev) => [...prev, { id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId, mode }]);
       // Placement mirrors `delegateAgent`'s reveal branch: a tab of the focused pane.
@@ -3163,6 +3318,7 @@ export function AgentSurface() {
     // terminal takes it as a client-side initialPrompt (type-without-submit); a chat must
     // NOT (its server path SUBMITS an initial prompt as the first turn) — its sendText
     // appends to the composer draft instead, which is exactly type-without-submit there.
+    if (!admitTab()) return;
     const s = chatMode
       ? spawn(bypass, undefined, false, 'chat')
       : spawn(bypass, undefined, false, 'agent', text, '', false);
@@ -3287,13 +3443,26 @@ export function AgentSurface() {
   };
   const changeChatModeRef = useRef(changeChatMode);
   changeChatModeRef.current = changeChatMode;
-  windowDepsRef.current = (self: string): WindowVerbDeps => ({
+  windowDepsRef.current = (self: string): WindowVerbDeps => {
+    // The CALLER's chat window (D8): a chat in a window that is not on screen reads and moves its
+    // own window's tabs, never the one the owner is looking at. The Super Agent is no tab of any
+    // window and has adopted them all, so it keeps the whole surface.
+    const parkedAll = windowed ? parkedHomes(chatWindows) : new Map<string, string>();
+    const selfKey = sessions.current.get(self)?.claudeId ?? sessionList.find((m) => m.id === self)?.claudeId ?? '';
+    const isSuperCaller = superCallerOf(sessions.current.get(self)) === 'super';
+    const home = !isSuperCaller && selfKey ? parkedAll.get(selfKey) : undefined;
+    const parkedWin = home ? chatWindows.list.find((w) => w.id === home) : undefined;
+    const shownWin = parkedWin ?? chatWindows.list.find((w) => w.id === chatWindows.activeId);
+    const inScope = (m: SessionMeta) => isSuperCaller || (home ? parkedAll.get(m.claudeId) === home : !parkedAll.has(m.claudeId));
+    const keyOf = (sid: string) => sessionListRef.current.find((m) => m.id === sid)?.claudeId ?? '';
+    return {
     self,
-    panes,
-    activePaneId,
+    panes: parkedWin ? unparkPanes(parkedWin.panes, sessionList) : panes,
+    activePaneId: parkedWin ? parkedWin.activePaneId : activePaneId,
+    ...(windowed && shownWin ? { window: shownWin.name } : {}),
     // Never the Super Agent's session, and for a handed-over child never a sibling (D4b, the
     // browser's re-check of what the server already refuses).
-    tabs: windowTabsFor(sessionList.map((m) => {
+    tabs: windowTabsFor(sessionList.filter(inScope).map((m) => {
       const live = m.dormant ? undefined : sessions.current.get(m.id);
       const chat = live?.kind === 'chat' ? live as ChatSession : undefined;
       return {
@@ -3321,6 +3490,8 @@ export function AgentSurface() {
         inline = prepared.inline;
         token = prepared.token;
       }
+      // Refused at the ceiling before anything starts ('' = the verb answers why).
+      if (!admitTab()) return '';
       const s = o.terminal
         ? spawn(false, undefined, false, 'shell')
         : spawn(false, undefined, false, 'chat', inline, o.model, true, token, false, o.effort, false, o.mode);
@@ -3328,13 +3499,25 @@ export function AgentSurface() {
         id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId,
         ...(s.kind === 'chat' ? { mode: o.mode } : {}),
       }]);
-      // Placed against the layout as it is when the spawn lands (the prompt prep awaited).
-      windowPlaceRef.current(s.id, o.split);
+      // Placed against the layout as it is when the spawn lands (the prompt prep awaited): in the
+      // caller's window, which stays parked when it is not on screen.
+      if (home && chatWindowsRef.current.activeId !== home) {
+        setChatWindows((prev) => updateParked(prev, home, (ps, ap) => placeTab(ps, ap, s.claudeId, o.split, nextPaneId())));
+      } else {
+        windowPlaceRef.current(s.id, o.split);
+      }
       return s.claudeId;
     },
-    split: (sid, paneId) => dropToZone(paneId, 'right', sid),
-    join: (sid, paneId) => combineIntoPane(sid, paneId),
-    focus: (sid, paneId) => { setExpanded(true); selectTab(paneId, sid); },
+    split: (sid, paneId) => {
+      if (home) setChatWindows((prev) => updateParked(prev, home, (ps) => ({ panes: splitOut(ps, keyOf(sid), nextPaneId()) })));
+      else dropToZone(paneId, 'right', sid);
+    },
+    join: (sid, paneId) => {
+      if (home) setChatWindows((prev) => updateParked(prev, home, (ps) => ({ panes: joinInto(ps, keyOf(sid), paneId) })));
+      else combineIntoPane(sid, paneId);
+    },
+    // Focus shows the tab, so its window comes forward.
+    focus: (sid, paneId) => { if (home) showWindow(home); setExpanded(true); selectTab(paneId, sid); },
     setMode: (sid, mode) => {
       const chat = sessions.current.get(sid) as ChatSession | undefined;
       if (!chat || !(chat.busy || chat.asking)) { changeChatModeRef.current(sid, mode); return 'now'; }
@@ -3366,7 +3549,8 @@ export function AgentSurface() {
       return deliverToChat(chat, text);
     },
     close: (sid) => closeSessionById(sid),
-  });
+    };
+  };
 
   // ── The Super Agent: who is who ───────────────────────────────────────────────────
   // Which of this window's chats a window verb comes from (D4b's browser re-check).
@@ -3598,6 +3782,7 @@ export function AgentSurface() {
     // Registered in the roster (so it is portaled and homed) but NEVER in a pane.
     const meta: SessionMeta = { id: s.id, title: 'Claude', kind: 'chat', bypass: s.bypass, claudeId: session, mode: 'super' };
     sessionListRef.current = [...sessionListRef.current, meta];
+    // admitTab: exempt (the Super Agent's own session; `handOver` checked the cap first).
     setSessionList((prev) => (prev.some((m) => m.claudeId === session) ? prev : [...prev, meta]));
     return s;
   }, [canSpawn, spawn]);
@@ -3708,6 +3893,7 @@ export function AgentSurface() {
       // …checked again after the prompt is prepared: that wait can be what ran past it.
       if (delegateExpired(args)) return { ok: false, error: 'expired' };
       // Follows the vault's permission switch like any chat (decision 13): no explicit bypass.
+      if (!admitTab()) return { ok: false, error: 'tabs_full' };
       const childId = newClaudeId();
       leanOpeningRef.current.set(childId, d.mcp);
       const s = spawn(false, childId, false, 'chat', prepared.inline, d.model, true, prepared.token, false, d.effort, false, d.mode) as ChatSession;
@@ -3777,6 +3963,7 @@ export function AgentSurface() {
       }
       const r = delegateArgs({ prompt: '-', mode: args.mode, model: args.model, effort: args.effort, title: args.title });
       if (!r.ok) return r;
+      if (!admitTab()) return { ok: false, error: 'tabs_full' };
       const s = spawn(false, child, true, 'chat', '', r.model, true, '', false, r.effort, false, r.mode) as ChatSession;
       s.setSuperChild(true);
       setSessionList((prev) => [...prev, {
@@ -3978,6 +4165,10 @@ export function AgentSurface() {
     // Pressed again while the hand-over request is still out: the flight reverses the moment it
     // starts (a slow server must not swallow the owner's "no, back").
     if (superBusyRef.current) { reverseQueuedRef.current = !reverseQueuedRef.current; return; }
+    // The Super Agent's own session is exempt from the tab cap, so the cap is checked here,
+    // before anything is handed over (D8).
+    const superSession = superStateRef.current?.session;
+    if (!(superSession && sessionListRef.current.some((m) => m.claudeId === superSession)) && !admitTab()) return;
     reverseQueuedRef.current = false;
     superBusyRef.current = true;
     setSuperBusy(true);
@@ -4247,10 +4438,6 @@ export function AgentSurface() {
   superChatRef.current = superChatSession;
   const superSidRef = useRef<string | null>(null);
   superSidRef.current = superSid;
-  const panesRef = useRef(panes);
-  panesRef.current = panes;
-  const activePaneIdRef = useRef(activePaneId);
-  activePaneIdRef.current = activePaneId;
   const focusSessionRef = useRef<(sid: string) => void>(() => {});
   focusSessionRef.current = (sid) => {
     if (minimizedIds.includes(sid)) restoreMinimized(sid);
@@ -4528,8 +4715,10 @@ export function AgentSurface() {
     // A minimized session intentionally lives in NO pane (it's a corner chip), so it is
     // not an orphan — exclude it or the reconcile would yank it back into a pane. Neither is
     // the Super Agent: it is never a tab (plan-r7 D9), handed over or parked.
+    // Nor a tab parked in another chat window (D8): it has a pane, just not on screen.
+    const parked = parkedHomes(chatWindows);
     const orphans = sessionList
-      .filter((m) => !placed.has(m.id) && !min.has(m.id) && !isSuperSession(m, superStateRef.current?.session))
+      .filter((m) => !placed.has(m.id) && !min.has(m.id) && !parked.has(m.claudeId) && !isSuperSession(m, superStateRef.current?.session))
       .map((m) => m.id);
     const hasDangling = panes.some((p) => p.tabs.some((id) => !known.has(id)));
     if (orphans.length === 0 && !hasDangling) return;
@@ -4549,7 +4738,14 @@ export function AgentSurface() {
       }
       return next;
     });
-  }, [sessionList, panes, minimizedIds]);
+  }, [sessionList, panes, minimizedIds, chatWindows]);
+
+  // A parked window forgets a conversation that no longer has a tab (closed anywhere: a verb, a
+  // close-window, the phone). Its sessions are otherwise untouched.
+  useEffect(() => {
+    const known = new Set(sessionList.map((m) => m.claudeId));
+    setChatWindows((prev) => pruneParked(prev, known));
+  }, [sessionList]);
 
   // ── Orphan detector: a live roster entry with no session object ───────────────────
   //
@@ -4862,9 +5058,6 @@ export function AgentSurface() {
   // `DrawerFactsBridge` adds the team rows and hands the lot to the window's drawer.
   const superOn = !!superState?.enabled;
   const superSelected = expanded && handedOver;
-  useEffect(() => {
-    emitInstance<DrawerSurfaceState>(bus, DRAWER_SURFACE_EVENT, { superOn, superSelected });
-  }, [bus, superOn, superSelected]);
 
   // A tab the Super Agent row just started: the hand-over waits until the roster it reads
   // holds it (the ref is set on the render that commits it).
@@ -4898,12 +5091,90 @@ export function AgentSurface() {
     runDrawerIntentRef.current(drawerIntent.intent);
     return undefined;
   }, [drawerIntent, drawerWait, caps, settingsReady]);
+  // ── Named chat windows: new, rename, close (D8) ──────────────────────────────────────
+  /** A new window right after the one on screen, with a fresh chat in it. */
+  const createChatWindow = useCallback(() => {
+    if (!admitTab()) return;
+    const cur = chatWindowsRef.current;
+    const name = tRef.current('shell.windows.newName').replace('{n}', String(cur.list.length + 1));
+    const r = addWindow(cur, name, { panes: panesRef.current, activePaneId: activePaneIdRef.current }, sessionListRef.current);
+    chatWindowsRef.current = r.state;
+    panesRef.current = [];
+    activePaneIdRef.current = '';
+    setChatWindows(r.state);
+    setPanes([]);
+    setActivePaneId('');
+    setFreshTabNonce((n) => n + 1);
+  }, [admitTab]);
+  // The fresh chat of a new (or emptied last) window, once its empty panes are on screen: the
+  // ordinary ⌘T path, so it lands like any new tab. Once per request (StrictMode runs effects twice).
+  const freshTabDoneRef = useRef(0);
+  useEffect(() => {
+    if (!freshTabNonce || freshTabDoneRef.current === freshTabNonce) return;
+    freshTabDoneRef.current = freshTabNonce;
+    if (panes.length === 0 && canSpawn) addSession(claudeKind);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [freshTabNonce]);
+  const renameChatWindow = useCallback((id: string, name: string) => {
+    if (!cleanWindowName(name)) return;
+    setChatWindows((prev) => renameWindow(prev, id, name));
+  }, []);
+  /**
+   * Close a window = close its tabs through the one tab-close path. Chats mid-turn ask first, in
+   * the app's own dialog (never `window.confirm`, a silent no-op in the desktop WebView), and the
+   * question says they stay in History. The last window is never closed: it empties to a fresh tab.
+   */
+  const closeChatWindow = useCallback(async (id: string) => {
+    const before = chatWindowsRef.current;
+    if (!before.list.some((w) => w.id === id)) return;
+    const superSid = superStateRef.current?.session;
+    const tabsOf = (st: WindowsState) => sessionListRef.current.filter((m) => !isSuperSession(m, superSid) && windowOfTab(st, m.claudeId) === id);
+    const running = tabsOf(before).filter((m) => {
+      const live = m.dormant ? undefined : sessions.current.get(m.id);
+      return !!live && (live.busy || live.asking);
+    });
+    if (running.length > 0) {
+      const ok = await confirmAction({
+        title: tRef.current('shell.windows.closeRunning.title'),
+        body: tRef.current('shell.windows.closeRunning.body').replace('{n}', String(running.length)),
+        confirmLabel: tRef.current('shell.windows.close'),
+        cancelLabel: tRef.current('shell.windows.keep'),
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    const now = chatWindowsRef.current;
+    if (!now.list.some((w) => w.id === id)) return;
+    const closing = tabsOf(now);
+    if (now.list.length <= 1) {
+      for (const m of closing) closeSessionById(m.id);
+      setFreshTabNonce((n) => n + 1);
+      return;
+    }
+    if (now.activeId === id) {
+      const next = neighbourOf(now, id);
+      if (next) showWindow(next);
+    }
+    for (const m of closing) closeSessionById(m.id);
+    chatWindowsRef.current = dropWindow(chatWindowsRef.current, id);
+    setChatWindows((prev) => dropWindow(prev, id));
+  }, [closeSessionById, showWindow]);
+
   const runDrawerIntentRef = useRef<(intent: DrawerIntent) => void>(() => {});
   runDrawerIntentRef.current = (intent) => {
     if (!caps?.desktop || !agentSettings.enabled) { setExpanded(true); return; }
     if (intent.kind === 'open-window') {
+      if (intent.windowId) showWindow(intent.windowId);
       setSuperView('panes');
       setExpanded(true);
+    } else if (intent.kind === 'new-window') {
+      setSuperView('panes');
+      if (canSpawn) { if (windowed) createChatWindow(); else addSession(claudeKind); }
+      setExpanded(true);
+    } else if (intent.kind === 'rename-window') {
+      renameChatWindow(intent.windowId, intent.name);
+    } else if (intent.kind === 'close-window') {
+      void closeChatWindow(intent.windowId);
     } else if (intent.kind === 'new-tab') {
       if (!canSpawn) { setExpanded(true); return; }
       setSuperView('panes');
@@ -4926,7 +5197,11 @@ export function AgentSurface() {
       void runSuperRow(plan, {
         showStage: () => setSuperView('super'),
         handOver,
-        spawnChat: () => addSession(SUPER_ROW_SPAWN.kind, { bypass: SUPER_ROW_SPAWN.bypass, explicitBypass: SUPER_ROW_SPAWN.explicitBypass }),
+        spawnChat: () => {
+          const id = addSession(SUPER_ROW_SPAWN.kind, { bypass: SUPER_ROW_SPAWN.bypass, explicitBypass: SUPER_ROW_SPAWN.explicitBypass });
+          if (!id) throw new Error('40 chats are open in this project');
+          return id;
+        },
         whenRegistered: (id) => new Promise<void>((resolve) => {
           if (sessionListRef.current.some((m) => m.id === id)) { resolve(); return; }
           registeredWaitersRef.current.set(id, resolve);
@@ -5329,6 +5604,20 @@ export function AgentSurface() {
     rollupFlagged,
   ]);
 
+  // …and each chat window's own ring and count for the drawer's window rows (D8). Every row a
+  // window holds, minimized ones with the window on screen.
+  const windowRows = rowsByWindow(chatWindows, dockRows, (id) => sessionList.find((m) => m.id === id)?.claudeId);
+  const windowFacts: WindowFact[] = chatWindows.list.map((w) => {
+    const r = rollupProject(windowRows.get(w.id) ?? []);
+    return { id: w.id, name: w.name, working: r.working, asking: r.asking, flagged: r.flagged, other: Math.max(0, r.live - r.working - r.asking) };
+  });
+  const windowFactsKey = JSON.stringify([chatWindows.activeId, windowFacts]);
+  useEffect(() => {
+    emitInstance<DrawerSurfaceState>(bus, DRAWER_SURFACE_EVENT, { superOn, superSelected, windows: windowFacts, activeWindowId: chatWindows.activeId });
+    // The facts are read through their key: a rebuilt array with the same rows sends nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bus, superOn, superSelected, windowFactsKey]);
+
   // ── The Super dock's pill, rows and gestures (owner 2026-10-25) ──
   // Sessions that ask but are not the Super's (an unadopted chat, a terminal): they light the
   // pill and show in its window as today's dock tiles (plan S4).
@@ -5505,6 +5794,19 @@ export function AgentSurface() {
             desktop layout). */}
         {/* A chat a remote screen holds (or is opening) is never handed over: named here, with
             what to do (take it back to the Mac, then hand over). */}
+        {/* The 40-tab ceiling (D8): says why a new chat did not open, until a tab closes. */}
+        {tabCapNotice && (
+          <div className="super-skipped-notice agent-tab-cap-notice">
+            <Notice
+              slim
+              tone="warn"
+              icon={<Glyph.stack />}
+              testId="agent-tab-cap"
+              title={t('shell.notice.tabsFull')}
+              onDismiss={() => setTabCapNotice(false)}
+            />
+          </div>
+        )}
         {handedOver && superSkipped.length > 0 && (
           <div className="super-skipped-notice">
             <Notice

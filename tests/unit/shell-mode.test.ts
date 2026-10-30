@@ -48,9 +48,20 @@ describe('shell gate', () => {
     expect(env.gets).toBe(1);
   });
 
-  it('never chosen = the default (classic before W3)', async () => {
-    expect(ux.DEFAULT_SHELL).toBe('classic');
+  it('never chosen = the default: the new shell since W3 (a fresh HOME opens in it)', async () => {
+    expect(ux.DEFAULT_SHELL).toBe('new');
+    expect(await ux.settleShellMode()).toBe('new');
+  });
+
+  it('an explicit classic stays classic after the default flip', async () => {
+    env.stored = { shell: 'classic' };
     expect(await ux.settleShellMode()).toBe('classic');
+  });
+
+  it("Settings' row reads a never-chosen switch as ON, an explicit classic as OFF", async () => {
+    expect(await prefs.fetchShellMode()).toBe('new');
+    env.stored = { shell: 'classic' };
+    expect(await prefs.fetchShellMode()).toBe('classic');
   });
 
   it('a failed read settles classic', async () => {

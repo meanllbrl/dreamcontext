@@ -102,7 +102,13 @@ export interface LayoutPrefs {
 
 const NO_LAYOUT: LayoutPrefs = { lastVault: null, projectOrder: [], drawerExpanded: [], drawerWidth: null, drawerOpen: null };
 
+/** What "never chosen" means since W3: the new shell. Re-exported by `uxMode.ts` as
+ *  `DEFAULT_SHELL`; kept here so the Settings row and the gate cannot disagree. */
+export const DEFAULT_SHELL_PREF: ShellPref = 'new';
+
 let shellPref: ShellPref | null = null;
+/** The server answered the read (a stored choice or none); false while unread or on a failure. */
+let shellAnswered = false;
 let layout: LayoutPrefs = NO_LAYOUT;
 let settled: Promise<void> | null = null;
 
@@ -119,6 +125,7 @@ export function initLauncherPrefsFromServer(): Promise<void> {
       const view = coerce(raw.view);
       if (view) writeLocal(view);
       shellPref = raw.shell === 'new' || raw.shell === 'classic' ? raw.shell : null;
+      shellAnswered = true;
       layout = {
         lastVault: typeof raw.lastVault === 'string' ? raw.lastVault : null,
         projectOrder: names(raw.projectOrder),
@@ -129,6 +136,12 @@ export function initLauncherPrefsFromServer(): Promise<void> {
     }, () => { /* older backend or offline: nothing stored */ });
   }
   return settled;
+}
+
+/** Did the server answer the settle read? `uxMode.ts` only: "never chosen" is the default only
+ *  when it is known, never when the file could not be read. */
+export function readShellPrefAnswered(): boolean {
+  return shellAnswered;
 }
 
 /** The stored switch as the server answered it (null = never chosen). `uxMode.ts` only. */
@@ -152,7 +165,8 @@ export async function writeShellMode(shell: ShellPref): Promise<ShellPref> {
 /** Fetch the stored switch fresh from the server (Settings reads the server, never a mirror). */
 export async function fetchShellMode(): Promise<ShellPref> {
   const raw = await api.get<{ shell?: unknown }>('/launcher/ui-settings');
-  return raw.shell === 'new' ? 'new' : 'classic';
+  // Never chosen reads as the default (ON since W3), the same rule the gate settles by.
+  return raw.shell === 'new' || raw.shell === 'classic' ? raw.shell : DEFAULT_SHELL_PREF;
 }
 
 let pendingLayout: Partial<LayoutPrefs> = {};
@@ -201,6 +215,7 @@ function armFlushOnHide(): void {
 /** Tests only. */
 export function resetLauncherPrefsForTests(): void {
   shellPref = null;
+  shellAnswered = false;
   layout = NO_LAYOUT;
   settled = null;
   pendingLayout = {};

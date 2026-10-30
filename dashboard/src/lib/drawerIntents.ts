@@ -17,10 +17,16 @@ export type DrawerIntent =
   /** The Super Agent row: open the stage, handing over first (and starting a chat first when
    *  the project has none, F2). */
   | { kind: 'super' }
-  /** "+" on a project row, or New chat window's pick: a new chat tab in this project. */
+  /** A new chat tab in this project's window on screen. */
   | { kind: 'new-tab' }
-  /** A chat window row: show the chat (not the stage). One window per project until W3. */
+  /** "+" on a project row, ⌘N or New chat window's pick: a new named chat window (W3, D8). */
+  | { kind: 'new-window' }
+  /** A chat window row: show that window's chats (not the stage). */
   | { kind: 'open-window'; windowId?: string }
+  /** A window row's Rename (inline in the drawer; a blank name reverts). */
+  | { kind: 'rename-window'; windowId: string; name: string }
+  /** A window row's Close window: its tabs close; the last window empties to a fresh tab. */
+  | { kind: 'close-window'; windowId: string }
   /** A History row: reopen THAT chat in this project (the `OPEN_SESSION` path). */
   | { kind: 'open-session'; sessionId: string }
   /** Project Relations, or an AI Team member's conversation: a page of this project. */
@@ -33,11 +39,26 @@ export interface PendingDrawerIntent {
   at: number;
 }
 
+/** One chat window as the drawer's row draws it: its name and its own ring and count. */
+export interface DrawerWindowFact {
+  id: string;
+  name: string;
+  working: number;
+  asking: number;
+  flagged: number;
+  other: number;
+}
+
 export interface DrawerSurfaceState {
   superOn: boolean;
   superSelected: boolean;
+  /** The project's chat windows, in order (W3). Absent from a surface that predates them. */
+  windows?: DrawerWindowFact[];
+  /** The window on screen. */
+  activeWindowId?: string;
 }
 
 export function sameSurfaceState(a: DrawerSurfaceState | null, b: DrawerSurfaceState): boolean {
-  return !!a && a.superOn === b.superOn && a.superSelected === b.superSelected;
+  return !!a && a.superOn === b.superOn && a.superSelected === b.superSelected
+    && a.activeWindowId === b.activeWindowId && JSON.stringify(a.windows ?? []) === JSON.stringify(b.windows ?? []);
 }

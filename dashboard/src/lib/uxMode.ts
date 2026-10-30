@@ -17,12 +17,14 @@
 import { createContext, createElement, useContext, useEffect, useState, type ReactNode } from 'react';
 import { isMacPhoneSurface } from './phoneSurface';
 import { readIsMobile } from '../hooks/useIsMobile';
-import { initLauncherPrefsFromServer, readShellPrefSettled } from './launcherPrefs';
+import { DEFAULT_SHELL_PREF, initLauncherPrefsFromServer, readShellPrefAnswered, readShellPrefSettled } from './launcherPrefs';
 
 export type ShellMode = 'pending' | 'new' | 'classic';
 
-/** Before the switch ships ON (W3): an install that never chose gets today's shell. */
-export const DEFAULT_SHELL: 'classic' | 'new' = 'classic';
+/** The switch ships ON (W3): an install that never chose opens in the new shell. An explicit
+ *  `classic` stays classic, and a server that cannot answer still means today's shell (it may be
+ *  holding exactly that `classic`). */
+export const DEFAULT_SHELL: 'classic' | 'new' = DEFAULT_SHELL_PREF;
 
 let frozen: 'new' | 'classic' | null = null;
 
@@ -49,7 +51,10 @@ export async function settleShellMode(): Promise<'new' | 'classic'> {
   }
   // A server that never answers must not leave a blank window: after the cap, today's shell.
   await Promise.race([initLauncherPrefsFromServer(), new Promise<void>((r) => { setTimeout(r, SETTLE_CAP_MS); })]);
-  if (!frozen) frozen = (readShellPrefSettled() ?? DEFAULT_SHELL) === 'new' ? 'new' : 'classic';
+  // Never chosen = the default, but only when the server ANSWERED: an unread file may hold an
+  // explicit `classic`, and a guess must never override it.
+  const answered = readShellPrefAnswered();
+  if (!frozen) frozen = (answered ? readShellPrefSettled() ?? DEFAULT_SHELL : 'classic') === 'new' ? 'new' : 'classic';
   return frozen;
 }
 

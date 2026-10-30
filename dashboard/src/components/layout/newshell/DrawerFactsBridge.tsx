@@ -38,10 +38,14 @@ export function DrawerFactsBridge({ vault, drawerVisible, onFacts }: {
 
   // A primitive key: a team array rebuilt with the same rows must not re-render the window.
   const teamKey = team.map((m) => `${m.slug}:${m.status}:${m.hasPhoto ? 1 : 0}:${m.title}`).join('|');
+  const windowsKey = JSON.stringify([surface.activeWindowId, surface.windows]);
   useEffect(() => {
-    onFacts?.(vault, { superOn: surface.superOn, superSelected: surface.superSelected, chatOpen, team });
-    // `team` is read through its key.
+    onFacts?.(vault, {
+      superOn: surface.superOn, superSelected: surface.superSelected, chatOpen, team,
+      ...(surface.windows ? { windows: surface.windows, activeWindowId: surface.activeWindowId } : {}),
+    });
+    // `team` and the windows are read through their keys.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vault, onFacts, surface.superOn, surface.superSelected, chatOpen, teamKey]);
+  }, [vault, onFacts, surface.superOn, surface.superSelected, chatOpen, teamKey, windowsKey]);
   return null;
 }

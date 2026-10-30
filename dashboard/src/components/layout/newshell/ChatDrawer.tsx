@@ -30,13 +30,20 @@ export interface ChatDrawerProps {
   newWindowNonce: number;
 }
 
-interface Menu { kind: 'project' | 'new'; name?: string; x: number; y: number }
+interface Menu { kind: 'project' | 'new' | 'window'; name?: string; windowId?: string; x: number; y: number }
+
+/** The stored name of a project's first window (agent-sessions.ts `DEFAULT_WINDOW`): drawn in the
+ *  owner's language. */
+const STORED_DEFAULT_NAME = 'Chat';
 
 export function ChatDrawer(p: ChatDrawerProps) {
   const { t } = useI18n();
   const [menu, setMenu] = useState<Menu | null>(null);
   const [guide, setGuide] = useState<number | null>(null);
   const [drag, setDrag] = useState<{ name: string; over: number } | null>(null);
+  /** A window row being renamed in place (the desktop WebView has no `prompt`). */
+  const [renaming, setRenaming] = useState<{ vault: string; id: string; value: string } | null>(null);
+  const renameDone = useRef(false);
   const rootRef = useRef<HTMLElement | null>(null);
   const newRowRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -194,10 +201,49 @@ export function ChatDrawer(p: ChatDrawerProps) {
       );
     }
     const live = c.working + c.asking + c.other;
+    const label = c.name === STORED_DEFAULT_NAME ? t('shell.windows.defaultName') : c.name;
+    if (renaming && renaming.vault === row.name && renaming.id === c.id) {
+      // Enter or a click away keeps the name; Esc, or a blank name, leaves it as it was.
+      const finish = (keep: boolean) => {
+        if (renameDone.current) return;
+        renameDone.current = true;
+        const value = renaming.value.trim();
+        setRenaming(null);
+        if (keep && value && value !== c.name) p.onIntent(row.name, { kind: 'rename-window', windowId: c.id, name: value });
+      };
+      return (
+        <div key={`w-${c.id}`} className="ns-dr-row ns-dr-child ns-dr-win is-renaming">
+          <input className="ns-dr-rename" autoFocus value={renaming.value} maxLength={60}
+            aria-label={t('shell.windows.rename')} data-testid="drawer-window-rename"
+            onFocus={(e) => e.currentTarget.select()}
+            onChange={(e) => setRenaming({ ...renaming, value: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+            }}
+            onBlur={() => finish(true)} />
+        </div>
+      );
+    }
+    const openWindowMenu = (x: number, y: number) => openMenu({ kind: 'window', name: row.name, windowId: c.id, x, y });
     return (
       <button key={`w-${c.id}`} type="button" className={`ns-dr-row ns-dr-child ns-dr-win${c.selected ? ' is-sel' : ''}`}
-        data-testid="drawer-window-row" onClick={() => pick(row.name, { kind: 'open-window', windowId: c.id })}>
-        <span className="ns-dr-t">{t('shell.windows.defaultName')}</span>
+        data-testid="drawer-window-row" data-window-id={c.id} aria-haspopup="menu"
+        onClick={() => pick(row.name, { kind: 'open-window', windowId: c.id })}
+        onContextMenu={(e) => { e.preventDefault(); openWindowMenu(e.clientX, e.clientY); }}
+        onKeyDown={(e) => {
+          // The keyboard's way to the same menu, and F2 to rename (the desktop convention).
+          if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+            e.preventDefault();
+            const r = e.currentTarget.getBoundingClientRect();
+            openWindowMenu(r.left + 24, r.bottom);
+          } else if (e.key === 'F2') {
+            e.preventDefault();
+            renameDone.current = false;
+            setRenaming({ vault: row.name, id: c.id, value: c.name === STORED_DEFAULT_NAME ? label : c.name });
+          }
+        }}>
+        <span className="ns-dr-t">{label}</span>
         <ProjectChipBubbles chip={{ live, asking: c.asking, working: c.working, idle: c.other, flagged: c.flagged }} />
       </button>
     );
@@ -247,10 +293,11 @@ export function ChatDrawer(p: ChatDrawerProps) {
                 <span className="ns-dr-t">{row.name}</span>
                 {row.otherWindow && <span className="ns-dr-note">{t('shell.drawer.otherWindow')}</span>}
                 {row.asleep && <span className="ns-dr-note">{t('shell.drawer.asleep')}</span>}
+                {row.sum && <ProjectChipBubbles chip={row.sum} />}
               </button>
               <button type="button" className="ns-dr-act ns-dr-add" aria-label={`${t('shell.drawer.newWindow')}: ${row.name}`}
                 data-testid="drawer-project-add"
-                onClick={(e) => { e.stopPropagation(); pick(row.name, { kind: 'new-tab' }); }}>+</button>
+                onClick={(e) => { e.stopPropagation(); pick(row.name, { kind: 'new-window' }); }}>+</button>
               <svg className={`ns-dr-chev${row.expanded ? ' is-open' : ''}`} viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>
             </div>
             {row.expanded && <div className="ns-dr-children">{row.children.map((c) => child(row, c))}</div>}
@@ -263,16 +310,37 @@ export function ChatDrawer(p: ChatDrawerProps) {
       {guide !== null && <div className="ns-dr-guide" style={{ left: guide }} aria-hidden="true" />}
 
       {menu && (
-        <div ref={menuRef} className="ns-menu ns-drawer-menu" role="menu" onKeyDown={onMenuKey} style={{ left: menu.x, top: menu.y }} data-testid={menu.kind === 'new' ? 'drawer-new-menu' : 'drawer-project-menu'}>
+        <div ref={menuRef} className="ns-menu ns-drawer-menu" role="menu" onKeyDown={onMenuKey} style={{ left: menu.x, top: menu.y }}
+          data-testid={menu.kind === 'new' ? 'drawer-new-menu' : menu.kind === 'window' ? 'drawer-window-menu' : 'drawer-project-menu'}>
           {menu.kind === 'new' ? (
             <>
               <div className="ns-drawer-menu-head">{t('shell.drawer.pickProject')}</div>
               {p.rows.map((row) => (
                 <button key={row.name} type="button" role="menuitem" className="ns-drawer-menu-item"
-                  onClick={() => { closeMenu(); pick(row.name, { kind: 'new-tab' }); }}>
+                  onClick={() => { closeMenu(); pick(row.name, { kind: 'new-window' }); }}>
                   {row.name}
                 </button>
               ))}
+            </>
+          ) : menu.kind === 'window' && menu.name && menu.windowId ? (
+            <>
+              <button type="button" role="menuitem" className="ns-drawer-menu-item" data-testid="drawer-window-rename-item"
+                onClick={() => {
+                  const win = p.rows.find((r) => r.name === menu.name)?.children.find((c) => c.kind === 'window' && c.id === menu.windowId);
+                  const name = win && win.kind === 'window' ? win.name : '';
+                  // Focus goes to the rename field, not back to the row.
+                  opener.current = null;
+                  setMenu(null);
+                  renameDone.current = false;
+                  setRenaming({ vault: menu.name!, id: menu.windowId!, value: name === STORED_DEFAULT_NAME ? t('shell.windows.defaultName') : name });
+                }}>
+                {t('shell.windows.rename')}<kbd>F2</kbd>
+              </button>
+              {/* Menu-only, with no shortcut: ⌘W stays "close tab". */}
+              <button type="button" role="menuitem" className="ns-drawer-menu-item is-danger" data-testid="drawer-window-close-item"
+                onClick={() => { closeMenu(); p.onIntent(menu.name!, { kind: 'close-window', windowId: menu.windowId! }); }}>
+                {t('shell.windows.close')}
+              </button>
             </>
           ) : menu.name && (
             <>
