@@ -122,8 +122,9 @@ describe('new, rename, close', () => {
     expect(close).not.toMatch(/window\.confirm|\bconfirm\(/);
     expect(close).toContain("tRef.current('shell.windows.closeRunning.body')");
     expect(close).toMatch(/now\.list\.length <= 1\) \{\s+for \(const m of closing\) closeSessionById\(m\.id\);\s+setFreshTabNonce/);
-    // A minimized chip belongs to no window: only the last window's close takes it.
-    expect(close).toContain('(st.list.length <= 1 || !minimized.has(m.id))');
+    // A minimized chip belongs to no window: no window's close takes it, the last one included.
+    expect(close).toContain('!minimizedIdsRef.current.includes(m.id)');
+    expect(close).not.toMatch(/st\.list\.length <= 1 \|\|/);
   });
 });
 

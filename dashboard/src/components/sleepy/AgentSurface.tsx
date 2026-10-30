@@ -5143,10 +5143,10 @@ export function AgentSurface() {
     if (!before.list.some((w) => w.id === id)) return;
     const superSid = superStateRef.current?.session;
     // A minimized tab sits in no window's panes (a corner chip, often a delegate started from a
-    // page): closing a window never takes it, unless this is the last window, which empties.
-    const minimized = new Set(minimizedIdsRef.current);
+    // page): closing a window never takes it, the last window included. Read live, so a chip
+    // minimized while the question is open is left alone too.
     const tabsOf = (st: WindowsState) => sessionListRef.current.filter((m) => !isSuperSession(m, superSid)
-      && windowOfTab(st, m.claudeId) === id && (st.list.length <= 1 || !minimized.has(m.id)));
+      && windowOfTab(st, m.claudeId) === id && !minimizedIdsRef.current.includes(m.id));
     const running = tabsOf(before).filter((m) => {
       const live = m.dormant ? undefined : sessions.current.get(m.id);
       return !!live && (live.busy || live.asking);
