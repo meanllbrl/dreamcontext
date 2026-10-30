@@ -3,7 +3,11 @@ import { Excalidraw } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 import { registerPinchTarget, type BoardViewport, type PinchPatch } from '../../lib/excalidrawPinch';
 import { FIT_MAX_SETTLE_FRAMES, planFit, type FitBox, type FitRecord } from '../../lib/boardFit';
+import { installImageThemeShim } from '../../lib/excalidrawImageTheme';
 import './ExcalidrawCanvas.css';
+
+// A picture keeps its own pixels in dark mode, WebKit included — see excalidrawImageTheme.ts.
+installImageThemeShim();
 
 interface Props {
   elements: readonly unknown[];
