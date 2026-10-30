@@ -135,6 +135,72 @@ export interface SavedMeta {
 /** `claude --effort`'s documented set, the same list `agent-spawn-shared.ts` gates a spawn by. */
 const EFFORT_LEVELS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
+/** A conversation's unsent composer content, kept across restarts (the dashboard's
+ *  `chat/composerDrafts.ts`; mirrors its `SavedDraft`). Text the user wrote: coerced to the
+ *  client's caps, never trusted. */
+export interface SavedDraft {
+  text: string;
+  chips: Array<{ kind: 'image' | 'file' | 'folder' | 'ref' | 'element'; name: string; path?: string; text?: string }>;
+  quote: string | null;
+  savedAt: number;
+}
+
+/** Mirrored from the dashboard's composerDrafts.ts (drift test: composer-drafts.test.ts). */
+export const MAX_DRAFT_TEXT = 20000;
+export const MAX_DRAFT_QUOTE = 4000;
+export const MAX_DRAFT_CHIPS = 20;
+export const MAX_DRAFT_CONVERSATIONS = 200;
+const MAX_CHIP_NAME = 300;
+const MAX_CHIP_PATH = 4096;
+const MAX_CHIP_TEXT = 8000;
+const DRAFT_CHIP_KINDS: readonly string[] = ['image', 'file', 'folder', 'ref', 'element'];
+
+/** One stored draft, or null. Over-long text is DROPPED, never cut: a truncated draft restored
+ *  into the box would read as what the user wrote. */
+export function coerceDraft(raw: unknown): SavedDraft | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.text !== 'string' || o.text.length > MAX_DRAFT_TEXT) return null;
+  const chips: SavedDraft['chips'] = [];
+  if (Array.isArray(o.chips)) {
+    for (const c of o.chips.slice(0, MAX_DRAFT_CHIPS)) {
+      if (!c || typeof c !== 'object') continue;
+      const r = c as Record<string, unknown>;
+      if (typeof r.kind !== 'string' || !DRAFT_CHIP_KINDS.includes(r.kind) || typeof r.name !== 'string') continue;
+      chips.push({
+        kind: r.kind as SavedDraft['chips'][number]['kind'],
+        name: r.name.slice(0, MAX_CHIP_NAME),
+        ...(typeof r.path === 'string' && r.path && r.path.length <= MAX_CHIP_PATH ? { path: r.path } : {}),
+        ...(typeof r.text === 'string' && r.text && r.text.length <= MAX_CHIP_TEXT ? { text: r.text } : {}),
+      });
+    }
+  }
+  const quote = typeof o.quote === 'string' && o.quote && o.quote.length <= MAX_DRAFT_QUOTE ? o.quote : null;
+  if (!o.text.trim() && chips.length === 0 && !quote) return null;
+  return { text: o.text, chips, quote, savedAt: typeof o.savedAt === 'number' && Number.isFinite(o.savedAt) ? o.savedAt : 0 };
+}
+
+/**
+ * The surface's `drafts` map — conversation UUID → its unsent composer content — coerced.
+ * Keyed by CONVERSATION, not carried on a tab entry, so a draft outlives its tab: a closed chat
+ * reopened from Past chats, the Super Agent (never a tab), an automation tab and a launch with
+ * "Reopen past tabs" off all keep theirs.
+ */
+export function coerceDraftMap(raw: unknown): Record<string, SavedDraft> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const out: Record<string, SavedDraft> = {};
+  let n = 0;
+  for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (n >= MAX_DRAFT_CONVERSATIONS) break;
+    if (!UUID_RE.test(id)) continue;
+    const d = coerceDraft(v);
+    if (!d) continue;
+    out[id] = d;
+    n++;
+  }
+  return n ? out : undefined;
+}
+
 /** Hard ceiling on rostered sessions (extras are dropped, not rejected). */
 export const MAX_SESSIONS = 20;
 const MAX_TITLE = 200;
@@ -142,8 +208,10 @@ const DEFAULT_TITLE = 'Agent';
 const MIN_SIZE = 0.1;
 const MAX_SIZE = 10;
 const DEFAULT_SIZE = 1;
-/** Generous cap on the serialized roster; a runaway client can't write an unbounded file. */
-const MAX_BYTES = 64 * 1024;
+/** Generous cap on the serialized roster; a runaway client can't write an unbounded file.
+ *  Sized for kept composer drafts: the client keeps all of them under 512 KB (composerDrafts.ts
+ *  DRAFTS_BUDGET_BYTES), so the tab metadata keeps its old 64 KB of headroom on top. */
+const MAX_BYTES = 1024 * 1024;
 /** Generous ceiling on `automation.runFiredAt` — an ISO timestamp is well under this; the
  *  cap exists only to bound a hand-edited/malicious string before it reaches `Date.parse`. */
 const MAX_RUN_FIRED_AT = 64;
@@ -326,6 +394,8 @@ export interface SavedSurface {
   /** 0-based index of the pane that had focus, clamped like {@link SavedMeta.pane}. */
   activePane?: number;
   chatPermissionMode: ChatPermissionMode;
+  /** Saved composer drafts by conversation UUID ({@link coerceDraftMap}). */
+  drafts?: Record<string, SavedDraft>;
 }
 
 function coerceActivePane(raw: unknown): number | undefined {
@@ -351,10 +421,12 @@ function parseSurface(text: string | null): StoredSurface {
     if (text === null) throw new Error('absent');
     const raw = JSON.parse(text) as Record<string, unknown>;
     const activePane = coerceActivePane(raw?.activePane);
+    const drafts = coerceDraftMap(raw?.drafts);
     return {
       sessions: sanitizeRoster(raw) ?? [],
       ...(activePane !== undefined ? { activePane } : {}),
       chatPermissionMode: coercePermissionMode(raw?.chatPermissionMode),
+      ...(drafts ? { drafts } : {}),
       generation: coerceGeneration(raw?.generation),
     };
   } catch {
@@ -371,7 +443,7 @@ function readSurface(contextRoot: string, phone = false): StoredSurface {
 /** The persisted file: the surface plus its generation (written only when non-zero, so a
  *  roster that was never bumped stays byte-identical to the legacy shape). */
 function serializeSurface(surface: SavedSurface, generation: number): string {
-  const sessionsFirst = { sessions: surface.sessions, ...(surface.activePane !== undefined ? { activePane: surface.activePane } : {}), chatPermissionMode: surface.chatPermissionMode };
+  const sessionsFirst = { sessions: surface.sessions, ...(surface.activePane !== undefined ? { activePane: surface.activePane } : {}), chatPermissionMode: surface.chatPermissionMode, ...(surface.drafts ? { drafts: surface.drafts } : {}) };
   return JSON.stringify(generation > 0 ? { ...sessionsFirst, generation } : sessionsFirst, null, 2) + '\n';
 }
 
@@ -633,6 +705,7 @@ function surfaceBody(saved: StoredSurface, isBound: (sessionId: string) => boole
     sessions,
     ...(saved.activePane !== undefined ? { activePane: saved.activePane } : {}),
     chatPermissionMode: saved.chatPermissionMode,
+    ...(saved.drafts ? { drafts: saved.drafts } : {}),
     generation: saved.generation,
   };
 }
@@ -675,6 +748,12 @@ export async function handleAgentSessionsPut(
     // whoever writes the file, never inherited from what happened to be there.
     chatPermissionMode: coercePermissionMode(raw.chatPermissionMode),
   };
+  // Drafts are the user's own text: a body that does not MENTION them (a client from before
+  // drafts) keeps what is stored — a delete is never inferred from absence. A body that sends
+  // the map, even `{}`, replaces it.
+  const draftsSent = raw.drafts !== undefined;
+  const sentDrafts = coerceDraftMap(raw.drafts);
+  if (sentDrafts) surface.drafts = sentDrafts;
   const serialized = JSON.stringify(surface);
   if (Buffer.byteLength(serialized, 'utf-8') > MAX_BYTES) {
     sendError(res, 400, 'too_large', 'session roster payload is too large.');
@@ -700,6 +779,7 @@ export async function handleAgentSessionsPut(
       const stored = readSurface(contextRoot, phone);
       if (!rosterBaseAccepted(base, stored.generation)) { stale(stored); return; }
       generation = stored.generation;
+      if (!draftsSent && stored.drafts) surface.drafts = stored.drafts;
       writeSurface(contextRoot, surface, generation, phone);
     } finally {
       releaseFileLock(lock);
