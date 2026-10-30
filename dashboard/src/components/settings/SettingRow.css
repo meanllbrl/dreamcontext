@@ -463,3 +463,5 @@
 .settings-models-link { border: 0; background: transparent; color: var(--color-accent-ink); font-size: var(--font-size-sm); cursor: pointer; padding: 0 var(--space-1); white-space: nowrap; }
 .settings-models-link:hover { text-decoration: underline; }
 .settings-models-link:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; border-radius: var(--radius-sm); }
+/* Settings' own section nav sticks below the page bar, not under it. */
+.project-instance[data-shell="new"] .settings-nav { top: var(--space-13); }

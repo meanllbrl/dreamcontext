@@ -50,9 +50,17 @@
   .page-bar { padding: 0 var(--space-3); }
 }
 
-/* A bar at the top of a padded page reaches the frame's edges (the frame pads 16/20/20). */
+/* A bar at the top of a padded page reaches the frame's edges (the frame pads 16/20/20), and
+   stays at the top while the page scrolls under it (Settings, Core, Sleep Cycle…): the frame
+   is the scroller and its 16px top padding is inside the sticky area, so the bar sticks at
+   minus that padding: flush with the frame's top edge, nothing scrolling above it. */
 .page-bar--flush {
   margin: calc(var(--space-4) * -1) calc(var(--space-5) * -1) var(--space-4);
+  position: sticky;
+  top: calc(var(--space-4) * -1);
+  z-index: 5;
+  background: var(--color-bg);
+  border-radius: 14px 14px 0 0;
 }
 
 /* The title at the left of a page's own toolbar row (W2-B). */
