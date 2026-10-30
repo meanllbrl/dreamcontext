@@ -2097,3 +2097,15 @@
 @media (prefers-reduced-motion: reduce) {
   .chat-cmp-photo-pending .chat-cmp-attachment-glyph { animation: none; }
 }
+
+/* The new shell (W2-C): "New chats: <model · effort>" beside "Set as default". */
+.chat-cmp-default-now {
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}

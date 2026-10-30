@@ -135,6 +135,16 @@ export function SystemIcon(props: IconProps) {
 }
 
 /** Learning — a spark: the layer that forms and tests hypotheses. */
+/** Settings → Models (new shell): a chip with its pins. */
+export function ModelsIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="7" y="7" width="10" height="10" rx="2" />
+      <path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4" />
+    </Icon>
+  );
+}
+
 export function LearningIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -205,6 +215,7 @@ export const SETTINGS_ICONS = {
   clickup: ClickUpIcon,
   connections: ConnectionsIcon,
   system: SystemIcon,
+  models: ModelsIcon,
   /** Legacy id kept so the old `tasks` icon import site (if any) still resolves. */
   tasks: CloudTasksIcon,
 } as const;

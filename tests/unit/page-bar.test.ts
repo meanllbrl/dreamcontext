@@ -8,11 +8,13 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { createElement } from '../../dashboard/node_modules/react/index.js';
+import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(`../../dashboard/src/${rel}`, import.meta.url)), 'utf-8');
 const { PageTitle, PageBar } = await import('../../dashboard/src/components/layout/PageBar.js');
+const { I18nProvider } = await import('../../dashboard/src/context/I18nContext.js');
+const inI18n = (el: unknown) => renderToStaticMarkup(createElement(I18nProvider, null, el as never));
 
 /** Page → [the file that draws its title, the label key, how it is gated]. */
 const INLINE: Record<string, [string, string, RegExp]> = {
@@ -60,11 +62,11 @@ describe('page headers', () => {
   });
 
   it('a title is one 18px h1 of the bar\'s class; "← Chat" shows only for a page a chat opened', () => {
-    const plain = renderToStaticMarkup(createElement(PageTitle, { title: 'Tasks' }));
+    const plain = inI18n(createElement(PageTitle, { title: 'Tasks' }));
     expect(plain.match(/<h1 /g)).toHaveLength(1);
     expect(plain).toContain('class="page-bar-title page-bar-title--inline"');
     expect(plain).not.toContain('page-bar-back');
-    const bar = renderToStaticMarkup(createElement(PageBar, { title: 'Core', onBackToChat: () => {} }));
+    const bar = inI18n(createElement(PageBar, { title: 'Core', onBackToChat: () => {} }));
     expect(bar).toContain('page-bar-back');
     const css = read('components/layout/PageBar.css');
     expect(css).toMatch(/\.page-bar-title \{[^}]*font-size: calc\(18px \* var\(--zoom\)\)/);
