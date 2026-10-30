@@ -92,7 +92,7 @@ const SUBAGENT_RULE = [
 export function chatSubagents(contextRoot: string, opts: { exclude?: string; home?: string; routing?: boolean } = {}): ChatSubagents | null {
   const callable: AutomationManifest[] = [];
   let targets: AutomationManifest[] = [];
-  try { targets = listAgentTargets(contextRoot); } catch { targets = []; }
+  try { targets = listAgentTargets(contextRoot, opts.home); } catch { targets = []; }
   for (const m of targets) {
     if (m.slug === opts.exclude) continue;
     let approved = false;

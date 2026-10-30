@@ -29,7 +29,7 @@ import { SUPER_EVENT_PREFIXES, aboutHeads } from '../super/types.js';
  *   through `sayToAgent`, so the list and the verb can never disagree.
  *
  * Pure but for the reads (manifests, the machine-local approval registry, the recall corpus).
- * Every function takes `home?` and hands it to `checkApproval`.
+ * Every function takes `home?` and hands it to `checkApproval` and to the member listing (global agents).
  */
 
 export type MemberState = 'ready' | 'needs-approval' | 'off';
@@ -60,7 +60,7 @@ export interface MemberCall {
  * `getAutomation` throws; `sayToAgent` turns that into its `say_refused`.
  */
 export function memberCallState(contextRoot: string, slug: string, home?: string): MemberCall {
-  const manifest = getAutomation(contextRoot, slug);
+  const manifest = getAutomation(contextRoot, slug, home);
   if (!manifest) return { state: 'missing', manifest: null, verdict: null };
   if (!manifest.enabled) return { state: 'off', manifest, verdict: null };
   const verdict = checkApproval(dirname(contextRoot), manifest, home, 'run');
@@ -97,7 +97,7 @@ export function watchedInsights(prompt: string, slugs: readonly string[]): strin
  */
 export function collectTeam(contextRoot: string, home?: string): TeamMember[] {
   let targets: AutomationManifest[] = [];
-  try { targets = listAgentTargets(contextRoot); } catch { targets = []; }
+  try { targets = listAgentTargets(contextRoot, home); } catch { targets = []; }
   const slugs = insightSlugs(contextRoot);
   const out: TeamMember[] = [];
   for (const m of targets) {
@@ -375,7 +375,7 @@ function callableMembers(contextRoot: string, route: TeamRoute, exclude: string 
   if (route === 'super') return collectTeam(contextRoot, home).filter((m) => m.state === 'ready' && m.slug !== exclude);
   const slugs = insightSlugs(contextRoot);
   let targets: AutomationManifest[] = [];
-  try { targets = listAgentTargets(contextRoot); } catch { targets = []; }
+  try { targets = listAgentTargets(contextRoot, home); } catch { targets = []; }
   const out: TeamMember[] = [];
   for (const m of targets) {
     if (m.slug === exclude) continue;

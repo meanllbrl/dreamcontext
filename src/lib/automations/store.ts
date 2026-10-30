@@ -996,10 +996,10 @@ export function listManifestFiles(contextRoot: string): string[] {
  * with no `agents/` folder that second half is empty, so this is exactly the
  * list it always was.
  */
-export function listAutomations(contextRoot: string): AutomationManifest[] {
+export function listAutomations(contextRoot: string, home?: string): AutomationManifest[] {
   const out = listAutomationFileTargets(contextRoot);
   if (!existsSync(join(contextRoot, 'agents'))) return out;
-  for (const target of listAgentTargets(contextRoot)) {
+  for (const target of listAgentTargets(contextRoot, home)) {
     if (classifyAutomationSlot(contextRoot, target.slug) === 'absent') out.push(target);
   }
   return out.sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
@@ -1010,10 +1010,10 @@ export function listAutomations(contextRoot: string): AutomationManifest[] {
  * (the file, never a fallback, even when that file is unreadable), else the
  * call target of an agent with no file of its own.
  */
-export function getAutomation(contextRoot: string, slug: string): AutomationManifest | null {
+export function getAutomation(contextRoot: string, slug: string, home?: string): AutomationManifest | null {
   if (!isSafeAutomationSlug(slug)) return null;
   const path = automationPath(contextRoot, slug);
-  if (!pathOccupied(path)) return getRunTarget(contextRoot, slug, 'agent');
+  if (!pathOccupied(path)) return getRunTarget(contextRoot, slug, 'agent', home);
   try {
     return readAutomationFile(path);
   } catch {
@@ -1032,10 +1032,10 @@ export function getAutomation(contextRoot: string, slug: string): AutomationMani
  *    built from. A target built any other way carries `legacyKey: false` and
  *    no bindings, and silently loses the approvals that depend on them.
  */
-export function getRunTarget(contextRoot: string, slug: string, kind: RunKind): AutomationManifest | null {
+export function getRunTarget(contextRoot: string, slug: string, kind: RunKind, home?: string): AutomationManifest | null {
   if (!isSafeAutomationSlug(slug)) return null;
   if (kind === 'agent') {
-    const agent = getAgent(contextRoot, slug);
+    const agent = getAgent(contextRoot, slug, home);
     return agent ? agentCallTarget(contextRoot, agent) : null;
   }
   const path = automationPath(contextRoot, slug);

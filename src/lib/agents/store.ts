@@ -264,7 +264,7 @@ function bySlug<T extends { slug: string }>(a: T, b: T): number {
   return a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0;
 }
 
-function resolveAgents(contextRoot: string, files: readonly SlotFile[]): AgentManifest[] {
+function resolveAgents(contextRoot: string, files: readonly SlotFile[], home?: string): AgentManifest[] {
   const agents = new Map<string, AgentManifest>();
   for (const f of files) {
     if (f.parts.kind === 'legacy') agents.set(f.slug, legacyPair(f.parts.legacy).agent);
@@ -280,9 +280,9 @@ function resolveAgents(contextRoot: string, files: readonly SlotFile[]): AgentMa
     }
   }
   // This machine's global agents (D1), each unless a project member of its name shadows it here.
-  for (const slug of listGlobalAgentSlugs()) {
+  for (const slug of listGlobalAgentSlugs(home)) {
     if (agents.has(slug) || hasProjectMember(contextRoot, slug)) continue;
-    const agent = readGlobalAgent(slug);
+    const agent = readGlobalAgent(slug, home);
     if (agent) agents.set(slug, agent);
   }
   return [...agents.values()].sort(bySlug);
@@ -301,13 +301,14 @@ function callTargetFrom(contextRoot: string, agent: AgentManifest, files: readon
 }
 
 /** Every agent, sorted by slug: each unsplit legacy manifest's agent (on-call
- *  ones included) and each readable `agents/*.md` it does not shadow. */
-export function listAgents(contextRoot: string): AgentManifest[] {
-  return resolveAgents(contextRoot, readSlotFiles(contextRoot));
+ *  ones included) and each readable `agents/*.md` it does not shadow. `home`
+ *  is the machine home the global agents are read from (default: the real one). */
+export function listAgents(contextRoot: string, home?: string): AgentManifest[] {
+  return resolveAgents(contextRoot, readSlotFiles(contextRoot), home);
 }
 
 /** One agent, by the same precedence as {@link listAgents}, or null. */
-export function getAgent(contextRoot: string, slug: string): AgentManifest | null {
+export function getAgent(contextRoot: string, slug: string, home?: string): AgentManifest | null {
   if (!isSafeAutomationSlug(slug)) return null;
   const slotPath = automationPath(contextRoot, slug);
   if (pathOccupied(slotPath)) {
@@ -320,7 +321,7 @@ export function getAgent(contextRoot: string, slug: string): AgentManifest | nul
   }
   const path = agentPath(contextRoot, slug);
   // No member of this name here: this machine's global agent of that name, if there is one (D1).
-  if (!pathOccupied(path)) return isGlobalAgentHere(contextRoot, slug) ? readGlobalAgent(slug) : null;
+  if (!pathOccupied(path)) return isGlobalAgentHere(contextRoot, slug, home) ? readGlobalAgent(slug, home) : null;
   try {
     return readAgentFile(path);
   } catch {
@@ -336,9 +337,9 @@ export function agentCallTarget(contextRoot: string, agent: AgentManifest): Auto
 
 /** The call target of EVERY agent (same-slug pairs' agents included). The only
  *  list an agent approval surface may iterate. */
-export function listAgentTargets(contextRoot: string): AutomationManifest[] {
+export function listAgentTargets(contextRoot: string, home?: string): AutomationManifest[] {
   const files = readSlotFiles(contextRoot);
-  return resolveAgents(contextRoot, files).map((agent) => callTargetFrom(contextRoot, agent, files));
+  return resolveAgents(contextRoot, files, home).map((agent) => callTargetFrom(contextRoot, agent, files));
 }
 
 // ─── Writes ──────────────────────────────────────────────────────────────────
