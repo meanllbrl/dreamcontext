@@ -393,3 +393,21 @@
   .bsearch-layout { flex-direction: column; }
   .bsearch-list { width: 100%; }
 }
+
+/* The new shell's one-row header (W2-B): the page title, then the search on the same row,
+   reaching the frame's edges (the Knowledge page is padded 16/20). */
+.bsearch-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: calc(var(--space-4) * -1) calc(var(--space-5) * -1) 0;
+  padding: 0 var(--space-5);
+}
+.bsearch-head .bsearch-bar {
+  flex: 1 1 auto;
+  min-width: 130px;
+  max-width: 560px;
+  padding-top: var(--space-1);
+  padding-bottom: var(--space-1);
+  box-shadow: none;
+}

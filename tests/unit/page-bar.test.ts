@@ -37,6 +37,12 @@ describe('page headers', () => {
     }
   });
 
+  it('a page state with no toolbar row (off, empty) still carries the one title bar', () => {
+    expect(read('pages/HypothesesPage.tsx')).toMatch(/return newShell \? <div className="ns-empty-page"><PageBar title=\{t\('nav\.hypotheses'\)\} \/>\{off\}<\/div> : off;/);
+    expect(read('components/lab/board/BoardPage.tsx')).toMatch(/board-page--empty">\s*\{newShell && <PageBar title=\{t\('nav\.labpage'\)\} \/>\}/);
+    expect(read('components/council/CouncilHall.tsx')).toMatch(/if \(newShell\) return <><PageBar flush title=\{t\('nav\.council'\)\} \/><CouncilEmptyState/);
+  });
+
   it('the toolbar components draw the title only when given one, and mark the row', () => {
     for (const file of ['components/tasks/BoardViewTabs.tsx', 'components/roadmap/RoadmapToolbar.tsx', 'components/theses/ThesisBoardToolbar.tsx', 'components/search/BrainSearch.tsx']) {
       const src = read(file);

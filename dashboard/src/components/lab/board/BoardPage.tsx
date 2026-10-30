@@ -4,7 +4,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useIsNewShell } from '../../../lib/uxMode';
-import { PageTitle } from '../../layout/PageBar';
+import { PageBar, PageTitle } from '../../layout/PageBar';
 import { useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../../context/I18nContext';
 import { useApi, useVault } from '../../../context/VaultContext';
@@ -678,6 +678,7 @@ export function BoardPage({
   if (list.isSuccess && boards.length === 0) {
     return (
       <div className="board-page board-page--empty">
+        {newShell && <PageBar title={t('nav.labpage')} />}
         {banner}
         <div className="board-canvas">
           <BoardEmptyState

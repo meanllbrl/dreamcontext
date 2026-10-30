@@ -24,29 +24,41 @@ function heading(block: Element): string {
   return block.querySelector('h1, h2, h3, .settings-section-title, .setting-group-title')?.textContent ?? '';
 }
 
+/** Filter one container: its heading matching shows it whole; otherwise its rows (or, with no
+ *  rows, its whole text) decide. Returns whether anything in it still shows. */
+function filterBox(box: Element, words: readonly string[], head: string): boolean {
+  if (textMatches(head, words)) return true;
+  const rows = Array.from(box.querySelectorAll('.setting-row'));
+  if (!rows.length) return textMatches(box.textContent ?? '', words);
+  let any = false;
+  for (const row of rows) {
+    const text = `${row.querySelector('.setting-row-title')?.textContent ?? ''} ${row.querySelector('.setting-row-hint')?.textContent ?? ''}`;
+    if (textMatches(text, words)) any = true;
+    else row.setAttribute(HIDDEN, '');
+  }
+  return any;
+}
+
 /** Apply the query to `root`; returns how many blocks still show. An empty query clears. */
 export function applySettingsSearch(root: HTMLElement, query: string): number {
   const words = queryWords(query);
-  const blocks = Array.from(root.children);
   for (const el of root.querySelectorAll(`[${HIDDEN}]`)) el.removeAttribute(HIDDEN);
   paint(root, []);
+  const blocks = Array.from(root.children).filter((b) => !b.matches('.settings-search-empty'));
   if (!words.length) return blocks.length;
   let shown = 0;
   for (const block of blocks) {
-    const rows = Array.from(block.querySelectorAll('.setting-row'));
-    const head = textMatches(heading(block), words);
-    let any = head;
-    if (!head) {
-      if (rows.length) {
-        for (const row of rows) {
-          const text = `${row.querySelector('.setting-row-title')?.textContent ?? ''} ${row.querySelector('.setting-row-hint')?.textContent ?? ''}`;
-          if (textMatches(text, words)) any = true;
-          else row.setAttribute(HIDDEN, '');
-        }
-      } else {
-        any = textMatches(block.textContent ?? '', words);
-      }
+    if (textMatches(heading(block), words)) { shown++; continue; }
+    // A section is its groups (and loose pieces between them): each decides for itself, and an
+    // empty group never leaves its title standing alone.
+    const parts = Array.from(block.querySelectorAll(':scope > *:not(.settings-section-head)'));
+    let any = false;
+    for (const part of parts) {
+      const title = part.querySelector('.setting-group-title')?.textContent ?? '';
+      if (filterBox(part, words, title)) any = true;
+      else part.setAttribute(HIDDEN, '');
     }
+    if (!parts.length) any = filterBox(block, words, '');
     if (any) shown++;
     else block.setAttribute(HIDDEN, '');
   }

@@ -3,7 +3,7 @@ import { useI18n } from '../../context/I18nContext';
 import {
   SUPER_EFFORT_CHOICES, SUPER_MODEL_CHOICES, patchAgentSettings, type AgentSettings,
 } from '../../lib/agentSettings';
-import { getProfile, saveProfile } from '../../lib/assistantProfile';
+import { getAssistantStatus, saveProfile } from '../../lib/assistantProfile';
 import {
   SLEEP_EFFORT_OPTIONS, SLEEP_MODEL_OPTIONS, SLEEP_SPECIALISTS, useConfig, useUpdateConfig,
 } from '../../hooks/useConfig';
@@ -70,12 +70,13 @@ export function ModelsSection({ agentCfg, onOpenSleep }: {
   const [assistant, setAssistant] = useState<{ model: string; effort: string } | 'none' | null>(null);
   useEffect(() => {
     let gone = false;
-    getProfile().then(
-      (p) => {
-        const c = p.config as { model?: unknown; effort?: unknown };
-        if (!gone) setAssistant({ model: typeof c.model === 'string' ? c.model : '', effort: typeof c.effort === 'string' ? c.effort : '' });
+    // The status route answers before the Assistant exists (the profile route is a 404 then).
+    getAssistantStatus().then(
+      (st) => {
+        if (gone) return;
+        if (!st.exists || !st.config) { setAssistant('none'); return; }
+        setAssistant({ model: st.config.model ?? '', effort: st.config.effort ?? '' });
       },
-      // 404 `no_assistant` (not created yet) and a refusal both leave the row disabled.
       () => { if (!gone) setAssistant('none'); },
     );
     return () => { gone = true; };

@@ -1,4 +1,7 @@
 import { useEffect, useState } from 'react';
+import { useI18n } from '../context/I18nContext';
+import { PageBar } from '../components/layout/PageBar';
+import { useIsNewShell } from '../lib/uxMode';
 import { useTheses, useSetLearningEnabled } from '../hooks/useTheses';
 import { ThesisBoard } from '../components/theses/ThesisBoard';
 import type { FocusTarget } from '../hooks/useFocusTarget';
@@ -21,6 +24,8 @@ export function HypothesesPage({ focus }: HypothesesPageProps = {}) {
   const setLearningEnabled = useSetLearningEnabled();
   const [initialObjective, setInitialObjective] = useState<string | null>(null);
   const [initialDetailSlug, setInitialDetailSlug] = useState<string | null>(null);
+  const newShell = useIsNewShell();
+  const { t } = useI18n();
 
   useEffect(() => {
     const id = focus?.id;
@@ -40,7 +45,7 @@ export function HypothesesPage({ focus }: HypothesesPageProps = {}) {
   }
 
   if (data?.enabled === false) {
-    return (
+    const off = (
       <div className="hyp-off">
         <div className="hyp-off-icon" aria-hidden="true">⊘</div>
         <h2 className="hyp-off-title">The Proactive Learning Layer is off</h2>
@@ -60,6 +65,8 @@ export function HypothesesPage({ focus }: HypothesesPageProps = {}) {
         </button>
       </div>
     );
+    // The new shell: the off state has no toolbar row, so it gets the title-only bar (W2-B).
+    return newShell ? <div className="ns-empty-page"><PageBar title={t('nav.hypotheses')} />{off}</div> : off;
   }
 
   return (

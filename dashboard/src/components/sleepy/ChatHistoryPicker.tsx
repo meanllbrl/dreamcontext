@@ -348,7 +348,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
             {loading ? 'Reading your conversations…'
               : failed ? 'Could not read past chats.'
                 : trimmed ? `No past chat matches “${trimmed}”.`
-                  : cross && scope === ALL ? t('shell.history.empty')
+                  : cross && scope === ALL ? t('shell.history.none')
                   : showAgentRuns ? 'No past chats in this project yet.'
                     : hiddenRuns > 0
                       ? `Nothing here but ${hiddenRuns} agent run${hiddenRuns === 1 ? '' : 's'}.`

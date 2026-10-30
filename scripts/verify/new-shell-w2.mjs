@@ -44,7 +44,7 @@ async function dismissWhatsNew(page) {
 async function metrics(page) {
   return page.evaluate(() => {
     const inst = document.querySelector('.project-instance:not([hidden])');
-    const titles = [...(inst?.querySelectorAll('[data-testid="page-bar"]') ?? [])].filter((el) => el.getClientRects().length > 0);
+    const titles = [...(inst?.querySelectorAll('.page-bar-title') ?? [])].filter((el) => el.getClientRects().length > 0);
     const row = titles[0]?.closest('[data-page-row], .page-bar');
     const drawer = document.querySelector('[data-testid="chat-drawer"]');
     return {
@@ -52,7 +52,7 @@ async function metrics(page) {
       titles: titles.length,
       titleText: titles[0]?.textContent?.trim() ?? null,
       titleRowH: row ? Math.round(row.getBoundingClientRect().height) : null,
-      titleFont: titles[0] ? getComputedStyle(titles[0].matches('h1') ? titles[0] : titles[0].querySelector('h1')).fontSize : null,
+      titleFont: titles[0] ? getComputedStyle(titles[0]).fontSize : null,
       drawer: drawer ? Math.round(drawer.getBoundingClientRect().width) : 0,
       chatOpen: !!inst?.querySelector('.agent-surface.expanded'),
     };
