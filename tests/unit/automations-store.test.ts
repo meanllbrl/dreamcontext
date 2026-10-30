@@ -1337,7 +1337,8 @@ describe('bound automations through the automation store', () => {
   });
 
   it('listAutomations lists an agent with no automation file as its call target, beside the jobs', () => {
-    const slugs = storeForBound.listAutomations(boundCtx).map((m) => `${m.slug}:${m.runKind}`);
+    // An empty home: this machine's global agents would join the list otherwise.
+    const slugs = storeForBound.listAutomations(boundCtx, join(boundProj, 'home')).map((m) => `${m.slug}:${m.runKind}`);
     expect(slugs).toEqual(['scout:agent', 'scout-daily:automation']);
     expect(storeForBound.listAutomationJobs(boundCtx).map((j) => j.slug)).toEqual(['scout-daily']);
   });

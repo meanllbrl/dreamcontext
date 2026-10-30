@@ -150,7 +150,7 @@ export function buildAutomationsSnapshot(
   let hasFailure = false;
   let total = 0;
 
-  for (const manifest of listAutomations(contextRoot)) {
+  for (const manifest of listAutomations(contextRoot, opts.home)) {
     total += 1;
     // ─── Last-24h runs / failures (cache history within the window) ────────
     const cache = readAutomationCache(contextRoot, manifest.slug);
@@ -229,7 +229,7 @@ export function buildAutomationsSnapshot(
   const blockedSlugs = new Set(blockedLines.map((l) => l.slice(2, l.indexOf(':'))));
   const agentLines: string[] = [];
   let agentTargets: ReturnType<typeof listAgentTargets> = [];
-  try { agentTargets = listAgentTargets(contextRoot); } catch { agentTargets = []; }
+  try { agentTargets = listAgentTargets(contextRoot, opts.home); } catch { agentTargets = []; }
   for (const target of agentTargets) {
     if (blockedSlugs.has(target.slug)) continue;
     const runVerdict = checkApproval(projectRoot, target, opts.home, 'run');

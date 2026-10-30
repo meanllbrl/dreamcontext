@@ -196,7 +196,8 @@ describe('setAgentPlacement: the write, outside the approval hash', () => {
     writeFileSync(join(ctx, 'agents', 'x.md'), file('x', 'y'));
     writeFileSync(join(ctx, 'agents', 'y.md'), file('y', 'x'));
     writeFileSync(join(ctx, 'agents', 'z.md'), file('z', 'gone'));
-    const t = buildTree(listAgents(ctx));
+    // `home`: the machine's own global agents would join the tree otherwise.
+    const t = buildTree(listAgents(ctx, home));
     expect(t.nodes.size).toBe(3);
     expect(t.roots.sort()).toEqual(['x', 'z']);
     expect(t.nodes.get('z')!.missingManager).toBe('gone');
