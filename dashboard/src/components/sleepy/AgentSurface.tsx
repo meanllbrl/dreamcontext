@@ -586,6 +586,8 @@ export function AgentSurface() {
   const classicHomeRef = useRef(new Map<string, string>());
   /** The first roster read seeded the windows; a re-hydrate merges into them. */
   const windowsSeededRef = useRef(false);
+  /** The windows are this surface's to save: seeded from the roster, or the owner changed them. */
+  const windowsKnownRef = useRef(false);
   /** A new (or emptied last) window asks for a fresh chat tab once its empty panes render. */
   const [freshTabNonce, setFreshTabNonce] = useState(0);
   /** The 40-tab ceiling was hit: a lasting notice until a tab closes or it is dismissed. */
@@ -634,6 +636,8 @@ export function AgentSurface() {
   // while the overlay stays open — they live on as live progress chips in the corner dock,
   // restorable with a click. Kept alive in the garage exactly like any backgrounded tab.
   const [minimizedIds, setMinimizedIds] = useState<string[]>([]);
+  const minimizedIdsRef = useRef(minimizedIds);
+  minimizedIdsRef.current = minimizedIds;
   // The tab drag in flight (tabDrag.ts) — one store per surface, read by the tab strip and the
   // panes' drop overlays. Never React state here: a drag re-renders only what its target
   // touches, never this 4k-line surface.
@@ -1429,6 +1433,7 @@ export function AgentSurface() {
             if (firstSeed) {
               const r = restoreWindows(savedWindows, placed, res.activePane, nextPaneId);
               windowsSeededRef.current = true;
+              windowsKnownRef.current = true;
               chatWindowsRef.current = r.state;
               setChatWindows(r.state);
               // Something opened a tab while the roster was in flight (the D7 race): it keeps the
@@ -1485,6 +1490,7 @@ export function AgentSurface() {
         // window list itself still comes back, so a save never drops a name.
         if (firstSeed && !windowsSeededRef.current && savedWindows) {
           windowsSeededRef.current = true;
+          windowsKnownRef.current = true;
           const seeded: WindowsState = { list: savedWindows.map((w) => ({ id: w.id, name: w.name, panes: [], activePaneId: '' })), activeId: savedWindows[0].id };
           chatWindowsRef.current = seeded;
           setChatWindows(seeded);
@@ -1520,7 +1526,9 @@ export function AgentSurface() {
       const activeTabs = new Set<string>();
       const windowOf = new Map<string, string>();
       let activePaneIndex = -1;
-      let windowsOut: SavedWindowMeta[];
+      // Sent only once this surface knows the project's windows (the first read seeded them, or
+      // the owner made one): a surface that never read them must not replace the stored names.
+      let windowsOut: SavedWindowMeta[] | undefined;
       if (windowed) {
         // Every window's panes, window after window, ONE index across the surface: an app from
         // before windows still lays each tab out in its own pane (D8).
@@ -1531,17 +1539,21 @@ export function AgentSurface() {
           if (at.active) activeTabs.add(sid);
         });
         activePaneIndex = sp.activePane ?? -1;
-        windowsOut = sp.windows;
+        if (windowsKnownRef.current) windowsOut = sp.windows;
       } else {
         panes.forEach((p, i) => {
           p.tabs.forEach((t) => paneOf.set(t, i));
           if (p.active) activeTabs.add(p.active);
         });
         activePaneIndex = panes.findIndex((p) => p.id === activePaneId);
-        // Classic hands every tab back to the window it came from, and the windows unchanged.
+        // Classic hands every tab back to the window it came from, and sends no `windows` at all:
+        // absence keeps the stored list exactly, each window's focused pane included.
         for (const m of sessionList) windowOf.set(m.id, classicHomeRef.current.get(m.claudeId) ?? chatWindows.list[0]?.id ?? DEFAULT_WINDOW_ID);
-        windowsOut = chatWindows.list.map((w) => ({ id: w.id, name: w.name }));
+        windowsOut = undefined;
       }
+      // The window on screen's tabs first: an app from before W3 keeps only the first 20 entries
+      // (its MAX_SESSIONS), so a downgrade past 20 tabs keeps the ones the owner was looking at.
+      const shownFirst = (m: SessionMeta) => (windowOf.get(m.id) === chatWindows.activeId ? 0 : 1);
       const payload = {
         // The remembered permission mode rides with the roster: same per-vault, machine-local,
         // gitignored file, and the same reason for being server-side at all (localStorage dies
@@ -1551,8 +1563,8 @@ export function AgentSurface() {
         // Every conversation's saved drafts, not only the open tabs' (composerDrafts.ts).
         ...(draftsLoadedRef.current ? { drafts: allDrafts(vault) } : {}),
         ...(activePaneIndex >= 0 ? { activePane: activePaneIndex } : {}),
-        windows: windowsOut,
-        sessions: [...sessionList
+        ...(windowsOut ? { windows: windowsOut } : {}),
+        sessions: [...[...sessionList].sort((a, b) => shownFirst(a) - shownFirst(b))
           .filter((m) => m.kind !== 'shell')
           // The Super Agent is never a tab, so it is never saved as one: a relaunch after
           // take-back shows no super tab, and a reload while handed over rebinds it by id.
@@ -5098,6 +5110,7 @@ export function AgentSurface() {
     const cur = chatWindowsRef.current;
     const name = tRef.current('shell.windows.newName').replace('{n}', String(cur.list.length + 1));
     const r = addWindow(cur, name, { panes: panesRef.current, activePaneId: activePaneIdRef.current }, sessionListRef.current);
+    windowsKnownRef.current = true;
     chatWindowsRef.current = r.state;
     panesRef.current = [];
     activePaneIdRef.current = '';
@@ -5117,6 +5130,7 @@ export function AgentSurface() {
   }, [freshTabNonce]);
   const renameChatWindow = useCallback((id: string, name: string) => {
     if (!cleanWindowName(name)) return;
+    windowsKnownRef.current = true;
     setChatWindows((prev) => renameWindow(prev, id, name));
   }, []);
   /**
@@ -5128,7 +5142,11 @@ export function AgentSurface() {
     const before = chatWindowsRef.current;
     if (!before.list.some((w) => w.id === id)) return;
     const superSid = superStateRef.current?.session;
-    const tabsOf = (st: WindowsState) => sessionListRef.current.filter((m) => !isSuperSession(m, superSid) && windowOfTab(st, m.claudeId) === id);
+    // A minimized tab sits in no window's panes (a corner chip, often a delegate started from a
+    // page): closing a window never takes it, unless this is the last window, which empties.
+    const minimized = new Set(minimizedIdsRef.current);
+    const tabsOf = (st: WindowsState) => sessionListRef.current.filter((m) => !isSuperSession(m, superSid)
+      && windowOfTab(st, m.claudeId) === id && (st.list.length <= 1 || !minimized.has(m.id)));
     const running = tabsOf(before).filter((m) => {
       const live = m.dormant ? undefined : sessions.current.get(m.id);
       return !!live && (live.busy || live.asking);
@@ -5156,6 +5174,7 @@ export function AgentSurface() {
       if (next) showWindow(next);
     }
     for (const m of closing) closeSessionById(m.id);
+    windowsKnownRef.current = true;
     chatWindowsRef.current = dropWindow(chatWindowsRef.current, id);
     setChatWindows((prev) => dropWindow(prev, id));
   }, [closeSessionById, showWindow]);

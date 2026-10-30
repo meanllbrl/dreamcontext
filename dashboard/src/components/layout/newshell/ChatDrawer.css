@@ -370,10 +370,6 @@
   color: var(--color-error-ink);
 }
 
-[data-theme="dark"] .ns-drawer-menu-item.is-danger {
-  color: var(--color-error);
-}
-
 /* ── A window row renamed in place (the desktop WebView has no prompt) ───────────── */
 
 .ns-dr-win.is-renaming {

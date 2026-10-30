@@ -148,6 +148,18 @@ describe('roster windows: round trip and absence', () => {
     expect(new Set(old.map((m) => m.pane)).size).toBe(3);
   });
 
+  it('past 20 tabs, an older app (which keeps the first 20) gets the window that was on screen: the order sent is kept', async () => {
+    // The client saves the shown window's tabs first (AgentSurface `shownFirst`).
+    const sessions = [
+      ...Array.from({ length: 12 }, (_, i) => tab(`Shown ${i}`, { sessionId: uuid(i + 1), window: 'w2', pane: 3 })),
+      ...Array.from({ length: 13 }, (_, i) => tab(`Other ${i}`, { sessionId: uuid(i + 50), window: 'main', pane: 0 })),
+    ];
+    await put({ windows: [{ id: 'main', name: 'Chat' }, { id: 'w2', name: 'Two' }], sessions, chatPermissionMode: 'auto' });
+    const oldReader = stored().sessions.slice(0, 20); // MAX_SESSIONS before W3
+    expect(oldReader.filter((m) => m.window === 'w2')).toHaveLength(12);
+    expect(stored().sessions).toHaveLength(25);
+  });
+
   it('a 409 on a stale generation still holds, and carries the windows', async () => {
     writeFileSync(file(), JSON.stringify({ ...twoWindows, generation: 2 }));
     const r = await put({ ...twoWindows, baseGeneration: 1 });

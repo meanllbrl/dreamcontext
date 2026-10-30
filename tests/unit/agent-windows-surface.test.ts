@@ -122,6 +122,8 @@ describe('new, rename, close', () => {
     expect(close).not.toMatch(/window\.confirm|\bconfirm\(/);
     expect(close).toContain("tRef.current('shell.windows.closeRunning.body')");
     expect(close).toMatch(/now\.list\.length <= 1\) \{\s+for \(const m of closing\) closeSessionById\(m\.id\);\s+setFreshTabNonce/);
+    // A minimized chip belongs to no window: only the last window's close takes it.
+    expect(close).toContain('(st.list.length <= 1 || !minimized.has(m.id))');
   });
 });
 
@@ -194,10 +196,15 @@ describe('save and restore', () => {
   });
 
   it('AgentSurface saves `windows` and each tab\'s `window`, and classic hands both back unchanged', () => {
-    expect(SURFACE).toMatch(/windows: windowsOut,/);
+    expect(SURFACE).toContain('...(windowsOut ? { windows: windowsOut } : {}),');
     expect(SURFACE).toMatch(/\.\.\.\(windowOf\.has\(m\.id\) \? \{ window: windowOf\.get\(m\.id\) \} : \{\}\)/);
     expect(SURFACE).toMatch(/classicHomeRef\.current\.get\(m\.claudeId\)/);
-    expect(SURFACE).toMatch(/windowsOut = chatWindows\.list\.map\(\(w\) => \(\{ id: w\.id, name: w\.name \}\)\)/);
+    // Classic sends no windows at all (absence keeps them, focused panes included); the new shell
+    // only once it knows them, so a surface that never read them cannot replace the names.
+    expect(SURFACE).toMatch(/windowsOut = undefined;/);
+    expect(SURFACE).toContain('if (windowsKnownRef.current) windowsOut = sp.windows;');
+    // The window on screen's tabs are saved first (an older app keeps only the first 20).
+    expect(SURFACE).toContain('[...sessionList].sort((a, b) => shownFirst(a) - shownFirst(b))');
   });
 });
 
