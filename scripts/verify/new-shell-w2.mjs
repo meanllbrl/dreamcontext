@@ -287,21 +287,41 @@ for (const run of RUNS) {
   await post({ shell: 'new' });
   await open();
 
-  // 8: the Super row on a project with no chat.
-  if (await showDrawer(page)) {
+  // 8: the Super row on a project with NO chat and no Super record (initech at 1440, globex at
+  // 1024): it starts a chat first (auto), then hands over; the drawer stays beside the stage.
+  const superRow = async (vault, w, h) => {
+    await page.setViewportSize({ width: w, height: h });
+    await open();
+    const before = await page.evaluate(async ([u, v]) => {
+      const r = await fetch(`${u}/api/agent/sessions`, { headers: { 'x-dreamcontext-vault': v } });
+      const s = await fetch(`${u}/api/super/state`, { headers: { 'x-dreamcontext-vault': v } }).then((x) => x.json()).catch(() => ({}));
+      return { tabs: (await r.json()).sessions?.length ?? null, superOn: !!(s.enabled ?? s.state?.enabled) };
+    }, [BASE, vault]);
+    if (!(await showDrawer(page))) { fail(`super-row@${w}: no drawer`); return; }
     await expandAll(page);
-    await page.locator('[data-drawer-project="initech"] [data-testid="drawer-super-row"]').click();
-    await settle(page, 6000);
-    const st = await page.evaluate(() => ({
-      stage: !!document.querySelector('.project-instance:not([hidden]) .super-surface'),
-      drawer: !!document.querySelector('[data-testid="chat-drawer"]'),
-      picker: document.querySelector('[data-testid="ns-picker-btn"]')?.textContent?.trim(),
-    }));
-    report.checks.superRow = st;
-    await page.screenshot({ path: join(OUT, 'super-row-initech-1440-dark.png') });
-    if (!st.stage) fail(`super-row: no Super stage on initech (${JSON.stringify(st)})`);
-    if (!st.drawer) fail('super-row: the drawer left beside the stage');
-  }
+    await page.locator(`[data-drawer-project="${vault}"] [data-testid="drawer-super-row"]`).click();
+    await settle(page, 7000);
+    const st = await page.evaluate(async ([u, v]) => {
+      const r = await fetch(`${u}/api/agent/sessions`, { headers: { 'x-dreamcontext-vault': v } }).then((x) => x.json());
+      return {
+        stage: !!document.querySelector('.project-instance:not([hidden]) .super-surface'),
+        drawer: !!document.querySelector('[data-testid="chat-drawer"]'),
+        picker: document.querySelector('[data-testid="ns-picker-btn"]')?.textContent?.trim(),
+        spawned: (r.sessions ?? []).map((m) => ({ kind: m.kind, bypass: m.bypass })),
+        chatPermissionMode: r.chatPermissionMode,
+      };
+    }, [BASE, vault]);
+    report.checks[`superRow@${w}`] = { before, after: st };
+    await page.screenshot({ path: join(OUT, `super-row-${vault}-${w}-dark.png`) });
+    if (before.tabs !== 0 || before.superOn) fail(`super-row@${w}: ${vault} was not a fresh no-chat project (${JSON.stringify(before)})`);
+    if (!st.stage) fail(`super-row@${w}: no Super stage on ${vault} (${JSON.stringify(st)})`);
+    if (!st.drawer) fail(`super-row@${w}: the drawer left beside the stage`);
+    if (!st.spawned.some((m) => m.kind === 'chat' && m.bypass === false)) fail(`super-row@${w}: no starter chat in auto (${JSON.stringify(st.spawned)})`);
+    if (vault === 'initech' && st.chatPermissionMode !== 'bypass') fail(`super-row@${w}: the remembered bypass mode changed to ${st.chatPermissionMode}`);
+  };
+  await superRow('initech', 1440, 900);
+  await superRow('globex', 1024, 768);
+  await page.setViewportSize({ width: 1440, height: 900 });
 
   // 10: order, width and expanded projects survive a restart.
   await open();

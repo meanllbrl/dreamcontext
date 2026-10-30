@@ -23,6 +23,12 @@ import { SaveMark, useInstantSave } from './useInstantSave';
  * The AI Team team-wide and Short text models are not here: their keys do not exist yet.
  */
 const CHAT_MODELS = ['opus', 'sonnet', 'haiku'] as const;
+
+/** `patchAgentSettings` resolves `{ ok: false }` on a refused write: that is not a save. */
+async function patchOrThrow(patch: Partial<AgentSettings>): Promise<void> {
+  const r = await patchAgentSettings(patch) as { ok?: boolean; error?: string } | undefined;
+  if (r && r.ok === false) throw new Error(r.error ?? 'not saved');
+}
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 /** MIRRORED from `src/lib/assistant/home.ts` (DEFAULT_ASSISTANT_MODEL and its default effort): what
  *  the Assistant runs on before anyone picks; the server cannot store "no choice", so no Default. */
@@ -109,9 +115,9 @@ export function ModelsSection({ agentCfg, onOpenSleep }: {
         control={agentCfg && (
           <span className="settings-models-pair">
             <Pick aria={`${t('shell.settings.models.chat')} model`} testId="models-chat-model" value={agentCfg.chatDefaultModel} choices={CHAT_MODELS} inherit={inherit}
-              onChange={(v) => void chatSave.save(() => patchAgentSettings({ chatDefaultModel: v }))} />
+              onChange={(v) => void chatSave.save(() => patchOrThrow({ chatDefaultModel: v }))} />
             <Pick aria={`${t('shell.settings.models.chat')} effort`} testId="models-chat-effort" value={agentCfg.chatDefaultEffort} choices={EFFORTS} inherit={inherit}
-              onChange={(v) => void chatSave.save(() => patchAgentSettings({ chatDefaultEffort: v }))} />
+              onChange={(v) => void chatSave.save(() => patchOrThrow({ chatDefaultEffort: v }))} />
           </span>
         )}
       />
@@ -122,9 +128,9 @@ export function ModelsSection({ agentCfg, onOpenSleep }: {
         control={agentCfg && (
           <span className="settings-models-pair">
             <Pick aria={t('settings.agents.super_model')} testId="settings-super-model" value={agentCfg.superModel} choices={SUPER_MODEL_CHOICES}
-              onChange={(v) => void superSave.save(() => patchAgentSettings({ superModel: v }))} />
+              onChange={(v) => void superSave.save(() => patchOrThrow({ superModel: v }))} />
             <Pick aria={t('settings.agents.super_effort')} testId="settings-super-effort" value={agentCfg.superEffort} choices={SUPER_EFFORT_CHOICES}
-              onChange={(v) => void superSave.save(() => patchAgentSettings({ superEffort: v }))} />
+              onChange={(v) => void superSave.save(() => patchOrThrow({ superEffort: v }))} />
           </span>
         )}
       />

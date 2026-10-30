@@ -41,10 +41,12 @@ describe('Models', () => {
   });
 
   it('each row saves its existing key', () => {
-    expect(models).toMatch(/patchAgentSettings\(\{ chatDefaultModel: v \}\)/);
-    expect(models).toMatch(/patchAgentSettings\(\{ chatDefaultEffort: v \}\)/);
-    expect(models).toMatch(/patchAgentSettings\(\{ superModel: v \}\)/);
-    expect(models).toMatch(/patchAgentSettings\(\{ superEffort: v \}\)/);
+    // Through patchAgentSettings, and a refused write is not shown as saved.
+    expect(models).toMatch(/const r = await patchAgentSettings\(patch\)/);
+    expect(models).toMatch(/patchOrThrow\(\{ chatDefaultModel: v \}\)/);
+    expect(models).toMatch(/patchOrThrow\(\{ chatDefaultEffort: v \}\)/);
+    expect(models).toMatch(/patchOrThrow\(\{ superModel: v \}\)/);
+    expect(models).toMatch(/patchOrThrow\(\{ superEffort: v \}\)/);
     expect(models).toMatch(/saveProfile\(\{ model: v \}\)/);
     expect(models).toMatch(/saveProfile\(\{ effort: v \}\)/);
     // Sleep: every specialist at once through /api/config.

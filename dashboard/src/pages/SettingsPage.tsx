@@ -223,6 +223,22 @@ export function SettingsPage({ focus }: SettingsPageProps) {
     setShownBlocks(applySettingsSearch(contentRef.current, searching ? query : ''));
   });
   useEffect(() => () => { if (contentRef.current) applySettingsSearch(contentRef.current, ''); }, []);
+  // Sections load their own data after the keystroke: re-apply when their rows arrive. Only
+  // nodes and text are watched, never attributes, so the filter's own marks do not re-trigger it.
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!searching || !root || typeof MutationObserver === 'undefined') return undefined;
+    let raf = 0;
+    const obs = new MutationObserver(() => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        setShownBlocks(applySettingsSearch(root, query));
+      });
+    });
+    obs.observe(root, { childList: true, subtree: true, characterData: true });
+    return () => { obs.disconnect(); if (raf) cancelAnimationFrame(raf); };
+  }, [searching, query]);
   // `/` and ⌘F put the cursor in the search, unless the owner is typing somewhere already.
   const { isActive } = useVault();
   useEffect(() => {

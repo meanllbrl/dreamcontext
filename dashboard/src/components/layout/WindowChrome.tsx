@@ -1053,8 +1053,12 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [newWindowNonce, setNewWindowNonce] = useState(0);
-  const newWindowRef = useRef<() => void>(() => {});
-  newWindowRef.current = () => { if (drawerVisible) setNewWindowNonce((n) => n + 1); };
+  const newWindowRef = useRef<() => boolean>(() => false);
+  newWindowRef.current = () => {
+    if (!drawerVisible) return false;
+    setNewWindowNonce((n) => n + 1);
+    return true;
+  };
 
   // ⌘P opens the picker, ⌘1-9 pick the Nth project in the picker's order, ⌘B is the drawer
   // button. `ProjectSwitcher` is not mounted in the new shell, so ⌘P has one owner.
@@ -1075,10 +1079,10 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
       } else if (key === 'b' && !editable) {
         e.preventDefault();
         setDrawerToggleNonce((n) => n + 1);
-      } else if (key === 'n' && !inTerminal) {
-        // ⌘N: New chat window's project picker, while the drawer is on screen.
+      } else if (key === 'n' && !inTerminal && newWindowRef.current()) {
+        // ⌘N: New chat window's project picker, while the drawer is on screen; otherwise the
+        // key is left alone (⌃N moves a line down in the composer).
         e.preventDefault();
-        newWindowRef.current();
       } else if (/^[1-9]$/.test(e.key) && !inChat) {
         const target = projectOrderRef.current[Number(e.key) - 1];
         if (!target) return;

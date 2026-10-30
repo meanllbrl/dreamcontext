@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useApi } from '../../context/VaultContext';
 import { ApiClient } from '../../api/client';
 import { useI18n } from '../../context/I18nContext';
@@ -98,6 +98,12 @@ interface ChatHistoryPickerProps {
   onPickIn?: (vault: string, session: PastSession) => void;
 }
 
+/** The new shell's list-plus-projects-column box. Classic renders no box at all, so its markup
+ *  stays exactly what it was. */
+function BodyWrap({ on, children }: { on: boolean; children: ReactNode }) {
+  return on ? <div className="chp-body">{children}</div> : <>{children}</>;
+}
+
 /** The projects column's "All projects" entry. */
 const ALL = '\u0000all';
 
@@ -148,6 +154,8 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
   const { t } = useI18n();
   const cross = !!projects;
   const [scope, setScope] = useState<string>(() => currentVault ?? ALL);
+  /** "All projects": the projects whose read failed, named under the list (never dropped). */
+  const [failedVaults, setFailedVaults] = useState<string[]>([]);
   const projectsKey = projects?.join('\n') ?? '';
   const overlayId = useOverlayId('chat-history');
   const [q, setQ] = useState('');
@@ -184,6 +192,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
     setLoading(true);
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const fanned = cross && scope === ALL;
+    if (!fanned) setFailedVaults([]);
     const handle = setTimeout(() => {
       const read: Promise<ChatHistoryResponse> = !cross
         ? api.get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT))
@@ -192,7 +201,12 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
             projects ?? [],
             (v) => new ApiClient(v).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, HISTORY_PER_VAULT)),
             () => reqRef.current === seq,
-          ).then((r) => ({ sessions: r.sessions, total: r.total, agentRuns: r.agentRuns, truncated: false }))
+          ).then((r) => {
+            if (reqRef.current === seq) setFailedVaults(r.failed);
+            // Every project failed: that is a failure, not "no chats".
+            if (r.failed.length && r.failed.length === (projects ?? []).length) throw new Error('every project failed');
+            return { sessions: r.sessions, total: r.total, agentRuns: r.agentRuns, truncated: false };
+          })
           : new ApiClient(scope).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT))
             .then((r) => ({ ...r, sessions: r.sessions.map((x) => ({ ...x, vault: scope })) }));
       read
@@ -288,7 +302,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
         <kbd className="chp-kbd">esc</kbd>
       </div>
 
-      <div className="chp-body">
+      <BodyWrap on={cross}>
       {cross && (
         <div className="chp-projects" role="tablist" aria-label={t('shell.drawer.projects')} data-testid="chp-projects">
           {[ALL, ...(projects ?? [])].map((v) => (
@@ -357,7 +371,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
         )}
       </div>
 
-      </div>
+      </BodyWrap>
 
       <div className="chp-foot">
         <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
@@ -378,6 +392,9 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
               ? 'hide agent runs'
               : `${hiddenRuns} agent run${hiddenRuns === 1 ? '' : 's'} hidden — show`}
           </button>
+        )}
+        {cross && scope === ALL && failedVaults.length > 0 && (
+          <span className="chp-foot-count" data-testid="chp-failed">{t('shell.history.failed').replace('{names}', failedVaults.join(', '))}</span>
         )}
         {trimmed && data?.indexing && (
           <span className="chp-foot-count" data-testid="chp-indexing">

@@ -51,12 +51,22 @@ export function useDrawerProjects(expanded: readonly string[], mounted: readonly
   useEffect(() => {
     if (!visible) return;
     let gone = false;
+    const started: string[] = [];
+    const landed = new Set<string>();
     for (const v of [...poll, ...once]) {
       if (readOnce.current.has(v)) continue;
       readOnce.current.add(v);
-      void readFanoutFacts(v).then((f) => { if (!gone) setFacts((prev) => ({ ...prev, [v]: f })); });
+      started.push(v);
+      void readFanoutFacts(v).then((f) => {
+        landed.add(v);
+        if (!gone) setFacts((prev) => ({ ...prev, [v]: f }));
+      }, () => { /* each read already degrades to empty; this keeps the chain quiet */ });
     }
-    return () => { gone = true; };
+    // A read cut short by a change (another project expanded, focus moved) is read again next time.
+    return () => {
+      gone = true;
+      for (const v of started) if (!landed.has(v)) readOnce.current.delete(v);
+    };
   }, [poll, once, visible]);
 
   // Then every 15 s, the capped few.
@@ -66,11 +76,11 @@ export function useDrawerProjects(expanded: readonly string[], mounted: readonly
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = () => {
       timer = setTimeout(() => {
-        void Promise.all(poll.map((v) => readFanoutFacts(v).then((f) => [v, f] as const))).then((pairs) => {
-          if (gone) return;
-          setFacts((prev) => ({ ...prev, ...Object.fromEntries(pairs) }));
-          tick();
-        });
+        void Promise.all(poll.map((v) => readFanoutFacts(v).then((f) => [v, f] as const)))
+          .then((pairs) => { if (!gone) setFacts((prev) => ({ ...prev, ...Object.fromEntries(pairs) })); })
+          .catch((err) => console.warn('[drawer] a project read failed:', err))
+          // A failed round never stops the polling.
+          .finally(() => { if (!gone) tick(); });
       }, pollMs(DRAWER_POLL_MS));
     };
     tick();

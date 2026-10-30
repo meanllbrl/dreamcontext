@@ -73,6 +73,21 @@ describe('the surface wiring', () => {
     expect(block).toMatch(/bypass: s\.bypass/);
   });
 
+  it('a second Super-row press while the first still runs only shows the stage (never the "back" path)', () => {
+    const at = surface.indexOf("intent.kind === 'super'");
+    const block = surface.slice(at, surface.indexOf('// Open on the last chat (6b)', at));
+    const guard = block.indexOf('if (superBusyRef.current || flightRunRef.current?.run.active || superRowBusyRef.current) {');
+    expect(guard).toBeGreaterThan(0);
+    expect(guard).toBeLessThan(block.indexOf('planSuperRow('));
+    expect(block).toMatch(/superRowBusyRef\.current = true;\s*void runSuperRow\(plan, \{/);
+    expect(block).toMatch(/\}\)\.finally\(\(\) => \{ superRowBusyRef\.current = false; \}\);/);
+  });
+
+  it('open-on-restore yields to a page the window was opened for or already went to', () => {
+    expect(surface).toMatch(/if \(navigatedRef\.current \|\| openedForLink\(\)\) \{ openedOnRestoreThisWindow = true; return; \}/);
+    expect(surface).toMatch(/useInstanceEvent\('dreamcontext-navigate', \(\) => \{\s*navigatedRef\.current = true;/);
+  });
+
   it('a drawer intent waits for the restored tabs and the Super record before it acts', () => {
     expect(surface).toMatch(/const ready = caps !== null && settingsReady && hydratedRef\.current && superKnownRef\.current;/);
   });

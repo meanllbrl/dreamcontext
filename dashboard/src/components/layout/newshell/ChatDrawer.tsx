@@ -40,6 +40,38 @@ export function ChatDrawer(p: ChatDrawerProps) {
   const rootRef = useRef<HTMLElement | null>(null);
   const newRowRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const justDragged = useRef(false);
+  /** Where focus was when a menu opened: it goes back there when the menu closes. */
+  const opener = useRef<HTMLElement | null>(null);
+  const openMenu = (m: Menu) => {
+    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setMenu(m);
+  };
+  const closeMenu = () => {
+    setMenu(null);
+    const back = opener.current;
+    opener.current = null;
+    if (back?.isConnected) requestAnimationFrame(() => back.focus());
+  };
+  // A menu takes focus on its first item, so the keyboard can use it (⌘N is often pressed from
+  // the composer); ↑ ↓ Home End move between items.
+  const menuOpen = !!menu;
+  useEffect(() => {
+    if (menuOpen) menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
+  }, [menuOpen]);
+  const onMenuKey = (e: ReactKeyboardEvent) => {
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)') ?? []);
+    if (!items.length) return;
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    let next = -1;
+    if (e.key === 'ArrowDown') next = (at + 1) % items.length;
+    else if (e.key === 'ArrowUp') next = (at - 1 + items.length) % items.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = items.length - 1;
+    if (next < 0) return;
+    e.preventDefault();
+    items[next].focus();
+  };
   // A menu opens at the click point, then is pulled back inside the window (a right-click near
   // the edge of a 390px window would otherwise hang off it).
   useLayoutEffect(() => {
@@ -58,7 +90,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
     if (p.newWindowNonce === seenNonce.current) return;
     seenNonce.current = p.newWindowNonce;
     const r = newRowRef.current?.getBoundingClientRect();
-    setMenu({ kind: 'new', x: r ? r.left + 12 : 80, y: r ? r.bottom + 4 : 80 });
+    openMenu({ kind: 'new', x: r ? r.left + 12 : 80, y: r ? r.bottom + 4 : 80 });
   }, [p.newWindowNonce]);
 
   // A menu closes on Esc or a press outside it, and owns that Esc (the chat must not see it).
@@ -68,10 +100,10 @@ export function ChatDrawer(p: ChatDrawerProps) {
       if (e.key !== 'Escape') return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      setMenu(null);
+      closeMenu();
     };
     const onDown = (e: PointerEvent) => {
-      if (!(e.target instanceof Element) || !e.target.closest('.ns-drawer-menu')) setMenu(null);
+      if (!(e.target instanceof Element) || !e.target.closest('.ns-drawer-menu')) { opener.current = null; setMenu(null); }
     };
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('pointerdown', onDown, true);
@@ -112,18 +144,22 @@ export function ChatDrawer(p: ChatDrawerProps) {
       if (over < 0) over = els.length;
       setDrag({ name, over });
     };
-    const up = () => {
+    const end = (drop: boolean) => {
       window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
       setDrag(null);
-      if (dragging) {
-        p.onDrop(name, over);
-        // The click that ends a drag is not a toggle.
-        window.addEventListener('click', (ev) => { ev.stopPropagation(); ev.preventDefault(); }, { capture: true, once: true });
-      }
+      if (!dragging) return;
+      if (drop) p.onDrop(name, over);
+      // The click that ends a drag is not a toggle; nothing outside this row is ever held back.
+      justDragged.current = true;
+      setTimeout(() => { justDragged.current = false; }, 0);
     };
+    const onUp = () => end(true);
+    const onCancel = () => end(false);
     window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
   };
 
   const onRowKey = (e: ReactKeyboardEvent, name: string) => {
@@ -172,7 +208,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
       ref={rootRef} aria-label={t('shell.drawer.projects')} data-testid="chat-drawer">
       <div className="ns-dr-scroll">
         <button ref={newRowRef} type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-new-window"
-          onClick={(e) => setMenu({ kind: 'new', x: e.clientX, y: e.clientY })}>
+          onClick={(e) => openMenu({ kind: 'new', x: e.clientX, y: e.clientY })}>
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h3l7-7-3-3-7 7v3zM9 4l3 3" /></svg>
           <span className="ns-dr-t">{t('shell.drawer.newWindow')}</span>
           <kbd className="ns-dr-kbd">⌘N</kbd>
@@ -191,23 +227,27 @@ export function ChatDrawer(p: ChatDrawerProps) {
           <div key={row.name} className="ns-dr-project" data-drawer-project={row.name}
             data-drop-before={drag && drag.over === i && drag.name !== row.name ? 'true' : undefined}
             data-dragging={drag?.name === row.name ? 'true' : undefined}>
-            <div role="button" tabIndex={0} className={`ns-dr-row ns-dr-proj${row.active ? ' is-cur' : ''}`}
-              aria-expanded={row.expanded} data-testid="drawer-project-row"
+            {/* Two sibling buttons, never one inside the other: the row's own toggle (name, notes)
+                and "+". The rest of the row (the chevron, the gaps) toggles on a pointer click. */}
+            <div className={`ns-dr-row ns-dr-proj${row.active ? ' is-cur' : ''}`}
               onPointerDown={(e) => startDrag(e, row.name)}
-              onClick={() => p.onToggleExpanded(row.name)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); p.onToggleExpanded(row.name); }
-                onRowKey(e, row.name);
+              onClick={(e) => {
+                if (justDragged.current || (e.target instanceof Element && e.target.closest('button'))) return;
+                p.onToggleExpanded(row.name);
               }}
-              onContextMenu={(e) => { e.preventDefault(); setMenu({ kind: 'project', name: row.name, x: e.clientX, y: e.clientY }); }}>
-              <span className="ns-dr-pic">
-                {row.logo
-                  ? <VaultLogo name={row.name} hasLogo={row.logo} stamp={row.logoStamp} size={18} />
-                  : <span className="ns-dr-initial" aria-hidden="true">{row.name.slice(0, 1).toUpperCase()}</span>}
-              </span>
-              <span className="ns-dr-t">{row.name}</span>
-              {row.otherWindow && <span className="ns-dr-note">{t('shell.drawer.otherWindow')}</span>}
-              {row.asleep && <span className="ns-dr-note">{t('shell.drawer.asleep')}</span>}
+              onContextMenu={(e) => { e.preventDefault(); openMenu({ kind: 'project', name: row.name, x: e.clientX, y: e.clientY }); }}>
+              <button type="button" className="ns-dr-toggle" aria-expanded={row.expanded} data-testid="drawer-project-row"
+                onClick={() => { if (!justDragged.current) p.onToggleExpanded(row.name); }}
+                onKeyDown={(e) => onRowKey(e, row.name)}>
+                <span className="ns-dr-pic">
+                  {row.logo
+                    ? <VaultLogo name={row.name} hasLogo={row.logo} stamp={row.logoStamp} size={18} />
+                    : <span className="ns-dr-initial" aria-hidden="true">{row.name.slice(0, 1).toUpperCase()}</span>}
+                </span>
+                <span className="ns-dr-t">{row.name}</span>
+                {row.otherWindow && <span className="ns-dr-note">{t('shell.drawer.otherWindow')}</span>}
+                {row.asleep && <span className="ns-dr-note">{t('shell.drawer.asleep')}</span>}
+              </button>
               <button type="button" className="ns-dr-act ns-dr-add" aria-label={`${t('shell.drawer.newWindow')}: ${row.name}`}
                 data-testid="drawer-project-add"
                 onClick={(e) => { e.stopPropagation(); pick(row.name, { kind: 'new-tab' }); }}>+</button>
@@ -223,31 +263,31 @@ export function ChatDrawer(p: ChatDrawerProps) {
       {guide !== null && <div className="ns-dr-guide" style={{ left: guide }} aria-hidden="true" />}
 
       {menu && (
-        <div ref={menuRef} className="ns-menu ns-drawer-menu" role="menu" style={{ left: menu.x, top: menu.y }} data-testid={menu.kind === 'new' ? 'drawer-new-menu' : 'drawer-project-menu'}>
+        <div ref={menuRef} className="ns-menu ns-drawer-menu" role="menu" onKeyDown={onMenuKey} style={{ left: menu.x, top: menu.y }} data-testid={menu.kind === 'new' ? 'drawer-new-menu' : 'drawer-project-menu'}>
           {menu.kind === 'new' ? (
             <>
               <div className="ns-drawer-menu-head">{t('shell.drawer.pickProject')}</div>
               {p.rows.map((row) => (
                 <button key={row.name} type="button" role="menuitem" className="ns-drawer-menu-item"
-                  onClick={() => { setMenu(null); pick(row.name, { kind: 'new-tab' }); }}>
+                  onClick={() => { closeMenu(); pick(row.name, { kind: 'new-tab' }); }}>
                   {row.name}
                 </button>
               ))}
             </>
           ) : menu.name && (
             <>
-              <button type="button" role="menuitem" className="ns-drawer-menu-item" onClick={() => { setMenu(null); p.onMove(menu.name!, -1); }}>
+              <button type="button" role="menuitem" className="ns-drawer-menu-item" onClick={() => { closeMenu(); p.onMove(menu.name!, -1); }}>
                 {t('shell.drawer.moveUp')}<kbd>⌥↑</kbd>
               </button>
-              <button type="button" role="menuitem" className="ns-drawer-menu-item" onClick={() => { setMenu(null); p.onMove(menu.name!, 1); }}>
+              <button type="button" role="menuitem" className="ns-drawer-menu-item" onClick={() => { closeMenu(); p.onMove(menu.name!, 1); }}>
                 {t('shell.drawer.moveDown')}<kbd>⌥↓</kbd>
               </button>
-              <button type="button" role="menuitem" className="ns-drawer-menu-item" onClick={() => { setMenu(null); p.onOpenInWindow(menu.name!); }}>
+              <button type="button" role="menuitem" className="ns-drawer-menu-item" onClick={() => { closeMenu(); p.onOpenInWindow(menu.name!); }}>
                 {t('shell.drawer.openInWindow')}
               </button>
               <button type="button" role="menuitem" className="ns-drawer-menu-item"
                 disabled={!p.rows.find((r) => r.name === menu.name)?.held}
-                onClick={() => { setMenu(null); p.onCloseProject(menu.name!); }}>
+                onClick={() => { closeMenu(); p.onCloseProject(menu.name!); }}>
                 {t('shell.drawer.closeProject')}
               </button>
             </>

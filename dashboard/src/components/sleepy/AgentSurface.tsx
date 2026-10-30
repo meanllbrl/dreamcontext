@@ -106,6 +106,10 @@ import { DRAWER_INTENT_EVENT, DRAWER_SURFACE_EVENT, type DrawerIntent, type Draw
 import { planSuperRow, runSuperRow, SUPER_ROW_SPAWN } from './super/superRow';
 /** The new shell opens its first project on Chat once per window (6b), not on every switch. */
 let openedOnRestoreThisWindow = false;
+/** The window was opened to land a link (`&open=`, `openVaultWindow`): its page wins over Chat. */
+function openedForLink(): boolean {
+  try { return new URLSearchParams(window.location.search).has('open'); } catch { return false; }
+}
 /** The hand-over folds the classic sidebar; the new shell has none to fold (D4), so it never
  *  holds one. The shell is frozen per window, so this reads one settled answer. */
 function holdSidebarCollapsed(instanceId: string, on: boolean): void {
@@ -4836,7 +4840,10 @@ export function AgentSurface() {
   // This instance's Shell only (it emits on the same bus): navigating in the foreground
   // project must not collapse a backgrounded project's overlay out from under it, so that
   // switching back lands on the agent you left open rather than on its page.
-  useInstanceEvent('dreamcontext-navigate', () => setExpanded((cur) => (cur ? false : cur)));
+  useInstanceEvent('dreamcontext-navigate', () => {
+    navigatedRef.current = true;
+    setExpanded((cur) => (cur ? false : cur));
+  });
 
   // The sidebar's Chat row. Same gate as the corner FAB (desktop + enabled in Settings): a
   // rail that shows the row only under those conditions can still be a beat ahead of `caps`,
@@ -4862,6 +4869,10 @@ export function AgentSurface() {
   // A tab the Super Agent row just started: the hand-over waits until the roster it reads
   // holds it (the ref is set on the render that commits it).
   const registeredWaitersRef = useRef(new Map<string, () => void>());
+  /** The Super row's own run (spawn, wait, hand over) is in flight. */
+  const superRowBusyRef = useRef(false);
+  /** This instance navigated to a page (a link, the rail) since it mounted. */
+  const navigatedRef = useRef(false);
   useEffect(() => {
     for (const [id, resolve] of registeredWaitersRef.current) {
       if (sessionList.some((m) => m.id === id)) { registeredWaitersRef.current.delete(id); resolve(); }
@@ -4900,11 +4911,18 @@ export function AgentSurface() {
       setExpanded(true);
     } else if (intent.kind === 'super') {
       setExpanded(true);
+      // Pressed again while the first press is still handing over (or starting its chat): the
+      // drawer never takes the hand-over button's "press again = back" path.
+      if (superBusyRef.current || flightRunRef.current?.run.active || superRowBusyRef.current) {
+        setSuperView('super');
+        return;
+      }
       const plan = planSuperRow({
         enabled: !!superStateRef.current?.enabled,
         hasChat: sessionListRef.current.some((m) => !m.dormant && (m.kind ?? 'agent') !== 'shell'),
         canSpawn,
       });
+      superRowBusyRef.current = true;
       void runSuperRow(plan, {
         showStage: () => setSuperView('super'),
         handOver,
@@ -4913,7 +4931,7 @@ export function AgentSurface() {
           if (sessionListRef.current.some((m) => m.id === id)) { resolve(); return; }
           registeredWaitersRef.current.set(id, resolve);
         }),
-      });
+      }).finally(() => { superRowBusyRef.current = false; });
     }
   };
 
@@ -4922,6 +4940,9 @@ export function AgentSurface() {
   const openOnRestoreRef = useRef<() => void>(() => {});
   openOnRestoreRef.current = () => {
     if (openedOnRestoreThisWindow || readShellModeFrozen() !== 'new') return;
+    // A page the owner (or a link this window was opened for) already went to wins: the chat
+    // must not cover it once the restore lands.
+    if (navigatedRef.current || openedForLink()) { openedOnRestoreThisWindow = true; return; }
     if (!isActive || isMobile || !caps?.desktop || !agentSettings.enabled) return;
     openedOnRestoreThisWindow = true;
     setExpanded(true);

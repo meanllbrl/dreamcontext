@@ -4,6 +4,8 @@
  * sources, the intent rule at the ceiling, reordering, and the History fan-out merge.
  */
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   buildDrawerRows, dropInOrder, intentLands, moveInOrder, teamRowsOf, type DrawerProjectInput,
 } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
@@ -135,6 +137,23 @@ describe('drawer order', () => {
     expect(dropInOrder(['a', 'b', 'c', 'd'], 'a', 3)).toEqual(['b', 'c', 'a', 'd']);
     expect(dropInOrder(['a', 'b', 'c', 'd'], 'd', 0)).toEqual(['d', 'a', 'b', 'c']);
     expect(dropInOrder(['a', 'b', 'c', 'd'], 'b', 4)).toEqual(['a', 'c', 'd', 'b']);
+  });
+});
+
+describe('the drawer and History, wired', () => {
+  const src = (rel: string) => readFileSync(fileURLToPath(new URL(`../../dashboard/src/${rel}`, import.meta.url)), 'utf-8');
+  it('classic History renders no extra box (byte-identical markup)', () => {
+    const picker = src('components/sleepy/ChatHistoryPicker.tsx');
+    expect(picker).toMatch(/return on \? <div className="chp-body">\{children\}<\/div> : <>\{children\}<\/>;/);
+    expect(picker).toMatch(/<BodyWrap on=\{cross\}>/);
+  });
+  it('a project row is two sibling buttons, never a button inside a button', () => {
+    const drawer = src('components/layout/newshell/ChatDrawer.tsx');
+    expect(drawer).not.toMatch(/role="button"/);
+    expect(drawer).toMatch(/<button type="button" className="ns-dr-toggle" aria-expanded=\{row\.expanded\}/);
+  });
+  it('History names the projects it could not read', () => {
+    expect(src('components/sleepy/ChatHistoryPicker.tsx')).toMatch(/setFailedVaults\(r\.failed\)/);
   });
 });
 

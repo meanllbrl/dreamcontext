@@ -231,11 +231,6 @@
 
 /* ── The new shell's cross-project History (D7): a projects column beside the list ─── */
 
-/* Classic draws no column: the wrapper is not a box there, so its layout is unchanged. */
-.chp-body {
-  display: contents;
-}
-
 .chp-modal--projects .chp-body {
   flex: 1 1 auto;
   min-height: 0;
