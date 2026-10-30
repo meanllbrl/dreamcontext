@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback, useEffect, type CSSProperties } from 'react';
+import { NEW_SHELL_BOARD, useIsNewShell } from '../../lib/uxMode';
 import type { Task } from '../../hooks/useTasks';
 import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers, useStatusModel, isOpenChildrenRefusal } from '../../hooks/useTasks';
 import { useI18n } from '../../context/I18nContext';
@@ -250,6 +251,9 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
 
   const selectedTask = selectedSlug ? tasks.find((t) => t.slug === selectedSlug) || null : null;
 
+  // The new shell's page frame already draws the card (D11): no second border, and the board
+  // fills the frame instead of sizing from the viewport.
+  const newShell = useIsNewShell();
   if (!s.ready || isLoading) {
     return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 240, color: 'var(--color-text-tertiary)', fontSize: 13 }}>Loading board…</div>;
   }
@@ -260,7 +264,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const isEmpty = filtered.length === 0;
 
   return (
-    <div style={{ height: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', maxHeight: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', display: 'flex', flexDirection: 'column', position: 'relative', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 14, overflow: 'hidden', boxShadow: 'var(--shadow-md)' }}>
+    <div style={{ height: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', maxHeight: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))', display: 'flex', flexDirection: 'column', position: 'relative', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 14, overflow: 'hidden', boxShadow: 'var(--shadow-md)', ...(newShell ? NEW_SHELL_BOARD : {}) }}>
       <BoardViewTabs
         views={s.views}
         activeViewId={s.activeViewId}

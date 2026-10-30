@@ -35,6 +35,9 @@ import {
 } from './lib/startChatIntent';
 import type { StartIntent } from './lib/desktop';
 import { useI18n } from './context/I18nContext';
+import { RelationsPage } from './pages/RelationsPage';
+import { TOGGLE_PAGE_DRAWER_EVENT, useIsNewShell } from './lib/uxMode';
+import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from './lib/agentSettings';
 import './ProjectInstance.css';
 
 /**
@@ -77,7 +80,7 @@ function AgentPageNavBridge({ nav }: { nav: ShellNavigation }) {
     (detail) => {
       const page = detail?.page;
       if (page !== 'tasks' && page !== 'knowledge' && page !== 'core' && page !== 'whiteboards' && page !== 'settings') return;
-      nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null);
+      nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null, 'chat');
     },
   );
   return null;
@@ -95,6 +98,31 @@ function AgentPageNavBridge({ nav }: { nav: ShellNavigation }) {
  * from — a hook called in `ProjectInstance`'s own body would subscribe to the off-instance
  * fallback bus and never hear a thing. Renders nothing.
  */
+/**
+ * The new shell's drawer button and ⌘B: ONE route, ONE handler (D12). The window bumps
+ * `nonce` on the active instance; this decides from the instance's own page:
+ *  - on Chat (the overlay expanded): toggle the window's chat drawer;
+ *  - on Whiteboards: toggle that page's own explorer (`TOGGLE_PAGE_DRAWER_EVENT`, W2-B);
+ *  - anywhere else: open Chat, which brings the drawer back.
+ * Rendered inside Shell's children for the page. Renders nothing.
+ */
+function PageDrawerToggleBridge({ page, nonce, onDrawerToggle }: { page: Page; nonce: number; onDrawerToggle?: () => void }) {
+  const { bus, isActive } = useVault();
+  const [chatOpen, setChatOpen] = useState(false);
+  useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => setChatOpen(open === true));
+  const seen = useRef(nonce);
+  useEffect(() => {
+    if (nonce === seen.current) return;
+    seen.current = nonce;
+    // Every instance hears the window's nonce; only the one on screen acts on it.
+    if (!isActive) return;
+    if (chatOpen) onDrawerToggle?.();
+    else if (page === 'whiteboards') emitInstance(bus, TOGGLE_PAGE_DRAWER_EVENT, null);
+    else openAgentSurface(bus);
+  }, [nonce, isActive, chatOpen, page, bus, onDrawerToggle]);
+  return null;
+}
+
 function RollupBridge({
   vault, onRollup,
 }: { vault: string; onRollup?: (vault: string, rollup: ProjectRollup) => void }) {
@@ -393,6 +421,9 @@ const PageRouter = memo(function PageRouter({
       return <AnnouncementsPage focus={focus} />;
     case 'whiteboards':
       return <WhiteboardsPage focus={focus} />;
+    case 'relations':
+      // New shell only: `Shell` never lands a classic window here.
+      return <RelationsPage />;
   }
 });
 
@@ -425,12 +456,20 @@ export interface ProjectInstanceProps {
   pendingStart?: PendingStartIntent | null;
   /** Reports a pending start intent was taken, so the chrome stops holding it. */
   onStartConsumed?: (vault: string, nonce: number) => void;
+  /** New shell: bumped by the title bar's drawer button and ⌘B; the ACTIVE instance's
+   *  `PageDrawerToggleBridge` decides what it means on its page. */
+  drawerToggleNonce?: number;
+  /** New shell: the window's chat drawer is on screen (W2 polls the drawer's facts faster). */
+  drawerVisible?: boolean;
+  /** New shell: the drawer button meant the chat drawer itself. */
+  onDrawerToggle?: () => void;
 }
 
 export function ProjectInstance({
   vault, instanceId, isActive, sidebarCollapsed, onToggleSidebar, onRollup, pendingLink = null, onLinkConsumed,
-  pendingStart = null, onStartConsumed,
+  pendingStart = null, onStartConsumed, drawerToggleNonce = 0, onDrawerToggle,
 }: ProjectInstanceProps) {
+  const newShell = useIsNewShell();
   /*
    * Both of these are per-instance identities that must survive every re-render: a new
    * QueryClient would drop the project's whole cache mid-session, and a new EventTarget would
@@ -494,6 +533,7 @@ export function ProjectInstance({
     <div
       className="project-instance"
       data-instance={instanceId}
+      data-shell={newShell ? 'new' : undefined}
       hidden={!isActive}
       inert={!isActive}
     >
@@ -523,6 +563,7 @@ export function ProjectInstance({
                       onAgentsFocus={focusAgents}
                     />
                     <StartIntentBridge start={pendingStart} onConsumed={consumeStart} />
+                    {newShell && <PageDrawerToggleBridge page={nav.page} nonce={drawerToggleNonce} onDrawerToggle={onDrawerToggle} />}
                     {!suppressAnnouncements && (
                       <AnnouncementsModal onOpenPage={(id) => nav.navigate('announcements', id ?? null)} />
                     )}

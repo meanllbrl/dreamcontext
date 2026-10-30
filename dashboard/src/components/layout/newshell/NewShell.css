@@ -1,0 +1,479 @@
+/*
+ * The new shell (Settings → New layout; lib/uxMode.ts). Every rule here is scoped under
+ * `.window-chrome[data-shell="new"]` or `.project-instance[data-shell="new"]`, so the classic
+ * shell never matches one. Tokens only; the few literal lengths are the approved prototype's
+ * (codex-tarzi/proto.html r27) and are named where they appear.
+ */
+
+/* ── The title bar ───────────────────────────────────────────────────────────────────── */
+
+.ns-titlebar {
+  position: relative;
+  /* Like today's bar (ProjectTabs.css): above the page and the chat overlay, below every
+     full-screen view (the Insights card 50, a Lab app 1200, FullscreenOverlay 1100). */
+  z-index: 40;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--titlebar-height);
+  padding: 0 var(--space-3);
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border);
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.ns-tb-left,
+.ns-tb-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.ns-tb-right {
+  margin-left: auto;
+  gap: var(--space-2);
+}
+
+.ns-tb-slot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.ns-tb-nav {
+  display: flex;
+  align-items: center;
+}
+
+.ns-tb-btn {
+  flex: none;
+  width: var(--space-7);
+  height: var(--space-7);
+  display: grid;
+  place-items: center;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.ns-tb-btn:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.ns-tb-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.ns-tb-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.ns-tb-btn:focus-visible,
+.ns-tb-picker:focus-visible,
+.ns-zoom button:focus-visible,
+.ns-rail-btn:focus-visible,
+.ns-menu-row:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+.ns-tb-picker {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 240px;
+  height: var(--space-7);
+  padding: 0 var(--space-2);
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.ns-tb-picker:hover,
+.ns-tb-picker[aria-expanded="true"] {
+  background: var(--color-bg-tertiary);
+}
+
+.ns-tb-picker-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ns-tb-caret {
+  flex: none;
+  color: var(--color-text-tertiary);
+}
+
+/* Centred on the WINDOW, not on the space left between the two clusters. */
+.ns-tb-brand {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-family-display);
+  font-size: calc(15px * var(--zoom));
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.ns-tb-word span {
+  color: var(--color-accent-ink);
+}
+
+.ns-tb-notice {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + var(--space-2));
+  transform: translateX(-50%);
+  max-width: min(560px, calc(100vw - var(--space-8)));
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-lg);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  pointer-events: none;
+}
+
+.ns-zoom {
+  display: flex;
+  align-items: center;
+  height: var(--space-7);
+  padding: 0 2px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+}
+
+.ns-zoom button {
+  height: var(--space-5);
+  min-width: var(--space-5);
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.ns-zoom .ns-zoom-value {
+  min-width: var(--space-10);
+}
+
+.ns-zoom button:hover:not(:disabled) {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+}
+
+.ns-zoom button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ≤900: no back/forward, the wordmark goes, Hands-free is icon-only (handsfree.css). */
+@media (max-width: 900px) {
+  .ns-tb-nav,
+  .ns-tb-word { display: none; }
+}
+
+/* ≤600: no zoom, and the picker gets the room. */
+@media (max-width: 600px) {
+  .ns-zoom,
+  .ns-tb-brand { display: none; }
+  .ns-tb-picker { max-width: 160px; }
+}
+
+/* ── The body row: [rail][drawer (W2)][instances] ───────────────────────────────────── */
+
+.window-chrome[data-shell="new"] {
+  background: var(--color-bg-secondary);
+}
+
+.ns-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.ns-body > .window-chrome-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ns-rail-slot {
+  flex: none;
+  display: flex;
+  /* Above the chat overlay (20) so More opens over it; below the title bar (40). */
+  position: relative;
+  z-index: 30;
+}
+
+/* ── The rail ────────────────────────────────────────────────────────────────────────── */
+
+.ns-rail {
+  width: var(--space-13);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) 0 var(--space-3);
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.ns-rail-btn {
+  position: relative;
+  flex: none;
+  width: var(--space-10);
+  height: var(--space-10);
+  display: grid;
+  place-items: center;
+  border: none;
+  background: none;
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.ns-rail-btn svg {
+  width: var(--space-5);
+  height: var(--space-5);
+}
+
+.ns-rail-btn:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.ns-rail-btn:active {
+  transform: scale(0.97);
+}
+
+.ns-rail-btn[data-on="true"] {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
+}
+
+.ns-rail-btn[data-off="true"] {
+  opacity: 0.6;
+}
+
+.ns-rail-badge {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--mood-waiting, var(--color-accent));
+  box-shadow: 0 0 0 2px var(--color-bg-secondary);
+}
+
+.ns-rail-sep {
+  width: var(--space-5);
+  margin: var(--space-1) 0;
+  border: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.ns-rail-grow {
+  flex: 1;
+}
+
+/* ≤600: the rail is a bottom bar of five. */
+@media (max-width: 600px) {
+  .ns-body { flex-direction: column-reverse; }
+  .ns-rail-slot { z-index: 30; }
+  .ns-rail {
+    width: 100%;
+    flex-direction: row;
+    justify-content: space-around;
+    padding: 0 var(--space-2) env(safe-area-inset-bottom, 0px);
+    border-right: 0;
+    border-top: 1px solid var(--color-border);
+    overflow: visible;
+  }
+  .ns-rail-btn {
+    width: 56px;
+    height: var(--space-11);
+  }
+}
+
+/* ── Menus: the picker and More ─────────────────────────────────────────────────────── */
+
+.ns-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 220px;
+  max-width: min(360px, calc(100vw - var(--space-4)));
+  max-height: calc(100vh - var(--space-16));
+  overflow-y: auto;
+  padding: var(--space-1);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-xl);
+  outline: none;
+}
+
+.ns-menu-head {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+}
+
+.ns-menu-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--space-8);
+  padding: 0 var(--space-3);
+  border: none;
+  background: none;
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ns-menu-row:hover,
+.ns-menu-row[data-focus="true"] {
+  background: var(--color-bg-tertiary);
+}
+
+.ns-menu-row[data-on="true"] {
+  background: var(--color-accent-soft);
+}
+
+.ns-menu-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-tertiary);
+}
+
+.ns-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ns-menu-note {
+  flex: none;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.ns-menu-count {
+  flex: none;
+  min-width: var(--space-5);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  color: var(--color-text-on-brand);
+  font-size: var(--font-size-xs);
+  text-align: center;
+}
+
+.ns-menu-kbd {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* ── The page card frame (D11) ───────────────────────────────────────────────────────── */
+
+/* The instance is the chat overlay's and the in-place full-screen views' containing block. */
+.project-instance[data-shell="new"] {
+  position: relative;
+}
+
+/* The prototype's `.pgx`: 14px 16px 16px around one rounded card (proto.html). */
+.project-instance[data-shell="new"] .shell-main {
+  margin: 14px var(--space-4) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-bg);
+  box-shadow: var(--shadow-sm);
+  container-type: inline-size;
+  /* The prototype's `.pg-body`: no page's content touches the frame. */
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}
+
+/* Pages that fill the frame themselves: no inner margin. */
+.project-instance[data-shell="new"]:is(
+  [data-page="tasks"], [data-page="roadmap"], [data-page="hypotheses"], [data-page="whiteboards"],
+  [data-page="lab"], [data-page="brain"], [data-page="automations"], [data-page="agents"], [data-page="relations"]
+) .shell-main {
+  padding: 0;
+}
+
+/* The boards fill the frame; the frame never scrolls on them. */
+.project-instance[data-shell="new"]:is([data-page="tasks"], [data-page="roadmap"], [data-page="hypotheses"], [data-page="relations"]) .shell-main {
+  overflow: hidden;
+}
+
+/* About pulls itself out by the classic page padding; the frame already has its own. */
+.project-instance[data-shell="new"] .about {
+  margin: calc(var(--space-4) * -1) calc(var(--space-5) * -1) calc(var(--space-5) * -1);
+}
+
+/* The full-page task stays inside the board, so it never covers the rail. Its composer and
+   tray stay inside the frame (TaskDetailPanel.css warns about clipping them). The drawer
+   variant stays a window-wide modal. */
+.project-instance[data-shell="new"] .detail-overlay--fullscreen {
+  position: absolute;
+  inset: 0;
+  top: 0;
+}
+
+/* Knowledge's full-screen document: inside the instance, right of the rail. Portaled
+   full-screen views (chat cards) are not inside the instance and keep today's coverage. */
+.project-instance[data-shell="new"] .fullscreen-overlay {
+  position: absolute;
+  inset: 0;
+  top: 0;
+}
+
+/* The corner Chat button: the rail's Chat item carries its count. */
+.project-instance[data-shell="new"] .agent-fab {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .project-instance[data-shell="new"] .shell-main {
+    margin: var(--space-2);
+    border-radius: 0;
+  }
+}

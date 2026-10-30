@@ -1,3 +1,5 @@
+import { ShellModeProvider } from './lib/uxMode';
+import { LauncherRoot } from './pages/LauncherRoot';
 import { Component, type ReactNode } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createInstanceQueryClient, registerInstanceClient } from './lib/instanceQueryClient';
@@ -5,11 +7,8 @@ import { initWindowActivity } from './lib/windowActivity';
 import { initAgentSettingsFromServer, readAgentSettings } from './lib/agentSettings';
 import { initLightMode } from './lib/lightMode';
 import { initMotionClock } from './lib/motionClock';
-import { LauncherPage } from './pages/LauncherPage';
 import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
-import { UpgradeRelaunchBanner } from './components/layout/UpgradeRelaunchBanner';
-import { ProjectSwitcher } from './components/search/ProjectSwitcher';
 import { WindowChrome } from './components/layout/WindowChrome';
 import { ChecklistWindow } from './components/checklist/ChecklistWindow';
 import { Notch, ASSISTANT_VAULT } from './components/assistant/Notch';
@@ -215,9 +214,9 @@ export function App() {
         <QueryClientProvider client={windowQueryClient}>
           <ThemeProvider>
             <I18nProvider>
-              <UpgradeRelaunchBanner />
-              <LauncherPage />
-              <ProjectSwitcher />
+              <ShellModeProvider>
+                <LauncherRoot />
+              </ShellModeProvider>
             </I18nProvider>
           </ThemeProvider>
         </QueryClientProvider>
@@ -240,7 +239,9 @@ export function App() {
       <ThemeProvider>
         <QueryClientProvider client={windowQueryClient}>
           <I18nProvider>
-            <WindowChrome initialVault={initialVault} initialLink={initialLink} initialStart={initialStart} />
+            <ShellModeProvider>
+              <WindowChrome initialVault={initialVault} initialLink={initialLink} initialStart={initialStart} />
+            </ShellModeProvider>
           </I18nProvider>
         </QueryClientProvider>
       </ThemeProvider>

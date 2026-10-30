@@ -1,6 +1,6 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import { existsSync, mkdirSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync, rmSync, realpathSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -45,6 +45,7 @@ import { resolveAuthors } from '../../lib/people-resolve.js';
 import { today } from '../../lib/id.js';
 import { randomUUID } from 'node:crypto';
 import { isDesktop } from '../desktop.js';
+import { isPhoneSocket } from '../phone-origin.js';
 import { SUPER_AGENT_DEFAULT } from '../../lib/model-facts.js';
 import {
   listGitHubRepos,
@@ -1123,43 +1124,114 @@ type LauncherView = 'space' | 'list';
 
 interface LauncherUiSettings {
   view: LauncherView;
+  /** Which shell the windows open in: today's (`classic`) or the Codex-style one (`new`).
+   *  Read once per window by the dashboard's `lib/uxMode.ts`; absent = the default. */
+  shell?: 'classic' | 'new';
+  /** The new shell's window layout. Kept here, not in localStorage, because the desktop app
+   *  picks a fresh loopback port (a fresh origin) every launch. */
+  lastVault?: string | null;
+  projectOrder?: string[];
+  drawerExpanded?: string[];
+  drawerWidth?: number;
+  drawerOpen?: boolean;
 }
 
 /** List leads until Space has been CHOSEN — mirrors dashboard/src/lib/launcherPrefs.ts. */
 const LAUNCHER_UI_DEFAULTS: LauncherUiSettings = { view: 'list' };
 
+/** Mirrors dashboard/src/lib/launcherPrefs.ts (drift test: launcher-prefs.test.ts). */
+export const MAX_LAYOUT_PROJECTS = 200;
+export const DRAWER_WIDTH_MIN = 200;
+export const DRAWER_WIDTH_MAX = 480;
+const MAX_PROJECT_NAME = 256;
+
 function launcherUiPath(): string {
   return join(homedir(), '.dreamcontext', 'launcher-ui.json');
 }
 
-/**
- * Coerce an untrusted blob to valid settings. STRICT-PICK boundary for
- * `POST /api/launcher/ui-settings`: nothing is spread through from the caller.
- */
-function coerceLauncherUi(raw: Record<string, unknown>): LauncherUiSettings {
-  return { view: raw.view === 'space' ? 'space' : LAUNCHER_UI_DEFAULTS.view };
+/** A project name as `resolveRequestVault` accepts one: never path-shaped, no dots or NULs. */
+function projectName(v: unknown): string | null {
+  if (typeof v !== 'string' || !v || v.length > MAX_PROJECT_NAME) return null;
+  return /[/\\:.\x00]/.test(v) ? null : v;
 }
 
-/** GET /api/launcher/ui-settings — persisted { view } (defaults if absent). */
+function projectNames(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: string[] = [];
+  for (const x of v) {
+    const n = projectName(x);
+    if (n && !out.includes(n)) out.push(n);
+    if (out.length >= MAX_LAYOUT_PROJECTS) break;
+  }
+  return out;
+}
+
+/**
+ * Coerce an untrusted blob. STRICT-PICK boundary for `POST /api/launcher/ui-settings`: nothing
+ * is spread through from the caller, and ONLY the keys present come back (a key that fails its
+ * rule is dropped, never defaulted). The POST merges this over the stored file, so a caller
+ * that sends `{view}` never pins `shell`, and a default flip still reaches existing installs.
+ */
+export function coerceLauncherUiPartial(raw: Record<string, unknown>): Partial<LauncherUiSettings> {
+  const out: Partial<LauncherUiSettings> = {};
+  if (raw.view === 'space' || raw.view === 'list') out.view = raw.view;
+  if (raw.shell === 'classic' || raw.shell === 'new') out.shell = raw.shell;
+  if (raw.lastVault === null) out.lastVault = null;
+  else if ('lastVault' in raw) { const n = projectName(raw.lastVault); if (n) out.lastVault = n; }
+  const order = projectNames(raw.projectOrder);
+  if (order) out.projectOrder = order;
+  const expanded = projectNames(raw.drawerExpanded);
+  if (expanded) out.drawerExpanded = expanded;
+  if (typeof raw.drawerWidth === 'number' && Number.isFinite(raw.drawerWidth)) {
+    out.drawerWidth = Math.min(DRAWER_WIDTH_MAX, Math.max(DRAWER_WIDTH_MIN, Math.round(raw.drawerWidth)));
+  }
+  if (typeof raw.drawerOpen === 'boolean') out.drawerOpen = raw.drawerOpen;
+  return out;
+}
+
+/** The stored file, coerced; a missing file is `{}`. A corrupt one is copied to `.bad` (only the
+ *  newest copy kept) and read as `{}`, so the next write repairs it. */
+function readLauncherUiStored(): Partial<LauncherUiSettings> {
+  const p = launcherUiPath();
+  if (!existsSync(p)) return {};
+  let text = '';
+  try {
+    text = readFileSync(p, 'utf-8');
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+    return coerceLauncherUiPartial(parsed as Record<string, unknown>);
+  } catch {
+    try { writeFileSync(`${p}.bad`, text, 'utf-8'); } catch { /* best effort */ }
+    return {};
+  }
+}
+
+/** Every OS window talks to this one server, so the read-merge-write is serialised here: two
+ *  windows writing different keys at the same moment both land. */
+let launcherUiChain: Promise<unknown> = Promise.resolve();
+function withLauncherUiLock<T>(fn: () => T): Promise<T> {
+  const run = launcherUiChain.then(fn, fn);
+  launcherUiChain = run.catch(() => undefined);
+  return run;
+}
+
+/** GET /api/launcher/ui-settings — the stored settings over the defaults. A phone socket gets
+ *  only `{view, shell}`: the layout fields name projects, and this route is phone-readable. */
 export async function handleLauncherUiGet(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
   _contextRoot: string | null,
 ): Promise<void> {
-  let settings = { ...LAUNCHER_UI_DEFAULTS };
-  try {
-    const p = launcherUiPath();
-    if (existsSync(p)) {
-      settings = coerceLauncherUi(JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>);
-    }
-  } catch {
-    /* unreadable / corrupt — fall back to defaults */
+  const settings: LauncherUiSettings = { ...LAUNCHER_UI_DEFAULTS, ...readLauncherUiStored() };
+  if (isPhoneSocket(req)) {
+    sendJson(res, 200, { view: settings.view, ...(settings.shell ? { shell: settings.shell } : {}) });
+    return;
   }
   sendJson(res, 200, settings);
 }
 
-/** POST /api/launcher/ui-settings — persist { view }. STRICT-PICK. */
+/** POST /api/launcher/ui-settings — merge the keys sent over the stored file. STRICT-PICK. */
 export async function handleLauncherUiSet(
   req: IncomingMessage,
   res: ServerResponse,
@@ -1167,15 +1239,22 @@ export async function handleLauncherUiSet(
   _contextRoot: string | null,
 ): Promise<void> {
   const body = await parseJsonBody(req);
-  if (!body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
     sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
     return;
   }
-  const settings = coerceLauncherUi(body as Record<string, unknown>);
+  const patch = coerceLauncherUiPartial(body as Record<string, unknown>);
   try {
-    mkdirSync(join(homedir(), '.dreamcontext'), { recursive: true });
-    writeFileSync(launcherUiPath(), JSON.stringify(settings, null, 2) + '\n', 'utf-8');
-    sendJson(res, 200, settings);
+    const merged = await withLauncherUiLock(() => {
+      const next = { ...readLauncherUiStored(), ...patch };
+      mkdirSync(join(homedir(), '.dreamcontext'), { recursive: true });
+      const p = launcherUiPath();
+      const tmp = `${p}.${process.pid}.${randomUUID()}.tmp`;
+      writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', 'utf-8');
+      renameSync(tmp, p);
+      return next;
+    });
+    sendJson(res, 200, { ...LAUNCHER_UI_DEFAULTS, ...merged });
   } catch (err) {
     console.error('[launcher] ui-settings write failed:', err);
     sendError(res, 500, 'write_failed', 'Failed to persist launcher preferences.');

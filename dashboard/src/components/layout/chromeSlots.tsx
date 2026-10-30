@@ -16,6 +16,8 @@ export interface ChromeSlots {
   left: HTMLElement | null;
   /** Right of the chip strip, before the window controls: sleep tracker + update badge. */
   right: HTMLElement | null;
+  /** The new shell only: the active project's `Rail`, left of the page frame. */
+  rail?: HTMLElement | null;
 }
 
 /** What a `Header` sees with no chrome above it (tests, storybook-style mounts): no slots,

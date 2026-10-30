@@ -100,7 +100,14 @@ import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
 import { readSuperStateView, type SuperDigestWire, type SuperStateView } from '../../lib/superTypes';
 import { PhoneAgenda, phoneEventContext } from './super/PhoneAgenda';
-import { holdSidebarCollapsed } from '../../hooks/useSidebarCollapse';
+import { holdSidebarCollapsed as holdClassicSidebar } from '../../hooks/useSidebarCollapse';
+import { readShellModeFrozen } from '../../lib/uxMode';
+/** The hand-over folds the classic sidebar; the new shell has none to fold (D4), so it never
+ *  holds one. The shell is frozen per window, so this reads one settled answer. */
+function holdSidebarCollapsed(instanceId: string, on: boolean): void {
+  if (readShellModeFrozen() === 'new') return;
+  holdClassicSidebar(instanceId, on);
+}
 import type { PendingQuestion } from './chatSession';
 import { HandoverButton } from './super/HandoverButton';
 import { SuperCentreHead, SuperSurface, jobLookOf, prefersReducedMotion, runFlights, type FlightRun, type StageShowChild } from './super/SuperSurface';

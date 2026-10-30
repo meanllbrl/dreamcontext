@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useContext, useEffect, useMemo, useState } from 'react';
+import { LauncherOpenContext } from '../lib/uxMode';
 import {
   useLauncherStatus,
   useUpdateProject,
@@ -47,7 +48,15 @@ const TEAM_FETCH_INTERVAL_MS = 5 * 60 * 1000;
 /** First team fetch waits for the launcher to paint (see the mount effect). */
 const TEAM_FETCH_INITIAL_DELAY_MS = 3000;
 
-export function LauncherPage() {
+/**
+ * `embedded`: Space as a layer of the new shell's Project Relations page (lib/uxMode.ts). The window's own
+ * bar and panel already carry what the launcher bar does (projects, New project, the Assistant
+ * and Global agents), so the bar is not drawn; only `Update all` stays, when there is something
+ * to update. `startAddProject` opens straight on Add Project.
+ */
+export function LauncherPage({ embedded }: { embedded?: { startAddProject?: boolean } } = {}) {
+  // The new shell's embedded Space opens projects in its own window (lib/uxMode.ts).
+  const openOverride = useContext(LauncherOpenContext);
   const { data, isLoading, isError, error } = useLauncherStatus();
   const updateProject = useUpdateProject();
   const unregister = useUnregisterVault();
@@ -70,7 +79,8 @@ export function LauncherPage() {
    * rendering List in the meantime would flash the wrong surface, so the body is
    * withheld for the one localhost round-trip it takes to find out.
    */
-  const [view, setView] = useState<LauncherView | null>(readLauncherViewLocal);
+  const [storedView, setView] = useState<LauncherView | null>(readLauncherViewLocal);
+  const view: LauncherView | null = embedded ? 'space' : storedView;
   /** How many projects `Update all` has got through, for the button's counter. */
   const [updateAllDone, setUpdateAllDone] = useState(0);
   /** One hidden file input + the right-click menu that opens it — see VaultLogo.tsx.
@@ -104,7 +114,7 @@ export function LauncherPage() {
   // empty localStorage) — once it is seeded, the mirror IS the server's answer
   // and re-reading would only race the user's own click.
   useEffect(() => {
-    if (view !== null) return;
+    if (storedView !== null) return;
     let cancelled = false;
     void initLauncherViewFromServer().then((v) => {
       if (!cancelled) setView((prev) => prev ?? v);
@@ -130,6 +140,18 @@ export function LauncherPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, isError, onboardingMode, onboardingDismissed]);
 
+  // The embedded New project: Space opens on Add Project, once the readiness answer is in
+  // (it picks the step Add Project starts on).
+  const startAdd = !!embedded?.startAddProject;
+  const readinessKnown = !!readiness.report || !!readiness.error;
+  const [startedAdd, setStartedAdd] = useState(false);
+  useEffect(() => {
+    if (!startAdd || startedAdd || !readinessKnown) return;
+    setStartedAdd(true);
+    openOnboarding();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startAdd, startedAdd, readinessKnown]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return vaults;
@@ -144,7 +166,8 @@ export function LauncherPage() {
     // registry. Fire-and-forget: a failed stamp must never block the open.
     touch.mutate(name);
     try {
-      await openVaultWindow(name);
+      if (openOverride) openOverride(name);
+      else await openVaultWindow(name);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
     }
@@ -211,8 +234,26 @@ export function LauncherPage() {
       // Header) — the top bar alone is mostly filled with controls, leaving
       // only a sliver to grab. Cards, the Space, and onboarding opt out via
       // data-no-drag so their own interactions are never hijacked.
-      onMouseDown={startTitleBarDrag}
+      // Embedded in the new shell's frame, a press inside the page never drags the window.
+      onMouseDown={embedded ? undefined : startTitleBarDrag}
     >
+      {embedded ? (
+        stale.length > 0 && (
+          <div className="launcher-embedded-actions" data-no-drag>
+            <button
+              type="button"
+              className="launcher-btn launcher-btn-update"
+              disabled={updateAll.isPending}
+              title={`Run dreamcontext update in: ${stale.map((v) => v.name).join(', ')}`}
+              onClick={handleUpdateAll}
+            >
+              {updateAll.isPending
+                ? `Updating ${updateAllDone}/${stale.length}…`
+                : `Update all (${stale.length})`}
+            </button>
+          </div>
+        )
+      ) : (
       <header
         className="launcher-bar"
         onDoubleClick={(e) => void toggleMaximizeWindow(e.target)}
@@ -272,6 +313,7 @@ export function LauncherPage() {
           </button>
         </div>
       </header>
+      )}
 
       {onboardingMode === 'bar' && onboarding === null && (
         <button type="button" className="launcher-finish-bar" data-no-drag onClick={() => openOnboarding()}>
@@ -301,7 +343,8 @@ export function LauncherPage() {
             onAddProject={() => openOnboarding()}
             onError={setActionError}
           />
-          <AssistantEntryCard variant="space" />
+          {/* Embedded, the Assistant lives in the window's projects panel, not in Space. */}
+          {!embedded && <AssistantEntryCard variant="space" />}
         </div>
       )}
 

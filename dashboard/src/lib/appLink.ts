@@ -322,6 +322,20 @@ export async function drainAppLinks(
 
 let installed = false;
 
+/** Resolves once this window's boot link drain has run (see {@link appLinksDrained}). */
+let markDrained: () => void = () => {};
+const drained = new Promise<void>((resolve) => { markDrained = resolve; });
+
+/**
+ * Resolves after this window's FIRST link drain, so the new shell's launcher picks its project
+ * only once a cold-start link has had its chance to open one. Resolves at once off the desktop
+ * or in a window that does not route links, and after 3 s at the latest: it can never hang.
+ */
+export function appLinksDrained(capMs = 3_000): Promise<void> {
+  if (!isDesktop()) return Promise.resolve();
+  return Promise.race([drained, new Promise<void>((r) => { setTimeout(r, capMs); })]);
+}
+
 /**
  * Wire this window to the shell's doorbell (called once, from `main.tsx`). Acts only in `main`
  * and `vault-*` windows, and listens on THIS webview rather than globally: a global listener
@@ -333,11 +347,12 @@ export function installAppLinkListener(): void {
   installed = true;
   void (async () => {
     const label = await thisWindowLabel();
-    if (!isAppLinkRouterWindow(label)) return;
+    if (!isAppLinkRouterWindow(label)) { markDrained(); return; }
     let invoke: typeof import('@tauri-apps/api/core').invoke;
     try {
       ({ invoke } = await import('@tauri-apps/api/core'));
     } catch {
+      markDrained();
       return;
     }
     const take = () => invoke<string | null>(TAKE_APP_LINK_COMMAND);
@@ -366,5 +381,6 @@ export function installAppLinkListener(): void {
       console.warn('[app-link] could not listen for links:', err);
     }
     await drain();
+    markDrained();
   })();
 }

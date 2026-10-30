@@ -69,6 +69,26 @@
 .project-instance[data-sidebar="collapsed"] .agent-surface.closing {
   left: var(--sidebar-width-collapsed);
 }
+/* The new shell (D4): Chat is a page in the card frame. The overlay is bounded to its own
+   `.project-instance` (position: relative there, NewShell.css), inset to the frame, so it never
+   covers the rail or the drawer and needs no width variable. 0,6,0 and after the rule above:
+   it wins on specificity AND order even where `data-sidebar` is left over. Grows from the
+   frame's centre, not from the corner button the new shell does not draw. */
+.project-instance[data-shell="new"][data-instance] .agent-surface.expanded:not([data-mobile]),
+.project-instance[data-shell="new"][data-instance] .agent-surface.closing:not([data-mobile]) {
+  position: absolute;
+  inset: 14px var(--space-4) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  transform-origin: 50% 50%;
+}
+@media (max-width: 600px) {
+  .project-instance[data-shell="new"][data-instance] .agent-surface.expanded:not([data-mobile]),
+  .project-instance[data-shell="new"][data-instance] .agent-surface.closing:not([data-mobile]) {
+    inset: var(--space-2);
+    border-radius: 0;
+  }
+}
 @keyframes agent-surface-zoom-in {
   from { transform: scale(0.28) translateY(24px); opacity: 0; border-radius: var(--radius-xl, 16px); }
   60%  { opacity: 1; }

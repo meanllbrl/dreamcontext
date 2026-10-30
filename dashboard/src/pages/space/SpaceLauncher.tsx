@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { LauncherOpenContext } from '../../lib/uxMode';
 import {
   useFederationGraph,
   useCreateConnection,
@@ -122,6 +123,8 @@ export interface SpaceLauncherProps {
  * projects without crowding, and the whole thing spins, zooms, and pans.
  */
 export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherProps) {
+  // The new shell's embedded Space opens projects in its own window (lib/uxMode.ts).
+  const openOverride = useContext(LauncherOpenContext);
   const { data, isLoading, isError, error } = useFederationGraph();
   const { data: teamVaults } = useTeamUpdates();
   const createConn = useCreateConnection();
@@ -339,12 +342,13 @@ export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherPro
       // comes back to the launcher, then open. A failed stamp must not block.
       touch.mutate(name);
       try {
-        await openVaultWindow(name);
+        if (openOverride) openOverride(name);
+        else await openVaultWindow(name);
       } catch (err) {
         onError(err instanceof Error ? err.message : String(err));
       }
     },
-    [onError, touch],
+    [onError, touch, openOverride],
   );
 
   const connect = useCallback(

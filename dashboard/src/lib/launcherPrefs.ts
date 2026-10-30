@@ -77,3 +77,108 @@ export async function initLauncherViewFromServer(): Promise<LauncherView> {
     return readLauncherViewLocal() ?? DEFAULT_LAUNCHER_VIEW;
   }
 }
+
+// ─── The shell switch and the new shell's window layout ─────────────────────────────────
+//
+// Same file, same reason: `~/.dreamcontext/launcher-ui.json`. The server MERGES every POST
+// over the stored file, so each writer here sends only its own keys: a `lastVault` write
+// never pins `shell`, and the default flip (W3) still reaches installs that never chose.
+
+/** Which shell the windows open in. Read by `lib/uxMode.ts` ONLY (source guard). */
+export type ShellPref = 'classic' | 'new';
+
+/** Mirrors `src/server/routes/launcher.ts` (drift test: launcher-prefs.test.ts). */
+export const MAX_LAYOUT_PROJECTS = 200;
+export const DRAWER_WIDTH_MIN = 200;
+export const DRAWER_WIDTH_MAX = 480;
+
+export interface LayoutPrefs {
+  lastVault: string | null;
+  projectOrder: string[];
+  drawerExpanded: string[];
+  drawerWidth: number | null;
+  drawerOpen: boolean | null;
+}
+
+const NO_LAYOUT: LayoutPrefs = { lastVault: null, projectOrder: [], drawerExpanded: [], drawerWidth: null, drawerOpen: null };
+
+let shellPref: ShellPref | null = null;
+let layout: LayoutPrefs = NO_LAYOUT;
+let settled: Promise<void> | null = null;
+
+function names(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, MAX_LAYOUT_PROJECTS) : [];
+}
+
+/** Read the server file once for this window: the launcher view's mirror, the shell switch and
+ *  the layout. Later calls share the first answer. A missing route or a failed read settles as
+ *  "nothing stored", which every reader treats as classic. */
+export function initLauncherPrefsFromServer(): Promise<void> {
+  if (!settled) {
+    settled = api.get<Record<string, unknown>>('/launcher/ui-settings').then((raw) => {
+      const view = coerce(raw.view);
+      if (view) writeLocal(view);
+      shellPref = raw.shell === 'new' || raw.shell === 'classic' ? raw.shell : null;
+      layout = {
+        lastVault: typeof raw.lastVault === 'string' ? raw.lastVault : null,
+        projectOrder: names(raw.projectOrder),
+        drawerExpanded: names(raw.drawerExpanded),
+        drawerWidth: typeof raw.drawerWidth === 'number' ? raw.drawerWidth : null,
+        drawerOpen: typeof raw.drawerOpen === 'boolean' ? raw.drawerOpen : null,
+      };
+    }, () => { /* older backend or offline: nothing stored */ });
+  }
+  return settled;
+}
+
+/** The stored switch as the server answered it (null = never chosen). `uxMode.ts` only. */
+export function readShellPrefSettled(): ShellPref | null {
+  return shellPref;
+}
+
+/** The new shell's layout as read at settle time, plus this window's own later writes. */
+export function readLayoutPrefs(): LayoutPrefs {
+  return layout;
+}
+
+/** Settings' "New layout" row. Returns the server's answer, so the save mark shows what was
+ *  actually stored; takes effect when the app restarts (the gate is frozen per window). */
+export async function writeShellMode(shell: ShellPref): Promise<ShellPref> {
+  const res = await api.post<{ shell?: unknown }>('/launcher/ui-settings', { shell });
+  if (res.shell !== 'new' && res.shell !== 'classic') throw new Error('shell not stored');
+  return res.shell;
+}
+
+/** Fetch the stored switch fresh from the server (Settings reads the server, never a mirror). */
+export async function fetchShellMode(): Promise<ShellPref> {
+  const raw = await api.get<{ shell?: unknown }>('/launcher/ui-settings');
+  return raw.shell === 'new' ? 'new' : 'classic';
+}
+
+let pendingLayout: Partial<LayoutPrefs> = {};
+let layoutTimer: ReturnType<typeof setTimeout> | null = null;
+export const LAYOUT_WRITE_DEBOUNCE_MS = 400;
+
+/** Persist part of the layout. Server only (localStorage would not survive the next launch's
+ *  origin), debounced: a drawer drag or a run of project switches writes once. */
+export function writeLayoutPrefs(partial: Partial<LayoutPrefs>): void {
+  layout = { ...layout, ...partial };
+  pendingLayout = { ...pendingLayout, ...partial };
+  if (layoutTimer) clearTimeout(layoutTimer);
+  layoutTimer = setTimeout(() => {
+    layoutTimer = null;
+    const body = pendingLayout;
+    pendingLayout = {};
+    void api.post('/launcher/ui-settings', body).catch(() => { /* best effort */ });
+  }, LAYOUT_WRITE_DEBOUNCE_MS);
+}
+
+/** Tests only. */
+export function resetLauncherPrefsForTests(): void {
+  shellPref = null;
+  layout = NO_LAYOUT;
+  settled = null;
+  pendingLayout = {};
+  if (layoutTimer) clearTimeout(layoutTimer);
+  layoutTimer = null;
+}

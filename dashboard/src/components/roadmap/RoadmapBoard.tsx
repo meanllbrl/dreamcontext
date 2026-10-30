@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
+import { NEW_SHELL_BOARD, useIsNewShell } from '../../lib/uxMode';
 import { RoadmapToolbar } from './RoadmapToolbar';
 import { ObjectiveCreateModal } from './ObjectiveCreateModal';
 import { RoadmapTimeline } from './RoadmapTimeline';
@@ -84,6 +85,9 @@ export function RoadmapBoard({ onNavigate, focus }: RoadmapBoardProps = {}) {
   const selectedForecast = selected ? forecasts.get(selected) : undefined;
   const showWarn = warnings.length > 0 && !warnDismissed;
 
+  // The new shell's page frame already draws the card (D11): no second border, and the board
+  // fills the frame instead of sizing from the viewport.
+  const newShell = useIsNewShell();
   return (
     <div style={{
       // Respect the app-wide zoom (top-bar "− 100% +"). The roadmap is a pixel-
@@ -97,6 +101,7 @@ export function RoadmapBoard({ onNavigate, focus }: RoadmapBoardProps = {}) {
       height: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))',
       maxHeight: 'calc(100dvh - var(--header-height) - 2 * var(--space-4))',
       display: 'flex', flexDirection: 'column', position: 'relative', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 14, overflow: 'hidden', boxShadow: 'var(--shadow-md)',
+      ...(newShell ? NEW_SHELL_BOARD : {}),
     }}>
       <RoadmapToolbar
         search={search} setSearch={setSearch}

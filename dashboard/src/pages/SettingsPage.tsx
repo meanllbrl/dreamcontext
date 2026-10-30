@@ -7,6 +7,7 @@ import { ConnectionsManager } from '../components/settings/ConnectionsManager';
 import { RecallModeCards } from '../components/settings/RecallModeCards';
 import { TaskOverrideEditor } from '../components/settings/TaskOverrideEditor';
 import { SETTINGS_ICONS } from '../components/settings/SettingsIcons';
+import { NewLayoutSetting } from '../components/settings/NewLayoutSetting';
 import { MaturityTag, type MaturityLevel } from '../components/common/MaturityTag';
 import { CloudTaskSync } from '../components/settings/CloudTaskSync';
 import { SettingGroup, SettingRow, Toggle } from '../components/settings/SettingRow';
@@ -829,6 +830,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
         <SectionHead titleKey="settings.nav.system" descKey="settings.desc.system" />
         <SystemDependencies />
         <AutoUpdateSetting />
+        <NewLayoutSetting />
       </section>
       )}
 
