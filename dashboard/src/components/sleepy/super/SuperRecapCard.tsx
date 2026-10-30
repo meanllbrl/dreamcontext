@@ -25,6 +25,7 @@ export function SuperRecapCard({ group, hidden, onToggle, children }: {
       role="group"
       className="super-recap-card"
       data-testid="super-recap-card"
+      data-item-id={group.anchor}
       data-open={open ? 'true' : undefined}
       data-hidden={hidden ? 'true' : undefined}
       aria-labelledby={`${id}-title`}

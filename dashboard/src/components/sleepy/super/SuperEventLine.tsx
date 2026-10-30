@@ -26,6 +26,7 @@ export function SuperEventLine({ group, titleFor, expanded, onToggle }: {
       className="super-event-line"
       role="note"
       data-testid="super-event-line"
+      data-item-id={group.anchor}
       data-kind={group.kind}
       data-full={group.full ? 'true' : undefined}
       data-expanded={expanded ? 'true' : undefined}

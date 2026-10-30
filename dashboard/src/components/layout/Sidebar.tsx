@@ -18,6 +18,7 @@ import {
 } from '../../lib/agentSettings';
 import { PROJECT_ROLLUP_EVENT } from '../sleepy/AgentSurface';
 import type { ProjectRollup } from '../sleepy/agentStatus';
+import { useSuperUnreadCount } from '../sleepy/super/superUnreadStore';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import './Sidebar.css';
 
@@ -194,6 +195,8 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
   // their laptop must not clear this badge here.
   const { data: agentFeed } = useAgentFeed();
   const agentUnread = agentFeed?.unreadTotal ?? 0;
+  // What the owner has not read in this project's Super Agent chat (the pane publishes it).
+  const superUnread = useSuperUnreadCount(vault);
   // Hypotheses is in the rail for everyone, on or off. It used to be hidden
   // while the learning layer was disabled, which made the layer undiscoverable
   // by exactly the people who had never turned it on: the page that explains it
@@ -306,6 +309,7 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
                 staggerIndex += 1;
                 const label = t(item.labelKey);
                 const { live, waiting } = chatRollup;
+                const showUnread = superUnread > 0;
                 return (
                   <li key={item.launch} className={`animate-stagger animate-stagger-${staggerIndex}`}>
                     <button
@@ -318,9 +322,11 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
                       <span className="sidebar-label">{label}</span>
                       {/* A COUNT of what is open, not an unread number — so it wears the quiet
                           pill, and only takes the accent when a session is waiting on you. */}
-                      {live > 0 && (
+                      {(live > 0 || showUnread) && (
                         <span className="sidebar-item-end">
-                          <span className={`sidebar-badge${waiting > 0 ? '' : ' sidebar-badge--quiet'}`}>{live}</span>
+                          {showUnread
+                            ? <span className="sidebar-badge sidebar-badge--count" data-testid="super-unread-badge" title={t('super.unread.count').replace('{n}', String(superUnread))}>{superUnread}</span>
+                            : <span className={`sidebar-badge${waiting > 0 ? '' : ' sidebar-badge--quiet'}`}>{live}</span>}
                         </span>
                       )}
                     </button>
