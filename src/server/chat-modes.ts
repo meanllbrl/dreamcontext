@@ -510,6 +510,8 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
 - Your handoff is a FILE, never a task: \`dreamcontext super handoff --done … --next …\` writes
   \`_dream_context/state/.super/handoff.md\`. A fresh session (the owner's New session, or a
   handoff) reads that file first, then \`super state\`.
+- A global agent (this Mac's; \`agents list\` marks it) is an AI Team member too: \`super team ask\`
+  it, never a child or a sub-agent.
 
 ## The agenda (your notepad)
 His Agenda card is YOUR notepad, never a list of children (he sees those everywhere): a few

@@ -259,7 +259,7 @@ export function registerSuperCommand(program: Command): void {
 
   const team = s.command('team').description('The project\'s AI Team: give a member a job in its own thread');
   team.command('ask <member> <job>')
-    .description('Give an AI Team member a job: it lands in the member\'s own thread and runs on its own model, approval and queue. Refused when the member is off (say_disabled) or not approved here (say_unapproved: the owner approves it in AI Team; his queue strip asks him). A busy member queues it (queued: true)')
+    .description('Give an AI Team member a job: it lands in the member\'s own thread and runs on its own model, approval and queue. A member is a project agent or, when no project member holds its name, one of this machine\'s global agents (~/.dreamcontext/agents): both are asked the same way. Refused when the member is off (say_disabled) or not approved here (say_unapproved: the owner approves it in AI Team; his queue strip asks him). A busy member queues it (queued: true)')
     .option('--brief <line>', 'The one-line reminder its card shows (default: the job\'s first line)')
     .action((member: string, job: string, o: { brief?: string }) => run('team-ask', { member, text: job, brief: o.brief }));
 

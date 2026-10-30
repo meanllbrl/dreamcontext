@@ -84,9 +84,24 @@ export function globalAgentExists(slug: string, home?: string): boolean {
   return isSafeAutomationSlug(slug) && isRegularFile(globalAgentPath(slug, home));
 }
 
+/** Where a member of the project lives. */
+export type MemberScope = 'project' | 'global';
+
+/**
+ * THE resolver for "is `slug` a member of this project, and where": a project member first (an
+ * agent file, or anything in the automation slot), else this machine's global agent of that name,
+ * else none. Presence only: a file mid-rewrite or unreadable is still there. Every reader that asks
+ * whether a member exists (the say path through `getAgent`, a team job's watch) asks this.
+ */
+export function memberScope(contextRoot: string, slug: string, home?: string): MemberScope | null {
+  if (!isSafeAutomationSlug(slug)) return null;
+  if (hasProjectMember(contextRoot, slug)) return 'project';
+  return globalAgentExists(slug, home) ? 'global' : null;
+}
+
 /** Whether `slug` names the global agent in THIS project: it exists, and no project member shadows it. */
 export function isGlobalAgentHere(contextRoot: string, slug: string, home?: string): boolean {
-  return isSafeAutomationSlug(slug) && !hasProjectMember(contextRoot, slug) && globalAgentExists(slug, home);
+  return memberScope(contextRoot, slug, home) === 'global';
 }
 
 /** Every global agent's slug, sorted. A link, a folder or an unsafe name is skipped. */
