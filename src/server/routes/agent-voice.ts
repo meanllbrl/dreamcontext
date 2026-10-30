@@ -461,7 +461,7 @@ export async function handleVoiceStt(
       // THIS take only (409, its own code): not `stt_unconfigured`, which the composer reads as
       // "dictation is not set up" until Settings changes, and not retryable — the load will
       // not be gone in the composer's retry window.
-      logVoiceEvent({ kind: 'stt', ...meta, bytes: audioEarly.length, failed: 'stt_pressure' });
+      logVoiceEvent({ kind: 'stt', ...meta, bytes: audioEarly.length, failed: 'stt_pressure', why: pressure.why });
       sendJson(res, 409, {
         error: 'stt_pressure',
         message: `This Mac is ${what} right now, so local dictation is paused to keep it responsive. Try again in a minute, or switch dictation to the cloud in Settings → Voice.`,
