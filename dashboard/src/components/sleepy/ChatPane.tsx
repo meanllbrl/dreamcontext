@@ -28,7 +28,7 @@ import { isQuestOnlyCommand, stepStretches, type StretchProbe } from './chat/too
 import { chatLineage, deriveChatQuest, partyBatches, type Party } from './chat/questModel';
 import { ChatQuestBar } from './chat/ChatQuestBar';
 import { ItemView } from './chat/TranscriptItem';
-import { feedMarks, feedShift, type ChatFeed, type FeedItem } from './chat/chatFeed';
+import { feedMarks, feedRunWorking, feedShift, type ChatFeed, type FeedItem } from './chat/chatFeed';
 import { ToolRunCard } from './chat/ToolRunCard';
 import { SurveyCard } from './chat/SurveyCard';
 import { PermissionCard } from './chat/PermissionCard';
@@ -2379,6 +2379,13 @@ export function ChatPane({
       if (!meta.empty) {
         feedNodes.push(
           <ItemView key={it.id} item={it} onOpenFile={handleOpenFile} onOpenBoard={handleOpenBoard} actor="lead" readOnly />,
+        );
+      }
+      if (feedRunWorking(meta, marks)) {
+        feedNodes.push(
+          <div key={`fwork-${meta.sessionKey}`} data-feed-working={meta.sessionKey}>
+            <WorkingIndicator label={feed.labels.working} startedAt={Date.parse(meta.startedAt) || undefined} />
+          </div>,
         );
       }
       // What the read observer watches: a run session's end (its last row, or its boundary).

@@ -14,7 +14,7 @@ import {
   remountStageFeed, retryStageFeed, setStageFeedPinned, stageFeed, stageSessionLevel, subscribeStageSession,
 } from './stageSession';
 import { dayRuleLabel, pendingApprovals, routineCountLabel, type TeamRow } from './teamModel';
-import type { ChatFeed, FeedLabels, FeedMeta } from '../sleepy/chat/chatFeed';
+import { feedHasRunning, type ChatFeed, type FeedLabels, type FeedMeta } from '../sleepy/chat/chatFeed';
 import { TeamApproval } from './TeamApproval';
 import type { PanelTab } from './TeamPanel';
 import { TeamIcon } from './TeamIcons';
@@ -195,6 +195,8 @@ function useStageSession(vault: string, agent: AgentSummary, level: string) {
 /** How often the open stage re-reads its history's page 1 (a talk held in a Chat tab that ended
  *  joins the flow). */
 const HISTORY_POLL_MS = 60_000;
+/** While one of its routine runs is in flight: its posts and its end land within seconds. */
+const HISTORY_POLL_RUNNING_MS = 5_000;
 
 function hhmm(iso: string | number): string {
   const d = new Date(iso);
@@ -267,12 +269,13 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, 
     if (feedNewestId === null) return;
     void refreshStageFeed(vault, agent.slug, feedNewestId);
   }, [vault, agent.slug, feedNewestId]);
-  useEffect(() => {
-    const timer = setInterval(() => { void refreshStageFeed(vault, agent.slug, newestRef.current); }, HISTORY_POLL_MS);
-    return () => clearInterval(timer);
-  }, [vault, agent.slug, newestRef]);
-
   const snap = stageFeed(vault, agent.slug);
+  const running = !!snap && feedHasRunning(snap.items);
+  useEffect(() => {
+    const every = running ? HISTORY_POLL_RUNNING_MS : HISTORY_POLL_MS;
+    const timer = setInterval(() => { void refreshStageFeed(vault, agent.slug, newestRef.current); }, every);
+    return () => clearInterval(timer);
+  }, [vault, agent.slug, newestRef, running]);
   // The day words move at midnight: a tick re-derives the labels.
   const [dayTick, setDayTick] = useState(() => new Date().toDateString());
   useEffect(() => {
@@ -303,6 +306,7 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, 
       live: liveKind === 'continuing'
         ? t('aiteam.history.continuing').replace('{time}', hhmm(liveStarted))
         : t('aiteam.history.new'),
+      working: t('aiteam.working.label'),
       end: t('aiteam.history.start').replace('{name}', agent.title),
       loading: t('aiteam.history.loading'),
       error: t('aiteam.history.failedRead'),
