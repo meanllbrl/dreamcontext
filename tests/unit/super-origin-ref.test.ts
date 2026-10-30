@@ -109,6 +109,12 @@ describe('the server knows the owner message of the running turn', () => {
     markSuperEventTurn(SUPER, true);
     expect(superOwnerMsgRef(SUPER)).toBeUndefined();
   });
+
+  it('a slash command answers no message of his', () => {
+    ownerWrites(ASK);
+    noteSuperOwnerMsg(SUPER, null);
+    expect(superOwnerMsgRef(SUPER)).toBeUndefined();
+  });
 });
 
 describe('owner message → team ask → done event → the answer links to his message', () => {

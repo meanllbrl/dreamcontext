@@ -2883,8 +2883,9 @@ export function startChatSession(
     if (held) content.push({ type: 'text', text: held.text });
     // The owner spoke to the Super Agent: its turn is no inbox bookkeeping any more.
     if (isSuper) markSuperEventTurn(chatRegistryId, false);
-    // The message this turn answers: a job the super starts in it records it (`origin`).
-    if (isSuper && !text.startsWith('/')) noteSuperOwnerMsg(chatRegistryId, msgRef(text));
+    // The message this turn answers: a job the super starts in it records it (`origin`). A slash
+    // command is no message of his: it answers none.
+    if (isSuper) noteSuperOwnerMsg(chatRegistryId, text.startsWith('/') ? null : msgRef(text));
     const wrote = writeStdin({ type: 'user', message: { role: 'user', content } });
     // Written, and not a slash command: the owner's lease, the running event turn marked
     // steered, an open `ask` answered, the held events it carried delivered (plan r4 D4, D7, D18).

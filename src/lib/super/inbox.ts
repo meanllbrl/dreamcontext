@@ -590,8 +590,8 @@ export function isSuperEventTurn(sessionId: string): boolean {
  *  every owner message and dropped when an event turn opens: a job the super starts in his turn
  *  records it (`origin`), so its results link under that message. In memory, like the above. */
 const ownerMsgRefs = new Map<string, string>();
-export function noteSuperOwnerMsg(sessionId: string, ref: string): void {
-  ownerMsgRefs.set(sessionId, ref);
+export function noteSuperOwnerMsg(sessionId: string, ref: string | null): void {
+  if (ref) ownerMsgRefs.set(sessionId, ref); else ownerMsgRefs.delete(sessionId);
 }
 export function superOwnerMsgRef(sessionId: string): string | undefined {
   return ownerMsgRefs.get(sessionId);
