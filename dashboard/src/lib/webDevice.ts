@@ -42,6 +42,38 @@ export function deviceFit(device: WebDevice | null, box: { w: number; h: number 
   return { w, h: Math.round(box.h / scale), scale };
 }
 
+/** A site's desktop layout width, in css px (Super presentation layouts, plan-r2 D8). */
+export const DESKTOP_WIDTH = 1280;
+
+/** The scale a page laid out at {@link DESKTOP_WIDTH} takes in a box this wide: only between 60 %
+ *  and 100 % (narrower it would be unreadable, wider it fits natively). Null: native. */
+export function desktopScale(boxWidth: number): number | null {
+  const s = boxWidth / DESKTOP_WIDTH;
+  return s >= 0.6 && s < 1 ? s : null;
+}
+
+/** A frame laid out at the desktop width and scaled into its box (the box must be `position:
+ *  relative; overflow: hidden`): as tall as the box once scaled. Shared by a server page's frame
+ *  and a project page that fills its card, so the two draw a desktop page the same way. */
+export function desktopFrameStyle(scale: number): {
+  position: 'absolute'; left: 0; top: 0; width: number; height: string; transform: string; transformOrigin: string;
+} {
+  return { position: 'absolute', left: 0, top: 0, width: DESKTOP_WIDTH, height: `${100 / scale}%`, transform: `scale(${scale})`, transformOrigin: '0 0' };
+}
+
+/**
+ * A project web page's frame geometry (DocumentReader's HtmlPage). `fill` (a web card): the frame
+ * IS its box, as a server page's frame is, and the page scrolls inside itself — never the height
+ * the page reports, because a full-screen page (`height: 100vh`, `html, body { height: 100% }`)
+ * reports the frame's own height back, and an auto-height frame then stays at the browser's
+ * default 150 px (owner 2026-10-30: the card showed a 150 px strip). A desktop `scale` lays it
+ * out at the desktop width. Not filling (a reading column): exactly the page's reported height.
+ */
+export function htmlFrameGeometry(fill: boolean, reported: number | null, scale: number | null): Record<string, string | number> {
+  if (fill) return scale ? desktopFrameStyle(scale) : {};
+  return reported === null ? {} : { height: reported, minHeight: 0 };
+}
+
 export function isWebDevice(v: unknown): v is WebDevice {
   return v === 'phone' || v === 'tablet' || v === 'desktop';
 }

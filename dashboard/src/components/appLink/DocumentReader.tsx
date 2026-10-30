@@ -10,6 +10,7 @@ import { isValidAppLinkPath } from '../../lib/appLink';
 import { agentFileKind } from '../../lib/agentFileKind';
 import { resolveWikilinkTarget, type WikilinkCandidate } from '../../lib/wikilinks';
 import { buildSandboxSrcdoc, SANDBOX_ALLOW } from '../../lib/sandboxHtml';
+import { desktopScale, htmlFrameGeometry } from '../../lib/webDevice';
 import {
   findLocalAssets, inlineLocalAssets, LINK_GUARD, MAX_ASSET_BYTES, MAX_TOTAL_BYTES,
 } from '../../lib/htmlLocalAssets';
@@ -97,6 +98,15 @@ export interface DocumentReaderProps {
    * pointer is inside the page. Off by default: no other host listens.
    */
   zoomBridge?: boolean;
+  /**
+   * A web page FILLS the reader's box (the web card): the frame is the box's height and the page
+   * scrolls inside itself, like a server page's frame. Off: the frame takes the page's reported
+   * height, so a document reads in the column with the note right under its last line.
+   */
+  fill?: boolean;
+  /** With `fill`: the page is laid out at the desktop width and scaled into its box (Super's
+   *  presentation layouts), as a server page's frame is. */
+  desktop?: boolean;
 }
 
 const CONTEXT_PREFIX = '_dream_context/';
@@ -136,7 +146,7 @@ function useText(): (key: string, fallback: string) => string {
 
 export function DocumentReader({
   path, onOpen, onClose, embedded = false, onWikilink, vaultReads = false, hostFileActions = false,
-  variant = 'default', allowAbsolute = false, zoomBridge = false,
+  variant = 'default', allowAbsolute = false, zoomBridge = false, fill = false, desktop = false,
 }: DocumentReaderProps) {
   const api = useApi();
   const { vault } = useVault();
@@ -207,7 +217,7 @@ export function DocumentReader({
       )}
       {media ? <ViewerMedia key={path} path={path} kind={media} vaultReads={vaultReads} />
         : kind === 'html' ? (
-          <HtmlPage key={path} path={path} embedded={embedded} vaultReads={vaultReads} fileActions={embedded && !hostFileActions} zoomBridge={zoomBridge} />
+          <HtmlPage key={path} path={path} embedded={embedded} vaultReads={vaultReads} fileActions={embedded && !hostFileActions} zoomBridge={zoomBridge} fill={fill} desktop={desktop} />
         ) : (
           <ViewerDocument key={path} path={path} onOpen={onOpen} onWikilink={onWikilink ?? resolveWikilink} vaultReads={vaultReads} />
         )}
@@ -461,8 +471,8 @@ function ViewerDocument({
  * frame says.
  */
 function HtmlPage({
-  path, vaultReads, fileActions, zoomBridge = false,
-}: { path: string; embedded: boolean; vaultReads: boolean; fileActions: boolean; zoomBridge?: boolean }) {
+  path, vaultReads, fileActions, zoomBridge = false, fill = false, desktop = false,
+}: { path: string; embedded: boolean; vaultReads: boolean; fileActions: boolean; zoomBridge?: boolean; fill?: boolean; desktop?: boolean }) {
   const tx = useText();
   const { t } = useI18n();
   const { resolved: theme } = useTheme();
@@ -472,6 +482,19 @@ function HtmlPage({
   const [height, setHeight] = useState<number | null>(null);
   const [torn, setTorn] = useState(false);
   const html = state.html;
+  // Filling at the desktop width: the scale its box's width asks for (a 0-wide box keeps the last).
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const [scale, setScale] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = boxRef.current;
+    if (!fill || !desktop || !el) { setScale(null); return undefined; }
+    const read = () => { if (el.clientWidth > 0) setScale(desktopScale(el.clientWidth)); };
+    read();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fill, desktop, html]);
 
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
@@ -501,8 +524,24 @@ function HtmlPage({
     frameRef.current?.contentWindow?.postMessage({ [HEIGHT_REQUEST_KEY]: true }, '*');
   }, []);
 
+  const frame = srcDoc !== null && !torn && (
+    <iframe
+      ref={frameRef}
+      className={scale ? 'doc-reader-html-frame doc-reader-html-frame--desktop' : 'doc-reader-html-frame'}
+      data-desktop-scale={scale ? scale.toFixed(3) : undefined}
+      title={fileNameOf(path)}
+      sandbox={CHAT_HTML_SANDBOX}
+      allow={SANDBOX_ALLOW}
+      srcDoc={srcDoc}
+      onLoad={onLoad}
+      // Not filling: the floor is for before the page has reported; after, the frame is exactly
+      // the page's height, so the note below sits right under a short page's last line. Filling:
+      // the box's height, never the reported one (a 100vh page would report the frame's own).
+      style={{ ...htmlFrameGeometry(fill, height, scale), colorScheme: theme }}
+    />
+  );
   return (
-    <div className="doc-reader-html">
+    <div className={fill ? 'doc-reader-html doc-reader-html--fill' : 'doc-reader-html'}>
       {state.loading && <p className="viewer-status">{t('viewer.loading')}</p>}
       {state.error && (state.tooLarge
         ? <p className="viewer-status viewer-status--error">{tx('reader.tooLarge', 'This page is too large to show here (the limit is 8 MB). Open it on the computer.')}</p>
@@ -512,20 +551,7 @@ function HtmlPage({
           {tx('reader.htmlNavigated', 'This page tried to open another web page, so it was stopped.')}
         </p>
       )}
-      {srcDoc !== null && !torn && (
-        <iframe
-          ref={frameRef}
-          className="doc-reader-html-frame"
-          title={fileNameOf(path)}
-          sandbox={CHAT_HTML_SANDBOX}
-          allow={SANDBOX_ALLOW}
-          srcDoc={srcDoc}
-          onLoad={onLoad}
-          // The floor is for before the page has reported; after, the frame is exactly the
-          // page's height, so the note below sits right under a short page's last line.
-          style={{ height: height ?? undefined, minHeight: height === null ? undefined : 0, colorScheme: theme }}
-        />
-      )}
+      {frame && (fill ? <div ref={boxRef} className="doc-reader-html-box">{frame}</div> : frame)}
       {srcDoc !== null && (
         <div className="doc-reader-html-foot">
           <span className="doc-reader-html-note">
