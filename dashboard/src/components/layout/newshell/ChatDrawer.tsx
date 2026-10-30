@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { VaultLogo } from '../VaultLogo';
 import { ProjectChipBubbles } from '../ProjectTabs';
@@ -39,6 +39,18 @@ export function ChatDrawer(p: ChatDrawerProps) {
   const [drag, setDrag] = useState<{ name: string; over: number } | null>(null);
   const rootRef = useRef<HTMLElement | null>(null);
   const newRowRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  // A menu opens at the click point, then is pulled back inside the window (a right-click near
+  // the edge of a 390px window would otherwise hang off it).
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!menu || !el) return;
+    const r = el.getBoundingClientRect();
+    const pad = 8;
+    const x = Math.max(pad, Math.min(menu.x, window.innerWidth - r.width - pad));
+    const y = Math.max(pad, Math.min(menu.y, window.innerHeight - r.height - pad));
+    if (x !== menu.x || y !== menu.y) setMenu({ ...menu, x, y });
+  }, [menu]);
 
   // ⌘N: the picker opens where New chat window sits.
   const seenNonce = useRef(p.newWindowNonce);
@@ -211,7 +223,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
       {guide !== null && <div className="ns-dr-guide" style={{ left: guide }} aria-hidden="true" />}
 
       {menu && (
-        <div className="ns-menu ns-drawer-menu" role="menu" style={{ left: menu.x, top: menu.y }} data-testid={menu.kind === 'new' ? 'drawer-new-menu' : 'drawer-project-menu'}>
+        <div ref={menuRef} className="ns-menu ns-drawer-menu" role="menu" style={{ left: menu.x, top: menu.y }} data-testid={menu.kind === 'new' ? 'drawer-new-menu' : 'drawer-project-menu'}>
           {menu.kind === 'new' ? (
             <>
               <div className="ns-drawer-menu-head">{t('shell.drawer.pickProject')}</div>
