@@ -222,6 +222,7 @@ async function run() {
     await blur(true);
     const before = turnEnds();
     await send('GO-REPORTS A ASK');
+    await blur(true); // typing puts the window in front again
     ok('the turn ended', await until(page, async () => turnEnds() > before, 60000));
     await page.waitForTimeout(1500);
 
@@ -309,6 +310,7 @@ async function run() {
     const input390 = page.locator('.chat-cmp-input:visible').first();
     const b4 = turnEnds();
     await input390.click(); await input390.fill('GO-REPORTS B'); await page.keyboard.press('Enter');
+    await blur(true);
     await until(page, async () => turnEnds() > b4, 60000);
     await page.waitForTimeout(1500);
     await page.locator('.chat-scroll:visible').first().evaluate((el) => { el.scrollTop = el.scrollHeight; });
