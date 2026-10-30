@@ -29,10 +29,10 @@ describe('what counts as unread', () => {
 
   it('the same words at another time are another message, however long the list', () => {
     const gap = SAME_MESSAGE_MS + 1000;
-    const all = units([text('a', 'ok', 1000), text('b', 'ok', 1000 + gap)]);
+    const all = units([user('u', 'go', 1), text('a', 'ok', 1000), text('b', 'ok', 1000 + gap)]);
     expect(unreadOf(all, marks(0, [{ key: all[0].key, ts: 1000 }])).map((u) => u.itemId)).toEqual(['b']);
     // The older one fell out of the replay's tail: the read one stays read.
-    const tail = units([text('b', 'ok', 1000 + gap)]);
+    const tail = units([user('u', 'go', 1000), text('b', 'ok', 1000 + gap)]);
     expect(unreadOf(tail, marks(0, [{ key: all[1].key, ts: 1000 + gap }]))).toEqual([]);
   });
 
@@ -49,41 +49,45 @@ describe('what counts as unread', () => {
   });
 
   it('an open question is a unit on its card, placed by its own time', () => {
-    const all = units([text('a', 'first', 10), text('b', 'second', 30)], [{ id: 'q1', createdAt: 20 }]);
+    const all = units([user('u', 'go', 5), text('a', 'first', 10), text('b', 'second', 30)], [{ id: 'q1', createdAt: 20 }]);
     expect(all.map((u) => u.question ?? u.itemId)).toEqual(['a', 'q1', 'b']);
   });
 
   it('flags nothing before the marks load, and nothing older than the record', () => {
-    const all = units([text('old', 'old', 5), text('new', 'new', 50)]);
+    const all = units([user('u', 'go', 1), text('old', 'old', 5), text('new', 'new', 50)]);
     expect(unreadOf(all, null)).toEqual([]);
     expect(unreadOf(all, marks(10)).map((u) => u.itemId)).toEqual(['new']);
   });
 
   it('an undated message is never flagged', () => {
-    expect(unreadOf(units([text('a', 'no time', 0)]), marks(0))).toEqual([]);
+    expect(unreadOf(units([user('u', 'go', 0), text('a', 'no time', 0)]), marks(0))).toEqual([]);
   });
 
   it('a read message stays read after a replay redates it and adds its reply mark', () => {
-    const live = units([text('live-id', 'Tamam, oldu.\n\nDevam.', 1000)]);
+    const live = units([user('u', 'go', 1), text('live-id', 'Tamam, oldu.\n\nDevam.', 1000)]);
     const read = marks(0, [{ key: live[0].key, ts: 1000 }]);
-    const replay = units([text('history-3', '<!-- re:abc123 -->\nTamam, oldu. Devam.', 1500)]);
+    const replay = units([user('u', 'go', 1), text('history-3', '<!-- re:abc123 -->\nTamam, oldu. Devam.', 1500)]);
     expect(replay[0].key).toBe(live[0].key);
     expect(unreadOf(replay, read)).toEqual([]);
   });
 
   it('the same words much later are a new message', () => {
-    const later = units([text('a', 'Tamam.', 1000 + SAME_MESSAGE_MS + 1)]);
+    const later = units([user('u', 'go', 1), text('a', 'Tamam.', 1000 + SAME_MESSAGE_MS + 1)]);
     expect(unreadOf(later, marks(0, [{ key: later[0].key, ts: 1000 }]))).toHaveLength(1);
   });
 
   it('counts down as marks land, and a slow answer cannot bring a dot back', () => {
-    const all = units([text('a', 'one', 10), text('b', 'two', 20), text('c', 'three', 30)]);
+    const all = units([user('u', 'go', 1), text('a', 'one', 10), text('b', 'two', 20), text('c', 'three', 30)]);
     let m = marks(0);
     expect(unreadOf(all, m)).toHaveLength(3);
     m = withRead(m, [{ key: all[0].key, ts: 10 }]);
     expect(unreadOf(all, m).map((u) => u.itemId)).toEqual(['b', 'c']);
     m = mergeMarks(m, marks(0));
     expect(unreadOf(all, m).map((u) => u.itemId)).toEqual(['b', 'c']);
+  });
+
+  it('prose cut from its event by the replay\'s tail is no new message', () => {
+    expect(units([text('r', 'folded once', 10), user('u', 'next', 20), text('a', 'after', 21)]).map((u) => u.itemId)).toEqual(['a']);
   });
 
   it('keys ignore whitespace, not words', () => {

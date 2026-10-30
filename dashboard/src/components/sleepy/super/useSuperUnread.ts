@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { ApiClient } from '../../../api/client';
-import { getWindowActivity } from '../../../lib/windowActivity';
+import { getWindowActivity, onWindowActivity } from '../../../lib/windowActivity';
 import {
   advanceDwell, firstMountedRow, leadIndex, mergeMarks, mostlyVisible, ownerCanRead, readMarksOf, sideOf, unreadOf, unreadUnits, withRead,
   type ReadMark, type ReadMarks, type Span, type UnreadItem, type UnreadUnit,
@@ -9,7 +9,7 @@ import { dropSuperUnread, publishSuperUnread } from './superUnreadStore';
 
 const TICK_MS = 250;
 const FLUSH_MS = 300;
-/** Ticks a unit inside the mounted range has no row before it counts as nothing to see. */
+/** Looks a unit inside the mounted range has no row before it counts as nothing to see. */
 const GONE_TICKS = 4;
 /** A failed read or write tries again, later each time. */
 const RETRY_MS = 3000;
@@ -25,6 +25,9 @@ export interface SuperUnread {
   lead: () => UnreadUnit | null;
   markAll: () => void;
 }
+
+/** One message: the same key at another time is another one. */
+const unitId = (u: UnreadUnit) => `${u.key}|${u.ts}`;
 
 function rowOf(root: HTMLElement, u: UnreadUnit): HTMLElement | null {
   return root.querySelector<HTMLElement>(u.itemId
@@ -190,12 +193,23 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
     }
   });
 
+  // Looked at again when something can have changed, never on a free-running clock (the window
+  // rules, super-surface.test.ts): the only timer runs while a unit is being dwelled on, or a
+  // missing row waits out GONE_TICKS, and it ends with them.
+  const started = useRef(new Map<string, number>());
+  const missing = useRef(new Map<string, number>());
+  const tickRef = useRef<() => void>(() => {});
   const hasUnread = count > 0;
   useEffect(() => {
-    if (!hasUnread) { setEdge(null); return undefined; }
-    let started = new Map<string, number>();
-    const missing = new Map<string, number>();
+    if (!hasUnread) {
+      setEdge(null);
+      started.current = new Map();
+      missing.current.clear();
+      return undefined;
+    }
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
       const scroller = scrollRef.current;
       const root = contentRef.current;
       if (!scroller || !root) return;
@@ -221,29 +235,49 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
           // Behind the window's ceiling it can be revealed; below the first mounted row there is
           // nothing to reveal (a block that drew nothing), and it must not hold a count for ever.
           if (firstMounted < 0 || i < firstMounted) { next = 'up'; return; }
-          const n = (missing.get(u.key) ?? 0) + 1;
-          missing.set(u.key, n);
+          const n = (missing.current.get(unitId(u)) ?? 0) + 1;
+          missing.current.set(unitId(u), n);
           if (n >= GONE_TICKS && canRead) gone.push(u);
           return;
         }
-        missing.delete(u.key);
+        missing.current.delete(unitId(u));
         const r = el.getBoundingClientRect();
         const row = { top: r.top, bottom: r.bottom };
-        if (mostlyVisible(row, view)) { visible.push(u.key); return; }
+        if (mostlyVisible(row, view)) { visible.push(unitId(u)); return; }
         const side = sideOf(row, view);
         if (side === 'above') next = 'up';
         else if (next === null && side === 'below') next = 'down';
       });
       setEdge(next);
-      const step = advanceDwell(started, canRead ? visible : [], Date.now());
-      started = step.started;
+      const step = advanceDwell(started.current, canRead ? visible : [], Date.now());
+      started.current = step.started;
       const seen = new Set(step.seen);
-      markRead([...units.filter((u) => seen.has(u.key)), ...gone]);
+      markRead([...units.filter((u) => seen.has(unitId(u))), ...gone]);
+      if (started.current.size > 0 || (canRead && missing.current.size > 0)) timer = setTimeout(tick, TICK_MS);
     };
+    tickRef.current = tick;
+    const soon = () => { if (!timer) timer = setTimeout(tick, TICK_MS); };
+    const scroller = scrollRef.current;
+    scroller?.addEventListener('scroll', soon, { passive: true });
+    const sized = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(soon);
+    if (scroller) sized?.observe(scroller);
+    if (contentRef.current) sized?.observe(contentRef.current);
+    const offActivity = onWindowActivity(soon);
+    // What covered the pane has no event of its own; closing it is a gesture.
+    window.addEventListener('pointerup', soon, true);
+    window.addEventListener('keyup', soon, true);
     tick();
-    const timer = setInterval(tick, TICK_MS);
-    return () => clearInterval(timer);
+    return () => {
+      if (timer) clearTimeout(timer);
+      tickRef.current = () => {};
+      scroller?.removeEventListener('scroll', soon);
+      sized?.disconnect();
+      offActivity();
+      window.removeEventListener('pointerup', soon, true);
+      window.removeEventListener('keyup', soon, true);
+    };
   }, [hasUnread, scrollRef, contentRef, markRead]);
+  useEffect(() => { tickRef.current(); }, [unread]);
 
   return { count, edge, lead, markAll };
 }

@@ -80,7 +80,12 @@ export function unreadUnits(
     }
   }
   const units: UnreadUnit[] = [];
+  // Before the first user item the replay's tail may have cut a turn in half: prose whose event
+  // line is gone would read as a new, unmarked message.
+  let opened = false;
   for (const it of items) {
+    if (it.kind === 'user') opened = true;
+    if (!opened) continue;
     const ts = it.ts ?? 0;
     const anchor = anchors.get(it.id);
     if (anchor) units.push({ key: anchor, ts, itemId: it.id, question: null });
