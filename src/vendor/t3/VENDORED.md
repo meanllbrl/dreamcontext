@@ -5,7 +5,7 @@ Written by `node scripts/sync-t3.mjs <t3-checkout> <commit>`. Never edit a file 
 a behaviour change is a new `patches/*.patch` with a `# reason:` line, re-applied by the script.
 `tests/unit/vendor-t3-drift.test.ts` fails when a file differs from `vendor-manifest.json`.
 
-Files: 242 copied (186869 upstream lines), 18 stubs, 0 patches.
+Files: 249 copied (186869 upstream lines), 18 stubs, 0 patches.
 
 ## Stubs (cut seams, plan §2)
 
@@ -292,3 +292,10 @@ Files: 242 copied (186869 upstream lines), 18 stubs, 0 patches.
 - `packages/shared/src/toolActivity.ts`
 - `packages/shared/src/toolOutput.ts`
 - `packages/shared/src/video.ts`
+- `apps/server/src/orchestration-v2/testkit/fixtures/simple/codex_transcript.ndjson`
+- `apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/codex_transcript.ndjson`
+- `apps/server/src/orchestration-v2/testkit/fixtures/tool_call_restricted_granular/codex_transcript.ndjson`
+- `apps/server/src/orchestration-v2/testkit/fixtures/plan_questions/codex_transcript.ndjson`
+- `apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/codex_transcript.ndjson`
+- `apps/server/src/orchestration-v2/testkit/fixtures/todo_list/codex_transcript.ndjson`
+- `apps/server/src/orchestration-v2/testkit/fixtures/command_output_streaming/codex_transcript.ndjson`

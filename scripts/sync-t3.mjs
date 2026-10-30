@@ -59,6 +59,13 @@ const TESTS = [
   // infrastructure (Cursor SDK, native keyring). tests/unit/t3-bridge/registry.test.ts covers ours.
 ];
 
+// T3's recorded Codex app-server transcripts (synthetic prompts), replayed by our bridge tests
+// and by scripts/verify/fake-codex.mjs.
+export const FIXTURES = [
+  'simple', 'tool_call_read_only_on_request', 'tool_call_restricted_granular', 'plan_questions',
+  'turn_interrupt', 'todo_list', 'command_output_streaming',
+].map((s) => `apps/server/src/orchestration-v2/testkit/fixtures/${s}/codex_transcript.ndjson`);
+
 // Cut seams (plan §2): T3 app modules replaced by our stub at the same path.
 // The stub source lives in src/vendor/t3/_stubs/<same path>; the reason is the
 // stub's first comment line. The walk never enters a stubbed file's imports.
@@ -227,6 +234,13 @@ function main() {
       continue;
     }
     const text = vendoredText(rel, fs.readFileSync(path.join(src, rel), 'utf8'));
+    fs.writeFileSync(out, text);
+    manifest.files[rel] = sha256(text);
+  }
+  for (const rel of FIXTURES) {
+    const out = path.join(DEST, rel);
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    const text = fs.readFileSync(path.join(src, rel));
     fs.writeFileSync(out, text);
     manifest.files[rel] = sha256(text);
   }

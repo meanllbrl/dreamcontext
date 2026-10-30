@@ -15,12 +15,17 @@ export const T3_PACKAGES = {
   'effect-codex-app-server': 'effect-codex-app-server',
 };
 
-const SPEC = /^(@t3tools\/(?:contracts|provider-core|shared|provider-testing)|effect-codex-app-server)(?:\/(.+))?$/;
+// Our bridge reaches T3's server modules (the drivers, adapters, registry) by this name, so no
+// file of ours imports a vendored path with a `.ts` extension. T3's own files never use it.
+const SERVER = path.join(ROOT, 'src/vendor/t3/apps/server/src');
+
+const SPEC = /^(@t3tools\/(?:contracts|provider-core|shared|provider-testing|server)|effect-codex-app-server)(?:\/(.+))?$/;
 
 /** The file a T3 package specifier resolves to, or null when it is not one. */
 export function resolveT3(spec) {
   const m = SPEC.exec(spec);
   if (!m) return null;
+  if (m[1] === '@t3tools/server') return m[2] ? path.join(SERVER, `${m[2]}.ts`) : null;
   return path.join(PKGS, T3_PACKAGES[m[1]], 'src', `${m[2] ?? 'index'}.ts`);
 }
 

@@ -61,6 +61,7 @@ import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { CHAT_MODE_ROWS, DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { bindChatAgent } from '../../lib/chatAgentBinding';
+import { bindChatTool, chatToolFor, type ChatTool } from '../../lib/chatToolBinding';
 import { TALK_TO_AGENT_EVENT, type TalkToAgentDetail } from '../../lib/talkToAgent';
 import { useAgents, findAgent } from '../../hooks/useAgents';
 import { preparePrompt, promptFitsInline, developKickoffPrompt, trainKickoffPrompt, initializerKickoffPrompt } from '../../lib/agentPrompt';
@@ -308,6 +309,8 @@ interface SavedMeta {
   mode?: ChatMode;
   /** The agent this chat tab speaks as. Mirrors the server's `SavedMeta.agent`. */
   agent?: string;
+  /** The tool this chat runs on when it is not Claude. Mirrors the server's `SavedMeta.tool`. */
+  tool?: 'codex';
   /** 0-based index of the pane this tab sat in, left to right. Absent on legacy rosters →
    *  pane 0, which is exactly the single-pane restore this surface used to do unconditionally. */
   pane?: number;
@@ -1240,6 +1243,8 @@ export function AgentSurface() {
           // tab without one restores DORMANT (manual Resume). Spawn happens here, once —
           // and only on the non-cancelled invocation, so StrictMode can't double-spawn.
           const restored: SessionMeta[] = fresh.map((m, i) => {
+            // Bound before any spawn or Resume below: `createChatSession` reads the tool from it.
+            if (m.sessionId) bindChatTool(m.sessionId, m.kind === 'chat' && m.tool === 'codex' ? 'codex' : '');
             // Shells restore as shells; an 'automation' entry KEEPS that display kind (see
             // the branch below — C11/C12); every other Claude-backed tab (saved as agent OR
             // chat) reopens as the CURRENTLY chosen Agent screen — the preference is a swap,
@@ -1461,6 +1466,7 @@ export function AgentSurface() {
             // state on BOTH sides, so a plain chat tab's payload is unchanged.
             ...(m.kind === 'chat' && m.mode && m.mode !== DEFAULT_CHAT_MODE ? { mode: m.mode } : {}),
             ...(m.kind === 'chat' && m.agent ? { agent: m.agent } : {}),
+            ...(m.kind === 'chat' && chatToolFor(m.claudeId) ? { tool: chatToolFor(m.claudeId) } : {}),
             // The model, effort and account it runs on, so a relaunch resumes it on them: a
             // running chat's own, else (dormant, parked) the ones its Resume will use.
             // A relaunch-parked Super child has an empty `parked` beside its `launch`: each field
@@ -2101,6 +2107,53 @@ export function AgentSurface() {
       return { ...p, tabs, active: s.id };
     }));
   }, [spawn, modelForSession, effortForSession]);
+
+  /**
+   * The composer's tool pick (Track T W1): a NEW conversation on the other tool, in THIS tab when
+   * nothing has been said in it yet, beside it otherwise. Never a move of this conversation: a
+   * conversation lives on one tool (moving one across tools is W4's handoff), so the pick works
+   * exactly like `pickChatAgent`. The model is left to the new tool's own default (a Claude model
+   * id means nothing to Codex); mode, permission and the unsent draft carry over.
+   */
+  const pickChatTool = useCallback((sid: string, tool: ChatTool) => {
+    const cs = sessions.current.get(sid);
+    if (!cs || cs.kind !== 'chat') return;
+    const chat = cs as ChatSession;
+    if (chat.tool === tool) return;
+    const fresh = !chat.busy && chat.getModel().items.length === 0;
+    const carried = fresh ? chat.getModel().draft : '';
+    const claudeId = newClaudeId();
+    bindChatTool(claudeId, tool);
+    bindChatAgent(claudeId, '');
+    if (fresh) {
+      try { chat.dispose(); } catch { /* best-effort */ }
+      sessions.current.delete(chat.id);
+    }
+    const s = spawn(chat.bypass, claudeId, false, 'chat', '', tool ? '' : modelForSession(chat), true, '', false, tool ? '' : effortForSession(chat), true, chat.mode, tool ? '' : chat.accountId) as ChatSession;
+    carryDraftInto(s, carried);
+    if (carried) clearDraft(vault, chat.claudeId);
+    const meta: SessionMeta = {
+      id: s.id, title: titleFor(s), kind: 'chat', bypass: s.bypass, claudeId,
+      ...(chat.mode !== DEFAULT_CHAT_MODE ? { mode: chat.mode } : {}),
+    };
+    if (fresh) {
+      setSessionList((prev) => prev.map((m) => (m.id === chat.id ? meta : m)));
+      setPanes((prev) => prev.map((p) => ({
+        ...p,
+        tabs: p.tabs.map((t) => (t === chat.id ? s.id : t)),
+        active: p.active === chat.id ? s.id : p.active,
+      })));
+      return;
+    }
+    setSessionList((prev) => [...prev, meta]);
+    setPanes((prev) => prev.map((p) => {
+      const at = p.tabs.indexOf(chat.id);
+      if (at < 0) return p;
+      const tabs = [...p.tabs];
+      tabs.splice(at + 1, 0, s.id);
+      return { ...p, tabs, active: s.id };
+    }));
+  }, [spawn, modelForSession, effortForSession, vault]);
 
   /**
    * The `bypass` segment in ONE chat composer. Switches THAT conversation, and remembers the
@@ -4384,6 +4437,7 @@ export function AgentSurface() {
     changePermissionMode: changeChatPermissionMode,
     changeMode: changeChatMode,
     pickAgent: pickChatAgent,
+    pickTool: pickChatTool,
     changeAccount: changeChatAccountFor,
     handoffToDevelop,
     openAppPage: onOpenAppPage,
@@ -4399,6 +4453,7 @@ export function AgentSurface() {
     changePermissionMode: (sid, mode) => chatActionsRef.current.changePermissionMode(sid, mode),
     changeMode: (sid, mode) => chatActionsRef.current.changeMode(sid, mode),
     pickAgent: (sid, agent) => chatActionsRef.current.pickAgent?.(sid, agent),
+    pickTool: (sid, tool) => chatActionsRef.current.pickTool?.(sid, tool),
     changeAccount: (sid, accountId) => chatActionsRef.current.changeAccount(sid, accountId),
     handoffToDevelop: (cs, taskSlug) => chatActionsRef.current.handoffToDevelop(cs, taskSlug),
     openAppPage: (page, id) => chatActionsRef.current.openAppPage(page, id),

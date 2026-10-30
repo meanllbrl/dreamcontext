@@ -1,10 +1,12 @@
-import { memo, type ReactNode, useCallback } from 'react';
+import { memo, type ReactNode, useCallback, useMemo } from 'react';
 import { ChatPane } from './ChatPane';
 import type { ModelConfig } from '../../lib/agentComposer';
 import type { AutomationRunRef } from '../../lib/automationRunChat';
 import type { ChatMode } from '../../lib/chatModes';
 import type { ChatSession } from './chatSession';
-import type { ChatAgentPick } from './chat/ComposerMenus';
+import type { ChatAgentPick, ToolPick } from './chat/ComposerMenus';
+import type { ChatTool } from '../../lib/chatToolBinding';
+import { codexModelConfig, useAgentTools } from '../../hooks/useAgentCapabilities';
 import type { ChatFeed } from './chat/chatFeed';
 
 /**
@@ -54,6 +56,9 @@ export interface ChatSurfaceActions {
    *  Optional: a host whose agent is fixed (the Assistant's notch, a whiteboard card) has no
    *  picker, so the menu draws no Agent section there. */
   pickAgent?: (sid: string, agent: ChatAgentPick | null) => void;
+  /** Open a NEW chat on another tool (Track T W1): a conversation lives on one tool, so this
+   *  never moves this one; see AgentSurface's `pickChatTool`. Optional like `pickAgent`. */
+  pickTool?: (sid: string, tool: ChatTool) => void;
   /** Move a RUNNING conversation to another Claude account. RESPAWNS at the turn boundary —
    *  an account is `CLAUDE_CONFIG_DIR`, read once at spawn, so there is nothing to switch
    *  live. Same shape as `changeMode` beside it for exactly that reason; see AgentSurface's
@@ -121,13 +126,26 @@ function ChatPaneHostInner({
     (page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => actions.openAppPage(page, id, vault), [actions],
   );
   const onSignIn = useCallback(() => actions.signIn(session), [actions, session]);
+  // A Codex chat reads Codex's own models and efforts; a Claude chat is unchanged.
+  const tools = useAgentTools().data;
+  const codexInfo = tools?.find((t) => t.tool === 'codex');
+  const codexConfig = session.tool === 'codex' ? codexModelConfig(codexInfo) : null;
+  const paneConfig = codexConfig ?? modelConfig;
+  const paneModel = codexConfig && !codexConfig.models.some((m) => m.id === model) ? codexConfig.defaultModel : model;
+  const paneEffort = codexConfig && !codexConfig.efforts.includes(effort) ? codexConfig.defaultEffort : effort;
+  const pickTool = actions.pickTool;
+  const toolPick = useMemo<ToolPick | undefined>(() => (pickTool && codexInfo ? {
+    current: session.tool,
+    codex: { ready: codexInfo.ready, installed: codexInfo.installed, signedIn: codexInfo.signedIn },
+    onPick: (tool) => pickTool(session.id, tool),
+  } : undefined), [pickTool, codexInfo, session]);
 
   return (
     <ChatPane
       session={session}
-      modelConfig={modelConfig}
-      model={model}
-      effort={effort}
+      modelConfig={paneConfig}
+      model={paneModel}
+      effort={paneEffort}
       onModelChange={onModelChange}
       onEffortChange={onEffortChange}
       onAccountChange={onAccountChange}
@@ -137,6 +155,7 @@ function ChatPaneHostInner({
       mode={mode}
       onModeChange={onModeChange}
       onAgentPick={actions.pickAgent ? onAgentPick : undefined}
+      toolPick={toolPick}
       onHandoffToDevelop={onHandoffToDevelop}
       onResume={onResume}
       automation={automation}

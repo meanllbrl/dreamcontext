@@ -62,7 +62,7 @@ import { MIRROR_TAIL, syncMirror } from './composerMirror';
 import { PictureChip, RefPopover, RefSrList, refMirrorSegments, refsInOrder } from './ComposerRefLayer';
 import { persistDraft, readDraft, restoreDraftBody, subscribeDraft, type SavedDraft } from './composerDrafts';
 import { Popover } from '../SkillPickerPopover';
-import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
+import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick, type ToolPick } from './ComposerMenus';
 import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
 import { ConcentricRings } from './UsageRings';
 import type { ComposerHost } from './composerHost';
@@ -457,7 +457,7 @@ export function Composer({
   session, model, effort, modelConfig, onModelChange, onEffortChange, busy, connected,
   quote, onClearQuote, permissionMode = 'auto', projectPermissionMode,
   onPermissionModeChange, onSignIn, mcpPicker, onPeerMessage,
-  mode = DEFAULT_CHAT_MODE, onModeChange, agent = '', onAgentPick, onSetModelDefault, shelved = false,
+  mode = DEFAULT_CHAT_MODE, onModeChange, agent = '', onAgentPick, toolPick, onSetModelDefault, shelved = false,
   mentions, renderMentionFace, mentionsLabel = 'Connected projects',
   idlePlaceholder, unavailable,
   showModel = true,
@@ -549,6 +549,8 @@ export function Composer({
   agent?: string;
   /** The mode menu's Agent section. Absent = no section (see ModeMenu). */
   onAgentPick?: (agent: ChatAgentPick | null) => void;
+  /** Claude / Codex in the model menu (Track T W1). Absent = no tool choice on this composer. */
+  toolPick?: ToolPick;
   /**
    * OVERRIDE for "Set as default" — not the thing that makes the button work.
    *
@@ -2283,6 +2285,7 @@ export function Composer({
             head={modelMenu?.head}
             foot={modelMenu?.foot}
             defaultId={modelMenu?.defaultId}
+            toolPick={toolPick}
           />
         </div>
       )}

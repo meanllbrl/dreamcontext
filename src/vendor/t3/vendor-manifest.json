@@ -242,7 +242,14 @@
     "packages/shared/src/themePalettes.ts": "09a4c8bd5229d5f9e22a299f8bd2f626a6c7ef34ffc6ca60a99c2f6f24f31cc1",
     "packages/shared/src/toolActivity.ts": "d6d7b276a07b3a8521a822b83e507f8ec1f53e80055a05b72c09b9e487485bdd",
     "packages/shared/src/toolOutput.ts": "925cb436752e4ef37059c0bfe86f8ca577a921dd0b794f7896e4cd46f4c2ae54",
-    "packages/shared/src/video.ts": "ca33022a3c4bddd2191fbdea74f8a50aea0225555cda14789fc0a718cc0198aa"
+    "packages/shared/src/video.ts": "ca33022a3c4bddd2191fbdea74f8a50aea0225555cda14789fc0a718cc0198aa",
+    "apps/server/src/orchestration-v2/testkit/fixtures/simple/codex_transcript.ndjson": "66f9e6e34c44bbbdb1767f154f01502b1143dcc5603f0bca1dc45269790ade1a",
+    "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/codex_transcript.ndjson": "73efc75f0310dc3deb6f773b22eb26aa7f0358437176fee0c77631f4176970d8",
+    "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_restricted_granular/codex_transcript.ndjson": "493fa39545ae1bb9b8a3e19b04d04c0e13e89287925c51c4966d143af0b8d20e",
+    "apps/server/src/orchestration-v2/testkit/fixtures/plan_questions/codex_transcript.ndjson": "8247408b08cde0784bda3f71c1640f41c3e863ce7cb56c02a868c19cc5a67981",
+    "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/codex_transcript.ndjson": "3ae3b0bede46e3d3fe17dec59f842346e335c7dc12a4e5b35e8f528755281632",
+    "apps/server/src/orchestration-v2/testkit/fixtures/todo_list/codex_transcript.ndjson": "40bea511f9433a76331f7a33620402031589ffca75119d6837fdbc689db0ee5a",
+    "apps/server/src/orchestration-v2/testkit/fixtures/command_output_streaming/codex_transcript.ndjson": "3074227564c4c27921c72d976dff09c4b8df90807a54badd9f33f5bc2096b562"
   },
   "stubs": {
     "apps/server/src/environment/ServerEnvironment.ts": {
