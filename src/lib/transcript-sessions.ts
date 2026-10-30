@@ -28,10 +28,11 @@
  * shapes are the norm, never an error.
  */
 
-import { closeSync, existsSync, fstatSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, openSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { userPromptOf } from './transcript-history.js';
+import { listClaudeAccounts } from './claude-accounts.js';
 
 /** One past conversation, as the history picker shows it. */
 export interface PastSession {
@@ -42,9 +43,13 @@ export interface PastSession {
   title: string;
   /** `title` is a remembered tab name, not a clipped first prompt — the client may show it whole. */
   named: boolean;
-  /** Present only on a queried listing: the title or message line that holds the query's first
-   *  word, one-lined and clipped around it ({@link matchSnippet}), so a hit says WHY it matched. */
+  /** Present only on a queried listing: the title or message line that holds the query, one-lined
+   *  and clipped around it ({@link matchSnippet}), so a hit says WHY it matched. */
   match?: string;
+  /** Present only on a queried listing: where the query was found. `title` = the row's own name;
+   *  `prompt` = a message of yours the index already held; `content` = only somewhere deeper in
+   *  the conversation (your messages or the agent's replies). Rows are ranked in this order. */
+  matchIn?: 'title' | 'prompt' | 'content';
   /** Most recent thing the user said, one-lined. '' when it would just repeat the title. */
   preview: string;
   /** Last write to the transcript (ms epoch) — "when did I last talk to this session". */
@@ -183,6 +188,9 @@ const MAX_HEAD_PROMPTS = 12;
 const TITLE_MAX = 120;
 const PREVIEW_MAX = 200;
 const HAYSTACK_MAX = 4000;
+
+/** Words of a query that are searched; the rest are ignored. */
+const MAX_QUERY_TOKENS = 8;
 
 export const DEFAULT_LIMIT = 200;
 export const MAX_LIMIT = 500;
@@ -454,11 +462,44 @@ function recordedCwd(dir: string): string {
  * the number of projects the user has ever opened.
  */
 export function resolveProjectDir(projectRoot: string, home: string = homedir()): string | null {
-  const key = `${home} ${projectRoot}`;
+  return resolveProjectDirUnder(claudeProjectsBase(home), projectRoot);
+}
+
+/**
+ * Every directory holding THIS project's conversations, one per Claude account the app knows
+ * (`claude-accounts.ts`). An account's sandbox normally SHARES `projects/` with the real
+ * `~/.claude` (a symlink — see `claude-account-sandbox.ts`), so the usual answer is one dir;
+ * a sandbox whose `projects/` is a real directory of its own contributes its sessions too.
+ * Deduplicated by real path.
+ */
+export function resolveProjectDirs(projectRoot: string, home: string = homedir()): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (dir: string | null) => {
+    if (!dir) return;
+    let real = dir;
+    try { real = realpathSync(dir); } catch { return; }
+    if (seen.has(real)) return;
+    seen.add(real);
+    out.push(dir);
+  };
+  add(resolveProjectDir(projectRoot, home));
+  let accounts: ReturnType<typeof listClaudeAccounts> = [];
+  try { accounts = listClaudeAccounts(home); } catch { /* no register — one account */ }
+  for (const a of accounts) {
+    if (!a.configDir) continue;
+    // A sandbox dir stands in for HOME: its transcripts live under `<configDir>/projects`.
+    add(resolveProjectDirUnder(join(a.configDir, 'projects'), projectRoot));
+  }
+  return out;
+}
+
+/** {@link resolveProjectDir} against an explicit `projects` base (HOME's, or an account
+ *  sandbox's). */
+function resolveProjectDirUnder(base: string, projectRoot: string): string | null {
+  const key = `${base} ${projectRoot}`;
   const cached = dirCache.get(key);
   if (cached !== undefined) return cached;
-
-  const base = claudeProjectsBase(home);
   let resolved: string | null = null;
   const guess = join(base, claudeProjectDirName(projectRoot));
   if (existsSync(guess)) {
@@ -517,12 +558,86 @@ export interface ListPastSessionsResult {
   truncated: boolean;
 }
 
+/** One transcript file of the project, as a listing considers it. */
+export interface TranscriptFile {
+  path: string;
+  id: string;
+  mtimeMs: number;
+  size: number;
+}
+
+/**
+ * The project's transcript files across every account dir ({@link resolveProjectDirs}),
+ * newest-mtime first, capped at {@link MAX_SCANNED_FILES}. Stat only — no content is read.
+ * One conversation id found in two dirs is the same conversation: the newer copy wins.
+ */
+export function listTranscriptFiles(
+  projectRoot: string,
+  home: string = homedir(),
+): { files: TranscriptFile[]; truncated: boolean } {
+  const byId = new Map<string, TranscriptFile>();
+  for (const dir of resolveProjectDirs(projectRoot, home)) {
+    let names: string[];
+    try { names = readdirSync(dir); } catch { continue; }
+    for (const name of names) {
+      const m = JSONL_RE.exec(name);
+      if (!m) continue;
+      const path = join(dir, name);
+      try {
+        const st = statSync(path);
+        if (!st.isFile() || st.size === 0) continue;
+        const prev = byId.get(m[1]);
+        if (!prev || st.mtimeMs > prev.mtimeMs) byId.set(m[1], { path, id: m[1], mtimeMs: st.mtimeMs, size: st.size });
+      } catch {
+        /* vanished between readdir and stat */
+      }
+    }
+  }
+  // Stat first, sort by recency, and only THEN read file contents: the newest N are what
+  // anyone scrolls, and a project with thousands of transcripts must not pay a head+tail
+  // read for the ones it will never show.
+  const all = [...byId.values()].sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const truncated = all.length > MAX_SCANNED_FILES;
+  return { files: truncated ? all.slice(0, MAX_SCANNED_FILES) : all, truncated };
+}
+
+/** Full conversation text of a transcript, from `transcript-content-index.ts`. `folded` is
+ *  {@link foldCase} of `text` (same length). Undefined = not indexed (yet). */
+export type ContentLookup = (path: string) => { text: string; folded: string } | undefined;
+
+/** Occurrences of `needle` in `hay`, counted up to `cap` — a ranking signal, not a statistic. */
+function countOf(hay: string, needle: string, cap = 20): number {
+  let n = 0;
+  let at = hay.indexOf(needle);
+  while (at >= 0 && n < cap) { n++; at = hay.indexOf(needle, at + needle.length); }
+  return n;
+}
+
+/**
+ * The snippet for a content-only hit: the message (one line of the index) holding `needle`,
+ * clipped around it like {@link matchSnippet}. '' when it is not there.
+ */
+export function contentSnippet(text: string, folded: string, needle: string, radius = 60): string {
+  const at = folded.indexOf(needle);
+  if (at < 0) return '';
+  const lineStart = folded.lastIndexOf('\n', at) + 1;
+  const nl = folded.indexOf('\n', at);
+  const lineEnd = nl < 0 ? folded.length : nl;
+  const from = Math.max(lineStart, at - radius);
+  const to = Math.min(lineEnd, at + needle.length + radius);
+  return `${from > lineStart ? '…' : ''}${text.slice(from, to).trim()}${to < lineEnd ? '…' : ''}`;
+}
+
 /**
  * Every past conversation of `projectRoot`, newest activity first.
  *
- * `query` matches case-insensitively against the session's title, the prompts harvested
- * from its head, its most recent prompt, and its branch — every token must appear
- * somewhere in that haystack (AND, not OR), so a second word narrows rather than widens.
+ * `query` matches case-insensitively. Every token must appear somewhere (AND, not OR) in the
+ * session's title, the prompts harvested from its head, its most recent prompt, its branch —
+ * or, when `content` is given, anywhere in what was said in it (your messages and the agent's
+ * replies, from `transcript-content-index.ts`). A queried listing is RANKED, not date-ordered:
+ * every token in the title first, then a hit among the prompts already in the summary, then a
+ * content-only hit; within a tier, the whole query as a phrase beats scattered words, then more
+ * occurrences beat fewer, then the newer session wins.
  *
  * Machine-spawned sessions (goal-skill builders, the Sleep chip's agent, scheduled
  * automations, council personas — see {@link isAgentRun}) are EXCLUDED unless
@@ -539,37 +654,17 @@ export function listPastSessions(
     /** The name each conversation carried in its tab (`session-titles.ts`), keyed by
      *  conversation UUID. Preferred over the first prompt, and searchable. */
     titles?: ReadonlyMap<string, string>;
+    /** Full-text lookup; absent = search the summary haystack only (the old behaviour). */
+    content?: ContentLookup;
+    /** Precomputed {@link listTranscriptFiles} (the caller already needed it to index). */
+    files?: { files: TranscriptFile[]; truncated: boolean };
   } = {},
 ): ListPastSessionsResult {
   const home = opts.home ?? homedir();
   const limit = Math.min(MAX_LIMIT, Math.max(1, opts.limit ?? DEFAULT_LIMIT));
-  const dir = resolveProjectDir(projectRoot, home);
-  if (!dir) return { sessions: [], total: 0, agentRuns: 0, truncated: false };
+  const { files: scanned, truncated } = opts.files ?? listTranscriptFiles(projectRoot, home);
 
-  let names: string[];
-  try { names = readdirSync(dir); } catch { return { sessions: [], total: 0, agentRuns: 0, truncated: false }; }
-
-  // Stat first, sort by recency, and only THEN read file contents: the newest N are what
-  // anyone scrolls, and a project with thousands of transcripts must not pay a head+tail
-  // read for the ones it will never show.
-  const candidates: Array<{ path: string; id: string; mtimeMs: number; size: number }> = [];
-  for (const name of names) {
-    const m = JSONL_RE.exec(name);
-    if (!m) continue;
-    const path = join(dir, name);
-    try {
-      const st = statSync(path);
-      if (!st.isFile() || st.size === 0) continue;
-      candidates.push({ path, id: m[1], mtimeMs: st.mtimeMs, size: st.size });
-    } catch {
-      /* vanished between readdir and stat */
-    }
-  }
-  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  const truncated = candidates.length > MAX_SCANNED_FILES;
-  const scanned = truncated ? candidates.slice(0, MAX_SCANNED_FILES) : candidates;
-
-  const all: IndexedSession[] = [];
+  const all: Array<IndexedSession & { path: string }> = [];
   for (const c of scanned) {
     const hit = summaryCache.get(c.path);
     let summary: IndexedSession | null;
@@ -587,6 +682,7 @@ export function listPastSessions(
     all.push(named && named !== summary.title
       ? {
         ...summary,
+        path: c.path,
         title: named,
         named: true,
         // The first prompt stops being the title, so a one-turn session shows it underneath
@@ -595,23 +691,56 @@ export function listPastSessions(
         haystack: `${foldCase(named)}\n${summary.haystack}`,
         lines: [named, ...summary.lines],
       }
-      : summary);
+      : { ...summary, path: c.path });
   }
 
-  const tokens = foldCase(opts.query ?? '').split(/\s+/).filter(Boolean);
-  const matched = tokens.length === 0
-    ? all
-    : all.filter((s) => tokens.every((t) => s.haystack.includes(t)));
+  const folded = foldCase(opts.query ?? '').trim();
+  // Distinct words, and few of them: each one is a pass over every indexed conversation, so a
+  // pasted paragraph must not turn one request into a hundred scans.
+  const tokens = [...new Set(folded.split(/\s+/).filter(Boolean))].slice(0, MAX_QUERY_TOKENS);
+  const phrase = tokens.join(' ');
+
+  type Ranked = { s: (typeof all)[number]; tier: 0 | 1 | 2; phrase: boolean; score: number; match: string };
+  let ranked: Ranked[];
+  if (tokens.length === 0) {
+    ranked = all.map((s) => ({ s, tier: 0, phrase: false, score: 0, match: '' }));
+  } else {
+    ranked = [];
+    for (const s of all) {
+      const title = foldCase(s.title);
+      const body = opts.content?.(s.path);
+      // Each token must be found somewhere: the summary's haystack or the full text.
+      if (!tokens.every((t) => s.haystack.includes(t) || !!body?.folded.includes(t))) continue;
+      const tier: 0 | 1 | 2 = tokens.every((t) => title.includes(t)) ? 0
+        : tokens.every((t) => s.haystack.includes(t)) ? 1 : 2;
+      const hasPhrase = title.includes(phrase) || s.haystack.includes(phrase) || !!body?.folded.includes(phrase);
+      let score = 0;
+      for (const t of tokens) score += Math.log1p(countOf(s.haystack, t) + (body ? countOf(body.folded, t) : 0));
+      // The snippet: the title for a title hit, else the summary line holding the phrase or
+      // first word, else the deeper message holding it.
+      const needle = hasPhrase ? phrase : tokens[0];
+      let match = tier === 0 ? s.title : matchSnippet(s.lines, needle) || matchSnippet(s.lines, tokens[0]);
+      if (!match && body) match = contentSnippet(body.text, body.folded, needle) || contentSnippet(body.text, body.folded, tokens[0]);
+      ranked.push({ s, tier, phrase: hasPhrase, score, match });
+    }
+    ranked.sort((a, b) => a.tier - b.tier
+      || Number(b.phrase) - Number(a.phrase)
+      || b.score - a.score
+      || b.s.updatedAt - a.s.updatedAt);
+  }
 
   // Agent runs are filtered AFTER the query, so the count reported back is "how many of the
   // things you searched for are being held back" — the number the picker offers to reveal —
   // rather than a corpus-wide constant that says nothing about the current list.
-  const shown = opts.includeAgentRuns ? matched : matched.filter((s) => !s.agentRun);
-  const agentRuns = matched.length - shown.length;
+  const shown = opts.includeAgentRuns ? ranked : ranked.filter((r) => !r.s.agentRun);
+  const agentRuns = ranked.length - shown.length;
 
-  // `haystack` and `lines` are stripped here — they are the index, not the payload. A queried
-  // listing says why each row matched (the line holding the first word).
-  const sessions = shown.slice(0, limit).map(({ haystack: _drop, lines, ...rest }) =>
-    tokens.length ? { ...rest, match: matchSnippet(lines, tokens[0]) } : rest);
+  // `haystack`, `lines` and `path` are stripped here — they are the index, not the payload. A
+  // queried listing says why each row matched, and where.
+  const TIERS = ['title', 'prompt', 'content'] as const;
+  const sessions = shown.slice(0, limit).map(({ s, tier, match }) => {
+    const { haystack: _h, lines: _l, path: _p, ...rest } = s;
+    return tokens.length ? { ...rest, match, matchIn: TIERS[tier] } : rest;
+  });
   return { sessions, total: shown.length, agentRuns, truncated };
 }

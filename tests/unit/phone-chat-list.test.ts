@@ -228,7 +228,7 @@ describe('the list is the Mac phone\'s home (AC21)', () => {
     expect(code('dashboard/src/components/sleepy/usePhoneHome.ts')).toMatch(/new ApiClient\(p\)\.get<ChatSessionsResponse>\(`\/agent\/chat-sessions\?limit=\$\{PAST_LIMIT\}&q=\$\{encodeURIComponent\(q\)\}`\)/);
     expect(list).toMatch(/usePhoneHome\(\{ vault, tabs, active, q: dq \}\)/);
     expect(list).toMatch(/const r = pastTap\(d\.resume\.id, fresh\.chats\);\s*if \('adopt' in r\) \{ onAdopt\(r\.adopt\); return; \}/);
-    expect(server).toMatch(/tokens\.length \? \{ \.\.\.rest, match: matchSnippet\(lines, tokens\[0\]\) \} : rest/);
+    expect(server).toMatch(/tokens\.length \? \{ \.\.\.rest, match, matchIn: TIERS\[tier\] \} : rest/);
   });
 });
 

@@ -127,6 +127,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.chp-hit {
+  background: color-mix(in srgb, var(--color-warning) 30%, transparent);
+  color: inherit;
+  border-radius: 2px;
+}
+
 .chp-row-preview {
   font-size: 11px;
   line-height: 1.35;
