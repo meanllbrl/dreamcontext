@@ -2519,18 +2519,7 @@ export function Composer({
       </div>
 
       <div className="chat-cmp-toolbar">
-        {/* One control for every kind of attachment — files and folders. A bare `+` now that its labelled Skills neighbour is gone: it is
-            the only icon control on this side of the row, so there is nothing for it to read
-            as a loose part OF. Still a `Popover` (not one of the three panels above): its
-            menu is a short list that clamps to its trigger rather than spanning the card.
-            Drawn only inside a project (`showAttach`) — every attachment becomes a path, and
-            a pasted image's bytes need that project's temp dir. */}
-        {showAttach && (phonePhotos
-          ? <PhotoButton onFiles={stablePhonePhotos} label={t('chat.photo.add')} />
-          : <AttachButton onPick={stablePick} />
-        )}
-
-        {/* After the `+` (owner 2026-10-30: the prototype's order), and it answers two questions in one word each: how is this agent
+        {/* Leading control (owner 2026-10-30: the `+` sits on its right), and it answers two questions in one word each: how is this agent
             briefed to WORK, and what may it do without asking. Everything after it is about
             composing the message; this is about who you are talking to. Absent on a surface
             with no mode and no permission gate to set — see `showMode`. */}
@@ -2545,6 +2534,17 @@ export function Composer({
             open={menu.open === 'mode'}
             onToggle={toggleMode}
           />
+        )}
+
+        {/* One control for every kind of attachment — files and folders. A bare `+` now that its labelled Skills neighbour is gone: it is
+            the only icon control on this side of the row, so there is nothing for it to read
+            as a loose part OF. Still a `Popover` (not one of the three panels above): its
+            menu is a short list that clamps to its trigger rather than spanning the card.
+            Drawn only inside a project (`showAttach`) — every attachment becomes a path, and
+            a pasted image's bytes need that project's temp dir. */}
+        {showAttach && (phonePhotos
+          ? <PhotoButton onFiles={stablePhonePhotos} label={t('chat.photo.add')} />
+          : <AttachButton onPick={stablePick} />
         )}
         {pageChip && <PageChip page={pageChip} convId={convId} />}
 

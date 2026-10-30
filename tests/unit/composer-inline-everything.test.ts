@@ -255,10 +255,11 @@ describe('the mirror keeps the textarea metrics (round 2)', () => {
 describe("the toolbar as the prototype draws it (owner 2026-10-30, r3)", () => {
   const src = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/sleepy/chat/Composer.tsx'), 'utf8');
   const css = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/sleepy/chat/composer.css'), 'utf8');
-  it('no Sleepy glyph on the mode button, line chevrons, the + first, no resting voice caption', () => {
+  it('no Sleepy glyph on the mode button, line chevrons, the + after the mode, no resting voice caption', () => {
     expect(src).not.toMatch(/SleepyMascot/);
     expect(src).not.toMatch(/chat-cmp-caret" aria-hidden>▾/);
-    expect(src.indexOf('<AttachButton onPick={stablePick} />')).toBeLessThan(src.indexOf('<ModeTrigger'));
+    // The + sits right of the mode button (owner 2026-10-30, r4).
+    expect(src.indexOf('<ModeTrigger')).toBeLessThan(src.indexOf('<AttachButton onPick={stablePick} />'));
     expect(src).toMatch(/&& voice\.state !== 'idle' && \(/);
     expect(src).toMatch(/`Hold to talk · \$\{hotkeyLabel\(pushToTalk\)\}`/);
     expect(src).toMatch(/className=\{`chat-cmp-iconbtn chat-cmp-mic/);
