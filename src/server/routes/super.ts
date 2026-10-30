@@ -38,6 +38,7 @@ import { findLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
 import { askShowState, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
+import { startAskWarning } from '../../lib/super/ask-summary.js';
 import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
 import {
   CLAUDE_SESSIONS_MEANS, delegationAllowed, lightModeNow, machineNotes, machineRoom, readCapacityFactsForState, type CapacityFacts,
@@ -1744,7 +1745,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const reach = ownerQuestionReach(state, id);
     if (reach.reached) noteSuperEscalation(session);
     const head = superQueueHead(state);
-    ok(res, { item: id, asked: true, waiting: head?.id !== id, ...reach, show });
+    // A start/approve question with no summary on its card: sent anyway, the Super is told (owner 2026-10-29).
+    const warning = startAskWarning(spec);
+    ok(res, { item: id, asked: true, waiting: head?.id !== id, ...reach, show, ...(warning ? { warning } : {}) });
   },
 
   merge: async (c, b, res) => {

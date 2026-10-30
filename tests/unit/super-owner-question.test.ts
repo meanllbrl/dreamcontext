@@ -180,6 +180,24 @@ describe('super ask (the agent\'s own question)', () => {
     expect(banners.map((b) => [b.title, b.body])).toEqual([['Super Agent asks · acme', 'Ship the video today?']]);
     expect(result(r)).toMatchObject({ asked: true, shown: true, reached: true, via: ['banner'] });
     expect(String(result(r).note)).toMatch(/next message to you/);
+    // Not a start question: no warning.
+    expect(result(r).warning).toBeUndefined();
+  });
+
+  it('a start question with no summary on its card still goes, and its answer carries a warning (owner 2026-10-29)', async () => {
+    const r = await verb('ask', { text: 'Plan hazır. Geliştirmeye başlansın mı?', options: ['Evet', 'Bekle'] });
+    expect(r.status).toBe(200);
+    expect(result(r)).toMatchObject({ asked: true, reached: true });
+    expect(String(result(r).warning)).toMatch(/carries no summary/);
+  });
+
+  it('a start question whose yes option previews the plan carries no warning', async () => {
+    const preview = '<ul class="dc-list"><li>Blocked hours show hatched on the calendar</li><li>A lesson put there warns, never blocks</li><li>Existing lessons stay as they are</li><li>Your call: the warning text; no new cost</li></ul>';
+    const ask = { title: 'Blocked hours → development', questions: [{ question: 'The plan is ready. Shall it start?', options: [{ label: 'Yes, start', preview }, { label: 'Wait' }] }] };
+    const r = await verb('ask', { ask });
+    expect(r.status).toBe(200);
+    expect(result(r)).toMatchObject({ asked: true });
+    expect(result(r).warning).toBeUndefined();
   });
 });
 
