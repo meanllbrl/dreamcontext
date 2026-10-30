@@ -175,8 +175,9 @@ describe('the Voice card is a folded ALPHA group at the bottom of the AGENT sect
     const uses = page.match(/<VoiceSettings \/>/g) ?? [];
     expect(uses.length).toBe(1);
     const at = page.indexOf('<VoiceSettings />');
-    const section = page.lastIndexOf("activeSection === 'agents'", at);
-    const nextSection = page.indexOf("activeSection === 'memory'", section);
+    // `show(id)` is "the active section" (or, in the new shell, a search is typed).
+    const section = page.lastIndexOf("show('agents')", at);
+    const nextSection = page.indexOf("show('memory')", section);
     expect(section).toBeGreaterThan(-1);
     expect(at).toBeLessThan(nextSection);         // inside the agents block, before the next
   });
