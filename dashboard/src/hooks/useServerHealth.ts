@@ -11,7 +11,7 @@ export interface ServerHealth {
    * desktop app never serves a stale bundle after `dreamcontext upgrade`/`npm i -g`.
    */
   upgradeReady?: string | null;
-  /** Live tabs mid-work (a turn, a question, background tasks); the relaunch waits on it. */
+  /** Live tabs mid-work (a turn, a question, background tasks); a Relaunch click asks first. */
   agentsWorking?: number;
 }
 
@@ -29,7 +29,7 @@ export interface ServerHealth {
  * "current" against a genuinely stale server silently drops functionality — e.g. a
  * `&prompt=` param the old server ignores while the client has disarmed its fallback.
  */
-export function useServerHealth(opts: { refetchInterval?: number | false } = {}): {
+export function useServerHealth(): {
   health: ServerHealth | undefined;
   serverCurrent: boolean;
   refetch: () => Promise<ServerHealth | undefined>;
@@ -39,9 +39,6 @@ export function useServerHealth(opts: { refetchInterval?: number | false } = {})
     queryFn: () => api.get<ServerHealth>('/health'),
     staleTime: 60_000,
     retry: 1,
-    // Per observer: only a consumer that asks for it (the relaunch banner while an update
-    // waits) polls; every other one keeps the 60 s staleness.
-    refetchInterval: opts.refetchInterval ?? false,
   });
   // Stable, so an effect may depend on it without re-running every render.
   const refetchHealth = useCallback(async () => (await refetch()).data, [refetch]);

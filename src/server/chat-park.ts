@@ -322,7 +322,7 @@ export const TERMINAL_WORKING_RECENT_MS = 60_000;
  * How many live tabs are doing work a whole-app relaunch would cut off: a turn running, a
  * question waiting for the owner, or background shells/agents. Read from each process (the
  * same answers the park sweep trusts), never from a flag the window keeps — the update
- * banner holds its countdown on this (UpgradeRelaunchBanner.tsx). A chat probe that throws
+ * banner asks before a Relaunch click on this (UpgradeRelaunchBanner.tsx). A chat probe that throws
  * counts as working: an unknown chat is not one we may kill.
  *
  * A TERMINAL's hook state alone cannot hold it: it reads "not ready" before the first prompt,

@@ -51,11 +51,11 @@ export async function handleHealthGet(
     // and ensure-dashboard compare it against their own to detect skew.
     version: dreamcontextVersion(),
     // Desktop self-heal: the newer on-disk version when an upgrade landed under
-    // this running server (else null). The bundle uses it to auto-relaunch the
-    // app onto the new version without any manual quit/reopen.
+    // this running server (else null). The bundle uses it to offer a relaunch of the
+    // app onto the new version (the owner's click) without any manual quit/reopen.
     upgradeReady: relaunchableUpgrade(getUpgradeReadyVersion()),
-    // Live tabs mid-work (a turn, a question, background tasks). The relaunch countdown
-    // waits while this is above zero, so an update never cuts an agent off mid-turn.
+    // Live tabs mid-work (a turn, a question, background tasks). A Relaunch click while
+    // this is above zero asks the owner first, so an update never cuts an agent off unseen.
     agentsWorking: countWorkingAgents(),
   });
 }
