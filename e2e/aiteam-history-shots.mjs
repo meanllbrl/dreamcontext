@@ -12,7 +12,7 @@
  * The agent has 3 days of routine runs (plus ten older days, so the history pages), a talk with the
  * owner yesterday, and 3 unread messages today. Checked at each width:
  *   - the pane shows day rules, session boundaries, the "3 new" divider at the top of the viewport,
- *     and "New conversation · now" above the composer (no "resumed" divider);
+ *     and, before a turn, no live line (the composer says "Start a new conversation"; no "resumed");
  *   - scrolling up loads an older page with no jump (first visible row moves < 2 px), until
  *     "Start of Herodot's history";
  *   - the roster badge clears after reading (within one feed poll);
@@ -228,8 +228,9 @@ async function browserLeg(port, consoleErrors) {
       check(`${tag}: day rules (Today / Yesterday / …)`, days.includes('Today') && days.includes('Yesterday'), days.join(' | '));
       const bounds = await page.locator('.aiteam-stage [data-feed-boundary]').allInnerTexts();
       check(`${tag}: one boundary per session, with label and duration`, bounds.some((b) => /Herodot daily ran · .* · \d+ min/.test(b)) && bounds.some((b) => /Conversation with you · /.test(b)), bounds.slice(-4).join(' | '));
-      check(`${tag}: "New conversation · now" above the live turns, no "resumed" divider`,
-        (await page.locator('.aiteam-stage [data-feed-live]').innerText()).includes('New conversation · now')
+      check(`${tag}: no live line before a turn (the composer says "Start a new conversation"), no "resumed" divider`,
+        (await page.locator('.aiteam-stage [data-feed-live]').count()) === 0
+          && /Start a new conversation with Herodot/.test(await page.locator('.aiteam-stage .chat-cmp-input').first().getAttribute('placeholder') ?? '')
           && !(await pane.innerText()).includes('earlier conversation ↑ · resumed'));
       check(`${tag}: past posts are read-only rows (no Edit, no Retry)`,
         (await page.locator('.aiteam-stage .chat-scroll [aria-label="Edit"], .aiteam-stage .chat-scroll [aria-label="Retry"]').count()) === 0);
@@ -366,7 +367,8 @@ async function deepLeg(page, pane, tag, wait, until, shot) {
   const reopened = await until(async () => {
     const keys = await boundaryKeys();
     return keys.filter((k) => k.startsWith('talk::')).length === talksBefore + 1
-      && (await page.locator('.aiteam-stage [data-feed-live]').innerText()).includes('New conversation · now');
+      && (await page.locator('.aiteam-stage [data-feed-live]').count()) === 0
+      && /Start a new conversation/.test(await page.locator('.aiteam-stage .chat-cmp-input').first().getAttribute('placeholder') ?? '');
   }, 15000);
   check(`${tag}: deselecting an idle stage and reopening starts a new session, its talk now history`, reopened, `talks ${talksBefore} → ${(await boundaryKeys()).filter((k) => k.startsWith('talk::')).length}`);
   await shot('8-reopened-new');

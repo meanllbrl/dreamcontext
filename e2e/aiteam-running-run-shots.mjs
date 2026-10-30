@@ -9,7 +9,7 @@
  * isolated scratch vault (fake HOME, DREAMCONTEXT_DESKTOP=1) and real Chromium at 1440 px.
  * Fictional fixtures: "Herodot", the agent of a project called "Acme Notes". One run finished
  * this morning; one started a minute ago and has only its prompt. Checked:
- *   - the running run's end carries the working indicator, above "New conversation · now";
+ *   - the running run's end carries the working indicator (no empty "New conversation" line);
  *   - once the run posts and ends, the post lands and the indicator leaves (fast re-read).
  *
  * Screenshots: <out-dir>/1440-1-running.png, 1440-2-finished.png. Exit 1 on any FAIL.
@@ -136,12 +136,8 @@ async function browserLeg(port, consoleErrors) {
     check('the running run is in the stage, its boundary says running', await until(async () => /running/.test(await boundary.innerText()), 20000), await boundary.innerText().catch(() => ''));
     await page.locator('.aiteam-stage .chat-scroll').evaluate((el) => { el.scrollTop = el.scrollHeight; });
     const working = page.locator(`.aiteam-stage [data-feed-working="${key}"]`);
-    const order = async () => pane.evaluate((el, k) => {
-      const w = el.querySelector(`[data-feed-working="${CSS.escape(k)}"]`);
-      const live = el.querySelector('[data-feed-live]');
-      return !!w && !!live && (w.compareDocumentPosition(live) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
-    }, key);
-    check('…and its end says it is working, above "New conversation · now"', await until(async () => (await working.isVisible()) && await order(), 5000));
+    check('…and its end says it is working, with no "New conversation · now" line under it',
+      await until(async () => (await working.isVisible()) && (await page.locator('.aiteam-stage [data-feed-live]').count()) === 0, 5000));
     await shot('1-running');
 
     // The run posts its result and ends: within a fast re-read the post lands, the indicator leaves.

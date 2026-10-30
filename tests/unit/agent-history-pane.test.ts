@@ -30,7 +30,7 @@ vi.mock('../../dashboard/src/components/sleepy/chatSession', () => ({
 }));
 
 import { splitWindow, shouldAutoReveal, nextFirstShown, WINDOW_MAX_ENTRIES } from '../../dashboard/src/components/sleepy/chat/chatEntities';
-import { feedHasRunning, feedMarks, feedRunWorking, feedShift, stripActionFences } from '../../dashboard/src/components/sleepy/chat/chatFeed';
+import { feedHasRunning, feedMarks, feedRunWorking, feedShift, liveDividerShown, stripActionFences } from '../../dashboard/src/components/sleepy/chat/chatFeed';
 import {
   applyDeferred, dividerFor, mergeFresh, overlaps, prependOlder, readingOrder, toFeedItems, type FeedSession,
 } from '../../dashboard/src/components/aiteam/agentHistory';
@@ -135,6 +135,18 @@ describe('a routine run in flight (the list says Working, so the stage does too)
     const items = toFeedItems([run('desk', 0, 2)]);
     expect(items.some((it, i) => feedRunWorking(it.feed, feedMarks(items, i, null)))).toBe(false);
     expect(feedHasRunning(items)).toBe(false);
+  });
+});
+
+describe('the live line under the history', () => {
+  it('waits for the live conversation\'s first turn: an empty one is said by the composer', () => {
+    expect(liveDividerShown({ loading: false, failed: false, feedLen: 3, liveEmpty: true })).toBe(false);
+    expect(liveDividerShown({ loading: false, failed: false, feedLen: 3, liveEmpty: false })).toBe(true);
+  });
+  it('never while the history loads, nor with no history at all', () => {
+    expect(liveDividerShown({ loading: true, failed: false, feedLen: 3, liveEmpty: false })).toBe(false);
+    expect(liveDividerShown({ loading: false, failed: false, feedLen: 0, liveEmpty: false })).toBe(false);
+    expect(liveDividerShown({ loading: false, failed: true, feedLen: 0, liveEmpty: false })).toBe(true);
   });
 });
 

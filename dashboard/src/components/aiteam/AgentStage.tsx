@@ -387,11 +387,15 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, 
     );
   }
   if (!session) return <div className="aiteam-stage-note"><p>{t('common.loading')}</p></div>;
+  // Writing here starts the stage's OWN conversation, never a run's: while it has nothing yet,
+  // the composer says so (the live line under the history waits for its first turn).
+  const conv = session.getModel();
+  const fresh = !session.busy && conv.history.length === 0 && conv.items.length === 0 && conv.pending.length === 0;
   return (
     <CardChat
       session={session}
       reopen={() => open('resume')}
-      placeholder={t('aiteam.stage.placeholder').replace('{name}', agent.title)}
+      placeholder={(fresh ? t('aiteam.stage.placeholderNew') : t('aiteam.stage.placeholder')).replace('{name}', agent.title)}
       pane
       feed={feed}
     />

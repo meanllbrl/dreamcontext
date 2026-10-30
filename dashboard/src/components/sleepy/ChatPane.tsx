@@ -28,7 +28,7 @@ import { isQuestOnlyCommand, stepStretches, type StretchProbe } from './chat/too
 import { chatLineage, deriveChatQuest, partyBatches, type Party } from './chat/questModel';
 import { ChatQuestBar } from './chat/ChatQuestBar';
 import { ItemView } from './chat/TranscriptItem';
-import { feedMarks, feedRunWorking, feedShift, type ChatFeed, type FeedItem } from './chat/chatFeed';
+import { feedMarks, feedRunWorking, feedShift, liveDividerShown, type ChatFeed, type FeedItem } from './chat/chatFeed';
 import { ToolRunCard } from './chat/ToolRunCard';
 import { SurveyCard } from './chat/SurveyCard';
 import { PermissionCard } from './chat/PermissionCard';
@@ -2406,7 +2406,9 @@ export function ChatPane({
         feedNodes.push(<div key={`fseen-${meta.sessionKey}`} className="chat-feed-seen" data-feed-seen={meta.sessionKey} aria-hidden />);
       }
     }
-    if (!feed.loading && (feedLen > 0 || feed.failed)) {
+    // A typed draft counts: the owner left something there ("Continuing · started …").
+    const liveEmpty = !session.busy && !conv.draft && conv.history.length === 0 && conv.items.length === 0 && conv.pending.length === 0;
+    if (liveDividerShown({ loading: feed.loading, failed: feed.failed, feedLen, liveEmpty })) {
       feedNodes.push(<div key="feed-live" className="chat-history-divider" data-feed-live aria-hidden>{feed.labels.live}</div>);
     }
   }

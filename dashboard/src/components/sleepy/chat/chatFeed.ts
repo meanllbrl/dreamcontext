@@ -112,6 +112,15 @@ export function feedHasRunning(items: readonly FeedItem[]): boolean {
   return items.some((it) => it.feed.sessionKind === 'run' && it.feed.status === 'running');
 }
 
+/**
+ * Is the live conversation's line drawn under the feed? Only once that conversation HAS
+ * something: an empty one is said by the composer's placeholder ("New conversation with …"),
+ * so a finished run is never followed by a line that reads as if something just happened.
+ */
+export function liveDividerShown(o: { loading: boolean; failed: boolean; feedLen: number; liveEmpty: boolean }): boolean {
+  return !o.loading && (o.feedLen > 0 || o.failed) && !o.liveEmpty;
+}
+
 /** Local day start of an instant. */
 export function localDay(iso: string): number {
   const d = new Date(iso);
