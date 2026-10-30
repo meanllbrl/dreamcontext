@@ -145,8 +145,10 @@ describe('a ref chip', () => {
     expect(composeOutgoing('see', [chip('dcref:wb/q3-plan/note-1')], null, (p) => `'${p}'`).message).toBe('see dcref:wb/q3-plan/note-1');
     expect(foldAttachments('see', [chip('dcref:wb/q3-plan/note-1'), { id: 'f', kind: 'file', name: 'f', path: '/a b' }], (p) => `'${p}'`))
       .toBe("see dcref:wb/q3-plan/note-1 '/a b'");
-    expect(src).toMatch(/a\.kind === 'ref' \? '📌'/);
-    // The chip's class is `chat-cmp-attachment-${kind}`, so `chat-cmp-attachment-ref` follows.
-    expect(src).toMatch(/chat-cmp-attachment chat-cmp-attachment-\$\{a\.kind\}/);
+    // Its chip is IN the text (owner 2026-10-30), its icon drawn by the mirror (ComposerRefLayer).
+    const layer = readFileSync(
+      join(import.meta.dirname, '../../dashboard/src/components/sleepy/chat/ComposerRefLayer.tsx'), 'utf8',
+    );
+    expect(layer).toMatch(/att\.kind === 'ref' \? '📌'/);
   });
 });

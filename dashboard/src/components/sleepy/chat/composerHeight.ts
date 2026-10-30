@@ -110,7 +110,7 @@ export function readFieldMetrics(ta: HTMLTextAreaElement): FieldMetrics {
   const px = (v: string) => parseFloat(v) || 0;
   // `line-height: normal` computes to the keyword in some engines — fall back to the ratio
   // the stylesheet actually sets rather than to a hardcoded pixel count.
-  const lineHeight = px(cs.lineHeight) || px(cs.fontSize) * 1.45 || 20;
+  const lineHeight = px(cs.lineHeight) || px(cs.fontSize) * 1.75 || 26;
   const border = px(cs.borderTopWidth) + px(cs.borderBottomWidth);
   return { lineHeight, fieldChrome: px(cs.paddingTop) + px(cs.paddingBottom) + border, border };
 }

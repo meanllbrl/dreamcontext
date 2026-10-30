@@ -255,7 +255,7 @@ describe('the voice row says two to four words, in both languages', () => {
 
   it('the line sits LEFT of the mic, so its changing width never moves the button under a held pointer', () => {
     const note = composer.indexOf('className="chat-cmp-voice-note is-idle"');
-    const mic = composer.indexOf('chat-cmp-send chat-cmp-mic');
+    const mic = composer.indexOf('chat-cmp-iconbtn chat-cmp-mic');
     expect(note).toBeGreaterThan(-1);
     expect(mic).toBeGreaterThan(note);
   });
@@ -285,7 +285,7 @@ describe('the recording strip draws in the theme', () => {
 
   it('the recording mic uses error tokens, no fixed colour', () => {
     const css = read('dashboard/src/components/sleepy/chat/composer.css');
-    const rules = [...css.matchAll(/\.chat-cmp-send\.chat-cmp-mic\.is-recording(::after)? \{[\s\S]*?\}/g)].map((m) => m[0]).join('\n');
+    const rules = [...css.matchAll(/\.chat-cmp-(?:iconbtn\.chat-cmp-)?mic\.is-recording(?:,\s*\.chat-cmp-iconbtn\.chat-cmp-mic\.is-recording:hover)?(::after)? \{[\s\S]*?\}/g)].map((m) => m[0]).join('\n');
     expect(rules).toContain('var(--color-error-subtle)');
     expect(rules).toContain('var(--color-error-ink)');
     expect(rules).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|hsl\(/i);

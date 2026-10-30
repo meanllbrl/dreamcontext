@@ -3880,7 +3880,7 @@ export function AgentSurface() {
 
   /**
    * Inspect picked an element in a web card's page (owner 2026-10-22: "the selected component
-   * should reach the composer, so I can comment on that spot"): a removable chip in the Super
+   * should reach the composer, so I can comment on that spot"): a chip at the caret in the Super
    * Agent's composer carrying the element's block; its picture is uploaded like a pasted image
    * and joins the block once it lands. Several picks, several chips.
    */
@@ -3895,6 +3895,9 @@ export function AgentSurface() {
     addAttachments(convId, [{
       id: att, kind: 'element', name: pickChipName(pick), text: pickBlock(pick, { id, title: card?.title || card?.ref || id }, page),
       ...(pick.crop ? { url: pick.crop } : {}), ...(blob ? { uploading: true } : {}),
+      // A chip IN the text at the caret, its picture in the chip (owner 2026-10-30: never a
+      // tag above the text), so his words about this element follow it.
+      inline: true, pending: true,
     }]);
     if (blob) {
       const job = uploadAgentFile(vault, blob, `element-${pick.tag}.${blob.type === 'image/jpeg' ? 'jpg' : 'png'}`).then((path) => settleAttachment(convId, att, path));

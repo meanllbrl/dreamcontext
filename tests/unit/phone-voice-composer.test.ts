@@ -47,8 +47,9 @@ describe('the phone composer\'s mic', () => {
     // anything at all (2026-10-27: the model loads on the first take, never at launch).
     expect(composer).toMatch(/if \(!voiceEnabled \|\| phoneVoice\) return;/);
     expect(composer).not.toContain("'/api/agent/voice/warm'");
-    // At rest the phone's mic carries no caption at all (owner, 2026-10-21: short hints).
-    expect(composer).toMatch(/!\(phoneVoice && voice\.state === 'idle'\)/);
+    // At rest no mic carries a caption at all (owner, 2026-10-21 for the phone; 2026-10-30 for
+    // every composer: the binding lives in the mic's tooltip).
+    expect(composer).toMatch(/&& voice\.state !== 'idle' && \(/);
     const trace = code('dashboard/src/lib/voice/turnTrace.ts');
     expect(trace).toMatch(/if \(!phoneAllows\('POST', '\/api\/agent\/voice\/log'\)\) return;\s*void fetch\('\/api\/agent\/voice\/log'/);
   });

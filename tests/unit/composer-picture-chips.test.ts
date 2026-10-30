@@ -24,14 +24,15 @@ const note = (id: string, line: string): Attachment => ({
 beforeEach(() => { __resetScratchForTests(); });
 
 describe('staging a picture', () => {
-  it('a pasted or dropped image is staged inline and pending (the composer puts its chip at the caret); a file is not', () => {
+  it('a pasted or dropped image or file is staged inline and pending (the composer puts its chip at the caret)', () => {
     stageUpload('c', new File(['x'], 'shot.png', { type: 'image/png' }), () => new Promise(() => {}));
     stageUpload('c', new File(['x'], 'brief.pdf', { type: 'application/pdf' }), () => new Promise(() => {}));
     const [img, file] = readScratch('c').attachments;
     expect(img).toMatchObject({ kind: 'image', inline: true, pending: true, uploading: true });
     expect(isTokenRef(img)).toBe(true);
-    expect(file.inline).toBeUndefined();
-    expect(isTokenRef(file)).toBe(false);
+    // Owner 2026-10-30: a file is a chip in the text too, never a row above it.
+    expect(file).toMatchObject({ kind: 'file', inline: true, pending: true });
+    expect(isTokenRef(file)).toBe(true);
     expect(pendingUploads('c')).toHaveLength(2);
     markInserted('c', [img.id], { [img.id]: 'shot.png' });
     expect(readScratch('c').attachments[0]).toMatchObject({ pending: false, chip: 'shot.png' });
@@ -42,7 +43,7 @@ describe('the picture token', () => {
   it('opens with two EM SPACEs (blank in the box, the thumbnail room) and parses with its id', () => {
     const a = pic('shot.png');
     const t = refToken(a);
-    expect(t.slice(1, 3)).toBe(GLYPH_IMAGE);
+    expect(t.slice(2, 2 + GLYPH_IMAGE.length)).toBe(GLYPH_IMAGE);
     const spans = parseRefTokens(`a ${t} b`);
     expect(spans).toHaveLength(1);
     expect(spans[0].glyph).toBe(GLYPH_IMAGE);
@@ -141,8 +142,9 @@ describe('the mirror', () => {
     const n = note('n1', 'line');
     const draft = `${refToken(a)} hi ${refToken(n)}`;
     const segs = refMirrorSegments(draft, [], [a, n]).filter((s) => s.kind === 'ref');
-    expect(segs[0]).toMatchObject({ refId: a.id, img: 'blob:one', lead: 3, state: 'uploading' });
-    expect(segs[0].text.slice(1, segs[0].lead)).toBe(GLYPH_IMAGE);
+    // The mark starts at the glyph: the isolate and the chip's air are untinted text beside it.
+    expect(segs[0]).toMatchObject({ refId: a.id, img: 'blob:one', lead: GLYPH_IMAGE.length, state: 'uploading' });
+    expect(segs[0].text.slice(0, segs[0].lead)).toBe(GLYPH_IMAGE);
     expect(segs[1]).toMatchObject({ refId: n.id, slot: 1 });
     expect(refsInOrder(draft, [n, a]).map((x) => x.id)).toEqual([a.id, n.id]);
   });

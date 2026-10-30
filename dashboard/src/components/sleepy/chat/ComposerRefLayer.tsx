@@ -5,7 +5,8 @@ import { mentionSegments, type PeerMention } from '../../../lib/agentComposer';
 import { REPLY_TO_RE } from '../../../lib/superTypes';
 import { splitAbout } from '../super/superHandover';
 import { useDismissOnOutside } from '../../../lib/useDismissOnOutside';
-import { isTokenRef, parseRefTokens, refTokenId } from './composerRefs';
+import { formatFileSize } from '../../../lib/phoneAttach';
+import { isChatReply, isMediaRef, isTokenRef, parseRefTokens, refTokenId } from './composerRefs';
 import type { Attachment } from './composerScratch';
 
 /**
@@ -16,14 +17,16 @@ import type { Attachment } from './composerScratch';
  */
 
 /** One run of the mirror: plain text, an `@mention`, or a reference token (its slot, its ref).
- *  A picture's token also carries its preview (`img`), its glyph's length (`lead`, the room the
- *  thumbnail is painted in) and its upload state. */
+ *  An inline attachment's token (a picture, a file, a picked element…) also carries its preview
+ *  (`img`) or, with none, its icon (`icon`), its glyph's length (`lead`, the room the thumbnail
+ *  is painted in) and its upload state. */
 export interface MirrorSegment {
   text: string;
   kind: 'text' | 'mention' | 'ref';
   slot?: number;
   refId?: string;
   img?: string;
+  icon?: string;
   lead?: number;
   state?: 'uploading' | 'failed' | 'ready';
 }
@@ -41,20 +44,30 @@ export function refMirrorSegments(draft: string, peers: PeerMention[], staged: r
   let about = 0;
   parseRefTokens(draft).forEach((t) => {
     text(draft.slice(pos, t.start));
+    // The isolate and the chip's air on each side stay untinted: the room between a chip and
+    // the words beside it (owner 2026-10-30).
+    out.push({ text: draft.slice(t.start, t.start + t.lead), kind: 'text' });
+    const core = draft.slice(t.start + t.lead, t.end - t.tail);
     const att = byId.get(t.id);
-    if (att?.kind === 'image') {
+    if (att && isMediaRef(att)) {
       out.push({
-        text: draft.slice(t.start, t.end), kind: 'ref', refId: att.id, img: att.url, lead: 1 + t.glyph.length,
+        text: core, kind: 'ref', refId: att.id, img: att.url, icon: att.url ? undefined : chipIcon(att), lead: core.indexOf('\u00A0') >= 0 ? core.indexOf('\u00A0') : t.glyph.length,
         state: att.uploading ? 'uploading' : att.failed ? 'failed' : 'ready',
       });
     } else {
       about += 1;
-      out.push({ text: draft.slice(t.start, t.end), kind: 'ref', slot: Math.min(about, 5), refId: att?.id });
+      out.push({ text: core, kind: 'ref', slot: Math.min(about, 5), refId: att?.id });
     }
+    out.push({ text: draft.slice(t.end - t.tail, t.end), kind: 'text' });
     pos = t.end;
   });
   text(draft.slice(pos));
   return out;
+}
+
+/** What an inline chip with no thumbnail shows in its room: what kind of thing it is. */
+export function chipIcon(att: Pick<Attachment, 'kind'>): string {
+  return att.kind === 'folder' ? '📁' : att.kind === 'ref' ? '📌' : att.kind === 'element' ? '◎' : att.kind === 'image' ? '🖼' : '📄';
 }
 
 /**
@@ -64,8 +77,10 @@ export function refMirrorSegments(draft: string, peers: PeerMention[], staged: r
  * textarea paints them); a sent bubble draws it with `sent` (the words visible, a click opens
  * the picture). `lead` is the glyph's text (the thumbnail's room), `rest` everything after it.
  */
-export function PictureChip({ img, lead, rest, state, flash, refId, sent, title, onOpen }: {
+export function PictureChip({ img, icon, lead, rest, state, flash, refId, sent, title, onOpen }: {
   img?: string;
+  /** No thumbnail (a file, a folder, an element with no picture): its kind's icon in the room. */
+  icon?: string;
   lead: string;
   rest: string;
   state?: MirrorSegment['state'];
@@ -89,7 +104,7 @@ export function PictureChip({ img, lead, rest, state, flash, refId, sent, title,
         onKeyDown: (e: ReactKeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } },
       } : {})}
     >
-      <span className="chat-cmp-hl-thumb" style={img ? { backgroundImage: `url("${img}")` } : undefined}>{lead}</span>
+      <span className="chat-cmp-hl-thumb" data-icon={!img && icon ? icon : undefined} style={img ? { backgroundImage: `url("${img}")` } : undefined}>{lead}</span>
       {rest}
     </mark>
   );
@@ -102,12 +117,18 @@ export function refsInOrder(draft: string, staged: readonly Attachment[]): Attac
 }
 
 /** What a ref's popover shows: where it came from and its whole line or quote. */
-function refDetail(att: Attachment): { from: 'agenda' | 'super' | 'owner'; text: string; reply: { ref: string; from: 'super' | 'owner' } | null } {
+function refDetail(att: Attachment): { from: 'agenda' | 'super' | 'owner' | 'claude'; text: string; reply: { ref: string; from: 'super' | 'owner' } | null } {
+  if (isChatReply(att)) return { from: 'claude', text: (att.text ?? '').replace(/^> /, ''), reply: null };
   const about = splitAbout(att.text ?? '').about;
   if (about?.kind === 'reply') return { from: about.from, text: about.quote, reply: { ref: about.ref, from: about.from } };
   if (about?.kind === 'note') return { from: 'agenda', text: about.line ?? att.name, reply: null };
   return { from: 'agenda', text: att.name, reply: null };
 }
+
+/** Where an inline attachment's popover says it came from. */
+const MEDIA_SOURCE_KEY: Partial<Record<Attachment['kind'], string>> = {
+  image: 'chat.photo.chip', file: 'chat.chip.file', folder: 'chat.chip.folder', element: 'chat.chip.element', ref: 'chat.chip.ref',
+};
 
 /**
  * The popover a chip opens (click or tap): its whole line or quote and where it came from,
@@ -129,8 +150,9 @@ export function RefPopover({ att, slot, left, bottom, onRemove, onGoTo, onClose 
   const ref = useRef<HTMLDivElement | null>(null);
   useDismissOnOutside(true, onClose, [ref]);
   const d = refDetail(att);
-  const picture = att.kind === 'image';
-  const source = picture ? t('chat.photo.chip') : d.from === 'agenda' ? t('super.ref.fromAgenda') : d.from === 'super' ? t('super.ref.fromSuper') : t('super.ref.fromOwn');
+  const picture = isMediaRef(att);
+  const source = picture ? t(MEDIA_SOURCE_KEY[att.kind] ?? 'chat.photo.chip')
+    : d.from === 'claude' ? t('chat.ref.fromClaude') : d.from === 'agenda' ? t('super.ref.fromAgenda') : d.from === 'super' ? t('super.ref.fromSuper') : t('super.ref.fromOwn');
   return createPortal(
     <div
       ref={ref}
@@ -143,14 +165,16 @@ export function RefPopover({ att, slot, left, bottom, onRemove, onGoTo, onClose 
       onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); } }}
     >
       <div className="chat-cmp-ref-pop-source">
-        {!picture && <span className="chat-cmp-ref-pop-glyph" aria-hidden>{REPLY_TO_RE.test(att.text ?? '') ? '↩' : '●'}</span>}
+        {!picture && <span className="chat-cmp-ref-pop-glyph" aria-hidden>{REPLY_TO_RE.test(att.text ?? '') || isChatReply(att) ? '↩' : '●'}</span>}
+        {picture && !att.url && <span className="chat-cmp-ref-pop-glyph" aria-hidden>{chipIcon(att)}</span>}
         {source}
       </div>
       {picture && att.url && <img className="chat-cmp-ref-pop-img" src={att.url} alt={att.name} data-testid="chat-cmp-ref-pop-img" />}
       <div className="chat-cmp-ref-pop-text">
-        {picture ? att.name : d.text}
+        {picture ? (att.kind === 'file' || att.kind === 'folder' ? att.path ?? att.name : att.name) : d.text}
+        {att.kind === 'file' && att.size !== undefined && <span className="chat-cmp-attachment-size" data-testid="phone-file-size">{formatFileSize(att.size)}</span>}
         {picture && att.uploading && <span className="chat-cmp-attachment-note">{t('chat.photo.attaching')}</span>}
-        {picture && att.failed && <span className="chat-cmp-attachment-note">{att.note ?? t('chat.photo.notAttached')}</span>}
+        {picture && att.failed && <span className="chat-cmp-attachment-note">{att.note ?? t(att.kind === 'element' ? 'chat.chip.elementNoPicture' : 'chat.photo.notAttached')}</span>}
       </div>
       <div className="chat-cmp-ref-pop-actions">
         {!picture && d.reply && onGoTo && (

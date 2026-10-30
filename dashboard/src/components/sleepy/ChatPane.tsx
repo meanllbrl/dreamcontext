@@ -66,7 +66,7 @@ import {
 import { surveyDraftKey } from './chat/surveyDrafts';
 import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { Composer } from './chat/Composer';
-import { insertRef, nextAttachmentId, readScratch, setQuote, subscribeScratch } from './chat/composerScratch';
+import { chatReplyRef, insertRef, nextAttachmentId, readScratch, setQuote, subscribeScratch } from './chat/composerScratch';
 import { messagePart, replyGroups, replyHeadsById as headsById, type ReplyHead } from './chat/replyLinks';
 import { PartStrip, ReplyStrip } from './chat/AgendaAboutStrip';
 import { msgRef, splitPageContext } from '../../lib/superTypes';
@@ -1829,9 +1829,15 @@ export function ChatPane({
   /** ↩ on a message. In a Super view it is a reply: a chip AT THE CARET (owner 2026-10-24: a
    *  second ↩ adds one, the same message again flashes the chip it has) whose block names the
    *  message and quotes its first words, never the whole of it (owner 2026-10-23). Anywhere
-   *  else, today's quote. His own message's words are its parts' words, never header text. */
+   *  else, a chip at the caret too whose block is the quote (owner 2026-10-30). His own message's words are its parts' words, never header text. */
   const handleQuote = useCallback((item: ChatUserItem | ChatTextItem) => {
-    if (!superView) { setQuote(convId, item.text); return; }
+    if (!superView) {
+      // A chip at the caret, like every other attachment (owner 2026-10-30), its block the quote.
+      const label = t(item.kind === 'user' ? 'super.ref.own' : 'chat.ref.claude');
+      insertRef(session.scratchId || convId, chatReplyRef(item.text, label));
+      requestAnimationFrame(() => session.focus());
+      return;
+    }
     const from = item.kind === 'user' ? 'owner' : 'super';
     const multi = item.kind === 'user' ? splitAboutParts(splitPageContext(item.text).text) : null;
     const words = !multi ? item.text

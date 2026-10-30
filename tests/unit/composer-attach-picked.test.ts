@@ -35,14 +35,14 @@ describe('stagePicked — the + menu', () => {
     expect(done.url).toBe(preview('/vault/_dream_context/tmp/agent-drops/shot.png'));
   });
 
-  it('three pictures stay three chips in pick order; a PDF and a folder keep the path row', () => {
+  it('three pictures stay three chips in pick order; a PDF and a folder are chips in the text too', () => {
     stagePicked('c', ['/a/1.png', '/a/2.JPG', '/a/notes.pdf', '/a/3.webp'], 'file', () => new Promise(() => {}), preview);
     stagePicked('c', ['/a/dir'], 'folder', () => Promise.resolve('never'), preview);
     const atts = readScratch('c').attachments;
-    expect(atts.filter((a) => a.inline).map((a) => a.name)).toEqual(['1.png', '2.JPG', '3.webp']);
-    expect(atts.find((a) => a.name === 'notes.pdf')).toMatchObject({ kind: 'file', path: '/a/notes.pdf' });
-    expect(atts.find((a) => a.name === 'notes.pdf')?.inline).toBeUndefined();
-    expect(atts.find((a) => a.name === 'dir')).toMatchObject({ kind: 'folder', path: '/a/dir' });
+    expect(atts.filter((a) => a.kind === 'image').map((a) => a.name)).toEqual(['1.png', '2.JPG', '3.webp']);
+    expect(atts.every((a) => a.inline && a.pending)).toBe(true);
+    expect(atts.find((a) => a.name === 'notes.pdf')).toMatchObject({ kind: 'file', path: '/a/notes.pdf', inline: true });
+    expect(atts.find((a) => a.name === 'dir')).toMatchObject({ kind: 'folder', path: '/a/dir', inline: true });
   });
 
   it('a refused copy keeps the original path: the agent still gets the picture', async () => {

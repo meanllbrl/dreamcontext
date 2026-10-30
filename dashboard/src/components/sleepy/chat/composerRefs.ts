@@ -8,12 +8,20 @@
  * the caret, IME, the draft carried across a respawn as a string) reads `selectionStart` and a
  * string. So a reference is a TOKEN in that string, drawn as a chip by the existing mirror:
  *
- *   FSI <glyph> NBSP <name> <id digits> PDI
+ *   FSI PAD <glyph> NBSP <name> PAD <id digits> PDI
  *
  * - glyph `●` for an agenda line, `↩` for a reply: the KIND (the hue, by order, is the identity);
  *   two EM SPACEs for a picture (owner 2026-10-27: each photo a chip with his words after it),
- *   blank in the textarea so the mirror's thumbnail behind them shows through;
+ *   blank in the textarea so the mirror's thumbnail behind them shows through; every other
+ *   attachment (a file, a folder, a picked element, a board item) wears the same room, its
+ *   thumbnail or its icon painted there (owner 2026-10-30: nothing staged sits above the text);
  * - FSI/PDI (U+2068/U+2069) are zero-width isolates, NBSPs keep the token from wrapping inside;
+ * - PAD (U+00A0, a no-break space) on each side inside the isolates is the chip's own air
+ *   (owner 2026-10-30: more room between a chip and the words beside it): the textarea lays it
+ *   out like any character, the mirror leaves it untinted. The closing one stands BEFORE the id
+ *   digits, never last: WebKit's textarea lets a no-break space at the end of a line hang past
+ *   the edge and its mirror does not, so a chip ending in one wrapped differently in each.
+ *   Optional when parsing, so a token written before it was added still reads;
  * - the id digits are the staged ref's id (this run's nonce + its attachment sequence) in base 4,
  *   written with the invisible format characters U+2061..U+2064, so labels may repeat freely
  *   and a token from another run, window or device never matches a ref of this one.
@@ -27,22 +35,30 @@ import type { Attachment } from './composerScratch';
 const FSI = '\u2068';
 const PDI = '\u2069';
 const NBSP = '\u00A0';
+/** The chip's air on each side, inside its isolates: a NO-BREAK space, so the line never breaks
+ *  between a chip and its air. (U+202F, the narrow one, is under 2 px in the system font.) */
+const PAD = NBSP;
 const DIGITS = ['\u2061', '\u2062', '\u2063', '\u2064'] as const;
 const DIGIT_RE = /[\u2061-\u2064]/;
 export const GLYPH_NOTE = '●';
 export const GLYPH_REPLY = '↩';
-/** A picture's glyph: two EM SPACEs, the room its thumbnail is painted in (behind the textarea). */
-export const GLYPH_IMAGE = '\u2003\u2003';
+/** A picture's glyph: two EM SPACEs, the room its thumbnail is painted in (behind the textarea),
+ *  each followed by a WORD JOINER: an EM SPACE is a break opportunity (even before the NBSP after
+ *  it, UAX #14 LB12a), and a line that broke inside the room split the chip in two (and the
+ *  textarea and its mirror did not always break alike). */
+export const GLYPH_IMAGE = '\u2003\u2060\u2003\u2060';
 const EMSP = '\u2003';
 /** The chip's name in the box, at most this many graphemes (measured at 390 px, W2). */
 export const REF_LABEL_MAX = 24;
 /** How far the remains of a damaged token may reach when its id digits are gone too. */
 const DAMAGE_REACH = 40;
 
-/** A well-formed token: `[start, end)` in the draft, its glyph, its name and its id (base 4). */
-export interface RefTokenSpan { start: number; end: number; glyph: string; label: string; id: string }
+/** A well-formed token: `[start, end)` in the draft, its glyph, its name and its id (base 4).
+ *  `lead`/`tail`: how many characters before its glyph and after its name (the isolates, the
+ *  chip's air and the id digits), the part the mirror leaves untinted. */
+export interface RefTokenSpan { start: number; end: number; glyph: string; label: string; id: string; lead: number; tail: number }
 
-const TOKEN_RE = /\u2068([●↩]|\u2003\u2003)\u00A0([^\u2068\u2069\n\u2061-\u2064]*)([\u2061-\u2064]+)\u2069/g;
+const TOKEN_RE = /\u2068\u00A0?([●↩]|\u2003\u2060?\u2003\u2060?)\u00A0([^\u2068\u2069\n\u2061-\u2064]*?)\u00A0?([\u2061-\u2064]+)\u2069/g;
 
 const toBase4 = (n: number, width = 1): string => {
   let s = Math.max(0, Math.floor(n)).toString(4);
@@ -70,19 +86,33 @@ export function refTokenId(att: Pick<Attachment, 'id'>): string {
 const encodeId = (id: string) => Array.from(id, (d) => DIGITS[Number(d)] ?? '').join('');
 const decodeId = (digits: string) => Array.from(digits, (c) => String(c.charCodeAt(0) - 0x2061)).join('');
 
-/** A staged attachment drawn as a token in the draft: an About line, or a picture staged inline
- *  (pasted, dropped or picked into the composer, `inline`). */
+/** A staged attachment drawn as a token in the draft: an About line (or a chat's reply quote), or
+ *  anything staged `inline` (a picture, a file, a folder, a picked element, a board item). The
+ *  page the Super dock is open on is context, never a chip in the text. */
 export function isTokenRef(a: Pick<Attachment, 'kind' | 'inline'>): boolean {
-  return a.kind === 'about' || (a.kind === 'image' && !!a.inline);
+  return a.kind === 'about' || (!!a.inline && a.kind !== 'page');
 }
 
-/** What a ref names, for "the same target twice": `note:n7`, `item:q-1`, `reply:k3f9q0`. */
+/** An inline chip that is not an About line: drawn in the picture's room (a thumbnail or an icon). */
+export function isMediaRef(a: Pick<Attachment, 'kind' | 'inline'>): boolean {
+  return isTokenRef(a) && a.kind !== 'about';
+}
+
+/** A normal chat's ↩ on a message: an About ref whose block is the quote itself (`> …`). */
+export function isChatReply(a: Pick<Attachment, 'kind' | 'text'>): boolean {
+  return a.kind === 'about' && (a.text ?? '').startsWith('> ');
+}
+
+/** What a ref names, for "the same target twice": `note:n7`, `item:q-1`, `reply:k3f9q0`, a chat
+ *  reply's `quote:> …`. */
 export function refKey(att: Pick<Attachment, 'text'>): string | null {
   const text = att.text ?? '';
   const a = ABOUT_AGENDA_RE.exec(text);
   if (a) return `${a[1]}:${a[2]}`;
   const r = REPLY_TO_RE.exec(text);
-  return r ? `reply:${r[1]}` : null;
+  if (r) return `reply:${r[1]}`;
+  // A normal chat's ↩: the quote is the target (the same message twice is one chip).
+  return text.startsWith('> ') ? `quote:${text}` : null;
 }
 
 function graphemes(s: string): string[] {
@@ -108,15 +138,16 @@ export function refLabel(att: Pick<Attachment, 'name' | 'chip'>, fits?: (label: 
   return clip(Math.max(n, Math.min(g.length, 2)));
 }
 
-/** The glyph a ref's chip opens with: ↩ for a reply, ● for an agenda line, a picture's room. */
+/** The glyph a ref's chip opens with: ↩ for a reply, ● for an agenda line, a picture's room (any
+ *  inline attachment). */
 export function refGlyph(att: Pick<Attachment, 'text'> & { kind?: Attachment['kind'] }): string {
-  if (att.kind === 'image') return GLYPH_IMAGE;
-  return REPLY_TO_RE.test(att.text ?? '') ? GLYPH_REPLY : GLYPH_NOTE;
+  if (att.kind && att.kind !== 'about') return GLYPH_IMAGE;
+  return REPLY_TO_RE.test(att.text ?? '') || (att.text ?? '').startsWith('> ') ? GLYPH_REPLY : GLYPH_NOTE;
 }
 
 /** The token a staged ref is drawn as in the draft (`fits`: see {@link refLabel}). */
 export function refToken(att: Pick<Attachment, 'id' | 'name' | 'text' | 'chip'> & { kind?: Attachment['kind'] }, fits?: (label: string) => boolean): string {
-  return `${FSI}${refGlyph(att)}${NBSP}${refLabel(att, fits)}${encodeId(refTokenId(att))}${PDI}`;
+  return `${FSI}${PAD}${refGlyph(att)}${NBSP}${refLabel(att, fits)}${PAD}${encodeId(refTokenId(att))}${PDI}`;
 }
 
 /** Every well-formed token in the draft, in order. */
@@ -124,7 +155,11 @@ export function parseRefTokens(draft: string): RefTokenSpan[] {
   const out: RefTokenSpan[] = [];
   for (const m of (draft ?? '').matchAll(TOKEN_RE)) {
     const start = m.index ?? 0;
-    out.push({ start, end: start + m[0].length, glyph: m[1], label: m[2], id: decodeId(m[3]) });
+    const lead = m[0][1] === PAD ? 2 : 1;
+    const tail = 1 + m[3].length + (m[0][m[0].length - 2 - m[3].length] === PAD ? 1 : 0);
+    // A room written before the joiner was added reads as today's.
+    const glyph = m[1].startsWith(EMSP) ? GLYPH_IMAGE : m[1];
+    out.push({ start, end: start + m[0].length, glyph, label: m[2], id: decodeId(m[3]), lead, tail });
   }
   return out;
 }
@@ -269,8 +304,14 @@ function damageEdits(text: string, from: number, to: number): Array<Edit & { ids
       for (let j = s - 1; j >= Math.max(from, i - DAMAGE_REACH); j--) {
         if (text[j] === '\n' || text[j] === PDI || text[j] === FSI) break;
         if ((text[j] === GLYPH_NOTE || text[j] === GLYPH_REPLY) && text[j + 1] === NBSP) { s = j; break; }
-        if (text[j] === EMSP && text[j + 1] === NBSP) { s = j > 0 && text[j - 1] === EMSP ? j - 1 : j; break; }
+        if ((text[j] === EMSP || text[j] === '\u2060') && text[j + 1] === NBSP) {
+          s = j;
+          while (s > from && (text[s - 1] === EMSP || text[s - 1] === '\u2060')) s -= 1;
+          break;
+        }
       }
+      // The chip's air before its glyph goes with it.
+      if (s > from && s < i && text[s - 1] === PAD) s -= 1;
       // Never reach back over an edit already made.
       const prev = out[out.length - 1];
       if (prev && s < prev.e) s = prev.e;
