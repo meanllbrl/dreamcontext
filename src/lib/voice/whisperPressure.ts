@@ -5,8 +5,13 @@
  *
  *   • MEMORY — `super/capacity.ts`: available memory from `vm_stat` and swap use from `sysctl`,
  *     memoized for a minute and shared with the Super Agent and the idle-chat park sweep. The
- *     lines are the Super's own (`machineRoom`): swap at 75 %+ of its size, or under 2 GB
- *     available. Disk and the session count are not memory and are ignored here.
+ *     lines are the Super's own (`machineRoom`): under 2 GB available, or swap at 75 %+ of its
+ *     size. Disk and the session count are not memory and are ignored here.
+ *   • NOT SWAP ON macOS (2026-10-30): macOS adds swap files as they fill, so "used / size" sits
+ *     at 90 %+ whenever anything is swapped at all — measured on the owner's 16 GB Mac with
+ *     2.5 GB available: 7.3 of 8 GB, a minute after 5.9 of 6 GB. As a line it refused 4 of 5
+ *     Shift+V takes that day. Available memory is the reading that moves under real load there;
+ *     on Linux the swap size is fixed, so its share still counts.
  *   • HEAT — the hands-free Mac mode's thermal governor already reads `NSProcessInfo.thermalState`
  *     while it runs; the server hands that last reading in ({@link setThermalSource}). `serious`
  *     or `critical` counts. When the governor is not running there is no reading, and no new one
@@ -16,7 +21,7 @@
  * a broken `vm_stat` must not switch dictation off.
  */
 
-import { machineRoom, readCapacityFacts } from '../super/capacity.js';
+import { machineRoom, readCapacityFacts, type CapacityFacts } from '../super/capacity.js';
 
 export interface PressureReading {
   pressed: boolean;
@@ -35,18 +40,27 @@ export function setThermalSource(src: ThermalSource | null): void {
   thermalSource = src ?? (() => null);
 }
 
+/** The memory half, pure: the Super's lines over one reading of the facts. */
+export function memoryPressure(
+  facts: CapacityFacts,
+  opts: { loadedMB?: number; platform?: NodeJS.Platform } = {},
+): PressureReading {
+  // Our own model's memory is not pressure we must react to by unloading it.
+  const own = Math.max(0, opts.loadedMB ?? 0) / 1024;
+  const room = machineRoom({ ...facts, availMemGb: facts.availMemGb + own }, { platform: opts.platform });
+  if (room.reasons.some((r) => r.limit === 'availMem')) return { pressed: true, why: 'memory' };
+  const swapCounts = (opts.platform ?? process.platform) !== 'darwin';
+  if (swapCounts && room.reasons.some((r) => r.limit === 'swap')) return { pressed: true, why: 'swap' };
+  return { pressed: false, why: null };
+}
+
 export const readMachinePressure: PressureReader = async (opts = {}) => {
   try {
     const t = thermalSource();
     if (t === 'serious' || t === 'critical') return { pressed: true, why: 'heat' };
   } catch { /* no reading */ }
   try {
-    const facts = await readCapacityFacts();
-    // Our own model's memory is not pressure we must react to by unloading it.
-    const own = Math.max(0, opts.loadedMB ?? 0) / 1024;
-    const room = machineRoom({ ...facts, availMemGb: facts.availMemGb + own });
-    if (room.reasons.some((r) => r.limit === 'availMem')) return { pressed: true, why: 'memory' };
-    if (room.reasons.some((r) => r.limit === 'swap')) return { pressed: true, why: 'swap' };
+    return memoryPressure(await readCapacityFacts(), opts);
   } catch { /* unreadable: fail open */ }
   return { pressed: false, why: null };
 };
