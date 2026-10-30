@@ -316,7 +316,7 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
                       className={`sidebar-item sidebar-item--launcher${chatOpen ? ' sidebar-item--active' : ''}`}
                       aria-current={chatOpen ? 'page' : undefined}
                       onClick={() => { openAgentSurface(bus); phone?.onClose(); }}
-                      {...named(live > 0 ? `${label} (${live} open)` : label)}
+                      {...named(showUnread ? `${label} (${t('super.unread.count').replace('{n}', String(superUnread))})` : live > 0 ? `${label} (${live} open)` : label)}
                     >
                       <span className="sidebar-icon"><ChatIcon /></span>
                       <span className="sidebar-label">{label}</span>
@@ -325,7 +325,7 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
                       {(live > 0 || showUnread) && (
                         <span className="sidebar-item-end">
                           {showUnread
-                            ? <span className="sidebar-badge sidebar-badge--count" data-testid="super-unread-badge" title={t('super.unread.count').replace('{n}', String(superUnread))}>{superUnread}</span>
+                            ? <span className="sidebar-badge sidebar-badge--count" data-testid="super-unread-badge">{superUnread}</span>
                             : <span className={`sidebar-badge${waiting > 0 ? '' : ' sidebar-badge--quiet'}`}>{live}</span>}
                         </span>
                       )}

@@ -288,7 +288,7 @@ export function PhoneChatList({
               {superRow.lastLine ? ` · ${superRow.lastLine}` : ''}
             </span>
           </span>
-          {r.vault === vault && superUnread > 0 && <span className="sidebar-badge" data-testid="super-unread-badge">{superUnread}</span>}
+          {r.vault === vault && superUnread > 0 && <span className="sidebar-badge" data-testid="super-unread-badge" aria-label={t('super.unread.count').replace('{n}', String(superUnread))}>{superUnread}</span>}
           <span className="mlist-age">{age(superRow.updatedAt)}</span>
         </button>
       </li>

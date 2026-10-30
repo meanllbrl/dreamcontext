@@ -2475,7 +2475,8 @@ export function ChatPane({
   const superQuestionView = useSuperQuestions(superView ? session.claudeId : null);
   const unreadItems = useMemo(() => [...conv.history, ...conv.items], [conv.history, conv.items]);
   const superUnread = useSuperUnread({
-    enabled: !!superView,
+    // The view is null once taken back: the record is gone then, and the session may stay.
+    enabled: !!superView && !!superQuestionView,
     vault: vault ?? null,
     api,
     items: unreadItems,
@@ -2485,9 +2486,10 @@ export function ChatPane({
     scrollRef,
     contentRef,
     dividerLabel: (n) => t('super.unread.divider').replace('{n}', String(n)),
+    onPainted: () => { holdAnchorSteady(); drawReplyLines(); },
   });
   const jumpToFirstUnread = () => {
-    const first = superUnread.first;
+    const first = superUnread.lead();
     if (first?.itemId) { replyJumpRef.current.jumpToReplyTarget(first.itemId); return; }
     const scroller = scrollRef.current;
     const card = first && scroller?.querySelector<HTMLElement>(`[data-testid="super-question-card"][data-item="${CSS.escape(first.question ?? '')}"]`);

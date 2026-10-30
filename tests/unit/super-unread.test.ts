@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DWELL_MS, SAME_MESSAGE_MS, advanceDwell, mergeMarks, mostlyVisible, ownerCanRead, sideOf, unreadOf, unreadUnits, wordsKey, withRead,
+  DWELL_MS, SAME_MESSAGE_MS, advanceDwell, firstMountedRow, leadIndex, mergeMarks, mostlyVisible, ownerCanRead, sideOf, unreadOf, unreadUnits, wordsKey, withRead,
   type ReadMarks, type UnreadItem,
 } from '../../dashboard/src/components/sleepy/super/superUnread';
 
@@ -25,6 +25,24 @@ describe('what counts as unread', () => {
     const replay = units([user('h0', '[super handover] The owner handed you these chats: x, y, z. Arrange the stage.', 12), text('h1', 'arranged', 13)]);
     expect(replay[0].key).toBe(live[0].key);
     expect(unreadOf(replay, marks(0, [{ key: live[0].key, ts: 10 }]))).toEqual([]);
+  });
+
+  it('the same words twice are two messages', () => {
+    const all = units([text('a', 'ok', 10), text('b', 'ok', 20)]);
+    expect(all[0].key).not.toBe(all[1].key);
+    expect(unreadOf(all, marks(0, [{ key: all[0].key, ts: 10 }])).map((u) => u.itemId)).toEqual(['b']);
+  });
+
+  it('a reply landing after its line was read flags the line again', () => {
+    const before = units([user('e', '[super recap] back', 10)]);
+    const after = units([user('e', '[super recap] back', 10), text('r', 'while you were away', 11)]);
+    expect(unreadOf(after, marks(0, [{ key: before[0].key, ts: 10 }]))).toHaveLength(1);
+  });
+
+  it('a batch is keyed by its id, whatever its item lines say', () => {
+    const live = units([user('e', '[super events] batch=b1 items=1\n- item=i child=c1 event=idle', 10), text('r', 'x', 11)]);
+    const replay = units([user('e', '[super events] batch=b1 items=2\n- item=i team=t member=m\n- item=j child=c2 event=idle', 10), text('r', 'x', 11)]);
+    expect(replay[0].key).toBe(live[0].key);
   });
 
   it('an open question is a unit on its card, placed by its own time', () => {
@@ -68,6 +86,23 @@ describe('what counts as unread', () => {
   it('keys ignore whitespace, not words', () => {
     expect(wordsKey('a  b\nc')).toBe(wordsKey('a b c'));
     expect(wordsKey('a b')).not.toBe(wordsKey('a c'));
+  });
+});
+
+describe('where the page starts', () => {
+  it('a unit with no row leads: it is above the window', () => {
+    expect(leadIndex([500, null, 300])).toBe(1);
+  });
+
+  it('else the topmost row leads, whatever the time order', () => {
+    expect(leadIndex([500, 100, 300])).toBe(1);
+    expect(leadIndex([])).toBe(-1);
+  });
+
+  it('a question in the tail says nothing about the window', () => {
+    const us = [{ itemId: null }, { itemId: 'a' }, { itemId: 'b' }];
+    expect(firstMountedRow(us, [true, false, true])).toBe(2);
+    expect(firstMountedRow(us, [true, false, false])).toBe(-1);
   });
 });
 

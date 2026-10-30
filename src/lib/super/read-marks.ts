@@ -101,7 +101,14 @@ async function loadFile(path: string): Promise<SuperReadMarks | null> {
   }
 }
 
+/** A committed symlink at `state/.super` must not carry a write out of the vault. */
+async function checkDir(dir: string): Promise<void> {
+  const st = await fsp.lstat(dir).catch(() => null);
+  if (st && !st.isDirectory()) throw new Error('state/.super is not a directory');
+}
+
 async function saveFile(path: string, marks: SuperReadMarks): Promise<void> {
+  await checkDir(dirname(path));
   await fsp.mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.${randomBytes(4).toString('hex')}.tmp`;
   try {
@@ -141,5 +148,8 @@ export function applyReadMarks(contextRoot: string, patch: ReadPatch, now: numbe
 /** The record's death: the owner took the Super Agent back. */
 export function clearReadMarks(contextRoot: string): Promise<void> {
   const path = marksPath(contextRoot);
-  return serial(path, () => fsp.rm(path, { force: true }));
+  return serial(path, async () => {
+    await checkDir(dirname(path));
+    await fsp.rm(path, { force: true });
+  });
 }

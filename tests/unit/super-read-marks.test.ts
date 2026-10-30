@@ -42,6 +42,13 @@ describe('the read record', () => {
     await expect(readReadMarks(root)).rejects.toThrow(/symlink/);
   });
 
+  it('refuses a symlinked state/.super', async () => {
+    mkdirSync(join(root, 'state'), { recursive: true });
+    mkdirSync(join(root, 'elsewhere'));
+    symlinkSync(join(root, 'elsewhere'), join(root, 'state', '.super'));
+    await expect(applyReadMarks(root, {}, 1)).rejects.toThrow(/not a directory/);
+  });
+
   it('concurrent writes all land', async () => {
     await applyReadMarks(root, {}, 1);
     await Promise.all(['a', 'b', 'c', 'd'].map((k, i) => applyReadMarks(root, { read: [{ key: `t:${k}`, ts: 10 + i }] }, 100)));
@@ -87,12 +94,24 @@ describe('the wire', () => {
 describe('the rail\'s count', () => {
   it('a key is born with a count and dies with the pane or at zero', () => {
     const before = _superUnreadSize();
-    publishSuperUnread('v1', 3);
+    const pane = {};
+    publishSuperUnread('v1', 3, pane);
     expect(_superUnreadSize()).toBe(before + 1);
-    publishSuperUnread('v1', 0);
+    publishSuperUnread('v1', 0, pane);
     expect(_superUnreadSize()).toBe(before);
-    publishSuperUnread('v1', 2);
-    dropSuperUnread('v1');
+    publishSuperUnread('v1', 2, pane);
+    dropSuperUnread('v1', pane);
     expect(_superUnreadSize()).toBe(before);
+  });
+
+  it('an old pane leaving does not wipe the new pane\'s count', () => {
+    const before = _superUnreadSize();
+    const old = {};
+    const fresh = {};
+    publishSuperUnread('v2', 3, old);
+    publishSuperUnread('v2', 3, fresh);
+    dropSuperUnread('v2', old);
+    expect(_superUnreadSize()).toBe(before + 1);
+    dropSuperUnread('v2', fresh);
   });
 });

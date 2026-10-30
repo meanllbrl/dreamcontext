@@ -54,9 +54,12 @@ function keyOf(it: UnreadItem): string {
 }
 
 /** An injected turn's live chip and its stored prompt are different words for one event, so its
- *  key is what the event IS. The same event again goes by `SAME_MESSAGE_MS`. */
-function eventKey(g: { kind: string; batch: string | null; items: ReadonlyArray<{ child: string }> }): string {
-  return `e:${msgRef([g.kind, g.batch ?? '', ...g.items.map((i) => i.child)].join('|'))}`;
+ *  key is what the event IS: its batch id when it has one (a batch's item lines differ between the
+ *  two), else its kind and children. `prose` is the finished blocks folded behind it, so a reply
+ *  landing after the line was read flags the line again. */
+function eventKey(g: { kind: string; batch: string | null; items: ReadonlyArray<{ child: string }> }, prose: number): string {
+  const what = g.batch ? `b|${g.batch}` : [g.kind, ...g.items.map((i) => i.child)].join('|');
+  return `e:${msgRef(what)}.${prose}`;
 }
 
 /** Every unit in the conversation, oldest first. `fold` is on when the pane folds event turns. */
@@ -68,22 +71,27 @@ export function unreadUnits(
   const anchors = new Map<string, string>();
   if (opts.fold) {
     const { groups } = groupSuperEventTurns(items, { ownerBatches: opts.ownerBatches, expanded: new Set() });
-    const textIds = new Set(items.filter((it) => it.kind === 'text' && it.text?.trim()).map((it) => it.id));
+    const textIds = new Set(items.filter((it) => it.kind === 'text' && it.done && it.text?.trim()).map((it) => it.id));
     for (const g of groups.values()) {
       for (const id of g.folded) folded.add(id);
       // A batch he was asked in is drawn full: its prose rows speak for it.
-      if (!g.full && (!QUIET_EVENTS.has(g.kind) || g.folded.some((id) => textIds.has(id)))) anchors.set(g.anchor, eventKey(g));
+      const prose = g.folded.filter((id) => textIds.has(id)).length;
+      if (!g.full && (!QUIET_EVENTS.has(g.kind) || prose > 0)) anchors.set(g.anchor, eventKey(g, prose));
     }
   }
   const units: UnreadUnit[] = [];
+  // The same words twice are two messages: the nth occurrence is part of the key.
+  const seen = new Map<string, number>();
+  const push = (key: string, ts: number, itemId: string) => {
+    const n = seen.get(key) ?? 0;
+    seen.set(key, n + 1);
+    units.push({ key: `${key}.${n}`, ts, itemId, question: null });
+  };
   for (const it of items) {
     const ts = it.ts ?? 0;
     const anchor = anchors.get(it.id);
-    if (anchor) {
-      units.push({ key: anchor, ts, itemId: it.id, question: null });
-    } else if (it.kind === 'text' && it.done && it.text?.trim() && !folded.has(it.id)) {
-      units.push({ key: `t:${keyOf(it)}`, ts, itemId: it.id, question: null });
-    }
+    if (anchor) push(anchor, ts, it.id);
+    else if (it.kind === 'text' && it.done && it.text?.trim() && !folded.has(it.id)) push(`t:${keyOf(it)}`, ts, it.id);
   }
   for (const q of opts.openQuestions) units.push({ key: `q:${q.id}`, ts: q.createdAt, itemId: null, question: q.id });
   return units.sort((a, b) => a.ts - b.ts);
@@ -104,6 +112,27 @@ export function unreadOf(units: readonly UnreadUnit[], marks: ReadMarks | null):
     const m = newest.get(u.key);
     return m === undefined || u.ts > m + SAME_MESSAGE_MS;
   });
+}
+
+/**
+ * Which unit leads: one with no row yet is above the window (a question card can be drawn at the
+ * chat's tail however old it is, so time order alone is not the page's order), else the topmost.
+ * `tops[i]` is the unit's row top, null with no row. -1: no unit.
+ */
+export function leadIndex(tops: ReadonlyArray<number | null>): number {
+  let best = -1;
+  for (let i = 0; i < tops.length; i++) {
+    const top = tops[i];
+    if (top === null) return i;
+    if (best < 0 || top < (tops[best] as number)) best = i;
+  }
+  return best;
+}
+
+/** The first PROSE or event row mounted. A question card proves nothing about the window: it
+ *  sits in the always-mounted tail, with unmounted rows newer than it. */
+export function firstMountedRow(units: readonly Pick<UnreadUnit, 'itemId'>[], mounted: readonly boolean[]): number {
+  return units.findIndex((u, i) => mounted[i] && u.itemId);
 }
 
 /** Add-only, like the server's merge, so a slow answer cannot bring a dot back. */

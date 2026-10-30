@@ -3,20 +3,24 @@ import { useSyncExternalStore } from 'react';
 /**
  * The unread count of each project's Super Agent chat, for what sits outside the pane (the
  * rail, the phone's list). The pane is the only writer. A key is born with a pane's first
- * count and dies with the pane (`dropSuperUnread`): a project closed leaves nothing here.
+ * count and dies with the pane or at zero: a project closed leaves nothing here.
  */
-const counts = new Map<string, number>();
+const counts = new Map<string, { count: number; pane: object }>();
 const listeners = new Set<() => void>();
 const emit = () => { for (const fn of listeners) fn(); };
 
-export function publishSuperUnread(vault: string, count: number): void {
-  if ((counts.get(vault) ?? 0) === count && (count > 0 || !counts.has(vault))) return;
-  if (count > 0) counts.set(vault, count); else counts.delete(vault);
-  emit();
+export function publishSuperUnread(vault: string, count: number, pane: object): void {
+  const held = counts.get(vault);
+  if (count > 0) {
+    if (held?.count === count && held.pane === pane) return;
+    counts.set(vault, { count, pane });
+    if (held?.count !== count) emit();
+  } else if (counts.delete(vault)) emit();
 }
 
-export function dropSuperUnread(vault: string): void {
-  if (counts.delete(vault)) emit();
+/** Only the pane that published: a pane replaced by a new one must not wipe the new one's count. */
+export function dropSuperUnread(vault: string, pane: object): void {
+  if (counts.get(vault)?.pane === pane && counts.delete(vault)) emit();
 }
 
 function subscribe(fn: () => void): () => void {
@@ -25,7 +29,7 @@ function subscribe(fn: () => void): () => void {
 }
 
 export function useSuperUnreadCount(vault: string | null): number {
-  const read = () => (vault ? counts.get(vault) ?? 0 : 0);
+  const read = () => (vault ? counts.get(vault)?.count ?? 0 : 0);
   return useSyncExternalStore(subscribe, read, read);
 }
 

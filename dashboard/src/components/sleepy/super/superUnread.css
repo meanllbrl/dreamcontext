@@ -29,12 +29,11 @@
   text-align: center;
   font-size: var(--font-size-xs, 11px);
   font-weight: 600;
-  color: var(--color-accent);
+  color: var(--color-accent-ink);
   pointer-events: none;
   background:
     linear-gradient(var(--color-accent), var(--color-accent)) left center / calc(50% - 56px) 1px no-repeat,
     linear-gradient(var(--color-accent), var(--color-accent)) right center / calc(50% - 56px) 1px no-repeat;
-  opacity: 0.8;
 }
 
 .super-unread-bar {
@@ -87,3 +86,7 @@
   .super-unread-jump, .super-unread-all { padding: 6px 10px; }
   .chat-scroll-inner--reply [data-unread]::before { left: -8px; }
 }
+
+/* A phone's message rows clip sideways (MobileChat.css), so the dot stands inside the row. */
+.agent-surface[data-mobile] .chat-msg-assistant-row[data-unread] { padding-left: 10px; }
+.agent-surface[data-mobile] .chat-msg-assistant-row[data-unread]::before { left: 0; }

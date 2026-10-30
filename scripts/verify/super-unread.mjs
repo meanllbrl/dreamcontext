@@ -198,7 +198,7 @@ async function run() {
     await page.keyboard.press('Enter');
   };
   const turnEnds = () => reports().filter((r) => r.kind === 'turn-end').length;
-  const blur = (off) => page.evaluate((v) => { Document.prototype.hasFocus = () => !v; }, off);
+  const blur = (off) => page.evaluate(async (v) => { Document.prototype.hasFocus = () => !v; window.dispatchEvent(new Event(v ? 'blur' : 'focus')); await new Promise((r) => setTimeout(r, 50)); }, off);
   const scroller = () => page.locator('[data-super-slot="centre"] .chat-scroll');
   const toBottom = () => scroller().evaluate((el) => { el.scrollTop = el.scrollHeight; });
   try {
@@ -321,6 +321,13 @@ async function run() {
     console.log('   390', JSON.stringify(geo));
     ok('390: the bar fits the width', !!geo.bar && geo.bar.l >= 0 && geo.bar.r <= 390, JSON.stringify(geo));
     ok('390: no sideways scroll', geo.over <= 0, String(geo.over));
+    const dotPaints = await page.evaluate(() => {
+      const row = [...document.querySelectorAll('.chat-msg-assistant-row[data-unread]')].find((e) => e.getBoundingClientRect().top > 100);
+      if (!row) return false;
+      const cs = getComputedStyle(row, '::before'); const rowCs = getComputedStyle(row);
+      return cs.content !== 'none' && (rowCs.overflowX !== 'clip' || parseFloat(cs.left) >= 0);
+    });
+    ok('390: the dot is inside what a row may paint', dotPaints);
     await shot('kod-sonra-390');
     await page.locator('.chat-scroll:visible').first().evaluate((el) => { el.scrollTop = 0; });
     await page.waitForTimeout(600);
@@ -334,6 +341,10 @@ async function run() {
     await toStage();
     await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
     ok('gone with the hand-over', await until(page, async () => !existsSync(marksFile), 20000));
+    ok('the rail count dies with it', await until(page, async () => (await badge()) === 0, 8000), `${await badge()}`);
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await page.waitForTimeout(1500);
+    ok('nothing writes a new record after take-back', !existsSync(marksFile));
 
     const real = errors.filter((e) => !/favicon|ERR_CONNECTION|WebSocket|Failed to load resource/i.test(e));
     ok('no console errors', real.length === 0, real.join('\n'));
