@@ -1729,6 +1729,7 @@ const translations: Record<string, Record<string, string>> = {
     'update.upgradeFailed': 'Upgrade failed.',
     'update.retry': 'Try again',
     'upgradeRelaunch.countdown': 'dreamcontext updated to v{version} — relaunching in {seconds}s to apply.',
+    'upgradeRelaunch.waiting': 'dreamcontext v{version} is installed — relaunching once {count} working agent(s) finish their turn.',
     'upgradeRelaunch.deferred': 'dreamcontext v{version} is installed — relaunch to apply the update.',
     'upgradeRelaunch.relaunching': 'Relaunching to apply the update…',
     'upgradeRelaunch.now': 'Relaunch now',
