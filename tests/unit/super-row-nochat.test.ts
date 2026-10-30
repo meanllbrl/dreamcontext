@@ -86,6 +86,10 @@ describe('the surface wiring', () => {
   it('open-on-restore yields to a page the window was opened for or already went to', () => {
     expect(surface).toMatch(/if \(navigatedRef\.current \|\| openedForLink\(\)\) \{ openedOnRestoreThisWindow = true; return; \}/);
     expect(surface).toMatch(/useInstanceEvent\('dreamcontext-navigate', \(\) => \{\s*navigatedRef\.current = true;/);
+    // The link flag survives App.tsx stripping `&open=` (it is marked before the strip).
+    expect(surface).toMatch(/const openedForLink = wasOpenedForLink;/);
+    const app = readFileSync(fileURLToPath(new URL('../../dashboard/src/App.tsx', import.meta.url)), 'utf-8');
+    expect(app).toMatch(/if \(initialLink !== null\) \{\s*markOpenedForLink\(\);/);
   });
 
   it('a drawer intent waits for the restored tabs and the Super record before it acts', () => {

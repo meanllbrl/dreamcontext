@@ -1,4 +1,5 @@
 import { ShellModeProvider } from './lib/uxMode';
+import { markOpenedForLink } from './lib/windowLaunch';
 import { LauncherRoot } from './pages/LauncherRoot';
 import { Component, type ReactNode } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -99,6 +100,7 @@ const inboxMode = params.get('inbox') === '1';
  */
 const initialLink = params.get('open');
 if (initialLink !== null) {
+  markOpenedForLink();
   try {
     const url = new URL(window.location.href);
     url.searchParams.delete('open');

@@ -102,14 +102,14 @@ import { readSuperStateView, type SuperDigestWire, type SuperStateView } from '.
 import { PhoneAgenda, phoneEventContext } from './super/PhoneAgenda';
 import { holdSidebarCollapsed as holdClassicSidebar } from '../../hooks/useSidebarCollapse';
 import { readShellModeFrozen } from '../../lib/uxMode';
+import { wasOpenedForLink } from '../../lib/windowLaunch';
 import { DRAWER_INTENT_EVENT, DRAWER_SURFACE_EVENT, type DrawerIntent, type DrawerSurfaceState } from '../../lib/drawerIntents';
 import { planSuperRow, runSuperRow, SUPER_ROW_SPAWN } from './super/superRow';
 /** The new shell opens its first project on Chat once per window (6b), not on every switch. */
 let openedOnRestoreThisWindow = false;
-/** The window was opened to land a link (`&open=`, `openVaultWindow`): its page wins over Chat. */
-function openedForLink(): boolean {
-  try { return new URLSearchParams(window.location.search).has('open'); } catch { return false; }
-}
+/** The window was opened to land a link (`&open=`, `openVaultWindow`): its page wins over Chat.
+ *  Read from `lib/windowLaunch`, because `App.tsx` takes `&open=` off the URL at load. */
+const openedForLink = wasOpenedForLink;
 /** The hand-over folds the classic sidebar; the new shell has none to fold (D4), so it never
  *  holds one. The shell is frozen per window, so this reads one settled answer. */
 function holdSidebarCollapsed(instanceId: string, on: boolean): void {
