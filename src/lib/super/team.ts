@@ -5,7 +5,7 @@ import { readAutomationCache } from '../automations/store.js';
 import { plainPostText, readThread } from '../automations/threads.js';
 import type { AutomationQuestion, ThreadEntry } from '../automations/types.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
-import { MAX_CONTAINERS, MAX_FLOAT, MAX_TEAM_JOBS, floatCount, type SuperQueueItem, type SuperState, type SuperTeamJob, type TeamJobConclusion, type TeamJobEvent, type TeamJobStatus } from './types.js';
+import { MAX_CONTAINERS, MAX_FLOAT, MAX_READ_BYTES, MAX_TEAM_JOBS, floatCount, type SuperQueueItem, type SuperState, type SuperTeamJob, type TeamJobConclusion, type TeamJobEvent, type TeamJobStatus } from './types.js';
 import { containerIdFor, countEvent, newQueueId } from './inbox.js';
 import { makeRoom } from './room.js';
 
@@ -155,13 +155,7 @@ export function teamJobLive(
   const liveReply = live?.kind === 'reply' ? live : null;
 
   if (job.jobKind === 'reply') {
-    const from = liveReply ? liveReply.deliveredAt : job.deliveredAt;
-    const to = liveReply ? liveReply.endedAt : job.endedAt;
-    // Not queued: nothing held the member, so its posts after the ask are this reply's.
-    const mine = from !== undefined
-      ? after.filter((e) => { const ms = entryMs(e.id); return ms >= from && (to === undefined || ms <= to + MIRROR_SLACK_MS); })
-      : job.queued ? [] : after;
-    const lastLine = lastAgentLine(mine);
+    const lastLine = lastAgentLine(replyWindow(job, liveReply, after));
     if (liveReply) {
       if (liveReply.status === 'ok') return { status: 'done', lastLine };
       if (liveReply.status === 'failed' || liveReply.status === 'refused') return { status: 'failed', lastLine };
@@ -196,6 +190,41 @@ export function teamJobLive(
   if (cached) return { status: cached, lastLine };
   return { status: 'running', lastLine };
 }
+
+/** A REPLY's own entries among what came after its ask: the member's posts from the moment it got
+ *  the lock (not queued: nothing held the member, so all of them). */
+function replyWindow(job: SuperTeamJob, liveReply: Extract<LiveSayJob, { kind: 'reply' }> | null, after: ThreadEntry[]): ThreadEntry[] {
+  const from = liveReply ? liveReply.deliveredAt : job.deliveredAt;
+  const to = liveReply ? liveReply.endedAt : job.endedAt;
+  return from !== undefined
+    ? after.filter((e) => { const ms = entryMs(e.id); return ms >= from && (to === undefined || ms <= to + MIRROR_SLACK_MS); })
+    : job.queued ? [] : after;
+}
+
+/**
+ * The member's whole answer to a team job (`super read <team-id>`, and the head of its `event=done`
+ * item): its LAST post first (the one the last line reads, usually the result), then the earlier
+ * posts after the ask in order, from the same window `teamJobLive` reads; a fresh run that posted
+ * nothing answered in its document (`readRunAnswer`). '' when there is nothing yet. At most
+ * MAX_READ_BYTES of it.
+ */
+export function teamJobAnswer(contextRoot: string, job: SuperTeamJob, live: LiveSayJob | null): string {
+  const { after } = jobThread(contextRoot, job);
+  // A run's window is every post after its ask, the one `teamJobLive` reads (plan r8 §B). A follow-up
+  // asked while the member still runs lands in the same run: task super-takip-sorusu-cevap-penceresi.
+  const window = job.jobKind === 'reply' ? replyWindow(job, live?.kind === 'reply' ? live : null, after) : after;
+  const posts = window.filter((e) => e.kind === 'agent' && e.text.trim()).map((e) => e.text.trim());
+  let text = '';
+  if (posts.length) text = [posts[posts.length - 1], ...posts.slice(0, -1)].join('\n\n');
+  else if (job.jobKind === 'run') {
+    try { text = readRunAnswer(contextRoot, job.member, job.runId)?.text.trim() ?? ''; } catch { text = ''; }
+  }
+  const buf = Buffer.from(text, 'utf-8');
+  return buf.length > MAX_READ_BYTES ? buf.subarray(0, MAX_READ_BYTES).toString('utf-8').replace(/\uFFFD+$/, '') : text;
+}
+
+/** The share of a done job's answer its `[super events]` item carries; `super read` has the rest. */
+export const TEAM_ANSWER_EXCERPT = 600;
 
 /** The job's run in its member's thread, in id order, and what came after the job's own ask.
  *  `fromMs` reads only from the day before that moment on (an answer days later). */
@@ -354,6 +383,19 @@ export function teamItemLines(contextRoot: string, vault: string, s: Pick<SuperS
   const asked = q.kind === 'question' && end.question?.id === job.toldQuestion ? end.question : undefined;
   if (asked) lines.push(wrapUntrusted(vault, `Question: ${firstLine(asked.question, 300)}`));
   const lastLine = q.kind === 'question' ? teamJobLive(contextRoot, job, live).lastLine : row.lastLine;
+  if (q.kind === 'done') {
+    // The answer itself, so the super can relay it without a second call: the member's final post
+    // first (an answered question's resolution line leads when that is how it ended).
+    let answer = teamJobAnswer(contextRoot, job, live);
+    if (end.lastLine && !answer.includes(end.lastLine)) answer = answer ? `${end.lastLine}\n\n${answer}` : end.lastLine;
+    if (!answer) answer = lastLine;
+    if (answer) {
+      const cut = answer.length > TEAM_ANSWER_EXCERPT;
+      lines.push(wrapUntrusted(vault, `Answer: ${cut ? `${answer.slice(0, TEAM_ANSWER_EXCERPT).trimEnd()}…` : answer}`));
+      if (cut) lines.push(`  (cut: the whole answer: \`dreamcontext super read ${job.id}\`)`);
+    }
+    return lines;
+  }
   if (lastLine) lines.push(wrapUntrusted(vault, `Last line: ${lastLine}`));
   return lines;
 }

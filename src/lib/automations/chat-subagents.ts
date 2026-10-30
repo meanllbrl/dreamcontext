@@ -3,6 +3,7 @@ import { listAgentTargets } from '../agents/store.js';
 import { identityOnly } from '../agents/compose.js';
 import { checkApproval } from './registry.js';
 import { buildPatternBlock, buildSoulBlock, buildTurnLearningDirective, sanitizeAutomationPrompt } from './runner.js';
+import { nameOf, summaryOf } from '../agents/agent-summary.js';
 import type { AutomationManifest } from './types.js';
 
 /**
@@ -29,8 +30,6 @@ import type { AutomationManifest } from './types.js';
 
 /** At most this many agents ride one spawn: the roster rides every turn of the system prompt. */
 export const MAX_CHAT_SUBAGENTS = 24;
-/** A roster line's and a description's share of an agent's prompt. */
-const SUMMARY_CHARS = 140;
 
 export interface SubagentDefinition {
   description: string;
@@ -42,17 +41,6 @@ export interface ChatSubagents {
   agents: Record<string, SubagentDefinition>;
   /** The briefing section that tells the chat's Claude it can call them. */
   roster: string;
-}
-
-/** The agent's display name: its own title, never a bound automation's. */
-function nameOf(m: AutomationManifest): string {
-  return m.agentTitle || m.title;
-}
-
-/** The first `SUMMARY_CHARS` of the prompt, on one line. */
-function summaryOf(m: AutomationManifest): string {
-  const flat = sanitizeAutomationPrompt(m.prompt).replace(/\s+/g, ' ').trim();
-  return flat.length > SUMMARY_CHARS ? `${flat.slice(0, SUMMARY_CHARS - 1).trimEnd()}…` : flat;
 }
 
 /** What the agent is told when the chat's Claude calls it. Same order as its other briefs. */
@@ -79,10 +67,29 @@ export function subagentPrompt(m: AutomationManifest): string {
 }
 
 /**
- * The approved agents a chat in this project can call, or null when there are none (no flag, no
- * briefing section). `exclude` is the agent the chat itself speaks as.
+ * How an ordinary Chat tab is told to use them (task super-agent-isi-bolerken-…, owner
+ * 2026-10-29: chats SUGGEST the member, never consult it by themselves). `routing: false` keeps
+ * the wording every other spawn had before, byte for byte: a Super Agent's child (the Super
+ * already chose who does the job) and an agent's own Chat tab (it speaks AS a member).
  */
-export function chatSubagents(contextRoot: string, opts: { exclude?: string; home?: string } = {}): ChatSubagents | null {
+const ROUTING_RULE = [
+  'The owner made these agents on the AI Team page: each is his specialist for its field. Before you answer or start work: if',
+  'the request falls in one agent\'s field below, say in one line which agent knows it best and offer to ask it. Call it (the',
+  'Agent tool, `subagent_type` = its slug) when the owner says yes or names it, with a complete, self-contained request; relay',
+  'its answer and say which agent answered. Do its job yourself only when the owner asks you to.',
+];
+const SUBAGENT_RULE = [
+  'The owner made these agents on the AI Team page. You can call any of them as a sub-agent: the Agent tool with `subagent_type` set',
+  'to its slug. When the owner names one ("ask the funnel agent…") or asks for its job, dispatch it with a complete, self-contained',
+  'request, relay what it returns, and say which agent answered. Do its job yourself only when the owner asks you to.',
+];
+
+/**
+ * The approved agents a chat in this project can call, or null when there are none (no flag, no
+ * briefing section). `exclude` is the agent the chat itself speaks as; `routing` picks the
+ * ordinary Chat tab's routing rule over the plain sub-agent wording (see ROUTING_RULE).
+ */
+export function chatSubagents(contextRoot: string, opts: { exclude?: string; home?: string; routing?: boolean } = {}): ChatSubagents | null {
   const callable: AutomationManifest[] = [];
   let targets: AutomationManifest[] = [];
   try { targets = listAgentTargets(contextRoot); } catch { targets = []; }
@@ -104,9 +111,7 @@ export function chatSubagents(contextRoot: string, opts: { exclude?: string; hom
   }
   const roster = [
     "## This project's agents",
-    'The owner made these agents on the AI Team page. You can call any of them as a sub-agent: the Agent tool with `subagent_type` set',
-    'to its slug. When the owner names one ("ask the funnel agent…") or asks for its job, dispatch it with a complete, self-contained',
-    'request, relay what it returns, and say which agent answered. Do its job yourself only when the owner asks you to.',
+    ...(opts.routing ? ROUTING_RULE : SUBAGENT_RULE),
     ...callable.map((m) => `- \`${m.slug}\` ${nameOf(m)}: ${summaryOf(m)}`),
   ].join('\n');
   return { agents, roster };

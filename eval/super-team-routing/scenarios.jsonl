@@ -1,0 +1,12 @@
+{"id":"T01","kind":"super","fixture":"team","request":"Run the signup funnel test end to end."}
+{"id":"T02","kind":"super","fixture":"team","request":"What's this month's revenue?"}
+{"id":"T03","kind":"super","fixture":"team","request":"What are competitors running in ads this week?"}
+{"id":"T04","kind":"super","fixture":"team","request":"Fix the typo in the onboarding title."}
+{"id":"T05","kind":"super","fixture":"team","request":"Three things: 1) why did revenue dip last week? 2) add a dark-mode toggle to Settings in orbit-app. 3) funnel QA of the new paywall."}
+{"id":"T06","kind":"super","fixture":"team","request":"Rewrite the pricing funnel's first three screens."}
+{"id":"T07","kind":"super","fixture":"noteam","request":"What's this month's revenue?"}
+{"id":"T08","kind":"chat","fixture":"team","request":"What's this month's revenue?"}
+{"id":"T09","kind":"event","fixture":"team","request":""}
+{"id":"T10","kind":"super","fixture":"team","request":"bu ayın geliri ne?"}
+{"id":"R02","kind":"resume","fixture":"team","request":"What's this month's revenue?","of":"T02"}
+{"id":"R06","kind":"resume","fixture":"team","request":"Rewrite the pricing funnel's first three screens.","of":"T06"}

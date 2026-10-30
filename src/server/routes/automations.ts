@@ -5,6 +5,7 @@ import { dirname, extname, join } from 'node:path';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
 import { ownerLabel } from '../../lib/agents/owner.js';
+import { memberCallState } from '../../lib/agents/team-roster.js';
 import {
   getAutomation,
   listAutomations,
@@ -2121,17 +2122,20 @@ export function sayToAgent(
   const board = readBoard(contextRoot, input.board);
   if (board === undefined) return sayRefusal(400, 'bad_board', 'That whiteboard does not exist in this project.');
   try {
-    const manifest = getAutomation(contextRoot, slug);
-    if (!manifest) return sayRefusal(404, 'not_found', `Automation not found: ${slug}`);
-    if (!manifest.enabled) {
-      return sayRefusal(409, 'say_disabled', `${manifest.title} is turned off. Turn it on to call it.`);
-    }
-    // Checked HERE as well as inside the runner, and not as a duplicate: the
+    // ONE reading of the member (team-roster.ts `memberCallState`): the Super Agent's team list
+    // and this verb judge the same slot the same way, so they can never disagree.
+    //
+    // The approval is checked HERE as well as inside the runner, and not as a duplicate: the
     // runner's check stops the run, this one stops the MESSAGE. Without it an
     // unapproved agent leaves the owner's words sitting in the channel under
     // an answer that is only ever going to be "it is not approved".
-    const projectRoot = dirname(contextRoot);
-    const verdict = checkApproval(projectRoot, manifest, undefined, 'run');
+    const call = memberCallState(contextRoot, slug);
+    const manifest = call.manifest;
+    if (call.state === 'missing' || !manifest) return sayRefusal(404, 'not_found', `Automation not found: ${slug}`);
+    if (call.state === 'off') {
+      return sayRefusal(409, 'say_disabled', `${manifest.title} is turned off. Turn it on to call it.`);
+    }
+    const verdict = call.verdict!;
     if (!verdict.approved && verdict.reason === 'not_owner') {
       return sayRefusal(403, 'not_owner', `${manifest.agentTitle || manifest.title} belongs to ${ownerLabel(verdict.owner)}, so it is read-only here: only its owner talks to it.`);
     }

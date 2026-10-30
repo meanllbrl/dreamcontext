@@ -206,7 +206,7 @@ export function registerSuperCommand(program: Command): void {
     .action((child: string, line: string, o: { task?: string }) => run('brief', { child, line, task: o.task }));
 
   s.command('read <child>')
-    .description('A child\'s last reply, whole (tool calls skipped), fenced as the child\'s text. An event line that ends in "…" is cut: this prints the rest')
+    .description('A child\'s last reply, whole (tool calls skipped), fenced as the child\'s text. An event line that ends in "…" is cut: this prints the rest. A team job\'s id (team-…): the member\'s whole answer')
     .option('--bytes <n>', 'Instead: the raw end of its transcript, this many bytes (max 262144)')
     .action((child: string, o: { bytes?: string }) => run('read', { child, bytes: o.bytes ? Number(o.bytes) : undefined }));
 

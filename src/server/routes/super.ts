@@ -11,12 +11,13 @@ import { PhoneHeldError, SuperStoreRefused, isReservedId, okMember, phoneHeld, r
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, groupPresentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
-  MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
+  MAX_TITLE, MIN_GROUP_CARDS, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
   MAX_ASK_PICTURES, MAX_FILMSTRIP, PRESENT_LAYOUTS, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
-import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, noteTeamJobEnd, recordTeamJob, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobEnding, teamJobOwed, teamJobStatus, type LiveSayJob } from '../../lib/super/team.js';
+import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, noteTeamJobEnd, recordTeamJob, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, type LiveSayJob } from '../../lib/super/team.js';
+import { collectTeam, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
 import { sayToAgent } from './automations.js';
 import { agentActivity, currentAutomationJob, currentReplyJob, whenReplySettles, whenRunSettles } from '../automation-job.js';
 import { automationPath, getAutomation } from '../../lib/automations/store.js';
@@ -698,9 +699,13 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       if (noteText) noted = putPadNote(s, 'now', noteText, sid);
     });
     const predecessor = succeeds ? await retirePredecessor(c, succeeds) : null;
+    // A job that looks like a ready AI Team member's field: a warning, never a block (owner,
+    // 2026-10-29). Not for a pool job: it was judged when it was kept.
+    const hint = fromRow ? null : delegateTeamHint(root, job, sid);
     // A child with no card is said out loud (`card: 'not_opened'`), never a quiet null.
     ok(res, {
       sessionId: sid, ...cardOutcome(container, sid, after), ...(wt ? { worktree: wt.path, branch: wt.branch } : {}), ...(fromRow ? { from: fromRow.id } : {}),
+      ...(hint ? { teamHint: hint } : {}),
       ...(predecessor ? { predecessor } : {}),
       ...(noted === 'full' ? { note: null, noteRefused: `pad_full: the agenda holds ${MAX_PAD} notes` } : noted ? { note: noted } : {}),
     });
@@ -711,6 +716,21 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     const n = (delegating.get(root) ?? 1) - 1;
     if (n > 0) delegating.set(root, n); else delegating.delete(root);
   }
+}
+
+/** `super state`'s `members`: the AI Team as `super team ask` judges it, names and fields fenced. */
+function teamMembersRow(root: string, vault: string): { members?: Array<Record<string, string>> } {
+  let members: TeamMember[] = [];
+  try { members = collectTeam(root); } catch { members = []; }
+  if (!members.length) return {};
+  return { members: members.map((m) => ({ slug: m.slug, title: wrapUntrusted(vault, m.title), state: m.state, role: wrapUntrusted(vault, m.role) })) };
+}
+
+/** The `delegate` answer's warning when the job falls in a ready member's field (`teamFit`). */
+function delegateTeamHint(root: string, job: Job, child: string): string | null {
+  const fit = teamFit(root, `${job.brief}\n${job.prompt.slice(0, 2_000)}`);
+  if (!fit) return null;
+  return `${wrapUntrusted(vaultNameOf(root), `${fit.title}: ${fit.role}`)} (\`${fit.slug}\`) may own this field: if so, \`dreamcontext super end ${child}\` and \`dreamcontext super team ask ${fit.slug} "<the job>"\``;
 }
 
 /** A queue item as the agent reads it: its child-derived text fenced (D10), the escalated
@@ -861,6 +881,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       head: head ? fenceQ(head) : null, machine, limits: { maxChildren: MAX_LIVE_CHILDREN },
       // Both card limits, counted the way `open` counts them (its 409 names which one refused).
       cards: cardCounts(settled), pool: poolRows(vault, settled.pool), team, ...(warnings.length ? { warnings } : {}),
+      // The AI Team the super gives jobs to (team-roster.ts, the same reading as `team ask`): its
+      // names and fields are a shared brain's text, fenced. Omitted when there is none.
+      ...teamMembersRow(root, vault),
       // The MCP servers `delegate --mcp` can grant (D14): names only, each one the narrow
       // [a-z0-9_-] shape (a name of any other shape is never listed, so nothing here is prose).
       mcpServers: [...knownMcpServers(dirname(root)).keys()],
@@ -1366,6 +1389,21 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 
   read: async (c, b, res) => {
+    // A team job's id (`team-…`): the member's whole answer (team.ts `teamJobAnswer`), fenced.
+    const teamId = str(b.child);
+    if (teamId && TEAM_JOB_ID_RE.test(teamId)) {
+      const j = c.state.team.find((x) => x.id === teamId);
+      if (!j) { refuse(res, 404, 'unknown_team', 'no such team job (`dreamcontext super state` lists them under `team`)'); return; }
+      const root = c.who.contextRoot;
+      const live = liveSayJob(root, j);
+      let text = '';
+      try { text = teamJobAnswer(root, j, live); } catch { text = ''; }
+      ok(res, {
+        team: j.id, member: j.member, status: teamJobStatus(root, j, live).status,
+        text: wrapUntrusted(vaultNameOf(root), text || '(no answer from the member yet)'),
+      });
+      return;
+    }
     const child = childArg(c, b, res);
     if (!child) return;
     const root = c.who.contextRoot;
