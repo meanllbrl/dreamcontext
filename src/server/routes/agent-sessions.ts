@@ -140,7 +140,7 @@ const EFFORT_LEVELS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max
  *  client's caps, never trusted. */
 export interface SavedDraft {
   text: string;
-  chips: Array<{ kind: 'image' | 'file' | 'folder' | 'ref' | 'element'; name: string; path?: string; text?: string }>;
+  chips: Array<{ kind: 'image' | 'file' | 'folder' | 'ref' | 'element' | 'about'; name: string; path?: string; text?: string; inline?: true; chip?: string; tid?: string }>;
   quote: string | null;
   savedAt: number;
 }
@@ -153,7 +153,8 @@ export const MAX_DRAFT_CONVERSATIONS = 200;
 const MAX_CHIP_NAME = 300;
 const MAX_CHIP_PATH = 4096;
 const MAX_CHIP_TEXT = 8000;
-const DRAFT_CHIP_KINDS: readonly string[] = ['image', 'file', 'folder', 'ref', 'element'];
+const MAX_CHIP_TOKEN = 600;
+const DRAFT_CHIP_KINDS: readonly string[] = ['image', 'file', 'folder', 'ref', 'element', 'about'];
 
 /** One stored draft, or null. Over-long text is DROPPED, never cut: a truncated draft restored
  *  into the box would read as what the user wrote. */
@@ -172,6 +173,9 @@ export function coerceDraft(raw: unknown): SavedDraft | null {
         name: r.name.slice(0, MAX_CHIP_NAME),
         ...(typeof r.path === 'string' && r.path && r.path.length <= MAX_CHIP_PATH ? { path: r.path } : {}),
         ...(typeof r.text === 'string' && r.text && r.text.length <= MAX_CHIP_TEXT ? { text: r.text } : {}),
+        ...(r.inline === true ? { inline: true as const } : {}),
+        ...(typeof r.chip === 'string' && r.chip && r.chip.length <= MAX_CHIP_TOKEN ? { chip: r.chip } : {}),
+        ...(typeof r.tid === 'string' && /^\d{1,12}$/.test(r.tid) ? { tid: r.tid } : {}),
       });
     }
   }

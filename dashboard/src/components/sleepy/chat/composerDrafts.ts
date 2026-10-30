@@ -39,7 +39,8 @@
  * glyph and its path). Content over the caps keeps the LAST version that fit rather than a
  * truncated one: an earlier whole draft is honest, a cut one is not.
  */
-import type { Attachment } from './composerScratch';
+import { nextAttachmentId, type Attachment } from './composerScratch';
+import { isTokenRef, parseRefTokens, refToken, refTokenId } from './composerRefs';
 
 /** A chip as a draft keeps it: what a send needs, never an object URL or a data-URL picture. */
 export interface DraftChip {
@@ -47,6 +48,12 @@ export interface DraftChip {
   name: string;
   path?: string;
   text?: string;
+  /** An inline chip: drawn as a token in the draft's text (picture, file, element, ↩ reply, About line). */
+  inline?: true;
+  /** The paste token a chip carries (`Attachment.chip`). */
+  chip?: string;
+  /** The id of this chip's token in the saved text; a restore mints a new id and rewrites it. */
+  tid?: string;
 }
 
 export interface SavedDraft {
@@ -113,12 +120,35 @@ export function subscribeAnyDrafts(fn: () => void): () => void {
 
 /** The chips a draft keeps: what a send would carry. */
 export function keptChips(attachments: readonly Attachment[]): DraftChip[] {
-  return attachments.filter((a) => !!a.path || (a.kind === 'element' && !!a.text)).map((a) => ({
+  return attachments.filter((a) => !!a.path || ((a.kind === 'element' || a.kind === 'about') && !!a.text)).map((a) => ({
     kind: a.kind,
     name: a.name,
     ...(a.path ? { path: a.path } : {}),
     ...(a.text ? { text: a.text } : {}),
+    ...(a.inline ? { inline: true as const } : {}),
+    ...(a.chip ? { chip: a.chip } : {}),
+    ...(isTokenRef(a) ? { tid: refTokenId(a) } : {}),
   }));
+}
+
+/**
+ * A kept draft put back in the box: its chips as fresh attachments, and the text with every
+ * token re-pointed at its chip's NEW id (a token's id is this run's nonce plus the chip's
+ * sequence, so a saved one matches nothing after a restart). A token whose chip was not kept
+ * stays as it is; the composer's own reconcile turns it into plain words.
+ */
+export function restoreDraftBody(d: SavedDraft): { text: string; attachments: Attachment[] } {
+  const attachments: Attachment[] = [];
+  const byTid = new Map<string, Attachment>();
+  for (const { tid, ...c } of d.chips) {
+    const att: Attachment = { id: nextAttachmentId(), ...c };
+    attachments.push(att);
+    if (tid) byTid.set(tid, att);
+  }
+  let text = d.text;
+  const spans = parseRefTokens(text).filter((t) => byTid.has(t.id)).reverse();
+  for (const t of spans) text = text.slice(0, t.start) + refToken(byTid.get(t.id)!) + text.slice(t.end);
+  return { text, attachments };
 }
 
 function utf8Bytes(v: unknown): number {
@@ -192,7 +222,7 @@ export function coerceDraft(raw: unknown): SavedDraft | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const o = raw as Record<string, unknown>;
   if (typeof o.text !== 'string' || o.text.length > MAX_DRAFT_TEXT) return null;
-  const kinds: readonly string[] = ['image', 'file', 'folder', 'ref', 'element'];
+  const kinds: readonly string[] = ['image', 'file', 'folder', 'ref', 'element', 'about'];
   const chips = Array.isArray(o.chips)
     ? o.chips.slice(0, MAX_DRAFT_CHIPS).flatMap((c): DraftChip[] => {
       if (!c || typeof c !== 'object') return [];
@@ -203,6 +233,9 @@ export function coerceDraft(raw: unknown): SavedDraft | null {
         name: r.name,
         ...(typeof r.path === 'string' && r.path ? { path: r.path } : {}),
         ...(typeof r.text === 'string' && r.text ? { text: r.text } : {}),
+        ...(r.inline === true ? { inline: true as const } : {}),
+        ...(typeof r.chip === 'string' && r.chip && r.chip.length <= 600 ? { chip: r.chip } : {}),
+        ...(typeof r.tid === 'string' && /^\d{1,12}$/.test(r.tid) ? { tid: r.tid } : {}),
       }];
     })
     : [];

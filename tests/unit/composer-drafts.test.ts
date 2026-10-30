@@ -11,9 +11,10 @@ import { Readable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   __resetDraftsForTests, allDrafts, clearDraft, persistDraft, readDraft, seedAllDrafts, subscribeAnyDrafts, subscribeDraft,
-  MAX_DRAFT_TEXT, MAX_DRAFT_QUOTE, MAX_DRAFT_CHIPS, MAX_DRAFT_CONVERSATIONS, DRAFTS_BUDGET_BYTES,
+  MAX_DRAFT_TEXT, MAX_DRAFT_QUOTE, MAX_DRAFT_CHIPS, MAX_DRAFT_CONVERSATIONS, DRAFTS_BUDGET_BYTES, restoreDraftBody,
 } from '../../dashboard/src/components/sleepy/chat/composerDrafts.js';
 import type { Attachment } from '../../dashboard/src/components/sleepy/chat/composerScratch.js';
+import { parseRefTokens, refToken, refTokenId } from '../../dashboard/src/components/sleepy/chat/composerRefs.js';
 import * as server from '../../src/server/routes/agent-sessions.js';
 
 const V = 'proj-a';
@@ -200,5 +201,23 @@ describe('server roster (agent-sessions.ts): drafts are a map by conversation', 
     const m = /const MAX_BYTES = (\d+) \* (\d+);/.exec(src);
     expect(m).not.toBeNull();
     expect(Number(m![1]) * Number(m![2])).toBeGreaterThanOrEqual(DRAFTS_BUDGET_BYTES + 64 * 1024);
+  });
+});
+
+describe('inline chips survive a restart (taslak-mesaj on top of the inline-chip composer)', () => {
+  it('keeps a picture, a file and an ↩ reply with their tokens, and re-points each token at its new chip', () => {
+    const pic: Attachment = { id: 'a1', kind: 'image', name: 'shot.png', path: '/tmp/shot.png', inline: true };
+    const reply: Attachment = { id: 'a2', kind: 'about', name: 'Claude: earlier answer', text: '> earlier answer' };
+    const text = `look ${refToken(reply)} at ${refToken(pic)} now`;
+    expect(persistDraft(V, U1, box(text, [pic, reply]), 1)).toBe('kept');
+    const saved = readDraft(V, U1)!;
+    expect(saved.chips.map((c) => [c.kind, !!c.inline, !!c.tid])).toEqual([['image', true, true], ['about', false, true]]);
+    expect(server.coerceDraft(JSON.parse(JSON.stringify(saved)))!.chips).toEqual(saved.chips);
+
+    const back = restoreDraftBody(saved);
+    const ids = parseRefTokens(back.text).map((t) => t.id);
+    expect(ids).toEqual(back.attachments.slice().reverse().map((a) => refTokenId(a)));
+    expect(back.attachments.map((a) => a.id)).not.toContain('a1');
+    expect(back.text.replace(/[^\u0020-\u007e]/g, '')).toContain('look');
   });
 });

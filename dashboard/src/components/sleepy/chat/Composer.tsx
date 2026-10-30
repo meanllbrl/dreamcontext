@@ -60,7 +60,7 @@ import {
 } from './composerRefs';
 import { MIRROR_TAIL, syncMirror } from './composerMirror';
 import { PictureChip, RefPopover, RefSrList, refMirrorSegments, refsInOrder } from './ComposerRefLayer';
-import { persistDraft, readDraft, subscribeDraft, type SavedDraft } from './composerDrafts';
+import { persistDraft, readDraft, restoreDraftBody, subscribeDraft, type SavedDraft } from './composerDrafts';
 import { Popover } from '../SkillPickerPopover';
 import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
 import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
@@ -1550,12 +1550,13 @@ export function Composer({
       keptAppliedRef.current = true;
       const sc = readScratch(convId);
       if (liveRef.current.draft.trim() || sc.attachments.length || sc.quote) return;
-      if (d.chips.length) addAttachments(convId, d.chips.map((c): Attachment => ({ id: nextAttachmentId(), ...c })));
+      const back = restoreDraftBody(d);
+      if (back.attachments.length) addAttachments(convId, back.attachments);
       if (d.quote) setQuote(convId, d.quote);
-      if (d.text) {
-        setDraft(d.text);
-        session.syncDraft(d.text);
-        pendingCaret.current = { pos: d.text.length, scrollToEnd: true };
+      if (back.text) {
+        setDraft(back.text);
+        session.syncDraft(back.text);
+        pendingCaret.current = { pos: back.text.length, scrollToEnd: true };
       }
     };
     take(readDraft(vault, convId));
