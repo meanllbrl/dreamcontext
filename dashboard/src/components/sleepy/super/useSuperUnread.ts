@@ -204,7 +204,7 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
     if (!hasUnread) {
       setEdge(null);
       started.current = new Map();
-      missing.current.clear();
+      missing.current = new Map();
       return undefined;
     }
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -228,6 +228,8 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
       const firstMounted = firstMountedRow(units, rows.map(Boolean));
       const visible: string[] = [];
       const gone: UnreadUnit[] = [];
+      // Rebuilt each look, so only a unit still waiting can keep the timer alive.
+      const waiting = new Map<string, number>();
       let next: UnreadEdge = null;
       units.forEach((u, i) => {
         const el = rows[i];
@@ -236,11 +238,10 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
           // nothing to reveal (a block that drew nothing), and it must not hold a count for ever.
           if (firstMounted < 0 || i < firstMounted) { next = 'up'; return; }
           const n = (missing.current.get(unitId(u)) ?? 0) + 1;
-          missing.current.set(unitId(u), n);
           if (n >= GONE_TICKS && canRead) gone.push(u);
+          else waiting.set(unitId(u), n);
           return;
         }
-        missing.current.delete(unitId(u));
         const r = el.getBoundingClientRect();
         const row = { top: r.top, bottom: r.bottom };
         if (mostlyVisible(row, view)) { visible.push(unitId(u)); return; }
@@ -248,6 +249,7 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
         if (side === 'above') next = 'up';
         else if (next === null && side === 'below') next = 'down';
       });
+      missing.current = waiting;
       setEdge(next);
       const step = advanceDwell(started.current, canRead ? visible : [], Date.now());
       started.current = step.started;
