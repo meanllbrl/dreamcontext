@@ -1253,7 +1253,10 @@ export function AgentSurface() {
             // a persisted 'automation' kind fell through to `claudeKind` here and came back
             // as a plain agent — the server-side fix (agent-sessions.ts's `coerceMeta`) was
             // necessary but not sufficient without this read-side counterpart.
-            const kind: SessionKind = m.kind === 'shell' ? 'shell' : m.kind === 'automation' ? 'automation' : claudeKind;
+            // A Codex chat has no terminal surface: it restores as a chat whatever the Agent screen
+            // says, or the next save would drop its `tool` and resume its thread on Claude.
+            const codexChat = m.kind === 'chat' && m.tool === 'codex';
+            const kind: SessionKind = codexChat ? 'chat' : m.kind === 'shell' ? 'shell' : m.kind === 'automation' ? 'automation' : claudeKind;
             if (kind === 'automation' && m.sessionId) {
               // X2 (blocking): an automation session this MACHINE never bound must not
               // attempt a WS connect at all. T24's server-side gate `rejectUpgrade`s it at
@@ -1544,8 +1547,11 @@ export function AgentSurface() {
       // and '' means "inherit whatever the CLI's own settings.json says" — which is what a
       // user who never pressed the button still gets. A terminal agent is untouched by this:
       // its defaults come from the CLI directly, and this preference is a Chat-surface one.
-      const chatModel = model || agentSettingsRef.current.chatDefaultModel;
-      const chatEffort = effort || agentSettingsRef.current.chatDefaultEffort;
+      // A conversation bound to another tool (Codex) takes ITS tool's own default: the saved
+      // default is a Claude model and effort, which mean nothing there.
+      const boundTool = !!(claudeId && chatToolFor(claudeId));
+      const chatModel = model || (boundTool ? '' : agentSettingsRef.current.chatDefaultModel);
+      const chatEffort = effort || (boundTool ? '' : agentSettingsRef.current.chatDefaultEffort);
       // Chat (BETA) is a headless stream-json engine, not a PTY — createChatSession has its
       // own factory (chatSession.ts), takes `effort` at spawn (the terminal only ever
       // switches it live via `/effort`, so its own createSession has no such param), and has
@@ -1733,7 +1739,7 @@ export function AgentSurface() {
     // agent with no `parked`: it too comes back as the chat it was, under its own bypass.
     // How, and on what (parked first, else the roster's settings): `resumePlan` (chatLaunch.ts),
     // which `super resume` reports from too.
-    const plan = resumePlan(meta, claudeKind);
+    const plan = resumePlan({ ...meta, tool: chatToolFor(meta.claudeId) }, claudeKind);
     const { asChat, launch } = plan;
     if (asChat) bindChatAgent(meta.claudeId, meta.agent ?? '');
     const s = meta.kind === 'shell'
@@ -2080,7 +2086,9 @@ export function AgentSurface() {
       try { chat.dispose(); } catch { /* best-effort */ }
       sessions.current.delete(chat.id);
     }
-    const s = spawn(chat.bypass, claudeId, false, 'chat', '', modelForSession(chat), true, '', false, effortForSession(chat), true, chat.mode, chat.accountId) as ChatSession;
+    // An agent speaks on Claude: from a Codex pane, Codex's model, effort and account stay behind.
+    const sameTool = !chat.tool;
+    const s = spawn(chat.bypass, claudeId, false, 'chat', '', sameTool ? modelForSession(chat) : '', true, '', false, sameTool ? effortForSession(chat) : '', true, chat.mode, sameTool ? chat.accountId : '') as ChatSession;
     carryDraftInto(s, carried);
     // The box moved to the new conversation; its kept copy under the old id would be orphaned.
     if (carried) clearDraft(vault, chat.claudeId);
@@ -2129,7 +2137,8 @@ export function AgentSurface() {
       try { chat.dispose(); } catch { /* best-effort */ }
       sessions.current.delete(chat.id);
     }
-    const s = spawn(chat.bypass, claudeId, false, 'chat', '', tool ? '' : modelForSession(chat), true, '', false, tool ? '' : effortForSession(chat), true, chat.mode, tool ? '' : chat.accountId) as ChatSession;
+    // Another tool never inherits this one's model, effort or account: each is the target tool's own.
+    const s = spawn(chat.bypass, claudeId, false, 'chat', '', '', true, '', false, '', true, chat.mode, '') as ChatSession;
     carryDraftInto(s, carried);
     if (carried) clearDraft(vault, chat.claudeId);
     const meta: SessionMeta = {

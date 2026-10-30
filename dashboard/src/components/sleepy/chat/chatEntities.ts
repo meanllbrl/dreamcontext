@@ -357,8 +357,13 @@ export function parseEditDiff(input: unknown): EditDiff | null {
   if (typeof obj.patch === 'string') {
     const removed: string[] = [];
     const added: string[] = [];
+    let inHunk = false;
     for (const line of obj.patch.split('\n')) {
-      if (/^(---|\+\+\+|@@|diff |index |\\ No newline)/.test(line)) continue;
+      // File headers (`---`/`+++`, `diff`, `index`) only come before the first hunk; inside one, a
+      // line starting `--` or `++` is content (a removed SQL comment, an added `++i`).
+      if (line.startsWith('@@')) { inHunk = true; continue; }
+      if (line.startsWith('\\ No newline')) continue;
+      if (!inHunk && /^(---|\+\+\+|diff |index )/.test(line)) continue;
       if (line.startsWith('-')) removed.push(line.slice(1));
       else if (line.startsWith('+')) added.push(line.slice(1));
     }

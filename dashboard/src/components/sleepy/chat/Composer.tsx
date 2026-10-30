@@ -2279,7 +2279,8 @@ export function Composer({
             effort={effortValue}
             onModelChange={stableModelChange}
             onEffortChange={stableEffortChange}
-            onSetDefault={stableSaveDefault}
+            // The saved default is Claude's: a Codex pane never writes its model into it.
+            onSetDefault={session.tool ? undefined : stableSaveDefault}
             savedDefault={savedDefault}
             close={menu.close}
             head={modelMenu?.head}
