@@ -37,7 +37,11 @@ import { WhiteboardHostContext, useDataTheme, useWbText, type WhiteboardHost } f
 import { WIDGET_REGISTRY } from './widgets/registry';
 import { WidgetFrame, WidgetNotice } from './widgets/WidgetFrame';
 import { sameWidgetSlot, widgetSlotProps, type WidgetSlotProps } from './widgetSlot';
+import { installImageThemeShim } from '../../lib/excalidrawImageTheme';
 import './WhiteboardCanvas.css';
+
+// A picture keeps its own pixels in dark mode, WebKit included — see excalidrawImageTheme.ts.
+installImageThemeShim();
 
 /** The scene the page hands in once, at mount. The page remounts (via `key`) for another board. */
 export interface WhiteboardScene {
