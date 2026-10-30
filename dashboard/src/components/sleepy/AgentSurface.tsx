@@ -4709,6 +4709,8 @@ export function AgentSurface() {
       if (document.querySelector('[data-resizing]')) return;
       // The phone's agenda sheet owns Esc: it closes the sheet (PhoneAgenda), not the chat.
       if (document.querySelector('[data-testid="phone-agenda-sheet"]')) return;
+      // The new shell's project picker and More menu own Esc: it closes the menu, not the chat.
+      if (document.querySelector('.ns-menu')) return;
       // A web card in Inspect, or asking whether to clear its page, owns Esc: it leaves Inspect
       // (ZoomPane). A pick never focuses the page (its click is swallowed), so Esc lands here.
       if (document.querySelector('.super-zoom[data-inspect], [data-testid="super-zoom-clear-ask"]')) return;

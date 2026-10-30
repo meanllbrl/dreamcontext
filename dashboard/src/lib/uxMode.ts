@@ -26,6 +26,9 @@ export const DEFAULT_SHELL: 'classic' | 'new' = 'classic';
 
 let frozen: 'new' | 'classic' | null = null;
 
+/** How long a window waits for the stored switch before it settles on the default. */
+export const SETTLE_CAP_MS = 3_000;
+
 /** Surfaces that keep today's UI whatever the switch says. Read at mount, then frozen. */
 export function shellForcedClassic(): boolean {
   if (typeof window === 'undefined') return true;
@@ -44,7 +47,8 @@ export async function settleShellMode(): Promise<'new' | 'classic'> {
     frozen = 'classic';
     return frozen;
   }
-  await initLauncherPrefsFromServer();
+  // A server that never answers must not leave a blank window: after the cap, today's shell.
+  await Promise.race([initLauncherPrefsFromServer(), new Promise<void>((r) => { setTimeout(r, SETTLE_CAP_MS); })]);
   if (!frozen) frozen = (readShellPrefSettled() ?? DEFAULT_SHELL) === 'new' ? 'new' : 'classic';
   return frozen;
 }

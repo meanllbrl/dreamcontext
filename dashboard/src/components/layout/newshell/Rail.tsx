@@ -6,7 +6,7 @@ import { PAGE_LABEL_KEY } from '../../../lib/pageLabels';
 import { useIsNarrowWindow } from '../../../hooks/useIsNarrowWindow';
 import { CanvasIcon, ChatIcon, CheckedBoxIcon, MoreDotsIcon, NavIcon } from '../NavIcons';
 import { RailTip } from '../RailTip';
-import { useNavBadges } from '../useNavBadges';
+import type { useNavBadges } from '../useNavBadges';
 import type { Page } from '../Sidebar';
 import { MoreMenu } from './MoreMenu';
 import { BOTTOM_BAR, MORE_PAGES, RAIL_ENTRIES, RAIL_FOOT, morePagesNarrow, railPageOf } from './railModel';
@@ -21,6 +21,8 @@ function RailIcon({ page }: { page: Page }) {
 interface RailProps {
   activePage: Page;
   onNavigate: (page: Page) => void;
+  /** The project's badges, from `useNavBadges` held by the caller for the project's lifetime. */
+  badges: ReturnType<typeof useNavBadges>;
 }
 
 /**
@@ -29,10 +31,10 @@ interface RailProps {
  * (`chromeSlots.tsx`), because every badge and every click belong to that project. At 600px and
  * below it becomes a bottom bar of five.
  */
-export function Rail({ activePage, onNavigate }: RailProps) {
+export function Rail({ activePage, onNavigate, badges }: RailProps) {
   const { t } = useI18n();
   const { bus } = useVault();
-  const { unread, agentUnread, learningOff, showChat, chatRollup, chatOpen } = useNavBadges();
+  const { unread, agentUnread, learningOff, showChat, chatRollup, chatOpen } = badges;
   const narrow = useIsNarrowWindow(600);
   const railRef = useRef<HTMLElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);

@@ -6,6 +6,7 @@ import { useChromeSlots } from '../chromeSlots';
 import { SleepDebtTracker } from '../SleepDebtTracker';
 import { UpdateBadge } from '../UpdateBadge';
 import type { Page } from '../Sidebar';
+import { useNavBadges } from '../useNavBadges';
 import { Rail } from './Rail';
 
 interface NewShellControlsProps {
@@ -29,10 +30,14 @@ export function NewShellControls({ activePage, onNavigate, onOpenSearch, canBack
   const { isActive } = useVault();
   const slots = useChromeSlots();
   const { t } = useI18n();
+  // Above the `isActive` return, so it lives as long as the project: the chat surface publishes
+  // its rollup and expanded state on CHANGE only, and a rail that remounted on every switch back
+  // would start from zero and miss them (no badge, the wrong row lit).
+  const badges = useNavBadges();
   if (!isActive) return null;
   return (
     <>
-      {slots.rail && createPortal(<Rail activePage={activePage} onNavigate={onNavigate} />, slots.rail)}
+      {slots.rail && createPortal(<Rail activePage={activePage} onNavigate={onNavigate} badges={badges} />, slots.rail)}
       {slots.left && createPortal(
         <>
           <button type="button" className="ns-tb-btn" data-no-drag onClick={onOpenSearch} title={t('shell.search')} aria-label={t('shell.search')} data-testid="ns-search">

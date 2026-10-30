@@ -950,6 +950,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
       const el = e.target instanceof Element ? e.target : null;
       const inTerminal = !!el?.closest('.xterm');
       const editable = !!el?.closest('input, textarea, select, [contenteditable="true"], .xterm');
+      // ⌘1-9 skip the chat too, as the classic switcher does (ProjectSwitcher.tsx).
+      const inChat = editable || !!el?.closest('.agent-surface');
       const key = e.key.toLowerCase();
       if (key === 'p' && !inTerminal) {
         e.preventDefault();
@@ -957,7 +959,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
       } else if (key === 'b' && !editable) {
         e.preventDefault();
         setDrawerToggleNonce((n) => n + 1);
-      } else if (/^[1-9]$/.test(e.key) && !editable) {
+      } else if (/^[1-9]$/.test(e.key) && !inChat) {
         const target = projectOrderRef.current[Number(e.key) - 1];
         if (!target) return;
         e.preventDefault();

@@ -165,12 +165,37 @@ export function writeLayoutPrefs(partial: Partial<LayoutPrefs>): void {
   layout = { ...layout, ...partial };
   pendingLayout = { ...pendingLayout, ...partial };
   if (layoutTimer) clearTimeout(layoutTimer);
-  layoutTimer = setTimeout(() => {
-    layoutTimer = null;
-    const body = pendingLayout;
+  layoutTimer = setTimeout(flushLayoutPrefs, LAYOUT_WRITE_DEBOUNCE_MS);
+  armFlushOnHide();
+}
+
+function flushLayoutPrefs(): void {
+  if (layoutTimer) clearTimeout(layoutTimer);
+  layoutTimer = null;
+  const body = pendingLayout;
+  pendingLayout = {};
+  if (!Object.keys(body).length) return;
+  void api.post('/launcher/ui-settings', body).catch((err) => {
+    console.warn('[launcher-ui] layout write failed:', err);
+  });
+}
+
+/** A window closed inside the debounce (⌘Q right after a pick) still writes what it chose:
+ *  `pagehide` sends the pending keys as a beacon, which outlives the page. */
+let flushArmed = false;
+function armFlushOnHide(): void {
+  if (flushArmed || typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+  flushArmed = true;
+  window.addEventListener('pagehide', () => {
+    if (!Object.keys(pendingLayout).length) return;
+    const body = JSON.stringify(pendingLayout);
     pendingLayout = {};
-    void api.post('/launcher/ui-settings', body).catch(() => { /* best effort */ });
-  }, LAYOUT_WRITE_DEBOUNCE_MS);
+    if (layoutTimer) clearTimeout(layoutTimer);
+    layoutTimer = null;
+    try {
+      navigator.sendBeacon('/api/launcher/ui-settings', new Blob([body], { type: 'application/json' }));
+    } catch { /* the debounced write is the normal path; this is the last chance */ }
+  });
 }
 
 /** Tests only. */
@@ -181,4 +206,5 @@ export function resetLauncherPrefsForTests(): void {
   pendingLayout = {};
   if (layoutTimer) clearTimeout(layoutTimer);
   layoutTimer = null;
+  flushArmed = false;
 }

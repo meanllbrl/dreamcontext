@@ -51,12 +51,17 @@ export function ProjectPicker({ anchor, rows, onPick, onClose }: ProjectPickerPr
       if (ref.current?.contains(target) || anchor?.contains(target)) return;
       onClose();
     };
+    // Esc closes it wherever focus is (the chat can hold focus while the picker is open).
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
     window.addEventListener('mousedown', onDown, true);
-    return () => window.removeEventListener('mousedown', onDown, true);
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('mousedown', onDown, true);
+      window.removeEventListener('keydown', onKey, true);
+    };
   }, [anchor, onClose]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return; }
     if (e.key === 'ArrowDown') { e.preventDefault(); setFocused((i) => Math.min(rows.length - 1, i + 1)); return; }
     if (e.key === 'ArrowUp') { e.preventDefault(); setFocused((i) => Math.max(0, i - 1)); return; }
     if (e.key === 'Enter' && rows[focused]) { e.preventDefault(); onPick(rows[focused].name); }

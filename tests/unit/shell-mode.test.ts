@@ -59,6 +59,16 @@ describe('shell gate', () => {
     expect(await ux.settleShellMode()).toBe('classic');
   });
 
+  it('a server that never answers settles classic after the cap, never a blank window', async () => {
+    vi.useFakeTimers();
+    env.stored = { shell: 'new' };
+    const hang = vi.spyOn((await import('../../dashboard/src/api/client.js')).api, 'get').mockImplementation(() => new Promise(() => {}));
+    const settled = ux.settleShellMode();
+    await vi.advanceTimersByTimeAsync(ux.SETTLE_CAP_MS + 10);
+    expect(await settled).toBe('classic');
+    hang.mockRestore();
+  });
+
   it('classic on the phone, without asking the server', async () => {
     env.stored = { shell: 'new' };
     env.mobile = true;

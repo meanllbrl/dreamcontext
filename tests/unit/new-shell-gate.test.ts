@@ -45,3 +45,22 @@ describe('the new shell gate', () => {
     }
   });
 });
+
+describe('W1 review fixes stay in place', () => {
+  const src = (rel: string) => files.find((f) => f.rel === rel)!.src;
+  it("the rail's badges live as long as the project, not as long as it is on screen", () => {
+    const c = src('components/layout/newshell/NewShellControls.tsx');
+    expect(c.indexOf('useNavBadges()')).toBeGreaterThan(-1);
+    expect(c.indexOf('useNavBadges()')).toBeLessThan(c.indexOf('if (!isActive) return null'));
+    expect(src('components/layout/newshell/Rail.tsx')).not.toMatch(/useNavBadges\(\)/);
+  });
+  it('embedded Space stops its window keys and its drift while its project is hidden', () => {
+    const s = src('pages/space/SpaceLauncher.tsx');
+    expect(s).toContain('const live = !openOverride || isActive;');
+    expect(s).toContain('if (reduced || !live) return;');
+    expect(s).toContain('if (!live) return undefined;');
+  });
+  it('Esc on the new picker or More closes the menu, not the chat', () => {
+    expect(src('components/sleepy/AgentSurface.tsx')).toContain("if (document.querySelector('.ns-menu')) return;");
+  });
+});

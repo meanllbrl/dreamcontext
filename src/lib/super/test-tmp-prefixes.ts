@@ -292,6 +292,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-launchd-',
   'dc-launchd-broken-',
   'dc-launchd-broken-contrast-',
+  'dc-launcher-ui-',
   'dc-layout-',
   'dc-lean-proj-',
   'dc-learn-cli-',
