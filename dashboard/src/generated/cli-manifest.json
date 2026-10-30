@@ -3357,7 +3357,7 @@
     },
     {
       "path": "super read",
-      "desc": "A child's last reply, whole (tool calls skipped), fenced as the child's text. An event line that ends in \"…\" is cut: this prints the rest",
+      "desc": "A child's last reply, whole (tool calls skipped), fenced as the child's text. An event line that ends in \"…\" is cut: this prints the rest. A team job's id (team-…): the member's whole answer",
       "args": [
         "<child>"
       ],

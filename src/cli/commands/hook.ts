@@ -43,7 +43,8 @@ import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
-import { bm25Search, loadSkillDocs, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
+import { bm25Search, loadSkillDocs, RECALL_STRONG_SCORE, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
+import { stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
 import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import {
   loadPatternsReporting, matchPatterns, selectForInjection, syncPatternShimsIfStale,
@@ -511,8 +512,8 @@ export const RECALL_INJECT_TOP_K = 5;
 export const RECALL_HAIKU_TOP_K = 3;
 /** Ranks printed in full (path, why, excerpt); ranks beyond it are one line each. */
 export const RECALL_FULL_RENDER_RANKS = 3;
-/** Raw BM25 score a printed hit must reach for the block to be injected (threshold unchanged by K=5). */
-export const RECALL_STRONG_SCORE = 2.0;
+/** Raw BM25 score a printed hit must reach for the block to be injected (lives in lib/recall.ts). */
+export { RECALL_STRONG_SCORE };
 
 /**
  * The injection gate. The window is the printed hits (so K=5 widens it from 3), the threshold is the
@@ -1991,6 +1992,8 @@ function spawnAutoSleep(): void {
   const env = { ...process.env };
   delete env.DREAMCONTEXT_TAB_SESSION;
   delete env.CLAUDE_CODE_SESSION_ID;
+  // Nor the chat's AI Team route: a headless cycle must never be told to `super team ask`.
+  delete env.DREAMCONTEXT_TEAM_ROUTE;
   const child = spawn(process.execPath, [cliEntry, 'sleep', 'auto-run'], {
     detached: true,
     stdio: 'ignore',
@@ -2992,7 +2995,9 @@ export function registerHookCommand(program: Command): void {
       // never disagree (env override, else persisted .sleep.json, else 'haiku').
       if (process.env.DREAMCONTEXT_MEMORY_HOOK !== '0') {
         try {
-          const prompt = String((input as Record<string, unknown>).prompt ?? '');
+          // The Super's `<super-team>` roster is never recall's input (team-roster.ts): without one
+          // the prompt is byte-identical.
+          const prompt = stripSuperTeamBlocks(String((input as Record<string, unknown>).prompt ?? ''));
           if (prompt.trim().length >= 8) {
             const recallMode = resolveRecallMode(root);
 
@@ -3076,6 +3081,25 @@ export function registerHookCommand(program: Command): void {
           }
         } catch (recallErr) {
           if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] error:', (recallErr as Error).message ?? recallErr);
+        }
+      }
+
+      // ── The AI Team member line (task super-agent-isi-bolerken-…) ──────────
+      // An app chat only (`DREAMCONTEXT_TEAM_ROUTE` super|offer, never a nested hook): when the
+      // OWNER's own words fall in a callable member's field, one line says so (super: give it with
+      // `super team ask`; offer: offer the owner to ask it). Never on a server-written Super turn,
+      // never on a quote or a held digest (team-roster.ts `ownerWords`). Own try/catch.
+      {
+        const route = teamRouteOf(process.env.DREAMCONTEXT_TEAM_ROUTE);
+        // A background sleep cycle or an automation run a chat started is no chat, whatever it
+        // inherited (the spawns strip the route too; neither gate alone is load-bearing).
+        if (route && !isNestedClaudeHook() && !isBackgroundAutoSleep() && !process.env.DREAMCONTEXT_AUTOMATION_SLUG) {
+          try {
+            const lines = teamPromptDirectives({ prompt: String((input as Record<string, unknown>).prompt ?? ''), contextRoot: root, route });
+            if (lines.length) console.log(['', '— AI Team —', ...lines.map((l) => `  ${l}`)].join('\n'));
+          } catch (teamErr) {
+            if (process.env.DREAMCONTEXT_DEBUG) console.error('[team] error:', (teamErr as Error).message ?? teamErr);
+          }
         }
       }
 

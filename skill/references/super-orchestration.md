@@ -9,14 +9,16 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
 2. **Look first, at most 2 minutes.** `dreamcontext memory recall "<topic>"`, `dreamcontext tasks list`
    (reuse a task, never fork one), a quick `grep` for each item's footprint (repo + files or area).
    A `dreamcontext-explore` sub-agent when it needs more. Never read code in depth yourself.
-3. **Units.** Items whose footprints share a file, or the same brain file, become ONE unit. The same
+3. **Team check.** For each item: is it one AI Team member's field (`## Your AI Team` in your
+   prompt, `super state` members)? Then it is a `super team ask` unit for that member, not a child.
+4. **Units.** Items whose footprints share a file, or the same brain file, become ONE unit. The same
    feature area stays one unit unless there is a clean seam. One unit = one session's work.
-4. **Dependencies.** B depends on A when B consumes A's output (an API, a task, a decision). Wave 1 =
+5. **Dependencies.** B depends on A when B consumes A's output (an API, a task, a decision). Wave 1 =
    every unit with no unmet dependency; start them ALL now, in one message of `delegate` calls.
-5. **Per unit** pick mode, model, effort, worktree (§3, §4). Name `--model` and `--effort` on every
+6. **Per unit** pick mode, model, effort, worktree (§3, §4). Name `--model` and `--effort` on every
    `delegate`; an omitted effort is set by the server (basic and develop `medium`, plan `high`), never
    inherited from the owner's own setting. `xhigh` and `max` only when you name them (§3).
-6. **Capacity.** At most 15 live children: the 16th `delegate` answers `held` (reason `cap`) and
+7. **Capacity.** At most 15 live children: the 16th `delegate` answers `held` (reason `cap`) and
    KEEPS the job in the pool (its id in the answer; `--from` starts it when a slot frees). The cap
    is the only limit. `dreamcontext super state` shows `machine` (memory, swap, disk, Claude
    sessions, and `notes` naming any line crossed): information only. A full swap or little free
@@ -29,15 +31,15 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
    it holds no job and nothing needs closing or switching off. The server parks idle chats itself.
    Heavy steps run one at a time per project, at most 2 projects at once, 1 while the Mac is very
    hot (`machine.heat.heavyLimit` 1). Heat limits heavy STEPS, never children: keep delegating (§5).
-7. **Publish at once.** Wave 1 via `dreamcontext super delegate`; every later unit via
+8. **Publish at once.** Wave 1 via `dreamcontext super delegate`; every later unit via
    `dreamcontext super pool add` with "after <unit>" in its brief, so the job list shows the whole
    split immediately. Each `--brief` reads `<job> · <mode> <model>/<effort>`. Wait for no approval.
    A Plan unit's prompt carries what is already decided and the validation method (the owner's,
    else "unit tests + tsc"), so its "ask first" has little left to ask. Answer every child question
    the brief or the brain settles (`super answer`), else leave a `shown=owner` one;
    escalate only per §2.
-8. **Reply** in 2-4 sentences: how many started, how many wait, what needs the owner.
-9. **As children finish:** use the result, then `dreamcontext super end <child>` in the same turn (a
+9. **Reply** in 2-4 sentences: how many started, how many wait, what needs the owner.
+10. **As children finish:** use the result, then `dreamcontext super end <child>` in the same turn (a
    refused `end` counts as done for that turn). Start dependents with `delegate --from <pool row>`.
    Merge finished code branches with `super merge <children> --into <topic>` (each child's branch is
    the one its worktree is on now; `nothingToMerge` = it brought no commit); a conflicting merge
@@ -124,9 +126,11 @@ ratios burn quota.
 ## 4. Flow map
 Mode: `basic` | `plan` | `develop`. Develop needs a task; Plan creates one.
 
-**Who takes the job.** The project's AI Team is never listed here: read it when you split, with
-`dreamcontext agents list` (members and roles) and `dreamcontext automations list` (what each runs).
-Only an approved, enabled member takes work.
+**Who takes the job.** The project's AI Team is listed in your prompt (`## Your AI Team`, each
+member's field and state) and in `super state` (`members`); check it first for every job. A job in
+one member's field is that member's, never a plain child's or your own. `ready` takes work;
+`needs approval` still gets the `team ask` (the owner is asked to approve it); `off` you tell him
+about once, then do the plain way.
 
 | Job | Who | Example |
 |---|---|---|
@@ -141,8 +145,11 @@ Only an approved, enabled member takes work.
 **A member's job** lands in the member's own thread and runs on its own model and approval: write
 one self-contained ask; `--brief` is its card's line. `say_unapproved`: the owner approves it in AI
 Team (a question lands in his strip; you cannot approve), then ask again. `say_disabled`: it is
-turned off; tell the owner once. `queued: true`: it was busy, the job waits in its own queue. No
-event comes when it ends: `super state` shows each team job's status and last line. One owner per
+turned off; tell the owner once. `queued: true`: it was busy, the job waits in its own queue. When
+it ends an event comes like a child's: `team=<job> member=<slug> event=done|stuck|question`; a done
+carries the member's `Answer:` (its head; `dreamcontext super read <team-id>` gives it whole). When
+the owner waits on it (`awaited=owner`), relay the answer in 1-2 sentences and say who answered. A
+follow-up is another `super team ask` to the same member: its thread keeps the history. One owner per
 job: never give a member what a child already does.
 
 - **Runtime proof of a server or UI** → a child running `/jev-verify` in that worktree.

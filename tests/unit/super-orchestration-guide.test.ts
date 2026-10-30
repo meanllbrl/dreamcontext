@@ -91,8 +91,19 @@ describe('super-orchestration guide: shape', () => {
   // +100 (2026-10-27, integration 0.35.3): group present + a child's question straight to the owner (measured 19,435).
   // +100 (2026-10-29): a whiteboard opens with `super open whiteboard <slug>`, never board (measured 19,553).
   // +200 (2026-10-29): pictures shown as a result open with `--present`; landscape pictures a filmstrip (measured 19,769).
-  it('is at most 19,800 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(19_800);
+  // +700 (2026-10-29): the AI Team: §1's team check, §4's team in the prompt, a member's job's real event (measured 20,446).
+  it('is at most 20,500 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(20_500);
+  });
+
+  it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {
+    expect(FLAT).toContain('**Team check.** For each item: is it one AI Team member\'s field (`## Your AI Team` in your prompt, `super state` members)?');
+    expect(FLAT).toContain('The project\'s AI Team is listed in your prompt (`## Your AI Team`');
+    expect(FLAT).toContain('`team=<job> member=<slug> event=done|stuck|question`');
+    expect(FLAT).toContain('`dreamcontext super read <team-id>` gives it whole');
+    expect(FLAT).toContain('A follow-up is another `super team ask` to the same member');
+    expect(FLAT).not.toContain('No event comes when it ends');
+    expect(FLAT).not.toContain('is never listed here');
   });
 
   it('has the seven sections in order', () => {

@@ -505,8 +505,9 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   \`super resume <child>\` reopens it); \`--idle\` lists idle ones; \`--force\` only if the owner asked.
 - \`super update <child> --model|--effort|--mode\` changes a running child; \`super adopt <chat>\`
   makes an open chat yours. The owner's own chats take \`--force\`, only when he asks.
-- The AI Team (\`dreamcontext agents list\`): \`super team ask <member> "<job>"\` hands an approved
-  member recurring or field work in its own thread; \`super state\` shows how it goes.
+- Your AI Team, when the project has one, is listed under \`## Your AI Team\` (and in \`super state\`
+  members): check it first for every job; a member's field is that member's job
+  (\`super team ask <member> "<job>"\`, in its own thread), never a sub-agent.
 - Your handoff is a FILE, never a task: \`dreamcontext super handoff --done … --next …\` writes
   \`_dream_context/state/.super/handoff.md\`. A fresh session (the owner's New session, or a
   handoff) reads that file first, then \`super state\`.

@@ -23,6 +23,8 @@ import { BUILDER_NO_BACKGROUND_ENV, TASK_ID_RE, classifyBuilderResult, lastResul
 export const BUILDER_ENV_UNSET = [
   'DREAMCONTEXT_TAB_SESSION', 'DREAMCONTEXT_SERVER_PID', 'CLAUDE_CODE_SESSION_ID',
   'DREAMCONTEXT_DEFERRED_PROMPT', 'DREAMCONTEXT_CHAT_TAB', 'CLAUDE_EFFORT',
+  // The chat's AI Team route (agent-chat.ts): a builder or run a chat starts is no chat.
+  'DREAMCONTEXT_TEAM_ROUTE',
 ] as const;
 
 export const BUILDER_ALLOWED_TOOLS = 'Read Glob Grep Write Edit MultiEdit Bash';

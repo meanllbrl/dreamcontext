@@ -41,6 +41,9 @@ import { getRunTarget } from '../../lib/automations/store.js';
 import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.js';
 import { parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
 import { chatSubagents } from '../../lib/automations/chat-subagents.js';
+import {
+  chatSpawnRoster, collectTeam, renderSuperTeamBlock, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
+} from '../../lib/agents/team-roster.js';
 import { SUPER_BRIEF_TEXT, modeBriefing, type ChatMode } from '../chat-modes.js';
 import { heldModeFromTranscript, modeNoteHookOutput, modeNoteSettings, modeNoteSources, modeSwitchNote, superBriefState } from '../chat-mode-drift.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
@@ -99,7 +102,7 @@ import { remoteViewOf } from './super-remote.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, ownerMsgBlock } from '../../lib/super/types.js';
 import { MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, setSuperDigestSink, superAnswerDigest, superOwnerSpoke, superSanitizeOpts, superSocketAttached, superTurnEnded,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, setSuperDigestSink, superAnswerDigest, superOwnerSpoke, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
 } from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
@@ -2016,10 +2019,31 @@ export function startChatSession(
   // it can (lib/automations/chat-subagents.ts). Read at every spawn, so a new or re-approved agent
   // is callable after the next Resume. A failed read costs the roster, never the spawn.
   let subagents: ReturnType<typeof chatSubagents> = null;
+  // The Super Agent gets NO `--agents` and no roster (task super-agent-isi-bolerken-…): one route,
+  // `super team ask`, so a member's job lands in its own thread, card and run approval. Its team is
+  // its own block below. An ordinary Chat tab's roster is the routing rule (suggest the member, call
+  // it on the owner's yes); a Super's child (the Super already chose who does the job) and an
+  // agent's own tab (it speaks AS a member) keep the plain sub-agent wording.
+  const teamRouting = !opts.leanMcp && !opts.agent;
   // A scoped agent's allowlist disallows the Agent tool, so a roster there would name a door it lacks.
-  if (!isAssistant && !card && !scopedCard) {
-    try { subagents = chatSubagents(contextRoot, { exclude: opts.agent }); } catch { subagents = null; }
+  if (!isAssistant && !card && !scopedCard && !isSuper) {
+    try { subagents = chatSpawnRoster(contextRoot, { exclude: opts.agent, routing: teamRouting }); } catch { subagents = null; }
   }
+  // The Super's `## Your AI Team` ('' without a team; a failed read costs the block, never the spawn).
+  let superTeamBlock = '';
+  if (isSuper) {
+    try { superTeamBlock = superSpawnTeamBlock(contextRoot, superVaultName(contextRoot)); } catch { superTeamBlock = ''; }
+  }
+  // Which team the Super session holds (its fingerprint): the block in THIS spawn's system prompt
+  // once the briefing file really carried it; a resume reads its transcript instead (below).
+  const superTeam: { inPrompt: string | null; delivered: string | null } = { inPrompt: null, delivered: null };
+  /** The block's fingerprint once this spawn's briefing file really carried it. */
+  let spawnTeamFp: string | null = null;
+  /** A `/clear` (the owner's, or a rotation's) began a new conversation on this spawn's prompt. */
+  const superTeamCleared = (): void => {
+    superTeam.inPrompt = spawnTeamFp;
+    superTeam.delivered = spawnTeamFp;
+  };
   let agentsArg: string[] = [];
   let cleanupAgents = () => { /* nothing written */ };
   if (subagents) {
@@ -2059,12 +2083,16 @@ export function startChatSession(
     const ownBrief = card ? card.briefing : agentChat ? [agentChat.briefing, tabBrief].filter(Boolean).join('\n\n') : tabBrief;
     // Named only when the `--agents` definitions really ride this spawn (`subagents` is cleared
     // when their file could not be written), so the model is never told about agents it lacks.
-    const modeBrief = [ownBrief, subagents?.roster ?? ''].filter(Boolean).join('\n\n');
+    const modeBrief = [ownBrief, subagents?.roster ?? '', superTeamBlock].filter(Boolean).join('\n\n');
     // A Super Agent's delegated child (lean, above) is also told how to reach its Super Agent.
     const surface = opts.leanMcp ? `${CHAT_SURFACE_BRIEFING}\n${SUPER_CHILD_BRIEFING}` : CHAT_SURFACE_BRIEFING;
     const briefing = modeBrief ? `${surface}\n${modeBrief}` : surface;
     writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
     briefingArg = ['--append-system-prompt-file', brief];
+    // Written with the block in it: a fresh session (and any conversation a `/clear` starts on this
+    // spawn) holds this team from its first turn.
+    if (superTeamBlock) spawnTeamFp = teamBlockFingerprint(superTeamBlock);
+    if (spawnTeamFp && !resumeTarget) superTeam.inPrompt = superTeam.delivered = spawnTeamFp;
     cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };
     
   } catch { /* no briefing this session — the chat still works, just terminal-flavoured */ }
@@ -2092,6 +2120,9 @@ export function startChatSession(
       const jsonl = transcript ? readFileSync(transcript, 'utf-8') : '';
       // No transcript found for a resume: nothing proves the revision arrived, so it rides once.
       if (isSuper) Object.assign(superBrief, transcript ? superBriefState(jsonl, SUPER_BRIEF_REV) : { inPrompt: false, due: true });
+      // The team it holds: the header in its birth prompt, or the last `<super-team>` a message
+      // carried since its last compaction. No transcript: nothing proves a team arrived.
+      if (isSuper && transcript) Object.assign(superTeam, superTeamState(jsonl));
       const state = transcript ? heldModeFromTranscript(jsonl) : null;
       const sources = modeNoteSources(state, mode);
       if (state && sources.length) {
@@ -2258,7 +2289,12 @@ export function startChatSession(
       mode,
     })
     : null;
-  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...storeMcp.env, ...(envelope?.env ?? {}) } as Record<string, string | undefined>;
+  // The prompt hook's AI TEAM MEMBER line (team-roster.ts): `super` for the Super, `offer` for an
+  // ordinary Chat tab whose routing roster really rides this spawn, '' for everything else (a Super
+  // child, an agent's own tab, the Assistant, a card). ALWAYS set: env is `{...process.env, …}`, so
+  // an unset name would inherit the server's own.
+  const teamRoute = isSuper ? 'super' : subagents && teamRouting ? 'offer' : '';
+  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', DREAMCONTEXT_TEAM_ROUTE: teamRoute, ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...storeMcp.env, ...(envelope?.env ?? {}) } as Record<string, string | undefined>;
   // Its own process group on POSIX, so the whole tree can be ended at once (win32: see chatSpawnCommand).
   const spawnCmd = chatSpawnCommand({ argv, script });
   const child: ChildProcessWithoutNullStreams = spawn(spawnCmd.file, spawnCmd.args, {
@@ -2860,7 +2896,21 @@ export function startChatSession(
     // The Super Agent's briefing changed since its session began (K9): this owner message
     // carries the new sections, once; again only after a compaction drops them.
     const brief = isSuper && superBrief.due && !text.startsWith('/');
-    if (brief) content.push({ type: 'text', text: SUPER_BRIEF_TEXT });
+    // The AI Team it holds is not the current one (resumed, compacted, or the team changed): the
+    // block rides this message, once (team-roster.ts `superOwnerTurnBlocks`, after the briefing
+    // update). A failed read costs the block, never his message.
+    let teamTurn: ReturnType<typeof superOwnerTurnBlocks> | null = null;
+    if (isSuper) {
+      try {
+        const members = collectTeam(contextRoot);
+        teamTurn = superOwnerTurnBlocks({
+          text, briefText: brief ? SUPER_BRIEF_TEXT : null, teamBlock: renderSuperTeamBlock(members, superVaultName(contextRoot)),
+          fingerprint: teamFingerprint(members), teamDelivered: superTeam.delivered,
+        });
+      } catch { teamTurn = null; }
+    }
+    if (teamTurn) content.push(...teamTurn.blocks);
+    else if (brief) content.push({ type: 'text', text: SUPER_BRIEF_TEXT });
     // A spoken message to the Super Agent (K1): its answer is read aloud. The window reads
     // only what streams between `voice_turn` and `voice_turn_end`; an event turn never arms it.
     const voice = isSuper && spokenTexts.delete(text);
@@ -2891,6 +2941,8 @@ export function startChatSession(
       void clearSuperNote(superRootOfChild(chatRegistryId) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }
     if (brief && wrote) superBrief.due = false;
+    if (teamTurn && wrote) superTeam.delivered = teamTurn.delivered;
+    if (isSuper && wrote && text.trim() === '/clear') superTeamCleared();
     if (voice && wrote && !voiceArmed) { voiceArmed = true; sendMeta({ subtype: 'voice_turn' }); }
     lastSentSpoken = voice && wrote;
   };
@@ -3260,6 +3312,8 @@ export function startChatSession(
       superSignals?.observe(obj);
       // A compaction drops the message that carried the briefing update (never the system prompt).
       if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary' && !superBrief.inPrompt) superBrief.due = true;
+      // It drops a `<super-team>` a message carried too: what it holds is its system prompt's block.
+      if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary') superTeam.delivered = superTeam.inPrompt;
       if (obj.type === 'system' && obj.subtype === 'background_tasks_changed') {
         backgroundTasks = Array.isArray(obj.tasks) ? obj.tasks.length : 0;
       }
@@ -3368,7 +3422,10 @@ export function startChatSession(
             lastMainContext,
             writeUserTurn: (text) => {
               openTurn();
-              writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+              const wroteTurn = writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+              // `/clear` starts a fresh conversation on THIS spawn's system prompt: it holds this
+              // spawn's team block, whatever an earlier message delivered.
+              if (isSuper && text === '/clear' && wroteTurn) superTeamCleared();
             },
             // Its own frame, not the branch notice's one-liner: the chat draws the run as it
             // happens (handoff-progress.ts), so "it is happening" is on screen from now on.
