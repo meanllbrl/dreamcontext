@@ -119,7 +119,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   // One frame at a time: a steer must not race the turn it steers.
   let chain: Promise<void> = Promise.resolve();
   const handle = async (frame: Record<string, unknown>): Promise<void> => {
-    trace('in ', frame.type === 'user' ? { ...frame, subtype: JSON.stringify(userText(frame).slice(0, 40)) } : frame);
+    trace('in ', frame);
     if (frame.type === 'user') {
       const text = userText(frame);
       if (!text) return;

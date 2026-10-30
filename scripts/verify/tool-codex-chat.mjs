@@ -20,7 +20,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -246,6 +246,26 @@ async function main() {
     ok('after a server restart the Codex tab is back with its history', await h2.waitText('fixture simple ok', 25000), (await h2.paneText()).slice(0, 300));
     await h2.send('hello again');
     ok('and it answers on its resumed thread', await h2.until(async () => ((await h2.paneText()).match(/fixture simple ok/g) ?? []).length >= 2, 25000));
+    // ── Eco: a handoff record for this pane rotates it into a fresh Codex thread ──
+    const state = join(PROJ, '_dream_context', 'state');
+    const roster = JSON.parse(readFileSync(join(state, '.agent-sessions.json'), 'utf-8'));
+    const pane = roster.sessions.find((x) => x.tool === 'codex')?.sessionId;
+    const mapFile = join(state, '.agent-session-map', `${pane}.json`);
+    const before = existsSync(mapFile) ? JSON.parse(readFileSync(mapFile, 'utf-8')).current : '';
+    ok('the Codex pane is in the roster with its tool, and its thread is in the tab map', !!pane && !!before, `${pane} ${before}`);
+    const tab = JSON.parse(readFileSync(join(state, '.context-watch', `tab-${pane}.json`), 'utf-8').toString() || '{}');
+    ok('the Codex pane got its Eco seed (tab-<pane>.json)', typeof tab.enabled === 'boolean', JSON.stringify(tab));
+    mkdirSync(join(state, '.handoff-requests'), { recursive: true });
+    const recPath = join(state, '.handoff-requests', `${pane}.json`);
+    writeFileSync(recPath, JSON.stringify({ task: 'acme-checkout', title: 'Checkout redesign', at: new Date().toISOString(), contextTokens: 190000, fromSession: before, tab: pane }));
+    await h2.send('hello rotate');
+    const rotated = await h2.until(async () => {
+      const rec = existsSync(recPath) ? JSON.parse(readFileSync(recPath, 'utf-8')) : {};
+      const now = existsSync(mapFile) ? JSON.parse(readFileSync(mapFile, 'utf-8')).current : '';
+      return !!rec.actedAt && !!rec.consumedAt && now && now !== before;
+    }, 30000);
+    ok('a handoff record rotates the pane into a fresh Codex thread (record acted on and consumed)', rotated, readFileSync(recPath, 'utf-8'));
+    await r2.page.screenshot({ path: join(SHOTS, 'eco-rotation.png') });
     report.notes.push(...r2.errors);
     await r2.page.close();
 

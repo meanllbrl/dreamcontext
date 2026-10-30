@@ -3462,6 +3462,22 @@
       ]
     },
     {
+      "path": "t3-chat",
+      "desc": "Run one chat on a T3 provider adapter over stream-json stdio (used by the chat server)",
+      "args": [],
+      "valueFlags": [
+        "--tool",
+        "--cwd",
+        "--model",
+        "--effort",
+        "--mode",
+        "--pane",
+        "--resume",
+        "--briefing-file",
+        "--extra-root"
+      ]
+    },
+    {
       "path": "tasks",
       "desc": "Create tasks, log progress, insert into sections, and mark complete",
       "args": [],

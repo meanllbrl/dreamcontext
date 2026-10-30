@@ -107,3 +107,24 @@ describe('t3 bridge card ids', () => {
     expect(session.wire.t3RequestId(String(ask.request_id))).toMatch(/^runtime-request:/);
   });
 });
+
+describe('t3 bridge secrets', () => {
+  it('no environment secret reaches a frame, and T3 writes no provider log of its own', async () => {
+    const SECRET = 'sk-fake-test-0000000000000000000000000000';
+    const { session, frames, fixture, stateRoot } = await openReplaySession('tool_call_read_only_on_request', {
+      paneId: 'pane-secrets', env: { OPENAI_API_KEY: SECRET, GITHUB_TOKEN: SECRET },
+    });
+    open.push(session);
+    await session.send(fixture.prompt);
+    await waitFor(() => frames.some((f) => f.type === 'control_request'));
+    const ask = frames.find((f) => f.type === 'control_request')!;
+    await session.answer(String(ask.request_id), { behavior: 'allow' });
+    await waitFor(() => frames.some(isResult));
+    expect(JSON.stringify(frames)).not.toContain(SECRET);
+    const { readdirSync, statSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const logs = join(stateRoot, 'logs');
+    expect(statSync(logs).mode & 0o777).toBe(0o700);
+    expect(readdirSync(join(logs, 'provider'))).toEqual([]);
+  });
+});

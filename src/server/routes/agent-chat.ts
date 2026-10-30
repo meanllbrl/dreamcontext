@@ -1879,8 +1879,12 @@ export function startChatSession(
   else autoPlacedAccounts.delete(pinId);
   if (!account) handPickedAccounts.delete(pinId);
   else if (!accountAutoPlaced && activeAccountId) notePane(handPickedAccounts, pinId, activeAccountId);
-  const freshPin = !bridgeTool && !resumeTarget && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
-    ? pinId : '';
+  // A bridge pane always holds its pane id (its tool's thread is found through the tab map, so
+  // there is no Claude transcript to pin): `--session-id` is a Claude flag the bridge never reads.
+  const freshPin = bridgeTool
+    ? (resumeTarget ? '' : pinId)
+    : !resumeTarget && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
+      ? pinId : '';
   const idArg = resumeTarget ? ['--resume', resumeTarget] : freshPin ? ['--session-id', freshPin] : [];
   /** This pane keeps a stable id across respawns (Claude: a pinned or resumed conversation; a bridge
    *  pane: always, since the bridge records its thread under the pane id). */
@@ -1908,7 +1912,7 @@ export function startChatSession(
    * SCOPED TO `resumeId`. A brand-new session (`sessionId` only) whose id is somehow held is
    * not covered here — it has no transcript to lose, and `freshPin` already declines to pin it.
    */
-  if (resumeId && !resumeTarget && !freshPin && !bridgeTool) {
+  if (resumeId && !resumeTarget && !freshPin) {
     try {
       ws.send(JSON.stringify({
         type: 'dc_meta',

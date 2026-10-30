@@ -60,7 +60,7 @@ export function replayFactory(transcript: CodexReplay.CodexAppServerReplayTransc
   };
 }
 
-export async function openReplaySession(scenario: string, extra: { mode?: string; paneId?: string } = {}) {
+export async function openReplaySession(scenario: string, extra: { mode?: string; paneId?: string; env?: NodeJS.ProcessEnv } = {}) {
   const fixture = loadFixture(scenario);
   const frames: WireFrame[] = [];
   const stateRoot = mkdtempSync(join(tmpdir(), 'dc-t3-state-'));
@@ -70,7 +70,7 @@ export async function openReplaySession(scenario: string, extra: { mode?: string
     model: fixture.model,
     mode: extra.mode ?? 'bypassPermissions',
     paneId: extra.paneId ?? `pane-${scenario}`,
-    env: {},
+    env: extra.env ?? {},
     stateRoot,
     runtimePolicyOverride: policyFor(fixture),
     clientFactory: replayFactory(fixture.transcript),

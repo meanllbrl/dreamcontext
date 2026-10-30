@@ -263,7 +263,8 @@ describe('how the super agent talks to the owner', () => {
 
   it('the shipped text never names a condition', () => {
     const files: string[] = [];
-    const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (/\.(ts|tsx|md)$/.test(f)) files.push(p); } };
+    // src/vendor is third-party code (T3 Code, MIT) we copy unchanged, not text we write or brief with.
+    const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (p === join('src', 'vendor')) continue; if (statSync(p).isDirectory()) walk(p); else if (/\.(ts|tsx|md)$/.test(f)) files.push(p); } };
     for (const d of ['src', 'skill', 'dashboard/src']) walk(d);
     const hits = files.filter((f) => /\bADHD\b/i.test(readFileSync(f, 'utf-8')));
     expect(hits).toEqual([]);
