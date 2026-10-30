@@ -4,7 +4,7 @@ import { useApi, useVault } from '../../../context/VaultContext';
 import { openWebSession, portOfHost, readLoopbackGrants, setLoopbackGrant, useLoopbackGrants, type WebSessionView } from '../../../lib/loopbackGrants';
 import { proxiedHref } from '../../../lib/webPick';
 import type { WebFrameControl, WebFrameInfo } from '../../../lib/webFrameControl';
-import type { WebDevice } from '../../../lib/webDevice';
+import { desktopFrameStyle, desktopScale, type WebDevice } from '../../../lib/webDevice';
 import { useDeviceBox } from '../../layout/DeviceSwitch';
 import { openExternalUrl } from '../../../lib/desktop';
 import { externalHref } from '../../../lib/externalLinks';
@@ -37,15 +37,7 @@ import type { WidgetProps } from './types';
  */
 export const WEB_WIDGET_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
 
-/** A site's desktop layout width, in css px (Super presentation layouts, plan-r2 D8). */
-export const DESKTOP_WIDTH = 1280;
-
-/** The scale a page laid out at {@link DESKTOP_WIDTH} takes in a box this wide: only between 60 %
- *  and 100 % (narrower it would be unreadable, wider it fits natively). Null: native. */
-export function desktopScale(boxWidth: number): number | null {
-  const s = boxWidth / DESKTOP_WIDTH;
-  return s >= 0.6 && s < 1 ? s : null;
-}
+export { DESKTOP_WIDTH, desktopScale } from '../../../lib/webDevice';
 
 export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zoomBridge, control, desktop, device }: WidgetProps & {
   /** A PAGE's frame is allowed and shown (its trust gate passed): the Super Agent's card offers
@@ -72,7 +64,7 @@ export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zo
     );
   }
   if (check.kind === 'file') {
-    return <WebFile elementId={elementId} file={check} title={payload.title || check.name} active={active} size={size} zoomBridge={zoomBridge} />;
+    return <WebFile elementId={elementId} file={check} title={payload.title || check.name} active={active} size={size} zoomBridge={zoomBridge} desktop={desktop} />;
   }
   return <WebPage page={check} title={payload.title || check.unicodeHost} active={active} size={size} onFrameAllowed={onFrameAllowed} control={control} desktop={desktop} device={device} />;
 }
@@ -124,7 +116,7 @@ export function PageFrame({ title, href, control, info, desktop, device = null }
   const style: CSSProperties | undefined = box.fit
     ? box.frameStyle
     : autoDesktop
-      ? { position: 'absolute', left: 0, top: 0, width: DESKTOP_WIDTH, height: `${100 / autoDesktop}%`, transform: `scale(${autoDesktop})`, transformOrigin: '0 0' }
+      ? desktopFrameStyle(autoDesktop)
       : undefined;
   return (
     <div ref={box.ref} className="wb-web-device" data-device={box.fit ? device ?? undefined : undefined}>
@@ -318,7 +310,7 @@ function useFileAccess(src: string, attempt: number): FileAccess {
   return access;
 }
 
-function WebFile({ elementId, file, title, active, size, zoomBridge }: FrameProps & { elementId: string; file: FileCheck; zoomBridge?: boolean }) {
+function WebFile({ elementId, file, title, active, size, zoomBridge, desktop }: FrameProps & { elementId: string; file: FileCheck; zoomBridge?: boolean }) {
   const tx = useWbText();
   const api = useApi();
   const { vault } = useVault();
@@ -399,6 +391,10 @@ function WebFile({ elementId, file, title, active, size, zoomBridge }: FrameProp
           variant="page"
           allowAbsolute={file.absolute}
           zoomBridge={zoomBridge}
+          // A web card shows a page, not a document: the frame fills the card (as a server
+          // page's does) and the page scrolls inside it, at the desktop width when presented.
+          fill
+          desktop={desktop}
         />
       </div>
     );

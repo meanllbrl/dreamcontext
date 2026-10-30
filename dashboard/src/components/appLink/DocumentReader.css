@@ -170,6 +170,34 @@
   padding: var(--space-6) var(--space-8) var(--space-10);
 }
 
+/* A web page that FILLS its box (the web card, `fill`): the frame takes every pixel the card has
+   left under the note's line, edge to edge like a server page's frame, and the page scrolls
+   inside itself. Its height never comes from the page (HtmlPage, htmlFrameGeometry). */
+.doc-reader-html.doc-reader-html--fill {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+}
+.doc-reader-html-box {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.doc-reader-html-box > .doc-reader-html-frame {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.doc-reader-html--fill .doc-reader-html-foot {
+  flex: none;
+  padding: var(--space-1) var(--space-3);
+}
+
 /* A PDF: the stage fills the page edge to edge — the engine's viewer draws its own margins. */
 .doc-reader--page.doc-reader--pdf .pdf-viewer--embedded { background: var(--color-bg); }
 .doc-reader--page.doc-reader--pdf .pdf-viewer-stage { padding: 0; min-height: 0; }

@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEVICE_WIDTH, MAX_REMEMBERED, deviceFit, isWebDevice, withDevice } from '../../dashboard/src/lib/webDevice.js';
+import { DESKTOP_WIDTH, DEVICE_WIDTH, MAX_REMEMBERED, desktopFrameStyle, desktopScale, deviceFit, htmlFrameGeometry, isWebDevice, withDevice } from '../../dashboard/src/lib/webDevice.js';
 
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf-8');
@@ -72,5 +72,32 @@ describe('wiring', () => {
     expect(widget).toMatch(/box\.fit\s*\? box\.frameStyle/);
     expect(viewer).toMatch(/useWebDevice\(deviceKey \?\? null\)/);
     expect(read('dashboard/src/components/sleepy/super/SuperSurface.tsx')).toMatch(/<CardFullscreenView subject=\{full\.subject\} cardId=\{full\.id\}/);
+  });
+});
+
+describe('a project web page in a web card fills it (owner 2026-10-30: a 150 px strip)', () => {
+  it('filling, the frame never takes the height the page reports', () => {
+    // A 100vh page reports the frame's own height: the browser default 150 px, forever.
+    expect(htmlFrameGeometry(true, 150, null)).toEqual({});
+    expect(htmlFrameGeometry(true, null, null)).toEqual({});
+  });
+  it('filling at the desktop width: laid out 1280 wide, scaled, as tall as its box', () => {
+    expect(htmlFrameGeometry(true, 150, 0.5)).toEqual(desktopFrameStyle(0.5));
+    expect(desktopFrameStyle(0.8)).toMatchObject({ position: 'absolute', width: DESKTOP_WIDTH, height: '125%', transform: 'scale(0.8)' });
+    expect(desktopScale(900)).toBeCloseTo(900 / 1280);
+    expect(desktopScale(1400)).toBeNull();
+  });
+  it('a reading column keeps the reported height', () => {
+    expect(htmlFrameGeometry(false, 640, null)).toEqual({ height: 640, minHeight: 0 });
+    expect(htmlFrameGeometry(false, null, null)).toEqual({});
+  });
+  it('the web card asks for the filling page, and the reader passes it to the frame', () => {
+    const web = readFileSync(join(ROOT, 'dashboard/src/components/whiteboard/widgets/WebWidget.tsx'), 'utf-8');
+    const file = web.slice(web.indexOf('function WebFile('));
+    expect(file).toMatch(/<DocumentReader[\s\S]*?\bfill\b[\s\S]*?desktop=\{desktop\}/);
+    expect(web).toMatch(/<WebFile [^>]*desktop=\{desktop\}/);
+    const reader = readFileSync(join(ROOT, 'dashboard/src/components/appLink/DocumentReader.tsx'), 'utf-8');
+    expect(reader).toMatch(/<HtmlPage [^>]*fill=\{fill\} desktop=\{desktop\}/);
+    expect(reader).toContain('htmlFrameGeometry(fill, height, scale)');
   });
 });
