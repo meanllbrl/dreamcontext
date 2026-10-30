@@ -44,16 +44,21 @@ export function refMirrorSegments(draft: string, peers: PeerMention[], staged: r
   let about = 0;
   parseRefTokens(draft).forEach((t) => {
     text(draft.slice(pos, t.start));
+    // The isolate and the chip's air on each side stay untinted: the room between a chip and
+    // the words beside it (owner 2026-10-30).
+    out.push({ text: draft.slice(t.start, t.start + t.lead), kind: 'text' });
+    const core = draft.slice(t.start + t.lead, t.end - t.tail);
     const att = byId.get(t.id);
     if (att && isMediaRef(att)) {
       out.push({
-        text: draft.slice(t.start, t.end), kind: 'ref', refId: att.id, img: att.url, icon: att.url ? undefined : chipIcon(att), lead: 1 + t.glyph.length,
+        text: core, kind: 'ref', refId: att.id, img: att.url, icon: att.url ? undefined : chipIcon(att), lead: core.indexOf('\u00A0'),
         state: att.uploading ? 'uploading' : att.failed ? 'failed' : 'ready',
       });
     } else {
       about += 1;
-      out.push({ text: draft.slice(t.start, t.end), kind: 'ref', slot: Math.min(about, 5), refId: att?.id });
+      out.push({ text: core, kind: 'ref', slot: Math.min(about, 5), refId: att?.id });
     }
+    out.push({ text: draft.slice(t.end - t.tail, t.end), kind: 'text' });
     pos = t.end;
   });
   text(draft.slice(pos));

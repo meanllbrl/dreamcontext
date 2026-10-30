@@ -322,8 +322,44 @@ const chipGeometry = (page, scope) => page.evaluate((s) => {
     const peer = lr && textBoxes.find((t) => sameLine(t, lr));
     if (peer) maxBaselineDiff = Math.max(maxBaselineDiff, Math.abs(peer.bottom - lr.bottom));
   }
+  // Side room: from a chip's painted edge to the nearest visible letter beside it on its line.
+  let minSideGap = Infinity;
+  const letterRects = [];
+  const w2 = document.createTreeWalker(hl, NodeFilter.SHOW_TEXT);
+  for (let n = w2.nextNode(); n; n = w2.nextNode()) {
+    if (n.parentElement?.closest('mark')) continue;
+    const t = n.textContent;
+    for (let k = 0; k < t.length; k++) {
+      if (/[\s\u2060-\u2069\u202F]/.test(t[k])) continue;
+      const r = document.createRange(); r.setStart(n, k); r.setEnd(n, k + 1);
+      const rr = r.getClientRects()[0]; if (rr) letterRects.push(rr);
+    }
+  }
+  for (const m of marks) for (const c of [...m.getClientRects()].filter((r) => r.width > 2)) {
+    for (const l of letterRects) {
+      if (!sameLine(c, l)) continue;
+      const gap = l.left >= c.right ? l.left - c.right : c.left >= l.right ? c.left - l.right : -1;
+      if (gap >= 0) minSideGap = Math.min(minSideGap, gap);
+    }
+  }
   const lines = new Set([...chipBoxes, ...textBoxes].map((r) => Math.round((r.top + r.bottom) / 2 / 4))).size;
-  return { lineHeightPx: lineH, fontSizePx: parseFloat(getComputedStyle(hl).fontSize), lines, chips: chipBoxes.length, minGapPx: Number.isFinite(minGap) ? Math.round(minGap * 10) / 10 : null, maxBaselineDiffPx: Math.round(maxBaselineDiff * 10) / 10 };
+  const ta = root.querySelector('.chat-cmp-input');
+  const pad = parseFloat(getComputedStyle(ta).paddingTop) + parseFloat(getComputedStyle(ta).paddingBottom);
+  const taLines = Math.round((ta.scrollHeight - pad) / lineH);
+  const hlRange = document.createRange(); hlRange.selectNodeContents(hl);
+  const mirrorLines = new Set([...hlRange.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.top / (lineH / 2)))).size;
+  const split = marks.filter((m) => [...m.getClientRects()].filter((r) => r.width > 2).length > 1).length;
+  const cw = (e) => { const c = getComputedStyle(e); return Math.round((e.clientWidth - parseFloat(c.paddingLeft) - parseFloat(c.paddingRight)) * 10) / 10; };
+  // Diagnostic: the same text in ONE run, in a plain div with the textarea's metrics.
+  const probe = document.createElement('div');
+  const tcs = getComputedStyle(ta);
+  Object.assign(probe.style, { position: 'absolute', visibility: 'hidden', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', width: `${cw(ta)}px`, font: tcs.font, fontFamily: tcs.fontFamily, fontSize: tcs.fontSize, lineHeight: tcs.lineHeight, fontKerning: tcs.fontKerning });
+  probe.textContent = ta.value; document.body.appendChild(probe);
+  const plainDivLines = Math.round(probe.getBoundingClientRect().height / lineH); probe.remove();
+  const markDiff = marks.map((m) => { const sp = document.createElement('span'); Object.assign(sp.style, { position: 'absolute', visibility: 'hidden', whiteSpace: 'pre', font: tcs.font, fontFamily: tcs.fontFamily, fontSize: tcs.fontSize }); sp.textContent = m.textContent; document.body.appendChild(sp); const d = Math.round((m.getBoundingClientRect().width - sp.getBoundingClientRect().width) * 10) / 10; sp.remove(); return d; });
+  const hlFont = getComputedStyle(hl).fontFamily === tcs.fontFamily && getComputedStyle(hl).fontWeight === tcs.fontWeight && getComputedStyle(hl).letterSpacing === tcs.letterSpacing && getComputedStyle(hl).wordSpacing === tcs.wordSpacing;
+  const thumbPad = [...hl.querySelectorAll('.chat-cmp-hl-thumb, mark')].map((e) => getComputedStyle(e).paddingLeft + '/' + getComputedStyle(e).paddingRight + '/' + getComputedStyle(e).marginLeft + '/' + getComputedStyle(e).borderLeftWidth);
+  return { markDiff, hlFont, thumbPad: [...new Set(thumbPad)], plainDivLines, taContentW: cw(ta), hlContentW: cw(hl), taOverflowY: getComputedStyle(ta).overflowY, taScrollbar: ta.offsetWidth - ta.clientWidth, taLines, mirrorLines, splitChips: split, lineHeightPx: lineH, fontSizePx: parseFloat(getComputedStyle(hl).fontSize), lines, chips: chipBoxes.length, minGapPx: Number.isFinite(minGap) ? Math.round(minGap * 10) / 10 : null, minSideGapPx: Number.isFinite(minSideGap) ? Math.round(minSideGap * 10) / 10 : null, maxBaselineDiffPx: Math.round(maxBaselineDiff * 10) / 10 };
 }, scope);
 const shotEl = async (page, name) => { const p = join(OUT, name); await page.screenshot({ path: p }); results.shots.push(p); return p; };
 
@@ -434,8 +470,11 @@ async function flow(pw, base) {
   writeFileSync(join(OUT, 'l1-geometry-1440.json'), JSON.stringify(geo, null, 2));
   note(`1440 geometry: ${JSON.stringify(geo)}`);
   ok('L1 1440: a message of two lines or more with chips', (geo?.lines ?? 0) >= 2 && (geo?.chips ?? 0) >= 3, JSON.stringify(geo));
-  ok('L1 1440: no chip touches the line above or below (≥ 3 px clear)', (geo?.minGapPx ?? -1) >= 3, JSON.stringify(geo));
+  ok('L1 1440: no chip touches the line above or below (≥ 5 px clear)', (geo?.minGapPx ?? -1) >= 5, JSON.stringify(geo));
   ok('L1 1440: chips and words share one baseline (≤ 1 px)', (geo?.maxBaselineDiffPx ?? 9) <= 1, JSON.stringify(geo));
+  ok('L1 1440: room on both sides of each chip (≥ 6 px to the nearest letter)', (geo?.minSideGapPx ?? -1) >= 6, JSON.stringify(geo));
+  ok('L1 1440: no chip split across two lines', geo?.splitChips === 0, JSON.stringify(geo));
+  ok('L1 1440: the mirror wraps exactly like the textarea (same line count)', geo && geo.taLines === geo.mirrorLines, JSON.stringify(geo));
   { const cmp = page.locator(`${SCOPE} .chat-cmp`).filter({ has: page.locator('.chat-cmp-input:visible') }).first(); const p = join(OUT, 'l1-two-lines-composer-1440.png'); await cmp.screenshot({ path: p }).catch(() => {}); results.shots.push(p); }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(1200);
@@ -451,8 +490,11 @@ async function flow(pw, base) {
   geo = await chipGeometry(page, SCOPE);
   writeFileSync(join(OUT, 'l1-geometry-390.json'), JSON.stringify(geo, null, 2));
   note(`390 geometry: ${JSON.stringify(geo)}`);
-  ok('L1 390: no chip touches the line above or below (≥ 3 px clear)', (geo?.minGapPx ?? -1) >= 3, JSON.stringify(geo));
+  ok('L1 390: no chip touches the line above or below (≥ 5 px clear)', (geo?.minGapPx ?? -1) >= 5, JSON.stringify(geo));
   ok('L1 390: chips and words share one baseline (≤ 1 px)', (geo?.maxBaselineDiffPx ?? 9) <= 1, JSON.stringify(geo));
+  ok('L1 390: room on both sides of each chip (≥ 6 px to the nearest letter)', (geo?.minSideGapPx ?? -1) >= 6, JSON.stringify(geo));
+  ok('L1 390: no chip split across two lines', geo?.splitChips === 0, JSON.stringify(geo));
+  ok('L1 390: the mirror wraps exactly like the textarea (same line count)', geo && geo.taLines === geo.mirrorLines, JSON.stringify(geo));
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.waitForTimeout(1200);
 

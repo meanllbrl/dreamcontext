@@ -187,7 +187,7 @@ describe('the mirror draws each chip in the picture room', () => {
     const r: Attachment = { id: nextAttachmentId(), kind: 'ref', name: 'Note', inline: true };
     const segs = refMirrorSegments(`${tok(el)} x ${tok(f)} ${tok(d)} ${tok(r)}`, [], [el, f, d, r]).filter((s) => s.kind === 'ref');
     expect(segs.map((s) => [s.img, s.icon, s.lead])).toEqual([
-      [el.url, undefined, 3], [undefined, '📄', 3], [undefined, '📁', 3], [undefined, '📌', 3],
+      [el.url, undefined, 4], [undefined, '📄', 4], [undefined, '📁', 4], [undefined, '📌', 4],
     ]);
   });
 });
@@ -203,5 +203,51 @@ describe('the field type (owner 2026-10-30: chips between the lines, never touch
       expect(rule(sel)).toMatch(/line-height: var\(--chat-cmp-lh\);/);
     }
     expect(css).toMatch(/--chat-cmp-min-h: calc\(2 \* var\(--chat-cmp-lh\) \* var\(--chat-cmp-fs\) \+ 16px\);/);
+  });
+});
+
+describe('the room around a chip (owner 2026-10-30, round 2)', () => {
+  it('a no-break space on each side inside the token, drawn untinted beside the chip', () => {
+    const el = element();
+    const segs = refMirrorSegments(`a ${tok(el)} b`, [], [el]);
+    const i = segs.findIndex((s) => s.kind === 'ref');
+    expect(segs[i - 1]).toMatchObject({ kind: 'text', text: '\u2068\u00A0' });
+    expect(segs[i + 1].kind).toBe('text');
+    expect(segs[i + 1].text).toMatch(/^\u00A0[\u2061-\u2064]+\u2069$/);
+    expect(segs[i].text.startsWith(GLYPH_IMAGE)).toBe(true);
+  });
+
+  it('a chip in the box opens the lines up; the measured height re-reads the line height', () => {
+    const css = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/sleepy/chat/composer.css'), 'utf8');
+    const base = Number(/--chat-cmp-lh: ([\d.]+);/.exec(css)?.[1]);
+    const withChips = Number(/\.chat-cmp\[data-chips\] \{ --chat-cmp-lh: ([\d.]+); \}/.exec(css)?.[1]);
+    expect(withChips).toBeGreaterThan(base);
+    const src = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/sleepy/chat/Composer.tsx'), 'utf8');
+    expect(src).toMatch(/data-chips=\{hlSegments\.some\(\(x\) => x\.kind === 'ref'\) \? '' : undefined\}/);
+    expect(src).toMatch(/if \(chips !== prev\.chips\) \{\n\s+metricsRef\.current = null;/);
+  });
+});
+
+describe('a chip never breaks across lines (round 2)', () => {
+  it('its picture room is joined (no break opportunity inside a chip), and an older room still reads', () => {
+    expect(GLYPH_IMAGE).toBe('\u2003\u2060\u2003\u2060');
+    const el = element();
+    const t = tok(el);
+    const old = t.replace(GLYPH_IMAGE, '\u2003\u2003');
+    expect(parseRefTokens(old)[0].glyph).toBe(GLYPH_IMAGE);
+    expect(reconcileRefs(`a ${old} b`, [el]).draft).toBe(`a ${old} b`);
+    // A damaged room (its FSI gone) still goes whole.
+    const bare = `x ${t.slice(1)} y`;
+    expect(reconcileRefs(bare, []).draft).toBe('x  y');
+  });
+});
+
+describe('the mirror keeps the textarea metrics (round 2)', () => {
+  it("global.css's pen padding on <mark> is cancelled for the mirror's chips and mentions", () => {
+    const css = readFileSync(join(import.meta.dirname, '../../dashboard/src/components/sleepy/chat/composer.css'), 'utf8');
+    expect(css).toMatch(/\.chat-cmp-hl :is\(\.chat-cmp-hl-ref, \.chat-cmp-hl-mention\) \{ padding-inline: 0; margin-inline: 0; \}/);
+    const global = readFileSync(join(import.meta.dirname, '../../dashboard/src/styles/global.css'), 'utf8');
+    // The rule it cancels: if the pen ever stops padding marks, this guard can go.
+    expect(global).toMatch(/\nmark \{[\s\S]*?padding: 0 0\.22em;/);
   });
 });

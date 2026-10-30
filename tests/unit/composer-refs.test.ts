@@ -31,16 +31,20 @@ const reply = (ref: string, quote: string): Attachment => ({
 beforeEach(() => { __resetScratchForTests(); });
 
 describe('the token', () => {
-  it('is FSI, glyph, NBSP, name, invisible id digits, PDI; parsed back with its id', () => {
+  it('is FSI, its air, glyph, NBSP, name, invisible id digits, its air, PDI; parsed back with its id', () => {
     const a = note('n1', 'Windows tests');
     const t = refToken(a);
-    expect(t.startsWith(`${FSI}${GLYPH_NOTE}\u00A0Windows\u00A0tests`)).toBe(true);
+    expect(t.startsWith(`${FSI}\u00A0${GLYPH_NOTE}\u00A0Windows\u00A0tests`)).toBe(true);
     expect(t.endsWith(PDI)).toBe(true);
-    expect(t).toMatch(/[\u2061-\u2064]+\u2069$/);
+    expect(t).toMatch(/\u00A0[\u2061-\u2064]+\u2069$/);
+    // A token written before the air was added still parses.
+    expect(parseRefTokens(`${FSI}${t.slice(2).replace(/\u00A0(?=[\u2061-\u2064])/, '')}`)[0]).toMatchObject({ glyph: GLYPH_NOTE, label: 'Windows\u00A0tests', lead: 1 });
+    expect(parseRefTokens(t)[0]).toMatchObject({ label: 'Windows\u00A0tests', lead: 2 });
+    expect(parseRefTokens(t)[0].tail).toBe(t.length - t.indexOf('\u00A0', t.indexOf('tests')));
     const spans = parseRefTokens(`hi ${t} there`);
     expect(spans).toHaveLength(1);
     expect(spans[0]).toMatchObject({ start: 3, end: 3 + t.length, glyph: GLYPH_NOTE, label: 'Windows\u00A0tests', id: refTokenId(a) });
-    expect(refToken(reply('k3f9q0', 'Bu'))[1]).toBe(GLYPH_REPLY);
+    expect(refToken(reply('k3f9q0', 'Bu'))[2]).toBe(GLYPH_REPLY);
   });
 
   it('clips the name to 24 graphemes and strips every format character, so pad text cannot break it', () => {

@@ -1306,7 +1306,7 @@ export function Composer({
   // (also `draft`, via the draftEpoch adoption above), submit (draft → ''), and the quote /
   // attachment rows appearing or disappearing. Only a draft that GREW by insertion skips the
   // collapse measure; a chip row change is the only thing that re-reads the body's chrome.
-  const prevMeasuredRef = useRef({ draft, quote, attachments });
+  const prevMeasuredRef = useRef({ draft, quote, attachments, chips: parseRefTokens(draft).length > 0 });
   // Before any keystroke reaches React: the field's text child is never rewritten, so the
   // measure below resolves the field's style, not the pane's (composerHeight.ts).
   useLayoutEffect(() => { if (taRef.current) keepFieldTextChildless(taRef.current); });
@@ -1317,7 +1317,14 @@ export function Composer({
       needChromeRef.current = true;
       needFullRef.current = true;
     }
-    prevMeasuredRef.current = { draft, quote, attachments };
+    // A chip in the box opens the lines up (`data-chips`, composer.css): the cached line height
+    // is stale the moment the first chip comes in or the last one goes.
+    const chips = parseRefTokens(draft).length > 0;
+    if (chips !== prev.chips) {
+      metricsRef.current = null;
+      needFullRef.current = true;
+    }
+    prevMeasuredRef.current = { draft, quote, attachments, chips };
     resize();
   }, [resize, draft, draggedH, quote, attachments]);
 
@@ -2139,7 +2146,7 @@ export function Composer({
   const stablePhonePhotos = useStableHandler((files: File[]) => onPhonePhotos(files));
 
   return (
-    <div className="chat-cmp" ref={rootRef}>
+    <div className="chat-cmp" ref={rootRef} data-chips={hlSegments.some((x) => x.kind === 'ref') ? '' : undefined}>
       {/* Anchored to `.chat-cmp`, NOT to the row it belongs to: the card clips its own
           overflow (safe for the toolbar's menus, which are portaled — this one is not), so
           a menu opening upward out of the textarea would be cut off at the card's edge. */}

@@ -45,6 +45,9 @@
      descendants — every menu and hover card in here must portal to <body>. */
   container: chatcmp / inline-size;
 }
+/* A chip in the box: a little more room between the lines (owner 2026-10-30), so a chip never
+   crowds the line above or below. The textarea and its mirror read the same variable. */
+.chat-cmp[data-chips] { --chat-cmp-lh: 1.95; }
 
 .chat-cmp-card {
   display: flex;
@@ -501,6 +504,10 @@
 /* A reference chip in the Super composer (owner 2026-10-24): its token is text in the textarea;
    the mirror paints the slot's TINT behind it (never a fill: the words keep --color-text). The
    k-th chip wears --ref-slot-k, the same slot its bubble and the Super's section head show. */
+/* The mirror's marks carry NO horizontal box: global.css gives every <mark> a pen's
+   `padding: 0 0.22em; margin: 0 -0.1em`, which made each chip ~0.24em wider in the mirror than
+   in the textarea, so a line that only just fit in one wrapped in the other. */
+.chat-cmp-hl :is(.chat-cmp-hl-ref, .chat-cmp-hl-mention) { padding-inline: 0; margin-inline: 0; }
 .chat-cmp-hl-ref { --ref-slot: var(--ref-slot-1); }
 .chat-cmp-hl-ref[data-slot="2"] { --ref-slot: var(--ref-slot-2); }
 .chat-cmp-hl-ref[data-slot="3"] { --ref-slot: var(--ref-slot-3); }
