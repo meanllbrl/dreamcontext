@@ -209,7 +209,19 @@ export function isSwipeDeck(questions: QuestionSpec[], source: string | undefine
     && questions.every((q) => kindOf(q) === 'choice' && !q.multiSelect && q.options.length === 2);
 }
 
-/** True when a question's options should be drawn as a visual board rather than rows. */
+/** True when a question's options should be drawn as a visual board rather than rows: two or
+ *  more of them carry a preview, so "this one or that one" is answered by LOOKING. */
 export function isBoard(q: QuestionSpec): boolean {
-  return kindOf(q) === 'choice' && q.options.some((o) => !!o.preview);
+  return kindOf(q) === 'choice' && q.options.filter((o) => !!o.preview).length >= 2;
+}
+
+/**
+ * The one option whose preview a question shows, when exactly one carries one (owner 2026-10-30,
+ * "okuyamıyorum"): nothing to compare it with, so it is drawn ONCE across the card's width above
+ * plain rows, never as a half-width tile beside an empty "No preview" twin. Its index, else -1.
+ */
+export function soloPreviewIndex(q: QuestionSpec): number {
+  if (kindOf(q) !== 'choice') return -1;
+  const withPreview = q.options.flatMap((o, i) => (o.preview ? [i] : []));
+  return withPreview.length === 1 ? withPreview[0] : -1;
 }

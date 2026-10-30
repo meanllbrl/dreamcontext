@@ -276,10 +276,14 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       expect.stringContaining('<super-brief rev=16>'),
     ]);
     expect(added).toEqual([
-      expect.stringContaining('unseen): the text says in one line that a question waits.'),
-      'or any work: the card carries what he says yes to (the yes option\'s `preview`: the problem in',
-      'one sentence, 3-6 short bullets of what will be done, his decisions, cost or risk in money, never',
-      expect.stringContaining('time) and your text gives the same summary'),
+      expect.stringContaining('Information he must READ never rides'),
+      'in a question: it is a report card on his stage. Write it as a page (`_dream_context/tmp/super/<topic>.html`,',
+      'the `dc-` kit), `super open web <that path> --title "<name>"`, and ask with `--show <its card>`:',
+      'the question is the decision in one short line, his card points at the report ("To read: …"), and',
+      'the report stays after his answer. Asking him to approve or start a plan or any work: that report',
+      'carries what he says yes to (the problem in one sentence, 3-6 short bullets of what will be done,',
+      'his decisions, cost or risk in money, never time) and your text gives the same summary, as long as',
+      expect.stringContaining('it needs (the exception to 2-4).'),
       '- Your AI Team, when the project has one, is listed under `## Your AI Team` (and in `super state`',
       "  members): check it first for every job; a member's field is that member's job",
       '  (`super team ask <member> "<job>"`, in its own thread), never a sub-agent.',
@@ -287,8 +291,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '  it, never a child or a sub-agent.',
       expect.stringContaining('with `origin=<ref>`'),
       '  result with `<!-- re:<ref> -->`.',
-      expect.stringContaining('<super-brief rev=18>'),
+      expect.stringContaining('<super-brief rev=19>'),
     ]);
-    expect(after.length).toBe(before.length + 7);
+    expect(after.length).toBe(before.length + 11);
   });
 });

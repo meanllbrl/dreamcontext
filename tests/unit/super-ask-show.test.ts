@@ -460,6 +460,42 @@ describe('super ask presents its pictures and answers show', () => {
     const r = await verb('ask', { text: 'Which?', show: ['image-a', 'image-b'] });
     expect(r.json.show).toMatchObject({ via: 'show', state: 'presented', cards: ['image-a', 'image-b'] });
   });
+  it('a report card named by --show is recorded as the question\'s read, stays after the answer, and is the summary (owner 2026-10-30)', async () => {
+    const web = (id: string): SuperContainer => ({ id, kind: 'web', ref: 'report/plan.html', shape: 'square', place: 'float', title: 'Sprint plan' });
+    makeVault({ containers: [web('web-plan'), img('image-a')] });
+    const r = await verb('ask', { ask: { title: 'Sprint → start', questions: [{ question: 'Start the 7 items today?', options: [{ label: 'Start' }, { label: 'Change the list' }] }] }, show: ['web-plan', 'image-a'] });
+    expect(r.status).toBe(200);
+    // Only the readable card is pointed at; a picture stays the picture question's own.
+    let s = await readSuperState(root);
+    expect(s.queue.find((q) => q.id === r.json.item)?.read).toEqual(['web-plan']);
+    // A start question showing a report card has its summary: no warning.
+    expect(r.json.warning).toBeUndefined();
+    expect((await verb('queue-done', { item: r.json.item })).status).toBe(200);
+    s = await readSuperState(root);
+    expect(s.containers.find((c) => c.id === 'web-plan')).toMatchObject({ place: 'float' });
+    // Nothing points at it once he answered.
+    expect(s.queue.find((q) => q.id === r.json.item)?.read).toBeUndefined();
+  });
+  it('a start question with no report card shown is warned; previews and pictures do not count', async () => {
+    makeVault({ containers: [img('image-a')] });
+    const r = await verb('ask', { ask: { questions: [{ question: 'Plan ready, start?', options: [{ label: 'Start' }, { label: 'Wait' }] }] }, show: ['image-a'] });
+    expect(r.status).toBe(200);
+    expect(r.json.warning).toEqual(expect.stringContaining('shows him no report card'));
+    expect((await readSuperState(root)).queue.find((q) => q.id === r.json.item)?.read).toBeUndefined();
+  });
+  it('sanitize keeps an open ask\'s read (container ids, at most 3) and drops it once done', () => {
+    const s = sanitizeSuperState({
+      ...emptySuperState(), session: 'sup', enabled: true,
+      queue: [
+        ask('q-1', { read: ['web-a', 'BAD id', 'web-b', 'web-a', 'web-c', 'web-d'] } as Partial<SuperQueueItem>),
+        ask('q-2', { state: 'done', read: ['web-a'] } as Partial<SuperQueueItem>),
+        { ...ask('q-3'), kind: 'question', read: ['web-a'] } as SuperQueueItem,
+      ],
+    });
+    expect(s.queue.find((q) => q.id === 'q-1')?.read).toEqual(['web-a', 'web-b', 'web-c']);
+    expect(s.queue.find((q) => q.id === 'q-2')?.read).toBeUndefined();
+    expect(s.queue.find((q) => q.id === 'q-3')?.read).toBeUndefined();
+  });
   it('the Super forgot everything: its last picture set within 10 minutes (recent)', async () => {
     makeVault();
     expect((await verb('open', { kind: 'image', refs: ['mock/a.png', 'mock/b.png'] })).status).toBe(200);

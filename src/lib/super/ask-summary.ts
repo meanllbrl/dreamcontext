@@ -2,11 +2,12 @@ import type { SuperAskSpec } from './types.js';
 
 /**
  * A `super ask` that asks the owner to start or approve something must carry what he says yes to
- * (owner 2026-10-29: "plan hazır başlasın mı diyor ama planı hiç özetlemiyor"). Field evidence
- * (Tilki super session, same day): cards whose description held 150-330 characters of prose
- * still got "Bana özetle" back; the answer he accepted was a bulleted summary. A description is
- * one line (`askLine` folds newlines, at most 600 characters), so the summary lives in an option's
- * `preview`, and only a preview with some substance counts.
+ * (owner 2026-10-29: "plan hazır başlasın mı diyor ama planı hiç özetlemiyor"), and that summary
+ * is READ on its own card, never packed into the question (owner 2026-10-30, "bilgi vermeyi bile
+ * soru sorarak veriyor, okuyamıyorum"): a 7-item plan in the yes option's preview landed in a
+ * half-width tile at the chat's 17 px, cut after three items, beside an empty "No preview" twin.
+ * So the summary is a report card on the stage (an .html page, `super open web <path>`) the
+ * question shows (`--show <card>`), and the card asks the decision in one line, pointing at it.
  *
  * Advisory only: the card is sent either way, the route adds the warning to its answer. A false
  * positive costs one line in the Super's tool output, so the start patterns stay broad.
@@ -14,17 +15,26 @@ import type { SuperAskSpec } from './types.js';
 
 /** Turkish stems (no `\b`: it does not see ş/ı/ç) and English words that mark a start/approve question. */
 const START_RE = /\b(?:start|begin|approve|proceed|go ahead|kick off|implement)|plan|başla|onay|geliştir/i;
-/** A preview's text (tags dropped) at least this long counts as a summary: four short bullets measure ~150. */
-export const MIN_PREVIEW_SUMMARY = 100;
+/** A preview's text (tags dropped) past this is information to READ, not a look at an option:
+ *  four short bullets measure ~150, a mockup's labels stay well under it. */
+export const MAX_PREVIEW_TEXT = 200;
 
 const textOf = (html: string) => html.replace(/<[^<>]*>/g, ' ').replace(/&[a-z#0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim();
 
-export const START_ASK_WARNING = 'This card asks the owner to start or approve something but carries no summary of it. It went as it is; now write him the summary in this turn\'s text (the problem in one sentence, what will be done in 3-6 short bullets, the decisions that are his, cost or risk in money). Next time put it in the card: the yes option\'s `preview`.';
+const REPORT_HOW = 'write the summary as a page (the problem in one sentence, what will be done in 3-6 short bullets, the decisions that are his, cost or risk in money), `super open web <that .html> --title "<name>"`, then ask the decision in one short line with `--show <its card>`';
 
-/** The warning for a start/approve question with no summary on its card, else null. Pure. */
-export function startAskWarning(spec: SuperAskSpec): string | null {
+export const START_ASK_WARNING = `This card asks the owner to start or approve something but shows him no report card of it. It went as it is; now write him the summary in this turn's text. Next time ${REPORT_HOW}.`;
+
+export const LONG_PREVIEW_WARNING = `A preview on this card is information to read (over ${MAX_PREVIEW_TEXT} characters of text), which a question card cannot hold readably. It went as it is. Next time ${REPORT_HOW}; a preview is only for a look at an option (a mockup, a picture).`;
+
+/**
+ * The warning for a Super `ask`, else null. Pure. `readCards`: how many report cards the question
+ * shows (`SuperQueueItem.read`). A start/approve question needs one; any question with a preview
+ * that is really a text to read is told where that text goes.
+ */
+export function askWarning(spec: SuperAskSpec, readCards: number): string | null {
   const asksStart = spec.questions.some((q) => START_RE.test(q.question)) || START_RE.test(spec.title ?? '');
-  if (!asksStart) return null;
-  const summarised = spec.questions.some((q) => q.options.some((o) => !!o.preview && textOf(o.preview).length >= MIN_PREVIEW_SUMMARY));
-  return summarised ? null : START_ASK_WARNING;
+  if (asksStart && readCards === 0) return START_ASK_WARNING;
+  const long = spec.questions.some((q) => q.options.some((o) => !!o.preview && textOf(o.preview).length > MAX_PREVIEW_TEXT));
+  return long ? LONG_PREVIEW_WARNING : null;
 }

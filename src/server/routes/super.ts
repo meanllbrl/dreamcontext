@@ -13,7 +13,7 @@ import {
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
   MAX_TITLE, MIN_GROUP_CARDS, MSG_REF_RE, SESSION_ID_RE, SUPER_VERBS, TASK_SLUG_RE, TEAM_JOB_ID_RE, applyGroupOp, askLine, askSpecFromLegacy, askSummary, cleanAskOptions, cleanAskSpec, cleanGroupName,
   AGENDA_REF, MAX_PAD, PAD_ID_RE, PAD_SECTIONS, cleanPadText, nextPadId, atLeastSize, defaultShape, defaultSizeFor, dissolveGroups, floatCount, isMediaKind, isPageKind, leaveGroups, minSizeFor, viewWithout,
-  MAX_ASK_PICTURES, MAX_FILMSTRIP, PRESENT_LAYOUTS, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
+  MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
 import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, noteTeamJobEnd, recordTeamJob, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, type LiveSayJob } from '../../lib/super/team.js';
@@ -38,7 +38,7 @@ import { findLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
 import { askShowState, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
-import { startAskWarning } from '../../lib/super/ask-summary.js';
+import { askWarning } from '../../lib/super/ask-summary.js';
 import { NODE_SRC_FS, openImageCards, resolvePreviewImages, type SrcFs } from '../../lib/super/ask-show-src.js';
 import {
   CLAUDE_SESSIONS_MEANS, delegationAllowed, lightModeNow, machineNotes, machineRoom, readCapacityFactsForState, type CapacityFacts,
@@ -59,7 +59,7 @@ import { DEFAULT_WHITEBOARD, ensureDefaultWhiteboard, listWhiteboards, resolveWh
 import { noteDismissed } from '../../lib/super/proactive.js';
 import { RECORD_FULL_MESSAGE, cardCounts, cardOutcome, makeRoom, noCardWarnings, roomPossible } from '../../lib/super/room.js';
 import { childIsLive, isLiveChatCard } from '../../lib/super/live.js';
-import { activityOf, dropOwnerWait, getChat, onChatChange } from '../../lib/assistant/chat-registry.js';
+import { activityOf, dropOwnerWait, getChat, onChatChange, pendingRequest } from '../../lib/assistant/chat-registry.js';
 import { noteSuperSend } from '../../lib/super/owner-wait.js';
 import { wrapUntrusted } from '../../lib/assistant/autonomy.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
@@ -516,6 +516,13 @@ function applyAskShow(
   opened = [...new Set([...opened, ...ids.filter((id) => recent.includes(id))])];
   if (ids.length) recordAskShow(s, item, ids, opened, via);
   return { ids, via, opened, fresh, cut, chain };
+}
+
+/** The cards a question named with `--show` that are there to be READ (`isReadKind`): the
+ *  report cards its card points at. Pictures stay the picture question's own presentation. */
+function readCardsOf(s: SuperState, shown: ReturnType<typeof applyAskShow>): string[] {
+  if (!shown || shown.via !== 'show') return [];
+  return shown.ids.filter((id) => s.containers.some((k) => k.id === id && isReadKind(k.kind))).slice(0, MAX_ASK_READS);
 }
 
 /** After the write: the picture chain, the phone's strip, and what the agent is told (D9). */
@@ -1465,7 +1472,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const requestId = str(b.requestId);
     if (!requestId || requestId.length > 200) { refuse(res, 400, 'invalid_args', 'name the question id'); return; }
     if (phoneHeld(child)) { refusePhoneHeld(res); return; }
-    const pq = getChat(child)?.pendingQuestion ?? null;
+    const pq = pendingRequest(getChat(child), requestId);
     const asking = getChat(child)?.status === 'asking';
     // FAIL CLOSED (D7): only the plain question the registry names right now. A permission is
     // the owner's alone, whoever asks; anything else is stale.
@@ -1569,8 +1576,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // Its pictures (task a-picture-question…): `--show`, the child's own option previews (read
     // against its worktree, or the project), else the pictures shown for its job lately.
     const child = item.sessionId;
-    const pq = getChat(child)?.pendingQuestion;
-    const images = pq && !pq.isPermission && pq.requestId === item.requestId ? pq.images ?? [] : [];
+    const pq = pendingRequest(getChat(child), item.requestId);
+    const images = pq && !pq.isPermission ? pq.images ?? [] : [];
     const prep = await prepareAskShow(c, b, res, images, c.state.children[child]?.worktree ?? dirname(c.who.contextRoot), child);
     if (!prep) return;
     // Asked inside an event turn: that turn renders in full for the owner (D8).
@@ -1757,6 +1764,12 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       pushed = true;
       noteOwnerBatch(s, batch ?? undefined);
       shown = applyAskShow(s, id, prep, c.who.contextRoot, now);
+      // The report cards it shows: his card points at them, "To read: <card> →" (owner 2026-10-30).
+      const read = readCardsOf(s, shown);
+      if (read.length) {
+        const item = s.queue.find((q) => q.id === id);
+        if (item) item.read = read;
+      }
     });
     if (!pushed) { refuse(res, 409, 'ask_open', 'you already have a question open with the owner; wait for his answer'); return; }
     // The record's queue was full: the store dropped it (its cards are put back on the next write).
@@ -1766,8 +1779,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const reach = ownerQuestionReach(state, id);
     if (reach.reached) noteSuperEscalation(session);
     const head = superQueueHead(state);
-    // A start/approve question with no summary on its card: sent anyway, the Super is told (owner 2026-10-29).
-    const warning = startAskWarning(spec);
+    // A start/approve question with no report card, or a preview that is a text to read: sent
+    // anyway, the Super is told (owner 2026-10-29, 2026-10-30).
+    const warning = askWarning(spec, state.queue.find((q) => q.id === id)?.read?.length ?? 0);
     ok(res, { item: id, asked: true, waiting: head?.id !== id, ...reach, show, ...(warning ? { warning } : {}) });
   },
 

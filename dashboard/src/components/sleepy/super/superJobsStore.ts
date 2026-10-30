@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import type { SuperAskSpec, SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
+import type { SurveyRead } from '../chat/SurveyCard';
 
 /**
  * The one channel between the centre chat's event lines and the stage: a child's name in an
@@ -72,6 +73,9 @@ export interface SuperQuestionView {
    *  as the server read it from the child, and the route that answers it through the Mac window
    *  (`/api/agent/super-answer`). Absent on the laptop, which answers through the child's chat. */
   remote?: SuperRemoteQuestions;
+  /** A Super `ask`'s report cards on the stage, each with the click that brings it into view
+   *  (`SuperQueueItem.read`); absent where no stage can be arranged. */
+  readsOf?: (item: SuperQueueItem) => SurveyRead[];
 }
 
 /** The phone's way to a child question it cannot hold (usePhoneSuperQuestions.ts). */

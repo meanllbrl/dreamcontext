@@ -14,7 +14,7 @@ import { describe, it, expect } from 'vitest';
 import type { QuestionSpec } from '../../dashboard/src/lib/chatProtocol.js';
 import { buildQuestionAnswer } from '../../dashboard/src/lib/chatProtocol.js';
 import {
-  allValues, answeredCount, choose, firstUnansweredIndex, isAnswered, isBoard, isComplete,
+  allValues, answeredCount, choose, firstUnansweredIndex, isAnswered, isBoard, isComplete, soloPreviewIndex,
   isSwipeDeck, numberValue, optionLetter, pickFor, resolveAnswers, resolveNote, resolveNotes,
   resolveValues, setText, setValue, textRole, toggleOther, togglePick, unclearMessage, type SurveyPicks,
 } from '../../dashboard/src/components/sleepy/chat/surveyAnswers.js';
@@ -207,10 +207,19 @@ describe('which surface the card draws', () => {
     expect(isSwipeDeck([], 'swipe')).toBe(false);
   });
 
-  it('a board as soon as one option carries a preview', () => {
+  it('a board only when two or more options carry a preview (something to compare)', () => {
     expect(isBoard(single)).toBe(false);
-    expect(isBoard({ ...single, options: [{ label: 'A', preview: '<b>a</b>' }, { label: 'B' }] })).toBe(true);
+    expect(isBoard({ ...single, options: [{ label: 'A', preview: '<b>a</b>' }, { label: 'B', preview: '<b>b</b>' }] })).toBe(true);
+    expect(isBoard({ ...single, options: [{ label: 'A', preview: '<b>a</b>' }, { label: 'B' }] })).toBe(false);
     expect(isBoard(text)).toBe(false);
+  });
+
+  it('one preview is drawn once, full width, above plain rows (owner 2026-10-30)', () => {
+    expect(soloPreviewIndex({ ...single, options: [{ label: 'A', preview: '<b>a</b>' }, { label: 'B' }] })).toBe(0);
+    expect(soloPreviewIndex({ ...single, options: [{ label: 'A' }, { label: 'B', preview: '<b>b</b>' }, { label: 'C' }] })).toBe(1);
+    expect(soloPreviewIndex({ ...single, options: [{ label: 'A', preview: 'a' }, { label: 'B', preview: 'b' }] })).toBe(-1);
+    expect(soloPreviewIndex(single)).toBe(-1);
+    expect(soloPreviewIndex(text)).toBe(-1);
   });
 
   it('options are lettered A, B, C, D', () => {

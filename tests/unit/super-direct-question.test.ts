@@ -24,7 +24,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
+import { _resetChatRegistry, getChat, pendingRequestIds, registerChat, type ChatHandle } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
 import { emptySuperState } from '../../src/lib/super/types.js';
 import {
@@ -223,5 +223,99 @@ describe('a child\'s question is the owner\'s from birth', { timeout: 30_000 }, 
     expect(await itemOf('perm-1')).toMatchObject({ kind: 'permission' });
     expect((await itemOf('perm-1'))?.direct).toBeUndefined();
     expect(delivered).toHaveLength(0);
+  });
+
+  // Owner 2026-10-30: "birine cevap verince diğeri de kapanıyor". The registry held one request a
+  // chat, so a second question overwrote the first, its item closed, and its card went with it.
+  it('two questions of one child: both stay open, and answering one leaves the other (either order)', async () => {
+    const h = reg(C1);
+    askQuestion(h, 'req-1', 'First?');
+    await vi.waitFor(async () => expect((await itemOf('req-1'))?.state).not.toBe('done'), W);
+    askQuestion(h, 'req-2', 'Second?');
+    await vi.waitFor(async () => expect(await itemOf('req-2')).toBeDefined(), W);
+    await _superInboxDrained();
+    expect((await itemOf('req-1'))?.state).not.toBe('done');
+    expect((await itemOf('req-2'))?.state).not.toBe('done');
+    expect(pendingRequestIds(getChat(C1))).toEqual(['req-1', 'req-2']);
+
+    // The newest answered: the older one is still asked, the chat still asking.
+    h.answered('req-2');
+    await vi.waitFor(async () => expect((await itemOf('req-2'))?.state).toBe('done'), W);
+    await _superInboxDrained();
+    expect((await itemOf('req-1'))?.state).not.toBe('done');
+    expect(getChat(C1)?.status).toBe('asking');
+    expect(getChat(C1)?.pendingQuestion?.requestId).toBe('req-1');
+
+    // The older one, raised again behind a newer: answering IT leaves the newer alone.
+    askQuestion(h, 'req-3', 'Third?');
+    await vi.waitFor(async () => expect(await itemOf('req-3')).toBeDefined(), W);
+    h.answered('req-1');
+    await vi.waitFor(async () => expect((await itemOf('req-1'))?.state).toBe('done'), W);
+    await _superInboxDrained();
+    expect((await itemOf('req-3'))?.state).not.toBe('done');
+    expect(getChat(C1)?.pendingQuestion?.requestId).toBe('req-3');
+
+    // The last one: the chat works again, nothing stays behind.
+    h.answered('req-3');
+    await vi.waitFor(async () => expect((await itemOf('req-3'))?.state).toBe('done'), W);
+    expect(getChat(C1)?.status).toBe('working');
+    expect(pendingRequestIds(getChat(C1))).toEqual([]);
+  });
+  it('the Super can answer the older of two questions by its id', async () => {
+    const h = reg(C1);
+    askQuestion(h, 'req-1', 'First?');
+    await vi.waitFor(async () => expect(await itemOf('req-1')).toBeDefined(), W);
+    askQuestion(h, 'req-2', 'Second?');
+    await vi.waitFor(async () => expect(await itemOf('req-2')).toBeDefined(), W);
+    const r = await superAnswer(C1, 'req-1');
+    expect(r.status).toBe(200);
+    await _superInboxDrained();
+    expect((await itemOf('req-2'))?.state).not.toBe('done');
+    expect(getChat(C1)?.pendingQuestion?.requestId).toBe('req-2');
+  });
+  it('a turn\'s end clears every waiting request', async () => {
+    const h = reg(C1);
+    askQuestion(h, 'req-1', 'First?');
+    askQuestion(h, 'req-2', 'Second?');
+    h.observe({ type: 'result' });
+    expect(pendingRequestIds(getChat(C1))).toEqual([]);
+  });
+  it('a stale answer closes nothing, and a request the CLI took back leaves (end review, 2026-10-30)', async () => {
+    const h = reg(C1);
+    askQuestion(h, 'req-1', 'First?');
+    askQuestion(h, 'req-2', 'Second?');
+    h.answered('req-2');
+    h.answered('req-2');   // an old card, clicked twice
+    h.answered('nope');
+    expect(getChat(C1)?.status).toBe('asking');
+    expect(pendingRequestIds(getChat(C1))).toEqual(['req-1']);
+    // Cancelled behind a newer request, then the newer answered: nothing dead is promoted.
+    askQuestion(h, 'req-3', 'Third?');
+    h.observe({ type: 'control_cancel_request', request_id: 'req-1' });
+    expect(pendingRequestIds(getChat(C1))).toEqual(['req-3']);
+    h.answered('req-3');
+    expect(getChat(C1)?.status).toBe('working');
+    // The only request cancelled: the chat works again.
+    askQuestion(h, 'req-4', 'Fourth?');
+    h.observe({ type: 'control_cancel_request', request_id: 'req-4' });
+    expect(getChat(C1)?.status).toBe('working');
+    expect(pendingRequestIds(getChat(C1))).toEqual([]);
+  });
+  it('each of a burst keeps its own words on the owner\'s bar', async () => {
+    const h = reg(C1);
+    askQuestion(h, 'req-1', 'First words?');
+    askQuestion(h, 'req-2', 'Second words?');
+    await vi.waitFor(async () => expect(await itemOf('req-2')).toBeDefined(), W);
+    await vi.waitFor(async () => expect(await itemOf('req-1')).toBeDefined(), W);
+    expect((await itemOf('req-1'))?.ownerText).toContain('First words?');
+    expect((await itemOf('req-2'))?.ownerText).toContain('Second words?');
+  });
+  it('an earlier permission stays the owner\'s: `super answer` refuses it by its id', async () => {
+    const h = reg(C1);
+    h.observe({ type: 'control_request', request_id: 'perm-1', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'ls' } } });
+    askQuestion(h, 'req-2', 'Second?');
+    await vi.waitFor(async () => expect(await itemOf('req-2')).toBeDefined(), W);
+    expect((await superAnswer(C1, 'perm-1')).status).toBe(403);
+    expect((await itemOf('perm-1'))?.state).not.toBe('done');
   });
 });

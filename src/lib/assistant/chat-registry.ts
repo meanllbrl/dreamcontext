@@ -101,6 +101,11 @@ export interface ChatEntry {
   status: ChatStatus;
   lastAssistantText: string[];
   pendingQuestion: PendingQuestion | null;
+  /** Requests raised before `pendingQuestion` and still unanswered, oldest first: a chat can hold
+   *  several (the CLI raises parallel tool calls together, and the window keeps every one). Without
+   *  them a second question overwrote the first, whose queue item closed with its card while the
+   *  child still waited on it (owner 2026-10-30). Absent = none. */
+  earlierPending?: PendingQuestion[];
   updatedAt: string;
   /** The last sign of life: a stdout frame, a user frame written, an answer relayed. */
   lastFrameAt: string;
@@ -224,13 +229,15 @@ function emit(e: ChatEntry, from: ChatStatus): void {
 }
 
 const cap = (s: string, n = TEXT_CAP) => (s.length > n ? `${s.slice(0, n)}…` : s);
+const clonePending = (p: PendingQuestion): PendingQuestion => ({
+  ...p, options: [...p.options],
+  ...(p.images ? { images: p.images.map((i) => ({ ...i })) } : {}),
+  ...(p.questions ? { questions: p.questions.map((q) => ({ ...q, options: q.options.map((o) => ({ ...o })) })) } : {}),
+});
 const clone = (e: ChatEntry): ChatEntry => ({
   ...e, lastAssistantText: [...e.lastAssistantText],
-  pendingQuestion: e.pendingQuestion ? {
-    ...e.pendingQuestion, options: [...e.pendingQuestion.options],
-    ...(e.pendingQuestion.images ? { images: e.pendingQuestion.images.map((i) => ({ ...i })) } : {}),
-    ...(e.pendingQuestion.questions ? { questions: e.pendingQuestion.questions.map((q) => ({ ...q, options: q.options.map((o) => ({ ...o })) })) } : {}),
-  } : null,
+  pendingQuestion: e.pendingQuestion ? clonePending(e.pendingQuestion) : null,
+  ...(e.earlierPending ? { earlierPending: e.earlierPending.map(clonePending) } : {}),
   ...(e.ownerWaits ? { ownerWaits: e.ownerWaits.map((w) => ({ ...w })) } : {}),
   ...(e.ownerAnswered ? { ownerAnswered: [...e.ownerAnswered] } : {}),
 });
@@ -386,6 +393,22 @@ export function registryQuestions(raw: readonly unknown[]): RegistryQuestion[] |
   return out;
 }
 
+/** At most this many earlier requests a chat keeps (a batch of parallel tool calls). */
+const MAX_EARLIER_PENDING = 16;
+
+/** The request ids a chat is waiting on: the newest and the ones raised before it. */
+export function pendingRequestIds(e: Pick<ChatEntry, 'pendingQuestion' | 'earlierPending'> | null | undefined): string[] {
+  if (!e) return [];
+  return [...(e.earlierPending ?? []), ...(e.pendingQuestion ? [e.pendingQuestion] : [])].map((p) => p.requestId);
+}
+
+/** One waiting request of a chat by its id, wherever it stands. */
+export function pendingRequest(e: Pick<ChatEntry, 'pendingQuestion' | 'earlierPending'> | null | undefined, requestId: string | undefined): PendingQuestion | null {
+  if (!e || !requestId) return null;
+  if (e.pendingQuestion?.requestId === requestId) return e.pendingQuestion;
+  return e.earlierPending?.find((p) => p.requestId === requestId) ?? null;
+}
+
 /** Read a `control_request{can_use_tool}` into a pending question. Unrecognised shapes
  *  return null (`pattern-unrecognized-shape-returns-null`). */
 export function readPendingQuestion(frame: Record<string, unknown>): PendingQuestion | null {
@@ -449,6 +472,22 @@ export function registerChat(init: { sessionId: string; conversationId: string |
   const alive = () => { e.lastFrameAt = new Date().toISOString(); };
   const syncTools = () => { e.toolsInFlight = openTools.size; };
 
+  /** A request left (answered or cancelled). Others still waiting: the chat keeps asking and the
+   *  listeners close only this one. An id it is not waiting on (a card that outlived its turn)
+   *  closes nothing: it would take every waiting request down with it. */
+  const settlePending = (requestId?: string | null): void => {
+    if (requestId && pendingRequestIds(e).length && !pendingRequest(e, requestId)) return;
+    const earlier = e.earlierPending ?? [];
+    if (requestId && earlier.length) {
+      const rest = earlier.filter((p) => p.requestId !== requestId);
+      if (rest.length === earlier.length) e.pendingQuestion = rest.pop() ?? null;
+      if (rest.length) e.earlierPending = rest; else delete e.earlierPending;
+      if (e.status === 'asking') emit(e, 'asking');
+      return;
+    }
+    if (!requestId || e.pendingQuestion?.requestId === requestId) { e.pendingQuestion = null; delete e.earlierPending; }
+    if (e.status === 'asking') setStatus(e, 'working');
+  };
   return {
     sessionId: init.sessionId,
     observe(frame) {
@@ -468,10 +507,19 @@ export function registerChat(init: { sessionId: string; conversationId: string |
         if (jobs > 0) e.backgroundJobs = jobs; else delete e.backgroundJobs;
         return;
       }
+      // The CLI took a request back itself: it waits on it no more, whoever still shows it.
+      if (frame.type === 'control_cancel_request' && typeof frame.request_id === 'string') {
+        if (pendingRequest(e, frame.request_id)) settlePending(frame.request_id);
+        return;
+      }
       const q = readPendingQuestion(frame);
       if (q) {
         const prevRequestId = e.pendingQuestion?.requestId;
         const wasAsking = e.status === 'asking';
+        // A different request: the one before it still waits for its answer.
+        if (e.pendingQuestion && prevRequestId !== q.requestId) {
+          e.earlierPending = [...(e.earlierPending ?? []).filter((p) => p.requestId !== q.requestId), e.pendingQuestion].slice(-MAX_EARLIER_PENDING);
+        }
         e.pendingQuestion = q;
         setStatus(e, 'asking');
         // Still asking, but about something new: the owner has a different question to see.
@@ -512,6 +560,7 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       }
       if (frame.type === 'result' && topLevel) {
         e.pendingQuestion = null;
+        delete e.earlierPending;
         openTools.clear();
         syncTools();
         e.lastTurn = {
@@ -553,13 +602,13 @@ export function registerChat(init: { sessionId: string; conversationId: string |
     answered(requestId) {
       if (dead) return;
       alive();
-      if (!requestId || e.pendingQuestion?.requestId === requestId) e.pendingQuestion = null;
-      if (e.status === 'asking') setStatus(e, 'working');
+      settlePending(requestId);
     },
     exited() {
       if (dead) return;
       dead = true;
       e.pendingQuestion = null;
+      delete e.earlierPending;
       setStatus(e, 'gone');
       const t = setTimeout(() => {
         deathTimers.delete(init.sessionId);

@@ -10,7 +10,7 @@ import { FullscreenOverlay } from '../../layout/FullscreenOverlay';
 import { agentFileUrl } from '../../../api/client';
 import { useVault } from '../../../context/VaultContext';
 import {
-  allValues, answeredCount, choose, firstUnansweredIndex, isAnswered, isBoard, isComplete,
+  allValues, answeredCount, choose, firstUnansweredIndex, isAnswered, isBoard, isComplete, soloPreviewIndex,
   isSwipeDeck, numberValue, optionLetter, pickFor, resolveAnswers, resolveNotes, setText,
   setValue, textRole, toggleOther, togglePick, unclearMessage, type SurveyPicks,
 } from './surveyAnswers';
@@ -31,9 +31,14 @@ import { useI18n } from '../../../context/I18nContext';
  *
  * WHAT A QUESTION LOOKS LIKE follows what it asks:
  *   • options as rows — the default;
- *   • options with a `preview` — an A/B/C BOARD of tiles, each drawing its preview in the
- *     `dream-html` sandbox (project pictures inlined by `previewImages.ts`), each with a
- *     fullscreen door, because "this one or that one" is answered by LOOKING;
+ *   • two or more options with a `preview` — an A/B/C BOARD of tiles, each drawing its preview
+ *     in the `dream-html` sandbox (project pictures inlined by `previewImages.ts`), each with a
+ *     fullscreen door, because "this one or that one" is answered by LOOKING; an option with
+ *     no preview is a plain row under the tiles;
+ *   • exactly ONE option with a `preview` — nothing to compare: the preview is drawn once across
+ *     the card at the card's type size, its option named above it, plain rows under it, and an
+ *     "Open whole" bar when it is taller than its window (owner 2026-10-30: a half-width tile
+ *     beside an empty "No preview" twin, at the chat's 17 px, could not be read);
  *   • `metadata.source: "swipe"` over two-way questions — a SWIPE DECK: drag right for the
  *     first option, left for the second, ←/→ or the two buttons for the same thing;
  *   • `kind: "text"` — a text box; `kind: "number"` — a slider with its value.
@@ -89,7 +94,11 @@ export function SurveyReceipt({ title, unclear, values }: { title?: string; uncl
   );
 }
 
-export function SurveyCard({ item, session, draftKey, connected }: {
+/** A card the question is about, open elsewhere to be READ (a Super Agent's report card on its
+ *  stage): the card names it in one line, and a click brings it into view. */
+export interface SurveyRead { id: string; title: string; onOpen: () => void }
+
+export function SurveyCard({ item, session, draftKey, connected, reads }: {
   item: PendingQuestion;
   session: SurveyHost & { reconnectSoon?: () => void };
   /** Keep the picks outside the card under this key (a chat pane passes one; hosts that do not
@@ -97,6 +106,9 @@ export function SurveyCard({ item, session, draftKey, connected }: {
   draftKey?: string;
   /** The session's socket is open. `false` turns a tap on Submit into a held answer. */
   connected?: boolean;
+  /** What the question points at to be read (owner 2026-10-30: information is read on its own
+   *  card, the question carries only the decision). */
+  reads?: readonly SurveyRead[];
 }) {
   const { t } = useI18n();
   const questions = item.questions;
@@ -289,6 +301,14 @@ export function SurveyCard({ item, session, draftKey, connected }: {
         </div>
       )}
 
+      {reads?.map((r) => (
+        <button key={r.id} type="button" className="chat-surveycard-read" onClick={r.onOpen} data-card={r.id}>
+          <span className="chat-surveycard-read-label">{t('chat.survey.toRead')}</span>
+          <span className="chat-surveycard-read-title">{r.title}</span>
+          <span className="chat-surveycard-read-go">{t('chat.survey.toReadOpen')} →</span>
+        </button>
+      ))}
+
       <div
         className="chat-surveycard-viewport"
         style={viewportH != null ? { height: viewportH } : undefined}
@@ -468,11 +488,25 @@ function QuestionBody({ q, picks, swipe, onPicks, onDecide, onOther, onCommit, c
     );
   }
 
+  const rows = (indexes: readonly number[], lettered: boolean) => (
+    <OptionRows
+      q={q}
+      indexes={indexes}
+      lettered={lettered}
+      chosen={pick.chosen}
+      onToggle={(label) => onPicks((prev) => togglePick(prev, q, label))}
+    />
+  );
+  const other = <OtherRow q={q} on={!!pick.other} keyHint={q.options.length + 1} onToggle={onOther} />;
+  const plain = q.options.flatMap((o, i) => (o.preview ? [] : [i]));
+
   if (isBoard(q)) {
+    // Tiles for what is compared by looking; an option with nothing to show is a plain row
+    // under them, never an empty "No preview" tile the size of the others (owner 2026-10-30).
     return (
       <>
         <div className="chat-surveycard-board" role={q.multiSelect ? 'group' : 'radiogroup'} aria-label={q.question}>
-          {q.options.map((o, i) => (
+          {q.options.map((o, i) => (o.preview ? (
             <BoardTile
               key={o.label}
               letter={optionLetter(i)}
@@ -483,9 +517,27 @@ function QuestionBody({ q, picks, swipe, onPicks, onDecide, onOther, onCommit, c
               on={pick.chosen.includes(o.label)}
               onToggle={() => onPicks((prev) => togglePick(prev, q, o.label))}
             />
-          ))}
+          ) : null))}
         </div>
-        <OtherRow q={q} on={!!pick.other} keyHint={q.options.length + 1} onToggle={onOther} />
+        <div className="chat-surveycard-options">
+          {plain.length > 0 && rows(plain, true)}
+          {other}
+        </div>
+        {field}
+      </>
+    );
+  }
+
+  const solo = soloPreviewIndex(q);
+  if (solo >= 0) {
+    const o = q.options[solo];
+    return (
+      <>
+        <SoloPreview letter={optionLetter(solo)} label={o.label} preview={o.preview as string} />
+        <div className="chat-surveycard-options">
+          {rows(q.options.map((_, i) => i), true)}
+          {other}
+        </div>
         {field}
       </>
     );
@@ -494,35 +546,100 @@ function QuestionBody({ q, picks, swipe, onPicks, onDecide, onOther, onCommit, c
   return (
     <>
       <div className="chat-surveycard-options">
-        {q.options.map((o, i) => {
-          const on = pick.chosen.includes(o.label);
-          return (
-            <button
-              key={o.label}
-              type="button"
-              className={`chat-surveycard-opt${on ? ' on' : ''}`}
-              aria-pressed={on}
-              onClick={() => onPicks((prev) => togglePick(prev, q, o.label))}
-            >
-              <span className={`chat-surveycard-opt-mark${q.multiSelect ? ' box' : ' radio'}`} aria-hidden>
-                {on ? (q.multiSelect ? '✓' : '●') : ''}
-              </span>
-              <span className="chat-surveycard-opt-body">
-                <span className="chat-surveycard-opt-title">{o.label}</span>
-                {o.description && <span className="chat-surveycard-opt-desc">{o.description}</span>}
-              </span>
-              <span className="chat-surveycard-opt-key" aria-hidden>{i + 1}</span>
-            </button>
-          );
-        })}
-        <OtherRow q={q} on={!!pick.other} keyHint={q.options.length + 1} onToggle={onOther} />
+        {rows(q.options.map((_, i) => i), false)}
+        {other}
       </div>
       {field}
     </>
   );
 }
 
-/** The "Other" row: same shape as an option, so picking it changes no height. */
+/** Options as rows. `lettered`: the card also shows a preview naming options by letter, so each
+ *  row wears its letter where the radio mark would be. */
+function OptionRows({ q, indexes, lettered, chosen, onToggle }: {
+  q: QuestionSpec;
+  indexes: readonly number[];
+  lettered: boolean;
+  chosen: readonly string[];
+  onToggle: (label: string) => void;
+}) {
+  return (
+    <>
+      {indexes.map((i) => {
+        const o = q.options[i];
+        const on = chosen.includes(o.label);
+        return (
+          <button
+            key={o.label}
+            type="button"
+            className={`chat-surveycard-opt${on ? ' on' : ''}`}
+            aria-pressed={on}
+            onClick={() => onToggle(o.label)}
+          >
+            {lettered ? (
+              <span className="chat-surveycard-tile-letter" aria-hidden>{on ? '✓' : optionLetter(i)}</span>
+            ) : (
+              <span className={`chat-surveycard-opt-mark${q.multiSelect ? ' box' : ' radio'}`} aria-hidden>
+                {on ? (q.multiSelect ? '✓' : '●') : ''}
+              </span>
+            )}
+            <span className="chat-surveycard-opt-body">
+              <span className="chat-surveycard-opt-title">{o.label}</span>
+              {o.description && <span className="chat-surveycard-opt-desc">{o.description}</span>}
+            </span>
+            <span className="chat-surveycard-opt-key" aria-hidden>{i + 1}</span>
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+/**
+ * The one preview of a question (`soloPreviewIndex`), read rather than compared: across the
+ * card's width at the card's own type size, headed by the option it belongs to. A preview taller
+ * than its window fades out over an "Open whole" bar that opens it full screen; a lone picture or
+ * clip keeps its own door.
+ */
+function SoloPreview({ letter, label, preview }: { letter: string; label: string; preview: string }) {
+  const { t } = useI18n();
+  const { vault } = useVault();
+  const media = loneMedia(preview);
+  const html = usePreviewHtml(preview);
+  const [full, setFull] = useState(false);
+  const windowRef = useRef<HTMLDivElement | null>(null);
+  const [overflows, setOverflows] = useState(false);
+  useLayoutEffect(() => {
+    const el = windowRef.current;
+    if (!el || media) return;
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 2);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => ro.disconnect();
+  }, [media, html]);
+  return (
+    <div className="chat-surveycard-solo" data-overflows={overflows || undefined}>
+      <div className="chat-surveycard-solo-head">
+        <span className="chat-surveycard-tile-letter" aria-hidden>{letter}</span>
+        <span className="chat-surveycard-solo-label">{label}</span>
+      </div>
+      <div className="chat-surveycard-solo-window" ref={windowRef}>
+        {media
+          ? <MediaPreview kind={media.kind} path={media.src} src={agentFileUrl(vault, media.src, { raw: true })} />
+          : html ? <HtmlView html={html} full={full} onFull={setFull} /> : null}
+      </div>
+      {overflows && (
+        <button type="button" className="chat-surveycard-solo-more" onClick={() => setFull(true)}>
+          <span aria-hidden>⛶</span> {t('chat.survey.openWhole')}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function OtherRow({ q, on, keyHint, onToggle }: {
   q: QuestionSpec;
   on: boolean;
