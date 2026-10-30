@@ -266,17 +266,28 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
     const after = superBriefing(SUPER_ORCHESTRATION_GUIDE_PATH).split('\n');
     const gone = before.filter((l) => !after.includes(l));
     const added = after.filter((l) => !before.includes(l));
+    // The base also carries super-plan-ozeti (merged into the new shell base, 2026-10-30): a start
+    // or approve question carries its summary on the card and in the text. That one line grows.
+    const PLAN_SUMMARY_GONE = 'unseen): the text says in one line that a question waits. Plain words, no inside jargon ("its own copy", not worktree). Say plainly';
+    const PLAN_SUMMARY_ADDED = [
+      'unseen): the text says in one line that a question waits. Asking him to approve or start a plan',
+      "or any work: the card carries what he says yes to (the yes option's `preview`: the problem in",
+      'one sentence, 3-6 short bullets of what will be done, his decisions, cost or risk in money, never',
+      'time) and your text gives the same summary, as long as it needs (the exception to 2-4). Plain words, no inside jargon ("its own copy", not worktree). Say plainly',
+    ];
     expect(gone).toEqual([
+      PLAN_SUMMARY_GONE,
       '- The AI Team (`dreamcontext agents list`): `super team ask <member> "<job>"` hands an approved',
       '  member recurring or field work in its own thread; `super state` shows how it goes.',
       expect.stringContaining('<super-brief rev=16>'),
     ]);
     expect(added).toEqual([
+      ...PLAN_SUMMARY_ADDED,
       '- Your AI Team, when the project has one, is listed under `## Your AI Team` (and in `super state`',
       "  members): check it first for every job; a member's field is that member's job",
       '  (`super team ask <member> "<job>"`, in its own thread), never a sub-agent.',
       expect.stringContaining('<super-brief rev=17>'),
     ]);
-    expect(after.length).toBe(before.length + 1);
+    expect(after.length).toBe(before.length + 1 + PLAN_SUMMARY_ADDED.length - 1);
   });
 });
