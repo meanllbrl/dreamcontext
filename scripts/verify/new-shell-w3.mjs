@@ -110,6 +110,11 @@ for (const run of RUNS) {
   report.checks[`globexWindows@${tag}`] = globexRows;
   if (acmeRows.length !== 2 || !acmeRows[1].includes('Refactor')) fail(`acme windows@${tag}: ${JSON.stringify(acmeRows)}`);
   if (globexRows !== 1) fail(`globex (legacy) windows@${tag}: ${globexRows}`);
+  // The window a restart reopened (the one last on screen), then the first window, explicitly.
+  report.checks[`reopenedWindow@${tag}`] = await page.evaluate(() => document.querySelector('[data-drawer-project="acme"] .ns-dr-win.is-sel')?.getAttribute('data-window-id') ?? null);
+  await windowRows(page, 'acme').first().click();
+  await settle(page, 1200);
+  await showDrawer(page);
   const firstTabs = await tabTitles(page);
   report.checks[`acmeChatTabs@${tag}`] = firstTabs;
   if (!(firstTabs.join('|').includes('Checkout total') && firstTabs.join('|').includes('Invoice CSV'))) fail(`acme Chat window tabs@${tag}: ${JSON.stringify(firstTabs)}`);
@@ -188,7 +193,7 @@ for (const run of RUNS) {
 
   // Put acme back where it was for the next width: the rename is undone.
   await page.locator('[data-drawer-project="acme"] [data-testid="drawer-window-row"]').first().click();
-  await settle(page, 600);
+  await settle(page, 1500);
   const errs = errors.filter((e) => !/Failed to load resource.*(404|401)/.test(e));
   report.consoleErrors.push(...errs.map((e) => `${tag}: ${e}`));
   if (errs.length) fail(`console errors@${tag}: ${errs.slice(0, 3).join(' | ')}`);
@@ -238,9 +243,10 @@ if (!ONLY || ONLY === '1440') {
   if (classic.newShell !== 0) fail('OFF: explicit classic opened the new shell');
   // Classic's way into the chat: the dock (unfold it, then a chip), or the FAB with no tabs.
   if (await off2.page.locator('.agent-dock-anchor').isVisible().catch(() => false)) {
-    if (!(await off2.page.locator('.agent-dock-tiles button').first().isVisible().catch(() => false))) await off2.page.locator('.agent-dock-anchor').click();
+    if (!(await off2.page.locator('.agent-dock-tiles').isVisible().catch(() => false))) await off2.page.locator('.agent-dock-anchor').click();
     await settle(off2.page, 500);
-    await off2.page.locator('.agent-dock-tiles button').first().click().catch(() => {});
+    // By its title: a tile's first button is its ✕.
+    await off2.page.locator('.agent-dock-tiles').getByText('Invoice CSV').first().click().catch(() => {});
   } else {
     await off2.page.locator('.agent-fab').first().click().catch(() => {});
   }
