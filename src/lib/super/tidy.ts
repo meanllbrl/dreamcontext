@@ -1,7 +1,8 @@
 /**
  * The stage tidies itself (owner 2026-10-22: "Kullanılmayan, artık önemli olmayan kartlar
  * kalabalık oluşturuyor"). A floating card or group nobody touched for TIDY_IDLE_MS, or a
- * finished child's card the owner has seen in the agenda, goes to Others. Never closed.
+ * finished child's card the owner has seen in the agenda, goes to Others. From Others a card
+ * closes after OTHERS_IDLE_MS (owner 2026-10-31, the Others sweep below): only the record goes.
  *
  * A picture shown for a child's job (`super open image --for <child>`) goes to Others once that
  * job moves on after it was shown: the super sends the child new work, ends it or hands it on,
@@ -34,8 +35,9 @@
  * card's clock again, so nothing is swept at once after one.
  */
 import { resolve } from 'node:path';
-import { DONE_SETTLE_MS, isMediaKind, type SuperContainer, type SuperState } from './types.js';
+import { DONE_SETTLE_MS, isMediaKind, viewWithout, type SuperContainer, type SuperState } from './types.js';
 import { chatIsBusy, childIsLive, type BusyTest } from './live.js';
+import { retirable } from './room.js';
 
 /**
  * The same clock also ENDS finished jobs (owner 2026-10-27: "buradaki eski sessionlar da
@@ -55,6 +57,11 @@ export const RETIRE_IDLE_MS = 60 * 60_000;
 
 export const TIDY_IDLE_MS = 45 * 60_000;
 export const TIDY_TICK_MS = 60_000;
+/** Others closes a card nobody touched for this long. In-memory clock like the stage's, so a
+ *  restart starts it again; four hours fits a working day of relaunches. */
+export const OTHERS_IDLE_MS = 4 * 60 * 60_000;
+/** Past this many items, the oldest closable one goes as soon as it is TIDY_IDLE_MS old. */
+export const OTHERS_MAX = 12;
 
 /** Verify only: a shorter idle bar, tick and grace (scripts/verify/super-image-group.mjs). */
 function envMs(name: string): number | null {
@@ -64,10 +71,12 @@ function envMs(name: string): number | null {
 const idleMs = () => envMs('DREAMCONTEXT_SUPER_TIDY_IDLE_MS') ?? TIDY_IDLE_MS;
 const tickMs = () => envMs('DREAMCONTEXT_SUPER_TIDY_TICK_MS') ?? TIDY_TICK_MS;
 const graceMs = () => envMs('DREAMCONTEXT_SUPER_TIDY_GRACE_MS') ?? LOOK_GRACE_MS;
+const othersIdleMs = () => envMs('DREAMCONTEXT_SUPER_OTHERS_IDLE_MS') ?? OTHERS_IDLE_MS;
 /** Verify only: a shorter retire bar (scripts/verify/super-retire.mjs). */
 export const retireMs = () => envMs('DREAMCONTEXT_SUPER_RETIRE_MS') ?? RETIRE_IDLE_MS;
 
-interface Mark { sig: string; at: number }
+/** `others`: when this card or group entered Others, so a long stage life counts for nothing there. */
+interface Mark { sig: string; at: number; others?: number }
 /** Per vault: each card's and group's last seen signature and when it last changed. */
 const marks = new Map<string, Map<string, Mark>>();
 /** Per vault: when this process first saw it. Nothing is older than this to the retire clock,
@@ -114,6 +123,14 @@ export function refreshMarks(m: Map<string, Mark>, s: SuperState, now: number): 
     if (!had || had.sig !== sig) m.set(id, { sig, at: now });
   }
   for (const id of [...m.keys()]) if (!sigs.has(id)) m.delete(id);
+  // A card in a group in Others is in Others: only the group's own place says so.
+  const rest = new Set(s.groups.filter((g) => g.place === 'others').flatMap((g) => g.cards));
+  for (const k of [...s.containers, ...s.groups]) {
+    const mark = m.get(k.id);
+    if (!mark) continue;
+    if (k.place !== 'others' && !rest.has(k.id)) delete mark.others;
+    else mark.others ??= now;
+  }
   return m;
 }
 
@@ -238,6 +255,107 @@ export function applyTidy(s: SuperState, ids: readonly string[]): void {
   }
 }
 
+// ─── Others: what nobody needs closes ──────────────────────────────────────────────
+
+/**
+ * A card Others keeps for good reason: what the owner did, a question's pictures, a live job, and
+ * what `retirable` (the room rule, room.ts) keeps. A done child with a process is the retire
+ * clock's: it ends first and its card goes with it. Closing removes only the record's row.
+ */
+function othersKeeps(s: SuperState, c: SuperContainer, busy: BusyTest): boolean {
+  if (c.kind === 'agenda' || c.by === 'auto' || c.pos || c.sizeBy === 'owner' || c.keptBy === 'owner' || c.heldAt !== undefined) return true;
+  if (s.askShows?.some((a) => a.cards.includes(c.id))) return true;
+  if (c.forChild && (childIsLive(s, c.forChild, busy) || s.queue.some((q) => q.sessionId === c.forChild && q.state !== 'done'))) return true;
+  if (c.kind === 'chat') {
+    const ch = Object.prototype.hasOwnProperty.call(s.children, c.ref) ? s.children[c.ref] : undefined;
+    if (ch && (ch.adopted || (ch.row === 'done' && ch.endedAt === undefined))) return true;
+  }
+  return !retirable(s, { ...c, place: 'others' }, busy);
+}
+
+/** The Others items (ungrouped cards, whole groups) to close now. Pure. */
+export function planOthersClose(
+  s: SuperState, touched: (id: string) => number | undefined, now: number, clockFrom = 0, busy: BusyTest = chatIsBusy,
+): string[] {
+  const shown = new Set(shownIds(s));
+  const grouped = new Set(s.groups.flatMap((g) => g.cards));
+  const byId = new Map(s.containers.map((c) => [c.id, c] as const));
+  const last = (ids: readonly string[]) => Math.max(clockFrom, ...ids.map((id) => touched(id) ?? now));
+  const items: Array<{ id: string; at: number; open: boolean }> = [];
+  for (const c of s.containers) {
+    if (c.place !== 'others' || grouped.has(c.id)) continue;
+    items.push({ id: c.id, at: last([c.id]), open: !shown.has(c.id) && !othersKeeps(s, c, busy) });
+  }
+  for (const g of s.groups) {
+    if (g.place !== 'others') continue;
+    const cards = g.cards.map((id) => byId.get(id)).filter((c): c is SuperContainer => !!c);
+    const open = !g.pos && g.keptBy !== 'owner' && cards.every((c) => !shown.has(c.id) && !othersKeeps(s, c, busy));
+    items.push({ id: g.id, at: last([g.id, ...g.cards]), open });
+  }
+  const out = items.filter((it) => it.open && now - it.at >= othersIdleMs()).map((it) => it.id);
+  let over = items.length - out.length - OTHERS_MAX;
+  const spare = items.filter((it) => it.open && !out.includes(it.id) && now - it.at >= idleMs()).sort((a, b) => a.at - b.at);
+  for (const it of spare) { if (over-- <= 0) break; out.push(it.id); }
+  return out;
+}
+
+/** Take them off the record (in place: the caller's locked write). */
+export function applyOthersClose(s: SuperState, ids: readonly string[]): void {
+  const gone = new Set(ids);
+  for (const g of s.groups) if (gone.has(g.id)) for (const id of g.cards) gone.add(id);
+  s.containers = s.containers.filter((c) => !gone.has(c.id));
+  s.groups = s.groups.filter((g) => !gone.has(g.id));
+  s.view = viewWithout(s.view, gone);
+}
+
+// ─── A spent presentation closes ───────────────────────────────────────────────────
+
+/**
+ * The agent's `present` has done its job: every card that belongs to a job shows a job that is
+ * over and whose result the owner saw, and nothing touched it for the idle bar since. His own
+ * view, layout or card arrangement keeps it, as do a question's pictures and a set with no job
+ * behind it (no fact says it is over).
+ */
+export function presentSpent(s: SuperState, touched: (id: string) => number | undefined, now: number, busy: BusyTest = chatIsBusy): boolean {
+  const v = s.view;
+  if (v.mode !== 'present' || v.by === 'owner' || v.layoutBy === 'owner' || v.ask) return false;
+  let jobs = 0;
+  let last = 0;
+  for (const id of v.cards ?? []) {
+    const c = s.containers.find((k) => k.id === id);
+    if (!c) continue;
+    if (c.pos || c.sizeBy === 'owner' || c.by === 'auto' || s.groups.some((g) => g.pos && g.cards.includes(id))) return false;
+    last = Math.max(last, touched(id) ?? now);
+    const job = c.kind === 'chat' || c.kind === 'browser' ? c.ref : c.forChild;
+    if (!job) continue;
+    const ch = Object.prototype.hasOwnProperty.call(s.children, job) ? s.children[job] : undefined;
+    if (!ch) continue;
+    if (childIsLive(s, job, busy) || ch.finishedAt === undefined || ch.seenAt === undefined || ch.seenAt < ch.finishedAt) return false;
+    last = Math.max(last, ch.seenMarkedAt ?? ch.seenAt);
+    jobs++;
+  }
+  return jobs > 0 && now - last >= idleMs();
+}
+
+/** End the presentation; its cards go to Others (a group only when it was shown whole). In
+ *  place. Returns what moved. */
+export function endPresent(s: SuperState): string[] {
+  const shown = shownIds(s);
+  const set = new Set(shown);
+  s.view = { mode: 'float' };
+  const groupOf = new Map(s.groups.flatMap((g) => g.cards.map((id) => [id, g] as const)));
+  const ids = new Set<string>();
+  for (const id of shown) {
+    const c = s.containers.find((k) => k.id === id);
+    if (!c || c.kind === 'agenda' || c.by === 'auto') continue;
+    const g = groupOf.get(id);
+    if (!g) ids.add(id);
+    else if (g.cards.every((k) => set.has(k) && s.containers.find((x) => x.id === k)?.kind !== 'agenda')) ids.add(g.id);
+  }
+  applyTidy(s, [...ids]);
+  return [...ids];
+}
+
 // ─── Retire: finished, told, untouched jobs end ────────────────────────────────────
 
 /** What only the live registry knows about a child's process. */
@@ -329,15 +447,20 @@ export async function tidyOnce(root: string, how: TidyIo, now = Date.now()): Pro
   if (!s.enabled) { vaults.delete(keyOf(root)); return []; }
   const m = refreshMarks(marksOf(root), s, now);
   const touched = (id: string) => m.get(id)?.at;
+  /** Others counts from entry too. Unmarked (it moved in this very write): just now. */
+  const inOthers = (id: string) => { const k = m.get(id); return k?.others === undefined ? undefined : Math.max(k.at, k.others); };
   let moved: string[] = [];
-  if (planTidy(s, touched, now).length) {
+  const from = retireClockFrom(root);
+  if (planTidy(s, touched, now).length || presentSpent(s, touched, now) || planOthersClose(s, inOthers, now, from).length) {
     await how.write(root, (d) => {
       if (!d.enabled) return;
       // What changed since the read above (a card the owner brought back, one the super opened,
       // a picture his look made his) counts as touched before anything moves.
       refreshMarks(m, d, now);
-      moved = planTidy(d, touched, now);
+      const ended = presentSpent(d, touched, now) ? endPresent(d) : [];
+      moved = [...ended, ...planTidy(d, touched, now).filter((id) => !ended.includes(id))];
       applyTidy(d, moved);
+      applyOthersClose(d, planOthersClose(d, inOthers, now, from));
       // Its own move is not a touch: the moved cards keep their clock (the retire bar reads it).
       const sigs = signatures(d);
       for (const id of moved) { const had = m.get(id); const sig = sigs.get(id); if (had && sig) had.sig = sig; }
@@ -345,7 +468,7 @@ export async function tidyOnce(root: string, how: TidyIo, now = Date.now()): Pro
     if (how.retire) s = await how.read(root);
   }
   if (how.retire && s.enabled) {
-    const due = planRetire(s, touched, (sid) => how.retire!.live(root, sid), now, retireClockFrom(root));
+    const due = planRetire(s, touched, (sid) => how.retire!.live(root, sid), now, from);
     // A failed end is logged and retried next tick; it never stops this vault's tidying.
     if (due.length) await how.retire.end(root, due).catch((err: unknown) => { console.warn(`[super] ${root}: ending finished children failed: ${(err as Error)?.message ?? err}`); });
   }

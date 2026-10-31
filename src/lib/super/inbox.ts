@@ -5,7 +5,7 @@ import { wrapUntrusted } from '../assistant/autonomy.js';
 import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
 import { armTeamJobWatches, awaitedTeamItem, staleTeamItem, teamItemLines, teamLiveRows } from './team.js';
-import { markPadTold, padNotice, settlePad } from './pad.js';
+import { closeAnswered, markPadTold, padNotice, settlePad } from './pad.js';
 import { superRestoreHold } from './restore.js';
 import { makeRoom } from './room.js';
 import { bringLiveCard, floatLiveChildren } from './live.js';
@@ -732,8 +732,10 @@ async function closeOpenAsks(key: string, sessionId: string, told: readonly stri
   }
   await writeSuper(key, (s) => {
     for (const q of s.queue) {
-      if (q.kind === 'ask') q.state = 'done';
-      else if (ids.has(q.id) && q.state === 'pending') { q.state = inbox ? 'delivered' : q.kind === 'owner' ? 'escalated' : 'done'; q.batch = batch; }
+      if (q.kind === 'ask') {
+        if (q.state !== 'done') closeAnswered(s, q.ask?.questions[0]?.question ?? q.ownerText ?? '');
+        q.state = 'done';
+      } else if (ids.has(q.id) && q.state === 'pending') { q.state = inbox ? 'delivered' : q.kind === 'owner' ? 'escalated' : 'done'; q.batch = batch; }
     }
     if (s.held) s.held = s.held.filter((h) => !ids.has(h.item));
     markPadTold(s, padIds);

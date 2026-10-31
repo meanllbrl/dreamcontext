@@ -16,7 +16,7 @@ import {
 import type { TermStatus } from './agentSession';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { MAC_CLOSE_HANDED_OVER, MAC_CLOSE_SIGNED_OUT, MAC_CLOSE_TAKEN_OVER, MAC_MODE_ENDED_EVENT, REATTACH_EVICT, REATTACH_PASSIVE } from '../handsfree/macContract';
-import { runStatusFrom, startSubAgentRun, bashCommandFor, type SubAgentRun } from './chat/chatEntities';
+import { agentRunRunning, runStatusFrom, startSubAgentRun, bashCommandFor, type SubAgentRun } from './chat/chatEntities';
 import * as queue from './chat/chatQueue';
 import { dropBrowserLive, pushBrowserFrame } from './chat/browserLiveStore';
 import { createNotifyCoalescer } from './chat/notifyCoalescer';
@@ -226,7 +226,7 @@ export type AssistantCommandHandler = (cmd: { id: string; verb: string; args: Re
  *  the process and turns the tab dormant, run right after the answer is on the wire. */
 export type ParkVerdict =
   | { ok: true; commit: () => void }
-  | { ok: false; error: 'busy' | 'asking' | 'background' | 'focused' | 'refused' };
+  | { ok: false; error: 'busy' | 'asking' | 'background' | 'queued' | 'focused' | 'refused' };
 /** `focusGraceMs`: how recently looked-at or typed-in counts as the owner's, as the server
  *  applies it (2 min; a verify run shortens it), capped at 2 min here. */
 export type ParkHandler = (req: { reason: string; focusGraceMs: number; end?: boolean; force?: boolean }) => ParkVerdict;
@@ -499,10 +499,10 @@ export interface ChatSession {
   busy: boolean;
   asking: boolean;
   attention: boolean;
-  /** Agents this conversation started (sub-agents, headless teammates) are still running.
-   *  Only the pane can see them all (teammates come from a poll), so it reports this through
-   *  {@link ChatSession.setAgentsWorking}; the tab and dock read it as `working`. */
-  agentsWorking: boolean;
+  /** Agents this conversation started (sub-agents, headless teammates) are still running. Read
+   *  from the model at every read, so it cannot outlive the runs; only teammates (a poll the pane
+   *  owns) arrive through {@link ChatSession.setAgentsWorking}. */
+  readonly agentsWorking: boolean;
   /** Not on screen: garaged, or its pane's overlay folded (AgentSurface's placement pass sets it).
    *  Turning it OFF fires the subscribers once, so a pane that held its renders while hidden
    *  (chat/hiddenRenderGate.ts) catches up before it paints. */
@@ -675,6 +675,8 @@ export interface ChatSession {
   /** Something a park would lose: a turn, a card waiting, agents this conversation started,
    *  a background shell, or queued messages not sent yet. */
   hasLiveWork: () => boolean;
+  /** What a park refusal names while {@link hasLiveWork}. */
+  liveWorkError: () => 'asking' | 'busy' | 'background' | 'queued';
   /** The Super Agent's window-side verbs (`delegate`, `answer`). Only the super chat gets one;
    *  without it every `super_command` answers `no_window`. */
   setSuperHandler: (fn: SuperCommandHandler | null) => void;
@@ -1302,6 +1304,8 @@ export function createChatSession(
   const onPageVisibility = () => sendVisibility();
   if (isMacPhoneSurface() && typeof document !== 'undefined') document.addEventListener('visibilitychange', onPageVisibility);
 
+  /** The pane's teammate poll says one runs (see `agentsWorking`). */
+  let teammatesWorking = false;
   const session: ChatSession = {
     id, bypass, kind: 'chat', claudeId, container,
     status: 'connecting',
@@ -1314,7 +1318,8 @@ export function createChatSession(
     // running before any frame arrives, so the working indicator, the dock chip and the
     // "don't inject into a busy session" guards must all see it (a spawn with no prompt
     // stays idle — it is genuinely waiting for the user).
-    busy: serverSubmitsPrompt, asking: false, attention: false, agentsWorking: false, minimized: false,
+    busy: serverSubmitsPrompt, asking: false, attention: false, minimized: false,
+    get agentsWorking() { return teammatesWorking || agentRunRunning(conv.subAgents); },
     superChild: false,
     capabilities: [],
     model,
@@ -1363,6 +1368,7 @@ export function createChatSession(
     setParkHandler,
     markFocus,
     hasLiveWork,
+    liveWorkError,
     setSuperHandler,
     onSuper,
     superDigest: null,
@@ -2862,10 +2868,16 @@ export function createChatSession(
       || conv.queued.length > 0
       || conv.subAgents.some((r) => r.status === 'running');
   }
+  /** Why a park is refused. A waiting composer row is no background job: said as what it is. */
+  function liveWorkError(): 'asking' | 'busy' | 'background' | 'queued' {
+    if (session.asking) return 'asking';
+    if (session.busy) return 'busy';
+    return session.agentsWorking || conv.subAgents.some((r) => r.status === 'running') ? 'background' : 'queued';
+  }
   function runPark(req: { id: string; reason: string; focusGraceMs?: number; end?: boolean; force?: boolean }): void {
     let verdict: ParkVerdict;
     // `force` (`super end --force`, only on the owner's word): live work does not refuse it.
-    if (!req.force && hasLiveWork()) verdict = { ok: false, error: session.asking ? 'asking' : session.busy ? 'busy' : 'background' };
+    if (!req.force && hasLiveWork()) verdict = { ok: false, error: liveWorkError() };
     else {
       try {
         verdict = parkHandler
@@ -3255,8 +3267,8 @@ export function createChatSession(
   }
 
   function setAgentsWorking(working: boolean): void {
-    if (session.agentsWorking === working || disposed) return;
-    session.agentsWorking = working;
+    if (teammatesWorking === working || disposed) return;
+    teammatesWorking = working;
     // Nothing in the transcript changed, so no render flush: only the surface's tab and dock
     // chip turn on this.
     notify();

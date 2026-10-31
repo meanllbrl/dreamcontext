@@ -807,6 +807,11 @@ export function isAgentRun(run: SubAgentRun): boolean {
   return isDispatchedAgent(run) || isHeadlessAgentShell(run) || isTeammateRun(run);
 }
 
+/** Is any agent of this conversation still running? (A plain shell is not "the work".) */
+export function agentRunRunning(runs: readonly SubAgentRun[]): boolean {
+  return runs.some((r) => isAgentRun(r) && r.status === 'running');
+}
+
 /** A plain shell command the CLI is running in the background — the complement of
  *  {@link isAgentRun}. These get their own surface (`BackgroundShellsTray`) rather than a row
  *  in the sub-agent card: a shell has no sidechain transcript to drill into, but it does have

@@ -20,7 +20,7 @@ import {
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
   remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem, MIN_TOOL_RUN,
   countCards, headForCards, noticeCut, WINDOW_TAIL_CARDS, WINDOW_STEP_CARDS, WINDOW_MAX_ENTRIES,
-  isAgentRun, isHeadlessAgentShell, isTeammateRun,
+  isHeadlessAgentShell, isTeammateRun,
   type SubAgentRun, type ScrollIntent, type RunSegment, type CardWindow,
 } from './chat/chatEntities';
 import { isDreamcontextCommand } from './chat/dreamCommand';
@@ -1056,8 +1056,10 @@ export function ChatPane({
   // The tab and dock chip only see the turn; while any agent this chat started is still
   // running, the work is not done, so they keep reading `working`. Plain background shells
   // (a dev server) do not count: they can run for hours without being "the work".
-  const agentsWorking = agentRuns.some((r) => isAgentRun(r) && r.status === 'running');
-  useEffect(() => { session.setAgentsWorking(agentsWorking); }, [session, agentsWorking]);
+  // Only teammates: the session reads its own runs itself (agentRunRunning), so nothing here can
+  // leave it saying `working` after they end.
+  const teammatesWorking = agentRuns.some((r) => isTeammateRun(r) && r.status === 'running');
+  useEffect(() => { session.setAgentsWorking(teammatesWorking); }, [session, teammatesWorking]);
   const questMode = mode === 'plan' || mode === 'develop' ? mode : null;
   const shelfProgress = shelf.progress;
   const quest = useMemo(

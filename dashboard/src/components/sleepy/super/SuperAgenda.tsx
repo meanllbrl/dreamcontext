@@ -52,7 +52,8 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
 }) {
   const { t } = useI18n();
   const sections = superNotepad(state, look);
-  const countOf = (sec: string) => sections[sec as keyof typeof sections].length + (sec === 'waiting' ? taskRows.length : 0);
+  // A folded Now line no longer counts as running; a Waiting one still waits on him, so it does.
+  const countOf = (sec: string) => sections[sec as keyof typeof sections].filter((r) => sec !== 'now' || !r.stale).length + (sec === 'waiting' ? taskRows.length : 0);
 
   if (variant === 'tile') {
     return (
@@ -79,6 +80,66 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   };
   const clickable = (r: AgendaRow) => !!r.item && (showsChild(r) ? !!r.sid && canShowChild(r.sid) : true);
 
+  const rowOf = (r: AgendaRow) => {
+    const body = (
+        <>
+          <span className="super-agenda-dot" aria-hidden />
+          <span className="super-agenda-name" title={r.text}>{r.text}</span>
+          <span className="super-agenda-meta">
+            {r.chip && <span className="super-agenda-chip" data-kind={r.chip}>{t(`super.jobs.chip.${r.chip}`)}</span>}
+            {r.auto && <span className="super-agenda-chip" data-kind="auto" data-testid="super-agenda-auto">{t('super.agenda.auto')}</span>}
+            {r.stale && <span className="super-agenda-chip" data-kind="stale" data-testid="super-agenda-stale" title={t('super.agenda.staleTitle')}>{t('super.agenda.stale')}</span>}
+            {r.note && onMoveNote && (r.section !== 'waiting' || r.stale) && (
+              <button
+                type="button"
+                className="super-agenda-move"
+                data-testid="super-agenda-move"
+                data-to={r.section === 'done' ? 'now' : 'done'}
+                title={t(r.section === 'done' ? 'super.agenda.moveBackTitle' : 'super.agenda.moveDoneTitle')}
+                aria-label={t(r.section === 'done' ? 'super.agenda.moveBackTitle' : 'super.agenda.moveDoneTitle')}
+                onClick={() => onMoveNote(r.note as string, r.section === 'done' ? 'now' : 'done')}
+              >
+                {t(r.section === 'done' ? 'super.agenda.moveBack' : 'super.agenda.moveDone')}
+              </button>
+            )}
+          </span>
+          {r.line && <span className="super-agenda-line" title={r.line}>{r.line}</span>}
+        </>
+      );
+      return (
+        <div
+          key={r.key}
+          className="super-agenda-row"
+          data-row={r.key}
+          data-testid="super-agenda-row"
+          data-state={r.section}
+          data-kind={r.note ? 'note' : 'question'}
+          data-chip={r.chip ?? undefined}
+          data-about={onWriteAbout ? 'true' : undefined}
+          data-auto={r.auto ? 'true' : undefined}
+          data-stale={r.stale ? 'true' : undefined}
+        >
+          {clickable(r)
+            ? <button type="button" className="super-agenda-row-btn" onClick={() => press(r)}>{body}</button>
+            : <div className="super-agenda-row-btn">{body}</div>}
+          {onWriteAbout && (
+            <button
+              type="button"
+              className="super-agenda-about"
+              data-testid="super-agenda-about"
+              aria-label={t('super.agenda.writeAbout')}
+              title={t('super.agenda.writeAbout')}
+              onClick={() => onWriteAbout(r)}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+                <path d="M6.5 4 2.5 8l4 4M3 8h6.5a4 4 0 0 1 4 4v1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          )}
+        </div>
+      );
+  };
+
   return (
     <div className="super-agenda" data-testid="super-agenda" data-variant="full" role="region" aria-label={t('super.agenda.label')}>
       {AGENDA_SECTIONS.map((sec) => {
@@ -90,65 +151,14 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
               <span className="super-agenda-n" data-testid={`super-agenda-count-${sec}`}>{countOf(sec)}</span>
             </h3>
             {countOf(sec) === 0 && <div className="super-agenda-empty">{t(`super.agenda.empty.${sec}`)}</div>}
-            {rows.map((r) => {
-              const body = (
-                <>
-                  <span className="super-agenda-dot" aria-hidden />
-                  <span className="super-agenda-name" title={r.text}>{r.text}</span>
-                  <span className="super-agenda-meta">
-                    {r.chip && <span className="super-agenda-chip" data-kind={r.chip}>{t(`super.jobs.chip.${r.chip}`)}</span>}
-                    {r.auto && <span className="super-agenda-chip" data-kind="auto" data-testid="super-agenda-auto">{t('super.agenda.auto')}</span>}
-                    {r.stale && <span className="super-agenda-chip" data-kind="stale" data-testid="super-agenda-stale" title={t('super.agenda.staleTitle')}>{t('super.agenda.stale')}</span>}
-                    {r.note && onMoveNote && (r.section === 'now' || r.section === 'done') && (
-                      <button
-                        type="button"
-                        className="super-agenda-move"
-                        data-testid="super-agenda-move"
-                        data-to={r.section === 'now' ? 'done' : 'now'}
-                        title={t(r.section === 'now' ? 'super.agenda.moveDoneTitle' : 'super.agenda.moveBackTitle')}
-                        aria-label={t(r.section === 'now' ? 'super.agenda.moveDoneTitle' : 'super.agenda.moveBackTitle')}
-                        onClick={() => onMoveNote(r.note as string, r.section === 'now' ? 'done' : 'now')}
-                      >
-                        {t(r.section === 'now' ? 'super.agenda.moveDone' : 'super.agenda.moveBack')}
-                      </button>
-                    )}
-                  </span>
-                  {r.line && <span className="super-agenda-line" title={r.line}>{r.line}</span>}
-                </>
-              );
-              return (
-                <div
-                  key={r.key}
-                  className="super-agenda-row"
-                  data-row={r.key}
-                  data-testid="super-agenda-row"
-                  data-state={r.section}
-                  data-kind={r.note ? 'note' : 'question'}
-                  data-chip={r.chip ?? undefined}
-                  data-about={onWriteAbout ? 'true' : undefined}
-                  data-auto={r.auto ? 'true' : undefined}
-                  data-stale={r.stale ? 'true' : undefined}
-                >
-                  {clickable(r)
-                    ? <button type="button" className="super-agenda-row-btn" onClick={() => press(r)}>{body}</button>
-                    : <div className="super-agenda-row-btn">{body}</div>}
-                  {onWriteAbout && (
-                    <button
-                      type="button"
-                      className="super-agenda-about"
-                      data-testid="super-agenda-about"
-                      aria-label={t('super.agenda.writeAbout')}
-                      title={t('super.agenda.writeAbout')}
-                      onClick={() => onWriteAbout(r)}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
-                        <path d="M6.5 4 2.5 8l4 4M3 8h6.5a4 4 0 0 1 4 4v1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+            {rows.filter((r) => !r.stale).map(rowOf)}
+            {rows.some((r) => r.stale) && (
+              // A line nothing keeps true rests folded: still here, still closable, never deleted.
+              <details className="super-agenda-fold" data-testid="super-agenda-stale-fold">
+                <summary>{tr(t, 'super.agenda.fold', 'Old lines')} · {rows.filter((r) => r.stale).length}</summary>
+                {rows.filter((r) => r.stale).map(rowOf)}
+              </details>
+            )}
             {sec === 'waiting' && taskRows.map((r) => (
               <div key={r.id} className="super-agenda-row" data-row={r.id} data-testid="super-agenda-row" data-state="waiting" data-kind="task" data-chip={r.kind}>
                 <button type="button" className="super-agenda-row-btn" onClick={() => onOpenTask?.(r.ref)} title={tr(t, 'super.agenda.openTask', 'Open the task')}>

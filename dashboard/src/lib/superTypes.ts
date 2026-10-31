@@ -90,6 +90,7 @@ export interface SuperGroup {
   place: ContainerPlace;
   /** The owner's drop, like a card's. */
   pos?: { x: number; y: number };
+  keptBy?: 'owner';
 }
 
 export const GROUP_ID_RE = /^grp-[a-z0-9-]{1,36}$/;
@@ -488,7 +489,7 @@ export interface SuperPadItem {
   /** The job (child session id) the line follows; `by` who last moved it when not the super. */
   for?: string; by?: 'auto' | 'owner'; why?: PadAutoWhy; toldAt?: number;
 }
-export const PAD_AUTO_WHY = ['done', 'ended', 'gone'] as const;
+export const PAD_AUTO_WHY = ['done', 'ended', 'gone', 'answered'] as const;
 export type PadAutoWhy = typeof PAD_AUTO_WHY[number];
 /** A Now line with no job behind it, unchanged this long, is stale (the card flags it). */
 export const PAD_STALE_MS = 2 * 60 * 60 * 1000;
@@ -676,7 +677,7 @@ export function normalizeGroups(containers: readonly SuperContainer[], raw: unkn
       continue;
     }
     for (const id of cards) taken.add(id);
-    groups.push({ id: g.id, name: cleanGroupName(g.name) || nextGroupName(groups), cards, place, ...(pos ? { pos } : {}) });
+    groups.push({ id: g.id, name: cleanGroupName(g.name) || nextGroupName(groups), cards, place, ...(pos ? { pos } : {}), ...(g.keptBy === 'owner' ? { keptBy: 'owner' as const } : {}) });
   }
   return { containers: out, groups };
 }

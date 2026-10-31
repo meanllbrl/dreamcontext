@@ -8,8 +8,10 @@
  *   Now when the job works again. A line the owner moved by hand (`by: 'owner'`) is never moved
  *   by the server again; a line the super moved itself (`note done`) is its own.
  * - A Now line with NO job behind it that has not changed for PAD_STALE_MS is stale, and so is
- *   such a Waiting line left from an earlier day: `super state` flags it and the next event
- *   batch (or recap / handover turn) asks the super to keep it or close it.
+ *   such a Waiting line left from an earlier day: the card folds it (nothing is deleted, the owner
+ *   closes it there), `super state` flags it and the super is told ONCE to keep or close it.
+ * - A line about a job replaces its unlinked twin; an answered question closes the Waiting line
+ *   about it (`padAbout`).
  * - A new day: a Done line from before today drops off by itself (owner 2026-10-28: yesterday's
  *   results still sat on the card as today's). A line the owner moved by hand stays.
  *
@@ -85,17 +87,19 @@ export function settlePad(s: SuperState, now = Date.now()): boolean {
   return true;
 }
 
-/** What the super must hear about its pad in the next event batch: each auto move not yet told,
- *  and each stale line not told within the last PAD_STALE_MS. Empty = nothing. */
+/** What the super must hear about its pad in the next event batch: each auto move and each stale
+ *  line not yet told. Once: a stale line it left alone rests folded on the card. Empty = nothing. */
 export function padNotice(s: Pick<SuperState, 'pad'>, now = Date.now()): { lines: string[]; ids: string[] } {
   const lines: string[] = [];
   const ids: string[] = [];
   for (const p of s.pad ?? []) {
     const told = p.toldAt !== undefined && p.toldAt >= p.at;
     if (p.by === 'auto' && p.section === 'done' && !told) {
-      lines.push(`- note=${p.id} moved Now -> Done by itself: its job (child=${p.for}) is ${p.why}. Line: "${p.text}"`);
+      lines.push(p.why === 'answered'
+        ? `- note=${p.id} moved Waiting -> Done by itself: he answered the question it is about. Line: "${p.text}"`
+        : `- note=${p.id} moved Now -> Done by itself: its job (child=${p.for}) is ${p.why}. Line: "${p.text}"`);
       ids.push(p.id);
-    } else if (padStale(p, now) && !(p.toldAt !== undefined && now - p.toldAt < PAD_STALE_MS)) {
+    } else if (padStale(p, now) && !told) {
       lines.push(`- note=${p.id} has stood in ${p.section === 'now' ? 'Now' : 'Waiting'} unchanged for ${Math.floor((now - p.at) / 60_000)} min and nothing moves it by itself. Line: "${p.text}"`);
       ids.push(p.id);
     }
@@ -109,6 +113,36 @@ export function padNotice(s: Pick<SuperState, 'pad'>, now = Date.now()): { lines
     ],
     ids,
   };
+}
+
+/** The words that carry a line's meaning: no digits, no short fillers. */
+function padWords(text: string): Set<string> {
+  return new Set(text.toLocaleLowerCase('tr').split(/[^\p{L}]+/u).filter((w) => w.length >= 4));
+}
+
+/** Do these two say the same thing? At least 3 shared words, 60 % of the shorter one's. */
+export function padAbout(a: string, b: string): boolean {
+  const x = padWords(a);
+  const y = padWords(b);
+  const shared = [...x].filter((w) => y.has(w)).length;
+  return shared >= 3 && shared >= 0.6 * Math.min(x.size, y.size);
+}
+
+/** A line the super wrote freehand and nothing else keeps true. */
+const unlinked = (p: SuperPadItem) => !p.for && p.by !== 'owner';
+
+/** A job's line arrives: its older unlinked twin in Now goes, the new line says the same. A
+ *  Waiting line is his and a stale one rests folded: neither is deleted on a likeness. Pure. */
+export function withoutTwins(pad: readonly SuperPadItem[], text: string, now = Date.now()): SuperPadItem[] {
+  return pad.filter((p) => !(unlinked(p) && p.section === 'now' && !padStale(p, now) && padAbout(p.text, text)));
+}
+
+/** He answered this question: the Waiting line about it moves to Done (seen on the card, told to
+ *  the super, reversible). Mutates `s`. */
+export function closeAnswered(s: SuperState, question: string, now = Date.now()): void {
+  if (!s.pad || !question) return;
+  s.pad = s.pad.map((p) => (unlinked(p) && p.section === 'waiting' && padAbout(p.text, question)
+    ? { ...p, section: 'done' as const, at: now, by: 'auto' as const, why: 'answered' as const } : p));
 }
 
 /** Stamp the lines a delivered batch told the super about. Mutates `s`. */
