@@ -85,6 +85,10 @@ export interface SuperSurfaceProps {
   onStageReady: (stage: { origin: DOMRect; plan: StagePlan }) => void;
   /** O11: the owner dropped a card on the centre (or pressed its "Ask about this"). */
   onAskAbout: (id: string, title: string) => void;
+  /** A card chip in a Super message was clicked (owner 2026-10-31): bring this card or group into
+   *  view the way a click on it does, then say so with `onFocusCardDone`. */
+  focusCard?: string | null;
+  onFocusCardDone?: () => void;
   /** Inspect picked an element in a web card's page (`page`: its address as the dev server knows it). */
   onPickElement?: (id: string, pick: WebPick, page: string) => void;
   /** Comment on words selected on a card: they go to the Super Agent's composer as a chip. */
@@ -561,6 +565,18 @@ export function SuperSurface(props: SuperSurfaceProps) {
     },
     onFullscreen: (id: string, subject: CardFullscreen) => setFull({ id, subject }),
   };
+  // A card chip clicked in the chat: the same as a click on the card (side by side) or its group's
+  // tile (the group's panel). A card gone meanwhile does nothing.
+  const focusCardDone = props.onFocusCardDone;
+  const focusCard = props.focusCard;
+  const focusRef = useRef({ side: actions.onSideBySide, group: openFromTile });
+  focusRef.current = { side: actions.onSideBySide, group: openFromTile };
+  useEffect(() => {
+    if (!focusCard) return;
+    if (byId.has(focusCard)) focusRef.current.side(focusCard);
+    else if (groupsById.has(focusCard)) focusRef.current.group(focusCard);
+    focusCardDone?.();
+  }, [focusCard, focusCardDone, byId, groupsById]);
   /**
    * Where a card grows (owner 2026-10-29, "alan var mı?"): a card he placed, or one he grows by its
    * corner (`pin`), grows from its inner top corner where it is drawn; an auto card sized from the

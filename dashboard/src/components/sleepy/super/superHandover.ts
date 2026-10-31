@@ -12,11 +12,13 @@
  *  - how `super answer` maps the agent's choices onto the child's AskUserQuestion;
  *  - which window verbs the browser executor refuses while handed over (D4b's re-check).
  *
- * React-free and DOM-free: imports only the window's mirror of the server types.
+ * React-free and DOM-free: imports only the window's mirror of the server types (and the card
+ * mention's words, cardMention.ts).
  */
 import {
   ABOUT_AGENDA_RE, ABOUT_CARD_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
 } from '../../../lib/superTypes';
+import { cardMentionText } from '../../../lib/cardMention';
 
 // ─── Who is the Super Agent ────────────────────────────────────────────────────
 
@@ -1188,19 +1190,17 @@ export function lastLinesOf(items: ReadonlyArray<{ kind: string; text?: string }
   return [];
 }
 
-/** The longest card title an `@card` reference carries (§0 C-minors). */
-export const CARD_REF_TITLE_MAX = 60;
+export { CARD_REF_TITLE_MAX } from '../../../lib/cardMention';
 
 /**
- * O11: what dropping a card on the centre puts into the Super Agent's draft —
+ * O11: the words dropping a card on the centre stands for in the Super Agent's message —
  * `@card:<id> “<title>” `, one line, the title clipped and stripped of control characters and
- * quotes. A space goes first when the draft does not end in whitespace.
+ * quotes. A space goes first when the draft does not end in whitespace. The composer draws it as a
+ * chip (owner 2026-10-31); a send writes exactly these words where the chip stood.
  */
 export function cardReference(id: string, title: string, draft: string): string {
-  const clean = title.replace(/[\u0000-\u001f\u007f“”"]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const clipped = clean.length > CARD_REF_TITLE_MAX ? `${clean.slice(0, CARD_REF_TITLE_MAX - 1).trimEnd()}…` : clean;
   const lead = draft && !/\s$/.test(draft) ? ' ' : '';
-  return `${lead}@card:${id} “${clipped}” `;
+  return `${lead}${cardMentionText(id, title)} `;
 }
 
 /** A one-line view of a permission's tool input — the command, the path, or compact JSON. */

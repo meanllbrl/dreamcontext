@@ -2410,3 +2410,7 @@ video.chat-msg-user-media-el { cursor: default; }
 }
 .chat-cmp-hl-img.is-sent:hover { background: color-mix(in srgb, var(--color-accent) 24%, transparent); }
 .chat-cmp-hl-img.is-sent:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+/* A stage card he named that is no longer on the stage (owner 2026-10-31): its title stays, quieter,
+   and nothing to press. */
+.chat-cmp-hl-img.is-sent[data-state='gone'] { cursor: default; opacity: 0.62; }
+.chat-cmp-hl-img.is-sent[data-state='gone']:hover { background: color-mix(in srgb, var(--color-accent) 14%, transparent); }

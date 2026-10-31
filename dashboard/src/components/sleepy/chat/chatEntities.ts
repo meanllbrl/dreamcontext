@@ -6,6 +6,7 @@ import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { readScopedRaw, writeScopedRaw } from '../../../lib/scopedStorage';
 import type { Attachment } from './composerScratch';
 import { refLabel } from './composerRefs';
+import { cardMentions } from '../../../lib/cardMention';
 
 /**
  * Pure, framework-light logic shared by the Agent Chat (beta) redesign's card
@@ -2556,6 +2557,31 @@ export function pictureRuns(text: string): PictureRun[] | null {
     runs.push({ kind: 'text', text: p.words ? ` ${p.words}${tail}` : tail });
   });
   return runs.filter((r) => r.kind === 'picture' || r.text);
+}
+
+/** One run of a sent bubble drawn with chips: his words, a picture, or a stage card he named. */
+export type InlineRun = PictureRun | { kind: 'card'; id: string; title: string };
+
+/**
+ * A sent message's chips where they stood (owner 2026-10-31: a card dropped on the Super chat reads
+ * as its chip in the bubble too, never `@card:<id> “<title>”`): {@link pictureRuns}, then each
+ * card mention in his words split out as a card run. Null when there is neither.
+ */
+export function inlineRuns(text: string): InlineRun[] | null {
+  const pics = pictureRuns(text);
+  if (!pics && !cardMentions(text).length) return null;
+  const out: InlineRun[] = [];
+  for (const r of pics ?? [{ kind: 'text' as const, text }]) {
+    if (r.kind !== 'text') { out.push(r); continue; }
+    let pos = 0;
+    for (const m of cardMentions(r.text)) {
+      if (m.start > pos) out.push({ kind: 'text', text: r.text.slice(pos, m.start) });
+      out.push({ kind: 'card', id: m.id, title: m.title });
+      pos = m.end;
+    }
+    if (pos < r.text.length) out.push({ kind: 'text', text: r.text.slice(pos) });
+  }
+  return out;
 }
 
 /**

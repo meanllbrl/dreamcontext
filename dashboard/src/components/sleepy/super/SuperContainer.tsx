@@ -54,9 +54,9 @@ export function fullscreenOf(c: Container, title: string, allowedHref: string | 
   return null;
 }
 
-export const KIND_GLYPH: Record<Container['kind'], string> = {
-  chat: '◆', insight: '◔', task: '☐', knowledge: '¶', whiteboard: '▦', board: '▦', web: '◎', image: '▣', pdf: '▥', video: '▶', browser: '◉', team: '◈', agenda: '☰',
-};
+import { KIND_GLYPH } from '../../../lib/cardMention';
+
+export { KIND_GLYPH };
 
 /** A whiteboard's board file, from its slug (`whiteboards/<slug>/<slug>.excalidraw.md`). */
 export function whiteboardPath(slug: string): string | null {

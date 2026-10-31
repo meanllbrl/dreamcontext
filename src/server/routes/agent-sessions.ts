@@ -148,7 +148,7 @@ const EFFORT_LEVELS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max
  *  client's caps, never trusted. */
 export interface SavedDraft {
   text: string;
-  chips: Array<{ kind: 'image' | 'file' | 'folder' | 'ref' | 'element' | 'about'; name: string; path?: string; text?: string; inline?: true; chip?: string; tid?: string }>;
+  chips: Array<{ kind: 'image' | 'file' | 'folder' | 'ref' | 'element' | 'about' | 'card'; name: string; path?: string; text?: string; inline?: true; chip?: string; tid?: string; cardKind?: string; url?: string }>;
   quote: string | null;
   savedAt: number;
 }
@@ -162,7 +162,10 @@ const MAX_CHIP_NAME = 300;
 const MAX_CHIP_PATH = 4096;
 const MAX_CHIP_TEXT = 8000;
 const MAX_CHIP_TOKEN = 600;
-const DRAFT_CHIP_KINDS: readonly string[] = ['image', 'file', 'folder', 'ref', 'element', 'about'];
+export const DRAFT_CHIP_KINDS: readonly string[] = ['image', 'file', 'folder', 'ref', 'element', 'about', 'card'];
+/** A card chip's picture (owner 2026-10-31): only the app's own file route, nothing that can break
+ *  out of the `url("…")` it is painted in. Mirrored from composerDrafts.ts. */
+export const CARD_PICTURE_URL_RE = /^\/api\/agent\/file\?[^"'()\\\s]{1,2000}$/;
 
 /** One stored draft, or null. Over-long text is DROPPED, never cut: a truncated draft restored
  *  into the box would read as what the user wrote. */
@@ -184,6 +187,8 @@ export function coerceDraft(raw: unknown): SavedDraft | null {
         ...(r.inline === true ? { inline: true as const } : {}),
         ...(typeof r.chip === 'string' && r.chip && r.chip.length <= MAX_CHIP_TOKEN ? { chip: r.chip } : {}),
         ...(typeof r.tid === 'string' && /^\d{1,12}$/.test(r.tid) ? { tid: r.tid } : {}),
+        ...(r.kind === 'card' && typeof r.cardKind === 'string' && /^[a-z]{1,16}$/.test(r.cardKind) ? { cardKind: r.cardKind } : {}),
+        ...(r.kind === 'card' && typeof r.url === 'string' && CARD_PICTURE_URL_RE.test(r.url) ? { url: r.url } : {}),
       });
     }
   }
