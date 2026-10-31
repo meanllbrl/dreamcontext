@@ -184,7 +184,8 @@ export function layoutOrgChart(
   const gutter = hasBand && row.items.length > 0 ? ORG.gapX * 2 : 0;
   /** The band's inset from the chart's edge, so its frame never sits flush on the pane. */
   const bandInset = ORG.framePad - 2;
-  const width = Math.max(row.width + gutter * 2, ORG.youW, hasBand ? Math.max(bandInner + (ORG.framePad + bandInset) * 2, ORG.bandMinW) : 0);
+  const bandNeeds = hasBand ? Math.max(bandInner + ORG.framePad * 2, ORG.bandMinW) : 0;
+  const width = Math.max(row.width + gutter * 2, ORG.youW, hasBand ? bandNeeds + bandInset * 2 : 0);
   const you: OrgBox = { x: width / 2 - ORG.youW / 2, y: 0, w: ORG.youW, h: ORG.youH };
   const rootY = ORG.youH + ORG.gapY;
   const busY = ORG.youH + ORG.gapY / 2;
@@ -203,9 +204,12 @@ export function layoutOrgChart(
   if (hasBand) {
     const y = teamBottom + ORG.gapY;
     const on = !!opts.selected && bandSlugs.includes(opts.selected);
-    band = { x: bandInset, y, w: width - bandInset * 2, h: ORG.frameHead + ORG.cardH + ORG.framePad, count: bandSlugs.length, onPath: on };
+    // Its left edge is the team row's, its right edge just past the owner's line.
+    const w = Math.max(bandNeeds, row.width + ORG.gapX + bandInset);
+    const x = Math.min(x0, width - bandInset - w);
+    band = { x, y, w, h: ORG.frameHead + ORG.cardH + ORG.framePad, count: bandSlugs.length, onPath: on };
     bandSlugs.forEach((slug, i) => {
-      cards.push({ slug, x: bandInset + ORG.framePad + i * (ORG.cardW + ORG.gapX), y: y + ORG.frameHead, w: ORG.cardW, h: ORG.cardH });
+      cards.push({ slug, x: x + ORG.framePad + i * (ORG.cardW + ORG.gapX), y: y + ORG.frameHead, w: ORG.cardW, h: ORG.cardH });
     });
     const lx = row.items.length > 0 ? x0 + row.width + ORG.gapX : width / 2;
     edges.push({
