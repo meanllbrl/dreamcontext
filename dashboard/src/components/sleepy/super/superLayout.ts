@@ -1339,7 +1339,22 @@ function planWith(
     const rowFloor = layout === 'review' && ordered.length > 1 ? (ordered.length - 1) * (STAGE.FIT_MIN.w + STAGE.GAP) - STAGE.GAP : 0;
     const pageNeed = layout !== 'filmstrip' && chat === 'mini' ? pageWidth(page) : undefined;
     const fitted = pageNeed !== undefined && c.width - roomyMiniW - STAGE.GAP > Math.max(pageNeed, rowFloor);
-    const miniW = fitted ? c.width - STAGE.GAP - Math.max(pageNeed, rowFloor) : roomyMiniW;
+    const reviewRowH = (h: number) => Math.min(STAGE.REVIEW_ROW_MAX, Math.max(STAGE.REVIEW_ROW_MIN, STAGE.REVIEW_ROW_FRAC * h));
+    // A web page with a device width picked (owner 2026-10-31), as half does: the CARD takes the
+    // device's shape and the chat the width that leaves, down to its own floor. Its page has no
+    // measured width (stageItems), so this and `fitted` never meet. A folded chat wants no width:
+    // the card sits in the middle of what it leaves.
+    const pageItem = list.find((x) => x.id === page);
+    const device = layout !== 'filmstrip' && pageItem?.kind === 'web' ? pageItem.aspect : undefined;
+    const deviceW = device && chat === 'mini'
+      ? Math.min(c.width - STAGE.GAP - STAGE.MINI_MIN_W, Math.max(
+        Math.min(STAGE.FIT_MIN.w, c.width / 2),
+        rowFloor,
+        ((layout === 'review' ? c.height - reviewRowH(c.height) - STAGE.GAP : c.height) - STAGE.CARD_CHROME.h) * device + STAGE.CARD_CHROME.w,
+      ))
+      : undefined;
+    const pageRect = (r: Rect): Rect => (device ? fitCard(r, device) : r);
+    const miniW = deviceW !== undefined ? c.width - STAGE.GAP - deviceW : fitted ? c.width - STAGE.GAP - Math.max(pageNeed, rowFloor) : roomyMiniW;
     // The chat takes the whole left column (owner 2026-10-25): a short mini left an unused gap above it.
     const miniH = c.height;
     const centre: Rect = chat === 'bar'
@@ -1357,15 +1372,15 @@ function planWith(
     if (layout === 'review') {
       // The child's page big on top (its site, else its browser), its other cards in a row under it.
       const rest = ordered.filter((id) => id !== page);
-      const rowH = Math.min(STAGE.REVIEW_ROW_MAX, Math.max(STAGE.REVIEW_ROW_MIN, STAGE.REVIEW_ROW_FRAC * main.height));
-      place(page, { x: main.x, y: main.y, width: main.width, height: Math.max(0, main.height - rowH - STAGE.GAP) }, 'present');
+      const rowH = reviewRowH(main.height);
+      place(page, pageRect({ x: main.x, y: main.y, width: main.width, height: Math.max(0, main.height - rowH - STAGE.GAP) }), 'present');
       const rw = rest.length ? (main.width - (rest.length - 1) * STAGE.GAP) / rest.length : 0;
       rest.forEach((id, k) => place(id, { x: main.x + k * (rw + STAGE.GAP), y: main.y + main.height - rowH, width: rw, height: rowH }, 'present'));
       if (fitted) cards[page] = { ...cards[page], fitted };
       for (const k of list) if (!cards[k.id]) toOthers(k);
       return finish(centre, centre.width, 'present', undefined, undefined, extra);
     }
-    place(ordered[0], main, 'present');
+    place(ordered[0], pageRect(main), 'present');
     if (fitted) cards[page] = { ...cards[page], fitted };
     for (const k of list) if (!cards[k.id]) toOthers(k);
     return finish(centre, centre.width, 'present', undefined, undefined, extra);
