@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { cpus, homedir, loadavg, tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
-import { acquireFileLock, acquireFileLockWithin, releaseFileLock } from './file-lock.js';
+import { acquireFileLock, releaseFileLock } from './file-lock.js';
 
 /**
  * The pieces behind `dreamcontext builder …`: what a headless `claude -p` builder and the
@@ -129,10 +129,21 @@ export function heavySlotPaths(dir: string): string[] {
   return Array.from({ length: HEAVY_MACHINE_SLOTS }, (_, i) => join(dir, `slot-${i}.lock`));
 }
 
-/** How many slots a LIVE process holds right now (a dead holder's file does not count). */
+/** The machine's fast slots, for a short check (`./heavy-queue.ts` decides which). */
+export const FAST_SLOTS = 2;
+
+export function fastSlotPaths(dir: string): string[] {
+  return Array.from({ length: FAST_SLOTS }, (_, i) => join(dir, `fast-${i}.lock`));
+}
+
+/** How many heavy slots a LIVE process holds right now (a dead holder's file does not count). */
 export function heavySlotsHeld(dir: string): number {
+  return liveHolders(heavySlotPaths(dir));
+}
+
+function liveHolders(paths: string[]): number {
   let n = 0;
-  for (const p of heavySlotPaths(dir)) {
+  for (const p of paths) {
     try {
       const { pid } = JSON.parse(readFileSync(p, 'utf-8')) as { pid?: unknown };
       if (typeof pid !== 'number') { n += 1; continue; }
@@ -171,6 +182,8 @@ export async function acquireHeavy(cwd: string, opts: {
   onLimit?: (n: number) => void;
   /** Called once the repo lock is taken (the wait that runs out after it was the slots'). */
   onRepoLock?: () => void;
+  /** The line's order: the repo lock is only tried on this caller's turn (lib/heavy-queue.ts). */
+  turn?: (nowMs: number) => boolean;
 }): Promise<HeavyHold | null> {
   const now = opts.now ?? Date.now;
   const pollMs = opts.pollMs ?? 1000;
@@ -185,12 +198,16 @@ export async function acquireHeavy(cwd: string, opts: {
   };
   let limit = await readLimit();
   let readAt = now();
-  const held = await acquireFileLockWithin(repoLock, { waitMs: Math.max(0, deadline - now()), staleMs: HEAVY_LOCK_STALE_MS, pollMs, now, verifyPidLiveness: true });
-  if (!held) return null;
+  for (;;) {
+    if ((opts.turn?.(now()) ?? true) && acquireFileLock(repoLock, now(), HEAVY_LOCK_STALE_MS, { verifyPidLiveness: true })) break;
+    if (now() >= deadline) return null;
+    await new Promise((r) => { setTimeout(r, pollMs); });
+  }
   try { opts.onRepoLock?.(); } catch { /* informational */ }
   for (;;) {
     if (now() - readAt >= HEAT_RECHECK_MS) { limit = await readLimit(); readAt = now(); }
-    if (heavySlotsHeld(opts.slotDir) < limit) {
+    // Very hot means one step machine-wide, and a running short check is a step.
+    if (heavySlotsHeld(opts.slotDir) + (limit === 1 ? liveHolders(fastSlotPaths(opts.slotDir)) : 0) < limit) {
       for (const slot of heavySlotPaths(opts.slotDir).slice(0, limit)) {
         if (acquireFileLock(slot, now(), HEAVY_LOCK_STALE_MS, { verifyPidLiveness: true })) {
           return { slot, release: () => { releaseFileLock(slot); releaseFileLock(repoLock); } };
@@ -199,6 +216,31 @@ export async function acquireHeavy(cwd: string, opts: {
     }
     if (now() >= deadline) { releaseFileLock(repoLock); return null; }
     await new Promise((r) => { setTimeout(r, pollMs); });
+  }
+}
+
+/**
+ * A fast slot, machine-wide, and no repo lock: a short check does not stand behind a long one.
+ * `limit()` is read every poll (`fastSlotLimit`); 0 ends the wait (very hot: the caller falls back
+ * to the one heavy line). Null = nothing is held.
+ */
+export async function acquireFastSlot(opts: {
+  waitMs: number; paths: string[]; limit: () => number; turn: (nowMs: number) => boolean; pollMs?: number; now?: () => number;
+}): Promise<HeavyHold | null> {
+  const now = opts.now ?? Date.now;
+  const deadline = now() + Math.max(0, opts.waitMs);
+  for (;;) {
+    const limit = opts.limit();
+    if (limit <= 0) return null;
+    if (opts.turn(now())) {
+      for (const slot of opts.paths.slice(0, limit)) {
+        if (acquireFileLock(slot, now(), HEAVY_LOCK_STALE_MS, { verifyPidLiveness: true })) {
+          return { slot, release: () => { releaseFileLock(slot); } };
+        }
+      }
+    }
+    if (now() >= deadline) return null;
+    await new Promise((r) => { setTimeout(r, opts.pollMs ?? 500); });
   }
 }
 

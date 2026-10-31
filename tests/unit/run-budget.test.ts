@@ -169,6 +169,10 @@ describe('builder heavy stops a run past the limit', () => {
     expect(runs()).toBe('1');
 
     expect(await heavy({ because: 'the owner asked for a clean rebuild' })).toBe(0);
+    // The way out works once per run and command: a second one really stops, in any phase.
+    err.length = 0;
+    expect(await heavy({ because: 'the owner asked for a clean rebuild again' })).toBe(HEAVY_OVER_BUDGET_EXIT);
+    expect(err.join('\n')).toMatch(/already spent its one --because/);
     expect(runs()).toBe('2');
     const { overruns } = readBudget(budgetPath(repo));
     expect(overruns).toHaveLength(1);

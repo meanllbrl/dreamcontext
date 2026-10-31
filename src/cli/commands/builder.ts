@@ -18,13 +18,15 @@ import {
   repoToplevel,
   type OrphanCheck,
 } from '../../lib/builder-tools.js';
-import { HEAVY_HOT_WAIT_S, acquireHeavyReporting } from '../../lib/heavy-acquire.js';
+import { HEAVY_HOT_WAIT_S, acquireHeavyReporting, queueReport } from '../../lib/heavy-acquire.js';
+import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-queue.js';
 import { RouterPlanError, parseRouterPlan, pickEndReview } from '../../lib/review-route.js';
 import {
-  BUDGET_LIMITS, HEAVY_OVER_BUDGET_EXIT, budgetPath, currentScope, heavyStep, markPhase, packageScripts, readBudget,
+  BUDGET_LIMITS, HEAVY_OVER_BUDGET_EXIT, becauseSpent, budgetPath, currentScope, heavyStep, markPhase, packageScripts, readBudget,
   recordRed, recordStart, refusal, shellQuote, validReason, type BudgetKind, type BudgetScope,
 } from '../../lib/run-budget.js';
 import { LIGHT_LANE_MAX_LINES, laneFromGit } from '../../lib/run-lane.js';
+import { appendLedger, ledgerLine, ledgerPath, readLedger, recordCheck, summarize, type LedgerMark } from '../../lib/run-ledger.js';
 import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps } from './builder-sessions.js';
 
 /**
@@ -35,9 +37,10 @@ import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps 
  *
  *   load [--reap]   one line: cores, 1-min load, busy|quiet; then any orphaned checker of this
  *                   repo (killed with --reap). Always exits 0: it informs, it never blocks.
- *   heavy -- <cmd>  runs <cmd> holding the repo's heavy lock, so builders take turns on the
- *                   type-checker and test runner. Exits with <cmd>'s code, or 75 when the lock
- *                   stayed busy past --max-wait and nothing ran.
+ *   heavy -- <cmd>  runs <cmd> in its line (lib/heavy-queue.ts): a short check through a fast
+ *                   slot, the rest holding the repo's heavy lock, smaller first. Exits with
+ *                   <cmd>'s code, or 75 when the wait ran out, nothing ran and the place is kept.
+ *   queue           who holds the lock and who waits, in order.
  *   report <file> <TaskId>  did that builder finish? reported (exit 0) | unfinished | stopped |
  *                   missing (exit 3), with the line that decided it.
  *   review-pick <file>  which end review a run gets, from the review-router's plan: one
@@ -45,6 +48,7 @@ import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps 
  *   open <slug>     a run starts: from here on `heavy` counts repeats on this branch.
  *   lane            light or full, read off the diff itself (lib/run-lane.ts).
  *   budget          what this branch spent of its repeat limit, and every run past it.
+ *   mark | ledger   bracket the review; the run's minutes: code, queue, checks, review.
  *   base | spawn | fork | resume | wait | test | status   start and track builder sessions,
  *                   and the lead's wave-end check (./builder-sessions.ts).
  */
@@ -63,6 +67,8 @@ export interface BuilderDeps {
   heavySlotDir?: () => string;
   /** How many heavy steps the machine runs at once now (default: the heat limit, lib/heat.ts). */
   heavyLimit?: () => Promise<number>;
+  /** Is the machine past its cores (default: the load average)? Fewer fast slots while it is. */
+  machineBusy?: () => boolean;
 }
 
 const DEFAULT_DEPS: BuilderDeps = {
@@ -139,7 +145,7 @@ export function builderLane(deps: BuilderDeps, opts: { from?: string; to?: strin
   if (opts.from) markPhase(deps.cwd(), 'end', undefined, Date.now());
   deps.print(`${pick.lane}: ${pick.reason}`);
   deps.print(pick.lane === 'light'
-    ? `one reviewer, no router; browser: ${pick.visible ? 'yes, something visible changed' : 'no, nothing visible changed'}; no verify script of its own`
+    ? `one reviewer (it reads the security too), no router; browser: ${pick.visible ? 'yes, something visible changed' : 'no, nothing visible changed'}; no verify script of its own`
     : 'review-router, then builder review-pick');
 }
 
@@ -151,6 +157,40 @@ export function builderBudget(deps: BuilderDeps): void {
   deps.print(scope ? `now: ${scope.branch} ${scope.run} ${scope.phase}` : 'now: no run open on this branch, nothing is limited');
   for (const [key, b] of Object.entries(file.buckets)) deps.print(`${key}: ${b.runs} run(s), ${b.reds} red`);
   for (const o of file.overruns) deps.print(`over the limit ${o.at} ${o.bucket}: "${o.reason}" (${o.command})`);
+  if (scope) printLedger(deps, scope.run);
+}
+
+function printLedger(deps: BuilderDeps, run: string): boolean {
+  const s = summarize(readLedger(ledgerPath(deps.cwd()), run), Date.now());
+  deps.print(s ? ledgerLine(run, s) : `ledger ${run}: no record (the run has no "builder open")`);
+  return s !== null;
+}
+
+/** `ledger`: the run's minutes. `--close` stops its clock: the last thing a run does. */
+export function builderLedger(deps: BuilderDeps, slug: string | undefined, opts: { close?: boolean }): number {
+  const run = slug ?? currentScope(deps.cwd())?.run;
+  if (!run) {
+    deps.printErr('builder ledger: no run open on this branch; name the task slug');
+    return 2;
+  }
+  if (opts.close) appendLedger(ledgerPath(deps.cwd()), { type: 'mark', run, what: 'close', at: Date.now() });
+  return printLedger(deps, run) ? 0 : 3;
+}
+
+const MARKS: readonly string[] = ['review-start', 'review-end'];
+
+export function builderMark(deps: BuilderDeps, what: string): number {
+  const run = currentScope(deps.cwd())?.run;
+  if (!MARKS.includes(what)) {
+    deps.printErr(`builder mark: ${MARKS.join(' or ')}, got "${what}"`);
+    return 2;
+  }
+  if (!run) {
+    deps.printErr('builder mark: no run open on this branch ("builder open <slug>" starts one)');
+    return 2;
+  }
+  appendLedger(ledgerPath(deps.cwd()), { type: 'mark', run, what: what as LedgerMark, at: Date.now() });
+  return 0;
 }
 
 export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { maxWait?: string; because?: string }): Promise<number> {
@@ -173,6 +213,8 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { ma
   const kind: BudgetKind | null = !step || step.kind === 'check' ? null : step.kind;
   const target = step?.target ?? '';
   const scope: BudgetScope | null = kind ? currentScope(deps.cwd()) : null;
+  const pick = queueOf(command, packageScripts(deps.cwd()), (files) => countRelatedTests(deps.cwd(), files));
+  const label = safeLabel(command, packageScripts(deps.cwd()));
   const budget = budgetPath(deps.cwd());
   // Asked before the wait for the lock, so a refused run costs no queueing.
   const over = kind && scope
@@ -184,17 +226,26 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { ma
     deps.printErr(`  Is this run truly needed? builder heavy --because "<why>" -- ${shellQuote(command)}  (kept in "builder budget")`);
     return HEAVY_OVER_BUDGET_EXIT;
   }
+  if (over && kind && scope && becauseSpent(readBudget(budget), scope, target)) {
+    deps.printErr(`builder heavy: REFUSED, ${over}, and this run already spent its one --because on ${target}. NOTHING ran.`);
+    deps.printErr('  This stops here: use the proof you have, or put it to the owner.');
+    return HEAVY_OVER_BUDGET_EXIT;
+  }
   const started = Date.now();
-  const { held, busy } = await acquireHeavyReporting({
+  const { held, busy, line } = await acquireHeavyReporting({
     cwd: deps.cwd(), lockPath: heavyLockPath(deps.cwd()), slotDir: deps.heavySlotDir?.() ?? heavySlotDir(),
-    maxWaitS, heavyLimit: deps.heavyLimit, ps: deps.ps,
+    maxWaitS, heavyLimit: deps.heavyLimit, ps: deps.ps, machineBusy: deps.machineBusy,
+    job: { key: jobKey(deps.cwd(), command), size: pick.size, label, line: pick.line },
+    note: (l) => deps.printErr(`builder heavy: ${l}`),
   });
   if (!held) {
+    const gaveUp = Date.now();
+    recordCheck(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran: gaveUp, ended: gaveUp, exit: null });
     deps.printErr(`builder heavy: ${busy}`);
     return HEAVY_LOCK_BUSY_EXIT;
   }
-  const waited = Math.round((Date.now() - started) / 1000);
-  if (waited > 0) deps.printErr(`builder heavy: waited ${waited}s for the heavy lock`);
+  const ran = Date.now();
+  deps.printErr(`builder heavy: ${line} line (${pick.why}), waited ${Math.round((ran - started) / 1000)}s`);
   if (kind && scope) {
     if (over) deps.printErr(`builder heavy: over the limit (${over}), run on purpose: ${opts.because}`);
     recordStart(budget, scope, kind, target, Date.now(), over ? { command, reason: opts.because! } : undefined);
@@ -210,6 +261,7 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { ma
       process.off('SIGTERM', onTerm);
       process.off('SIGINT', onInt);
       if (code !== 0 && kind && scope) recordRed(budget, scope, target, Date.now());
+      recordCheck(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran, ended: Date.now(), exit: code });
       held.release();
       resolveExit(code);
     };
@@ -235,9 +287,9 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
   cmd
     .command('heavy')
     .argument('<command...>', 'The check to run, after --')
-    .option('--max-wait <seconds>', `How long to wait for the lock (default ${HEAVY_DEFAULT_WAIT_S}, ${HEAVY_HOT_WAIT_S} while the Mac is very hot)`)
-    .option('--because <reason>', 'Run past the repeat limit; the reason stays in `builder budget`')
-    .description(`Run a type-check, build, test run or browser verify script holding this repo's heavy lock and one of the machine's ${HEAVY_MACHINE_SLOTS} heavy slots (every repo together; 1 while macOS says the Mac is very hot), one at a time per repo (exit: the command's, ${HEAVY_LOCK_BUSY_EXIT} = busy, nothing ran, or ${HEAVY_OVER_BUDGET_EXIT} = past the repeat limit, nothing ran)`)
+    .option('--max-wait <seconds>', `How long to stand in line (default ${HEAVY_DEFAULT_WAIT_S}, ${HEAVY_HOT_WAIT_S} while the Mac is very hot)`)
+    .option('--because <reason>', 'Run past the repeat limit, once per run and command; the reason stays in `builder budget`')
+    .description(`Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this repo's heavy lock and one of the machine's ${HEAVY_MACHINE_SLOTS} heavy slots (every repo together; 1 while macOS says the Mac is very hot), smaller first (exit: the command's, ${HEAVY_LOCK_BUSY_EXIT} = the wait ran out, nothing ran, the place is kept, or ${HEAVY_OVER_BUDGET_EXIT} = past the repeat limit, nothing ran)`)
     .action(async (command: string[], opts: { maxWait?: string; because?: string }) => {
       process.exitCode = await builderHeavy(deps, command, opts);
     });
@@ -266,6 +318,7 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .description('A run starts on this branch: `heavy` counts repeats from here on, per phase')
     .action((slug: string, opts: { phase: string }) => {
       markPhase(deps.cwd(), opts.phase, slug, Date.now());
+      appendLedger(ledgerPath(deps.cwd()), { type: 'mark', run: slug, what: 'open', at: Date.now() });
       deps.print(`${slug}: phase ${opts.phase}, repeat limit on (builder budget)`);
     });
 
@@ -280,6 +333,26 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .command('budget')
     .description('What this branch spent of the repeat limit on browser runs, builds and full test suites, and every run past it')
     .action(() => builderBudget(deps));
+
+  cmd
+    .command('queue')
+    .description('Who holds the heavy lock and who waits in each line, in the order they will run')
+    .action(() => {
+      for (const l of queueReport(heavyLockPath(deps.cwd()), deps.heavySlotDir?.() ?? heavySlotDir(), deps.ps)) deps.print(l);
+    });
+
+  cmd
+    .command('mark')
+    .argument('<what>', 'review-start or review-end')
+    .description('Bracket the end review in the run\'s ledger')
+    .action((what: string) => { process.exitCode = builderMark(deps, what); });
+
+  cmd
+    .command('ledger')
+    .argument('[slug]', 'The task slug (default: the run open on this branch)')
+    .option('--close', 'The run is done: stop its clock')
+    .description('One line of the run\'s minutes, from records: code, queue, checks, review')
+    .action((slug: string | undefined, opts: { close?: boolean }) => { process.exitCode = builderLedger(deps, slug, opts); });
 
   registerBuilderSessionCommands(cmd, sessionDeps);
 }
