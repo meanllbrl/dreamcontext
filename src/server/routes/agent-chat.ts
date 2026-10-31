@@ -2460,10 +2460,17 @@ export function startChatSession(
   const exited = new Promise<void>((r) => { markExited = r; });
   child.once('close', () => markExited());
   child.once('error', () => markExited());
+  /** A cut's `close` must not wait on pipes: a daemon that left the group keeps them open after
+   *  the child died, and only `close` runs the teardown that says it is gone. */
+  let cutting = false;
+  const dropPipes = (): void => { child.stdout.destroy?.(); child.stderr.destroy?.(); };
+  child.once('exit', () => { if (cutting) dropPipes(); });
   /** Hands-free cut: the whole process group, SIGTERM then SIGKILL. The transcript stays, so
    *  the conversation is resumable exactly as after any other exit. */
   const cutChild = async (): Promise<void> => {
     if (!alive) return;
+    cutting = true;
+    if (child.exitCode != null || child.signalCode != null) dropPipes();
     if (child.pid) {
       // The whole group plus any descendant that left it; SIGKILL after the grace even when
       // the leader already exited; resolves once every one of them is gone (D22).
