@@ -2314,7 +2314,7 @@ export function startChatSession(
   // The bridge child runs on a Node at its floor, found beside the machine's default, never by
   // changing it (`node-floor.ts`). No such Node: the pane says so instead of crashing in a chat.
   const bridgeNodePath = bridgeTool ? bridgeNode() : null;
-  // A Super child runs with nobody watching it: no `.env` gate, no child on Codex.
+  // A Super child runs with nobody watching it: no live write gate, no child on Codex.
   const noEnvGate = bridgeTool === 'codex' && !!opts.leanMcp && !codexEnvGateReady(projectRoot);
   const bridgeScript = bridgeTool && bridgeNodePath && !noEnvGate
     ? bridgeChatScript({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : opts.leanMcp ? HEADLESS_ENVELOPES['super-child'].codex ?? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(leanMcpPath ? { mcpConfig: leanMcpPath } : {}), ...(opts.leanMcp ? { strictMcp: true } : {}), ...(codexAccountId ? { account: codexAccountId } : {}) })

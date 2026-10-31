@@ -1,19 +1,21 @@
 /**
- * Is the `.env` gate live for an unattended Codex run here? (Track T W4, the owner's rule: the
- * gate works.) `workspaceWrite` reads every file and Codex has no deny list through
- * `sandboxPolicy`, so the gate is our PreToolUse hook, and Codex runs a project's hooks only with
- * `.codex/hooks.json` present, the project trusted AND that hook trusted: Codex asks about the
- * hooks separately ("Trust all and continue", seen live on 0.164), and a folder trusted without
- * them leaves the gate off. With no gate an unattended run is refused: nobody is there to see
- * `.env` go to the vendor. `dreamcontext install --tool codex` writes the hooks; both trusts are
- * the owner's. Codex stores a hash we do not recompute, so an edited hook is caught by Codex
- * itself (it stops running it), not here.
+ * Is the write gate live for an unattended Codex run here? (Track T W4.) The gate is our PreToolUse
+ * hook: it refuses writes to `_dream_context/marketing/.env` and to agent files. It does NOT refuse
+ * READING any `.env`, on Claude either; the sandbox reads every file on both. `workspaceWrite`
+ * would let a run write those files, and Codex has no deny list through `sandboxPolicy`, so with
+ * no live hook an unattended run is refused.
+ *
+ * Codex runs a project's hooks only with `.codex/hooks.json` present, the project trusted AND that
+ * hook trusted: it asks about the hooks separately ("Trust all and continue", seen live on 0.164).
+ * `dreamcontext install --tool codex` writes the hooks; both trusts are the owner's. Codex stores
+ * a hash we do not recompute, so an edited hook is caught by Codex itself, not here. The hook runs
+ * the global `dreamcontext`, which must be a build that knows `--format codex`.
  */
 import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-export const NO_ENV_GATE = 'Codex would run here without the .env gate. Run `dreamcontext install --tool codex` in this project, open `codex` there once, and trust both the folder and its hooks.';
+export const NO_ENV_GATE = 'Codex would run here without the gate on marketing tokens and agent files. Run `dreamcontext install --tool codex` in this project, open `codex` there once, and trust both the folder and its hooks.';
 
 const read = (p: string): string => { try { return readFileSync(p, 'utf-8'); } catch { return ''; } };
 
