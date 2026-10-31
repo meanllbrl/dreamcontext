@@ -3,8 +3,9 @@
  * with no measured width, a device width or an owner's size keeps today's card to the pixel.
  */
 import { describe, it, expect } from 'vitest';
-import { STAGE, planStage, stageItems } from '../../dashboard/src/components/sleepy/super/superLayout.js';
+import { STAGE, fitCard, planStage, stageItems } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import { MAX_PAGE_FITS, PAGE_FIT_KEY, pageFitKey, pageFitOf, readPageFit, setPageFit } from '../../dashboard/src/lib/pageFit.js';
+import { deviceAspect } from '../../dashboard/src/lib/webDevice.js';
 import type { SuperContainer, SuperView } from '../../dashboard/src/lib/superTypes.js';
 
 const WIDE = { width: 1600, height: 900 };
@@ -110,5 +111,70 @@ describe('the report', () => {
     setPageFit(k, 700);
     for (let i = 0; i < MAX_PAGE_FITS; i += 1) setPageFit(pageFitKey('p', `f${i}`), 700);
     expect(pageFitOf(k)).toBeUndefined();
+  });
+});
+
+describe('a web page with a device picked takes the device shape in a presentation', () => {
+  const PHONE = deviceAspect('phone');
+  const DESKTOP = deviceAspect('desktop');
+  const shaped = (cs: SuperContainer[], view: SuperView, aspect: number | undefined, opts = {}) =>
+    planStage(stageItems(cs, [], view, () => false, () => aspect), view, WIDE, opts);
+  const spotlight = present(['a'], 'spotlight');
+  const shapeOf = (r: { width: number; height: number }) => (r.width - STAGE.CARD_CHROME.w) / (r.height - STAGE.CARD_CHROME.h);
+
+  it('spotlight + phone: a narrow tall card, the chat takes the width it frees', () => {
+    const p = shaped([web('a')], spotlight, PHONE);
+    const free = shaped([web('a')], spotlight, undefined);
+    expect(shapeOf(p.cards.a.rect)).toBeCloseTo(PHONE, 6);
+    expect(p.cards.a.rect.height).toBeCloseTo(free.cards.a.rect.height, 6);
+    expect(p.cards.a.rect.width).toBeLessThan(free.cards.a.rect.width / 2);
+    expect(p.centre.width).toBeGreaterThan(free.centre.width);
+    expect(p.centre.x + p.centre.width + STAGE.GAP).toBeCloseTo(p.cards.a.rect.x, 6);
+    expect(p.cards.a.rect.x + p.cards.a.rect.width).toBeCloseTo(free.cards.a.rect.x + free.cards.a.rect.width, 6);
+    expect(p.cards.a.fitted).toBeUndefined();
+  });
+
+  it('spotlight + desktop: a wide card, the chat narrows to its floor and no further', () => {
+    const p = shaped([web('a')], spotlight, DESKTOP);
+    const free = shaped([web('a')], spotlight, undefined);
+    expect(p.centre.width).toBe(STAGE.MINI_MIN_W);
+    expect(p.centre.width).toBeLessThan(free.centre.width);
+    expect(p.cards.a.rect.width).toBeGreaterThan(free.cards.a.rect.width);
+    expect(shapeOf(p.cards.a.rect)).toBeCloseTo(DESKTOP, 6);
+  });
+
+  it('spotlight, no device: today\'s card and chat to the pixel; a picture keeps them too', () => {
+    const p = shaped([web('a')], spotlight, undefined);
+    expect(p.centre.width).toBe(Math.min(STAGE.MINI_MAX_W, Math.max(STAGE.MINI_MIN_W, STAGE.MINI_FRAC_W * WIDE.width)));
+    const pic = { ...web('a'), kind: 'image', aspect: PHONE } as SuperContainer;
+    const q = shaped([pic], spotlight, undefined);
+    expect(q.centre.width).toBe(p.centre.width);
+    expect(q.cards.a.rect).toEqual(p.cards.a.rect);
+  });
+
+  it('a folded chat: the card sits in shape in the middle of the stage, the bar keeps its width', () => {
+    const folded = { ...spotlight, chat: 'bar' } as SuperView;
+    const p = shaped([web('a')], folded, PHONE);
+    const free = shaped([web('a')], folded, undefined);
+    expect(p.chat).toBe('bar');
+    expect(p.cards.a.rect).toEqual(fitCard(free.cards.a.rect, PHONE));
+    expect(p.centre).toEqual(free.centre);
+  });
+
+  it('a question open over a folded chat: the mini is back and the card still in shape', () => {
+    const p = shaped([web('a')], { ...spotlight, chat: 'bar' } as SuperView, PHONE, { asking: true });
+    expect(p.chat).toBe('mini');
+    expect(shapeOf(p.cards.a.rect)).toBeCloseTo(PHONE, 6);
+  });
+
+  it('review + phone: the page in shape, the row of cards under it keeps its floor', () => {
+    const view = present(['a', 'b', 'c'], 'review');
+    const cs = [web('a'), web('b', { kind: 'task' } as Partial<SuperContainer>), web('c', { kind: 'task' } as Partial<SuperContainer>)];
+    const p = planStage(stageItems(cs, [], view, () => false, (c) => (c.id === 'a' ? PHONE : undefined)), view, WIDE, {});
+    const free = planStage(stageItems(cs, [], view), view, WIDE, {});
+    expect(shapeOf(p.cards.a.rect)).toBeCloseTo(PHONE, 6);
+    expect(p.centre.width).toBeGreaterThan(free.centre.width);
+    expect(p.cards.b.rect.width).toBeGreaterThanOrEqual(STAGE.FIT_MIN.w);
+    expect(p.cards.c.rect.x + p.cards.c.rect.width).toBeCloseTo(free.cards.c.rect.x + free.cards.c.rect.width, 6);
   });
 });
