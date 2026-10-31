@@ -1255,6 +1255,11 @@
 /* A page and a live browser fill the large card (the body scrolls, so it is not a flex box). */
 .super-card-view--web, .super-card-view--browser { height: 100%; }
 .super-card-view--web > .wb-widget { flex: 1 1 auto; min-height: 0; }
+/* The card's one title line: the widget's head stands where the card's would, and stops short of
+   the card's buttons at the top right (they are always shown on a large card). Past the file
+   head's own padding (widgets.css), which reads through :has(). */
+.super-web-one-line > .wb-widget.wb-widget--web > .wb-widget-head.wb-widget-head { height: 36px; min-height: 0; padding-block: 0; padding-inline-end: 124px; }
+.super-web-one-line .wb-widget-title { font-size: var(--font-size-sm); font-weight: 600; color: var(--color-text); }
 
 /* ── Card sizes (owner 2026-10-22: "like Apple widgets") ─────────────────────────────────── */
 

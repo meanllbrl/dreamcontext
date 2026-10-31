@@ -1,6 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { TeamTile, teamRingKind, teamStatusOf, type TeamCard } from './TeamTile';
 import { useI18n } from '../../../context/I18nContext';
+import { useVault } from '../../../context/VaultContext';
+import { pageFitKey, setPageFit } from '../../../lib/pageFit';
 import { CONTAINER_SIZES, SIZE_UNITS, type ContainerSize, type SuperChild, type SuperContainer as Container } from '../../../lib/superTypes';
 import type { WidgetSize } from '../../../lib/whiteboardWidgets';
 import { BoardEmbed, BoardFullscreen } from '../chat/BoardEmbed';
@@ -697,15 +699,20 @@ function WebCardBody(p: BodyProps & { large: boolean }): ReactNode {
   if (!hidden) desktopRef.current = !!p.desktopViewport && p.large;
   const desktop = desktopRef.current;
   const frame = p.webLive && p.viewReady;
+  const oneLine = frame && (p.plan.where === 'present' || p.plan.where === 'half' || p.plan.where === 'float');
+  const { vault } = useVault();
+  const onPageFit = useCallback((width: number) => setPageFit(pageFitKey(vault, c.ref), width), [vault, c.ref]);
   return (
     <div className={p.large ? 'super-card-large' : tile ? 'super-card-body' : 'super-card-body super-card-large'}
       data-inert={p.large ? undefined : 'true'} data-testid="super-web-card" data-web-state={p.parked ? 'parked' : tile ? 'tile' : p.large ? 'large' : 'float'}>
-      {!tile && <CardHead kind={c.kind} title={p.title} container={c} />}
+      {/* The page's own widget carries the title and its actions: one line, never two. A sheet (a
+          phone) and a thumb keep the head they have. */}
+      {!tile && !oneLine && <CardHead kind={c.kind} title={p.title} container={c} />}
       <div className="super-card-large-body super-web-body">
         <div ref={keepRef} className="super-web-keep" style={keepStyle}>
           <ZoomPane live={live} interactive={p.large} control={live ? control : undefined} device={device} onDevice={setDevice}>
             {frame
-              ? <div className="super-card-view super-card-view--web"><WebWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'web', url: c.ref, title: c.title }} active size={widgetSize(p.plan)} onFrameAllowed={p.onFrameAllowed} control={live ? control : undefined} zoomBridge={!live} desktop={desktop} device={device} /></div>
+              ? <div className={`super-card-view super-card-view--web${oneLine ? ' super-web-one-line' : ''}`}><WebWidget elementId={`super-${c.id}`} payload={{ v: 1, kind: 'web', url: c.ref, title: oneLine ? p.title : c.title }} active size={widgetSize(p.plan)} onFrameAllowed={p.onFrameAllowed} control={live ? control : undefined} zoomBridge={!live} desktop={desktop} device={device} onPageFit={onPageFit} /></div>
               : null}
           </ZoomPane>
         </div>

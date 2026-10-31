@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type MutableRefObject, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
 import { MAX_CONTAINERS, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
@@ -36,6 +36,7 @@ import { MAX_KEPT_FRAMES, MAX_LIVE_BROWSERS, MAX_LIVE_IFRAMES, autoFrames, keptW
 import { LIGHT_POLL_FACTOR, pollMs, useWindowActivity } from '../../../lib/windowActivity';
 import { useStageCues, withGhosts } from './useStageCues';
 import { deviceAspect, isWebDevice, useWebDevices } from '../../../lib/webDevice';
+import { pageFitKey, pageFitOf, pageFitsVersion, subscribePageFits } from '../../../lib/pageFit';
 import './SuperSurface.css';
 import './superTone.css';
 import './superCentre.css';
@@ -251,6 +252,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // Its key changes only when a child's liveness does, so the plan is not redone per frame.
   // The device width the owner picked on each web card: side by side, the card takes its shape.
   const devicesKey = useWebDevices();
+  // Each project page's measured width: a report's card takes it, the chat the rest.
+  const fitsVersion = useSyncExternalStore(subscribePageFits, pageFitsVersion);
+  const { vault } = useVault();
   const liveJobsKey = state.containers.filter((c) => c.kind === 'chat'
     && childIsLive(state, c.ref, props.sessionFor(c.ref) ? chatStatus(props.sessionFor(c.ref)).kind : null)).map((c) => c.id).join(',');
   const items = useMemo(() => {
@@ -259,8 +263,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
     return stageItems(state.containers, state.groups, view, (c) => live.has(c.id), (c) => {
       const d = devices.get(c.id);
       return isWebDevice(d) ? deviceAspect(d) : undefined;
-    });
-  }, [state.containers, state.groups, view, liveJobsKey, devicesKey]);
+    }, (c) => pageFitOf(pageFitKey(vault, c.ref)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fitsVersion: the store's answers changed
+  }, [state.containers, state.groups, view, liveJobsKey, devicesKey, fitsVersion, vault]);
   // The agenda minimised to its corner pill (owner 2026-10-22 23:44): not a card on the stage
   // (stageItems leaves it out) unless the view shows it side by side or presented.
   const agendaPill = useMemo(() => {
@@ -928,7 +933,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               agenda={c.kind === 'agenda' ? renderAgenda : undefined}
               // One big page (spotlight, review's site, a filmstrip's big card): at a desktop width.
               // A report in the brain is a document, not a site: scaled down it read at 10 px.
-              desktopViewport={(plan.layout === 'spotlight' || plan.layout === 'review' || plan.layout === 'filmstrip') && cp.where === 'present' && !c.ref.startsWith('_dream_context/')}
+              desktopViewport={(plan.layout === 'spotlight' || plan.layout === 'review' || plan.layout === 'filmstrip') && cp.where === 'present' && !cp.fitted && !c.ref.startsWith('_dream_context/')}
               onSelectThumb={setSelected}
               {...actions}
             />

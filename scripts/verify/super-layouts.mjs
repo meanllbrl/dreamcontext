@@ -321,7 +321,7 @@ async function flow(pw, base, ports) {
   ok('the page lays out at 1280 css px', (await innerWidthOf(frame)) === 1280, await innerWidthOf(frame).catch((e) => String(e)));
   const scale = Number(await siteCard.locator('iframe').getAttribute('data-desktop-scale'));
   ok(`…scaled to fit (${scale})`, scale >= 0.6 && scale < 1);
-  const head = siteCard.locator('.super-card-head').first();
+  const head = siteCard.locator('.super-card-head, .wb-widget-head').first();
   const hb = await box(head);
   const hl = await head.evaluate((el) => ({ w: el.offsetWidth, h: el.offsetHeight }));
   ok('the card\'s title bar renders at 1:1', !!hb && Math.abs(hb.height - hl.h) < 1.5, JSON.stringify({ hb, hl }));
