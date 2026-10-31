@@ -151,11 +151,12 @@ rect.st-ghost { fill: color-mix(in srgb, var(--color-success) 10%, transparent);
 .st-pline { position: relative; display: grid; grid-template-columns: minmax(0, 104px) minmax(0, 1fr) 104px; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--color-border); font-size: calc(12.5px * var(--zoom)); cursor: default; }
 .st-pname { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text); }
 .st-pbars { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.st-pbar { display: flex; align-items: center; gap: 2px; min-width: 0; height: 12px; }
-.st-pbar > i { display: block; flex: 0 1 auto; height: 9px; min-width: 2px; border-radius: 2px; }
-.st-page .st-pbar > i.st-ghostbar { height: 9px; box-sizing: border-box; }
-.st-page .st-pbar > i.st-pmem { box-sizing: border-box; border: 1px dashed var(--chart-8); background: color-mix(in srgb, var(--chart-8) 30%, transparent); }
-.st-pbar em { flex: none; margin-left: 4px; font-style: normal; font-size: calc(11px * var(--zoom)); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+.st-pbar { display: grid; grid-template-columns: minmax(0, 1fr) 54px; align-items: center; gap: 6px; height: 12px; }
+.st-ptrack { display: flex; gap: 1px; min-width: 0; }
+.st-ptrack > i { display: block; flex: 0 1 auto; box-sizing: border-box; height: 9px; min-width: 2px; border-radius: 2px; }
+.st-page .st-ptrack > i.st-ghostbar { height: 9px; box-sizing: border-box; }
+.st-page .st-ptrack > i.st-pmem { box-sizing: border-box; border: 1px dashed var(--chart-8); background: color-mix(in srgb, var(--chart-8) 30%, transparent); }
+.st-pbar em { white-space: nowrap; font-style: normal; font-size: calc(11px * var(--zoom)); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
 .st-netpill { justify-self: end; padding: 0 4px; border: 1.2px dashed; border-radius: 4px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .st-netpill.up { border-color: var(--color-success); background: color-mix(in srgb, var(--color-success) 8%, transparent); color: var(--color-success-ink); }
 .st-netpill.down { border-color: var(--color-error); background: color-mix(in srgb, var(--color-error) 9%, transparent); color: var(--color-error-ink); }

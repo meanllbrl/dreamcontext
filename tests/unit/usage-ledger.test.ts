@@ -452,6 +452,25 @@ describe('usage ledger', () => {
       expect(sum(other.dc.trend.memory)).toBe(0);
     });
 
+    it('a sleep across the range edge ties the card, the row and the trend to what fell inside', async () => {
+      const bash = (ts: string, id: string, command: string) => assistant(id, `r${id}`, ts, U(1000), {}, [{ type: 'tool_use', id: `t${id}`, name: 'Bash', input: { command } }]);
+      write('s1.jsonl', [
+        user('a', at(30 * 60), typed('uyu')),
+        bash(at(1460), 'm1', 'dreamcontext sleep start'),   // before the 24h range opens
+        assistant('m2', 'r2', at(1450), U(9000)),
+        assistant('m3', 'r3', at(1400), U(3000)),           // inside it
+        bash(at(1398), 'm4', 'dreamcontext sleep done'),
+      ]);
+      await scan();
+      const day = stats('24h');
+      const sum = (v: number[]) => v.reduce((a, b) => a + b, 0);
+      expect(day.dc.sleep.runs.length).toBe(1);
+      expect(day.dc.sleep.runs[0].cost).toBeGreaterThan(day.dc.sleep.cost);
+      expect(sum(day.dc.trend.sleep)).toBeCloseTo(day.dc.sleep.cost, 10);
+      expect(day.dc.projects[0].sleep.cost).toBeCloseTo(day.dc.sleep.cost, 10);
+      expect(day.dc.sleep.cost).toBeGreaterThan(0);
+    });
+
     it('an old cache is read again, so no count stays empty', () => {
       writeFileSync(join(home, '.dreamcontext', 'usage-scan-cache.json'), JSON.stringify({ version: 2, models: [], files: { x: { rows: [] } } }));
       expect(Object.keys(loadLedger(home).files)).toEqual([]);

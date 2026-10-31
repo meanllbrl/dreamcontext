@@ -57,9 +57,11 @@ export function scaleFor(max: number): { top: number; ticks: number[] } {
 export function StatsChart({ buckets, hourly, series, format }: Props) {
   const { t } = useI18n();
   const { host, width } = useChartWidth();
-  const [hover, setHover] = useState<number | null>(null);
+  const [hoverAt, setHover] = useState<number | null>(null);
 
   const n = buckets.length;
+  // A range change shortens the bars under a resting pointer.
+  const hover = hoverAt !== null && hoverAt < n ? hoverAt : null;
   const stack = buckets.map((_, i) => series.reduce((a, s) => a + s.values[i], 0));
   const max = Math.max(...stack, 1e-9);
   const { top, ticks } = scaleFor(max);

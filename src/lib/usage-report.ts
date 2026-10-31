@@ -85,7 +85,7 @@ export interface PromptCounts { owner: number; super: number; auto: number }
 export interface ProjectRow {
   key: string; label: string; tokens: number; cost: number | null;
   prompts: PromptCounts | null;
-  /** MEASURED: the same runs as the Sleep card. */
+  /** MEASURED: the same in-range rows as the Sleep card and the trend. */
   sleep: { tokens: number; cost: number };
   /** ESTIMATE, as the Memory card: chars / 3.5, priced at the row's cache rates. */
   estMemory: { tokens: number; cost: number };
@@ -363,6 +363,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
   const chart = { work: zero(), memory: zero(), sleep: zero(), estSaved: zero() };
   const memory = { first: 0, carried: 0, starts: 0, messages: 0 };
   const trend = { sleep: zero(), memory: zero(), saved: zero() };
+  const sleepOf = new Map<string, { tokens: number; cost: number }>();
   const memoryOf = new Map<string, { tokens: number; cost: number }>();
   const promptsOf = new Map<string, PromptCounts>();
   const sent = superSends(ledger.files);
@@ -454,7 +455,13 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
         claudeTokens += tokens;
         claudeInput += input + cacheRead + cacheWrite;
         const mem = asleep ? 0 : memFirst + memCarried;
-        if (asleep) { chart.sleep[i] += tokens; trend.sleep[i] += cost; }
+        if (asleep) {
+          chart.sleep[i] += tokens; trend.sleep[i] += cost;
+          // The run list shows a run whole; the totals count what fell in this range and filter.
+          const z = sleepOf.get(v.project) ?? { tokens: 0, cost: 0 };
+          sleepOf.set(v.project, z);
+          z.tokens += tokens; z.cost += cost;
+        }
         else {
           chart.memory[i] += mem; chart.work[i] += Math.max(0, tokens - mem); memory.first += memFirst; memory.carried += memCarried;
           const m = memoryOf.get(v.project) ?? { tokens: 0, cost: 0 };
@@ -701,10 +708,9 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
     ecoOf.set(e.project, g);
     g.tokens += e.estSaved; g.cost += e.estSavedCost;
   }
-  const projectRows: ProjectRow[] = [...new Set([...spendRows.map((r) => r.key), ...vaultMap.keys(), ...ecoOf.keys(), ...promptsOf.keys()])].map((key) => {
+  const projectRows: ProjectRow[] = [...new Set([...spendRows.map((r) => r.key), ...sleepOf.keys(), ...ecoOf.keys(), ...promptsOf.keys()])].map((key) => {
     const s = spendRows.find((r) => r.key === key);
-    const v = vaultMap.get(key);
-    const sleep = { tokens: v?.tokens ?? 0, cost: v?.cost ?? 0 };
+    const sleep = sleepOf.get(key) ?? { tokens: 0, cost: 0 };
     const estMemory = memoryOf.get(key) ?? { tokens: 0, cost: 0 };
     const estSaved = ecoOf.get(key) ?? { tokens: 0, cost: 0 };
     return {
@@ -728,7 +734,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
     dc: {
       claudeTokens, chart,
       sleep: {
-        tokens: runViews.reduce((a, r) => a + r.tokens, 0), cost: runViews.reduce((a, r) => a + r.cost, 0),
+        tokens: [...sleepOf.values()].reduce((a, s) => a + s.tokens, 0), cost: [...sleepOf.values()].reduce((a, s) => a + s.cost, 0),
         runs: runViews.sort((a, b) => b.start - a.start),
         vaults: [...vaultMap.entries()].map(([key, g]) => ({ key, label: key, tool: null, sub: String(g.runs), tokens: g.tokens, cost: g.cost })).sort((a, b) => (b.cost ?? 0) - (a.cost ?? 0)),
         specialists: [...specMap.values()].sort((a, b) => b.cost - a.cost),

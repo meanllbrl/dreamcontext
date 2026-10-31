@@ -2,7 +2,7 @@ import { useId, useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { scaleFor, shortLabel, useChartWidth } from './StatsChart';
 import { fmtCost, fmtDay } from './statsFormat';
-import { ecoStartAt, topEaters, trendBuckets, type EatenItem } from './statsCharts';
+import { ecoCover, ecoStartAt, topEaters, trendBuckets, type EatenItem } from './statsCharts';
 import type { StatsWire } from './statsTypes';
 
 const H = 196;
@@ -33,12 +33,14 @@ function EatenLine({ item, max, partial, open, onOpen }: { item: EatenItem; max:
       <span className="st-pname" title={item.label}>{item.others ? t('stats.charts.other').replace('{n}', String(item.others)) : item.label}</span>
       <span className="st-pbars">
         <span className="st-pbar">
-          {item.sleep > 0 && <i style={{ width: pct(item.sleep), background: SLEEP }} />}
-          {item.memory > 0 && <i className="st-pmem" style={{ width: pct(item.memory) }} />}
+          <span className="st-ptrack">
+            {item.sleep > 0 && <i style={{ width: pct(item.sleep), background: SLEEP }} />}
+            {item.memory > 0 && <i className="st-pmem" style={{ width: pct(item.memory) }} />}
+          </span>
           <em>~{fmtCost(eaten)}</em>
         </span>
         <span className="st-pbar">
-          {item.saved > 0 ? <i className="st-ghostbar" style={{ width: pct(item.saved) }} /> : null}
+          <span className="st-ptrack">{item.saved > 0 && <i className="st-ghostbar" style={{ width: pct(item.saved) }} />}</span>
           <em>{item.saved > 0 ? `~${fmtCost(item.saved)}` : '—'}</em>
         </span>
       </span>
@@ -75,10 +77,12 @@ function TrendChart({ data }: { data: StatsWire }) {
   const { t } = useI18n();
   const hatch = useId();
   const { host, width } = useChartWidth();
-  const [hover, setHover] = useState<number | null>(null);
+  const [hoverAt, setHover] = useState<number | null>(null);
   const weekly = data.range === '90d';
   const bars = trendBuckets(data.buckets, data.dc.trend, weekly);
   const n = bars.length;
+  // A range change shortens the bars under a resting pointer.
+  const hover = hoverAt !== null && hoverAt < n ? hoverAt : null;
   const eatenOf = (i: number) => bars[i].sleep + bars[i].memory;
   const max = Math.max(...bars.map((b) => Math.max(b.sleep + b.memory, b.saved)), 1e-9);
   const { top, ticks } = scaleFor(max);
@@ -88,7 +92,13 @@ function TrendChart({ data }: { data: StatsWire }) {
   const start = ecoStartAt(bars, data.dc.ecoFrom);
   const startX = start === null ? null : LEFT + 2 + gap * start;
   const fromLabel = data.dc.ecoFrom === null ? '' : t('stats.charts.ecoStart').replace('{d}', fmtDay(data.dc.ecoFrom));
-  const measured = (i: number) => data.dc.ecoFrom !== null && bars[i].end > data.dc.ecoFrom;
+  const cover = hover === null ? 'none' : ecoCover(bars[hover], data.dc.ecoFrom);
+  const savedAt = (i: number) => {
+    // A bucket the record starts inside keeps its saved bar on the measured side of the mark.
+    const x = LEFT + 2 + gap * i + (gap - bar * 2 - 1) / 2 + bar + 1;
+    if (startX === null || x >= startX + 1 || ecoCover(bars[i], data.dc.ecoFrom) !== 'part') return { x, w: bar };
+    return { x: startX + 1, w: Math.min(bar, Math.max(3, LEFT + 2 + gap * (i + 1) - startX - 1)) };
+  };
   const empty = bars.every((b) => b.sleep + b.memory + b.saved < 0.005);
   const tipLeft = hover === null ? 0 : Math.max(0, Math.min(width - 190, LEFT + gap * hover + gap / 2 - 95));
   return (
@@ -112,7 +122,7 @@ function TrendChart({ data }: { data: StatsWire }) {
               <g key={b.start}>
                 {b.sleep > 0 && <rect x={x} y={y(b.sleep)} width={bar} height={Math.max(1.5, y(0) - y(b.sleep))} rx={Math.min(2, bar / 3)} style={{ fill: SLEEP }} />}
                 {b.memory > 0 && <rect x={x} y={y(eatenOf(i))} width={bar} height={Math.max(1.5, y(b.sleep) - y(eatenOf(i)))} rx={Math.min(2, bar / 3)} className="st-soft" style={{ fill: 'color-mix(in srgb, var(--chart-8) 30%, transparent)' }} />}
-                {b.saved > 0 && <rect x={x + bar + 1} y={y(b.saved)} width={bar} height={Math.max(2, y(0) - y(b.saved))} rx={Math.min(2, bar / 3)} className="st-ghost" />}
+                {b.saved > 0 && <rect x={savedAt(i).x} y={y(b.saved)} width={savedAt(i).w} height={Math.max(2, y(0) - y(b.saved))} rx={Math.min(2, bar / 3)} className="st-ghost" />}
                 {label && <text className="st-ax" x={x + bar + 16 > width ? width - 1 : x + bar} y={H - 6} textAnchor={x + bar + 16 > width ? 'end' : 'middle'}>{label}</text>}
                 <rect className="st-hit" x={LEFT + gap * i} y={TOP} width={gap} height={H - TOP - BOTTOM} onMouseEnter={() => setHover(i)} onClick={() => setHover(i)} />
               </g>
@@ -131,8 +141,8 @@ function TrendChart({ data }: { data: StatsWire }) {
             <b>{weekly ? `${fmtDay(bars[hover].start)} – ${fmtDay(bars[hover].end - 1)}` : data.hourly ? `${fmtDay(bars[hover].start)} ${String(new Date(bars[hover].start).getHours()).padStart(2, '0')}:00` : fmtDay(bars[hover].start)}</b>
             <div>{t('stats.sleep')}<span>{fmtCost(bars[hover].sleep)}</span></div>
             <div>{t('stats.charts.memory')}<span>~{fmtCost(bars[hover].memory)}</span></div>
-            <div>{t('stats.charts.saved')}<span>{measured(hover) ? `~${fmtCost(bars[hover].saved)}` : t('stats.charts.notMeasured')}</span></div>
-            {measured(hover) && <div className="tt">{t('stats.projects.net')}<span>{fmtNet(bars[hover].saved - eatenOf(hover))}</span></div>}
+            <div>{t('stats.charts.saved')}<span>{cover === 'none' || (cover === 'part' && bars[hover].saved <= 0) ? t('stats.charts.notMeasured') : `${cover === 'part' ? '≥ ' : ''}~${fmtCost(bars[hover].saved)}`}</span></div>
+            {cover !== 'none' && <div className="tt">{t('stats.projects.net')}<span>{cover === 'part' ? '≥ ' : ''}{fmtNet(bars[hover].saved - eatenOf(hover))}</span></div>}
           </div>
         )}
       </div>

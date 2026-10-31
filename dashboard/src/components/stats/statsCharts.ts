@@ -43,6 +43,12 @@ export function trendBuckets(buckets: Array<{ start: number; end: number }>, tre
   return out;
 }
 
+/** How much of a bucket the Eco record covers: a bucket it starts inside saved more than it shows. */
+export function ecoCover(b: { start: number; end: number }, ecoFrom: number | null): 'none' | 'part' | 'full' {
+  if (ecoFrom === null || b.end <= ecoFrom) return 'none';
+  return b.start < ecoFrom ? 'part' : 'full';
+}
+
 /** Where the Eco record starts, as a bucket position (2.5 = halfway through the third). Null: it covers the whole range. */
 export function ecoStartAt(buckets: Array<{ start: number; end: number }>, ecoFrom: number | null): number | null {
   if (buckets.length === 0) return null;

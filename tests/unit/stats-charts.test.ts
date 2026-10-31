@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ecoStartAt, topEaters, trendBuckets } from '../../dashboard/src/components/stats/statsCharts';
+import { ecoCover, ecoStartAt, topEaters, trendBuckets } from '../../dashboard/src/components/stats/statsCharts';
 import type { ProjectRow } from '../../dashboard/src/components/stats/statsTypes';
 
 const row = (key: string, sleep: number, memory: number, saved: number, owner: number | null = 1): ProjectRow => ({
@@ -32,6 +32,14 @@ describe('the project charts', () => {
     expect(weeks[12]).toMatchObject({ start: 830, end: 900, sleep: 7 });
     expect(weeks.reduce((a, w) => a + w.sleep, 0)).toBe(90);
     expect(trendBuckets(days, { sleep: one, memory: one, saved: one }, false)).toHaveLength(90);
+  });
+
+  it('a bucket the record starts inside is partly covered, never whole', () => {
+    expect(ecoCover({ start: 0, end: 10 }, 15)).toBe('none');
+    expect(ecoCover({ start: 10, end: 20 }, 15)).toBe('part');
+    expect(ecoCover({ start: 15, end: 20 }, 15)).toBe('full');
+    expect(ecoCover({ start: 20, end: 30 }, 15)).toBe('full');
+    expect(ecoCover({ start: 20, end: 30 }, null)).toBe('none');
   });
 
   it('the Eco mark sits inside its bucket, is gone when the record covers the range, and fills it when there is none', () => {
