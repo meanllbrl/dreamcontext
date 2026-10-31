@@ -20,6 +20,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 process.env.HOME = mkdtempSync(`${tmpdir()}/notch-owner-answer-home-`);
+process.env.DREAMCONTEXT_DESKTOP = '1';
 
 const routes = await import('../../src/server/routes/assistant.js');
 const registry = await import('../../src/lib/assistant/chat-registry.js');

@@ -27,6 +27,9 @@ export type DrawerIntent =
   | { kind: 'rename-window'; windowId: string; name: string }
   /** A window row's Close window: its tabs close; the last window empties to a fresh tab. */
   | { kind: 'close-window'; windowId: string }
+  /** A window row dragged: it lands before `before` (null = the end). Nothing else changes, not
+   *  even which project is on screen. */
+  | { kind: 'move-window'; windowId: string; before: string | null }
   /** A History row: reopen THAT chat in this project (the `OPEN_SESSION` path). */
   | { kind: 'open-session'; sessionId: string }
   /** An AI Team member's conversation: opens in the chat area, never on the AI Team page. */
@@ -49,6 +52,14 @@ export interface DrawerWindowFact {
   asking: number;
   flagged: number;
   other: number;
+  /** Every tab it holds, saved ones too (`other` counts live ones only). 0: nothing to open. */
+  tabs: number;
+}
+
+/** A click that opens something on the chat area: the project lands on it from its first frame
+ *  (`AgentSurface`'s arrival), never on the page it would otherwise start on. */
+export function landsOnChat(intent: DrawerIntent): boolean {
+  return intent.kind !== 'rename-window' && intent.kind !== 'close-window' && intent.kind !== 'move-window' && intent.kind !== 'page';
 }
 
 export interface DrawerSurfaceState {

@@ -6,6 +6,7 @@ import { REPLY_TO_RE } from '../../../lib/superTypes';
 import { splitAbout } from '../super/superHandover';
 import { useDismissOnOutside } from '../../../lib/useDismissOnOutside';
 import { formatFileSize } from '../../../lib/phoneAttach';
+import { cardGlyph } from '../../../lib/cardMention';
 import { isChatReply, isMediaRef, isTokenRef, parseRefTokens, refTokenId } from './composerRefs';
 import type { Attachment } from './composerScratch';
 
@@ -28,7 +29,8 @@ export interface MirrorSegment {
   img?: string;
   icon?: string;
   lead?: number;
-  state?: 'uploading' | 'failed' | 'ready';
+  /** `gone`: a sent card chip whose card is no longer on the stage. */
+  state?: 'uploading' | 'failed' | 'ready' | 'gone';
 }
 
 /** The mirror's runs: tokens first, mentions inside the rest. An About chip's slot is its order
@@ -66,7 +68,8 @@ export function refMirrorSegments(draft: string, peers: PeerMention[], staged: r
 }
 
 /** What an inline chip with no thumbnail shows in its room: what kind of thing it is. */
-export function chipIcon(att: Pick<Attachment, 'kind'>): string {
+export function chipIcon(att: Pick<Attachment, 'kind' | 'cardKind'>): string {
+  if (att.kind === 'card') return cardGlyph(att.cardKind);
   return att.kind === 'folder' ? '📁' : att.kind === 'ref' ? '📌' : att.kind === 'element' ? '◎' : att.kind === 'image' ? '🖼' : '📄';
 }
 
@@ -77,7 +80,7 @@ export function chipIcon(att: Pick<Attachment, 'kind'>): string {
  * textarea paints them); a sent bubble draws it with `sent` (the words visible, a click opens
  * the picture). `lead` is the glyph's text (the thumbnail's room), `rest` everything after it.
  */
-export function PictureChip({ img, icon, lead, rest, state, flash, refId, sent, title, onOpen }: {
+export function PictureChip({ img, icon, lead, rest, state, flash, refId, sent, title, onOpen, testId }: {
   img?: string;
   /** No thumbnail (a file, a folder, an element with no picture): its kind's icon in the room. */
   icon?: string;
@@ -89,13 +92,14 @@ export function PictureChip({ img, icon, lead, rest, state, flash, refId, sent, 
   sent?: boolean;
   title?: string;
   onOpen?: () => void;
+  testId?: string;
 }) {
   return (
     <mark
       className={`chat-cmp-hl-ref chat-cmp-hl-img${flash ? ' is-flash' : ''}${sent ? ' is-sent' : ''}`}
       data-ref-id={refId}
       data-state={state}
-      data-testid={sent ? 'chat-msg-picture' : 'chat-cmp-hl-img'}
+      data-testid={testId ?? (sent ? 'chat-msg-picture' : 'chat-cmp-hl-img')}
       title={title}
       {...(sent && onOpen ? {
         role: 'button',
@@ -117,17 +121,18 @@ export function refsInOrder(draft: string, staged: readonly Attachment[]): Attac
 }
 
 /** What a ref's popover shows: where it came from and its whole line or quote. */
-function refDetail(att: Attachment): { from: 'agenda' | 'super' | 'owner' | 'claude'; text: string; reply: { ref: string; from: 'super' | 'owner' } | null } {
+function refDetail(att: Attachment): { from: 'agenda' | 'super' | 'owner' | 'claude' | 'card'; text: string; reply: { ref: string; from: 'super' | 'owner' } | null } {
   if (isChatReply(att)) return { from: 'claude', text: (att.text ?? '').replace(/^> /, ''), reply: null };
   const about = splitAbout(att.text ?? '').about;
   if (about?.kind === 'reply') return { from: about.from, text: about.quote, reply: { ref: about.ref, from: about.from } };
+  if (about?.kind === 'card') return { from: 'card', text: about.quote, reply: null };
   if (about?.kind === 'note') return { from: 'agenda', text: about.line ?? att.name, reply: null };
   return { from: 'agenda', text: att.name, reply: null };
 }
 
 /** Where an inline attachment's popover says it came from. */
 const MEDIA_SOURCE_KEY: Partial<Record<Attachment['kind'], string>> = {
-  image: 'chat.photo.chip', file: 'chat.chip.file', folder: 'chat.chip.folder', element: 'chat.chip.element', ref: 'chat.chip.ref',
+  image: 'chat.photo.chip', file: 'chat.chip.file', folder: 'chat.chip.folder', element: 'chat.chip.element', ref: 'chat.chip.ref', card: 'chat.chip.card',
 };
 
 /**
@@ -152,7 +157,7 @@ export function RefPopover({ att, slot, left, bottom, onRemove, onGoTo, onClose 
   const d = refDetail(att);
   const picture = isMediaRef(att);
   const source = picture ? t(MEDIA_SOURCE_KEY[att.kind] ?? 'chat.photo.chip')
-    : d.from === 'claude' ? t('chat.ref.fromClaude') : d.from === 'agenda' ? t('super.ref.fromAgenda') : d.from === 'super' ? t('super.ref.fromSuper') : t('super.ref.fromOwn');
+    : d.from === 'claude' ? t('chat.ref.fromClaude') : d.from === 'card' ? t('super.ref.fromCard') : d.from === 'agenda' ? t('super.ref.fromAgenda') : d.from === 'super' ? t('super.ref.fromSuper') : t('super.ref.fromOwn');
   return createPortal(
     <div
       ref={ref}

@@ -161,7 +161,9 @@ describe('the composer and the server use it', () => {
     // Sign-in and MCP are judged on what he typed, not on the folded message, and without the
     // chips in it (owner 2026-10-24, plan R3-4: `words` is the draft with its tokens stripped).
     // Pictures are chips in every view (2026-10-27): a normal chat strips them when it holds one.
-    expect(composer).toMatch(/const words = superView \|\| parseRefTokens\(text\)\.length \? stripTokens\(text\) : text;/);
+    // A card chip is read as the words it sends (2026-10-31): `wire` is the draft with them in.
+    expect(composer).toMatch(/const wire = expandCardChips\(text, staged\)\.text;/);
+    expect(composer).toMatch(/const words = superView \|\| parseRefTokens\(wire\)\.length \? stripTokens\(wire\) : wire;/);
     expect(composer).toMatch(/isSignInCommand\(words\)/);
     expect(composer).toMatch(/isMcpCommand\(words\)/);
     // A slash send keeps the About chip staged.

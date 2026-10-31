@@ -154,7 +154,7 @@ const EFFORT_LEVELS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max
  *  client's caps, never trusted. */
 export interface SavedDraft {
   text: string;
-  chips: Array<{ kind: 'image' | 'file' | 'folder' | 'ref' | 'element' | 'about'; name: string; path?: string; text?: string; inline?: true; chip?: string; tid?: string }>;
+  chips: Array<{ kind: 'image' | 'file' | 'folder' | 'ref' | 'element' | 'about' | 'card'; name: string; path?: string; text?: string; inline?: true; chip?: string; tid?: string; cardKind?: string; url?: string }>;
   quote: string | null;
   savedAt: number;
 }
@@ -168,7 +168,10 @@ const MAX_CHIP_NAME = 300;
 const MAX_CHIP_PATH = 4096;
 const MAX_CHIP_TEXT = 8000;
 const MAX_CHIP_TOKEN = 600;
-const DRAFT_CHIP_KINDS: readonly string[] = ['image', 'file', 'folder', 'ref', 'element', 'about'];
+export const DRAFT_CHIP_KINDS: readonly string[] = ['image', 'file', 'folder', 'ref', 'element', 'about', 'card'];
+/** A card chip's picture (owner 2026-10-31): only the app's own file route, nothing that can break
+ *  out of the `url("…")` it is painted in. Mirrored from composerDrafts.ts. */
+export const CARD_PICTURE_URL_RE = /^\/api\/agent\/file\?[^"'()\\\s]{1,2000}$/;
 
 /** One stored draft, or null. Over-long text is DROPPED, never cut: a truncated draft restored
  *  into the box would read as what the user wrote. */
@@ -190,6 +193,8 @@ export function coerceDraft(raw: unknown): SavedDraft | null {
         ...(r.inline === true ? { inline: true as const } : {}),
         ...(typeof r.chip === 'string' && r.chip && r.chip.length <= MAX_CHIP_TOKEN ? { chip: r.chip } : {}),
         ...(typeof r.tid === 'string' && /^\d{1,12}$/.test(r.tid) ? { tid: r.tid } : {}),
+        ...(r.kind === 'card' && typeof r.cardKind === 'string' && /^[a-z]{1,16}$/.test(r.cardKind) ? { cardKind: r.cardKind } : {}),
+        ...(r.kind === 'card' && typeof r.url === 'string' && CARD_PICTURE_URL_RE.test(r.url) ? { url: r.url } : {}),
       });
     }
   }
@@ -487,6 +492,13 @@ function coerceActivePane(raw: unknown): number | undefined {
   return typeof raw === 'number' && Number.isFinite(raw)
     ? Math.min(MAX_SESSIONS - 1, Math.max(0, Math.floor(raw)))
     : undefined;
+}
+
+/** The windows in `order`; a window it does not name (made since it was read) stays, at the end. */
+export function orderWindows(list: readonly SavedWindow[], order: readonly string[]): SavedWindow[] {
+  const at = new Map(order.map((id, i) => [id, i] as const));
+  const named = list.filter((w) => at.has(w.id)).sort((a, b) => at.get(a.id)! - at.get(b.id)!);
+  return [...named, ...list.filter((w) => !at.has(w.id))];
 }
 
 /** The stored surface plus its generation, as {@link readRosterSurface} returns it. */
@@ -830,6 +842,45 @@ function surfaceBody(saved: StoredSurface, isBound: (sessionId: string) => boole
     windows: saved.windows ?? [{ ...DEFAULT_WINDOW }],
     generation: saved.generation,
   };
+}
+
+/**
+ * `PUT /api/agent/sessions/window-order`: the drawer's drag on a project no surface holds. Only
+ * the windows' order changes. A surface that holds the project saves its own order instead; if
+ * one does hold it, the bumped generation sends it back to re-read rather than write over this.
+ */
+export async function handleAgentWindowOrderPut(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!rosterAllowed(req)) {
+    sendError(res, 403, 'desktop_only', 'Agent session roster is only available in the desktop app.');
+    return;
+  }
+  const order = (await parseJsonBody(req))?.order;
+  if (!Array.isArray(order) || !order.every((id) => typeof id === 'string')) {
+    sendError(res, 400, 'invalid_order', 'order must be a list of window ids.');
+    return;
+  }
+  try {
+    const lock = await acquireRosterLockWithin(contextRoot, 5_000);
+    if (!lock) {
+      sendError(res, 503, 'roster_locked', 'The session roster is being written; try again.');
+      return;
+    }
+    try {
+      const stored = readSurface(contextRoot);
+      writeSurface(contextRoot, { ...stored, windows: orderWindows(stored.windows ?? [], order) }, stored.generation + 1);
+    } finally {
+      releaseFileLock(lock);
+    }
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    console.error('[agent-sessions] window order write failed:', err);
+    sendError(res, 500, 'write_failed', 'Failed to persist the window order.');
+  }
 }
 
 /**

@@ -130,6 +130,41 @@ export function leadIndex(tops: ReadonlyArray<number | null>): number {
   return best;
 }
 
+/**
+ * Where a jump goes: the OLDEST unread out of view, so the reader walks the list in reading order.
+ * Anything above the view (or above the window: no row) comes first, then the nearest below. A
+ * walk under way passes `after`, the row it stands on: it goes on forward while there is a row
+ * ahead, or a row still inside its dwell would call every click back. -1: all on screen.
+ */
+export function nextUnreadIndex(rows: ReadonlyArray<Span | null>, view: Span, after: Span | null = null): number {
+  let below = -1;
+  let above = -1;
+  let ahead = -1;
+  let unmounted = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row) { if (unmounted < 0) unmounted = i; continue; }
+    const side = sideOf(row, view);
+    if (side === 'above' && (above < 0 || row.top < (rows[above] as Span).top)) above = i;
+    if (side === 'below' && (below < 0 || row.top < (rows[below] as Span).top)) below = i;
+    if (after && side !== 'in' && row.top > after.top && (ahead < 0 || row.top < (rows[ahead] as Span).top)) ahead = i;
+  }
+  if (ahead >= 0) return ahead;
+  if (unmounted >= 0) return unmounted;
+  return above >= 0 ? above : below;
+}
+
+/**
+ * The "Unread" line does not follow the reading. It holds its row while that row is on screen, so
+ * nothing moves under the reader's eyes; off screen it goes to the current lead; and a message
+ * landing at the bottom of a pinned view, being read as it arrives, draws no line at all.
+ */
+export function chooseLine(s: { held: boolean; heldInView: boolean; heldIsLead: boolean; lead: boolean; leadInView: boolean; pinned: boolean }): 'held' | 'lead' | 'none' {
+  if (s.held && (s.heldInView || s.heldIsLead)) return 'held';
+  if (!s.lead || (s.pinned && s.leadInView)) return 'none';
+  return 'lead';
+}
+
 /** The first PROSE or event row mounted. A question card proves nothing about the window: it
  *  sits in the always-mounted tail, with unmounted rows newer than it. */
 export function firstMountedRow(units: readonly Pick<UnreadUnit, 'itemId'>[], mounted: readonly boolean[]): number {
@@ -151,6 +186,21 @@ export function readMarksOf(raw: unknown): ReadMarks | null {
   const o = raw as Partial<ReadMarks> | null;
   if (!o || typeof o !== 'object' || typeof o.since !== 'number' || !Array.isArray(o.read)) return null;
   return { since: o.since, read: o.read.filter((m) => m && typeof m.key === 'string' && typeof m.ts === 'number') };
+}
+
+// ─── The jump ────────────────────────────────────────────────────────────────────
+
+export const GLIDE_MS = 260;
+/** The longest stretch a jump animates. A long way is covered at once and only the last of it
+ *  glides: animating thousands of pixels of mounted rows is what stuttered. */
+export const GLIDE_REACH = 480;
+
+export function glideFrom(from: number, to: number, reach = GLIDE_REACH): number {
+  return Math.abs(to - from) <= reach ? from : to - Math.sign(to - from) * reach;
+}
+
+export function glideEase(t: number): number {
+  return 1 - (1 - t) ** 3;
 }
 
 // ─── Seen: the reading rule ──────────────────────────────────────────────────────

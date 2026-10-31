@@ -250,7 +250,7 @@ import {
 } from './routes/agent-voice.js';
 import { pruneTakes } from '../lib/voice/voiceLog.js';
 import { handleAgentDownload } from './routes/agent-download.js';
-import { handleAgentSessionsGet, handleAgentSessionsPut } from './routes/agent-sessions.js';
+import { handleAgentSessionsGet, handleAgentSessionsPut, handleAgentWindowOrderPut } from './routes/agent-sessions.js';
 import { handleContextHandoffDefaultGet, handleContextHandoffDefaultPost } from './routes/agent-handoff-default.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
 import { handlePeerList, handlePeerLogo, handlePeerMailList, handlePeerSend, handlePeerMailStatus } from './routes/peer.js';
@@ -749,6 +749,7 @@ export function buildRouter(): Router {
   // (desktop-gated, vault-scoped — same posture as /drop above).
   router.get('/api/agent/sessions', handleAgentSessionsGet);
   router.put('/api/agent/sessions', handleAgentSessionsPut);
+  router.put('/api/agent/sessions/window-order', handleAgentWindowOrderPut);
   router.get('/api/agent/context-handoff-default', handleContextHandoffDefaultGet);
   router.post('/api/agent/context-handoff-default', handleContextHandoffDefaultPost);
 

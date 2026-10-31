@@ -31,7 +31,7 @@
  * either after a restart would show the user a chip that no longer refers to anything.
  */
 
-import { ABOUT_AGENDA_RE, MAX_MESSAGE_REFS, REPLY_TO_RE } from '../../../lib/superTypes';
+import { ABOUT_AGENDA_RE, ABOUT_CARD_RE, MAX_MESSAGE_REFS, REPLY_TO_RE } from '../../../lib/superTypes';
 import { isChatReply, isMediaRef, isTokenRef, parseRefTokens, refKey, refTokenId, stripTokens, type RefTokenSpan } from './composerRefs';
 
 export interface Attachment {
@@ -45,8 +45,11 @@ export interface Attachment {
    *  per conversation, each a token in the draft (`insertRef`, composerRefs.ts); it never makes a
    *  message on its own (`countsAsContent`). `page` is the page the Super dock is open on (owner
    *  2026-10-25): `text` is the `[On page …]` block the message ENDS with, `name` what the chip
-   *  reads. One per conversation (`setPageContext`), never content, and it stays after a send. */
-  kind: 'image' | 'file' | 'folder' | 'ref' | 'element' | 'about' | 'page';
+   *  reads. One per conversation (`setPageContext`), never content, and it stays after a send.
+   *  `card` is a stage card dropped on the Super chat (owner 2026-10-31): `text` is the exact
+   *  words the send writes where its chip stands (`@card:<id> “<title>”`, unchanged on the wire),
+   *  `name` its title, `url` an image card's picture, `cardKind` what card it is (its icon). */
+  kind: 'image' | 'file' | 'folder' | 'ref' | 'element' | 'about' | 'page' | 'card';
   name: string;
   /** Image attachments only — an object URL for the pasted `File` blob, so the chip shows
    *  the picture itself while its bytes are still on their way to disk. Revoked when the entry
@@ -91,6 +94,8 @@ export interface Attachment {
   /** `about` only: the name its token was drawn with (clipped to fit the field), once it is in
    *  the box; a paste of that token is matched against it. */
   chip?: string;
+  /** `card` only: the card's kind (`chat`, `image`, `task`, `group`…), the icon its chip wears. */
+  cardKind?: string;
 }
 
 export interface ComposerScratch {
@@ -278,17 +283,18 @@ export function dropSentAttachments(convId: string, opts: { keepAbout?: boolean;
   // its inline chips (`keepInline`). The page chip stays always: the next message is still
   // written from that page.
   const gone = (a: Attachment) => a.kind !== 'page' && wasSent(a) && !(opts.keepAbout && a.kind === 'about')
-    && !(opts.keepInline && isMediaRef(a));
+    // A card chip's words went out in the text either way: it never stays behind.
+    && !(opts.keepInline && isMediaRef(a) && a.kind !== 'card');
   cur.attachments.forEach((a) => { if (gone(a)) revoke(a); });
   (cur.recent ?? []).forEach((a) => { if (!cur.attachments.some((x) => x.id === a.id)) revoke(a); });
   // A send ends what `recent` remembers: a chip cut before it is not pasted back after it.
   commit(convId, { attachments: cur.attachments.filter((a) => !gone(a)), quote: null });
 }
 
-/** A chip a send carries: one with a path, a picked element or an About line (its block is the
- *  content). */
-export function wasSent(a: Attachment): boolean {
-  return !!a.path || ((a.kind === 'element' || a.kind === 'about') && !!a.text);
+/** A chip a send carries: one with a path, a picked element, an About line or a stage card (its
+ *  block or its words are the content). */
+export function wasSent(a: Pick<Attachment, 'path' | 'kind' | 'text'>): boolean {
+  return !!a.path || ((a.kind === 'element' || a.kind === 'about' || a.kind === 'card') && !!a.text);
 }
 
 /** A chip that is something to send by itself. An About line is not: it says what the message
@@ -389,10 +395,13 @@ export function stageRefs(convId: string, refs: readonly Attachment[], draft = '
   const cur = readScratch(convId);
   const named = new Set(parseRefTokens(draft).map((t) => t.id));
   // An inline attachment the new draft does not hold is not dropped: its chip is put back (pending).
+  // A card chip, like an About one, is the draft's own: one the new draft does not hold leaves
+  // (unless it is still waiting for the caret).
   const kept = cur.attachments
-    .filter((a) => a.kind !== 'about' || (!a.pending && named.has(refTokenId(a))))
+    .filter((a) => (a.kind === 'card' ? a.pending || named.has(refTokenId(a)) : a.kind !== 'about' || (!a.pending && named.has(refTokenId(a)))))
     .map((a) => (isMediaRef(a) && !named.has(refTokenId(a)) ? { ...a, pending: true } : a));
-  const add = refs.filter((r) => !kept.some((a) => a.id === r.id)).map((a) => ({ ...a, kind: 'about' as const, pending: false }));
+  const add = refs.filter((r) => !kept.some((a) => a.id === r.id))
+    .map((a): Attachment => (a.kind === 'card' ? { ...a, inline: true, pending: false } : { ...a, kind: 'about', pending: false }));
   commit(convId, { ...cur, attachments: [...kept, ...add] });
 }
 
@@ -454,9 +463,12 @@ export function composeOutgoing(
 }
 
 function composeBody(
-  text: string, attachments: readonly Attachment[], quote: string | null, quotePath: (p: string) => string,
+  draft: string, staged: readonly Attachment[], quote: string | null, quotePath: (p: string) => string,
   opts: { superView?: boolean } = {},
 ): { message: string; quoted: string; slash: boolean } {
+  // A stage card's chip is words he could have typed: it goes out as them, where it stands, and
+  // everything after reads the draft as if he had (the wire is today's, owner 2026-10-31).
+  const { text, attachments } = expandCardChips(draft, staged);
   const abouts = attachments.filter((a) => a.kind === 'about' && !!a.text);
   const media = attachments.filter(isMediaRef);
   const byId = new Map([...abouts, ...media].map((a) => [refTokenId(a), a] as const));
@@ -520,6 +532,25 @@ function composeBody(
   return { message, quoted, slash: false };
 }
 
+/** The draft with each card chip's token replaced by its words, and the card chips unstaged. A
+ *  card chip whose token is not in the draft carries nothing. */
+export function expandCardChips(draft: string, staged: readonly Attachment[]): { text: string; attachments: readonly Attachment[] } {
+  if (!staged.some((a) => a.kind === 'card')) return { text: draft, attachments: staged };
+  const cards = new Map(staged.filter((a) => a.kind === 'card' && !!a.text).map((a) => [refTokenId(a), a] as const));
+  let text = '';
+  let pos = 0;
+  for (const t of parseRefTokens(draft)) {
+    const card = cards.get(t.id);
+    if (!card) continue;
+    text += draft.slice(pos, t.start);
+    // Its words stand apart from his, as a drop always put them (`cardReference`).
+    const after = draft.slice(t.end, t.end + 1);
+    text += `${text && !/\s$/.test(text) ? ' ' : ''}${card.text as string}${after && !/\s/.test(after) ? ' ' : ''}`;
+    pos = t.end;
+  }
+  return { text: text + draft.slice(pos), attachments: staged.filter((a) => a.kind !== 'card') };
+}
+
 /**
  * A draft whose chips include pictures or other inline attachments (owner 2026-10-27, 10-30):
  * read strictly left to right, so each chip is followed by exactly the words he wrote after it. A
@@ -564,7 +595,7 @@ function composeInline(
 
 /** A typed line that would read as a reference header gets a leading U+200B (Super view). */
 export function neutraliseHeaders(words: string): string {
-  return words.split('\n').map((l) => (ABOUT_AGENDA_RE.test(l) || REPLY_TO_RE.test(l) ? `\u200B${l}` : l)).join('\n');
+  return words.split('\n').map((l) => (ABOUT_AGENDA_RE.test(l) || ABOUT_CARD_RE.test(l) || REPLY_TO_RE.test(l) ? `\u200B${l}` : l)).join('\n');
 }
 
 /**

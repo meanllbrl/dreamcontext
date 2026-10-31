@@ -52,7 +52,7 @@ import {
   promptHistory, canRecallHistory, stepHistory, NO_HISTORY_NAV, type HistoryNav,
 } from './chatEntities';
 import {
-  addAttachments, composeOutgoing, countsAsContent, dropRefs, dropSentAttachments, markInserted, nextAttachmentId, pendingUploads,
+  addAttachments, composeOutgoing, countsAsContent, expandCardChips, dropRefs, dropSentAttachments, markInserted, nextAttachmentId, pendingUploads,
   readScratch, removeAttachment, repend, setQuote, stagePicked, restoreRefs, setAttachmentPreview, settleAttachment, stageRefs, stageUpload, subscribeScratch, trackUpload, wasSent, type Attachment,
 } from './composerScratch';
 import {
@@ -70,6 +70,7 @@ import type { ComposerHost } from './composerHost';
 import './composer.css';
 import { useDictationReady } from '../../../lib/voice/useDictationReady';
 import { REPLY_TO_RE } from '../../../lib/superTypes';
+import { useStageCards } from '../super/stageCards';
 
 /**
  * The redesigned Agent Chat (beta) composer (task T6, plan rev.3) — replaced the inline
@@ -735,7 +736,7 @@ export function Composer({
     pendingCaret.current = { pos: text.length, scrollToEnd: true };
   };
   const recall = (dir: 'back' | 'forward'): boolean => {
-    const staged = superView ? readScratch(convId).attachments.filter((a) => a.kind === 'about' && !a.pending) : undefined;
+    const staged = superView ? readScratch(convId).attachments.filter((a) => (a.kind === 'about' || a.kind === 'card') && !a.pending) : undefined;
     const stepped = stepHistory(historyEntries, nav, dir, draft, staged);
     if (!stepped) return false;
     setNavBoth(stepped.nav);
@@ -744,7 +745,7 @@ export function Composer({
     // to the stash stages the chips it held.
     const back = stepped.refs
       ? { draft: stepped.text, refs: [...stepped.refs] }
-      : draftFromMessage(stepped.text, { mint: nextAttachmentId, words: refLabelWords, fits: chipFits() });
+      : draftFromMessage(stepped.text, { mint: nextAttachmentId, words: refLabelWords, fits: chipFits(), card: stageCards?.cardOf });
     stageRefs(convId, back.refs, back.draft);
     applyRecalled(back.draft);
     return true;
@@ -765,7 +766,7 @@ export function Composer({
         if (superView && session.getModel().draftEpochReason === 'rewind') {
           // A rewound message comes back with its chips (plan R3-2): read once, written back to
           // the session, and the reason consumed, so a remount never converts it again.
-          const back = draftFromMessage(adopted, { mint: nextAttachmentId, words: refLabelWords, fits: chipFits() });
+          const back = draftFromMessage(adopted, { mint: nextAttachmentId, words: refLabelWords, fits: chipFits(), card: stageCards?.cardOf });
           adopted = back.draft;
           session.syncDraft(adopted);
           stageRefs(convId, back.refs, adopted);
@@ -846,7 +847,9 @@ export function Composer({
   const [fieldFocused, setFieldFocused] = useState(false);
   /** The chip flashing (the same target pressed again, a pasted copy of one): its attachment id. */
   const [flashing, setFlashing] = useState<string | null>(null);
-  const refLabelWords = { question: t('super.agenda.aboutAQuestion'), super: t('super.ref.super'), own: t('super.ref.own') };
+  /** The stage's cards (the handed-over Super chat only): a recalled card chip's icon or picture. */
+  const stageCards = useStageCards();
+  const refLabelWords = { question: t('super.agenda.aboutAQuestion'), super: t('super.ref.super'), own: t('super.ref.own'), card: t('super.ref.card') };
 
   /**
    * A chip's widest share of its field (plan criterion 8): a label is clipped further until its
@@ -1980,9 +1983,13 @@ export function Composer({
     if (!quoted.trim()) return;
     // Every test below reads his words without the chips; every path that clears the box keeps
     // them for the next message (they were not sent) and never hands a token to a peer.
-    const words = superView || parseRefTokens(text).length ? stripTokens(text) : text;
-    const kept = tokensOnly(text);
     const staged = readScratch(convId).attachments;
+    // A card chip IS words on the wire (`@card:<id> “<title>”`): read them as he would have typed
+    // them, as `composeBody` does, so a card before `@peer` or `/login` keeps the message his.
+    const wire = expandCardChips(text, staged).text;
+    const words = superView || parseRefTokens(wire).length ? stripTokens(wire) : wire;
+    const kept = tokensOnly(text);
+    const cardIds = new Set(staged.filter((a) => a.kind === 'card').map(refTokenId));
     // An inline attachment that did not go (no path: it failed, or is still on its way) keeps its chip.
     const unsent = new Set(staged.filter((a) => isMediaRef(a) && !wasSent(a)).map(refTokenId));
     // A chat's ↩ goes with the message wherever it goes (a peer too).
@@ -2064,7 +2071,8 @@ export function Composer({
     if (spoken) session.armSpoken?.(message);
     // The dictated take, only when the draft is still exactly what was heard.
     if (take && take.text === text) session.armVoiceTake?.(message, take.ref);
-    const left = slash ? kept : tokensOnly(text, (s) => unsent.has(s.id));
+    // A slash command's card words went out with it (its chip is unstaged): its token leaves too.
+    const left = slash ? tokensOnly(text, (s) => !cardIds.has(s.id)) : tokensOnly(text, (s) => unsent.has(s.id));
     const sent = () => {
       // A slash command carried no chip, so its chips stay in the box for the next message.
       setDraft(left);

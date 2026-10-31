@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type MutableRefObject, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
 import { MAX_CONTAINERS, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
@@ -15,7 +15,7 @@ import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { remoteLayoutPatch } from './remoteStage';
 import { SuperAgenda } from './SuperAgenda';
 import { onOpenJobRow, publishSuperEventContext } from './superJobsStore';
-import { AgendaButton, AgendaPill } from './AgendaButton';
+import { AgendaButton, AgendaPill, OthersButton } from './AgendaButton';
 import { childModelChip, type AsksOwner } from './AgentCard';
 import { SuperContainer, chatStatus, childBusyOf, isLivePage, superCentreStatus, type RemoteRow } from './SuperContainer';
 import { useLiveSession } from './liveSession';
@@ -23,6 +23,7 @@ import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
 import { LOOK_RENEW_MS, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
+import { SelectionScope } from '../chat/SelectionBar';
 import { cardTitle } from './superTitles';
 import { BrandMark } from '../../brand/BrandMark';
 import { useTasks } from '../../../hooks/useTasks';
@@ -36,6 +37,7 @@ import { MAX_KEPT_FRAMES, MAX_LIVE_BROWSERS, MAX_LIVE_IFRAMES, autoFrames, keptW
 import { LIGHT_POLL_FACTOR, pollMs, useWindowActivity } from '../../../lib/windowActivity';
 import { useStageCues, withGhosts } from './useStageCues';
 import { deviceAspect, isWebDevice, useWebDevices } from '../../../lib/webDevice';
+import { pageFitKey, pageFitOf, pageFitsVersion, subscribePageFits } from '../../../lib/pageFit';
 import './SuperSurface.css';
 import './superTone.css';
 import './superCentre.css';
@@ -84,8 +86,14 @@ export interface SuperSurfaceProps {
   onStageReady: (stage: { origin: DOMRect; plan: StagePlan }) => void;
   /** O11: the owner dropped a card on the centre (or pressed its "Ask about this"). */
   onAskAbout: (id: string, title: string) => void;
+  /** A card chip in a Super message was clicked (owner 2026-10-31): bring this card or group into
+   *  view the way a click on it does, then say so with `onFocusCardDone`. */
+  focusCard?: string | null;
+  onFocusCardDone?: () => void;
   /** Inspect picked an element in a web card's page (`page`: its address as the dev server knows it). */
   onPickElement?: (id: string, pick: WebPick, page: string) => void;
+  /** Comment on words selected on a card: they go to the Super Agent's composer as a chip. */
+  onCommentCardText?: (id: string, text: string) => void;
   /** "Write about this" on an agenda line: the line becomes the About chip in the centre's composer. */
   onWriteAbout?: (row: AgendaRow) => void;
   /** The owner ended a child from its card (`whenDone`: once its turn ends). */
@@ -131,8 +139,7 @@ export function jobLookOf({ sessionFor, titleFor, nameFor, children, superTitle 
 }
 
 /**
- * The Super chat's head: the dreamcontext logo, its name ("dreamcontext Super Agent", owner
- * 2026-10-25), and (as a column) the subtitle, the stage's Agenda button when one is given and
+ * The Super chat's head: the dreamcontext logo, its name ("Super Agent", owner 2026-10-31), and (as a column) the subtitle, the stage's Agenda button when one is given and
  * New session. The stage centre and the Super dock both draw it; the dock passes no agenda (the
  * agenda is a stage card) and its two buttons as `actions`.
  */
@@ -171,6 +178,17 @@ const BACK_TO_GROUP_MS = 3000;
  * Nothing polls: the state is pushed (`super_state`) and handed down; the cards read the
  * children's live sessions. The owner's gestures go up through `onLayout` as patches.
  */
+/** A card as a place a selection counts: Comment hands its words to the Super Agent's composer. */
+function CardSelectionScope({ id, onComment, onCommented, children }: {
+  id: string; onComment?: (id: string, text: string) => void; onCommented?: () => void; children: ReactNode;
+}) {
+  return (
+    <SelectionScope handler={{ canComment: () => !!onComment, comment: (text) => { onComment?.(id, text); onCommented?.(); } }}>
+      {children}
+    </SelectionScope>
+  );
+}
+
 export function SuperSurface(props: SuperSurfaceProps) {
   const { state, pending, motion, superSession, onSlotsChanged } = props;
   const remote = props.remote ?? null;
@@ -251,6 +269,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // Its key changes only when a child's liveness does, so the plan is not redone per frame.
   // The device width the owner picked on each web card: side by side, the card takes its shape.
   const devicesKey = useWebDevices();
+  // Each project page's measured width: a report's card takes it, the chat the rest.
+  const fitsVersion = useSyncExternalStore(subscribePageFits, pageFitsVersion);
+  const { vault } = useVault();
   const liveJobsKey = state.containers.filter((c) => c.kind === 'chat'
     && childIsLive(state, c.ref, props.sessionFor(c.ref) ? chatStatus(props.sessionFor(c.ref)).kind : null)).map((c) => c.id).join(',');
   const items = useMemo(() => {
@@ -259,8 +280,9 @@ export function SuperSurface(props: SuperSurfaceProps) {
     return stageItems(state.containers, state.groups, view, (c) => live.has(c.id), (c) => {
       const d = devices.get(c.id);
       return isWebDevice(d) ? deviceAspect(d) : undefined;
-    });
-  }, [state.containers, state.groups, view, liveJobsKey, devicesKey]);
+    }, (c) => pageFitOf(pageFitKey(vault, c.ref)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fitsVersion: the store's answers changed
+  }, [state.containers, state.groups, view, liveJobsKey, devicesKey, fitsVersion, vault]);
   // The agenda minimised to its corner pill (owner 2026-10-22 23:44): not a card on the stage
   // (stageItems leaves it out) unless the view shows it side by side or presented.
   const agendaPill = useMemo(() => {
@@ -547,6 +569,18 @@ export function SuperSurface(props: SuperSurfaceProps) {
     },
     onFullscreen: (id: string, subject: CardFullscreen) => setFull({ id, subject }),
   };
+  // A card chip clicked in the chat: the same as a click on the card (side by side) or its group's
+  // tile (the group's panel). A card gone meanwhile does nothing.
+  const focusCardDone = props.onFocusCardDone;
+  const focusCard = props.focusCard;
+  const focusRef = useRef({ side: actions.onSideBySide, group: openFromTile });
+  focusRef.current = { side: actions.onSideBySide, group: openFromTile };
+  useEffect(() => {
+    if (!focusCard) return;
+    if (byId.has(focusCard)) focusRef.current.side(focusCard);
+    else if (groupsById.has(focusCard)) focusRef.current.group(focusCard);
+    focusCardDone?.();
+  }, [focusCard, focusCardDone, byId, groupsById]);
   /**
    * Where a card grows (owner 2026-10-29, "alan var mı?"): a card he placed, or one he grows by its
    * corner (`pin`), grows from its inner top corner where it is drawn; an auto card sized from the
@@ -831,6 +865,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     return { id, title: titleOf(c), kind: c.kind, status: tone === null ? undefined : tone === 'starting' ? 'idle' : tone };
   };
   const othersItems: OthersItem[] = plan.others.map(pillItem);
+  const toggleOthers = () => setOpenGroup((o) => (o === 'others' ? null : 'others'));
   // The live jobs the rail's one column cannot hold, beside a page or a presentation.
   const moreItems: OthersItem[] = (plan.more?.ids ?? []).filter((id) => byId.has(id)).map(pillItem);
 
@@ -842,6 +877,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       data-super-motion={motion}
       data-mode={plan.mode}
       data-narrow={plan.narrow ? 'true' : undefined}
+      data-phone={plan.phone ? 'true' : undefined}
       data-dragging={drag ? 'true' : undefined}
       data-presenting={plan.mode === 'present' ? 'true' : undefined}
       data-layout={plan.layout ?? undefined}
@@ -862,7 +898,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
           <div className="super-centre-clip">
             <SuperCentreHead
               chat={plan.chat}
-              agenda={!agendaOnStage ? <AgendaButton state={state} look={jobLook} onOpen={openAgenda} /> : undefined}
+              agenda={(
+                <>
+                  {!agendaOnStage && <AgendaButton state={state} look={jobLook} onOpen={openAgenda} />}
+                  {plan.phone && othersItems.length > 0 && (
+                    <OthersButton count={othersItems.length} asking={othersItems.some((i) => i.status === 'asking')} open={openGroup === 'others'} buttonRef={stackRef} onToggle={toggleOthers} />
+                  )}
+                </>
+              )}
               pending={freshPending(state)}
               onNewSession={props.onNewSession}
               noNewSession={!!remote}
@@ -890,6 +933,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
           const cue = ghost ? { kind: 'close' as const } : stageCues.cueFor(c.id);
           const rect = cp.rect;
           return (
+            <CardSelectionScope key={c.id} id={c.id} onComment={props.onCommentCardText}>
             <SuperContainer
               key={c.id}
               container={c}
@@ -928,10 +972,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
               agenda={c.kind === 'agenda' ? renderAgenda : undefined}
               // One big page (spotlight, review's site, a filmstrip's big card): at a desktop width.
               // A report in the brain is a document, not a site: scaled down it read at 10 px.
-              desktopViewport={(plan.layout === 'spotlight' || plan.layout === 'review' || plan.layout === 'filmstrip') && cp.where === 'present' && !c.ref.startsWith('_dream_context/')}
+              desktopViewport={(plan.layout === 'spotlight' || plan.layout === 'review' || plan.layout === 'filmstrip') && cp.where === 'present' && !cp.fitted && !c.ref.startsWith('_dream_context/')}
               onSelectThumb={setSelected}
               {...actions}
             />
+            </CardSelectionScope>
           );
         })}
         {state.groups.map((g) => {
@@ -1015,8 +1060,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
           aria-hidden
         />
       )}
-      {agendaPill && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
-      <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={() => setOpenGroup((o) => (o === 'others' ? null : 'others'))} stackRef={stackRef} />
+      {agendaPill && !plan.phone && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
+      {!plan.phone && <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={toggleOthers} stackRef={stackRef} />}
       {plan.more && <OthersStack more stackRef={moreRef} items={moreItems} rect={plan.more.rect} open={openGroup === 'more'} onToggle={() => setOpenGroup((o) => (o === 'more' ? null : 'more'))} />}
       {openGroup && (() => {
         // The rail's "more" tile opens like Others (its cards are live jobs: no close-all there).
@@ -1055,7 +1100,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
         );
       })()}
       <div ref={layerRef} className="super-stage-layer" aria-hidden />
-      {full && <CardFullscreenView subject={full.subject} cardId={full.id} onClose={() => setFull(null)} />}
+      {full && (
+        <CardSelectionScope id={full.id} onComment={props.onCommentCardText} onCommented={() => setFull(null)}>
+          <CardFullscreenView subject={full.subject} cardId={full.id} onClose={() => setFull(null)} />
+        </CardSelectionScope>
+      )}
     </div>
   );
 }

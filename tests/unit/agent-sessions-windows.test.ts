@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
-  handleAgentSessionsGet, handleAgentSessionsPut, landPhoneRosterOnDesktop, rosterSummary,
+  handleAgentSessionsGet, handleAgentSessionsPut, handleAgentWindowOrderPut, landPhoneRosterOnDesktop, orderWindows, rosterSummary,
   coerceWindows, withWindows, MAX_SESSIONS, MAX_WINDOW_NAME, DEFAULT_WINDOW, type SavedMeta,
 } from '../../src/server/routes/agent-sessions.js';
 import { parseJsonBody } from '../../src/server/middleware.js';
@@ -257,5 +257,58 @@ describe('roster windows: 40 tabs at their worst still save', () => {
     const sessions = Array.from({ length: 45 }, (_, i) => tab(`T${i}`, { sessionId: uuid(i + 1) }));
     expect((await put({ sessions, chatPermissionMode: 'auto' })).status).toBe(200);
     expect(stored().sessions).toHaveLength(40);
+  });
+});
+
+describe('the drawer drag on a project nothing holds', () => {
+  const seed = () => writeFileSync(file(), JSON.stringify({
+    sessions: [tab('A', { sessionId: uuid(1), window: 'a', pane: 0, active: true }), tab('B', { sessionId: uuid(2), window: 'b', pane: 1 })],
+    activePane: 1, chatPermissionMode: 'bypass', drafts: { [uuid(1)]: { text: 'mine', chips: [], quote: null, savedAt: 1 } },
+    windows: [{ id: 'a', name: 'A', activePane: 0 }, { id: 'b', name: 'B', activePane: 1 }, { id: 'c', name: 'C' }],
+    generation: 4,
+  }));
+  async function order(body: unknown): Promise<number> {
+    const r = res();
+    await handleAgentWindowOrderPut(req(body), r.res, {}, contextRoot);
+    return r.status();
+  }
+
+  it('changes the order and nothing else, and a read sees it', async () => {
+    seed();
+    const before = stored();
+    expect(await order({ order: ['c', 'b', 'a'] })).toBe(200);
+    const after = stored();
+    expect(after.windows!.map((w) => w.id)).toEqual(['c', 'b', 'a']);
+    expect(after.windows!.find((w) => w.id === 'b')).toEqual({ id: 'b', name: 'B', activePane: 1 });
+    expect(after.sessions.map((m) => [m.title, m.window, m.pane])).toEqual(before.sessions.map((m) => [m.title, m.window, m.pane]));
+    expect((after as unknown as Record<string, unknown>).drafts).toEqual((before as unknown as Record<string, unknown>).drafts);
+    expect((after as unknown as Record<string, unknown>).chatPermissionMode).toBe('bypass');
+    expect((await get()).windows.map((w: { id: string }) => w.id)).toEqual(['c', 'b', 'a']);
+  });
+
+  it('bumps the generation: a surface that read the old list re-reads, it cannot write over this', async () => {
+    seed();
+    expect(await order({ order: ['b', 'a', 'c'] })).toBe(200);
+    expect(stored().generation).toBe(5);
+    expect((await put({ sessions: [], windows: [{ id: 'a', name: 'A' }], baseGeneration: 4, chatPermissionMode: 'auto' })).status).toBe(409);
+  });
+
+  it('a window the order does not name stays, an id it does not know is ignored', () => {
+    const list = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'c', name: 'C' }];
+    expect(orderWindows(list, ['c', 'ghost', 'a']).map((w) => w.id)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('refuses a body that is not a list of ids, and the file stays as it was', async () => {
+    seed();
+    const was = readFileSync(file(), 'utf-8');
+    expect(await order({ order: 'a' })).toBe(400);
+    expect(await order({ order: [1] })).toBe(400);
+    expect(await order('nonsense')).toBe(400);
+    expect(readFileSync(file(), 'utf-8')).toBe(was);
+  });
+
+  it('stays desktop-only', async () => {
+    delete process.env.DREAMCONTEXT_DESKTOP;
+    expect(await order({ order: [] })).toBe(403);
   });
 });

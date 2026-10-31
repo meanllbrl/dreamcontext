@@ -1,3 +1,4 @@
+import type { RefObject } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import type { SuperStateView } from '../../../lib/superTypes';
 import { superNotepad, type JobLook } from './superHandover';
@@ -31,6 +32,28 @@ export function AgendaButton({ state, look, onOpen }: { state: SuperStateView; l
       <Glyph className="super-fresh-glyph" />
       <span className="super-fresh-btn-label">{t('super.agenda.label')}</span>
       {waiting > 0 && <span className="super-agenda-open-n" data-kind="waiting" aria-hidden>{waiting}</span>}
+    </button>
+  );
+}
+
+/**
+ * Others in the centre's head, on a phone-width stage (owner 2026-10-31: the pill under the chat
+ * cost the height): the same panel, opened beside Agenda, its count on the button.
+ */
+export function OthersButton({ count, asking, open, buttonRef, onToggle }: {
+  count: number;
+  asking: boolean;
+  open: boolean;
+  buttonRef: RefObject<HTMLButtonElement | null>;
+  onToggle: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <button ref={buttonRef} type="button" className="super-fresh-btn super-agenda-open super-others-open" data-testid="super-others-open"
+      data-asking={asking ? 'true' : undefined} aria-haspopup="dialog" aria-expanded={open}
+      aria-label={t('super.others.label').replace('{n}', String(count))} title={t('super.others.name')} onClick={onToggle}>
+      <span className="super-others-sheets" aria-hidden><span /><span /><span /></span>
+      <span className="super-agenda-open-n" aria-hidden>{count}</span>
     </button>
   );
 }

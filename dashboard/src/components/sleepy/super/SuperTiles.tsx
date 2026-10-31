@@ -12,6 +12,7 @@ import type { SessionStatusKind } from '../agentStatus';
 import { StatusRing } from './AgentCard';
 import { criteriaProgress, insightTile } from './tileModel';
 import { KIND_GLYPH } from './SuperContainer';
+import { GROUP_GLYPH } from '../../../lib/cardMention';
 import './superInsight.css';
 
 /**
@@ -51,7 +52,7 @@ function TileTop({ kind }: { kind: Container['kind'] | 'group' }) {
   const { t } = useI18n();
   return (
     <div className="super-tile-top">
-      <span className="super-tile-glyph" aria-hidden>{kind === 'group' ? '▤' : KIND_GLYPH[kind]}</span>
+      <span className="super-tile-glyph" aria-hidden>{kind === 'group' ? GROUP_GLYPH : KIND_GLYPH[kind]}</span>
       <span className="super-tile-kind">{t(`super.tile.kind.${kind}`)}</span>
     </div>
   );

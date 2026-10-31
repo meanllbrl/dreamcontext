@@ -32,16 +32,21 @@ export const ORG = {
   stackIndent: 14,
   youW: 132,
   youH: 34,
+  /** The band holds its name, its one-line note and its count, even around one card. */
+  bandMinW: 480,
 } as const;
 
 export interface OrgBox { x: number; y: number; w: number; h: number }
 export interface OrgCard extends OrgBox { slug: string }
 export interface OrgFrame extends OrgBox { lead: string; label: string; count: number; onPath: boolean }
 export interface OrgEdge { from: string; to: string; points: [number, number][]; onPath: boolean }
+/** The members of all projects: one band across the chart's foot, on the owner's line. */
+export interface OrgBand extends OrgBox { count: number; onPath: boolean }
 export interface OrgLayout {
   width: number;
   height: number;
   you: OrgBox;
+  band: OrgBand | null;
   cards: OrgCard[];
   frames: OrgFrame[];
   edges: OrgEdge[];
@@ -58,7 +63,7 @@ interface Measured { w: number; h: number }
 
 export function layoutOrgChart(
   tree: TeamTree,
-  opts: { selected?: string | null; titleOf?: (slug: string) => string } = {},
+  opts: { selected?: string | null; titleOf?: (slug: string) => string; band?: readonly string[] } = {},
 ): OrgLayout {
   const titleOf = opts.titleOf ?? ((s: string) => s);
   const onPath = new Set(opts.selected ? chainOf(tree, opts.selected) : []);
@@ -172,7 +177,15 @@ export function layoutOrgChart(
   };
 
   const row = packRow(tree.roots);
-  const width = Math.max(row.width, ORG.youW);
+  const bandSlugs = opts.band ?? [];
+  const hasBand = bandSlugs.length > 0;
+  const bandInner = bandSlugs.length * ORG.cardW + (bandSlugs.length - 1) * ORG.gapX;
+  // The band's line runs down a free gutter right of the team, past every card.
+  const gutter = hasBand && row.items.length > 0 ? ORG.gapX * 2 : 0;
+  /** The band's inset from the chart's edge, so its frame never sits flush on the pane. */
+  const bandInset = ORG.framePad - 2;
+  const bandNeeds = hasBand ? Math.max(bandInner + ORG.framePad * 2, ORG.bandMinW) : 0;
+  const width = Math.max(row.width + gutter * 2, ORG.youW, hasBand ? bandNeeds + bandInset * 2 : 0);
   const you: OrgBox = { x: width / 2 - ORG.youW / 2, y: 0, w: ORG.youW, h: ORG.youH };
   const rootY = ORG.youH + ORG.gapY;
   const busY = ORG.youH + ORG.gapY / 2;
@@ -186,8 +199,30 @@ export function layoutOrgChart(
       onPath: onPath.has(it.slug),
     });
   }
-  const height = Math.max(ORG.youH, ...cards.map((c) => c.y + c.h), ...frames.map((f) => f.y + f.h));
-  return { width, height, you, cards, frames, edges };
+  const teamBottom = Math.max(ORG.youH, ...cards.map((c) => c.y + c.h), ...frames.map((f) => f.y + f.h));
+  let band: OrgBand | null = null;
+  if (hasBand) {
+    const y = teamBottom + ORG.gapY;
+    const on = !!opts.selected && bandSlugs.includes(opts.selected);
+    // Its left edge is the team row's, its right edge just past the owner's line.
+    const w = Math.max(bandNeeds, row.width + ORG.gapX + bandInset);
+    const x = Math.min(x0, width - bandInset - w);
+    band = { x, y, w, h: ORG.frameHead + ORG.cardH + ORG.framePad, count: bandSlugs.length, onPath: on };
+    bandSlugs.forEach((slug, i) => {
+      cards.push({ slug, x: x + ORG.framePad + i * (ORG.cardW + ORG.gapX), y: y + ORG.frameHead, w: ORG.cardW, h: ORG.cardH });
+    });
+    const lx = row.items.length > 0 ? x0 + row.width + ORG.gapX : width / 2;
+    edges.push({
+      from: '',
+      to: '',
+      points: row.items.length > 0
+        ? [[width / 2, ORG.youH], [width / 2, busY], [lx, busY], [lx, y]]
+        : [[width / 2, ORG.youH], [lx, y]],
+      onPath: on,
+    });
+  }
+  const height = band ? band.y + band.h : teamBottom;
+  return { width, height, you, band, cards, frames, edges };
 }
 
 /** An edge as an SVG path: straight runs with small rounded corners. */

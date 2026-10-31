@@ -28,8 +28,9 @@
  *
  * React-free and DOM-free, so root vitest loads it directly (composer-refs.test.ts).
  */
-import { ABOUT_AGENDA_RE, MAX_MESSAGE_REFS, REPLY_TO_RE, aboutHeads } from '../../../lib/superTypes';
+import { ABOUT_AGENDA_RE, ABOUT_CARD_RE, MAX_MESSAGE_REFS, REPLY_TO_RE, aboutHeads } from '../../../lib/superTypes';
 import { splitAbout, type MessageAbout } from '../super/superHandover';
+import { cardMentions } from '../../../lib/cardMention';
 import type { Attachment } from './composerScratch';
 
 const FSI = '\u2068';
@@ -109,8 +110,12 @@ export function refKey(att: Pick<Attachment, 'text'>): string | null {
   const text = att.text ?? '';
   const a = ABOUT_AGENDA_RE.exec(text);
   if (a) return `${a[1]}:${a[2]}`;
+  // A reply or a card names its passage too: two selections in one message are two chips, and a
+  // ↩ always quotes the same first words, so the same message twice is still one.
   const r = REPLY_TO_RE.exec(text);
-  if (r) return `reply:${r[1]}`;
+  if (r) return `reply:${r[1]}${text.slice(r[0].length)}`;
+  const c = ABOUT_CARD_RE.exec(text);
+  if (c) return `card:${c[1]}${text.slice(c[0].length)}`;
   // A normal chat's ↩: the quote is the target (the same message twice is one chip).
   return text.startsWith('> ') ? `quote:${text}` : null;
 }
@@ -142,7 +147,7 @@ export function refLabel(att: Pick<Attachment, 'name' | 'chip'>, fits?: (label: 
  *  inline attachment). */
 export function refGlyph(att: Pick<Attachment, 'text'> & { kind?: Attachment['kind'] }): string {
   if (att.kind && att.kind !== 'about') return GLYPH_IMAGE;
-  return REPLY_TO_RE.test(att.text ?? '') || (att.text ?? '').startsWith('> ') ? GLYPH_REPLY : GLYPH_NOTE;
+  return REPLY_TO_RE.test(att.text ?? '') || ABOUT_CARD_RE.test(att.text ?? '') || (att.text ?? '').startsWith('> ') ? GLYPH_REPLY : GLYPH_NOTE;
 }
 
 /** The token a staged ref is drawn as in the draft (`fits`: see {@link refLabel}). */
@@ -434,19 +439,22 @@ export interface RefLabelWords {
   super: string;
   /** Before a reply to his own message ("You:"). */
   own: string;
+  /** Before a passage of a stage card ("Card:"). */
+  card: string;
 }
-export const REF_LABEL_WORDS_EN: RefLabelWords = { question: 'a question', super: 'Super:', own: 'You:' };
+export const REF_LABEL_WORDS_EN: RefLabelWords = { question: 'a question', super: 'Super:', own: 'You:', card: 'Card:' };
 
 /** The chip's name for what a sent part is about (the words, before `refLabel` clips them). */
 export function refNameFor(about: MessageAbout, words: RefLabelWords = REF_LABEL_WORDS_EN): string {
   if (about.kind === 'reply') return `${about.from === 'super' ? words.super : words.own} ${about.quote}`;
+  if (about.kind === 'card') return `${words.card} ${about.quote}`;
   if (about.kind === 'note') return about.line ?? '';
   return words.question;
 }
 
 /** A line he typed that would read as a header carries a leading U+200B on the wire; read back,
  *  the mark goes, and the next send puts it back. */
-const NEUTRALISED_RE = /(^|\n)\u200B(?=\[(?:About agenda line |Reply to message ref=))/g;
+const NEUTRALISED_RE = /(^|\n)\u200B(?=\[(?:About agenda line |About card @card:|Reply to message ref=))/g;
 
 /**
  * A sent message back as a draft with chips (the inverse of `composeOutgoing`, D3): ↑ recall and
@@ -456,11 +464,18 @@ const NEUTRALISED_RE = /(^|\n)\u200B(?=\[(?:About agenda line |Reply to message 
  */
 export function draftFromMessage(
   message: string,
-  opts: { mint: () => string; words?: RefLabelWords; label?: (about: MessageAbout) => string | undefined; fits?: (label: string) => boolean },
+  opts: {
+    mint: () => string; words?: RefLabelWords; label?: (about: MessageAbout) => string | undefined; fits?: (label: string) => boolean;
+    /** What the stage knows of a card (its kind, a picture card's picture), for its chip. */
+    card?: (id: string) => { kind: string; img?: string } | null;
+  },
 ): { draft: string; refs: Attachment[] } {
-  const text = typeof message === 'string' ? message : '';
+  const raw = typeof message === 'string' ? message : '';
+  // A stage card he named comes back as its chip too (owner 2026-10-31), never its raw words.
+  const cards = cardChipsIn(raw, opts);
+  const text = cards.draft;
   const heads = aboutHeads(text);
-  if (!heads.length) return { draft: text.replace(NEUTRALISED_RE, '$1'), refs: [] };
+  if (!heads.length) return { draft: text.replace(NEUTRALISED_RE, '$1'), refs: cards.refs };
   const refs: Attachment[] = [];
   const pieces: string[] = [];
   const pre = text.slice(0, heads[0].at).replace(/\n+$/, '');
@@ -478,5 +493,32 @@ export function draftFromMessage(
     } else pieces.push(block);
     if (words.trim()) pieces.push(words);
   });
-  return { draft: pieces.join(' ').replace(NEUTRALISED_RE, '$1'), refs };
+  return { draft: pieces.join(' ').replace(NEUTRALISED_RE, '$1'), refs: [...cards.refs, ...refs] };
+}
+
+/** Each `@card:<id> “<title>”` in a sent text as a card chip's token (its words kept as the chip's
+ *  `text`, so a send writes them back unchanged). */
+function cardChipsIn(
+  text: string,
+  opts: { mint: () => string; fits?: (label: string) => boolean; card?: (id: string) => { kind: string; img?: string } | null },
+): { draft: string; refs: Attachment[] } {
+  // Never inside a reference block (a reply's quote may hold a card's words): those stay as sent.
+  const heads = aboutHeads(text);
+  const found = cardMentions(text).filter((m) => !heads.some((h) => m.start < h.end && m.end > h.at));
+  if (!found.length) return { draft: text, refs: [] };
+  const refs: Attachment[] = [];
+  let draft = '';
+  let pos = 0;
+  for (const m of found) {
+    const info = opts.card?.(m.id) ?? null;
+    const named: Attachment = {
+      id: opts.mint(), kind: 'card', name: m.title || m.id, text: text.slice(m.start, m.end), inline: true,
+      ...(info ? { cardKind: info.kind } : {}), ...(info?.img ? { url: info.img } : {}),
+    };
+    const att: Attachment = { ...named, chip: refLabel(named, opts.fits) };
+    refs.push(att);
+    draft += text.slice(pos, m.start) + refToken(att);
+    pos = m.end;
+  }
+  return { draft: draft + text.slice(pos), refs };
 }

@@ -342,7 +342,13 @@ export function armPointerDrag(down: PointerLike, el: TabDragElement, opts: Poin
   function onLost() { finish(false); }
   function onKey(e: KeyboardEvent) {
     if (e.key !== 'Escape') return;
-    if (dragging) { e.preventDefault(); e.stopPropagation(); }
+    if (dragging) {
+      e.preventDefault();
+      e.stopPropagation();
+      // The button is still down: its release is the end of a cancelled drag, not a click. Only
+      // here: after a blur no release follows, and the next real click must land.
+      win.addEventListener('pointerup', () => swallowNextClick(win), { capture: true, once: true });
+    }
     finish(false);
   }
 

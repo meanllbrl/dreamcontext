@@ -2,23 +2,23 @@ import { useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, ty
 import type { TeamTree, TreeLine } from '../../../../src/lib/agents/tree.js';
 import { AgentAvatar } from '../agents/AgentAvatar';
 import { AutomationsDispatcherBar } from '../automations/AutomationsDispatcherBar';
-import { runDuration, useNow } from '../agents/agentRunState';
 import { useI18n } from '../../context/I18nContext';
-import { filterRoster, rosterTime, type TeamRow } from './teamModel';
+import { filterRoster, type TeamRow } from './teamModel';
 import { clampRosterWidth, ROSTER_MAX_WIDTH, ROSTER_MIN_WIDTH, ROSTER_WIDTH_STEP, rollupOf, teamTreeOf, treeSections, visibleTreeLines, type RosterView, type TeamRollup } from './teamTree';
 import { TeamIcon } from './TeamIcons';
 
 /**
  * THE LIST ON THE LEFT: every teammate, one row each, "Needs you" first.
  *
- * A row is a conversation, like a messenger's: face (with a status dot), name, the last thing
- * said, when, how many unread, and one tag for the state that stops it (a question, a paused
- * routine, an approval). A draft row stands at the top while a new teammate is being written.
+ * A row reads like the side menu: one line, a small face, the name, and on the right only what
+ * asks for a look (a state dot, unread). What was said and when is on the teammate's own page. A
+ * member of all projects that talked here carries a small globe. A draft row stands at the top
+ * while a new teammate is being written.
  *
  * TREE (the List | Tree switch under the search): the same rows, indented under the agent each
  * reports to, one section per lead's team and a last "Reports to you" for the agents with
- * nobody above or below them. A lead folds; folded, it says what its team holds (how many
- * reports, who needs you, who waits for approval), so a fold never hides a question.
+ * nobody above or below them. A lead folds; folded, its dot still says what its team holds, so
+ * a fold never hides a question.
  */
 export function TeamRoster({
   rows,
@@ -38,7 +38,10 @@ export function TeamRoster({
   onWidth,
   onWidthCommit,
   headless = false,
+  beyond = 0,
 }: {
+  /** How many members of all projects stand only on the Org chart: an empty list says so. */
+  beyond?: number;
   /** The new shell (W2-B): the page's bar carries the title, the count and the actions. */
   headless?: boolean;
   rows: TeamRow[];
@@ -114,7 +117,6 @@ export function TeamRoster({
   const readonly = shown.filter((r) => r.section === 'readonly');
   const owners = [...new Set(readonly.map((r) => r.ownerLabel ?? ''))];
   const empty = rows.length === 0 && !draft;
-  const now = new Date(useNow(rows.some((r) => r.status === 'working')));
 
   return (
     <aside className="aiteam-roster" aria-label={t('aiteam.title')}>
@@ -144,7 +146,7 @@ export function TeamRoster({
             </span>
           )}
           <span className="aiteam-spacer" />
-          {onOrgChart && !empty && (
+          {onOrgChart && (!empty || beyond > 0) && (
             <button
               type="button"
               className="aiteam-iconbtn"
@@ -163,48 +165,42 @@ export function TeamRoster({
       )}
       {top}
       {!empty && (
-        <label className="aiteam-search">
-          <TeamIcon name="search" size={14} />
-          <input
-            className="aiteam-search-input"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t('aiteam.search')}
-            aria-label={t('aiteam.search')}
-          />
-        </label>
-      )}
-      {!empty && (
-        <div className="aiteam-viewswitch agents-switch" role="tablist" aria-label={t('aiteam.view.label')}>
-          {(['list', 'tree'] as const).map((v) => (
-            <button
-              key={v}
-              type="button"
-              role="tab"
-              aria-selected={view === v}
-              className={`agents-switch-opt${view === v ? ' agents-switch-opt--on' : ''}`}
-              onClick={() => onView?.(v)}
-              data-roster-view={v}
-            >
-              <TeamIcon name={v === 'list' ? 'list' : 'tree'} size={14} />
-              {t(`aiteam.view.${v}`)}
-            </button>
-          ))}
+        <div className="aiteam-tools">
+          <label className="aiteam-search">
+            <TeamIcon name="search" size={13} />
+            <input
+              className="aiteam-search-input"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t('aiteam.search')}
+              aria-label={t('aiteam.search')}
+            />
+          </label>
+          <div className="aiteam-viewicons" role="tablist" aria-label={t('aiteam.view.label')}>
+            {(['list', 'tree'] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                role="tab"
+                aria-selected={view === v}
+                aria-label={t(`aiteam.view.${v}`)}
+                title={t(`aiteam.view.${v}`)}
+                className={`aiteam-viewicon${view === v ? ' is-on' : ''}`}
+                onClick={() => onView?.(v)}
+                data-roster-view={v}
+              >
+                <TeamIcon name={v === 'list' ? 'list' : 'tree'} size={14} />
+              </button>
+            ))}
+          </div>
         </div>
       )}
       <div className="aiteam-list">
-        {empty && <p className="aiteam-roster-empty">{t('aiteam.roster.empty')}</p>}
+        {empty && <p className="aiteam-roster-empty">{t(beyond > 0 ? 'aiteam.roster.emptyProject' : 'aiteam.roster.empty')}</p>}
         {draft && (
           <button type="button" className="aiteam-row aiteam-row--on aiteam-row--draft" aria-current="true">
             <span className="aiteam-face"><span className="aiteam-draft-av" aria-hidden="true">+</span></span>
-            <span className="aiteam-row-main">
-              <span className="aiteam-row-top"><span className="aiteam-row-name">{t('aiteam.newTeammate')}</span></span>
-              <span className="aiteam-row-preview">
-                {draft.title.trim()
-                  ? t('aiteam.draft.named').replace('{name}', draft.title.trim())
-                  : t('aiteam.draft.blank')}
-              </span>
-            </span>
+            <span className="aiteam-row-name">{draft.title.trim() || t('aiteam.newTeammate')}</span>
             <span className="aiteam-row-end" />
           </button>
         )}
@@ -212,17 +208,17 @@ export function TeamRoster({
           <>
             {needs.length > 0 && <div className="aiteam-section">{t('aiteam.section.needs')}</div>}
             {needs.map((r) => (
-              <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} now={now} />
+              <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} />
             ))}
             {team.length > 0 && <div className="aiteam-section">{t('aiteam.section.team')}</div>}
             {team.map((r) => (
-              <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} now={now} />
+              <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} />
             ))}
             {owners.map((owner) => (
               <div key={`ro:${owner}`} data-readonly-section={owner}>
                 <div className="aiteam-section">{t('aiteam.section.readonly').replace('{owner}', owner)}</div>
                 {readonly.filter((r) => (r.ownerLabel ?? '') === owner).map((r) => (
-                  <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} now={now} />
+                  <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} />
                 ))}
               </div>
             ))}
@@ -246,13 +242,11 @@ export function TeamRoster({
                     key={l.slug}
                     line={l}
                     row={row}
-                    team={node.ownTeam}
                     rollup={l.collapsed ? rollupOf(tree, (s) => rowBySlug.get(s), l.slug) : null}
                     note={node.missingManager ? t('aiteam.tree.missing') : node.cycle ? t('aiteam.tree.loop') : null}
                     on={!draft && selected === l.slug}
                     onSelect={onSelect}
                     onToggle={toggle}
-                    now={now}
                   />
                 );
               })}
@@ -271,17 +265,15 @@ export function TeamRoster({
 
 /** A row of the tree: the guides down from its managers, its fold, then the list's own row. */
 function TreeRow({
-  line, row, team, rollup, note, on, onSelect, onToggle, now,
+  line, row, rollup, note, on, onSelect, onToggle,
 }: {
   line: TreeLine;
   row: TeamRow;
-  team: string | null;
   rollup: TeamRollup | null;
   note: string | null;
   on: boolean;
   onSelect: (slug: string) => void;
   onToggle: (slug: string) => void;
-  now: Date;
 }) {
   const { t } = useI18n();
   const d = line.depth;
@@ -321,9 +313,6 @@ function TreeRow({
         row={row}
         on={on}
         onSelect={onSelect}
-        now={now}
-        size={d === 0 ? 40 : 32}
-        team={team}
         rollup={rollup}
         note={note}
       />
@@ -339,89 +328,44 @@ function guideX(level: number): number {
   return level * TREE_INDENT + CARET / 2;
 }
 
-function rollupWords(r: TeamRollup, t: (k: string) => string): { text: string; warn: boolean }[] {
-  const out: { text: string; warn: boolean }[] = [
-    { text: (r.reports === 1 ? t('aiteam.tree.reports.one') : t('aiteam.tree.reports.many')).replace('{n}', String(r.reports)), warn: false },
-  ];
-  if (r.needs > 0) out.push({ text: t('aiteam.tree.roll.needs').replace('{n}', String(r.needs)), warn: true });
-  if (r.approval > 0) out.push({ text: t('aiteam.tree.roll.approval').replace('{n}', String(r.approval)), warn: true });
-  if (r.working > 0) out.push({ text: t('aiteam.tree.roll.working').replace('{n}', String(r.working)), warn: false });
-  if (r.paused > 0) out.push({ text: t('aiteam.tree.roll.paused').replace('{n}', String(r.paused)), warn: false });
-  return out;
-}
-
+/** The list's row, in the side menu's language: one line, a small face, a name, and on the right
+ *  only what asks for a look (unread, or a state dot). The rest is on the teammate's own head. */
 function Row({
-  row, on, onSelect, now, size = 40, team = null, rollup = null, note = null,
+  row, on, onSelect, rollup = null, note = null,
 }: {
   row: TeamRow;
   on: boolean;
   onSelect: (slug: string) => void;
-  now: Date;
-  size?: number;
-  /** A lead's team, drawn as a chip before its last line. */
-  team?: string | null;
-  /** A folded lead: what its team holds. */
+  /** A folded lead: what its team holds. A question inside a fold still shows. */
   rollup?: TeamRollup | null;
   /** Why it sits at the top of the tree when it should not (a missing manager, a loop). */
   note?: string | null;
 }) {
   const { t } = useI18n();
-  const working = row.status === 'working';
-  const elapsed = working && row.workingSince ? runDuration(now.getTime() - row.workingSince) : null;
-  const dot = working ? 'working' : row.status === 'needs' ? 'needs' : row.status === 'idle' && row.lastAt ? 'idle' : null;
+  // Asking wins over working: a fold must never hide a question.
+  const dot = row.status === 'needs' || row.status === 'approval' || rollup?.needs || rollup?.approval ? 'needs'
+    : row.status === 'working' || rollup?.working ? 'working'
+      : row.status === 'paused' ? 'paused' : null;
   return (
     <button
       type="button"
-      className={`aiteam-row${on ? ' aiteam-row--on' : ''}${size < 40 ? ' aiteam-row--sm' : ''}`}
+      className={`aiteam-row${on ? ' aiteam-row--on' : ''}`}
       onClick={() => onSelect(row.slug)}
       aria-current={on ? 'true' : undefined}
+      title={[row.title, note, row.preview].filter(Boolean).join(' · ')}
       data-team-row={row.slug}
     >
       <span className="aiteam-face">
-        <AgentAvatar of="agent" slug={row.slug} title={row.title} hasPhoto={row.hasPhoto} size={size} />
-        {dot && <span className={`aiteam-face-dot aiteam-face-dot--${dot}`} aria-hidden="true" />}
+        <AgentAvatar of="agent" slug={row.slug} title={row.title} hasPhoto={row.hasPhoto} size={22} />
       </span>
-      <span className="aiteam-row-main">
-        <span className="aiteam-row-top">
-          <span className="aiteam-row-name">{row.title}</span>
-          <span className="aiteam-row-time">{working ? t('aiteam.time.now') : rosterTime(row.lastAt, now, t)}</span>
-        </span>
-        <span className={`aiteam-row-preview${working ? ' aiteam-row-preview--live' : ''}${team ? ' aiteam-row-preview--team' : ''}`}>
-          {team && <span className="aiteam-tag aiteam-tag--accent aiteam-teamchip">{team}</span>}
-          {working
-            ? t('aiteam.working').replace('{time}', elapsed ?? '')
-            : row.preview ?? t('aiteam.row.noMessages')}
-        </span>
-        {rollup && (
-          <span className="aiteam-rollup" data-rollup>
-            {rollupWords(rollup, t).map((w, i) => (
-              <span key={i} className={w.warn ? 'aiteam-rollup-warn' : undefined}>{i > 0 ? ' · ' : ''}{w.text}</span>
-            ))}
-          </span>
-        )}
-        {note && <span className="aiteam-rollup">{note}</span>}
-        {(row.status === 'needs' || row.status === 'paused' || row.status === 'approval' || row.elsewhere || row.readOnly || row.global) && (
-          <span className="aiteam-row-tags">
-            {row.global && (
-              <span className="aiteam-tag aiteam-tag--accent" data-global-chip title={t('aiteam.tag.globalHint')}>{t('aiteam.tag.global')}</span>
-            )}
-            {row.readOnly && (
-              <span className="aiteam-tag aiteam-tag--muted" data-owner-chip><TeamIcon name="lock" size={10} />{t('aiteam.owner.of').replace('{owner}', row.ownerLabel ?? '')}</span>
-            )}
-            {row.elsewhere && (
-              <span className="aiteam-tag aiteam-tag--muted" data-elsewhere-chip>{t('aiteam.elsewhere.tag').replace('{machine}', row.elsewhere)}</span>
-            )}
-            {row.status === 'needs' && <span className="aiteam-tag aiteam-tag--warn">{t('aiteam.tag.needs')}</span>}
-            {row.status === 'paused' && (
-              <span className="aiteam-tag aiteam-tag--muted"><TeamIcon name="pause" size={10} />{t('aiteam.tag.paused')}</span>
-            )}
-            {row.status === 'approval' && (
-              <span className="aiteam-tag"><TeamIcon name="lock" size={10} />{t('aiteam.tag.approval')}</span>
-            )}
-          </span>
-        )}
-      </span>
+      <span className="aiteam-row-name">{row.title}</span>
       <span className="aiteam-row-end">
+        {row.global && (
+          <span className="aiteam-row-mark" title={t('aiteam.tag.globalHint')} aria-label={t('aiteam.tag.global')} data-global-chip>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true"><circle cx="6" cy="6" r="4.8" /><path d="M1.2 6h9.6M6 1.2c1.6 1.4 1.6 8.2 0 9.6M6 1.2c-1.6 1.4-1.6 8.2 0 9.6" /></svg>
+          </span>
+        )}
+        {dot && <span className={`aiteam-row-dot aiteam-row-dot--${dot}`} aria-label={t(dot === 'working' ? 'aiteam.time.now' : `aiteam.tag.${dot}`)} />}
         {row.unread > 0 && <span className="sidebar-badge">{row.unread}</span>}
       </span>
     </button>

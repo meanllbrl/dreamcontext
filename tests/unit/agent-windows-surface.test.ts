@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  addWindow, dropWindow, initialWindows, neighbourOf, parkedHomes, placeTab, pruneParked, renameWindow, restoreWindows,
+  addWindow, adoptWindowOrder, dropWindow, initialWindows, moveBefore, moveWindow, neighbourOf, parkedHomes, placeTab, pruneParked, renameWindow, restoreWindows,
   rowsByWindow, savePlacement, splitOut, joinInto, switchWindow, unparkPanes, windowOfTab, TAB_CAP,
   type WindowsState, type WinTab,
 } from '../../dashboard/src/components/sleepy/chatWindows.js';
@@ -259,5 +259,68 @@ describe('the 40-tab ceiling (admitTab)', () => {
     const h = SURFACE.slice(at, SURFACE.indexOf('await enableSuper(scopedApi', at));
     expect(h.length).toBeGreaterThan(100);
     expect(h).toContain('admitTab()');
+  });
+});
+
+describe('the drawer drag: moving a window', () => {
+  const three = (): WindowsState => ({
+    list: ['a', 'b', 'c'].map((id) => ({ id, name: id.toUpperCase(), panes: [], activePaneId: '' })),
+    activeId: 'b',
+  });
+  const ids = (s: WindowsState) => s.list.map((w) => w.id);
+
+  it('lands before the named window, or at the end, and the selected window stays selected', () => {
+    expect(ids(moveWindow(three(), 'c', 'a'))).toEqual(['c', 'a', 'b']);
+    expect(ids(moveWindow(three(), 'a', 'c'))).toEqual(['b', 'a', 'c']);
+    expect(ids(moveWindow(three(), 'a', null))).toEqual(['b', 'c', 'a']);
+    expect(moveWindow(three(), 'a', null).activeId).toBe('b');
+  });
+
+  it('changes nothing for an unknown window, a drop on itself, or a drop where it already is', () => {
+    const state = three();
+    expect(moveWindow(state, 'x', 'a')).toBe(state);
+    expect(moveWindow(state, 'a', 'x')).toBe(state);
+    expect(moveWindow(state, 'b', 'b')).toBe(state);
+    expect(moveWindow(state, 'c', null)).toBe(state);
+    expect(moveWindow(state, 'a', 'b')).toBe(state);
+  });
+
+  it('the new order is what a save writes and a restore rebuilds, each tab still in its window', () => {
+    const tabs = [{ id: 's1', claudeId: 'k1' }, { id: 's2', claudeId: 'k2' }, { id: 's3', claudeId: 'k3' }];
+    const state: WindowsState = {
+      list: [
+        { id: 'a', name: 'A', panes: [{ id: 'p1', tabs: ['k1'], active: 'k1' }], activePaneId: 'p1' },
+        { id: 'b', name: 'B', panes: [], activePaneId: '' },
+        { id: 'c', name: 'C', panes: [{ id: 'p3', tabs: ['k3'], active: 'k3' }], activePaneId: 'p3' },
+      ],
+      activeId: 'b',
+    };
+    const live = { panes: [{ id: 'p2', tabs: ['s2'], active: 's2' }], activePaneId: 'p2' };
+    const saved = savePlacement(moveWindow(state, 'c', 'a'), live, tabs);
+    expect(saved.windows.map((w) => w.id)).toEqual(['c', 'a', 'b']);
+    let n = 0;
+    const back = restoreWindows(saved.windows, tabs.map((t) => ({ ...t, ...saved.placement.get(t.id) })), saved.activePane, () => `m${n++}`);
+    expect(back.state.list.map((w) => w.id)).toEqual(['c', 'a', 'b']);
+    expect(back.state.activeId).toBe('b');
+    expect(back.state.list.find((w) => w.id === 'c')!.panes[0].tabs).toEqual(['k3']);
+    expect(back.live[0].tabs).toEqual(['s2']);
+  });
+
+  it('a re-hydrate takes the saved order, so a save after a 409 cannot write the old one back', () => {
+    const state = three();
+    const back = adoptWindowOrder(state, [{ id: 'c' }, { id: 'a' }, { id: 'b' }]);
+    expect(ids(back)).toEqual(['c', 'a', 'b']);
+    expect(back.activeId).toBe('b');
+    expect(savePlacement(back, { panes: [], activePaneId: '' }, []).windows.map((w) => w.id)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('a window the roster does not list yet stays, at the end; an unchanged order is the same state', () => {
+    const state = three();
+    expect(ids(adoptWindowOrder(state, [{ id: 'c' }, { id: 'a' }]))).toEqual(['c', 'a', 'b']);
+    expect(adoptWindowOrder(state, [{ id: 'a' }, { id: 'b' }, { id: 'c' }])).toBe(state);
+  });
+
+  it('moveBefore keeps the extra fields of a fan-out window', () => {
+    expect(moveBefore([{ id: 'a', tabs: 1 }, { id: 'b', tabs: 2 }], 'b', 'a')).toEqual([{ id: 'b', tabs: 2 }, { id: 'a', tabs: 1 }]);
   });
 });

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import {
   cliPackageVersion,
   npmInstallCommand,
@@ -105,7 +105,7 @@ describe('commands', () => {
   });
 
   it('puts node\'s folder first on PATH, once', () => {
-    expect(pathWithNode({ PATH: '/usr/bin:/n/bin:/bin' }, '/n/bin/node')).toBe('/n/bin:/usr/bin:/bin');
+    expect(pathWithNode({ PATH: ['/usr/bin', '/n/bin', '/bin'].join(delimiter) }, '/n/bin/node')).toBe(['/n/bin', '/usr/bin', '/bin'].join(delimiter));
     expect(pathWithNode({}, '/n/bin/node')).toBe('/n/bin');
   });
 });

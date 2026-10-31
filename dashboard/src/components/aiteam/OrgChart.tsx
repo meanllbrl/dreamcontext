@@ -24,8 +24,12 @@ import { TeamIcon } from './TeamIcons';
  * place of the list and the conversation; the side panel stays where it was.
  */
 export function OrgView({
-  tree, rows, selected, onSelect, onTalk, onConversations, onNew, onToast, nextRun,
+  tree, rows, selected, onSelect, onTalk, onConversations, onNew, onToast, nextRun, headless = false, band = [],
 }: {
+  /** The members of all projects, in their own band on the owner's line. */
+  band?: readonly string[];
+  /** The new shell: the page's bar carries the title, the switch and New; the count and the find stay here. */
+  headless?: boolean;
   tree: TeamTree;
   rows: TeamRow[];
   selected: string | null;
@@ -52,12 +56,12 @@ export function OrgView({
   return (
     <section className="aiteam-org" aria-label={t('aiteam.page.org')}>
       <header className="aiteam-org-head">
-        <h1 className="aiteam-roster-title">{t('aiteam.title')}</h1>
+        {!headless && <h1 className="aiteam-roster-title">{t('aiteam.title')}</h1>}
         <span className="aiteam-roster-count">
           {(rows.length === 1 ? t('aiteam.count.one') : t('aiteam.count.many')).replace('{n}', String(rows.length))}
           {teams > 0 && ` · ${(teams === 1 ? t('aiteam.org.teams.one') : t('aiteam.org.teams.many')).replace('{n}', String(teams))}`}
         </span>
-        <PageSwitch view="org" onConversations={onConversations} />
+        {!headless && <PageSwitch view="org" onConversations={onConversations} />}
         <span className="aiteam-spacer" />
         <label className="aiteam-search aiteam-org-search">
           <TeamIcon name="search" size={14} />
@@ -69,9 +73,11 @@ export function OrgView({
             aria-label={t('aiteam.org.find')}
           />
         </label>
-        <button type="button" className="aiteam-newbtn" onClick={onNew}>
-          <TeamIcon name="plus" size={12} /> {t('aiteam.new')}
-        </button>
+        {!headless && (
+          <button type="button" className="aiteam-newbtn" onClick={onNew}>
+            <TeamIcon name="plus" size={12} /> {t('aiteam.new')}
+          </button>
+        )}
       </header>
       {(needs.length > 0 || said.length > 0) && (
         <div className="aiteam-org-strip" data-org-strip>
@@ -86,7 +92,7 @@ export function OrgView({
           {said.length > 0 && <span className="aiteam-org-strip-facts">{said.join(' · ')}</span>}
         </div>
       )}
-      <OrgChart tree={tree} rows={rows} selected={selected} onSelect={onSelect} onTalk={onTalk} matches={matches} />
+      <OrgChart tree={tree} rows={rows} selected={selected} onSelect={onSelect} onTalk={onTalk} matches={matches} band={band} />
       <div className="aiteam-roster-foot aiteam-org-foot">
         <AutomationsDispatcherBar variant="inline" onToast={onToast} />
         <span className="aiteam-roster-next">{nextRun}</span>
@@ -126,8 +132,9 @@ export function PageSwitch({ view, onConversations }: { view: 'conversations' | 
 }
 
 export function OrgChart({
-  tree, rows, selected, onSelect, onTalk, matches = null,
+  tree, rows, selected, onSelect, onTalk, matches = null, band = [],
 }: {
+  band?: readonly string[];
   tree: TeamTree;
   rows: TeamRow[];
   selected: string | null;
@@ -139,8 +146,8 @@ export function OrgChart({
   const { t } = useI18n();
   const rowOf = useMemo(() => new Map(rows.map((r) => [r.slug, r])), [rows]);
   const layout = useMemo(
-    () => layoutOrgChart(tree, { selected, titleOf: (s) => rowOf.get(s)?.title ?? s }),
-    [tree, selected, rowOf],
+    () => layoutOrgChart(tree, { selected, titleOf: (s) => rowOf.get(s)?.title ?? s, band }),
+    [tree, selected, rowOf, band],
   );
   const now = useNow(rows.some((r) => r.status === 'working'));
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -173,6 +180,18 @@ export function OrgChart({
             <span className="aiteam-org-frame-count">{f.count}</span>
           </div>
         ))}
+        {layout.band && (
+          <div
+            className={`aiteam-org-frame aiteam-org-frame--band${layout.band.onPath ? ' aiteam-org-frame--path' : ''}`}
+            style={{ left: layout.band.x, top: layout.band.y, width: layout.band.w, height: layout.band.h }}
+            title={t('aiteam.tag.globalHint')}
+            data-org-band
+          >
+            <span className="aiteam-org-frame-label">{t('aiteam.section.allProjects')}</span>
+            <span className="aiteam-org-frame-count">{layout.band.count}</span>
+            <span className="aiteam-org-band-note">{t('aiteam.org.band')}</span>
+          </div>
+        )}
         <svg className="aiteam-org-lines" width={layout.width} height={layout.height} aria-hidden="true">
           {layout.edges.filter((e) => !e.onPath).map((e) => (
             <path key={`${e.from}>${e.to}`} d={edgePath(e.points)} className="aiteam-org-line" />

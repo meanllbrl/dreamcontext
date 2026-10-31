@@ -218,7 +218,7 @@ describe('the agent\'s git config runs nothing in the host (end review, owner de
     const { project, repo, marker } = poisonedRepo();
     // The two bypasses the overrides missed: a driver only visible on the task branch, a name -c cannot express.
     const inc = join(scratch, 'inc.cfg');
-    writeFileSync(inc, `[filter "y"]\n\tsmudge = ${join(scratch, 'filter.sh')}\n`);
+    writeFileSync(inc, `[filter "y"]\n\tsmudge = ${join(scratch, 'filter.sh').replace(/\\/g, '/')}\n`);
     execFileSync('git', ['-C', repo, 'config', 'includeIf.onbranch:super/**.path', inc]);
     execFileSync('git', ['-C', repo, 'config', 'filter.a=b.smudge', join(scratch, 'filter.sh')]);
     writeFileSync(join(repo, '.gitattributes'), '*.txt filter=x\n*.y filter=y\n*.dat filter=a=b\n');
@@ -277,7 +277,7 @@ describe('the agent\'s git config runs nothing in the host (end review, owner de
     execFileSync('chmod', ['+x', pack]);
     execFileSync('git', ['-C', repo, 'config', 'remote.origin.uploadpack', pack]);
     const inc = join(scratch, 'inc.cfg');
-    writeFileSync(inc, `[remote "origin"]\n\tuploadpack = ${pack}\n`);
+    writeFileSync(inc, `[remote "origin"]\n\tuploadpack = ${pack.replace(/\\/g, '/')}\n`);
     execFileSync('git', ['-C', repo, 'config', 'includeIf.onbranch:super/**.path', inc]);
     updateSetupConfig(project, { linkedRepos: [{ name: 'code', gitRemoteUrl: 'https://github.com/example/code.git' }] });
     setLinkedRepoPath('https://github.com/example/code.git', repo, home);

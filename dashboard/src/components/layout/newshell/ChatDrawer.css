@@ -319,6 +319,26 @@
   background: var(--color-accent);
 }
 
+/* A chat row in the air, and the line where it lands (`::before` is the tree line). */
+.ns-dr-win[data-dragging="true"] {
+  opacity: 0.5;
+}
+
+.ns-dr-win[data-drop-before="true"]::after,
+.ns-dr-win[data-drop-after="true"]::after {
+  content: '';
+  position: absolute;
+  left: var(--space-2);
+  right: var(--space-2);
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-accent);
+  pointer-events: none;
+}
+
+.ns-dr-win[data-drop-before="true"]::after { top: -1px; }
+.ns-dr-win[data-drop-after="true"]::after { bottom: -1px; }
+
 /* ── Resize: a handle on the edge; while dragging only a guide line moves (D4). ───── */
 
 .ns-dr-handle {

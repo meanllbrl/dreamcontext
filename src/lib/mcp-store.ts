@@ -162,7 +162,10 @@ export function storeFileProblem(path: string): string | null {
   if (!st.isFile()) return 'it is not a regular file';
   const uid = typeof process.getuid === 'function' ? process.getuid() : null;
   if (uid !== null && st.uid !== uid) return 'it is owned by another user';
-  if ((st.mode & 0o777) !== 0o600) return 'its permissions are not 0600';
+  // Windows has no POSIX mode: every file reads back 0o666 whatever it was opened with, so this
+  // test refused every store there and no MCP server ever reached a spawn (CI, test-windows).
+  // The store lives in the user's profile; NTFS ACLs are what guards it on that platform.
+  if (process.platform !== 'win32' && (st.mode & 0o777) !== 0o600) return 'its permissions are not 0600';
   return null;
 }
 

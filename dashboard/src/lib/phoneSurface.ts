@@ -199,6 +199,7 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/agent/voice/dictation',
   'PUT /api/agent/voice/config',
   'POST /api/agent/download',
+  'PUT /api/agent/sessions/window-order',
   'GET /api/agent/context-handoff-default',
   'POST /api/agent/context-handoff-default',
   'POST /api/connections',

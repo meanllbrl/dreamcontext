@@ -13,6 +13,14 @@ import { readAccountRejections, recordAccountRejection } from '../../src/lib/cla
 import type { ProbeOutcome } from '../../src/lib/claude-usage-probe.js';
 import type { UsageLimitsResponse } from '../../src/lib/claude-usage.js';
 
+// The spawn takes the direct path when a `claude` is installed; a CI runner has none, and the
+// `$SHELL -ilc` fallback would put its own words at the head of the argv these tests read.
+vi.mock('../../src/lib/claude-path.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/lib/claude-path.js')>()),
+  findClaudeBin: () => '/fake/bin/claude',
+}));
+
+
 /**
  * AUTOMATIONS USE EVERY ACCOUNT, not only the preferred one.
  *

@@ -60,7 +60,7 @@ const NON_TEXT_FILLS: Record<string, string> = {
   "components/sleepy/chat/teamBoard.css::.chat-team-board-phase[data-tone='running'] .chat-team-board-dot": 'state dot',
   'components/sleepy/super/SuperSurface.css::.super-tile-bar-fill': 'progress bar',
   'components/sleepy/super/SuperSurface.css::.super-card-glint': 'verb glint behind a card (AC16), no text',
-  'components/sleepy/super/superUnread.css::.chat-scroll-inner--reply [data-unread]::before': 'unread dot',
+  'components/sleepy/super/superUnread.css::.chat-scroll-inner--reply .chat-msg-assistant-row[data-unread] > .chat-msg-assistant-body:not(.chat-msg-assistant-body ~ .chat-msg-assistant-body)::after, .chat-scroll-inner--reply .chat-msg-assistant-row[data-unread]:not(:has(> .chat-msg-assistant-body))::before, .chat-scroll-inner--reply [data-unread]:not(.chat-msg-assistant-row)::before': 'unread dot',
   'components/sleepy/super/superUnread.css::.chat-scroll-inner--reply [data-unread-first]::after': 'the unread line (1px rules beside its label, never under it)',
   'components/sleepy/super/superInsight.css::.super-tile-lane-bar:last-child': 'funnel silhouette bar (the last step)',
   'components/whiteboard/widgets/wikiWidget.css::.wb-wiki-row.is-drop-before::before, .wb-wiki-row.is-drop-after::after, .wb-wiki-section.is-drop-before::before, .wb-wiki-section.is-drop-after::after': 'drop marker (bar)',

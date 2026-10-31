@@ -385,7 +385,7 @@ async function main() {
     ok(`…and the Dock bounce follows the attention rule (owner ${focused ? 'watching: the chip nudges instead' : 'away: bounced'})`, focused ? true : bounced, JSON.stringify(await page.evaluate(() => window.__calls)));
     await page.screenshot({ path: join(OUT, 'B1-super-asks-stage.png') });
     await chip.screenshot({ path: join(OUT, 'B2-project-chip-asking.png') }).catch(() => {});
-    await page.getByRole('button', { name: 'Collapse agent' }).first().click().catch(() => {});
+    await page.evaluate(() => document.activeElement?.blur?.()); await page.keyboard.press('Escape');
     const askChip = page.locator('.agent-dock-chip[data-kind="asking"]').filter({ hasText: 'Claude' });
     ok('B4 folded, the dock shows the Super Agent\'s question as a "?" chip with no close button', await until(page, async () => (await askChip.count()) === 1
       && (await askChip.locator('.agent-dock-chip-q').count()) === 1 && (await askChip.locator('.agent-dock-chip-close').count()) === 0, 10000));
@@ -398,7 +398,7 @@ async function main() {
     ok('the owner answers from the job bar: the super gets "Answer to your question: Ship it"', await until(page, async () => reports().some((r) => r.role === 'super' && r.kind === 'answer' && r.text.startsWith('Answer to your question: Ship it')), 20000));
     ok('B5 answered: the centre stops asking, the chip\'s "needs you" bubble and nudge go', await until(page, async () => (await centreBox.getAttribute('data-status')) !== 'asking'
       && (await chip.getAttribute('data-asking')) !== 'true' && (await chip.locator('.project-tab-bubble[data-state="asking"]').count()) === 0, 20000), `${await centreBox.getAttribute('data-status')} ${await chip.getAttribute('aria-label')}`);
-    await page.getByRole('button', { name: 'Collapse agent' }).first().click().catch(() => {});
+    await page.evaluate(() => document.activeElement?.blur?.()); await page.keyboard.press('Escape');
     ok('…and the folded dock has no Super chip any more', await until(page, async () => (await page.locator('.agent-dock-chip').filter({ hasText: 'Claude' }).count()) === 0, 10000));
     await page.screenshot({ path: join(OUT, 'B5-answered-folded.png') });
 

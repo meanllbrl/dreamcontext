@@ -66,6 +66,7 @@ import {
 import { surveyDraftKey } from './chat/surveyDrafts';
 import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { Composer } from './chat/Composer';
+import { SelectionScope } from './chat/SelectionBar';
 import { chatReplyRef, insertRef, nextAttachmentId, readScratch, setQuote, subscribeScratch } from './chat/composerScratch';
 import { messagePart, replyGroups, replyHeadsById as headsById, type ReplyHead } from './chat/replyLinks';
 import { PartStrip, ReplyStrip } from './chat/AgendaAboutStrip';
@@ -73,7 +74,7 @@ import { msgRef, splitPageContext } from '../../lib/superTypes';
 import { createHiddenRenderGate } from './chat/hiddenRenderGate';
 import { shouldInterruptChat } from './chat/interruptKey';
 import { useI18n } from '../../context/I18nContext';
-import { groupSuperEventTurns, replyAboutBlock, splitAbout, splitAboutParts, superEventOf, type SuperEventGroup } from './super/superHandover';
+import { groupSuperEventTurns, replyAboutBlock, replySelectionBlock, selectionQuote, splitAbout, splitAboutParts, superEventOf, type SuperEventGroup } from './super/superHandover';
 import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/superQuestions';
 import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
 import { SuperEventLine } from './super/SuperEventLine';
@@ -82,6 +83,7 @@ import { StageMediaStrip } from './super/StageMediaStrip';
 import { useSuperEventContext, useSuperQuestions } from './super/superJobsStore';
 import { SuperUnreadBar } from './super/SuperUnreadBar';
 import { useSuperUnread } from './super/useSuperUnread';
+import { useUnreadJump } from './super/useUnreadJump';
 import './super/SuperSurface.css';
 import './chat/cards.css';
 import './chat/overlays.css';
@@ -953,7 +955,19 @@ export function ChatPane({
   // frozen forever. macOS momentum keeps emitting wheel events for its whole decay, so the
   // quiet timer genuinely outlives the animator.
   const lastActivityAtRef = useRef(-Infinity);
-  const markActivity = useCallback(() => { lastActivityAtRef.current = performance.now(); }, []);
+  /** A jump running: its frames write the offset, so neither the pin nor the hold may. */
+  const glideRef = useRef<{ frame: number } | null>(null);
+  /** Stops a running jump where it is, and the owner has the scroller again. */
+  const stopGlideRef = useRef<() => void>(() => {});
+  /** The reader was sent somewhere and has not moved since. Only their own input may pin the view
+   *  again: a jump starts inside the bottom's slack, and `nextStickToBottom` rule 1 would read
+   *  its first frames as arriving there, leaving the view pinned on its way up. */
+  const jumpHeldRef = useRef(false);
+  const markActivity = useCallback(() => {
+    lastActivityAtRef.current = performance.now();
+    jumpHeldRef.current = false;
+    stopGlideRef.current();
+  }, []);
   /** Pending settled-reveal timer, so a burst of scroll events keeps exactly one alive. */
   const settleTimerRef = useRef(0);
 
@@ -992,6 +1006,8 @@ export function ChatPane({
     // A drag is unambiguous — it is the one gesture whose direction the scroll metrics can be
     // trusted for, because the pointer owns the scroller for the whole press.
     draggingRef.current = true;
+    jumpHeldRef.current = false;
+    stopGlideRef.current();
     const release = () => {
       draggingRef.current = false;
       window.removeEventListener('pointerup', release);
@@ -1355,7 +1371,7 @@ export function ChatPane({
    * reader was never at as their reading position.
    */
   const holdAnchorSteady = useCallback(() => {
-    if (stickRef.current) return;
+    if (stickRef.current || glideRef.current) return;
     const held = heldAnchorRef.current;
     const el = scrollRef.current;
     if (!held || !el || el.clientHeight === 0) return;
@@ -1470,22 +1486,29 @@ export function ChatPane({
   /** `n` makes a repeat click a new state value, so the flash replays; `reveal`: the target
    *  was above the window and is mounted by this same render. */
   const [replyJump, setReplyJump] = useState<{ id: string; n: number; reveal: boolean; part?: number } | null>(null);
-  /** `part`: a head naming one part of a message with several references lands on the message
-   *  and flashes that part's chip too. */
-  const jumpToReplyTarget = (itemId: string, part?: number) => {
+  /** Unpins the view for a jump to an item and mounts it if it is above the window. True: it
+   *  mounts with the next render; null: no such item. */
+  const releaseToItem = (itemId: string): boolean | null => {
     let idx = conv.history.findIndex((it) => it.id === itemId);
     if (idx >= 0) idx += feedLen;
     if (idx < 0) {
       const live = conv.items.findIndex((it) => it.id === itemId);
       idx = live < 0 ? -1 : feedLen + conv.history.length + live;
     }
-    if (idx < 0) return;
+    if (idx < 0) return null;
     setStick(false);
     const reveal = idx < firstShown;
     if (reveal) {
       captureAnchor(true);
       setFirstShownState(nextFirstShown(firstShown, { total: windowTotal, pinned: false, reveal: true, tailHead, revealHead: idx }));
     }
+    return reveal;
+  };
+  /** `part`: a head naming one part of a message with several references lands on the message
+   *  and flashes that part's chip too. */
+  const jumpToReplyTarget = (itemId: string, part?: number) => {
+    const reveal = releaseToItem(itemId);
+    if (reveal === null) return;
     setReplyJump((prev) => ({ id: itemId, n: (prev?.n ?? 0) + 1, reveal, ...(part ? { part } : {}) }));
   };
   /** His reply's strip: the message it names is the nearest one before his reply whose words
@@ -1859,6 +1882,31 @@ export function ChatPane({
     insertRef(session.scratchId || convId, { id: nextAttachmentId(), kind: 'about', name, text: quote });
     requestAnimationFrame(() => session.focus());
   }, [superView, convId, session, t]);
+  /** Comment on selected words (owner 2026-10-31): a chip at the caret like ↩'s, its quote the
+   *  selection. In a Super view it replies to the message it was selected in, so a passage that
+   *  is in no message (a tool row) offers Copy alone. */
+  const selectedItem = (id: string | null) => {
+    const it = id ? [...conv.history, ...conv.items].find((x) => x.id === id) : undefined;
+    return it && (it.kind === 'user' || it.kind === 'text') ? it : null;
+  };
+  const selectionHandler = {
+    canComment: (id: string | null) => !readOnly && (!superView || !!selectedItem(id)),
+    comment: (text: string, id: string | null) => {
+      const quote = selectionQuote(text);
+      if (!quote) return;
+      const item = selectedItem(id);
+      const convKey = session.scratchId || convId;
+      if (!superView) insertRef(convKey, chatReplyRef(quote, t(item?.kind === 'user' ? 'super.ref.own' : 'chat.ref.claude')));
+      else if (item) {
+        const from = item.kind === 'user' ? 'owner' : 'super';
+        insertRef(convKey, {
+          id: nextAttachmentId(), kind: 'about', name: `${t(from === 'super' ? 'super.ref.super' : 'super.ref.own')} ${quote}`,
+          text: replySelectionBlock(item.text, from, quote),
+        });
+      } else return;
+      requestAnimationFrame(() => session.focus());
+    },
+  };
   const handleNavApp = useCallback((page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => {
     setSlideOver(null);
     onOpenAppPage?.(page, id, vault);
@@ -2489,29 +2537,50 @@ export function ChatPane({
     openQuestions: superQuestionView?.open ?? NO_QUESTIONS,
     scrollRef,
     contentRef,
-    dividerLabel: (n) => t('super.unread.divider').replace('{n}', String(n)),
-    onPainted: () => { holdAnchorSteady(); drawReplyLines(); },
+    dividerLabel: () => t('super.unread.divider'),
+    isPinned: () => stickRef.current,
+    isGliding: () => !!glideRef.current,
+    isWalking: () => jumpHeldRef.current,
   });
-  const jumpToFirstUnread = () => {
-    const first = superUnread.lead();
-    if (first?.itemId) { replyJumpRef.current.jumpToReplyTarget(first.itemId); return; }
-    const scroller = scrollRef.current;
-    const card = first && scroller?.querySelector<HTMLElement>(`[data-testid="super-question-card"][data-item="${CSS.escape(first.question ?? '')}"]`);
-    if (!scroller || !card) return;
+  const { rowOf: unreadRowOf, look: lookAtUnread } = superUnread;
+  const goToUnread = useUnreadJump({ scrollRef, rowOf: unreadRowOf, look: lookAtUnread, measureTop: contentTopOf, landing: RAIL_CLEARANCE, flashMs: FLASH_MS, captureAnchor, prevTopRef, restoreTopRef, glideRef, stopGlideRef });
+  const jumpToNextUnread = () => {
+    const unit = superUnread.next();
+    if (!unit) return;
+    if (unit.itemId ? releaseToItem(unit.itemId) === null : !unreadRowOf(unit)) return;
     setStick(false);
-    scroller.scrollTo({ top: contentTopOf(card, scroller) - RAIL_CLEARANCE, behavior: 'smooth' });
+    jumpHeldRef.current = true;
+    goToUnread(unit);
+  };
+  /** The button pressed goes away with the bar, and focus with it, which would end the surface's
+   *  chords. Never under a finger: it would open the keyboard. */
+  const refocusAfterBar = () => { if (window.matchMedia('(hover: hover)').matches) session.focus(); };
+  const goToLatest = () => {
+    jumpHeldRef.current = false;
+    stopGlideRef.current();
+    setStick(true);
+    scrollToBottom();
+    if (superView) refocusAfterBar();
   };
 
   // A stage strip is not something the owner sent (ChatUserItem.stageMedia).
   const lastUserItem = [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user' && !it.stageMedia);
+  // Nor, for the pin, is an event turn: the live chip is a user item too, and re-arming on it
+  // dragged a reader down on every event. Retry keeps `lastUserItem`: a failed event turn is
+  // what it sends again.
+  const lastOwnItem = superView
+    ? [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user' && !it.stageMedia && !superEventOf(it.text))
+    : lastUserItem;
 
   // Sending is unambiguous intent to watch the answer, so it re-arms sticking: a reply that
   // streams in off-screen because you had scrolled up is a bug, not a feature. Keyed on the
   // newest user message instead of plumbed through the composer, so EVERY send path counts —
   // composer submit, retry, a dropped file's re-issue, a delegated prompt.
-  const lastUserItemId = lastUserItem?.id;
+  const lastUserItemId = lastOwnItem?.id;
   useLayoutEffect(() => {
     if (!lastUserItemId) return;
+    jumpHeldRef.current = false;
+    stopGlideRef.current();
     setStick(true);
     scrollToBottom();
   }, [lastUserItemId, setStick, scrollToBottom]);
@@ -2537,10 +2606,10 @@ export function ChatPane({
         />
       )}
       <BrowserHostProvider value={browserHost}>
+      <SelectionScope handler={selectionHandler}>
       <div className="chat-transcript">
         <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} />
-        {superView && <SuperUnreadBar unread={superUnread} onJump={jumpToFirstUnread} />}
-        <div
+                <div
           className="chat-scroll"
           ref={scrollRef}
           onScroll={(e) => {
@@ -2552,7 +2621,7 @@ export function ChatPane({
               prevScrollTop: prevTopRef.current,
               userDriven: userDriving(),
             };
-            setStick(nextStickToBottom(stickRef.current, metrics));
+            if (!jumpHeldRef.current) setStick(nextStickToBottom(stickRef.current, metrics));
             restoreTopRef.current = nextRestoreTop(restoreTopRef.current, metrics);
             prevTopRef.current = el.scrollTop;
             syncRail();
@@ -2578,7 +2647,7 @@ export function ChatPane({
             // mutated, so they cost no layout, and the settle writes nothing unless something
             // really moved.
             if (stickRef.current) heldAnchorRef.current = null;
-            else { holdAnchorSteady(); captureAnchor(); }
+            else if (!glideRef.current) { holdAnchorSteady(); captureAnchor(); }
             // Reading upwards past the window's ceiling extends it, so scrolling back
             // through a long conversation feels continuous rather than like hitting a wall.
             //
@@ -2775,16 +2844,18 @@ export function ChatPane({
             onClose={closeFind}
           />
         )}
-        {!pinned && (
+        {superView && <SuperUnreadBar unread={superUnread} onJump={jumpToNextUnread} onBottom={pinned ? null : goToLatest} onGone={refocusAfterBar} />}
+        {!pinned && !(superView && superUnread.edge && superUnread.count > 0) && (
           <button
             type="button"
             className="chat-jump"
-            onClick={() => { setStick(true); scrollToBottom(); }}
+            onClick={goToLatest}
           >
-            <span aria-hidden>↓</span> Latest
+            <span aria-hidden>↓</span> {superView ? t('super.unread.bottom') : 'Latest'}
           </button>
         )}
       </div>
+      </SelectionScope>
       </BrowserHostProvider>
       {/* Docked above the composer, OUTSIDE the scroller: a background shell outlives the
           turn that started it, so its row must not scroll away while the process runs. Shown

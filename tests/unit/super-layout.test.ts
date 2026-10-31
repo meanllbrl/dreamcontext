@@ -607,3 +607,40 @@ describe('the owner\'s patch, applied locally (§0 C3)', () => {
     expect(patchEchoed(gone, toB)).toBe(true);
   });
 });
+
+describe('a phone-width stage is the chat, edge to edge (owner 2026-10-31)', () => {
+  const PHONE = { width: 390, height: 700 };
+
+  it('the centre fills the stage, and Others stays reachable (the head draws it)', () => {
+    const p = planStage([card('a'), card('b')], FLOAT, PHONE, {});
+    expect(p.phone).toBe(true);
+    expect(p.centre).toEqual({ x: 0, y: 0, width: 390, height: 700 });
+    expect(p.others).toHaveLength(2);
+    expect(inStage(p, p.othersRect)).toBe(true);
+  });
+
+  it('only what is showing takes height: the queue above, the terminals below', () => {
+    const q = planStage([], FLOAT, PHONE, { queueUp: true });
+    expect(q.centre.y).toBeGreaterThanOrEqual(q.queue.y + q.queue.height);
+    expect(q.centre.y + q.centre.height).toBe(700);
+    expect(q.queue.x).toBeGreaterThan(0);
+    expect(q.queue.x + q.queue.width).toBeLessThan(390);
+    const t = planStage([], FLOAT, PHONE, { terminals: 1 });
+    expect(t.centre.y).toBe(0);
+    expect(t.centre.y + t.centre.height).toBeLessThanOrEqual(t.dock.y);
+    expect(t.dock.width).toBeGreaterThan(300);
+  });
+
+  it('a page side by side keeps its frame and its Others pill: the sheet covers the head', () => {
+    const p = planStage([card('a'), card('b')], { mode: 'half', card: 'a' } as SuperView, PHONE, {});
+    expect(p.phone).toBe(false);
+    expect(p.cards.a.where).toBe('sheet');
+  });
+
+  it('a tablet-width narrow stage and the desktop stage are untouched', () => {
+    expect(planStage([], FLOAT, { width: 800, height: 700 }, {}).phone).toBe(false);
+    const d = planStage([], FLOAT, STAGES[1], {});
+    expect(d.phone).toBe(false);
+    expect(d.centre.y).toBe(STAGE.MARGIN + STAGE.BAND);
+  });
+});

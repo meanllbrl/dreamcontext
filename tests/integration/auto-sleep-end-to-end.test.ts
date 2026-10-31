@@ -158,9 +158,10 @@ describe('the Stop hook trigger', () => {
     setDebt(500);
     stopHook();
     expect(waitForDispatch()).toBe(true);
-    // And it recorded a real, live job rather than an empty shell.
+    // And it recorded a real job rather than an empty shell. `failed` is the same dispatch on a
+    // machine with no claude (a CI runner): the login shell exits at once, which races this read.
     const job = JSON.parse(readFileSync(sidecar(), 'utf8'));
-    expect(job.status).toBe('running');
+    expect(['running', 'failed']).toContain(job.status);
     expect(Number.isInteger(job.pid)).toBe(true);
   });
 

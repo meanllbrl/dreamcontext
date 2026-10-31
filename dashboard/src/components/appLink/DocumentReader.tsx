@@ -10,8 +10,11 @@ import { isValidAppLinkPath } from '../../lib/appLink';
 import { agentFileKind } from '../../lib/agentFileKind';
 import { resolveWikilinkTarget, type WikilinkCandidate } from '../../lib/wikilinks';
 import { buildSandboxSrcdoc, SANDBOX_ALLOW } from '../../lib/sandboxHtml';
+import { SELECTION_BRIDGE } from '../../lib/textSelection';
+import { useFrameSelection } from '../sleepy/chat/SelectionBar';
 import { pageDefaultCss } from '../../lib/pageDefaultCss';
 import { desktopScale, htmlFrameGeometry } from '../../lib/webDevice';
+import { PAGE_FIT_BRIDGE, readPageFit } from '../../lib/pageFit';
 import {
   findLocalAssets, inlineLocalAssets, LINK_GUARD, MAX_ASSET_BYTES, MAX_TOTAL_BYTES,
 } from '../../lib/htmlLocalAssets';
@@ -108,6 +111,8 @@ export interface DocumentReaderProps {
   /** With `fill`: the page is laid out at the desktop width and scaled into its box (Super's
    *  presentation layouts), as a server page's frame is. */
   desktop?: boolean;
+  /** A web page reports its own width (lib/pageFit.ts): the host's card takes it. */
+  onPageFit?: (width: number) => void;
 }
 
 const CONTEXT_PREFIX = '_dream_context/';
@@ -147,7 +152,7 @@ function useText(): (key: string, fallback: string) => string {
 
 export function DocumentReader({
   path, onOpen, onClose, embedded = false, onWikilink, vaultReads = false, hostFileActions = false,
-  variant = 'default', allowAbsolute = false, zoomBridge = false, fill = false, desktop = false,
+  variant = 'default', allowAbsolute = false, zoomBridge = false, fill = false, desktop = false, onPageFit,
 }: DocumentReaderProps) {
   const api = useApi();
   const { vault } = useVault();
@@ -218,7 +223,7 @@ export function DocumentReader({
       )}
       {media ? <ViewerMedia key={path} path={path} kind={media} vaultReads={vaultReads} />
         : kind === 'html' ? (
-          <HtmlPage key={path} path={path} embedded={embedded} vaultReads={vaultReads} fileActions={embedded && !hostFileActions} zoomBridge={zoomBridge} fill={fill} desktop={desktop} />
+          <HtmlPage key={path} path={path} embedded={embedded} vaultReads={vaultReads} fileActions={embedded && !hostFileActions} zoomBridge={zoomBridge} fill={fill} desktop={desktop} onPageFit={onPageFit} />
         ) : (
           <ViewerDocument key={path} path={path} onOpen={onOpen} onWikilink={onWikilink ?? resolveWikilink} vaultReads={vaultReads} />
         )}
@@ -472,13 +477,14 @@ function ViewerDocument({
  * frame says.
  */
 function HtmlPage({
-  path, vaultReads, fileActions, zoomBridge = false, fill = false, desktop = false,
-}: { path: string; embedded: boolean; vaultReads: boolean; fileActions: boolean; zoomBridge?: boolean; fill?: boolean; desktop?: boolean }) {
+  path, vaultReads, fileActions, zoomBridge = false, fill = false, desktop = false, onPageFit,
+}: { path: string; embedded: boolean; vaultReads: boolean; fileActions: boolean; zoomBridge?: boolean; fill?: boolean; desktop?: boolean; onPageFit?: (width: number) => void }) {
   const tx = useText();
   const { t } = useI18n();
   const { resolved: theme } = useTheme();
   const state = useProjectHtml(path, vaultReads);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
+  useFrameSelection(frameRef);
   const loads = useRef(0);
   const [height, setHeight] = useState<number | null>(null);
   const [torn, setTorn] = useState(false);
@@ -497,12 +503,17 @@ function HtmlPage({
     return () => ro.disconnect();
   }, [fill, desktop, html]);
 
+  // Read through a ref: a new callback must not rebuild the srcdoc (the frame would reload).
+  const reportsFit = !!onPageFit;
+  const pageFit = useRef(onPageFit);
+  pageFit.current = onPageFit;
+
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
       html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, overrideCss: pageDefaultCss(fill),
-      headScript: [HEIGHT_BRIDGE, LINK_GUARD, ...(zoomBridge ? [ZOOM_BRIDGE] : [])].join('\n'),
+      headScript: [HEIGHT_BRIDGE, SELECTION_BRIDGE, LINK_GUARD, ...(zoomBridge ? [ZOOM_BRIDGE] : []), ...(reportsFit ? [PAGE_FIT_BRIDGE] : [])].join('\n'),
     })),
-    [html, theme, zoomBridge, fill],
+    [html, theme, zoomBridge, fill, reportsFit],
   );
 
   // The only message accepted: a height, from THIS frame's window (identity is the gate).
@@ -511,6 +522,8 @@ function HtmlPage({
       if (!frameRef.current?.contentWindow || event.source !== frameRef.current.contentWindow) return;
       const h = readHeightMessage(event.data);
       if (h !== null) setHeight(Math.min(MAX_HTML_HEIGHT, h));
+      const w = readPageFit(event.data);
+      if (w !== undefined) pageFit.current?.(w);
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);

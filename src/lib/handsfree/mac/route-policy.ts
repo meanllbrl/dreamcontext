@@ -395,6 +395,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agent/download': deny(DESKTOP),
   'GET /api/agent/sessions': allow(`${CHAT}: the phone's own tab roster, or (\`?of=desktop\`) the Mac window's chat tabs narrowed to title, id, pane, kind and bypass for seeding; side-effect free`),
   'PUT /api/agent/sessions': allow(`${CHAT}: the phone's own tab roster`),
+  'PUT /api/agent/sessions/window-order': deny(DESKTOP),
   'GET /api/agent/context-handoff-default': deny(SETTINGS),
   'POST /api/agent/context-handoff-default': deny(SETTINGS),
   'GET /api/vaults': filtered('read: only the chosen projects, by name (never a path, never another project); side-effect free'),

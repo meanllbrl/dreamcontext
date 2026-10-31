@@ -4,11 +4,12 @@
  * the `.env` deny gate (pre-tool-use) and every other hook run unchanged.
  */
 import { describe, it, expect } from 'vitest';
+import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isMcpProbeChild } from '../../src/cli/commands/hook.js';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const SRC = readFileSync(join(ROOT, 'src/cli/commands/hook.ts'), 'utf-8');
 
 /** The body of one `hook <name>` action, up to the next `.command(`. */

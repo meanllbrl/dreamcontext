@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { AgentIdentityDialog } from '../agents/AgentIdentityDialog';
 import { useI18n } from '../../context/I18nContext';
+import { phoneAllows } from '../../lib/phoneSurface';
+import { useIsNewShell } from '../../lib/uxMode';
 import { TeamIcon } from './TeamIcons';
 import '../agents/AgentIdentityDialog.css';
 
@@ -13,6 +15,9 @@ export type TeamStarter = (typeof TEAM_STARTERS)[number] | 'blank';
  * A NEW TEAMMATE, written in the page: a starter (or blank), then the same identity form the
  * Agents page used (photo, name, job, soul, model, effort, board, learning). No schedule here:
  * a routine is set up by asking the teammate for one in its conversation.
+ *
+ * In the new shell the form also says where it works: this project, or all of them (this Mac's
+ * global agent, created through the launcher's route, so never offered where that route is shut).
  */
 export function NewTeammate({
   start = 'blank',
@@ -29,6 +34,8 @@ export function NewTeammate({
 }) {
   const { t } = useI18n();
   const [starter, setStarter] = useState<TeamStarter>(start);
+  const [everywhere, setEverywhere] = useState(false);
+  const canChoose = useIsNewShell() && phoneAllows('POST', '/api/launcher/global-agents');
   const initial = starter === 'blank'
     ? undefined
     : { title: t(`agents.starter.${starter}.title`), prompt: t(`agents.starter.${starter}.prompt`) };
@@ -58,12 +65,32 @@ export function NewTeammate({
               </button>
             ))}
           </div>
+          {canChoose && (
+            <>
+              <span className="aiteam-panel-label">{t('aiteam.new.scope')}</span>
+              <div className="aid-segmented" role="group" aria-label={t('aiteam.new.scope')}>
+                {([false, true] as const).map((all) => (
+                  <button
+                    key={String(all)}
+                    type="button"
+                    className={`aid-segment${everywhere === all ? ' is-on' : ''}`}
+                    aria-pressed={everywhere === all}
+                    onClick={() => setEverywhere(all)}
+                    data-new-scope={all ? 'all' : 'project'}
+                  >
+                    {t(all ? 'aiteam.new.scope.all' : 'aiteam.new.scope.project')}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           <AgentIdentityDialog
             // A different starter is a different form: remount so it opens filled with it.
             key={starter}
             inline
             slug={null}
             whiteboard={whiteboard}
+            scope={everywhere ? 'global' : undefined}
             initial={initial}
             onClose={onCancel}
             onSaved={onCreated}

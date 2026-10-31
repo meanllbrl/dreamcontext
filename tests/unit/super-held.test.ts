@@ -106,6 +106,22 @@ describe('the held ledger', () => {
 });
 
 describe('the super\'s own question open: the pile rides WITH the owner\'s answer', () => {
+
+  it('a comment on a card passage answers nothing: the open ask stays open and held events stay held', async () => {
+    makeVault({ children: { c1: child('c1', { adopted: false, row: 'working' }) } });
+    await startSuperInbox([root]);
+    settle(reg(SUPER, 'super'));
+    reg('c1');
+    const { inbox } = fakeInbox();
+    attachSuperInbox(inbox);
+    await openAsk();
+    await finish('c1', 'q-done-c1');
+    const abouts = [{ kind: 'card' as const, id: 'web-abc' }];
+    expect(superAnswerDigest(SUPER, Date.now(), abouts)).toBeNull();
+    superOwnerSpoke(SUPER, Date.now(), [], abouts);
+    await new Promise((r) => setTimeout(r, 200));
+    expect((await readSuperState(root)).queue.find((q) => q.id === 'q-ask-1')?.state).not.toBe('done');
+  });
   it('an agenda line its job closed while the question was open rides in the answer, wrapped, and is told once', async () => {
     makeVault({ children: { c1: child('c1', { adopted: false, row: 'working' }) }, pad: [{ id: 'n1', section: 'now', text: 'Board layout', at: 1, for: 'c1' }], padSeq: 1 });
     await startSuperInbox([root]);
