@@ -60,7 +60,7 @@ import {
 } from '../../lib/automations/notifier.js';
 import { formatSchedule, nextFire } from '../../lib/automations/schedule.js';
 import { sniffImageType, EXT_BY_IMAGE_TYPE } from '../../lib/image-sniff.js';
-import { allPendingQuestions, claimQuestion, pendingQuestion } from '../../lib/automations/hitl.js';
+import { allPendingQuestions, claimQuestion, pendingQuestion, settleApprovalQuestions } from '../../lib/automations/hitl.js';
 import { approvalQuestionTarget, resumeWithAnswer } from '../../lib/automations/verdict.js';
 import { queuedFire, type QueuedFire } from '../../lib/automations/queue.js';
 import { ackAttention, attentionRuns, attentionWatermark } from '../../lib/automations/attention.js';
@@ -611,6 +611,7 @@ export async function handleAutomationsApprove(
     if (refuseNotOwner(res, manifest)) return;
     const projectRoot = dirname(contextRoot);
     const entry = approveAutomation(projectRoot, manifest, new Date());
+    settleApprovalQuestions(contextRoot, manifest.slug);
     sendJson(res, 200, { slug: manifest.slug, approval: entry });
   } catch (err) {
     if (sendIfNotOwner(res, err)) return;

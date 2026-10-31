@@ -52,12 +52,13 @@
  * wedges the automation.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { generateId } from '../id.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { isSafeSessionId } from '../transcript-locate.js';
 import { isSafeTaskSlug } from '../task-backend/local.js';
-import { getAutomation, isSafeAutomationSlug } from './store.js';
+import { getAutomation, getRunTarget, isSafeAutomationSlug } from './store.js';
+import { checkApproval } from './registry.js';
 import {
   HITL_CHANNELS,
   HITL_DIR,
@@ -558,6 +559,26 @@ export function resolveQuestion(
   };
   writeQuestion(contextRoot, next);
   return next;
+}
+
+/**
+ * Close every open `approval` question of `slug` whose target is approved now. The question asks
+ * "may this run?", so once the answer is yes it asks nothing, and an open one would still hold the
+ * slug's fires (`runner.ts`: "a question is waiting"). Only answering the card closed it; approving
+ * on the AI Team page, or `agents approve`, left it open and the member stayed blocked. Starts no
+ * run: the owed fire runs on the next tick. A question that carries a task stays: answering its
+ * card is what starts that task, and closing it here would lose the job. Returns how many it closed.
+ */
+export function settleApprovalQuestions(contextRoot: string, slug: string, home?: string, now: Date = new Date()): number {
+  let closed = 0;
+  for (const q of listQuestions(contextRoot, slug)) {
+    if (q.state !== 'pending' || q.kind !== 'approval' || q.task) continue;
+    const target = getRunTarget(contextRoot, slug, runKindOf(contextRoot, slug, q.target));
+    if (!target || !checkApproval(dirname(contextRoot), target, home, 'run').approved) continue;
+    resolveQuestion(contextRoot, q, 'approve', 'dashboard', now.toISOString());
+    closed += 1;
+  }
+  return closed;
 }
 
 /** Record what the agent said (or how it failed) once an answer has been acted

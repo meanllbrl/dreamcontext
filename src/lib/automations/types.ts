@@ -1055,6 +1055,16 @@ export const AGENT_SELF_ENV = 'DREAMCONTEXT_AGENT_SELF';
  *  every such child, so a CLI verb the owner alone may run refuses it as it refuses a run. */
 export const AGENT_CHAT_ENV = 'DREAMCONTEXT_AGENT_CHAT';
 
+/** Env var set on the Super Agent's session and its children: chats no owner is typing in, reading
+ *  text nobody here wrote. What they create is not approved by creating it. */
+export const SUPER_CREW_ENV = 'DREAMCONTEXT_SUPER_CREW';
+
+/** True when a create must leave its approval to the owner: an agent's run or conversation, or the
+ *  Super Agent's crew. The owner's own Chat keeps "the human who wrote it approved it". */
+export function createNeedsOwner(env: NodeJS.ProcessEnv = process.env): boolean {
+  return insideAgentRun(env) || !!env[SUPER_CREW_ENV];
+}
+
 /** True inside anything an agent drives: a run (scheduled, called, a task job) or a conversation
  *  with it. The ONE predicate every owner-only CLI verb asks (autonomy, filing approval, assign). */
 export function insideAgentRun(env: NodeJS.ProcessEnv = process.env): boolean {

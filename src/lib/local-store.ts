@@ -282,6 +282,7 @@ export function latestStageSession(projectRoot: string, agent: string, home?: st
 
 /** The death of an agent's machine-local entries: deleted or renamed. Never throws. */
 export function forgetAgentLocal(projectRoot: string, agent: string, home?: string): void {
+  moveAmendments(projectRoot, agent, null, home);
   try {
     if (listAgentSessions(projectRoot, agent, home).length > 0) {
       mutateSessions(projectRoot, agent, home, () => []);
@@ -302,8 +303,28 @@ export function forgetAgentLocal(projectRoot: string, agent: string, home?: stri
   }
 }
 
+/** The file `agents/amendments.ts` owns: its text history dies and moves with the member. */
+const AMENDMENTS_FILE = 'agent-amendments.json';
+
+/** Move one member's amendment history, or (with `to` null) drop it. Never throws. */
+function moveAmendments(projectRoot: string, from: string, to: string | null, home?: string): void {
+  try {
+    const rec = readLocalJson<{ members?: Record<string, unknown[]> }>(projectRoot, AMENDMENTS_FILE, {}, home);
+    if (!rec.members?.[from]) return;
+    updateLocalJson<{ members?: Record<string, unknown[]> }>(projectRoot, AMENDMENTS_FILE, {}, (cur) => {
+      const members = { ...(cur.members ?? {}) };
+      if (to !== null && members[from]) members[to] = [...(members[from] ?? []), ...(members[to] ?? [])];
+      delete members[from];
+      return { members };
+    }, home);
+  } catch {
+    // a leftover entry names a member that no longer exists; nothing can read it
+  }
+}
+
 /** An agent renamed: its stage home session and its session index follow it. Never throws. */
 export function renameAgentStage(projectRoot: string, from: string, to: string, home?: string): void {
+  moveAmendments(projectRoot, from, to, home);
   try {
     if (listAgentSessions(projectRoot, from, home).length > 0) {
       updateLocalJson<SessionsRecord>(projectRoot, SESSIONS_FILE, EMPTY_SESSIONS(), (cur) => {

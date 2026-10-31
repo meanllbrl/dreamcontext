@@ -97,6 +97,7 @@ import { assistantToken, clearTaint, markTainted, setAssistantSurface } from '..
 import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
+import { SUPER_CREW_ENV } from '../../lib/automations/types.js';
 import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChild, peekSuperNote, readSuperState, setPhoneHoldsProbe, superIndex, superRootOfChild } from '../../lib/super/store.js';
 import { remoteViewOf } from './super-remote.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
@@ -2294,7 +2295,12 @@ export function startChatSession(
   // child, an agent's own tab, the Assistant, a card). ALWAYS set: env is `{...process.env, …}`, so
   // an unset name would inherit the server's own.
   const teamRoute = isSuper ? 'super' : subagents && teamRouting ? 'offer' : '';
-  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', DREAMCONTEXT_TEAM_ROUTE: teamRoute, ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...storeMcp.env, ...(envelope?.env ?? {}) } as Record<string, string | undefined>;
+  // The Super Agent and its children read text nobody here wrote and run with no owner in the loop:
+  // what they create waits for his approval (`superCrew`). ALWAYS set, as above.
+  // `leanMcp` too: a delegated child opens BEFORE its record lands, and a resumed one is out of the
+  // index, and both carry that flag; a forged one only narrows what the sender may do.
+  const superCrewEnv = isSuper || !!opts.leanMcp || [resumeId, sessionId].some((id) => !!id && isHandedOverChild(id)) ? '1' : '';
+  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', DREAMCONTEXT_TEAM_ROUTE: teamRoute, [SUPER_CREW_ENV]: superCrewEnv, ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...storeMcp.env, ...(envelope?.env ?? {}) } as Record<string, string | undefined>;
   // Its own process group on POSIX, so the whole tree can be ended at once (win32: see chatSpawnCommand).
   const spawnCmd = chatSpawnCommand({ argv, script });
   const child: ChildProcessWithoutNullStreams = spawn(spawnCmd.file, spawnCmd.args, {

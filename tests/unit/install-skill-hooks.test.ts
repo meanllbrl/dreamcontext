@@ -111,11 +111,11 @@ describe('ensureClaudeHooks: legacy npx handlers are rewritten in place', () => 
     expect(readHooks().Stop).toEqual([{ hooks: [{ type: 'command', command: hookCommand('stop'), timeout: 45 }] }]);
   });
 
-  it('the two PreToolUse gates (same command, different matchers) both survive', () => {
+  it('the three PreToolUse gates (same command, different matchers) all survive', () => {
     writeSettings(legacySettings());
     ensureClaudeHooks(dir);
     const pre = readHooks().PreToolUse;
-    expect(pre.map((g) => g.matcher).sort()).toEqual(['Agent', 'Edit|Write|MultiEdit']);
+    expect(pre.map((g) => g.matcher).sort()).toEqual(['Agent', 'Bash', 'Edit|Write|MultiEdit']);
     for (const g of pre) expect(g.hooks).toEqual([{ type: 'command', command: hookCommand('pre-tool-use'), timeout: 5 }]);
   });
 });

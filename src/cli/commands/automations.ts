@@ -30,6 +30,7 @@ import {
   type FlowGraph,
   type ThreadSummaryRow,
   THREAD_SUMMARY_MAX_ROWS,
+  createNeedsOwner,
 } from '../../lib/automations/types.js';
 import {
   listAutomations,
@@ -80,6 +81,7 @@ import {
   claimQuestion,
   listQuestions,
   pendingQuestion,
+  settleApprovalQuestions,
   QUESTION_CHOICE_MAX_CHARS,
   QUESTION_CHOICES_MAX,
 } from '../../lib/automations/hitl.js';
@@ -227,6 +229,8 @@ function boardExists(contextRoot: string, slug: string): boolean {
 function createBoundFromFlags(
   root: string,
   slug: string,
+  /** The owner consented to this write: his terminal, or his yes on a `propose --routine`. */
+  stamp: boolean,
   opts: { title: string; slot: string[]; days?: string; at?: string; mode?: string; timeout?: string; catchup?: string;
     disabled?: boolean; shared?: boolean; notify?: boolean; review?: string; agent?: string; job?: string },
 ): AutomationManifest | null {
@@ -264,8 +268,8 @@ function createBoundFromFlags(
       shared: !!opts.shared,
       notify: opts.notify,
       review: opts.review as ReviewMode | undefined,
-    }, { approve: { now: new Date() } });
-    success(`Automation created: automations/${manifest.slug}.md, running as the agent "${agentSlug}" (approved on this machine).`);
+    }, stamp ? { approve: { now: new Date() } } : {});
+    success(`Automation created: automations/${manifest.slug}.md, running as the agent "${agentSlug}"${stamp ? ' (approved on this machine)' : '. It waits for the owner\'s approval on the AI Team page'}.`);
     if (opts.shared) printPublishedPaths(manifest.slug, shareWithAgent(root, manifest.slug, agentSlug));
     return manifest;
   } catch (err) {
@@ -624,6 +628,12 @@ async function answerApprovalQuestion(root: string, question: AutomationQuestion
  * touching anything.
  */
 async function answerFlowHitlQuestion(root: string, question: AutomationQuestion, answerText: string): Promise<void> {
+  // A yes here can set up a routine (`create --answer`): it is the owner's, never the crew's.
+  if (createNeedsOwner()) {
+    error('Answering a question an agent asked is the owner\'s step, and this is an agent run or the Super Agent\'s crew. He answers it in the app.');
+    process.exitCode = 1;
+    return;
+  }
   const outcome = await resumeWithAnswer(root, question, answerText, 'cli');
   if (outcome.status === 'refused') {
     error(outcome.error ?? 'that question could not be answered');
@@ -853,8 +863,11 @@ export function registerAutomationsCommand(program: Command): void {
         process.exitCode = 1;
         return;
       }
+      // An agent's run or the Super Agent's crew gets no approval by creating: only the owner's own
+      // chat or terminal, or his yes on a `propose --routine`, grants one.
+      const stamp = !createNeedsOwner() || gate.question !== null;
       if (opts.agent !== undefined) {
-        const created = createBoundFromFlags(root, slug, opts);
+        const created = createBoundFromFlags(root, slug, stamp, opts);
         if (created) recordRoutineCreated(root, gate, created);
         return;
       }
@@ -938,9 +951,9 @@ export function registerAutomationsCommand(program: Command): void {
 
         const projectRoot = projectRootFor(root);
         registerProject(projectRoot);
-        approveAutomation(projectRoot, manifest, new Date());
+        if (stamp) approveAutomation(projectRoot, manifest, new Date());
 
-        success(`Automation created: automations/${manifest.slug}.md (auto-approved on this machine).`);
+        success(`Automation created: automations/${manifest.slug}.md (${stamp ? 'auto-approved on this machine' : 'it waits for the owner\'s approval on the AI Team page'}).`);
         if (manifest.whiteboard) {
           console.log(chalk.dim(`  Home board: ${manifest.whiteboard}. Every run is scoped to that board.`));
         }
@@ -2191,6 +2204,7 @@ export function registerAutomationsCommand(program: Command): void {
         }
 
         approveAutomation(projectRoot, manifest, new Date());
+        settleApprovalQuestions(root, slug);
         success(`"${slug}" approved.`);
       } catch (err) {
         handleAutomationsError(err);

@@ -22,6 +22,9 @@ import { sayToAgent } from './automations.js';
 import { agentActivity, currentAutomationJob, currentReplyJob, whenReplySettles, whenRunSettles } from '../automation-job.js';
 import { getAutomation } from '../../lib/automations/store.js';
 import { memberScope } from '../../lib/agents/scope.js';
+import { AmendmentRefused, amendMember, approvedTargets } from '../../lib/agents/amendments.js';
+import { isNotOwnerError } from '../../lib/agents/owner.js';
+import { AutomationError } from '../../lib/automations/types.js';
 import { checkApproval } from '../../lib/automations/registry.js';
 import {
   agendaMissing, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, superOpenBatch,
@@ -2081,6 +2084,35 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     });
     void pumpSuper(root);
     ok(res, { child: sid, adopted: true, ...cardOutcome(container, sid, after) });
+  },
+
+  'team-amend': async (c, b, res) => {
+    // A member's instructions, corrected. Only the recorded Super Agent session reaches this door
+    // (`authorizeSuperAgent`): a child, the member itself and a terminal are refused above. Text
+    // fields only; anything else in the body is ignored, so no field of a member's reach can ride.
+    if (!requireHandedOver(c, res)) return;
+    const root = c.who.contextRoot;
+    const member = str(b.member);
+    if (!member || !okMember(member)) {
+      refuse(res, 404, 'unknown_member', 'name a member of this project\'s AI Team by its slug (`dreamcontext agents list`)');
+      return;
+    }
+    const text = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+    try {
+      const a = amendMember(root, {
+        member, why: text(b.why) ?? '', prompt: text(b.prompt), soul: text(b.soul), job: text(b.job), routine: str(b.routine), session: c.who.sessionId,
+      });
+      ok(res, {
+        amendment: a.id,
+        changed: a.changes.map((x) => (x.routine ? `${x.routine}:${x.field}` : x.field)),
+        approved: approvedTargets(root, member),
+      });
+    } catch (err) {
+      if (err instanceof AmendmentRefused) { refuse(res, err.status, err.code, wrapUntrusted(vaultNameOf(root), err.message)); return; }
+      if (isNotOwnerError(err)) { refuse(res, 403, 'not_owner', wrapUntrusted(vaultNameOf(root), err.message)); return; }
+      if (err instanceof AutomationError) { refuse(res, 400, 'invalid_args', wrapUntrusted(vaultNameOf(root), err.message)); return; }
+      throw err;
+    }
   },
 
   'team-ask': async (c, b, res) => {

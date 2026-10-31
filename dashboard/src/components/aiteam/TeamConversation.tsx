@@ -24,6 +24,7 @@ import {
   type ConversationThread, type TeamAgent, type TeamRow, type TemporaryModel,
 } from './teamModel';
 import { TeamIcon } from './TeamIcons';
+import { TeamAmendments } from './TeamAmendments';
 import { TeamApproval } from './TeamApproval';
 import '../sleepy/ChatPane.css';
 import '../sleepy/chat/composer.css';
@@ -358,6 +359,7 @@ export function TeamConversation({
       </header>
 
       <TeamApproval agentTitle={agent.title} pending={pending} onToast={onToast} />
+      {agent.readOnly !== true && <TeamAmendments slug={agent.slug} onToast={onToast} />}
       {!blocked && messages.length === 0 && dispatcher && !dispatcher.installed && (
         <div className="aiteam-banner">
           <span className="auto-dispatch-pill"><span className="auto-dispatch-dot" aria-hidden="true" /><span className="auto-dispatch-pill-label">{t('aiteam.scheduler.off')}</span></span>

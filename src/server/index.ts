@@ -158,6 +158,8 @@ import {
   handleLauncherGlobalAgentsCreate,
   handleAgentsUpdate,
   handleAgentsDelete,
+  handleAgentsAmendmentRevert,
+  handleAgentsAmendments,
   handleAgentsApprove,
   handleAgentsPlace,
   handleAgentsPhotoGet, handleAgentsStage, handleAgentsHistory,
@@ -847,6 +849,8 @@ export function buildRouter(): Router {
   router.get('/api/agents/:slug/photo', handleAgentsPhotoGet);
   router.get('/api/agents/:slug/stage', handleAgentsStage);
   router.get('/api/agents/:slug/history', handleAgentsHistory);
+  router.get('/api/agents/:slug/amendments', handleAgentsAmendments);
+  router.post('/api/agents/:slug/amendments/:id/revert', handleAgentsAmendmentRevert);
   router.post('/api/agents/:slug/photo', handleAgentsPhotoUpload);
   router.get('/api/automations', handleAutomationsList);
   // Create is a POST on the COLLECTION, so it shares no shape with any `/:slug`

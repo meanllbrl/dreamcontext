@@ -50,6 +50,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDue, type DueVerdict } from './schedule.js';
 import { getAutomation, listAutomations, readAutomationCache } from './store.js';
+import { allPendingQuestions, settleApprovalQuestions } from './hitl.js';
 import { drainQueue, enqueueFire } from './queue.js';
 import { listRegisteredProjects, recordTickCompleted, recordTickStarted } from './registry.js';
 import { rotateLogIfLarge } from './launchd.js';
@@ -186,6 +187,15 @@ export async function tickProject(projectRoot: string, opts: TickOptions = {}): 
   const contextRoot = join(projectRoot, CONTEXT_DIR_NAME);
 
   const manifests = listAutomations(contextRoot);
+  // A question the page's approve left open would hold this slug's fires forever: see `settleApprovalQuestions`.
+  // Housekeeping: a failure here is logged and never stops this project's fires or the next one's.
+  try {
+    for (const q of allPendingQuestions(contextRoot)) {
+      if (q.kind === 'approval') settleApprovalQuestions(contextRoot, q.slug, opts.home, now);
+    }
+  } catch (err) {
+    logFn(`[automations] the approval question sweep failed for ${projectRoot}: ${(err as Error).message}`);
+  }
   const verdicts: SlugVerdict[] = [];
   const ran: RunOutcome[] = [];
   // Slugs the drain phase already ran this pass — the `isDue()` loop below

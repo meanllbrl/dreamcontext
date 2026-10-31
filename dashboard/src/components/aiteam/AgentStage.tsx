@@ -18,6 +18,7 @@ import {
 } from './stageSession';
 import { dayRuleLabel, messagesOf, pendingApprovals, routineCountLabel, type TeamRow } from './teamModel';
 import { feedHasRunning, type ChatFeed, type FeedLabels, type FeedMeta } from '../sleepy/chat/chatFeed';
+import { TeamAmendments } from './TeamAmendments';
 import { TeamApproval } from './TeamApproval';
 import type { PanelTab } from './TeamPanel';
 import { TeamIcon } from './TeamIcons';
@@ -164,6 +165,7 @@ export function AgentStage({
       ) : (
         <TeamApproval agentTitle={agent.title} pending={pending} onToast={onToast} />
       )}
+      {!readOnly && <TeamAmendments slug={agent.slug} onToast={onToast} />}
 
       {readOnly || elsewhere ? (
         <div className="aiteam-stage-note" data-stage-closed>
