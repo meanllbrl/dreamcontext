@@ -9,8 +9,8 @@ import { isDesktop, pickerOpen } from '../../lib/desktop';
 import { frameMotionMs, setFrames, type FrameItem, type MinPreset } from '../../lib/windowFrames';
 import { claimSeat, flying, guardHeal, isCurrentSeat, setSeatWindow, wantSeat, withFlight, type SeatFrame } from './seatGuard';
 import { executeAssistantCommand, onAssistantNotify } from './commandExecutor';
-import { ProposalList, decide, type Proposal } from './ProposalList';
-import { GlanceList, HandoffList, answerPermission, dismissHandoff } from './GlanceList';
+import { ProposalList, decide, type DecideOutcome, type Proposal } from './ProposalList';
+import { GlanceList, HandoffList, answerPermission, dismissHandoff, type AnswerFailure } from './GlanceList';
 import { ConversationMenu } from './ConversationMenu';
 import { NotchPeek, peekItem, type PeekItem } from './NotchPeek';
 import { AgentAvatar, InboxList } from './InboxList';
@@ -461,6 +461,10 @@ export function Notch() {
   const [eventPeek, setEventPeek] = useState<PeekItem | null>(null);
   /** The open panel's two faces: what is happening everywhere, and the conversation. */
   const [tab, setTab] = useState<'now' | 'chat'>('chat');
+  /** A Y / N or a spoken answer that failed: no row was clicked, so the row is told. */
+  const [answerFailure, setAnswerFailure] = useState<AnswerFailure | null>(null);
+  /** The same for a proposal Y / N could not decide. */
+  const [proposalFailure, setProposalFailure] = useState<{ id: string; outcome: DecideOutcome } | null>(null);
   const [convosOpen, setConvosOpen] = useState(false);
   const [peek, setPeek] = useState<PeekReason | null>(null);
   const [finishedId, setFinishedId] = useState<string | null>(null);
@@ -488,6 +492,7 @@ export function Notch() {
   /** When the live conversation last had a turn (ms): decides a fresh one after a long idle. */
   const lastActiveRef = useRef<number | null>(null);
   const expandedRef = useRef(false);
+  const expandRef = useRef<(to?: 'now' | 'chat') => void>(() => {});
   expandedRef.current = expanded;
   const seatRef = useRef<Seat>('notch');
   seatRef.current = seatMode;
@@ -685,6 +690,14 @@ export function Notch() {
   }, [busyCount]);
   const mood = notchMood(rollup, justFinished);
   // A row changed here is put right by the server's next answer, even an unchanged one.
+  /** Y / N and a spoken word come from anywhere, and a relay can take 25 s to fail, so he may have
+   *  folded by then: the panel opens on the Now list, where the row says what happened. */
+  const showAnswerFailure = useCallback((failure: AnswerFailure) => {
+    setAnswerFailure(failure);
+    setTab('now');
+    setConvosOpen(false);
+    if (!expandedRef.current) expandRef.current('now');
+  }, []);
   const dropRow = useCallback((sessionId: string) => {
     rawGate.forget('glance');
     setGlance((g) => g.filter((c) => c.sessionId !== sessionId));
@@ -930,26 +943,33 @@ export function Notch() {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
       const key = e.key.toLowerCase();
-      if (key !== 'y' && key !== 'n') return;
+      // One press, one answer: a held Y must not fall through to the next prompt.
+      if ((key !== 'y' && key !== 'n') || e.repeat) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
       const ask = glance.find((c) => c.ask?.kind === 'permission');
       if (ask) {
         e.preventDefault();
-        void answerPermission(ask, key === 'y' ? 'allow' : 'deny').then((ok) => { if (ok) dropRow(ask.sessionId); });
+        void answerPermission(ask, key === 'y' ? 'allow' : 'deny').then((outcome) => {
+          if (outcome === 'ok' || outcome === 'stale') dropRow(ask.sessionId);
+          else showAnswerFailure({ ask: ask.ask!.id, outcome });
+        });
         return;
       }
       const p = proposals[0];
       if (p) {
         e.preventDefault();
-        void decide(p.id, key === 'y' ? 'approve' : 'reject').then((ok) => {
-          if (ok) { rawGate.forget('proposals'); setProposals((ps) => ps.filter((x) => x.id !== p.id)); }
+        void decide(p.id, key === 'y' ? 'approve' : 'reject').then((outcome) => {
+          if (outcome === 'ok' || outcome === 'gone') { rawGate.forget('proposals'); setProposals((ps) => ps.filter((x) => x.id !== p.id)); return; }
+          setProposalFailure({ id: p.id, outcome });
+          setTab('now');
+          setConvosOpen(false);
         });
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [expanded, glance, proposals, dropRow, rawGate]);
+  }, [expanded, glance, proposals, dropRow, showAnswerFailure, rawGate]);
 
   // ── THE ISLAND GROWS AND FOLDS (notchMotion.ts) ──────────────────────────────────────────
   // The window is transparent, so a growing window frame was never what the owner saw. In the
@@ -1079,6 +1099,7 @@ export function Notch() {
   }, [runMotion, stillIsland]);
   /** For timers armed before a re-render: always the current `collapse`. */
   const collapseRef = useRef(collapse);
+  expandRef.current = expand;
   collapseRef.current = collapse;
 
   // Pop out / dock: the SAME webview changes seats. Never an unmount, never a reload.
@@ -1216,20 +1237,20 @@ export function Notch() {
       const ask = choice ? glanceRef.current.find((c) => c.ask?.kind === 'permission') : undefined;
       if (!choice || !ask) return false;
       const folds = voiceSummonRef.current && !engagedRef.current;
-      void answerPermission(ask, choice).then((ok) => {
-        if (ok) {
+      void answerPermission(ask, choice).then((outcome) => {
+        if (outcome === 'ok' || outcome === 'stale') {
           dropRow(ask.sessionId);
           if (folds && expandedRef.current && seatRef.current === 'notch') collapseRef.current();
           return;
         }
         voiceSummonRef.current = false;
-        setTab('now');
+        showAnswerFailure({ ask: ask.ask!.id, outcome });
       });
       voiceSummonRef.current = false;
       return true;
     });
     return () => session.setOwnerWordsHook(null);
-  }, [session, dropRow]);
+  }, [session, dropRow, showAnswerFailure]);
 
   // The turn and its speech are over: a panel a presentation opened folds, unless it said
   // `stay` or the owner took it over. Unspoken, it stays long enough to be read.
@@ -1692,6 +1713,7 @@ export function Notch() {
           ref={peekRef}
           item={peekNow}
           assistant={hasAssistant}
+          onFailed={showAnswerFailure}
           onOpenChat={() => void expand(peekNow.kind === 'summary' ? undefined : 'chat')}
           onDone={() => {
             const id = peekId(peekNow);
@@ -1738,9 +1760,10 @@ export function Notch() {
           />
         )}
         <div className="dc-notch__now" hidden={tab !== 'now' || convosOpen}>
-          {liveRows.length > 0 && <GlanceList chats={liveRows} onAnswered={dropRow} />}
+          {liveRows.length > 0 && <GlanceList chats={liveRows} failure={answerFailure} onAnswered={dropRow} />}
           {proposals.length > 0 && (
             <ProposalList
+              failure={proposalFailure}
               proposals={proposals}
               keyed={!glance.some((c) => c.ask?.kind === 'permission')}
               onDecided={(id) => { rawGate.forget('proposals'); setProposals((p) => p.filter((x) => x.id !== id)); }}
@@ -1755,7 +1778,7 @@ export function Notch() {
             onNoticeGone={hide}
             onPostGone={hide}
           />
-          {handoffs.length > 0 && <HandoffList handoffs={handoffs} onAnswered={dropRow} onDismiss={clearHandoff} />}
+          {handoffs.length > 0 && <HandoffList handoffs={handoffs} failure={answerFailure} onAnswered={dropRow} onDismiss={clearHandoff} />}
           {glance.length === 0 && proposals.length === 0 && handoffs.length === 0 && inboxCount === 0 && inbox.running.length === 0 && (
             <p className="dc-notch__empty">Nothing running and nothing waiting on you.{hasAssistant && ` Ask ${name} to start something.`}</p>
           )}

@@ -1,5 +1,5 @@
 import { forwardRef, useState } from 'react';
-import { answerPermission, dismissHandoff } from './GlanceList';
+import { answerPermission, dismissHandoff, type AnswerFailure } from './GlanceList';
 import { AgentAvatar, dismissNotice, markPostSeen, muteAutomation, openAutomation, openChat } from './InboxList';
 import {
   accountLine, glanceStatus, handoffPhase,
@@ -47,17 +47,18 @@ export const NotchPeek = forwardRef<HTMLDivElement, {
   /** An assistant exists to talk to. Without one the notch only notifies: no "ask" buttons,
    *  and opening it shows everything waiting. */
   assistant: boolean;
+  /** An answer failed. The peek may have folded by the time a relay gives up, so the panel says it. */
+  onFailed: (failure: AnswerFailure) => void;
   onOpenChat: () => void;
   onDone: () => void;
-}>(function NotchPeek({ item, assistant, onOpenChat, onDone }, ref) {
+}>(function NotchPeek({ item, assistant, onFailed, onOpenChat, onDone }, ref) {
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
   const answer = async (sessionId: string, ask: GlanceChat['ask'], choice: 'allow' | 'deny') => {
+    if (!ask) return;
     setBusy(true);
-    setFailed(false);
-    const ok = await answerPermission({ sessionId, ask }, choice);
+    const outcome = await answerPermission({ sessionId, ask }, choice);
     setBusy(false);
-    if (ok) onDone(); else setFailed(true);
+    if (outcome === 'ok' || outcome === 'stale') onDone(); else onFailed({ ask: ask.id, outcome });
   };
 
   return (
@@ -73,7 +74,6 @@ export const NotchPeek = forwardRef<HTMLDivElement, {
             <button type="button" className="dc-glance__btn" disabled={busy} onClick={() => void answer(item.chat.sessionId, item.chat.ask, 'deny')}>Deny</button>
             <button type="button" className="dc-glance__btn dc-glance__btn--primary" disabled={busy} onClick={() => void answer(item.chat.sessionId, item.chat.ask, 'allow')}>Allow</button>
             <button type="button" className="dc-peek__quiet" onClick={() => { openChat(item.chat.vault, item.chat.sessionId); onDone(); }}>Open {item.chat.vault}</button>
-            {failed && <span className="dc-glance__fail">Couldn't reach {item.chat.vault}.</span>}
           </div>
         </>
       )}

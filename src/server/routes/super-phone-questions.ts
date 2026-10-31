@@ -1,7 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isAgentRequest } from '../desktop.js';
-import { isSameOriginStrict } from './agent-spawn-shared.js';
 import { isPhoneSocket } from '../phone-origin.js';
 import { isReservedId, readSuperState } from '../../lib/super/store.js';
 import { directQuestion, superSanitizeOpts, superVaultName, writeSuper } from '../../lib/super/inbox.js';
@@ -27,8 +26,10 @@ import { sendSuperCommand, superTokenOfSession } from '../../lib/window-control.
  *        so its card leaves there too. The super's own `ask` needs no route: its answer is owner
  *        text, which the mirror carries.
  *
- * Gated like the phone's other chat routes (`isAgentRequest`: the laptop on loopback, a phone
- * with its device session); the phone vault gate already scoped the project.
+ * The read is gated like the phone's other chat routes (`isAgentRequest`: the laptop on loopback,
+ * a phone with its device session); the phone vault gate already scoped the project. The answer
+ * is the phone's alone: the laptop answers through the child's own card, so a loopback caller
+ * here could only be something other than the owner.
  */
 
 /** One open question as the phone draws it. `card` null = no card to draw (the child's
@@ -139,9 +140,9 @@ export function phoneAnswerOpen(item: SuperQueueItem, requestId: string): boolea
 
 /** POST /api/agent/super-answer {item, requestId, picked?, notes?, unclear?} */
 export async function handleSuperPhoneAnswer(req: IncomingMessage, res: ServerResponse, _params: unknown, contextRoot: string): Promise<void> {
-  // The phone gate already judged a phone write's Origin (the tunnel's own); on the laptop only
-  // the app's own page answers for the owner (the strict T0 test of the super's owner routes).
-  if (!isAgentRequest(req) || (!isPhoneSocket(req) && !isSameOriginStrict(req))) { sendError(res, 403, 'forbidden', 'Available only in the desktop app or a signed-in phone.'); return; }
+  // The phone gate already judged the write's Origin (the tunnel's own); the device session is
+  // judged here again so this never relies on its order.
+  if (!isPhoneSocket(req) || !isAgentRequest(req)) { sendError(res, 403, 'forbidden', 'Available only on a signed-in phone.'); return; }
   const b = (await parseJsonBody(req)) ?? {};
   const id = typeof b.item === 'string' ? b.item : '';
   const requestId = typeof b.requestId === 'string' ? b.requestId : '';

@@ -24,6 +24,8 @@
  * Collect, don't fail fast: every check prints ✓/✗. Exit 0 iff all pass.
  */
 import { spawn, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:net';
 import { appendFileSync, chmodSync, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -174,10 +176,23 @@ function setupScratch() {
   const r = spawnSync(process.execPath, [CLI, 'vaults', 'add', 'acme-app', PROJ], { env: env(), encoding: 'utf-8' });
   if (r.status !== 0) throw new Error(`vaults add failed: ${r.stderr || r.stdout}`);
 }
+const OWNER_KEY = randomBytes(32).toString('hex');
+const rawPost = (port, path, body, headers) => new Promise((resolve, reject) => {
+  const payload = JSON.stringify(body);
+  const r = httpRequest({ host: '127.0.0.1', port, path, method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload), ...headers } }, (res) => {
+    let text = '';
+    res.on('data', (c) => { text += c; });
+    res.on('end', () => resolve({ status: res.statusCode, text }));
+  });
+  r.on('error', reject);
+  r.end(payload);
+});
 const freePort = () => new Promise((res, rej) => { const s = createServer(); s.on('error', rej); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => res(port)); }); });
 async function startServer(port) {
   const PATH = [join(HOME, '.local', 'bin'), '/usr/bin', '/bin', '/usr/sbin', '/sbin', dirname(process.execPath)].join(':');
-  const srv = spawn(process.execPath, [CLI, 'dashboard', '--no-open', '-p', String(port)], { cwd: PROJ, env: { ...env(), PATH, DREAMCONTEXT_CLI: CLI }, stdio: ['ignore', 'pipe', 'pipe'] });
+  // The shell's own hand-over: the owner key down stdin, the flag that says it is coming.
+  const srv = spawn(process.execPath, [CLI, 'dashboard', '--no-open', '-p', String(port)], { cwd: PROJ, env: { ...env(), PATH, DREAMCONTEXT_CLI: CLI, DREAMCONTEXT_OWNER_KEY_STDIN: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  srv.stdin.end(`${OWNER_KEY}\n`);
   const log = createWriteStream(join(OUT, 'server.log'));
   srv.stdout.pipe(log); srv.stderr.pipe(log);
   for (const end = Date.now() + 30_000; Date.now() < end;) {
@@ -207,11 +222,17 @@ async function main() {
   const base = `http://127.0.0.1:${port}`;
   const srv = await startServer(port);
   const post = (path, body) => fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  // The signal that would start an unauthenticated inspector inside the server holding the key.
+  srv.kill('SIGUSR1');
+  await new Promise((r) => setTimeout(r, 800));
+  ok('SIGUSR1 opens no inspector on the server that holds the key', srv.exitCode === null && !/Debugger listening/.test(readFileSync(join(OUT, 'server.log'), 'utf-8')));
   const browser = await chromium.launch();
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, colorScheme: 'dark', recordVideo: { dir: join(OUT, 'video'), size: { width: 1600, height: 1000 } } });
   const page = await context.newPage();
   const notchCtx = await browser.newContext({ viewport: { width: 580, height: 560 }, colorScheme: 'dark' });
   const notch = await notchCtx.newPage();
+  // No shell here: Chromium has no IPC, so the page's fetch gets the key the shell would give it.
+  await notch.route('**/api/assistant/answer', (r) => r.continue({ headers: { ...r.request().headers(), 'x-dreamcontext-owner-key': OWNER_KEY } }));
   const errors = [];
   for (const [p, tag] of [[page, 'project'], [notch, 'notch']]) {
     p.on('console', (m) => { if (m.type() === 'error') errors.push(`[${tag}] ${m.text()}`); });
@@ -330,6 +351,12 @@ async function main() {
     // What an agent with Bash would try next: the owner's own route, as a bare loopback client.
     const curl = await post('/api/assistant/answer', { sessionId: child, question: q4, choice: 'allow' });
     ok('an agent\'s curl to the owner route is refused (403 owner_page_only)', curl.status === 403 && /owner_page_only/.test(await curl.text()));
+    // The same client forging everything a header can claim: only the key is missing. Over raw
+    // HTTP, because fetch() refuses to set Host, Origin and Sec-Fetch-Site.
+    const forged = await rawPost(new URL(base).port, '/api/assistant/answer', { sessionId: child, question: q4, choice: 'allow' }, { Origin: base, 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Dest': 'empty' });
+    ok('…and with every header forged, still 403 owner_page_only', forged.status === 403 && /owner_page_only/.test(forged.text), `${forged.status} ${forged.text}`);
+    const answerCurl = await rawPost(new URL(base).port, '/api/agent/super-answer', { item: 'x', requestId: q4 }, { Origin: base, 'Sec-Fetch-Site': 'same-origin' });
+    ok('…and the phone\'s route refuses a loopback caller (403)', answerCurl.status === 403, `${answerCurl.status} ${answerCurl.text}`);
     ok('…and the child is still waiting', answeredWith('four') === undefined);
     await openNow();
     const allow4 = notch.locator('.dc-glance__btn--primary:visible').filter({ hasText: /^\s*Allow/ }).first();

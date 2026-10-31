@@ -248,6 +248,25 @@ describe('the glance and the rollup', () => {
     expect((chats[0].ask as { text: string }).text).toBe('<untrusted-project-output vault="acme">Postgres or sqlite?</untrusted-project-output>');
   });
 
+  it('the row is the permission the owner route answers: the open one, then the one held before it', async () => {
+    await makeVault({ queue: [{ id: 'q-p', sessionId: 'c1', kind: 'permission', state: 'escalated', requestId: 'p-old', createdAt: 1 }] });
+    const c1 = reg('c1');
+    const bash = (id: string) => ({ type: 'control_request', request_id: id, request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'npm publish' } } });
+    c1.observe(bash('p-old'));
+    c1.observe(bash('p-new'));
+    const row = async () => {
+      const r = res();
+      await handleAssistantGlance(req(), r);
+      return (r.json.chats as Array<{ ask: { id: string; kind: string } }>)[0].ask;
+    };
+    expect(await row()).toMatchObject({ id: 'p-new', kind: 'permission' });
+    c1.answered('p-new');
+    expect(await row()).toMatchObject({ id: 'p-old', kind: 'permission' });
+    // Held behind a plain question: still a row, but the chat answers it.
+    c1.observe({ type: 'control_request', request_id: 'q-new', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] }] } } });
+    expect(await row()).toMatchObject({ id: 'p-old', kind: 'question' });
+  });
+
   it('the super agent\'s own ask is the row: its words fenced, its options, no child title (plan r4 D7)', async () => {
     await makeVault({ queue: [{ id: 'q-a', sessionId: SUPER, kind: 'ask', state: 'escalated', ownerText: 'Ship it today?', options: ['Yes', 'Tomorrow'], createdAt: 1 }] });
     const r = res();

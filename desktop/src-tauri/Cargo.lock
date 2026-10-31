@@ -980,6 +980,7 @@ version = "0.36.2"
 dependencies = [
  "block2",
  "cpal",
+ "getrandom 0.2.17",
  "libc",
  "objc2",
  "objc2-app-kit",

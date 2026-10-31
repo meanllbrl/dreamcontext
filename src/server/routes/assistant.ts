@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { isLoopback, isSameOriginStrict } from './agent-spawn-shared.js';
+import { hasOwnerKey } from '../owner-key.js';
 import {
   ASSISTANT_VAULT, assistantContextRoot, assistantExists, assistantProjectRoot, isAssistantVault,
   readAssistantConfig, writeAssistantConfig, sanitizeConfigPatch, notchOnlyPatch,
@@ -75,12 +76,18 @@ function ownerGate(req: IncomingMessage, res: ServerResponse): boolean {
 /**
  * The route that GRANTS a permission (`/api/assistant/answer`) asks more than loopback: a
  * permission is the owner's to give, never an agent's, and any process here can reach loopback —
- * an agent's `curl` included, the Super Agent's too, which knows its children's request ids. The
- * app's own page (the notch) sends its Origin on every POST; a bare client sends none. Header
- * forgery still passes, as it does on the chat socket: a secret only the shell holds is the
- * stronger fix (separate task).
+ * an agent's `curl` included, the Super Agent's too, which knows its children's request ids.
+ * The headers stop a page: this very origin, and a browser's own word that it is (a page on
+ * another port, a rebinding name, a client that sends no Fetch Metadata). They stop no process,
+ * which can write any of them, so the last word is the key only the shell holds (owner-key.ts).
  */
-function fromOwnerPage(req: IncomingMessage): boolean {
+export function fromOwnerPage(req: IncomingMessage): boolean {
+  return carriesOwnOrigin(req)
+    && String(req.headers['sec-fetch-site'] ?? '').trim().toLowerCase() === 'same-origin'
+    && hasOwnerKey(req);
+}
+
+function carriesOwnOrigin(req: IncomingMessage): boolean {
   return typeof req.headers.origin === 'string' && isSameOriginStrict(req);
 }
 
@@ -779,12 +786,15 @@ function superGlanceRows(clip: (s: string) => string): Array<Record<string, unkn
   for (const { vault, item } of superAttentionRows()) {
     const c = getChat(item.sessionId);
     if (item.kind === 'permission') {
-      const pq = pendingRequest(c, item.requestId);
+      // The row is what the owner route answers: the permission open now, whatever the queue
+      // head says. One held behind a plain question opens the chat, with no Allow or Deny.
+      const open = c?.pendingQuestion?.isPermission ? c.pendingQuestion : null;
+      const pq = open ?? pendingRequest(c, item.requestId);
       if (!c || !pq || !pq.isPermission) continue;
       rows.push({
         sessionId: c.sessionId, vault, activity: 'asking', since: c.updatedAt, super: true,
         title: c.title ? wrapUntrusted(vault, clip(c.title)) : '',
-        ask: { id: pq.requestId, kind: 'permission', tool: pq.toolName, text: wrapUntrusted(vault, clip(pq.text)) },
+        ask: { id: pq.requestId, kind: open ? 'permission' : 'question', tool: pq.toolName, text: wrapUntrusted(vault, clip(pq.text)) },
       });
     } else if (item.kind === 'ask') {
       // The Super Agent's OWN question (plan r4 D7): no child id, no child title; its words fenced.
@@ -951,14 +961,19 @@ export async function handleAssistantOwnerAnswer(req: IncomingMessage, res: Serv
   if (!sessionId || !question || !choice) { sendError(res, 400, 'invalid_args', 'sessionId, question and choice (allow|deny) are required'); return; }
   const chat = getChat(sessionId);
   if (!chat) { sendError(res, 404, 'unknown_session', `No live chat "${sessionId}".`); return; }
-  // Only the prompt the registry still shows: a stale row must not answer a newer one.
-  if (!pendingRequest(chat, question)) { sendError(res, 409, 'not_waiting', 'that prompt is no longer waiting'); return; }
+  // Only the permission open right now. One raised before it still waits, but it is not the one
+  // in front of the owner: it opens when the newer one closes, and `Allow` must never reach it.
+  const open = chat.pendingQuestion;
+  if (!open || open.requestId !== question || !open.isPermission) { sendError(res, 409, 'not_waiting', 'that prompt is no longer waiting'); return; }
   // `by: 'owner'` is what lets the window answer a chat the Assistant may not touch (the Super
   // Agent and, handed over, its children): only this owner-gated route sets it, `pickUiArgs`
   // never passes it through, and the window claims the args from the server, never the doorbell.
   const r = await relayCommand('answer', { sessionId, question, choice, text: null, vault: chat.vault, by: 'owner' });
-  if (r.ok) sendJson(res, 200, { ok: true, result: r.result });
-  else sendJson(res, r.error === 'no_surface' ? 409 : 200, { ok: false, error: r.error });
+  if (r.ok) { sendJson(res, 200, { ok: true, result: r.result }); return; }
+  // A relay can take 25 s to fail. Whether the prompt left is the registry's to say, not the
+  // relay's: a window that merely does not hold the chat leaves it open and the owner told.
+  if (getChat(sessionId)?.pendingQuestion?.requestId !== question) { sendError(res, 409, 'not_waiting', 'that prompt is no longer waiting'); return; }
+  sendJson(res, r.error === 'no_surface' ? 409 : 200, { ok: false, error: r.error });
 }
 
 /** Runs a bundled-CLI subcommand in `cwd` — injectable for tests. */
@@ -1108,6 +1123,13 @@ export async function handleAssistantProposalDecide(req: IncomingMessage, res: S
   const body = (await parseJsonBody(req)) ?? {};
   const action = body.action;
   if (action !== 'approve' && action !== 'edit' && action !== 'reject') { sendError(res, 400, 'invalid_action', 'action must be approve, edit or reject.'); return; }
+  // A yes is the owner's word on what the Assistant asked to do, a permission among them: it wants
+  // what his own answer wants. A no grants nothing, and it is his only way out of a proposal in an
+  // app too old to hold the key, where the notch is the only place one is decided.
+  if (action === 'reject' ? !carriesOwnOrigin(req) : !fromOwnerPage(req)) {
+    sendError(res, 403, 'owner_page_only', 'Only the app\'s own page decides a proposal for the owner.');
+    return;
+  }
   const ok = resolveProposal(params.id, action, typeof body.text === 'string' ? body.text : undefined);
   if (!ok) { sendError(res, 404, 'unknown_proposal', 'No such pending proposal.'); return; }
   sendJson(res, 200, { ok: true });

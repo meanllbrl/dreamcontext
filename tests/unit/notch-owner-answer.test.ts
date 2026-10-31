@@ -25,8 +25,13 @@ const routes = await import('../../src/server/routes/assistant.js');
 const registry = await import('../../src/lib/assistant/chat-registry.js');
 const stateMod = await import('../../src/lib/assistant/session-state.js');
 const relay = await import('../../src/lib/assistant/relay.js');
+const ownerKey = await import('../../src/server/owner-key.js');
 const { runVerb } = await import('../../dashboard/src/components/assistant/useAssistantDoorbell');
 const { permissionWord } = await import('../../dashboard/src/components/assistant/notchModel');
+const { answerFailureText, answerPermission } = await import('../../dashboard/src/components/assistant/GlanceList');
+const { decide } = await import('../../dashboard/src/components/assistant/ProposalList');
+
+const KEY = 'k'.repeat(64);
 
 function makeRes() {
   let status = 0;
@@ -42,16 +47,16 @@ function makeRes() {
 function req(url: string, body: unknown): IncomingMessage {
   return Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), {
     method: 'POST', url,
-    // The notch page's own POST: same origin, as the owner route requires.
-    headers: { host: '127.0.0.1:4173', origin: 'http://127.0.0.1:4173', 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
+    // The notch page's own POST: same origin and the shell's key, as the owner route requires.
+    headers: { host: '127.0.0.1:4173', origin: 'http://127.0.0.1:4173', 'sec-fetch-site': 'same-origin', [ownerKey.OWNER_KEY_HEADER]: KEY, 'content-type': 'application/json' },
     socket: { remoteAddress: '127.0.0.1', setTimeout() {} },
     setTimeout() {},
   }) as unknown as IncomingMessage;
 }
 
 describe('POST /api/assistant/answer relays the OWNER\'s answer as his', () => {
-  beforeEach(() => { registry._resetChatRegistry(); stateMod._resetAssistantState(); });
-  afterEach(() => stateMod._resetAssistantState());
+  beforeEach(() => { registry._resetChatRegistry(); stateMod._resetAssistantState(); ownerKey.setOwnerKey(KEY); });
+  afterEach(() => { stateMod._resetAssistantState(); ownerKey.setOwnerKey(null); });
 
   it('the command the window claims says by: owner', async () => {
     const c = registry.registerChat({ sessionId: 'child-1', conversationId: null, vault: 'acme', mode: 'basic' });
@@ -70,6 +75,53 @@ describe('POST /api/assistant/answer relays the OWNER\'s answer as his', () => {
     expect(r.body()).toMatchObject({ ok: true });
     expect(frames).toHaveLength(1);
     expect(frames[0]).toMatchObject({ verb: 'answer', args: { sessionId: 'child-1', question: 'r1', choice: 'allow', vault: 'acme', by: 'owner' } });
+  });
+});
+
+describe('the notch tells a refusal from an unreachable project', () => {
+  const ask = { sessionId: 'c1', ask: { id: 'r1', kind: 'permission' as const } };
+  // A page outside the shell: no key to ask for, and the server decides.
+  beforeEach(() => vi.stubGlobal('window', {}));
+  afterEach(() => vi.unstubAllGlobals());
+  const replying = (status: number, body: unknown) => vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status })));
+
+  it('an answer that landed is ok', async () => {
+    replying(200, { ok: true });
+    expect(await answerPermission(ask, 'allow')).toBe('ok');
+  });
+
+  it('a prompt that moved on is stale: it may come back, so nothing is refused for good', async () => {
+    replying(409, { error: 'not_waiting' });
+    expect(await answerPermission(ask, 'allow')).toBe('stale');
+    replying(404, { error: 'unknown_session' });
+    expect(await answerPermission(ask, 'allow')).toBe('stale');
+  });
+
+  it('no key or no Fetch Metadata: refused, and retrying cannot help', async () => {
+    replying(403, { error: 'owner_page_only' });
+    expect(await answerPermission(ask, 'allow')).toBe('refused');
+    expect(answerFailureText('refused', 'acme')).toBe('This can\'t be answered here. Answer it in acme.');
+  });
+
+  it('a proposal tells the same apart, and one already decided is simply gone', async () => {
+    replying(200, { ok: true });
+    expect(await decide('p', 'approve')).toBe('ok');
+    replying(404, { error: 'unknown_proposal' });
+    expect(await decide('p', 'approve')).toBe('gone');
+    replying(403, { error: 'owner_page_only' });
+    expect(await decide('p', 'approve')).toBe('refused');
+    replying(500, 'not json');
+    expect(await decide('p', 'approve')).toBe('unreachable');
+  });
+
+  it('no window, a bad reply or no network: unreachable, in the words it always had', async () => {
+    replying(409, { error: 'no_surface' });
+    expect(await answerPermission(ask, 'allow')).toBe('unreachable');
+    replying(500, 'not json');
+    expect(await answerPermission(ask, 'allow')).toBe('unreachable');
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('down'); }));
+    expect(await answerPermission(ask, 'allow')).toBe('unreachable');
+    expect(answerFailureText('unreachable', 'acme')).toBe('Couldn\'t reach acme. Open it to answer.');
   });
 });
 

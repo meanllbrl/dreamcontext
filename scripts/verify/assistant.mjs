@@ -22,6 +22,7 @@
  * FAILURE POLICY — collect, don't fail fast: every check prints ✓/✗, exit 0 iff all passed.
  */
 
+import { randomBytes } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -166,6 +167,7 @@ function setupScratch() {
 }
 
 const LINGER_MS = 2000;
+const OWNER_KEY = randomBytes(32).toString('hex');
 const PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin', dirname(process.execPath)].join(':');
 
 async function startServer(port) {
@@ -175,9 +177,10 @@ async function startServer(port) {
   const srv = spawn(process.execPath, [CLI, 'dashboard', '--no-open', '-p', String(port)], {
     cwd: PROJ('alpha-app'),
     // The linger is shortened so the W2 notch check can outwait it (agent-chat.ts closeLingerMs).
-    env: { ...shellEnv, HOME, PATH, DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_CHAT_CLOSE_LINGER_MS: String(LINGER_MS) },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...shellEnv, HOME, PATH, DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_CHAT_CLOSE_LINGER_MS: String(LINGER_MS), DREAMCONTEXT_OWNER_KEY_STDIN: '1' },
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
+  srv.stdin.end(`${OWNER_KEY}\n`);
   let log = '';
   srv.stdout.on('data', (d) => { log += d; });
   srv.stderr.on('data', (d) => { log += d; });
@@ -382,7 +385,8 @@ try {
     ok('under ask, broadcast becomes a proposal and WAITS', proposal?.verb === 'broadcast' && proposal?.text === 'Always use pnpm, never npm.', JSON.stringify(proposal));
     const alphaFile = join(PROJ('alpha-app'), '_dream_context', 'broadcast-received.txt');
     ok('nothing was written before approval', !existsSync(alphaFile));
-    if (proposal) await post(`/api/assistant/proposals/${proposal.id}`, { action: 'approve' });
+    // The notch's own POST: same origin and the shell's key (src/server/owner-key.ts).
+    if (proposal) await fetch(`${base}/api/assistant/proposals/${proposal.id}`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base, 'sec-fetch-site': 'same-origin', 'x-dreamcontext-owner-key': OWNER_KEY }, body: JSON.stringify({ action: 'approve' }) });
     const r = await running;
     const rows = r.json?.rows ?? [];
     ok('broadcast answers "written in 2 of 3"', r.code === 0 && r.json?.summary === 'written in 2 of 3', r.stdout || r.stderr);

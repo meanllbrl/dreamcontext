@@ -281,6 +281,7 @@ import {
   handleLinkedReposUnlink,
 } from './routes/linked-repos.js';
 import { listVaults } from '../lib/vaults.js';
+import { receiveOwnerKey } from './owner-key.js';
 import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, registerShutdownHandler, killTrackedChildren } from './lifecycle.js';
 import { startOrphanSweep } from './orphan-sweep.js';
 import { startTaskJobLoop } from './task-job-loop.js';
@@ -1330,6 +1331,7 @@ export async function stopPhoneListener(): Promise<void> {
 }
 
 export function startDashboardServer(options: ServerOptions): Promise<void> {
+  receiveOwnerKey();
   // Before anything can spawn a pane: drop any inherited spawn marker (a server launched from a
   // builder or automation must not zero a human pane's sleep debt) and stamp this server's pid
   // as the hooks' ancestry boundary. Unpinned panes get no per-tab env, so without this the
