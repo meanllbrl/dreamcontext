@@ -430,6 +430,9 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // permission mode of every session the agent runs in, so moving to either, or a synced edit
     // between them, must block until someone here re-approves.
     ...(m.autonomy && m.autonomy !== DEFAULT_AGENT_AUTONOMY ? { autonomy: m.autonomy } : {}),
+    // OMITTED when empty, and LAST, for the same append-only reason: no agent names any today, so
+    // nobody re-blocks. Present, it opens tools in a light job, so a synced edit must block.
+    ...(m.readTools?.length ? { readTools: [...m.readTools].sort() } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }
@@ -490,6 +493,8 @@ export function approvalFields(m: AutomationManifest): ApprovalPayloadFields {
     soul: typeof m.soul === 'string' ? m.soul : '',
     // Always present (as the default when absent): the reviewer sees how much it may decide alone.
     autonomy: m.autonomy ?? DEFAULT_AGENT_AUTONOMY,
+    // Always present (as '' when absent): the reviewer reads which tools a light job may call.
+    readTools: (m.readTools ?? []).join(', '),
   };
 }
 

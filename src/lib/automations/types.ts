@@ -99,6 +99,12 @@ export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 export interface SpawnModelOverride {
   model: string | null;
   effort: EffortLevel | null;
+  /** A LIGHT job (`super team ask --light`, `light-run.ts`): this spawn runs read-only, in the
+   *  envelope `lightRunArgs` builds. Only the Super's verb sets it; never a request body. */
+  light?: true;
+  /** One job's settings (`super team ask --model`), not a message in the member's conversation:
+   *  see `runLeavesNoSession`. Never a request body; the AI Team's temporary model is a message. */
+  oneJob?: true;
 }
 
 /**
@@ -482,6 +488,11 @@ export interface AutomationManifest {
    * to `ask` or `free` costs a re-approval, and a synced edit to it must block.
    */
   autonomy?: AgentAutonomy;
+  /**
+   * The MCP tools a light job of this agent may call (`read_tools:`, `light-run.ts`). Identity,
+   * through `composeRun`; absent on an agent that names none. Hashed when present: it opens tools.
+   */
+  readTools?: string[];
   /** Its agent's owner (`owner:`), unhashed; absent on an unstamped file. `checkApproval` returns
    *  `not_owner` FIRST when it is not this machine's login (`agents/owner.ts`). */
   owner?: string;
@@ -944,6 +955,10 @@ export const AUTOMATIONS_PHOTO_GITIGNORE_ENTRIES_ROOT = ['_dream_context/automat
  *  lock file under `automations/cache/`, gitignored. */
 export interface RunSidecar {
   slug: string;
+  /** A light job: `automations kill` then moves no schedule watermark. Absent on any other run. */
+  light?: true;
+  /** `runLeavesNoSession`: what queues behind this run would have no session to resume. */
+  noSession?: true;
   runnerPid: number;
   childPid: number;
   childPgid: number;
@@ -1043,6 +1058,8 @@ export interface ApprovalPayloadFields {
   /** Hashed because it decides the permission mode every session of the agent runs in.
    *  Always present here (as `balanced` when unset), for the same display reason as `flow`. */
   autonomy: AgentAutonomy;
+  /** Hashed because it opens tools in a light job. '' when absent. */
+  readTools: string;
 }
 
 /** Env var naming a home-board agent's board for its spawned child; the CLI's
@@ -1143,6 +1160,7 @@ export const APPROVAL_DIFF_FIELDS = [
   'job',
   'soul',
   'autonomy',
+  'readTools',
 ] as const;
 
 // ─── Pattern caps ────────────────────────────────────────────────────────────

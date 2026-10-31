@@ -79,11 +79,11 @@ describe('skill/references/whiteboards.md: the agent card', () => {
 });
 
 describe('skill/references/automations.md: the whiteboard field and its approval', () => {
-  it('counts the approval-hashed fields as thirteen, matching APPROVAL_DIFF_FIELDS', () => {
-    expect(APPROVAL_DIFF_FIELDS).toHaveLength(13);
-    expect(APPROVAL_DIFF_FIELDS[APPROVAL_DIFF_FIELDS.length - 1]).toBe('autonomy');
-    expect(AUTOMATIONS_MD).toContain('across all thirteen of those fields');
-    expect(AUTOMATIONS_MD).not.toMatch(/all (nine|ten|eleven|twelve)\b|those (nine|ten|eleven|twelve) fields/);
+  it('counts the approval-hashed fields as fourteen, matching APPROVAL_DIFF_FIELDS', () => {
+    expect(APPROVAL_DIFF_FIELDS).toHaveLength(14);
+    expect(APPROVAL_DIFF_FIELDS[APPROVAL_DIFF_FIELDS.length - 1]).toBe('readTools');
+    expect(AUTOMATIONS_MD).toContain('across all fourteen of those fields');
+    expect(AUTOMATIONS_MD).not.toMatch(/all (nine|ten|eleven|twelve|thirteen)\b|those (nine|ten|eleven|twelve|thirteen) fields/);
   });
 
   it('has the Board agents recipe and the manifest field row', () => {

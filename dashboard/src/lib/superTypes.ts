@@ -420,6 +420,10 @@ export interface SuperTeamJob {
   outcome?: 'done' | 'failed';
   deliveredAt?: number;
   endedAt?: number;
+  /** The model and effort the job runs on, and whether it is a light (read-only) job. */
+  model?: string;
+  effort?: string;
+  light?: true;
   /** The owner asked for it through the super: its result goes to him. */
   awaited?: true;
   /** The last ending event already queued for the super. */

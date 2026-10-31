@@ -152,6 +152,8 @@ export function composeRun(
     // Only a level other than the default rides the target, so a composed target stays field for
     // field what a legacy read gives (the hash omits the default either way).
     ...(agent.autonomy !== DEFAULT_AGENT_AUTONOMY ? { autonomy: agent.autonomy } : {}),
+    // Only when named, so a target without any stays field for field what it was.
+    ...(agent.readTools?.length ? { readTools: agent.readTools } : {}),
     // Unhashed; carried only when stamped, so an unstamped pair composes as before.
     ...(agent.owner ? { owner: agent.owner } : {}),
   };

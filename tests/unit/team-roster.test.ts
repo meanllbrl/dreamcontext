@@ -227,7 +227,7 @@ describe('teamFit and the hook line, on the eval fixture (TEAM_FIT_MIN_SCORE cal
 
   it('super route: a ready member\'s line naming super team ask; an insight it watches', () => {
     const lines = teamPromptDirectives({ prompt: "What's this month's revenue? Check the MRR now too.", contextRoot: team.contextRoot, route: 'super', home: team.home });
-    expect(lines[0]).toBe('→ AI TEAM MEMBER `ledger` (Ledger): this is its field: `dreamcontext super team ask ledger "<the job>"`, not a child or your own answer.');
+    expect(lines[0]).toBe('→ AI TEAM MEMBER `ledger` (Ledger): this is its field: a small read of one source changing nothing is yours (or `--light`); a diagnosis, draft, send or several sources: `dreamcontext super team ask ledger "<the job>"`, not a child.');
     expect(lines).toContain('→ Ledger (AI Team) watches this metric (`mrr-now`).');
   });
 

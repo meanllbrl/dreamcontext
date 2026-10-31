@@ -267,10 +267,19 @@ export function registerSuperCommand(program: Command): void {
 
   const team = s.command('team').description('The project\'s AI Team: give a member a job in its own thread');
   team.command('ask <member> <job>')
-    .description('Give an AI Team member a job: it lands in the member\'s own thread and runs on its own model, approval and queue. A member is a project agent or, when no project member holds its name, one of this machine\'s global agents (~/.dreamcontext/agents): both are asked the same way. Refused when the member is off (say_disabled) or not approved here (say_unapproved: the owner approves it in AI Team; his queue strip asks him). A busy member queues it (queued: true)')
+    .description('Give an AI Team member a job: it lands in the member\'s own thread and runs on its own approval and queue, on its own model unless this job names one. A member is a project agent or, when no project member holds its name, one of this machine\'s global agents (~/.dreamcontext/agents): both are asked the same way. Refused when the member is off (say_disabled) or not approved here (say_unapproved: the owner approves it in AI Team; his queue strip asks him). A busy member queues it (queued: true)')
     .option('--brief <line>', 'The one-line reminder its card shows (default: the job\'s first line)')
+    .option('--model <alias>', 'This job only: the model it runs on (an invalid name is refused and the choices listed). The member\'s own setting is untouched and its next job runs on it')
+    .option('--effort <level>', 'This job only: low | medium | high | xhigh | max')
+    .option('--light', 'A small read-only job: the run gets read tools only (no command, write, send or web tool; MCP tools only those the agent names in read_tools:), skips the member\'s start-up reading, and defaults to haiku at low effort')
     .option('--origin <ref>', ORIGIN_HELP)
-    .action((member: string, job: string, o: { brief?: string; origin?: string }) => run('team-ask', { member, text: job, brief: o.brief, ...(o.origin !== undefined ? { origin: o.origin } : {}) }));
+    .action((member: string, job: string, o: { brief?: string; origin?: string; model?: string; effort?: string; light?: boolean }) => run('team-ask', {
+      member, text: job, brief: o.brief,
+      ...(o.origin !== undefined ? { origin: o.origin } : {}),
+      ...(o.model !== undefined ? { model: o.model } : {}),
+      ...(o.effort !== undefined ? { effort: o.effort } : {}),
+      ...(o.light ? { light: true } : {}),
+    }));
 
   team.command('amend <member>')
     .description('Correct a member\'s instructions after a mistake: only its prompt, soul or a routine\'s job. It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page. Refused: `amend_needs_owner` (the text adds an address, a command, a secret path or a hidden character), `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `amend_unapproved`, `owner_reverted` (he took this text back), `amend_global`')

@@ -52,7 +52,7 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 describe('hook user-prompt-submit: the AI TEAM MEMBER line', () => {
   it('super route: the owner\'s words in a ready member\'s field name it and super team ask', () => {
     const lines = teamLines(hook(team, 'Run the signup funnel test end to end', 'super'));
-    expect(lines).toEqual(['  → AI TEAM MEMBER `probe` (Probe): this is its field: `dreamcontext super team ask probe "<the job>"`, not a child or your own answer.']);
+    expect(lines).toEqual(['  → AI TEAM MEMBER `probe` (Probe): this is its field: a small read of one source changing nothing is yours (or `--light`); a diagnosis, draft, send or several sources: `dreamcontext super team ask probe "<the job>"`, not a child.']);
   });
 
   it('nothing without the env, or with it empty (terminals, runs, a Super child)', () => {

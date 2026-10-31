@@ -17,7 +17,11 @@ import {
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
 import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, noteTeamJobEnd, recordTeamJob, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, type LiveSayJob } from '../../lib/super/team.js';
-import { collectTeam, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
+import { collectTeam, memberCallState, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
+import { agentModelChoices, parseModelOverride } from '../../lib/agents/model-choices.js';
+import { LIGHT_DEFAULT_EFFORT, LIGHT_DEFAULT_MODEL } from '../../lib/automations/light-run.js';
+import { spawnModel } from '../../lib/automations/runner.js';
+import type { SpawnModelOverride } from '../../lib/automations/types.js';
 import { sayToAgent } from './automations.js';
 import { agentActivity, currentAutomationJob, currentReplyJob, whenReplySettles, whenRunSettles } from '../automation-job.js';
 import { getAutomation } from '../../lib/automations/store.js';
@@ -744,7 +748,7 @@ function teamMembersRow(root: string, vault: string): { members?: Array<Record<s
 function delegateTeamHint(root: string, job: Job, child: string): string | null {
   const fit = teamFit(root, `${job.brief}\n${job.prompt.slice(0, 2_000)}`);
   if (!fit) return null;
-  return `${wrapUntrusted(vaultNameOf(root), `${fit.title}: ${fit.role}`)} (\`${fit.slug}\`) may own this field: if so, \`dreamcontext super end ${child}\` and \`dreamcontext super team ask ${fit.slug} "<the job>"\``;
+  return `${wrapUntrusted(vaultNameOf(root), `${fit.title}: ${fit.role}`)} (\`${fit.slug}\`) may own this field. A small read of one source is yours, not a member's; a diagnosis, draft, send or several sources is its job: then \`dreamcontext super end ${child}\` and \`dreamcontext super team ask ${fit.slug} "<the job>"\``;
 }
 
 /** A queue item as the agent reads it: its child-derived text fenced (D10), the escalated
@@ -2131,7 +2135,15 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!text.trim()) { refuse(res, 400, 'invalid_args', 'write the job for the member'); return; }
     const origin = jobOrigin(c, b);
     if (origin.error) { refuse(res, 400, 'invalid_args', origin.error); return; }
-    const r = sayToAgent(root, { slug: member, text, via: 'super' });
+    // Refused before anything starts, queues or reaches the thread. `model` / `effort` are this
+    // job's alone: they ride its spawn, never the member's file, and no hash sees them.
+    const light = b.light === true;
+    const picked = parseModelOverride(b, agentModelChoices());
+    if (!picked.ok) { refuse(res, 400, 'invalid_args', picked.message); return; }
+    const override: SpawnModelOverride | null = light
+      ? { model: picked.override?.model ?? LIGHT_DEFAULT_MODEL, effort: picked.override?.effort ?? LIGHT_DEFAULT_EFFORT, light: true }
+      : picked.override && { ...picked.override, oneJob: true as const };
+    const r = sayToAgent(root, { slug: member, text, via: 'super', ...(override ? { override } : {}) });
     if (!r.ok) {
       if (r.code === 'not_found' || r.code === 'say_disabled') {
         // Gone or turned off: an approval question about it no longer waits on the owner.
@@ -2155,10 +2167,18 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     const out = r.body as { runId?: unknown; entryId?: unknown; queued?: unknown; job?: { id?: unknown; kind?: unknown } };
     const runId = typeof out.runId === 'string' ? out.runId : new Date().toISOString();
+    // What it runs on, for its record and card. The job already started: a failed read costs the
+    // member's half of that record, never the record.
+    let settings: { model: string | null; effort: string | null } = { model: null, effort: null };
+    try { settings = memberCallState(root, member).manifest ?? settings; } catch { /* its own pick stands */ }
+    const used = spawnModel(settings as Parameters<typeof spawnModel>[0], override);
     const job: SuperTeamJob = {
       id: newTeamJobId(),
       member,
       runId,
+      ...(used.model ? { model: used.model } : {}),
+      ...(used.effort ? { effort: used.effort } : {}),
+      ...(light ? { light: true as const } : {}),
       ...(typeof out.entryId === 'string' ? { entryId: out.entryId } : {}),
       jobKind: out.job?.kind === 'reply' ? 'reply' : 'run',
       ...(typeof out.job?.id === 'string' ? { jobId: out.job.id } : {}),
@@ -2177,7 +2197,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // A run's ending is in its thread and run cache already: the write queues its event for the
     // super and pushes the window, so the job's card turns done or failed without a poll.
     if (job.jobKind === 'run' && job.jobId) void whenRunSettles(job.jobId)?.then(() => teamJobSettled(root, job.id)).catch(() => { /* best-effort */ });
-    ok(res, { job: job.id, member, runId, queued: job.queued, status: job.queued ? 'queued' : 'running' });
+    ok(res, {
+      job: job.id, member, runId, queued: job.queued, status: job.queued ? 'queued' : 'running',
+      ...(job.model ? { model: job.model } : {}), ...(job.effort ? { effort: job.effort } : {}), ...(light ? { light: true } : {}),
+    });
   },
 };
 

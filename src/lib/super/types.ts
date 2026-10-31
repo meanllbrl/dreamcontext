@@ -646,6 +646,12 @@ export interface SuperTeamJob {
   awaited?: true;
   /** The owner message it answers (`msgRef`): every awaited=owner event of it says `origin=<ref>`. */
   origin?: string;
+  /** The model and effort this job runs on: its own (`team ask --model/--effort`), else the
+   *  member's settings at the time. Recorded, never written to the member. */
+  model?: string;
+  effort?: string;
+  /** A light job (`team ask --light`): read-only tools, no start-up reading. */
+  light?: true;
   /** The last event its ending already put on the queue: the same one is never queued twice. */
   told?: TeamJobEvent;
   /** With `told: 'question'`: which of its run's questions that was (each one is its own event). */

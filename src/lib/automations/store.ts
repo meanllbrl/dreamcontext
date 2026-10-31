@@ -1239,6 +1239,8 @@ export function readRunSidecar(contextRoot: string, slug: string): RunSidecar | 
       startedAt: r.startedAt,
       timeoutAt: r.timeoutAt,
       ...(r.target === 'agent' ? { target: 'agent' as const } : {}),
+      ...(r.light === true ? { light: true as const } : {}),
+      ...(r.noSession === true ? { noSession: true as const } : {}),
     };
   } catch {
     return null;

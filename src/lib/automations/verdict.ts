@@ -78,6 +78,7 @@ import {
   type SpawnImpl,
   type TurnBoardContext,
 } from './runner.js';
+import { LIGHT_JOB_BLOCK, lightRunArgs } from './light-run.js';
 import {
   boardScopeArgs,
   prepareScopePaths,
@@ -361,7 +362,8 @@ export function buildResumeArgs(
    *  but a reply the owner typed with one picked. */
   override?: SpawnModelOverride | null,
 ): string[] {
-  const permission = scopeArgs ? [...scopeArgs] : ['--permission-mode', 'bypassPermissions'];
+  // A light job's envelope beats every other (`buildClaudeArgs`), on a resumed session too.
+  const permission = override?.light ? lightRunArgs(m) : scopeArgs ? [...scopeArgs] : ['--permission-mode', 'bypassPermissions'];
   const args = ['--resume', sessionId, '-p', prompt, ...permission, '--output-format', 'json'];
   // Same envelope the run was approved with — a verdict must not quietly grant
   // a bigger model or a higher effort than the hash covers. The one exception is
@@ -873,7 +875,8 @@ function spawnSessionResume(
 
   function spawnOn(account: AutomationAccount): Promise<ClaudeExecution> {
     ensureSandbox(account.configDir, opts.home);
-    return executeClaudeDetached(buildResumeArgs(m, sessionId, sanitizeAutomationPrompt(prompt), scopeArgs, opts.override), {
+    const said = opts.override?.light ? `${LIGHT_JOB_BLOCK}\n\n${prompt}` : prompt;
+    return executeClaudeDetached(buildResumeArgs(m, sessionId, sanitizeAutomationPrompt(said), scopeArgs, opts.override), {
       cwd: dirname(contextRoot),
       timeoutMs,
       // `accountEnvFor` FIRST, so a resume runs on the account picked above.
@@ -882,7 +885,7 @@ function spawnSessionResume(
       // dashboard process happened to be started under. The hints spread after it cannot
       // clobber `CLAUDE_CONFIG_DIR`: the filter above admits no such key.
       env: { ...accountEnvFor(account.configDir, opts.home), ...hints, ...scopeVars },
-      sharedMcpHome: scopeArgs ? undefined : opts.home ?? homedir(),
+      sharedMcpHome: scopeArgs && !opts.override?.light ? undefined : opts.home ?? homedir(),
       spawnImpl: opts.spawnImpl,
       killImpl: opts.killImpl,
       log: opts.log,
@@ -898,6 +901,7 @@ function spawnSessionResume(
           timeoutAt: new Date(startedAt.getTime() + timeoutMs).toISOString(),
           // A resumed agent call target stays the agent if it proposes again.
           ...(m.runKind === 'agent' ? { target: 'agent' as const } : {}),
+          ...(opts.override?.light ? { light: true as const } : {}),
         });
       },
     });

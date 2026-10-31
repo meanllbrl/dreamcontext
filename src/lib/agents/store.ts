@@ -61,6 +61,7 @@ import { classifyAutomationSlot, isSafeAutomationSlug, parseManifestFrontmatter,
 import { assertOwned, currentLogin, parseOwner } from './owner.js';
 import { adoptPattern, agentSyncSwitchOn, effectivePattern, recordCreatedLocally } from './agent-sync.js';
 import { composeRun, legacyPair } from './compose.js';
+import { readToolsOf } from './read-tools.js';
 import { normalizeSoul } from './soul-templates.js';
 import { validateSoul } from './soul.js';
 import { normalizeTeamLabel, readTeamLabel, wouldCycle } from './tree.js';
@@ -163,6 +164,7 @@ export function readAgentFile(filePath: string, scope: AgentScope = 'project'): 
     team: readTeamLabel(data.team),
     call: callSettings,
     autonomy: parseAutonomy(data.autonomy),
+    ...(readToolsOf(data.read_tools).length ? { readTools: readToolsOf(data.read_tools) } : {}),
     face: parseFace(data.face),
     owner: parseOwner(data.owner),
     updated: strOrNull(data.updated),
@@ -907,6 +909,7 @@ function withIdentity(target: AutomationManifest, agent: AgentManifest): Automat
     learning: agent.learning,
     whiteboard: agent.whiteboard,
     autonomy: agent.autonomy,
+    ...(agent.readTools?.length ? { readTools: agent.readTools } : {}),
   };
 }
 

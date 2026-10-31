@@ -669,6 +669,13 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
                       {/* Hashed when present, LAST: its agent's soul. Approve grants it,
                           so it must be read here; a synced soul is otherwise approved
                           blind. Empty is not hashed, so there is nothing to review. */}
+                      {/* Hashed when named: what a light job of this agent may call. */}
+                      {!!automation.readTools?.length && (
+                        <div className="adp-review-row" data-review-read-tools>
+                          <span className="adp-review-label">read tools</span>
+                          <span>{automation.readTools.join(', ')}</span>
+                        </div>
+                      )}
                       {automation.soul && (
                         <div className="adp-review-row adp-review-row--block" data-review-soul>
                           <span className="adp-review-label">soul</span>

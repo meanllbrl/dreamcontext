@@ -115,7 +115,7 @@ describe('super delegate and the AI Team', () => {
     expect(commands()).toHaveLength(1);
     const hint = String(result(r).teamHint);
     expect(hint).toMatch(/^<untrusted-project-output vault="acme">Probe: You are Probe/);
-    expect(hint).toContain(`(\`probe\`) may own this field: if so, \`dreamcontext super end ${CHILD_SID}\` and \`dreamcontext super team ask probe "<the job>"\``);
+    expect(hint).toContain(`(\`probe\`) may own this field. A small read of one source is yours, not a member's; a diagnosis, draft, send or several sources is its job: then \`dreamcontext super end ${CHILD_SID}\` and \`dreamcontext super team ask probe "<the job>"\``);
   });
 
   it('no hint for a typo fix, a member waiting for approval, a team-less project, or a pooled job', async () => {
