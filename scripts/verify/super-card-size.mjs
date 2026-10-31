@@ -456,6 +456,8 @@ try {
 
   console.log('\n── the page full screen');
   await clickIn(page, ids.page, 'super-card-fullscreen');
+  // A project page opens in Click mode (a drag selects its words): the pan checks below use Inspect.
+  await page.locator('[data-testid="frame-viewer-mode"]').click();
   ok('the page viewer opens', await until(page, async () => (await page.locator('[data-testid="frame-viewer"]').count()) === 1, 5000));
   ok('…and draws the page', await until(page, async () => (await page.locator('[data-testid="frame-viewer"] iframe').count()) === 1, 10000));
   await page.waitForTimeout(1500);

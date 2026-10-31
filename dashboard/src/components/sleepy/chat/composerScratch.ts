@@ -31,7 +31,7 @@
  * either after a restart would show the user a chip that no longer refers to anything.
  */
 
-import { ABOUT_AGENDA_RE, MAX_MESSAGE_REFS, REPLY_TO_RE } from '../../../lib/superTypes';
+import { ABOUT_AGENDA_RE, ABOUT_CARD_RE, MAX_MESSAGE_REFS, REPLY_TO_RE } from '../../../lib/superTypes';
 import { isChatReply, isMediaRef, isTokenRef, parseRefTokens, refKey, refTokenId, stripTokens, type RefTokenSpan } from './composerRefs';
 
 export interface Attachment {
@@ -564,7 +564,7 @@ function composeInline(
 
 /** A typed line that would read as a reference header gets a leading U+200B (Super view). */
 export function neutraliseHeaders(words: string): string {
-  return words.split('\n').map((l) => (ABOUT_AGENDA_RE.test(l) || REPLY_TO_RE.test(l) ? `\u200B${l}` : l)).join('\n');
+  return words.split('\n').map((l) => (ABOUT_AGENDA_RE.test(l) || ABOUT_CARD_RE.test(l) || REPLY_TO_RE.test(l) ? `\u200B${l}` : l)).join('\n');
 }
 
 /**

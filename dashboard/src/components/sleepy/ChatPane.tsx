@@ -66,6 +66,7 @@ import {
 import { surveyDraftKey } from './chat/surveyDrafts';
 import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { Composer } from './chat/Composer';
+import { SelectionScope } from './chat/SelectionBar';
 import { chatReplyRef, insertRef, nextAttachmentId, readScratch, setQuote, subscribeScratch } from './chat/composerScratch';
 import { messagePart, replyGroups, replyHeadsById as headsById, type ReplyHead } from './chat/replyLinks';
 import { PartStrip, ReplyStrip } from './chat/AgendaAboutStrip';
@@ -73,7 +74,7 @@ import { msgRef, splitPageContext } from '../../lib/superTypes';
 import { createHiddenRenderGate } from './chat/hiddenRenderGate';
 import { shouldInterruptChat } from './chat/interruptKey';
 import { useI18n } from '../../context/I18nContext';
-import { groupSuperEventTurns, replyAboutBlock, splitAbout, splitAboutParts, superEventOf, type SuperEventGroup } from './super/superHandover';
+import { groupSuperEventTurns, replyAboutBlock, replySelectionBlock, selectionQuote, splitAbout, splitAboutParts, superEventOf, type SuperEventGroup } from './super/superHandover';
 import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/superQuestions';
 import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
 import { SuperEventLine } from './super/SuperEventLine';
@@ -1857,6 +1858,31 @@ export function ChatPane({
     insertRef(session.scratchId || convId, { id: nextAttachmentId(), kind: 'about', name, text: quote });
     requestAnimationFrame(() => session.focus());
   }, [superView, convId, session, t]);
+  /** Comment on selected words (owner 2026-10-31): a chip at the caret like ↩'s, its quote the
+   *  selection. In a Super view it replies to the message it was selected in, so a passage that
+   *  is in no message (a tool row) offers Copy alone. */
+  const selectedItem = (id: string | null) => {
+    const it = id ? [...conv.history, ...conv.items].find((x) => x.id === id) : undefined;
+    return it && (it.kind === 'user' || it.kind === 'text') ? it : null;
+  };
+  const selectionHandler = {
+    canComment: (id: string | null) => !readOnly && (!superView || !!selectedItem(id)),
+    comment: (text: string, id: string | null) => {
+      const quote = selectionQuote(text);
+      if (!quote) return;
+      const item = selectedItem(id);
+      const convKey = session.scratchId || convId;
+      if (!superView) insertRef(convKey, chatReplyRef(quote, t(item?.kind === 'user' ? 'super.ref.own' : 'chat.ref.claude')));
+      else if (item) {
+        const from = item.kind === 'user' ? 'owner' : 'super';
+        insertRef(convKey, {
+          id: nextAttachmentId(), kind: 'about', name: `${t(from === 'super' ? 'super.ref.super' : 'super.ref.own')} ${quote}`,
+          text: replySelectionBlock(item.text, from, quote),
+        });
+      } else return;
+      requestAnimationFrame(() => session.focus());
+    },
+  };
   const handleNavApp = useCallback((page: 'tasks' | 'knowledge' | 'core' | 'whiteboards', id: string, vault?: string) => {
     setSlideOver(null);
     onOpenAppPage?.(page, id, vault);
@@ -2535,6 +2561,7 @@ export function ChatPane({
         />
       )}
       <BrowserHostProvider value={browserHost}>
+      <SelectionScope handler={selectionHandler}>
       <div className="chat-transcript">
         <ReconnectingChipWhenDue connecting={session.status === 'connecting'} claudeId={session.claudeId} />
         {superView && <SuperUnreadBar unread={superUnread} onJump={jumpToFirstUnread} />}
@@ -2783,6 +2810,7 @@ export function ChatPane({
           </button>
         )}
       </div>
+      </SelectionScope>
       </BrowserHostProvider>
       {/* Docked above the composer, OUTSIDE the scroller: a background shell outlives the
           turn that started it, so its row must not scroll away while the process runs. Shown

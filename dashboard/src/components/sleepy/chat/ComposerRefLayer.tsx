@@ -117,10 +117,11 @@ export function refsInOrder(draft: string, staged: readonly Attachment[]): Attac
 }
 
 /** What a ref's popover shows: where it came from and its whole line or quote. */
-function refDetail(att: Attachment): { from: 'agenda' | 'super' | 'owner' | 'claude'; text: string; reply: { ref: string; from: 'super' | 'owner' } | null } {
+function refDetail(att: Attachment): { from: 'agenda' | 'super' | 'owner' | 'claude' | 'card'; text: string; reply: { ref: string; from: 'super' | 'owner' } | null } {
   if (isChatReply(att)) return { from: 'claude', text: (att.text ?? '').replace(/^> /, ''), reply: null };
   const about = splitAbout(att.text ?? '').about;
   if (about?.kind === 'reply') return { from: about.from, text: about.quote, reply: { ref: about.ref, from: about.from } };
+  if (about?.kind === 'card') return { from: 'card', text: about.quote, reply: null };
   if (about?.kind === 'note') return { from: 'agenda', text: about.line ?? att.name, reply: null };
   return { from: 'agenda', text: att.name, reply: null };
 }
@@ -152,7 +153,7 @@ export function RefPopover({ att, slot, left, bottom, onRemove, onGoTo, onClose 
   const d = refDetail(att);
   const picture = isMediaRef(att);
   const source = picture ? t(MEDIA_SOURCE_KEY[att.kind] ?? 'chat.photo.chip')
-    : d.from === 'claude' ? t('chat.ref.fromClaude') : d.from === 'agenda' ? t('super.ref.fromAgenda') : d.from === 'super' ? t('super.ref.fromSuper') : t('super.ref.fromOwn');
+    : d.from === 'claude' ? t('chat.ref.fromClaude') : d.from === 'card' ? t('super.ref.fromCard') : d.from === 'agenda' ? t('super.ref.fromAgenda') : d.from === 'super' ? t('super.ref.fromSuper') : t('super.ref.fromOwn');
   return createPortal(
     <div
       ref={ref}

@@ -264,8 +264,10 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
   it('the exact diff', () => {
     const before = readFileSync(join(__dirname, '..', '..', 'eval', 'super-team-routing', 'frozen', 'super-briefing.md'), 'utf-8').split('\n');
     const after = superBriefing(SUPER_ORCHESTRATION_GUIDE_PATH).split('\n');
-    const gone = before.filter((l) => !after.includes(l));
-    const added = after.filter((l) => !before.includes(l));
+    // The two lines rewrapped around `[About card …]` (rev 23) are pinned in super-briefing.
+    const card = (l: string) => /is him replying to that message[:,]$|^`quote:` is a pointer|^`\[About card @card:<id>\]` to a card passage/.test(l);
+    const gone = before.filter((l) => !after.includes(l) && !card(l));
+    const added = after.filter((l) => !before.includes(l) && !card(l));
     // The AI Team bullet and the rev are this test's subject; the other lines are the 0.36.2
     // branches merged on top (plan summary, global members, `origin=<ref>`), each pinned by its own test.
     expect(gone).toEqual([
@@ -310,7 +312,7 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '- New work: `super note clear`. Write a day or date, never "today"/"tomorrow".',
       expect.stringContaining('with `origin=<ref>`'),
       '  result with `<!-- re:<ref> -->`.',
-      expect.stringContaining('<super-brief rev=22>'),
+      expect.stringContaining('<super-brief rev=23>'),
     ]);
     expect(after.length).toBe(before.length + 16);
   });

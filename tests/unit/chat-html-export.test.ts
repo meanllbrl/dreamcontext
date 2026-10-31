@@ -189,7 +189,7 @@ describe('the snapshot leg of the bridge', () => {
     // bar in the fullscreen header talks to its snapshot leg), the reach bridge (Esc has to
     // close a fullscreen deck the reader clicked into), and the kit's tab script.
     const kit = readFileSync(join(CHAT_DIR, 'chatHtmlKit.ts'), 'utf-8');
-    expect(kit).toContain('headScript: `${HEIGHT_BRIDGE}\n${REACH_BRIDGE}\n${KIT_BEHAVIOUR}`,');
+    expect(kit).toContain('headScript: `${HEIGHT_BRIDGE}\n${SELECTION_BRIDGE}\n${REACH_BRIDGE}\n${KIT_BEHAVIOUR}`,');
   });
 });
 

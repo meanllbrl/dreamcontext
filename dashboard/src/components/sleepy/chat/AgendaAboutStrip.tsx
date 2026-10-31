@@ -130,6 +130,7 @@ export function useRefChipLabel(about: MessageAbout, superSid: string | null): s
   const view = useSuperQuestions(about.kind === 'item' ? superSid : null);
   const ctx = useSuperEventContext(about.kind === 'item' ? superSid : null);
   if (about.kind === 'reply') return `${t(about.from === 'super' ? 'super.ref.super' : 'super.ref.own')} ${about.quote}`;
+  if (about.kind === 'card') return `${t('super.ref.card')} ${about.quote}`;
   if (about.kind === 'note') return about.line ?? '';
   return agendaAboutStrip(about, view?.open ?? [], (sid) => ctx?.titleFor(sid) ?? '', {
     about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'),
@@ -154,7 +155,7 @@ export function RefChip({ about, slot, part, superSid, onClick, pressed }: {
   pressed?: boolean;
 }) {
   const label = useRefChipLabel(about, superSid);
-  const glyph = about.kind === 'reply' ? '↩' : '●';
+  const glyph = about.kind === 'reply' || about.kind === 'card' ? '↩' : '●';
   const body = (
     <>
       <span className="chat-ref-chip-glyph" aria-hidden>{glyph}</span>
@@ -170,7 +171,7 @@ export function RefChip({ about, slot, part, superSid, onClick, pressed }: {
     'data-testid': 'chat-ref-chip',
   };
   return onClick
-    ? <button type="button" {...common} aria-expanded={about.kind === 'reply' ? undefined : !!pressed} onClick={onClick}>{body}</button>
+    ? <button type="button" {...common} aria-expanded={about.kind === 'reply' || about.kind === 'card' ? undefined : !!pressed} onClick={onClick}>{body}</button>
     : <span {...common}>{body}</span>;
 }
 
