@@ -1103,14 +1103,12 @@ function planWith(
     // Tight: every job one line, so the chat reads. A card the owner sized keeps the rail of tiles.
     const tilesFit = f.content.width - (T + GAP) >= STAGE.PRESENT_MIN + GAP + STAGE.REGION_MIN && capacity(f.content.height) >= rail.length;
     const ownerSized = rail.some((c) => c.sizeBy === 'owner' && sizeOf(c) !== 'small');
-    // A group holding a live job waits in the "more" tile: it has no one-line form.
-    const liveGroups = presenting && opts.miniRail && !narrow ? list.filter((c) => c.live && c.kind === 'group' && c.place === 'float' && !picked.includes(c.id)) : [];
-    if (presenting && opts.miniRail && (rail.length || liveGroups.length) && f.width < STAGE.MINI_RAIL_STAGE && !(ownerSized && tilesFit)) {
+    if (presenting && opts.miniRail && rail.length && f.width < STAGE.MINI_RAIL_STAGE && !(ownerSized && tilesFit)) {
       const { MINI_RAIL_W: W, MINI_RAIL_H: H, MINI_RAIL_GAP: G } = STAGE;
       const fits = Math.max(0, Math.floor((f.content.height + G) / (H + G)));
       // Past what the column holds, the rest wait in the "more" tile at its foot, on the stage.
-      const shown = fits >= rail.length + (liveGroups.length ? 1 : 0) ? rail : rail.slice(0, Math.max(0, fits - 1));
-      const rest = [...rail.slice(shown.length), ...liveGroups];
+      const shown = fits >= rail.length ? rail : rail.slice(0, Math.max(0, fits - 1));
+      const rest = rail.slice(shown.length);
       const rows = shown.length + (rest.length ? 1 : 0);
       let y = f.content.y + (f.content.height - rows * H - (rows - 1) * G) / 2;
       for (const c of shown) {

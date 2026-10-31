@@ -246,12 +246,6 @@ describe('note 10: a tight presentation draws its live jobs on one line', () => 
       expect(Math.min(p.cards.p1.rect.width, p.cards.p2.rect.width), String(width)).toBeGreaterThanOrEqual(STAGE.FIT_MIN.w - 1e-6);
     }
   });
-  it('a group holding a live job stays on the stage, in the more tile', () => {
-    const items = [{ id: 'grp', kind: 'group', shape: 'square', place: 'float', live: true, slot: 0 }, ...jobs, pic('p1'), pic('p2')];
-    const p = planStage(items as never, view('compare'), stage(1200), { miniRail: true });
-    expect(p.others).not.toContain('grp');
-    expect(p.more?.ids).toContain('grp');
-  });
   it('past what the column holds, the rest wait in the more tile, on the stage', () => {
     const many = Array.from({ length: 12 }, (_, i) => card(`j${i}`));
     const p = planStage([...many, pic('p1'), pic('p2')] as never, view('filmstrip'), { width: 1075, height: 400 }, { miniRail: true });
