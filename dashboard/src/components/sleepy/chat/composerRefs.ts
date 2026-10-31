@@ -30,6 +30,7 @@
  */
 import { ABOUT_AGENDA_RE, ABOUT_CARD_RE, MAX_MESSAGE_REFS, REPLY_TO_RE, aboutHeads } from '../../../lib/superTypes';
 import { splitAbout, type MessageAbout } from '../super/superHandover';
+import { cardMentions } from '../../../lib/cardMention';
 import type { Attachment } from './composerScratch';
 
 const FSI = '\u2068';
@@ -463,11 +464,18 @@ const NEUTRALISED_RE = /(^|\n)\u200B(?=\[(?:About agenda line |About card @card:
  */
 export function draftFromMessage(
   message: string,
-  opts: { mint: () => string; words?: RefLabelWords; label?: (about: MessageAbout) => string | undefined; fits?: (label: string) => boolean },
+  opts: {
+    mint: () => string; words?: RefLabelWords; label?: (about: MessageAbout) => string | undefined; fits?: (label: string) => boolean;
+    /** What the stage knows of a card (its kind, a picture card's picture), for its chip. */
+    card?: (id: string) => { kind: string; img?: string } | null;
+  },
 ): { draft: string; refs: Attachment[] } {
-  const text = typeof message === 'string' ? message : '';
+  const raw = typeof message === 'string' ? message : '';
+  // A stage card he named comes back as its chip too (owner 2026-10-31), never its raw words.
+  const cards = cardChipsIn(raw, opts);
+  const text = cards.draft;
   const heads = aboutHeads(text);
-  if (!heads.length) return { draft: text.replace(NEUTRALISED_RE, '$1'), refs: [] };
+  if (!heads.length) return { draft: text.replace(NEUTRALISED_RE, '$1'), refs: cards.refs };
   const refs: Attachment[] = [];
   const pieces: string[] = [];
   const pre = text.slice(0, heads[0].at).replace(/\n+$/, '');
@@ -485,5 +493,32 @@ export function draftFromMessage(
     } else pieces.push(block);
     if (words.trim()) pieces.push(words);
   });
-  return { draft: pieces.join(' ').replace(NEUTRALISED_RE, '$1'), refs };
+  return { draft: pieces.join(' ').replace(NEUTRALISED_RE, '$1'), refs: [...cards.refs, ...refs] };
+}
+
+/** Each `@card:<id> “<title>”` in a sent text as a card chip's token (its words kept as the chip's
+ *  `text`, so a send writes them back unchanged). */
+function cardChipsIn(
+  text: string,
+  opts: { mint: () => string; fits?: (label: string) => boolean; card?: (id: string) => { kind: string; img?: string } | null },
+): { draft: string; refs: Attachment[] } {
+  // Never inside a reference block (a reply's quote may hold a card's words): those stay as sent.
+  const heads = aboutHeads(text);
+  const found = cardMentions(text).filter((m) => !heads.some((h) => m.start < h.end && m.end > h.at));
+  if (!found.length) return { draft: text, refs: [] };
+  const refs: Attachment[] = [];
+  let draft = '';
+  let pos = 0;
+  for (const m of found) {
+    const info = opts.card?.(m.id) ?? null;
+    const named: Attachment = {
+      id: opts.mint(), kind: 'card', name: m.title || m.id, text: text.slice(m.start, m.end), inline: true,
+      ...(info ? { cardKind: info.kind } : {}), ...(info?.img ? { url: info.img } : {}),
+    };
+    const att: Attachment = { ...named, chip: refLabel(named, opts.fits) };
+    refs.push(att);
+    draft += text.slice(pos, m.start) + refToken(att);
+    pos = m.end;
+  }
+  return { draft: draft + text.slice(pos), refs };
 }
