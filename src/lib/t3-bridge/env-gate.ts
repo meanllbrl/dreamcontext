@@ -8,14 +8,19 @@
  * Codex runs a project's hooks only with `.codex/hooks.json` present, the project trusted AND that
  * hook trusted: it asks about the hooks separately ("Trust all and continue", seen live on 0.164).
  * `dreamcontext install --tool codex` writes the hooks; both trusts are the owner's. Codex stores
- * a hash we do not recompute, so an edited hook is caught by Codex itself, not here. The hook runs
- * the global `dreamcontext`, which must be a build that knows `--format codex`.
+ * a hash we do not recompute, so an edited hook is caught by Codex itself, not here.
+ *
+ * The hook runs the GLOBAL `dreamcontext`, and an older build refuses `--format` and exits: Codex
+ * then goes on without the gate, silently. So the hook is also asked, once, the way Codex would.
  */
+import { spawnSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { cliAwarePath } from '../automations/cli-path.js';
+import { claudeAwarePath } from '../claude-path.js';
 
-export const NO_ENV_GATE = 'Codex would run here without the gate on marketing tokens and agent files. Run `dreamcontext install --tool codex` in this project, open `codex` there once, and trust both the folder and its hooks.';
+export const NO_ENV_GATE = 'Codex would run here without the gate on marketing tokens and agent files. Run `dreamcontext install --tool codex` in this project, open `codex` there once, and trust both the folder and its hooks. The global dreamcontext must be this version or newer.';
 
 const read = (p: string): string => { try { return readFileSync(p, 'utf-8'); } catch { return ''; } };
 
@@ -45,10 +50,16 @@ function hookTrusted(config: string, path: string): boolean {
   return hash;
 }
 
-export function codexEnvGateReady(cwd: string, home: string = homedir()): boolean {
+/** Does the `dreamcontext` a Codex hook would find understand that hook? Empty input allows. */
+function globalHookAnswers(cwd: string): boolean {
+  const r = spawnSync('dreamcontext', ['hook', 'pre-tool-use', '--format', 'codex'], { cwd, input: '', env: { ...process.env, PATH: cliAwarePath(claudeAwarePath()) }, timeout: 15_000 });
+  return r.status === 0;
+}
+
+export function codexEnvGateReady(cwd: string, home: string = homedir(), hookAnswers: (cwd: string) => boolean = globalHookAnswers): boolean {
   if (!read(join(cwd, '.codex', 'hooks.json')).includes('pre-tool-use')) return false;
   const config = read(join(home, '.codex', 'config.toml'));
   let real = cwd;
   try { real = realpathSync(cwd); } catch { /* the path as given */ }
-  return [cwd, real].some((p) => trusted(config, p) && hookTrusted(config, p));
+  return [cwd, real].some((p) => trusted(config, p) && hookTrusted(config, p)) && hookAnswers(cwd);
 }
