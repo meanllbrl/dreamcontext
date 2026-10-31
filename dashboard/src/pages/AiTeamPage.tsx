@@ -8,7 +8,7 @@ import { TeamPanel, type PanelTab } from '../components/aiteam/TeamPanel';
 import { NewTeammate, TEAM_STARTERS, type TeamStarter } from '../components/aiteam/NewTeammate';
 import { buildRoster, messagesOf, openingView, type TeamAgent } from '../components/aiteam/teamModel';
 import {
-  clampRosterWidth, pageStorage, readPageView, readTeamSketch, readRosterWidth, writeRosterWidth, readRosterView, teamTreeOf, writePageView, writeRosterView, type PageView, type RosterView,
+  clampRosterWidth, pageStorage, listedRows, readPageView, readRosterWidth, writeRosterWidth, readRosterView, teamTreeOf, writePageView, writeRosterView, type PageView, type RosterView,
 } from '../components/aiteam/teamTree';
 import { OrgView } from '../components/aiteam/OrgChart';
 import { chainOf } from '../../../src/lib/agents/tree.js';
@@ -72,24 +72,19 @@ export function AiTeamPage({
   const agents: TeamAgent[] = useMemo(() => agentsQ.data ?? [], [agentsQ.data]);
   const automations = useMemo(() => automationsQ.data ?? [], [automationsQ.data]);
   const rows = useMemo(() => buildRoster(agents, automations, feed), [agents, automations, feed]);
-  // SKETCH: the owner's options A, B, C (`dreamcontext.aiteam.v3`). Unset: super/tek-ekip's list.
-  const [sketch] = useState(() => readTeamSketch(pageStorage()));
-  const [allTab, setAllTab] = useState(false);
-  const projectRows = useMemo(() => rows.filter((r) => !r.global), [rows]);
-  const globalRows = useMemo(() => rows.filter((r) => r.global), [rows]);
-  const listRows = sketch === 'a' ? rows.filter((r) => !r.global || r.lastAt)
-    : sketch === 'b' ? (allTab ? globalRows : projectRows)
-      : sketch === 'c' ? projectRows : rows;
-  const chartRows = sketch === 'a' || sketch === 'b' ? projectRows : rows;
   const tree = useMemo(() => teamTreeOf(rows, agentsQ.data ?? []), [rows, agentsQ.data]);
-  const scopedTree = useMemo(() => {
-    const keep = new Set((sketch ? (sketch === 'c' ? projectRows : chartRows) : rows).map((r) => r.slug));
-    return teamTreeOf(rows.filter((r) => keep.has(r.slug)), (agentsQ.data ?? []).filter((a) => keep.has(a.slug)));
-  }, [rows, agentsQ.data, sketch, projectRows, chartRows]);
+  // The list: this project first; members of all projects join it once they have talked here.
+  const listRows = useMemo(() => listedRows(rows), [rows]);
+  const listTree = useMemo(() => {
+    const keep = new Set(listRows.map((r) => r.slug));
+    return teamTreeOf(listRows, (agentsQ.data ?? []).filter((a) => keep.has(a.slug)));
+  }, [listRows, agentsQ.data]);
+  // The chart: this project's tree, the members of all projects in their own band.
+  const band = useMemo(() => rows.filter((r) => r.global).map((r) => r.slug), [rows]);
   const chartTree = useMemo(() => {
-    const keep = new Set(chartRows.map((r) => r.slug));
-    return teamTreeOf(chartRows, (agentsQ.data ?? []).filter((a) => keep.has(a.slug)));
-  }, [chartRows, agentsQ.data]);
+    const inBand = new Set(band);
+    return teamTreeOf(rows.filter((r) => !inBand.has(r.slug)), (agentsQ.data ?? []).filter((a) => !inBand.has(a.slug)));
+  }, [rows, band, agentsQ.data]);
   const [rosterView, setRosterView] = useState<RosterView>(() => readRosterView(pageStorage()));
   const pickRosterView = useCallback((v: RosterView) => {
     setRosterView(v);
@@ -143,11 +138,12 @@ export function AiTeamPage({
   const deletedRef = useRef<string | null>(null);
   useEffect(() => {
     if (current || rows.length === 0) return;
-    const first = rows.find((r) => r.slug !== deletedRef.current) ?? null;
+    const free = (r: { slug: string }) => r.slug !== deletedRef.current;
+    const first = listRows.find(free) ?? rows.find(free) ?? null;
     if (!first) return;
     setSelected(first.slug);
     setTeamView(openingView(first));
-  }, [current, rows]);
+  }, [current, rows, listRows]);
 
   // A link or a caller asked for one teammate, the create flow, or its profile.
   useEffect(() => {
@@ -319,8 +315,8 @@ export function AiTeamPage({
         <OrgView
           headless={newShell}
           tree={chartTree}
-          rows={chartRows}
-          band={sketch === 'a' ? globalRows : []}
+          rows={rows}
+          band={band}
           selected={panelShown ? current?.slug ?? null : null}
           onSelect={selectInOrg}
           onTalk={talkTo}
@@ -333,16 +329,14 @@ export function AiTeamPage({
       {showList && (
         <TeamRoster
           rows={listRows}
-          sketch={!!sketch}
-          tucked={sketch === 'c' ? globalRows : []}
-          heading={sketch === 'b' && allTab ? t('aiteam.section.allProjects') : undefined}
+          beyond={rows.length - listRows.length}
           selected={current?.slug ?? null}
           draft={creating ? { title: creating.title } : null}
           onSelect={select}
           onNew={() => startNew()}
           onToast={setToast}
           nextRun={nextRun}
-          tree={scopedTree}
+          tree={listTree}
           view={rosterView}
           onView={pickRosterView}
           onOrgChart={() => { pickPageView('org'); setPanel((p) => (p ? 'team' : p)); }}
@@ -454,14 +448,10 @@ export function AiTeamPage({
     <div className="aiteam-ns">
       <PageBar title={t('nav.aiTeam')}>
         <div className="aiteam-ns-views" role="tablist" aria-label={t('nav.aiTeam')}>
-          <button type="button" role="tab" aria-selected={!org && !allTab} className={`aiteam-ns-view${org || allTab ? '' : ' is-on'}`}
-            onClick={() => { setAllTab(false); pickPageView('conversations'); }}>{t('aiteam.page.conversations')}</button>
+          <button type="button" role="tab" aria-selected={!org} className={`aiteam-ns-view${org ? '' : ' is-on'}`}
+            onClick={() => pickPageView('conversations')}>{t('aiteam.page.conversations')}</button>
           <button type="button" role="tab" aria-selected={org} className={`aiteam-ns-view${org ? ' is-on' : ''}`}
-            onClick={() => { setAllTab(false); pickPageView('org'); setPanel((p) => (p ? 'team' : p)); }}>{t('aiteam.page.org')}</button>
-          {sketch === 'b' && (
-            <button type="button" role="tab" aria-selected={!org && allTab} className={`aiteam-ns-view${!org && allTab ? ' is-on' : ''}`}
-              onClick={() => { setAllTab(true); pickPageView('conversations'); if (globalRows[0]) setSelected(globalRows[0].slug); }}>{t('aiteam.section.allProjects')}</button>
-          )}
+            onClick={() => { pickPageView('org'); setPanel((p) => (p ? 'team' : p)); }}>{t('aiteam.page.org')}</button>
         </div>
         <span className="aiteam-spacer" />
         <button type="button" className="aiteam-newbtn" onClick={() => startNew()}>

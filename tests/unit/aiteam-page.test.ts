@@ -25,7 +25,7 @@ vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
       'aiteam.tag.paused': 'Routine paused', 'aiteam.tag.approval': 'Needs your approval',
       'aiteam.working': 'Working · {time}', 'aiteam.time.now': 'now', 'aiteam.row.noMessages': 'No messages yet',
       'aiteam.newTeammate': 'New teammate', 'aiteam.draft.named': '{name} · not added yet',
-      'aiteam.section.allProjects': 'All projects', 'aiteam.section.thisProject': 'This project',
+      'aiteam.section.allProjects': 'All projects',
       'aiteam.section.readonly': "{owner}'s · read-only", 'aiteam.tag.global': 'All projects',
       'aiteam.tag.globalHint': 'Stays on this Mac.',
     } as Record<string, string>)[key] ?? key,
@@ -37,6 +37,9 @@ vi.mock('../../dashboard/src/components/automations/AutomationsDispatcherBar.js'
 }));
 
 const { TeamRoster } = await import('../../dashboard/src/components/aiteam/TeamRoster.js');
+const { listedRows } = await import('../../dashboard/src/components/aiteam/teamTree.js');
+const { buildRoster } = await import('../../dashboard/src/components/aiteam/teamModel.js');
+const { buildTree } = await import('../../src/lib/agents/tree.js');
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const read = (rel: string) => readFileSync(join(ROOT, 'dashboard/src', rel), 'utf-8');
@@ -67,69 +70,87 @@ describe('the team list (A2)', () => {
     expect([...html.matchAll(/data-team-row="([a-z]+)"/g)].map((m) => m[1])).toEqual(['growth', 'scout', 'brief', 'support']);
   });
 
-  it('each state wears its own word: needs you, working with its time, paused, approval, unread', () => {
-    expect(html).toMatch(/aiteam-face-dot--needs/);
-    expect(html).toMatch(/aiteam-tag aiteam-tag--warn">Needs you/);
-    expect(html).toMatch(/aiteam-row-preview aiteam-row-preview--live">Working · 1m 1[12]s/);
-    expect(html).toMatch(/aiteam-face-dot--working/);
-    expect(html).toContain('Routine paused');
-    expect(html).toContain('Needs your approval');
+  it('a row is one line: name, and on the right only a state dot or unread', () => {
+    expect(html).toMatch(/aiteam-row-dot--needs/);
+    expect(html).toMatch(/aiteam-row-dot--working/);
+    expect(html).toMatch(/aiteam-row-dot--paused/);
     expect(html).toMatch(/sidebar-badge">1</);
-    expect(html).not.toMatch(/Beta|maturity/);
+    expect(html).not.toContain('aiteam-row-preview');
+    expect(html).not.toMatch(/>Routine paused</);
+    expect(html).not.toContain('aiteam-tag');
+    // What was said stays one hover away.
+    expect(html).toContain('title="Brief · Morning."');
   });
 
   it('a new teammate being written stands at the top as a draft row', () => {
     const d = render([row('growth')], { title: 'Store reviewer' });
     expect(d.indexOf('aiteam-row--draft')).toBeLessThan(d.indexOf('data-team-row="growth"'));
-    expect(d).toContain('Store reviewer · not added yet');
+    expect(d).toMatch(/aiteam-row-name">Store reviewer</);
   });
 });
 
 describe('teammates in all projects', () => {
   const ads = (over: Partial<TeamRow> = {}) => row('ads', { title: 'Ads Manager', global: true, ...over });
   const local = row('scout', { title: 'Scout' });
-  const at = (html: string, text: string) => { const i = html.indexOf(text); expect(i, text).toBeGreaterThan(-1); return i; };
 
-  it('nobody in all projects: the one-heading list of today, no card', () => {
-    const html = render([local]);
-    expect(html).toContain('Team');
-    expect(html).not.toContain('data-roster-section="all-projects"');
-    expect(html).not.toContain('This project');
+  it('the list holds this project, and a member of all projects once it has something here', () => {
+    const rows = [
+      local,
+      ads({ lastAt: '2026-10-19T18:00:00Z' }),
+      row('quiet', { global: true }),
+      row('paused', { global: true, status: 'paused' }),
+      row('asks', { global: true, status: 'needs', section: 'needs' }),
+      row('runs', { global: true, status: 'working' }),
+      row('gate', { global: true, status: 'approval' }),
+    ];
+    expect(listedRows(rows).map((r) => r.slug)).toEqual(['scout', 'ads', 'asks', 'runs']);
   });
 
-  it('two sections, all projects first in its own card, each with its count', () => {
-    const html = render([ads(), row('legal', { title: 'Legal', global: true }), local]);
-    expect(html).toMatch(/All projects<span class="aiteam-section-count"> · 2<\/span>/);
-    expect(html).toContain('title="Stays on this Mac."');
-    expect(html).toMatch(/This project<span class="aiteam-section-count"> · 1<\/span>/);
-    expect(at(html, 'data-roster-section="all-projects"')).toBeLessThan(at(html, 'data-roster-section="team"'));
-    // The heading says it: no chip repeats it on the rows of the card.
-    expect(html).not.toContain('data-global-chip');
-  });
-
-  it('needs you stays first and keeps the chip; read-only stays last', () => {
+  it('it stands in the roster order, last talk first, with the globe and its hint', () => {
     const html = render([
-      ads({ status: 'needs', section: 'needs' }),
-      row('legal', { title: 'Legal', global: true }),
+      row('newer', { lastAt: '2026-10-20T18:00:00Z' }),
+      ads({ lastAt: '2026-10-19T18:00:00Z' }),
+      local,
+    ]);
+    expect([...html.matchAll(/data-team-row="([a-z]+)"/g)].map((m) => m[1])).toEqual(['newer', 'ads', 'scout']);
+    expect(html).toContain('title="Stays on this Mac."');
+    expect(html.match(/data-global-chip/g)).toHaveLength(1);
+    expect(html).toContain('>Team<');
+  });
+
+  it('needs you stays first, globe and all; read-only stays last', () => {
+    const html = render([
+      ads({ status: 'needs', section: 'needs', lastAt: '2026-10-19T18:00:00Z' }),
       local,
       row('kim', { title: 'Theirs', section: 'readonly', readOnly: true, ownerLabel: 'Kim' }),
     ]);
-    expect(at(html, 'Needs you')).toBeLessThan(at(html, 'data-roster-section="all-projects"'));
-    expect(at(html, 'data-roster-section="team"')).toBeLessThan(at(html, 'data-readonly-section'));
-    expect(html).toMatch(/All projects<span class="aiteam-section-count"> · 1<\/span>/);
+    expect(html.indexOf('Needs you')).toBeLessThan(html.indexOf('data-team-row="ads"'));
+    expect(html.indexOf('data-team-row="ads"')).toBeLessThan(html.indexOf('data-team-row="scout"'));
+    expect(html.indexOf('data-team-row="scout"')).toBeLessThan(html.indexOf('data-readonly-section'));
     expect(html).toContain('data-global-chip');
   });
 
-  it('only members of all projects: no empty This project heading', () => {
-    expect(render([ads()])).not.toContain('data-roster-section="team"');
+  it('a stage talk counts: the server\'s fact gives the row its last talk', () => {
+    const agent = { slug: 'ads', title: 'Ads', hasPhoto: false, roleLine: '', description: '', approvedForChat: true, approvedToRun: true, approvalReason: null, model: null, effort: null, scope: 'global' as const };
+    expect(buildRoster([{ ...agent, lastTalkAt: '2026-10-20T10:00:00.000Z' }], [], null)[0].lastAt).toBe('2026-10-20T10:00:00.000Z');
+    expect(buildRoster([agent], [], null)[0].lastAt).toBeNull();
   });
 
-  it('the tree keeps them with the chip, reporting straight to you', () => {
+  it('an empty list says where the others are, and the way there stays', () => {
     const html = renderToStaticMarkup(createElement(TeamRoster, {
-      rows: [ads(), local], selected: null, draft: null, view: 'tree', onSelect: () => {}, onNew: () => {}, onToast: () => {}, nextRun: '',
+      rows: [], beyond: 2, selected: null, draft: null, onSelect: () => {}, onNew: () => {}, onToast: () => {}, onOrgChart: () => {}, nextRun: '',
     }));
-    expect(html).toContain('data-tree-section="you"');
-    expect(html).toContain('data-global-chip');
+    expect(html).toContain('aiteam.roster.emptyProject');
+    expect(html).toContain('data-page-view="org"');
+  });
+
+  it('a fold never hides a question behind a working dot', () => {
+    const html = renderToStaticMarkup(createElement(TeamRoster, {
+      rows: [row('lead', { status: 'working' }), row('kid', { status: 'needs', section: 'needs' })],
+      tree: buildTree([{ slug: 'lead', reportsTo: null, team: null }, { slug: 'kid', reportsTo: 'lead', team: null }]),
+      view: 'tree', selected: null, draft: null, onSelect: () => {}, onNew: () => {}, onToast: () => {}, nextRun: '',
+    }));
+    expect(html.match(/data-team-row="kid"[\s\S]*?<\/button>/)![0]).toContain('aiteam-row-dot--needs');
   });
 
   it('no way to place them, and nobody can be placed under them', () => {
@@ -138,7 +159,6 @@ describe('teammates in all projects', () => {
     expect(tab).toMatch(/!summary\?\.implicit && !readOnly && !everywhere && addable/);
     expect(tab).toMatch(/addable = [^;]*a\.scope !== 'global'/s);
     expect(code(read('components/aiteam/PlaceInTeam.tsx'))).toMatch(/options = [^;]*\(a\.scope !== 'global' \|\| a\.slug === current\)/s);
-    expect(code(read('components/aiteam/OrgChart.tsx'))).toContain('data-global-chip');
   });
 
   it('the form offers the choice in the new shell only, where the launcher route is open, without remounting', () => {

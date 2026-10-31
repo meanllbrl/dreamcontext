@@ -169,13 +169,11 @@ export function pageStorage(): Storage | null {
   }
 }
 
-/** SKETCH: which of the owner's three options is drawn (null: the list as on super/tek-ekip). */
-export type TeamSketch = 'a' | 'b' | 'c';
-export function readTeamSketch(storage: Pick<Storage, 'getItem'> | null): TeamSketch | null {
-  try {
-    const v = storage?.getItem('dreamcontext.aiteam.v3');
-    return v === 'a' || v === 'b' || v === 'c' ? v : null;
-  } catch {
-    return null;
-  }
+/**
+ * Who the Conversations list holds: this project's teammates, and a member of all projects once
+ * it has something here (it was talked to in this project, or it is working or asking you).
+ * The rest stand in the Org chart's own band. The roster's order is kept, last talk first.
+ */
+export function listedRows<T extends Pick<TeamRow, 'global' | 'lastAt' | 'status'>>(rows: readonly T[]): T[] {
+  return rows.filter((r) => !r.global || r.lastAt !== null || r.status === 'working' || r.status === 'needs');
 }

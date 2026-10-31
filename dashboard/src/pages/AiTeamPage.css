@@ -297,20 +297,13 @@
 .aiteam-viewswitch { display: flex; margin: 0 var(--space-4) var(--space-3); }
 .aiteam-viewswitch .agents-switch-opt { flex: 1; justify-content: center; }
 .aiteam-section-count { font-weight: var(--font-weight-semibold); }
-/* Your teammates in all projects: the one card in the list, a tone above it. */
-.aiteam-rostercard { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; padding-bottom: var(--space-1); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg-secondary); }
-.aiteam-rostercard .aiteam-row:hover:not(.aiteam-row--on) { background: var(--color-bg-tertiary); }
-.aiteam-rostercard .aiteam-face-dot { border-color: var(--color-bg-secondary); }
-.aiteam-rostercard .aiteam-row--on .aiteam-face-dot { border-color: var(--color-bg-tertiary); }
 .aiteam-treesec { display: flex; flex-direction: column; gap: 2px; }
 .aiteam-trow { position: relative; display: flex; align-items: flex-start; }
 .aiteam-trow > .aiteam-row { flex: 1; min-width: 0; }
 .aiteam-guide { position: absolute; top: -2px; bottom: 0; width: 0; border-left: 1px solid var(--color-border-hover); pointer-events: none; }
-.aiteam-guide--down { top: 40px; }
-.aiteam-trow:not(.aiteam-trow--root) .aiteam-guide--down { top: 36px; }
-.aiteam-elbow { position: absolute; top: -2px; height: 26px; border-left: 1px solid var(--color-border-hover); border-bottom: 1px solid var(--color-border-hover); border-bottom-left-radius: var(--radius-sm); pointer-events: none; }
-.aiteam-caret { position: relative; z-index: 1; display: inline-grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; margin-top: 16px; padding: 0; border: 0; border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text-tertiary); cursor: pointer; }
-.aiteam-trow:not(.aiteam-trow--root) .aiteam-caret { margin-top: 12px; }
+.aiteam-guide--down { top: 28px; }
+.aiteam-elbow { position: absolute; top: -2px; height: 18px; border-left: 1px solid var(--color-border-hover); border-bottom: 1px solid var(--color-border-hover); border-bottom-left-radius: var(--radius-sm); pointer-events: none; }
+.aiteam-caret { position: relative; z-index: 1; display: inline-grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; margin-top: 4px; padding: 0; border: 0; border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text-tertiary); cursor: pointer; }
 .aiteam-caret:hover { color: var(--color-text); background: var(--color-bg-secondary); }
 .aiteam-caret:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent); }
 .aiteam-caret--none { background: transparent; cursor: default; }
@@ -474,19 +467,12 @@ button.aiteam-person:not(:disabled):hover { border-color: var(--color-border-hov
 .aiteam-roster .aiteam-row--on .aiteam-row-name { font-weight: var(--font-weight-semibold); }
 .aiteam-roster .aiteam-row-end { flex-direction: row; align-items: center; gap: var(--space-2); padding-top: 0; }
 .aiteam-roster .aiteam-draft-av { width: 22px; height: 22px; }
-.aiteam-roster .aiteam-rostercard { border: 0; background: transparent; padding: 0; gap: 0; }
 .aiteam-list { gap: 0; }
 .aiteam-row-dot { width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--color-text-tertiary); }
 .aiteam-row-dot--working { background: var(--color-accent); }
 .aiteam-row-dot--needs { background: var(--color-warning); }
 .aiteam-row-mark { display: inline-flex; color: var(--color-text-tertiary); }
 
-/* SKETCH: C's closed line, A's band. */
-.aiteam-tuck { margin-top: var(--space-2); padding-top: var(--space-1); border-top: 1px solid var(--color-border); }
-.aiteam-tuck-head { display: flex; align-items: center; gap: var(--space-1); width: 100%; height: 32px; padding: 0 var(--space-2); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--color-text-tertiary); font-size: var(--font-size-xs); cursor: pointer; }
-.aiteam-tuck-head:hover { background: var(--color-bg-secondary); color: var(--color-text-secondary); }
-.aiteam-org-band { margin: var(--space-6) var(--space-6) var(--space-4); padding: var(--space-3); border: 1px dashed var(--color-border-hover); border-radius: var(--radius-lg); }
-.aiteam-org-band-head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); font-size: var(--font-size-xs); }
-.aiteam-org-band-head .aiteam-org-frame-label, .aiteam-org-band-head .aiteam-org-frame-count { position: static; }
-.aiteam-org-band-note { color: var(--color-text-tertiary); }
-.aiteam-org-band-cards { display: flex; gap: var(--space-4); overflow-x: auto; }
+/* The members of all projects: a band on the owner's line, its note beside its name. */
+.aiteam-org-frame--band { border-style: dashed; }
+.aiteam-org-band-note { position: absolute; top: var(--space-2); left: 150px; font-size: var(--font-size-xs); color: var(--color-text-tertiary); white-space: nowrap; }

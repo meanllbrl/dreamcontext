@@ -26,8 +26,8 @@ import { TeamIcon } from './TeamIcons';
 export function OrgView({
   tree, rows, selected, onSelect, onTalk, onConversations, onNew, onToast, nextRun, headless = false, band = [],
 }: {
-  /** SKETCH A: the members of all projects, in their own band under the owner. */
-  band?: TeamRow[];
+  /** The members of all projects, in their own band on the owner's line. */
+  band?: readonly string[];
   /** The new shell: the page's bar carries the title, the switch and New; the count and the find stay here. */
   headless?: boolean;
   tree: TeamTree;
@@ -134,7 +134,7 @@ export function PageSwitch({ view, onConversations }: { view: 'conversations' | 
 export function OrgChart({
   tree, rows, selected, onSelect, onTalk, matches = null, band = [],
 }: {
-  band?: TeamRow[];
+  band?: readonly string[];
   tree: TeamTree;
   rows: TeamRow[];
   selected: string | null;
@@ -146,8 +146,8 @@ export function OrgChart({
   const { t } = useI18n();
   const rowOf = useMemo(() => new Map(rows.map((r) => [r.slug, r])), [rows]);
   const layout = useMemo(
-    () => layoutOrgChart(tree, { selected, titleOf: (s) => rowOf.get(s)?.title ?? s }),
-    [tree, selected, rowOf],
+    () => layoutOrgChart(tree, { selected, titleOf: (s) => rowOf.get(s)?.title ?? s, band }),
+    [tree, selected, rowOf, band],
   );
   const now = useNow(rows.some((r) => r.status === 'working'));
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -180,6 +180,18 @@ export function OrgChart({
             <span className="aiteam-org-frame-count">{f.count}</span>
           </div>
         ))}
+        {layout.band && (
+          <div
+            className={`aiteam-org-frame aiteam-org-frame--band${layout.band.onPath ? ' aiteam-org-frame--path' : ''}`}
+            style={{ left: layout.band.x, top: layout.band.y, width: layout.band.w, height: layout.band.h }}
+            title={t('aiteam.tag.globalHint')}
+            data-org-band
+          >
+            <span className="aiteam-org-frame-label">{t('aiteam.section.allProjects')}</span>
+            <span className="aiteam-org-frame-count">{layout.band.count}</span>
+            <span className="aiteam-org-band-note">{t('aiteam.org.band')}</span>
+          </div>
+        )}
         <svg className="aiteam-org-lines" width={layout.width} height={layout.height} aria-hidden="true">
           {layout.edges.filter((e) => !e.onPath).map((e) => (
             <path key={`${e.from}>${e.to}`} d={edgePath(e.points)} className="aiteam-org-line" />
@@ -209,20 +221,6 @@ export function OrgChart({
           );
         })}
       </div>
-      {band.length > 0 && (
-        <section className="aiteam-org-band" data-org-band title={t('aiteam.tag.globalHint')}>
-          <div className="aiteam-org-band-head">
-            <span className="aiteam-org-frame-label">{t('aiteam.section.allProjects')}</span>
-            <span className="aiteam-org-frame-count">{band.length}</span>
-            <span className="aiteam-org-band-note">{t('aiteam.team.toYou')}</span>
-          </div>
-          <div className="aiteam-org-band-cards">
-            {band.map((row) => (
-              <OrgCard key={row.slug} row={row} on={selected === row.slug} dim={!!matches && !matches.has(row.slug)} style={{ position: 'relative', width: 200, height: 92, flexShrink: 0 }} onSelect={onSelect} onTalk={onTalk} now={now} />
-            ))}
-          </div>
-        </section>
-      )}
     </div>
   );
 }
@@ -242,7 +240,6 @@ function OrgCard({
   const working = row.status === 'working';
   const dot = working ? 'working' : row.status === 'needs' ? 'needs' : row.status === 'idle' ? 'idle' : null;
   const enabled = row.routines.filter((r) => r.enabled).length;
-  const inBand = style.position === 'relative';
   return (
     <button
       type="button"
@@ -264,10 +261,6 @@ function OrgCard({
         </span>
       </span>
       <span className="aiteam-org-card-foot">
-        {/* The foot is one short line: a state that stops the card takes it whole. */}
-        {row.global && row.status === 'idle' && !inBand && (
-          <span className="aiteam-tag aiteam-tag--accent" data-global-chip title={t('aiteam.tag.globalHint')}>{t('aiteam.tag.global')}</span>
-        )}
         {row.status === 'needs' && <span className="aiteam-tag aiteam-tag--warn">{t('aiteam.tag.needs')}</span>}
         {working && (
           <span className="aiteam-org-live">

@@ -36,6 +36,7 @@ import { readThread } from '../../lib/automations/threads.js';
 import { listInboxRows, type InboxRow } from '../../lib/owner-inbox.js';
 import { findTaskHead, readTaskJobs } from '../../lib/agents/task-jobs.js';
 import { latestStageSession, readStageHomeSession } from '../../lib/local-store.js';
+import { lastTalkAt } from '../../lib/agents/history.js';
 import { listAgentHistory } from '../../lib/agents/history.js';
 import { sanitizeUuid } from './agent-spawn-shared.js';
 import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
@@ -123,6 +124,8 @@ export interface AgentSummary {
   readOnly: boolean;
   /** `global`: this machine's agent, listed in every project and kept out of every brain (D1). */
   scope: 'project' | 'global';
+  /** A global agent: when it was last talked with in THIS project. Null when never, or a project member. */
+  lastTalkAt: string | null;
   /** Same login, several machines (B1-7): where it runs, when that is not this machine. */
   runsElsewhere: { machine: string; name: string } | null;
   /** It arrived by sync and was not created on this machine (the approval view marks it). */
@@ -205,6 +208,7 @@ export function summarizeAgent(
     ownerLabel: owner ? ownerLabel(owner) : null,
     readOnly,
     scope: global ? 'global' : 'project',
+    lastTalkAt: global ? lastTalkAt(contextRoot, target.slug, home) : null,
     runsElsewhere: where.here ? null : { machine: where.machine, name: where.name },
     // A global agent never arrives by sync: it is this machine's (D1).
     arrivedBySync: !global && !!agent && !agent.implicit && agentSyncSwitchOn(contextRoot)

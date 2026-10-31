@@ -10,14 +10,15 @@ import { TeamIcon } from './TeamIcons';
 /**
  * THE LIST ON THE LEFT: every teammate, one row each, "Needs you" first.
  *
- * A row is a conversation, like a messenger's: face (with a status dot), name, the last thing
- * said, when, how many unread, and one tag for the state that stops it (a question, a paused
- * routine, an approval). A draft row stands at the top while a new teammate is being written.
+ * A row reads like the side menu: one line, a small face, the name, and on the right only what
+ * asks for a look (a state dot, unread). What was said and when is on the teammate's own page. A
+ * member of all projects that talked here carries a small globe. A draft row stands at the top
+ * while a new teammate is being written.
  *
  * TREE (the List | Tree switch under the search): the same rows, indented under the agent each
  * reports to, one section per lead's team and a last "Reports to you" for the agents with
- * nobody above or below them. A lead folds; folded, it says what its team holds (how many
- * reports, who needs you, who waits for approval), so a fold never hides a question.
+ * nobody above or below them. A lead folds; folded, its dot still says what its team holds, so
+ * a fold never hides a question.
  */
 export function TeamRoster({
   rows,
@@ -37,16 +38,10 @@ export function TeamRoster({
   onWidth,
   onWidthCommit,
   headless = false,
-  sketch = false,
-  tucked = [],
-  heading,
+  beyond = 0,
 }: {
-  /** SKETCH: one flat list, no All projects card. */
-  sketch?: boolean;
-  /** SKETCH C: the members of all projects, behind one closed line at the foot of the list. */
-  tucked?: TeamRow[];
-  /** SKETCH B: the heading of the flat list. */
-  heading?: string;
+  /** How many members of all projects stand only on the Org chart: an empty list says so. */
+  beyond?: number;
   /** The new shell (W2-B): the page's bar carries the title, the count and the actions. */
   headless?: boolean;
   rows: TeamRow[];
@@ -117,11 +112,7 @@ export function TeamRoster({
     return next;
   });
   const needs = shown.filter((r) => r.section === 'needs');
-  // Your teammates in every project come first; the rest of the team is this project's.
-  const everywhere = sketch ? [] : shown.filter((r) => r.section === 'team' && r.global);
-  const team = shown.filter((r) => r.section === 'team' && (sketch || !r.global));
-  const [tuckOpen, setTuckOpen] = useState(false);
-  const tuckedShown = filterRoster(tucked, query);
+  const team = shown.filter((r) => r.section === 'team');
   // Teammates' agents, one read-only part per owner (B1-4), after your own.
   const readonly = shown.filter((r) => r.section === 'readonly');
   const owners = [...new Set(readonly.map((r) => r.ownerLabel ?? ''))];
@@ -155,7 +146,7 @@ export function TeamRoster({
             </span>
           )}
           <span className="aiteam-spacer" />
-          {onOrgChart && !empty && (
+          {onOrgChart && (!empty || beyond > 0) && (
             <button
               type="button"
               className="aiteam-iconbtn"
@@ -205,7 +196,7 @@ export function TeamRoster({
         </div>
       )}
       <div className="aiteam-list">
-        {empty && <p className="aiteam-roster-empty">{t('aiteam.roster.empty')}</p>}
+        {empty && <p className="aiteam-roster-empty">{t(beyond > 0 ? 'aiteam.roster.emptyProject' : 'aiteam.roster.empty')}</p>}
         {draft && (
           <button type="button" className="aiteam-row aiteam-row--on aiteam-row--draft" aria-current="true">
             <span className="aiteam-face"><span className="aiteam-draft-av" aria-hidden="true">+</span></span>
@@ -217,32 +208,11 @@ export function TeamRoster({
           <>
             {needs.length > 0 && <div className="aiteam-section">{t('aiteam.section.needs')}</div>}
             {needs.map((r) => (
-              <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} mark={sketch && r.global && !heading} />
+              <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} />
             ))}
-            {everywhere.length > 0 && (
-              <div className="aiteam-rostercard" data-roster-section="all-projects">
-                <div className="aiteam-section" title={t('aiteam.tag.globalHint')}>
-                  {t('aiteam.section.allProjects')}
-                  <span className="aiteam-section-count"> · {everywhere.length}</span>
-                </div>
-                {/* The heading says it, so its rows carry no chip. */}
-                {everywhere.map((r) => (
-                  <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} />
-                ))}
-              </div>
-            )}
-            {team.length > 0 && (
-              <div className="aiteam-section" data-roster-section="team">
-                {everywhere.length > 0 ? (
-                  <>
-                    {t('aiteam.section.thisProject')}
-                    <span className="aiteam-section-count"> · {team.length}</span>
-                  </>
-                ) : heading ?? t('aiteam.section.team')}
-              </div>
-            )}
+            {team.length > 0 && <div className="aiteam-section">{t('aiteam.section.team')}</div>}
             {team.map((r) => (
-              <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} mark={sketch && r.global && !heading} />
+              <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} />
             ))}
             {owners.map((owner) => (
               <div key={`ro:${owner}`} data-readonly-section={owner}>
@@ -283,16 +253,7 @@ export function TeamRoster({
             </div>
           );
         })}
-        {view === 'list' && tuckedShown.length > 0 && (
-          <div className="aiteam-tuck">
-            <button type="button" className="aiteam-tuck-head" aria-expanded={tuckOpen} onClick={() => setTuckOpen((o) => !o)} title={t('aiteam.tag.globalHint')} data-all-projects-toggle>
-              <TeamIcon name={tuckOpen ? 'chevronDown' : 'chevronRight'} size={12} />
-              {t('aiteam.section.allProjects')}<span className="aiteam-section-count"> · {tuckedShown.length}</span>
-            </button>
-            {tuckOpen && tuckedShown.map((r) => <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} />)}
-          </div>
-        )}
-        {!empty && shown.length === 0 && tuckedShown.length === 0 && <p className="aiteam-roster-empty">{t('aiteam.search.none')}</p>}
+        {!empty && shown.length === 0 && <p className="aiteam-roster-empty">{t('aiteam.search.none')}</p>}
       </div>
       <div className="aiteam-roster-foot">
         <AutomationsDispatcherBar variant="inline" onToast={onToast} />
@@ -370,7 +331,7 @@ function guideX(level: number): number {
 /** The list's row, in the side menu's language: one line, a small face, a name, and on the right
  *  only what asks for a look (unread, or a state dot). The rest is on the teammate's own head. */
 function Row({
-  row, on, onSelect, rollup = null, note = null, mark = false,
+  row, on, onSelect, rollup = null, note = null,
 }: {
   row: TeamRow;
   on: boolean;
@@ -379,12 +340,11 @@ function Row({
   rollup?: TeamRollup | null;
   /** Why it sits at the top of the tree when it should not (a missing manager, a loop). */
   note?: string | null;
-  /** The small mark of a member of all projects, where nothing else says it. */
-  mark?: boolean;
 }) {
   const { t } = useI18n();
-  const dot = row.status === 'working' || rollup?.working ? 'working'
-    : row.status === 'needs' || row.status === 'approval' || rollup?.needs || rollup?.approval ? 'needs'
+  // Asking wins over working: a fold must never hide a question.
+  const dot = row.status === 'needs' || row.status === 'approval' || rollup?.needs || rollup?.approval ? 'needs'
+    : row.status === 'working' || rollup?.working ? 'working'
       : row.status === 'paused' ? 'paused' : null;
   return (
     <button
@@ -400,7 +360,7 @@ function Row({
       </span>
       <span className="aiteam-row-name">{row.title}</span>
       <span className="aiteam-row-end">
-        {mark && (
+        {row.global && (
           <span className="aiteam-row-mark" title={t('aiteam.tag.globalHint')} aria-label={t('aiteam.tag.global')} data-global-chip>
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true"><circle cx="6" cy="6" r="4.8" /><path d="M1.2 6h9.6M6 1.2c1.6 1.4 1.6 8.2 0 9.6M6 1.2c-1.6 1.4-1.6 8.2 0 9.6" /></svg>
           </span>

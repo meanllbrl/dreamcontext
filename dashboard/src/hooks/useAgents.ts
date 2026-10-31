@@ -82,6 +82,8 @@ export interface AgentSummary {
   /** `global`: this machine's agent, listed in every project and kept out of every brain (AI Team
    *  v2 D1). Optional: an older server sends none, which reads as `project`. */
   scope?: 'project' | 'global';
+  /** A member of all projects: when it was last talked with in this project. */
+  lastTalkAt?: string | null;
   /** The owner's other machine runs it (same login, several machines). */
   runsElsewhere?: { machine: string; name: string } | null;
   /** Arrived by sync and was not created on this machine. */
