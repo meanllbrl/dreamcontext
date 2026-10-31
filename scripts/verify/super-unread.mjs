@@ -76,6 +76,22 @@ async function superTurn(text) {
     if (text.includes('ASK')) { const r = bashCall('super', 'ask', 'Yıllık planda indirim yüzde kaç olsun?', '--options', '%15|%20'); report({ kind: 'asked', r }); }
     return 'Son rapor ' + tag + ': hepsi bu kadar.';
   }
+  if (text.includes('GO-DRIP')) {
+    // Reports landing one by one while the owner is up in the chat.
+    await sleep(2500);
+    for (let i = 1; i <= 8; i++) {
+      const block = [{ type: 'text', text: 'Canlı rapor ' + i + ': bir sonraki adım bitti, sonuç sahnede ve kontrol bekliyor.' }];
+      persist('assistant', block);
+      out({ type: 'assistant', message: { role: 'assistant', content: block } });
+      await sleep(450);
+    }
+    return 'Canlı raporlar bitti.';
+  }
+  if (text.includes('GO-EVENT')) {
+    // A child finishes while the owner is up in the chat: an event turn lands on the idle Super.
+    report({ kind: 'sent', r: cli('super', 'delegate', '--prompt', 'SLOW-Q', '--brief', 'Uzun is') });
+    return 'bekliyorum';
+  }
   if (text.includes('GO-SLOW')) { await sleep(4000); return 'The release notes are ready.'; }
   const perm = text.match(/GO-CHILDPERM (\\S+)/);
   if (perm) { report({ kind: 'sent', r: cli('super', 'send', perm[1], 'PERM-Q') }); return 'asked the child'; }
@@ -84,6 +100,7 @@ async function superTurn(text) {
   return 'ok';
 }
 async function childTurn(text) {
+  if (text.includes('SLOW-Q')) { await sleep(6000); return 'çocuk işi bitti'; }
   if (text.includes('PERM-Q')) {
     const r = await ask({ tool_name: 'Bash', display_name: 'Bash', input: { command: 'npm run build', description: 'Build the app' } });
     report({ kind: 'perm', response: r });
@@ -211,6 +228,134 @@ async function run() {
   const blur = (off) => page.evaluate(async (v) => { Document.prototype.hasFocus = () => !v; window.dispatchEvent(new Event(v ? 'blur' : 'focus')); await new Promise((r) => setTimeout(r, 50)); }, off);
   const scroller = () => page.locator('[data-super-slot="centre"] .chat-scroll');
   const toBottom = () => scroller().evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  /** Every frame from the click on: where the view is, where the first unread is, is it pinned. */
+  const trace = (ms) => page.evaluate((ms) => new Promise((done) => {
+    const el = document.querySelector('[data-super-slot="centre"] .chat-scroll');
+    const out = []; const t0 = performance.now();
+    const step = () => {
+      const t = performance.now() - t0;
+      const f = document.querySelector('[data-unread-first]');
+      out.push({ t: Math.round(t), top: Math.round(el.scrollTop), h: el.scrollHeight, max: el.scrollHeight - el.clientHeight, pill: !!document.querySelector('[data-super-slot="centre"] .chat-jump'), line: f ? Math.round(f.getBoundingClientRect().top) : null });
+      if (t < ms) requestAnimationFrame(step); else done(out);
+    };
+    requestAnimationFrame(step);
+  }), ms);
+  /** What a trace shows: how far the view went up, how far it was then pulled back down, the frames. */
+  const verdict = (name, tr) => {
+    const least = Math.min(...tr.map((x) => x.top));
+    const iLeast = tr.findIndex((x) => x.top === least);
+    const end = tr[tr.length - 1];
+    const dts = tr.slice(1).map((x, i) => x.t - tr[i].t);
+    const moves = tr.slice(1).map((x, i) => x.top - tr[i].top).filter(Boolean);
+    const v = { start: tr[0].top, least, end: end.top, pulledBack: end.top - least, atBottomAtEnd: end.max - end.top < 60, pillAtEnd: end.pill, frames: tr.length, worstFrameMs: Math.max(...dts), biggestStep: Math.max(...moves.map(Math.abs), 0), reversals: moves.slice(1).filter((m, i) => Math.sign(m) !== Math.sign(moves[i])).length, tookMs: tr[iLeast].t };
+    console.log(`   ${name}`, JSON.stringify(v));
+    writeFileSync(join(OUT, `iz-${name}.json`), JSON.stringify(tr));
+    return v;
+  };
+  /** Rows must not move when marks come and go: the jump's layout is the same read or unread. */
+  const noOverlap = () => page.evaluate(() => {
+    const body = document.querySelector('.chat-msg-assistant-row[data-unread] > .chat-msg-assistant-body');
+    const line = document.querySelector('.chat-reply-line')?.getBoundingClientRect();
+    const box = body?.getBoundingClientRect();
+    const first = document.querySelector('[data-unread-first]');
+    const lineLeft = first ? first.getBoundingClientRect().left : null;
+    return { dotRight: box ? box.right : null, replyLineRight: line ? line.right : null, unreadLineLeft: lineLeft };
+  });
+  const jumpTrace = async () => {
+    await blur(false);
+    await toBottom();
+    await page.waitForTimeout(1500);
+    ok('at the bottom the bar offers the rest', await until(page, async () => (await bar.count()) === 1, 4000));
+    await shot(`ux-${BEFORE ? 'once' : 'sonra'}-1-altta-1440`);
+    // 1. Nothing but the reader's own click.
+    await page.locator('[data-testid="super-unread-jump"]').click();
+    const quiet = verdict('sessiz', await trace(4000));
+    await shot(`ux-${BEFORE ? 'once' : 'sonra'}-2-vardi-1440`);
+    ok('quiet: the view stays where the jump put it', quiet.pulledBack <= 2, JSON.stringify(quiet));
+    if (!BEFORE) {
+      ok('quiet: it landed in one direction', quiet.reversals === 0, JSON.stringify(quiet));
+      ok('quiet: the way down is on offer', await page.locator('[data-testid="super-unread-bottom"], .chat-jump').count() > 0);
+      const lines = await noOverlap();
+      console.log('   lines', JSON.stringify(lines));
+      ok('the unread line starts right of the reply line', lines.replyLineRight == null || lines.unreadLineLeft == null || lines.unreadLineLeft > lines.replyLineRight, JSON.stringify(lines));
+      // Next unread: the rows below are reached one click at a time, and each stays.
+      const barNow = await bar.innerText().catch(() => '');
+      console.log('   bar after landing:', JSON.stringify(barNow));
+      // Faster than the dwell: the walk goes on, it does not come back.
+      const walk = [];
+      for (let i = 0; i < 4 && await bar.count(); i++) {
+        await page.locator('[data-testid="super-unread-jump"]').click();
+        await page.waitForTimeout(450);
+        walk.push(await scroller().evaluate((el) => el.scrollTop));
+      }
+      console.log('   fast clicks', JSON.stringify(walk));
+      ok('next: fast clicks never stand on one row twice', new Set(walk).size === walk.length, JSON.stringify(walk));
+      await page.waitForTimeout(1500);
+      if (await bar.count()) {
+        const a = await scroller().evaluate((el) => el.scrollTop);
+        await page.locator('[data-testid="super-unread-jump"]').click();
+        await page.waitForTimeout(900);
+        const c = await scroller().evaluate((el) => el.scrollTop);
+        ok('next: the second click moves on', c !== a, `${a} -> ${c}`);
+        await page.waitForTimeout(1800);
+        ok('next: and stays', (await scroller().evaluate((el) => el.scrollTop)) === c);
+      }
+      // The bar going away with focus in it leaves focus in the pane, not on the body.
+      if (await bar.count()) {
+        await page.locator('[data-testid="super-unread-jump"]').focus();
+        await page.locator('[data-testid="super-unread-all"]').click();
+        await page.locator('[data-testid="super-unread-all"]').waitFor({ state: 'detached', timeout: 3000 }).catch(() => {});
+        await page.waitForTimeout(200);
+        ok('focus: it stays in the pane when the bar goes', await page.evaluate(() => document.activeElement && document.activeElement !== document.body));
+      }
+      await toBottom();
+      await page.waitForTimeout(400);
+    }
+    // 2. Back down, then the same click while reports land.
+    await toBottom();
+    await page.waitForTimeout(600);
+    await blur(true);
+    await send('GO-REPORTS Z');
+    await blur(true);
+    const b = turnEnds();
+    await until(page, async () => turnEnds() >= b, 30000);
+    await page.waitForTimeout(1200);
+    await send('GO-DRIP');
+    await blur(false);
+    await page.waitForTimeout(800);
+    await until(page, async () => (await bar.count()) === 1, 4000);
+    if (await bar.count()) {
+      await page.locator('[data-testid="super-unread-jump"]').click();
+      const live = verdict('canli', await trace(6000));
+      await shot(`ux-${BEFORE ? 'once' : 'sonra'}-3-canli-1440`);
+      await page.waitForTimeout(2500);
+      // 3. An event turn landing on the idle Super while the reader is up.
+      await send('GO-EVENT');
+      await blur(true);
+      await page.waitForTimeout(1800);
+      await blur(false);
+      await page.waitForTimeout(400);
+      if (await bar.count()) {
+        await page.locator('[data-testid="super-unread-jump"]').click();
+        const evBefore = frames().filter((f) => f.role === 'super' && /^\[super (event|batch)/.test(f.blocks[0] ?? '')).length;
+        const ev = verdict('olay', await trace(24000));
+        const evLanded = frames().filter((f) => f.role === 'super' && /^\[super (event|batch)/.test(f.blocks[0] ?? '')).length - evBefore;
+        console.log('   event turns that landed during the trace:', evLanded);
+        ok('event: one really landed during the trace', evLanded > 0);
+        ok('event: an event turn does not drag the reader back down', ev.pulledBack <= 2 && !ev.atBottomAtEnd, JSON.stringify(ev));
+      } else console.log('   (no bar for the event round)');
+      ok('live: nothing drags the reader back down', live.pulledBack <= 2 && !live.atBottomAtEnd, JSON.stringify(live));
+      if (!BEFORE) {
+        const m = await page.evaluate(() => { const b = document.querySelector('[data-testid="super-unread-bottom"]') ?? document.querySelector('[data-super-slot="centre"] .chat-jump'); b?.click(); return !!b; });
+        await page.waitForTimeout(700);
+        ok('live: the way down brings the reader to the end', m && await scroller().evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight < 60));
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.waitForTimeout(1200);
+        await scroller().evaluate((el) => { el.scrollTop = el.scrollHeight; }).catch(() => {});
+        await shot('ux-sonra-4-390');
+      }
+    } else ok('live: a bar to click', false);
+  };
   try {
     await page.goto(`${base}/?vault=acme-app`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(3000);
@@ -222,7 +367,8 @@ async function run() {
     await page.keyboard.press('Enter');
     await until(page, async () => frames().some((f) => f.role === 'child'), 30000);
     await page.waitForTimeout(1200);
-    await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+    // The new shell's drawer carries the door; the classic header its button.
+    await page.locator('[data-testid="drawer-super-row"]:visible, [data-testid="super-handover-btn"]:visible').first().click();
     ok('the Super stage shows', await until(page, async () => (await page.locator('[data-testid="super-surface"]:visible').count()) > 0, 30000));
     ok('the super agent took the hand-over', await until(page, async () => reports().some((r) => r.kind === 'handover'), 60000));
     await until(page, async () => (await centreInput.count()) > 0, 30000);
@@ -235,6 +381,11 @@ async function run() {
     await blur(true); // typing puts the window in front again
     ok('the turn ended', await until(page, async () => turnEnds() > before, 60000));
     await page.waitForTimeout(1500);
+
+    if (process.env.ONLY === 'jump') {
+      await jumpTrace();
+      return;
+    }
 
     if (BEFORE) {
       await scroller().evaluate((el) => { el.scrollTop = 200; });
@@ -335,12 +486,20 @@ async function run() {
     ok('390: no sideways scroll', geo.over <= 0, String(geo.over));
     const dotPaints = await page.evaluate(() => {
       const row = [...document.querySelectorAll('.chat-msg-assistant-row[data-unread]')].find((e) => e.getBoundingClientRect().top > 100);
-      if (!row) return false;
-      const cs = getComputedStyle(row, '::before'); const rowCs = getComputedStyle(row);
-      return cs.content !== 'none' && (rowCs.overflowX !== 'clip' || parseFloat(cs.left) >= 0);
+      const body = row?.querySelector(':scope > .chat-msg-assistant-body');
+      if (!body) return false;
+      const cs = getComputedStyle(body, '::after');
+      return cs.content !== 'none' && parseFloat(cs.right) > 0;
     });
-    ok('390: the dot is inside what a row may paint', dotPaints);
+    ok('390: the dot is inside the message card', dotPaints);
     await shot('kod-sonra-390');
+    await page.locator('[data-testid="super-unread-jump"]').click();
+    const phone = verdict('telefon', await trace(3000));
+    ok('390: the jump lands and stays', phone.pulledBack <= 2 && phone.reversals === 0, JSON.stringify(phone));
+    const pill = await page.evaluate(() => { const b = document.querySelector('[data-testid="super-unread-bar"]')?.getBoundingClientRect(); return b ? { l: b.left, r: b.right, three: !!document.querySelector('[data-testid="super-unread-bottom"]') } : null; });
+    console.log('   390 pill', JSON.stringify(pill));
+    ok('390: the pill with the way down fits', !pill || (pill.l >= 0 && pill.r <= 390), JSON.stringify(pill));
+    await shot('ux-sonra-5-390-vardi');
     await page.locator('.chat-scroll:visible').first().evaluate((el) => { el.scrollTop = 0; });
     await page.waitForTimeout(600);
     await blur(false);

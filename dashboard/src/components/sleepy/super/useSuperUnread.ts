@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { ApiClient } from '../../../api/client';
 import { getWindowActivity, onWindowActivity } from '../../../lib/windowActivity';
 import {
-  advanceDwell, firstMountedRow, leadIndex, mergeMarks, mostlyVisible, ownerCanRead, readMarksOf, sideOf, unreadOf, unreadUnits, withRead,
+  advanceDwell, chooseLine, firstMountedRow, leadIndex, mergeMarks, mostlyVisible, nextUnreadIndex, ownerCanRead, readMarksOf, sideOf, unreadOf, unreadUnits, withRead,
   type ReadMark, type ReadMarks, type Span, type UnreadItem, type UnreadUnit,
 } from './superUnread';
 import { dropSuperUnread, publishSuperUnread } from './superUnreadStore';
@@ -21,8 +21,11 @@ export interface SuperUnread {
   count: number;
   /** Where the nearest unread out of view lies; null: all of it is on screen. */
   edge: UnreadEdge;
-  /** The unit leading the page right now. */
-  lead: () => UnreadUnit | null;
+  /** Where the next jump goes. */
+  next: () => UnreadUnit | null;
+  rowOf: (u: UnreadUnit) => HTMLElement | null;
+  /** Look again now: a jump just landed. */
+  look: () => void;
   markAll: () => void;
 }
 
@@ -35,13 +38,30 @@ function rowOf(root: HTMLElement, u: UnreadUnit): HTMLElement | null {
     : `[data-testid="super-question-card"][data-item="${CSS.escape(u.question ?? '')}"]`);
 }
 
+/** The line stands in the gap above a message, so above its reply strip when it wears one. */
+export function lineHostOf(row: HTMLElement): HTMLElement {
+  const before = row.previousElementSibling;
+  return before instanceof HTMLElement && before.hasAttribute('data-reply-strip') ? before : row;
+}
+
+function viewOf(scroller: HTMLElement): Span {
+  const box = scroller.getBoundingClientRect();
+  return { top: Math.max(box.top, 0), bottom: Math.min(box.bottom, window.innerHeight) };
+}
+
+const spanOf = (el: HTMLElement): Span => {
+  const r = el.getBoundingClientRect();
+  return { top: r.top, bottom: r.bottom };
+};
+
 /**
  * The Super chat's read state on the live pane: marks loaded from and written to the server, the
  * dots and the divider painted as ATTRIBUTES on rows other components own (so this feature adds
  * no prop to a row or a card, and superUnread.css alone draws it), the dwell clock, the count.
+ * Painting takes no layout room: a read never moves a row.
  * `enabled` false: nothing runs, no request, no timer.
  */
-export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches, openQuestions, scrollRef, contentRef, dividerLabel, onPainted }: {
+export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches, openQuestions, scrollRef, contentRef, dividerLabel, isPinned, isGliding, isWalking }: {
   enabled: boolean;
   /** The project the rail's count goes to; null = this pane publishes none. */
   vault: string | null;
@@ -52,9 +72,12 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
   openQuestions: ReadonlyArray<{ id: string; createdAt: number }>;
   scrollRef: RefObject<HTMLElement | null>;
   contentRef: RefObject<HTMLElement | null>;
-  dividerLabel: (count: number) => string;
-  /** The line moved between rows: heights changed with no size change a ResizeObserver can see. */
-  onPainted: () => void;
+  dividerLabel: () => string;
+  isPinned: () => boolean;
+  /** A jump is under way: nothing counts as seen and the bar holds still until it lands. */
+  isGliding: () => boolean;
+  /** The reader has not moved since the last jump: the next one goes on from it. */
+  isWalking: () => boolean;
 }): SuperUnread {
   const [marks, setMarks] = useState<ReadMarks | null>(null);
   const [edge, setEdge] = useState<UnreadEdge>(null);
@@ -152,46 +175,71 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
     setEdge(null);
   }, [markRead]);
 
-  const lead = useCallback((): UnreadUnit | null => {
+  const rowOfUnit = useCallback((u: UnreadUnit) => {
     const root = contentRef.current;
-    const units = unreadRef.current;
-    return (root ? units[leadIndex(units.map((u) => rowOf(root, u)?.getBoundingClientRect().top ?? null))] : units[0]) ?? null;
+    return root ? rowOf(root, u) : null;
   }, [contentRef]);
 
+  const walkingRef = useRef(isWalking);
+  walkingRef.current = isWalking;
+  const walkedTo = useRef<HTMLElement | null>(null);
+  const next = useCallback((): UnreadUnit | null => {
+    const root = contentRef.current;
+    const scroller = scrollRef.current;
+    const units = unreadRef.current;
+    if (!root || !scroller) return units[0] ?? null;
+    const rows = units.map((u) => rowOf(root, u));
+    const from = walkingRef.current() && walkedTo.current?.isConnected ? spanOf(walkedTo.current) : null;
+    const unit = units[nextUnreadIndex(rows.map((el) => (el ? spanOf(el) : null)), viewOf(scroller), from)] ?? null;
+    walkedTo.current = unit ? rowOf(root, unit) : null;
+    return unit;
+  }, [contentRef, scrollRef]);
+
   // Painted after every commit: a row the window just mounted has to get its dot before the
-  // browser draws it. Only what differs is touched, so a streaming token costs a lookup.
+  // browser draws it. Only what differs is touched, and a streaming token that changed no row
+  // stops before it measures anything.
   const painted = useRef(new Set<HTMLElement>());
   const labelFor = useRef(dividerLabel);
   labelFor.current = dividerLabel;
-  const paintedRef = useRef(onPainted);
-  paintedRef.current = onPainted;
+  const pinnedRef = useRef(isPinned);
+  pinnedRef.current = isPinned;
+  const glidingRef = useRef(isGliding);
+  glidingRef.current = isGliding;
   const lineOn = useRef<HTMLElement | null>(null);
-  useLayoutEffect(() => {
+  const [lineShown, setLineShown] = useState(false);
+  const rowsThen = useRef<ReadonlyArray<HTMLElement | null>>([]);
+  const paint = useCallback((force: boolean) => {
     const root = contentRef.current;
-    if (!root) return;
+    const scroller = scrollRef.current;
+    if (!root || !scroller) return;
+    const rows = unreadRef.current.map((u) => rowOf(root, u));
+    if (!force && rows.length === rowsThen.current.length && rows.every((el, i) => el === rowsThen.current[i])) return;
+    rowsThen.current = rows;
     const want = new Set<HTMLElement>();
-    const rows = unread.map((u) => rowOf(root, u));
-    const first = rows[leadIndex(rows.map((el) => el?.getBoundingClientRect().top ?? null))] ?? null;
     for (const el of rows) if (el) want.add(el);
-    for (const el of painted.current) {
-      if (!want.has(el)) { el.removeAttribute('data-unread'); el.removeAttribute('data-unread-first'); el.removeAttribute('data-unread-label'); }
-    }
-    for (const el of want) {
-      if (!el.hasAttribute('data-unread')) el.setAttribute('data-unread', '');
-      if (el === first) {
-        el.setAttribute('data-unread-first', '');
-        el.setAttribute('data-unread-label', labelFor.current(count));
-      } else if (el.hasAttribute('data-unread-first')) {
-        el.removeAttribute('data-unread-first');
-        el.removeAttribute('data-unread-label');
-      }
-    }
+    for (const el of painted.current) if (!want.has(el)) el.removeAttribute('data-unread');
+    for (const el of want) if (!el.hasAttribute('data-unread')) el.setAttribute('data-unread', '');
     painted.current = want;
-    if (lineOn.current !== first) {
-      lineOn.current = first;
-      paintedRef.current();
-    }
-  });
+
+    const view = viewOf(scroller);
+    const leadRow = rows[leadIndex(rows.map((el) => (el ? el.getBoundingClientRect().top : null)))] ?? null;
+    const lead = leadRow ? lineHostOf(leadRow) : null;
+    const heldEl = lineOn.current?.isConnected ? lineOn.current : null;
+    const inView = (el: HTMLElement | null) => !!el && sideOf(spanOf(el), view) === 'in';
+    const choice = chooseLine({
+      held: !!heldEl, heldInView: inView(heldEl), heldIsLead: !!heldEl && heldEl === lead,
+      lead: !!lead, leadInView: inView(lead), pinned: pinnedRef.current(),
+    });
+    const line = choice === 'held' ? heldEl : choice === 'lead' ? lead : null;
+    if (line === lineOn.current) return;
+    lineOn.current?.removeAttribute('data-unread-first');
+    lineOn.current?.removeAttribute('data-unread-label');
+    line?.setAttribute('data-unread-first', '');
+    line?.setAttribute('data-unread-label', labelFor.current());
+    lineOn.current = line;
+    setLineShown(!!line);
+  }, [contentRef, scrollRef]);
+  useLayoutEffect(() => { paint(false); });
 
   // Looked at again when something can have changed, never on a free-running clock (the window
   // rules, super-surface.test.ts): the only timer runs while a unit is being dwelled on, or a
@@ -200,8 +248,10 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
   const missing = useRef(new Map<string, number>());
   const tickRef = useRef<() => void>(() => {});
   const hasUnread = count > 0;
+  // A line outlives the last unread until it leaves the screen, and only a look can see that.
+  const watching = hasUnread || lineShown;
   useEffect(() => {
-    if (!hasUnread) {
+    if (!watching) {
       setEdge(null);
       started.current = new Map();
       missing.current = new Map();
@@ -213,8 +263,10 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
       const scroller = scrollRef.current;
       const root = contentRef.current;
       if (!scroller || !root) return;
+      if (glidingRef.current()) return; // it looks when it lands
+      paint(true);
       const box = scroller.getBoundingClientRect();
-      const view: Span = { top: Math.max(box.top, 0), bottom: Math.min(box.bottom, window.innerHeight) };
+      const view = viewOf(scroller);
       const shown = box.width > 0 && view.bottom > view.top;
       const onTop = shown ? document.elementFromPoint(box.left + box.width / 2, (view.top + view.bottom) / 2) : null;
       const activity = getWindowActivity();
@@ -242,14 +294,16 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
           else waiting.set(unitId(u), n);
           return;
         }
-        const r = el.getBoundingClientRect();
-        const row = { top: r.top, bottom: r.bottom };
+        const row = spanOf(el);
         if (mostlyVisible(row, view)) { visible.push(unitId(u)); return; }
         const side = sideOf(row, view);
         if (side === 'above') next = 'up';
         else if (next === null && side === 'below') next = 'down';
       });
       missing.current = waiting;
+      // The arrow says where the next click goes: a walk goes on down past what it left above.
+      const walked = walkingRef.current() && walkedTo.current?.isConnected ? spanOf(walkedTo.current) : null;
+      if (walked && rows.some((el) => { const r = el && spanOf(el); return !!r && r.top > walked.top && sideOf(r, view) === 'below'; })) next = 'down';
       setEdge(next);
       const step = advanceDwell(started.current, canRead ? visible : [], Date.now());
       started.current = step.started;
@@ -278,8 +332,12 @@ export function useSuperUnread({ enabled, vault, api, items, fold, ownerBatches,
       window.removeEventListener('pointerup', soon, true);
       window.removeEventListener('keyup', soon, true);
     };
-  }, [hasUnread, scrollRef, contentRef, markRead]);
-  useEffect(() => { tickRef.current(); }, [unread]);
+  }, [watching, scrollRef, contentRef, markRead, paint]);
+  // By what is unread, not by the array: `items` is a new list on every streamed token, and a
+  // height it grew is already the ResizeObserver's above.
+  const unreadKey = unread.map(unitId).join('\n');
+  useEffect(() => { tickRef.current(); }, [unreadKey]);
+  const look = useCallback(() => { tickRef.current(); }, []);
 
-  return { count, edge, lead, markAll };
+  return { count, edge, next, rowOf: rowOfUnit, look, markAll };
 }
