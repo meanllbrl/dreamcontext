@@ -8,6 +8,7 @@ import { dreamcontextVersion } from '../../lib/manifest.js';
 import { readVersionCache, writeVersionCache } from '../../lib/version-check.js';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { listVaults, type Vault } from '../../lib/vaults.js';
+import { acquireProjectUpdatesLock, diskBusyReason, releaseProjectUpdatesLock } from '../../lib/project-catch-up.js';
 import { appUpdatesItself, readAppManifest } from './app.js';
 import {
   npmInstallCommand,
@@ -281,11 +282,29 @@ async function maybeUpdateAllProjects(opts?: UpgradeOpts): Promise<void> {
     return;
   }
 
+  // The app's automatic catch-up shares this lock, so two `update`s never meet in one project.
+  // If it holds it now, it is already on the job and its next check covers the new version.
+  const locked = !opts?.projectUpdater;
+  if (locked && !acquireProjectUpdatesLock()) {
+    console.log(chalk.dim('The desktop app is updating projects right now; it will bring them to this version.'));
+    return;
+  }
   const updater = opts?.projectUpdater ?? defaultProjectUpdater;
   const results: ProjectUpdateResult[] = [];
-  for (const vault of vaults) {
-    console.log(chalk.cyan(`\n↻ Refreshing ${chalk.bold(vault.name)} (${vault.path})...`));
-    results.push(updater(vault));
+  try {
+    for (const vault of vaults) {
+      // The same wait as the automatic catch-up; the app's next check picks these up.
+      const wait = existsSync(vault.path) ? diskBusyReason(vault.path, Date.now()) : null;
+      if (wait) {
+        console.log(chalk.dim(`\n  ${vault.name} waits: ${wait}. Its files follow at the next app check or \`dreamcontext update\` there.`));
+        results.push({ vault, ok: false, error: wait });
+        continue;
+      }
+      console.log(chalk.cyan(`\n↻ Refreshing ${chalk.bold(vault.name)} (${vault.path})...`));
+      results.push(updater(vault));
+    }
+  } finally {
+    if (locked) releaseProjectUpdatesLock();
   }
 
   const ok = results.filter((r) => r.ok);

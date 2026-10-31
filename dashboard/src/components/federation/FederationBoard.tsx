@@ -1034,6 +1034,8 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
             <span>
               {!sel.exists
                 ? t('federation.map.detail.gone')
+                : sel.autoUpdate
+                  ? sel.autoUpdate.reason
                 : sel.needsUpdate
                   ? fmt(t('federation.map.detail.behind'), {
                       from: sel.setupVersion,
@@ -1041,7 +1043,7 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
                     })
                   : fmt(t('federation.map.detail.current'), { v: sel.setupVersion })}
             </span>
-            {sel.exists && sel.needsUpdate && (
+            {sel.exists && sel.autoUpdate?.state === 'failed' && (
               <button
                 className="lgraph-btn"
                 disabled={updateProject.isPending}

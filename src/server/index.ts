@@ -289,6 +289,7 @@ import { startOrphanSweep } from './orphan-sweep.js';
 import { startTaskJobLoop } from './task-job-loop.js';
 import { startClaudeUpdateJob } from './claude-update-job.js';
 import { readyVersionOnDisk, startSelfUpdateJob } from './self-update-job.js';
+import { startProjectCatchUpJob } from './project-catch-up-job.js';
 import { configureMacListener, macSession, registerHandsfreeMacRoutes, writeMacServerHint } from './routes/handsfree-mac.js';
 import { setThermalSource } from '../lib/voice/whisperPressure.js';
 import { authFor, handleHandsfreeLogin, handleHandsfreeLogout } from './handsfree-auth.js';
@@ -1434,12 +1435,14 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       let shuttingDown = false;
       let stopClaudeUpdate: (() => void) | undefined;
       let stopSelfUpdate: (() => void) | undefined;
+      let stopProjectCatchUp: (() => void) | undefined;
       const shutdown = () => {
         if (shuttingDown) return; // SIGTERM + watchdog can both fire; reap once
         shuttingDown = true;
         console.log('\n  Shutting down...');
         stopClaudeUpdate?.();
         stopSelfUpdate?.();
+        stopProjectCatchUp?.();
         // Mac mode: a graceful shutdown is a Return — the tunnel closes, phones are signed out,
         // sleep and Low Power Mode are restored. Bounded by the 5 s exit below.
         const macDone = isDesktop() && macSession().isOn() ? macSession().stop({ shutdown: true }).catch(() => undefined) : Promise.resolve();
@@ -1498,6 +1501,8 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // The CLI itself: upgraded from the app (launch + every 6 h), not only from a Claude
       // prompt, then every project refreshed. Self-gates to the app-owned desktop server.
       stopSelfUpdate = startSelfUpdateJob();
+      // Every registered project follows the CLI on disk, however that CLI got there.
+      stopProjectCatchUp = startProjectCatchUpJob();
     };
     // The Super Agent's in-memory index and inbox come up BEFORE the server listens, so before
     // any chat can register (plan-r7 D16): a handed-over child's first question is already

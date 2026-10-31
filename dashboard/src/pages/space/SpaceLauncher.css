@@ -390,16 +390,6 @@
   opacity: 0.7;
 }
 
-.space-chip-flag {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #fbbf24;
-  border: 1px solid rgba(251, 191, 36, 0.4);
-  border-radius: 999px;
-  padding: 1px 6px;
-}
-
 /* ─── The expanded card ───────────────────────────────────────────────────── */
 
 /* Selecting a project grows its pill into a card ON THE SPOT. The alternative —

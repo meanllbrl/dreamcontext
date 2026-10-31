@@ -61,6 +61,7 @@ import { readSleepState } from '../../cli/commands/sleep.js';
 import { SLEEP_ROSTER_CLAUSE } from '../../lib/sleep-prompt.js';
 import { readAppManifest } from '../../cli/commands/app.js';
 import { getUpgradeRun, startUpgradeRun } from '../upgrade-job.js';
+import { acquireProjectUpdatesLock, readProjectUpdatesRecord, releaseProjectUpdatesLock, type ProjectIssue, type ProjectUpdatesRecord } from '../../lib/project-catch-up.js';
 import { readSelfUpdateRecord, selfUpdateDisabledBy, selfUpdateLogPath, selfUpdateMarkerOff, setSelfUpdateEnabled } from '../../lib/self-update.js';
 import {
   consolidationDepth,
@@ -1423,10 +1424,9 @@ export async function handleLauncherDefaults(
 //
 // The launcher dot is GREEN when a project's installed dreamcontext files are
 // current, YELLOW when the project is behind the running CLI (its `setupVersion`
-// is older than `dreamcontextVersion()` → a `dreamcontext update` would refresh
-// its skills/agents/hooks), and RED when the folder is gone. This mirrors the
-// upgrade-vs-update distinction: upgrading the CLI does NOT touch a project's
-// installed files; each project must be updated individually.
+// is older than `dreamcontextVersion()`), and RED when the folder is gone. A yellow
+// project is normally on its way: src/lib/project-catch-up.ts brings every project
+// up to the installed CLI on its own, and `autoUpdate` says why one is still behind.
 
 export interface VaultStatus {
   name: string;
@@ -1439,6 +1439,8 @@ export interface VaultStatus {
   latestVersion: string;
   /** True iff the folder exists AND setupVersion is behind latestVersion. */
   needsUpdate: boolean;
+  /** Why the automatic update has not finished here; null while nothing is wrong. */
+  autoUpdate: Pick<ProjectIssue, 'state' | 'reason'> | null;
   /** True iff the vault ships an identity mark (`_dream_context/assets/logo.*`) —
    *  the card builds the image URL itself via `/api/launcher/logo`. */
   logo: boolean;
@@ -1454,7 +1456,7 @@ export interface VaultStatus {
 }
 
 /** Compute one vault's launcher status (pure-ish: reads disk, never throws). */
-function computeVaultStatus(v: Vault, latest: string): VaultStatus {
+function computeVaultStatus(v: Vault, latest: string, issues: ProjectUpdatesRecord['issues'] = {}): VaultStatus {
   const exists = existsSync(resolve(v.path));
   let setupVersion = '0.0.0';
   if (exists) {
@@ -1472,6 +1474,7 @@ function computeVaultStatus(v: Vault, latest: string): VaultStatus {
   // file convention peer mail reads). A boolean, not bytes: the card builds the image URL
   // itself (`/api/launcher/logo`), and reporting it here spares N speculative 404s.
   const logoFile = exists ? findVaultLogo(join(resolve(v.path), '_dream_context')) : null;
+  const issue = issues[resolve(v.path)];
   return {
     name: v.name,
     path: v.path,
@@ -1479,6 +1482,7 @@ function computeVaultStatus(v: Vault, latest: string): VaultStatus {
     setupVersion,
     latestVersion: latest,
     needsUpdate,
+    autoUpdate: needsUpdate && issue ? { state: issue.state, reason: issue.reason } : null,
     logo: logoFile !== null,
     logoStamp: logoFile ? Math.round(logoFile.mtimeMs) : null,
     lastOpenedAt: typeof v.lastOpenedAt === 'string' ? v.lastOpenedAt : null,
@@ -1631,7 +1635,8 @@ export async function handleLauncherStatus(
   _contextRoot: string | null,
 ): Promise<void> {
   const latest = dreamcontextVersion();
-  const vaults = listVaults().map((v) => computeVaultStatus(v, latest));
+  const issues = readProjectUpdatesRecord()?.issues;
+  const vaults = listVaults().map((v) => computeVaultStatus(v, latest, issues));
   sendJson(res, 200, { vaults, latestVersion: latest });
 }
 
@@ -1723,6 +1728,11 @@ export async function handleLauncherUpdate(
     sendError(res, 400, 'missing_vault', `Vault path no longer exists: ${target}`);
     return;
   }
+  // The automatic catch-up and `upgrade` share this lock: two `update`s never meet in a project.
+  if (!acquireProjectUpdatesLock()) {
+    sendError(res, 409, 'update_running', 'Projects are being updated right now. Try again in a moment.');
+    return;
+  }
   try {
     // `update` now exits non-zero when it could not do its job (e.g. no
     // installed platform), which `defaultCliRunner` surfaces as a rejection.
@@ -1777,6 +1787,8 @@ export async function handleLauncherUpdate(
     console.error('[launcher] update failed:', err);
     const detail = err instanceof Error ? err.message : 'unknown error';
     sendError(res, 500, 'update_failed', `Update failed: ${detail}`);
+  } finally {
+    releaseProjectUpdatesLock();
   }
 }
 
