@@ -33,6 +33,8 @@ import { agentKeyOf, readManifestFrontmatter } from '../../lib/agents/slot.js';
 import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
 import type { AgentIdentityPatch } from '../../lib/agents/types.js';
 import { agentModelChoices, parseModelOverride } from '../../lib/agents/model-choices.js';
+import { runLeavesNoSession, wouldStickToSession } from '../../lib/automations/light-run.js';
+import { readRunSidecar } from '../../lib/automations/store.js';
 import { resolveRunSession, readSessionDigest } from '../../lib/automations/session.js';
 import { foreignRunEvidence } from '../../lib/automations/session-registry.js';
 import {
@@ -472,6 +474,8 @@ export async function handleAutomationsShow(
         // Hashed when not `balanced`, and LAST in APPROVAL_DIFF_FIELDS: how much its agent
         // decides alone, which is the permission mode of its sessions.
         autonomy: manifest.autonomy ?? DEFAULT_AGENT_AUTONOMY,
+        // Hashed when named: the review shows what a light job of it may call.
+        readTools: manifest.readTools ?? [],
         prompt: manifest.prompt,
         outputInstructions: manifest.outputInstructions,
         // NOT hashed and deliberately so (it changes every run), but shown:
@@ -2082,6 +2086,12 @@ export async function handleAutomationsThreadRead(
   }
 }
 
+/** A run in flight that leaves no session (`runLeavesNoSession`): nothing can queue behind it. */
+function onOneOffJob(contextRoot: string, manifest: AutomationManifest, busy: ReturnType<typeof currentAutomationJob>): boolean {
+  return (busy?.status === 'running' && runLeavesNoSession(manifest, busy.override))
+    || readRunSidecar(contextRoot, manifest.slug)?.noSession === true;
+}
+
 /** Who is calling an agent by name: a person typing right now, or the Super Agent handing a
  *  member a job while the owner has handed the Chat screen over (`super team ask`). */
 export type SayVia = 'dashboard' | 'assistant' | 'super';
@@ -2162,6 +2172,12 @@ export function sayToAgent(
     const busy = currentAutomationJob(contextRoot, slug);
     const working = agentActivity(contextRoot, slug);
     if (busy?.status === 'running' || working) {
+      // A run that leaves no session has nothing to queue behind: a reply would wait for it and
+      // then find no conversation. Said now, the same way as any member too busy to take it.
+      // So is a job that may not enter the session it would queue into.
+      if (onOneOffJob(contextRoot, manifest, busy) || wouldStickToSession(manifest, input.override)) {
+        return sayRefusal(409, 'say_busy', `${manifest.title} is on a one-off job or cannot take this one in its session. Try again when it finishes.`);
+      }
       const liveRun = working?.runId
         ?? (busy?.status === 'running' ? busy.runId : null)
         ?? listThreadRuns(contextRoot, slug, 1)[0]?.runId
@@ -2197,7 +2213,7 @@ export function sayToAgent(
     // guard, and its refusal reaches the channel within seconds as a `system:failed`
     // entry carrying its own sentence. A second copy of the check here would drift from
     // the one that actually decides.
-    if (manifest.mode === 'sched' && latestBoundSession(slug)) {
+    if (manifest.mode === 'sched' && latestBoundSession(slug) && !wouldStickToSession(manifest, input.override)) {
       const entry = appendThreadEntry(contextRoot, slug, {
         runId, kind: 'user', text: shown, via, now: fireAt,
       });
@@ -2379,6 +2395,10 @@ export async function handleAutomationsThreadReply(
     // produced a session, so nothing here could carry the reply — and a reply that will
     // never execute must not be left in the channel looking delivered.
     // A run in flight is the exception: it is about to bind the session this reply queues for.
+    if (onOneOffJob(contextRoot, manifest, currentAutomationJob(contextRoot, slug))) {
+      sendError(res, 409, 'say_busy', `${manifest.title} is on a one-off job. Try again when it finishes.`);
+      return;
+    }
     if (!latestBoundSession(slug) && !agentActivity(contextRoot, slug)) {
       sendError(
         res, 409, 'not_bound',

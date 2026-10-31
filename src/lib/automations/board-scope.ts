@@ -318,6 +318,15 @@ function absRule(tool: string, realPath: string, glob = '/**'): string {
   return `${tool}(/${realPath}${glob})`;
 }
 
+/** The credential folders and files of a home, as deny rules. */
+export function credentialReadDenies(userHome?: string): string[] {
+  const home = userHome ?? realHome();
+  return [
+    ...CREDENTIAL_HOME_DIRS.map((d) => absRule('Read', join(home, d))),
+    ...CREDENTIAL_HOME_FILES.map((f) => absRule('Read', join(home, f), '')),
+  ];
+}
+
 /**
  * The scoped permission argv, PURE. For a scoped agent it replaces
  * `--permission-mode bypassPermissions` wherever that sits, and nothing else changes.
@@ -343,8 +352,7 @@ export function boardScopeArgs(
     '--disallowedTools',
     ...BOARD_AGENT_DISALLOWED_TOOLS,
     // Credential reads. Read rules also govern Grep and Glob (confirmed on a real claude).
-    ...CREDENTIAL_HOME_DIRS.map((d) => absRule('Read', join(home, d))),
-    ...CREDENTIAL_HOME_FILES.map((f) => absRule('Read', join(home, f), '')),
+    ...credentialReadDenies(home),
     ...CREDENTIAL_ANYWHERE.map((g) => `Read(${g})`),
   ];
 }

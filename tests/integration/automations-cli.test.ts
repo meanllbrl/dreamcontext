@@ -419,7 +419,8 @@ describe('automations CLI (integration)', () => {
     // Appended LAST and omitted when empty, so every older hash is unchanged.
     // 12 → 13 with `autonomy` (AI Team v2): Free runs bypassPermissions, so a synced move to it
     // must block; omitted when `balanced`, so every existing hash is unchanged.
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(13);
+    // 13 → 14 with `readTools`: the MCP tools a light job may call; omitted when none.
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(14);
     for (const field of APPROVAL_DIFF_FIELDS) {
       expect(yesOut.stdout).toContain(field);
     }

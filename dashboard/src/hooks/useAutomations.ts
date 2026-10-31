@@ -290,6 +290,8 @@ export interface AutomationManifestDetail {
   /** Hashed when not `balanced`, LAST: its agent's autonomy level, which decides the permission
    *  mode of every session it runs in. Absent on an older backend, which means `balanced`. */
   autonomy?: 'ask' | 'balanced' | 'free';
+  /** Hashed when named, LAST: the MCP read tools a light job of it may call. */
+  readTools?: string[];
   prompt: string;
   outputInstructions: string;
   pattern: AutomationPattern;

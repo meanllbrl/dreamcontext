@@ -285,14 +285,16 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       'his decisions, cost or risk in money, never time) and your text gives the same summary, as long as',
       expect.stringContaining('it needs (the exception to 2-4).'),
       '- Your AI Team, when the project has one, is listed under `## Your AI Team` (and in `super state`',
-      "  members): check it first for every job; a member's field is that member's job",
-      '  (`super team ask <member> "<job>"`, in its own thread), never a sub-agent.',
+      '  members): check it first for every job. A diagnosis, draft, send, a change or several sources in',
+      "  a member's field is that member's job (`super team ask <member> \"<job>\"`, in its own thread),",
+      '  never a sub-agent. A small read of ONE source, changing nothing, is yours; out of your reach,',
+      '  add `--light` (read-only tools, cheap model). `--model`/`--effort` set one job, never the member.',
       '- A global agent (this Mac\'s; `agents list` marks it) is an AI Team member too: `super team ask`',
       '  it, never a child or a sub-agent.',
       expect.stringContaining('with `origin=<ref>`'),
       '  result with `<!-- re:<ref> -->`.',
-      expect.stringContaining('<super-brief rev=19>'),
+      expect.stringContaining('<super-brief rev=20>'),
     ]);
-    expect(after.length).toBe(before.length + 11);
+    expect(after.length).toBe(before.length + 13);
   });
 });

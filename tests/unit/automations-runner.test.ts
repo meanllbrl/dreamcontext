@@ -889,6 +889,52 @@ describe('runAutomation — completed runs', () => {
   });
 });
 
+describe('runAutomation — a light job leaves nothing behind', () => {
+  const fire = async (slug: string, override?: { model: string; effort: 'low'; light?: true; oneJob?: true }) => {
+    const { child, emitClose, emitStdout } = makeFakeChild(1400);
+    const run = runAutomation(contextRoot, slug, { now: () => NOW, home, spawnImpl: makeSpawnImpl(child), notify: () => {}, ...(override ? { override } : {}) });
+    await vi.waitFor(() => expect(child.stdout.listenerCount('data')).toBeGreaterThan(0));
+    emitStdout(CLAUDE_JSON_OK);
+    emitClose(0);
+    return run;
+  };
+
+  it('binds no session and moves no watermark: a full job never resumes a turn that skipped the reading', async () => {
+    const { slug } = createApproved('light-leaves-nothing');
+    const outcome = await fire(slug, { model: 'haiku', effort: 'low', light: true });
+    expect(outcome.status).toBe('ok');
+    expect(latestBoundSession(slug, home)).toBeNull();
+    expect(readAutomationCache(contextRoot, slug)?.lastFireAt ?? null).toBeNull();
+    expect(outcome.event?.sessionId).toBeNull();
+  });
+
+  it('one job\'s model on an agent with none is not bound either: it would stick to the session', async () => {
+    const { slug } = createApproved('one-job-model');
+    await fire(slug, { model: 'haiku', effort: 'low', oneJob: true });
+    expect(latestBoundSession(slug, home)).toBeNull();
+  });
+
+  it('a run that stopped on a question still binds: the answer must have a session to resume', async () => {
+    const { slug } = createApproved('asked-binds', { review: 'output' } as never);
+    await fire(slug, { model: 'haiku', effort: 'low', oneJob: true });
+    expect(latestBoundSession(slug, home)).toBe('sess_abc123');
+  });
+
+  it('the sidecar keeps its marks through a read: kill and the busy check depend on them', () => {
+    const base = { slug: 'marks', runnerPid: 4000, childPid: 4001, childPgid: 4001, fireAt: NOW.toISOString(), startedAt: NOW.toISOString(), timeoutAt: NOW.toISOString() };
+    mkdirSync(join(contextRoot, 'automations', 'cache'), { recursive: true });
+    writeRunSidecar(contextRoot, 'marks', { ...base, light: true, noSession: true });
+    expect(readRunSidecar(contextRoot, 'marks')).toMatchObject({ light: true, noSession: true });
+  });
+
+  it('the same run without light does both', async () => {
+    const { slug } = createApproved('full-binds');
+    await fire(slug);
+    expect(latestBoundSession(slug, home)).toBe('sess_abc123');
+    expect(readAutomationCache(contextRoot, slug)?.lastFireAt).not.toBeNull();
+  });
+});
+
 describe('runAutomation — sidecar retention (rev-5 regression)', () => {
   it('a second run attempt does NOT overwrite a live orphan\'s sidecar record', async () => {
     const manifest = createApproved('retention-check');

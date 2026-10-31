@@ -93,6 +93,9 @@ export interface AgentManifest {
   /** Its figure (`face: {shape, color}`), stamped at create; null on a manifest written before
    *  figures existed (the page then draws the bare hash). Unhashed, like `photo`. */
   face: AgentFace | null;
+  /** The MCP tools its light jobs may call (`read_tools:`, literal names, set by hand in the
+   *  file; `light-run.ts`). Absent = none: a light job then has the file readers only. Hashed. */
+  readTools?: string[];
   /** Its creator's GitHub login (`owner:`), `machine:<id>` before anyone signed in on that machine,
    *  `unowned` when no creator could be worked out, null on a file the migration has not stamped
    *  yet. Unhashed. Only the owner writes, runs, talks to or assigns it (`agents/owner.ts`). */

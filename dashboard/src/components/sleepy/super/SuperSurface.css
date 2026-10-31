@@ -681,6 +681,9 @@
 .super-team-who .agent-av,
 .super-team-who img { flex: none; }
 .super-tile[data-tile='team'] .super-tile-line { -webkit-line-clamp: 2; }
+/* What the job runs on, one line: the last line gives up a row, so the card keeps its height. */
+.super-tile-runs-on { font-size: var(--font-size-2xs); color: var(--color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.super-tile[data-tile='team']:has(.super-tile-runs-on) .super-tile-line { -webkit-line-clamp: 1; }
 .super-card-view--team { display: flex; height: 100%; }
 /* Shown side by side, its member's conversation (the AI Team pane): it scrolls itself. */
 .super-card-large-body:has(> .aiteam-convo) { overflow: hidden; }

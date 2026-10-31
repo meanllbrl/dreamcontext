@@ -37,6 +37,8 @@ export interface AutomationJobState {
    *  already wrote into this run's thread — the `#agents` composer — addresses
    *  the message it just posted. `null` for a plain "run now". */
   runId: string | null;
+  /** The ask's own settings, for what arrives while it runs (`runLeavesNoSession`). */
+  override?: SpawnModelOverride | null;
 }
 
 /** What turns a "run now" into an ASK: the human's words, and the fire time the
@@ -161,6 +163,7 @@ export function startAutomationJob(
     outcome: null,
     error: null,
     runId: ask ? ask.fireAt.toISOString() : null,
+    ...(ask?.override ? { override: ask.override } : {}),
   };
   if (!bySlug) { bySlug = new Map(); jobs.set(contextRoot, bySlug); }
   bySlug.set(slug, job);
@@ -291,7 +294,7 @@ async function runJob(contextRoot: string, job: AutomationJobState, ask?: Automa
     // original error, which is why this is its own try/catch.
     // Never for a run that names its target or carries a task: a replayed bare
     // slug would fire a same-slug pair's job, or the agent without its task.
-    if (!ask?.target && !ask?.task) {
+    if (!ask?.target && !ask?.task && !ask?.override?.light) {
       try {
         enqueueFire(dirname(contextRoot), job.slug, new Date(job.startedAt).toISOString());
       } catch {
@@ -630,9 +633,11 @@ async function replyOrAnswer(
 ): Promise<TalkOutcome> {
   // Synchronous up to the first resume call, on purpose: the job starts its turn in the
   // same tick it was created, exactly as it did before this routing existed.
+  // Never a light job: read-only, it would spend the answer on a turn that cannot act on it.
+  // It goes to `resumeWithMessage`, whose refusal reaches the Super as this job's failure.
   const openQuestion = () => {
     const q = pendingQuestion(contextRoot, slug);
-    return q && q.kind === 'flow-hitl' ? q : null;
+    return q && q.kind === 'flow-hitl' && !verdictOpts.override?.light ? q : null;
   };
   const answer = async (q: NonNullable<ReturnType<typeof openQuestion>>): Promise<TalkOutcome> => {
     const answered = await resumeWithAnswer(contextRoot, q, text, 'dashboard', verdictOpts);

@@ -126,7 +126,7 @@ export function teamFingerprint(members: readonly TeamMember[]): string {
 }
 
 /** The whole block (header, rules and member lines) stays under this; the rest is counted. */
-export const TEAM_BLOCK_MAX_CHARS = 2_000;
+export const TEAM_BLOCK_MAX_CHARS = 2_300;
 /** A member's field in the block: shorter than the chat roster's, so more members fit. */
 const BLOCK_ROLE_CHARS = 110;
 
@@ -138,9 +138,11 @@ const STATE_LABEL: Record<MemberState, string> = { ready: 'ready', 'needs-approv
 
 const TEAM_RULES = [
   "The owner's standing specialists. For EVERY job, before you delegate it or answer it yourself: does it fall in one member's",
-  'field below? Then it is that member\'s job.',
-  '- ready: `dreamcontext super team ask <slug> "<self-contained ask>" --brief "<line>"`. Never a plain child for it, never',
-  '  your own answer. Its result comes back as an event (`team=<job> event=done`, with its Answer); `dreamcontext super read',
+  'field below? Then a diagnosis, a draft, a send, anything that changes something, or a job across several sources is that',
+  "member's job. A small read of ONE source (one chat, one record), changing nothing, is yours when you can reach it.",
+  '- ready: `dreamcontext super team ask <slug> "<self-contained ask>" --brief "<line>"`; `--model`/`--effort` for this job',
+  '  only; `--light` for a one-source read you cannot reach yourself (read-only tools, cheap model). Never a plain child for',
+  '  a member\'s job. Its result comes back as an event (`team=<job> event=done`, with its Answer); `dreamcontext super read',
   '  <team-id>` gives it whole; relay it when the owner waits on it. A follow-up is another `super team ask` to that member.',
   '- needs approval: still `super team ask` it (the owner gets the approval question); tell him in one line; a plain child',
   '  only if he says so.',
@@ -359,7 +361,7 @@ export function teamPromptDirectives(i: { prompt: string; contextRoot: string; r
   const member = agentHit ? callable.find((m) => m.slug === agentHit.doc.slug) : undefined;
   if (member) {
     const how = i.route === 'super'
-      ? `\`dreamcontext super team ask ${member.slug} "<the job>"\`, not a child or your own answer.`
+      ? `a small read of one source changing nothing is yours (or \`--light\`); a diagnosis, draft, send or several sources: \`dreamcontext super team ask ${member.slug} "<the job>"\`, not a child.`
       : 'offer the owner to ask it before you do its job yourself.';
     lines.push(`→ AI TEAM MEMBER \`${member.slug}\` (${safeTitle(member.title)}): this is its field: ${how}`);
   }

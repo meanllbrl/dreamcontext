@@ -42,6 +42,7 @@ export function TeamTile({ card }: { card: TeamCard }) {
   const working = status === 'running';
   const spin = useSpinSlot(card.job.id, working);
   const line = card.lastLine || card.job.brief;
+  const runsOn = [card.job.light ? t('super.team.light') : '', card.job.model, card.job.effort].filter(Boolean).join(' · ');
   return (
     <div className="super-tile" data-tile="team" data-kind={kind} data-super-tone={toneOfStatus(kind)} data-team-status={status} data-testid="super-team-tile" title={name}>
       <span className="super-tile-corners" aria-hidden />
@@ -55,6 +56,7 @@ export function TeamTile({ card }: { card: TeamCard }) {
         <span className="super-tile-title" data-testid="super-team-took">{t('super.team.took').replace('{name}', name)}</span>
       </div>
       <div className="super-tile-line" data-testid="super-team-line">{line}</div>
+      {runsOn && <div className="super-tile-runs-on" data-testid="super-team-runs-on" title={runsOn}>{runsOn}</div>}
       <div className="super-tile-foot">
         <span className="super-tile-state" data-testid="super-team-state">{t(`super.team.state.${status}`)}</span>
         <span>· {elapsedLabel(Date.now() - card.job.startedAt)}</span>

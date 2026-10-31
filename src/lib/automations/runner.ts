@@ -20,6 +20,7 @@ import { mcpStoreFiles } from '../mcp-store.js';
 import { recordAccountRejection } from '../claude-limit-rejections.js';
 import type { ProbeOutcome } from '../claude-usage-probe.js';
 import { levelBrief } from '../agents/permission.js';
+import { LIGHT_JOB_BLOCK, lightRunArgs, runLeavesNoSession } from './light-run.js';
 import {
   automationAccountWithoutProbe, pickAutomationAccount, protectedAutomationAccount, recordAccountWait, type AutomationAccount,
 } from './account.js';
@@ -591,6 +592,9 @@ export function composePrompt(
    *  prompt has left. A function so the budget is known before the block is: the history
    *  shrinks to fit, never the owner's message. Absent ⇒ no history block. */
   history?: ((maxBytes: number) => string) | null,
+  /** A light job (`light-run.ts`): its block joins the prompt and the learning directive leaves,
+   *  since this turn cannot run it. The approved prompt stays as it is, byte for byte. */
+  light?: boolean,
 ): string {
   const parts = [
     buildPreamble(m, projectRoot, fireAt, outputPath, telegramChatId, board?.scope ?? null), '', m.prompt.trim(),
@@ -625,8 +629,9 @@ export function composePrompt(
   // The agent's recent history goes right under its pattern: both are notes, both lose to
   // everything approved above, and the owner's live message still comes after them.
   const historyAt = parts.length;
-  const learning = buildLearningDirective(m);
+  const learning = light ? '' : buildLearningDirective(m);
   if (learning) parts.push('', learning);
+  if (light) parts.push('', LIGHT_JOB_BLOCK);
   // The assigned task: DATA under its own fresh nonce, after every approved block
   // and before the owner's live note.
   if (task) parts.push('', buildTaskAssignmentBlock(task, newTurnNonce()));
@@ -1100,7 +1105,8 @@ export function buildClaudeArgs(
   scopeArgs?: readonly string[] | null,
   override?: SpawnModelOverride | null,
 ): string[] {
-  const permission = scopeArgs ? [...scopeArgs] : ['--permission-mode', 'bypassPermissions'];
+  // A light job's envelope beats every other: read-only sits under any level and any home board.
+  const permission = override?.light ? lightRunArgs(m) : scopeArgs ? [...scopeArgs] : ['--permission-mode', 'bypassPermissions'];
   const args = ['-p', prompt, ...permission, '--output-format', 'json'];
   const { model, effort } = spawnModel(m, override);
   if (model) args.push('--model', model);
@@ -2186,7 +2192,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // the queue replays a bare slug through `getAutomation`, which would fire a
     // same-slug pair's JOB in place of its agent, or the agent without its task.
     // Its caller reports the deferral instead.
-    if (!opts.target && !opts.task) {
+    // A light job is never replayed: the queue holds a bare slug, a full run of the agent.
+    if (!opts.target && !opts.task && !opts.override?.light) {
       try {
         enqueueFire(projectRoot, slug, fireAt.toISOString(), home);
       } catch (err) {
@@ -2379,7 +2386,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         durationMs: 0,
         // Consumed, not owed: the cause (a deleted board, a symlink) outlives the next tick,
         // so leaving the fire owed would raise this same banner every five minutes.
-        advanceWatermark: true,
+        advanceWatermark: !opts.override?.light,
         notify: true,
       });
     }
@@ -2397,6 +2404,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       (maxBytes) => buildRecentHistoryBlock(contextRoot, manifest.agent, {
         nonce: newTurnNonce(), now: nowFn(), totalBytes: maxBytes, excludeRunId: fireAt.toISOString(),
       }),
+      opts.override?.light === true,
     );
 
     // Steps 7–12 — spawn (detached, own process group), wire the host, collect,
@@ -2435,7 +2443,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         ...(taskStep ? taskStep.env : {}),
       },
       timeoutMs: budgetMs,
-      sharedMcpHome: scopeArgs ? undefined : accountsHome,
+      // A light job's envelope names its MCP tools, on a home board too.
+      sharedMcpHome: scopeArgs && !opts.override?.light ? undefined : accountsHome,
       spawnImpl: spawnFn,
       killImpl: killFn,
       log: logFn,
@@ -2453,6 +2462,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
           startedAt: spawnedAt.toISOString(),
           timeoutAt: new Date(spawnedAt.getTime() + budgetMs).toISOString(),
           ...(opts.target === 'agent' ? { target: 'agent' as const } : {}),
+          ...(opts.override?.light ? { light: true as const } : {}),
+          ...(runLeavesNoSession(manifest, opts.override) ? { noSession: true as const } : {}),
         });
         taskStep?.onChild?.(child.pid as number);
 
@@ -2642,7 +2653,11 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // afterwards. Only the runner may write it — it is the process that
         // spawned the session, so it is the only thing that knows first-hand
         // which session belongs to which slug.
-        bindSession(claudeResult.sessionId);
+        // A run that leaves no session still binds one that stopped on a question: an answer
+        // resumes it, and a question nothing can answer would hold the agent for good.
+        if (!runLeavesNoSession(manifest, opts.override) || pendingQuestionFor(contextRoot, slug, isAgentTarget ? 'agent' : 'automation')) {
+          bindSession(claudeResult.sessionId);
+        }
 
         // Did this fire end with a human owing a verdict? Either the run asked
         // for one itself (`review: agent` → `automations propose`), or the
@@ -2850,14 +2865,16 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       resultText: claudeResult?.result ?? null,
       reviewCardId,
       reviewStagedPath,
-      sessionId: claudeResult?.sessionId ?? null,
+      // Bound or nothing: an unbound session in the history reads as a run on another machine.
+      sessionId: runLeavesNoSession(manifest, opts.override) ? null : claudeResult?.sessionId ?? null,
       costUsd: claudeResult?.costUsd ?? null,
       numTurns: claudeResult?.numTurns ?? null,
       permissionDenials: claudeResult?.permissionDenials ?? 0,
       startedAt,
       finishedAt,
       durationMs,
-      advanceWatermark: true,
+      // A light read stands in for no scheduled fire.
+      advanceWatermark: !opts.override?.light,
       notify: true,
     });
   } finally {
@@ -3040,7 +3057,7 @@ export function killRunGroup(
     numTurns: null,
     permissionDenials: 0, // "not collected", never "none occurred" on this path
   };
-  recordRun(contextRoot, slug, event, { advanceWatermark: true });
+  recordRun(contextRoot, slug, event, { advanceWatermark: !sidecar.light });
   logFn(`automation "${slug}": operator killed process group ${sidecar.childPgid}`);
 
   // Guard 7 — clear.

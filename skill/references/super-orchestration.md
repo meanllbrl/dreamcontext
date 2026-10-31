@@ -10,7 +10,7 @@ says how to turn "do these 10 things" into safe, parallel children that finish f
    (reuse a task, never fork one), a quick `grep` for each item's footprint (repo + files or area).
    A `dreamcontext-explore` sub-agent when it needs more. Never read code in depth yourself.
 3. **Team check.** For each item: is it one AI Team member's field (`## Your AI Team` in your
-   prompt, `super state` members)? Then it is a `super team ask` unit for that member, not a child.
+   prompt, `super state` members)? Then: `super team ask`, not a child (a one-source read is yours).
 4. **Units.** Items whose footprints share a file, or the same brain file, become ONE unit. The same
    feature area stays one unit unless there is a clean seam. One unit = one session's work.
 5. **Dependencies.** B depends on A when B consumes A's output (an API, a task, a decision). Wave 1 =

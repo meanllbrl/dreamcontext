@@ -9,7 +9,8 @@ import {
   ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, viewWithout,
   type AskShow, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
-import { parseJob, promptHash } from './jobs.js';
+import { JOB_EFFORTS, parseJob, promptHash } from './jobs.js';
+import { sanitizeModel } from '../claude-args.js';
 import { capAskShows } from './ask-show.js';
 import { OWNER_WAIT_KINDS, type OwnerWaitKind } from './owner-wait.js';
 import { parseMcpNames } from './lean-mcp.js';
@@ -370,6 +371,9 @@ function sanitizeTeam(raw: unknown): SuperTeamJob[] {
       ...(finite(j.endedAt) !== undefined ? { endedAt: finite(j.endedAt) } : {}),
       ...(j.awaited === true ? { awaited: true as const } : {}),
       ...(typeof j.origin === 'string' && MSG_REF_RE.test(j.origin) ? { origin: j.origin } : {}),
+      ...(typeof j.model === 'string' && sanitizeModel(j.model) ? { model: j.model } : {}),
+      ...(typeof j.effort === 'string' && (JOB_EFFORTS as readonly string[]).includes(j.effort) ? { effort: j.effort } : {}),
+      ...(j.light === true ? { light: true as const } : {}),
       ...(j.told === 'done' || j.told === 'stuck' || j.told === 'question' ? { told: j.told } : {}),
       ...(j.told === 'question' && typeof j.toldQuestion === 'string' && ENTRY_ID_RE.test(j.toldQuestion) ? { toldQuestion: j.toldQuestion } : {}),
       ...(j.open === true ? { open: true as const } : {}),
