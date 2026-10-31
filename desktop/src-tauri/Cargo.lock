@@ -976,7 +976,7 @@ dependencies = [
 
 [[package]]
 name = "dreamcontext-desktop"
-version = "0.36.7"
+version = "0.36.8"
 dependencies = [
  "block2",
  "cpal",
