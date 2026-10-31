@@ -287,6 +287,11 @@ describe('the pill while the Assistant works (notchModel.ts)', () => {
     expect(assistantActivityLine([tool('dreamcontext assistant look'), { kind: 'user' }], null)).toBe('Thinking…');
     const base = { name: 'Dreamy', asker: null, proposals: 0, finished: null, handoffs: [] };
     expect(pillHeadline({ ...base, self: 'Asking larkspur…' })).toBe('Asking larkspur…');
+    const sup = { vault: 'korus', super: true as const, ask: null };
+    expect(pillHeadline({ ...base, chats: [sup] })).toBe('korus Super is on it');
+    expect(pillHeadline({ ...base, chats: [sup, { ...sup, vault: 'larkspur' }] })).toBe('2 Super Agents on it');
+    expect(pillHeadline({ ...base, asker: 'korus', chats: [sup] })).toBe('korus needs you');
+    expect(pillHeadline({ ...base, chats: [{ vault: 'korus', ask: null }] })).toBe(base.name);
     expect(pillHeadline({ ...base, self: 'Asking larkspur…', asker: 'korus' })).toBe('korus needs you');
     expect(pillHeadline({ ...base, running: [{ vault: 'a', slug: 'digest', title: 'Daily digest', hasPhoto: false, since: 1, runId: null }] })).toBe('Daily digest is working');
   });

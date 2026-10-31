@@ -1616,7 +1616,7 @@ export function Notch() {
   const self = session && busy && !expanded
     ? assistantActivityLine(session.getModel().items as unknown as ActivityItem[], progressLine)
     : null;
-  const pillText = pillHeadline({ name, asker: asker?.vault ?? null, proposals: rollup.proposals, finished: finishedVault, handoffs, self, running: inbox.running });
+  const pillText = pillHeadline({ name, asker: asker?.vault ?? null, proposals: rollup.proposals, finished: finishedVault, handoffs, self, running: inbox.running, chats: glance });
   // The "Now" tab's count: everything that waits on the owner or is still running for them.
   const nowCount = glance.filter((c) => c.ask).length + proposals.length + inboxCount
     + handoffs.filter((h) => handoffPhase(h) === 'running').length;

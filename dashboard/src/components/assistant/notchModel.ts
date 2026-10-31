@@ -67,6 +67,10 @@ export interface GlanceChat {
   /** The row is the Super Agent's (the server's `super: true`, routes/assistant.ts superGlanceRows):
    *  drawn with its glyph so the owner tells it from an ordinary chat at a glance. */
   super?: true;
+  /** A Super Agent's row at work: its children with a turn in flight. */
+  jobs?: number;
+  /** The Super itself has a turn in flight too (it may sit idle while its children run). */
+  selfBusy?: true;
 }
 
 const GLANCE_ACTIVITIES = new Set(['asking', 'working', 'starting', 'stale']);
@@ -101,6 +105,8 @@ export function readGlance(raw: unknown): GlanceChat[] {
         ? { id: a.id, kind: a.kind === 'permission' ? 'permission' : 'question', tool: typeof a.tool === 'string' ? a.tool : '', text: unwrapUntrusted(a.text) }
         : null,
       ...(o.super === true ? { super: true as const } : {}),
+      ...(typeof o.jobs === 'number' && Number.isFinite(o.jobs) && o.jobs > 0 ? { jobs: Math.floor(o.jobs) } : {}),
+      ...(o.selfBusy === true ? { selfBusy: true as const } : {}),
     });
   }
   return out;
@@ -122,6 +128,10 @@ export function notchMood(r: Rollup, justFinished: boolean): NotchMood {
 export function glanceStatus(c: GlanceChat): string {
   if (c.ask) return c.ask.kind === 'permission' ? 'needs permission' : 'has a question';
   if (c.activity === 'asking') return 'needs you';
+  if (c.jobs) {
+    const jobs = `${c.jobs} job${c.jobs === 1 ? '' : 's'}`;
+    return c.selfBusy ? `working + ${jobs}` : `${jobs} running`;
+  }
   if (c.activity === 'stale') return 'quiet for a while';
   if (c.activity === 'starting') return 'starting';
   return 'working';
@@ -199,6 +209,8 @@ export function pillHeadline(input: {
   self?: string | null;
   /** Running automations, newest first. */
   running?: RunningAutomation[];
+  /** The glance rows: a project's Super Agent at work is said by name. */
+  chats?: Pick<GlanceChat, 'vault' | 'super' | 'ask'>[];
 }): string {
   if (input.asker) return `${input.asker} needs you`;
   if (input.proposals > 0) return input.proposals === 1 ? 'Waiting for your yes' : `${input.proposals} waiting for your yes`;
@@ -208,6 +220,9 @@ export function pillHeadline(input: {
   const running = input.handoffs.filter((h) => handoffPhase(h) === 'running');
   if (running.length === 1) return `${running[0].vault} is on it`;
   if (running.length > 1) return `${running.length} projects on it`;
+  const supers = (input.chats ?? []).filter((c) => c.super && !c.ask);
+  if (supers.length === 1) return `${supers[0].vault} Super is on it`;
+  if (supers.length > 1) return `${supers.length} Super Agents on it`;
   const automations = input.running ?? [];
   if (automations.length === 1) return `${automations[0].title || automations[0].slug} is working`;
   if (automations.length > 1) return `${automations.length} teammates working`;
