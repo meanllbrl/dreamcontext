@@ -122,6 +122,8 @@ export class ToWire {
   readonly questionsByRequest = new Map<string, ReadonlyArray<{ id: string; question: string }>>();
   private turnOpen = false;
   private lastAssistantText = '';
+  /** This turn's tokens, as T3 reported them last. */
+  private turnUsage: { input: number; cached: number; output: number } | null = null;
   /** The model context in use, from `provider_thread.updated` (`contextUsage.usedTokens`). */
   contextTokens = 0;
   /** The native thread id (`system/init` `session_id`). */
@@ -180,8 +182,13 @@ export class ToWire {
       case 'provider_turn.updated': {
         // Codex reports the context of its last request per turn (`last.totalTokens`); T3's
         // orchestrator copies it onto the thread's `contextUsage`, which we read above too.
-        const used = event.providerTurn.tokenUsage?.usedTokens;
+        const usage = event.providerTurn.tokenUsage;
+        const used = usage?.usedTokens;
         if (typeof used === 'number' && used > 0) this.contextTokens = used;
+        // What a headless run's cost estimate reads (run.ts). A chat never looks at it.
+        if (usage && (usage.inputTokens !== undefined || usage.outputTokens !== undefined)) {
+          this.turnUsage = { input: usage.inputTokens ?? 0, cached: usage.cachedInputTokens ?? 0, output: usage.outputTokens ?? 0 };
+        }
         return event.providerTurn.status === 'running' ? this.beginTurn(now) : [];
       }
       case 'turn_item.updated':
@@ -379,6 +386,7 @@ export class ToWire {
       usage: { input_tokens: this.contextTokens, output_tokens: 0 },
       session_id: this.sessionId,
       dc_tool: this.opts.tool,
+      ...(this.turnUsage ? { dc_turn_usage: this.turnUsage } : {}),
       ...(failure?.class === 'usage_limit' ? { dc_limit: { resetsAtMs: Number.isFinite(limitResetMs) ? limitResetMs : null } } : {}),
     });
     this.turnOpen = false;

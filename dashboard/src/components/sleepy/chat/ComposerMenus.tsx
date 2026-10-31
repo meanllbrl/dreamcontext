@@ -1,3 +1,4 @@
+import type { PickerToolState } from './model-picker/pickerModel';
 import { useState, type ReactNode } from 'react';
 import {
   CONTEXT_TIGHT_PCT,
@@ -315,48 +316,17 @@ function ModelRow({
   );
 }
 
-/** The composer's tool pick (Track T W1): which tool THIS chat runs on, and how to open a chat
- *  on the other one. Temporary until the r29 picker (W4) replaces the whole menu. */
+/** What the r29 picker draws for an ordinary chat (Track T W4): every tool's models, and how to
+ *  open a chat on another tool. Absent = the plain menu below (AI Team, Super Agent). */
 export interface ToolPick {
   current: '' | 'codex';
-  /** Codex's readiness from `/api/agent/tools`; null = the server does not offer it. */
-  codex: { ready: boolean; installed: boolean; signedIn: boolean; nodeOk: boolean } | null;
-  onPick: (tool: '' | 'codex') => void;
-}
-
-function ToolRows({ pick, close }: { pick: ToolPick; close: () => void }) {
-  const codex = pick.codex;
-  const codexNote = !codex ? null : !codex.installed ? 'Not installed' : !codex.signedIn ? 'Sign in with codex login' : !codex.nodeOk ? 'Needs Node 22.16 or newer' : null;
-  const row = (tool: '' | 'codex', label: string, note: string | null, disabled: boolean) => (
-    <button
-      key={tool || 'claude'}
-      type="button"
-      role="menuitemradio"
-      aria-checked={pick.current === tool}
-      className={`chat-cmp-modelrow${pick.current === tool ? ' is-active' : ''}`}
-      disabled={disabled}
-      onClick={() => { if (pick.current !== tool) pick.onPick(tool); close(); }}
-    >
-      <span className="chat-cmp-modelrow-head">
-        <span className="chat-cmp-modelrow-name">{label}</span>
-        {pick.current !== tool && !disabled && <span className="chat-cmp-modelrow-meta">New chat</span>}
-      </span>
-      {note && <span className="chat-cmp-modelrow-insight">{note}</span>}
-    </button>
-  );
-  return (
-    <>
-      <span className="chat-cmp-grouplabel">Tool</span>
-      {row('', 'Claude', null, false)}
-      {codex && row('codex', 'Codex', codexNote, !codex.ready)}
-      <div className="chat-cmp-menu-divider" />
-    </>
-  );
+  tools: PickerToolState[];
+  onPick: (tool: '' | 'codex', model: string) => void;
 }
 
 export function ModelMenu({
   config, model, effort, onModelChange, onEffortChange, onSetDefault, savedDefault, close,
-  head, foot, defaultId, defaultLine, toolPick,
+  head, foot, defaultId, defaultLine,
 }: {
   config: ModelConfig;
   model: string;
@@ -380,8 +350,6 @@ export function ModelMenu({
   defaultId?: string;
   /** The new shell (W2-C): what new chats start with now, beside "Set as default". */
   defaultLine?: string;
-  /** Draws the Claude / Codex group above the models. Absent = no tool choice here. */
-  toolPick?: ToolPick;
 }) {
   const [otherOpen, setOtherOpen] = useState(false);
   const { primary, other } = splitModels(config, model);
@@ -391,7 +359,6 @@ export function ModelMenu({
   return (
     <div className="chat-cmp-modelmenu" role="menu" aria-label="Model and reasoning effort">
       {head}
-      {toolPick && <ToolRows pick={toolPick} close={close} />}
       <span className="chat-cmp-grouplabel">Model</span>
       <div className="chat-cmp-scroll">
         {primary.map((m) => (

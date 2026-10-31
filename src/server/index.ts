@@ -1,4 +1,5 @@
 import { handleAgentTools } from './routes/agent-tools.js';
+import { handleAgentToolHandoff } from './routes/agent-tool-handoff.js';
 import {
   handleCodexAccountsAdopt, handleCodexAccountsList, handleCodexAccountsLogin, handleCodexAccountsRefresh,
   handleCodexAccountsRemove, handleCodexAccountsReorder,
@@ -595,6 +596,7 @@ export function buildRouter(): Router {
   router.get('/api/agent/model-config', handleAgentModelConfig);
   // The tools a chat can run on (Track T): read from disk, agnostic like model-config.
   router.get('/api/agent/tools', handleAgentTools);
+  router.post('/api/agent/tool-handoff', handleAgentToolHandoff);
   // The account's 5-hour + weekly caps, from Claude Code's own cache. Vault-agnostic for
   // the same reason model-config is: it reads the user's install, not a project.
   router.get('/api/agent/usage-limits', handleAgentUsageLimits);

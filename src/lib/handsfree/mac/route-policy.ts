@@ -311,6 +311,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agent/accounts/codex/remove': deny(SIGN_IN),
   'POST /api/agent/accounts/codex/reorder': agnostic(`${CHAT}: the order Codex accounts are tried in`),
   'POST /api/agent/accounts/codex/refresh': agnostic(`${CHAT}: re-reads the Codex accounts' usage`),
+  'POST /api/agent/tool-handoff': deny('laptop-only: sends a conversation\'s text to another vendor, after a confirm on this Mac'),
   // MCP management (task mcp-management): Settings' matrix, probes, sign-ins and store edits are
   // the owner window's alone (they spawn `claude` and save commands that run on every spawn).
   'GET /api/agent/mcp/overview': deny(SETTINGS),

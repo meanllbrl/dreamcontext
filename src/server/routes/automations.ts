@@ -1,3 +1,4 @@
+import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -40,7 +41,7 @@ import { resolveRunSession, readSessionDigest } from '../../lib/automations/sess
 import { foreignRunEvidence } from '../../lib/automations/session-registry.js';
 import {
   approvalFields,
-  checkApproval,
+  checkApproval, getApproval,
   renderApprovalReview,
   approveAutomation,
   listRegisteredProjects,
@@ -206,6 +207,9 @@ interface AutomationSummary {
    *  from the LIST — opening it must not have to fetch the manifest first, or
    *  the form flashes a default effort the owner never chose. */
   effort: AutomationManifest['effort'];
+  /** Which tool it runs on, and the Codex account it is pinned to (null = chosen per run). */
+  tool: 'claude' | 'codex';
+  account: string | null;
   timeoutMinutes: number;
   catchupHours: number;
   approved: boolean;
@@ -308,6 +312,8 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
     face: faceOf(m.slug, m.path ? parseFace(readManifestFrontmatter(m.path)?.data.face) : null),
     model: m.model,
     effort: m.effort,
+    tool: m.tool ?? 'claude',
+    account: m.account ?? null,
     timeoutMinutes: m.timeoutMinutes,
     catchupHours: m.catchupHours,
     approved: approval.approved,
@@ -477,6 +483,8 @@ export async function handleAutomationsShow(
         autonomy: manifest.autonomy ?? DEFAULT_AGENT_AUTONOMY,
         // Hashed when named: the review shows what a light job of it may call.
         readTools: manifest.readTools ?? [],
+        // Hashed off Claude: which vendor reads the prompt.
+        tool: manifest.tool ?? 'claude',
         prompt: manifest.prompt,
         outputInstructions: manifest.outputInstructions,
         // NOT hashed and deliberately so (it changes every run), but shown:
@@ -1050,6 +1058,18 @@ function readMode(v: unknown): AutomationMode | undefined {
   throw new AutomationError(`Invalid mode — must be one of: ${AUTOMATION_MODES.join(', ')}.`);
 }
 
+/** The tool and account a save asks for. Absent stays; `''` or null is Claude / no pin. */
+function readToolChoice(body: Record<string, unknown>): { tool: 'codex' | null | undefined; account: string | null | undefined } {
+  const t = body.tool;
+  if (t !== undefined && t !== null && t !== '' && t !== 'claude' && t !== 'codex') throw new AutomationError('Invalid tool: Claude or Codex.');
+  const a = body.account;
+  if (a !== undefined && a !== null && a !== '' && !(typeof a === 'string' && isCodexAccountId(a))) throw new AutomationError('Invalid account.');
+  return {
+    tool: t === undefined ? undefined : t === 'codex' ? 'codex' : null,
+    account: a === undefined ? undefined : (a as string) || null,
+  };
+}
+
 function readEffort(v: unknown): EffortLevel | null | undefined {
   if (v === undefined) return undefined;
   if (v === null || v === '') return null;
@@ -1140,6 +1160,12 @@ function approveUnlessUnseenSoul(contextRoot: string, before: AutomationManifest
   const wasApproved = before !== null && checkApproval(dirname(contextRoot), before, undefined, 'run').approved;
   const hasSoul = typeof after.soul === 'string' && after.soul.trim() !== '';
   if (!wasApproved && hasSoul) return false;
+  // Any later save of a target waiting on its tool must not stamp that wait away: only the
+  // owner's approve does (Track T W4). What was last approved says which tool that was.
+  if (!wasApproved) {
+    const entry = getApproval(dirname(contextRoot), after.slug, undefined, after.runKind === 'agent' ? 'agent' : 'automation');
+    if ((entry?.tool ?? null) !== (after.tool ?? null)) return false;
+  }
   approveHere(contextRoot, after);
   return true;
 }
@@ -1201,6 +1227,7 @@ export async function handleAutomationsCreate(
       slots: readSlots(body.slots),
       model: str(body.model) ?? null,
       effort: readEffort(body.effort) ?? null,
+      ...(!whiteboard && readToolChoice(body).tool === 'codex' ? { tool: 'codex' as const, account: readToolChoice(body).account ?? null } : {}),
       timeoutMinutes: readTimeout(body.timeoutMinutes),
       prompt,
       whiteboard,
@@ -1322,6 +1349,7 @@ export async function handleAutomationsUpdate(
     }
     const model = body.model === undefined ? undefined : (str(body.model) ?? null);
     const effort = readEffort(body.effort);
+    const { tool, account } = readToolChoice(body);
     // `job` is the automation's own `## Job`: absent leaves it, null or blank removes it. The
     // store refuses it for anything but an automation that picks an agent.
     if (body.job !== undefined && body.job !== null && typeof body.job !== 'string') {
@@ -1336,7 +1364,7 @@ export async function handleAutomationsUpdate(
     const before = getRunTarget(contextRoot, params.slug, 'automation');
     const agentSlug = current.runKind === 'agent' ? current.slug : boundAgentOf(contextRoot, params.slug);
     if (agentSlug) {
-      const { manifest, stamped } = updateSplitTarget(contextRoot, current, agentSlug, body, { model, effort, prompt: str(body.prompt), job }, before);
+      const { manifest, stamped } = updateSplitTarget(contextRoot, current, agentSlug, body, { model, effort, prompt: str(body.prompt), job, tool, account }, before);
       sendJson(res, 200, {
         automation: summarize(dirname(contextRoot), contextRoot, manifest),
         ...(stamped ? {} : { needsApproval: true }),
@@ -1351,13 +1379,17 @@ export async function handleAutomationsUpdate(
       at: str(body.at),
       model,
       effort,
+      ...(tool !== undefined ? { tool } : {}),
+      ...(account !== undefined ? { account } : {}),
       timeoutMinutes: readTimeout(body.timeoutMinutes),
       enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
       review: str(body.review) as UpdateAutomationInput['review'],
       prompt: str(body.prompt),
       job,
     });
-    const stamped = approveUnlessUnseenSoul(contextRoot, before, manifest);
+    // Another tool means another vendor reads the prompt: the owner approves it, no quiet stamp.
+    const toolMoved = tool !== undefined && (tool ?? '') !== (current.tool ?? '');
+    const stamped = !toolMoved && approveUnlessUnseenSoul(contextRoot, before, manifest);
     sendJson(res, 200, {
       automation: summarize(dirname(contextRoot), contextRoot, manifest),
       ...(stamped ? {} : { needsApproval: true }),
@@ -1392,6 +1424,8 @@ function updateSplitTarget(
     effort: EffortLevel | null | undefined;
     prompt: string | undefined;
     job: string | null | undefined;
+    tool: 'codex' | null | undefined;
+    account: string | null | undefined;
   },
   /** The automation target as read before this save, or null. */
   before: AutomationManifest | null,
@@ -1405,13 +1439,17 @@ function updateSplitTarget(
   if (identityIn.prompt !== undefined) identity.prompt = identityIn.prompt;
   if (identityIn.model !== undefined) identity.model = identityIn.model;
   if (identityIn.effort !== undefined) identity.effort = identityIn.effort;
+  if (identityIn.tool !== undefined) identity.tool = identityIn.tool;
+  if (identityIn.account !== undefined) identity.account = identityIn.account;
+  // Another tool waits for the owner's approval of the new hash, on this path too (`withRestamp`).
+  const toolMoved = identityIn.tool !== undefined && (identityIn.tool ?? '') !== (current.tool ?? '');
   if (current.runKind === 'agent' && str(body.title) !== undefined) identity.title = str(body.title);
   if (Object.keys(identity).length > 0) withRestamp(contextRoot, projectRoot, agentSlug, identity);
 
   if (current.runKind === 'agent') {
     const target = getRunTarget(contextRoot, current.slug, 'agent');
     if (!target) throw new AutomationError(`Agent not found: ${current.slug}`);
-    return { manifest: target, stamped: true };
+    return { manifest: target, stamped: !toolMoved && checkApproval(projectRoot, target, undefined, 'run').approved };
   }
   const manifest = updateAutomation(contextRoot, current.slug, {
     title: str(body.title),
@@ -1424,7 +1462,7 @@ function updateSplitTarget(
     review: str(body.review) as UpdateAutomationInput['review'],
     job: identityIn.job,
   });
-  return { manifest, stamped: approveUnlessUnseenSoul(contextRoot, before, manifest) };
+  return { manifest, stamped: !toolMoved && approveUnlessUnseenSoul(contextRoot, before, manifest) };
 }
 
 /**

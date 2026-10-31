@@ -2535,6 +2535,14 @@
       "group": true
     },
     {
+      "path": "mcp lean-exec",
+      "desc": "Start one server of a lean MCP subset file, with stdio passed through",
+      "args": [
+        "<file>",
+        "<name>"
+      ]
+    },
+    {
       "path": "mcp serve",
       "desc": "Serve this project's brain over stdio MCP: recall and an allowlisted set of verbs, confined to the vault",
       "args": [],
@@ -3042,7 +3050,10 @@
     {
       "path": "sleep auto-run",
       "desc": "INTERNAL: run one background consolidation now (spawned detached by the Stop hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--tool"
+      ]
     },
     {
       "path": "sleep config",
@@ -3269,7 +3280,8 @@
         "--slug",
         "--base",
         "--task",
-        "--mcp"
+        "--mcp",
+        "--tool"
       ]
     },
     {
@@ -3410,7 +3422,8 @@
         "--slug",
         "--base",
         "--task",
-        "--mcp"
+        "--mcp",
+        "--tool"
       ]
     },
     {
@@ -3592,7 +3605,9 @@
         "<action>"
       ],
       "valueFlags": [
-        "--account"
+        "--account",
+        "--in",
+        "--out"
       ]
     },
     {
@@ -3609,7 +3624,22 @@
         "--resume",
         "--briefing-file",
         "--extra-root",
-        "--account"
+        "--account",
+        "--mcp-config"
+      ]
+    },
+    {
+      "path": "t3-run",
+      "desc": "Run one headless turn on Codex; prints one JSON document (used by automations)",
+      "args": [],
+      "valueFlags": [
+        "--surface",
+        "--prompt",
+        "--model",
+        "--effort",
+        "--account",
+        "--resume",
+        "--extra-root"
       ]
     },
     {

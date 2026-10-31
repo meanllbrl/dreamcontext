@@ -63,6 +63,7 @@ import { MIRROR_TAIL, syncMirror } from './composerMirror';
 import { PictureChip, RefPopover, RefSrList, refMirrorSegments, refsInOrder } from './ComposerRefLayer';
 import { persistDraft, readDraft, restoreDraftBody, subscribeDraft, type SavedDraft } from './composerDrafts';
 import { Popover } from '../SkillPickerPopover';
+import { ComposerModelPicker } from './model-picker/ComposerModelPicker';
 import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick, type ToolPick } from './ComposerMenus';
 import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
 import { ConcentricRings } from './UsageRings';
@@ -2319,7 +2320,23 @@ export function Composer({
       )}
       {menu.open === 'model' && showModel && (
         <div ref={menu.menuRef}>
-          <MemoModelMenu
+          {toolPick && !modelMenu ? (
+            <ComposerModelPicker
+              pick={toolPick}
+              model={model}
+              effort={effortValue}
+              onModelChange={stableModelChange}
+              onEffortChange={stableEffortChange}
+              accounts={accounts}
+              activeAccountId={activeAccountId}
+              onAccountChange={onAccountChange ? stableAccountChange : undefined}
+              newChatsLine={newChatsLine()}
+              // A Codex pane still on Claude's fallback list has no Codex model to save.
+              onSetDefault={session.tool && !modelConfig.isToolList ? undefined : stableSaveDefault}
+              savedDefault={savedDefault}
+              close={menu.close}
+            />
+          ) : <MemoModelMenu
             config={modelConfig}
             model={model}
             effort={effortValue}
@@ -2333,8 +2350,7 @@ export function Composer({
             foot={modelMenu?.foot}
             defaultId={modelMenu?.defaultId}
             defaultLine={newShell && !modelMenu?.foot && !onSetModelDefault ? newChatsLine() : undefined}
-            toolPick={toolPick}
-          />
+          />}
         </div>
       )}
       {menu.open === 'usage' && (

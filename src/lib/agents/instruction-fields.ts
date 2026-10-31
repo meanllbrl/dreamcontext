@@ -39,6 +39,7 @@ export const HASHED_FIELD_SIDE = {
   whiteboard: 'authority',
   autonomy: 'authority',
   readTools: 'authority',
+  tool: 'authority',
   mode: 'authority',
 } as const satisfies Record<keyof ApprovalPayloadFields | 'mode', FieldSide>;
 

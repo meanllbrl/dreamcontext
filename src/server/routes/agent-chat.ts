@@ -125,6 +125,9 @@ import {
 import { BRIDGE_TOOLS, sanitizeTool, type ToolId } from '../../lib/t3-bridge/registry.js';
 import { codexHistoryFor } from '../../lib/t3-bridge/codex-history-route.js';
 import { bridgeChatScript, bridgeResumeTarget } from '../../lib/t3-bridge/spawn.js';
+import { HEADLESS_ENVELOPES } from '../../lib/t3-bridge/headless-envelope.js';
+import { pruneToolHandoffSeeds } from '../../lib/t3-bridge/tool-handoff.js';
+import { NO_ENV_GATE, codexEnvGateReady } from '../../lib/t3-bridge/env-gate.js';
 import { bridgeNode, nodeTooOldMessage } from '../../lib/t3-bridge/node-floor.js';
 import { readAgentUiSettings } from './launcher.js';
 import { linkedWritableRoots } from '../../lib/t3-bridge/roots.js';
@@ -1370,14 +1373,14 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // the stage's home session, recorded once in the machine-local store (lib/local-store.ts).
     const stageAgent = chatAgent && url.searchParams.get('stage') === '1' ? chatAgent : null;
     // Which tool this pane runs on (Track T W1). Absent or `claude` = today's path. A bridge tool
-    // runs ordinary project chats only for now: the Assistant, a card, an agent's tab, the Super
-    // Agent and its lean children stay on Claude until their wave (W4), refused rather than opened
-    // half-wired.
+    // runs ordinary project chats and a Super Agent's lean children (W4). The Assistant, a card, an
+    // agent's tab and the Super Agent itself stay on Claude: their verbs are off the brain MCP
+    // allowlist on purpose, so they are refused rather than opened half-wired.
     const toolAsked = url.searchParams.get('tool');
     const toolParsed = sanitizeTool(toolAsked);
     if (toolAsked !== null && !toolParsed) { rejectUpgrade(socket, 400); return; }
     const bridgeTool = toolParsed && (BRIDGE_TOOLS as readonly string[]).includes(toolParsed) ? toolParsed as 'codex' : null;
-    if (bridgeTool && (assistant || card || chatAgent || mode === 'super' || url.searchParams.get('lean') === '1')) {
+    if (bridgeTool && (assistant || card || chatAgent || mode === 'super')) {
       rejectUpgrade(socket, 400); return;
     }
     // The T3 Claude engine (plan r5 §5) is shut until Wave 4: the server does not keep T3's thread
@@ -1842,6 +1845,7 @@ export function startChatSession(
   /** The pane runs on a T3 bridge tool (Codex) instead of `claude`. Every branch below that reads
    *  it leaves the Claude path exactly as it was when it is null. */
   const bridgeTool = opts.tool ?? null;
+  try { pruneToolHandoffSeeds(join(projectRoot, '_dream_context')); } catch { /* the next chat tries again */ }
   const assistantConfig = isAssistant ? (readAssistantConfig() ?? DEFAULT_ASSISTANT_CONFIG) : null;
 
   // Which Claude account this process is about to inherit. Captured BEFORE the spawn (it is
@@ -2310,11 +2314,13 @@ export function startChatSession(
   // The bridge child runs on a Node at its floor, found beside the machine's default, never by
   // changing it (`node-floor.ts`). No such Node: the pane says so instead of crashing in a chat.
   const bridgeNodePath = bridgeTool ? bridgeNode() : null;
-  const bridgeScript = bridgeTool && bridgeNodePath
-    ? bridgeChatScript({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(codexAccountId ? { account: codexAccountId } : {}) })
+  // A Super child runs with nobody watching it: no `.env` gate, no child on Codex.
+  const noEnvGate = bridgeTool === 'codex' && !!opts.leanMcp && !codexEnvGateReady(projectRoot);
+  const bridgeScript = bridgeTool && bridgeNodePath && !noEnvGate
+    ? bridgeChatScript({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : opts.leanMcp ? HEADLESS_ENVELOPES['super-child'].codex ?? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(leanMcpPath ? { mcpConfig: leanMcpPath } : {}), ...(opts.leanMcp ? { strictMcp: true } : {}), ...(codexAccountId ? { account: codexAccountId } : {}) })
     : null;
   if (bridgeTool && !bridgeScript) {
-    const why = bridgeNodePath ? `${bridgeTool} could not start: the dreamcontext install path is not shell-safe.` : nodeTooOldMessage(bridgeTool === 'codex' ? 'Codex' : 'The T3 Claude engine');
+    const why = noEnvGate ? NO_ENV_GATE : bridgeNodePath ? `${bridgeTool} could not start: the dreamcontext install path is not shell-safe.` : nodeTooOldMessage(bridgeTool === 'codex' ? 'Codex' : 'The T3 Claude engine');
     try { ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', message: why })); } catch { /* gone */ }
     try { ws.close(); } catch { /* already closed */ }
     releaseHeld();

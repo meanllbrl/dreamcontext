@@ -505,6 +505,8 @@ export interface SuperChild {
   /** The MCP servers it was started with (`delegate --mcp`, plan r5 D14): a delegated child
    *  runs lean, with only these; Resume keeps the same set. */
   mcp?: string[];
+  /** The child runs on this tool (Track T W4). Absent = Claude. */
+  tool?: 'codex';
   /** `super end` closed it (epoch ms): no process, no tab, no card; the transcript stays and
    *  `super resume` reopens it (which clears this). Absent = a child that may be running. */
   endedAt?: number;
@@ -698,6 +700,8 @@ export interface SuperPoolItem {
   slug?: string;
   base?: string;
   mcp?: string[];
+  /** The child runs on this tool (Track T W4). Absent = Claude. */
+  tool?: 'codex';
   /** Kept because `delegate` hit the cap. */
   held?: boolean;
   /** A `delegate --from` went unconfirmed: the child may be running. */

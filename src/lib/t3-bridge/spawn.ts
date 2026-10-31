@@ -29,6 +29,10 @@ export interface BridgeScriptInput {
   readonly extraRoots?: readonly string[];
   /** A non-#0 Codex account (plan r5 §4b). */
   readonly account?: string;
+  /** A Super child's lean MCP subset (`{ mcpServers }`, written by lean-mcp.ts). */
+  readonly mcpConfig?: string;
+  /** A Super child: nothing else from the owner's Codex config (launch.ts `codexStrictArgs`). */
+  readonly strictMcp?: boolean;
   readonly node?: string;
   readonly cli?: string;
   readonly home?: string;
@@ -53,6 +57,8 @@ export function bridgeChatScript(i: BridgeScriptInput): string | null {
   // A root that is not shell-safe is left out, never quoted around: the sandbox only gets narrower.
   const roots = (i.extraRoots ?? []).filter(isScriptSafePath);
   if (i.tool === 'codex' && i.account && isCodexAccountId(i.account)) args.push('--account', i.account);
+  if (i.tool === 'codex' && i.mcpConfig && isScriptSafePath(i.mcpConfig)) args.push('--mcp-config', i.mcpConfig);
+  if (i.tool === 'codex' && i.strictMcp) args.push('--strict-mcp');
   // Last: `--extra-root` takes every value after it.
   if (roots.length) args.push('--extra-root', ...roots);
   return `exec "${node}" "${cli}" ${args.map((a) => `"${a}"`).join(' ')}`;

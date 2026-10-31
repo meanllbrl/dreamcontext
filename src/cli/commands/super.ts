@@ -119,9 +119,10 @@ export function registerSuperCommand(program: Command): void {
     .option('--slug <slug>', 'The worktree and branch name (a-z, 0-9, -)')
     .option('--base <ref>', 'The commit the worktree starts from (default: the repo\'s HEAD)')
     .option('--task <slug>', 'Link its row to this task (state/<slug>.md)')
-    .option('--mcp <names>', 'The MCP servers it may use, comma-separated (`super state` lists them); a child gets none of the others');
-  type JobOpts = { prompt?: string; brief?: string; mode: string; model?: string; effort?: string; worktree?: string; slug?: string; base?: string; task?: string; mcp?: string };
-  const jobBody = (o: JobOpts) => ({ prompt: o.prompt, brief: o.brief, mode: o.mode, model: o.model, effort: o.effort, worktree: o.worktree, slug: o.slug, base: o.base, task: o.task, mcp: o.mcp });
+    .option('--mcp <names>', 'The MCP servers it may use, comma-separated (`super state` lists them); a child gets none of the others')
+    .option('--tool <tool>', 'The tool the child runs on: claude (default) or codex');
+  type JobOpts = { prompt?: string; brief?: string; mode: string; model?: string; effort?: string; worktree?: string; slug?: string; base?: string; task?: string; mcp?: string; tool?: string };
+  const jobBody = (o: JobOpts) => ({ prompt: o.prompt, brief: o.brief, mode: o.mode, model: o.model, effort: o.effort, worktree: o.worktree, slug: o.slug, base: o.base, task: o.task, mcp: o.mcp, tool: o.tool });
 
   job(s.command('delegate')
     .description(`Start a child chat in THIS project and open its card; returns its session id. At the cap (${MAX_LIVE_CHILDREN} live children, the only limit), the job is kept in the pool (\`held\`)`)

@@ -96,6 +96,10 @@ export interface AgentManifest {
   /** The MCP tools its light jobs may call (`read_tools:`, literal names, set by hand in the
    *  file; `light-run.ts`). Absent = none: a light job then has the file readers only. Hashed. */
   readTools?: string[];
+  /** Runs on this tool when it is not Claude (Track T W4). Hashed through the composed target. */
+  tool?: 'codex';
+  /** The Codex account it is pinned to, unhashed. Absent = chosen per run. */
+  account?: string;
   /** Its creator's GitHub login (`owner:`), `machine:<id>` before anyone signed in on that machine,
    *  `unowned` when no creator could be worked out, null on a file the migration has not stamped
    *  yet. Unhashed. Only the owner writes, runs, talks to or assigns it (`agents/owner.ts`). */
@@ -138,7 +142,11 @@ export interface AgentInput {
  * settings: no verb edits those in this build, and `withRestamp` re-approves
  * only what this patch can express.
  */
-export type AgentIdentityPatch = Partial<Pick<AgentInput, 'title' | 'prompt' | 'soul' | 'model' | 'effort' | 'learning' | 'whiteboard' | 'photo' | 'autonomy'>>;
+export type AgentIdentityPatch = Partial<Pick<AgentInput, 'title' | 'prompt' | 'soul' | 'model' | 'effort' | 'learning' | 'whiteboard' | 'photo' | 'autonomy'>> & {
+  /** null = back to Claude. Changing it leaves the agent awaiting the owner's approval. */
+  tool?: 'codex' | null;
+  account?: string | null;
+};
 
 /**
  * Where an agent sits in the team: its manager and its team's name. `null` clears a key,

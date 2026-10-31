@@ -5,6 +5,7 @@ import type { AutomationRunRef } from '../../lib/automationRunChat';
 import type { ChatMode } from '../../lib/chatModes';
 import type { ChatSession } from './chatSession';
 import type { ChatAgentPick, ToolPick } from './chat/ComposerMenus';
+import { claudeState, codexState } from './chat/model-picker/pickerModel';
 import type { ChatTool } from '../../lib/chatToolBinding';
 import { codexModelConfig, useAgentTools } from '../../hooks/useAgentCapabilities';
 import type { ChatFeed } from './chat/chatFeed';
@@ -58,7 +59,7 @@ export interface ChatSurfaceActions {
   pickAgent?: (sid: string, agent: ChatAgentPick | null) => void;
   /** Open a NEW chat on another tool (Track T W1): a conversation lives on one tool, so this
    *  never moves this one; see AgentSurface's `pickChatTool`. Optional like `pickAgent`. */
-  pickTool?: (sid: string, tool: ChatTool) => void;
+  pickTool?: (sid: string, tool: ChatTool, model?: string) => void;
   /** Move a RUNNING conversation to another Claude account. RESPAWNS at the turn boundary —
    *  an account is `CLAUDE_CONFIG_DIR`, read once at spawn, so there is nothing to switch
    *  live. Same shape as `changeMode` beside it for exactly that reason; see AgentSurface's
@@ -134,11 +135,11 @@ function ChatPaneHostInner({
   const paneModel = codexConfig && !codexConfig.models.some((m) => m.id === model) ? codexConfig.defaultModel : model;
   const paneEffort = codexConfig && !codexConfig.efforts.includes(effort) ? codexConfig.defaultEffort : effort;
   const pickTool = actions.pickTool;
-  const toolPick = useMemo<ToolPick | undefined>(() => (pickTool && codexInfo ? {
+  const toolPick = useMemo<ToolPick | undefined>(() => (pickTool ? {
     current: session.tool,
-    codex: { ready: codexInfo.ready, installed: codexInfo.installed, signedIn: codexInfo.signedIn, nodeOk: codexInfo.nodeOk !== false },
-    onPick: (tool) => pickTool(session.id, tool),
-  } : undefined), [pickTool, codexInfo, session]);
+    tools: [claudeState(modelConfig, session.tool ? '' : model), ...(codexInfo ? [codexState(codexInfo)] : [])],
+    onPick: (tool, picked) => pickTool(session.id, tool, picked),
+  } : undefined), [pickTool, codexInfo, session, modelConfig, model]);
 
   return (
     <ChatPane

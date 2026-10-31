@@ -29,7 +29,12 @@
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import type { ChildProcess } from 'node:child_process';
 import { dirname, join } from 'node:path';
+import { codexRunAccountArg, pickCodexRunAccount } from './codex-account.js';
+import { codexModelOf, codexRunArgs } from '../t3-bridge/headless-envelope.js';
+import { bridgeNode } from '../t3-bridge/node-floor.js';
+import { linkedWritableRoots } from '../t3-bridge/roots.js';
 import { homedir } from 'node:os';
 import { win32PowerShell } from '../proc.js';
 import { effectivePattern } from '../agents/agent-sync.js';
@@ -868,10 +873,53 @@ function spawnSessionResume(
   const scopeArgs = resume ? boardScopeArgs(resume.scope, resume.paths) : null;
   // Never an "Only mine" account (account protection): the owner's reply resumes agent work, so
   // it leaves the accounts they keep for themself alone; the threshold does not gate it.
+  if (m.tool === 'codex') return spawnCodexResume();
   const quick = automationAccountWithoutProbe({ home: opts.home });
   return quick
     ? spawnOn(withoutOwnerOnly(quick, { home: opts.home }))
     : pickAutomationAccount({ home: opts.home }).then((a) => spawnOn(withoutOwnerOnly(a, { home: opts.home })));
+
+  function spawnedSidecar(child: ChildProcess, startedAt: Date): void {
+    writeRunSidecar(contextRoot, m.slug, {
+      slug: m.slug,
+      runnerPid: process.pid,
+      childPid: child.pid as number,
+      childPgid: child.pid as number, // detached ⇒ setsid() ⇒ pgid === pid
+      fireAt,
+      startedAt: startedAt.toISOString(),
+      timeoutAt: new Date(startedAt.getTime() + timeoutMs).toISOString(),
+      // A resumed agent call target stays the agent if it proposes again.
+      ...(m.runKind === 'agent' ? { target: 'agent' as const } : {}),
+      ...(opts.override?.light ? { light: true as const } : {}),
+    });
+  }
+
+  /** The thread lives in the shared `~/.codex`, so any signed-in account resumes it. */
+  function spawnCodexResume(): Promise<ClaudeExecution> {
+    const at = nowFn();
+    const node = bridgeNode();
+    const cli = process.env.DREAMCONTEXT_CLI || process.argv[1] || '';
+    const pick = pickCodexRunAccount({ pinned: m.account, home: opts.home });
+    if (resume || !node || !cli || !('account' in pick)) {
+      return Promise.resolve({ spawned: false, timedOut: false, exitCode: null, stdout: '', stderrTail: resume ? 'A home board stays on Claude.' : 'Codex cannot resume here: no signed-in account or no Node 22.16.', startedAt: at, finishedAt: at, result: null });
+    }
+    const { model, effort } = spawnModel(m, opts.override);
+    const said = opts.override?.light ? `${LIGHT_JOB_BLOCK}\n\n${prompt}` : prompt;
+    return executeClaudeDetached(codexRunArgs({
+      surface: opts.override?.light ? 'light' : 'verdict', prompt: sanitizeAutomationPrompt(said), model: codexModelOf(model), effort,
+      account: codexRunAccountArg(pick.account), resume: sessionId, extraRoots: linkedWritableRoots(dirname(contextRoot)),
+    }), {
+      command: { file: node, prefix: [cli] },
+      cwd: dirname(contextRoot),
+      env: hints,
+      timeoutMs,
+      spawnImpl: opts.spawnImpl,
+      killImpl: opts.killImpl,
+      log: opts.log,
+      now: nowFn,
+      onSpawned: spawnedSidecar,
+    });
+  }
 
   function spawnOn(account: AutomationAccount): Promise<ClaudeExecution> {
     ensureSandbox(account.configDir, opts.home);
@@ -890,20 +938,7 @@ function spawnSessionResume(
       killImpl: opts.killImpl,
       log: opts.log,
       now: nowFn,
-      onSpawned: (child, startedAt) => {
-        writeRunSidecar(contextRoot, m.slug, {
-          slug: m.slug,
-          runnerPid: process.pid,
-          childPid: child.pid as number,
-          childPgid: child.pid as number, // detached ⇒ setsid() ⇒ pgid === pid
-          fireAt,
-          startedAt: startedAt.toISOString(),
-          timeoutAt: new Date(startedAt.getTime() + timeoutMs).toISOString(),
-          // A resumed agent call target stays the agent if it proposes again.
-          ...(m.runKind === 'agent' ? { target: 'agent' as const } : {}),
-          ...(opts.override?.light ? { light: true as const } : {}),
-        });
-      },
+      onSpawned: spawnedSidecar,
     });
   }
 }

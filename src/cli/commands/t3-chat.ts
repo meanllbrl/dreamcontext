@@ -33,9 +33,11 @@ export function registerT3ChatCommand(program: Command): void {
     .option('--briefing-file <path>', 'chat-surface briefing, sent as developer instructions')
     .option('--extra-root <path...>', 'another folder the sandboxed tool may write (a linked repo)')
     .option('--account <id>', 'a Codex account other than #0 (its own home under ~/.dreamcontext/codex-accounts)')
+    .option('--mcp-config <path>', 'a lean MCP subset ({ mcpServers }) a Super child may use')
+    .option('--strict-mcp', 'nothing from the Codex config: no MCP servers, no web search')
     .action(async (o: {
       tool: string; cwd?: string; model?: string; effort?: string; mode: string; pane?: string;
-      resume?: string; briefingFile?: string; extraRoot?: string[]; account?: string;
+      resume?: string; briefingFile?: string; extraRoot?: string[]; account?: string; mcpConfig?: string; strictMcp?: boolean;
     }) => {
       if (o.tool !== 'codex' && o.tool !== 'claude') {
         process.stderr.write(`t3-chat: unknown tool ${o.tool}\n`);
@@ -54,15 +56,39 @@ export function registerT3ChatCommand(program: Command): void {
       process.exit(await bridge.runT3Chat({ ...o, tool: o.tool, cwd: o.cwd ?? process.cwd() }));
     });
 
+  // One unattended turn on Codex (plan r5 §6, W4): the runner reads its stdout as `claude -p`'s.
+  program
+    .command('t3-run', { hidden: true })
+    .description('Run one headless turn on Codex; prints one JSON document (used by automations)')
+    .requiredOption('--surface <surface>', 'which headless surface this is (headless-envelope.ts)')
+    .requiredOption('--prompt <text>', 'the turn')
+    .option('--model <model>', 'model id')
+    .option('--effort <effort>', 'reasoning effort')
+    .option('--account <id>', 'a Codex account other than #0')
+    .option('--resume <threadId>', 'a native thread to continue')
+    .option('--extra-root <path...>', 'another folder the sandboxed run may write (a linked repo)')
+    .action(async (o: { surface: string; prompt: string; model?: string; effort?: string; account?: string; resume?: string; extraRoot?: string[] }) => {
+      let bridge: Awaited<ReturnType<typeof loadBridge>>;
+      try {
+        bridge = await loadBridge('codex');
+      } catch (err) {
+        process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `Codex could not load: ${String(err).slice(0, 300)}`, num_turns: 0, total_cost_usd: 0, dc_tool: 'codex' }) + '\n');
+        process.exit(1);
+      }
+      process.exit(await bridge.runT3Headless({ ...o, surface: o.surface as never, cwd: process.cwd() }));
+    });
+
   // The account jobs that need T3's own code (plan r5 §4b, W2): a shadow home laid out before a
   // sign-in, and a limits probe with no model call. Only the server runs it.
   program
     .command('t3-account', { hidden: true })
     .description('Prepare a Codex account home or read its limits, through T3 (used by the server)')
-    .argument('<action>', 'prepare | probe')
+    .argument('<action>', 'prepare | probe | seed')
     .option('--account <id>', 'the Codex account (default: #0, ~/.codex)')
-    .action(async (action: string, o: { account?: string }) => {
-      if (action !== 'prepare' && action !== 'probe') {
+    .option('--in <path>', 'seed: the raw messages the route wrote')
+    .option('--out <path>', 'seed: where the rendered text goes')
+    .action(async (action: string, o: { account?: string; in?: string; out?: string }) => {
+      if (action !== 'prepare' && action !== 'probe' && action !== 'seed') {
         process.stderr.write(`t3-account: unknown action ${action}\n`);
         process.exit(2);
       }
@@ -73,6 +99,6 @@ export function registerT3ChatCommand(program: Command): void {
         process.stdout.write(JSON.stringify({ ok: false, signedIn: false, error: `Codex could not load: ${String(err).slice(0, 300)}` }) + '\n');
         process.exit(1);
       }
-      process.exit(await bridge.runT3Account({ action, ...(o.account ? { account: o.account } : {}) }));
+      process.exit(await bridge.runT3Account({ action, ...(o.account ? { account: o.account } : {}), ...(o.in ? { in: o.in } : {}), ...(o.out ? { out: o.out } : {}) }));
     });
 }

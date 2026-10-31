@@ -61,6 +61,9 @@ export interface ApprovalEntry {
    *  human here approved, even if the hash were somehow made to match. Absent
    *  for an ordinary agent and on every entry written before this field. */
   whiteboard?: string;
+  /** The tool the approved manifest ran on, when it was not Claude (Track T W4): what tells a
+   *  later save that the target is waiting for the owner, not merely edited. */
+  tool?: string;
 }
 
 /** One project's approvals, keyed by automation slug. */
@@ -127,7 +130,8 @@ function isValidApprovalEntry(v: unknown): v is ApprovalEntry {
     // Optional, but when present it must be a non-empty string. A malformed
     // value drops the entry (reads as never-approved): failing closed costs a
     // re-approval, failing open could unscope a board agent.
-    (e.whiteboard === undefined || (typeof e.whiteboard === 'string' && e.whiteboard.length > 0))
+    (e.whiteboard === undefined || (typeof e.whiteboard === 'string' && e.whiteboard.length > 0)) &&
+    (e.tool === undefined || typeof e.tool === 'string')
   );
 }
 
@@ -437,6 +441,9 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // today, so every hash stays byte-for-byte what it was. Present, it lets a run leave its own
     // tool, so adding or changing it re-approves exactly that automation.
     ...(m.fallbackTools?.length ? { fallbackTools: [...m.fallbackTools] } : {}),
+    // OMITTED on Claude, and LAST (Track T W4): every automation that exists runs on Claude, so
+    // every hash stays what it was. Present, it decides which vendor reads the prompt.
+    ...(m.tool ? { tool: m.tool } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }
@@ -499,6 +506,8 @@ export function approvalFields(m: AutomationManifest): ApprovalPayloadFields {
     autonomy: m.autonomy ?? DEFAULT_AGENT_AUTONOMY,
     // Always present (as '' when absent): the reviewer reads which tools a light job may call.
     readTools: (m.readTools ?? []).join(', '),
+    // Null on Claude, so an approval stored before this field reads the same and shows no change.
+    tool: m.tool ?? null,
   };
 }
 
@@ -676,6 +685,7 @@ function approvalEntryFor(m: AutomationManifest, now: Date): ApprovalEntry {
     approvedAt: now.toISOString(),
     payloadVersion: APPROVAL_PAYLOAD_VERSION,
     ...(m.whiteboard ? { whiteboard: m.whiteboard } : {}),
+    ...(m.tool ? { tool: m.tool } : {}),
   };
 }
 

@@ -1,3 +1,7 @@
+import { bridgeResumeTarget } from '../../lib/t3-bridge/spawn.js';
+import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
+import { sanitizeTool } from '../../lib/t3-bridge/registry.js';
+import { codexTerminalEnv } from '../../lib/codex-accounts.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { mcpStoreFiles, storeFileRefs } from '../../lib/mcp-store.js';
 import { isAssistantVault } from '../../lib/assistant/home.js';
@@ -718,6 +722,11 @@ export function attachAgentTerminal(server: Server): void {
     const model = sanitizeModel(url.searchParams.get('model'));
     // Reasoning effort (`claude --effort <level>`) — whitelist-gated to the documented set.
     const effort = sanitizeEffort(url.searchParams.get('effort'));
+    // Which tool an agent terminal runs (Track T W4). Absent = `claude`, unchanged.
+    const accountParam = url.searchParams.get('account') ?? '';
+    const codexOpt = kind === 'agent' && sanitizeTool(url.searchParams.get('tool')) === 'codex'
+      ? { codex: { account: isCodexAccountId(accountParam) ? accountParam : '' } }
+      : {};
     // An INITIAL prompt to submit automatically (the "Run sleep agent" consolidation, task
     // delegation, task curation). Passed to `claude` as a positional argument
     // (`claude … "<prompt>"`), which starts the interactive TUI with that first message already
@@ -749,7 +758,7 @@ export function attachAgentTerminal(server: Server): void {
 
       const wss = new WebSocketServer({ noServer: true });
       wss.handleUpgrade(req, socket, head, (ws) => {
-        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId, kind, model, effort, initialPrompt, deferPrompt, execCommand, execCwd);
+        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId, kind, model, effort, initialPrompt, deferPrompt, execCommand, execCwd, codexOpt);
       });
     })();
   });
@@ -1129,6 +1138,22 @@ export function agentExecLine(flags: string, promptArg: string, mcpRefs: readonl
   return `exec claude${flags}${promptArg}${mcp}`;
 }
 
+/**
+ * The Codex terminal (Track T W4): the owner's own interactive `codex`, on the pane's account.
+ * The sandbox is always workspace-write with approvals on request: `bypass` is a Claude setting
+ * and never widens this. Tokens are gated by the caller; the thread id is `CODEX_THREAD_RE`'s.
+ */
+export function codexExecLine(o: { model: string; effort: string; resume: string; signedInFile: boolean; promptArg: string }): string {
+  const flags = [
+    ...(o.signedInFile ? [`-c 'cli_auth_credentials_store="file"'`] : []),
+    ...(o.model ? [`-m ${o.model}`] : []),
+    ...(o.effort ? [`-c 'model_reasoning_effort="${o.effort}"'`] : []),
+    '-s workspace-write',
+    '-a on-request',
+  ];
+  return `exec codex ${flags.join(' ')}${o.resume ? ` resume ${o.resume}` : ''}${o.promptArg}`;
+}
+
 export function startPtySession(
   ws: import('ws').WebSocket,
   pty: typeof import('node-pty'),
@@ -1144,7 +1169,7 @@ export function startPtySession(
   deferPrompt = false,
   execCommand = '',
   execCwd = '',
-  opts: { home?: string } = {},
+  opts: { home?: string; codex?: { account: string } } = {},
 ): void {
   const spawnCwd = kind === 'exec' && execCwd ? execCwd : projectRoot;
   const shell = process.env.SHELL || '/bin/zsh';
@@ -1302,11 +1327,18 @@ export function startPtySession(
   // The MCP stores every account shares (task mcp-management), named by env variable so the
   // `-c` string never carries HOME's text; the prompt operand sits BEFORE the variadic flag.
   const storeMcp = kind === 'agent' ? storeFileRefs(mcpStoreFiles({ home: opts.home, projectRoot }).files) : { refs: [], env: {} };
+  const codexEnv = opts.codex ? codexTerminalEnv(opts.codex.account) : null;
+  // Only this project's own thread, and only one no pane holds (`bridgeResumeTarget`).
+  const codexResume = opts.codex
+    ? bridgeResumeTarget({ tool: 'codex', mapped: mappedId, resumeId, projectRoot, held: new Set() })
+    : '';
   const shellArgs = kind === 'shell'
     ? ['-il']
     : kind === 'exec'
       ? execShellArgs(shell, execCommand)
-      : ['-ilc', agentExecLine(`${idArg}${modelFlag}${effortFlag}${flag}`, promptArg, storeMcp.refs), ...(promptArg ? [submitPrompt] : [])];
+      : opts.codex
+        ? ['-ilc', codexExecLine({ model, effort, resume: codexResume, signedInFile: !!codexEnv?.pre.length, promptArg }), ...(promptArg ? [submitPrompt] : [])]
+        : ['-ilc', agentExecLine(`${idArg}${modelFlag}${effortFlag}${flag}`, promptArg, storeMcp.refs), ...(promptArg ? [submitPrompt] : [])];
   // An agent PTY exports its tab's STABLE roster id so the SessionStart hook (which
   // inherits this env through `claude`) can record roster id → live conversation id
   // on every rotation — the other half of the resume-staleness fix above. ONLY when
@@ -1329,7 +1361,7 @@ export function startPtySession(
       // actually installed into, so `exec claude` resolves even when the install's
       // `export PATH` echo never reached the user's rc. Appended, never prepended —
       // a `claude` the rc already resolves keeps winning.
-      env: { ...process.env, PATH: claudeAwarePath(), TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv, ...statusEnv, ...storeMcp.env } as Record<string, string>,
+      env: { ...process.env, PATH: claudeAwarePath(), TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv, ...statusEnv, ...storeMcp.env, ...(codexEnv?.env ?? {}) } as Record<string, string>,
     }) as unknown as PtyLike;
   } catch (err) {
     // pty.spawn can throw synchronously (documented posix_spawnp failure when the

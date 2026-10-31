@@ -84,8 +84,10 @@ export interface AgentSettings {
   /** Codex's own default model and effort ('' = the Codex account's own), apart from Claude's. */
   codexDefaultModel: string;
   codexDefaultEffort: string;
-  /** Stored for W4: a Super Agent runs on Claude until then. */
+  /** The Super Agent's tool (Track T W4). */
   superTool: '' | 'codex';
+  /** The model picker's starred models, `<tool>:<model id>`. */
+  modelFavourites: string[];
   /** `dreamcontext` = today's engine, `t3` = T3's Claude driver (experimental, plan r5 §5). */
   claudeEngine: 'dreamcontext' | 't3';
   /** One-time marker that this blob has been through the "Chat is the default screen"
@@ -138,6 +140,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   codexDefaultModel: '',
   codexDefaultEffort: '',
   superTool: '',
+  modelFavourites: [],
   claudeEngine: 'dreamcontext',
   lightMode: 'auto',
   parkIdleChats: true,
@@ -196,6 +199,7 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     codexDefaultModel: typeof r.codexDefaultModel === 'string' && CHAT_DEFAULT_MODEL_RE.test(r.codexDefaultModel) ? r.codexDefaultModel : '',
     codexDefaultEffort: typeof r.codexDefaultEffort === 'string' && /^[a-z]{1,16}$/.test(r.codexDefaultEffort) ? r.codexDefaultEffort : '',
     superTool: r.superTool === 'codex' ? 'codex' : '',
+    modelFavourites: Array.isArray(r.modelFavourites) ? (r.modelFavourites as unknown[]).filter((x): x is string => typeof x === 'string' && /^(claude|codex):[A-Za-z0-9._[\]-]{1,64}$/.test(x)).slice(0, 24) : [],
     claudeEngine: r.claudeEngine === 't3' ? 't3' : 'dreamcontext',
     lightMode: r.lightMode === 'on' || r.lightMode === 'off' ? r.lightMode : 'auto',
     // No `superAgent` key any more: the Super Agent is on for everyone (2026-10-29). An old

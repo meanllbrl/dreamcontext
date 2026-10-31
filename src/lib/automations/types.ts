@@ -501,6 +501,12 @@ export interface AutomationManifest {
    * adds it to `ApprovalPayloadFields` / `APPROVAL_DIFF_FIELDS` and the review panel with it.
    */
   fallbackTools?: string[];
+  /** The tool it runs on when that is not Claude (Track T W4). Hashed: it decides which vendor
+   *  sees the prompt and which envelope runs it, so a change re-approves. Absent = Claude. */
+  tool?: 'codex';
+  /** The Codex account it is pinned to, unhashed (who pays, not what runs). Absent = chosen per
+   *  run, by the owner's order and `agentThreshold`. Claude runs keep their chooser. */
+  account?: string;
   /** Its agent's owner (`owner:`), unhashed; absent on an unstamped file. `checkApproval` returns
    *  `not_owner` FIRST when it is not this machine's login (`agents/owner.ts`). */
   owner?: string;
@@ -1068,6 +1074,8 @@ export interface ApprovalPayloadFields {
   autonomy: AgentAutonomy;
   /** Hashed because it opens tools in a light job. '' when absent. */
   readTools: string;
+  /** Hashed because it decides which vendor reads the prompt and under which envelope it runs. */
+  tool: string | null;
 }
 
 /** Env var naming a home-board agent's board for its spawned child; the CLI's
@@ -1169,6 +1177,7 @@ export const APPROVAL_DIFF_FIELDS = [
   'soul',
   'autonomy',
   'readTools',
+  'tool',
 ] as const;
 
 // ─── Pattern caps ────────────────────────────────────────────────────────────

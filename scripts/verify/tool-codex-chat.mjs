@@ -183,10 +183,12 @@ async function main() {
     // The MODEL trigger (the mode menu's trigger shares its class): found by its title.
     await page.locator('.chat-cmp-modeltrigger[title^="Model and reasoning effort"]:visible').first().click();
     await page.waitForTimeout(400);
-    const menu = h.vis('.chat-cmp-modelmenu').first();
-    ok('the model menu has a Tool group with a Codex row', (await menu.getByRole('menuitemradio', { name: /Codex/ }).count()) === 1);
+    const menu = h.vis('[data-testid="model-picker"]').first();
+    await menu.getByRole('button', { name: 'Codex', exact: true }).click();
+    ok('the model picker lists Codex models', (await menu.getByRole('menuitemradio', { name: /GPT-6 Luna/ }).count()) === 1);
     await page.screenshot({ path: join(SHOTS, 'menu-tool-row.png') });
-    await menu.getByRole('menuitemradio', { name: /Codex/ }).click();
+    await menu.getByRole('menuitemradio', { name: /GPT-6 Luna/ }).click();
+    await page.getByRole('button', { name: /Open new chat/ }).click();
     await page.waitForTimeout(2500);
     ok('picking Codex opens a NEW chat beside the Claude one', (await h.paneText()).includes('CLAUDE SAYS') === false);
 
@@ -245,7 +247,7 @@ async function main() {
     await h.send('DIFF please');
     ok('a file-change approval opens', await h.until(async () => (await h.vis('.chat-permcard').count()) > 0, 20000));
     ok('Allow closes the file-change card', await allow());
-    ok('the file change finishes', await h.waitText('with exactly:'));
+    ok('the file change finishes', await h.waitText('with exactly:'), await h.paneText());
     ok('the change is drawn as a tool card naming the file', (await h.paneText()).includes('.codex-probe-write-action.txt'));
     await page.screenshot({ path: join(SHOTS, 'diff.png') });
     await h.settled();

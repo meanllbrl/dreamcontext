@@ -19,4 +19,14 @@ export function registerMcpServeCommand(program: Command): void {
         process.exit(2);
       }
     });
+
+  // A Super child's MCP server on Codex (launch.ts `codexLeanMcpArgs`): the command, arguments and
+  // env stay in the 0600 file, because whatever Codex is told on `-c` shows in `ps`.
+  mcp
+    .command('lean-exec <file> <name>')
+    .description('Start one server of a lean MCP subset file, with stdio passed through')
+    .action(async (file: string, name: string) => {
+      const { startLeanServer } = await import('../../lib/super/lean-exec.js');
+      process.exit(await startLeanServer(file, name));
+    });
 }

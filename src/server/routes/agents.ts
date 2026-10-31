@@ -1,3 +1,4 @@
+import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, join } from 'node:path';
 import { lstatSync } from 'node:fs';
@@ -101,6 +102,8 @@ export interface AgentSummary {
   roleLine: string;
   model: string | null;
   effort: EffortLevel | null;
+  tool: 'claude' | 'codex';
+  account: string | null;
   whiteboard: string | null;
   shared: boolean;
   /** `reports_to` as written (the dashboard's tree applies the read rules). Unhashed. */
@@ -195,6 +198,8 @@ export function summarizeAgent(
     roleLine: roleLineOf(target.prompt),
     model: target.model,
     effort: target.effort,
+    tool: target.tool ?? 'claude',
+    account: target.account ?? null,
     whiteboard: target.whiteboard ?? null,
     shared: agent?.shared ?? false,
     reportsTo: agent?.reportsTo ?? null,
@@ -544,6 +549,14 @@ export async function handleAgentsUpdate(
     if (body.model !== undefined) patch.model = str(body.model) ?? null;
     const effort = readEffort(body.effort);
     if (effort !== undefined) patch.effort = effort;
+    if (body.tool !== undefined) {
+      if (body.tool !== null && body.tool !== '' && body.tool !== 'claude' && body.tool !== 'codex') throw new AutomationError('Invalid tool: Claude or Codex.');
+      patch.tool = body.tool === 'codex' ? 'codex' : null;
+    }
+    if (body.account !== undefined) {
+      if (body.account !== null && body.account !== '' && !(typeof body.account === 'string' && isCodexAccountId(body.account))) throw new AutomationError('Invalid account.');
+      patch.account = (body.account as string) || null;
+    }
     const whiteboard = readWhiteboard(body.whiteboard);
     if (whiteboard !== undefined) patch.whiteboard = whiteboard;
     if (typeof body.learning === 'boolean') patch.learning = body.learning;

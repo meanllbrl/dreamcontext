@@ -9,6 +9,7 @@ import {
 // pane sizing) — the primitive moved to `termCore.ts`, the import site did not have to.
 export { currentZoom };
 import { copyPreservingUnicode } from '../../lib/clipboard';
+import { chatToolParam } from '../../lib/chatToolBinding';
 import { nextLineShadow } from '../../lib/lineShadow';
 import { raiseAskAttention } from '../../lib/attention';
 import { webglBudget, type WebglHandle } from './webglBudget';
@@ -205,7 +206,7 @@ const WORKING_RE = /esc to interrupt|ctrl\+b to run in background/i;
  * the vault also names this session's alarm source, which is what lets a background project's
  * chip raise the user (see `raiseAskAttention` below). Empty string = no project pinned.
  */
-export function createSession(vault: string, bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false): Session {
+export function createSession(vault: string, bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, accountId = ''): Session {
   const id = `agent-${++sessionSeq}`;
   const container = document.createElement('div');
   container.className = 'agent-pane-term';
@@ -256,7 +257,8 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
   // restore, it asks the server to `--resume` that exact conversation instead.
   const isShell = kind === 'shell';
   const idParam = isShell ? '' : (resume ? `&resume=${encodeURIComponent(claudeId)}` : `&sessionId=${encodeURIComponent(claudeId)}`);
-  const kindParam = isShell ? '&kind=shell' : '';
+  // A Codex conversation's terminal runs `codex` on its account (Track T W4); '' stays Claude's URL.
+  const kindParam = isShell ? '&kind=shell' : `${chatToolParam(claudeId)}${accountId ? `&account=${encodeURIComponent(accountId)}` : ''}`;
   // The model applies ONLY to a Claude agent (`claude --model <id>`); a shell has none, and
   // an empty id means "let Claude Code use its configured default" (no flag). The server
   // re-validates the token before it ever reaches the shell command, so this is a hint.

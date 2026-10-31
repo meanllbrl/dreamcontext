@@ -23,10 +23,13 @@ export interface T3ChatOptions {
   briefingFile?: string;
   extraRoot?: string[];
   account?: string;
+  mcpConfig?: string;
+  strictMcp?: boolean;
 }
 
 export const runT3Chat = (o: T3ChatOptions): Promise<number> => runBridgeChat(o);
 export { runT3Account } from './account-cli.js';
+export { runT3Headless } from './run.js';
 
 export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Promise<number> {
   const eco = ecoJoins(o.cwd, process.env, { tool: o.tool });
@@ -46,6 +49,8 @@ export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Pr
       ...(o.briefingFile ? { briefingFile: o.briefingFile } : {}),
       extraRoots: o.extraRoot ?? [],
       ...(o.account ? { account: o.account } : {}),
+      ...(o.mcpConfig ? { mcpConfig: o.mcpConfig } : {}),
+      ...(o.strictMcp ? { strictMcp: true } : {}),
     },
     {
       ...(claudeKit ? { claudeKit } : {}),

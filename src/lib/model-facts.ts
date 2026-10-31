@@ -154,3 +154,25 @@ export const KNOWN_SLEEP_MODEL_VALUES: readonly string[] = Object.freeze([
   ...LEGACY_SLEEP_MODEL_IDS,
   ...MODEL_ALIASES,
 ]);
+
+/**
+ * OpenAI's list prices, USD per million tokens, for the COST ESTIMATE of a headless Codex run.
+ * Not a model fact the app promises: a ChatGPT login pays by its plan, never by the token, and
+ * OpenAI's list moves. A model with no row of its own is priced at its tier's row (`gpt-6-luna` as
+ * Luna); a name with no known tier has no estimate (null), never a guess.
+ */
+export const GPT_PRICES_AS_OF = '2026-11-01';
+export const GPT_TIER_PRICES: Readonly<Record<'sol' | 'terra' | 'luna', { in: number; out: number }>> = Object.freeze({
+  sol: { in: 5, out: 30 },
+  terra: { in: 2, out: 12 },
+  luna: { in: 0.2, out: 1.2 },
+});
+
+export function estimateGptCostUsd(model: string, usage: { input?: number; cached?: number; output?: number }): number | null {
+  const tier = /\b(sol|terra|luna)\b/i.exec(model.replace(/[-_.]/g, ' '))?.[1]?.toLowerCase() as keyof typeof GPT_TIER_PRICES | undefined;
+  if (!tier) return null;
+  const price = GPT_TIER_PRICES[tier];
+  // Cached input bills lower; with no published rate for every tier it counts at the input rate,
+  // so the estimate errs high.
+  return ((usage.input ?? 0) * price.in + (usage.output ?? 0) * price.out) / 1_000_000;
+}

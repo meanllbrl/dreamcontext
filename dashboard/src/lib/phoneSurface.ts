@@ -161,6 +161,7 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'POST /api/agent/accounts/codex/login',
   'POST /api/agent/accounts/codex/adopt',
   'POST /api/agent/accounts/codex/remove',
+  'POST /api/agent/tool-handoff',
   'GET /api/agent/mcp/overview',
   'POST /api/agent/mcp/check',
   'POST /api/agent/mcp/connect',

@@ -184,6 +184,8 @@ async function onRequest(msg) {
         const pick = (key) => String(extra[key]?.value ?? '').split('\n').find((l) => /checkout/i.test(l))?.trim() ?? '(nothing)';
         override = `From the brain: ${pick('dreamcontext-brain')} · Recall: ${pick('dreamcontext-prompt')}`;
       }
+      // A carried chat (W4): the reply quotes what the new thread was handed from the old one.
+      if (/\bHISTORY\b/.test(text)) override = `Handed over: ${String(extra['dreamcontext-prompt']?.value ?? '').split('\n').find((l) => /marigold/.test(l))?.trim() ?? '(nothing)'}`;
       recordUser(wantTitle ? 'user.text' : 'user.text', text);
       record({ type: 'token_usage_record', usage: { input_tokens: 4000, cached_input_tokens: 1000, output_tokens: 120 }, response_id: `resp_${turnSeq}` });
       const entries = scenario === 'simple' ? SIMPLE : load(scenario);

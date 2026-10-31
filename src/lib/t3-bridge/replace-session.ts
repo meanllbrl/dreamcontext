@@ -15,8 +15,9 @@
  * account switch already performs). For a Claude-on-Claude switch the chat server keeps calling
  * `spawnSuccessor` exactly as before; this module only DECIDES that case, it never re-implements it.
  *
- * In this task no chat changes tool through policy (`FallbackPolicy` is `'never'`): a cross-tool
- * target reaches this function only from a test (§4e criterion 8).
+ * No chat changes tool through policy (`FallbackPolicy` is `'never'`). The one cross-tool caller
+ * is the owner's own pick in the model picker (tool-handoff route): its old chat stays open, so
+ * `close` does nothing, and the text rides a seed instead of a handoff record (`carriesOwnText`).
  */
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -70,6 +71,9 @@ export interface ReplaceDeps {
   readonly home?: string;
   readonly now?: () => Date;
   readonly keyOf?: KeyOf;
+  /** The caller carries the conversation itself: no handoff record (a record left on the new pane
+   *  would rotate it at its first result), no continue prompt. */
+  readonly carriesOwnText?: boolean;
 }
 
 export interface ReplaceResult extends ReplacementPlan {
@@ -83,7 +87,7 @@ export async function replaceSession(current: PaneEngine, target: SwitchTarget, 
   const plan = planReplacement(current, target, deps.home, deps.keyOf);
   let record: HandoffRecord | null = null;
   let continuePrompt: string | null = null;
-  if (plan.handoff) {
+  if (plan.handoff && !deps.carriesOwnText) {
     // The task the pane works on carries over; a pane on no task resumes nothing it can name.
     const task = activeTaskForNudge(deps.contextRoot);
     if (task) {

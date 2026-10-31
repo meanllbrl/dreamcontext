@@ -56,6 +56,68 @@ export function codexBrainMcpArgs(o: { node: string; cli: string; root: string; 
   return args.join(' ');
 }
 
+/**
+ * A Super child's lean MCP subset as Codex config (Track T W4). Every server starts through
+ * `dreamcontext mcp lean-exec <file> <name>`, which reads the real command, arguments and env from
+ * the 0600 file: `-c` values are process arguments, and a token must never show in `ps`. Only
+ * stdio servers with a plain name; a server left out is the narrow side.
+ */
+export function codexLeanMcpArgs(path: string, o: { node: string; cli: string }): string {
+  let servers: Record<string, { command?: unknown }>;
+  try {
+    servers = (JSON.parse(readFileSync(path, 'utf-8')) as { mcpServers?: typeof servers }).mcpServers ?? {};
+  } catch {
+    return '';
+  }
+  const arr = (xs: string[]): string => `[${xs.map(tomlString).join(', ')}]`;
+  const out: string[] = [];
+  for (const [name, c] of Object.entries(servers)) {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(name) || typeof c?.command !== 'string' || name === 'dreamcontext') continue;
+    out.push(codexConfigArg(`mcp_servers.${name}.command`, tomlString(o.node)));
+    out.push(codexConfigArg(`mcp_servers.${name}.args`, arr([o.cli, 'mcp', 'lean-exec', path, name])));
+  }
+  return out.join(' ');
+}
+
+/** The server names in `codex mcp list --json`: every config and form Codex itself merged. Null = unreadable. */
+export function parseCodexMcpList(stdout: string): string[] | null {
+  try {
+    const rows = JSON.parse(stdout) as unknown;
+    if (!Array.isArray(rows)) return null;
+    const names = rows.map((r) => (r as { name?: unknown })?.name);
+    return names.every((n): n is string => typeof n === 'string') ? names : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The servers a lean subset file keeps. */
+export function leanMcpNames(path: string | undefined): string[] {
+  if (!path) return [];
+  try {
+    return Object.keys((JSON.parse(readFileSync(path, 'utf-8')) as { mcpServers?: object }).mcpServers ?? {});
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * What a narrow surface (a lean child, a light job, a sleep) must not inherit from the owner's
+ * Codex config (Track T W4): Claude runs those with `--strict-mcp-config` or no MCP at all. Codex
+ * has no such flag, and `-c mcp_servers={}` MERGES rather than resets (checked on codex-cli
+ * 0.164), so each server Codex lists is switched off by name. `keep` is what this surface was
+ * given. Web search runs at OpenAI, outside the sandbox's network rule, so it goes too.
+ *
+ * Null when a server cannot be switched off (`codex` could not list them, or a name `-c` cannot
+ * address, like one with a dot): the caller refuses the run, since a server left on is wider.
+ */
+export function codexStrictArgs(listed: readonly string[] | null, keep: readonly string[]): string | null {
+  if (!listed) return null;
+  const off = listed.filter((n) => !keep.includes(n));
+  if (off.some((n) => !/^[A-Za-z0-9_-]{1,64}$/.test(n))) return null;
+  return [...off.map((n) => codexConfigArg(`mcp_servers.${n}.enabled`, 'false')), codexConfigArg('web_search', '"disabled"')].join(' ');
+}
+
 /** T3's Claude driver: its `--append-system-prompt-file` launch argument carries our briefing. */
 export function claudeLaunchArgs(o: { briefingFile?: string }): string {
   return o.briefingFile ? `--append-system-prompt-file ${quoteLaunchToken(o.briefingFile)}` : '';

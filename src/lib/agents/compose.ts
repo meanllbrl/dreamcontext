@@ -77,6 +77,8 @@ export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: 
     autonomy: m.autonomy ?? DEFAULT_AGENT_AUTONOMY,
     face: null,
     owner: m.owner ?? null,
+    ...(m.tool ? { tool: m.tool } : {}),
+    ...(m.tool && m.account ? { account: m.account } : {}),
     updated: null,
     call: isCall
       ? {
@@ -154,6 +156,9 @@ export function composeRun(
     ...(agent.autonomy !== DEFAULT_AGENT_AUTONOMY ? { autonomy: agent.autonomy } : {}),
     // Only when named, so a target without any stays field for field what it was.
     ...(agent.readTools?.length ? { readTools: agent.readTools } : {}),
+    // Only off Claude, so a composed target stays field for field what it was.
+    ...(agent.tool ? { tool: agent.tool } : {}),
+    ...(agent.tool && agent.account ? { account: agent.account } : {}),
     // Unhashed; carried only when stamped, so an unstamped pair composes as before.
     ...(agent.owner ? { owner: agent.owner } : {}),
   };

@@ -2975,6 +2975,17 @@ export function registerHookCommand(program: Command): void {
         }
       } catch { /* advisory — must never break the prompt path */ }
 
+      // ── A chat carried over from another tool (Track T W4) ──────────────────
+      // Once: the owner's pick in the model picker left this pane the other tool's text. Every
+      // other turn finds no file and prints nothing. Nested-guarded like the lines above.
+      try {
+        if (process.env.DREAMCONTEXT_TAB_SESSION && !isNestedClaudeHook()) {
+          const { consumeToolHandoffSeed } = await import('../../lib/t3-bridge/tool-handoff.js');
+          const seed = consumeToolHandoffSeed(root, process.env.DREAMCONTEXT_TAB_SESSION);
+          if (seed) console.log(seed);
+        }
+      } catch { /* advisory — must never break the prompt path */ }
+
       // ── A whiteboard agent card: the board, fresh, beside this message ────
       // Only a card session's child carries the two env vars (card-chat.ts), so
       // every other chat stays silent. Before the sleep-lock return: the board is

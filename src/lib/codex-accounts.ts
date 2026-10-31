@@ -355,6 +355,15 @@ function codexArgsEnv(id: string, deps: CodexAccountDeps): { env: NodeJS.Process
   return { env, pre: s.shadowHomePath ? ['-c', 'cli_auth_credentials_store="file"'] : [] };
 }
 
+/** The interactive terminal's account (Track T W4): `''` is #0, whose env stays as it is. */
+export function codexTerminalEnv(id: string, home: string = homedir()): { env: Record<string, string>; pre: string[] } {
+  if (!id || id === CODEX_PRIMARY_ID || !isCodexAccountId(id)) return { env: {}, pre: [] };
+  const s = codexInstanceSettings(home, id);
+  return s.shadowHomePath
+    ? { env: { CODEX_HOME: s.shadowHomePath }, pre: ['-c', 'cli_auth_credentials_store="file"'] }
+    : { env: {}, pre: [] };
+}
+
 export interface ProbeOutcome {
   status: 'ok' | 'needs-relogin' | 'unknown';
   email?: string;

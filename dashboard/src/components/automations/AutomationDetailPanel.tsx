@@ -670,6 +670,13 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
                           so it must be read here; a synced soul is otherwise approved
                           blind. Empty is not hashed, so there is nothing to review. */}
                       {/* Hashed when named: what a light job of this agent may call. */}
+                      {/* Hashed off Claude: which vendor reads this prompt. */}
+                      {automation.tool === 'codex' && (
+                        <div className="adp-review-row" data-review-tool>
+                          <span className="adp-review-label">tool</span>
+                          <span>Codex (OpenAI reads this prompt)</span>
+                        </div>
+                      )}
                       {!!automation.readTools?.length && (
                         <div className="adp-review-row" data-review-read-tools>
                           <span className="adp-review-label">read tools</span>

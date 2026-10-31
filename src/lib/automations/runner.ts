@@ -22,6 +22,11 @@ import { recordAccountRejection } from '../claude-limit-rejections.js';
 import type { ProbeOutcome } from '../claude-usage-probe.js';
 import { levelBrief } from '../agents/permission.js';
 import { LIGHT_JOB_BLOCK, lightRunArgs, runLeavesNoSession } from './light-run.js';
+import { codexRunAccountArg, pickCodexRunAccount, type CodexPick } from './codex-account.js';
+import { HEADLESS_ENVELOPES, codexModelOf, codexRunArgs } from '../t3-bridge/headless-envelope.js';
+import { bridgeNode } from '../t3-bridge/node-floor.js';
+import { linkedWritableRoots } from '../t3-bridge/roots.js';
+import { recordToolRejection } from '../account-switch.js';
 import {
   automationAccountWithoutProbe, pickAutomationAccount, protectedAutomationAccount, recordAccountWait, type AutomationAccount,
 } from './account.js';
@@ -1029,6 +1034,13 @@ export function declaredRunFailure(result: string): string | null {
   return reason || 'the run declared itself failed';
 }
 
+/** A headless Codex run's limit (`dc_limit`, run.ts). Claude's envelope never carries the field. */
+function codexLimitOf(p: Record<string, unknown>): LimitSignal | null {
+  const limit = p.dc_limit as { resetsAtMs?: unknown } | undefined;
+  if (!limit || typeof limit !== 'object') return null;
+  return { window: 'unknown', resetsAtMs: typeof limit.resetsAtMs === 'number' ? limit.resetsAtMs : null, via: 'rateLimitEvent' };
+}
+
 /** PURE — never throws. Unparseable JSON or a missing/non-string `result`
  *  both degrade to the same "not parsed" shape; the caller writes the RAW
  *  stdout tail to the output file in that case so nothing is silently lost. */
@@ -1055,7 +1067,7 @@ export function parseClaudeJson(stdout: string): ClaudeResult {
       // Computed HERE because this is the one place that holds both halves at once: the
       // whole envelope (for the structured readers, which carry the window and the reset)
       // and the narrowed `result` string (for the gated text reader).
-      limit: readEnvelopeLimitSignal(p, result),
+      limit: readEnvelopeLimitSignal(p, result) ?? codexLimitOf(p),
     };
   } catch {
     return { raw: stdout, ...UNPARSEABLE };
@@ -1399,6 +1411,9 @@ export interface ClaudeExecOptions {
   sharedMcpHome?: string;
   /** HOME whose hands-free state is checked. Tests only; production reads the real one. */
   home?: string;
+  /** Run this instead of `claude`, under the same spawn, kill and parse matrix: a headless Codex
+   *  run (`node <cli> t3-run …`, which prints `claude -p`'s JSON). Absent = Claude, unchanged. */
+  command?: { file: string; prefix: readonly string[] };
 }
 
 export interface ClaudeExecution {
@@ -1452,10 +1467,12 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
   // Positional argv (no shell re-parse), so the paths ride as themselves.
   const mcpFiles = opts.sharedMcpHome ? mcpStoreFiles({ home: opts.sharedMcpHome, projectRoot: opts.cwd }).files : [];
   const argv = mcpFiles.length ? [...args, '--mcp-config', ...mcpFiles] : args;
-  const claudeBin = findClaudeBin();
+  const claudeBin = opts.command ? null : findClaudeBin();
   // Windows has no login shell to fall back to: with no resolved binary the bare name is tried and
   // its ENOENT is reported below, instead of a /bin/zsh that does not exist.
-  const child: ChildProcess = claudeBin
+  const child: ChildProcess = opts.command
+    ? spawnFn(opts.command.file, [...opts.command.prefix, ...args], spawnOptions)
+    : claudeBin
     ? spawnFn(claudeBin, argv, spawnOptions)
     : process.platform === 'win32'
       ? spawnFn(win32ClaudeFallback(), argv, spawnOptions)
@@ -2161,7 +2178,22 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
   // the machine records when the earliest account frees up, so the tick skips every unattended
   // start until then instead of probing a full machine every five minutes.
   let protectedAccount: AutomationAccount | null = null;
-  if (opts.unattended) {
+  // A Codex run spends Codex's accounts: Claude's windows do not decide it (its pick is below).
+  const onCodex = manifest.tool === 'codex';
+  let codexPick: CodexPick | null = null;
+  if (opts.unattended && onCodex) {
+    const pick = codexPick = pickCodexRunAccount({ pinned: manifest.account, unattended: true, home: accountsHome, now: nowFn().getTime() });
+    if ('waitUntil' in pick) {
+      // Queued only: `recordAccountWait` is the machine-wide pause for CLAUDE's accounts, and a
+      // full Codex account must not stop every Claude automation with it.
+      try {
+        if (!opts.target && !opts.task) enqueueFire(projectRoot, slug, fireAt.toISOString(), home);
+      } catch (err) {
+        logFn(`warning: could not queue "${slug}" for its Codex account: ${(err as Error).message}`);
+      }
+      return shortCircuit('deferred', `every Codex account is near its usage limit; it waits until ${new Date(pick.waitUntil).toISOString()}`);
+    }
+  } else if (opts.unattended) {
     const pick = await protectedAutomationAccount({ home: accountsHome, probe: opts.probeUsage, now: nowFn().getTime() });
     if ('waitUntil' in pick) {
       try {
@@ -2266,7 +2298,11 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // chat turn makes (`account.ts`). A single-account machine returns at once, with no probe.
     // `?? await` so the common case spawns in this same tick, exactly as it did before.
     const accountDeps = { home: accountsHome, probe: opts.probeUsage };
-    let account = protectedAccount ?? automationAccountWithoutProbe(accountDeps) ?? await pickAutomationAccount(accountDeps);
+    let account = onCodex
+      // The placeholder keeps the approval question on Claude's default home (#0 is the real HOME)
+      // and Claude's limit switch out of a Codex run (its id is null).
+      ? { id: null, configDir: accountsHome, label: null }
+      : protectedAccount ?? automationAccountWithoutProbe(accountDeps) ?? await pickAutomationAccount(accountDeps);
     ensureSandbox(account.configDir, accountsHome);
 
     // Step 6.5 — the approval question, when the manifest changed under an
@@ -2396,6 +2432,29 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         notify: true,
       });
     }
+    // What Codex cannot hold stays refused, never widened (headless-envelope.ts): a home board's
+    // read denies and a task step's pinned session. Said plainly, and the fire is consumed.
+    // A pinned account that is gone ends the run: another login must not send this prompt.
+    if (onCodex) codexPick ??= pickCodexRunAccount({ pinned: manifest.account, home: accountsHome });
+    const codexRefusal = !onCodex ? '' : scope ? HEADLESS_ENVELOPES['board-agent'].why : taskStep ? HEADLESS_ENVELOPES['task-step'].why : '';
+    const codexNode = onCodex ? bridgeNode() : null;
+    const codexCli = process.env.DREAMCONTEXT_CLI || process.argv[1] || '';
+    const noCodexAccount = onCodex && !(codexPick && 'account' in codexPick);
+    if (codexRefusal || noCodexAccount || (onCodex && (!codexNode || !codexCli))) {
+      const n = nowFn();
+      return await finalize({
+        status: 'failed',
+        error: codexRefusal
+          ? `"${manifest.title}" cannot run on Codex. ${codexRefusal} Set its tool back to Claude.`
+          : noCodexAccount
+            ? (manifest.account ? 'The Codex account this is pinned to is not signed in on this Mac.' : 'No Codex account is signed in on this Mac.')
+            : 'Codex needs Node 22.16 or newer on this Mac.',
+        outputPath: null, exitCode: null, sessionId: null, costUsd: null, numTurns: null, permissionDenials: 0,
+        startedAt: n, finishedAt: n, durationMs: 0,
+        advanceWatermark: !opts.override?.light,
+        notify: true,
+      });
+    }
     const scopeArgs = scope && scopePaths ? boardScopeArgs(scope, scopePaths) : null;
     const scopeVars = scope && scopePaths ? scopeEnv(scope, scopePaths) : {};
     const { turn, display: askText } = buildBoardTurn(contextRoot, scope, opts.board, opts.ask ?? null);
@@ -2421,7 +2480,16 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     const timeoutMs = taskStep ? taskStep.timeoutMs : manifest.timeoutMinutes * 60_000;
     // A task step runs under its level's envelope (M4) unless a home board narrows it further.
     const permissionArgs = scopeArgs ?? (taskStep ? [...taskStep.permissionArgs] : null);
-    const claudeArgs = taskStep
+    const runSurface = opts.override?.light ? 'light' : opts.target === 'agent' ? 'agent' : 'automation';
+    const codexArgs = (accountId: string, resume: string | null, text: string): string[] => {
+      const { model, effort } = spawnModel(manifest, opts.override);
+      return codexRunArgs({
+        surface: runSurface, prompt: text, model: codexModelOf(model), effort, account: codexRunAccountArg(accountId), resume,
+        extraRoots: linkedWritableRoots(projectRoot),
+      });
+    };
+    let codexAccount = codexPick && 'account' in codexPick ? codexPick.account : '';
+    const claudeArgs = onCodex ? codexArgs(codexAccount, null, sanitizeAutomationPrompt(prompt)) : taskStep
       ? taskStep.resume
         ? ['--resume', taskStep.sessionId, ...buildClaudeArgs(manifest, sanitizeAutomationPrompt(taskStep.resumePrompt ?? prompt), permissionArgs, opts.override)]
         : [...buildClaudeArgs(manifest, prompt, permissionArgs, opts.override), '--session-id', taskStep.sessionId]
@@ -2450,7 +2518,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       },
       timeoutMs: budgetMs,
       // A light job's envelope names its MCP tools, on a home board too.
-      sharedMcpHome: scopeArgs && !opts.override?.light ? undefined : accountsHome,
+      sharedMcpHome: onCodex || (scopeArgs && !opts.override?.light) ? undefined : accountsHome,
+      ...(onCodex && codexNode ? { command: { file: codexNode, prefix: [codexCli] } } : {}),
       spawnImpl: spawnFn,
       killImpl: killFn,
       log: logFn,
@@ -2525,6 +2594,28 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
 
     let execution = await runOn(account, claudeArgs, timeoutMs);
     const startedAt = execution.startedAt;
+
+    // The same move for a Codex run: its refusal goes in Codex's own store, a pinned run ends on
+    // its account. Every Codex account shares `~/.codex`, so a thread resumes on any of them.
+    const codexTried: string[] = [];
+    while (onCodex && execution.spawned && !execution.timedOut && execution.result?.limit && codexAccount) {
+      const limit = execution.result.limit;
+      codexTried.push(codexAccount);
+      try {
+        recordToolRejection('codex', codexAccount, limit, accountsHome);
+      } catch (err) {
+        logFn(`automation "${slug}": could not record the account refusal: ${(err as Error).message}`);
+      }
+      if (manifest.account) break;
+      const nextPick = pickCodexRunAccount({ unattended: opts.unattended, exclude: codexTried, home: accountsHome, now: nowFn().getTime() });
+      if (!('account' in nextPick)) break;
+      const budgetMs = timeoutMs - (nowFn().getTime() - startedAt.getTime());
+      if (budgetMs < MIN_SWITCH_BUDGET_MS) break;
+      postSystemEntry(contextRoot, slug, fireAt.toISOString(), 'started', `The ${limitWindowLabel(limit)} usage limit stopped it on one Codex account. Continuing on the next.`, logFn);
+      codexAccount = nextPick.account;
+      const thread = (execution.result.numTurns ?? 0) > 1 ? execution.result.sessionId : null;
+      execution = await runOn(account, thread ? codexArgs(codexAccount, thread, CONTINUE_AFTER_SWITCH_PROMPT) : codexArgs(codexAccount, null, sanitizeAutomationPrompt(prompt)), budgetMs);
+    }
 
     // THE ACCOUNT SWITCH. A run the API refused on its limit is moved to the next account with
     // capacity instead of ending there. The refusal is WRITTEN DOWN first, which is what every

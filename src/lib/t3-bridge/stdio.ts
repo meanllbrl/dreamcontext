@@ -9,12 +9,13 @@
  *   - `control_request` interrupt / set_model / set_permission_mode → done, then acked
  *   - any other control_request → acked with an error (rewind, stop_task, MCP: not on this tool yet)
  */
+import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BridgeSession, type BridgeSessionOptions } from './session.js';
-import { claudeLaunchArgs, codexBrainMcpArgs, codexLaunchArgs, scrubbedCodexEnv } from './launch.js';
+import { claudeLaunchArgs, codexBrainMcpArgs, codexLaunchArgs, codexLeanMcpArgs, codexStrictArgs, leanMcpNames, parseCodexMcpList, scrubbedCodexEnv } from './launch.js';
 import { codexInstanceSettings, isCodexAccountId } from './accounts.js';
 import { HIDDEN_TITLE_PROMPT, TabTitler, titleBlock, titleIn } from './tab-title.js';
 import type { WireFrame } from './to-wire.js';
@@ -35,6 +36,10 @@ export interface StdioArgs {
   readonly binaryPath?: string;
   /** A non-#0 Codex account id (plan r5 §4b). Absent = account #0, `~/.codex`. */
   readonly account?: string;
+  /** A Super child's lean MCP subset (launch.ts `codexLeanMcpArgs`). */
+  readonly mcpConfig?: string;
+  /** Nothing from the owner's Codex config: no MCP servers, no web search (`codexStrictArgs`). */
+  readonly strictMcp?: boolean;
 }
 
 export interface StdioDeps {
@@ -47,6 +52,8 @@ export interface StdioDeps {
   /** Tests: a replay client instead of `codex app-server`. */
   readonly clientFactory?: BridgeSessionOptions['clientFactory'];
   readonly runtimePolicyOverride?: BridgeSessionOptions['runtimePolicyOverride'];
+  /** Tests: stands in for `codex mcp list --json`. */
+  readonly listMcp?: () => string[] | null;
   /** Called by `/clear` after the fresh thread opened (consumes the handoff record). What it
    *  returns rides the NEXT turn as untrusted app context (the handoff banner). */
   readonly onRotated?: (nativeThreadId: string) => AppContext[] | void;
@@ -73,6 +80,9 @@ const userText = (frame: Record<string, unknown>): string => {
     .map((b) => b.text)
     .join('');
 };
+
+const CLOSE_LIMIT_MS = 5_000;
+const MCP_LIST_LIMIT_MS = 15_000;
 
 /** Run until stdin ends. Resolves with the exit code. */
 export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<number> {
@@ -112,13 +122,30 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   let session: BridgeSession;
   // The account this pane runs on: its private home and its file credential store.
   const account = args.tool === 'codex' && args.account && isCodexAccountId(args.account) ? codexInstanceSettings(home, args.account) : null;
+  // A narrow surface hears from Codex which servers exist, and starts with none but its own.
+  const strictArgs = args.strictMcp && args.tool === 'codex'
+    ? codexStrictArgs(
+      (deps.listMcp ?? (() => {
+        const r = spawnSync(args.binaryPath ?? (process.platform === 'win32' ? 'codex.cmd' : 'codex'), ['mcp', 'list', '--json'], { cwd: args.cwd, env: scrubbedCodexEnv(deps.env), encoding: 'utf-8', timeout: MCP_LIST_LIMIT_MS, shell: process.platform === 'win32' });
+        return r.status === 0 ? parseCodexMcpList(r.stdout) : null;
+      }))(),
+      [...(deps.brain ? ['dreamcontext'] : []), ...leanMcpNames(args.mcpConfig)],
+    )
+    : '';
+  if (strictArgs === null) {
+    emit({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'Codex did not start: one of the MCP servers in its config could not be switched off for this run.', num_turns: 0, total_cost_usd: 0, usage: {}, dc_tool: args.tool });
+    rmSync(privateTmp, { recursive: true, force: true });
+    return 1;
+  }
   const launchArgs = args.tool === 'claude'
     ? claudeLaunchArgs({ briefingFile: args.briefingFile })
     : [
       account?.launchArgs ?? '',
       codexLaunchArgs({ briefingFile: args.briefingFile }),
+      strictArgs,
       // The brain's write path (§4a): only with a brain, i.e. when the chat gets its context.
       deps.brain ? codexBrainMcpArgs({ node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', root: args.cwd, tabSession: deps.env.DREAMCONTEXT_TAB_SESSION }) : '',
+      args.mcpConfig ? codexLeanMcpArgs(args.mcpConfig, { node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '' }) : '',
     ].filter(Boolean).join(' ');
   try {
     session = await BridgeSession.open({
@@ -245,6 +272,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   // The server ends a pane with SIGTERM (then SIGKILL): close the session first, which ends the
   // `codex app-server` child T3 spawned in its own group, and remove the private temp folder.
   const onSignal = (): void => {
+    // A Codex that ignores the close must not hold the exit: the app-server ends at stdin's EOF.
+    setTimeout(() => { process.exit(0); }, CLOSE_LIMIT_MS).unref();
     void session.close().finally(() => { rmSync(privateTmp, { recursive: true, force: true }); process.exit(0); });
   };
   if (deps.handleSignals) { process.once('SIGTERM', onSignal); process.once('SIGINT', onSignal); }

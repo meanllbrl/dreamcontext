@@ -324,11 +324,19 @@ export function SettingsPage({ focus }: SettingsPageProps) {
     if (focus?.id === 'brain' || focus?.id === 'teamsync') setActiveSection('teamsync');
     else if (focus?.id === 'github') setActiveSection('github');
     else if (focus?.id === 'system') setActiveSection('system');
+    // The composer's model picker (Track T W4): "Models ›" and a tool's "Sign in" / "Add ›".
+    else if (focus?.id === 'models') setActiveSection(newShell ? 'models' : 'agents');
+    else if (focus?.id === 'accounts' || focus?.id === 'accounts-codex') {
+      const target = focus.id === 'accounts-codex' ? 'settings-codex-accounts' : 'settings-claude-accounts';
+      setActiveSection('agents');
+      requestAnimationFrame(() => document.getElementById(target)?.scrollIntoView({ block: 'start' }));
+    }
     // `/mcp` → "Manage in Settings": the Agents section, scrolled to its MCP matrix.
     else if (focus?.id === 'mcp') {
       setActiveSection('agents');
       requestAnimationFrame(() => document.getElementById('settings-mcp')?.scrollIntoView({ block: 'start' }));
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `newShell` only picks the section name
   }, [focus?.id, focus?.nonce]);
 
   if (configLoading) {
@@ -441,10 +449,12 @@ export function SettingsPage({ focus }: SettingsPageProps) {
           {/* Connected Claude accounts stay at the TOP: which account an agent runs
               on is the first thing about it, and the limit that stops work is the
               reason this block exists. */}
+          <div id="settings-claude-accounts" />
           <SettingGroup title={t('settings.agents.accounts.title')}>
             <ClaudeAccounts />
           </SettingGroup>
           {/* Codex's accounts beside Claude's (Track T W2): the same bars, so the two compare. */}
+          <div id="settings-codex-accounts" />
           <SettingGroup title={t('settings.agents.codexAccounts.title')}>
             <CodexAccounts />
           </SettingGroup>
