@@ -26,6 +26,9 @@ export interface CreatedProject {
 
 interface Props {
   report: ReadinessReport | undefined;
+  /** The step's heading, when it is not the setup's "Add your project". */
+  title?: string;
+  subtitle?: string;
   /** A project was created or set up: go on to the hand-off. */
   onCreated: (project: CreatedProject) => void;
   /** The folder is already a dreamcontext project: open it, no questions. */
@@ -44,7 +47,7 @@ interface PickedFolder {
  * detect and recommends the packs that fit. A GitHub description and a detected stack still
  * ride along silently, so the scaffold's `init` starts from them.
  */
-export function ProjectStep({ report, onCreated, onOpenExisting }: Props) {
+export function ProjectStep({ report, title, subtitle, onCreated, onOpenExisting }: Props) {
   const { t } = useI18n();
   const defaults = useLauncherDefaults();
   const scaffold = useScaffoldProject();
@@ -166,8 +169,8 @@ export function ProjectStep({ report, onCreated, onOpenExisting }: Props) {
     ];
     return (
       <>
-        <h2 className="ob-title">{t('onboarding.project.title')}</h2>
-        <p className="ob-subtitle">{t('onboarding.project.subtitle')}</p>
+        <h2 className="ob-title">{title ?? t('onboarding.project.title')}</h2>
+        <p className="ob-subtitle">{subtitle ?? t('onboarding.project.subtitle')}</p>
         <div className="ob-choices">
           {cards.map((c) => (
             <button key={c.mode} type="button" className="ob-choice" onClick={() => pickMode(c.mode)}>

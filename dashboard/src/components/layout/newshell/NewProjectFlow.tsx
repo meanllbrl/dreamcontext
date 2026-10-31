@@ -26,7 +26,7 @@ function Flow({ stage, onClose, onLand }: { stage: Stage; onClose: () => void; o
   const [initial] = useState(stage);
   return (
     <NewProjectLandContext.Provider value={onLand}>
-      <Onboarding initialStage={initial} onClose={onClose} onOpenProject={(name) => onLand(name)} onFinished={onClose} />
+      <Onboarding initialStage={initial} purpose="new-project" onClose={onClose} onOpenProject={(name) => onLand(name)} onFinished={onClose} />
     </NewProjectLandContext.Provider>
   );
 }

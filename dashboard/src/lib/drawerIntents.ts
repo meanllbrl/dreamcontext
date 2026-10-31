@@ -49,6 +49,14 @@ export interface DrawerWindowFact {
   asking: number;
   flagged: number;
   other: number;
+  /** Every tab it holds, saved ones too (`other` counts live ones only). 0: nothing to open. */
+  tabs: number;
+}
+
+/** A click that opens something on the chat area: the project lands on it from its first frame
+ *  (`AgentSurface`'s arrival), never on the page it would otherwise start on. */
+export function landsOnChat(intent: DrawerIntent): boolean {
+  return intent.kind !== 'rename-window' && intent.kind !== 'close-window' && intent.kind !== 'page';
 }
 
 export interface DrawerSurfaceState {

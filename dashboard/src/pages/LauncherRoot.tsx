@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useShellMode } from '../lib/uxMode';
-import { readLayoutPrefs } from '../lib/launcherPrefs';
+import { NewProjectLandContext, useShellMode } from '../lib/uxMode';
+import { readLayoutPrefs, writeLayoutPrefs } from '../lib/launcherPrefs';
 import { appLinksDrained } from '../lib/appLink';
 import { findWindowForVault } from '../lib/windowRegistry';
 import { isDesktop, vaultWindowLabel } from '../lib/desktop';
@@ -68,7 +68,25 @@ export function LauncherRoot() {
     return () => { live = false; };
   }, [newShell, data, isError, pick]);
 
-  if (!newShell || pick === null) return <TodayLauncher />;
+  // A project made here (the app's first, most often) opens in THIS window, on its chat, with the
+  // drawer beside it: never a second window over a launcher nobody needs any more.
+  const [landed, setLanded] = useState<{ name: string; start?: 'initializer' } | null>(null);
+  if (landed) {
+    return <WindowChrome initialVault={landed.name} initialStart={landed.start ?? null}
+      initialIntent={landed.start ? { kind: 'open-window' } : { kind: 'new-window' }} />;
+  }
+  if (!newShell) return <TodayLauncher />;
+  if (pick === null) {
+    return (
+      <NewProjectLandContext.Provider value={(name, start) => {
+        const expanded = readLayoutPrefs().drawerExpanded ?? [];
+        if (!expanded.includes(name)) writeLayoutPrefs({ drawerExpanded: [...expanded, name] });
+        setLanded({ name, start });
+      }}>
+        <TodayLauncher />
+      </NewProjectLandContext.Provider>
+    );
+  }
   if (pick === undefined) return null;
   return <WindowChrome initialVault={pick} />;
 }

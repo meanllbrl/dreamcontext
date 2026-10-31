@@ -112,7 +112,7 @@ import {
   type RestoredTab, type SavedWindowMeta, type WindowFact, type WindowsState, type WinPane,
 } from './chatWindows';
 import { wasOpenedForLink } from '../../lib/windowLaunch';
-import { DRAWER_INTENT_EVENT, DRAWER_SURFACE_EVENT, type DrawerIntent, type DrawerSurfaceState } from '../../lib/drawerIntents';
+import { DRAWER_INTENT_EVENT, DRAWER_SURFACE_EVENT, type DrawerIntent, type DrawerSurfaceState, type PendingDrawerIntent } from '../../lib/drawerIntents';
 import { planSuperRow, runSuperRow, SUPER_ROW_SPAWN } from './super/superRow';
 /** The new shell opens its first project on Chat once per window (6b), not on every switch. */
 let openedOnRestoreThisWindow = false;
@@ -453,6 +453,8 @@ function carryQueueInto(next: ChatSession, held: string[], queued: { texts: stri
 /** How long a chat link waits for the surface's capabilities, settings and saved roster
  *  before acting on what it has, and how often it looks. */
 const LINKED_SESSION_WAIT_MS = 8_000;
+/** On top of that wait, the longest a drawer arrival may stand before the wait gives up. */
+const ARRIVAL_SLACK_MS = 12_000;
 const LINKED_SESSION_POLL_MS = 150;
 /** The onboarding start intent's wait for caps, settings and roster: the plan's 10 s bound. */
 const START_INTENT_WAIT_MS = 10_000;
@@ -471,7 +473,9 @@ function tunnelSettings(s: AgentSettings): AgentSettings {
   return isMacPhoneSurface() && !s.chatView ? { ...s, chatView: true } : s;
 }
 
-export function AgentSurface({ stageBesideDrawer = false }: {
+export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
+  /** New shell: the drawer click this project lands on, known from its first render. */
+  arrival?: PendingDrawerIntent | null;
   /** The new shell's chat drawer stands beside this surface: the Super stage leans right. */
   stageBesideDrawer?: boolean;
 } = {}) {
@@ -5143,6 +5147,12 @@ export function AgentSurface({ stageBesideDrawer = false }: {
   // knows its tabs and its Super record (a project the click just mounted is still restoring):
   // read early, an empty roster would make the Super row start a chat the project did not need.
   const [drawerIntent, setDrawerIntent] = useState<{ intent: DrawerIntent; since: number } | null>(null);
+  /** The drawer click this project is landing on (its kind), until it has run. */
+  const [arriving, setArriving] = useState<DrawerIntent['kind'] | null>(null);
+  /** Opened by a drawer click: no zoom, until it folds. */
+  const [arrived, setArrived] = useState(false);
+  /** The Super row's hand-over outlives the intent: the wait ends when it does. */
+  const arrivalHeldRef = useRef(false);
   const [drawerWait, setDrawerWait] = useState(0);
   useInstanceEvent<DrawerIntent>(DRAWER_INTENT_EVENT, (intent) => {
     if (intent) setDrawerIntent({ intent, since: Date.now() });
@@ -5156,8 +5166,39 @@ export function AgentSurface({ stageBesideDrawer = false }: {
     }
     setDrawerIntent(null);
     runDrawerIntentRef.current(drawerIntent.intent);
+    if (!arrivalHeldRef.current) setArriving(null);
     return undefined;
   }, [drawerIntent, drawerWait, caps, settingsReady]);
+
+  // ── The arrival: a drawer click lands in one step ─────────────────────────────────────
+  // What was clicked is known from the project's first render, so that render already stands on
+  // the chat area, before the browser paints. A project opens on no page in between, no other
+  // chat of its own shows, and nothing zooms in: the main area waits plainly until the intent
+  // above has run. The drawer's rows follow the target, not whatever happens to be restoring.
+  const arrivalNonce = arrival?.nonce;
+  useLayoutEffect(() => {
+    if (!arrival || !windowed) return;
+    setExpanded(true);
+    setArrived(true);
+    setSuperPeek(null);
+    // A History pick travels by its own path; it opens the surface and has nothing to wait for.
+    if (arrival.intent.kind !== 'open-session') setArriving(arrival.intent.kind);
+    // Read at the nonce: the same click must not land twice.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arrivalNonce, windowed]);
+  // On the fold, not on "not expanded": a project's first effects run with `expanded` still false,
+  // after the arrival above has already set it.
+  const wasExpandedForArrival = useRef(false);
+  useEffect(() => {
+    if (wasExpandedForArrival.current && !expanded) setArrived(false);
+    wasExpandedForArrival.current = expanded;
+  }, [expanded]);
+  // The intent can be dropped on its way (a stale queue entry): the wait never outlives its bound.
+  useEffect(() => {
+    if (!arriving) return undefined;
+    const timer = window.setTimeout(() => setArriving(null), LINKED_SESSION_WAIT_MS + ARRIVAL_SLACK_MS);
+    return () => window.clearTimeout(timer);
+  }, [arriving]);
   // ── Named chat windows: new, rename, close (D8) ──────────────────────────────────────
   /** A new window right after the one on screen, with a fresh chat in it. */
   const createChatWindow = useCallback(() => {
@@ -5180,7 +5221,12 @@ export function AgentSurface({ stageBesideDrawer = false }: {
   useEffect(() => {
     if (!freshTabNonce || freshTabDoneRef.current === freshTabNonce) return;
     freshTabDoneRef.current = freshTabNonce;
-    if (panes.length === 0 && canSpawn) addSession(claudeKind);
+    // The DRAWN panes: a window left holding only the Super Agent's tabs is empty to the owner.
+    if (shownPanes.length === 0 && canSpawn) {
+      const sid = addSession(claudeKind);
+      // Ready to type: the composer exists once its pane has landed.
+      if (sid) requestAnimationFrame(() => requestAnimationFrame(() => focusTerm(sid)));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freshTabNonce]);
   const renameChatWindow = useCallback((id: string, name: string) => {
@@ -5254,7 +5300,13 @@ export function AgentSurface({ stageBesideDrawer = false }: {
       setExpanded(true);
     } else if (intent.kind === 'new-window') {
       setSuperView('panes');
-      if (canSpawn) { if (windowed) createChatWindow(); else addSession(claudeKind); }
+      if (canSpawn) {
+        // An empty window is reused, never a pile of them no row shows: the first one takes the chat.
+        const empty = windowed ? chatWindowsRef.current.list.find((w) => !windowRows.get(w.id)?.length) : undefined;
+        if (empty) { showWindow(empty.id); setFreshTabNonce((n) => n + 1); }
+        else if (windowed) createChatWindow();
+        else addSession(claudeKind);
+      }
       setExpanded(true);
     } else if (intent.kind === 'rename-window') {
       renameChatWindow(intent.windowId, intent.name);
@@ -5280,6 +5332,7 @@ export function AgentSurface({ stageBesideDrawer = false }: {
         canSpawn,
       });
       superRowBusyRef.current = true;
+      arrivalHeldRef.current = true;
       void runSuperRow(plan, {
         showStage: () => setSuperView('super'),
         handOver,
@@ -5292,7 +5345,7 @@ export function AgentSurface({ stageBesideDrawer = false }: {
           if (sessionListRef.current.some((m) => m.id === id)) { resolve(); return; }
           registeredWaitersRef.current.set(id, resolve);
         }),
-      }).finally(() => { superRowBusyRef.current = false; });
+      }).finally(() => { superRowBusyRef.current = false; arrivalHeldRef.current = false; setArriving(null); });
     }
   };
 
@@ -5700,15 +5753,16 @@ export function AgentSurface({ stageBesideDrawer = false }: {
   const shownFacts = { live: shownRollup.live, asking: shownRollup.asking, working: shownRollup.working, flagged: shownRollup.flagged };
   const windowRows = rowsByWindow(chatWindows, ownerRows, (id) => sessionList.find((m) => m.id === id)?.claudeId);
   const windowFacts: WindowFact[] = chatWindows.list.map((w) => {
-    const r = rollupProject(windowRows.get(w.id) ?? []);
-    return { id: w.id, name: w.name, working: r.working, asking: r.asking, flagged: r.flagged, other: Math.max(0, r.live - r.working - r.asking) };
+    const rows = windowRows.get(w.id) ?? [];
+    const r = rollupProject(rows);
+    return { id: w.id, name: w.name, working: r.working, asking: r.asking, flagged: r.flagged, other: Math.max(0, r.live - r.working - r.asking), tabs: rows.length };
   });
   const peekMember = superPeek?.kind === 'member' ? superPeek.slug : null;
   const superMarks = superRowMarks(superState);
-  const windowFactsKey = JSON.stringify([chatWindows.activeId, windowFacts, shownFacts, peekMember, superMarks]);
+  const windowFactsKey = JSON.stringify([chatWindows.activeId, windowFacts, shownFacts, peekMember, superMarks, arriving]);
   useEffect(() => {
     emitInstance<DrawerSurfaceState>(bus, DRAWER_SURFACE_EVENT, {
-      superOn, superSelected: superSelected && !peekMember, windows: windowFacts, activeWindowId: chatWindows.activeId,
+      superOn, superSelected: (superSelected || arriving === 'super') && !peekMember, windows: windowFacts, activeWindowId: chatWindows.activeId,
       shown: shownFacts, ...(peekMember ? { member: peekMember } : {}), superMarks,
     });
     // The facts are read through their key: a rebuilt array with the same rows sends nothing.
@@ -5937,6 +5991,9 @@ export function AgentSurface({ stageBesideDrawer = false }: {
             />
           </div>
         )}
+        {windowed && arriving && (
+          <div className="agent-arriving" data-testid="agent-arriving" role="status"><span>{t('shell.windows.opening')}</span></div>
+        )}
         {windowed && superPeek && (
           <div className="agent-peek" data-testid="agent-peek" data-kind={superPeek.kind}>
             <div className="agent-peek-head">
@@ -6024,7 +6081,14 @@ export function AgentSurface({ stageBesideDrawer = false }: {
           {shownPanes.length === 0 && (
             <div className="agent-allmin-hint">
               <p className="agent-allmin-title">{windowed ? t('shell.windows.empty') : 'All agents minimized'}</p>
-              <p className="agent-allmin-sub">{windowed ? t('shell.windows.emptyHint') : 'Click a chip in the bottom-right corner to bring one back, or start a new one with ＋ New agent.'}</p>
+              {!windowed && <p className="agent-allmin-sub">Click a chip in the bottom-right corner to bring one back, or start a new one with ＋ New agent.</p>}
+              {windowed && !canSpawn && <p className="agent-allmin-sub">{t('shell.windows.emptyBlocked')}</p>}
+              {windowed && canSpawn && (
+                <button type="button" className="chat-btn primary agent-allmin-new" data-testid="chat-empty-new"
+                  onClick={() => runDrawerIntentRef.current({ kind: 'new-window' })}>
+                  {t('shell.drawer.newChat')}
+                </button>
+              )}
             </div>
           )}
           {shownPanes.map((pane) => {
@@ -6151,6 +6215,7 @@ export function AgentSurface({ stageBesideDrawer = false }: {
         /* The minimized-sessions dock floats over our bottom-right corner — flag it so the
            corner pane's composer can clear its anchor chip (model/effort stay visible). */
         data-dock-floating={caps?.desktop && expanded && minimizedRows.length > 0 ? 'true' : undefined}
+        data-arrived={arrived ? 'true' : undefined}
         /* The phone layer's switch — every rule in `MobileChat.css` hangs off this one
            attribute, so the desktop layout is untouched at any width. */
         data-mobile={isMobile ? 'true' : undefined}
@@ -6167,7 +6232,7 @@ export function AgentSurface({ stageBesideDrawer = false }: {
             pane; the header IS the tab strip, so there's no separate title row and no
             second 38px bar), and the "New" split action. */}
         {/* New shell, the Super stage: no bar at all; the stage takes its height. */}
-        <div className="agent-overlay-head" hidden={windowed && handedOver}>
+        <div className="agent-overlay-head" hidden={windowed && (handedOver || !!arriving)}>
           {/* The phone header: [☰ sessions] [active session name] [＋ new chat]. It REPLACES
               the desktop trio rather than restyling it — the tab strip's per-tab ✕/minimize
               buttons are 20px affordances that no thumb can hit, and a hidden-but-mounted

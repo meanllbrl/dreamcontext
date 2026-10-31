@@ -343,6 +343,8 @@ export interface WindowFact {
   asking: number;
   flagged: number;
   other: number;
+  /** Every tab it holds, saved ones too. */
+  tabs: number;
 }
 
 /** Group session rows by the window that holds them (the selected one for anything unparked). */
