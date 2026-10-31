@@ -41,6 +41,7 @@ mod node_runtime;
 mod node_setup;
 #[cfg(target_os = "macos")]
 mod open_panel_guard;
+mod owner_key;
 mod page_focus;
 mod splash;
 mod updater;
@@ -49,7 +50,7 @@ mod win;
 
 use std::net::TcpListener;
 use std::path::Path;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -113,6 +114,7 @@ pub fn run() {
             assistant::assistant_wake,
             assistant::assistant_set_enabled,
             frames::set_frames,
+            owner_key::owner_key,
             app_link::take_app_link,
             splash::splash_done,
             splash::splash_play,
@@ -759,9 +761,13 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
     // No usable Node (none, or older than 18): the setup screen installs a private one and
     // boot continues on it. `fresh_install` marks that path for the longer first-boot wait
     // and the setup screen's own hand-over to the Launcher.
-    let (node, fresh_install) = match node_runtime::resolve_usable_node() {
-        Ok(choice) => (choice.path, false),
-        Err(problem) => (node_setup::run_blocking(&app, problem)?, true),
+    let (node, node_version, fresh_install) = match node_runtime::resolve_usable_node() {
+        Ok(choice) => (choice.path, Some(choice.version), false),
+        Err(problem) => {
+            let path = node_setup::run_blocking(&app, problem)?;
+            let pinned = node_runtime::node_pins().ok().and_then(|p| node_runtime::parse_node_version(&p.version));
+            (path, pinned, true)
+        }
     };
     let (cli, global_cli) = resolve_cli(&app)?;
     let port = pick_free_port()?;
@@ -769,6 +775,10 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
     // Boot the server in LAUNCHER mode — vault-agnostic. Each window pins its
     // own vault via ?vault=<name> → X-Dreamcontext-Vault header.
     let mut cmd = Command::new(&node);
+    // No inspector on a signal, so no window at all before the CLI's own guard runs.
+    if node_version.is_some_and(owner_key::node_can_disable_sigusr1) {
+        cmd.arg("--disable-sigusr1");
+    }
     cmd.args([
         cli.as_str(),
         "dashboard",
@@ -787,6 +797,10 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
         // is the orphaned-dashboard-server safety net; see `startParentDeathWatch`
         // in src/server/lifecycle.ts.
         .env("DREAMCONTEXT_PARENT_PID", std::process::id().to_string())
+        // The owner key comes down stdin, never the environment: every agent inherits that
+        // (src/owner_key.rs).
+        .env("DREAMCONTEXT_OWNER_KEY_STDIN", "1")
+        .stdin(Stdio::piped())
         // The global CLI install the server's self-update upgrades (src/lib/self-update.ts),
         // also when the bundled copy is the one running. Absent = no global CLI found.
         .envs(global_cli.map(|g| ("DREAMCONTEXT_GLOBAL_CLI".to_string(), g)))
@@ -818,9 +832,16 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
             cmd.stdout(log).stderr(err);
         }
     }
-    let child: Child = cmd
+    use std::io::Write;
+    let mut child: Child = cmd
         .spawn()
         .map_err(|e| format!("Failed to start the dashboard server with node:\n  {node}\n\n{e}"))?;
+    let key = owner_key::mint()?;
+    // A server that died before reading this is reported by the health poll below.
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = writeln!(stdin, "{key}");
+    }
+    app.manage(owner_key::OwnerKey(key));
 
     // Windows: the server's whole tree dies with the app, even on a crash (src/win.rs).
     #[cfg(windows)]

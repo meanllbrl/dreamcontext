@@ -1,3 +1,4 @@
+import './inspector-guard.js';
 import './hide-windows.js';
 import chalk from 'chalk';
 import { createProgram } from './program.js';

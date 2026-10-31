@@ -558,6 +558,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'outbox-vault-',
   'owned-cdp-',
   'owner-',
+  'owner-answer-',
+  'owner-answer-home-',
   'phone-gate-',
   'phone-log-',
   'phone-origin-',

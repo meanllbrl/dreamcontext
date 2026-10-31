@@ -26,6 +26,7 @@
     "notification:allow-request-permission",
     "notification:allow-notify",
     "allow-assistant-geometry",
+    "allow-owner-key",
     "allow-assistant-haptic",
     "allow-assistant-wake",
     "allow-pick-paths",

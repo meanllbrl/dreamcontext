@@ -6,7 +6,7 @@
  * owner's answer refuses a stale prompt id and a non-loopback caller; the notch-side reader
  * drops junk rows and strips the wrapper; the mood ladder.
  */
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { Readable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { mkdtempSync } from 'node:fs';
@@ -16,10 +16,13 @@ process.env.HOME = mkdtempSync(`${tmpdir()}/assistant-glance-home-`);
 
 const routes = await import('../../src/server/routes/assistant.js');
 const registry = await import('../../src/lib/assistant/chat-registry.js');
+const ownerKey = await import('../../src/server/owner-key.js');
 const { addVault } = await import('../../src/lib/vaults.js');
 const { mkdirSync } = await import('node:fs');
 const { join } = await import('node:path');
 const { readGlance, unwrapUntrusted, notchMood, glanceStatus, EMPTY_ROLLUP } = await import('../../dashboard/src/components/assistant/notchModel');
+
+const KEY = 'k'.repeat(64);
 
 function makeRes() {
   let status = 0;
@@ -74,11 +77,13 @@ describe('GET /api/assistant/glance', () => {
 });
 
 describe('POST /api/assistant/answer (the owner\'s Allow / Deny)', () => {
-  beforeEach(() => registry._resetChatRegistry());
-  // The app's own page: it sends its Origin on every POST (the notch's fetch).
+  beforeEach(() => { registry._resetChatRegistry(); ownerKey.setOwnerKey(KEY); });
+  afterEach(() => ownerKey.setOwnerKey(null));
+  // The app's own page: its Origin, its browser's word for it, and the shell's key (the notch's fetch).
   const answer = async (body: unknown, remote?: string, origin: string | null = 'http://127.0.0.1:4173') => {
     const r = makeRes();
     const rq = req('POST', '/api/assistant/answer', body, remote);
+    Object.assign(rq.headers, { 'sec-fetch-site': 'same-origin', [ownerKey.OWNER_KEY_HEADER]: KEY });
     if (origin !== null) (rq.headers as Record<string, string>).origin = origin;
     await routes.handleAssistantOwnerAnswer(rq, r.res);
     return r;

@@ -624,6 +624,20 @@ export async function focusThisWindow(): Promise<void> {
 }
 
 /**
+ * The key the shell holds for the owner's own notch (`POST /api/assistant/answer`). Asked for on
+ * every answer, so no page keeps it. Null outside the app, in another window, or on an older shell.
+ */
+export async function ownerKey(): Promise<string | null> {
+  if (!isDesktop()) return null;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<string>('owner_key');
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Pin (or unpin) the CURRENT window above every app. Always-on-top alone only floats a window
  * on the macOS Space it was opened on, so a pinned checklist vanished the moment the user
  * switched desktop or went into a full-screen app; the shell's `set_pinned` also makes it join
