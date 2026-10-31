@@ -31,6 +31,15 @@ describe('t3 bridge session (T3 replay)', () => {
     expect(String(result.session_id)).toMatch(/^[0-9a-f-]{20,}$/);
   });
 
+  it('a hidden turn hands back its text and draws nothing, and the pane is not busy in it', async () => {
+    const { session, frames, fixture } = await openReplaySession('simple');
+    open.push(session);
+    const pending = session.hiddenTurn(fixture.prompt);
+    expect(session.busy).toBe(false);
+    expect(await pending).toContain('fixture simple ok');
+    expect(frames.filter((f) => f.type === 'assistant' || f.type === 'result' || f.type === 'stream_event')).toEqual([]);
+  });
+
   it('asks an approval with the tool name and its input, and resumes on allow', async () => {
     const { session, frames, fixture } = await openReplaySession('tool_call_read_only_on_request');
     open.push(session);

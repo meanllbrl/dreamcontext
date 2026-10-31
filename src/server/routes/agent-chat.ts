@@ -1881,8 +1881,9 @@ export function startChatSession(
   // records it) and only when that thread belongs to THIS project (`bridgeResumeTarget`).
   const resumeTarget = bridgeTool === 'codex'
     ? bridgeResumeTarget({ tool: bridgeTool, mapped: mappedId, resumeId, projectRoot, held: liveConversations })
+    // A T3 Claude pane's thread id is not its pin, so a held pin is a running child too.
     : [mappedId, resumeId].find(
-      (c) => c && !liveConversations.has(c) && claudeConversationExists(c),
+      (c) => c && !liveConversations.has(c) && !(bridgeTool && liveConversations.has(resumeId || sessionId)) && claudeConversationExists(c),
     ) ?? '';
   const pinId = resumeId || sessionId;
   // Who chose this pane's account — see `autoPlacedAccounts`. Only an auto-placed pane comes home.
@@ -1897,11 +1898,11 @@ export function startChatSession(
   // resolvable), it REFUSES below like a Claude resume, rather than starting a fresh
   // thread whose record would overwrite the map and lose the conversation for good.
   const bridgeMapped = !!bridgeTool && !!mappedId && mappedId !== resumeId && isCodexThreadId(mappedId);
-  // Only a Codex pane holds by pane: T3's Claude engine keeps Claude's own session rules, so its
-  // "a resume never quietly forks" guard and its one-writer hold are today's.
-  const paneHeld = bridgeTool === 'codex';
+  // A bridge pane holds by pane. T3's Claude engine allocates its own thread id, so a pane that
+  // already has a transcript under its id must not open fresh either: that open refuses below.
+  const paneHeld = !!bridgeTool;
   const freshPin = paneHeld
-    ? (resumeTarget || bridgeMapped ? '' : pinId)
+    ? (resumeTarget || bridgeMapped || (bridgeTool === 'claude' && claudeConversationExists(pinId)) ? '' : pinId)
     : !resumeTarget && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
       ? pinId : '';
   const idArg = resumeTarget ? ['--resume', resumeTarget] : freshPin ? ['--session-id', freshPin] : [];
@@ -2016,12 +2017,16 @@ export function startChatSession(
   // respawn of the same pane waits for the old child exactly as a Claude resume does.
   const heldConversation = paneHeld ? pinId : resumeTarget || freshPin;
   if (heldConversation) liveConversations.add(heldConversation);
+  // The T3 Claude engine writes the resumed transcript itself: one writer, like today's engine.
+  const threadHold = bridgeTool === 'claude' && resumeTarget !== pinId ? resumeTarget : '';
+  if (threadHold) liveConversations.add(threadHold);
   /** The hold was handed to a respawn while this child was detached and busy (`supersedeLive`):
    *  the conversation is not ours to release any more, so `releaseHeld` must leave it alone. */
   let holdLent = false;
   let releaseHeld = () => {
     releaseHeld = () => { /* once */ };
     if (heldConversation && !holdLent) liveConversations.delete(heldConversation);
+    if (threadHold) liveConversations.delete(threadHold);
   };
 
   // ── A FRESH session starts on the default branch ──────────────────────────────────────

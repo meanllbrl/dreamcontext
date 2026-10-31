@@ -421,9 +421,9 @@ export class BridgeSession {
     } as OrchestrationV2AppThread;
   }
 
-  /** Is a turn running? */
+  /** Is a turn the owner can see running? A hidden one is not: nothing waits on its `result`. */
   get busy(): boolean {
-    return this.activeRun !== null;
+    return this.activeRun !== null && !this.hidden;
   }
 
   /**
@@ -523,7 +523,8 @@ export class BridgeSession {
 
   /**
    * One turn nobody sees: what it wrote comes back, none of its frames go out. Only from idle.
-   * Ends by itself after `ms`, so a stuck turn can never hold the pane.
+   * Told to stop after `ms`. One that still has not ended 20 s later means the tool is stuck:
+   * the session ends like any dead tool, and the pane offers Resume.
    */
   async hiddenTurn(text: string, ms = 45_000): Promise<string> {
     if (this.closed || this.activeRun || this.hidden || !this.session || !this.providerThread) return '';
@@ -532,12 +533,14 @@ export class BridgeSession {
     const hidden = { text: '', finished, finish, stopping: false };
     this.hidden = hidden;
     const timer = setTimeout(() => { void this.cancelHidden(); }, ms);
+    const deadline = setTimeout(() => { if (this.hidden === hidden) this.fatal(`${this.opts.tool === 'claude' ? 'Claude' : 'Codex'} stopped responding.`); }, ms + 20_000);
     try {
       const failure = await this.startRun(this.turnMessage(text), []);
       if (failure) this.endHidden();
       else await finished;
     } finally {
       clearTimeout(timer);
+      clearTimeout(deadline);
     }
     return hidden.text;
   }
