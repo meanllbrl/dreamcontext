@@ -270,6 +270,7 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
     // branches merged on top (plan summary, global members, `origin=<ref>`), each pinned by its own test.
     expect(gone).toEqual([
       expect.stringContaining('unseen): the text says in one line that a question waits.'),
+      '  `super resume <child>` reopens it); `--idle` lists idle ones; `--force` only if the owner asked.',
       '- The AI Team (`dreamcontext agents list`): `super team ask <member> "<job>"` hands an approved',
       '  member recurring or field work in its own thread; `super state` shows how it goes.',
       '  `super note done <id>` when it finished or he gave it, `drop <id>` when it no longer holds,',
@@ -289,6 +290,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       'carries what he says yes to (the problem in one sentence, 3-6 short bullets of what will be done,',
       'his decisions, cost or risk in money, never time) and your text gives the same summary, as long as',
       expect.stringContaining('it needs (the exception to 2-4).'),
+      '- His note on a running job: before its first reviewer, into that child; after, a new small job.',
+      '  `super resume <child>` reopens it); `--force` only if the owner asked.',
       '- Your AI Team, when the project has one, is listed under `## Your AI Team` (and in `super state`',
       '  members): check it first for every job. A diagnosis, draft, send, a change or several sources in',
       "  a member's field is that member's job (`super team ask <member> \"<job>\"`, in its own thread),",
@@ -305,7 +308,7 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '- New work: `super note clear`. Write a day or date, never "today"/"tomorrow".',
       expect.stringContaining('with `origin=<ref>`'),
       '  result with `<!-- re:<ref> -->`.',
-      expect.stringContaining('<super-brief rev=20>'),
+      expect.stringContaining('<super-brief rev=22>'),
     ]);
     expect(after.length).toBe(before.length + 17);
   });

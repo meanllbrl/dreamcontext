@@ -81,9 +81,9 @@ describe('develop: the lead builds, checks each wave, and ONE clean reviewer jud
     expect(wave).toMatch(/a plan that\s+turns out to be wrong = STOP/);
   });
 
-  it('ONE end reviewer on Opus over every changed path by name, in parallel with the final check', () => {
+  it('ONE end reviewer on Opus over every changed path by name, the final check after it', () => {
     const end = dSection('## 3.', '## 4.');
-    expect(end).toMatch(/The end review and the final check run\s+at the same time, dispatched in ONE message/);
+    expect(end).toMatch(/The final check, ONCE, after the last PASS/);
     expect(end).toMatch(/ONE `reviewer` sub-agent \(Agent tool, model opus, effort high, not in the background\)/);
     expect(end).toMatch(/every path you changed, enumerated by name, with START and NOW, never a\s+bare `git diff` against a ref/);
     expect(end).toMatch(/never paste a diff/);
@@ -110,7 +110,9 @@ describe('develop: the lead builds, checks each wave, and ONE clean reviewer jud
   it('a red final check goes back through review like a reviewer FAIL: nothing closes on an unread fix', () => {
     const end = dSection('## 3.', '## 4.');
     expect(end).toMatch(/A reviewer FAIL or a red final check takes the same path/);
-    expect(end).toMatch(/and the final check runs again/);
+    expect(end).toMatch(/Only what the fix touched runs: no build, no browser/);
+    expect(end).toMatch(/effort\s+medium/);
+    expect(end).toMatch(/Rounds have no cap/);
     expect(end).toMatch(/Nothing closes on a fix no reviewer has read/);
   });
 
@@ -271,11 +273,11 @@ describe('review where it pays (owner decision 15, 2026-10-11)', () => {
     expect(section('### 2f.', '### 2g.')).toMatch(/not in the background/);
   });
 
-  it('the end review runs alongside the final check and is skipped when every wave was reviewed', () => {
+  it('the final check waits for the end review, which is skipped when every wave was reviewed', () => {
     const end = section('## 3.', '## 4.');
-    expect(end).toMatch(/The end review and the final check run at the same time, dispatched in ONE message/);
+    expect(end).toMatch(/The final check, ONCE, after the last PASS/);
     expect(end).toMatch(/A run whose every wave was REVIEWED skips it/);
-    expect(end).toMatch(/a fresh end reviewer\s+re-checks only the previous findings and the fix/);
+    expect(end).toMatch(/a fresh reviewer \(model opus, effort\s+medium, not in the background\) re-checks only the previous findings and the fix/);
   });
 });
 
@@ -519,7 +521,7 @@ describe('the end review the diff picks, in both recipes', () => {
     });
 
     it(`${name}: a team FAIL is re-checked by the specialists that raised it, no new router`, () => {
-      expect(end).toMatch(/one specialist for each that raised a blocking\s+finding, fed only its previous findings word for word/);
+      expect(end).toMatch(/one specialist for each that raised a blocking\s+finding \(effort medium\), fed only its previous findings word for word/);
       expect(end).toMatch(/the\s+router does not run again/);
     });
   }

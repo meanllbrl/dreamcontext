@@ -723,6 +723,11 @@
       ]
     },
     {
+      "path": "builder budget",
+      "desc": "What this branch spent of the repeat limit on browser runs, builds and full test suites, and every run past it",
+      "args": []
+    },
+    {
       "path": "builder fork",
       "desc": "Start a builder forked from the base, so it starts knowing what the base read (detached)",
       "args": [
@@ -737,18 +742,38 @@
     },
     {
       "path": "builder heavy",
-      "desc": "Run a type-check, build, test run or browser verify script holding this repo's heavy lock and one of the machine's 2 heavy slots (every repo together; 1 while macOS says the Mac is very hot), one at a time per repo (exit: the command's, or 75 = busy, nothing ran)",
+      "desc": "Run a type-check, build, test run or browser verify script holding this repo's heavy lock and one of the machine's 2 heavy slots (every repo together; 1 while macOS says the Mac is very hot), one at a time per repo (exit: the command's, 75 = busy, nothing ran, or 77 = past the repeat limit, nothing ran)",
       "args": [
         "<command...>"
       ],
       "valueFlags": [
-        "--max-wait"
+        "--max-wait",
+        "--because"
+      ]
+    },
+    {
+      "path": "builder lane",
+      "desc": "Light or full, read off the diff: light is under 300 lines and touches no security, money, data migration or permission path",
+      "args": [],
+      "valueFlags": [
+        "--from",
+        "--to"
       ]
     },
     {
       "path": "builder load",
       "desc": "Print cores, the 1-min load average and busy|quiet, plus orphaned checkers of this repo (always exits 0)",
       "args": []
+    },
+    {
+      "path": "builder open",
+      "desc": "A run starts on this branch: `heavy` counts repeats from here on, per phase",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--phase"
+      ]
     },
     {
       "path": "builder report",
@@ -1594,7 +1619,7 @@
     },
     {
       "path": "hook pre-tool-use",
-      "desc": "Gate default sub-agents when _dream_context/ exists (called by Claude Code PreToolUse hook)",
+      "desc": "Gate default sub-agents and heavy shell steps (called by Claude Code PreToolUse hook)",
       "args": []
     },
     {

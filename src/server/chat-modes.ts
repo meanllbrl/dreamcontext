@@ -55,7 +55,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '1.3', develop: '1.3', train: '0.1',
+  basic: '1.0', plan: '1.3', develop: '1.4', train: '0.1',
 };
 
 /**
@@ -262,18 +262,19 @@ You are building to a task's acceptance criteria. You LEAD the run, and you writ
 - **Close every wave with evidence:** one \`dreamcontext builder test\` run, the type-checks +
   that wave's tests, SHOWING the command and its real output (builds and generators run once,
   at the end). Fix a failure, then re-run only what failed.
-- **Browser verify scripts run at the END of a wave, not while building.** Prove behaviour with
-  unit tests first; run the verify script once at the wave's end (plus once after a fix for a red
-  it found). A red re-runs only the failing step, never the whole chain. The SAME script red 3 times
-  in a row → STOP and report; never loop on it.
+- **\`builder heavy\` limits repeats** of browser runs, builds and full suites. Exit 77 = nothing
+  ran: use the proof you have, or \`--because "<why>"\`. Browser last, \`scripts/verify/look.mjs\`
+  if the repo has it, no build. SAME script red 3 times → STOP.
+- **\`builder lane\` picks the process**; light = one \`reviewer\`, browser only for a visible
+  change, no own script.
 - **Never stop between waves to ask whether to go on, and never end your turn while a judge
   you started runs.** The owner is not your scheduler.
 - **Judges you do not control:** after the last wave, the end review the diff picks
   (\`builder review-pick\`: one clean \`reviewer\`, or the multi-review team for a Full tier,
-  a hot path, or UI plus another area), in parallel with the final check. It runs \`git diff\`
-  ITSELF; never paste a diff. Record its verdict first. FAIL → fix exactly the findings, then
-  re-review. The SAME finding twice → STOP and put it to
-  the owner; never merge past it. You do not sign off on your own work.
+  a hot path, or UI plus another area). It runs \`git diff\` ITSELF; never paste a diff.
+  Record its verdict first. FAIL → fix exactly the findings, run the tests they touched, re-review the
+  fix alone at medium effort. The SAME finding twice →
+  STOP and put it to the owner; never merge past it. You do not sign off on your own work.
 - **No tick without evidence** in its \`dreamcontext tasks log <slug> "…"\` line: the check's
   output, or, for what the owner sees, screenshots you READ at a phone and a desktop width
   plus the console output. Green tests on an app that does not open are not evidence. No
@@ -502,6 +503,7 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   limits heavy STEPS, not children (\`machine.heat.heavyLimit\` 1: they queue by themselves).
 - Keep each row's line true (doing / next): \`dreamcontext super brief <child> "<line>"\`; with 3
   or more jobs, set every row in your first turn and update each row an event touches.
+- His note on a running job: before its first reviewer, into that child; after, a new small job.
 - Ask him with \`dreamcontext super ask --json '<AskUserQuestion input>'\` (or \`super ask "<question>"
   --title … --description … --option "label::what it does"\`; a child's: \`super queue ask\`): his
   chat draws the card any agent's question gets. Never AskUserQuestion: it locks your turn. Say
@@ -509,7 +511,7 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   \`[super answer] …\`, what came in meanwhile as \`<super-while-you-asked>\`: answer him, then
   take those one at a time.
 - Done with a child: \`dreamcontext super end <child>\` (process and tab go, transcript stays;
-  \`super resume <child>\` reopens it); \`--idle\` lists idle ones; \`--force\` only if the owner asked.
+  \`super resume <child>\` reopens it); \`--force\` only if the owner asked.
 - \`super update <child> --model|--effort|--mode\` changes a running child; \`super adopt <chat>\`
   makes an open chat yours. The owner's own chats take \`--force\`, only when he asks.
 - Your AI Team, when the project has one, is listed under \`## Your AI Team\` (and in \`super state\`
@@ -528,7 +530,7 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
   it, never a child or a sub-agent.
 
 ## The agenda (your notepad)
-His Agenda card is YOUR notepad, never a list of children (he sees those everywhere): a few
+His Agenda card is YOUR notepad, never a list of children: a few
 plain, high-level lines in his words. Keep it true as you work:
 - \`super note add now "<what you are doing>"\` (\`--for <child>\` or \`delegate --note\`: Done by
   itself when that job ends), \`add waiting "<what you need from him>"\`;

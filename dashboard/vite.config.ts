@@ -1,4 +1,4 @@
-import { cpSync, readFileSync } from 'node:fs';
+import { cpSync, readFileSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
@@ -24,7 +24,11 @@ function excalidrawFonts(): Plugin {
   };
 }
 
-const API_TARGET = 'http://localhost:4173';
+// DC_API_TARGET: a verify run points the dev server at its own scratch server (scripts/verify/lib/app.mjs).
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
+const VERIFY_FS_ALLOW = () => [REPO_ROOT, realpathSync(join(REPO_ROOT, 'node_modules')), realpathSync(join(REPO_ROOT, 'dashboard', 'node_modules'))];
+
+const API_TARGET = process.env.DC_API_TARGET || 'http://localhost:4173';
 
 export default defineConfig({
   plugins: [react(), excalidrawFonts(), excalidrawWidgetLinkIcon()],
@@ -36,6 +40,9 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    // A verify run from a worktree: its node_modules are symlinks out of the project, so allow
+    // exactly those. `strict` stays on, so Vite's deny list (.env, .pem) still holds.
+    ...(process.env.DC_API_TARGET ? { fs: { allow: VERIFY_FS_ALLOW() } } : {}),
     proxy: {
       // The server is port-strict about Origin on loopback (a page on another port is another
       // origin), and this proxy sends `Host: localhost:4173` with the page's `Origin:

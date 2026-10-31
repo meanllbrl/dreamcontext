@@ -121,6 +121,7 @@ export const HOOK_SPECS: readonly HookSpec[] = [
   { event: 'PreToolUse', name: 'pre-tool-use', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: 'Edit|Write|MultiEdit' },
   // Third: the same gate for a shell write. A member's file (`agents/*.md`, `automations/*.md`) was
   // once appended to from a heredoc, which dropped its approval (`member-file-guard.ts`).
+  // (Also) a heavy shell step goes through `builder heavy` (lock + repeat limit, lib/run-budget.ts).
   { event: 'PreToolUse', name: 'pre-tool-use', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: 'Bash' },
   { event: 'UserPromptSubmit', name: 'user-prompt-submit', command: USER_PROMPT_SUBMIT_HOOK, timeout: 120 },
   { event: 'PostToolUse', name: 'post-tool-use', command: POST_TOOL_USE_HOOK, timeout: 30, matcher: 'Edit|Write' },
