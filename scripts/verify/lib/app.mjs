@@ -47,7 +47,7 @@ const pathOf = (url) => { try { const u = new URL(url); return u.pathname + u.se
 const NOISE = /\/@vite\/|\/__vite_ping|favicon\.ico|\/api\/.*\/ws\b/;
 
 export async function openApp({ suite = 'look', build = false } = {}) {
-  const scratch = scratchDir(`dc-verify-${suite}`);
+  const scratch = scratchDir(`dc-verify-${suite}-${process.pid}`); // two runs can overlap in the fast line
   rmSync(scratch, { recursive: true, force: true });
   const home = join(scratch, 'home');
   const proj = join(scratch, 'proj');
@@ -63,7 +63,7 @@ export async function openApp({ suite = 'look', build = false } = {}) {
   const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(?:CLAUDE|DREAMCONTEXT_)/.test(k)));
   const env = { ...clean, HOME: home, PATH: `${bin}:${process.env.PATH}`, npm_config_cache: join(process.env.HOME ?? home, '.npm'), DREAMCONTEXT_DESKTOP: '1', DREAMCONTEXT_AUTO_DASHBOARD: '0' };
   const apiPort = await freePort();
-  const shots = shotsDir(REPO, suite);
+  const shots = join(shotsDir(REPO, suite), String(process.pid));
   mkdirSync(shots, { recursive: true });
   const procs = [];
   const killAll = () => { for (const p of procs) { try { process.kill(-p.pid, 'SIGTERM'); } catch { /* gone */ } } };

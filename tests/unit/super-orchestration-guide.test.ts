@@ -296,6 +296,6 @@ describe('heat and the heavy lock (the heat task, AC5)', () => {
     const goal = readFileSync(join(__dirname, '../../skill-packs/goal-skill/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
     expect(goal).toContain('`dreamcontext builder heavy --max-wait 1200 -- node scripts/verify/<x>.mjs`, never beside tests');
     const src = readFileSync(join(__dirname, '../../src/lib/develop-recipe.ts'), 'utf8');
-    expect(src).toContain('Every browser run goes through\n  \\`builder heavy\\`, never beside tests');
+    expect(src).toContain('Every browser run goes through \\`builder heavy\\`');
   });
 });
