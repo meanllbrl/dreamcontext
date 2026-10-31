@@ -334,7 +334,9 @@ export function noteTeamJobEnd(
   concluded?: TeamJobConclusion,
 ): boolean {
   const job = s.team.find((j) => j.id === jobId);
-  if (!job || !s.session || job.told === 'done' || job.told === 'stuck') return false;
+  // With the mode off nobody is told: the job's ending stays unsaid, and it reaches the owner
+  // (automations/super-quiet.ts reads a job the Super was never told as his).
+  if (!job || !s.session || !s.enabled || job.told === 'done' || job.told === 'stuck') return false;
   // A turn concluded lost is read once more inside this write: an ending that landed since wins.
   const read = concluded === 'gone' ? null : teamJobEnding(contextRoot, job, live);
   const conclude = concluded === 'gone' || (concluded === 'lost' && read?.kind === null);

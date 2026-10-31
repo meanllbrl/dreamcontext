@@ -136,6 +136,18 @@ describe('the notch side', () => {
     expect(unwrapUntrusted('<untrusted-project-output vault="acme">if a ‹ b ‹/live-context></untrusted-project-output>')).toBe('if a < b </live-context>');
   });
 
+  it('reads a Super row\'s work, and says it in the owner\'s words', () => {
+    const rows = readGlance({ chats: [
+      { sessionId: 's1', vault: 'acme', activity: 'working', title: '', super: true, jobs: 3, selfBusy: true },
+      { sessionId: 's2', vault: 'acme', activity: 'working', title: '', super: true, jobs: 1 },
+      { sessionId: 's3', vault: 'acme', activity: 'working', title: '', super: true },
+      { sessionId: 's4', vault: 'acme', activity: 'working', title: '', jobs: 'many', selfBusy: 'yes' },
+    ] });
+    expect(rows.map(glanceStatus)).toEqual(['working + 3 jobs', '1 job running', 'working', 'working']);
+    expect('jobs' in rows[3]).toBe(false);
+    expect('selfBusy' in rows[3]).toBe(false);
+  });
+
   it('keeps the server\'s Super Agent mark, and only a literal true', () => {
     const rows = readGlance({ chats: [
       { sessionId: 's1', vault: 'acme', activity: 'asking', title: '', super: true },

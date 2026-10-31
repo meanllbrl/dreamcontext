@@ -7,6 +7,7 @@ import { listSharedAgentSlugs } from '../automations/sharing.js';
 import { listAutomations, readAutomationCache } from '../automations/store.js';
 import { isThreadDayFile, parseDayFile, threadReadWatermark, threadSlugDir } from '../automations/threads.js';
 import { feedCutoffDay, runUnread } from '../automations/feed.js';
+import { superQuietReader } from '../automations/super-quiet.js';
 import { privateSources } from '../automations/history.js';
 import type { RunEvent, ThreadEntry } from '../automations/types.js';
 import {
@@ -210,6 +211,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
   const projectRoot = dirname(contextRoot);
   const candidates: Candidate[] = [];
   let unreadCount = 0;
+  const quietOf = superQuietReader(contextRoot);
   const agentTitle = (() => {
     try {
       const a = getAgent(contextRoot, slug);
@@ -237,7 +239,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
     for (const [runId, runEntries] of byRun) {
       // Unread exactly as the feed counts it: the run's entries inside the feed's window.
       const windowed = runEntries.filter((e) => windowIds.has(e.id));
-      const u = runUnread(windowed, watermark);
+      const u = runUnread(windowed, watermark, quietOf(source, runEntries));
       unreadCount += u.unreadPosts;
       let lastMs = -Infinity;
       let lastAt = runEntries[runEntries.length - 1].at;

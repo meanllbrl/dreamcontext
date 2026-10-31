@@ -33,7 +33,7 @@ const { spawnModelFor } = await import('../../src/server/routes/agent-chat.js');
 const { DEFAULT_ASSISTANT_CONFIG, sanitizeConfigPatch } = await import('../../src/lib/assistant/home.js');
 const { splitNotchCue, stripNotchCue, readingTimeMs } = await import('../../dashboard/src/lib/notchCue');
 const { sttRetryable, STT_RETRIES } = await import('../../dashboard/src/lib/voice/useVoiceCapture');
-const { assistantActivityLine, pillHeadline, readInbox, accountLine, recentFinishedVault, enqueuePeeks, FINISHED_PILL_MS } = await import('../../dashboard/src/components/assistant/notchModel');
+const { freshStarts, assistantActivityLine, pillHeadline, readInbox, accountLine, recentFinishedVault, enqueuePeeks, FINISHED_PILL_MS } = await import('../../dashboard/src/components/assistant/notchModel');
 
 function makeRes() {
   let status = 0;
@@ -278,6 +278,21 @@ describe('transcription retries (useVoiceCapture.ts)', () => {
   });
 });
 
+describe('a Super job at work (notchModel.ts)', () => {
+  it('keeps the server\'s mark on a running row, and only a literal true', () => {
+    const row = { vault: 'korus', slug: 'desk', title: 'Desk', since: 1, runId: 'r' };
+    const { running } = readInbox({ running: [{ ...row, superJob: true }, { ...row, slug: 'plain', superJob: 'yes' }] });
+    expect(running.map((r) => r.superJob)).toEqual([true, undefined]);
+    const seen = new Set<string>();
+    expect(freshStarts(running, seen)).toEqual([running[1]]);
+    expect(seen.size).toBe(2);
+    const other = { ...running[0], slug: 'other', superJob: true as const };
+    expect(freshStarts([other], seen)).toEqual([]);
+    expect(seen.size).toBe(3);
+    expect(freshStarts([other, running[1]], seen)).toEqual([]);
+  });
+});
+
 describe('the pill while the Assistant works (notchModel.ts)', () => {
   it('names the running verb, else the progress sentence, else thinking — this turn only', () => {
     const tool = (command: string, status = 'running') => ({ kind: 'tool', name: 'Bash', input: { command }, status });
@@ -287,6 +302,11 @@ describe('the pill while the Assistant works (notchModel.ts)', () => {
     expect(assistantActivityLine([tool('dreamcontext assistant look'), { kind: 'user' }], null)).toBe('Thinking…');
     const base = { name: 'Dreamy', asker: null, proposals: 0, finished: null, handoffs: [] };
     expect(pillHeadline({ ...base, self: 'Asking larkspur…' })).toBe('Asking larkspur…');
+    const sup = { vault: 'korus', super: true as const, ask: null };
+    expect(pillHeadline({ ...base, chats: [sup] })).toBe('korus Super is on it');
+    expect(pillHeadline({ ...base, chats: [sup, { ...sup, vault: 'larkspur' }] })).toBe('2 Super Agents on it');
+    expect(pillHeadline({ ...base, asker: 'korus', chats: [sup] })).toBe('korus needs you');
+    expect(pillHeadline({ ...base, chats: [{ vault: 'korus', ask: null }] })).toBe(base.name);
     expect(pillHeadline({ ...base, self: 'Asking larkspur…', asker: 'korus' })).toBe('korus needs you');
     expect(pillHeadline({ ...base, running: [{ vault: 'a', slug: 'digest', title: 'Daily digest', hasPhoto: false, since: 1, runId: null }] })).toBe('Daily digest is working');
   });

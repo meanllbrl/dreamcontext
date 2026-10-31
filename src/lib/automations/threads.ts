@@ -7,6 +7,7 @@ import { dirname, join, normalize, resolve, sep } from 'node:path';
 import { nanoid } from 'nanoid';
 import { automationsDir, getAutomation, isSafeAutomationSlug, listAutomations } from './store.js';
 import { notifyViaBundle, NOTIFY_SOUND_OK } from './notifier.js';
+import { superQuietReader, superRunQuiet } from './super-quiet.js';
 import { appLinkForContextRoot } from '../app-link.js';
 import { readMachineIdentity } from '../machine-id.js';
 import { memberSidePath, safeMemberWrite } from '../agents/scope.js';
@@ -689,7 +690,13 @@ export function threadUnread(
   const entries = readThread(contextRoot, slug, days === undefined ? {} : { days });
   const last = entries[entries.length - 1] ?? null;
   const watermark = readAll(home)[dirname(contextRoot)]?.[slug] ?? null;
-  const unread = entries.filter((e) => e.kind !== 'user' && (watermark === null || e.id > watermark));
+  // One rule with the feed: what a Super Agent's job said counts for nobody (super-quiet.ts).
+  const quietOf = superQuietReader(contextRoot);
+  const byRun = new Map<string, ThreadEntry[]>();
+  for (const e of entries) byRun.set(e.runId, [...(byRun.get(e.runId) ?? []), e]);
+  const quiet = new Set<string>();
+  for (const run of byRun.values()) for (const id of quietOf(slug, run)) quiet.add(id);
+  const unread = entries.filter((e) => e.kind !== 'user' && !quiet.has(e.id) && (watermark === null || e.id > watermark));
   return { count: unread.length, lastId: last?.id ?? null, lastAt: last?.at ?? null };
 }
 
@@ -804,6 +811,9 @@ export function announceTurn(
     const last = said[said.length - 1] ?? null;
     const watermark = threadReadWatermark(contextRoot, slug, home);
     if (last && watermark !== null && watermark >= last.id) return false;
+    // A Super Agent's job reports to the Super; a question it asks is still the owner's.
+    const runId = last?.runId ?? readThread(contextRoot, slug, { days: 2 }).find((e) => e.id === sinceId)?.runId;
+    if (last?.kind !== 'system' && runId && superRunQuiet(contextRoot, slug, runId)) return false;
     const body = plainPostText(last?.text ?? fallback ?? '');
     if (!body) return false;
     const title = last?.kind === 'system' ? `${manifest.title} — needs your answer` : manifest.title;

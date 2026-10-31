@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { listVaults } from '../lib/vaults.js';
 import { listAutomations, resolveAutomationPhoto } from '../lib/automations/store.js';
 import { buildFeed } from '../lib/automations/feed.js';
+import { superRunQuiet } from '../lib/automations/super-quiet.js';
 import { plainPostText } from '../lib/automations/threads.js';
 import { readMutedAutomations } from '../lib/assistant/notch-inbox.js';
 import { agentActivities } from './automation-job.js';
@@ -48,6 +49,8 @@ export interface RunningAutomation {
   /** When the turn holding the lock began, epoch ms. */
   since: number;
   runId: string | null;
+  /** A job the Super Agent gave it: the face stays, the "started" peek does not. */
+  superJob?: true;
 }
 
 export interface AutomationPost {
@@ -100,6 +103,7 @@ export function runningAutomations(now = Date.now()): RunningAutomation[] {
         // Who is working: the teammate's name, the one the AI Team page lists it under.
         vault: p.vault, slug, title: m.agentTitle || m.title, since: a.since, runId: a.runId,
         hasPhoto: resolveAutomationPhoto(p.contextRoot, m.photo) !== null,
+        ...(a.runId && superRunQuiet(p.contextRoot, slug, a.runId) ? { superJob: true as const } : {}),
       });
     }
   }

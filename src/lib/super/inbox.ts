@@ -13,7 +13,7 @@ import { keepQuestionsAcrossRelaunch } from './outbox.js';
 import { settleAskShows } from './ask-show.js';
 import {
   STARTING_GRACE_MS, activityOf, adoptOwnerWaits, chatTopic, getChat, onChatChange, onOwnerWaitChange, ownerWaitAnswered, pendingRequest, pendingRequestIds,
-  type ChatChange, type ChatEntry,
+  type ChatActivity, type ChatChange, type ChatEntry,
 } from '../assistant/chat-registry.js';
 import { pushFrame, tokenOfSession } from '../window-control.js';
 import { announceOwnerHead, seedOwnerHead, serverBannered } from './owner-question.js';
@@ -284,6 +284,40 @@ function noteHead(root: string, state: SuperState): void {
 export function superAttentionRows(): Array<{ root: string; vault: string; item: SuperQueueItem }> {
   const out: Array<{ root: string; vault: string; item: SuperQueueItem }> = [];
   for (const h of heads.values()) if (h.enabled && h.head) out.push({ root: h.root, vault: h.vault, item: h.head });
+  return out;
+}
+
+/** One handed-over project with work going, as the notch draws it (`superWork`). */
+export interface SuperWorkRow {
+  vault: string;
+  /** The Super chat: the row's id, and where a click goes. */
+  session: string;
+  /** Its own activity right now; null when nothing runs it (its children go on). */
+  own: ChatActivity | null;
+  /** Children with a turn in flight. Asking, idle, parked, ended and gone ones are not work. */
+  jobs: number;
+}
+
+/**
+ * The work under each handed-over project, whichever the owner has open: a row while the Super
+ * Agent or any child of it runs. A Super chat that is itself asking still gets its row here; the
+ * glance leaves that one to the ordinary row, which carries the question.
+ */
+export function superWork(now = Date.now()): SuperWorkRow[] {
+  const out: SuperWorkRow[] = [];
+  for (const h of heads.values()) {
+    const { session, enabled, children } = superIndex(h.root);
+    if (!enabled || !session) continue;
+    const self = getChat(session);
+    const own = self ? activityOf(self, now) : null;
+    let jobs = 0;
+    for (const sid of children) {
+      const c = getChat(sid);
+      const a = c ? activityOf(c, now) : null;
+      if (a === 'working' || a === 'starting') jobs += 1;
+    }
+    if (jobs > 0 || own === 'working' || own === 'starting') out.push({ vault: h.vault, session, own, jobs });
+  }
   return out;
 }
 

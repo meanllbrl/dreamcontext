@@ -5,7 +5,8 @@
  *    inbox opened too, is a row AND a routable banner unless he is looking at it; with the
  *    mode off nothing gets a banner;
  *  - the glance leaves children out and carries at most ONE super row per project (its queue
- *    head when that is a permission or an escalation); the rollup counts only that head;
+ *    head when that is a permission or an escalation) plus one row for its work; the rollup
+ *    counts that head for what waits, and children only for what runs;
  *  - the Assistant's send/answer/close refuse the super session and its children while handed
  *    over.
  */
@@ -199,6 +200,87 @@ describe('the notch inbox', () => {
     vi.advanceTimersByTime(FINISH_DEBOUNCE_MS + 10);
     expect(listNotchEvents().filter((e) => e.kind === 'finished')).toHaveLength(3);
     expect(banners).toEqual([]);
+  });
+});
+
+describe('the notch tracks a Super Agent at work (owner 2026-10-31)', () => {
+  const children = (...ids: string[]) => Object.fromEntries(ids.map((id) => [id, { sessionId: id, brief: '', adopted: true, startedAt: 1 }]));
+  const running = (h: ChatHandle) => { h.userSent('go'); return h; };
+  const glance = async () => { const r = res(); await handleAssistantGlance(req(), r); return r.json.chats as Array<Record<string, unknown>>; };
+  const rollup = async () => { const r = res(); await handleAssistantRollup(req(), r); return r.json as Record<string, number>; };
+
+  it('1 Super + 3 working children: the bubble says 4, the project is one row', async () => {
+    await makeVault({ children: children('c1', 'c2', 'c3') });
+    running(reg(SUPER, 'super'));
+    ['c1', 'c2', 'c3'].forEach((id) => running(reg(id)));
+    expect((await rollup()).working).toBe(4);
+    const rows = await glance();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ sessionId: SUPER, vault: 'acme', activity: 'working', super: true, jobs: 3, selfBusy: true, ask: null });
+  });
+
+  it('a Super idle with working children is work still going', async () => {
+    await makeVault({ children: children('c1', 'c2', 'c3') });
+    finishTurn(reg(SUPER, 'super'));
+    ['c1', 'c2', 'c3'].forEach((id) => running(reg(id)));
+    expect((await rollup()).working).toBe(3);
+    const rows = await glance();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ sessionId: SUPER, activity: 'working', jobs: 3 });
+    expect(rows[0].selfBusy).toBeUndefined();
+  });
+
+  it('idle, ended, parked and gone children are not work, and an unrecorded chat counts once', async () => {
+    await makeVault({ children: {
+      ...children('c1', 'c2', 'parked-one'),
+      over: { sessionId: 'over', brief: '', adopted: true, startedAt: 1, endedAt: 2 },
+    } });
+    finishTurn(reg('c1'));
+    running(reg('c2')).exited();
+    running(reg('other'));
+    expect((await rollup()).working).toBe(1);
+    expect((await glance()).map((r) => r.sessionId)).toEqual(['other']);
+  });
+
+  it('a child that asks stays a waiting row, never a working one, beside the others at work', async () => {
+    await makeVault({ children: children('c1', 'c2') });
+    running(reg('c2'));
+    reg('c1').observe({ type: 'control_request', request_id: 'p-1', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'npm publish' } } });
+    await vi.waitFor(async () => { expect((await rollup()).asking).toBe(1); });
+    expect((await rollup()).working).toBe(1);
+    const rows = await glance();
+    expect(rows.map((r) => [r.sessionId, r.activity])).toEqual([['c1', 'asking']]);
+  });
+
+  it('an unchanged Super run answers the same bytes: the notch\'s raw gate stays shut', async () => {
+    await makeVault({ children: children('c1') });
+    running(reg('c1'));
+    const body = async () => { const r = res(); await handleAssistantGlance(req(), r); return JSON.stringify(r.json); };
+    const first = await body();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(await body()).toBe(first);
+  });
+
+  it('the row cap never drops an ordinary question for a progress row', async () => {
+    await makeVault({ children: children('c1') });
+    running(reg('c1'));
+    for (let i = 0; i < 6; i++) {
+      reg(`q${i}`).observe({ type: 'control_request', request_id: `r${i}`, request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'ls' } } });
+    }
+    await vi.waitFor(async () => {
+      const rows = await glance();
+      expect(rows).toHaveLength(6);
+      expect(rows.every((r) => r.activity === 'asking')).toBe(true);
+    });
+  });
+
+  it('with the mode off the children are ordinary chats and there is no Super row', async () => {
+    await makeVault({ enabled: false, children: children('c1') });
+    running(reg('c1'));
+    expect((await rollup()).working).toBe(1);
+    const rows = await glance();
+    expect(rows.map((r) => r.sessionId)).toEqual(['c1']);
+    expect(rows[0].super).toBeUndefined();
   });
 });
 

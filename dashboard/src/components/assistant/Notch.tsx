@@ -17,7 +17,7 @@ import { AgentAvatar, InboxList } from './InboxList';
 import { ListeningOverlay } from './ListeningOverlay';
 import { NOTCH_GROW_EASE, drawsOpen, islandClip, planMotion, type IslandRect, type MotionPhase, type MotionRequest } from './notchMotion';
 import {
-  EMPTY_INBOX, EMPTY_ROLLUP, assistantActivityLine, enqueuePeeks, handoffPhase, notchMood, pillBubbles, pillHeadline, pillLabel,
+  EMPTY_INBOX, EMPTY_ROLLUP, assistantActivityLine, enqueuePeeks, freshStarts, handoffPhase, notchMood, pillBubbles, pillHeadline, pillLabel,
   PEEK_TTL_MS, noticeKey, offScreenAsks, peekTtlMs, permissionWord, readGlance, readHandoffs, readInbox, readRollup, recentFinishedVault, runKey,
   type ActivityItem, type GlanceChat, type Handoff, type Inbox, type Rollup,
   createRawGate, startsFresh,
@@ -803,7 +803,7 @@ export function Notch() {
     for (const k of [...seen.ids]) if (!listedKeys.has(k)) seen.ids.delete(k);
     const liveRuns = new Set(inbox.running.map(runKey));
     const starts: Array<{ id: string; item: PeekItem }> = [];
-    for (const r of inbox.running) if (!seen.runs.has(runKey(r))) { seen.runs.add(runKey(r)); starts.push({ id: `run:${runKey(r)}`, item: { kind: 'started', run: r } }); }
+    for (const r of freshStarts(inbox.running, seen.runs)) starts.push({ id: `run:${runKey(r)}`, item: { kind: 'started', run: r } });
     for (const k of [...seen.runs]) if (!liveRuns.has(k)) seen.runs.delete(k);
     if (!seen.booted) { seen.booted = true; return; }   // what was already there at launch is listed, not announced
     // Server order is newest first; the queue speaks oldest first. A start is news only when
@@ -1616,7 +1616,7 @@ export function Notch() {
   const self = session && busy && !expanded
     ? assistantActivityLine(session.getModel().items as unknown as ActivityItem[], progressLine)
     : null;
-  const pillText = pillHeadline({ name, asker: asker?.vault ?? null, proposals: rollup.proposals, finished: finishedVault, handoffs, self, running: inbox.running });
+  const pillText = pillHeadline({ name, asker: asker?.vault ?? null, proposals: rollup.proposals, finished: finishedVault, handoffs, self, running: inbox.running, chats: glance });
   // The "Now" tab's count: everything that waits on the owner or is still running for them.
   const nowCount = glance.filter((c) => c.ask).length + proposals.length + inboxCount
     + handoffs.filter((h) => handoffPhase(h) === 'running').length;

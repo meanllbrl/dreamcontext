@@ -357,6 +357,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-proj-',
   'dc-ps1-',
   'dc-queue-',
+  'dc-quiet-',
+  'dc-quiet-home-',
   'dc-realpath-',
   'dc-recall-automation-',
   'dc-recall-options-',

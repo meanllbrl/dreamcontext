@@ -25,7 +25,7 @@ import {
 } from '../../lib/assistant/relay.js';
 import { listVaults } from '../../lib/vaults.js';
 import { isSuperChild } from '../../lib/super/store.js';
-import { isSuperManaged, superAttentionRows } from '../../lib/super/inbox.js';
+import { isSuperManaged, superAttentionRows, superWork } from '../../lib/super/inbox.js';
 import { noteNotchPoll } from '../../lib/super/owner-question.js';
 import { dismissDelegation, listDelegations, recordDelegation } from '../../lib/assistant/delegations.js';
 import { notifyAssistantAutonomy } from './agent-chat.js';
@@ -698,7 +698,7 @@ export function conversationLastActiveAt(conversationId: string | null, home?: s
 
 /**
  * GET /api/assistant/rollup — the notch pill's glance: how many chats are starting / working /
- * stale / asking / idle and how many proposals wait. Counted by ACTIVITY (`activityOf`), not
+ * stale / asking / idle and how many proposals wait, in every project. Counted by ACTIVITY (`activityOf`), not
  * raw status: `working` is only a turn genuinely in flight, a restored tab nobody has typed in
  * is `idle`, and a turn that went silent is `stale`. COUNTS ONLY: no project-derived text, so
  * it neither needs the untrusted wrapper nor taints anything, and the owner gate is enough.
@@ -708,9 +708,11 @@ export async function handleAssistantRollup(req: IncomingMessage, res: ServerRes
   const counts = { starting: 0, working: 0, stale: 0, asking: 0, idle: 0 };
   const now = Date.now();
   for (const c of listChats({})) {
-    // A Super Agent child is the Super Agent's to watch (D16): only its queue head counts.
-    if (isSuperChild(c.sessionId)) continue;
     const a = activityOf(c, now);
+    // A Super Agent child's questions are the Super's to watch (D16): only its queue head counts
+    // for those, below. Its WORK counts like any chat's (owner 2026-10-31: 1 Super + 3 sessions
+    // ran and the notch showed none); an idle child is not news.
+    if (isSuperChild(c.sessionId) && a !== 'working' && a !== 'starting' && a !== 'stale') continue;
     if (a !== 'gone') counts[a] += 1;
   }
   counts.asking += superAttentionRows().length;
@@ -734,10 +736,14 @@ export async function handleAssistantGlance(req: IncomingMessage, res: ServerRes
   const now = Date.now();
   const rank: Record<string, number> = { asking: 0, working: 1, starting: 2, stale: 3 };
   const clip = (s: string) => (s.length > GLANCE_TEXT_CAP ? `${s.slice(0, GLANCE_TEXT_CAP)}…` : s);
+  // One row per project at work: the Super's, carrying its children's count. A Super chat that
+  // asks keeps its ordinary row (the question), and the rollup still counts the work.
+  const work = superWork(now).filter((w) => w.own !== 'asking');
+  const worked = new Set(work.map((w) => w.session));
   const chats = listChats({})
     // Handed over (D16): the Super Agent watches its children; the owner sees one row per
-    // project, its queue head, below.
-    .filter((c) => !isSuperChild(c.sessionId))
+    // project: its queue head below, and its work.
+    .filter((c) => !isSuperChild(c.sessionId) && !worked.has(c.sessionId))
     .map((c) => ({ c, activity: activityOf(c, now) }))
     .filter(({ activity }) => activity in rank)
     .sort((a, b) => rank[a.activity] - rank[b.activity] || Date.parse(b.c.lastFrameAt) - Date.parse(a.c.lastFrameAt))
@@ -773,7 +779,17 @@ export async function handleAssistantGlance(req: IncomingMessage, res: ServerRes
   }));
   // A notch is reading the rows: a Super Agent question at the head will show in it.
   noteNotchPoll();
-  sendJson(res, 200, { chats: [...superGlanceRows(clip), ...chats].slice(0, GLANCE_MAX), delegations });
+  const heads = superGlanceRows(clip);
+  // One row per project: its question wins, and the bubble still counts the work behind it.
+  const waiting = new Set(heads.map((h) => h.vault));
+  const workRows = work.filter((w) => !waiting.has(w.vault)).map((w) => ({
+    sessionId: w.session, vault: w.vault, activity: w.own === 'starting' ? 'starting' : 'working', super: true,
+    title: '', ask: null, jobs: w.jobs, ...(w.own === 'working' || w.own === 'starting' ? { selfBusy: true } : {}),
+  }));
+  // Asking first, always: the cap never drops a question for a progress row.
+  const asking = chats.filter((c) => c.activity === 'asking');
+  const rest = chats.filter((c) => c.activity !== 'asking');
+  sendJson(res, 200, { chats: [...heads, ...asking, ...workRows, ...rest].slice(0, GLANCE_MAX), delegations });
 }
 
 /**
