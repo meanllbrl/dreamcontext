@@ -23,7 +23,7 @@ const superDir = `${SLEEPY}/super`;
 
 describe('the Super Agent is never a tab (D9, AC1)', () => {
   it('the roster save never writes it: a relaunch after take-back shows no super tab', () => {
-    const save = surface.slice(surface.indexOf('sessions: [...sessionList'), surface.indexOf('withBaseGeneration(payload'));
+    const save = surface.slice(surface.indexOf('sessions: [...[...sessionList]'), surface.indexOf('withBaseGeneration(payload'));
     expect(save).toMatch(/\.filter\(\(m\) => !isSuperSession\(m, superStateRef\.current\?\.session\)\)/);
   });
 
@@ -164,7 +164,7 @@ describe('take-back restores the panes exactly (AC1)', () => {
     // "Terminal N" rows (the server ends the shell with its socket). A take-back AFTER a reload
     // can therefore not bring it back — not a hand-over rule, the product's terminal rule.
     expect(surface).toMatch(/const s = o\.terminal\s*\? spawn\(false, undefined, false, 'shell'\)/);
-    const save = surface.slice(surface.indexOf('sessions: [...sessionList'), surface.indexOf('withBaseGeneration(payload'));
+    const save = surface.slice(surface.indexOf('sessions: [...[...sessionList]'), surface.indexOf('withBaseGeneration(payload'));
     expect(save).toMatch(/\.filter\(\(m\) => m\.kind !== 'shell'\)/);
   });
 });

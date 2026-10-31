@@ -1,3 +1,4 @@
+import { useSuperUnreadCount } from '../../sleepy/super/superUnreadStore';
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { VaultLogo } from '../VaultLogo';
@@ -183,11 +184,8 @@ export function ChatDrawer(p: ChatDrawerProps) {
   const child = (row: DrawerProjectRow, c: DrawerChild) => {
     if (c.kind === 'super') {
       return (
-        <button key="super" type="button" className={`ns-dr-row ns-dr-child ns-dr-super${c.selected ? ' is-sel' : ''}`}
-          data-testid="drawer-super-row" onClick={() => pick(row.name, { kind: 'super' })}>
-          <span className="ns-dr-t">{t('shell.drawer.superAgent')}</span>
-          <span className={`ns-dr-dot${c.on ? ' is-on' : ''}`} aria-hidden="true" />
-        </button>
+        <SuperRow key="super" vault={row.name} selected={c.selected} on={c.on} label={t('shell.drawer.superAgent')}
+          unreadLabel={(n) => t('super.unread.count').replace('{n}', String(n))} onPick={() => pick(row.name, { kind: 'super' })} />
       );
     }
     if (c.kind === 'member') {
@@ -363,5 +361,20 @@ export function ChatDrawer(p: ChatDrawerProps) {
         </div>
       )}
     </aside>
+  );
+}
+
+/** The Super Agent row: its project's unread count rides beside the title (the pane publishes it). */
+function SuperRow({ vault, selected, on, label, unreadLabel, onPick }: {
+  vault: string; selected: boolean; on: boolean; label: string; unreadLabel: (n: number) => string; onPick: () => void;
+}) {
+  const unread = useSuperUnreadCount(vault);
+  return (
+    <button type="button" className={`ns-dr-row ns-dr-child ns-dr-super${selected ? ' is-sel' : ''}`}
+      data-testid="drawer-super-row" aria-label={unread > 0 ? `${label} (${unreadLabel(unread)})` : undefined} onClick={onPick}>
+      <span className="ns-dr-t">{label}</span>
+      {unread > 0 && <span className="ns-menu-count" data-testid="super-unread-badge">{unread}</span>}
+      <span className={`ns-dr-dot${on ? ' is-on' : ''}`} aria-hidden="true" />
+    </button>
   );
 }

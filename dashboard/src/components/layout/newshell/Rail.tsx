@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { useVault } from '../../../context/VaultContext';
 import { openAgentSurface } from '../../../lib/agentSettings';
+import { useSuperUnreadCount } from '../../sleepy/super/superUnreadStore';
 import { PAGE_LABEL_KEY } from '../../../lib/pageLabels';
 import { useIsNarrowWindow } from '../../../hooks/useIsNarrowWindow';
 import { CanvasIcon, ChatIcon, CheckedBoxIcon, MoreDotsIcon, NavIcon } from '../NavIcons';
@@ -33,7 +34,9 @@ interface RailProps {
  */
 export function Rail({ activePage, onNavigate, badges }: RailProps) {
   const { t } = useI18n();
-  const { bus } = useVault();
+  const { vault, bus } = useVault();
+  // What the owner has not read in this project's Super Agent chat (the pane publishes it).
+  const superUnread = useSuperUnreadCount(vault);
   const { unread, agentUnread, learningOff, showChat, chatRollup, chatOpen } = badges;
   const narrow = useIsNarrowWindow(600);
   const railRef = useRef<HTMLElement>(null);
@@ -74,7 +77,8 @@ export function Rail({ activePage, onNavigate, badges }: RailProps) {
 
   const chatRow = () => {
     if (!showChat) return null;
-    const name = chatRollup.live > 0 ? `${t('nav.chat')} (${chatRollup.live})` : t('nav.chat');
+    const unreadLabel = superUnread > 0 ? t('super.unread.count').replace('{n}', String(superUnread)) : '';
+    const name = unreadLabel ? `${t('nav.chat')} (${unreadLabel})` : chatRollup.live > 0 ? `${t('nav.chat')} (${chatRollup.live})` : t('nav.chat');
     return (
       <button
         key="chat"
@@ -88,7 +92,7 @@ export function Rail({ activePage, onNavigate, badges }: RailProps) {
         onClick={() => openAgentSurface(bus)}
       >
         <ChatIcon />
-        {chatRollup.waiting > 0 && <span className="ns-rail-badge" aria-hidden="true" />}
+        {(chatRollup.waiting > 0 || superUnread > 0) && <span className="ns-rail-badge" aria-hidden="true" />}
       </button>
     );
   };

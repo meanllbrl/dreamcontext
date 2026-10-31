@@ -177,7 +177,10 @@ async function run() {
   page.on('pageerror', (e) => errors.push(String(e)));
   const centreInput = page.locator('[data-super-slot="centre"] .chat-cmp-input');
   const nav = async (label) => {
-    await page.locator('nav button').filter({ has: page.locator('.sidebar-label', { hasText: label }) }).first().click();
+    // Classic sidebar, or the new shell's rail (the default): its rail buttons carry the label.
+    const rail = page.locator(label === 'Chat' ? '[data-testid="ns-rail-chat"]' : `.ns-rail-btn[aria-label^="${label}"]`);
+    if (await rail.count()) await rail.first().click();
+    else await page.locator('nav button').filter({ has: page.locator('.sidebar-label', { hasText: label }) }).first().click();
     await page.waitForTimeout(900);
   };
   const toStage = async () => {
@@ -189,7 +192,14 @@ async function run() {
   };
   const shot = (name) => page.screenshot({ path: join(OUT, `${name}.png`) });
   const dots = () => page.locator('[data-super-slot="centre"] [data-unread]').count();
-  const badge = async () => { const b = page.locator('nav [data-testid="super-unread-badge"]'); return (await b.count()) ? Number((await b.first().innerText()).trim() || 0) : 0; };
+  const badge = async () => {
+    const b = page.locator('nav [data-testid="super-unread-badge"], [data-testid="drawer-super-row"] [data-testid="super-unread-badge"]');
+    if (await b.count()) return Number((await b.first().innerText()).trim() || 0);
+    // New shell with its drawer closed: the rail's Chat button names the count in its label.
+    const lbl = await page.locator('[data-testid="ns-rail-chat"]').first().getAttribute('aria-label').catch(() => null);
+    const m = lbl && /\((\d+) /.exec(lbl);
+    return m ? Number(m[1]) : 0;
+  };
   const bar = page.locator('[data-testid="super-unread-bar"]');
   const barCount = async () => Number(((await bar.innerText().catch(() => '')).match(/\d+/) ?? ['0'])[0]);
   const send = async (text) => {
