@@ -64,7 +64,7 @@ export function TeamPanel({
   // A teammate's agent (B1-4): every tab reads, nothing writes.
   const member = findAgent(useAgents().data, slug);
   const readOnly = member?.readOnly === true;
-  // A global agent reports to the owner in every project: it has no place in one project's team (D1).
+  // A member of all projects reports straight to the owner everywhere, so it has no place to edit (D1).
   const global = member?.scope === 'global';
   const reports = team?.tree.nodes.get(slug)?.children.length ?? 0;
   const tabs: { id: PanelTab; label: string; count?: number }[] = [

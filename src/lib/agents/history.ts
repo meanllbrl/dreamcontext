@@ -337,6 +337,24 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
   return { candidates, unreadCount };
 }
 
+/**
+ * When this machine last really talked with `slug` in this project, from the session index and
+ * its transcripts, or null. Lasting where the feed is a window (and absent on the phone); a
+ * session opened and left without a word has no transcript and does not count.
+ */
+export function lastTalkAt(contextRoot: string, slug: string, home?: string): string | null {
+  const sessions = listAgentSessions(dirname(contextRoot), slug, home);
+  if (sessions.length === 0) return null;
+  const lookup = newTalkLookup(contextRoot, home);
+  let newest = 0;
+  for (const s of sessions) {
+    const path = lookup.find(s.id);
+    if (!path && !s.hadTurns) continue;
+    newest = Math.max(newest, (path ? transcriptMtime(path) : null) ?? timeOf(s.at));
+  }
+  return newest > 0 ? new Date(Math.floor(newest)).toISOString() : null;
+}
+
 /** `<lastAt ISO>|<key>` → its parts, or null when malformed. */
 export function parseHistoryCursor(raw: string | null | undefined): { ms: number; key: string } | null {
   if (!raw) return null;

@@ -26,7 +26,7 @@ import { markThreadRead, newThreadEntryId, threadSlugDir } from '../../src/lib/a
 import { THREAD_ENTRY_MARKER, type ThreadEntry } from '../../src/lib/automations/types.js';
 import {
   agentConversationSlugs, historyStats, listAgentHistory, resetHistoryStats, searchAgentHistory,
-  type HistorySession,
+  type HistorySession, lastTalkAt,
 } from '../../src/lib/agents/history.js';
 import { resetTalkStats, talkStats, TALK_MAX_ROWS } from '../../src/lib/agents/talks.js';
 import {
@@ -485,3 +485,13 @@ describe('AC9 the briefing', () => {
 });
 
 void statSync;
+
+describe('lastTalkAt: the lasting fact that a member was talked with here', () => {
+  it('a session opened and left without a word does not count; one that had turns does', () => {
+    recordAgentSession(projectRoot, 'scout', 'glance', 'stage', home, new Date('2026-10-01T10:00:00Z'));
+    expect(lastTalkAt(contextRoot, 'scout', home)).toBeNull();
+    markSessionHadTurns(projectRoot, 'scout', ['glance'], home);
+    expect(lastTalkAt(contextRoot, 'scout', home)).toBe('2026-10-01T10:00:00.000Z');
+    expect(lastTalkAt(contextRoot, 'nobody', home)).toBeNull();
+  });
+});

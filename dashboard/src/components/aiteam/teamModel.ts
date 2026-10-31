@@ -28,7 +28,7 @@ export type TeamAutomation = Pick<
 export type TeamAgent = Pick<
   AgentSummary,
   'slug' | 'title' | 'hasPhoto' | 'roleLine' | 'description' | 'approvedForChat' | 'approvedToRun' | 'approvalReason' | 'model' | 'effort'
-> & Partial<Pick<AgentSummary, 'readOnly' | 'owner' | 'ownerLabel' | 'runsElsewhere' | 'scope'>>;
+> & Partial<Pick<AgentSummary, 'readOnly' | 'owner' | 'ownerLabel' | 'runsElsewhere' | 'scope' | 'lastTalkAt'>>;
 
 export type TeamStatus = 'working' | 'needs' | 'approval' | 'paused' | 'idle';
 
@@ -172,7 +172,8 @@ export function buildRoster(
       status,
       workingSince: since,
       preview: last ? previewOf(last) : null,
-      lastAt: last?.at ?? null,
+      // A stage talk leaves no thread entry; the server's fact keeps a member of all projects listed.
+      lastAt: [last?.at, agent.lastTalkAt].filter((x): x is string => !!x).sort().pop() ?? null,
       unread,
       section: readOnly ? 'readonly' : status === 'needs' ? 'needs' : 'team',
       readOnly,

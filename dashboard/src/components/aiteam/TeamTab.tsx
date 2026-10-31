@@ -35,6 +35,8 @@ export function TeamTab({
   const summary = agents.find((a) => a.slug === slug);
   // A teammate's agent (B1-4): its place in the team is read here, never changed or talked to.
   const readOnly = summary?.readOnly === true;
+  // A member of all projects reports straight to you everywhere: its line is shown, never edited.
+  const everywhere = summary?.scope === 'global';
   if (!me || !node) return <div className="aiteam-panel-body" />;
 
   const chain = chainOf(tree, slug);
@@ -43,7 +45,7 @@ export function TeamTab({
   const team = [slug, ...descendantsOf(tree, slug)];
   const routines = team.flatMap((s) => (rowOf.get(s)?.routines ?? []).map((r) => ({ owner: rowOf.get(s)!, routine: r })));
   const above = new Set(chain);
-  const addable = agents.filter((a) => !above.has(a.slug) && a.slug !== slug && a.reportsTo !== slug && !a.implicit && !a.readOnly)
+  const addable = agents.filter((a) => !above.has(a.slug) && a.slug !== slug && a.reportsTo !== slug && !a.implicit && !a.readOnly && a.scope !== 'global')
     .sort((a, b) => a.title.localeCompare(b.title));
 
   return (
@@ -65,16 +67,17 @@ export function TeamTab({
           </span>
         </div>
         {node.team && <span className="aiteam-tag aiteam-tag--accent">{node.team}</span>}
+        {everywhere && <span className="aiteam-tag aiteam-tag--accent" data-global-chip title={t('aiteam.tag.globalHint')}>{t('aiteam.tag.global')}</span>}
       </div>
       {!readOnly && <div className="aiteam-teamtab-actions">
         <button type="button" className="agp-btn agp-btn--primary" onClick={() => onTalk(slug)}>{t('agents.profile.talk')}</button>
-        {!summary?.implicit && (
+        {!summary?.implicit && !everywhere && (
           <button type="button" className="agp-btn" onClick={() => setEditing(editing === 'manager' ? null : 'manager')} data-change-manager>
             {t('aiteam.team.changeManager')}
           </button>
         )}
       </div>}
-      {editing === 'manager' && !readOnly && (
+      {editing === 'manager' && !readOnly && !everywhere && (
         <ManagerPicker slug={slug} tree={tree} agents={agents} onDone={() => setEditing(null)} onToast={onToast} />
       )}
 
@@ -83,12 +86,14 @@ export function TeamTab({
         ? <MemberCard row={manager} now={now} onOpen={onOpen} />
         : <div className="aiteam-teamtab-you">{t('aiteam.team.toYou')}</div>}
 
-      <p className="aiteam-panel-label">
-        {t('aiteam.team.its')}
-        {node.ownTeam ? ` · ${node.ownTeam}` : ''}
-        {' · '}
-        {(reports.length === 1 ? t('aiteam.tree.reports.one') : t('aiteam.tree.reports.many')).replace('{n}', String(reports.length))}
-      </p>
+      {!(everywhere && reports.length === 0) && (
+        <p className="aiteam-panel-label">
+          {t('aiteam.team.its')}
+          {node.ownTeam ? ` · ${node.ownTeam}` : ''}
+          {' · '}
+          {(reports.length === 1 ? t('aiteam.tree.reports.one') : t('aiteam.tree.reports.many')).replace('{n}', String(reports.length))}
+        </p>
+      )}
       {reports.map((r) => <MemberCard key={r.slug} row={r} now={now} onOpen={onOpen} />)}
       {editing === 'add' ? (
         <div className="aiteam-place-edit">
@@ -112,7 +117,7 @@ export function TeamTab({
           <button type="button" className="agp-textbtn" onClick={() => setEditing(null)}>{t('aiteam.place.cancel')}</button>
         </div>
       ) : (
-        !summary?.implicit && !readOnly && addable.length > 0 && (
+        !summary?.implicit && !readOnly && !everywhere && addable.length > 0 && (
           <button type="button" className="aiteam-teamtab-add" onClick={() => setEditing('add')} data-add-report>
             + {t('aiteam.team.addReport')}
           </button>

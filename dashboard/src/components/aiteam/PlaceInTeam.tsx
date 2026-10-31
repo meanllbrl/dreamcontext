@@ -88,7 +88,9 @@ export function ManagerPicker({
   const place = usePlaceAgent();
   const below = useMemo(() => new Set(descendantsOf(tree, slug)), [tree, slug]);
   const current = tree.nodes.get(slug)?.parent ?? '';
-  const options = agents.filter((a) => a.slug !== slug && !below.has(a.slug)).sort((a, b) => a.title.localeCompare(b.title));
+  // Nobody is placed under a member of all projects: it stays on this Mac, the line would not
+  // travel. One already there keeps it listed, so the picker tells the truth and "You" still moves it.
+  const options = agents.filter((a) => a.slug !== slug && !below.has(a.slug) && (a.scope !== 'global' || a.slug === current)).sort((a, b) => a.title.localeCompare(b.title));
   const name = agents.find((a) => a.slug === slug)?.title ?? slug;
   return (
     <div className="aiteam-place-edit">

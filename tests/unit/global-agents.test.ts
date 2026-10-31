@@ -151,6 +151,28 @@ describe('a global agent is created once and listed in every project (AC-D1-1)',
     expect(() => createAgent(b.context, { slug: 'scout', title: 'S', prompt: 'P' })).toThrow(/global agents/);
   });
 
+  it('from a project\'s "+ New": refused when that project holds the name, and the refusal says "all projects"', async () => {
+    createAgent(a.context, { slug: 'writer', title: 'Writer', prompt: 'You write.' }, { approve: { now: NOW } });
+    const clash = makeRes();
+    await handleLauncherGlobalAgentsCreate(req({ title: 'Writer', prompt: 'P' }), clash.res, {}, a.context);
+    expect(clash.status()).toBeGreaterThanOrEqual(400);
+    expect(existsSync(globalAgentPath('writer'))).toBe(false);
+
+    const fine = makeRes();
+    await handleLauncherGlobalAgentsCreate(req({ title: 'Critic', prompt: 'P' }), fine.res, {}, a.context);
+    expect(fine.status()).toBe(201);
+    for (const send of [
+      (out: ReturnType<typeof makeRes>) => handleLauncherGlobalAgentsCreate(req({ title: 'Critic', prompt: 'P' }), out.res, {}, a.context),
+      (out: ReturnType<typeof makeRes>) => handleAgentsCreate(req({ title: 'Critic', prompt: 'P' }), out.res, {}, b.context),
+    ]) {
+      const again = makeRes();
+      await send(again);
+      expect(again.status()).toBeGreaterThanOrEqual(400);
+      expect(JSON.stringify(again.body())).toContain('teammates in all projects');
+      expect(JSON.stringify(again.body())).not.toMatch(/global/i);
+    }
+  });
+
   it('a project member of the same name wins in its own project only', () => {
     createGlobalAgent(scout, { approve: { now: NOW } });
     createAgent(a.context, { slug: 'scout-local', title: 'x', prompt: 'P' });

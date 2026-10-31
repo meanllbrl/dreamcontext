@@ -82,6 +82,8 @@ export interface AgentSummary {
   /** `global`: this machine's agent, listed in every project and kept out of every brain (AI Team
    *  v2 D1). Optional: an older server sends none, which reads as `project`. */
   scope?: 'project' | 'global';
+  /** A member of all projects: when it was last talked with in this project. */
+  lastTalkAt?: string | null;
   /** The owner's other machine runs it (same login, several machines). */
   runsElsewhere?: { machine: string; name: string } | null;
   /** Arrived by sync and was not created on this machine. */
@@ -204,10 +206,12 @@ export function useCreateGlobalAgent() {
   return useMutation({
     mutationFn: (draft: AgentIdentityDraft) =>
       api.post<{ agent: GlobalAgentRow }>('/launcher/global-agents', draft).then((r) => r.agent),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['global-agents'] });
-      queryClient.invalidateQueries({ queryKey: ['agents'] });
-    },
+    // Waited for: AI Team opens the new member as soon as this settles, and a page whose roster
+    // does not hold it yet falls back to the first row.
+    onSuccess: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['global-agents'] }),
+      queryClient.invalidateQueries({ queryKey: ['agents'] }),
+    ]),
   });
 }
 
