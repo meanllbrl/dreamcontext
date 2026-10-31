@@ -1902,7 +1902,7 @@ export function startChatSession(
   // already has a transcript under its id must not open fresh either: that open refuses below.
   const paneHeld = !!bridgeTool;
   const freshPin = paneHeld
-    ? (resumeTarget || bridgeMapped || (bridgeTool === 'claude' && claudeConversationExists(pinId)) ? '' : pinId)
+    ? (resumeTarget || bridgeMapped || (bridgeTool === 'claude' && (liveConversations.has(pinId) || claudeConversationExists(pinId))) ? '' : pinId)
     : !resumeTarget && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
       ? pinId : '';
   const idArg = resumeTarget ? ['--resume', resumeTarget] : freshPin ? ['--session-id', freshPin] : [];
