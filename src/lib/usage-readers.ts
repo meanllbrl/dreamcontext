@@ -179,7 +179,9 @@ export function firstPromptText(record: Record<string, unknown>): string | null 
 export type PromptKind = 'owner' | 'super' | 'auto';
 
 /** Server-written turns no marker tells apart, by their fixed opening. They count for nobody. */
-const SERVER_TURNS = ['[Request interrupted', '[ran in chat]', '[delegated-session event]', 'The previous turn ', 'Your previous turn was stopped'];
+const SERVER_TURNS = ['[Request interrupted', '[ran in chat]', '[delegated-session event]', 'The previous turn ', 'Your previous turn was stopped', 'The "Go to development" hand-off'];
+/** The app's own task brief (dashboard agentPrompt.ts): `isAgentRun`'s role check does not see it. */
+export const APP_BRIEF_OPENINGS = ['You are picking up the task'];
 /** Every `super delegate` brief opens with one of these (routes/super.ts `delegateJob`). */
 export const SUPER_BIRTH_OPENINGS = ['If you start a dev server, pin its url', 'You work in your own git worktree:'];
 /** A record's own word that nobody typed it. `scheduled` still goes on, as a machine run's turn. */
@@ -192,7 +194,8 @@ export interface HumanTurn { ts: number; uuid: string | null; text: string; mach
  * summaries, notifications, slash-command stubs and Super event turns are not.
  *
  * `machineShaped`: the app's chats send content blocks, while `claude -p "<text>"` writes a plain
- * string under the SDK entrypoint. So a session that OPENS that way was started by a program.
+ * string under the SDK entrypoint. One exception: a person's message with a dropped file is also a
+ * string, and it opens on the file's path, so a path-led string is never machine-shaped.
  */
 export function humanTurn(record: Record<string, unknown>): HumanTurn | null {
   if (record.type !== 'user') return null;
@@ -222,7 +225,7 @@ export function humanTurn(record: Record<string, unknown>): HumanTurn | null {
   if (SERVER_TURNS.some((p) => words.startsWith(p))) return null;
   return {
     ts, uuid: typeof record.uuid === 'string' ? record.uuid : null, text: words,
-    machineShaped: typeof content === 'string' && record.entrypoint === 'sdk-cli',
+    machineShaped: typeof content === 'string' && record.entrypoint === 'sdk-cli' && !/^\/\S/.test(words),
     scheduled: record.turnOrigin === 'scheduled',
   };
 }
@@ -232,12 +235,18 @@ export function humanTurn(record: Record<string, unknown>): HumanTurn | null {
  * turns read like a person's and are the Super's: its resumes, its "the owner picked A". On the
  * real logs a sample of them held almost nothing else, so a word the owner typed into a child's own
  * tab counts as the Super's. An owner's chat stays the owner's until a send claims a turn in it
- * (usage-report.ts `superSends`): that is the adopted child.
+ * (usage-report.ts `superSends`): that is the adopted child. A session a brief opened is a person's
+ * from the first block-shaped turn on: a program's resume writes a string (`turnKind`).
  */
 export function firstTurnKind(turn: HumanTurn, origin: SessionOrigin): PromptKind {
   if (SUPER_BIRTH_OPENINGS.some((p) => turn.text.startsWith(p))) return 'super';
-  if (origin || turn.scheduled || turn.machineShaped || isAgentRun(turn.text)) return 'auto';
+  if (origin || turn.scheduled || turn.machineShaped || APP_BRIEF_OPENINGS.some((p) => turn.text.startsWith(p)) || isAgentRun(turn.text)) return 'auto';
   return 'owner';
+}
+
+/** A turn's kind in a session of `session` kind. Sleep and automation runs stay machine whole. */
+export function turnKind(turn: HumanTurn, session: PromptKind, origin: SessionOrigin): PromptKind {
+  return session === 'auto' && !origin && !turn.machineShaped && !turn.scheduled ? 'owner' : session;
 }
 
 /** The start of a shell command only, as `SLEEP_CMD`: a brief quoting the words is no send. */

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { accountIndexAt, currentLedger, ledgerRoots, loadLedger, scanLedger, sessionAccounts } from '../../src/lib/usage-ledger.js';
 import { buildStats } from '../../src/lib/usage-report.js';
-import { SUPER_BIRTH_OPENINGS, claudeSleepMark, initialCodexState, parseCodexRecord, parseLimitHit } from '../../src/lib/usage-readers.js';
+import { APP_BRIEF_OPENINGS, SUPER_BIRTH_OPENINGS, claudeSleepMark, initialCodexState, parseCodexRecord, parseLimitHit } from '../../src/lib/usage-readers.js';
 import { resolvePrice } from '../../src/lib/usage-pricing.js';
 import { closeSleepRun, logHandoff, noteSleepRunCost, openSleepRun, readLimitHistory, readSleepRuns } from '../../src/lib/usage-records.js';
 import { recordUsageMeter } from '../../src/lib/claude-usage-meter.js';
@@ -362,6 +362,20 @@ describe('usage ledger', () => {
       expect(row(stats())?.prompts).toEqual({ owner: 0, super: 0, auto: 4 });
     });
 
+    it('a dropped file opens a person\'s chat; a brief\'s session is theirs from the first block on, a program\'s resume is not', async () => {
+      write('drop.jsonl', [user('a', at(50), '/tmp/agent-drops/x.png neden opus'), user('b', at(49), typed('devam')), assistant('m1', 'r1', at(48), U(1))]);
+      write('brief.jsonl', [
+        user('c', at(47), typed('You are the goal planner.')),
+        user('d', at(46), typed('bitti mi')),
+        user('e', at(45), 'resume by a program'),
+        assistant('m2', 'r2', at(44), U(1)),
+      ]);
+      write('task.jsonl', [user('f', at(43), typed('You are picking up the task x.')), assistant('m3', 'r3', at(42), U(1))]);
+      write('refused.jsonl', [user('g', at(41), typed('kendi işim')), user('h', at(40), typed('The "Go to development" hand-off was refused')), assistant('m4', 'r4', at(39), U(1))]);
+      await scan();
+      expect(row(stats())?.prompts).toEqual({ owner: 4, super: 0, auto: 3 });
+    });
+
     it('a delegated child is the Super\'s whole; in an adopted chat a send is the Super\'s and the rest the owner\'s', async () => {
       const send = (ts: string, id: string, child: string) => assistant(id, `r${id}`, ts, U(1), {}, [{ type: 'tool_use', id: `t${id}`, name: 'Bash', input: { command: `dreamcontext super send ${child} "$(cat /tmp/m.txt)"` } }]);
       write('super1.jsonl', [
@@ -430,6 +444,9 @@ describe('usage ledger', () => {
     it('the openings of a delegate brief are the server\'s own words', () => {
       const src = readFileSync(join(process.cwd(), 'src/server/routes/super.ts'), 'utf-8');
       for (const opening of SUPER_BIRTH_OPENINGS) expect(src).toContain(opening);
+      const app = readFileSync(join(process.cwd(), 'dashboard/src/lib/agentPrompt.ts'), 'utf-8');
+      for (const opening of APP_BRIEF_OPENINGS) expect(app).toContain(opening);
+      expect(readFileSync(join(process.cwd(), 'dashboard/src/components/sleepy/AgentSurface.tsx'), 'utf-8')).toContain('The "Go to development" hand-off');
     });
   });
 });

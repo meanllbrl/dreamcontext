@@ -34,7 +34,7 @@ import { basename, dirname, join } from 'node:path';
 import { listClaudeAccounts } from './claude-accounts.js';
 import {
   claudeInjection, claudeLimitHit, claudeSleepMark, claudeSuperSends, firstPromptText, firstTurnKind, humanTurn, initialCodexState,
-  originOfFirstPrompt, parseClaudeRecord, parseCodexRecord, type CodexScanState, type LimitHit, type PromptKind, type SessionOrigin, type UsageLine,
+  originOfFirstPrompt, parseClaudeRecord, turnKind, parseCodexRecord, type CodexScanState, type LimitHit, type PromptKind, type SessionOrigin, type UsageLine,
 } from './usage-readers.js';
 
 export const LEDGER_VERSION = 3;
@@ -274,7 +274,7 @@ async function scanFile(path: string, tool: ScanRoot['tool'], size: number, mtim
     }
     const first = sessionKind === null;
     if (first) sessionKind = firstTurnKind(turn, origin);
-    const kind = sessionKind as PromptKind;
+    const kind = first ? (sessionKind as PromptKind) : turnKind(turn, sessionKind as PromptKind, origin);
     file.prompts.push([turn.ts, kind, accountIndexAt(heldBy, turn.ts)]);
   };
 
