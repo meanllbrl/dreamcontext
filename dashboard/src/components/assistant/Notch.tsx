@@ -803,7 +803,7 @@ export function Notch() {
     for (const k of [...seen.ids]) if (!listedKeys.has(k)) seen.ids.delete(k);
     const liveRuns = new Set(inbox.running.map(runKey));
     const starts: Array<{ id: string; item: PeekItem }> = [];
-    for (const r of inbox.running) if (!seen.runs.has(runKey(r))) { seen.runs.add(runKey(r)); starts.push({ id: `run:${runKey(r)}`, item: { kind: 'started', run: r } }); }
+    for (const r of inbox.running) if (!seen.runs.has(runKey(r))) { seen.runs.add(runKey(r)); if (!r.superJob) starts.push({ id: `run:${runKey(r)}`, item: { kind: 'started', run: r } }); }
     for (const k of [...seen.runs]) if (!liveRuns.has(k)) seen.runs.delete(k);
     if (!seen.booted) { seen.booted = true; return; }   // what was already there at launch is listed, not announced
     // Server order is newest first; the queue speaks oldest first. A start is news only when

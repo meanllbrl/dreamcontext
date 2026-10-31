@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { safeWriteTarget } from '../vault-read.js';
 import { GLOBAL_REGISTRY_KEY, safeMemberWrite, underGlobalAgents } from '../agents/scope.js';
 import { notifyViaBundle, NOTIFY_SOUND_OK, NOTIFY_SOUND_FAILED } from './notifier.js';
+import { superRunQuiet } from './super-quiet.js';
 import { recordNotification } from '../notification-log.js';
 import { appLinkForContextRoot, brainRelativePath } from '../app-link.js';
 import { ensureGitignoreEntries, removeGitignoreEntries } from '../gitignore.js';
@@ -1879,7 +1880,10 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // pass false and must stay silent, or a still-due automation would fire a
     // notification every 5 minutes for as long as it stays blocked.
     // A task step's banner is the host's (the delivery, with the task's link), never the run's own.
-    if (params.notify && manifest.notify && !taskStep) {
+    // A clean end of a job the Super Agent gave this member reports to the Super (`team=<job>
+    // event=done`), not to the owner. A failure, or a verdict he must give, still reaches him.
+    const superJob = params.status === 'ok' && !params.reviewCardId && superRunQuiet(contextRoot, slug, fireAt.toISOString());
+    if (params.notify && manifest.notify && !taskStep && !superJob) {
       // Success and failure sound DIFFERENT on purpose. Nobody is at the
       // keyboard when these fire; if both made the same noise, the sound would
       // only tell you that something happened, which you already knew from the
@@ -1951,7 +1955,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // delivery, and the person who set it up is by definition not at the Mac.
     // Best-effort like the banner: a network blip must never fail a run that
     // already succeeded.
-    if (params.notify && telegramCfg && !taskStep) {
+    if (params.notify && telegramCfg && !taskStep && !superJob) {
       const text =
         params.status === 'ok'
           ? params.reviewCardId

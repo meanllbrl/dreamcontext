@@ -283,6 +283,8 @@ export interface RunningAutomation {
   hasPhoto: boolean;
   since: number;
   runId: string | null;
+  /** A job the Super Agent gave it: no "started" peek. */
+  superJob?: true;
 }
 
 /** A task job's row waiting on the owner (M1), across projects: it opens its task. */
@@ -358,6 +360,7 @@ export function readInbox(raw: unknown): Inbox {
     running.push({
       vault: a.vault, slug: str(a.slug), title: unwrapUntrusted(a.title) || str(a.slug), hasPhoto: a.hasPhoto === true,
       since: num(a.since)!, runId: typeof a.runId === 'string' ? a.runId : null,
+      ...(a.superJob === true ? { superJob: true as const } : {}),
     });
   }
   const tasks: OwnerTaskRow[] = [];

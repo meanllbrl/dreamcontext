@@ -278,6 +278,14 @@ describe('transcription retries (useVoiceCapture.ts)', () => {
   });
 });
 
+describe('a Super job at work (notchModel.ts)', () => {
+  it('keeps the server\'s mark on a running row, and only a literal true', () => {
+    const row = { vault: 'korus', slug: 'desk', title: 'Desk', since: 1, runId: 'r' };
+    const { running } = readInbox({ running: [{ ...row, superJob: true }, { ...row, superJob: 'yes' }] });
+    expect(running.map((r) => r.superJob)).toEqual([true, undefined]);
+  });
+});
+
 describe('the pill while the Assistant works (notchModel.ts)', () => {
   it('names the running verb, else the progress sentence, else thinking — this turn only', () => {
     const tool = (command: string, status = 'running') => ({ kind: 'tool', name: 'Bash', input: { command }, status });

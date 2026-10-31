@@ -3,6 +3,7 @@ import { basename, isAbsolute, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { listAutomations, readAutomationCache, resolveAutomationPhoto } from './store.js';
 import { extractNotificationSummary } from './runner.js';
+import { superQuietReader } from './super-quiet.js';
 import { allPendingQuestions } from './hitl.js';
 import { readThread, threadReadWatermark } from './threads.js';
 import type {
@@ -390,6 +391,8 @@ export function buildFeedMessage(
   /** The slug's run history, newest first (as `recordRun` stores it) — where a
    *  resumed turn's session is found. Already read by the caller. */
   history: RunEvent[] = [],
+  /** What of this run counts for nobody (`super-quiet.ts`). */
+  quiet?: ReadonlySet<string>,
 ): FeedMessage {
   const ordered = [...entries].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const started = ordered.find((e) => e.kind === 'system' && e.event === 'started');
@@ -486,7 +489,7 @@ export function buildFeedMessage(
     // Your OWN replies never make a message unread — the same rule
     // `threadUnread` applies, kept identical here so the chip counts and the
     // per-message bar can never disagree.
-    unread: runUnread(ordered, watermark).unread,
+    unread: runUnread(ordered, watermark, quiet).unread,
     newestId: newest?.id ?? null,
   };
 }
@@ -504,13 +507,15 @@ export function buildFeedMessage(
 export function runUnread(
   entries: readonly ThreadEntry[],
   watermark: string | null,
+  /** Entries that count for nobody (`super-quiet.ts`). The run is still seen up to its newest. */
+  quiet?: ReadonlySet<string>,
 ): { unread: boolean; unreadPosts: number; newestId: string | null } {
   let newestId: string | null = null;
   let fresh = 0;
   let freshPosts = 0;
   for (const e of entries) {
     if (newestId === null || e.id > newestId) newestId = e.id;
-    if (e.kind === 'user' || (watermark !== null && e.id <= watermark)) continue;
+    if (e.kind === 'user' || quiet?.has(e.id) || (watermark !== null && e.id <= watermark)) continue;
     fresh++;
     if (e.kind === 'agent') freshPosts++;
   }
@@ -540,6 +545,7 @@ export function buildFeed(
   const messages: FeedMessage[] = [];
   const unreadBySlug: Record<string, number> = {};
   const agents: FeedResult['agents'] = [];
+  const quietOf = superQuietReader(contextRoot);
 
   // ONE questions read for the WHOLE feed, indexed by the run each question
   // belongs to. Per-run `pendingQuestion` calls would re-walk the same
@@ -589,7 +595,7 @@ export function buildFeed(
     // rule as the store's own `threadUnread`. A run is unread here exactly when its
     // `message.unread` below is true, so the chip and the per-message bars still agree.
     let count = 0;
-    for (const runEntries of byRun.values()) count += runUnread(runEntries, watermark).unreadPosts;
+    for (const runEntries of byRun.values()) count += runUnread(runEntries, watermark, quietOf(manifest.slug, runEntries)).unreadPosts;
     if (count > 0) unreadBySlug[manifest.slug] = count;
     for (const [runId, runEntries] of byRun) {
       messages.push(
@@ -598,6 +604,7 @@ export function buildFeed(
           runsByFire.get(runId) ?? null, watermark,
           questionByRun.get(`${manifest.slug}::${runId}`) ?? null,
           cache?.history ?? [],
+          quietOf(manifest.slug, runEntries),
         ),
       );
     }
