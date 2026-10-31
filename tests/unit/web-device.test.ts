@@ -66,7 +66,7 @@ describe('wiring', () => {
   it('the card, its frame and its full-screen view share one device choice', () => {
     expect(card).toMatch(/const \[device, setDevice\] = useWebDevice\(c\.id\);/);
     expect(card).toMatch(/<ZoomPane live=\{live\} interactive=\{p\.large\} control=\{live \? control : undefined\} device=\{device\} onDevice=\{setDevice\}>/);
-    expect(card).toMatch(/desktop=\{desktop\} device=\{device\} \/><\/div>/);
+    expect(card).toMatch(/desktop=\{desktop\} device=\{device\} onPageFit=\{onPageFit\} \/><\/div>/);
     // The one frame every web card draws (the board's widget too) sits in the device box.
     expect(widget).toMatch(/const box = useDeviceBox\(device\);/);
     expect(widget).toMatch(/box\.fit\s*\? box\.frameStyle/);
