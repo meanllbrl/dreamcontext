@@ -134,7 +134,8 @@ process.stdin.on('data', (c) => {
     const blocks = typeof content === 'string' ? [content] : content.filter((b) => b.type === 'text').map((b) => b.text);
     if (!blocks.length) continue;
     appendFileSync(${JSON.stringify(FRAMES)}, JSON.stringify({ role, pid: process.pid, t: Date.now(), blocks, folded: running }) + '\\n');
-    persist('user', blocks.join('\\n'));
+    // Block by block, as the real CLI stores them: the replay drops the owner-msg block by itself.
+    persist('user', blocks.map((text) => ({ type: 'text', text })));
     if (running) continue;
     running = true;
     chain = chain.then(() => turn(blocks)).finally(() => { running = false; });
@@ -228,6 +229,23 @@ async function run() {
   const blur = (off) => page.evaluate(async (v) => { Document.prototype.hasFocus = () => !v; window.dispatchEvent(new Event(v ? 'blur' : 'focus')); await new Promise((r) => setTimeout(r, 50)); }, off);
   const scroller = () => page.locator('[data-super-slot="centre"] .chat-scroll');
   const toBottom = () => scroller().evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  const takeBack = () => page.evaluate(async () => { const r = await fetch('/api/super/disable', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); return r.status; });
+  const takeBackChecks = async () => {
+    console.log('── take back: the record dies');
+    const marksFile = join(PROJ, '_dream_context', 'state', '.super', 'read-marks.json');
+    ok('the record is on disk', existsSync(marksFile));
+    await toStage();
+    // The new shell's stage has no take-back button: the same call the classic header's button makes.
+    await takeBack();
+    ok('gone with the hand-over', await until(page, async () => !existsSync(marksFile), 20000));
+    ok('the rail count dies with it', await until(page, async () => (await badge()) === 0, 8000), `${await badge()}`);
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await page.waitForTimeout(1500);
+    ok('nothing writes a new record after take-back', !existsSync(marksFile));
+
+    const real = errors.filter((e) => !/favicon|ERR_CONNECTION|WebSocket|Failed to load resource/i.test(e));
+    ok('no console errors', real.length === 0, real.join('\n'));
+  };
   /** Every frame from the click on: where the view is, where the first unread is, is it pinned. */
   const trace = (ms) => page.evaluate((ms) => new Promise((done) => {
     const el = document.querySelector('[data-super-slot="centre"] .chat-scroll');
@@ -382,6 +400,17 @@ async function run() {
     ok('the turn ended', await until(page, async () => turnEnds() > before, 60000));
     await page.waitForTimeout(1500);
 
+    if (process.env.ONLY === 'takeback') {
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await toStage();
+      await page.waitForTimeout(3000);
+      ok('a replayed message shows no raw owner-msg tag', !(await page.locator('[data-super-slot="centre"]').innerText()).includes('owner-msg'));
+      await blur(false);
+      await page.waitForTimeout(1500);
+      await takeBackChecks();
+      return;
+    }
+
     if (process.env.ONLY === 'jump') {
       await jumpTrace();
       return;
@@ -506,19 +535,7 @@ async function run() {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForTimeout(1000);
 
-    console.log('── take back: the record dies');
-    const marksFile = join(PROJ, '_dream_context', 'state', '.super', 'read-marks.json');
-    ok('the record is on disk', existsSync(marksFile));
-    await toStage();
-    await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
-    ok('gone with the hand-over', await until(page, async () => !existsSync(marksFile), 20000));
-    ok('the rail count dies with it', await until(page, async () => (await badge()) === 0, 8000), `${await badge()}`);
-    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-    await page.waitForTimeout(1500);
-    ok('nothing writes a new record after take-back', !existsSync(marksFile));
-
-    const real = errors.filter((e) => !/favicon|ERR_CONNECTION|WebSocket|Failed to load resource/i.test(e));
-    ok('no console errors', real.length === 0, real.join('\n'));
+    await takeBackChecks();
   } catch (e) {
     ok('run finished', false, e?.stack || String(e));
     await page.screenshot({ path: join(OUT, 'zz-crash.png') }).catch(() => {});
