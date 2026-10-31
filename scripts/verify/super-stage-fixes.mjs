@@ -379,7 +379,7 @@ try {
   await page.waitForTimeout(300);
   ok('a double click fits it again', (await zoomScale(page, ids.image)) === 1, String(await zoomScale(page, ids.image)));
   await page.evaluate(() => { window.__boardGestures = 0; for (const t of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(t, () => { window.__boardGestures += 1; }, false); });
-  await card(page, ids.image).locator('[data-testid="super-zoom"]').first().evaluate((el) => {
+  await card(page, ids.image).locator('[data-testid="super-zoom-stage"]').first().evaluate((el) => {
     const fire = (type, scale) => { const e = new Event(type, { bubbles: true, cancelable: true }); const r = el.getBoundingClientRect(); Object.assign(e, { scale, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 }); el.dispatchEvent(e); };
     fire('gesturestart', 1); fire('gesturechange', 1.5); fire('gesturechange', 2); fire('gestureend', 2);
   }).catch(() => {});
