@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
+import { StatsProjectCharts } from './StatsProjectCharts';
 import { fmtCost, fmtDay, fmtTokens } from './statsFormat';
 import type { ProjectRow, StatsWire } from './statsTypes';
 
@@ -30,8 +31,8 @@ function Row({ r, partial, t }: { r: ProjectRow; partial: boolean; t: (k: string
         <b>{r.estSaved.tokens > 0 ? `~${fmtCost(r.estSaved.cost)}` : '—'}</b>
         {r.estSaved.tokens > 0 && <small>~{fmtTokens(r.estSaved.tokens)}</small>}
       </span>
-      <span className={`st-pc${zero ? '' : ' st-est-cell'}`} role="cell" data-k={t('stats.projects.net')} data-partial={partial ? '' : undefined}>
-        <b className={up && !partial && !zero ? 'good' : undefined}>{zero ? '—' : `${partial ? '≥ ' : ''}${signed(r.estNet.cost, fmtCost)}`}</b>
+      <span className={`st-pc${zero ? '' : ' st-est-cell'}`} role="cell" data-k={t('stats.projects.net')} data-dir={zero ? undefined : up ? 'up' : 'down'}>
+        <b>{zero ? '—' : `${partial ? '≥ ' : ''}${signed(r.estNet.cost, fmtCost)}`}</b>
         {!zero && <small>{signed(r.estNet.tokens, fmtTokens)}</small>}
         {partial && <small className="st-partial">{t('stats.projects.partial')}</small>}
       </span>
@@ -49,6 +50,7 @@ export function StatsProjects({ data }: { data: StatsWire }) {
     <div className="st-card" data-testid="stats-projects">
       <div className="st-bh"><div className="st-k">{t('stats.projects.title')}</div></div>
       {projects.length === 0 && <div className="st-none">{t('stats.projects.none')}</div>}
+      {projects.length > 0 && <StatsProjectCharts data={data} />}
       {projects.length > 0 && (
         <div className="st-tbl st-proj" role="table">
           <div className="st-tr st-th" role="row">

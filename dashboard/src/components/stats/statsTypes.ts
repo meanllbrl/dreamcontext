@@ -50,6 +50,7 @@ export interface StatsWire {
     projects: ProjectRow[];
     ecoFrom: number | null;
     ecoPartial: boolean;
+    trend: { sleep: number[]; memory: number[]; saved: number[] };
   };
   limits: ToolLimits[];
   notCounted: Array<{ id: string; name: string }>;

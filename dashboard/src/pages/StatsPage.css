@@ -142,7 +142,30 @@ rect.st-ghost { fill: color-mix(in srgb, var(--color-success) 10%, transparent);
 .st-pc b { font-weight: 600; white-space: nowrap; }
 .st-pc small { max-width: 100%; font-size: calc(11.5px * var(--zoom)); line-height: 1.35; color: var(--color-text-tertiary); }
 .st-est-cell b { padding: 0 4px; border: 1.2px dashed var(--color-success); border-radius: 4px; background: color-mix(in srgb, var(--color-success) 8%, transparent); }
-.st-est-cell[data-partial] b { border-color: var(--color-caution); background: color-mix(in srgb, var(--color-caution) 10%, transparent); }
+.st-est-cell[data-dir='up'] b { color: var(--color-success-ink); }
+.st-est-cell[data-dir='down'] b { border-color: var(--color-error); background: color-mix(in srgb, var(--color-error) 9%, transparent); color: var(--color-error-ink); }
+.st-pcharts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--color-border); }
+.st-pchart { min-width: 0; }
+.st-pchart .st-ch { gap: 6px 12px; margin-bottom: 8px; }
+.st-memkey { box-sizing: border-box; border: 1px dashed var(--chart-8); background: color-mix(in srgb, var(--chart-8) 30%, transparent); }
+.st-pline { position: relative; display: grid; grid-template-columns: minmax(0, 104px) minmax(0, 1fr) 104px; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--color-border); font-size: calc(12.5px * var(--zoom)); cursor: default; }
+.st-pname { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text); }
+.st-pbars { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.st-pbar { display: flex; align-items: center; gap: 2px; min-width: 0; height: 12px; }
+.st-pbar > i { display: block; flex: 0 1 auto; height: 9px; min-width: 2px; border-radius: 2px; }
+.st-page .st-pbar > i.st-ghostbar { height: 9px; box-sizing: border-box; }
+.st-page .st-pbar > i.st-pmem { box-sizing: border-box; border: 1px dashed var(--chart-8); background: color-mix(in srgb, var(--chart-8) 30%, transparent); }
+.st-pbar em { flex: none; margin-left: 4px; font-style: normal; font-size: calc(11px * var(--zoom)); color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+.st-netpill { justify-self: end; padding: 0 4px; border: 1.2px dashed; border-radius: 4px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.st-netpill.up { border-color: var(--color-success); background: color-mix(in srgb, var(--color-success) 8%, transparent); color: var(--color-success-ink); }
+.st-netpill.down { border-color: var(--color-error); background: color-mix(in srgb, var(--color-error) 9%, transparent); color: var(--color-error-ink); }
+.st-tip.st-ptip { top: calc(100% - 4px); left: 0; }
+.st-hatch { stroke: var(--color-border); stroke-width: 2; }
+.st-ax.st-unm { fill: var(--color-text-secondary); }
+.st-ecoline { stroke: var(--color-text-secondary); stroke-width: 1.2; stroke-dasharray: 4 3; }
+.st-ax.st-ecotext, .st-ax.st-unm { paint-order: stroke; stroke: var(--color-bg-secondary); stroke-width: 3px; }
+.st-ax.st-ecotext { fill: var(--color-text); font-weight: 600; }
+.st-chartnote { position: absolute; inset: 0 0 22px 46px; display: flex; align-items: center; justify-content: center; font-size: calc(12.5px * var(--zoom)); color: var(--color-text-tertiary); pointer-events: none; }
 .st-pc small.st-partial { color: var(--color-warning-ink); }
 
 .st-scrim { position: absolute; inset: 0; z-index: 40; background: color-mix(in srgb, var(--color-bg) 55%, transparent); }
@@ -163,6 +186,7 @@ rect.st-ghost { fill: color-mix(in srgb, var(--color-success) 10%, transparent);
 .st-pa { display: flex; gap: 8px; margin-top: 10px; }
 
 @media (max-width: 900px) {
+  .st-pcharts { grid-template-columns: minmax(0, 1fr); }
   .st-grid2 { grid-template-columns: minmax(0, 1fr); }
   .st-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -185,6 +209,8 @@ rect.st-ghost { fill: color-mix(in srgb, var(--color-success) 10%, transparent);
   .st-wins .st-tr .num .dim { display: none; }
   .st-eco .st-tr { grid-template-columns: minmax(0, 1fr) 96px 54px; }
   .st-eco .st-tr > :nth-child(4) { display: block; }
+  .st-pline { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; }
+  .st-pbars { grid-column: 1 / -1; grid-row: 2; }
   .st-proj .st-tr.st-th { display: none; }
   .st-proj .st-tr { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; padding-top: 10px; padding-bottom: 10px; }
   .st-proj .st-tr > :nth-child(1) { grid-column: 1 / -1; }

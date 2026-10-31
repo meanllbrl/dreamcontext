@@ -436,6 +436,22 @@ describe('usage ledger', () => {
       expect(buildStats({ range: '90d', project: null, off: new Set(), now: NOW }, home).dc.ecoPartial).toBe(true);
     });
 
+    it('the trend holds a row\'s memory, follows the project filter and adds up to the cards', async () => {
+      write('s1.jsonl', [
+        JSON.stringify({ type: 'attachment', timestamp: at(50), attachment: { type: 'hook_success', hookEvent: 'SessionStart', command: 'dreamcontext hook session-start', content: 'x'.repeat(3500) } }),
+        user('new', at(49), typed('bugün')),
+        assistant('m1', 'r1', at(48), U(5000)),
+      ]);
+      await scan();
+      const s = stats();
+      const sum = (v: number[]) => v.reduce((a, b) => a + b, 0);
+      expect(sum(s.dc.trend.memory)).toBeCloseTo(s.dc.projects[0].estMemory.cost, 10);
+      expect(sum(s.dc.trend.memory)).toBeGreaterThan(0);
+      expect(s.dc.trend.saved).toHaveLength(s.buckets.length);
+      const other = buildStats({ range: '7d', project: 'nothing-here', off: new Set(), now: NOW }, home);
+      expect(sum(other.dc.trend.memory)).toBe(0);
+    });
+
     it('an old cache is read again, so no count stays empty', () => {
       writeFileSync(join(home, '.dreamcontext', 'usage-scan-cache.json'), JSON.stringify({ version: 2, models: [], files: { x: { rows: [] } } }));
       expect(Object.keys(loadLedger(home).files)).toEqual([]);

@@ -23,20 +23,17 @@ const LEFT = 46;
 const BOTTOM = 22;
 const TOP = 8;
 
-function shortLabel(ms: number, i: number, n: number, hourly: boolean): string {
+export function shortLabel(ms: number, i: number, n: number, hourly: boolean): string {
   const d = new Date(ms);
   if (hourly) return d.getHours() % 6 === 0 ? String(d.getHours()).padStart(2, '0') : '';
   if (n <= 7) return d.toLocaleDateString('en-US', { weekday: 'short' });
   return i % Math.ceil(n / 6) === 0 ? fmtDay(ms) : '';
 }
 
-/** T3's hand-drawn stacked bars. A ghost series stacks on top with a dashed edge and stays out of "Total". */
-export function StatsChart({ buckets, hourly, series, format }: Props) {
-  const { t } = useI18n();
+/** The chart's own width, following its box. */
+export function useChartWidth() {
   const host = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(600);
-  const [hover, setHover] = useState<number | null>(null);
-
   useEffect(() => {
     const el = host.current;
     if (!el) return undefined;
@@ -44,17 +41,31 @@ export function StatsChart({ buckets, hourly, series, format }: Props) {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  return { host, width };
+}
+
+/** A round top and up to five gridlines for a largest value. */
+export function scaleFor(max: number): { top: number; ticks: number[] } {
+  const step = [1, 2, 2.5, 5, 10].map((x) => x * 10 ** Math.floor(Math.log10(max / 4))).find((x) => max / x <= 4.2) ?? max / 4;
+  const top = Math.ceil(max / step) * step;
+  const ticks: number[] = [];
+  for (let v = 0; v <= top + 1e-9; v += step) ticks.push(v);
+  return { top, ticks };
+}
+
+/** T3's hand-drawn stacked bars. A ghost series stacks on top with a dashed edge and stays out of "Total". */
+export function StatsChart({ buckets, hourly, series, format }: Props) {
+  const { t } = useI18n();
+  const { host, width } = useChartWidth();
+  const [hover, setHover] = useState<number | null>(null);
 
   const n = buckets.length;
   const stack = buckets.map((_, i) => series.reduce((a, s) => a + s.values[i], 0));
   const max = Math.max(...stack, 1e-9);
-  const step = [1, 2, 2.5, 5, 10].map((x) => x * 10 ** Math.floor(Math.log10(max / 4))).find((x) => max / x <= 4.2) ?? max / 4;
-  const top = Math.ceil(max / step) * step;
+  const { top, ticks } = scaleFor(max);
   const y = (v: number) => TOP + (H - TOP - BOTTOM) * (1 - v / top);
   const gap = (width - LEFT - 4) / n;
   const bar = Math.max(2, Math.min(28, gap * 0.66));
-  const ticks: number[] = [];
-  for (let v = 0; v <= top + 1e-9; v += step) ticks.push(v);
 
   const hovered = hover === null ? [] : series.filter((s) => s.values[hover] > 0);
   const tipLeft = hover === null ? 0 : Math.max(0, Math.min(width - 190, LEFT + gap * hover + gap / 2 - 95));

@@ -93,16 +93,36 @@ for (const theme of ['dark', 'light']) {
       if (await rows.count() !== 1) findings.push(`${tag}: one project should leave one row`);
       await toTable();
       await shot(page, `stats-proje-tek-${tag}`);
+      await shot(page, `stats-grafik-tek-${tag}`);
+      await page.getByTestId('stats-chart-trend').evaluate((el) => el.scrollIntoView({ block: 'start' }));
+      await page.waitForTimeout(200);
+      await shot(page, `stats-grafik-tek-zaman-${tag}`);
       await projectMenu.click();
       await page.locator('.st-mi', { hasText: 'All projects' }).first().click();
       await page.waitForTimeout(800);
     }
-    await page.getByRole('button', { name: '90d' }).click();
-    await page.waitForTimeout(1200);
-    await toTable();
-    await shot(page, `stats-proje-90d-${tag}`);
-    await page.getByRole('button', { name: '7d' }).click();
-    await page.waitForTimeout(800);
+    for (const range of ['24h', '30d', '90d', '7d']) {
+      await page.getByRole('button', { name: range, exact: true }).click();
+      await page.waitForTimeout(1200);
+      await toTable();
+      await shot(page, `stats-grafik-${range}-${tag}`);
+      if (w.width < 1000) {
+        await page.getByTestId('stats-chart-trend').evaluate((el) => el.scrollIntoView({ block: 'start' }));
+        await page.waitForTimeout(200);
+        await shot(page, `stats-grafik-${range}-zaman-${tag}`);
+        await page.getByTestId('stats-chart-trend').locator('.st-hit').last().click();
+        await page.waitForTimeout(200);
+        await shot(page, `stats-grafik-${range}-ipucu-${tag}`);
+        await page.mouse.move(0, 0);
+      }
+      if (await page.getByTestId('stats-chart-projects').locator('.st-tip').count()) findings.push(`${tag}: a tip stayed open`);
+    }
+    if (w.width > 1000 && theme === 'dark') {
+      await page.getByTestId('stats-chart-line').first().hover();
+      await page.waitForTimeout(200);
+      await shot(page, `stats-grafik-ipucu-${tag}`);
+      await page.mouse.move(0, 0);
+    }
     if (await page.locator('.st-body').evaluate((el) => el.scrollWidth - el.clientWidth) > 1) findings.push(`${tag}: the page body overflows sideways`);
     if (w.width > 1000 && theme === 'dark') {
       await page.locator('.st-body').evaluate((el) => { el.scrollTop = el.scrollHeight; });

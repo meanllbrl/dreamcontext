@@ -126,6 +126,8 @@ export interface StatsWire {
     ecoFrom: number | null;
     /** The range opens before `ecoFrom`: every row's saving is short of the truth. */
     ecoPartial: boolean;
+    /** Per bucket, in dollars: sleep is measured, memory and saved are ESTIMATES. */
+    trend: { sleep: number[]; memory: number[]; saved: number[] };
   };
   limits: ToolLimits[];
   notCounted: Array<{ id: string; name: string }>;
@@ -360,6 +362,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
   const unpriced = new Set<string>();
   const chart = { work: zero(), memory: zero(), sleep: zero(), estSaved: zero() };
   const memory = { first: 0, carried: 0, starts: 0, messages: 0 };
+  const trend = { sleep: zero(), memory: zero(), saved: zero() };
   const memoryOf = new Map<string, { tokens: number; cost: number }>();
   const promptsOf = new Map<string, PromptCounts>();
   const sent = superSends(ledger.files);
@@ -451,13 +454,17 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
         claudeTokens += tokens;
         claudeInput += input + cacheRead + cacheWrite;
         const mem = asleep ? 0 : memFirst + memCarried;
-        if (asleep) chart.sleep[i] += tokens;
+        if (asleep) { chart.sleep[i] += tokens; trend.sleep[i] += cost; }
         else {
           chart.memory[i] += mem; chart.work[i] += Math.max(0, tokens - mem); memory.first += memFirst; memory.carried += memCarried;
           const m = memoryOf.get(v.project) ?? { tokens: 0, cost: 0 };
           memoryOf.set(v.project, m);
           m.tokens += mem;
-          if (price) m.cost += (memFirst * price[3] + memCarried * price[2]) / 1e6;
+          if (price) {
+            const memCost = (memFirst * price[3] + memCarried * price[2]) / 1e6;
+            m.cost += memCost;
+            trend.memory[i] += memCost;
+          }
         }
       }
     }
@@ -652,7 +659,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
       const p = modelIdx === undefined ? null : resolvePrice(ledger.models[modelIdx], book).price;
       if (p) estSavedCost = Math.max(0, saved * p[2] / 1e6 - after * p[3] / 1e6);
       const i = indexOf(Math.floor(to.first / HOUR) * HOUR);
-      if (i >= 0) chart.estSaved[i] += estSaved;
+      if (i >= 0) { chart.estSaved[i] += estSaved; trend.saved[i] += estSavedCost; }
     }
     ecoRows.push({ project, title: typeof rec.title === 'string' ? rec.title : '', at, kind: rec.actedAt ? 'eco' : 'fresh', before, after, turns, estSaved, estSavedCost });
   }
@@ -737,7 +744,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
       },
       memory: { ...memory, inputShare: claudeInput ? (memory.first + memory.carried) / claudeInput : 0 },
       answer,
-      projects: projectRows, ecoFrom, ecoPartial: ecoFrom === null || ecoFrom > rangeStart,
+      projects: projectRows, ecoFrom, ecoPartial: ecoFrom === null || ecoFrom > rangeStart, trend,
     },
     limits: [{ id: 'claude', name: 'Claude Code', accounts: claudeLimits }, { id: 'codex', name: 'Codex', accounts: codexLimits }],
     notCounted: NOT_COUNTED,
