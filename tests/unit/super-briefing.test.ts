@@ -88,7 +88,7 @@ describe('superBriefing', () => {
   // The owner's field rules of 2026-10-21 (his language, no jargon, no time estimates (2026-10-22), rows kept from
   // the first turn, no reply to a repeat) are an explicit allowance on top of the 15 %, and so is
   // the child lifecycle that came with main (super end/resume/update/adopt, the Done line).
-  // Owner 2026-10-31: a card passage's header (rev 23).
+  // Owner 2026-10-31: a card passage's header (rev 24).
   const SELECTED_PASSAGE_2026_10_31 = 50;
   const OWNER_RULES_2026_10_21 = 400;
   const CHILD_LIFECYCLE_2026_10_21 = 500;
