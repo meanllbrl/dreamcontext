@@ -2611,7 +2611,7 @@ export function startChatSession(
   /** The window's last `focus` frame: the owner looked at or typed in this tab. */
   let focusedAt = 0;
   let parkAsk: { id: string; settle: (o: ParkOutcome) => void; promise: Promise<ParkOutcome> } | null = null;
-  const PARK_REFUSALS: readonly ParkOutcome[] = ['busy', 'asking', 'background', 'focused'];
+  const PARK_REFUSALS: readonly ParkOutcome[] = ['busy', 'asking', 'background', 'queued', 'focused'];
   const parkThis = (reason: string, opts: ParkOptions = {}): Promise<ParkOutcome> => {
     if (!alive || lingerTimer || lingerKillTimer) return Promise.resolve('already');
     if (parkAsk) return parkAsk.promise;

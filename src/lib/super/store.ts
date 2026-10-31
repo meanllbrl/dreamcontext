@@ -134,6 +134,7 @@ function sanitizeContainers(raw: unknown, children: Readonly<Record<string, Supe
       // with or without a size: he may have chosen small.
       ...(oneOf(CONTAINER_SIZES, c.size) && c.size !== 'small' ? { size: c.size } : {}),
       ...(c.sizeBy === 'owner' ? { sizeBy: 'owner' as const } : {}),
+      ...(c.keptBy === 'owner' ? { keptBy: 'owner' as const } : {}),
       place: oneOf(CONTAINER_PLACES, c.place) ? c.place : 'float',
       ...(pos && pos.x !== undefined && pos.y !== undefined ? { pos: { x: pos.x, y: pos.y } } : {}),
       ...(title ? { title: stripControls(title) } : {}),

@@ -31,7 +31,7 @@ import { ownerQuestionReach } from '../../lib/super/owner-question.js';
 import { freshInFlight, isSuperEventTurn, superOwnerMsgRef, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { clearReadMarks } from '../../lib/super/read-marks.js';
-import { padJobOver, padRolledOff, padStale } from '../../lib/super/pad.js';
+import { padJobOver, padRolledOff, padStale, withoutTwins } from '../../lib/super/pad.js';
 import { childDefaultEffort } from '../../lib/model-facts.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
@@ -833,7 +833,7 @@ function putPadNote(s: SuperState, section: PadSection, text: string, forChild?:
   }
   const next = nextPadId(pad, s.padSeq);
   const note: SuperPadItem = { id: next.id, section, text, at: Date.now(), ...(forChild ? { for: forChild } : {}) };
-  s.pad = [...pad, note];
+  s.pad = [...(forChild ? withoutTwins(pad, text) : pad), note];
   s.padSeq = next.seq;
   return note;
 }
@@ -2358,6 +2358,7 @@ const END_REFUSALS: Partial<Record<ParkOutcome, string>> = {
   asking: 'it waits on a question or a permission: settle that first, or pass --force only if the owner asked',
   focused: 'the owner is looking at or typing in that chat right now; leave it to him',
   exempt: 'that chat is never ended this way (the Assistant, the Super Agent or a phone holds it)',
+  queued: 'messages still wait in its composer queue and would be lost; let them run, or pass --force only if the owner asked',
   refused: 'the window refused to close it',
   no_answer: 'the window did not answer in time; check `dreamcontext super state` and try once more',
 };
@@ -2381,10 +2382,11 @@ async function endChild(c: SuperCaller, sid: string, force: boolean): Promise<En
   if (isLiveChat(sid)) {
     const outcome = await parkChat(sid, 'super-end', { end: true, force }).catch((): ParkOutcome => 'refused');
     if (outcome === 'background') {
-      const n = findParkable(sid)?.backgroundTasks() ?? 1;
+      // The process's roster, else the window's: it also sees agents the CLI does not track.
+      const n = findParkable(sid)?.backgroundTasks() ?? 0;
       return {
-        child: sid, ended: false, reason: 'background', background: n,
-        message: `${n} background task${n === 1 ? '' : 's'} (a shell, a dev server or a sub-agent) still run in it and would die; wait for them, or pass --force only if the owner asked`,
+        child: sid, ended: false, reason: 'background', ...(n ? { background: n } : {}),
+        message: `${n ? `${n} background task${n === 1 ? '' : 's'} (a shell, a dev server or a sub-agent) still run` : 'an agent it started (a headless teammate) still runs'} in it and would die; wait for it, or pass --force only if the owner asked`,
       };
     }
     if (outcome !== 'parked' && outcome !== 'drained' && outcome !== 'already') {
@@ -2621,6 +2623,7 @@ export function applyOwnerLayout(s: SuperState, body: Record<string, unknown>): 
     // He brings a picture (or a group) back from Others: it is his now, whether or not its
     // job moved on yet (tidy.ts): the idle clock is its rule.
     if (p.place === 'float' && k.place === 'others') {
+      k.keptBy = 'owner';
       for (const id of 'kind' in k ? [k.id] : k.cards) {
         const pic = s.containers.find((x) => x.id === id);
         if (pic) { delete pic.forChild; delete pic.forAt; }

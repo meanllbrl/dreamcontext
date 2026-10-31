@@ -1985,7 +1985,7 @@ export function AgentSurface({ stageBesideDrawer = false }: {
     if (s.kind === 'chat' && (s as ChatSession).mode === 'super') return { ok: false, error: 'refused' };
     // `force` (`super end --force`) is the owner's own word: nothing below keeps the tab.
     if (!force) {
-      if (s.hasLiveWork()) return { ok: false, error: s.asking ? 'asking' : s.busy ? 'busy' : 'background' };
+      if (s.hasLiveWork()) return { ok: false, error: 'liveWorkError' in s ? s.liveWorkError() : s.asking ? 'asking' : s.busy ? 'busy' : 'background' };
       if (Date.now() - (ownerTouchRef.current.get(sid) ?? 0) < focusGraceMs) return { ok: false, error: 'focused' };
       if (ownerLooking() && focusedSessionId === sid) return { ok: false, error: 'focused' };
       // An unsent draft is the owner's half-written message.

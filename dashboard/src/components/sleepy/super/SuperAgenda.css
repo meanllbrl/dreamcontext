@@ -17,6 +17,12 @@
 }
 .super-agenda-sec { margin-top: 8px; }
 .super-agenda-sec:first-child { margin-top: 0; }
+.super-agenda-fold { margin-top: 4px; }
+.super-agenda-fold > summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-tertiary, var(--muted-foreground));
+}
 .super-agenda-sec-h {
   display: flex;
   align-items: center;

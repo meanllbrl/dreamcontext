@@ -39,7 +39,7 @@ function childFinished(s: SuperState, sid: string, live: LiveTest): boolean {
   return ch.finishedAt === undefined || (ch.seenAt !== undefined && ch.seenAt >= ch.finishedAt);
 }
 
-function retirable(s: SuperState, c: SuperContainer, live: LiveTest): boolean {
+export function retirable(s: SuperState, c: SuperContainer, live: LiveTest): boolean {
   if (c.kind === 'chat') return childFinished(s, c.ref, live);
   // Everything else rests in Others to go: a read-only view, or a card that belongs to something.
   if (c.place !== 'others') return false;

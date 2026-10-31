@@ -119,7 +119,7 @@ describe('padNotice: what the next event batch tells the super, once', () => {
     expect(padNotice(s, NOW + 6).ids).toEqual([]);
   });
 
-  it('flags a jobless Now line unchanged for PAD_STALE_MS; again only after another window', () => {
+  it('flags a jobless Now line unchanged for PAD_STALE_MS, once', () => {
     const s = state({ pad: [line({ at: NOW - PAD_STALE_MS })] });
     expect(padStale(s.pad![0], NOW)).toBe(true);
     expect(padStale(s.pad![0], NOW - 1)).toBe(false);
@@ -129,7 +129,7 @@ describe('padNotice: what the next event batch tells the super, once', () => {
     expect(n.lines.join('\n')).toContain('has stood in Now unchanged for 120 min and nothing moves it');
     markPadTold(s, n.ids, NOW);
     expect(padNotice(s, NOW + PAD_STALE_MS - 1).ids).toEqual([]);
-    expect(padNotice(s, NOW + PAD_STALE_MS).ids).toEqual(['n1']);
+    expect(padNotice(s, NOW + 10 * PAD_STALE_MS).ids).toEqual([]);
   });
 
   it('rides in the `[super events]` text, and nothing is added when the pad is fine', () => {

@@ -272,6 +272,11 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       expect.stringContaining('unseen): the text says in one line that a question waits.'),
       '- The AI Team (`dreamcontext agents list`): `super team ask <member> "<job>"` hands an approved',
       '  member recurring or field work in its own thread; `super state` shows how it goes.',
+      '  `super note done <id>` when it finished or he gave it, `drop <id>` when it no longer holds,',
+      '  `keep <id>` for a stale line that holds. His open questions show there by themselves.',
+      "- Done holds today's; a past day's go by themselves. New work: `super note clear`. Write a",
+      '  day or date, never "today"/"tomorrow". Recap, handover, fresh session: read the pad in',
+      '  `super state`, close what he did or no longer holds.',
       '  every one, the second and later too.',
       expect.stringContaining('<super-brief rev=16>'),
     ]);
@@ -289,10 +294,13 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '  (`super team ask <member> "<job>"`, in its own thread), never a sub-agent.',
       '- A global agent (this Mac\'s; `agents list` marks it) is an AI Team member too: `super team ask`',
       '  it, never a child or a sub-agent.',
+      '  `super note done <id>` when it finished or he gave it, `drop <id>` when it no longer holds.',
+      '  His open questions show there by themselves.',
+      '- New work: `super note clear`. Write a day or date, never "today"/"tomorrow".',
       expect.stringContaining('with `origin=<ref>`'),
       '  result with `<!-- re:<ref> -->`.',
-      expect.stringContaining('<super-brief rev=19>'),
+      expect.stringContaining('<super-brief rev=20>'),
     ]);
-    expect(after.length).toBe(before.length + 11);
+    expect(after.length).toBe(before.length + 9);
   });
 });

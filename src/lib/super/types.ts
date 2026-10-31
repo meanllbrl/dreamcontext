@@ -110,6 +110,8 @@ export interface SuperContainer {
   size?: ContainerSize;
   /** The owner chose the size: an agent verb never changes it (only the owner's own layout). */
   sizeBy?: 'owner';
+  /** He brought it back from Others: the Others sweep never closes it (tidy.ts). */
+  keptBy?: 'owner';
   place: ContainerPlace;
   /** Where the OWNER dropped it: the card's top-left as fractions (0..1) of the stage's free
    *  area. Absent = placed automatically. No agent verb writes it. */
@@ -188,6 +190,8 @@ export interface SuperGroup {
   place: ContainerPlace;
   /** The owner's drop, like a card's. */
   pos?: { x: number; y: number };
+  /** He brought it back from Others: the Others sweep never closes it (tidy.ts). */
+  keptBy?: 'owner';
 }
 
 export const GROUP_ID_RE = /^grp-[a-z0-9-]{1,36}$/;
@@ -770,7 +774,7 @@ export interface SuperPadItem {
   /** When an event batch last told the super about this line (its auto move or its stale flag). */
   toldAt?: number;
 }
-export const PAD_AUTO_WHY = ['done', 'ended', 'gone'] as const;
+export const PAD_AUTO_WHY = ['done', 'ended', 'gone', 'answered'] as const;
 export type PadAutoWhy = typeof PAD_AUTO_WHY[number];
 /** A Now line with no job behind it that has not changed for this long is stale: `super state`
  *  flags it and the next event batch asks the super to keep (`note keep`) or close it. */
@@ -1014,7 +1018,7 @@ export function normalizeGroups(containers: readonly SuperContainer[], raw: unkn
       continue;
     }
     for (const id of cards) taken.add(id);
-    groups.push({ id: g.id, name: cleanGroupName(g.name) || nextGroupName(groups), cards, place, ...(pos ? { pos } : {}) });
+    groups.push({ id: g.id, name: cleanGroupName(g.name) || nextGroupName(groups), cards, place, ...(pos ? { pos } : {}), ...(g.keptBy === 'owner' ? { keptBy: 'owner' as const } : {}) });
   }
   return { containers: out, groups };
 }
@@ -1358,7 +1362,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 19;
+export const SUPER_BRIEF_REV = 20;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

@@ -123,6 +123,7 @@ export function createTranscriptSession(
     alwaysAllow: noop,
     clearAttention: noop,
     setAgentsWorking: noop,
+    liveWorkError: () => 'queued',
     setFocusTarget: noop,
     setTranscriptRepin: noop,
     load: (entries) => {

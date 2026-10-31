@@ -44,7 +44,7 @@ export type ParkExempt = 'assistant' | 'super' | 'phone';
 /** What a park attempt did. Only `parked` and `drained` freed a process. */
 export type ParkOutcome =
   | 'parked' | 'drained' | 'already'
-  | 'busy' | 'asking' | 'background' | 'focused' | 'exempt' | 'refused' | 'no_answer';
+  | 'busy' | 'asking' | 'background' | 'queued' | 'focused' | 'exempt' | 'refused' | 'no_answer';
 
 export interface Parkable {
   /** The tab's pinned conversation id (the roster id Resume uses). */
