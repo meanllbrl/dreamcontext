@@ -107,6 +107,8 @@ export const STAGE = {
   REVIEW_ROW_FRAC: 0.34,
   REVIEW_ROW_MIN: 200,
   REVIEW_ROW_MAX: 320,
+  /** A phone stage's queue pill: this far from the edges and the chat under it. */
+  PHONE_BAND_INSET: 8,
   /** A narrow sheet's tab row (2+ cards). */
   TAB_H: 36,
   /** The top band's presentation controls at its right end: the exit, and one segment per layout
@@ -145,6 +147,9 @@ export const TOUCH_REMOTE_NARROW_STAGE_PX = 940;
 /** …and its centre's floor: 560 px would leave a 968 px stage 156 px a side, under one tile, and
  *  every card would still land in Others; 480 leaves each side room for a column of tiles. */
 export const TOUCH_REMOTE_CENTRE_MIN = 480;
+/** Below this stage width the floating view is the chat alone, edge to edge (owner 2026-10-31):
+ *  no margins, no card chrome, and Others opens from the chat's head instead of a pill under it. */
+export const PHONE_STAGE_PX = 640;
 
 /** Where a card is drawn this time (its record may say otherwise: overflow is drawn, not written). */
 export type CardWhere = 'float' | 'others' | 'half' | 'present' | 'sheet' | 'thumb' | 'tab';
@@ -193,6 +198,9 @@ export interface StagePlan {
   width: number;
   height: number;
   narrow: boolean;
+  /** The edge-to-edge chat of a phone-width floating stage ({@link PHONE_STAGE_PX}): Others and
+   *  the agenda are reached from the chat's head, so neither draws its pill. */
+  phone: boolean;
   mode: SuperView['mode'];
   centre: Rect;
   cards: Record<string, CardPlan>;
@@ -809,12 +817,13 @@ function pushOut(rect: Rect, centre: Rect, free: Rect): Rect {
 
 // ─── The plan ───────────────────────────────────────────────────────────────────
 
-interface Frame { width: number; height: number; content: Rect; free: Rect; othersRect: Rect; othersZone: Rect; agendaPill: Rect; bandTop: number; bandBottom: number; centreMin: number }
+interface Frame { width: number; height: number; content: Rect; free: Rect; othersRect: Rect; othersZone: Rect; agendaPill: Rect; bandTop: number; bandBottom: number; centreMin: number; phone?: boolean }
 
 /** The stage's frame. `bottomBand`: the bottom band is reserved (the content stops above it);
  *  without it the content runs down to the bottom margin. */
-function frameOf(width: number, height: number, bottomBand = true, centreMin: number = STAGE.CENTRE_MIN): Frame {
+function frameOf(width: number, height: number, bottomBand = true, centreMin: number = STAGE.CENTRE_MIN, phone?: { queue: boolean; terminals: boolean }): Frame {
   const { MARGIN, BAND } = STAGE;
+  if (phone) return phoneFrame(frameOf(width, height, true, centreMin), phone);
   const below = bottomBand ? MARGIN + BAND : MARGIN;
   const content: Rect = { x: MARGIN, y: MARGIN + BAND, width: Math.max(0, width - 2 * MARGIN), height: Math.max(0, height - (MARGIN + BAND) - below) };
   const bandTop = MARGIN / 2;
@@ -827,6 +836,17 @@ function frameOf(width: number, height: number, bottomBand = true, centreMin: nu
   };
 }
 
+/** The phone's frame: the content runs to all four edges. Only what is showing takes height: the
+ *  queue pill above the chat, the terminals' dock below it. The Others rect stays bottom-right,
+ *  it is where a card flies to and what the panel opens above. */
+function phoneFrame(f: Frame, { queue, terminals }: { queue: boolean; terminals: boolean }): Frame {
+  const bandTop = STAGE.PHONE_BAND_INSET;
+  const top = queue ? bandTop + STAGE.BAND + bandTop : 0;
+  const below = terminals ? STAGE.MARGIN + STAGE.BAND : 0;
+  const content: Rect = { x: 0, y: top, width: f.width, height: Math.max(0, f.height - top - below) };
+  return { ...f, content, free: content, bandTop, phone: true };
+}
+
 function centreAt(f: Frame, w: number): Rect {
   return { x: (f.width - w) / 2, y: f.content.y, width: w, height: f.content.height };
 }
@@ -837,6 +857,13 @@ function bands(f: Frame, centre: Rect, pill = false, controls?: Rect): { queue: 
   // ResizeObserver pass). A pill that fits one row never spills over the centre's header (it
   // grows as an overlay only while the owner points at it). A presentation's controls hold the
   // band's right end: the pill stops a gap before them.
+  if (f.phone) {
+    const i = STAGE.PHONE_BAND_INSET;
+    return {
+      queue: { x: i, y: f.bandTop, width: Math.max(0, f.width - 2 * i), height: STAGE.BAND },
+      dock: { x: STAGE.MARGIN, y: f.bandBottom, width: Math.max(0, f.width - 2 * STAGE.MARGIN), height: STAGE.BAND },
+    };
+  }
   const right = controls ? Math.max(f.content.x, controls.x - STAGE.GAP) : f.content.x + f.content.width;
   const qw = Math.max(0, Math.min(STAGE.QUEUE_MAX, right - f.content.x));
   const qx = Math.min(Math.max(centre.x + (centre.width - qw) / 2, f.content.x), right - qw);
@@ -1069,7 +1096,11 @@ function planWith(
 ): StagePlan {
   // Items: at most the record's MAX_CONTAINERS cards, plus a grouped card the view presents beside its group.
   const list = containers.slice(0, MAX_CONTAINERS + MAX_FILMSTRIP);
-  const f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand, opts.centreMin);
+  // A page side by side or a presentation keeps its bands: it is drawn over the chat's head, and
+  // its exits live there.
+  const phone = stage.width > 0 && stage.width < PHONE_STAGE_PX && view.mode === 'float';
+  const f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand, opts.centreMin,
+    phone ? { queue: !!opts.queueUp, terminals: (opts.terminals ?? 0) > 0 } : undefined);
   const narrow = f.width < (opts.narrowPx ?? NARROW_STAGE_PX);
   const ids = new Set(list.map((c) => c.id));
   // An item's place in the RECORD (a group stands at its first card's), not in this list: a
@@ -1088,7 +1119,7 @@ function planWith(
     // narrow stage, or one the owner put away himself).
     others.sort((a, b) => Number(liveIds.has(b)) - Number(liveIds.has(a)) || (z.get(a) ?? 0) - (z.get(b) ?? 0));
     return {
-      width: f.width, height: f.height, narrow, mode, centre, cards, others,
+      width: f.width, height: f.height, narrow, phone, mode, centre, cards, others,
       othersRect: f.othersRect, othersZone: f.othersZone, agendaPill: f.agendaPill, pill: opts.agendaPill ?? null, ...bands(f, centre, !!opts.agendaPill, extra.controls), free: f.free,
       centreWidth, unit, order: list.map((c) => c.id), orbit, layout: null, chat: 'column', ...(more ? { more } : {}), ...(railPlan ? { rail: railPlan } : {}), ...extra,
     };

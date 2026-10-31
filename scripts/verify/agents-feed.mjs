@@ -713,7 +713,7 @@ async function main() {
       acked && !toastText, `offered=${offered} expanded=${acked} toast="${toastText}"`);
     if (toastText) await page.locator('.agents-toast').click().catch(() => {});
     if (acked) {
-      await page.locator('.agent-overlay-collapse').click().catch(() => {});
+      await page.evaluate(() => document.activeElement?.blur?.()); await page.keyboard.press('Escape');
       await until(async () => (await page.locator('.agent-surface.expanded').count()) === 0, 5000);
     }
 

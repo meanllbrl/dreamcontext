@@ -188,6 +188,7 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
 /* "Agenda" in the centre's head, while the card is off the stage: its badge counts what waits. */
 .super-agenda-open { margin-left: auto; }
 .super-agenda-open + .super-fresh { margin-left: 0; }
+.super-agenda-open + .super-agenda-open { margin-left: 0; }
 .super-agenda-open-n {
   min-width: 20px;
   padding: 0 4px;
@@ -199,6 +200,8 @@ button.super-agenda-row-btn:focus-visible { outline: 2px solid var(--color-borde
   color: var(--color-text);
   background: color-mix(in srgb, var(--mood-waiting) 16%, var(--color-bg-elevated));
 }
+/* Others' count takes the waiting colour only while a card in it asks. */
+.super-others-open:not([data-asking]) .super-agenda-open-n { background: var(--color-bg-tertiary); }
 
 /* The minimised agenda's pill, bottom-left (owner 2026-10-22 23:44): the Others stack's look. */
 .super-agenda-pill-glyph { flex: none; color: var(--color-text-secondary); }
