@@ -67,20 +67,25 @@ export type PriceSource = 'yours' | 'list' | 'none';
 
 /** Follows "Count as" (a loop stops where it closes), then the owner's price, then the list. */
 export function resolvePrice(model: string, book: PriceBook): { price: Price | null; source: PriceSource } {
-  const own = book.prices[model];
+  const own = Object.hasOwn(book.prices, model) ? book.prices[model] : undefined;
   if (own) return { price: own, source: 'yours' };
   let target = model;
   const seen = new Set([model]);
-  while (book.alias[target] && !seen.has(book.alias[target])) {
+  while (Object.hasOwn(book.alias, target) && !seen.has(book.alias[target])) {
     target = book.alias[target];
     seen.add(target);
-    if (book.prices[target]) return { price: book.prices[target], source: 'yours' };
+    if (Object.hasOwn(book.prices, target)) return { price: book.prices[target], source: 'yours' };
   }
   const list = listPrice(target);
   return list ? { price: list, source: target === model ? 'list' : 'yours' } : { price: null, source: 'none' };
 }
 
+/** Anthropic bills a 1-hour cache write at twice the input price; the list's rate is 5-minute. */
+const ONE_HOUR_WRITE = 2;
+
 /** Input, cache read, cache write, output, in USD. */
-export function costParts(price: Price, t: { input: number; cacheRead: number; cacheWrite: number; output: number }): [number, number, number, number] {
-  return [t.input * price[0] / 1e6, t.cacheRead * price[2] / 1e6, t.cacheWrite * price[3] / 1e6, t.output * price[1] / 1e6];
+export function costParts(price: Price, t: { input: number; cacheRead: number; cacheWrite: number; cacheWrite1h?: number; output: number }): [number, number, number, number] {
+  const hour = t.cacheWrite1h ?? 0;
+  const write = (t.cacheWrite - hour) * price[3] + hour * price[0] * ONE_HOUR_WRITE;
+  return [t.input * price[0] / 1e6, t.cacheRead * price[2] / 1e6, write / 1e6, t.output * price[1] / 1e6];
 }

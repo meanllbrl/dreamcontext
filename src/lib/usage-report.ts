@@ -21,9 +21,9 @@ import { EMPTY_USAGE_LIMITS, readUsageLimits, type UsageLimitsResponse } from '.
 import { listCodexAccounts, readCodexUsage } from './codex-accounts.js';
 import { resolveLinkedRepos } from './linked-repos.js';
 import { costParts, readPrices, resolvePrice, type PriceBook, type PriceSource } from './usage-pricing.js';
-import { readLimitHistory, readSleepRuns, type LimitPoint, type SleepRunRecord, type SleepTrigger } from './usage-records.js';
+import { readHandoffLog, readLimitHistory, readSleepRuns, type LimitPoint, type SleepRunRecord, type SleepTrigger } from './usage-records.js';
 import type { LimitHit } from './usage-readers.js';
-import { accountAt, currentLedger, scanProgress, type Ledger, type LedgerFile, type ScanProgress } from './usage-ledger.js';
+import { currentLedger, rowAccount, scanProgress, type Ledger, type LedgerFile, type LedgerRow, type ScanProgress } from './usage-ledger.js';
 import { listVaults, type Vault } from './vaults.js';
 
 export type StatsRange = '24h' | '7d' | '30d' | '90d';
@@ -39,7 +39,7 @@ export interface StatsQuery {
 
 export interface Bucket { start: number; end: number }
 
-export interface SpendRow { key: string; label: string; tool: 'claude' | 'codex' | null; sub?: string; tokens: number; cost: number | null; trend?: number[]; cacheHit?: number; priceSource?: PriceSource; price?: number[] | null }
+export interface SpendRow { alias?: string; key: string; label: string; tool: 'claude' | 'codex' | null; sub?: string; tokens: number; cost: number | null; trend?: number[]; cacheHit?: number; priceSource?: PriceSource; price?: number[] | null }
 
 export interface SleepSpecialist { name: string; model: string; effort: string | null; tokens: number; cost: number }
 
@@ -235,12 +235,18 @@ function draftRuns(views: FileView[]): RunDraft[] {
 function handoffRecords(vaults: Vault[], toProject: (v: Vault) => string): Array<{ project: string; rec: Record<string, unknown> }> {
   const out: Array<{ project: string; rec: Record<string, unknown> }> = [];
   for (const v of vaults) {
+    const logged = readHandoffLog(join(v.path, '_dream_context'));
+    const seen = new Set(logged.map((l) => `${l.fromSession}|${l.at}`));
+    for (const rec of logged) out.push({ project: toProject(v), rec: rec as unknown as Record<string, unknown> });
     const dir = join(v.path, '_dream_context', 'state', '.handoff-requests');
     let names: string[];
     try { names = readdirSync(dir); } catch { continue; }
     for (const n of names) {
       if (!n.endsWith('.json')) continue;
-      try { out.push({ project: toProject(v), rec: JSON.parse(readFileSync(join(dir, n), 'utf-8')) as Record<string, unknown> }); } catch { /* a torn record */ }
+      try {
+        const rec = JSON.parse(readFileSync(join(dir, n), 'utf-8')) as Record<string, unknown>;
+        if (!seen.has(`${String(rec.fromSession)}|${String(rec.at)}`)) out.push({ project: toProject(v), rec });
+      } catch { /* a torn record */ }
     }
   }
   return out;
@@ -295,10 +301,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
     };
   });
 
-  const shown = (v: FileView): boolean => {
-    if (q.off.has(v.f.tool) || q.off.has(`${v.f.tool}:${v.account ?? ''}`)) return false;
-    return q.project === null || v.project === q.project;
-  };
+  const shown = (v: FileView): boolean => !q.off.has(v.f.tool) && (q.project === null || v.project === q.project);
 
   const zero = () => new Array<number>(buckets.length).fill(0);
   const series: StatsWire['series'] = {};
@@ -334,20 +337,21 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
     const on = shown(v);
     const claude = v.f.tool === 'claude';
     for (const row of v.f.rows) {
-      const [hour, modelIdx, fast, input, cacheRead, cacheWrite, output, span, memFirst, memCarried] = row;
+      const [hour, modelIdx, fast, input, cacheRead, cacheWrite, output, span, memFirst, memCarried, cacheWrite1h] = row;
       const model = ledger.models[modelIdx];
       const { price } = resolvePrice(model, book);
-      const t = { input, cacheRead, cacheWrite, output };
+      const t = { input, cacheRead, cacheWrite, cacheWrite1h, output };
       const tokens = input + cacheRead + cacheWrite + output;
       const parts = price ? costParts(price, t) : null;
       const cost = parts ? parts[0] + parts[1] + parts[2] + parts[3] : 0;
       const asleep = v.asleep || span >= 0;
-      const run = runOfFileSpan.get(`${v.path}|${span >= 0 ? span : '*'}`);
-      const rowAccount = claude ? accountAt(v.owner, hour + HOUR - 1) : v.account;
+      // A background run owns its whole file, so its own `sleep start` span is the same run.
+      const run = runOfFileSpan.get(`${v.path}|${span >= 0 ? span : '*'}`) ?? runOfFileSpan.get(`${v.path}|*`);
+      const who = claude ? rowAccount(v.owner, row) : v.account;
 
-      if (claude && rowAccount) {
-        const hours = spend.get(rowAccount) ?? new Map<number, HourSpend>();
-        spend.set(rowAccount, hours);
+      if (claude && who) {
+        const hours = spend.get(who) ?? new Map<number, HourSpend>();
+        spend.set(who, hours);
         const h = hours.get(hour) ?? { cost: 0, sleepCost: 0, runs: new Map<string, number>() };
         hours.set(hour, h);
         h.cost += cost;
@@ -367,7 +371,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
         a.tokens += tokens; a.cost += cost;
       }
 
-      if (!on) continue;
+      if (!on || q.off.has(`${v.f.tool}:${who ?? ''}`)) continue;
       const i = indexOf(hour);
       if (i < 0) continue;
       const s = seriesOf(v.f.tool);
@@ -387,7 +391,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
         if (!price) g.priced = false;
       };
       addTo(group(byModel, model, () => ({ label: modelLabel(model), tool: v.f.tool })));
-      addTo(group(byAccount, `${v.f.tool}:${rowAccount ?? ''}`, () => ({ label: names.label(v.f.tool, rowAccount), tool: v.f.tool, sub: v.f.tool === 'claude' ? names.claude.find((a) => a.id === rowAccount)?.plan : names.codex.find((a) => a.id === rowAccount)?.plan })));
+      addTo(group(byAccount, `${v.f.tool}:${who ?? ''}`, () => ({ label: names.label(v.f.tool, who), tool: v.f.tool, sub: v.f.tool === 'claude' ? names.claude.find((a) => a.id === who)?.plan : names.codex.find((a) => a.id === who)?.plan })));
       addTo(group(byProject, v.project, () => ({ label: v.project, tool: null })));
 
       if (claude) {
@@ -408,13 +412,13 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
     trend: g.trend, cacheHit: g.allInput ? g.cacheRead / g.allInput : 0,
   })).sort((a, b) => (b.cost ?? 0) - (a.cost ?? 0) || b.tokens - a.tokens);
 
-  const models = toRows(byModel).map((r) => { const { price, source } = resolvePrice(r.key, book); return { ...r, priceSource: source, price }; });
+  const models = toRows(byModel).map((r) => { const { price, source } = resolvePrice(r.key, book); return { ...r, priceSource: source, price, ...(Object.hasOwn(book.alias, r.key) ? { alias: book.alias[r.key] } : {}) }; });
 
   // ── Windows: each 5-hour stretch of an account's spend, as Claude opens them ──────
   const hitsByAccount = new Map<string, LimitHit[]>();
   for (const v of views) {
     for (const h of v.f.hits) {
-      const who = accountAt(v.owner, h.ts);
+      const who = h.account ?? v.account;
       if (!who) continue;
       const list = hitsByAccount.get(who) ?? [];
       list.push(h);
@@ -478,7 +482,8 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
   for (const r of runDrafts) {
     if (r.end < rangeStart || r.start >= rangeEnd) continue;
     if (q.project !== null && r.project !== q.project) continue;
-    const who = accountAt(r.files[0].view.owner, r.start) ?? r.account;
+    const first = r.files[0].view;
+    const who = first.f.rows.find((row) => row[0] + HOUR > r.start) ? rowAccount(first.owner, first.f.rows.find((row) => row[0] + HOUR > r.start) as LedgerRow) : r.account;
     if (q.off.has('claude') || q.off.has(`claude:${who ?? ''}`)) continue;
     const t = runTotals.get(r.id);
     if (!t || t.tokens === 0) continue;
@@ -586,16 +591,20 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
   for (const w of hitWindows.filter((x) => x.kind === 'session')) {
     const costs = windows.filter((x) => x.hit && x.kind === 'session' && x.account === w.account).map((x) => x.cost).sort((x, y) => x - y);
     if (w.cost < costs[costs.length >> 1] / 2) w.thin = true;
+    // One account cannot have two 5-hour windows at once: a session moved and the folder stamp
+    // that says when lagged. The smaller of the two is the doubtful one.
+    const clash = windows.find((x) => x !== w && x.hit && x.kind === 'session' && x.account === w.account && x.start < w.end && w.start < x.end);
+    if (clash && clash.cost >= w.cost) w.thin = true;
   }
   const sleptHits = hitWindows.filter((w) => w.sleepCost > 0 && !w.thin).sort((a, b) => b.estSleepShare - a.estSleepShare);
   const slept = inRange.filter((w) => w.sleepCost > 0).sort((a, b) => b.sleepCost - a.sleepCost);
-  const worst = sleptHits[0] ?? slept[0] ?? null;
+  const worst = sleptHits[0] ?? null;
   const verdict: LimitAnswer['verdict'] = hitWindows.length === 0 ? 'none'
     : (sleptHits[0]?.estSleepShare ?? 0) >= 0.5 ? 'yes'
       : (sleptHits[0]?.estSleepShare ?? 0) >= 0.2 ? 'partly' : 'no';
   const answer: LimitAnswer = {
     verdict, hits: hitWindows.length, worst,
-    twoProject: inRange.filter((w) => new Set(w.runs.map((r) => r.project)).size >= 2).length,
+    twoProject: inRange.filter((w) => w.kind === 'session' && new Set(w.runs.map((r) => r.project)).size >= 2).length,
     windows: [...new Set([...sleptHits, ...slept.filter((w) => !w.thin), ...slept])].slice(0, 8),
   };
 

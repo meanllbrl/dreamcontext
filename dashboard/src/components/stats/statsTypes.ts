@@ -3,7 +3,7 @@ export type StatsRange = '24h' | '7d' | '30d' | '90d';
 export type StatsTab = 'cost' | 'tokens' | 'limits' | 'dc';
 
 export interface SpendRow {
-  key: string; label: string; tool: 'claude' | 'codex' | null; sub?: string; tokens: number; cost: number | null;
+  alias?: string; key: string; label: string; tool: 'claude' | 'codex' | null; sub?: string; tokens: number; cost: number | null;
   trend?: number[]; cacheHit?: number; priceSource?: 'yours' | 'list' | 'none'; price?: number[] | null;
 }
 export interface SleepSpecialist { name: string; model: string; effort: string | null; tokens: number; cost: number }

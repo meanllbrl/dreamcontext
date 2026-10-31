@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageBar } from '../components/layout/PageBar';
 import { useI18n } from '../context/I18nContext';
-import { useApi } from '../context/VaultContext';
+import { useApi, useVault } from '../context/VaultContext';
+import { phoneAllows } from '../lib/phoneSurface';
+import { pollMs } from '../lib/windowActivity';
 import { StatsDc } from '../components/stats/StatsDc';
 import { StatsLimits } from '../components/stats/StatsLimits';
 import { ModelSheet, RunSheet } from '../components/stats/StatsSheets';
@@ -34,6 +36,8 @@ function Menu({ label, on, children }: { label: string; on?: boolean; children: 
 export function StatsPage({ onNavigate }: { onNavigate: (page: 'settings') => void }) {
   const { t } = useI18n();
   const api = useApi();
+  const { isActive } = useVault();
+  const [saveFailed, setSaveFailed] = useState(false);
   const qc = useQueryClient();
   const [tab, setTab] = useState<StatsTab>('cost');
   const [range, setRange] = useState<StatsRange>('7d');
@@ -43,14 +47,20 @@ export function StatsPage({ onNavigate }: { onNavigate: (page: 'settings') => vo
   const [run, setRun] = useState<SleepRun | null>(null);
 
   const offParam = [...off].sort().join(',');
+  // Stats spans every project on this Mac, so the phone's surface never asks for it.
+  const allowed = phoneAllows('GET', '/api/agent/stats');
   const { data, isError } = useQuery({
     queryKey: ['agent-stats', range, project, offParam],
     queryFn: () => api.get<StatsWire>(`/agent/stats?range=${range}${project ? `&project=${encodeURIComponent(project)}` : ''}${offParam ? `&off=${encodeURIComponent(offParam)}` : ''}`),
     placeholderData: keepPreviousData,
-    refetchInterval: (q) => (q.state.data?.scanning ? 2000 : 60_000),
+    enabled: allowed,
+    refetchInterval: (q) => (isActive && allowed ? pollMs(q.state.data?.scanning ? 2000 : 60_000) : false),
   });
 
+  const sheetOpen = modelKey !== null || run !== null;
   useEffect(() => {
+    // Several projects stay mounted: only the one on screen may hear a key.
+    if (!isActive || sheetOpen) return undefined;
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
@@ -59,13 +69,13 @@ export function StatsPage({ onNavigate }: { onNavigate: (page: 'settings') => vo
         setRange(RANGES[Number(e.code.slice(5)) - 1]);
         return;
       }
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
       const hit = TABS.find(([, k]) => k === e.key.toLowerCase());
       if (hit) setTab(hit[0]);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [isActive, sheetOpen]);
 
   const toggle = (key: string) => setOff((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   const countedTools = data?.tools.filter((x) => x.counted) ?? [];
@@ -74,8 +84,13 @@ export function StatsPage({ onNavigate }: { onNavigate: (page: 'settings') => vo
   const model = modelKey ? data?.breakdown.model.find((m) => m.key === modelKey) ?? null : null;
 
   const savePrice = async (change: { model: string; price?: number[] | null; alias?: string | null }) => {
-    await api.post('/agent/stats/price', change);
-    await qc.invalidateQueries({ queryKey: ['agent-stats'] });
+    setSaveFailed(false);
+    try {
+      await api.post('/agent/stats/price', change);
+      await qc.invalidateQueries({ queryKey: ['agent-stats'] });
+    } catch {
+      setSaveFailed(true);
+    }
   };
 
   return (
@@ -120,12 +135,13 @@ export function StatsPage({ onNavigate }: { onNavigate: (page: 'settings') => vo
       </PageBar>
       <div className="st-body">
         {data?.scanning && <div className="st-scan" role="status">{data.scanning.total === 0 ? t('stats.scanningStart') : t('stats.scanning').replace('{d}', String(data.scanning.done)).replace('{n}', String(data.scanning.total))}</div>}
+        {!allowed && <div className="st-none">{t('stats.macOnly')}</div>}
         {isError && !data && <div className="st-none">{t('stats.loadFailed')}</div>}
         {data && (tab === 'cost' || tab === 'tokens') && <StatsSpend data={data} tab={tab} onTab={setTab} onModel={(r: SpendRow) => setModelKey(r.key)} />}
         {data && tab === 'limits' && <StatsLimits data={data} off={off} />}
         {data && tab === 'dc' && <StatsDc data={data} onRun={setRun} />}
       </div>
-      {model && data && <ModelSheet key={`${model.key}${model.priceSource}`} row={model} models={data.breakdown.model} range={range} onSave={(c) => void savePrice(c)} onClose={() => setModelKey(null)} />}
+      {model && data && <ModelSheet key={`${model.key}${model.priceSource}`} row={model} models={data.breakdown.model} range={range} saveFailed={saveFailed} onSave={(c) => void savePrice(c)} onClose={() => { setSaveFailed(false); setModelKey(null); }} />}
       {run && <RunSheet run={run} onSettings={() => { setRun(null); onNavigate('settings'); }} onClose={() => setRun(null)} />}
     </div>
   );

@@ -119,3 +119,31 @@ export function noteSleepRunCost(contextRoot: string, session: string | null | u
   const run = readSleepRuns(contextRoot).filter((r) => r.session === session).at(-1);
   if (run) appendRunLine(contextRoot, { run: run.run, costUsd });
 }
+
+/**
+ * A handoff that was taken, kept: the records in `.handoff-requests/` are pruned after 7 days and
+ * keyed by pane, so a 30-day Eco number needs its own line.
+ */
+export interface HandoffLine {
+  title: string; at: string; contextTokens: number | null; fromSession: string; toSession?: string; actedAt?: string; consumedAt: string;
+}
+
+const handoffLogPath = (contextRoot: string) => join(contextRoot, 'state', '.handoff-log.jsonl');
+
+export function logHandoff(contextRoot: string, line: HandoffLine): void {
+  try {
+    mkdirSync(join(contextRoot, 'state'), { recursive: true });
+    appendFileSync(handoffLogPath(contextRoot), JSON.stringify(line) + '\n');
+  } catch { /* one fewer row on a screen */ }
+}
+
+export function readHandoffLog(contextRoot: string): HandoffLine[] {
+  let raw: string;
+  try { raw = readFileSync(handoffLogPath(contextRoot), 'utf-8'); } catch { return []; }
+  const out: HandoffLine[] = [];
+  for (const line of raw.split('\n')) {
+    if (!line) continue;
+    try { out.push(JSON.parse(line) as HandoffLine); } catch { /* a torn last line */ }
+  }
+  return out;
+}

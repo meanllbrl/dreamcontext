@@ -2,11 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { accountAt, currentLedger, ledgerRoots, scanLedger, sessionAccounts } from '../../src/lib/usage-ledger.js';
+import { accountIndexAt, currentLedger, ledgerRoots, scanLedger, sessionAccounts } from '../../src/lib/usage-ledger.js';
 import { buildStats } from '../../src/lib/usage-report.js';
-import { initialCodexState, parseCodexRecord, parseLimitHit } from '../../src/lib/usage-readers.js';
+import { claudeSleepMark, initialCodexState, parseCodexRecord, parseLimitHit } from '../../src/lib/usage-readers.js';
 import { resolvePrice } from '../../src/lib/usage-pricing.js';
-import { closeSleepRun, noteSleepRunCost, openSleepRun, readLimitHistory, readSleepRuns } from '../../src/lib/usage-records.js';
+import { closeSleepRun, logHandoff, noteSleepRunCost, openSleepRun, readLimitHistory, readSleepRuns } from '../../src/lib/usage-records.js';
 import { recordUsageMeter } from '../../src/lib/claude-usage-meter.js';
 
 const NOW = Date.parse('2026-10-20T15:30:00Z');
@@ -110,9 +110,8 @@ describe('usage ledger', () => {
     writeFileSync(join(home, '.dreamcontext', 'claude-accounts.json'), JSON.stringify({ accounts: [{ id: 'a-1', email: 'a@example.com', configDir: sandbox }] }));
     expect(ledgerRoots(home).filter((r) => r.tool === 'claude')).toHaveLength(1);
     expect(sessionAccounts(home).get('sess-1')?.[0][1]).toBe('a-1');
-    expect(accountAt({ account: 'b', accounts: [[100, 'a'], [200, 'b']] }, 150)).toBe('a');
-    expect(accountAt({ account: 'b', accounts: [[100, 'a'], [200, 'b']] }, 250)).toBe('b');
-    expect(accountAt({ account: 'b', accounts: [[100, 'a'], [200, 'b']] }, 50)).toBe('a');
+    const list: Array<[number, string]> = [[100, 'a'], [200, 'b']];
+    expect([accountIndexAt(list, 50), accountIndexAt(list, 150), accountIndexAt(list, 250)]).toEqual([0, 0, 1]);
   });
 
   it('reads the real end of a window from the limit message', () => {
@@ -202,5 +201,85 @@ describe('usage ledger', () => {
     const a = stats().dc.answer;
     expect(a.hits).toBe(2);
     expect(a.verdict).toBe('no');
+  });
+
+  it('a repeat raises the output to the final count and nothing else; a 1-hour write is billed at its own rate', async () => {
+    write('s1.jsonl', [
+      assistant('m1', 'r1', at(30), { ...U(100, 3), cache_creation_input_tokens: 1000, cache_creation: { ephemeral_1h_input_tokens: 1000 } }),
+      assistant('m1', 'r1', at(30), { ...U(100, 90), cache_creation_input_tokens: 1000, cache_creation: { ephemeral_1h_input_tokens: 1000 } }),
+    ]);
+    await scan();
+    const s = stats();
+    expect(s.totals.input).toBe(100);
+    expect(s.totals.output).toBe(90);
+    expect(s.totals.costParts[2]).toBeCloseTo(1000 * 4 * 2 / 1e6, 9); // Opus 5.5 input is 4
+  });
+
+  it('a background run keeps the rows after its own sleep start', async () => {
+    write('s1.jsonl', [
+      JSON.stringify({ type: 'user', timestamp: at(40), message: { content: 'Think hard. Run a full dreamcontext memory consolidation now' } }),
+      assistant('m1', 'r1', at(39), U(100, 0)),
+      assistant('m2', 'r2', at(38), U(1000, 0), {}, [{ type: 'tool_use', name: 'Bash', input: { command: 'dreamcontext sleep start' } }]),
+      assistant('m3', 'r3', at(37), U(10000, 0)),
+    ]);
+    await scan();
+    const s = stats();
+    expect(s.dc.sleep.tokens).toBe(11100);
+    expect(s.dc.sleep.runs).toHaveLength(1);
+  });
+
+  it('prose and --help open no sleep', () => {
+    const call = (command: string) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } });
+    expect(claudeSleepMark(call('echo "per the skill: dreamcontext sleep start, then dispatch"'))).toBeNull();
+    expect(claudeSleepMark(call('dreamcontext sleep done --help'))).toBeNull();
+    expect(claudeSleepMark(call('cd /x && dreamcontext sleep start --deep'))).toBe('start');
+    expect(claudeSleepMark(call('FOO=1 /usr/local/bin/dreamcontext sleep done --summary x'))).toBe('done');
+  });
+
+  it('a Codex rollout moved to the archive is one set of requests', async () => {
+    const dir = join(home, '.codex', 'sessions');
+    const arch = join(home, '.codex', 'archived_sessions');
+    mkdirSync(dir, { recursive: true });
+    mkdirSync(arch, { recursive: true });
+    const lines = [
+      JSON.stringify({ timestamp: at(30), type: 'session_meta', payload: { id: 'c1', cwd: '/w' } }),
+      JSON.stringify({ timestamp: at(30), type: 'turn_context', payload: { model: 'gpt-x' } }),
+      JSON.stringify({ timestamp: at(29), type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 100, output_tokens: 10, total_tokens: 110 }, total_token_usage: { input_tokens: 100, output_tokens: 10, total_tokens: 110 } } } }),
+    ].join('\n') + '\n';
+    writeFileSync(join(dir, 'rollout-1.jsonl'), lines);
+    await scan();
+    expect(stats().totals.tokens).toBe(110);
+    rmSync(join(dir, 'rollout-1.jsonl'));
+    writeFileSync(join(arch, 'rollout-1.jsonl'), lines);
+    await scan();
+    expect(stats().totals.tokens).toBe(110);
+  });
+
+  it('hiding an account hides its rows, not the session it ended on', async () => {
+    const a = join(home, '.dreamcontext', 'claude-accounts', 'a-1');
+    const b = join(home, '.dreamcontext', 'claude-accounts', 'b-1');
+    mkdirSync(join(a, 'session-env', 's1'), { recursive: true });
+    await new Promise((r) => setTimeout(r, 20));
+    const switched = Date.now();
+    mkdirSync(join(b, 'session-env', 's1'), { recursive: true });
+    writeFileSync(join(home, '.dreamcontext', 'claude-accounts.json'), JSON.stringify({ accounts: [{ id: 'a-1', email: 'a@example.com', configDir: a }, { id: 'b-1', email: 'b@example.com', configDir: b }] }));
+    const iso = (ms: number) => new Date(ms).toISOString();
+    write('s1.jsonl', [assistant('m1', 'r1', iso(switched - 3_600_000), U(100, 0)), assistant('m2', 'r2', iso(switched + 3_600_000), U(1000, 0))]);
+    await scan();
+    const q = (off: string[]) => buildStats({ range: '7d', project: null, off: new Set(off), now: switched + 7_200_000 }, home).totals.input;
+    expect(q([])).toBe(1100);
+    expect(q(['claude:b-1'])).toBe(100);
+    expect(q(['claude:a-1'])).toBe(1000);
+  });
+
+  it('a logged handoff outlives the 7-day record, once', async () => {
+    const root = join(home, 'v', '_dream_context');
+    writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: 'alpha', path: join(home, 'v') }] }));
+    logHandoff(root, { title: 'T', at: at(600), contextTokens: 300000, fromSession: 'old', toSession: 'fresh', consumedAt: at(599), actedAt: at(599) });
+    write('fresh.jsonl', [assistant('m1', 'r1', at(598), U(50000, 0)), assistant('m2', 'r2', at(597), U(50000, 0))]);
+    await scan();
+    const eco = stats().dc.eco;
+    expect(eco.rows).toHaveLength(1);
+    expect(eco.rows[0]).toMatchObject({ before: 300000, after: 50000, turns: 1, kind: 'eco' });
   });
 });

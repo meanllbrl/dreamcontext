@@ -1,3 +1,4 @@
+import { logHandoff } from '../../lib/usage-records.js';
 import { directHeavy, shellQuote } from '../../lib/run-budget.js';
 import { Command } from 'commander';
 import {
@@ -2682,7 +2683,12 @@ export function registerHookCommand(program: Command): void {
         if (picked) {
           console.log(renderHandoffBanner(picked.record));
           console.log('');
-          stampHandoffRecord(root, picked.key, { consumedAt: new Date().toISOString(), ...(sid ? { toSession: sid } : {}) });
+          const consumedAt = new Date().toISOString();
+          stampHandoffRecord(root, picked.key, { consumedAt, ...(sid ? { toSession: sid } : {}) });
+          logHandoff(root, {
+            title: picked.record.title, at: picked.record.at, contextTokens: picked.record.contextTokens, fromSession: picked.record.fromSession,
+            consumedAt, ...(sid ? { toSession: sid } : {}), ...(picked.record.actedAt ? { actedAt: picked.record.actedAt } : {}),
+          });
         }
       } catch (handoffErr) {
         if (process.env.DREAMCONTEXT_DEBUG) console.error('[context-handoff] banner error:', (handoffErr as Error).message ?? handoffErr);

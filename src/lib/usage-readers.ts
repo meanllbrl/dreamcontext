@@ -21,7 +21,10 @@ export interface TokenTotals {
   /** Input not served from cache. */
   input: number;
   cacheRead: number;
+  /** All cache writes, whatever their lifetime. */
   cacheWrite: number;
+  /** The part of `cacheWrite` kept for an hour, billed higher than the 5-minute rate. */
+  cacheWrite1h?: number;
   output: number;
 }
 
@@ -65,6 +68,7 @@ export function parseClaudeRecord(record: Record<string, unknown>): UsageLine | 
       input: count(usage.input_tokens),
       cacheRead: count(usage.cache_read_input_tokens),
       cacheWrite: count(usage.cache_creation_input_tokens),
+      cacheWrite1h: count((usage.cache_creation as Record<string, unknown> | undefined)?.ephemeral_1h_input_tokens),
       output: count(usage.output_tokens),
     },
     speed: usage.speed === 'fast' ? 'fast' : 'standard',
@@ -106,7 +110,9 @@ export function claudeLimitHit(record: Record<string, unknown>): LimitHit | null
   return parseLimitHit(typeof first === 'string' ? first : '', ts);
 }
 
-const SLEEP_CMD = /(?:^|[;&|\n(]\s*|\s)(?:\S*\/)?dreamcontext\s+sleep\s+(start|done)\b/;
+/** At the start of a shell command only (a brief passed through Bash mentions the words too), and
+ *  never `--help`, which runs no sleep. */
+const SLEEP_CMD = /(?:^|[;&|\n(])\s*(?:\w+=\S*\s+)*(?:\S*\/)?dreamcontext\s+sleep\s+(start|done)\b(?![^\n;&|]*--help)/;
 
 /** `dreamcontext sleep start|done`, as a Bash call on this assistant line. A word in prose never counts. */
 export function claudeSleepMark(record: Record<string, unknown>): 'start' | 'done' | null {

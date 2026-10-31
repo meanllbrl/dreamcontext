@@ -2,7 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { fmtDay } from './statsFormat';
 
-export interface ChartSeries { name: string; color: string; values: number[]; ghost?: boolean; unpriced?: boolean }
+/** `ghost`: an estimate outside the totals. `soft`: an estimate of a part of a total, so it stacks
+ *  and counts, and is still drawn dashed with its `~`. */
+export interface ChartSeries { name: string; color: string; values: number[]; ghost?: boolean; soft?: boolean; unpriced?: boolean }
+
+/** The dashed bar every estimate carries. */
+export function GhostBar({ share }: { share: number }) {
+  return <i className="st-ghostbar st-ghostline" style={{ width: `${Math.max(2, Math.min(100, share * 100))}%` }} />;
+}
 
 interface Props {
   buckets: Array<{ start: number }>;
@@ -75,7 +82,7 @@ export function StatsChart({ buckets, hourly, series, format }: Props) {
                 return (
                   <rect
                     key={s.name} x={x} y={y(acc)} width={bar} height={Math.max(0.5, y(from) - y(acc))} rx={Math.min(3, bar / 4)}
-                    className={s.ghost ? 'st-ghost' : undefined} style={s.ghost ? undefined : { fill: s.color }}
+                    className={s.ghost ? 'st-ghost' : s.soft ? 'st-soft' : undefined} style={s.ghost ? undefined : { fill: s.color }}
                     data-ghost={s.ghost ? '' : undefined}
                   />
                 );
@@ -90,7 +97,7 @@ export function StatsChart({ buckets, hourly, series, format }: Props) {
         <div className="st-tip" style={{ left: tipLeft }}>
           <b>{hourly ? `${fmtDay(buckets[hover].start)} ${String(new Date(buckets[hover].start).getHours()).padStart(2, '0')}:00` : fmtDay(buckets[hover].start)}</b>
           {hovered.map((s) => (
-            <div key={s.name}><i style={s.ghost ? undefined : { background: s.color }} className={s.ghost ? 'gh' : undefined} />{s.name}<span>{s.ghost ? '~' : ''}{format(s.values[hover])}</span></div>
+            <div key={s.name}><i style={s.ghost ? undefined : { background: s.color }} className={s.ghost ? 'gh' : undefined} />{s.name}<span>{s.ghost || s.soft ? '~' : ''}{format(s.values[hover])}</span></div>
           ))}
           {hovered.length > 1 && (
             <div className="tt"><i />{t('stats.total')}<span>{format(series.filter((s) => !s.ghost).reduce((a, s) => a + s.values[hover], 0))}</span></div>
@@ -109,7 +116,7 @@ export function ChartLegend({ series, format }: { series: ChartSeries[]; format:
       {series.map((s) => (
         <span key={s.name}>
           <i style={s.ghost ? undefined : { background: s.color }} className={s.ghost ? 'st-ghost' : undefined} />
-          {s.name}<b>{s.unpriced ? t('stats.unpriced') : `${s.ghost ? '~' : ''}${format(s.values.reduce((a, b) => a + b, 0))}`}</b>
+          {s.name}<b>{s.unpriced ? t('stats.unpriced') : `${s.ghost || s.soft ? '~' : ''}${format(s.values.reduce((a, b) => a + b, 0))}`}</b>
         </span>
       ))}
     </div>

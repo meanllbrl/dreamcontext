@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
-import { ChartLegend, StatsChart, type ChartSeries } from './StatsChart';
+import { ChartLegend, GhostBar, StatsChart, type ChartSeries } from './StatsChart';
 import { fmtCost, fmtDay, fmtPct, fmtTokens, fmtWhen } from './statsFormat';
 import type { LimitWindow, SleepRun, StatsWire } from './statsTypes';
 
@@ -13,6 +13,7 @@ export function answerLine(data: StatsWire, t: T): string {
   const a = data.dc.answer;
   const share = a.worst ? `~${fmtPct(a.worst.estSleepShare * 100)}` : '';
   if (a.verdict === 'none') return t('stats.answer.line.none');
+  if (!a.worst) return t('stats.answer.line.noSleep').replace('{n}', String(a.hits));
   return t(`stats.answer.line.${a.verdict}`).replace('{n}', String(a.hits)).replace('{s}', share);
 }
 
@@ -27,21 +28,20 @@ function LimitAnswerCard({ data }: { data: StatsWire }) {
       <div className="st-k">{t('stats.answer.q')}</div>
       <div className="st-answer-v">
         <b>{t(`stats.answer.${a.verdict}`)}</b>
-        <span>{t(`stats.answer.${a.verdict}.why`).replace('{n}', String(a.hits)).replace('{s}', w ? `~${fmtPct(w.estSleepShare * 100)}` : '')}</span>
+        <span>{t(a.verdict === 'no' && !w ? 'stats.answer.no.noSleep' : `stats.answer.${a.verdict}.why`).replace('{n}', String(a.hits)).replace('{s}', w ? `~${fmtPct(w.estSleepShare * 100)}` : '')}</span>
       </div>
       {a.twoProject > 0 && <p className="st-sub">{t('stats.answer.two').replace('{n}', String(a.twoProject))}</p>}
       {a.windows.length > 0 && (
         <div className="st-tbl st-wins" role="table">
-          <div className="st-tr st-th" role="row"><span>{t('stats.answer.window')}</span><span>{t('stats.sleep')}</span><span>{t('stats.answer.shareOfSpend')} (~)</span><span /></div>
+          <div className="st-tr st-th" role="row"><span>{t('stats.answer.window')}</span><span>{t('stats.sleep')}</span><span>{t('stats.answer.shareOfSpend')} (~)</span></div>
           {shown.map((x) => (
             <div className="st-tr" role="row" key={`${x.kind}${x.account}${x.start}`}>
               <span className="nm nm2"><span>
-                <b>{fmtWhen(x.start)}{x.kind === 'weekly' ? ` · ${t('stats.weekly')}` : ''}</b>
+                <span className="st-rowhead"><b>{fmtWhen(x.start)}{x.kind === 'weekly' ? ` · ${t('stats.weekly')}` : ''}</b>{x.hit && <span className={`st-chip${x.thin ? '' : ' warn'}`} title={x.thin ? t('stats.answer.thin') : undefined}>{t('stats.answer.ranOut')}</span>}</span>
                 <span className="dim">{x.accountLabel} · {projectsOf(x).join(', ') || t('stats.sleep')}</span>
               </span></span>
               <span className="num">{fmtCost(x.sleepCost)} <span className="dim">/ {fmtCost(x.cost)}</span></span>
               <span className="shr"><i className="st-ghostbar" style={{ width: `${x.estSleepShare * 100}%` }} /><em>~{fmtPct(x.estSleepShare * 100)}</em></span>
-              <span>{x.hit && <span className={`st-chip${x.thin ? '' : ' warn'}`} title={x.thin ? t('stats.answer.thin') : undefined}>{t('stats.answer.ranOut')}</span>}</span>
             </div>
           ))}
           {a.windows.length > shown.length && <button type="button" className="st-more" onClick={() => setAll(true)}>{t('stats.showAll').replace('{n}', String(a.windows.length))}</button>}
@@ -72,7 +72,7 @@ function SleepTable({ data, onRun }: { data: StatsWire; onRun: (r: SleepRun) => 
               <span className="nm nm2"><span><b>{r.project}</b><span className="dim">{fmtWhen(r.start)} · {t(`stats.trigger.${r.trigger}`)}</span></span></span>
               <span className="num">{fmtTokens(r.tokens)}</span>
               <span className="num">{fmtCost(r.cost)}</span>
-              <span className="num" data-warn={(r.estWindowShare ?? 0) > 0.25 ? '' : undefined}>{r.estWindowShare === null ? '—' : `~${fmtPct(r.estWindowShare * 100)}`}</span>
+              <span className="num st-est" data-warn={(r.estWindowShare ?? 0) > 0.25 ? '' : undefined}>{r.estWindowShare === null ? '—' : `~${fmtPct(r.estWindowShare * 100)}`}{r.estWindowShare !== null && <GhostBar share={r.estWindowShare} />}</span>
             </button>
           ))}
           {s.runs.length > 12 && <p className="st-foot">{t('stats.moreRuns').replace('{n}', String(s.runs.length - 12))}</p>}
@@ -120,9 +120,10 @@ export function StatsDc({ data, onRun }: { data: StatsWire; onRun: (r: SleepRun)
   const hasEco = dc.eco.estSaved > 0;
   const net = dc.eco.estSaved - added;
   const barMax = Math.max(dc.eco.estSaved, added, 1);
+  const topSaved = Math.max(...dc.eco.rows.map((e) => e.estSaved), 1);
   const series: ChartSeries[] = [
     { name: t('stats.yourWork'), color: 'color-mix(in srgb, var(--chart-6) 70%, var(--color-bg-tertiary))', values: dc.chart.work },
-    { name: t('stats.memoryAdds'), color: 'var(--chart-8)', values: dc.chart.memory },
+    { name: t('stats.memoryAdds'), color: 'color-mix(in srgb, var(--chart-8) 30%, transparent)', values: dc.chart.memory, soft: true },
     { name: t('stats.sleep'), color: 'var(--color-accent)', values: dc.chart.sleep },
     { name: t('stats.ecoGhost'), color: 'transparent', values: dc.chart.estSaved, ghost: true },
   ];
@@ -134,6 +135,7 @@ export function StatsDc({ data, onRun }: { data: StatsWire; onRun: (r: SleepRun)
         <div className="st-card">
           <div className="st-k">{t('stats.sleep')}</div>
           <div className="st-big">{dc.estWeekShare === null ? fmtCost(dc.sleep.cost) : `~${fmtPct(dc.estWeekShare)}`}<small>{dc.estWeekShare === null ? t('stats.atApiPrice') : t('stats.ofWeek')}</small></div>
+          {dc.estWeekShare !== null && <div className="st-ghosttrack"><GhostBar share={dc.estWeekShare / 100} /></div>}
           <div className="st-sub">{dc.sleep.runs.length} {t('stats.sleepView.run').toLowerCase()} · {fmtTokens(dc.sleep.tokens)} {t('stats.tab.tokens').toLowerCase()} · {fmtCost(dc.sleep.cost)} · {fmtPct(dc.claudeTokens ? (dc.sleep.tokens / dc.claudeTokens) * 100 : 0)} {t('stats.ofClaude')}</div>
         </div>
         <div className="st-card">
@@ -143,8 +145,8 @@ export function StatsDc({ data, onRun }: { data: StatsWire; onRun: (r: SleepRun)
         </div>
         <div className="st-card">
           <div className="st-k">{t('stats.memoryAdds')}</div>
-          <div className="st-big">{fmtTokens(added)}<small>{t('stats.tokensLower')}</small></div>
-          <div className="st-sub">{fmtTokens(dc.memory.first)} {t('stats.firstRead')} · {fmtTokens(dc.memory.carried)} {t('stats.carried')} · {dc.memory.starts} {t('stats.starts')}, {dc.memory.messages} {t('stats.messages')} · {fmtPct(dc.memory.inputShare * 100)} {t('stats.ofInput')}</div>
+          <div className="st-big">~{fmtTokens(added)}<small>{t('stats.tokensLower')}</small></div>
+          <div className="st-sub">~{fmtTokens(dc.memory.first)} {t('stats.firstRead')} · ~{fmtTokens(dc.memory.carried)} {t('stats.carried')} · {dc.memory.starts} {t('stats.starts')}, {dc.memory.messages} {t('stats.messages')} · {fmtPct(dc.memory.inputShare * 100)} {t('stats.ofInput')}</div>
         </div>
         <div className="st-card">
           <div className="st-k">{t('stats.balance')}</div>
@@ -153,7 +155,7 @@ export function StatsDc({ data, onRun }: { data: StatsWire; onRun: (r: SleepRun)
             : <div className="st-big">—</div>}
           <div className="st-bal">
             <div><span>{t('stats.saved')}</span><i className="st-ghostbar" style={{ width: `${(dc.eco.estSaved / barMax) * 100}%` }} /></div>
-            <div><span>{t('stats.added')}</span><i className="a" style={{ width: `${(added / barMax) * 100}%` }} /></div>
+            <div><span>{t('stats.added')}</span><i className="st-ghostbar" style={{ width: `${(added / barMax) * 100}%` }} /></div>
           </div>
         </div>
       </div>
@@ -174,7 +176,7 @@ export function StatsDc({ data, onRun }: { data: StatsWire; onRun: (r: SleepRun)
               <div className="st-tr" key={`${e.at}${e.title}`}>
                 <span className="nm nm2"><span><b>{e.title || e.project}</b><span className="dim">{e.project} · {fmtDay(e.at)} · {t(`stats.ecoKind.${e.kind}`)}</span></span></span>
                 <span className="num">{fmtTokens(e.before)} → {e.after === null ? '—' : fmtTokens(e.after)}</span>
-                <span className="num good">{e.estSaved > 0 ? `~${fmtTokens(e.estSaved)}` : '—'}</span>
+                <span className="num good st-est">{e.estSaved > 0 ? `~${fmtTokens(e.estSaved)}` : '—'}{e.estSaved > 0 && <GhostBar share={e.estSaved / topSaved} />}</span>
               </div>
             ))}
           </div>

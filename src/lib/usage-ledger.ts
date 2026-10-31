@@ -35,15 +35,16 @@ import {
   parseClaudeRecord, parseCodexRecord, type CodexScanState, type LimitHit, type SessionOrigin, type UsageLine,
 } from './usage-readers.js';
 
-export const LEDGER_VERSION = 1;
+export const LEDGER_VERSION = 2;
 /** Rows older than this leave the cache: the widest range the screen shows is 90 days. */
 const KEEP_MS = 100 * 86_400_000;
 /** A sleep whose `done` never came stops claiming the chat's later turns after this long. */
 const OPEN_SPAN_MS = 2 * 3_600_000;
 
 /** [hour start ms, model index, fast?, input, cacheRead, cacheWrite, output, sleep span (-1 none),
- *  memory first read, memory carried]. Positional: 100k rows must stay small on disk. */
-export type LedgerRow = [number, number, 0 | 1, number, number, number, number, number, number, number];
+ *  memory first read, memory carried, 1-hour cache writes (part of cacheWrite), index into
+ *  `accounts`]. Positional: 100k rows must stay small on disk. */
+export type LedgerRow = [number, number, 0 | 1, number, number, number, number, number, number, number, number, number];
 
 export interface LedgerFile {
   s: number;
@@ -58,7 +59,8 @@ export interface LedgerFile {
   /** Account id (`primary` included) or Codex's creator id. Absent = nothing says who. */
   account?: string;
   /** A session that moved accounts mid-way (the auto-switch at a limit): [from ms, account],
-   *  oldest first. Row and limit-hit attribution reads this; `account` is its last entry. */
+   *  oldest first. A row names its entry at index 11 and a hit carries its own `account`, both
+   *  decided request by request while scanning; `account` is the last entry. */
   accounts?: Array<[number, string]>;
   first: number;
   last: number;
@@ -69,7 +71,7 @@ export interface LedgerFile {
   rows: LedgerRow[];
   /** In-chat sleeps: [start ms, end ms or 0]. Row index 7 points here. */
   spans: Array<[number, number]>;
-  hits: LimitHit[];
+  hits: Array<LimitHit & { account?: string }>;
   snapshots: number;
   recalls: number;
   /** base64 of the Float64 hashes of the keys this file counted. */
@@ -195,13 +197,17 @@ export function sessionAccounts(home: string = homedir()): Map<string, Array<[nu
   return out;
 }
 
-/** Who held the session at `ts`. Before the first switch it is the first account. */
-export function accountAt(file: Pick<LedgerFile, 'account' | 'accounts'>, ts: number): string | undefined {
-  const list = file.accounts;
-  if (!list || list.length < 2) return file.account;
-  let who = list[0][1];
-  for (const [from, id] of list) if (from <= ts) who = id;
-  return who;
+/** Which entry held the session at `ts`. Before the first switch it is the first one. */
+export function accountIndexAt(list: Array<[number, string]> | undefined, ts: number): number {
+  if (!list) return 0;
+  let at = 0;
+  list.forEach(([from], i) => { if (from <= ts) at = i; });
+  return at;
+}
+
+/** Who a row's tokens belong to. */
+export function rowAccount(file: Pick<LedgerFile, 'account' | 'accounts'>, row: LedgerRow): string | undefined {
+  return file.accounts?.[row[11]]?.[1] ?? file.account;
 }
 
 interface SubagentMeta { agentType?: string; effort?: string }
@@ -220,7 +226,7 @@ function readMeta(path: string): SubagentMeta {
 
 const hourOf = (ts: number): number => Math.floor(ts / 3_600_000) * 3_600_000;
 
-interface ScanContext { intern: (m: string) => number; seen: Set<number> }
+interface ScanContext { intern: (m: string) => number; seen: Set<number>; sessions: Map<string, Array<[number, string]>> }
 
 /** Read one log start to end. Yields to the event loop between chunks, so a scan never blocks the server. */
 async function scanFile(path: string, tool: ScanRoot['tool'], size: number, mtime: number, ctx: ScanContext): Promise<LedgerFile | null> {
@@ -234,7 +240,10 @@ async function scanFile(path: string, tool: ScanRoot['tool'], size: number, mtim
   };
   const rowsByKey = new Map<string, LedgerRow>();
   const counted: number[] = [];
-  const localSeen = new Set<number>();
+  // Each key's row and largest output: the first record of a message holds a partial
+  // `output_tokens`, so the repeats may only ever raise that one number.
+  const localSeen = new Map<number, { row: LedgerRow; output: number }>();
+  const heldBy = tool === 'claude' ? ctx.sessions.get(session) : undefined;
   const codex: CodexScanState = initialCodexState();
   let origin: SessionOrigin = null;
   let promptRead = isSub;
@@ -243,21 +252,28 @@ async function scanFile(path: string, tool: ScanRoot['tool'], size: number, mtim
   let carriedMem = 0;
 
   const count = (line: UsageLine) => {
+    let hash: number | null = null;
     if (line.dedupeKey !== null) {
-      const h = hashKey(line.dedupeKey);
-      if (localSeen.has(h) || ctx.seen.has(h)) return;
-      localSeen.add(h);
-      counted.push(h);
+      hash = hashKey(line.dedupeKey);
+      const mine = localSeen.get(hash);
+      if (mine) {
+        if (line.totals.output > mine.output) { mine.row[6] += line.totals.output - mine.output; mine.output = line.totals.output; }
+        return;
+      }
+      if (ctx.seen.has(hash)) return;
+      counted.push(hash);
     }
     if (openSpan >= 0 && line.ts - file.spans[openSpan][0] > OPEN_SPAN_MS) openSpan = -1;
     const model = ctx.intern(line.model);
     const hour = hourOf(line.ts);
     const fast: 0 | 1 = line.speed === 'fast' ? 1 : 0;
-    const key = `${hour}|${model}|${fast}|${openSpan}`;
+    const who = accountIndexAt(heldBy, line.ts);
+    const key = `${hour}|${model}|${fast}|${openSpan}|${who}`;
     let row = rowsByKey.get(key);
-    if (!row) { row = [hour, model, fast, 0, 0, 0, 0, openSpan, 0, 0]; rowsByKey.set(key, row); }
+    if (!row) { row = [hour, model, fast, 0, 0, 0, 0, openSpan, 0, 0, 0, who]; rowsByKey.set(key, row); }
     const t = line.totals;
-    row[3] += t.input; row[4] += t.cacheRead; row[5] += t.cacheWrite; row[6] += t.output;
+    row[3] += t.input; row[4] += t.cacheRead; row[5] += t.cacheWrite; row[6] += t.output; row[10] += t.cacheWrite1h ?? 0;
+    if (hash !== null) localSeen.set(hash, { row, output: t.output });
     row[8] += pendingMem; row[9] += carriedMem;
     carriedMem += pendingMem;
     pendingMem = 0;
@@ -289,7 +305,11 @@ async function scanFile(path: string, tool: ScanRoot['tool'], size: number, mtim
       return;
     }
     const hit = claudeLimitHit(rec);
-    if (hit !== null) { file.hits.push(hit); return; }
+    if (hit !== null) {
+      const who = heldBy?.[accountIndexAt(heldBy, hit.ts)]?.[1];
+      file.hits.push(who ? { ...hit, account: who } : hit);
+      return;
+    }
     const mark = claudeSleepMark(rec);
     if (mark === 'start' && openSpan < 0) {
       const at = Date.parse(String(rec.timestamp));
@@ -394,7 +414,9 @@ async function runScan(home: string, roots: ScanRoot[], state: LedgerState): Pro
   for (const root of roots) await walk(root.dir, found, root.tool);
   // Oldest first, so the first copy of a message keeps it, as T3's readdir order does.
   found.sort((a, b) => a.mtime - b.mtime);
+  const keepFrom = Date.now() - KEEP_MS;
   const stale = found.filter((f) => {
+    if (f.mtime < keepFrom) return false; // out of every range, and its entry is gone: never reread
     const c = ledger.files[f.path];
     return !c || c.s !== f.size || c.m !== f.mtime;
   });
@@ -415,8 +437,16 @@ async function runScan(home: string, roots: ScanRoot[], state: LedgerState): Pro
       return i;
     };
     for (const f of stale) {
-      const entry = await scanFile(f.path, f.tool, f.size, f.mtime, { intern, seen });
-      if (entry) ledger.files[f.path] = entry;
+      const entry = await scanFile(f.path, f.tool, f.size, f.mtime, { intern, seen, sessions: accounts });
+      if (entry) {
+        // Codex lines have no key: a rollout moved to `archived_sessions` is the same requests.
+        if (entry.tool === 'codex') {
+          for (const [path, other] of Object.entries(ledger.files)) {
+            if (path !== f.path && other.tool === 'codex' && other.session === entry.session) delete ledger.files[path];
+          }
+        }
+        ledger.files[f.path] = entry;
+      }
       state.progress = { done: state.progress.done + 1, total: stale.length };
     }
   }
