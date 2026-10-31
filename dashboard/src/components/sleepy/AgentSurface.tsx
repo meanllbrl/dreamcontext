@@ -106,7 +106,7 @@ import { PhoneAgenda, phoneEventContext } from './super/PhoneAgenda';
 import { holdSidebarCollapsed as holdClassicSidebar } from '../../hooks/useSidebarCollapse';
 import { readShellModeFrozen, useIsNewShell } from '../../lib/uxMode';
 import {
-  addWindow, cleanWindowName, dropWindow, renameWindow, initialWindows, joinInto, neighbourOf, parkedHomes, placeTab, pruneParked,
+  addWindow, adoptWindowOrder, cleanWindowName, dropWindow, moveWindow, renameWindow, initialWindows, joinInto, neighbourOf, parkedHomes, placeTab, pruneParked,
   restoreWindows, rowsByWindow, savePlacement, splitOut, switchWindow, unparkPanes, updateParked, windowOfTab,
   DEFAULT_WINDOW_ID, TAB_CAP,
   type RestoredTab, type SavedWindowMeta, type WindowFact, type WindowsState, type WinPane,
@@ -1275,6 +1275,13 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
         // before windows sends none: one window, as before.
         const savedWindows = Array.isArray(res.windows) && res.windows.length ? res.windows : undefined;
         const firstSeed = !cancelled && !windowsSeededRef.current;
+        // A re-hydrate (a 409): the windows' order on disk wins, or the next save writes the old
+        // one back over a drag made while this surface was not looking.
+        if (!firstSeed && !cancelled && windowed && savedWindows) {
+          const adopted = adoptWindowOrder(chatWindowsRef.current, savedWindows);
+          chatWindowsRef.current = adopted;
+          setChatWindows(adopted);
+        }
         // Terminals are never remembered — drop any shell entry, plus any legacy roster
         // row still named "Terminal N" (a stale shell saved before we stopped persisting
         // them; auto-title only ever renames AGENTS, so that default name is a reliable
@@ -5296,6 +5303,12 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
 
   const runDrawerIntentRef = useRef<(intent: DrawerIntent) => void>(() => {});
   runDrawerIntentRef.current = (intent) => {
+    // A drag moves a row and nothing else: this may be a project that is not on screen.
+    if (intent.kind === 'move-window') {
+      windowsKnownRef.current = true;
+      setChatWindows((prev) => moveWindow(prev, intent.windowId, intent.before));
+      return;
+    }
     if (!caps?.desktop || !agentSettings.enabled) { setExpanded(true); return; }
     if (intent.kind !== 'rename-window' && intent.kind !== 'close-window') setSuperPeek(null);
     if (intent.kind === 'member') {

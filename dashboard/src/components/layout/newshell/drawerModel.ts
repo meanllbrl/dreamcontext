@@ -223,6 +223,21 @@ export function intentLands(result: AddTabResult, mountedAfter: boolean): boolea
   return (result === 'added' || result === 'focused-tab') && mountedAfter;
 }
 
+/**
+ * Where a chat row dragged to height `y` lands: before the first window row whose middle is
+ * below `y`, or the end (null). Only window rows are given, so Super Agent and the team rows
+ * above them are never a target: pulled above the first window, a row stops there.
+ */
+export function windowDropBefore(rows: ReadonlyArray<{ id: string; top: number; height: number }>, y: number): string | null {
+  return rows.find((r) => y < r.top + r.height / 2)?.id ?? null;
+}
+
+/** Would a drop before `before` leave the rows as they are? `ids` is the rows' order. */
+export function windowDropIsNoop(ids: readonly string[], id: string, before: string | null): boolean {
+  const next = ids[ids.indexOf(id) + 1] ?? null;
+  return before === id || before === next;
+}
+
 /** Move `name` one step up (-1) or down (+1) in `order`; an end stays put. */
 export function moveInOrder(order: readonly string[], name: string, delta: -1 | 1): string[] {
   const i = order.indexOf(name);

@@ -481,6 +481,13 @@ function coerceActivePane(raw: unknown): number | undefined {
     : undefined;
 }
 
+/** The windows in `order`; a window it does not name (made since it was read) stays, at the end. */
+export function orderWindows(list: readonly SavedWindow[], order: readonly string[]): SavedWindow[] {
+  const at = new Map(order.map((id, i) => [id, i] as const));
+  const named = list.filter((w) => at.has(w.id)).sort((a, b) => at.get(a.id)! - at.get(b.id)!);
+  return [...named, ...list.filter((w) => !at.has(w.id))];
+}
+
 /** The stored surface plus its generation, as {@link readRosterSurface} returns it. */
 export interface StoredSurface extends SavedSurface {
   generation: number;
@@ -822,6 +829,45 @@ function surfaceBody(saved: StoredSurface, isBound: (sessionId: string) => boole
     windows: saved.windows ?? [{ ...DEFAULT_WINDOW }],
     generation: saved.generation,
   };
+}
+
+/**
+ * `PUT /api/agent/sessions/window-order`: the drawer's drag on a project no surface holds. Only
+ * the windows' order changes. A surface that holds the project saves its own order instead; if
+ * one does hold it, the bumped generation sends it back to re-read rather than write over this.
+ */
+export async function handleAgentWindowOrderPut(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!rosterAllowed(req)) {
+    sendError(res, 403, 'desktop_only', 'Agent session roster is only available in the desktop app.');
+    return;
+  }
+  const order = (await parseJsonBody(req))?.order;
+  if (!Array.isArray(order) || !order.every((id) => typeof id === 'string')) {
+    sendError(res, 400, 'invalid_order', 'order must be a list of window ids.');
+    return;
+  }
+  try {
+    const lock = await acquireRosterLockWithin(contextRoot, 5_000);
+    if (!lock) {
+      sendError(res, 503, 'roster_locked', 'The session roster is being written; try again.');
+      return;
+    }
+    try {
+      const stored = readSurface(contextRoot);
+      writeSurface(contextRoot, { ...stored, windows: orderWindows(stored.windows ?? [], order) }, stored.generation + 1);
+    } finally {
+      releaseFileLock(lock);
+    }
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    console.error('[agent-sessions] window order write failed:', err);
+    sendError(res, 500, 'write_failed', 'Failed to persist the window order.');
+  }
 }
 
 /**

@@ -1043,7 +1043,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   }, []);
 
   const mountedNames = useMemo(() => open.filter((p) => !p.cold).map((p) => p.vault), [open]);
-  const fanout = useDrawerProjects(newShell ? drawerExpanded : [], mountedNames, drawerVisible);
+  const { facts: fanout, moveWindow: moveFarWindow } = useDrawerProjects(newShell ? drawerExpanded : [], mountedNames, drawerVisible);
   const drawerRows = useMemo(() => {
     if (!newShell) return [];
     const byName = new Map((launcherStatus?.vaults ?? []).map((v) => [v.name, v] as const));
@@ -1080,6 +1080,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     drawerSeqRef.current += 1;
     const nonce = drawerSeqRef.current;
     setPendingDrawerIntents((prev) => ({ ...prev, [vault]: { intent, nonce, at: Date.now() } }));
+    // A drag moves a row, never the owner: the caller sends it only to a mounted project.
+    if (intent.kind === 'move-window') return 'focused-tab';
     if (landsOnChat(intent)) setArrivingVault(vault);
     let result: AddTabResult;
     if (openRef.current.some((p) => p.vault === vault)) {
@@ -1257,6 +1259,18 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                 onRelations={() => { if (activeVault) void queueDrawerIntent(activeVault, { kind: 'page', page: 'relations' }); setFloatingOpen(false); }}
                 onMove={(name, delta) => reorder(moveInOrder(projectOrder, name, delta))}
                 onDrop={(name, before) => reorder(dropInOrder(projectOrder, name, before))}
+                onMoveWindow={(vault, windowId, before) => {
+                  // Read now, not from the row: another window can take a project at any time, and
+                  // the drawer's own answer waits for its next rebuild.
+                  if (!mountedNames.includes(vault) && findWindowForVault(vault)) {
+                    notify(`${vault}: ${t('shell.drawer.otherWindow')}`);
+                    return;
+                  }
+                  // A mounted project holds its windows in memory and saves them itself; the
+                  // roster of one that is not mounted is changed on disk.
+                  if (mountedNames.includes(vault)) void queueDrawerIntent(vault, { kind: 'move-window', windowId, before });
+                  else moveFarWindow(vault, windowId, before);
+                }}
                 onOpenInWindow={(name) => {
                   if (openRef.current.some((p) => p.vault === name)) void detachToWindow(name);
                   else void openVaultWindow(name).catch((err) => notify(`Couldn't open a window for ${name}: ${err instanceof Error ? err.message : String(err)}`));
