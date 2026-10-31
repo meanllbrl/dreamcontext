@@ -73,7 +73,7 @@ describe('note 1 and the one-home rule: a Super session never enters a chat wind
 describe('note 2: the Super stage has no bar and chat windows have no Super button', () => {
   it('the head is hidden on the stage, and the Super tab is gone in the new shell', () => {
     const s = src(SURFACE);
-    expect(s).toContain('className="agent-overlay-head" hidden={windowed && handedOver}');
+    expect(s).toContain('className="agent-overlay-head" hidden={windowed && (handedOver || !!arriving)}');
     expect(s).toMatch(/const superTab = !windowed && panesLive/);
     expect(src('dashboard/src/components/sleepy/AgentTerminal.css')).toMatch(/\.agent-overlay-head\[hidden\] \{ display: none; \}/);
   });

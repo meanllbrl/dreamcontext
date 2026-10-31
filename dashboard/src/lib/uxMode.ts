@@ -99,7 +99,10 @@ export const LauncherOpenContext = createContext<((name: string) => void) | null
 
 /** The new shell's New project: its hand-off lands in THIS window, with the first run it asked for.
  *  Null everywhere else: `Handoff` opens the project's window as ever. */
-export const NewProjectLandContext = createContext<((name: string, start?: 'initializer') => void) | null>(null);
+export const NewProjectLandContext = createContext<NewProjectLanding | null>(null);
+/** `initializer`: made, and its first run starts. `existing`: it was already a project, so it opens
+ *  as it is. Neither: just made, on a fresh chat. */
+export type NewProjectLanding = (name: string, how?: 'initializer' | 'existing') => void;
 
 /** A page's drawer toggle (⌘B / the title-bar button) on a page that has its own drawer
  *  (Whiteboards' explorer). Emitted on the instance bus by `PageDrawerToggleBridge`. */

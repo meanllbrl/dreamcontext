@@ -33,7 +33,7 @@ import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { COARSE_POINTER_QUERY, useRemoteDesktop } from '../../hooks/useIsMobile';
 import { ChromeSlotsProvider, type ChromeSlots } from './chromeSlots';
 import { ProjectTabs, type ProjectChip } from './ProjectTabs';
-import { useIsNewShell } from '../../lib/uxMode';
+import { useIsNewShell, type NewProjectLanding } from '../../lib/uxMode';
 import { readLayoutPrefs, writeLayoutPrefs } from '../../lib/launcherPrefs';
 import { useLauncherStatus } from '../../hooks/useLauncher';
 import { TitleBar } from './newshell/TitleBar';
@@ -43,12 +43,12 @@ import { chill, liveInstanceCount, oldestEvictable } from './instanceCeiling';
 import { ChatDrawer } from './newshell/ChatDrawer';
 import { NewProjectFlow } from './newshell/NewProjectFlow';
 import {
-  buildDrawerRows, dropInOrder, intentLands, moveInOrder, type DrawerFacts,
+  buildDrawerRows, DRAWER_INTENT_TTL_MS, dropInOrder, intentLands, moveInOrder, type DrawerFacts,
 } from './newshell/drawerModel';
 import { useDrawerProjects } from '../../hooks/useDrawerProjects';
 import { useIsNarrowWindow } from '../../hooks/useIsNarrowWindow';
 import { ChatHistoryPicker } from '../sleepy/ChatHistoryPicker';
-import type { DrawerIntent, PendingDrawerIntent } from '../../lib/drawerIntents';
+import { landsOnChat, type DrawerIntent, type PendingDrawerIntent } from '../../lib/drawerIntents';
 import './newshell/NewShell.css';
 import './ProjectTabs.css';
 import './Header.css';
@@ -236,12 +236,14 @@ function seedPendingLinks(initialVault: string, initialLink: string | null | und
   return { [initialVault]: { raw: initialLink as string, nonce: 1 } };
 }
 
-export function WindowChrome({ initialVault, initialLink, initialStart = null }: {
+export function WindowChrome({ initialVault, initialLink, initialStart = null, initialIntent }: {
   initialVault: string;
   /** A `dreamcontext://` link this window was built to land (the `?open=` param). */
   initialLink?: string | null;
   /** The onboarding start intent this window was built to start (the `?start=` param). */
   initialStart?: StartIntent | null;
+  /** What this window was built to land on (a project just made in the launcher window). */
+  initialIntent?: DrawerIntent;
 }) {
   const { theme, setTheme, resolved } = useTheme();
   const { t } = useI18n();
@@ -968,7 +970,17 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
     });
   }, [open]);
 
-  const activeOnChat = !!(activeVault && drawerFacts[activeVault]?.chatOpen);
+  /** A drawer click is landing on this project's chat area: it counts as on Chat from the click,
+   *  so the drawer stays where it is while the project comes up. */
+  const [arrivingVault, setArrivingVault] = useState<string | null>(initialIntent ? initialVault : null);
+  const activeFactsOnChat = !!(activeVault && drawerFacts[activeVault]?.chatOpen);
+  const activeOnChat = activeFactsOnChat || (!!activeVault && activeVault === arrivingVault);
+  useEffect(() => {
+    if (!arrivingVault) return undefined;
+    if (drawerFacts[arrivingVault]?.chatOpen) { setArrivingVault(null); return undefined; }
+    const timer = window.setTimeout(() => setArrivingVault(null), DRAWER_INTENT_TTL_MS);
+    return () => window.clearTimeout(timer);
+  }, [arrivingVault, drawerFacts]);
   // ≤900 the drawer floats over the page and a pick closes it (without forgetting the setting).
   const narrow = useIsNarrowWindow(900);
   const [floatingOpen, setFloatingOpen] = useState(false);
@@ -1001,7 +1013,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
     });
   }, []);
   /** New project landed: its row open and selected at once, with no reload. */
-  const landNewProject = useCallback((name: string, start?: 'initializer') => {
+  const queueDrawerIntentRef = useRef<(vault: string, intent: DrawerIntent) => Promise<AddTabResult>>(async () => 'refused-ceiling');
+  const landNewProject = useCallback<NewProjectLanding>((name, how) => {
     setNewProjectOpen(false);
     setDrawerExpanded((cur) => {
       if (cur.includes(name)) return cur;
@@ -1009,14 +1022,16 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
       writeLayoutPrefs({ drawerExpanded: next });
       return next;
     });
-    void addTab(name).then((result) => {
-      if (start && (result === 'added' || result === 'focused-tab')) {
+    // It lands on its chat like any drawer click (its own start, the initializer, opens the chat
+    // itself), so it comes up selected in the drawer, never on the page a project starts on.
+    void queueDrawerIntentRef.current(name, how ? { kind: 'open-window' } : { kind: 'new-window' }).then((result) => {
+      if (how === 'initializer' && (result === 'added' || result === 'focused-tab')) {
         startSeqRef.current += 1;
         const nonce = startSeqRef.current;
-        setPendingStarts((prev) => ({ ...prev, [name]: { intent: start, nonce } }));
+        setPendingStarts((prev) => ({ ...prev, [name]: { intent: 'initializer', nonce } }));
       }
     });
-  }, [addTab]);
+  }, []);
   const [drawerWidth, setDrawerWidth] = useState(() => readLayoutPrefs().drawerWidth ?? 280);
   const resizeDrawer = useCallback((w: number) => {
     setDrawerWidth(w);
@@ -1055,9 +1070,17 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
 
   // The queue (D5): a row's click brings its project forward FIRST, and the intent travels
   // only when that project is now on screen and mounted (the `landLink` rule).
-  const [pendingDrawerIntents, setPendingDrawerIntents] = useState<Record<string, PendingDrawerIntent>>({});
-  const drawerSeqRef = useRef(0);
-  const queueDrawerIntent = useCallback(async (vault: string, intent: DrawerIntent) => {
+  const [pendingDrawerIntents, setPendingDrawerIntents] = useState<Record<string, PendingDrawerIntent>>(
+    () => (initialIntent ? { [initialVault]: { intent: initialIntent, nonce: 1, at: Date.now() } } : {}),
+  );
+  const drawerSeqRef = useRef(1);
+  const queueDrawerIntent = useCallback(async (vault: string, intent: DrawerIntent): Promise<AddTabResult> => {
+    // Queued BEFORE the project comes forward, in the same commit: it is what the project's first
+    // render lands on. Queued after, the project would first open on its own page.
+    drawerSeqRef.current += 1;
+    const nonce = drawerSeqRef.current;
+    setPendingDrawerIntents((prev) => ({ ...prev, [vault]: { intent, nonce, at: Date.now() } }));
+    if (landsOnChat(intent)) setArrivingVault(vault);
     let result: AddTabResult;
     if (openRef.current.some((p) => p.vault === vault)) {
       activate(vault);
@@ -1066,11 +1089,18 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
       result = await addTab(vault);
     }
     const tab = openRef.current.find((p) => p.vault === vault);
-    if (!intentLands(result, !!tab && !tab.cold)) return;
-    drawerSeqRef.current += 1;
-    const nonce = drawerSeqRef.current;
-    setPendingDrawerIntents((prev) => ({ ...prev, [vault]: { intent, nonce, at: Date.now() } }));
+    if (intentLands(result, !!tab && !tab.cold)) return result;
+    // Another window took it, or the ceiling refused: nothing lands here.
+    setArrivingVault((v) => (v === vault ? null : v));
+    setPendingDrawerIntents((prev) => {
+      if (prev[vault]?.nonce !== nonce) return prev;
+      const next = { ...prev };
+      delete next[vault];
+      return next;
+    });
+    return result;
   }, [activate, addTab]);
+  queueDrawerIntentRef.current = queueDrawerIntent;
   const consumeDrawerIntent = useCallback((vault: string, nonce: number) => {
     setPendingDrawerIntents((prev) => {
       if (prev[vault]?.nonce !== nonce) return prev;

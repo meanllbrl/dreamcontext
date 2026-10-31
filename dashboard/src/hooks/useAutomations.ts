@@ -939,6 +939,9 @@ export interface FeedMessage {
    *  is its document's opening line. `error` — it failed, and this is why. The
    *  reader is entitled to tell them apart, so the card does. */
   textFrom: 'post' | 'result' | 'error' | 'skipped' | 'none';
+  /** A job the Super Agent gave this member (`super-quiet.ts`): it reports to the Super. Absent on
+   *  an older server, which reads as the owner's. */
+  superJob?: boolean;
   files: FeedFile[];
   /** The BODY post's figures — `automations post --kv`. At most
    *  `THREAD_SUMMARY_MAX_ROWS` (6) rows; null when the post carried none. */

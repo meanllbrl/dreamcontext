@@ -46,8 +46,9 @@ describe('drawer rows', () => {
     });
     for (const r of rows) {
       expect(r.children[0].kind).toBe('super');
-      expect(r.children[r.children.length - 1].kind).toBe('window');
     }
+    // Nothing read yet: no window row is invented for it (New Chat comes with the facts).
+    expect(rows[1].children.map((c) => c.kind)).toEqual(['super']);
     expect(rows[1].source).toBe('none');
   });
 
@@ -88,7 +89,7 @@ describe('drawer rows', () => {
       activeVault: 'acme', expanded: ['acme', 'globex'], facts: { acme: facts, globex: facts }, fanout: {},
     });
     expect(rows[0].children[0]).toMatchObject({ kind: 'super', selected: true });
-    expect(rows[0].children.at(-1)).toMatchObject({ kind: 'window', selected: false });
+    expect(rows[0].children.map((c) => c.kind)).toEqual(['super']);
     expect(rows[1].children[0]).toMatchObject({ kind: 'super', selected: false });
   });
 

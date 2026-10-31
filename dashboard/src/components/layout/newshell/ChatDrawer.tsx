@@ -201,6 +201,15 @@ export function ChatDrawer(p: ChatDrawerProps) {
         </button>
       );
     }
+    if (c.kind === 'new-chat') {
+      return (
+        <button key="new-chat" type="button" className="ns-dr-row ns-dr-child ns-dr-newchat" data-testid="drawer-new-chat"
+          onClick={() => pick(row.name, { kind: 'new-window' })}>
+          <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>
+          <span className="ns-dr-t">{t('shell.drawer.newChat')}</span>
+        </button>
+      );
+    }
     const live = c.working + c.asking + c.other;
     const label = c.name === STORED_DEFAULT_NAME ? t('shell.windows.defaultName') : c.name;
     if (renaming && renaming.vault === row.name && renaming.id === c.id) {
@@ -259,6 +268,10 @@ export function ChatDrawer(p: ChatDrawerProps) {
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h3l7-7-3-3-7 7v3zM9 4l3 3" /></svg>
           <span className="ns-dr-t">{t('shell.drawer.newWindow')}</span>
           <kbd className="ns-dr-kbd">⌘N</kbd>
+        </button>
+        <button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-new-project-row" onClick={p.onNewProject}>
+          <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h4l1.5 1.5h5.5v6.5h-11zM8 7.8v3M6.5 9.3h3" /></svg>
+          <span className="ns-dr-t">{t('shell.drawer.newProject')}</span>
         </button>
         <button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-history" onClick={p.onHistory}>
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.5H5M8 5v3l2 1.5" /></svg>

@@ -4,8 +4,10 @@
  * expanded projects that are not mounted) and `ChatDrawer` draws exactly the rows this returns.
  *
  * Under each expanded project, in order: the Super Agent row (always, D6), the AI Team members
- * that have work (LISTED statuses only, D7), and one row per named chat window with its own ring
- * and count (W3, D8). A collapsed project's row carries the sum of its windows.
+ * that have work (LISTED statuses only, D7, never a job the Super Agent gave them), and one row per
+ * chat window that holds a chat, with its own ring and count (W3, D8). A project with none has one
+ * New Chat row instead: nothing here opens onto an empty screen. A collapsed project's row carries
+ * the sum of its windows.
  */
 import type { ProjectRollup } from '../../sleepy/agentStatus';
 import type { TeamRow, TeamStatus } from '../../aiteam/teamModel';
@@ -89,7 +91,9 @@ export type DrawerChild =
     /** The rest of the window's tabs (the plain count beside the ring). */
     other: number;
     selected: boolean;
-  };
+  }
+  /** No window here holds a chat: opens one, ready to type in. */
+  | { kind: 'new-chat' };
 
 export interface DrawerProjectRow {
   name: string;
@@ -113,7 +117,7 @@ export interface DrawerProjectRow {
 /** The listed members of a roster, those that want the owner first (needs, approval), then the
  *  working ones, each part in the roster's own order. */
 export function teamRowsOf(roster: readonly TeamRow[]): DrawerTeamRow[] {
-  const listed = roster.filter((r) => LISTED_TEAM.has(r.status) && !r.readOnly);
+  const listed = roster.filter((r) => LISTED_TEAM.has(r.status) && !r.readOnly && !r.superOnly);
   const rank = (s: TeamStatus) => (s === 'needs' ? 0 : s === 'approval' ? 1 : 2);
   return listed
     .map((r, i) => ({ r, i }))
@@ -165,14 +169,19 @@ export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout
     }
     const r = p.mounted ? (mine?.shown ?? p.rollup) : null;
     const windowsOn = onChat && !superSelected && !mine?.member;
-    if (mine?.windows?.length) {
-      for (const w of mine.windows) {
+    const before = children.length;
+    if (mine?.windows) {
+      // `tabs` counts saved chats too: a window of sleeping tabs is not empty.
+      for (const { tabs, ...w } of mine.windows) {
+        if (tabs === 0) continue;
         children.push({ kind: 'window', ...w, selected: windowsOn && w.id === mine.activeWindowId });
       }
-    } else if (far?.windows?.length) {
+    } else if (far?.windows) {
       // Nothing runs while a project is not mounted: no ring, only each window's tab count.
-      for (const w of far.windows) children.push({ kind: 'window', id: w.id, name: w.name, working: 0, asking: 0, flagged: 0, other: w.tabs, selected: false });
-    } else {
+      for (const w of far.windows) {
+        if (w.tabs > 0) children.push({ kind: 'window', id: w.id, name: w.name, working: 0, asking: 0, flagged: 0, other: w.tabs, selected: false });
+      }
+    } else if ((r?.live ?? 0) > 0 || (far?.tabs ?? 0) > 0) {
       children.push({
         kind: 'window',
         id: 'main',
@@ -184,6 +193,9 @@ export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout
         selected: windowsOn,
       });
     }
+    // Only on a known answer: before the roster is restored, or after a failed read, no row is
+    // better than offering a chat over chats that are there.
+    if (children.length === before && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
     return { ...base, source, children };
   });
 }
