@@ -307,6 +307,15 @@ describe('what still asks', () => {
     expect(approved('doctor', 'agent')).toBe(false);
   });
 
+  it('read_tools is the owner\'s: a hand-added tool drops the approval, and an amendment cannot launder it', () => {
+    memberWithRoutine();
+    const path = join(root, 'agents', 'doctor.md');
+    const src = readFileSync(path, 'utf-8');
+    writeFileSync(path, src.replace(/^---\n/, '---\nread_tools:\n  - mcp__mail__read\n'));
+    expect(approved('doctor', 'agent')).toBe(false);
+    refusedWith(() => amendMember(root, { member: 'doctor', why: 'x', prompt: NEW_PROMPT }), 'amend_unreviewed_change');
+  });
+
   it('an unapproved member stays the owner\'s: an amendment creates no approval', () => {
     createAgent(root, { slug: 'new', title: 'new', prompt: OLD_PROMPT });
     refusedWith(() => amendMember(root, { member: 'new', why: 'x', prompt: NEW_PROMPT }), 'amend_unapproved');
