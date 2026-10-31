@@ -274,8 +274,10 @@ export interface VaultStatus {
   setupVersion: string;
   /** The running CLI version `update` would bring the project up to. */
   latestVersion: string;
-  /** Folder exists AND setupVersion is behind latestVersion → YELLOW + Update. */
+  /** Folder exists AND setupVersion is behind latestVersion → YELLOW. Projects update on their own. */
   needsUpdate: boolean;
+  /** Why the automatic update has not finished here (absent/null: nothing is wrong). */
+  autoUpdate?: { state: 'failed' | 'deferred' | 'skipped'; reason: string } | null;
   /** The vault ships an identity mark (`_dream_context/assets/logo.*`) — render it via
    *  `launcherLogoUrl(name)`. */
   logo: boolean;
@@ -310,6 +312,8 @@ export function useLauncherStatus(enabled = true) {
     queryKey: ['launcher-status'],
     queryFn: () => api.get<StatusResponse>('/launcher/status'),
     enabled,
+    // Projects update on their own, so a yellow dot turns green without anyone clicking.
+    refetchInterval: (query) => (query.state.data?.vaults.some((v) => v.needsUpdate) ? 30_000 : false),
   });
 }
 
@@ -351,45 +355,6 @@ export function useUpdateProject() {
     mutationFn: (name: string) =>
       api.post<{ ok: true; status: VaultStatus }>('/launcher/update', { name }),
     onSuccess: () => {
-      invalidateLauncher(queryClient);
-    },
-  });
-}
-
-/** Outcome of an `Update all` run: which projects updated, and which refused. */
-export interface UpdateAllResult {
-  updated: string[];
-  failed: { name: string; message: string }[];
-}
-
-/**
- * Run `dreamcontext update` across several projects, ONE AT A TIME.
- *
- * Sequential on purpose: each update spawns a CLI process that writes skills and
- * agents into a project, and firing ten of those at once turns a slow machine
- * into a stalled one. A project that fails does not abort the rest — the caller
- * gets the full picture and can retry just the stragglers.
- *
- * `onProgress` fires after each project so the button can count up instead of
- * sitting on a spinner for a minute.
- */
-export function useUpdateAllProjects() {
-  const queryClient = useQueryClient();
-  return useMutation<UpdateAllResult, Error, { names: string[]; onProgress?: (done: number) => void }>({
-    mutationFn: async ({ names, onProgress }) => {
-      const result: UpdateAllResult = { updated: [], failed: [] };
-      for (const name of names) {
-        try {
-          await api.post<{ ok: true; status: VaultStatus }>('/launcher/update', { name });
-          result.updated.push(name);
-        } catch (err) {
-          result.failed.push({ name, message: err instanceof Error ? err.message : String(err) });
-        }
-        onProgress?.(result.updated.length + result.failed.length);
-      }
-      return result;
-    },
-    onSettled: () => {
       invalidateLauncher(queryClient);
     },
   });

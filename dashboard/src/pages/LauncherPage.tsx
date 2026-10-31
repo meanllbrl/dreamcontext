@@ -5,7 +5,6 @@ import {
   useUpdateProject,
   useUnregisterVault,
   useTouchVault,
-  useUpdateAllProjects,
   type VaultStatus,
 } from '../hooks/useLauncher';
 import { useTeamUpdates, useTeamFetch } from '../hooks/useBrainStatus';
@@ -51,8 +50,7 @@ const TEAM_FETCH_INITIAL_DELAY_MS = 3000;
 /**
  * `embedded`: Space as a layer of the new shell's Project Relations page (lib/uxMode.ts). The window's own
  * bar and panel already carry what the launcher bar does (projects, New project, the Assistant
- * and Global agents), so the bar is not drawn; only `Update all` stays, when there is something
- * to update. `startAddProject` opens straight on Add Project.
+ * and Global agents), so the bar is not drawn. `startAddProject` opens straight on Add Project.
  */
 export function LauncherPage({ embedded }: { embedded?: { startAddProject?: boolean } } = {}) {
   // The new shell's embedded Space opens projects in its own window (lib/uxMode.ts).
@@ -61,7 +59,6 @@ export function LauncherPage({ embedded }: { embedded?: { startAddProject?: bool
   const updateProject = useUpdateProject();
   const unregister = useUnregisterVault();
   const touch = useTouchVault();
-  const updateAll = useUpdateAllProjects();
   const [search, setSearch] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   const { t } = useI18n();
@@ -81,8 +78,6 @@ export function LauncherPage({ embedded }: { embedded?: { startAddProject?: bool
    */
   const [storedView, setView] = useState<LauncherView | null>(readLauncherViewLocal);
   const view: LauncherView | null = embedded ? 'space' : storedView;
-  /** How many projects `Update all` has got through, for the button's counter. */
-  const [updateAllDone, setUpdateAllDone] = useState(0);
   /** One hidden file input + the right-click menu that opens it — see VaultLogo.tsx.
    *  The setter deliberately has NO visible button: right-click the card. */
   const logoPicker = useVaultLogoPicker(setActionError);
@@ -195,29 +190,6 @@ export function LauncherPage({ embedded }: { embedded?: { startAddProject?: bool
   }
 
   /** Every project the running CLI could bring forward right now. */
-  const stale = useMemo(() => vaults.filter((v) => v.exists && v.needsUpdate), [vaults]);
-
-  function handleUpdateAll() {
-    if (stale.length === 0) return;
-    setActionError(null);
-    setUpdateAllDone(0);
-    updateAll.mutate(
-      { names: stale.map((v) => v.name), onProgress: setUpdateAllDone },
-      {
-        onSuccess: (result) => {
-          // Partial failure is the interesting case: say exactly which projects
-          // are still behind instead of a silent "done".
-          if (result.failed.length > 0) {
-            setActionError(
-              `Updated ${result.updated.length} of ${stale.length}. Failed: ` +
-                result.failed.map((f) => `${f.name} (${f.message})`).join(', '),
-            );
-          }
-        },
-        onError: (err) => setActionError(err instanceof Error ? err.message : String(err)),
-      },
-    );
-  }
 
   function pickView(v: LauncherView) {
     setView(v);
@@ -237,23 +209,7 @@ export function LauncherPage({ embedded }: { embedded?: { startAddProject?: bool
       // Embedded in the new shell's frame, a press inside the page never drags the window.
       onMouseDown={embedded ? undefined : startTitleBarDrag}
     >
-      {embedded ? (
-        stale.length > 0 && (
-          <div className="launcher-embedded-actions" data-no-drag>
-            <button
-              type="button"
-              className="launcher-btn launcher-btn-update"
-              disabled={updateAll.isPending}
-              title={`Run dreamcontext update in: ${stale.map((v) => v.name).join(', ')}`}
-              onClick={handleUpdateAll}
-            >
-              {updateAll.isPending
-                ? `Updating ${updateAllDone}/${stale.length}…`
-                : `Update all (${stale.length})`}
-            </button>
-          </div>
-        )
-      ) : (
+      {embedded ? null : (
       <header
         className="launcher-bar"
         onDoubleClick={(e) => void toggleMaximizeWindow(e.target)}
@@ -283,19 +239,6 @@ export function LauncherPage({ embedded }: { embedded?: { startAddProject?: bool
             onChange={(e) => setSearch(e.target.value)}
             aria-label="Search projects"
           />
-          {stale.length > 0 && (
-            <button
-              type="button"
-              className="launcher-btn launcher-btn-update"
-              disabled={updateAll.isPending}
-              title={`Run dreamcontext update in: ${stale.map((v) => v.name).join(', ')}`}
-              onClick={handleUpdateAll}
-            >
-              {updateAll.isPending
-                ? `Updating ${updateAllDone}/${stale.length}…`
-                : `Update all (${stale.length})`}
-            </button>
-          )}
           <button
             type="button"
             className="launcher-btn"
@@ -395,9 +338,10 @@ export function LauncherPage({ embedded }: { embedded?: { startAddProject?: bool
                   {!vault.exists && (
                     <div className="launcher-card-warn">Folder no longer exists on disk.</div>
                   )}
-                  {vault.exists && vault.needsUpdate && (
+                  {vault.exists && vault.autoUpdate && (
                     <div className="launcher-card-warn launcher-card-warn--stale">
-                      Skills out of date — v{vault.setupVersion} → v{vault.latestVersion}.
+                      {vault.autoUpdate.state === 'deferred' ? 'Update waiting: ' : 'Update did not finish: '}
+                      {vault.autoUpdate.reason}
                     </div>
                   )}
 
@@ -417,7 +361,7 @@ export function LauncherPage({ embedded }: { embedded?: { startAddProject?: bool
                         Open →
                       </button>
                     )}
-                    {vault.exists && vault.needsUpdate && (
+                    {vault.exists && vault.autoUpdate?.state === 'failed' && (
                       <button
                         type="button"
                         className="launcher-btn launcher-btn-update"
@@ -426,7 +370,7 @@ export function LauncherPage({ embedded }: { embedded?: { startAddProject?: bool
                       >
                         {updateProject.isPending && updateProject.variables === vault.name
                           ? 'Updating…'
-                          : 'Update'}
+                          : 'Retry update'}
                       </button>
                     )}
                     <button

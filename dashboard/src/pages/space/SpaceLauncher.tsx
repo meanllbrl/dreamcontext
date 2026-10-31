@@ -407,7 +407,9 @@ export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherPro
       out.push({
         key: 'version',
         glyph: '↻',
-        text: `Skills on v${v.setupVersion} — the CLI installs v${v.latestVersion}`,
+        text: v.autoUpdate
+          ? `${v.autoUpdate.state === 'deferred' ? 'Update waiting' : 'Update did not finish'}: ${v.autoUpdate.reason}`
+          : `Updating skills v${v.setupVersion} → v${v.latestVersion}`,
       });
     } else {
       out.push({ key: 'version', glyph: '✓', text: `Up to date · v${v.setupVersion}` });
@@ -766,7 +768,6 @@ export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherPro
                     <span className="space-chip-dot" aria-hidden="true" />
                     <VaultLogo name={v.name} hasLogo={v.logo} stamp={v.logoStamp} size={16} className="space-chip-logo" />
                     <span className="space-chip-name">{v.name}</span>
-                    {v.needsUpdate && <span className="space-chip-flag">update</span>}
                   </button>
                 ) : (
                   <div
@@ -815,7 +816,7 @@ export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherPro
                           Open project ↗
                         </button>
                       )}
-                      {v.exists && v.needsUpdate && (
+                      {v.exists && v.autoUpdate?.state === 'failed' && (
                         <button
                           type="button"
                           className="space-btn space-btn--update"
@@ -824,7 +825,7 @@ export function SpaceLauncher({ query, onAddProject, onError }: SpaceLauncherPro
                         >
                           {updateProject.isPending && updateProject.variables === v.name
                             ? 'Updating…'
-                            : `Update to v${v.latestVersion}`}
+                            : 'Retry update'}
                         </button>
                       )}
                       <button

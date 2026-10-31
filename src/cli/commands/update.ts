@@ -234,6 +234,15 @@ export function registerUpdateCommand(program: Command): void {
           return;
         }
 
+        // No catalog means no packs are detected, and the prune below would then read every
+        // installed pack as retired and delete it. A package mid-replacement or a partial one
+        // is a refusal, never a refresh.
+        if (!opts.coreOnly && !loadCatalog()) {
+          error('The pack catalog could not be read, so nothing was changed. Try again, or reinstall dreamcontext.');
+          process.exitCode = 1;
+          return;
+        }
+
         info(`Detected platforms: ${chalk.dim(platforms.join(', '))}`);
 
         // Read or bootstrap old manifest BEFORE running install.

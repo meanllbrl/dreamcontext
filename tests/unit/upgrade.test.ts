@@ -340,3 +340,61 @@ describe('runUpgrade — inside the desktop app', () => {
     expect(order).toEqual(['cli', 'alpha']);
   });
 });
+
+describe('runUpgrade project fan-out and the catch-up lock', () => {
+  it('leaves projects to the run that holds the lock, with no spawn', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { acquireProjectUpdatesLock } = await import('../../src/lib/project-catch-up.js');
+    const home = mkdtempSync(join(tmpdir(), 'upgrade-lock-'));
+    vi.stubEnv('HOME', home);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      expect(acquireProjectUpdatesLock(home)).toBe(true);
+      await runUpgrade(false, {
+        installer: () => {},
+        yes: true,
+        appInstalledCheck: () => false,
+        notifierState: () => ({ supported: false, bundlePresent: false, scriptCurrent: true }) as never,
+        // A folder that does not exist: reaching the default updater would log a Refreshing line.
+        vaultLister: () => [{ name: 'alpha', path: join(home, 'alpha') }],
+      });
+      const out = log.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(out).toContain('updating projects right now');
+      expect(out).not.toContain('Refreshing');
+    } finally {
+      log.mockRestore();
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves a project mid-merge alone and still does the others', async () => {
+    const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const home = mkdtempSync(join(tmpdir(), 'upgrade-wait-'));
+    vi.stubEnv('HOME', home);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    mkdirSync(join(home, 'busy', '.git'), { recursive: true });
+    writeFileSync(join(home, 'busy', '.git', 'MERGE_HEAD'), 'x');
+    mkdirSync(join(home, 'free'));
+    const updated: string[] = [];
+    try {
+      await runUpgrade(false, {
+        installer: () => {},
+        yes: true,
+        appInstalledCheck: () => false,
+        notifierState: () => ({ supported: false, bundlePresent: false, scriptCurrent: true }) as never,
+        vaultLister: () => [{ name: 'busy', path: join(home, 'busy') }, { name: 'free', path: join(home, 'free') }],
+        projectUpdater: (v) => { updated.push(v.name); return { vault: v, ok: true }; },
+      });
+      expect(updated).toEqual(['free']);
+    } finally {
+      log.mockRestore();
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
