@@ -57,9 +57,13 @@ export const STAGE = {
   MAX_COLS: 2,
   /** `present`: the centre's left column. */
   PRESENT_FRAC: 0.34,
-  /** The rail's one-line job card, the gap between two, and the stage width under which a
-   *  presentation is tight enough to use it. */
-  MINI_RAIL_W: 124,
+  /** The rail's one-line job card (a status dot in a ~44 px strip, owner 2026-10-31: "save width,
+   *  not height"), the gap between two, and the stage width under which a presentation is tight
+   *  enough to use it. */
+  MINI_RAIL_W: 44,
+  /** What the one-line rail took before it became a strip: the cards keep laying out against it,
+   *  so the strip's saving goes to the chat and the presented cards do not shrink. */
+  MINI_RAIL_W_WIDE: 124,
   MINI_RAIL_H: 40,
   MINI_RAIL_GAP: 8,
   MINI_RAIL_STAGE: 1560,
@@ -226,6 +230,8 @@ export interface StagePlan {
   /** Beside a page or a presentation: the live jobs the one rail column cannot hold, in a
    *  temporary tile at its foot (its cards are drawn 'others' at its rect, never in `others`). */
   more?: { rect: Rect; ids: string[] };
+  /** The one-line rail while it holds more jobs than fit: a window of `visible` from `start`. */
+  rail?: { rect: Rect; start: number; visible: number; total: number };
 }
 
 /** A side's orbit: x = x0 + dir * depth * (1 - ((y - cy) / ymax)^2), through tile centres. */
@@ -327,6 +333,8 @@ export interface PlanOptions {
   selected?: string | null;
   /** A filmstrip's first slot shown, while it holds more than fit (window state; clamped). */
   stripStart?: number;
+  /** The one-line rail's first job shown, while it holds more than fit (window state; clamped). */
+  railStart?: number;
   /** A Super question for the owner is open: a chat folded to its bar is drawn as the mini. */
   asking?: boolean;
   /** How many layouts the switcher offers (the window knows the cards' kinds); absent = those
@@ -1082,7 +1090,7 @@ function planWith(
     return {
       width: f.width, height: f.height, narrow, mode, centre, cards, others,
       othersRect: f.othersRect, othersZone: f.othersZone, agendaPill: f.agendaPill, pill: opts.agendaPill ?? null, ...bands(f, centre, !!opts.agendaPill, extra.controls), free: f.free,
-      centreWidth, unit, order: list.map((c) => c.id), orbit, layout: null, chat: 'column', ...(more ? { more } : {}), ...extra,
+      centreWidth, unit, order: list.map((c) => c.id), orbit, layout: null, chat: 'column', ...(more ? { more } : {}), ...(railPlan ? { rail: railPlan } : {}), ...extra,
     };
   };
   const place = (id: string, rect: Rect, where: CardWhere) => {
@@ -1097,6 +1105,7 @@ function planWith(
   let more: StagePlan['more'];
   /** What the one-line rail saved over the tiles; the presentation hands it to the chat. */
   let railSaved = 0;
+  let railPlan: StagePlan['rail'];
   const besideRail = (picked: readonly string[], presenting = false): Rect => {
     const rail = narrow ? [] : list.filter((c) => c.live && c.kind === 'chat' && c.place === 'float' && !picked.includes(c.id));
     const { TILE: T, GAP, BAND } = STAGE;
@@ -1106,20 +1115,16 @@ function planWith(
     if (presenting && opts.miniRail && rail.length && f.width < STAGE.MINI_RAIL_STAGE && !(ownerSized && tilesFit)) {
       const { MINI_RAIL_W: W, MINI_RAIL_H: H, MINI_RAIL_GAP: G } = STAGE;
       const fits = Math.max(0, Math.floor((f.content.height + G) / (H + G)));
-      // Past what the column holds, the rest wait in the "more" tile at its foot, on the stage.
-      const shown = fits >= rail.length ? rail : rail.slice(0, Math.max(0, fits - 1));
-      const rest = rail.slice(shown.length);
-      const rows = shown.length + (rest.length ? 1 : 0);
-      let y = f.content.y + (f.content.height - rows * H - (rows - 1) * G) / 2;
-      for (const c of shown) {
-        cards[c.id] = { id: c.id, rect: { x: f.content.x, y, width: W, height: H }, where: 'float', shape: 'square', size: 'small', owner: false, z: z.get(c.id) ?? 0, mini: true };
-        y += H + G;
-      }
-      if (rest.length) {
-        const rect: Rect = { x: f.content.x, y, width: W, height: H };
-        more = { rect, ids: rest.map((c) => c.id) };
-        for (const c of rest) cards[c.id] = { id: c.id, rect, where: 'others', shape: c.shape, owner: false, z: z.get(c.id) ?? 0 };
-      }
+      // Past what the column holds the strip scrolls (owner 2026-10-31): none falls to Others.
+      const visible = Math.max(1, Math.min(rail.length, fits));
+      const start = Math.min(Math.max(0, Math.round(opts.railStart ?? 0)), rail.length - visible);
+      const top = f.content.y + (f.content.height - visible * H - (visible - 1) * G) / 2;
+      rail.forEach((c, i) => {
+        const k = i - start;
+        const hidden = k < 0 || k >= visible;
+        cards[c.id] = { id: c.id, rect: { x: f.content.x, y: top + Math.min(Math.max(k, 0), visible - 1) * (H + G), width: W, height: H }, where: 'float', shape: 'square', size: 'small', owner: false, z: z.get(c.id) ?? 0, mini: true, ...(hidden ? { hidden: true } : {}) };
+      });
+      railPlan = { rect: { x: f.content.x, y: top, width: W, height: visible * H + (visible - 1) * G }, start, visible, total: rail.length };
       railSaved = T - W;
       return { ...f.content, x: f.content.x + W + GAP, width: f.content.width - W - GAP };
     }
@@ -1267,7 +1272,8 @@ function planWith(
     const chat: ChatDraw = view.chat === 'bar' && !opts.asking ? 'bar' : 'mini';
     const plainMiniW = Math.min(STAGE.MINI_MAX_W, Math.max(STAGE.MINI_MIN_W, STAGE.MINI_FRAC_W * f.width));
     // With a one-line rail the chat reads at its comfortable width, and the cards keep their floor.
-    const miniW = railSaved ? Math.max(plainMiniW + railSaved, Math.min(STAGE.PRESENT_MIN, c.width - STAGE.GAP - STAGE.REGION_MIN)) : plainMiniW;
+    const gain = railSaved ? STAGE.MINI_RAIL_W_WIDE - STAGE.MINI_RAIL_W : 0;
+    const miniW = railSaved ? Math.max(plainMiniW + railSaved, Math.min(STAGE.PRESENT_MIN, c.width - STAGE.GAP - STAGE.REGION_MIN - gain) + gain) : plainMiniW;
     // The chat takes the whole left column (owner 2026-10-25): a short mini left an unused gap above it.
     const miniH = c.height;
     const centre: Rect = chat === 'bar'

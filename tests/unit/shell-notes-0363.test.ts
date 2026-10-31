@@ -246,11 +246,21 @@ describe('note 10: a tight presentation draws its live jobs on one line', () => 
       expect(Math.min(p.cards.p1.rect.width, p.cards.p2.rect.width), String(width)).toBeGreaterThanOrEqual(STAGE.FIT_MIN.w - 1e-6);
     }
   });
-  it('past what the column holds, the rest wait in the more tile, on the stage', () => {
+  it('the strip is about 44 px wide, and past what the column holds it scrolls, nothing falls to Others', () => {
+    expect(STAGE.MINI_RAIL_W).toBe(44);
     const many = Array.from({ length: 12 }, (_, i) => card(`j${i}`));
-    const p = planStage([...many, pic('p1'), pic('p2')] as never, view('filmstrip'), { width: 1075, height: 400 }, { miniRail: true });
+    const cs = [...many, pic('p1'), pic('p2')] as never;
+    const p = planStage(cs, view('filmstrip'), { width: 1075, height: 400 }, { miniRail: true });
     expect(p.others.filter((id) => id.startsWith('j'))).toEqual([]);
-    expect(p.more?.ids.length).toBeGreaterThan(0);
+    expect(p.more).toBeUndefined();
+    expect(p.rail!.total).toBe(12);
+    expect(p.rail!.visible).toBeLessThan(12);
+    const shown = (q: typeof p) => many.filter((c) => !q.cards[c.id].hidden).map((c) => c.id);
+    expect(shown(p)).toHaveLength(p.rail!.visible);
+    const q = planStage(cs, view('filmstrip'), { width: 1075, height: 400 }, { miniRail: true, railStart: 99 });
+    expect(q.rail!.start).toBe(12 - q.rail!.visible);
+    expect(q.cards.j11.hidden).toBeUndefined();
+    expect(q.cards.j0.hidden).toBe(true);
   });
 
   it('a roomy stage keeps the tiles, as does the classic shell', () => {
@@ -333,5 +343,12 @@ describe('review: the hidden tab is out of every action', () => {
     writeFileSync(join(r, 'state', '.super-agent.json'), JSON.stringify({ v: 1, session: null, enabled: false, containers: [], groups: [], view: { mode: 'float' }, children, queue: [], notes: {}, away: { since: null, events: 0 }, dismissed: [], pool: [], ownerBatches: [], team: [] }));
     const st = await readSuperState(r);
     expect(Object.keys(st.children).length + (st.formerChildren ?? []).length).toBe(40);
+  });
+});
+
+describe('note 10: the strip dot of a job that asks the owner is red', () => {
+  it('reads the Super queue question, not only the session status', () => {
+    const src = readFileSync(join(__dirname, '../../dashboard/src/components/sleepy/super/SuperContainer.tsx'), 'utf-8');
+    expect(src).toMatch(/super-mini-job"[^>]*data-kind=\{p\.asksOwner \? 'asking' : p\.status\?\.kind\}/);
   });
 });
