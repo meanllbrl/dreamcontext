@@ -87,7 +87,11 @@ describe('Eco on a bridge pane', () => {
     const { transcript, recordedThread, prompt, turnStartParams } = rotationTranscript(project, banner);
 
     const env = { DREAMCONTEXT_TAB_SESSION: PANE };
-    const eco = ecoJoins(project, env);
+    // Codex has written both threads down (as it does with each thread's first turn).
+    const codexHome = join(home, '.codex');
+    mkdirSync(join(codexHome, 'sessions', '2026', '10', '30'), { recursive: true });
+    for (const id of [OLD_THREAD, recordedThread]) writeFileSync(join(codexHome, 'sessions', '2026', '10', '30', `rollout-2026-10-30T00-00-00-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: project } }) + '\n');
+    const eco = ecoJoins(project, env, { codexHome });
     const input = new PassThrough();
     const out: Record<string, unknown>[] = [];
     let buf = '';

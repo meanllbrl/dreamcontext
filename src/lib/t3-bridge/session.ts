@@ -459,6 +459,7 @@ export class BridgeSession {
     this.opts.emit({
       type: 'result', subtype: 'success', is_error: false, result: '', num_turns: 0, duration_ms: 0,
       total_cost_usd: 0, usage: { input_tokens: 0, output_tokens: 0 }, session_id: this.wire.sessionId, dc_tool: this.opts.tool,
+      dc_synthetic: true,
     });
     return this.wire.sessionId;
   }

@@ -79,6 +79,9 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   /** App context owed to the next turn (a handoff banner, an Eco nudge). */
   const pending: AppContext[] = [];
   const owe = (ctx: AppContext[] | void): void => { if (ctx) pending.push(...ctx); };
+  /** Local answers (an `/effort` sent mid-turn) owed AFTER the running turn's result: the server
+   *  counts a turn per result, so answering early would close the running turn on its books. */
+  const heldAnswers: WireFrame[] = [];
   /** Codex died: stop reading stdin so the bridge exits (non-zero) and the pane shows it ended. */
   let endInput: (() => void) | null = null;
   let fatal = false;
@@ -106,7 +109,10 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       },
       emit: (frame) => {
         emit(frame);
-        if (frame.type === 'result') owe(deps.onResult?.(session, frame));
+        // A synthetic result (the /clear or /effort answer) is not a turn Codex ran: it records nothing.
+        if (frame.type === 'result' && !frame.dc_synthetic) owe(deps.onResult?.(session, frame));
+        // A local answer held behind a running turn goes out after that turn's own result.
+        if (frame.type === 'result' && !frame.dc_synthetic && heldAnswers.length) for (const f of heldAnswers.splice(0)) emit(f);
       },
     });
   } catch (err) {
@@ -139,8 +145,12 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       const effort = /^\/effort\s+([a-z]{1,16})\s*$/.exec(text.trim());
       if (effort) {
         session.setEffort(effort[1]!);
-        emit({ type: 'assistant', message: { role: 'assistant', model: args.model, content: [{ type: 'text', text: `Set effort level to ${effort[1]}` }] }, parent_tool_use_id: null, session_id: session.nativeThreadId });
-        emit({ type: 'result', subtype: 'success', is_error: false, result: '', num_turns: 0, total_cost_usd: 0, usage: {}, session_id: session.nativeThreadId, dc_tool: args.tool });
+        const answer: WireFrame[] = [
+          { type: 'assistant', message: { role: 'assistant', model: args.model, content: [{ type: 'text', text: `Set effort level to ${effort[1]}` }] }, parent_tool_use_id: null, session_id: session.nativeThreadId },
+          { type: 'result', subtype: 'success', is_error: false, result: '', num_turns: 0, total_cost_usd: 0, usage: {}, session_id: session.nativeThreadId, dc_tool: args.tool, dc_synthetic: true },
+        ];
+        if (session.busy) heldAnswers.push(...answer);
+        else for (const f of answer) emit(f);
         return;
       }
       if (text.trim() === '/clear') {

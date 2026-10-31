@@ -125,7 +125,8 @@ describe('a Codex pane on the server\'s real turn counter', () => {
       account: '', initialPrompt: '', deferPrompt: false, tool: 'codex', reattachFallback: true,
     });
     const reattached = metas(next).find((m) => m.includes('"reattached"'));
-    if (reattached) expect(reattached).toContain('"busy":false');
+    expect(reattached).toBeTruthy();
+    expect(reattached).toContain('"busy":false');
   });
 
   it('a rotation counted by the server reaches done on the frames the bridge prints', () => {

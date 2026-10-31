@@ -1883,8 +1883,8 @@ export function startChatSession(
   else if (!accountAutoPlaced && activeAccountId) notePane(handPickedAccounts, pinId, activeAccountId);
   // A bridge pane always holds its pane id (its tool's thread is found through the tab map, so
   // there is no Claude transcript to pin): `--session-id` is a Claude flag the bridge never reads.
-  // When the pane's map names a thread this open cannot take (still held by a child shutting down,
-  // or no longer resolvable), it REFUSES below like a Claude resume, rather than starting a fresh
+  // When the pane's map names a thread this open cannot take (not this project's, or no longer
+  // resolvable), it REFUSES below like a Claude resume, rather than starting a fresh
   // thread whose record would overwrite the map and lose the conversation for good.
   const bridgeMapped = !!bridgeTool && !!mappedId && mappedId !== resumeId && isCodexThreadId(mappedId);
   const freshPin = bridgeTool
