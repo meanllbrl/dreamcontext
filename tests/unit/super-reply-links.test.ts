@@ -384,7 +384,7 @@ describe('section heads', () => {
   });
 
   it('the speech highlight never walks into a head; Copy copies the text, never a head', () => {
-    const ROOT = new URL('../../', import.meta.url).pathname;
+    const ROOT = fileURLToPath(new URL('../../', import.meta.url));
     const speech = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/chat/useSpokenHighlight.ts'), 'utf-8');
     expect(speech).toMatch(/closest\('\[data-reply-head\]'\) \? NodeFilter\.FILTER_REJECT/);
     const item = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/chat/TranscriptItem.tsx'), 'utf-8');

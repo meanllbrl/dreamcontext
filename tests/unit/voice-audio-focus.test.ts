@@ -32,7 +32,12 @@ function reply(match: RegExp, result: Partial<OsaResult>): void {
   answers.push({ match, result });
 }
 
+const realPlatform = process.platform;
+
 beforeEach(() => {
+  // canControlAudio is darwin-only by design, and every script here goes to the fake runner below,
+  // so the ledger's logic runs the same on the Linux CI job.
+  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
   home = mkdtempSync(join(tmpdir(), 'dc-focus-'));
   mkdirSync(dirname(voiceConfigPath(home)), { recursive: true });
   scripts = [];
@@ -47,6 +52,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
   resetAudioFocus();
   setOsaRunner(null, null);
   rmSync(home, { recursive: true, force: true });

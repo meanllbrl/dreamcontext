@@ -19,6 +19,11 @@ import { join } from 'node:path';
 scrubSpawnEnv(process.env);
 process.env.DREAMCONTEXT_SERVER_PID = String(process.pid);
 
+// 2b. An agent running the suite inside the desktop app inherits DREAMCONTEXT_DESKTOP=1, and the
+//     owner-only routes open for it. CI has no such variable, so those tests passed on the Mac and
+//     went red on Linux. A test that needs the desktop sets it itself.
+delete process.env.DREAMCONTEXT_DESKTOP;
+
 // 3. `super delegate` holds a job when THIS machine is short of room (orchestration plan r5 D11).
 //    The suite must not pass or fail by the developer's swap: every test sees a roomy machine
 //    unless it sets its own facts (`setCapacityFactsForTests`), or injects readers.

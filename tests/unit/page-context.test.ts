@@ -13,6 +13,7 @@
  * Fictional names throughout.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
+import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as server from '../../src/lib/super/types.js';
@@ -23,7 +24,7 @@ import {
 } from '../../dashboard/src/components/sleepy/chat/composerScratch.js';
 import { pageBlockOf, pageChipName, pageKeyOf, publishPage, publishPageDetail, readPageContext } from '../../dashboard/src/lib/pageContext.js';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const read = (f: string) => readFileSync(join(ROOT, f), 'utf-8');
 
 describe('the page block', () => {

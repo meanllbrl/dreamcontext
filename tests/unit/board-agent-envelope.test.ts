@@ -47,6 +47,14 @@ import { serializeWhiteboard } from '../../src/lib/whiteboards/format.js';
 import type { WhiteboardElement } from '../../src/lib/whiteboards/widgets.js';
 import type { AutomationManifest } from '../../src/lib/automations/types.js';
 
+// The spawn takes the direct path when a `claude` is installed; a CI runner has none, and the
+// `$SHELL -ilc` fallback would put its own words at the head of the argv these tests read.
+vi.mock('../../src/lib/claude-path.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/lib/claude-path.js')>()),
+  findClaudeBin: () => '/fake/bin/claude',
+}));
+
+
 let projectRoot: string;
 let contextRoot: string;
 let home: string;

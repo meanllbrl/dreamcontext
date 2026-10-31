@@ -7,6 +7,7 @@
  * aimed at its own message (task super-in-tek-cevabi…, AC9).
  */
 import { describe, it, expect } from 'vitest';
+import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseTranscriptHistory } from '../../src/lib/transcript-history.js';
@@ -16,7 +17,7 @@ import { splitReplyMark } from '../../dashboard/src/lib/replyMark.js';
 import { replyGroups } from '../../dashboard/src/components/sleepy/chat/replyLinks.js';
 import { splitAbout } from '../../dashboard/src/components/sleepy/super/superHandover.js';
 
-const RAW = readFileSync(join(new URL('../fixtures/super-reply-sections/', import.meta.url).pathname, 'transcript.jsonl'), 'utf-8');
+const RAW = readFileSync(join(fileURLToPath(new URL('../fixtures/super-reply-sections/', import.meta.url)), 'transcript.jsonl'), 'utf-8');
 
 /** The replay path of a Super view (chatSession's toChatItem): marks out, refs and sections in. */
 function replay(): ChatItem[] {

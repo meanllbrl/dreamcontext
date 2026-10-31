@@ -200,9 +200,9 @@ describe('propose is guarded by the run\'s ancestry', () => {
   it('REAL processes: a descendant in its own process group is admitted by the default probes; an outsider is not', async () => {
     // No mocks — a pgid mock is what hid the bug. The run child is a
     // detached shell (its own group, like the runner's spawn); with job control
-    // on, its background job gets a FRESH group, the shape Claude Code's Bash
+    // on, its background job gets a FRESH group (bash: dash, Ubuntu's sh, keeps it in the shell's), the shape Claude Code's Bash
     // tool gives every command. That job is the caller.
-    const run = spawn('/bin/sh', ['-c', 'set -m; sleep 30 & echo $!; wait'], {
+    const run = spawn('/bin/bash', ['-c', 'set -m; sleep 30 & echo $!; wait'], {
       detached: true,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
