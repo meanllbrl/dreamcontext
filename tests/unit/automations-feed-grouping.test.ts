@@ -703,3 +703,15 @@ describe('buildFeed — the window is 14 CALENDAR days', () => {
     expect(feed.messages[0].question?.text).toBe('Which one?');
   });
 });
+
+describe('buildFeed — an old run revived today stays', () => {
+  it('keeps a month-old run that got a fresh entry inside the window', () => {
+    createAutomation(contextRoot, { slug: 'rv', title: 'Rv', days: 'daily', at: '18:00', prompt: 'go' });
+    const old = '2026-09-29T09:00:00.000Z';
+    appendThreadEntry(contextRoot, 'rv', { runId: old, kind: 'system', event: 'started', text: 's', via: 'runner', now: new Date(old) });
+    const fresh = new Date('2026-10-31T09:00:00.000Z');
+    appendThreadEntry(contextRoot, 'rv', { runId: old, kind: 'agent', text: 'result', via: 'runner', now: fresh });
+    const feed = buildFeed(contextRoot, { now: new Date('2026-10-31T10:00:00.000Z'), home });
+    expect(feed.messages).toHaveLength(1);
+  });
+});
