@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useServerHealth } from '../../hooks/useServerHealth';
 import { useI18n } from '../../context/I18nContext';
+import { SelectionBar } from '../sleepy/chat/SelectionBar';
 import { useSidebarCollapse } from '../../hooks/useSidebarCollapse';
 import { useTheme } from '../../context/ThemeContext';
 import { setChipActiveProbe } from '../../lib/attention';
@@ -1211,6 +1212,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   if (newShell) {
     return (
       <ChromeContext.Provider value={chrome}>
+        <SelectionBar />
         <ChromeSlotsProvider value={chromeSlots}>
         <div className="window-chrome" data-shell="new">
           <div className="window-chrome-banners" ref={bannersRef}>
@@ -1308,6 +1310,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
 
   return (
     <ChromeContext.Provider value={chrome}>
+      <SelectionBar />
       <ChromeSlotsProvider value={chromeSlots}>
       <div className="window-chrome" data-remote={remote ? 'true' : undefined} data-touch={touch ? 'true' : undefined}>
         <div className="window-chrome-banners" ref={bannersRef}>

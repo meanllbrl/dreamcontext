@@ -143,6 +143,7 @@ import {
   SUPER_CHILD_VERBS, windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
   linkOpensSuperStage, presenceChatId, leanMcpFor, agendaAboutBlock, agendaRefName, type AgendaRow,
   freshPending, superDockLift, superDockOn, superDockPill, superSlotFor,
+  cardSelectionBlock, selectionQuote,
 } from './super/superHandover';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
 import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperPad, postSuperRecap, remoteSkippedTitles } from './super/superApi';
@@ -4185,6 +4186,17 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     }
   }, [vault]);
 
+  /** Comment on words selected on a card (owner 2026-10-31): a chip at the caret, like ↩'s. */
+  const commentOnCard = useCallback((id: string, text: string) => {
+    const cs = superChatRef.current;
+    if (!cs || cs.status === 'closed') return;
+    const convId = cs.scratchId || cs.claudeId;
+    const block = cardSelectionBlock(id, text);
+    if (!convId || !block) return;
+    insertRef(convId, { id: nextAttachmentId(), kind: 'about', name: `${t('super.ref.card')} ${selectionQuote(text)}`, text: block });
+    requestAnimationFrame(() => cs.focus());
+  }, [t]);
+
   /**
    * "Write about this" on an agenda line (owner 2026-10-23): the line drops into the Super
    * Agent's composer as a chip AT THE CARET (owner 2026-10-24: a second press ADDS one; the same
@@ -6053,6 +6065,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             onStageReady={onStageReady}
             onAskAbout={askAboutCard}
             onPickElement={pickElementFromCard}
+            onCommentCardText={commentOnCard}
             onWriteAbout={writeAboutRow}
             onEndChild={endChildFromCard}
             onKeepChild={keepChildRunning}

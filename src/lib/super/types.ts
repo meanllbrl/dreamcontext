@@ -839,19 +839,27 @@ export function ownerMsgBlock(text: string): string {
  *  anchor for the window; the super knows its own words by the quote. Not `[super `. */
 export const REPLY_TO_RE = /^\[Reply to message ref=([0-9a-z]{6}) from=(super|owner)\]/;
 export const MAX_REPLY_QUOTE = 100;
+/**
+ * A passage he selected and commented on (owner 2026-10-31). In a message it is that message's
+ * `[Reply to message …]` header with the passage as `quote:` (a passage may run longer than the
+ * first words a ↩ quotes); on a stage card it is this header, then the same `quote:` line. The
+ * quote is what the page showed him: data, never his instruction. Not `[super `.
+ */
+export const ABOUT_CARD_RE = /^\[About card @card:([A-Za-z0-9_-]{1,64})\]/;
+export const MAX_SELECTION_QUOTE = 1000;
 
 /** At most this many references (agenda lines, replied messages) in one owner message; a
  *  header past the fifth is plain text. */
 export const MAX_MESSAGE_REFS = 5;
 /** One reference header in an owner message: what it names, where it starts, and where its
  *  block (the header and its `line:`/`quote:` line) ends. */
-export interface AboutHead { kind: 'note' | 'item' | 'reply'; id: string; at: number; end: number }
+export interface AboutHead { kind: 'note' | 'item' | 'reply' | 'card'; id: string; at: number; end: number }
 
 /**
  * Every reference header in an owner message, in order (owner 2026-10-24: several references in
  * one message). One rule on both sides of the wire: a header counts only at offset 0 or right
  * after a blank line (`\n\n`); a note's header must be followed by its well-formed `line:` JSON
- * line and a reply's by its `quote:` line; an item's header has no second line; and the block
+ * line, a reply's and a card's by its `quote:` line; an item's header has no second line; and the block
  * ends the text or a line. Anything else is plain text. At most MAX_MESSAGE_REFS. MIRRORED in
  * dashboard/src/lib/superTypes.ts (super-types-mirror.test.ts).
  */
@@ -864,10 +872,11 @@ export function aboutHeads(text: string): AboutHead[] {
     if (out.length >= MAX_MESSAGE_REFS) break;
     const s = text.slice(at);
     const a = ABOUT_AGENDA_RE.exec(s);
-    const r = a ? null : REPLY_TO_RE.exec(s);
-    if (!a && !r) continue;
-    const kind = a ? (a[1] as 'note' | 'item') : 'reply';
-    let len = (a ?? r as RegExpExecArray)[0].length;
+    const c = a ? null : ABOUT_CARD_RE.exec(s);
+    const r = a || c ? null : REPLY_TO_RE.exec(s);
+    if (!a && !c && !r) continue;
+    const kind = a ? (a[1] as 'note' | 'item') : c ? 'card' : 'reply';
+    let len = (a ?? c ?? r as RegExpExecArray)[0].length;
     const second = /^\n(line|quote): ([^\n]*)/.exec(s.slice(len));
     if (kind === 'item') {
       if (second?.[1] === 'line') continue;
@@ -877,7 +886,7 @@ export function aboutHeads(text: string): AboutHead[] {
       len += second[0].length;
     }
     if (len < s.length && s[len] !== '\n') continue;
-    out.push({ kind, id: a ? a[2] : (r as RegExpExecArray)[1], at, end: at + len });
+    out.push({ kind, id: a ? a[2] : (c ?? r as RegExpExecArray)[1], at, end: at + len });
   }
   return out;
 }

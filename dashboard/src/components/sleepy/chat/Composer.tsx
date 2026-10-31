@@ -844,7 +844,7 @@ export function Composer({
   const [fieldFocused, setFieldFocused] = useState(false);
   /** The chip flashing (the same target pressed again, a pasted copy of one): its attachment id. */
   const [flashing, setFlashing] = useState<string | null>(null);
-  const refLabelWords = { question: t('super.agenda.aboutAQuestion'), super: t('super.ref.super'), own: t('super.ref.own') };
+  const refLabelWords = { question: t('super.agenda.aboutAQuestion'), super: t('super.ref.super'), own: t('super.ref.own'), card: t('super.ref.card') };
 
   /**
    * A chip's widest share of its field (plan criterion 8): a label is clipped further until its

@@ -17,6 +17,7 @@ import {
   buildStandaloneHtml, exportFilename, titleFromHtml, rasterize,
   copyBlobAsImage, printStandalone, measureStandalone,
 } from './htmlExport';
+import { useFrameSelection } from './SelectionBar';
 import './HtmlView.css';
 
 /**
@@ -100,7 +101,9 @@ const HEIGHT_RETRIES = 16;
  * inline the CONTENT does (via the bridge), fullscreen the OVERLAY does (the frame fills it,
  * and the document scrolls inside).
  */
-function HtmlFrame({ html, overrideCss, mode, title, reading, frameRefOut }: {
+function HtmlFrame({ html, overrideCss, mode, title, reading, frameRefOut, onCommented }: {
+  /** Comment took a selection here: full screen closes, so the composer can be seen. */
+  onCommented?: () => void;
   html: string;
   overrideCss?: string;
   mode: 'card' | 'full';
@@ -156,6 +159,8 @@ function HtmlFrame({ html, overrideCss, mode, title, reading, frameRefOut }: {
    * the theme changes is a worse lie than briefly holding the last true height.
    */
   const height = measured?.html === html ? measured.height : null;
+
+  useFrameSelection(frameRef, onCommented);
 
   // useLayoutEffect, NOT useEffect — this is the defect at the heart of this file. Passive
   // effects are flushed after paint, and under a busy main thread (a streaming turn is
@@ -446,7 +451,7 @@ function HtmlFullscreen({ html, overrideCss, onClose, reading, source }: {
       )}
     >
       <div className="chat-htmlview-full">
-        <HtmlFrame html={html} overrideCss={overrideCss} mode="full" title="Presentation"
+        <HtmlFrame html={html} overrideCss={overrideCss} mode="full" onCommented={onClose} title="Presentation"
           reading={reading} frameRefOut={fullFrame} />
       </div>
     </FullscreenOverlay>,

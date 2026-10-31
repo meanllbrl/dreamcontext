@@ -1,6 +1,7 @@
 import { memo, useMemo, useRef, useState } from 'react';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
+import { SelectionItemContext } from './SelectionBar';
 import { agentFileUrl, type ApiClient } from '../../../api/client';
 import { useApi, useVault } from '../../../context/VaultContext';
 import {
@@ -162,6 +163,7 @@ function UserMessage({
             onJump={onReplyJump ? () => onReplyJump(about.ref, about.from, item.id) : undefined}
           />
         )
+        : about?.kind === 'card' ? <ReplyStrip label={t('super.reply.toCard')} quotes={[about.quote]} />
         : about && <AgendaAboutStrip about={about} superSid={session && (session.mode === 'super' || session.superMirror) ? session.claudeId : null} />}
       {page && <PageStrip label={t('super.page.label')} text={pageChipName(page, (p) => (p in PAGE_LABEL_KEY ? t(PAGE_LABEL_KEY[p as Page]) : p))} />}
       {media.length > 0 && (
@@ -500,6 +502,7 @@ function AssistantMessage({
   }
 
   return (
+    <SelectionItemContext.Provider value={item.id}>
     <div className="chat-msg-assistant-row" data-done={item.done} data-item-id={item.id} data-reply-grp={replyGroup} tabIndex={-1}>
       {/* WRITTEN ORDER. Prose runs and blocks are siblings in the row's own flex column, so
           a card sits between the paragraph that introduces it and the one that says what to
@@ -563,6 +566,7 @@ function AssistantMessage({
         />
       )}
     </div>
+    </SelectionItemContext.Provider>
   );
 }
 

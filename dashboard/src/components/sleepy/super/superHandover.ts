@@ -15,7 +15,7 @@
  * React-free and DOM-free: imports only the window's mirror of the server types.
  */
 import {
-  ABOUT_AGENDA_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
+  ABOUT_AGENDA_RE, ABOUT_CARD_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
 } from '../../../lib/superTypes';
 
 // ─── Who is the Super Agent ────────────────────────────────────────────────────
@@ -704,8 +704,10 @@ export function splitAgendaAbout(text: string): { about: AgendaAbout | null; tex
 /** A message replying to one earlier message (its ↩): whose it was, its reference (a scroll
  *  anchor) and the quote as he saw it. */
 export interface ReplyAbout { kind: 'reply'; ref: string; from: 'super' | 'owner'; quote: string }
-/** What a sent message is about: an agenda line, or a message it replies to. */
-export type MessageAbout = AgendaAbout | ReplyAbout;
+/** A passage he selected on a stage card and commented on: the card and the passage. */
+export interface CardAbout { kind: 'card'; id: string; quote: string }
+/** What a sent message is about: an agenda line, a message it replies to, a passage of a card. */
+export type MessageAbout = AgendaAbout | ReplyAbout | CardAbout;
 
 /** A reply's quote: one line, no control characters, at most MAX_REPLY_QUOTE characters. */
 function replyQuote(text: string): string {
@@ -722,6 +724,30 @@ function replyQuote(text: string): string {
  */
 export function replyAboutBlock(refText: string, from: 'super' | 'owner', quoteText: string = refText): string {
   return `[Reply to message ref=${msgRef(refText)} from=${from}]\nquote: ${JSON.stringify(replyQuote(quoteText))}`;
+}
+
+/**
+ * A selected passage as a `quote:` value: one line (a line break could otherwise start a forged
+ * header), no control or format characters (bidi overrides, the chip token's digits), at most
+ * MAX_SELECTION_QUOTE characters. '' when nothing is left.
+ */
+export function selectionQuote(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  const flat = String(text ?? '').replace(/[\u0000-\u001f\u007f\u2028\u2029\p{Cf}]/gu, ' ').replace(/\s+/g, ' ').trim();
+  const chars = Array.from(flat);
+  return chars.length > MAX_SELECTION_QUOTE ? `${chars.slice(0, MAX_SELECTION_QUOTE - 1).join('').trimEnd()}…` : flat;
+}
+
+/** A reply about one passage of a message: its usual header, the passage as the quote. */
+export function replySelectionBlock(refText: string, from: 'super' | 'owner', selection: string): string {
+  return `[Reply to message ref=${msgRef(refText)} from=${from}]\nquote: ${JSON.stringify(selectionQuote(selection))}`;
+}
+
+/** The block for a passage of a stage card, or null for an id no header can carry. */
+export function cardSelectionBlock(cardId: string, selection: string): string | null {
+  const head = `[About card @card:${cardId}]`;
+  const m = ABOUT_CARD_RE.exec(head);
+  return m && m[0] === head ? `${head}\nquote: ${JSON.stringify(selectionQuote(selection))}` : null;
 }
 
 /** The words the reply chip reads, in the window's language. */
@@ -751,6 +777,24 @@ function splitReplyAbout(text: string): { about: ReplyAbout | null; text: string
   return { about: { kind: 'reply', ref: m[1], from: m[2] as 'super' | 'owner', quote }, text: words.replace(/^\n+/, '') };
 }
 
+function splitCardAbout(text: string): { about: CardAbout | null; text: string } {
+  const none = { about: null, text };
+  const m = ABOUT_CARD_RE.exec(text);
+  if (!m) return none;
+  const rest = text.slice(m[0].length);
+  const head = /^\nquote: ([^\n]*)/.exec(rest);
+  if (!head) return none;
+  let quote: string;
+  try {
+    const parsed: unknown = JSON.parse(head[1]);
+    if (typeof parsed !== 'string') return none;
+    quote = parsed;
+  } catch { return none; }
+  const words = rest.slice(head[0].length);
+  if (words !== '' && !words.startsWith('\n')) return none;
+  return { about: { kind: 'card', id: m[1], quote }, text: words.replace(/^\n+/, '') };
+}
+
 /**
  * A sent message split into what it is about (an agenda line or the message it replies to) and
  * the owner's own words. Same rule as `splitAgendaAbout`: only at offset 0, malformed = null and
@@ -761,7 +805,9 @@ export function splitAbout(text: string): { about: MessageAbout | null; text: st
   if (typeof text !== 'string') return { about: null, text: '' };
   if (aboutHeads(text).length >= 2) return { about: null, text };
   const agenda = splitAgendaAbout(text);
-  return agenda.about ? agenda : splitReplyAbout(text);
+  if (agenda.about) return agenda;
+  const card = splitCardAbout(text);
+  return card.about ? card : splitReplyAbout(text);
 }
 
 /** One part of a message with several references: what it is about and his words after it
