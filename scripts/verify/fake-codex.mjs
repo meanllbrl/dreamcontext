@@ -26,6 +26,18 @@ if (!DIR) { process.stderr.write('fake-codex: FAKE_CODEX_FIXTURES is not set\n')
 if (process.argv[2] !== 'app-server') { process.stdout.write('codex-cli 0.164.0\n'); process.exit(0); }
 // Which home this app-server runs with (a non-#0 account runs with its own; Track T W2).
 log(`app-server CODEX_HOME=${process.env.CODEX_HOME ?? ''}`);
+// The `-c` overrides the bridge launched us with (W3): which keys, and whether the developer
+// instructions ever carry brain content (they must not). Values are not logged.
+{
+  const cfg = [];
+  for (let i = 3; i < process.argv.length; i++) if (process.argv[i - 1] === '-c') cfg.push(process.argv[i]);
+  const dev = cfg.find((c) => c.startsWith('developer_instructions=')) ?? '';
+  log(`config keys=${cfg.map((c) => c.split('=')[0]).join(',')} devHasBrain=${/Agent Context|BRAIN-MARKER/.test(dev)} context_by=${process.env.DREAMCONTEXT_CONTEXT_BY ?? ''}`);
+  const mcp = cfg.find((c) => c.startsWith('mcp_servers.dreamcontext.args=')) ?? '';
+  if (mcp) log(`mcp args=${mcp.slice('mcp_servers.dreamcontext.args='.length)}`);
+  const mcpEnv = cfg.find((c) => c.startsWith('mcp_servers.dreamcontext.env=')) ?? '';
+  if (mcpEnv) log(`mcp env=${mcpEnv.slice('mcp_servers.dreamcontext.env='.length)}`);
+}
 
 const load = (scenario) => readFileSync(join(DIR, scenario, 'codex_transcript.ndjson'), 'utf-8')
   .trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.type !== 'transcript_start');
@@ -60,9 +72,21 @@ function record(payload) {
   if (!thread) return;
   const p = rolloutPath();
   if (!existsSync(p)) appendFileSync(p, JSON.stringify({ timestamp: new Date().toISOString(), type: 'session_meta', payload: { id: thread, cwd } }) + '\n');
-  if (payload) appendFileSync(p, JSON.stringify({ timestamp: new Date().toISOString(), type: 'response_item', payload }) + '\n');
+  if (!payload) return;
+  // A usage record is its own rollout line type, as in a real rollout.
+  const line = payload.type === 'token_usage_record'
+    ? { timestamp: new Date().toISOString(), type: 'token_usage_record', payload: { thread_id: thread, response_id: payload.response_id, usage: payload.usage } }
+    : { timestamp: new Date().toISOString(), type: 'response_item', payload };
+  appendFileSync(p, JSON.stringify(line) + '\n');
 }
 let pending = null; // { entries, pos } waiting at an expect_outbound
+/** BRAIN turns: the reply quotes what arrived as app context (W3), instead of the fixture text. */
+let override = '';
+let overrideSent = false;
+/** Like real Codex: injected context and the owner's text are tagged by kind in the rollout. */
+function recordUser(kind, text) {
+  record({ type: 'message', role: 'user', content: [{ type: 'input_text', text }], internal_chat_message_metadata_passthrough: { content_item_kinds: [kind] } });
+}
 /** Client answers that arrived before the transcript reached the point that waits for them. */
 let earlyAnswers = 0;
 const out = (frame) => { process.stdout.write(JSON.stringify(frame) + '\n'); log(`→ ${frame.method ?? `response ${frame.id}`}`); };
@@ -98,6 +122,17 @@ async function pump(entries, pos, from, scenario) {
     let frame = rehome(e.frame, from);
     // Responses to requests already answered (or never sent by this client) are not replayed.
     if (frame.id !== undefined && !frame.method) continue;
+    // A BRAIN turn: the first text delta carries the whole override, later ones are dropped.
+    if (override && scenario === 'simple' && frame.method === 'item/agentMessage/delta') {
+      if (overrideSent) continue;
+      overrideSent = true;
+      frame = { ...frame, params: { ...frame.params, delta: override } };
+    }
+    if (override && scenario === 'simple' && frame.method === 'item/completed' && frame.params?.item?.type === 'agentMessage') {
+      frame = { ...frame, params: { ...frame.params, item: { ...frame.params.item, text: override } } };
+      override = '';
+      overrideSent = false;
+    }
     if (wantTitle && scenario === 'simple' && frame.method === 'item/completed' && frame.params?.item?.type === 'agentMessage') {
       out({ method: 'item/agentMessage/delta', params: { threadId: thread, turnId: frame.params.turnId, itemId: frame.params.item.id, delta: TITLE } });
       frame = { ...frame, params: { ...frame.params, item: { ...frame.params.item, text: frame.params.item.text + TITLE } } };
@@ -141,7 +176,16 @@ async function onRequest(msg) {
       turnSeq += 1;
       const scenario = SCENARIOS.find(([re]) => re.test(text))?.[1] ?? 'simple';
       log(`turn/start "${text.slice(0, 60)}" → ${scenario}`);
-      record({ type: 'message', role: 'user', content: [{ type: 'input_text', text }] });
+      // App context (W3): which entries, of which kind, and their sizes; never their text.
+      const extra = msg.params?.additionalContext ?? {};
+      log(`turn/start additionalContext ${Object.entries(extra).map(([k, v]) => `${k}:${v?.kind}:${String(v?.value ?? '').length}`).join(',') || 'none'}`);
+      for (const [k, v] of Object.entries(extra)) recordUser(`additional_content.${k}`, `<external_${k}>${v?.value ?? ''}</external_${k}>`);
+      if (/\bBRAIN\b/.test(text)) {
+        const pick = (key) => String(extra[key]?.value ?? '').split('\n').find((l) => /checkout/i.test(l))?.trim() ?? '(nothing)';
+        override = `From the brain: ${pick('dreamcontext-brain')} · Recall: ${pick('dreamcontext-prompt')}`;
+      }
+      recordUser(wantTitle ? 'user.text' : 'user.text', text);
+      record({ type: 'token_usage_record', usage: { input_tokens: 4000, cached_input_tokens: 1000, output_tokens: 120 }, response_id: `resp_${turnSeq}` });
       const entries = scenario === 'simple' ? SIMPLE : load(scenario);
       const at = entries.findIndex((e) => e.type === 'expect_outbound' && e.label === 'turn/start');
       const reply = entries.slice(at).find((e) => e.type === 'emit_inbound' && e.frame.id !== undefined && !e.frame.method && e.frame.result?.turn);

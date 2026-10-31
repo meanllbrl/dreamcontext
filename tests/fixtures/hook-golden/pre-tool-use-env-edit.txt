@@ -1,0 +1,5 @@
+exit=0
+--- stdout ---
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Blocked: _dream_context/marketing/.env holds Meta access tokens. Agents must never write this file directly — initial setup is `mk init`, and rotation is a manual user action outside an agent session. If you need to verify config, run `dreamcontext mk config check`."}}
+
+--- stderr ---

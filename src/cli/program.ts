@@ -53,6 +53,8 @@ import { registerWhiteboardCommand } from './commands/whiteboard.js';
 import { registerNotifyCommand } from './commands/notify.js';
 import { registerHandsfreeCommand } from './commands/handsfree.js';
 import { registerT3ChatCommand } from './commands/t3-chat.js';
+import { registerMcpServeCommand } from './commands/mcp-serve.js';
+import { registerInstallToolCommand } from './commands/install-tool.js';
 
 /**
  * The command TREE, with no entrypoint attached.
@@ -194,6 +196,8 @@ export function createProgram(): Command {
   registerNotifyCommand(program);
   registerHandsfreeCommand(program);
   registerT3ChatCommand(program);
+  registerMcpServeCommand(program);
+  registerInstallToolCommand(program);
 
   return program;
 }

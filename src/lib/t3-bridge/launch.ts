@@ -6,7 +6,8 @@
  * T3's `tokenizeCliArgs`), so no vendored file changes. Brain content and per-turn recall never go
  * here: they ride as untrusted `appContext` (plan §4a, W3).
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 /** Quote one argument for T3's `tokenizeCliArgs` (POSIX single quotes; `'` as `'\''`). */
 export function quoteLaunchToken(token: string): string {
@@ -32,6 +33,25 @@ export function codexLaunchArgs(o: { briefingFile?: string }): string {
     let text = '';
     try { text = readFileSync(o.briefingFile, 'utf-8'); } catch { /* an unreadable briefing degrades to none */ }
     if (text.trim()) args.push(codexConfigArg('developer_instructions', tomlString(text.slice(0, MAX_DEVELOPER_INSTRUCTIONS))));
+  }
+  return args.join(' ');
+}
+
+/**
+ * The brain MCP server for this session (`dreamcontext mcp serve`, brain-mcp/server.ts), as Codex
+ * `mcp_servers.dreamcontext` overrides on the same `-c` route. Its env carries only the pane's tab
+ * id (Codex starts MCP servers with a filtered environment), so `tasks handoff` keys the Eco record
+ * by this pane. Nothing when the project has no brain or a path cannot be told.
+ */
+export function codexBrainMcpArgs(o: { node: string; cli: string; root: string; tabSession?: string }): string {
+  if (!o.node || !o.cli || !o.root || !existsSync(join(o.root, '_dream_context'))) return '';
+  const arr = (xs: string[]): string => `[${xs.map(tomlString).join(', ')}]`;
+  const args = [
+    codexConfigArg('mcp_servers.dreamcontext.command', tomlString(o.node)),
+    codexConfigArg('mcp_servers.dreamcontext.args', arr([o.cli, 'mcp', 'serve', '--root', o.root])),
+  ];
+  if (o.tabSession && /^[A-Za-z0-9._:-]{1,128}$/.test(o.tabSession)) {
+    args.push(codexConfigArg('mcp_servers.dreamcontext.env', `{ DREAMCONTEXT_TAB_SESSION = ${tomlString(o.tabSession)} }`));
   }
   return args.join(' ');
 }

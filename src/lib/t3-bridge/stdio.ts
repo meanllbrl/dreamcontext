@@ -14,10 +14,11 @@ import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BridgeSession, type BridgeSessionOptions } from './session.js';
-import { claudeLaunchArgs, codexLaunchArgs, scrubbedCodexEnv } from './launch.js';
+import { claudeLaunchArgs, codexBrainMcpArgs, codexLaunchArgs, scrubbedCodexEnv } from './launch.js';
 import { codexInstanceSettings, isCodexAccountId } from './accounts.js';
 import { HIDDEN_TITLE_PROMPT, TabTitler, titleBlock, titleIn } from './tab-title.js';
 import type { WireFrame } from './to-wire.js';
+import type { BrainContext } from './context.js';
 
 export type AppContext = { key: string; text: string };
 
@@ -57,6 +58,9 @@ export interface StdioDeps {
   readonly tabWantsTitle?: () => boolean;
   /** Called on every `result` (Eco measurement). What it returns rides the next turn. */
   readonly onResult?: (session: BridgeSession, frame: WireFrame) => AppContext[] | void;
+  /** The brain (context.ts): the snapshot at session start and after `/clear`, the prompt hook on
+   *  every owner turn. Absent = no brain (tests, the T3 Claude engine). */
+  readonly brain?: Pick<BrainContext, 'session' | 'prompt' | 'drain'>;
 }
 
 const userText = (frame: Record<string, unknown>): string => {
@@ -110,7 +114,12 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   const account = args.tool === 'codex' && args.account && isCodexAccountId(args.account) ? codexInstanceSettings(home, args.account) : null;
   const launchArgs = args.tool === 'claude'
     ? claudeLaunchArgs({ briefingFile: args.briefingFile })
-    : [account?.launchArgs ?? '', codexLaunchArgs({ briefingFile: args.briefingFile })].filter(Boolean).join(' ');
+    : [
+      account?.launchArgs ?? '',
+      codexLaunchArgs({ briefingFile: args.briefingFile }),
+      // The brain's write path (§4a): only with a brain, i.e. when the chat gets its context.
+      deps.brain ? codexBrainMcpArgs({ node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', root: args.cwd, tabSession: deps.env.DREAMCONTEXT_TAB_SESSION }) : '',
+    ].filter(Boolean).join(' ');
   try {
     session = await BridgeSession.open({
       tool: args.tool,
@@ -125,7 +134,9 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       ...(account ? { codexHome: { homePath: account.homePath, shadowHomePath: account.shadowHomePath } } : {}),
       // The account's live windows, for the server's switch and the Settings bars (never a secret).
       onUsageLimits: (u) => emit({ type: 'system', subtype: 'dc_usage', dc_tool: args.tool, windows: u.windows, checked_at: u.checkedAt }),
-      env: { ...scrubbedCodexEnv(deps.env), TMPDIR: privateTmp },
+      // DREAMCONTEXT_CONTEXT_BY: the bridge injects the brain, so a project's opt-in `.codex/hooks.json`
+      // stays quiet in this session (its `.env` gate still runs; hook.ts beginCodexHookFormat).
+      env: { ...scrubbedCodexEnv(deps.env), TMPDIR: privateTmp, ...(deps.brain ? { DREAMCONTEXT_CONTEXT_BY: 'bridge' } : {}) },
       stateRoot: join(home, '.dreamcontext', 't3'),
       extraRoots: args.extraRoots ?? [],
       privateTmp,
@@ -162,8 +173,11 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       : { type: 'control_response', response: { subtype: 'success', request_id: requestId, response: {} } });
   };
 
-  // One frame at a time: a steer must not race the turn it steers.
-  let chain: Promise<void> = Promise.resolve();
+  // One frame at a time: a steer must not race the turn it steers. The snapshot is read first,
+  // so the first turn already carries it.
+  let chain: Promise<void> = deps.brain
+    ? deps.brain.session(args.resume ? 'resume' : 'startup', session.nativeThreadId).catch(() => undefined)
+    : Promise.resolve();
   const handle = async (frame: Record<string, unknown>): Promise<void> => {
     trace('in ', frame);
     // The owner came back while a hidden turn runs: it gives way, nothing they send waits on it.
@@ -187,9 +201,13 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       if (text.trim() === '/clear') {
         const id = await session.newThread();
         owe(deps.onRotated?.(id));
+        // A fresh thread starts with a fresh snapshot, as SessionStart(source=clear) gives Claude.
+        await deps.brain?.session('clear', id).catch(() => undefined);
         return;
       }
-      await session.send(text, session.busy ? [] : [...titler.nudge(), ...pending.splice(0)]);
+      // A steer joins the running turn as Claude's mid-turn message does: no hook, no context.
+      const brain = session.busy || !deps.brain ? [] : await deps.brain.prompt(text, session.nativeThreadId).catch(() => []);
+      await session.send(text, session.busy ? [] : [...titler.nudge(), ...pending.splice(0), ...brain]);
       return;
     }
     if (frame.type === 'control_response') {
@@ -253,6 +271,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   });
   await chain.catch(() => undefined);
   if (deps.handleSignals) { process.off('SIGTERM', onSignal); process.off('SIGINT', onSignal); }
+  await deps.brain?.drain().catch(() => undefined);
   await session.close();
   rmSync(privateTmp, { recursive: true, force: true });
   return fatal ? 1 : 0;

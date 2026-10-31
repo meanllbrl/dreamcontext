@@ -288,6 +288,60 @@ function removeRetiredReadTaskGuard(projectRoot: string): void {
  * installer wrote (`npx dreamcontext hook <name>`) IN PLACE to {@link hookCommand}: matching on
  * the new string alone would add a second handler beside the old one and run every event twice.
  */
+/** The command Codex runs for one hook event: the same CLI hook, printed in Codex's shape. */
+export function codexHookCommand(event: string): string {
+  return `command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook ${event} --format codex || exec npx dreamcontext hook ${event} --format codex`;
+}
+
+/**
+ * Codex's hook events → our handlers, for `.codex/hooks.json` (Claude-compatible shape). No
+ * PostToolUse: the formatter/type-check hook is Claude's (Codex runs its own tooling). Inside a
+ * desktop Codex chat these stay quiet except pre-tool-use (DREAMCONTEXT_CONTEXT_BY, hook.ts).
+ */
+export const CODEX_HOOK_SPECS: readonly { event: string; name: string; timeout: number; matcher?: string }[] = [
+  { event: 'SessionStart', name: 'session-start', timeout: 10, matcher: 'startup|resume|compact|clear' },
+  { event: 'UserPromptSubmit', name: 'user-prompt-submit', timeout: 120 },
+  { event: 'PreToolUse', name: 'pre-tool-use', timeout: 5 },
+  { event: 'PreCompact', name: 'pre-compact', timeout: 5 },
+  { event: 'SubagentStart', name: 'subagent-start', timeout: 5 },
+  { event: 'Stop', name: 'stop', timeout: 45 },
+];
+
+const isOurCodexHook = (cmd: unknown): boolean => typeof cmd === 'string' && /dreamcontext hook [a-z-]+ --format codex/.test(cmd);
+
+/**
+ * Write or refresh our entries in `<project>/.codex/hooks.json`; idempotent. Every entry that is
+ * not ours (another tool's, the owner's) is kept as it is; ours are recognised by their command.
+ */
+export function ensureCodexHooks(projectRoot: string): { file: string; changed: boolean } {
+  const file = join(projectRoot, '.codex', 'hooks.json');
+  let doc: { hooks?: Record<string, Array<{ matcher?: string; hooks?: Array<{ type?: string; command?: string; timeout?: number }> }>> } & Record<string, unknown> = {};
+  const before = existsSync(file) ? readFileSync(file, 'utf-8') : '';
+  if (before.trim()) {
+    try { doc = JSON.parse(before); } catch { throw new Error(`${file} is not valid JSON; fix or move it, then run this again (nothing was written).`); }
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) throw new Error(`${file} is not a JSON object; nothing was written.`);
+  }
+  const hooks: Record<string, Array<{ matcher?: string; hooks?: Array<{ type?: string; command?: string; timeout?: number }> }>> = doc.hooks && typeof doc.hooks === 'object' ? doc.hooks : {};
+  // Drop our previous entries (a group left empty by that goes too), then add the current set.
+  for (const event of Object.keys(hooks)) {
+    const groups = Array.isArray(hooks[event]) ? hooks[event]! : [];
+    hooks[event] = groups
+      .map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h) => !isOurCodexHook(h.command)) }))
+      .filter((g) => (g.hooks ?? []).length > 0);
+    if (hooks[event]!.length === 0) delete hooks[event];
+  }
+  for (const spec of CODEX_HOOK_SPECS) {
+    const group = { ...(spec.matcher ? { matcher: spec.matcher } : {}), hooks: [{ type: 'command', command: codexHookCommand(spec.name), timeout: spec.timeout }] };
+    (hooks[spec.event] ??= []).push(group);
+  }
+  doc.hooks = hooks;
+  const after = JSON.stringify(doc, null, 2) + '\n';
+  if (after === before) return { file, changed: false };
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, after, 'utf-8');
+  return { file, changed: true };
+}
+
 export function ensureClaudeHooks(projectRoot: string): { added: string[]; updated: string[]; migrated: boolean } {
   const settingsPath = join(projectRoot, '.claude', 'settings.json');
   const result = { added: [] as string[], updated: [] as string[], migrated: false };

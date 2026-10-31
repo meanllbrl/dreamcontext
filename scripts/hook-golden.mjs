@@ -7,7 +7,8 @@
  * Builds a scratch HOME and a synthetic vault (fictional project, fixed content), feeds each
  * Claude hook a fixed payload, and writes what it printed to <out-dir>/<hook>.txt, with the few
  * values that change per run (scratch paths, today's date, clock times) normalized. Track T must
- * leave this output byte-identical: the golden files were produced by the 0.36.2 base CLI.
+ * leave this output byte-identical: the golden files are produced by the base CLI of the wave
+ * (W3: the 0.36.6 merge, before any W3 change).
  */
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -43,13 +44,16 @@ const env = { ...process.env, HOME, DREAMCONTEXT_TAB_SESSION: TAB, DREAMCONTEXT_
 delete env.DREAMCONTEXT_CHAT_TAB;
 delete env.CLAUDE_CODE_SESSION_ID;
 
-const runs = {
-  'session-start': { source: 'startup', session_id: SESSION, transcript_path: transcript },
-  'user-prompt-submit': { prompt: 'how does the checkout work', session_id: SESSION, transcript_path: transcript },
-  'post-tool-use': { tool_name: 'Edit', tool_input: { file_path: join(PROJ, 'src', 'cart.ts') }, session_id: SESSION, transcript_path: transcript },
-  'pre-tool-use': { tool_name: 'Read', tool_input: { file_path: join(ctx, 'marketing', '.env') }, session_id: SESSION, transcript_path: transcript },
-  'pre-compact': { trigger: 'auto', session_id: SESSION, transcript_path: transcript },
-};
+// [output file, hook, payload]. Track T W3 added the `.env` deny and the Stop hook.
+const runs = [
+  ['session-start', 'session-start', { source: 'startup', session_id: SESSION, transcript_path: transcript }],
+  ['user-prompt-submit', 'user-prompt-submit', { prompt: 'how does the checkout work', session_id: SESSION, transcript_path: transcript }],
+  ['post-tool-use', 'post-tool-use', { tool_name: 'Edit', tool_input: { file_path: join(PROJ, 'src', 'cart.ts') }, session_id: SESSION, transcript_path: transcript }],
+  ['pre-tool-use', 'pre-tool-use', { tool_name: 'Read', tool_input: { file_path: join(ctx, 'marketing', '.env') }, session_id: SESSION, transcript_path: transcript }],
+  ['pre-tool-use-env-edit', 'pre-tool-use', { tool_name: 'Edit', tool_input: { file_path: join(ctx, 'marketing', '.env') }, session_id: SESSION, transcript_path: transcript }],
+  ['pre-compact', 'pre-compact', { trigger: 'auto', session_id: SESSION, transcript_path: transcript }],
+  ['stop', 'stop', { session_id: SESSION, transcript_path: transcript, last_assistant_message: 'ok', stop_hook_active: false }],
+];
 
 const normalize = (s) => s
   .split(root).join('<ROOT>')
@@ -58,8 +62,8 @@ const normalize = (s) => s
   .replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, '<TIME>');
 
 mkdirSync(outDir, { recursive: true });
-for (const [hook, payload] of Object.entries(runs)) {
+for (const [file, hook, payload] of runs) {
   const r = spawnSync(process.execPath, [cli, 'hook', hook], { cwd: PROJ, env, input: JSON.stringify(payload), encoding: 'utf-8', timeout: 60_000 });
-  writeFileSync(join(outDir, `${hook}.txt`), normalize(`exit=${r.status}\n--- stdout ---\n${r.stdout ?? ''}\n--- stderr ---\n${r.stderr ?? ''}`));
+  writeFileSync(join(outDir, `${file}.txt`), normalize(`exit=${r.status}\n--- stdout ---\n${r.stdout ?? ''}\n--- stderr ---\n${r.stderr ?? ''}`));
 }
 rmSync(root, { recursive: true, force: true });

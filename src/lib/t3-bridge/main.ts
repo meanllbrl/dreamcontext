@@ -6,6 +6,8 @@
 import { join } from 'node:path';
 import { tabWantsAgentTitle } from '../chat-tab-title-nudge.js';
 import { ecoJoins } from './eco.js';
+import { BrainContext } from './context.js';
+import { findCodexRollout } from './codex-threads.js';
 import { codexCachedModels, codexDefaultModel } from './registry.js';
 import { runBridgeStdio } from './stdio.js';
 import type { ClaudeKit } from './claude-kit.js';
@@ -28,6 +30,9 @@ export { runT3Account } from './account-cli.js';
 
 export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Promise<number> {
   const eco = ecoJoins(o.cwd, process.env, { tool: o.tool });
+  // The brain reaches Codex through our own hooks (context.ts). The T3 Claude engine (closed,
+  // T3_CLAUDE_ENGINE_OPEN) would get it from Claude's own settings, so it gets none here.
+  const brain = o.tool === 'codex' ? new BrainContext({ cwd: o.cwd, env: process.env }) : null;
   return runBridgeStdio(
     {
       tool: o.tool,
@@ -51,7 +56,12 @@ export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Pr
       tabWantsTitle: () => process.env.DREAMCONTEXT_CHAT_TAB === '1' && tabWantsAgentTitle(process.env, join(o.cwd, '_dream_context')),
       onReady: (id) => eco.onReady(id),
       onRotated: (id) => eco.onRotated(id),
-      onResult: (session) => eco.onResult(session.nativeThreadId, session.wire.contextTokens),
+      onResult: (session, frame) => {
+        // Sleep sees the turn: the Stop hook records it, the rollout as its transcript.
+        brain?.turnEnded(session.nativeThreadId, findCodexRollout(session.nativeThreadId), typeof frame.result === 'string' ? frame.result : '');
+        return eco.onResult(session.nativeThreadId, session.wire.contextTokens);
+      },
+      ...(brain ? { brain } : {}),
     },
   );
 }

@@ -37,7 +37,7 @@ import { resolveLinkedRepos } from '../../lib/linked-repos.js';
 import { buildAutomationsSnapshot } from '../../lib/automations/snapshot.js';
 import { RECALL_GUIDANCE, TASK_CREATE_GUIDANCE, BRIEFING_RECOVERY_NOTE } from '../../lib/agent-guidance.js';
 import {
-  applyBudget, resolveBudget, resolveSubagentBriefingBudget, SUBAGENT_BRIEFING_MAX_CHARS,
+  applyBudget, resolveBudget, resolveBudgetForTool, resolveSubagentBriefingBudget, SUBAGENT_BRIEFING_MAX_CHARS,
   demoteMemoryBlock, demoteTaskList,
   renderOverBudgetBanner, HARNESS_PERSIST_CHAR_LIMIT,
   type BudgetSection, type BudgetRung, type BudgetResult,
@@ -2355,7 +2355,8 @@ export function measureSnapshot(
   // Final assembly through the token budget (see snapshot-budget.ts). The
   // demotion ladder only engages when the full render exceeds the budget;
   // under budget the output is byte-identical to the legacy format.
-  const budget = resolveBudget(process.env.DREAMCONTEXT_SNAPSHOT_BUDGET);
+  // A bridge tool's hook (`hook … --format codex`) sets DREAMCONTEXT_HOOK_TOOL; Claude never does.
+  const budget = resolveBudgetForTool(process.env.DREAMCONTEXT_SNAPSHOT_BUDGET, process.env.DREAMCONTEXT_HOOK_TOOL);
   const result = applyBudget(sections, budget);
   let text = result.text.trim();
 
