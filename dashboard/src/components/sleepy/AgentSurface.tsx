@@ -1247,6 +1247,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     if (hydratedRef.current || !(caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView)) || !settingsReady) return;
     let cancelled = false;
     (async () => {
+      let rosterUnread = false;
       try {
         const res = await scopedApi.get<SavedSurface>('/agent/sessions');
         if (!cancelled) rosterGenRef.current = generationOf(res);
@@ -1531,8 +1532,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
           chatWindowsRef.current = seeded;
           setChatWindows(seeded);
         }
-      } catch { /* no saved roster (or non-desktop 403) — just start fresh */ }
-      finally { if (!cancelled) { hydratedRef.current = true; setRosterKnown(true); openOnRestoreRef.current(); } }
+      } catch { /* no saved roster (or non-desktop 403) — just start fresh */ rosterUnread = true; }
+      // An unread roster is no answer: the drawer offers no New Chat over chats it could not see.
+      finally { if (!cancelled) { hydratedRef.current = true; if (!rosterUnread) setRosterKnown(true); openOnRestoreRef.current(); } }
     })();
     return () => { cancelled = true; };
   }, [caps, settingsReady, agentSettings.restoreTabs, agentSettings.chatView, scopedApi, rehydrateNonce, windowed]);

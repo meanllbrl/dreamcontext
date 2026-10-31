@@ -3,7 +3,7 @@ import { NewProjectLandContext, useShellMode } from '../lib/uxMode';
 import { readLayoutPrefs, writeLayoutPrefs } from '../lib/launcherPrefs';
 import { appLinksDrained } from '../lib/appLink';
 import { findWindowForVault } from '../lib/windowRegistry';
-import { isDesktop, openVaultWindow, vaultWindowLabel } from '../lib/desktop';
+import { focusWindow, isDesktop, openVaultWindow, vaultWindowLabel } from '../lib/desktop';
 import { useLauncherStatus, type VaultStatus } from '../hooks/useLauncher';
 import { UpgradeRelaunchBanner } from '../components/layout/UpgradeRelaunchBanner';
 import { ProjectSwitcher } from '../components/search/ProjectSwitcher';
@@ -81,6 +81,9 @@ export function LauncherRoot() {
       <NewProjectLandContext.Provider value={(name, how) => {
         void (async () => {
           // One project, one home: a project another window holds comes forward there.
+          // The registry first: a project held as a chip sits under its window's label, not its own.
+          const holder = findWindowForVault(name);
+          if (holder && await focusWindow(holder)) return;
           if (await heldElsewhere(name)) { await openVaultWindow(name); return; }
           const expanded = readLayoutPrefs().drawerExpanded ?? [];
           if (!expanded.includes(name)) writeLayoutPrefs({ drawerExpanded: [...expanded, name] });

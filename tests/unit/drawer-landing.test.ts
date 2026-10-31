@@ -105,6 +105,12 @@ describe('a project is a job, the first project is the only job', () => {
   it('the Mac step never traps a first run', () => {
     expect(flow).toMatch(/purpose === 'first-run' && stage === 'machine' && !welcoming[\s\S]*setStage\('project'\)/);
   });
+  it('a project another window holds comes forward there, by the window that holds it', () => {
+    expect(src('dashboard/src/pages/LauncherRoot.tsx')).toMatch(/const holder = findWindowForVault\(name\);\s*if \(holder && await focusWindow\(holder\)\) return;/);
+  });
+  it('an unread roster is no answer', () => {
+    expect(src('dashboard/src/components/sleepy/AgentSurface.tsx')).toContain('if (!rosterUnread) setRosterKnown(true)');
+  });
   it('an existing project opens as it is, never on a fresh chat', () => {
     expect(src('dashboard/src/components/layout/newshell/NewProjectFlow.tsx')).toContain("onLand(name, 'existing')");
     expect(src('dashboard/src/components/layout/WindowChrome.tsx')).toContain("how ? { kind: 'open-window' } : { kind: 'new-window' }");
