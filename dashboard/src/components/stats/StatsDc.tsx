@@ -13,6 +13,7 @@ export function answerLine(data: StatsWire, t: T): string {
   const a = data.dc.answer;
   const share = a.worst ? `~${fmtPct(a.worst.estSleepShare * 100)}` : '';
   if (a.verdict === 'none') return t('stats.answer.line.none');
+  if (a.verdict === 'unclear') return t('stats.answer.line.unclear').replace('{n}', String(a.hits));
   if (!a.worst) return t('stats.answer.line.noSleep').replace('{n}', String(a.counted));
   return t(`stats.answer.line.${a.verdict}`).replace('{n}', String(a.counted)).replace('{s}', share);
 }
@@ -28,9 +29,9 @@ function LimitAnswerCard({ data }: { data: StatsWire }) {
       <div className="st-k">{t('stats.answer.q')}</div>
       <div className="st-answer-v">
         <b>{t(`stats.answer.${a.verdict}`)}</b>
-        <span>{t(a.verdict === 'no' && !w ? 'stats.answer.no.noSleep' : `stats.answer.${a.verdict}.why`).replace('{n}', String(a.counted)).replace('{s}', w ? `~${fmtPct(w.estSleepShare * 100)}` : '')}</span>
+        <span>{t(a.verdict === 'no' && !w ? 'stats.answer.no.noSleep' : `stats.answer.${a.verdict}.why`).replace('{n}', String(a.verdict === 'unclear' ? a.hits : a.counted)).replace('{s}', w ? `~${fmtPct(w.estSleepShare * 100)}` : '')}</span>
       </div>
-      {a.doubtful > 0 && <p className="st-sub">{t('stats.answer.doubtful').replace('{n}', String(a.doubtful))}</p>}
+      {a.doubtful > 0 && a.verdict !== 'unclear' && <p className="st-sub">{t('stats.answer.doubtful').replace('{n}', String(a.doubtful))}</p>}
       {a.twoProject > 0 && <p className="st-sub">{t('stats.answer.two').replace('{n}', String(a.twoProject))}</p>}
       {a.windows.length > 0 && (
         <div className="st-tbl st-wins" role="table">

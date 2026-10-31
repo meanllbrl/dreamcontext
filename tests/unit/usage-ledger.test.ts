@@ -311,4 +311,19 @@ describe('usage ledger', () => {
     logHandoff(root, { title: '$(id)', at: at(1), contextTokens: 1, fromSession: 'x', consumedAt: at(1) });
     expect(readFileSync(target, 'utf-8')).toBe('keep');
   });
+
+  it('limits that ran out but no window the logs explain read as unclear, never as none', async () => {
+    const hour = new Date(NOW + 3_600_000).getHours();
+    const text = `You've hit your session limit · resets ${hour % 12 || 12}${hour >= 12 ? 'pm' : 'am'}`;
+    const big = 2 * 24 * 60;
+    const stamp = (min: number, h: number) => JSON.stringify({ type: 'assistant', timestamp: at(min), error: 'rate_limit', message: { id: `h${min}`, model: '<synthetic>', usage: U(0, 0), content: [{ type: 'text', text: `You've hit your session limit · resets ${h % 12 || 12}${h >= 12 ? 'pm' : 'am'}` }] } });
+    write('s1.jsonl', [assistant('b1', 'r1', at(big + 60), U(5_000_000, 5000)), stamp(big, new Date(NOW - big * 60_000 + 3_600_000).getHours())]);
+    write('s2.jsonl', [JSON.stringify({ type: 'assistant', timestamp: at(5), error: 'rate_limit', message: { id: 'h2', model: '<synthetic>', usage: U(0, 0), content: [{ type: 'text', text }] } })]);
+    mkdirSync(join(home, '.claude', 'session-env', 's1'), { recursive: true });
+    mkdirSync(join(home, '.claude', 'session-env', 's2'), { recursive: true });
+    await scan();
+    const a = buildStats({ range: '24h', project: null, off: new Set(), now: NOW }, home).dc.answer;
+    expect(a.hits).toBe(1);
+    expect(a.verdict).toBe('unclear');
+  });
 });

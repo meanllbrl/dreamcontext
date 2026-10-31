@@ -66,7 +66,8 @@ export interface LimitWindow {
 }
 
 export interface LimitAnswer {
-  verdict: 'yes' | 'partly' | 'no' | 'none';
+  /** `unclear`: limits ran out, but the logs explain none of those windows. */
+  verdict: 'yes' | 'partly' | 'no' | 'none' | 'unclear';
   hits: number;
   /** Hits whose window the logs explain: the only ones the verdict and its sentence speak for. */
   counted: number;
@@ -605,7 +606,8 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
   const sleptHits = hitWindows.filter((w) => w.sleepCost > 0 && !w.thin).sort((a, b) => b.estSleepShare - a.estSleepShare);
   const slept = inRange.filter((w) => w.sleepCost > 0).sort((a, b) => b.sleepCost - a.sleepCost);
   const worst = sleptHits[0] ?? null;
-  const verdict: LimitAnswer['verdict'] = hitWindows.every((w) => w.thin) ? 'none'
+  const verdict: LimitAnswer['verdict'] = hitWindows.length === 0 ? 'none'
+    : hitWindows.every((w) => w.thin) ? 'unclear'
     : (sleptHits[0]?.estSleepShare ?? 0) >= 0.5 ? 'yes'
       : (sleptHits[0]?.estSleepShare ?? 0) >= 0.2 ? 'partly' : 'no';
   const answer: LimitAnswer = {
