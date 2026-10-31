@@ -61,7 +61,7 @@ describe('the gate and the slot', () => {
     expect(src).toMatch(/if \(superDockOpen && \(!dockOn \|\| expanded\)\) setSuperDockOpen\(false\);/);
     expect(src).toMatch(/const foreground = new Set\(expanded \? homed : dockOpen && superSid \? \[superSid\] : \[\]\);/);
     expect(src).toMatch(/if \(superSlotFor\(\{ dockOpen, expanded \}\) === 'dock'\) \{/);
-    expect(src).toMatch(/\}, \[panes, expanded, handedOver, superSid, superShownSid, superSlotEpoch, dockOpen, dockSlotEpoch\]\);/);
+    expect(src).toMatch(/\}, \[shownPanes, expanded, handedOver, superSid, superShownSid, superSlotEpoch, dockOpen, dockSlotEpoch\]\);/);
     // homedSessions is unchanged (the dock never changes what is homed, only where).
     expect(read('dashboard/src/components/sleepy/super/superHandover.ts')).toMatch(/if \(!opts\.handedOver\) return new Set\(opts\.paneActives\.filter\(Boolean\)\);\n  return new Set\(\[opts\.superSid, opts\.shownSid\]/);
     // The page chip is ONE effect, cleared by its own cleanup.
@@ -71,7 +71,7 @@ describe('the gate and the slot', () => {
     expect(src).toMatch(/tRef\.current\(PAGE_LABEL_KEY\[p as Page\]\)/);
     // Nothing until the record is known; the old stack only when the dock is off.
     expect(src).toMatch(/\{caps\?\.desktop && agentSettings\.enabled && !expanded && superKnown && \(/);
-    expect(src).toMatch(/\) : dockOn \? null :/);
+    expect(src).toMatch(/\) : windowed \|\| dockOn \? null :/);
   });
 });
 
@@ -195,7 +195,7 @@ describe('the wiring', () => {
     expect(src).toMatch(/queueElsewhere=\{dockOpen\}\s*stageShowChild=\{stageShowChild\}/);
     const surface = read('dashboard/src/components/sleepy/super/SuperSurface.tsx');
     expect(surface).toMatch(/\{!props\.queueElsewhere && <JobBar/);
-    expect(surface).toMatch(/if \(props\.stageShowChild\) props\.stageShowChild\.current = \{ show: showChild, ready: plan\.width > 0 && props\.visible \};/);
+    expect(surface).toMatch(/if \(props\.stageShowChild\) props\.stageShowChild\.current = \{ show: showChild, showCard: actions\.onSideBySide, ready: plan\.width > 0 && props\.visible \};/);
   });
 
   it('Büyüt opens the Chat screen in one click; the band\'s child waits for the stage (1.5 s, the newest click wins)', () => {
@@ -207,7 +207,7 @@ describe('the wiring', () => {
 
   it('a row of the window runs today\'s dock-tile handler', () => {
     expect(src).toMatch(/const openDockRow = \(id: string\) => \{ setExpanded\(true\); if \(minimizedIds\.includes\(id\)\) restoreMinimized\(id\); else focusSession\(id\); \};/);
-    expect(src).toMatch(/const dockAskingRows = dockOn \? dockRows\.filter\(\(r\) => !r\.superChild && r\.info\.kind === 'asking'\) : \[\];/);
+    expect(src).toMatch(/const dockAskingRows = dockOn && !windowed \? dockRows\.filter\(\(r\) => !r\.superChild && r\.info\.kind === 'asking'\) : \[\];/);
   });
 
   it('every new word exists in EN and TR', () => {

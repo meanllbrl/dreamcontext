@@ -1,3 +1,5 @@
+import { TOGGLE_PAGE_DRAWER_EVENT } from '../lib/uxMode';
+import { useInstanceEvent } from '../context/VaultContext';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../context/I18nContext';
 import { useIsNewShell } from '../lib/uxMode';
@@ -136,6 +138,8 @@ export function BrainPage({ onNavigate }: BrainPageProps) {
   const [hoverId, setHoverId] = useState<string | null>(null);
   // Open beside the graph on a laptop; on a phone it would cover the whole graph, so it waits for the gear.
   const [settingsOpen, setSettingsOpen] = useState(() => !readIsMobile());
+  // The new shell's drawer button and ⌘B on this page: its own settings panel.
+  useInstanceEvent(TOGGLE_PAGE_DRAWER_EVENT, () => setSettingsOpen((s) => !s));
   const hasFittedRef = useRef(false);
 
   // Resize observer

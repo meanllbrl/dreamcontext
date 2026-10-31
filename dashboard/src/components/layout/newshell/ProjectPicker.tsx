@@ -19,6 +19,7 @@ interface ProjectPickerProps {
   rows: readonly PickerRow[];
   onPick: (name: string) => void;
   onClose: () => void;
+  onNewProject: () => void;
 }
 
 /**
@@ -26,7 +27,7 @@ interface ProjectPickerProps {
  * "All projects" row. A pick switches the project in THIS window, or brings forward the OS
  * window that already holds it. Arrow keys move, Enter picks, Esc closes.
  */
-export function ProjectPicker({ anchor, rows, onPick, onClose }: ProjectPickerProps) {
+export function ProjectPicker({ anchor, rows, onPick, onClose, onNewProject }: ProjectPickerProps) {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
@@ -102,6 +103,10 @@ export function ProjectPicker({ anchor, rows, onPick, onClose }: ProjectPickerPr
           </button>
         ))}
       </div>
+      <button type="button" className="ns-menu-row ns-picker-new" data-testid="ns-picker-new-project" onClick={onNewProject}>
+        <span className="ns-menu-logo ns-picker-new-mark" aria-hidden="true">+</span>
+        <span className="ns-menu-label">{t('shell.drawer.newProject')}</span>
+      </button>
     </div>
   );
 }

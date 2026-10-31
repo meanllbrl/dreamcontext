@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { chatTopic, getChat, pendingRequest, pendingRequestIds } from '../assistant/chat-registry.js';
 import { isReservedId, peekSuperNote, phoneHeld, superIndex } from './store.js';
 import { clearFresh } from './fresh-session.js';
-import { MAX_BRIEF, SESSION_ID_RE, type SuperChild, type SuperState } from './types.js';
+import { MAX_BRIEF, MAX_FORMER_CHILDREN, SESSION_ID_RE, type SuperChild, type SuperState } from './types.js';
 import {
   clearOwnerLease, showAgendaCard, ensureChatContainer, newQueueId, pumpSuper, reconcileRows, resolveAnswered, stopSweep, superVaultName, writeSuper,
 } from './inbox.js';
@@ -103,6 +103,10 @@ export async function enableSuper(
     for (const [sid, c] of Object.entries(kept)) {
       if (c.endedAt === undefined && !adopt.includes(sid) && isPhoneHeld(sid)) { c.endedAt = now; phoneEnded.add(sid); skip(sid, 'phone_held'); }
     }
+    // A pruned child is still the Super's (a chat window never shows it): the id stays (absence
+    // never deletes), so its tab does not come back as the owner's.
+    const pruned = Object.keys(s.children).filter((sid) => !Object.prototype.hasOwnProperty.call(kept, sid));
+    if (pruned.length) s.formerChildren = [...new Set([...(s.formerChildren ?? []), ...pruned])].slice(-MAX_FORMER_CHILDREN);
     s.children = kept;
     // Items about a child that is not kept, or that a remote screen holds, are old news.
     for (const q of s.queue) if (q.sessionId !== session && (!Object.prototype.hasOwnProperty.call(kept, q.sessionId) || phoneEnded.has(q.sessionId))) q.state = 'done';

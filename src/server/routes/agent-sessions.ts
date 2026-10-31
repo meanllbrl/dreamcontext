@@ -788,13 +788,23 @@ export interface RosterSummary {
   tabs: number;
   superOn: boolean;
   perWindow: Array<{ id: string; name: string; tabs: number }>;
+  /** The drawer's Super Agent row for a project not mounted: children at work, a question waiting. */
+  superWorking: number;
+  superAsking: boolean;
 }
 
-export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>, superState: { enabled: boolean; session: string | null }): RosterSummary {
+export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>, superState: Pick<SuperState, 'enabled' | 'session'> & Partial<Pick<SuperState, 'children' | 'formerChildren' | 'queue'>>): RosterSummary {
   const settled = withWindows({ sessions: saved.sessions }, saved.windows);
-  const own = settled.sessions.filter((m) => !(superState.session && m.sessionId === superState.session));
+  // The drawer's count of a project: the owner's chats, never the Super Agent's sessions (they
+  // stay in the roster; only this count leaves them out).
+  const former = new Set(superState.formerChildren ?? []);
+  const isSupers = (id: string) => id === superState.session || !!superState.children?.[id] || former.has(id);
+  const own = settled.sessions.filter((m) => !m.sessionId || !isSupers(m.sessionId));
   const perWindow = settled.windows.map((w) => ({ id: w.id, name: w.name, tabs: own.filter((m) => m.window === w.id).length }));
-  return { windows: perWindow.length, tabs: own.length, superOn: superState.enabled, perWindow };
+  // Mirrors the window's `needsOwner` (pinned by the super-row-marks test).
+  const superAsking = (superState.queue ?? []).some((q) => q.state !== 'done' && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && q.direct === true && !q.team)));
+  const superWorking = Object.values(superState.children ?? {}).filter((c) => c.endedAt === undefined && c.row === 'working').length;
+  return { windows: perWindow.length, tabs: own.length, superOn: superState.enabled, perWindow, superWorking, superAsking };
 }
 
 /** The GET body (also the 409 body): the surface, each entry with its `bound` flag, and the

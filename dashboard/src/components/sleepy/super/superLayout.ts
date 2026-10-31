@@ -331,6 +331,12 @@ export interface PlanOptions {
   narrowPx?: number;
   /** The centre's floor for this screen; absent = `STAGE.CENTRE_MIN`. */
   centreMin?: number;
+  /** The new shell's chat drawer stands beside the stage (owner 2026-10-31): the stage has lost
+   *  width on the left, so the centre leans right and widens, and the right cards go to the margin.
+   *  Only while no card stands where the owner dropped it, and only when it costs no card. */
+  leanRight?: boolean;
+  /** Set by `planStage` itself, once it has judged the leaning plan (callers leave it out). */
+  leanNow?: boolean;
   /** The agenda drawn at most this many tiles wide: set by `planStage` itself while it picks the
    *  agenda's width (callers leave it out). */
   agendaCap?: number;
@@ -387,11 +393,11 @@ interface FloatSolution {
  * overflow: the side's last, the auto-placed ones before the owner's and, among those, every other
  * card before a chat (the chats are why the owner handed over: they stay on the stage longest).
  */
-function solveFloat(f: Frame, left: readonly Slot[], right: readonly Slot[]): FloatSolution {
+function solveFloat(f: Frame, left: readonly Slot[], right: readonly Slot[], lean = false): FloatSolution {
   const { GAP, MARGIN, TILE: T, MAX_COLS, ORBIT_DEPTH } = STAGE;
   const W = f.width;
   const span = f.content.height;
-  const centre = centreAt(f, preferredCentre(W, f.centreMin));
+  let centre = centreAt(f, preferredCentre(W, f.centreMin));
   const room = (W - centre.width) / 2 - GAP - MARGIN;
   const cols = Math.max(0, Math.min(MAX_COLS, Math.floor((room + GAP) / (T + GAP) + 1e-9)));
   const perCol = capacity(span);
@@ -415,16 +421,25 @@ function solveFloat(f: Frame, left: readonly Slot[], right: readonly Slot[]): Fl
     return out;
   };
   const mid = centre.y + centre.height / 2;
-  for (const [side, slots] of [['left', keep(left)], ['right', keep(right)]] as const) {
+  const kept = { left: keep(left), right: keep(right) };
+  const colsPx = (slots: readonly Slot[]) => {
+    const n = Math.ceil(slots.length / perCol);
+    return n ? n * T + (n - 1) * GAP : 0;
+  };
+  const leaning = lean ? leanCentre(f, colsPx(kept.left), colsPx(kept.right), centre.width) : null;
+  if (leaning) centre = { ...centre, ...leaning };
+  for (const [side, slots] of [['left', kept.left], ['right', kept.right]] as const) {
     if (!slots.length) continue;
     const used = Math.ceil(slots.length / perCol);
-    const depth = Math.max(0, Math.min(ORBIT_DEPTH, room - used * T - (used - 1) * GAP));
+    const depth = leaning ? 0 : Math.max(0, Math.min(ORBIT_DEPTH, room - used * T - (used - 1) * GAP));
     const dir = side === 'left' ? -1 : 1;
     for (let k = 0; k < used; k++) {
       const col = slots.slice(k * perCol, (k + 1) * perCol);
       const total = col.length * T + (col.length - 1) * GAP;
       const y0 = mid - total / 2;
-      const x0 = side === 'left' ? centre.x - GAP - T - k * (T + GAP) : centre.x + centre.width + GAP + k * (T + GAP);
+      const x0 = leaning
+        ? (side === 'left' ? MARGIN + (used - 1 - k) * (T + GAP) : W - MARGIN - colsPx(slots) + k * (T + GAP))
+        : side === 'left' ? centre.x - GAP - T - k * (T + GAP) : centre.x + centre.width + GAP + k * (T + GAP);
       const ymax = (total - T) / 2;
       col.forEach((s, i) => {
         const y = y0 + i * (T + GAP);
@@ -438,6 +453,21 @@ function solveFloat(f: Frame, left: readonly Slot[], right: readonly Slot[]): Fl
     }
   }
   return { centre, u: T, rects, overflow, orbit };
+}
+
+/**
+ * The centre beside the drawer: both sides at the stage's margins and the centre across what is
+ * left between them, up to a fifth over its preferred width and never past its ceiling. Null when
+ * that would not widen it: the ordinary centred plan stands.
+ */
+function leanCentre(f: Frame, leftPx: number, rightPx: number, width: number): { x: number; width: number } | null {
+  const { GAP, MARGIN } = STAGE;
+  const l = leftPx ? leftPx + GAP : 0;
+  const r = rightPx ? rightPx + GAP : 0;
+  const room = f.width - 2 * MARGIN - l - r;
+  const grown = Math.min(STAGE.CENTRE_MAX, width * 1.2, room);
+  if (grown < width - 1e-9) return null;
+  return { x: MARGIN + l + (room - grown) / 2, width: grown };
 }
 
 // ─── Sized cards (owner 2026-10-22) ──────────────────────────────────────────────
@@ -478,12 +508,12 @@ interface SizedSolution extends FloatSolution {
  * card before a chat); only then the owner's own cards, the same way. A one-column side of
  * small cards keeps its orbit.
  */
-function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[], agendaCap?: number, ownerAside = false): SizedSolution {
-  return solveSizedAt(f, left, right, agendaCap ?? null, ownerAside);
+function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[], agendaCap?: number, ownerAside = false, lean = false): SizedSolution {
+  return solveSizedAt(f, left, right, agendaCap ?? null, ownerAside, lean);
 }
 
 /** `solveSized` with the agenda drawn at most `agendaCap` tiles wide (null: its own size). */
-function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[], agendaCap: number | null, ownerAside: boolean): SizedSolution {
+function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[], agendaCap: number | null, ownerAside: boolean, lean = false): SizedSolution {
   const { GAP, MARGIN, TILE: T, ORBIT_DEPTH } = STAGE;
   const W = f.width;
   const span = f.content.height;
@@ -590,11 +620,12 @@ function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly Size
   // take it under CENTRE_MIN does it move off the middle, right after the left side.
   const need = Math.max(unitsPx(cols.left) + (cols.left ? GAP : 0), unitsPx(cols.right) + (cols.right ? GAP : 0));
   const centred = Math.min(preferred, W - 2 * MARGIN - 2 * need);
-  const centreW = centred >= STAGE.CENTRE_MIN - 1e-9 ? centred : Math.max(STAGE.CENTRE_MIN, Math.min(preferred, avail()));
-  const x = centred >= STAGE.CENTRE_MIN - 1e-9
-    ? (W - centreW) / 2
-    : MARGIN + unitsPx(cols.left) + (cols.left ? GAP : 0) + Math.max(0, (avail() - centreW) / 2);
-  const centre: Rect = { x, y: f.content.y, width: centreW, height: f.content.height };
+  const plainW = centred >= STAGE.CENTRE_MIN - 1e-9 ? centred : Math.max(STAGE.CENTRE_MIN, Math.min(preferred, avail()));
+  const plainX = centred >= STAGE.CENTRE_MIN - 1e-9
+    ? (W - plainW) / 2
+    : MARGIN + unitsPx(cols.left) + (cols.left ? GAP : 0) + Math.max(0, (avail() - plainW) / 2);
+  const leaning = lean ? leanCentre(f, cols.left ? unitsPx(cols.left) : 0, cols.right ? unitsPx(cols.right) : 0, plainW) : null;
+  const centre: Rect = { x: leaning?.x ?? plainX, y: f.content.y, width: leaning?.width ?? plainW, height: f.content.height };
   const mid = centre.y + centre.height / 2;
   const rects = new Map<string, Rect>();
   const orbit: OrbitArc[] = [];
@@ -603,11 +634,13 @@ function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly Size
     if (!rows.length) continue;
     const total = heightOfRows(rows);
     const dir = side === 'left' ? -1 : 1;
-    const inner = side === 'left' ? centre.x - GAP : centre.x + centre.width + GAP;
+    const inner = leaning
+      ? (side === 'left' ? MARGIN + unitsPx(cols.left) : W - MARGIN - unitsPx(cols.right))
+      : side === 'left' ? centre.x - GAP : centre.x + centre.width + GAP;
     // A one-column side of small cards keeps its orbit.
     const oneColumn = rows.every((r) => r.items.length === 1 && drawn.get(r.items[0].id) === 'small');
     const room = side === 'left' ? centre.x - GAP - MARGIN : W - MARGIN - inner;
-    const depth = oneColumn && rows.length >= 2 ? Math.max(0, Math.min(ORBIT_DEPTH, room - T)) : 0;
+    const depth = !leaning && oneColumn && rows.length >= 2 ? Math.max(0, Math.min(ORBIT_DEPTH, room - T)) : 0;
     const ymax = (total - T) / 2;
     let y = mid - total / 2;
     for (const r of rows) {
@@ -910,6 +943,20 @@ export function planStage(
   // it does not stand in). The plan that sets such a card aside from its column is kept only when
   // it costs nothing: no card more in Others, none off the stage or over another, the centre no
   // further off the middle. Otherwise the stage is exactly as before.
+  if (opts.leanRight) {
+    // The centred plan is the judge: the agenda keeps the width it has there, and the leaning
+    // plan stands only when it widens the chat and costs no card. A card the owner dropped keeps
+    // the stage exactly as he arranged it.
+    const { leanRight: _lean, ...rest } = opts;
+    const centred = planStage(containers, view, stage, rest);
+    if (centred.mode !== 'float' || containers.some((c) => c.pos && c.place === 'float')) return centred;
+    const ag = containers.find((c) => c.kind === 'agenda' && c.place === 'float');
+    const agDrawn = ag ? centred.cards[ag.id] : undefined;
+    const leaned = planStageOnce(containers, view, stage, { ...rest, leanNow: true, ...(agDrawn ? { agendaCap: SIZE_UNITS[agDrawn.size ?? 'small'].w } : {}) });
+    const a = stageCost(leaned);
+    const b = stageCost(centred);
+    return leaned.centre.width >= centred.centre.width - 1e-6 && a.unsound <= b.unsound && a.others <= b.others ? leaned : centred;
+  }
   const base = planStageAgenda(containers, view, stage, opts);
   if (opts.ownerAside !== undefined) return base;
   const shrunk = containers.some((c) => c.pos && c.place === 'float' && (c.size ?? 'small') !== 'small'
@@ -1256,8 +1303,8 @@ function planWith(
   // size (solveSized).
   const sized = floating.some((c) => sizeById.get(c.id) !== 'small');
   const sol = sized
-    ? solveSized(f, slotsOn('left').map(withSize), slotsOn('right').map(withSize), opts.agendaCap, !!opts.ownerAside)
-    : { ...solveFloat(f, slotsOn('left'), slotsOn('right')), drawn: new Map<string, ContainerSize>(), uRight: undefined };
+    ? solveSized(f, slotsOn('left').map(withSize), slotsOn('right').map(withSize), opts.agendaCap, !!opts.ownerAside, !!opts.leanNow && !narrow)
+    : { ...solveFloat(f, slotsOn('left'), slotsOn('right'), !!opts.leanNow && !narrow), drawn: new Map<string, ContainerSize>(), uRight: undefined };
   const drawnOf = (id: string): ContainerSize => sol.drawn.get(id) ?? 'small';
   // The float centre takes the stage's height (owner 2026-10-25; 2026-10-28 for a windowed app):
   // from the top margin to the bottom margin, its width unchanged, the side cards where they were.

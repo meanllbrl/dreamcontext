@@ -42,7 +42,7 @@ import { DrawerFactsBridge } from './components/layout/newshell/DrawerFactsBridg
 import { DrawerIntentBridge } from './components/layout/newshell/DrawerIntentBridge';
 import type { DrawerFacts } from './components/layout/newshell/drawerModel';
 import { DRAWER_PAGE_EVENT, type PendingDrawerIntent } from './lib/drawerIntents';
-import { TOGGLE_PAGE_DRAWER_EVENT, useIsNewShell } from './lib/uxMode';
+import { TOGGLE_PAGE_DRAWER_EVENT, drawerTogglePanel, useIsNewShell } from './lib/uxMode';
 import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from './lib/agentSettings';
 import './ProjectInstance.css';
 
@@ -107,12 +107,14 @@ function AgentPageNavBridge({ nav }: { nav: ShellNavigation }) {
 /**
  * The new shell's drawer button and ⌘B: ONE route, ONE handler (D12). The window bumps
  * `nonce` on the active instance; this decides from the instance's own page:
- *  - on Chat (the overlay expanded): toggle the window's chat drawer;
- *  - on Whiteboards: toggle that page's own explorer (`TOGGLE_PAGE_DRAWER_EVENT`, W2-B);
- *  - anywhere else: open Chat, which brings the drawer back.
+ *  - on a page with its own side panel: toggle that panel (`pageHasPanel`, `TOGGLE_PAGE_DRAWER_EVENT`);
+ *  - anywhere else, Chat included: toggle the chat drawer, docked on Chat and floating over any
+ *    other page. The button never leaves the page.
  * Rendered inside Shell's children for the page. Renders nothing.
  */
-function PageDrawerToggleBridge({ page, nonce, onDrawerToggle }: { page: Page; nonce: number; onDrawerToggle?: () => void }) {
+function PageDrawerToggleBridge({ page, nonce, onDrawerToggle, onPageChange }: {
+  page: Page; nonce: number; onDrawerToggle?: () => void; onPageChange?: () => void;
+}) {
   const { bus, isActive } = useVault();
   const [chatOpen, setChatOpen] = useState(false);
   useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => setChatOpen(open === true));
@@ -122,10 +124,16 @@ function PageDrawerToggleBridge({ page, nonce, onDrawerToggle }: { page: Page; n
     seen.current = nonce;
     // Every instance hears the window's nonce; only the one on screen acts on it.
     if (!isActive) return;
-    if (chatOpen) onDrawerToggle?.();
-    else if (page === 'whiteboards') emitInstance(bus, TOGGLE_PAGE_DRAWER_EVENT, null);
-    else openAgentSurface(bus);
+    if (drawerTogglePanel({ chatOpen, page }) === 'page') emitInstance(bus, TOGGLE_PAGE_DRAWER_EVENT, null);
+    else onDrawerToggle?.();
   }, [nonce, isActive, chatOpen, page, bus, onDrawerToggle]);
+  // A drawer floating over a page goes with that page.
+  const seenPage = useRef(page);
+  useEffect(() => {
+    if (page === seenPage.current) return;
+    seenPage.current = page;
+    if (isActive) onPageChange?.();
+  }, [page, isActive, onPageChange]);
   return null;
 }
 
@@ -136,7 +144,7 @@ function PageDrawerToggleBridge({ page, nonce, onDrawerToggle }: { page: Page; n
 function DrawerPageBridge({ nav }: { nav: ShellNavigation }) {
   useInstanceEvent<{ page?: unknown; id?: unknown }>(DRAWER_PAGE_EVENT, (detail) => {
     const page = detail?.page;
-    if (page !== 'relations' && page !== 'automations') return;
+    if (page !== 'relations') return;
     nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null, 'other');
   });
   return null;
@@ -499,6 +507,8 @@ export interface ProjectInstanceProps {
   /** New shell: bumped by the title bar's drawer button and ⌘B; the ACTIVE instance's
    *  `PageDrawerToggleBridge` decides what it means on its page. */
   drawerToggleNonce?: number;
+  /** The page changed: a chat drawer floating over the old one closes. */
+  onDrawerDismiss?: () => void;
   /** New shell: the window's chat drawer is on screen (W2 polls the drawer's facts faster). */
   drawerVisible?: boolean;
   /** New shell: the drawer button meant the chat drawer itself. */
@@ -512,7 +522,7 @@ export interface ProjectInstanceProps {
 
 export function ProjectInstance({
   vault, instanceId, isActive, sidebarCollapsed, onToggleSidebar, onRollup, pendingLink = null, onLinkConsumed,
-  pendingStart = null, onStartConsumed, drawerToggleNonce = 0, onDrawerToggle,
+  pendingStart = null, onStartConsumed, drawerToggleNonce = 0, onDrawerToggle, onDrawerDismiss,
   drawerVisible = false, onDrawerFacts, pendingDrawerIntent = null, onDrawerIntentConsumed,
 }: ProjectInstanceProps) {
   const newShell = useIsNewShell();
@@ -621,7 +631,7 @@ export function ProjectInstance({
                       onAgentsFocus={focusAgents}
                     />
                     <StartIntentBridge start={pendingStart} onConsumed={consumeStart} />
-                    {newShell && <PageDrawerToggleBridge page={nav.page} nonce={drawerToggleNonce} onDrawerToggle={onDrawerToggle} />}
+                    {newShell && <PageDrawerToggleBridge page={nav.page} nonce={drawerToggleNonce} onDrawerToggle={onDrawerToggle} onPageChange={onDrawerDismiss} />}
                     {newShell && <DrawerPageBridge nav={nav} />}
                     {!suppressAnnouncements && (
                       <AnnouncementsModal onOpenPage={(id) => nav.navigate('announcements', id ?? null)} />
@@ -641,7 +651,7 @@ export function ProjectInstance({
               {/* Mounted OUTSIDE Shell, exactly as it was at the app root: the agent floater
                   keeps its PTY/scrollback alive across navigation and collapse/expand, which
                   only holds while it is not remounted by the page switch. */}
-              <AgentSurface />
+              <AgentSurface stageBesideDrawer={drawerVisible} />
               {/* AFTER the surface: an intent rung before it subscribed would be lost. */}
               {newShell && <DrawerIntentBridge pending={pendingDrawerIntent} onConsumed={onDrawerIntentConsumed} />}
             </I18nProvider>

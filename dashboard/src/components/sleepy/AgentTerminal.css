@@ -181,6 +181,43 @@
   --head-clear-start: 40px;   /* 12px inset + 28px collapse */
   --head-clear-end: 102px;    /* 12px inset + 90px "＋ New ▾" */
 }
+.agent-overlay-head[hidden] { display: none; }
+
+/* The new shell's chat area: a member's conversation, or a Super session's transcript. */
+.agent-term { position: relative; }
+.agent-peek {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--color-bg);
+}
+.agent-peek-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  height: 44px;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+.agent-peek-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--color-text); }
+.agent-peek-close {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.agent-peek-close:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.agent-peek-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+
 .agent-overlay-collapse {
   position: absolute;
   left: var(--space-3);

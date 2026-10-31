@@ -48,7 +48,7 @@ describe('a far project\'s facts', () => {
   it('come from that project\'s own client, the summary roster and the team inputs', async () => {
     asked.length = 0;
     const f = await readFanoutFacts('globex');
-    expect(f).toEqual({ tabs: 4, superOn: true, team: [{ slug: 'digest', title: 'Digest', hasPhoto: false, status: 'working' }] });
+    expect(f).toEqual({ tabs: 4, superOn: true, superMarks: { working: 0, asking: false }, team: [{ slug: 'digest', title: 'Digest', hasPhoto: false, status: 'working' }] });
     expect(asked.every(([v]) => v === 'globex')).toBe(true);
     expect(asked.map(([, p]) => p).sort()).toEqual(['/agent/sessions?summary=1', '/agents', '/automations', '/automations/threads']);
   });
@@ -82,7 +82,7 @@ describe('GET /agent/sessions?summary=1', () => {
     }
     expect(status).toBe(200);
     const json = JSON.parse(body);
-    expect(json).toEqual({ windows: 1, tabs: 2, superOn: false, perWindow: [{ id: 'main', name: 'Chat', tabs: 2 }] });
+    expect(json).toEqual({ windows: 1, tabs: 2, superOn: false, superWorking: 0, superAsking: false, perWindow: [{ id: 'main', name: 'Chat', tabs: 2 }] });
     expect(body).not.toContain('Secret plan');
     expect(body).not.toContain('private draft');
   });

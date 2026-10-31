@@ -41,7 +41,7 @@ describe('the Super Agent is never a tab (D9, AC1)', () => {
     expect(reconcile).toMatch(/!isSuperSession\(m, superStateRef\.current\?\.session\)/);
     expect(surface).toMatch(/const dockRows: SessionRow\[\] = sessionList\.filter\(\(meta\) => !isSuperSession\(meta, superState\?\.session\)\)/);
     // The corner chips are built from the dock rows.
-    expect(surface).toMatch(/\.map\(\(id\) => dockRows\.find\(\(r\) => r\.id === id\)\)/);
+    expect(surface).toMatch(/\.map\(\(id\) => ownerRows\.find\(\(r\) => r\.id === id\)\)/);
   });
 
   it('it joins the roster with mode super and is placed in NO pane', () => {
@@ -67,7 +67,7 @@ describe('the Super Agent is never a tab (D9, AC1)', () => {
 describe('hand over / take back (D5, D9, D17)', () => {
   it('the hand-over posts the adoption body built with the predicate (never the super itself)', () => {
     const hand = surface.slice(surface.indexOf('const handOver = useCallback'), surface.indexOf('const takeBack = useCallback'));
-    expect(hand).toMatch(/const body = adoptionBody\(tabs, before\?\.session\);/);
+    expect(hand).toMatch(/const body = adoptionBody\(windowed \? \[\] : tabs, before\?\.session\);/);
     expect(hand).toMatch(/await enableSuper\(scopedApi, body\)/);
     // First rects in ONE batch BEFORE the request and the DOM switch (D18).
     expect(hand.indexOf('const first = new Map')).toBeLessThan(hand.indexOf('await enableSuper'));
@@ -116,7 +116,7 @@ describe('hand over / take back (D5, D9, D17)', () => {
     expect(place).toMatch(/homedSessions\(\{ handedOver, superSid, shownSid: superShownSid/);
     expect(place).toMatch(/\} else place\(superSid, 'centre'\);/);
     expect(place).toMatch(/place\(superShownSid, 'shown'\)/);
-    expect(place).toMatch(/\[panes, expanded, handedOver, superSid, superShownSid, superSlotEpoch, dockOpen, dockSlotEpoch\]/);
+    expect(place).toMatch(/\[shownPanes, expanded, handedOver, superSid, superShownSid, superSlotEpoch, dockOpen, dockSlotEpoch\]/);
   });
 
   it('no chord opens, splits or closes a hidden pane while handed over; a dropped file goes to the Super Agent', () => {

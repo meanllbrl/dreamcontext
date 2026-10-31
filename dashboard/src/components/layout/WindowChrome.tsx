@@ -41,6 +41,7 @@ import type { PickerRow } from './newshell/ProjectPicker';
 import { mergeProjectOrder } from './newshell/projectOrder';
 import { chill, liveInstanceCount, oldestEvictable } from './instanceCeiling';
 import { ChatDrawer } from './newshell/ChatDrawer';
+import { NewProjectFlow } from './newshell/NewProjectFlow';
 import {
   buildDrawerRows, dropInOrder, intentLands, moveInOrder, type DrawerFacts,
 } from './newshell/drawerModel';
@@ -924,6 +925,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
   const projectOrderRef = useRef(projectOrder);
   projectOrderRef.current = projectOrder;
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
   const pickerRows = useMemo<PickerRow[]>(() => {
     if (!newShell) return [];
     const byName = new Map((launcherStatus?.vaults ?? []).map((v) => [v.name, v] as const));
@@ -970,12 +972,22 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
   // ≤900 the drawer floats over the page and a pick closes it (without forgetting the setting).
   const narrow = useIsNarrowWindow(900);
   const [floatingOpen, setFloatingOpen] = useState(false);
-  useEffect(() => { if (!activeOnChat) setFloatingOpen(false); }, [activeOnChat]);
-  const drawerVisible = newShell && activeOnChat && (narrow ? floatingOpen : drawerOpen);
+  useEffect(() => { setFloatingOpen(false); }, [activeOnChat, activeVault]);
+  // Docked beside Chat; floating over any other page (the button never leaves the page) and ≤900.
+  const drawerFloats = narrow || !activeOnChat;
+  const drawerVisible = newShell && (drawerFloats ? floatingOpen : drawerOpen);
   const onDrawerToggle = useCallback(() => {
-    if (narrow) setFloatingOpen((o) => !o);
+    if (drawerFloats) setFloatingOpen((o) => !o);
     else toggleDrawer();
-  }, [narrow, toggleDrawer]);
+  }, [drawerFloats, toggleDrawer]);
+  const dismissFloating = useCallback(() => setFloatingOpen(false), []);
+  // Esc closes a floating drawer (its menus own their Esc first).
+  useEffect(() => {
+    if (!floatingOpen) return undefined;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFloatingOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [floatingOpen]);
 
   const [drawerExpanded, setDrawerExpanded] = useState<string[]>(() => {
     const stored = readLayoutPrefs().drawerExpanded;
@@ -988,6 +1000,23 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
       return next;
     });
   }, []);
+  /** New project landed: its row open and selected at once, with no reload. */
+  const landNewProject = useCallback((name: string, start?: 'initializer') => {
+    setNewProjectOpen(false);
+    setDrawerExpanded((cur) => {
+      if (cur.includes(name)) return cur;
+      const next = [...cur, name];
+      writeLayoutPrefs({ drawerExpanded: next });
+      return next;
+    });
+    void addTab(name).then((result) => {
+      if (start && (result === 'added' || result === 'focused-tab')) {
+        startSeqRef.current += 1;
+        const nonce = startSeqRef.current;
+        setPendingStarts((prev) => ({ ...prev, [name]: { intent: start, nonce } }));
+      }
+    });
+  }, [addTab]);
   const [drawerWidth, setDrawerWidth] = useState(() => readLayoutPrefs().drawerWidth ?? 280);
   const resizeDrawer = useCallback((w: number) => {
     setDrawerWidth(w);
@@ -1162,6 +1191,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
             activeVault={activeVault}
             rows={pickerRows}
             pickerOpen={pickerOpen}
+            onNewProject={() => { setPickerOpen(false); setNewProjectOpen(true); }}
             onPickerOpen={setPickerOpen}
             onPick={(name) => void addTab(name)}
             notice={notice}
@@ -1175,18 +1205,20 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
             setLeftSlot={setLeftSlot}
             setRightSlot={setRightSlot}
           />
+          {newProjectOpen && <NewProjectFlow onClose={() => setNewProjectOpen(false)} onLand={landNewProject} />}
           {/* [rail][drawer (W2)][instances]: each instance starts right of the drawer, so the
               chat overlay bounded to it (D4) never covers the rail or the drawer. */}
           <div className="ns-body" data-drawer={drawerVisible ? 'open' : 'closed'}>
             <div className="ns-rail-slot" ref={setRailSlot} />
-            {drawerVisible && narrow && (
+            {drawerVisible && drawerFloats && (
               <div className="ns-drawer-scrim" onClick={() => setFloatingOpen(false)} aria-hidden="true" />
             )}
             {drawerVisible && (
               <ChatDrawer
                 rows={drawerRows}
                 width={drawerWidth}
-                floating={narrow}
+                floating={drawerFloats}
+                onNewProject={() => { setFloatingOpen(false); setNewProjectOpen(true); }}
                 onClose={() => setFloatingOpen(false)}
                 onResize={resizeDrawer}
                 onToggleExpanded={toggleExpanded}
@@ -1220,6 +1252,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null }:
                   drawerToggleNonce={drawerToggleNonce}
                   drawerVisible={drawerVisible}
                   onDrawerToggle={onDrawerToggle}
+                  onDrawerDismiss={dismissFloating}
                   onDrawerFacts={handleDrawerFacts}
                   pendingDrawerIntent={pendingDrawerIntents[p.vault] ?? null}
                   onDrawerIntentConsumed={consumeDrawerIntent}

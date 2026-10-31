@@ -60,6 +60,8 @@ export interface SuperSurfaceProps {
   sessionFor: (claudeId: string) => ChatSession | undefined;
   /** A shown child with no live chat: its transcript, read only (SuperContainer's `childTranscript`). */
   childTranscript?: (claudeId: string) => ReactNode;
+  /** The new shell's chat drawer stands beside the stage: the centre leans right and widens. */
+  leanRight?: boolean;
   /** A team card shown large: its member's conversation (SuperContainer's `teamConversation`).
    *  Absent while the surface is folded away: it hands the session back to the AI Team page. */
   teamConversation?: (member: string) => ReactNode;
@@ -107,7 +109,7 @@ export interface SuperSurfaceProps {
   remote?: { touch: boolean };
 }
 
-export interface StageShowChild { show: (sid: string) => void; ready: boolean }
+export interface StageShowChild { show: (sid: string) => void; showCard: (id: string) => void; ready: boolean }
 
 /** The look the agenda and the question band read (both the stage and the Super dock). */
 export function jobLookOf({ sessionFor, titleFor, nameFor, children, superTitle }: {
@@ -289,8 +291,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const exitPatch = (): LayoutPatch => ({ exit: { cards: presented, closing: props.pendingCloses() } });
   const queueUp = !!queueHead(state);
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, asking: ownerAsk, layoutChoices: layoutChoices.length, queueUp, narrowPx, centreMin, recent: topped }),
-    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, ownerAsk, layoutChoices.length, queueUp, narrowPx, centreMin, topped],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, asking: ownerAsk, layoutChoices: layoutChoices.length, queueUp, narrowPx, centreMin, recent: topped, leanRight: props.leanRight }),
+    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, ownerAsk, layoutChoices.length, queueUp, narrowPx, centreMin, topped, props.leanRight],
   );
   cuesPlanRef.current = plan;
   // The big card's slot scrolls into view whenever the selection moves (keys, a press, the Super).
@@ -549,7 +551,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   }
   /** Whether a size can be drawn for this card now: the plan the window draws (its options), asked with that size. */
   const canFit = (id: string, next: ContainerSize, pin?: boolean) => fitsNow(items, view, size, id, next,
-    { terminals: props.terminals.length, agendaPill, asking: ownerAsk, queueUp, narrowPx, centreMin, recent: topped }, growAt(id, pin));
+    { terminals: props.terminals.length, agendaPill, asking: ownerAsk, queueUp, narrowPx, centreMin, recent: topped, leanRight: props.leanRight }, growAt(id, pin));
   // A card closed meanwhile takes its full-screen view with it.
   useEffect(() => { if (full && !byId.has(full.id)) setFull(null); }, [byId, full]);
 
@@ -741,7 +743,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     else onLayout({ ...(c.place === 'others' ? { cards: [{ id: c.id, place: 'float' as const }] } : {}), view: { mode: 'present', cards: [c.id, agenda.id] } });
     if (wait) showOwnerCard(wait.wait);
   };
-  if (props.stageShowChild) props.stageShowChild.current = { show: showChild, ready: plan.width > 0 && props.visible };
+  if (props.stageShowChild) props.stageShowChild.current = { show: showChild, showCard: actions.onSideBySide, ready: plan.width > 0 && props.visible };
   // The super's own question (or an approval) in the agenda: its card in the centre chat.
   const showQuestion = (item: string) => {
     if (showQuestionCard(item, superSession?.container)) return;

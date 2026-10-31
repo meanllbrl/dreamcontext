@@ -22,7 +22,7 @@ import { pollMs, useWindowActivity } from '../lib/windowActivity';
 export async function readFanoutFacts(vault: string): Promise<FanoutFacts> {
   const api = new ApiClient(vault);
   const [summary, agents, automations, feed] = await Promise.all([
-    api.get<{ tabs?: unknown; superOn?: unknown; perWindow?: unknown }>('/agent/sessions?summary=1').catch(() => null),
+    api.get<{ tabs?: unknown; superOn?: unknown; perWindow?: unknown; superWorking?: unknown; superAsking?: unknown }>('/agent/sessions?summary=1').catch(() => null),
     api.get<{ agents: AgentSummary[] }>('/agents').then((r) => r.agents).catch(() => []),
     api.get<{ automations: AutomationSummary[] }>('/automations').then((r) => r.automations).catch(() => []),
     api.get<AgentFeed>('/automations/threads').catch(() => null),
@@ -30,6 +30,7 @@ export async function readFanoutFacts(vault: string): Promise<FanoutFacts> {
   return {
     tabs: typeof summary?.tabs === 'number' ? summary.tabs : 0,
     superOn: summary?.superOn === true,
+    superMarks: { working: typeof summary?.superWorking === 'number' ? summary.superWorking : 0, asking: summary?.superAsking === true },
     team: teamRowsOf(buildRoster(agents as TeamAgent[], automations, feed)),
     ...(Array.isArray(summary?.perWindow) ? { windows: perWindowOf(summary.perWindow) } : {}),
   };

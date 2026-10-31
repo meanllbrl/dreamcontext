@@ -6,7 +6,7 @@ import {
   AGENDA_REF, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
-  ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, viewWithout,
+  ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, viewWithout,
   type AskShow, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
 import { parseJob, promptHash } from './jobs.js';
@@ -411,6 +411,12 @@ function sanitizePad(raw: unknown): SuperPadItem[] {
   return out;
 }
 
+/** Pin ids only, newest kept. */
+function sanitizeFormerChildren(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(raw.filter((id): id is string => typeof id === 'string' && SESSION_ID_RE.test(id)))].slice(-MAX_FORMER_CHILDREN);
+}
+
 function sanitizePool(raw: unknown, opts: SanitizeOpts): SuperPoolItem[] {
   if (!Array.isArray(raw)) return [];
   const out: SuperPoolItem[] = [];
@@ -498,6 +504,7 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
   const queue = sanitizeQueue(raw.queue, session);
   const held = sanitizeHeld(raw.held, queue);
   const pad = sanitizePad(raw.pad);
+  const formerChildren = sanitizeFormerChildren(raw.formerChildren);
   const askShows = sanitizeAskShows(raw.askShows, containers);
   const rawSeq = finite(raw.padSeq);
   const padSeq = rawSeq !== undefined && rawSeq > 0 && rawSeq < 1e6 ? Math.floor(rawSeq) : 0;
@@ -516,6 +523,7 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
     away: { since: since ?? null, events: events !== undefined && events > 0 ? Math.floor(events) : 0 },
     dismissed: sanitizeDismissed(raw.dismissed, opts.now ?? Date.now()),
     pool: sanitizePool(raw.pool, opts),
+    ...(formerChildren.length ? { formerChildren } : {}),
     ownerBatches: sanitizeOwnerBatches(raw.ownerBatches),
     team,
     ...(held.length ? { held } : {}),
