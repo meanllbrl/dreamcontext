@@ -2,6 +2,9 @@
 /**
  * The pinned shelf — end-to-end verification in a real browser.
  *
+ * STALE since 2026-10-31: the fixtures below open their row with a `progress` block, and that
+ * row is gone. Rebuild them on a `row`-weight pin before trusting this script.
+ *
  *   npm run build && npm run verify:chat-shelf-ui
  *
  * Proves the four properties the shelf exists for, and that no unit test can reach, because

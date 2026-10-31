@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  partyBatches, partyTitle, partyHeadline, partyOutcome, partyBeat, partyTally, deriveChatQuest, chatLineage,
+  partyBatches, partyTitle, partyHeadline, partyOutcome, partyBeat, partyTally, deriveChatQuest, chatLineage, questTaskSlug,
   partyLine, runIdentity, runVerdict, runCarries, runDoing, runName, type Party, type QuestEntry,
 } from '../../dashboard/src/components/sleepy/chat/questModel';
 import type { SubAgentRun } from '../../dashboard/src/components/sleepy/chat/chatEntities';
@@ -653,5 +653,58 @@ describe('plain language', () => {
       expect(line, line).not.toMatch(/sleepy/i);
     }
     expect(copy.some((l) => l.startsWith(LEAD_NAME))).toBe(true);
+  });
+});
+
+describe('questTaskSlug: which task a chat runs, read off its commands', () => {
+  const run = (id: string, command: string): QuestEntry => ({
+    kind: 'tool', id, name: 'Bash', status: 'done', input: { command },
+  });
+
+  it('reads the recipe\'s S= line and ignores its placeholder', () => {
+    expect(questTaskSlug([run('a', 'S=<task-slug>\ndreamcontext builder open "$S"')])).toBeNull();
+    expect(questTaskSlug([run('a', 'S=my-task\ndreamcontext builder open "$S"')])).toBe('my-task');
+  });
+
+  it('reads a literal slug, and the newest one wins', () => {
+    expect(questTaskSlug([
+      run('a', 'dreamcontext builder open first-task'),
+      run('b', 'dreamcontext tasks ready second-task'),
+    ])).toBe('second-task');
+  });
+
+  it('a wave sub-task and somebody else\'s S= do not take the run over', () => {
+    expect(questTaskSlug([
+      run('a', 'S=parent\ndreamcontext builder open "$S"'),
+      run('b', 'dreamcontext tasks status wave-1-do-thing in_progress'),
+      run('c', 'dreamcontext tasks log wave-1-do-thing "w1 green"'),
+      run('d', 'S=3 ./run.sh'),
+    ])).toBe('parent');
+  });
+
+  it('a recipe close keeps the real slug on the win, never "$S"', () => {
+    const q = deriveChatQuest({
+      mode: 'develop', parties: [], progress: null, now: 1_000,
+      entries: [
+        { kind: 'user', id: 'u', text: 'go', ts: 1 },
+        run('a', 'S=real-task\ndreamcontext tasks status "$S" completed "done"'),
+      ],
+    })!;
+    expect(q.title).toBe('real-task');
+    expect(q.outcome?.taskSlug).toBe('real-task');
+  });
+
+  it('a slug that names no task does not move a Plan chat to its Task stage', () => {
+    const entries: QuestEntry[] = [{ kind: 'user', id: 'u', text: 'go', ts: 1 }];
+    const q = deriveChatQuest({
+      mode: 'plan', entries, parties: [], now: 1_000,
+      progress: { slug: 'ghost', state: 'unknown-slug', done: 0, total: 0 },
+    })!;
+    expect(q.title).toBeNull();
+    expect(q.stages.find((st) => st.id === 'task')?.state).toBe('todo');
+  });
+
+  it('a chat that runs no task has no slug', () => {
+    expect(questTaskSlug([run('a', 'git status')])).toBeNull();
   });
 });

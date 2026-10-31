@@ -1,7 +1,6 @@
 /**
  * The run-progress CHECKLIST — `listCheckboxes` (src/lib/markdown.ts), the criteria the
- * `/api/agent/task-progress` route ships, and the pure reasoning the panel draws from
- * (dashboard/src/lib/progressModel.ts).
+ * `/api/agent/task-progress` route ships.
  *
  * The defect these tests exist to keep closed: the panel used to state `8/20` in its header
  * and render TWO rows, because the route only ever derived two strings (owner, 2026-08-24).
@@ -9,11 +8,6 @@
  * and the NUMBER BESIDE IT can never describe different sets of lines, including on the
  * malformed task files where a lenient parser would quietly drop one and leave 19 rows under
  * a 20.
- *
- * Root vitest runs under plain Node with no jsdom (see chat-shelf-placement.test.ts), which is
- * exactly why `progressModel.ts` holds no React: everything decidable without a DOM is decided
- * there and asserted here. The rendered result is asserted separately, against real boxes in
- * real Chromium, by scripts/verify/chat-shelf-ui.mjs.
  */
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -22,9 +16,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { countCheckboxes, firstUnticked, listCheckboxes } from '../../src/lib/markdown.js';
 import { handleAgentTaskProgress, type TaskProgress } from '../../src/server/routes/agent-shelf.js';
-import {
-  criterionKey, groupCriteria, inFlightIndex, newlyTicked, sinceLabel,
-} from '../../dashboard/src/lib/progressModel.js';
+
+/** The criterion in flight: what the route's `now` names. */
+const inFlightIndex = (list: { done: boolean; text: string }[]) => list.findIndex((c) => !c.done && c.text.trim() !== '');
 
 // ─── listCheckboxes: one reader, one grammar ────────────────────────────────────────
 
@@ -241,119 +235,5 @@ describe('GET /api/agent/task-progress — the criteria list', () => {
     const p = await get('verbose');
     expect(p.criteria[0].text.length).toBeLessThanOrEqual(240);
     expect(p.criteria[0].text.endsWith('…')).toBe(true);
-  });
-});
-
-// ─── progressModel: what the panel reasons about before it draws ────────────────────
-
-const c = (text: string, done: boolean, group: string | null = null) => ({ text, done, group });
-
-describe('newlyTicked', () => {
-  it('names only the criteria that flipped unticked → ticked between two readings', () => {
-    const prev = [c('one', true), c('two', false), c('three', false)];
-    const next = [c('one', true), c('two', true), c('three', false)];
-    expect(newlyTicked(prev, next)).toEqual([criterionKey(c('two', true))]);
-  });
-
-  it('flashes NOTHING on the first reading of a run', () => {
-    // Twenty already-ticked criteria arriving at once are the state of the world, not twenty
-    // things that just happened — the difference between a live panel and a confetti cannon.
-    expect(newlyTicked([], [c('one', true), c('two', true)])).toEqual([]);
-  });
-
-  it('is asymmetric — work being taken back gets no celebratory highlight', () => {
-    expect(newlyTicked([c('one', true)], [c('one', false)])).toEqual([]);
-  });
-
-  it('keys on group + text, so a criterion inserted above does not flash the ones below it', () => {
-    const prev = [c('A1', false, 'Part A'), c('B1', false, 'Part B')];
-    const next = [c('A0', false, 'Part A'), c('A1', false, 'Part A'), c('B1', true, 'Part B')];
-    // B1 moved from index 1 to index 2 and is the only thing that ticked.
-    expect(newlyTicked(prev, next)).toEqual([criterionKey(c('B1', true, 'Part B'))]);
-  });
-
-  it('does not confuse two criteria with the same text under different headings', () => {
-    const prev = [c('tsc clean', false, 'Part A'), c('tsc clean', false, 'Validation')];
-    const next = [c('tsc clean', false, 'Part A'), c('tsc clean', true, 'Validation')];
-    expect(newlyTicked(prev, next)).toEqual([criterionKey(c('tsc clean', true, 'Validation'))]);
-  });
-});
-
-describe('inFlightIndex', () => {
-  it('is the first unticked criterion', () => {
-    expect(inFlightIndex([c('a', true), c('b', true), c('c', false), c('d', false)])).toBe(2);
-  });
-  it('skips a malformed empty criterion, matching what `firstUnticked` names', () => {
-    expect(inFlightIndex([c('a', true), c('', false), c('c', false)])).toBe(2);
-  });
-  it('is -1 when everything is ticked — a real state, not an error', () => {
-    expect(inFlightIndex([c('a', true)])).toBe(-1);
-    expect(inFlightIndex([])).toBe(-1);
-  });
-});
-
-describe('groupCriteria', () => {
-  it('folds the flat list into its headings, each with its own tally', () => {
-    const groups = groupCriteria([
-      c('A1', true, 'Part A'), c('A2', false, 'Part A'), c('V1', false, 'Validation'),
-    ]);
-    expect(groups).toHaveLength(2);
-    expect(groups[0]).toMatchObject({ name: 'Part A', done: 1, total: 2 });
-    expect(groups[1]).toMatchObject({ name: 'Validation', done: 0, total: 1 });
-  });
-
-  it('keeps the flat index, so a grouped row and the in-flight index agree without a lookup', () => {
-    const criteria = [c('A1', true, 'Part A'), c('A2', false, 'Part A'), c('V1', false, 'Validation')];
-    const groups = groupCriteria(criteria);
-    // Every item's index points back at the same object in the flat list…
-    for (const g of groups) {
-      for (const item of g.items) expect(criteria[item.index]).toBe(item.criterion);
-    }
-    // …which is what lets the panel mark exactly one row in flight by comparing indices.
-    const flight = inFlightIndex(criteria);
-    const marked = groups.flatMap((g) => g.items).filter((i) => i.index === flight);
-    expect(marked).toHaveLength(1);
-    expect(marked[0].criterion.text).toBe('A2');
-  });
-
-  it('an ungrouped list is ONE group named null — the panel renders it flat', () => {
-    const groups = groupCriteria([c('one', false), c('two', false)]);
-    expect(groups).toHaveLength(1);
-    expect(groups[0].name).toBeNull();
-    expect(groups[0].total).toBe(2);
-  });
-
-  it('does NOT merge a heading that repeats non-adjacently — that is the document as written', () => {
-    const groups = groupCriteria([c('A1', false, 'Part A'), c('V1', false, 'Validation'), c('A2', false, 'Part A')]);
-    expect(groups.map((g) => g.name)).toEqual(['Part A', 'Validation', 'Part A']);
-  });
-
-  it('is empty for an empty list, so a degenerate reading draws no group frame', () => {
-    expect(groupCriteria([])).toEqual([]);
-  });
-});
-
-describe('sinceLabel', () => {
-  const T = 1_700_000_000_000;
-
-  it('moves every second below a minute — the whole point is that it visibly ticks', () => {
-    expect(sinceLabel(T, T)).toBe('0s ago');
-    expect(sinceLabel(T, T + 9_000)).toBe('9s ago');
-    expect(sinceLabel(T, T + 59_000)).toBe('59s ago');
-  });
-
-  it('steps to minutes, then hours', () => {
-    expect(sinceLabel(T, T + 60_000)).toBe('1m ago');
-    expect(sinceLabel(T, T + 59 * 60_000)).toBe('59m ago');
-    expect(sinceLabel(T, T + 3_600_000)).toBe('1h ago');
-    expect(sinceLabel(T, T + 5 * 3_600_000)).toBe('5h ago');
-  });
-
-  it('an unread mtime shows NO clock rather than a confident "0s ago"', () => {
-    expect(sinceLabel(0, T)).toBeNull();
-  });
-
-  it('never reads negative when the clock is behind the file mtime', () => {
-    expect(sinceLabel(T, T - 30_000)).toBe('0s ago');
   });
 });

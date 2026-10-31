@@ -274,7 +274,6 @@ function standinMain(cfg) {
 
     await tool('Bash', { command: 'dreamcontext tasks create "Quest demo" --why "demo"' }, '✓ Task created: quest-demo.md');
     say('The plan is filed as a task.'
-      + fence('dream-view', { type: 'progress', task: 'quest-demo' })
       + fence('dream-actions', [{ label: 'Go to development', action: 'develop', id: 'quest-demo' }]));
   }
 
@@ -325,7 +324,7 @@ function standinMain(cfg) {
 
   // ── Develop kickoff: the build party, the boss gate twice, the final trial, the win ──
   async function developKickoff() {
-    say('Tracking the run.' + fence('dream-view', { type: 'progress', task: 'quest-demo' }));
+    await tool('Bash', { command: 'S=quest-demo\ndreamcontext builder open "$S"' }, '');
     await sleep(300);
     const i1 = dispatch('impl-1', { description: 'T1 Role registry', subagent_type: 'goal-implementer', prompt: 'Build T1.' });
     const i2 = dispatch('impl-2', { description: 'T2 Tokens', subagent_type: 'goal-implementer', prompt: 'Build T2.' });

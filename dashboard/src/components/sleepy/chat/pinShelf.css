@@ -1,14 +1,11 @@
 /* The pinned shelf — translated from the design import
-   (`_dream_context/workspace/design-import/composer.design.css`, §Pinned shelf) with three
+   (`_dream_context/workspace/design-import/composer.design.css`, §Pinned shelf) with two
    deliberate departures, each recorded where it happens:
 
      • `--font-text` → `--font-family-text`. The design's stylesheet is self-contained; this
        repo's token is named differently and carries the same value. It is the ONLY token that
        needed mapping — every other `--color-*`, `--radius-*` and `--transition-*` the design
        uses already exists verbatim in `styles/tokens.css`. Map, never duplicate.
-     • `.pin-pop*` is OMITTED. The design drew the progress detail twice — a popover and an
-       in-place panel — and said "pick one". The in-place variant is the chosen one, because
-       it is the only one that keeps the tag line and the composer where they are.
      • `.pin-pane` / `.pin-dock` / `.pin-composer` / `.pin-frame` are OMITTED. Those are the
        design doc's own harness — a stand-in pane and a replica composer so the seam could be
        drawn. Here the real `.chat-pane` and `.chat-cmp-card` play those parts.
@@ -80,48 +77,6 @@
 .pin-row + .pin-row { border-top: 1px solid var(--color-border); }
 .pin-shell.has-rows > .pin-tags { border-top: 1px solid var(--color-border); }
 
-/* The progress track is the row's own bottom edge rather than a bar inside it: the row is
-   already a horizontal band, and a second one inside would read as two things. */
-.pin-track {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 2px;
-  background: var(--color-border);
-}
-.pin-track-fill {
-  display: block;
-  height: 100%;
-  background: var(--color-accent);
-  transition: width var(--transition-normal, 240ms ease);
-}
-
-.pin-pct {
-  flex: 0 0 auto;
-  font-family: var(--font-mono);
-  font-size: var(--pin-num);
-  color: var(--color-accent);
-  font-variant-numeric: tabular-nums;
-}
-.pin-count {
-  flex: 0 0 auto;
-  font-family: var(--font-mono);
-  font-size: var(--pin-num);
-  color: var(--color-text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-.pin-dot { flex: 0 0 auto; color: var(--color-border-hover); font-size: var(--pin-glyph); }
-.pin-now {
-  min-width: 0;
-  font-size: var(--pin-text);
-  color: var(--color-text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.pin-now-key { color: var(--color-text-tertiary); }
-
 /* ── The lede button (the whole row is the affordance) ─────────────────────────────── */
 
 .pin-lede {
@@ -150,13 +105,6 @@
   font-size: var(--pin-glyph);
   line-height: 1;
   color: var(--color-text-tertiary);
-}
-.pin-title {
-  flex: 0 0 auto;
-  font-size: var(--pin-text);
-  font-weight: 600;
-  color: var(--color-text);
-  white-space: nowrap;
 }
 .pin-ledetext {
   font-size: var(--pin-text);
@@ -203,36 +151,6 @@
   overflow-y: auto;
 }
 .pin-body .markdown-preview { font-size: var(--pin-text); }
-.pin-notice {
-  margin: 0 0 6px;
-  color: var(--color-warning);
-  font-size: var(--pin-text-sm);
-  line-height: 1.45;
-}
-
-/* Progress detail rows. */
-.pin-task { display: flex; align-items: baseline; gap: 8px; padding: 2px 0; }
-.pin-task-glyph { flex: 0 0 auto; width: var(--pin-hit); font-size: var(--pin-glyph); line-height: 1.6; color: var(--color-text-tertiary); }
-.pin-task-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: var(--pin-text);
-  line-height: 1.6;
-  color: var(--color-text-secondary);
-}
-.pin-task-meta {
-  flex: 0 0 auto;
-  margin-left: auto;
-  padding-left: 12px;
-  font-family: var(--font-mono);
-  font-size: var(--pin-num);
-  color: var(--color-text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-.pin-task.is-done .pin-task-name { color: var(--color-text-tertiary); }
-.pin-task.is-now .pin-task-glyph { color: var(--color-accent); }
-.pin-task.is-now .pin-task-name { color: var(--color-text); font-weight: 500; }
-.pin-task.is-now .pin-task-meta { color: var(--color-accent); }
 
 /* ── The tag line — the resting state, and the row that never moves ────────────────── */
 
@@ -292,8 +210,7 @@
   letter-spacing: 0.07em;
   text-transform: uppercase;
 }
-/* The accent is spent exactly three times on this surface: the port chip, the progress fill,
-   and the open caret. Everything else is border, chip and text. */
+/* The accent is spent exactly twice on this surface: the port chip and the open caret. Everything else is border, chip and text. */
 .pin-chip.is-link {
   background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
   color: var(--color-accent);
@@ -364,47 +281,6 @@
 }
 .pin-x:hover { opacity: 1; background: var(--color-bg-tertiary); }
 .pin-x:focus-visible { opacity: 1; outline: 2px solid var(--color-accent); outline-offset: -2px; }
-
-/* ── The progress detail, as a popover over the conversation ───────────────────────────
-   Absolutely positioned against `.pin-shell`, so it takes the shelf NO height: opening it
-   cannot move the tag line or the composer, which is the property the in-place version could
-   not offer without paying for it in layout. `.pin-shell` is the positioning parent (and is
-   already a containing block anyway — `.pin-shelf`'s `container-type` applies layout
-   containment). Nothing here clips it: layout containment is not paint containment, so the
-   panel overhangs the shelf into the transcript exactly as drawn. */
-.pin-shell { position: relative; }
-
-.pin-pop {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: calc(100% + 8px);
-  padding: 10px 14px 12px;
-  box-sizing: border-box;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-bg-elevated, var(--color-bg-secondary));
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-  max-height: 34vh;
-  overflow-y: auto;
-  z-index: 5;
-}
-[data-theme='light'] .pin-pop { box-shadow: 0 12px 32px rgba(41, 45, 52, 0.14); }
-
-.pin-pop-head {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding-bottom: 8px;
-  margin-bottom: 6px;
-  border-bottom: 1px solid var(--color-border);
-}
-/* The count is pushed to the right and the close button follows it — so `.pin-x`'s usual
-   `margin-left: auto` has to be neutralised or it would claim the space first. */
-.pin-pop-head .pin-count { margin-left: auto; }
-.pin-pop-head .pin-x { flex: 0 0 auto; margin-left: 0; }
-
-.pin-poplist { display: flex; flex-direction: column; }
 
 /* The worktree marker ships both spellings; the narrow stage decides which is on screen. */
 .pin-chip-glyph { display: none; }

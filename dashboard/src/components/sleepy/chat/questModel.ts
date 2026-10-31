@@ -443,7 +443,7 @@ export function partyTally(p: Party): PartyTally {
 
 // ─── The chat as a quest ───────────────────────────────────────────────────────────
 
-/** The composer shelf's task progress, as far as the quest reads it (`TaskProgress` fits). */
+/** The task's progress, as far as the quest reads it (`TaskProgress` fits). */
 export interface QuestProgressProbe { slug: string; state: string; done: number; total: number }
 
 /** When an entry happened, or null. 0 is no time, never the epoch: a row replayed from a
@@ -462,17 +462,46 @@ function succeededCommand(e: QuestEntry): string | null {
   return command;
 }
 
+/** The `S=<slug>` every recipe block opens with. A placeholder cannot match. */
+const RECIPE_SLUG_RE = /(?:^|[\s;])S=([A-Za-z0-9._-]{1,252})(?=[\s;]|$)/m;
+
 /** The newest successful `tasks status <slug> <state>` the chat ran, as the run's own verdict on itself. */
-function lastStatusCall(entries: readonly QuestEntry[]): { slug: string; state: string; at: number | null; index: number } | null {
-  let found: { slug: string; state: string; at: number | null; index: number } | null = null;
+function lastStatusCall(entries: readonly QuestEntry[]): { slug: string | null; state: string; at: number | null; index: number } | null {
+  let found: { slug: string | null; state: string; at: number | null; index: number } | null = null;
   entries.forEach((e, index) => {
     const command = succeededCommand(e);
     if (!command) return;
     for (const a of parseDreamActions(command)) {
-      if (a.path === 'tasks status' && a.args.length >= 2) found = { slug: a.args[0], state: a.args[1], at: entryTime(e), index };
+      if (a.path !== 'tasks status' || a.args.length < 2) continue;
+      // The recipes write `"$S"`, which only their own `S=` line can name.
+      const slug = a.args[0].includes('$') ? command.match(RECIPE_SLUG_RE)?.[1] ?? null : a.args[0];
+      found = { slug, state: a.args[1], at: entryTime(e), index };
     }
   });
   return found;
+}
+
+/** The commands that name the task the chat itself runs. Not `tasks status` or `tasks log`:
+ *  a run with waves points those at each wave's sub-task. */
+const SLUG_COMMANDS: ReadonlySet<string> = new Set(['builder open', 'tasks insert', 'tasks ready']);
+
+/**
+ * Which task this chat is running, read off its own commands: the newest slug wins. The quest's
+ * title and criteria meter hang off it, and it costs the agent nothing to report.
+ */
+export function questTaskSlug(entries: readonly QuestEntry[]): string | null {
+  let slug: string | null = null;
+  for (const e of entries) {
+    const command = succeededCommand(e);
+    if (!command) continue;
+    // Only beside a dreamcontext call: `S=3 ./run.sh` is somebody else's variable.
+    const named = command.includes('dreamcontext') ? command.match(RECIPE_SLUG_RE)?.[1] : undefined;
+    if (named) slug = named;
+    for (const a of parseDreamActions(command)) {
+      if (SLUG_COMMANDS.has(a.path) && a.args[0] && !a.args[0].includes('$')) slug = a.args[0];
+    }
+  }
+  return slug;
 }
 
 const DEVELOP_WINS: Readonly<Record<string, QuestOutcomeKind>> = { completed: 'cleared', in_review: 'awaiting-signoff' };
@@ -500,7 +529,7 @@ interface Reach { at: number | null; rounds: number }
  *
  * Plan: Ask → Draft (a second user turn, an answered question, a scout or draft party, or any
  * later stage) → Plan review (one round per review party) → Task (a task created, or a
- * progress view). Sealed when a finished answer offers the `develop` hand-off.
+ * task the chat is running). Sealed when a finished answer offers the `develop` hand-off.
  *
  * Develop: Build (always; one wave per build party, the criteria meter from progress) → Boss
  * gate → Final trial. Won when the chat moved its task to `completed` (cleared) or
@@ -510,7 +539,9 @@ export function deriveChatQuest(i: {
   mode: 'plan' | 'develop'; entries: readonly QuestEntry[]; parties: readonly Party[];
   progress: QuestProgressProbe | null; now?: number;
 }): QuestView | null {
-  const { mode, entries, parties, progress } = i;
+  const { mode, entries, parties } = i;
+  // A slug read off a command can be a task that does not exist: that proves nothing.
+  const progress = i.progress?.state === 'unknown-slug' ? null : i.progress;
   const users = entries.filter((e) => e.kind === 'user');
   if (users.length === 0) return null;
   const template = QUEST_TEMPLATES[mode];
@@ -546,7 +577,7 @@ export function deriveChatQuest(i: {
     mark('build', startedAt, parties.filter((p) => p.stage === 'build').length || 1);
     const status = lastStatusCall(entries);
     const kind = status ? developWin(status.state) : undefined;
-    if (status && kind) won = { kind, slug: status.slug, at: status.at, index: status.index };
+    if (status && kind) won = { kind, slug: status.slug ?? progress?.slug ?? null, at: status.at, index: status.index };
   }
 
   // The furthest stage reached is the active one; everything before it counts as done, which

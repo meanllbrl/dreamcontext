@@ -262,13 +262,10 @@ describe('modeBriefing', () => {
     expect(brief).toMatch(/"id":\s*"<the-task-slug>"/);
   });
 
-  it('plan tells the agent to SHELVE the task it just created', () => {
-    // The shelf is proactive or it is nothing: an agent that only mentions progress in prose
-    // leaves the surface empty for the whole session.
-    const brief = modeBriefing('plan', { worktreeAllowed: false });
-    expect(brief).toContain('dream-view');
-    expect(brief).toContain('"type":"progress"');
-    expect(brief).toMatch(/"task":\s*"<the-slug>"/);
+  it('no mode tells the agent to shelve run progress any more', () => {
+    for (const mode of ['plan', 'develop', 'basic'] as const) {
+      expect(modeBriefing(mode, { worktreeAllowed: false }), mode).not.toContain('"type":"progress"');
+    }
   });
 
   it('plan does not depend on the worktree gate (it never implements)', () => {
@@ -338,7 +335,8 @@ describe('modeBriefing', () => {
     const brief = modeBriefing('develop', { worktreeAllowed: false });
     expect(brief).toContain('dreamcontext goal-live recipe develop');
     expect(brief).toMatch(/Unknown\s+command\? STOP and tell the owner to run `dreamcontext update`/);
-    expect(brief).toContain('dreamcontext goal-live start --goal <slug> --mode develop || true');
+    // The recipe is printed by `goal-live recipe`; opening a live map is no longer the lead's job.
+    expect(brief).not.toContain('goal-live start');
   });
 
   it('develop writes the wave map before any code; in a lead run a plan\'s lanes are built in turn', () => {
@@ -501,16 +499,6 @@ describe('modeBriefing', () => {
   // the line happens to end.
   const PERMITS = /MAY\s+use\s+a\s+git\s+worktree/;
   const FORBIDS = /Do\s+NOT\s+create\s+a\s+git\s+worktree/;
-
-  it('develop opens the run on the shelf BEFORE the first edit', () => {
-    const brief = modeBriefing('develop', { worktreeAllowed: false });
-    expect(brief).toContain('"type":"progress"');
-    expect(brief).toMatch(/"task":\s*"<the-slug>"/);
-    // It must land ahead of the wave instruction — "first action", not "somewhere".
-    expect(brief.indexOf('"type":"progress"')).toBeLessThan(brief.indexOf('Work in waves'));
-    // And it must say WHERE the percent comes from, or the agent will try to assert one.
-    expect(brief).toMatch(/criteria\s+you\s+tick/i);
-  });
 
   it('develop tells the agent to pin a dev-server URL as a tag', () => {
     // The port is the one session fact no server-side reader can attribute to a session —

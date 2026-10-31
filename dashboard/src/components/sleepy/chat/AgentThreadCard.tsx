@@ -23,7 +23,7 @@ import './AgentThreadCard.css';
  * agent describe a thread in prose. The channel is an append-only synced file with a
  * per-machine read watermark on top of it; a retyped exchange would fork that, and the
  * "unread" it implied would be about nothing. `validateAgentThread` drops every content key
- * for the same reason `validateProgress` drops a supplied percent, and this component asks
+ * and this component asks
  * the same two endpoints the Agents page asks.
  *
  * ── Why a Reply CONTROL and not a mounted `<Composer>` ─────────────────────────────────

@@ -23,9 +23,6 @@ import {
 function pin(id: string, at: number, extra: Partial<Extract<ShelfEntry, { kind: 'pin' }>> = {}): ShelfEntry {
   return { kind: 'pin', id, weight: 'tag', facts: [{ label: id }], updatedAt: at, ...extra };
 }
-function progress(task: string, at: number): ShelfEntry {
-  return { kind: 'progress', id: `progress:${task}`, task, updatedAt: at };
-}
 const NO_FACTS: ShelfFact[] = [];
 
 describe('effectiveWeight — weight is a request, not a command', () => {
@@ -45,10 +42,6 @@ describe('effectiveWeight — weight is a request, not a command', () => {
 
   it('never promotes a tag, whatever it carries', () => {
     expect(effectiveWeight(pin('a', 1, { weight: 'tag', detail: 'lots of prose' }))).toBe('tag');
-  });
-
-  it('always gives progress a row — a track and a live criterion do not fit a chip', () => {
-    expect(effectiveWeight(progress('t', 1))).toBe('row');
   });
 });
 
@@ -86,15 +79,6 @@ describe('layoutShelf — the ceiling', () => {
       NO_FACTS,
     );
     expect(layout.row?.id).toBe('new');
-  });
-
-  it('gives the row to PROGRESS even when a newer row-pin exists — a live run owns it', () => {
-    const layout = layoutShelf(
-      [progress('t', 1), pin('newer', 99, { weight: 'row', detail: 'd' })],
-      NO_FACTS,
-    );
-    expect(layout.row?.kind).toBe('progress');
-    expect(layout.demotedIds).toEqual(['newer']);
   });
 
   it('demotes displaced rows OLDEST FIRST — it demoted, it did not close', () => {
@@ -201,13 +185,6 @@ describe('foldViews — id-keyed, update in place, loud eviction', () => {
     const seeded = foldViews([], [pinView('a', 'A'), pinView('b', 'B'), pinView('c', 'C')], 1).entries;
     const { entries } = foldViews(seeded, [pinView('a', 'A2')], 5);
     expect(entries.map((e) => e.id)).toEqual(['a', 'b', 'c']);
-  });
-
-  it('keys progress by its task, so re-reporting a run updates one row', () => {
-    const one = foldViews([], [{ type: 'progress', task: 't' }], 1).entries;
-    const { entries } = foldViews(one, [{ type: 'progress', task: 't' }], 2);
-    expect(entries).toHaveLength(1);
-    expect(entries[0].id).toBe('progress:t');
   });
 
   it('ignores view types that are not shelf types', () => {
@@ -346,14 +323,6 @@ describe('foldViews — the drop', () => {
     expect(retired).toEqual([]);
   });
 
-  it('a drop never removes a progress row — progress has no drop, and its id cannot be spelled', () => {
-    const seeded = foldViews([], [{ type: 'progress', task: 't' }], 1).entries;
-    // `progress:t` is not a legal pin id (`validatePin` forbids `:`), so this is the closest
-    // an agent could get. It must not reach the row.
-    const { entries, retired } = foldViews(seeded, [dropView('progress'), dropView('t')], 2);
-    expect(entries.map((e) => e.id)).toEqual(['progress:t']);
-    expect(retired).toEqual([]);
-  });
 });
 
 describe('constants', () => {

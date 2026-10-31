@@ -55,7 +55,7 @@ export const DEFAULT_CHAT_MODE: ChatMode = 'basic';
  * version fails there, and it pins this map to `CHAT_MODE_ROWS[].version` on the client.
  */
 export const MODE_VERSIONS: Record<Exclude<ChatMode, typeof NON_PICKER_MODES[number]>, string> = {
-  basic: '1.0', plan: '1.3', develop: '1.4', train: '0.1',
+  basic: '1.0', plan: '1.4', develop: '1.5', train: '0.1',
 };
 
 /**
@@ -158,8 +158,7 @@ dreamcontext tasks insert <slug> constraints "<decisions taken, what is out of s
    2+ waves: each wave is a sub-task (\`tasks create "Wave N: …" --parent <slug> --basis plan\`)
    holding its criteria and lane files; the map names each wave's slug.
 
-   Present it, and shelve it the moment it exists — emit
-   \`\`\`dream-view {"type":"progress","task":"<the-slug>"}\`\`\` so the owner watches criteria land.
+   Present it.
 
 7. **Prove it complete.** Develop inherits ONLY this task file: run
    \`dreamcontext tasks ready <slug>\` and fill every gap it names until it passes. The button refuses until then.
@@ -239,19 +238,10 @@ const DEVELOP_BRIEFING = `# Mode: Develop
 
 You are building to a task's acceptance criteria. You LEAD the run, and you write the code.
 
-- **Put the run on the shelf FIRST** — right after you read the task:
-
-\`\`\`dream-view
-{"type":"progress","task":"<the-slug>"}
-\`\`\`
-
-  It is read from the criteria you tick on disk; there is no second place to report progress.
-  Dev server? Pin it: \`{"type":"pin","id":"dev","weight":"tag","facts":[{"label":":PORT","url":"http://localhost:PORT"}]}\`.
+- **Dev server?** Pin it: \`{"type":"pin","id":"dev","weight":"tag","facts":[{"label":":PORT","url":"http://localhost:PORT"}]}\`.
 
 - **Get the procedure:** run \`dreamcontext goal-live recipe develop\` and follow it. Unknown
   command? STOP and tell the owner to run \`dreamcontext update\`.
-- **Open the live map:** \`dreamcontext goal-live start --goal <slug> --mode develop || true\`
-  (on a reopen it adopts the run).
 - **Work in waves, as few as the dependencies allow.** No wave map in the task? Write one
   before any code: criteria grouped by what one check can prove; one wave is fine.
 - **The plan decides how it runs; you implement it.** \`EXECUTION: lead\` (or no line): you
