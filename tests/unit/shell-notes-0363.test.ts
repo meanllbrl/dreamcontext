@@ -345,3 +345,10 @@ describe('review: the hidden tab is out of every action', () => {
     expect(Object.keys(st.children).length + (st.formerChildren ?? []).length).toBe(40);
   });
 });
+
+describe('note 10: the strip dot of a job that asks the owner is red', () => {
+  it('reads the Super queue question, not only the session status', () => {
+    const src = readFileSync(join(__dirname, '../../dashboard/src/components/sleepy/super/SuperContainer.tsx'), 'utf-8');
+    expect(src).toMatch(/super-mini-job"[^>]*data-kind=\{p\.asksOwner \? 'asking' : p\.status\?\.kind\}/);
+  });
+});

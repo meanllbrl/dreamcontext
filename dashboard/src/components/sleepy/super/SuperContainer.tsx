@@ -491,7 +491,7 @@ function FloatBody(p: BodyProps): ReactNode {
   // A tight presentation's rail: a status dot only; the name is the frame's label and tooltip. The frame's click opens it as ever.
   if (p.plan.mini) {
     return (
-      <div className="super-card-body super-mini-job" data-inert="true" data-kind={p.status?.kind} title={p.title}>
+      <div className="super-card-body super-mini-job" data-inert="true" data-kind={p.asksOwner ? 'asking' : p.status?.kind} title={p.title}>
         <span className="super-mini-job-dot" aria-hidden="true" />
       </div>
     );
