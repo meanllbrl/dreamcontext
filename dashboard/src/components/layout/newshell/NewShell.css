@@ -477,3 +477,7 @@
     border-radius: 0;
   }
 }
+
+/* The picker's last row: New project, under a rule so it never reads as a project. */
+.ns-picker-new { border-top: 1px solid var(--color-border); margin-top: var(--space-1); padding-top: var(--space-2); }
+.ns-picker-new-mark { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; color: var(--color-text-secondary); }

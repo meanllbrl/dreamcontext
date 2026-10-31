@@ -97,9 +97,21 @@ export function ShellModeProvider({ children }: { children: ReactNode }) {
  */
 export const LauncherOpenContext = createContext<((name: string) => void) | null>(null);
 
+/** The new shell's New project: its hand-off lands in THIS window, with the first run it asked for.
+ *  Null everywhere else: `Handoff` opens the project's window as ever. */
+export const NewProjectLandContext = createContext<((name: string, start?: 'initializer') => void) | null>(null);
+
 /** A page's drawer toggle (⌘B / the title-bar button) on a page that has its own drawer
  *  (Whiteboards' explorer). Emitted on the instance bus by `PageDrawerToggleBridge`. */
 export const TOGGLE_PAGE_DRAWER_EVENT = 'dc-toggle-page-drawer';
+
+/** The pages whose side panel can be shown and hidden: the title-bar button and ⌘B drive it. */
+export const PAGES_WITH_PANEL: ReadonlySet<string> = new Set(['whiteboards', 'brain']);
+
+/** What the title-bar drawer button and ⌘B toggle here: the page's own panel, or the chat drawer. */
+export function drawerTogglePanel(o: { chatOpen: boolean; page: string }): 'page' | 'chat-drawer' {
+  return !o.chatOpen && PAGES_WITH_PANEL.has(o.page) ? 'page' : 'chat-drawer';
+}
 
 /** A board that draws its own card (Tasks, Roadmap, Hypotheses), inside the new shell's frame:
  *  no second border, radius or shadow, and the frame's height instead of the viewport's. */

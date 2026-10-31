@@ -11,6 +11,8 @@ interface TitleBarProps {
   activeVault: string;
   rows: readonly PickerRow[];
   pickerOpen: boolean;
+  /** The picker's last row: the app's Add Project flow. */
+  onNewProject: () => void;
   onPickerOpen: (open: boolean) => void;
   onPick: (name: string) => void;
   /** The chrome's notice (the ceiling's eviction or refusal), in the new wording. */
@@ -36,7 +38,7 @@ interface TitleBarProps {
  * above the page, below every full-screen view.
  */
 export function TitleBar({
-  activeVault, rows, pickerOpen, onPickerOpen, onPick, notice, onToggleDrawer,
+  activeVault, rows, pickerOpen, onNewProject, onPickerOpen, onPick, notice, onToggleDrawer,
   zoom, zoomLevels, onZoom, onCycleTheme, themeLabel, dark, setLeftSlot, setRightSlot,
 }: TitleBarProps) {
   const { t } = useI18n();
@@ -105,6 +107,7 @@ export function TitleBar({
 
       {pickerOpen && (
         <ProjectPicker
+          onNewProject={onNewProject}
           anchor={pickerRef.current}
           rows={rows}
           onPick={(name) => { onPickerOpen(false); onPick(name); }}

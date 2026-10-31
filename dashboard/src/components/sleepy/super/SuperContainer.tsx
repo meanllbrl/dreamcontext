@@ -294,6 +294,7 @@ export function SuperContainer(props: SuperContainerProps) {
       data-where={plan.where}
       data-shape={plan.shape}
       data-size={floating ? drawnSize : undefined}
+      data-mini={plan.mini ? 'true' : undefined}
       data-side={floating ? props.side : undefined}
       data-owner={plan.owner ? 'true' : undefined}
       data-status={status ? glowOf(status) : undefined}
@@ -486,6 +487,15 @@ function MacOnlyBody({ kind, title }: { kind: Container['kind']; title: string }
 function FloatBody(p: BodyProps): ReactNode {
   const c = p.container;
   const size = p.plan.size ?? 'small';
+  // A tight presentation's rail: status and short name. The frame's click opens it as ever.
+  if (p.plan.mini) {
+    return (
+      <div className="super-card-body super-mini-job" data-inert="true" data-kind={p.status?.kind} title={p.title}>
+        <span className="super-mini-job-dot" aria-hidden="true" />
+        <span className="super-mini-job-name">{p.title}</span>
+      </div>
+    );
+  }
   if (c.kind === 'agenda' && SIZE_UNITS[size].h === 1) {
     return (
       <div className="super-card-body" data-inert="true">

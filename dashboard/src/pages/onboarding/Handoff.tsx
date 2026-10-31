@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useContext } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { useAgentSettings } from '../../hooks/useOnboarding';
 import { emitStartIntent, openVaultWindow } from '../../lib/desktop';
+import { NewProjectLandContext } from '../../lib/uxMode';
 import type { ReadinessReport } from '../../lib/onboardingTypes';
 import { GemConverge } from './GemConverge';
 import { canStartClaude, handoffAction } from './handoffPlan';
@@ -29,12 +30,19 @@ export function Handoff({ project, report, onDone, onFinishSetup }: Props) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const canStart = canStartClaude(report, settings);
+  /** The new shell's New project lands in this window; null (the launcher) opens its own. */
+  const landHere = useContext(NewProjectLandContext);
 
   async function open(start: boolean) {
     if (busy) return;
     setBusy(true);
     setNotice(null);
     try {
+      if (landHere) {
+        landHere(project.name, start ? 'initializer' : undefined);
+        onDone(project.name);
+        return;
+      }
       const result = await openVaultWindow(project.name, undefined, start ? { start: 'initializer' } : {});
       if (start && handoffAction(result) === 'emit-start-intent') {
         const delivered = await emitStartIntent(project.name, 'initializer');

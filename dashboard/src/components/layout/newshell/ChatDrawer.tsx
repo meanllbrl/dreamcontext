@@ -27,6 +27,8 @@ export interface ChatDrawerProps {
   onDrop(name: string, beforeIndex: number): void;
   onOpenInWindow(name: string): void;
   onCloseProject(name: string): void;
+  /** "+" beside Projects: the app's Add Project flow. */
+  onNewProject(): void;
   /** Bumped by ⌘N: open the New chat window picker at its row. */
   newWindowNonce: number;
 }
@@ -184,14 +186,15 @@ export function ChatDrawer(p: ChatDrawerProps) {
   const child = (row: DrawerProjectRow, c: DrawerChild) => {
     if (c.kind === 'super') {
       return (
-        <SuperRow key="super" vault={row.name} selected={c.selected} on={c.on} label={t('shell.drawer.superAgent')}
+        <SuperRow key="super" vault={row.name} selected={c.selected} on={c.on} working={c.working} asking={c.asking} label={t('shell.drawer.superAgent')}
+          workingLabel={(n) => t('shell.drawer.superWorking').replace('{n}', String(n))} askingLabel={t('shell.drawer.superAsking')}
           unreadLabel={(n) => t('super.unread.count').replace('{n}', String(n))} onPick={() => pick(row.name, { kind: 'super' })} />
       );
     }
     if (c.kind === 'member') {
       return (
-        <button key={`m-${c.slug}`} type="button" className="ns-dr-row ns-dr-child ns-dr-member" data-status={c.status}
-          onClick={() => pick(row.name, { kind: 'page', page: 'automations', id: c.slug })}>
+        <button key={`m-${c.slug}`} type="button" className={`ns-dr-row ns-dr-child ns-dr-member${c.selected ? ' is-sel' : ''}`} data-status={c.status}
+          data-testid="drawer-member-row" onClick={() => pick(row.name, { kind: 'member', slug: c.slug, title: c.title })}>
           <AgentAvatar of="agent" slug={c.slug} title={c.title} hasPhoto={c.hasPhoto} size={16} />
           <span className="ns-dr-t">{c.title}</span>
           <span className="ns-dr-status" data-status={c.status} aria-hidden="true" />
@@ -266,7 +269,11 @@ export function ChatDrawer(p: ChatDrawerProps) {
           <span className="ns-dr-t">{t('shell.drawer.relations')}</span>
         </button>
 
-        <div className="ns-dr-sec">{t('shell.drawer.projects')}</div>
+        <div className="ns-dr-sec">
+          <span>{t('shell.drawer.projects')}</span>
+          <button type="button" className="ns-dr-sec-add" aria-label={t('shell.drawer.newProject')} title={t('shell.drawer.newProject')}
+            data-testid="drawer-new-project" onClick={p.onNewProject}>+</button>
+        </div>
         {p.rows.map((row, i) => (
           <div key={row.name} className="ns-dr-project" data-drawer-project={row.name}
             data-drop-before={drag && drag.over === i && drag.name !== row.name ? 'true' : undefined}
@@ -292,6 +299,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
                 {row.otherWindow && <span className="ns-dr-note">{t('shell.drawer.otherWindow')}</span>}
                 {row.asleep && <span className="ns-dr-note">{t('shell.drawer.asleep')}</span>}
                 {row.sum && <ProjectChipBubbles chip={row.sum} />}
+                {row.superAsking && <span className="ns-dr-ask" data-testid="drawer-project-asking" aria-label={t('shell.drawer.superAsking')} />}
               </button>
               <button type="button" className="ns-dr-act ns-dr-add" aria-label={`${t('shell.drawer.newWindow')}: ${row.name}`}
                 data-testid="drawer-project-add"
@@ -365,16 +373,22 @@ export function ChatDrawer(p: ChatDrawerProps) {
 }
 
 /** The Super Agent row: its project's unread count rides beside the title (the pane publishes it). */
-function SuperRow({ vault, selected, on, label, unreadLabel, onPick }: {
-  vault: string; selected: boolean; on: boolean; label: string; unreadLabel: (n: number) => string; onPick: () => void;
+function SuperRow({ vault, selected, on, working, asking, label, workingLabel, askingLabel, unreadLabel, onPick }: {
+  vault: string; selected: boolean; on: boolean; working: number; asking: boolean; label: string;
+  workingLabel: (n: number) => string; askingLabel: string; unreadLabel: (n: number) => string; onPick: () => void;
 }) {
   const unread = useSuperUnreadCount(vault);
+  // One mark at the row's end, in order of what the owner must do: the row itself goes red for a
+  // question; the ring counts the children at work; the unread count shows only when no ring does.
+  const named = [asking ? askingLabel : '', working > 0 ? workingLabel(working) : '', unread > 0 ? unreadLabel(unread) : ''].filter(Boolean).join(', ');
   return (
-    <button type="button" className={`ns-dr-row ns-dr-child ns-dr-super${selected ? ' is-sel' : ''}`}
-      data-testid="drawer-super-row" aria-label={unread > 0 ? `${label} (${unreadLabel(unread)})` : undefined} onClick={onPick}>
+    <button type="button" className={`ns-dr-row ns-dr-child ns-dr-super${selected ? ' is-sel' : ''}`} data-asking={asking ? 'true' : undefined}
+      data-testid="drawer-super-row" aria-label={named ? `${label} (${named})` : undefined} onClick={onPick}>
       <span className="ns-dr-t">{label}</span>
-      {unread > 0 && <span className="ns-menu-count" data-testid="super-unread-badge">{unread}</span>}
-      <span className={`ns-dr-dot${on ? ' is-on' : ''}`} aria-hidden="true" />
+      {working > 0
+        ? <span data-testid="super-working-ring"><ProjectChipBubbles chip={{ live: working, asking: 0, working, idle: 0, flagged: 0 }} /></span>
+        : unread > 0 && <span className="ns-menu-count" data-testid="super-unread-badge">{unread}</span>}
+      {working === 0 && unread === 0 && !asking && <span className={`ns-dr-dot${on ? ' is-on' : ''}`} aria-hidden="true" />}
     </button>
   );
 }

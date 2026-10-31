@@ -212,7 +212,7 @@ describe('roster windows: the phone and the drawer', () => {
       windows: [{ id: 'main', name: 'Chat' }, { id: 'w2', name: 'Refactor' }],
       sessions: [tab('A', { window: 'main' }), tab('B', { window: 'w2' }), tab('C', { window: 'w2' }), tab('S', { sessionId: uuid(7), window: 'w2' })],
     }, { enabled: true, session: uuid(7) });
-    expect(s).toEqual({ windows: 2, tabs: 3, superOn: true, perWindow: [{ id: 'main', name: 'Chat', tabs: 1 }, { id: 'w2', name: 'Refactor', tabs: 2 }] });
+    expect(s).toEqual({ windows: 2, tabs: 3, superOn: true, superWorking: 0, superAsking: false, perWindow: [{ id: 'main', name: 'Chat', tabs: 1 }, { id: 'w2', name: 'Refactor', tabs: 2 }] });
     expect(JSON.stringify(s)).not.toContain('"A"');
   });
 

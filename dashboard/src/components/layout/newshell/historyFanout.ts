@@ -20,13 +20,18 @@ export interface FanResult<T extends FanRow> {
   failed: string[];
 }
 
-export function historyPath(q: string, agentRuns: boolean, limit: number): string {
-  return `/agent/chat-sessions?limit=${limit}&q=${encodeURIComponent(q.trim())}${agentRuns ? '&agentRuns=1' : ''}`;
+export function historyPath(q: string, agentRuns: boolean, limit: number, superRows?: 'group' | 'only'): string {
+  return `/agent/chat-sessions?limit=${limit}&q=${encodeURIComponent(q.trim())}${agentRuns ? '&agentRuns=1' : ''}${superRows ? `&super=${superRows}` : ''}`;
+}
+
+/** A project's Super Agent as ONE History row: `superCount` marks it, its id is never a session. */
+export function superGroupRow<V extends string | undefined>(vault: V, group: { count: number; lastAt: number }, title: string) {
+  return { id: `super-group:${vault ?? ''}`, title, preview: '', updatedAt: group.lastAt, startedAt: null, sizeBytes: 0, gitBranch: '', vault, superCount: group.count };
 }
 
 export async function fanOutHistory<T extends FanRow>(
   vaults: readonly string[],
-  read: (vault: string) => Promise<{ sessions: T[]; total?: number; agentRuns?: number }>,
+  read: (vault: string) => Promise<{ sessions: T[]; total?: number; agentRuns?: number; extra?: T[] }>,
   /** False once a newer query took over: no more requests start. */
   current: () => boolean,
 ): Promise<FanResult<T>> {
@@ -38,6 +43,8 @@ export async function fanOutHistory<T extends FanRow>(
       try {
         const r = await read(vault);
         for (const s of r.sessions.slice(0, HISTORY_PER_VAULT)) out.sessions.push({ ...s, vault });
+        // Extra rows (a project's Super Agent entry) are never cut by the per-project cap.
+        for (const s of r.extra ?? []) out.sessions.push({ ...s, vault });
         out.total += r.total ?? r.sessions.length;
         out.agentRuns += r.agentRuns ?? 0;
       } catch {

@@ -41,6 +41,12 @@ export interface DrawerFacts {
   /** Each chat window with its own ring and count (W3); absent = one window, the rollup's. */
   windows?: DrawerWindowFact[];
   activeWindowId?: string;
+  /** The owner's chats alone: the ring of a collapsed project. Absent = the whole rollup. */
+  shown?: { live: number; asking: number; working: number; flagged: number };
+  /** The member whose conversation the chat area shows. */
+  member?: string;
+  /** The Super Agent row's marks: its children at work, and a question for the owner. */
+  superMarks?: { working: number; asking: boolean };
 }
 
 /** What the fan-out reads for an expanded project that is not mounted (D7). No ring: nothing
@@ -51,6 +57,8 @@ export interface FanoutFacts {
   team: DrawerTeamRow[];
   /** Each saved window's name and tab count (`?summary=1`'s `perWindow`); absent on an older server. */
   windows?: Array<{ id: string; name: string; tabs: number }>;
+  /** The same marks, read from that project's record. */
+  superMarks?: { working: number; asking: boolean };
 }
 
 export interface DrawerProjectInput {
@@ -67,8 +75,8 @@ export interface DrawerProjectInput {
 }
 
 export type DrawerChild =
-  | { kind: 'super'; on: boolean; selected: boolean }
-  | { kind: 'member'; slug: string; title: string; hasPhoto: boolean; status: TeamStatus }
+  | { kind: 'super'; on: boolean; selected: boolean; working: number; asking: boolean }
+  | { kind: 'member'; slug: string; title: string; hasPhoto: boolean; status: TeamStatus; selected: boolean }
   | {
     kind: 'window';
     id: string;
@@ -96,6 +104,8 @@ export interface DrawerProjectRow {
   /** Where its child rows came from. `none` = expanded, but nothing read yet. */
   source: 'mounted' | 'fanout' | 'none';
   children: DrawerChild[];
+  /** Collapsed: its Super Agent (or a child) waits on the owner. */
+  superAsking?: boolean;
   /** Collapsed and mounted: every window's chats summed, for the ring beside the name. */
   sum?: { live: number; asking: number; working: number; idle: number; flagged: number };
 }
@@ -130,11 +140,13 @@ export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout
       asleep: p.asleep, otherWindow: p.otherWindow, expanded: isOpen,
     };
     if (!isOpen) {
-      const r = p.mounted ? p.rollup : null;
+      const r = p.mounted ? (facts[p.name]?.shown ?? p.rollup) : null;
       const sum = r && r.live > 0
         ? { live: r.live, asking: r.asking, working: r.working, idle: Math.max(0, r.live - r.working - r.asking), flagged: r.flagged }
         : undefined;
-      return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}) };
+      // Folded, a question still reaches the owner: the project row carries it.
+      const ask = (p.mounted ? facts[p.name] : fanout[p.name])?.superMarks?.asking;
+      return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(ask ? { superAsking: true } : {}) };
     }
 
     const mine = p.mounted ? facts[p.name] : undefined;
@@ -143,15 +155,16 @@ export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout
     const onChat = active && !!mine?.chatOpen;
     const superSelected = onChat && !!mine?.superSelected;
 
+    const marks = mine?.superMarks ?? far?.superMarks;
     const children: DrawerChild[] = [
       // Always there, even before anything is read: it is how a project with no chat starts one.
-      { kind: 'super', on: !!(mine?.superOn ?? far?.superOn), selected: superSelected },
+      { kind: 'super', on: !!(mine?.superOn ?? far?.superOn), selected: superSelected, working: marks?.working ?? 0, asking: !!marks?.asking },
     ];
     for (const m of (mine?.team ?? far?.team ?? [])) {
-      children.push({ kind: 'member', slug: m.slug, title: m.title, hasPhoto: m.hasPhoto, status: m.status });
+      children.push({ kind: 'member', slug: m.slug, title: m.title, hasPhoto: m.hasPhoto, status: m.status, selected: onChat && mine?.member === m.slug });
     }
-    const r = p.mounted ? p.rollup : null;
-    const windowsOn = onChat && !superSelected;
+    const r = p.mounted ? (mine?.shown ?? p.rollup) : null;
+    const windowsOn = onChat && !superSelected && !mine?.member;
     if (mine?.windows?.length) {
       for (const w of mine.windows) {
         children.push({ kind: 'window', ...w, selected: windowsOn && w.id === mine.activeWindowId });

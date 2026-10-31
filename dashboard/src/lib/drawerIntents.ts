@@ -29,8 +29,10 @@ export type DrawerIntent =
   | { kind: 'close-window'; windowId: string }
   /** A History row: reopen THAT chat in this project (the `OPEN_SESSION` path). */
   | { kind: 'open-session'; sessionId: string }
-  /** Project Relations, or an AI Team member's conversation: a page of this project. */
-  | { kind: 'page'; page: 'relations' | 'automations'; id?: string };
+  /** An AI Team member's conversation: opens in the chat area, never on the AI Team page. */
+  | { kind: 'member'; slug: string; title: string }
+  /** Project Relations: a page of this project. */
+  | { kind: 'page'; page: 'relations'; id?: string };
 
 export interface PendingDrawerIntent {
   intent: DrawerIntent;
@@ -56,9 +58,16 @@ export interface DrawerSurfaceState {
   windows?: DrawerWindowFact[];
   /** The window on screen. */
   activeWindowId?: string;
+  /** The owner's chats alone, for the project's ring: the Super's never count there. */
+  shown?: { live: number; asking: number; working: number; flagged: number };
+  /** The AI Team member whose conversation the chat area shows. */
+  member?: string;
+  /** The Super Agent row's marks (`superRowMarks`). */
+  superMarks?: { working: number; asking: boolean };
 }
 
 export function sameSurfaceState(a: DrawerSurfaceState | null, b: DrawerSurfaceState): boolean {
   return !!a && a.superOn === b.superOn && a.superSelected === b.superSelected
-    && a.activeWindowId === b.activeWindowId && JSON.stringify(a.windows ?? []) === JSON.stringify(b.windows ?? []);
+    && a.activeWindowId === b.activeWindowId && a.member === b.member && JSON.stringify([a.shown, a.superMarks]) === JSON.stringify([b.shown, b.superMarks])
+    && JSON.stringify(a.windows ?? []) === JSON.stringify(b.windows ?? []);
 }

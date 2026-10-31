@@ -72,8 +72,8 @@ describe('drawer rows', () => {
     });
     expect(rows[0].source).toBe('mounted');
     expect(rows[0].children).toEqual([
-      { kind: 'super', on: true, selected: false },
-      { kind: 'member', slug: 'digest', title: 'Digest', hasPhoto: false, status: 'working' },
+      { kind: 'super', on: true, selected: false, working: 0, asking: false },
+      { kind: 'member', slug: 'digest', title: 'Digest', hasPhoto: false, status: 'working', selected: false },
       { kind: 'window', id: 'main', name: 'Chat', working: 2, asking: 1, flagged: 1, other: 1, selected: true },
     ]);
     expect(rows[1].source).toBe('fanout');

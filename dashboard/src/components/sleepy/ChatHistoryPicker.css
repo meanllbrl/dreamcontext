@@ -314,3 +314,25 @@
     border-radius: var(--radius-full, 999px);
   }
 }
+
+/* A project's Super Agent entry, opened: the way back to the whole list. */
+.chp-super-back {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.chp-super-back:hover { color: var(--color-text); }
+.chp-row-tag--super {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  text-transform: none;
+  letter-spacing: 0;
+}

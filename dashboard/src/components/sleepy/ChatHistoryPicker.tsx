@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useApi } from '../../context/VaultContext';
 import { ApiClient } from '../../api/client';
 import { useI18n } from '../../context/I18nContext';
-import { fanOutHistory, historyPath, HISTORY_DEBOUNCE_MS, HISTORY_PER_VAULT } from '../layout/newshell/historyFanout';
+import { fanOutHistory, historyPath, superGroupRow, HISTORY_DEBOUNCE_MS, HISTORY_PER_VAULT } from '../layout/newshell/historyFanout';
 import { useOverlayId } from '../../lib/useOverlayId';
 import { CommandModal, useListKeyboardNav } from '../search/CommandModal';
 import { highlight, queryTokens } from './phoneList';
@@ -49,6 +49,10 @@ export interface PastSession {
   gitBranch: string;
   /** The new shell's cross-project History: the project this chat belongs to. */
   vault?: string;
+  /** A Super Agent's session, in a search or its opened entry. */
+  super?: boolean;
+  /** This row is a project's Super Agent entry, standing for this many sessions. */
+  superCount?: number;
 }
 
 interface ChatHistoryResponse {
@@ -57,6 +61,8 @@ interface ChatHistoryResponse {
   /** Matching conversations the server withheld as machine-spawned agent runs. */
   agentRuns: number;
   truncated: boolean;
+  /** The project's Super Agent, as one entry (the new shell). */
+  superGroup?: { count: number; lastAt: number };
   /** Present while the server is still reading transcripts' content: the list is partial. */
   indexing?: { done: number; total: number };
 }
@@ -154,6 +160,8 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
   const { t } = useI18n();
   const cross = !!projects;
   const [scope, setScope] = useState<string>(() => currentVault ?? ALL);
+  /** The project whose Super Agent entry is open: its sessions fill the list. */
+  const [superOf, setSuperOf] = useState<string | null>(null);
   /** "All projects": the projects whose read failed, named under the list (never dropped). */
   const [failedVaults, setFailedVaults] = useState<string[]>([]);
   const projectsKey = projects?.join('\n') ?? '';
@@ -191,15 +199,26 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
     const seq = ++reqRef.current;
     setLoading(true);
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    const fanned = cross && scope === ALL;
+    const fanned = cross && scope === ALL && !superOf;
     if (!fanned) setFailedVaults([]);
+    const superTitle = t('shell.history.superAgent');
+    /** The project's entry, placed among its chats by its last activity. */
+    const withEntry = (r: ChatHistoryResponse, vault: string): ChatHistoryResponse => {
+      if (!r.superGroup) return r;
+      const row = superGroupRow(vault, r.superGroup, superTitle);
+      return { ...r, sessions: [...r.sessions, row].sort((a, b) => b.updatedAt - a.updatedAt) };
+    };
     const handle = setTimeout(() => {
       const read: Promise<ChatHistoryResponse> = !cross
         ? api.get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT))
+        : superOf
+          ? new ApiClient(superOf).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT, 'only'))
+            .then((r) => ({ ...r, sessions: r.sessions.map((x) => ({ ...x, vault: superOf })) }))
         : fanned
           ? fanOutHistory<PastSession>(
             projects ?? [],
-            (v) => new ApiClient(v).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, HISTORY_PER_VAULT)),
+            (v) => new ApiClient(v).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, HISTORY_PER_VAULT, 'group'))
+              .then((r) => ({ ...r, extra: r.superGroup ? [superGroupRow(v, r.superGroup, superTitle)] : [] })),
             () => reqRef.current === seq,
           ).then((r) => {
             if (reqRef.current === seq) setFailedVaults(r.failed);
@@ -207,8 +226,8 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
             if (r.failed.length && r.failed.length === (projects ?? []).length) throw new Error('every project failed');
             return { sessions: r.sessions, total: r.total, agentRuns: r.agentRuns, truncated: false };
           })
-          : new ApiClient(scope).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT))
-            .then((r) => ({ ...r, sessions: r.sessions.map((x) => ({ ...x, vault: scope })) }));
+          : new ApiClient(scope).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT, 'group'))
+            .then((r) => withEntry({ ...r, sessions: r.sessions.map((x) => ({ ...x, vault: scope })) }, scope));
       read
         .then((r) => {
           if (reqRef.current !== seq) return;
@@ -226,9 +245,10 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
     return () => { clearTimeout(handle); clearTimeout(retryTimer); };
     // `projects` is read through its key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, open, q, showAgentRuns, retry, cross, scope, projectsKey]);
+  }, [api, open, q, showAgentRuns, retry, cross, scope, projectsKey, superOf]);
 
   const pick = useCallback((s: PastSession) => {
+    if (s.superCount !== undefined) { setSuperOf(s.vault ?? null); setData(null); setRetry(0); return; }
     if (onPickIn && s.vault) onPickIn(s.vault, s);
     else onPick(s);
   }, [onPick, onPickIn]);
@@ -272,6 +292,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
     setFailed(false);
     setShowAgentRuns(false);
     setScope(currentVault ?? ALL);
+    setSuperOf(null);
     setNow(Date.now());
     const raf = requestAnimationFrame(() => { try { inputRef.current?.focus(); } catch { /* ignore */ } });
     return () => cancelAnimationFrame(raf);
@@ -308,13 +329,18 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
           {[ALL, ...(projects ?? [])].map((v) => (
             <button key={v} type="button" role="tab" aria-selected={scope === v}
               className={`chp-project${scope === v ? ' is-on' : ''}`}
-              onClick={() => { setScope(v); setRetry(0); setFocused(0); setData(null); }}>
+              onClick={() => { setScope(v); setSuperOf(null); setRetry(0); setFocused(0); setData(null); }}>
               {v === ALL ? t('shell.history.allProjects') : v}
             </button>
           ))}
         </div>
       )}
       <div className="chp-list" role="listbox" aria-label="Past chats" ref={listRef}>
+        {superOf && (
+          <button type="button" className="chp-super-back" data-testid="chp-super-back" onClick={() => { setSuperOf(null); setData(null); setFocused(0); }}>
+            ‹ {t('shell.history.superAgent')} · {superOf}
+          </button>
+        )}
         {sessions.map((s, i) => {
           const isFocused = i === focused;
           const isOpen = openSet.has(s.id);
@@ -333,6 +359,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
                 aria-selected={isFocused}
                 data-row-index={i}
                 className={`chp-row${isFocused ? ' chp-row--focused' : ''}${isOpen ? ' chp-row--open' : ''}`}
+                data-testid={s.superCount !== undefined ? 'chp-super-group' : undefined}
                 onClick={() => pick(s)}
                 onMouseEnter={() => setFocused(i)}
               >
@@ -347,9 +374,11 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
                   <span className="chp-row-when">{whenLabel(s.updatedAt, now)}</span>
                   <span className="chp-row-facts">
                     {cross && scope === ALL && s.vault && <span className="chp-row-tag chp-row-vault">{s.vault}</span>}
+                    {s.superCount !== undefined && <span className="chp-row-tag chp-row-tag--super" data-testid="chp-super-count">{t(s.superCount === 1 ? 'shell.history.superSession' : 'shell.history.superSessions').replace('{n}', String(s.superCount))}</span>}
+                    {s.super && !superOf && <span className="chp-row-tag chp-row-tag--super" data-testid="chp-super-tag">{t('shell.history.superAgent')}</span>}
                     {isOpen && <span className="chp-row-tag">open</span>}
                     {s.gitBranch && <span className="chp-row-branch" title={s.gitBranch}>{s.gitBranch}</span>}
-                    <span className="chp-row-size">{sizeLabel(s.sizeBytes)}</span>
+                    {s.superCount === undefined && <span className="chp-row-size">{sizeLabel(s.sizeBytes)}</span>}
                   </span>
                 </span>
               </button>

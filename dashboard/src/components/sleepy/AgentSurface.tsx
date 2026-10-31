@@ -129,6 +129,7 @@ import type { PendingQuestion } from './chatSession';
 import { HandoverButton } from './super/HandoverButton';
 import { SuperCentreHead, SuperSurface, jobLookOf, prefersReducedMotion, runFlights, type FlightRun, type StageShowChild } from './super/SuperSurface';
 import { SuperDock } from './super/SuperDock';
+import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superRowMarks } from './super/sessionHome';
 import { JobBar } from './super/JobBar';
 import { IconButton, chatStatus } from './super/SuperContainer';
 import { DockChip } from './AgentDock';
@@ -470,7 +471,10 @@ function tunnelSettings(s: AgentSettings): AgentSettings {
   return isMacPhoneSurface() && !s.chatView ? { ...s, chatView: true } : s;
 }
 
-export function AgentSurface() {
+export function AgentSurface({ stageBesideDrawer = false }: {
+  /** The new shell's chat drawer stands beside this surface: the Super stage leans right. */
+  stageBesideDrawer?: boolean;
+} = {}) {
   // Which project this surface belongs to. Every session it spawns, every file it uploads and
   // the checklist bridge it registers are bound to THIS vault — one window holds several live
   // projects, so reading an "active vault" module global here would spawn a project's agent
@@ -794,6 +798,18 @@ export function AgentSurface() {
   // without the record naming them (`childMarks`, D16): quiet from the first frame, not only once
   // the server's `super_state` push lands.
   const [superDelegated, setSuperDelegated] = useState<ReadonlyMap<string, number>>(() => new Map());
+  // Every session has ONE home (super/sessionHome.ts): in the new shell a chat window draws only
+  // its own. A view: the roster, the panes and the transcripts keep every session.
+  const superOwned = useMemo(() => superOwnedIds(superState, superDelegated), [superState, superDelegated]);
+  const superOwnedRef = useRef(superOwned);
+  superOwnedRef.current = superOwned;
+  const inChatWindow = useCallback((m: { mode?: string; claudeId?: string }) => (
+    !windowed || sessionHome(m, superOwnedRef.current, superStateRef.current?.session) === 'chat'
+  ), [windowed]);
+  /** A team member's conversation or an ended Super session's transcript, shown in the chat area. */
+  const [superPeek, setSuperPeek] = useState<{ kind: 'member'; slug: string; title: string } | { kind: 'transcript'; claudeId: string; title: string } | null>(null);
+  /** The rule's door for a pick: a Super session opens in the Super window, never as a tab. */
+  const openInSuperWindowRef = useRef<(past: { id: string; title?: string }) => boolean>(() => false);
   // The owner's hand-over actions in order: a result belonging to one already reversed is dropped.
   const superGenRef = useRef(actionGeneration());
 
@@ -1136,8 +1152,17 @@ export function AgentSurface() {
   }, []);
 
   const started = sessionList.length > 0;
-  // The action-focused pane (falls back to the first pane when the stored id is stale).
-  const activePane = panes.find((p) => p.id === activePaneId) ?? panes[0];
+  // What a chat window draws: only the tabs that live there (classic: every pane, as ever).
+  const shownPanes = useMemo(() => {
+    if (!windowed) return panes;
+    const metaOf = new Map(sessionList.map((m) => [m.id, m] as const));
+    return chatWindowPanes(panes, (id) => inChatWindow(metaOf.get(id) ?? {}));
+    // `superOwned` is what `inChatWindow` reads through its ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windowed, panes, sessionList, superOwned, inChatWindow]);
+  // The action-focused pane (falls back to the first pane when the stored id is stale). The shown
+  // panes: ⌘W, a drop or an injected line must never reach a tab the window does not draw.
+  const activePane = shownPanes.find((p) => p.id === activePaneId) ?? shownPanes[0];
   const panesRowRef = useRef<HTMLDivElement>(null);
   const glideRef = useRef<HTMLDivElement>(null);
   usePaneFocusGlide(panesRowRef, glideRef, activePane?.id, panes.length);
@@ -2574,6 +2599,7 @@ export function AgentSurface() {
   const resumePastSession = useCallback((past: PastSession, reattach: '' | '1' | 'passive' = '') => {
     setHistoryOpen(false);
     setExpanded(true);
+    if (openInSuperWindowRef.current(past)) return;
     // The Super Agent's conversation is never reopened as a tab: the hand-over button is its
     // only way in (plan-r7 D1, D9).
     if (past.id === superStateRef.current?.session) return;
@@ -3324,7 +3350,7 @@ export function AgentSurface() {
     setExpanded(true);
     let target = liveSession(focusedSessionId);
     if (!target) {
-      const liveMeta = sessionList.find((m) => liveSession(m.id));
+      const liveMeta = sessionList.find((m) => liveSession(m.id) && inChatWindow(m));
       if (liveMeta) { target = liveSession(liveMeta.id); focusSession(liveMeta.id); }
     }
     if (target) { target.sendText(text); target.focus(); return; }
@@ -3468,7 +3494,7 @@ export function AgentSurface() {
     const home = !isSuperCaller && selfKey ? parkedAll.get(selfKey) : undefined;
     const parkedWin = home ? chatWindows.list.find((w) => w.id === home) : undefined;
     const shownWin = parkedWin ?? chatWindows.list.find((w) => w.id === chatWindows.activeId);
-    const inScope = (m: SessionMeta) => isSuperCaller || (home ? parkedAll.get(m.claudeId) === home : !parkedAll.has(m.claudeId));
+    const inScope = (m: SessionMeta) => isSuperCaller || m.id === self || (inChatWindow(m) && (home ? parkedAll.get(m.claudeId) === home : !parkedAll.has(m.claudeId)));
     const keyOf = (sid: string) => sessionListRef.current.find((m) => m.id === sid)?.claudeId ?? '';
     return {
     self,
@@ -3599,7 +3625,9 @@ export function AgentSurface() {
   const handedOver = superView === 'super' && !!superState && !isMobile;
   // The Super dock's ONE gate (plan R1) and whether its window is open now. Never written from
   // here: the view stays as the hand-over and take-back left it (T1).
-  const dockOn = superDockOn({ handedOver, enabled: superState?.enabled, desktop: caps?.desktop, agentsEnabled: agentSettings.enabled });
+  // In the new shell the Super Agent stays reachable on every page whichever window Chat last
+  // showed: there is no take-back that ends it.
+  const dockOn = superDockOn({ handedOver: windowed ? !!superState && !isMobile : handedOver, enabled: superState?.enabled, desktop: caps?.desktop, agentsEnabled: agentSettings.enabled });
   const dockOpen = dockOn && superDockOpen && !expanded;
   // Closed whenever the dock is off or the overlay is expanded (the stage centre holds the chat).
   useEffect(() => { if (superDockOpen && (!dockOn || expanded)) setSuperDockOpen(false); }, [superDockOpen, dockOn, expanded]);
@@ -4220,7 +4248,9 @@ export function AgentSurface() {
           dormant: m.dormant || !s || s.status === 'closed',
         };
       });
-      const body = adoptionBody(tabs, before?.session);
+      // New shell: every session has one home and there is no take-back, so opening the Super
+      // Agent takes none of the owner's chats out of their windows.
+      const body = adoptionBody(windowed ? [] : tabs, before?.session);
       // FIRST rects, in ONE batch, before anything changes.
       const first = new Map<string, { role: FlightRole; rect: Rect }>();
       for (const cid of body.adopt) {
@@ -4485,7 +4515,10 @@ export function AgentSurface() {
   }, [handOver, takeBack]);
 
   /** A terminal in the Terminals row: take the screen back and focus that terminal. */
-  const openTerminalFromSuper = useCallback((sid: string) => { void takeBack(sid); }, [takeBack]);
+  const openTerminalFromSuper = useCallback((sid: string) => {
+    if (windowed) { setSuperView('panes'); focusSessionRef.current(sid); return; }
+    void takeBack(sid);
+  }, [takeBack, windowed]);
 
   // Read each visible pane's agent CURRENT model from its transcript when the layout or
   // roster changes (a mid-session `/model` switch — ours or the user's own — is reflected
@@ -4499,7 +4532,7 @@ export function AgentSurface() {
         .then((r) => { if (!cancelled && r?.model) setSessionModel((prev) => ({ ...prev, [sid]: r.model as string })); })
         .catch(() => { /* best-effort: keep the fallback */ });
     };
-    const activeSids = Array.from(new Set(panes.map((p) => p.active)));
+    const activeSids = Array.from(new Set(shownPanes.map((p) => p.active)));
     activeSids.forEach((sid) => {
       const meta = sessionList.find((m) => m.id === sid);
       if (!meta || meta.dormant || !meta.claudeId) return;
@@ -4677,7 +4710,7 @@ export function AgentSurface() {
   useLayoutEffect(() => {
     // A session has a home when it is some pane's active tab — homed in the overlay's
     // `.agent-pane-slot[data-pane]`. Everything else lives in the garage.
-    const homed = homedSessions({ handedOver, superSid, shownSid: superShownSid, paneActives: panes.map((p) => p.active) });
+    const homed = homedSessions({ handedOver, superSid, shownSid: superShownSid, paneActives: shownPanes.map((p) => p.active) });
 
     // HOMED and FOREGROUND are different questions, and conflating them regresses the
     // persistence invariant. A collapsed overlay's panes are still homed (their slots merely go
@@ -4707,7 +4740,7 @@ export function AgentSurface() {
       } else place(superSid, 'centre');
       place(superShownSid, 'shown');
     } else {
-      panes.forEach((pane) => {
+      shownPanes.forEach((pane) => {
         const s = sessions.current.get(pane.active);
         const slot = slots.get(pane.id);
         if (s && slot && s.container.parentElement !== slot) { slot.appendChild(s.container); s.ensureOpen({ focus: isActive }); }
@@ -4730,13 +4763,13 @@ export function AgentSurface() {
     // set of appendChild calls that are all no-ops.
     // `superSlotEpoch` re-runs it when the hand-over screen recreates its slots.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panes, expanded, handedOver, superSid, superShownSid, superSlotEpoch, dockOpen, dockSlotEpoch]);
+  }, [shownPanes, expanded, handedOver, superSid, superShownSid, superSlotEpoch, dockOpen, dockSlotEpoch]);
 
   // Keep activePaneId pointing at a real pane (panes shrink as tabs close/move).
   useEffect(() => {
-    if (panes.length === 0) { if (activePaneId) setActivePaneId(''); return; }
-    if (!panes.some((p) => p.id === activePaneId)) setActivePaneId(panes[0].id);
-  }, [panes, activePaneId]);
+    if (shownPanes.length === 0) { if (activePaneId) setActivePaneId(''); return; }
+    if (!shownPanes.some((p) => p.id === activePaneId)) setActivePaneId(shownPanes[0].id);
+  }, [shownPanes, activePaneId]);
 
   // Defensive reconcile: every roster session must live in exactly one pane. Explicit
   // placement (add/split/move/close) keeps this true; this only self-heals a dangling id
@@ -5167,7 +5200,7 @@ export function AgentSurface() {
     // A minimized tab sits in no window's panes (a corner chip, often a delegate started from a
     // page): closing a window never takes it, the last window included. Read live, so a chip
     // minimized while the question is open is left alone too.
-    const tabsOf = (st: WindowsState) => sessionListRef.current.filter((m) => !isSuperSession(m, superSid)
+    const tabsOf = (st: WindowsState) => sessionListRef.current.filter((m) => !isSuperSession(m, superSid) && inChatWindow(m)
       && windowOfTab(st, m.claudeId) === id && !minimizedIdsRef.current.includes(m.id));
     const running = tabsOf(before).filter((m) => {
       const live = m.dormant ? undefined : sessions.current.get(m.id);
@@ -5199,12 +5232,23 @@ export function AgentSurface() {
     windowsKnownRef.current = true;
     chatWindowsRef.current = dropWindow(chatWindowsRef.current, id);
     setChatWindows((prev) => dropWindow(prev, id));
-  }, [closeSessionById, showWindow]);
+  }, [closeSessionById, showWindow, inChatWindow]);
 
   const runDrawerIntentRef = useRef<(intent: DrawerIntent) => void>(() => {});
   runDrawerIntentRef.current = (intent) => {
     if (!caps?.desktop || !agentSettings.enabled) { setExpanded(true); return; }
-    if (intent.kind === 'open-window') {
+    if (intent.kind !== 'rename-window' && intent.kind !== 'close-window') setSuperPeek(null);
+    if (intent.kind === 'member') {
+      setExpanded(true);
+      // On the stage a team job's card opens large there (0.36.2); anywhere else the conversation
+      // opens in the chat area. Never the AI Team page.
+      const st = superStateRef.current;
+      const card = superViewRef.current === 'super'
+        ? st?.containers.find((c) => c.kind === 'team' && st.team.some((j) => j.id === c.ref && j.member === intent.slug))
+        : undefined;
+      if (card && stageShowChild.current?.ready) stageShowChild.current.showCard(card.id);
+      else setSuperPeek({ kind: 'member', slug: intent.slug, title: intent.title });
+    } else if (intent.kind === 'open-window') {
       if (intent.windowId) showWindow(intent.windowId);
       setSuperView('panes');
       setExpanded(true);
@@ -5231,7 +5275,8 @@ export function AgentSurface() {
       }
       const plan = planSuperRow({
         enabled: !!superStateRef.current?.enabled,
-        hasChat: sessionListRef.current.some((m) => !m.dormant && (m.kind ?? 'agent') !== 'shell'),
+        // The new shell adopts nothing (`handOver`), so the stage needs no chat to start from.
+        hasChat: windowed || sessionListRef.current.some((m) => !m.dormant && (m.kind ?? 'agent') !== 'shell'),
         canSpawn,
       });
       superRowBusyRef.current = true;
@@ -5420,7 +5465,7 @@ export function AgentSurface() {
       // fall back to the action-focused session if the point isn't over any pane.
       const at = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       const slot = (at?.closest('.agent-pane-slot[data-pane]') ?? null) as HTMLElement | null;
-      const targetPane = panes.find((p) => p.id === slot?.dataset.pane);
+      const targetPane = shownPanes.find((p) => p.id === slot?.dataset.pane);
       // Handed over, a file goes to the Super Agent: the panes it would otherwise reach are
       // not on screen.
       const targetSid = superViewRef.current === 'super' ? (superSidRef.current ?? '') : (targetPane?.active || focusedSessionId);
@@ -5492,7 +5537,7 @@ export function AgentSurface() {
   // ── Per-session view-models (recomputed every render; bumpStatus re-renders on a
   //    live status change so the tabs + dock chips always track the real PTY state). ──
   const metaById = new Map(sessionList.map((m) => [m.id, m] as const));
-  const paneVMs: PaneVM[] = panes.map((pane) => ({
+  const paneVMs: PaneVM[] = shownPanes.map((pane) => ({
     id: pane.id,
     active: pane.active,
     tabs: pane.tabs.map((id) => {
@@ -5647,22 +5692,51 @@ export function AgentSurface() {
 
   // …and each chat window's own ring and count for the drawer's window rows (D8). Every row a
   // window holds, minimized ones with the window on screen.
-  const windowRows = rowsByWindow(chatWindows, dockRows, (id) => sessionList.find((m) => m.id === id)?.claudeId);
+  // Only the owner's chats count there: the rollup above stays whole, because the project's
+  // live-session ceiling reads it, and a running child must never make a project look idle.
+  const ownerRows = windowed ? dockRows.filter((r) => inChatWindow(sessionList.find((m) => m.id === r.id) ?? {})) : dockRows;
+  // No queue head here: the Super row carries a question; a child's would count as a chat.
+  const shownRollup = rollupProject(ownerRows);
+  const shownFacts = { live: shownRollup.live, asking: shownRollup.asking, working: shownRollup.working, flagged: shownRollup.flagged };
+  const windowRows = rowsByWindow(chatWindows, ownerRows, (id) => sessionList.find((m) => m.id === id)?.claudeId);
   const windowFacts: WindowFact[] = chatWindows.list.map((w) => {
     const r = rollupProject(windowRows.get(w.id) ?? []);
     return { id: w.id, name: w.name, working: r.working, asking: r.asking, flagged: r.flagged, other: Math.max(0, r.live - r.working - r.asking) };
   });
-  const windowFactsKey = JSON.stringify([chatWindows.activeId, windowFacts]);
+  const peekMember = superPeek?.kind === 'member' ? superPeek.slug : null;
+  const superMarks = superRowMarks(superState);
+  const windowFactsKey = JSON.stringify([chatWindows.activeId, windowFacts, shownFacts, peekMember, superMarks]);
   useEffect(() => {
-    emitInstance<DrawerSurfaceState>(bus, DRAWER_SURFACE_EVENT, { superOn, superSelected, windows: windowFacts, activeWindowId: chatWindows.activeId });
+    emitInstance<DrawerSurfaceState>(bus, DRAWER_SURFACE_EVENT, {
+      superOn, superSelected: superSelected && !peekMember, windows: windowFacts, activeWindowId: chatWindows.activeId,
+      shown: shownFacts, ...(peekMember ? { member: peekMember } : {}), superMarks,
+    });
     // The facts are read through their key: a rebuilt array with the same rows sends nothing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bus, superOn, superSelected, windowFactsKey]);
 
+  // The door History and links walk through (`resumePastSession`): the new shell's desktop only.
+  openInSuperWindowRef.current = (past) => {
+    if (!windowed || isMobile || isMacPhoneSurface()) return false;
+    const st = superStateRef.current;
+    const meta = sessionListRef.current.find((m) => m.claudeId === past.id);
+    if (sessionHome(meta ?? { claudeId: past.id }, superOwnedRef.current, st?.session) !== 'super') return false;
+    // Off, a pick only reads: it never starts the Super Agent.
+    const landing = st?.enabled ? superLanding(past.id, st) : 'transcript';
+    if (st?.enabled) setSuperView('super');
+    if (landing === 'card') { setSuperPeek(null); dockShowChild(past.id); }
+    else if (landing === 'transcript') setSuperPeek({ kind: 'transcript', claudeId: past.id, title: meta?.title || (st && hasOwnKey(st.children, past.id) ? st.children[past.id].brief : '') || past.title || t('super.centre.name') });
+    else setSuperPeek(null);
+    return true;
+  };
+  // New shell: a pill opened from a chat window's last view still needs the stage's slots.
+  const showStageForDockRef = useRef(() => {});
+  showStageForDockRef.current = () => { if (windowed) setSuperView('super'); };
+
   // ── The Super dock's pill, rows and gestures (owner 2026-10-25) ──
   // Sessions that ask but are not the Super's (an unadopted chat, a terminal): they light the
   // pill and show in its window as today's dock tiles (plan S4).
-  const dockAskingRows = dockOn ? dockRows.filter((r) => !r.superChild && r.info.kind === 'asking') : [];
+  const dockAskingRows = dockOn && !windowed ? dockRows.filter((r) => !r.superChild && r.info.kind === 'asking') : [];
   const superDockPillModel = superDockPill({
     on: dockOn,
     known: superKnown,
@@ -5674,6 +5748,7 @@ export function AgentSurface() {
   // The page the corner sits on lifts it above the page's own bottom control.
   const dockLift = superDockLift(pageCtx as { page: string; board?: string } | null);
   const openSuperDock = () => {
+    showStageForDockRef.current();
     if (superState?.enabled && superState.session && !superChatRef.current) ensureSuperSession(superState.session);
     superChatRef.current?.clearAttention();
     setSuperDockOpen(true);
@@ -5758,7 +5833,7 @@ export function AgentSurface() {
   // Rows for the corner dock that floats over the EXPANDED overlay — only the sessions the
   // user minimized out of the panes (in minimize order). Empty → no corner dock shown.
   const minimizedRows: SessionRow[] = minimizedIds
-    .map((id) => dockRows.find((r) => r.id === id))
+    .map((id) => ownerRows.find((r) => r.id === id))
     .filter((r): r is SessionRow => !!r);
 
   // Every LIVE chat session — portaled into its own detached container below,
@@ -5779,7 +5854,9 @@ export function AgentSurface() {
   // The Super Agent's ONE button (owner decision 9), a tab pinned at the START of the chat tabs
   // (owner pick 2026-10-29): hand over every open chat, or take it back. Chat screen only (the
   // agent is a chat), desktop only, on for everyone (no Settings switch). Take back never hides.
-  const superTab = panesLive && (handedOver || (chatMode && !isMacPhoneSurface())) ? (
+  // New shell: never in a chat window, and the stage has no take-back. The drawer's Super Agent
+  // row is the one way in.
+  const superTab = !windowed && panesLive && (handedOver || (chatMode && !isMacPhoneSurface())) ? (
     <HandoverButton
       handedOver={handedOver}
       busy={superBusy || superMotion === 'running'}
@@ -5860,6 +5937,20 @@ export function AgentSurface() {
             />
           </div>
         )}
+        {windowed && superPeek && (
+          <div className="agent-peek" data-testid="agent-peek" data-kind={superPeek.kind}>
+            <div className="agent-peek-head">
+              <span className="agent-peek-title">{superPeek.title}</span>
+              <button type="button" className="agent-peek-close" aria-label={t('super.error.close')} data-testid="agent-peek-close" onClick={() => setSuperPeek(null)}>×</button>
+            </div>
+            <div className="agent-peek-body">
+              {superPeek.kind === 'transcript'
+                ? renderChildTranscript(superPeek.claudeId)
+                // The stage's gate: folded away, the session goes back to the AI Team page.
+                : (expanded || closing) && !windowActivity.hidden ? renderTeamConversation(superPeek.slug) : null}
+            </div>
+          </div>
+        )}
         {handedOver && superState && (
           <SuperSurface
             state={superState}
@@ -5868,6 +5959,8 @@ export function AgentSurface() {
             visible={expanded && !windowActivity.hidden}
             pending={superPending}
             pendingCloses={pendingCloses}
+            leanRight={windowed && stageBesideDrawer}
+            miniRail={windowed}
             motion={superMotion}
             superSession={superChatSession}
             vault={vault ?? ''}
@@ -5921,20 +6014,20 @@ export function AgentSurface() {
         )}
         <div
           ref={panesRowRef}
-          className={'agent-panes' + (panes.length > 1 ? ' split' : '')}
+          className={'agent-panes' + (shownPanes.length > 1 ? ' split' : '')}
           data-swap={isMobile && swapFlip ? String(swapFlip) : undefined}
           hidden={handedOver}
         >
           {/* The focused pane's top bar, ONE element that glides between panes on the
               compositor while the panes land in a single layout (usePaneFocusGlide.ts). */}
           <div ref={glideRef} className="agent-pane-glide" aria-hidden />
-          {panes.length === 0 && (
+          {shownPanes.length === 0 && (
             <div className="agent-allmin-hint">
-              <p className="agent-allmin-title">All agents minimized</p>
-              <p className="agent-allmin-sub">Click a chip in the bottom-right corner to bring one back, or start a new one with ＋ New agent.</p>
+              <p className="agent-allmin-title">{windowed ? t('shell.windows.empty') : 'All agents minimized'}</p>
+              <p className="agent-allmin-sub">{windowed ? t('shell.windows.emptyHint') : 'Click a chip in the bottom-right corner to bring one back, or start a new one with ＋ New agent.'}</p>
             </div>
           )}
-          {panes.map((pane) => {
+          {shownPanes.map((pane) => {
             const activeMeta = metaById.get(pane.active);
             const isActive = pane.id === activePane?.id;
             return (
@@ -6068,12 +6161,13 @@ export function AgentSurface() {
            and that cap cannot be computed without N. Read by BOTH the pane row and the tab
            strip above it, which is why it lives on their common ancestor: one number, so
            the two can never disagree and drift a divider off its pane edge. */
-        style={{ '--pane-count': panes.length } as CSSProperties}
+        style={{ '--pane-count': shownPanes.length } as CSSProperties}
       >
         {/* Overlay chrome — ONE row: collapse, the session TABS themselves (one group per
             pane; the header IS the tab strip, so there's no separate title row and no
             second 38px bar), and the "New" split action. */}
-        <div className="agent-overlay-head">
+        {/* New shell, the Super stage: no bar at all; the stage takes its height. */}
+        <div className="agent-overlay-head" hidden={windowed && handedOver}>
           {/* The phone header: [☰ sessions] [active session name] [＋ new chat]. It REPLACES
               the desktop trio rather than restyling it — the tab strip's per-tab ✕/minimize
               buttons are 20px affordances that no thumb can hit, and a hidden-but-mounted
@@ -6330,7 +6424,7 @@ export function AgentSurface() {
           sessions: a single "Chat" FAB. */}
       {caps?.desktop && agentSettings.enabled && !expanded && superKnown && (
         // Super on: ONE pill (and its window) in place of the stack (owner 2026-10-25, D1).
-        dockOn && superDockPillModel ? (
+        pageCorner({ newShell: windowed, superPill: dockOn && !!superDockPillModel, superDock: dockOn, chips: dockShown.length }) === 'super' && superDockPillModel ? (
           <SuperDock
             pill={superDockPillModel}
             open={dockOpen}
@@ -6375,7 +6469,7 @@ export function AgentSurface() {
             onOpen={openSuperDock}
             onMinimize={minimizeSuperDock}
           />
-        ) : dockOn ? null :
+        ) : windowed || dockOn ? null :
         // `dockRows`, not the roster: a parked Super Agent alone is no session the dock shows
         // (its open question is: `superAskRow`).
         dockShown.length === 0 ? (

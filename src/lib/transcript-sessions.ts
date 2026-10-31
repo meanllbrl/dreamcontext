@@ -644,6 +644,28 @@ export function contentSnippet(text: string, folded: string, needle: string, rad
  * `includeAgentRuns` is set. They outnumber real conversations several to one in a project
  * that uses the orchestration skills, and none of them is a chat anyone means to return to.
  */
+/**
+ * The Super Agent's sessions in a ranked listing (owner 2026-10-31), judged before any limit:
+ *  - `group`, no query: the owner's rows, and one `group` (how many, the last activity);
+ *  - `group`, a query: every match, so a search hides nothing;
+ *  - `only`: the Super's sessions, agent runs or not.
+ * `agentRuns` counts only what is withheld from the owner's rows.
+ */
+export function partitionSuper<R extends { s: { id: string; updatedAt: number; agentRun?: boolean } }>(
+  ranked: readonly R[], owned: ReadonlySet<string>, mode: 'group' | 'only', queried: boolean, includeAgentRuns: boolean,
+): { shown: R[]; agentRuns: number; group?: { count: number; lastAt: number } } {
+  const supers = ranked.filter((r) => owned.has(r.s.id));
+  if (mode === 'only') return { shown: supers, agentRuns: 0 };
+  const mine = ranked.filter((r) => !owned.has(r.s.id));
+  const agentRuns = includeAgentRuns ? 0 : mine.filter((r) => r.s.agentRun).length;
+  const keep = (r: R) => includeAgentRuns || !r.s.agentRun;
+  if (queried) return { shown: ranked.filter((r) => owned.has(r.s.id) || keep(r)), agentRuns };
+  return {
+    shown: mine.filter(keep), agentRuns,
+    ...(supers.length ? { group: { count: supers.length, lastAt: Math.max(...supers.map((r) => r.s.updatedAt)) } } : {}),
+  };
+}
+
 export function listPastSessions(
   projectRoot: string,
   opts: {
@@ -651,6 +673,8 @@ export function listPastSessions(
     query?: string;
     limit?: number;
     includeAgentRuns?: boolean;
+    /** The new shell's History: the project's Super Agent as one entry (`partitionSuper`). */
+    superRows?: { owned: ReadonlySet<string>; mode: 'group' | 'only' };
     /** The name each conversation carried in its tab (`session-titles.ts`), keyed by
      *  conversation UUID. Preferred over the first prompt, and searchable. */
     titles?: ReadonlyMap<string, string>;
@@ -732,8 +756,11 @@ export function listPastSessions(
   // Agent runs are filtered AFTER the query, so the count reported back is "how many of the
   // things you searched for are being held back" — the number the picker offers to reveal —
   // rather than a corpus-wide constant that says nothing about the current list.
-  const shown = opts.includeAgentRuns ? ranked : ranked.filter((r) => !r.s.agentRun);
-  const agentRuns = ranked.length - shown.length;
+  const parted = opts.superRows
+    ? partitionSuper(ranked, opts.superRows.owned, opts.superRows.mode, !!folded, !!opts.includeAgentRuns)
+    : { shown: opts.includeAgentRuns ? ranked : ranked.filter((r) => !r.s.agentRun), agentRuns: 0, group: undefined };
+  const { shown, group } = parted;
+  const agentRuns = opts.superRows ? parted.agentRuns : ranked.length - shown.length;
 
   // `haystack`, `lines` and `path` are stripped here — they are the index, not the payload. A
   // queried listing says why each row matched, and where.
@@ -742,5 +769,8 @@ export function listPastSessions(
     const { haystack: _h, lines: _l, path: _p, ...rest } = s;
     return tokens.length ? { ...rest, match, matchIn: TIERS[tier] } : rest;
   });
-  return { sessions, total: shown.length, agentRuns, truncated };
+  return {
+    sessions: opts.superRows ? sessions.map((s) => (opts.superRows!.owned.has(s.id) ? { ...s, super: true } : s)) : sessions,
+    total: shown.length, agentRuns, truncated, ...(group ? { superGroup: group } : {}),
+  };
 }

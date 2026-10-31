@@ -5,6 +5,8 @@ import { projectRootOf } from './agent-spawn-shared.js';
 import { listPastSessions, listTranscriptFiles, DEFAULT_LIMIT, MAX_LIMIT } from '../../lib/transcript-sessions.js';
 import { contentOf, ensureContentIndex } from '../../lib/transcript-content-index.js';
 import { readSessionTitles } from '../../lib/session-titles.js';
+import { readSuperState } from '../../lib/super/store.js';
+import { superSanitizeOpts } from '../../lib/super/inbox.js';
 
 /**
  * `GET /api/agent/chat-sessions` — the project's PAST Claude conversations, newest first,
@@ -85,13 +87,25 @@ export async function computeChatSessions(
     build.promise.catch(() => {});
   }
 
+  const superRows = q.super === 'group' || q.super === 'only' ? { owned: await superOwned(contextRoot), mode: q.super as 'group' | 'only' } : undefined;
   const result = listPastSessions(projectRoot, {
     home: opts.home, query, limit, includeAgentRuns, files,
     content: contentOf,
     // A closed tab's name, so the list says what the tab said (see `session-titles.ts`).
     titles: readSessionTitles(contextRoot),
+    ...(superRows ? { superRows } : {}),
   });
   return query.trim() && !indexed
     ? { ...result, indexing: { done: build.progress.done, total: build.progress.total } }
     : result;
+}
+
+/** Every session the project's Super record owns. No readable record: none, the list stays whole. */
+export async function superOwned(contextRoot: string): Promise<Set<string>> {
+  try {
+    const s = await readSuperState(contextRoot, superSanitizeOpts());
+    return new Set([...Object.keys(s.children), ...(s.formerChildren ?? []), ...(s.session ? [s.session] : [])]);
+  } catch {
+    return new Set();
+  }
 }

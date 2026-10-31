@@ -459,6 +459,8 @@ export interface SuperState {
   v: typeof SUPER_STATE_VERSION;
   session: string | null;
   enabled: boolean;
+  /** Children the record no longer holds, still the Super's: a chat window never shows them. */
+  formerChildren?: string[];
   containers: SuperContainer[];
   groups: SuperGroup[];
   view: SuperView;
@@ -817,6 +819,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
       ? v.dismissed.filter((d): d is SuperDismissed => isRecord(d) && oneOf(CONTAINER_KINDS, d.kind) && typeof d.ref === 'string' && typeof d.until === 'number')
       : [],
     pool,
+    ...(Array.isArray(v.formerChildren) ? { formerChildren: v.formerChildren.filter((x): x is string => typeof x === 'string') } : {}),
     ownerBatches,
     ...(held.length ? { held } : {}),
     ...(pad.length ? { pad } : {}),

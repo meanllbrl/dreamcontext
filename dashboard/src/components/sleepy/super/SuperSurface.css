@@ -1716,3 +1716,37 @@
   font-size: var(--font-size-xs);
   line-height: 1.4;
 }
+
+/* A tight presentation's rail: one line per live job; a job that asks stays unmistakable. */
+.super-card-frame[data-mini='true'] .super-mini-job {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  height: 100%;
+  padding: 0 var(--space-3);
+  min-width: 0;
+  overflow: hidden;
+}
+.super-mini-job-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-success);
+}
+.super-mini-job-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+.super-mini-job[data-kind='asking'] .super-mini-job-dot { background: var(--color-error); }
+.super-mini-job[data-kind='asking'] .super-mini-job-name { color: var(--color-error); }
+.super-mini-job[data-kind='saved'] .super-mini-job-dot,
+.super-mini-job[data-kind='ended'] .super-mini-job-dot { background: var(--color-text-tertiary); }

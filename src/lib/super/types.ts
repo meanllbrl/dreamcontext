@@ -452,6 +452,9 @@ export function applyOwnerViewFields(view: SuperView, f: OwnerViewFields): Super
   return next;
 }
 
+/** Pruned children remembered as the Super's (newest kept): `SuperState.formerChildren`. */
+export const MAX_FORMER_CHILDREN = 500;
+
 export interface SuperChild {
   /** The chat's pin id (what the chat registry and the tab roster key it by). */
   sessionId: string;
@@ -704,6 +707,8 @@ export interface SuperState {
   session: string | null;
   /** Handed over right now. */
   enabled: boolean;
+  /** Children the record no longer holds, still the Super's: a chat window never shows them. */
+  formerChildren?: string[];
   containers: SuperContainer[];
   /** Cards drawn together as one tile (2026-10-20). Absent in an older record = none. */
   groups: SuperGroup[];
