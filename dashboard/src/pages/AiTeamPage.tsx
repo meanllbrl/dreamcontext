@@ -300,6 +300,7 @@ export function AiTeamPage({
     >
       {org && (
         <OrgView
+          headless={newShell}
           tree={tree}
           rows={rows}
           selected={panelShown ? current?.slug ?? null : null}

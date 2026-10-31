@@ -24,8 +24,10 @@ import { TeamIcon } from './TeamIcons';
  * place of the list and the conversation; the side panel stays where it was.
  */
 export function OrgView({
-  tree, rows, selected, onSelect, onTalk, onConversations, onNew, onToast, nextRun,
+  tree, rows, selected, onSelect, onTalk, onConversations, onNew, onToast, nextRun, headless = false,
 }: {
+  /** The new shell: the page's bar carries the title, the switch and New; the count and the find stay here. */
+  headless?: boolean;
   tree: TeamTree;
   rows: TeamRow[];
   selected: string | null;
@@ -52,12 +54,12 @@ export function OrgView({
   return (
     <section className="aiteam-org" aria-label={t('aiteam.page.org')}>
       <header className="aiteam-org-head">
-        <h1 className="aiteam-roster-title">{t('aiteam.title')}</h1>
+        {!headless && <h1 className="aiteam-roster-title">{t('aiteam.title')}</h1>}
         <span className="aiteam-roster-count">
           {(rows.length === 1 ? t('aiteam.count.one') : t('aiteam.count.many')).replace('{n}', String(rows.length))}
           {teams > 0 && ` · ${(teams === 1 ? t('aiteam.org.teams.one') : t('aiteam.org.teams.many')).replace('{n}', String(teams))}`}
         </span>
-        <PageSwitch view="org" onConversations={onConversations} />
+        {!headless && <PageSwitch view="org" onConversations={onConversations} />}
         <span className="aiteam-spacer" />
         <label className="aiteam-search aiteam-org-search">
           <TeamIcon name="search" size={14} />
@@ -69,9 +71,11 @@ export function OrgView({
             aria-label={t('aiteam.org.find')}
           />
         </label>
-        <button type="button" className="aiteam-newbtn" onClick={onNew}>
-          <TeamIcon name="plus" size={12} /> {t('aiteam.new')}
-        </button>
+        {!headless && (
+          <button type="button" className="aiteam-newbtn" onClick={onNew}>
+            <TeamIcon name="plus" size={12} /> {t('aiteam.new')}
+          </button>
+        )}
       </header>
       {(needs.length > 0 || said.length > 0) && (
         <div className="aiteam-org-strip" data-org-strip>
