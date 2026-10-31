@@ -4,6 +4,8 @@ import { lstatSync } from 'node:fs';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
 import { ownerLabel } from '../../lib/agents/owner.js';
+import { AmendmentRefused, listAmendments, revertAmendment } from '../../lib/agents/amendments.js';
+import { settleApprovalQuestions } from '../../lib/automations/hitl.js';
 import { placement } from '../../lib/agents/active.js';
 import { GLOBAL_REGISTRY_KEY, hasProjectMember } from '../../lib/agents/scope.js';
 import { composeRun } from '../../lib/agents/compose.js';
@@ -634,9 +636,49 @@ export async function handleAgentsApprove(
     const projectRoot = dirname(contextRoot);
     registerProject(projectRoot);
     approveAutomation(projectRoot, target, new Date());
+    settleApprovalQuestions(contextRoot, params.slug);
     sendSummary(res, contextRoot, params.slug);
   } catch (err) {
     sendWriteError(res, err, 'approve_failed', 'Failed to approve the agent.');
+  }
+}
+
+/** GET /api/agents/:slug/amendments — what the Super Agent changed in this member, newest first,
+ *  with the text before and after. Machine-local, so a teammate's copy shows nothing here. */
+export async function handleAgentsAmendments(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!isSafeAutomationSlug(params.slug)) {
+    sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
+    return;
+  }
+  sendJson(res, 200, { amendments: listAmendments(dirname(contextRoot), params.slug) });
+}
+
+/** POST /api/agents/:slug/amendments/:id/revert — the owner takes a change back. */
+export async function handleAgentsAmendmentRevert(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!isSafeAutomationSlug(params.slug)) {
+    sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
+    return;
+  }
+  try {
+    const amendment = revertAmendment(contextRoot, params.slug, params.id);
+    settleApprovalQuestions(contextRoot, params.slug);
+    sendJson(res, 200, { amendment });
+  } catch (err) {
+    if (err instanceof AmendmentRefused) {
+      sendError(res, err.status, err.code, err.message);
+      return;
+    }
+    sendWriteError(res, err, 'revert_failed', 'Failed to take the change back.');
   }
 }
 

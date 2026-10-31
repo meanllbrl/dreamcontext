@@ -4,6 +4,8 @@
  * named by one of these (plus mkdtemp's 6-character suffix): never anyone else's.
  */
 export const TEST_TMP_PREFIXES: readonly string[] = [
+  'amend-',
+  'amend-home-',
   'ask-cli-',
   'assistant-aab-home-',
   'assistant-agent-home-',

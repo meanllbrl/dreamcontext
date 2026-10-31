@@ -18,6 +18,8 @@ import {
 } from '../../lib/agents/store.js';
 import type { AgentIdentityPatch, AgentPlacementPatch } from '../../lib/agents/types.js';
 import { buildTree, flattenTree } from '../../lib/agents/tree.js';
+import { listAmendments, revertAmendment } from '../../lib/agents/amendments.js';
+import { settleApprovalQuestions } from '../../lib/automations/hitl.js';
 import { assertOwned, ownerLabel } from '../../lib/agents/owner.js';
 import { agentSyncPreview, agentSyncState, confirmAgentSyncHere } from '../../lib/agents/agent-sync.js';
 import { writeActiveHere } from '../../lib/agents/active.js';
@@ -39,6 +41,7 @@ import {
   APPROVAL_DIFF_FIELDS,
   AutomationError,
   EFFORT_LEVELS,
+  createNeedsOwner,
   insideAgentRun,
   type AgentAutonomy,
   type EffortLevel,
@@ -75,6 +78,21 @@ export function refuseSelfApproval(env: NodeJS.ProcessEnv): boolean {
   error(SELF_APPROVAL_REFUSAL);
   process.exitCode = 1;
   return true;
+}
+
+/** True in a Claude session or an agent run: every shell that may not approve. */
+export function inSession(env: NodeJS.ProcessEnv = process.env): boolean {
+  return SELF_APPROVAL_ENVS.some((k) => env[k] !== undefined);
+}
+
+/** A hashed field's edit from a session. `agents edit` re-stamps what it changes, so a session
+ *  that may not approve must not reach the same result through an edit. */
+export const SESSION_EDIT_REFUSAL =
+  'A Claude session or an agent run does not edit a member\'s instructions or reach: an edit re-approves it, and approving is the owner\'s step. The Super Agent corrects instructions with `dreamcontext super team amend`; any other session tells the Super Agent, or asks the owner to edit it on the AI Team page.';
+
+/** True when `patch` changes something the approval hash covers. */
+function touchesHash(patch: AgentIdentityPatch): boolean {
+  return Object.keys(patch).some((k) => k !== 'title' && k !== 'photo');
 }
 
 function fail(err: unknown): void {
@@ -263,9 +281,10 @@ export function registerAgentsCommand(program: Command): void {
         fail(new Error(`--scope is project or global, not "${opts.scope}".`));
         return;
       }
-      // Inside an agent run, nothing it creates is approved by it: the owner approves on the AI Team
-      // page (a self-approved global agent would run in every project of this machine).
-      const selfRun = insideAgentRun();
+      // Inside an agent run or the Super Agent's crew, nothing it creates is approved by it: the
+      // owner approves on the AI Team page (a self-approved global agent would run in every project
+      // of this machine, and a new member is the widest change there is).
+      const selfRun = createNeedsOwner();
       const approve = selfRun ? {} : { approve: { now: new Date() } };
       const unapproved = selfRun ? ' It waits for the owner\'s approval on the AI Team page.' : '';
       if (opts.scope === 'global') {
@@ -346,6 +365,9 @@ export function registerAgentsCommand(program: Command): void {
           warn('Nothing to change.');
           return;
         }
+        if (touchesHash(patch) && inSession()) {
+          throw new AutomationError(SESSION_EDIT_REFUSAL);
+        }
         // The placement first: it is checked against the team (a loop, an unknown manager) and
         // refused before any identity change lands.
         if (Object.keys(place).length > 0) {
@@ -356,6 +378,40 @@ export function registerAgentsCommand(program: Command): void {
         }
         if (Object.keys(patch).length > 0) withRestamp(root, dirname(root), slug, patch);
         success(`Saved "${slug}".`);
+      } catch (err) {
+        fail(err);
+      }
+    });
+
+  agents
+    .command('amendments')
+    .argument('<slug>', 'Agent slug')
+    .description('What the Super Agent changed in this member: when, why, and what it replaced')
+    .option('--json', 'JSON output (the full text before and after)')
+    .action((slug: string, opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      const list = listAmendments(dirname(root), slug);
+      if (opts.json) { console.log(JSON.stringify({ amendments: list }, null, 2)); return; }
+      if (list.length === 0) { console.log(chalk.dim('No amendments.')); return; }
+      for (const a of list) {
+        const what = a.changes.map((c) => (c.routine ? `${c.routine} ${c.field}` : c.field)).join(', ');
+        console.log(`${a.id}  ${a.at.slice(0, 16).replace('T', ' ')}  ${what}${a.revertedAt ? chalk.dim('  (taken back)') : ''}`);
+        console.log(`  ${a.why}`);
+      }
+    });
+
+  agents
+    .command('revert')
+    .argument('<slug>', 'Agent slug')
+    .argument('<id>', 'Amendment id (`agents amendments <slug>`)')
+    .description('Take a Super Agent amendment back (refused inside a Claude session or an agent run)')
+    .action((slug: string, id: string) => {
+      if (refuseSelfApproval(process.env)) return;
+      const root = ensureContextRoot();
+      try {
+        revertAmendment(root, slug, id);
+        settleApprovalQuestions(root, slug);
+        success(`Took ${id} back: "${slug}" reads as it did before.`);
       } catch (err) {
         fail(err);
       }
@@ -401,6 +457,7 @@ export function registerAgentsCommand(program: Command): void {
         }
         registerProject(projectRoot);
         approveAutomation(projectRoot, target, new Date());
+        settleApprovalQuestions(root, slug);
         success(`Approved "${slug}" to run on this machine.`);
       } catch (err) {
         fail(err);
@@ -474,6 +531,12 @@ export function registerAgentsCommand(program: Command): void {
     .description('Delete an agent (refused while an automation runs as it)')
     .option('-y, --yes', 'Skip the interactive confirmation')
     .action(async (slug: string, opts: { yes?: boolean }) => {
+      // A delete takes its amendment history with it, and a new member of that name is a new start.
+      if (inSession()) {
+        error('Deleting a member is the owner\'s step, and this is a Claude session or an agent run. He deletes it on the AI Team page.');
+        process.exitCode = 1;
+        return;
+      }
       const root = ensureContextRoot();
       if (!getAgent(root, slug)) {
         error(`No agent named "${slug}" in this project.`);

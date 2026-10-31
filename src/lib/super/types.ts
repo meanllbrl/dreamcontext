@@ -1314,7 +1314,7 @@ export const SUPER_VERBS = [
   'answer', 'send', 'queue-list', 'queue-ask', 'queue-done', 'merge', 'worktree-list', 'worktree-remove',
   'pool-add', 'pool-remove', 'pool-list', 'ask',
   'end', 'resume', 'update', 'adopt',
-  'clean', 'team-ask',
+  'clean', 'team-ask', 'team-amend',
   'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];

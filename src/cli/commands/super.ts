@@ -1,7 +1,9 @@
 import { Command } from 'commander';
+import { readFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { windowEnv } from './window.js';
 import { MAX_LIVE_CHILDREN } from '../../lib/super/types.js';
+import { insideAgentRun } from '../../lib/automations/types.js';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { error, info, success } from '../../lib/format.js';
 import { HANDOFF_FIELDS, contextHandoffGaps, formatGaps, type HandoffFields } from '../../lib/handoff-readiness.js';
@@ -32,7 +34,8 @@ export const NOT_THE_SUPER_AGENT = '`dreamcontext super` works only from the pro
 interface CallResult { status: number; body: Record<string, unknown> }
 
 export function callSuper(verb: string, body: Record<string, unknown>, env: NodeJS.ProcessEnv = process.env): Promise<CallResult> {
-  const e = windowEnv(env);
+  // A key inherited from the Super Agent's shell does not make a member's run the Super Agent.
+  const e = insideAgentRun(env) ? null : windowEnv(env);
   if (!e) return Promise.resolve({ status: 401, body: { error: 'not_a_chat', message: NOT_THE_SUPER_AGENT } });
   const url = new URL(`/api/super/v/${verb}`, e.url);
   const payload = JSON.stringify(body);
@@ -268,6 +271,30 @@ export function registerSuperCommand(program: Command): void {
     .option('--brief <line>', 'The one-line reminder its card shows (default: the job\'s first line)')
     .option('--origin <ref>', ORIGIN_HELP)
     .action((member: string, job: string, o: { brief?: string; origin?: string }) => run('team-ask', { member, text: job, brief: o.brief, ...(o.origin !== undefined ? { origin: o.origin } : {}) }));
+
+  team.command('amend <member>')
+    .description('Correct a member\'s instructions after a mistake: only its prompt, soul or a routine\'s job. It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page. Refused: `amend_needs_owner` (the text adds an address, a command, a secret path or a hidden character), `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `amend_unapproved`, `owner_reverted` (he took this text back), `amend_global`')
+    .requiredOption('--why <line>', 'The mistake this fixes, in a line the owner reads')
+    .option('--prompt-file <path>', 'A file with its whole new prompt')
+    .option('--soul-file <path>', 'A file with its whole new soul (empty removes it)')
+    .option('--routine <slug>', 'The routine whose job changes')
+    .option('--job-file <path>', 'A file with the routine\'s whole new job (needs --routine; empty removes it)')
+    .action((member: string, o: { why: string; promptFile?: string; soulFile?: string; routine?: string; jobFile?: string }) => {
+      if (!o.promptFile && !o.soulFile && !o.jobFile) return usage('name what changes: --prompt-file, --soul-file or --job-file');
+      let body: Record<string, unknown>;
+      try {
+        body = {
+          member, why: o.why,
+          ...(o.promptFile ? { prompt: readFileSync(o.promptFile, 'utf-8') } : {}),
+          ...(o.soulFile ? { soul: readFileSync(o.soulFile, 'utf-8') } : {}),
+          ...(o.jobFile ? { job: readFileSync(o.jobFile, 'utf-8') } : {}),
+          ...(o.routine ? { routine: o.routine } : {}),
+        };
+      } catch (err) {
+        return usage(`that file cannot be read: ${(err as Error).message}`);
+      }
+      return run('team-amend', body);
+    });
 
   const q = s.command('queue').description('The one question queue');
   q.command('list')

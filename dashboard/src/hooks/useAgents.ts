@@ -281,6 +281,40 @@ export function useApproveAgent() {
   });
 }
 
+/** One thing the Super Agent changed in a member (`src/lib/agents/amendments.ts`). */
+export interface AgentAmendment {
+  id: string;
+  at: string;
+  why: string;
+  changes: Array<{ field: 'prompt' | 'soul' | 'job'; routine?: string; before: string; after: string }>;
+  revertedAt?: string;
+}
+
+/** What the Super Agent changed in this member, newest first. Empty for almost everyone. */
+export function useAgentAmendments(slug: string | null) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['agents', slug, 'amendments'],
+    queryFn: () => api.get<{ amendments: AgentAmendment[] }>(`/agents/${encodeURIComponent(slug ?? '')}/amendments`).then((r) => r.amendments),
+    enabled: !!slug,
+    retry: 0,
+  });
+}
+
+/** The owner takes a change back. The prompt, the review and the feed all read the new text. */
+export function useRevertAmendment(slug: string) {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post(`/agents/${encodeURIComponent(slug)}/amendments/${encodeURIComponent(id)}/revert`, {}),
+    onSuccess: () => {
+      invalidateAgent(queryClient, slug);
+      queryClient.invalidateQueries({ queryKey: ['agents', slug, 'amendments'] });
+    },
+  });
+}
+
 /** Where an agent sits in the team. `null` clears a key, an absent key leaves it. */
 export interface AgentPlacement {
   reportsTo?: string | null;

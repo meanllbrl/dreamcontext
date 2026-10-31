@@ -882,7 +882,7 @@ export function withRestamp(
 
 /** The agent's call target first, then every automation file that runs as it
  *  (its own unsplit manifest included, on-call or scheduled). */
-function restampTargets(contextRoot: string, agentSlug: string): { kind: RunKind; target: AutomationManifest }[] {
+export function restampTargets(contextRoot: string, agentSlug: string): { kind: RunKind; target: AutomationManifest }[] {
   const out: { kind: RunKind; target: AutomationManifest }[] = [];
   const call = getRunTarget(contextRoot, agentSlug, 'agent');
   if (call) out.push({ kind: 'agent', target: call });

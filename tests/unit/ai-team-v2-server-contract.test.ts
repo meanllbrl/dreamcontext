@@ -15,7 +15,7 @@
  *      the backfill is idempotent; no green or magenta tone.
  *   6. filing approval: route, CLI and refusals.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { onTestFinished, describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -168,6 +168,10 @@ describe('AC-A1-1 autonomy', () => {
 
   it('`agents edit --autonomy` sets it, and is refused inside an agent run', async () => {
     makeAgent();
+    // The owner's terminal: the suite may itself run inside a Claude session, which `agents edit` refuses.
+    const session = process.env.CLAUDECODE;
+    delete process.env.CLAUDECODE;
+    onTestFinished(() => { if (session !== undefined) process.env.CLAUDECODE = session; });
     expect((await runCli(['agents', 'edit', 'scout', '--autonomy', 'ask'])).code).toBe(0);
     expect(getAgent(contextRoot, 'scout')!.autonomy).toBe('ask');
     expect((await runCli(['agents', 'edit', 'scout', '--autonomy', 'loud'])).code).toBe(1);

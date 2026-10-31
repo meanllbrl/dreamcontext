@@ -42,6 +42,7 @@ import { generateId } from '../../lib/id.js';
 import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
+import { memberFileRefusal, memberFileWriteTarget } from '../../lib/agents/member-file-guard.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
 import { bm25Search, loadSkillDocs, RECALL_STRONG_SCORE, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
 import { stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
@@ -2730,6 +2731,16 @@ export function registerHookCommand(program: Command): void {
           return;
         }
         // (Gate 1b, the Develop lead-edit guard, was retired 2026-10-11: the lead builds now.)
+      }
+
+      // Gate 1c: an AI Team member's file is written through the CLI. A hand edit moves its
+      // approval hash, stops its next run and hands the owner a card (`member-file-guard.ts`).
+      const memberFile = memberFileWriteTarget(toolName, toolInput, typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd());
+      if (memberFile) {
+        console.log(JSON.stringify({
+          hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: memberFileRefusal(memberFile) },
+        }));
+        return;
       }
 
       // Gate 2: redirect default Explore agent to dreamcontext-explore.

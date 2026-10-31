@@ -8,6 +8,13 @@
       "group": true
     },
     {
+      "path": "agents amendments",
+      "desc": "What the Super Agent changed in this member: when, why, and what it replaced",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
       "path": "agents approve",
       "desc": "Review and approve an agent to run on this machine (refused inside a Claude session or an agent run)",
       "args": [
@@ -86,6 +93,14 @@
       "desc": "Delete an agent (refused while an automation runs as it)",
       "args": [
         "<slug>"
+      ]
+    },
+    {
+      "path": "agents revert",
+      "desc": "Take a Super Agent amendment back (refused inside a Claude session or an agent run)",
+      "args": [
+        "<slug>",
+        "<id>"
       ]
     },
     {
@@ -3411,6 +3426,20 @@
       "desc": "The project's AI Team: give a member a job in its own thread",
       "args": [],
       "group": true
+    },
+    {
+      "path": "super team amend",
+      "desc": "Correct a member's instructions after a mistake: only its prompt, soul or a routine's job. It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page. Refused: `amend_needs_owner` (the text adds an address, a command, a secret path or a hidden character), `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `amend_unapproved`, `owner_reverted` (he took this text back), `amend_global`",
+      "args": [
+        "<member>"
+      ],
+      "valueFlags": [
+        "--why",
+        "--prompt-file",
+        "--soul-file",
+        "--routine",
+        "--job-file"
+      ]
     },
     {
       "path": "super team ask",

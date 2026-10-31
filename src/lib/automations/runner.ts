@@ -1432,7 +1432,9 @@ export async function executeClaudeDetached(args: string[], opts: ClaudeExecOpti
     // value rather than leaving it to redirect the child (see `accountEnvFor`).
     // `cliAwarePath` so the run can call `dreamcontext` (post, propose, recall) even when it
     // was started from the app, whose environment has no login-shell PATH — see cli-path.ts.
-    env: { ...process.env, PATH: cliAwarePath(claudeAwarePath()), ...(opts.env ?? {}) },
+    // The window's key stays out: `automations run` from the Super Agent's shell must not hand its
+    // session to the member it starts (`super team amend` answers to that key).
+    env: { ...process.env, DREAMCONTEXT_WINDOW_TOKEN: undefined, DREAMCONTEXT_WINDOW_URL: undefined, PATH: cliAwarePath(claudeAwarePath()), ...(opts.env ?? {}) },
     stdio: opts.discardOutput ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
     // Windows has no process groups to lead, and a DETACHED_PROCESS child has no console: every
     // hook and tool claude starts would open its own visible one. Not detached, the child gets a

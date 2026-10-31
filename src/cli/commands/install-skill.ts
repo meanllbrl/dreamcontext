@@ -119,6 +119,9 @@ export const HOOK_SPECS: readonly HookSpec[] = [
   // Second PreToolUse entry: gates direct writes to protected files (e.g. marketing/.env).
   // The hook.ts action already branches on tool_name, so the same command serves both gates.
   { event: 'PreToolUse', name: 'pre-tool-use', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: 'Edit|Write|MultiEdit' },
+  // Third: the same gate for a shell write. A member's file (`agents/*.md`, `automations/*.md`) was
+  // once appended to from a heredoc, which dropped its approval (`member-file-guard.ts`).
+  { event: 'PreToolUse', name: 'pre-tool-use', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: 'Bash' },
   { event: 'UserPromptSubmit', name: 'user-prompt-submit', command: USER_PROMPT_SUBMIT_HOOK, timeout: 120 },
   { event: 'PostToolUse', name: 'post-tool-use', command: POST_TOOL_USE_HOOK, timeout: 30, matcher: 'Edit|Write' },
   { event: 'PreCompact', name: 'pre-compact', command: PRE_COMPACT_HOOK, timeout: 5 },

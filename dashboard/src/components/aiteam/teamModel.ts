@@ -207,6 +207,43 @@ export type PendingApproval = {
   reason: string | null;
 };
 
+/** The i18n key naming a changed instruction field. */
+export function amendmentFieldKey(field: 'prompt' | 'soul' | 'job'): string {
+  return `aiteam.amend.field.${field}`;
+}
+
+/** Past this many lines a side, a diff is the lines one side lacks: enough to read, cheap to draw. */
+const DIFF_MAX_LINES = 2000;
+
+/**
+ * A position-aware line diff, so a moved line, a dropped duplicate or a blank line shows too: what
+ * the owner reads instead of two whole prompts.
+ */
+export function amendmentDiff(before: string, after: string): Array<{ added: boolean; text: string }> {
+  const a = before.split('\n');
+  const b = after.split('\n');
+  if (a.length > DIFF_MAX_LINES || b.length > DIFF_MAX_LINES) {
+    const had = new Set(a);
+    const has = new Set(b);
+    return [...a.filter((l) => !has.has(l)).map((text) => ({ added: false, text })), ...b.filter((l) => !had.has(l)).map((text) => ({ added: true, text }))];
+  }
+  const dp = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i -= 1) {
+    for (let j = b.length - 1; j >= 0; j -= 1) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out: Array<{ added: boolean; text: string }> = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) { i += 1; j += 1; }
+    else if (j < b.length && (i === a.length || dp[i][j + 1] >= dp[i + 1][j])) { out.push({ added: true, text: b[j] }); j += 1; }
+    else { out.push({ added: false, text: a[i] }); i += 1; }
+  }
+  return out;
+}
+
 /** What waits for approval, in the order it matters: what blocks talking first, then the
  *  routines, then the call target's own runs (boards and tasks). Empty when all is approved. */
 export function pendingApprovals(

@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import type { Command } from 'commander';
 import { createProgram } from '../../src/cli/program.js';
 import { getAgent, recordAgentLesson } from '../../src/lib/agents/store.js';
+import { amendMember } from '../../src/lib/agents/amendments.js';
+import { getRunTarget } from '../../src/lib/automations/store.js';
+import { checkApproval } from '../../src/lib/automations/registry.js';
 import { SOUL_TEMPLATE_IDS, soulTemplate } from '../../src/lib/agents/soul-templates.js';
 
 /**
@@ -44,6 +47,8 @@ function sub(name: string): Command {
 const agentFile = (slug: string) => readFileSync(join(contextRoot, 'agents', `${slug}.md`), 'utf-8');
 
 beforeEach(() => {
+  // `agents edit` refuses a Claude session; the suite may itself run inside one.
+  vi.stubEnv('CLAUDECODE', undefined as unknown as string);
   cwd = process.cwd();
   projectRoot = realpathSync(mkdtempSync(join(tmpdir(), 'dc-soul-cli-')));
   contextRoot = join(projectRoot, '_dream_context');
@@ -122,5 +127,86 @@ describe('agents edit and show', () => {
     expect(plain.out).toContain('soul:');
     expect(plain.out).toContain('Be calm.');
     expect(plain.out).toContain('pattern: 1 lessons, playbook empty');
+  });
+});
+
+describe('agents edit from a session', () => {
+  beforeEach(async () => {
+    await run(['agents', 'create', 'scout', '--title', 'Scout', '--prompt', 'Look around.']);
+  });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it.each([
+    ['--prompt', 'New text.'],
+    ['--soul', 'Short sentences.'],
+    ['--autonomy', 'free'],
+    ['--model', 'opus'],
+    ['--effort', 'max'],
+    ['--whiteboard', 'home'],
+  ])('%s is refused in a Claude session: an edit re-approves, and approving is the owner\'s', async (flag, value) => {
+    vi.stubEnv('CLAUDECODE', '1');
+    const before = agentFile('scout');
+    const r = await run(['agents', 'edit', 'scout', flag, value]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('super team amend');
+    expect(agentFile('scout')).toBe(before);
+  });
+
+  it('is refused for a member\'s own run too', async () => {
+    vi.stubEnv('DREAMCONTEXT_AGENT_SELF', 'scout');
+    expect((await run(['agents', 'edit', 'scout', '--prompt', 'I rewrite myself.'])).code).toBe(1);
+  });
+
+  it('still lets a session rename a member or place it in the team', async () => {
+    vi.stubEnv('CLAUDECODE', '1');
+    expect((await run(['agents', 'edit', 'scout', '--title', 'Finder', '--team', 'growth'])).code).toBe(0);
+    expect(getAgent(contextRoot, 'scout')?.title).toBe('Finder');
+  });
+
+  it('the Super Agent\'s crew creates a member unapproved; no session deletes one', async () => {
+    vi.stubEnv('CLAUDECODE', '1');
+    vi.stubEnv('DREAMCONTEXT_SUPER_CREW', '1');
+    const created = await run(['agents', 'create', 'newcomer', '--title', 'New', '--prompt', 'Hello.']);
+    expect(created.code).toBe(0);
+    expect(created.out).toContain('waits for the owner');
+    const target = getRunTarget(contextRoot, 'newcomer', 'agent')!;
+    expect(checkApproval(projectRoot, target, undefined, 'run').approved).toBe(false);
+    expect((await run(['agents', 'remove', 'newcomer', '-y'])).code).toBe(1);
+    expect(getAgent(contextRoot, 'newcomer')).not.toBeNull();
+  });
+
+  it('the crew cannot give the owner\'s yes to a question', async () => {
+    const src = readFileSync(join(cwd, 'src', 'cli', 'commands', 'automations.ts'), 'utf-8');
+    expect(src).toMatch(/answerFlowHitlQuestion[\s\S]{0,200}createNeedsOwner\(\)/);
+  });
+
+  it('the owner\'s own chat still approves what it creates: he is the one who wrote it', async () => {
+    vi.stubEnv('CLAUDECODE', '1');
+    expect((await run(['agents', 'create', 'helper', '--title', 'Helper', '--prompt', 'Hello.'])).code).toBe(0);
+    expect(checkApproval(projectRoot, getRunTarget(contextRoot, 'helper', 'agent')!, undefined, 'run').approved).toBe(true);
+  });
+
+  it('the crew creates a routine unapproved too', async () => {
+    vi.stubEnv('DREAMCONTEXT_SUPER_CREW', '1');
+    const r = await run(['automations', 'create', 'scout-daily', '--title', 'Daily', '--agent', 'scout', '--job', 'Look.', '--days', 'daily', '--at', '09:00']);
+    expect(r.out).toContain('waits for the owner');
+    expect(checkApproval(projectRoot, getRunTarget(contextRoot, 'scout-daily', 'automation')!, undefined, 'run').approved).toBe(false);
+  });
+
+  it('works from the owner\'s terminal', async () => {
+    expect((await run(['agents', 'edit', 'scout', '--prompt', 'New text.'])).code).toBe(0);
+    expect(getAgent(contextRoot, 'scout')?.prompt).toBe('New text.');
+  });
+
+  it('`agents revert` is the owner\'s: a session is refused, and sees the history', async () => {
+    const a = amendMember(contextRoot, { member: 'scout', why: 'A wording fix.', prompt: 'Look around twice.' });
+    vi.stubEnv('CLAUDECODE', '1');
+    expect((await run(['agents', 'revert', 'scout', a.id])).code).toBe(1);
+    expect(getAgent(contextRoot, 'scout')?.prompt).toBe('Look around twice.');
+    expect((await run(['agents', 'amendments', 'scout'])).out).toContain('A wording fix.');
+    vi.unstubAllEnvs();
+    vi.stubEnv('CLAUDECODE', undefined as unknown as string);
+    expect((await run(['agents', 'revert', 'scout', a.id])).code).toBe(0);
+    expect(getAgent(contextRoot, 'scout')?.prompt).toBe('Look around.');
   });
 });
