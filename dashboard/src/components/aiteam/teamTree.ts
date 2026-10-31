@@ -168,3 +168,14 @@ export function pageStorage(): Storage | null {
     return null;
   }
 }
+
+/** SKETCH: which of the owner's three options is drawn (null: the list as on super/tek-ekip). */
+export type TeamSketch = 'a' | 'b' | 'c';
+export function readTeamSketch(storage: Pick<Storage, 'getItem'> | null): TeamSketch | null {
+  try {
+    const v = storage?.getItem('dreamcontext.aiteam.v3');
+    return v === 'a' || v === 'b' || v === 'c' ? v : null;
+  } catch {
+    return null;
+  }
+}

@@ -24,8 +24,10 @@ import { TeamIcon } from './TeamIcons';
  * place of the list and the conversation; the side panel stays where it was.
  */
 export function OrgView({
-  tree, rows, selected, onSelect, onTalk, onConversations, onNew, onToast, nextRun, headless = false,
+  tree, rows, selected, onSelect, onTalk, onConversations, onNew, onToast, nextRun, headless = false, band = [],
 }: {
+  /** SKETCH A: the members of all projects, in their own band under the owner. */
+  band?: TeamRow[];
   /** The new shell: the page's bar carries the title, the switch and New; the count and the find stay here. */
   headless?: boolean;
   tree: TeamTree;
@@ -90,7 +92,7 @@ export function OrgView({
           {said.length > 0 && <span className="aiteam-org-strip-facts">{said.join(' · ')}</span>}
         </div>
       )}
-      <OrgChart tree={tree} rows={rows} selected={selected} onSelect={onSelect} onTalk={onTalk} matches={matches} />
+      <OrgChart tree={tree} rows={rows} selected={selected} onSelect={onSelect} onTalk={onTalk} matches={matches} band={band} />
       <div className="aiteam-roster-foot aiteam-org-foot">
         <AutomationsDispatcherBar variant="inline" onToast={onToast} />
         <span className="aiteam-roster-next">{nextRun}</span>
@@ -130,8 +132,9 @@ export function PageSwitch({ view, onConversations }: { view: 'conversations' | 
 }
 
 export function OrgChart({
-  tree, rows, selected, onSelect, onTalk, matches = null,
+  tree, rows, selected, onSelect, onTalk, matches = null, band = [],
 }: {
+  band?: TeamRow[];
   tree: TeamTree;
   rows: TeamRow[];
   selected: string | null;
@@ -206,6 +209,20 @@ export function OrgChart({
           );
         })}
       </div>
+      {band.length > 0 && (
+        <section className="aiteam-org-band" data-org-band title={t('aiteam.tag.globalHint')}>
+          <div className="aiteam-org-band-head">
+            <span className="aiteam-org-frame-label">{t('aiteam.section.allProjects')}</span>
+            <span className="aiteam-org-frame-count">{band.length}</span>
+            <span className="aiteam-org-band-note">{t('aiteam.team.toYou')}</span>
+          </div>
+          <div className="aiteam-org-band-cards">
+            {band.map((row) => (
+              <OrgCard key={row.slug} row={row} on={selected === row.slug} dim={!!matches && !matches.has(row.slug)} style={{ position: 'relative', width: 200, height: 92, flexShrink: 0 }} onSelect={onSelect} onTalk={onTalk} now={now} />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -225,6 +242,7 @@ function OrgCard({
   const working = row.status === 'working';
   const dot = working ? 'working' : row.status === 'needs' ? 'needs' : row.status === 'idle' ? 'idle' : null;
   const enabled = row.routines.filter((r) => r.enabled).length;
+  const inBand = style.position === 'relative';
   return (
     <button
       type="button"
@@ -247,7 +265,7 @@ function OrgCard({
       </span>
       <span className="aiteam-org-card-foot">
         {/* The foot is one short line: a state that stops the card takes it whole. */}
-        {row.global && row.status === 'idle' && (
+        {row.global && row.status === 'idle' && !inBand && (
           <span className="aiteam-tag aiteam-tag--accent" data-global-chip title={t('aiteam.tag.globalHint')}>{t('aiteam.tag.global')}</span>
         )}
         {row.status === 'needs' && <span className="aiteam-tag aiteam-tag--warn">{t('aiteam.tag.needs')}</span>}

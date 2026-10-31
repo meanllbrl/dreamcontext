@@ -37,7 +37,16 @@ export function TeamRoster({
   onWidth,
   onWidthCommit,
   headless = false,
+  sketch = false,
+  tucked = [],
+  heading,
 }: {
+  /** SKETCH: one flat list, no All projects card. */
+  sketch?: boolean;
+  /** SKETCH C: the members of all projects, behind one closed line at the foot of the list. */
+  tucked?: TeamRow[];
+  /** SKETCH B: the heading of the flat list. */
+  heading?: string;
   /** The new shell (W2-B): the page's bar carries the title, the count and the actions. */
   headless?: boolean;
   rows: TeamRow[];
@@ -109,8 +118,10 @@ export function TeamRoster({
   });
   const needs = shown.filter((r) => r.section === 'needs');
   // Your teammates in every project come first; the rest of the team is this project's.
-  const everywhere = shown.filter((r) => r.section === 'team' && r.global);
-  const team = shown.filter((r) => r.section === 'team' && !r.global);
+  const everywhere = sketch ? [] : shown.filter((r) => r.section === 'team' && r.global);
+  const team = shown.filter((r) => r.section === 'team' && (sketch || !r.global));
+  const [tuckOpen, setTuckOpen] = useState(false);
+  const tuckedShown = filterRoster(tucked, query);
   // Teammates' agents, one read-only part per owner (B1-4), after your own.
   const readonly = shown.filter((r) => r.section === 'readonly');
   const owners = [...new Set(readonly.map((r) => r.ownerLabel ?? ''))];
@@ -206,7 +217,7 @@ export function TeamRoster({
           <>
             {needs.length > 0 && <div className="aiteam-section">{t('aiteam.section.needs')}</div>}
             {needs.map((r) => (
-              <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} />
+              <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} mark={sketch && r.global && !heading} />
             ))}
             {everywhere.length > 0 && (
               <div className="aiteam-rostercard" data-roster-section="all-projects">
@@ -227,11 +238,11 @@ export function TeamRoster({
                     {t('aiteam.section.thisProject')}
                     <span className="aiteam-section-count"> · {team.length}</span>
                   </>
-                ) : t('aiteam.section.team')}
+                ) : heading ?? t('aiteam.section.team')}
               </div>
             )}
             {team.map((r) => (
-              <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} />
+              <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} mark={sketch && r.global && !heading} />
             ))}
             {owners.map((owner) => (
               <div key={`ro:${owner}`} data-readonly-section={owner}>
@@ -272,7 +283,16 @@ export function TeamRoster({
             </div>
           );
         })}
-        {!empty && shown.length === 0 && <p className="aiteam-roster-empty">{t('aiteam.search.none')}</p>}
+        {view === 'list' && tuckedShown.length > 0 && (
+          <div className="aiteam-tuck">
+            <button type="button" className="aiteam-tuck-head" aria-expanded={tuckOpen} onClick={() => setTuckOpen((o) => !o)} title={t('aiteam.tag.globalHint')} data-all-projects-toggle>
+              <TeamIcon name={tuckOpen ? 'chevronDown' : 'chevronRight'} size={12} />
+              {t('aiteam.section.allProjects')}<span className="aiteam-section-count"> · {tuckedShown.length}</span>
+            </button>
+            {tuckOpen && tuckedShown.map((r) => <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} />)}
+          </div>
+        )}
+        {!empty && shown.length === 0 && tuckedShown.length === 0 && <p className="aiteam-roster-empty">{t('aiteam.search.none')}</p>}
       </div>
       <div className="aiteam-roster-foot">
         <AutomationsDispatcherBar variant="inline" onToast={onToast} />
