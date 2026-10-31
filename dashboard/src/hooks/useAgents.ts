@@ -204,10 +204,12 @@ export function useCreateGlobalAgent() {
   return useMutation({
     mutationFn: (draft: AgentIdentityDraft) =>
       api.post<{ agent: GlobalAgentRow }>('/launcher/global-agents', draft).then((r) => r.agent),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['global-agents'] });
-      queryClient.invalidateQueries({ queryKey: ['agents'] });
-    },
+    // Waited for: AI Team opens the new member as soon as this settles, and a page whose roster
+    // does not hold it yet falls back to the first row.
+    onSuccess: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['global-agents'] }),
+      queryClient.invalidateQueries({ queryKey: ['agents'] }),
+    ]),
   });
 }
 

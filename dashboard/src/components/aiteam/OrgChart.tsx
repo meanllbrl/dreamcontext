@@ -242,6 +242,10 @@ function OrgCard({
         </span>
       </span>
       <span className="aiteam-org-card-foot">
+        {/* The foot is one short line: a state that stops the card takes it whole. */}
+        {row.global && row.status === 'idle' && (
+          <span className="aiteam-tag aiteam-tag--accent" data-global-chip title={t('aiteam.tag.globalHint')}>{t('aiteam.tag.global')}</span>
+        )}
         {row.status === 'needs' && <span className="aiteam-tag aiteam-tag--warn">{t('aiteam.tag.needs')}</span>}
         {working && (
           <span className="aiteam-org-live">

@@ -297,6 +297,11 @@
 .aiteam-viewswitch { display: flex; margin: 0 var(--space-4) var(--space-3); }
 .aiteam-viewswitch .agents-switch-opt { flex: 1; justify-content: center; }
 .aiteam-section-count { font-weight: var(--font-weight-semibold); }
+/* Your teammates in all projects: the one card in the list, a tone above it. */
+.aiteam-rostercard { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; padding-bottom: var(--space-1); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg-secondary); }
+.aiteam-rostercard .aiteam-row:hover:not(.aiteam-row--on) { background: var(--color-bg-tertiary); }
+.aiteam-rostercard .aiteam-face-dot { border-color: var(--color-bg-secondary); }
+.aiteam-rostercard .aiteam-row--on .aiteam-face-dot { border-color: var(--color-bg-tertiary); }
 .aiteam-treesec { display: flex; flex-direction: column; gap: 2px; }
 .aiteam-trow { position: relative; display: flex; align-items: flex-start; }
 .aiteam-trow > .aiteam-row { flex: 1; min-width: 0; }

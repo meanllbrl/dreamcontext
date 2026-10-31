@@ -7,7 +7,7 @@ import { ownerLabel } from '../../lib/agents/owner.js';
 import { AmendmentRefused, listAmendments, revertAmendment } from '../../lib/agents/amendments.js';
 import { settleApprovalQuestions } from '../../lib/automations/hitl.js';
 import { placement } from '../../lib/agents/active.js';
-import { GLOBAL_REGISTRY_KEY, hasProjectMember } from '../../lib/agents/scope.js';
+import { GLOBAL_REGISTRY_KEY, globalAgentExists, hasProjectMember } from '../../lib/agents/scope.js';
 import { composeRun } from '../../lib/agents/compose.js';
 import { agentSyncSwitchOn, createdLocally, loginFromEmail } from '../../lib/agents/agent-sync.js';
 import { lastAuthorEmail as gitLastAuthorEmail } from '../../lib/git-sync/git.js';
@@ -306,8 +306,13 @@ function sendSummary(res: ServerResponse, contextRoot: string, slug: string, sta
  */
 function refuseGlobalOnPhone(req: IncomingMessage, res: ServerResponse, global: boolean): boolean {
   if (!global || !isPhoneSocket(req)) return false;
-  sendError(res, 403, 'phone_unavailable', 'Global agents are changed on the Mac itself.');
+  sendError(res, 403, 'phone_unavailable', 'Teammates in all projects are changed on the Mac itself.');
   return true;
+}
+
+/** The app's own words for a name one of them holds (the store's sentence is also the CLI's). */
+function refuseGlobalName(slug: string): void {
+  if (globalAgentExists(slug)) throw new AutomationError(`"${slug}" is already the name of one of your teammates in all projects.`);
 }
 
 function isGlobalHere(contextRoot: string, slug: string): boolean {
@@ -391,6 +396,7 @@ export async function handleAgentsCreate(
     if (!isSafeAutomationSlug(slug)) {
       throw new AutomationError(`"${title}" does not make a usable name — try plain letters and numbers.`);
     }
+    refuseGlobalName(slug);
     const projectRoot = dirname(contextRoot);
     registerProject(projectRoot);
     const input = {
@@ -453,17 +459,18 @@ export async function handleLauncherGlobalAgents(
     sendJson(res, 200, { agents: listGlobalAgents().map(globalAgentRow) });
   } catch (err) {
     console.error('[agents] global list failed', err);
-    sendError(res, 500, 'list_failed', 'Failed to list the global agents.');
+    sendError(res, 500, 'list_failed', 'Failed to list the teammates in all projects.');
   }
 }
 
 /** POST /api/launcher/global-agents {title, prompt, slug?, soul?, model?, effort?, learning?} —
- *  create a global agent from the launcher, granted on this machine (vault-agnostic, D1). */
+ *  create a global agent, granted on this machine (D1). Works with no project (the launcher) and
+ *  from a project's "+ New", which names its project. */
 export async function handleLauncherGlobalAgentsCreate(
   req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
-  _contextRoot: string | null,
+  contextRoot: string | null,
 ): Promise<void> {
   const body = await parseJsonBody(req);
   if (!body) {
@@ -477,6 +484,9 @@ export async function handleLauncherGlobalAgentsCreate(
     if (!prompt) throw new AutomationError('Describe who the agent is — that description is its prompt.');
     const slug = (str(body.slug) ?? '').trim() || slugifyTitle(title);
     if (!isSafeAutomationSlug(slug)) throw new AutomationError(`"${title}" does not make a usable name — try plain letters and numbers.`);
+    refuseGlobalName(slug);
+    // Sent from a project's "+ New": that project's member would hide the new one here.
+    if (contextRoot && hasProjectMember(contextRoot, slug)) throw new AutomationError(`"${slug}" is already the name of an agent or an automation in this project.`);
     const agent = createGlobalAgent({
       slug,
       title,
@@ -488,7 +498,7 @@ export async function handleLauncherGlobalAgentsCreate(
     }, { approve: { now: new Date() } });
     sendJson(res, 201, { agent: globalAgentRow(agent) });
   } catch (err) {
-    sendWriteError(res, err, 'create_failed', 'Failed to create the global agent.');
+    sendWriteError(res, err, 'create_failed', 'Failed to create the teammate.');
   }
 }
 

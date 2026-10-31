@@ -109,7 +109,9 @@ export function TeamRoster({
     return next;
   });
   const needs = shown.filter((r) => r.section === 'needs');
-  const team = shown.filter((r) => r.section === 'team');
+  // Your teammates in every project come first; the rest of the team is this project's.
+  const everywhere = shown.filter((r) => r.section === 'team' && r.global);
+  const team = shown.filter((r) => r.section === 'team' && !r.global);
   // Teammates' agents, one read-only part per owner (B1-4), after your own.
   const readonly = shown.filter((r) => r.section === 'readonly');
   const owners = [...new Set(readonly.map((r) => r.ownerLabel ?? ''))];
@@ -214,7 +216,28 @@ export function TeamRoster({
             {needs.map((r) => (
               <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} now={now} />
             ))}
-            {team.length > 0 && <div className="aiteam-section">{t('aiteam.section.team')}</div>}
+            {everywhere.length > 0 && (
+              <div className="aiteam-rostercard" data-roster-section="all-projects">
+                <div className="aiteam-section" title={t('aiteam.tag.globalHint')}>
+                  {t('aiteam.section.allProjects')}
+                  <span className="aiteam-section-count"> · {everywhere.length}</span>
+                </div>
+                {/* The heading says it, so its rows carry no chip. */}
+                {everywhere.map((r) => (
+                  <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} now={now} scopeChip={false} />
+                ))}
+              </div>
+            )}
+            {team.length > 0 && (
+              <div className="aiteam-section" data-roster-section="team">
+                {everywhere.length > 0 ? (
+                  <>
+                    {t('aiteam.section.thisProject')}
+                    <span className="aiteam-section-count"> · {team.length}</span>
+                  </>
+                ) : t('aiteam.section.team')}
+              </div>
+            )}
             {team.map((r) => (
               <Row key={r.slug} row={r} on={!draft && selected === r.slug} onSelect={onSelect} now={now} />
             ))}
@@ -351,7 +374,7 @@ function rollupWords(r: TeamRollup, t: (k: string) => string): { text: string; w
 }
 
 function Row({
-  row, on, onSelect, now, size = 40, team = null, rollup = null, note = null,
+  row, on, onSelect, now, size = 40, team = null, rollup = null, note = null, scopeChip = true,
 }: {
   row: TeamRow;
   on: boolean;
@@ -364,11 +387,14 @@ function Row({
   rollup?: TeamRollup | null;
   /** Why it sits at the top of the tree when it should not (a missing manager, a loop). */
   note?: string | null;
+  /** Off under the "All projects" heading, which already says it. */
+  scopeChip?: boolean;
 }) {
   const { t } = useI18n();
   const working = row.status === 'working';
   const elapsed = working && row.workingSince ? runDuration(now.getTime() - row.workingSince) : null;
   const dot = working ? 'working' : row.status === 'needs' ? 'needs' : row.status === 'idle' && row.lastAt ? 'idle' : null;
+  const everywhere = row.global && scopeChip;
   return (
     <button
       type="button"
@@ -400,9 +426,9 @@ function Row({
           </span>
         )}
         {note && <span className="aiteam-rollup">{note}</span>}
-        {(row.status === 'needs' || row.status === 'paused' || row.status === 'approval' || row.elsewhere || row.readOnly || row.global) && (
+        {(row.status === 'needs' || row.status === 'paused' || row.status === 'approval' || row.elsewhere || row.readOnly || everywhere) && (
           <span className="aiteam-row-tags">
-            {row.global && (
+            {everywhere && (
               <span className="aiteam-tag aiteam-tag--accent" data-global-chip title={t('aiteam.tag.globalHint')}>{t('aiteam.tag.global')}</span>
             )}
             {row.readOnly && (
