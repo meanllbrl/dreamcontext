@@ -13,6 +13,7 @@ import {
   plainLine, readTemporaryModels, routineCountLabel, writeTemporaryModel,
   type TeamAgent, type TeamAutomation,
 } from '../../dashboard/src/components/aiteam/teamModel';
+import { teamRowsOf } from '../../dashboard/src/components/layout/newshell/drawerModel';
 import type { FeedMessage, ThreadEntry } from '../../dashboard/src/hooks/useAutomations';
 
 function agent(slug: string, title: string, over: Partial<TeamAgent> = {}): TeamAgent {
@@ -89,6 +90,19 @@ describe('buildRoster (A2)', () => {
     expect(by.scout.routines).toEqual([]);
     expect(by.brief.status).toBe('paused');
     expect(by.brief.unread).toBe(1);
+  });
+
+  it('a disabled member raises no needs/approval alarm, and the drawer does not list it', () => {
+    const off = automation('off-a', 'a', { enabled: false, approved: false, approvalReason: 'new here' });
+    const r = buildRoster([agent('a', 'A', { approvedForChat: false })], [off], {
+      messages: [msg('off-a', 'r1', '2026-09-29T09:00:00.000Z', { status: 'needs-you', needsYou: true })],
+      unreadBySlug: {}, runSlots: {}, working: {},
+    });
+    expect(r[0].status).toBe('paused');
+    expect(r[0].section).toBe('team');
+    expect(teamRowsOf(r)).toEqual([]);
+    const on = buildRoster([agent('a', 'A', { approvedForChat: false })], [{ ...off, enabled: true }], null);
+    expect(on[0].status).toBe('approval');
   });
 
   it('an agent waiting for approval says so, and an empty one is idle', () => {

@@ -531,9 +531,11 @@ export const FEED_UNREAD_DAYS = FEED_DAY_WINDOW;
  */
 export function buildFeed(
   contextRoot: string,
-  opts: { limit?: number; home?: string } = {},
+  opts: { limit?: number; home?: string; now?: Date } = {},
 ): FeedResult {
   const home = opts.home ?? homedir();
+  const cutoffDay = new Date((opts.now ?? new Date()).getTime() - FEED_DAY_WINDOW * 86_400_000)
+    .toISOString().slice(0, 10);
   let manifests: AutomationManifest[] = [];
   try { manifests = listAutomations(contextRoot); } catch { manifests = []; }
 
@@ -569,7 +571,21 @@ export function buildFeed(
     // places that could drift apart. Deriving it here makes the chip count and
     // the per-message bars the same computation by construction, which is the
     // property that matters more than the saving.
-    const entries = readThread(contextRoot, manifest.slug, { days: FEED_DAY_WINDOW });
+    // The window is the last 14 CALENDAR days, not the newest 14 day files: an agent that
+    // runs rarely would otherwise keep a month-old run (and its unanswered `asked`) forever.
+    // A run stopped on an OPEN question record is the exception — it stays however old, so
+    // a real question never falls out of the window and vanishes.
+    const openDays = [...questionByRun.entries()]
+      .filter(([k]) => k.startsWith(`${manifest.slug}::`))
+      .map(([k]) => k.slice(manifest.slug.length + 2, manifest.slug.length + 12))
+      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && d < cutoffDay)
+      .sort();
+    const all = readThread(contextRoot, manifest.slug, {
+      fromDay: openDays[0] ?? cutoffDay,
+      ...(openDays.length ? {} : { days: FEED_DAY_WINDOW }),
+    });
+    const entries = all.filter((e) => e.runId.slice(0, 10) >= cutoffDay
+      || questionByRun.has(`${manifest.slug}::${e.runId}`));
     if (entries.length === 0) continue;
 
     const watermark = threadReadWatermark(contextRoot, manifest.slug, home);
