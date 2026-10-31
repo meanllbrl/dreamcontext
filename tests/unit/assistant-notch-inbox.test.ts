@@ -285,10 +285,10 @@ describe('a Super job at work (notchModel.ts)', () => {
     expect(running.map((r) => r.superJob)).toEqual([true, undefined]);
     const seen = new Set<string>();
     expect(freshStarts(running, seen)).toEqual([running[1]]);
-    expect(seen.size).toBe(1);
+    expect(seen.size).toBe(2);
     const other = { ...running[0], slug: 'other', superJob: true as const };
     expect(freshStarts([other], seen)).toEqual([]);
-    expect(seen.size).toBe(2);
+    expect(seen.size).toBe(3);
     expect(freshStarts([other, running[1]], seen)).toEqual([]);
   });
 });
