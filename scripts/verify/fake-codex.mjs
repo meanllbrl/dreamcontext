@@ -24,6 +24,8 @@ const LOG = process.env.FAKE_CODEX_LOG;
 const log = (s) => { if (LOG) try { appendFileSync(LOG, `${new Date().toISOString()} ${s}\n`); } catch { /* best effort */ } };
 if (!DIR) { process.stderr.write('fake-codex: FAKE_CODEX_FIXTURES is not set\n'); process.exit(2); }
 if (process.argv[2] !== 'app-server') { process.stdout.write('codex-cli 0.164.0\n'); process.exit(0); }
+// Which home this app-server runs with (a non-#0 account runs with its own; Track T W2).
+log(`app-server CODEX_HOME=${process.env.CODEX_HOME ?? ''}`);
 
 const load = (scenario) => readFileSync(join(DIR, scenario, 'codex_transcript.ndjson'), 'utf-8')
   .trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.type !== 'transcript_start');

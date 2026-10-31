@@ -83,6 +83,10 @@ import { dropFromOutbox } from '../../lib/super/outbox.js';
 import { clearAccountRejection, readAccountRejections, recordAccountRejection } from '../../lib/claude-limit-rejections.js';
 import { meterEndsRefusal, meterShowsRoomSince, readUsageMeter, readUsageMeterFrame, recordUsageMeter } from '../../lib/claude-usage-meter.js';
 import { chatSpawnAccount } from '../../lib/automations/account.js';
+import { clearToolSignedOut, readToolRejections, recordToolRejection, recordToolSignedOut } from '../../lib/account-switch.js';
+import { codexAccountDeps, codexAccountSignedIn, codexLimitsFor, getCodexAccount, listCodexAccounts, readCodexUsage, recordCodexUsage, type CodexAccountDeps } from '../../lib/codex-accounts.js';
+import { codexPaneAccount, decideCodexTarget, probeReading } from '../../lib/codex-switch.js';
+import { planReplacement } from '../../lib/t3-bridge/replace-session.js';
 import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
 import { taskOfAnySession } from '../../lib/agents/task-starter.js';
@@ -1373,9 +1377,10 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     if (bridgeTool && (assistant || card || chatAgent || mode === 'super' || url.searchParams.get('lean') === '1')) {
       rejectUpgrade(socket, 400); return;
     }
-    // The Claude engine setting (plan r5 §5, default off): a plain Claude chat through T3's driver.
-    // Everything that needs today's engine stays on it, exactly the surfaces a bridge tool refuses.
-    const t3Claude = !bridgeTool && !assistant && !card && !chatAgent && mode !== 'super' && url.searchParams.get('lean') !== '1'
+    // The T3 Claude engine (plan r5 §5) is shut until Wave 4: the server does not keep T3's thread
+    // id yet, so two tabs could write one transcript. A saved `claudeEngine: 't3'` does nothing.
+    const t3Claude = T3_CLAUDE_ENGINE_OPEN
+      && !bridgeTool && !assistant && !card && !chatAgent && mode !== 'super' && url.searchParams.get('lean') !== '1'
       && readAgentUiSettings().claudeEngine === 't3';
     const toolOpt = bridgeTool ? { tool: bridgeTool } : t3Claude ? { tool: 'claude' as const } : {};
 
@@ -1636,6 +1641,9 @@ interface ChatSpawnOpts {
   tool?: BridgeTool;
 }
 
+/** Wave 4 opens this, with the thread id kept by the server. Until then the path is dead. */
+const T3_CLAUDE_ENGINE_OPEN = false as boolean;
+
 /** `claude` only through the Claude engine setting: `?tool=` never selects it. */
 type BridgeTool = ToolId;
 
@@ -1776,6 +1784,11 @@ export const AUTH_CONTINUE_TEXT =
   'The previous turn failed because this chat\'s Claude account was signed out, and the chat has moved to a signed-in account. '
   + 'Continue exactly where you stopped; do not redo finished work.';
 
+/** What a Codex pane moved off a refused account is told after the restart (Track T W2). */
+export const CODEX_LIMIT_CONTINUE_TEXT =
+  'The previous turn was cut off by a Codex usage limit, and this chat has moved to another ChatGPT account. '
+  + 'Continue exactly where you stopped; do not redo finished work.';
+
 export const LIMIT_CONTINUE_TEXT =
   'The previous turn was cut off by a Claude usage limit, and this chat has moved to another account. '
   + 'Continue exactly where you stopped; do not redo finished work.';
@@ -1846,7 +1859,13 @@ export function startChatSession(
   // cache already shows as full (or a recorded refusal) is skipped here, so the chat opens on
   // one with room instead of restarting on the first message (`chatSpawnAccount`). An account
   // somebody picked is never second-guessed at spawn.
-  const spawnAccount = account || (chatSpawnAccount().id ?? '');
+  // A Codex pane's `account` names a CODEX account (Track T W2): it never reaches the Claude
+  // gate, which would refuse an id it does not know. Claude panes read `account` exactly as before.
+  const claudeAccountArg = opts.tool === 'codex' ? '' : account;
+  /** The Codex account a Codex pane runs on: the one asked for when it is registered, else the
+   *  one a new Codex chat opens on (codex-switch.ts). '' on every other pane. */
+  const codexAccountId = opts.tool === 'codex' ? codexPaneAccount(account) : '';
+  const spawnAccount = claudeAccountArg || (chatSpawnAccount().id ?? '');
   let accountConfigDir: string;
   try {
     accountConfigDir = resolveConfigDir(spawnAccount || null);
@@ -1887,10 +1906,10 @@ export function startChatSession(
     ) ?? '';
   const pinId = resumeId || sessionId;
   // Who chose this pane's account — see `autoPlacedAccounts`. Only an auto-placed pane comes home.
-  const accountAutoPlaced = !account || autoPlacedAccounts.get(pinId) === account;
+  const accountAutoPlaced = !claudeAccountArg || autoPlacedAccounts.get(pinId) === claudeAccountArg;
   if (accountAutoPlaced) noteAutoPlaced(pinId, activeAccountId);
   else autoPlacedAccounts.delete(pinId);
-  if (!account) handPickedAccounts.delete(pinId);
+  if (!claudeAccountArg) handPickedAccounts.delete(pinId);
   else if (!accountAutoPlaced && activeAccountId) notePane(handPickedAccounts, pinId, activeAccountId);
   // A bridge pane always holds its pane id (its tool's thread is found through the tab map, so
   // there is no Claude transcript to pin): `--session-id` is a Claude flag the bridge never reads.
@@ -2289,7 +2308,7 @@ export function startChatSession(
   // changing it (`node-floor.ts`). No such Node: the pane says so instead of crashing in a chat.
   const bridgeNodePath = bridgeTool ? bridgeNode() : null;
   const bridgeScript = bridgeTool && bridgeNodePath
-    ? bridgeChatScript({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot) })
+    ? bridgeChatScript({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(codexAccountId ? { account: codexAccountId } : {}) })
     : null;
   if (bridgeTool && !bridgeScript) {
     const why = bridgeNodePath ? `${bridgeTool} could not start: the dreamcontext install path is not shell-safe.` : nodeTooOldMessage(bridgeTool === 'codex' ? 'Codex' : 'The T3 Claude engine');
@@ -3059,7 +3078,9 @@ export function startChatSession(
   // Which account this process really runs on. The client asked for one (or for the default),
   // and the default may have skipped a full account — so the composer's account chip reads
   // this, not its own request. Said again on every reattach for a client that just arrived.
-  if (activeAccountId) sendMeta({ subtype: 'account_active', accountId: activeAccountId });
+  // A Codex pane names its CODEX account (and the tool), so the chip lists Codex accounts.
+  if (bridgeTool === 'codex') { if (codexAccountId) sendMeta({ subtype: 'account_active', accountId: codexAccountId, tool: 'codex' }); }
+  else if (activeAccountId) sendMeta({ subtype: 'account_active', accountId: activeAccountId });
 
   // A reattach found no live child (it exited while the client was away), so this is a fresh
   // resume: nothing is running, and the client replays the transcript it missed.
@@ -3540,13 +3561,13 @@ export function startChatSession(
       // what the account said a moment ago rather than a cache up to an hour old.
       // A bridge tool's limits and sign-in are its own accounts' (W2): Claude's observers stay off it.
       if (obj.type === 'rate_limit_event' && !bridgeTool) noteTurnUsage(obj);
-      if (bridgeTool) { /* not a Claude account's reading */ }
+      if (bridgeTool) { if (bridgeTool === 'codex') onCodexFrame(obj); }
       else if (limit) onLimitRejected(limit);
       else if (!obj.parent_tool_use_id && isAuthFailureFrame(obj)) onAuthFailed();
       else if (obj.type === 'assistant' && !obj.parent_tool_use_id) turnProgressed = true;
       // A turn that went through says the account is signed in again (claude-signed-out.ts).
       if (obj.type === 'result' && !obj.parent_tool_use_id) {
-        if (!authFailedTurn && obj.is_error !== true && activeAccountId) clearSignedOut(activeAccountId);
+        if (!bridgeTool && !authFailedTurn && obj.is_error !== true && activeAccountId) clearSignedOut(activeAccountId);
         authFailedTurn = false;
       }
       // After this frame's own refusal was dispatched (it may set the latch again): the turn is over.
@@ -4052,10 +4073,134 @@ export function startChatSession(
         .catch(() => false)));
   };
 
+  // ── Codex accounts (Track T W2) ──────────────────────────────────────────────────────
+  // The same join points as Claude's (plan r5 §4d), on Codex's own accounts: readings from the
+  // bridge's live limit updates and T3's limits probe, the same chooser (`chooseTarget` →
+  // `chooseAccount`) and thresholds, Codex's own refusal store. The move itself is the restart
+  // every switch uses: the client reopens this pane on the target account, and since every Codex
+  // account shares `~/.codex/sessions` (one continuation key, replace-session.ts) the reopened
+  // pane resumes the SAME thread. Claude panes never reach anything in this block.
+  const codexDeps = (): CodexAccountDeps => codexAccountDeps();
+
+  /** One frame from the Codex bridge: a live limit update, a refusal, or a turn that went through. */
+  const onCodexFrame = (obj: Record<string, unknown>): void => {
+    if (!codexAccountId) return;
+    // An account removed while this pane runs on it: its readings are not kept (no file comes back).
+    const registered = !!getCodexAccount(codexAccountId);
+    if (obj.type === 'system' && obj.subtype === 'dc_usage' && Array.isArray(obj.windows)) {
+      if (registered) recordCodexUsage(codexAccountId, obj.windows as unknown[], typeof obj.checked_at === 'string' ? obj.checked_at : new Date().toISOString(), 'session');
+      return;
+    }
+    if (obj.type !== 'result' || obj.parent_tool_use_id) return;
+    const limit = obj.dc_limit as { resetsAtMs?: unknown } | undefined;
+    if (limit && typeof limit === 'object') {
+      onCodexLimit({ window: 'unknown', resetsAtMs: typeof limit.resetsAtMs === 'number' ? limit.resetsAtMs : null, via: 'rateLimitEvent' });
+      return;
+    }
+    if (obj.is_error !== true) { clearToolSignedOut('codex', codexAccountId); return; }
+    // A failed turn on an account that is gone or signed out (removed in Settings, its sign-in
+    // deleted): Claude's `onAuthFailed`, for Codex. Written down, and the pane moves to a signed-in
+    // account whatever auto-switch says, since nothing here can serve it again.
+    if (registered && codexAccountSignedIn(codexAccountId)) return;
+    recordToolSignedOut('codex', codexAccountId);
+    if (switchPending || switchAbandoned) return;
+    if (!listCodexAccounts().some((a) => a.id !== codexAccountId && a.signedIn)) return;
+    const text = lastSentText && !turnProgressed ? lastSentText : CODEX_LIMIT_CONTINUE_TEXT;
+    switchGate = switchGate.then(() => (switchPending
+      ? false
+      : decideCodexAndAnnounce(text, 'needs_relogin', { id: codexAccountId, problem: 'needs-relogin' }, undefined, true).catch(() => false)));
+  };
+
+  /** Codex refused a turn for a usage limit: write it down, then move the pane if it can. */
+  const onCodexLimit = (signal: LimitSignal): void => {
+    if (turnsInFlight > 0) limitHitThisTurn = true;
+    if (switchPending) return;
+    const recorded = recordToolRejection('codex', codexAccountId, signal);
+    if (switchAbandoned) return;
+    if (!autoSwitchEnabled()) {
+      sendMeta({ subtype: 'account_switch', switched: false, reason: 'auto_switch_disabled', accountId: codexAccountId, tool: 'codex', earliestResetAt: recorded.until });
+      return;
+    }
+    if (listCodexAccounts().length < 2) return;
+    registry?.markLimited();
+    const text = lastSentText && !turnProgressed ? lastSentText : CODEX_LIMIT_CONTINUE_TEXT;
+    switchGate = switchGate.then(() => (switchPending
+      ? false
+      : decideCodexAndAnnounce(text, 'limit_hit', { id: codexAccountId, problem: 'unknown' }, recorded.until, true).catch(() => false)));
+  };
+
+  /** Before a turn goes out: move ahead of the wall when this Codex account is nearly full. */
+  const maybeSwitchCodex = async (text: string, resubmit: boolean): Promise<boolean> => {
+    if (!codexAccountId) return false;
+    const standing = readToolRejections('codex')[codexAccountId];
+    let active = codexLimitsFor(readCodexUsage(codexAccountId));
+    if (!autoSwitchEnabled()) {
+      if (standing || shouldSwitchAway(active)) {
+        sendMeta({ subtype: 'account_switch', switched: false, reason: 'auto_switch_disabled', accountId: codexAccountId, tool: 'codex', limits: active.limits, ...(standing ? { earliestResetAt: standing.until } : {}) });
+      }
+      return false;
+    }
+    if (listCodexAccounts().length < 2) return false;
+    if (standing) return decideCodexAndAnnounce(text, 'limit_known', { id: codexAccountId, problem: 'unknown' }, standing.until, resubmit);
+    if (switchStrategyFor() === 'sequential') return false;
+    // The bridge reports this account's windows on every turn, so the cached reading is fresh;
+    // only past the probe line is it read again for real before acting on it.
+    if (!shouldProbe(active)) return false;
+    const probed = await probeReading(codexAccountId, codexDeps());
+    if (!alive) return true;
+    if (probed.limits) active = probed.limits;
+    if (probed.problem !== 'needs-relogin' && !shouldSwitchAway(active)) return false;
+    return decideCodexAndAnnounce(text, probed.problem === 'needs-relogin' ? 'needs_relogin' : 'limit_near',
+      probed.limits ? { id: codexAccountId, limits: probed.limits } : { id: codexAccountId, problem: probed.problem ?? 'unknown' }, undefined, resubmit);
+  };
+
+  /** Choose among this tool's accounts and announce the move (Claude's `decideAndAnnounce`, for Codex). */
+  const decideCodexAndAnnounce = async (
+    text: string, cause: SwitchCause, activeReading: AccountReading, previousResetAt: number | undefined, resubmit: boolean,
+  ): Promise<boolean> => {
+    const choice = await decideCodexTarget({ activeId: codexAccountId, active: activeReading, probe: (id) => probeReading(id, codexDeps()) });
+    if (!alive) return true;
+    if (!choice.target || choice.target.accountId === codexAccountId) {
+      if (!choice.target || cause === 'limit_hit' || cause === 'limit_known') {
+        sendMeta({
+          subtype: 'account_switch', switched: false, reason: choice.target ? 'stayed_put' : 'all_exhausted',
+          accountId: codexAccountId, tool: 'codex', rejected: choice.rejected,
+          ...(choice.earliestResetAt === undefined ? {} : { earliestResetAt: choice.earliestResetAt }),
+        });
+      }
+      return false;
+    }
+    const target = getCodexAccount(choice.target.accountId);
+    if (!target) return false;
+    switchPending = true;
+    heldTexts = resubmit && text ? [text] : [];
+    if (isSuper && resubmit && text && lastSentSpoken && text === lastSentText) spokenTexts.add(text);
+    // The restart the client performs: same tool, the target account, the SAME thread
+    // (planReplacement: one continuation key across Codex accounts → resume, no handoff).
+    const plan = planReplacement({ tool: 'codex', accountId: codexAccountId, threadId: observedConversation || '' }, choice.target);
+    pendingSwitchFrame = {
+      subtype: 'account_switch',
+      switched: true,
+      reason: cause,
+      tool: 'codex',
+      accountId: target.id,
+      email: target.email,
+      fromAccountId: codexAccountId,
+      resumes: !plan.handoff,
+      ...(choice.sessionPercent === undefined ? {} : { sessionPercent: choice.sessionPercent }),
+      ...(choice.weeklyPercent === undefined ? {} : { weeklyPercent: choice.weeklyPercent }),
+      ...(choice.unmeasured ? { unmeasured: true } : {}),
+      ...(previousResetAt === undefined ? {} : { earliestResetAt: previousResetAt }),
+      rejected: choice.rejected,
+    };
+    reannounceSwitch();
+    return true;
+  };
+
   /** True when the turn was HELD (a restart is coming); false when the caller should send it. */
   const maybeSwitchAccount = async (text: string, opts: { resubmit?: boolean } = {}): Promise<boolean> => {
-    // A bridge tool switches its own accounts (W2); never a Claude switch.
-    if (bridgeTool) return false;
+    // A bridge tool switches its own tool's accounts (W2), never a Claude account.
+    if (bridgeTool && bridgeTool !== 'codex') return false;
     const resubmit = opts.resubmit ?? true;
     // One switch at a time per conversation. An owner message arriving while a restart is owed
     // JOINS it — held, re-announced, resubmitted after the restart in typing order — instead of
@@ -4069,6 +4214,7 @@ export function startChatSession(
       return true;
     }
     if (switchAbandoned) return false;
+    if (bridgeTool === 'codex') return maybeSwitchCodex(text, resubmit);
 
     // The API's own refusal, remembered from an earlier turn (this pane or any other). It
     // OUTRANKS the percentages below, which is the point: the account that produced the

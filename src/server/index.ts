@@ -1,4 +1,8 @@
 import { handleAgentTools } from './routes/agent-tools.js';
+import {
+  handleCodexAccountsAdopt, handleCodexAccountsList, handleCodexAccountsLogin, handleCodexAccountsRefresh,
+  handleCodexAccountsRemove, handleCodexAccountsReorder,
+} from './routes/agent-tool-accounts.js';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { networkInterfaces } from 'node:os';
@@ -608,6 +612,13 @@ export function buildRouter(): Router {
   router.post('/api/agent/accounts/switch-policy', handleAgentAccountsSwitchPolicy);
   router.post('/api/agent/accounts/owner-only', handleAgentAccountsOwnerOnly);
   router.post('/api/agent/accounts/agent-threshold', handleAgentAccountsAgentThreshold);
+  // Per-tool accounts (Track T W2): Codex's, each route with its Claude twin's guard.
+  router.get('/api/agent/accounts/codex', handleCodexAccountsList);
+  router.post('/api/agent/accounts/codex/login', handleCodexAccountsLogin);
+  router.post('/api/agent/accounts/codex/adopt', handleCodexAccountsAdopt);
+  router.post('/api/agent/accounts/codex/remove', handleCodexAccountsRemove);
+  router.post('/api/agent/accounts/codex/reorder', handleCodexAccountsReorder);
+  router.post('/api/agent/accounts/codex/refresh', handleCodexAccountsRefresh);
   // Settings → MCP (task mcp-management): every server × every Claude account, the probes that
   // fill it, a sign-in per account, and the store edits. Owner window only, reads included.
   // `/mcp` in Chat talks to its OWN process over the chat socket instead (agent-chat.ts).

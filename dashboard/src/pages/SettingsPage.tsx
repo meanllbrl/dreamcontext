@@ -27,6 +27,7 @@ import { OriginSetup } from '../components/brain/OriginSetup';
 import { SystemDependencies, FeatureDepsNotice } from '../components/settings/SystemDependencies';
 import { AutoUpdateSetting } from '../components/settings/AutoUpdateSetting';
 import { ClaudeAccounts } from '../components/settings/ClaudeAccounts';
+import { CodexAccounts } from '../components/settings/ToolAccounts';
 import { McpServers } from '../components/settings/McpServers';
 import { LinkedRepos } from '../components/brain/LinkedRepos';
 import { HandsfreeSettingsCard } from '../components/handsfree/HandsfreeSettingsCard';
@@ -442,6 +443,10 @@ export function SettingsPage({ focus }: SettingsPageProps) {
               reason this block exists. */}
           <SettingGroup title={t('settings.agents.accounts.title')}>
             <ClaudeAccounts />
+          </SettingGroup>
+          {/* Codex's accounts beside Claude's (Track T W2): the same bars, so the two compare. */}
+          <SettingGroup title={t('settings.agents.codexAccounts.title')}>
+            <CodexAccounts />
           </SettingGroup>
 
           {/* Directly under the accounts, because it answers the question the accounts raise:

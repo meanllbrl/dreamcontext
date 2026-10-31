@@ -364,6 +364,9 @@ export class ToWire {
     this.openAsks.clear();
     const ok = event.status === 'completed';
     const failure = event.status === 'failed' ? event.failure : null;
+    // A usage-limit refusal (T3 `failure.class === 'usage_limit'`): the server's switch reads it
+    // like Claude's refusal frame, with the reset T3 knows (plan r5 §4d "Limit detection").
+    const limitResetMs = failure?.class === 'usage_limit' && failure.resetAt ? Date.parse(failure.resetAt) : NaN;
     out.push({
       type: 'result',
       subtype: ok ? 'success' : 'error_during_execution',
@@ -376,6 +379,7 @@ export class ToWire {
       usage: { input_tokens: this.contextTokens, output_tokens: 0 },
       session_id: this.sessionId,
       dc_tool: this.opts.tool,
+      ...(failure?.class === 'usage_limit' ? { dc_limit: { resetsAtMs: Number.isFinite(limitResetMs) ? limitResetMs : null } } : {}),
     });
     this.turnOpen = false;
     return out;

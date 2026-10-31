@@ -769,7 +769,9 @@ export function fmtCost(usd: number): string {
  * the source actually provides.
  */
 export interface UsageLimitWire {
-  key: 'session' | 'weekly';
+  /** `monthly` only ever comes from a Codex Free/Go account (built client-side from T3's
+   *  windows, Track T W2); Claude's server never sends it. */
+  key: 'session' | 'weekly' | 'monthly';
   /** 0-100. */
   percent: number;
   /** Epoch ms at which this window resets. */
@@ -792,7 +794,7 @@ export interface UsageLimitsResponse {
 /** One rendered bar. `context` is computed locally and has no reset; the account caps come
  *  off the wire and always do. */
 export interface UsageLimit {
-  key: 'context' | 'session' | 'weekly';
+  key: 'context' | 'session' | 'weekly' | 'monthly';
   title: string;
   /** 0-100. */
   percent: number;
@@ -817,9 +819,10 @@ export const USAGE_MAX_AGE_MS = 6 * 60 * 60_000;
 const USAGE_TITLES: Record<UsageLimitWire['key'], string> = {
   session: '5-hour session',
   weekly: 'Weekly',
+  monthly: 'Monthly',
 };
 /** Render order, independent of whatever order the wire happened to use. */
-const USAGE_ORDER: Record<UsageLimitWire['key'], number> = { session: 0, weekly: 1 };
+const USAGE_ORDER: Record<UsageLimitWire['key'], number> = { session: 0, weekly: 1, monthly: 2 };
 
 function isPercent(n: unknown): n is number {
   return typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 100;

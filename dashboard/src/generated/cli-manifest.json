@@ -3518,6 +3518,16 @@
       ]
     },
     {
+      "path": "t3-account",
+      "desc": "Prepare a Codex account home or read its limits, through T3 (used by the server)",
+      "args": [
+        "<action>"
+      ],
+      "valueFlags": [
+        "--account"
+      ]
+    },
+    {
       "path": "t3-chat",
       "desc": "Run one chat on a T3 provider adapter over stream-json stdio (used by the chat server)",
       "args": [],
@@ -3530,7 +3540,8 @@
         "--pane",
         "--resume",
         "--briefing-file",
-        "--extra-root"
+        "--extra-root",
+        "--account"
       ]
     },
     {

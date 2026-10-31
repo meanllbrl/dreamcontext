@@ -32,9 +32,10 @@ export function registerT3ChatCommand(program: Command): void {
     .option('--resume <threadId>', 'a native thread to resume')
     .option('--briefing-file <path>', 'chat-surface briefing, sent as developer instructions')
     .option('--extra-root <path...>', 'another folder the sandboxed tool may write (a linked repo)')
+    .option('--account <id>', 'a Codex account other than #0 (its own home under ~/.dreamcontext/codex-accounts)')
     .action(async (o: {
       tool: string; cwd?: string; model?: string; effort?: string; mode: string; pane?: string;
-      resume?: string; briefingFile?: string; extraRoot?: string[];
+      resume?: string; briefingFile?: string; extraRoot?: string[]; account?: string;
     }) => {
       if (o.tool !== 'codex' && o.tool !== 'claude') {
         process.stderr.write(`t3-chat: unknown tool ${o.tool}\n`);
@@ -51,5 +52,27 @@ export function registerT3ChatCommand(program: Command): void {
         process.exit(1);
       }
       process.exit(await bridge.runT3Chat({ ...o, tool: o.tool, cwd: o.cwd ?? process.cwd() }));
+    });
+
+  // The account jobs that need T3's own code (plan r5 §4b, W2): a shadow home laid out before a
+  // sign-in, and a limits probe with no model call. Only the server runs it.
+  program
+    .command('t3-account', { hidden: true })
+    .description('Prepare a Codex account home or read its limits, through T3 (used by the server)')
+    .argument('<action>', 'prepare | probe')
+    .option('--account <id>', 'the Codex account (default: #0, ~/.codex)')
+    .action(async (action: string, o: { account?: string }) => {
+      if (action !== 'prepare' && action !== 'probe') {
+        process.stderr.write(`t3-account: unknown action ${action}\n`);
+        process.exit(2);
+      }
+      let bridge: Awaited<ReturnType<typeof loadBridge>>;
+      try {
+        bridge = await loadBridge('codex');
+      } catch (err) {
+        process.stdout.write(JSON.stringify({ ok: false, signedIn: false, error: `Codex could not load: ${String(err).slice(0, 300)}` }) + '\n');
+        process.exit(1);
+      }
+      process.exit(await bridge.runT3Account({ action, ...(o.account ? { account: o.account } : {}) }));
     });
 }

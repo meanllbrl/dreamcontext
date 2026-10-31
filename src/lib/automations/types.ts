@@ -493,6 +493,14 @@ export interface AutomationManifest {
    * through `composeRun`; absent on an agent that names none. Hashed when present: it opens tools.
    */
   readTools?: string[];
+  /**
+   * Other tools this automation may fall back to when every account of its own tool is out of
+   * limit (plan r5 §4e). A SHAPE only in Track T W2: no manifest parser reads it and nothing moves
+   * a run (the fallback policy is `'never'`), so it is never present today. Hashed when present,
+   * so allowing a fallback later re-approves only that automation. The rule that adds the parser
+   * adds it to `ApprovalPayloadFields` / `APPROVAL_DIFF_FIELDS` and the review panel with it.
+   */
+  fallbackTools?: string[];
   /** Its agent's owner (`owner:`), unhashed; absent on an unstamped file. `checkApproval` returns
    *  `not_owner` FIRST when it is not this machine's login (`agents/owner.ts`). */
   owner?: string;

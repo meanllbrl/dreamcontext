@@ -31,6 +31,7 @@ import * as ProviderEventLoggers from '@t3tools/provider-core/server/ProviderEve
 import { DEFAULT_SIGNAL_EXPORT } from '@t3tools/shared/observability';
 import * as OtelEnvironment from '@t3tools/shared/otelEnvironment';
 import * as CodexAdapterV2 from '@t3tools/server/orchestration-v2/Adapters/CodexAdapterV2';
+import { materializeCodexShadowHome, resolveCodexHomeLayout } from '@t3tools/server/provider/Drivers/CodexHomeLayout';
 import type * as ServerConfig from '@t3tools/server/config';
 import * as Crypto from 'effect/Crypto';
 import * as DateTime from 'effect/DateTime';
@@ -66,6 +67,11 @@ export interface BridgeSessionOptions {
   readonly binaryPath?: string;
   /** Codex `-c` launch arguments (developer instructions, profiles). */
   readonly launchArgs?: string;
+  /** A non-#0 Codex account (plan r5 §4b): `homePath ~/.codex` + its private `shadowHomePath`.
+   *  Absent = account #0, `~/.codex` itself. */
+  readonly codexHome?: { readonly homePath: string; readonly shadowHomePath: string };
+  /** A live limit update from the account (T3 `onUsageLimits`): windows as T3 builds them. */
+  readonly onUsageLimits?: (update: { readonly windows: ReadonlyArray<unknown>; readonly checkedAt: string }) => void;
   /** The environment the Codex process inherits (already scrubbed by the caller). */
   readonly env: NodeJS.ProcessEnv;
   /** dreamcontext's T3 state root (`~/.dreamcontext/t3`). Logs go under `logs/` (0700). */
@@ -161,6 +167,14 @@ export function bridgeServerConfig(stateRoot: string, cwd: string): ServerConfig
 }
 
 /** The runtime layer: Node services, T3's id allocator and MCP sessions, no provider event logs. */
+/** The Codex settings for one account, as `createCodexAdapterV2` derives them: a shadow home is
+ *  laid out (T3's `materializeCodexShadowHome`) and becomes the home Codex runs with. */
+const codexAccountSettings = (settings: typeof CodexSettings.Type) => Effect.gen(function* () {
+  const layout = yield* resolveCodexHomeLayout(settings);
+  yield* materializeCodexShadowHome(layout);
+  return { ...settings, homePath: layout.effectiveHomePath ?? '' } as typeof CodexSettings.Type;
+});
+
 function bridgeLayer(clientFactory: ClientFactory | undefined, kit: ClaudeKit | undefined) {
   const base = Layer.mergeAll(
     NodeServices.layer,
@@ -267,7 +281,9 @@ export class BridgeSession {
       enabled: true,
       ...(opts.binaryPath ? { binaryPath: opts.binaryPath } : {}),
       ...(opts.launchArgs ? { launchArgs: opts.launchArgs } : {}),
+      ...(opts.codexHome && opts.tool === 'codex' ? { homePath: opts.codexHome.homePath, shadowHomePath: opts.codexHome.shadowHomePath } : {}),
     };
+    const onUsageLimits = opts.onUsageLimits;
     const threadId = this.threadId;
     const runtimePolicy = this.runtimePolicy();
     const modelSelection = this.modelSelection();
@@ -287,7 +303,10 @@ export class BridgeSession {
         queryRunner: yield* kit.Runner,
       }) : yield* CodexAdapterV2.makeCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
-        settings: decodeCodexSettings(settingsInput),
+        // What T3's `createCodexAdapterV2` does before it builds the adapter: lay the account's
+        // shadow home out (authOverlay) and run Codex with CODEX_HOME = that home.
+        settings: yield* codexAccountSettings(decodeCodexSettings(settingsInput)),
+        ...(onUsageLimits ? { onUsageLimits: (u: { windows: ReadonlyArray<unknown>; checkedAt: string }) => Effect.sync(() => onUsageLimits(u)) } : {}),
         environment: opts.env,
         clientFactory: yield* CodexAdapterV2.CodexAppServerClientFactory,
         crypto: yield* Crypto.Crypto,

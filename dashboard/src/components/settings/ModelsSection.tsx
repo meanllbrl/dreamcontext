@@ -70,7 +70,6 @@ export function ModelsSection({ agentCfg, onOpenSleep }: {
 }) {
   const { t } = useI18n();
   const chatSave = useInstantSave();
-  const engineSave = useInstantSave();
   const codexInfo = useAgentTools().data?.find((x) => x.tool === 'codex');
   const codexModels = codexInfo?.models ?? [];
   const codexEfforts = [...new Set(codexModels.flatMap((m) => m.efforts))];
@@ -141,18 +140,6 @@ export function ModelsSection({ agentCfg, onOpenSleep }: {
               </>
             )}
           </span>
-        )}
-      />
-      <SettingRow
-        title={t('shell.settings.models.claudeEngine')}
-        hint={t('shell.settings.models.claudeEngineHint')}
-        status={<SaveMark state={engineSave.state} />}
-        control={agentCfg && (
-          <select className="settings-text-input" aria-label={t('shell.settings.models.claudeEngine')} data-testid="models-claude-engine" value={agentCfg.claudeEngine}
-            onChange={(e) => void engineSave.save(() => patchOrThrow({ claudeEngine: e.target.value === 't3' ? 't3' : 'dreamcontext' }))}>
-            <option value="dreamcontext">dreamcontext</option>
-            <option value="t3">T3 SDK</option>
-          </select>
         )}
       />
       <SettingRow

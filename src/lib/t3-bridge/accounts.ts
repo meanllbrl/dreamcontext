@@ -16,15 +16,23 @@ export interface CodexInstanceSettings {
   readonly launchArgs: string;
 }
 
+/** Account #0: `~/.codex` itself, the owner's own `codex login`. Never a shadow home. */
+export const CODEX_PRIMARY_ID = 'primary';
+
+/** A non-#0 account id: a folder name under `~/.dreamcontext/codex-accounts/`, never `primary`. */
+export function isCodexAccountId(id: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,63}$/.test(id) && id !== CODEX_PRIMARY_ID;
+}
+
 /** The private home of a non-#0 Codex account. */
 export function codexAccountHome(home: string, accountId: string): string {
-  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(accountId)) throw new Error(`invalid codex account id: ${accountId}`);
+  if (!isCodexAccountId(accountId)) throw new Error(`invalid codex account id: ${accountId}`);
   return join(home, '.dreamcontext', 'codex-accounts', accountId);
 }
 
 export function codexInstanceSettings(home: string, accountId: string | null): CodexInstanceSettings {
   const shared = join(home, '.codex');
-  if (!accountId) return { homePath: shared, shadowHomePath: '', launchArgs: '' };
+  if (!accountId || accountId === CODEX_PRIMARY_ID) return { homePath: shared, shadowHomePath: '', launchArgs: '' };
   return {
     homePath: shared,
     shadowHomePath: codexAccountHome(home, accountId),

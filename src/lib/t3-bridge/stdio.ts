@@ -15,6 +15,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BridgeSession, type BridgeSessionOptions } from './session.js';
 import { claudeLaunchArgs, codexLaunchArgs, scrubbedCodexEnv } from './launch.js';
+import { codexInstanceSettings, isCodexAccountId } from './accounts.js';
 import { HIDDEN_TITLE_PROMPT, TabTitler, titleBlock, titleIn } from './tab-title.js';
 import type { WireFrame } from './to-wire.js';
 
@@ -31,6 +32,8 @@ export interface StdioArgs {
   readonly briefingFile?: string;
   readonly extraRoots?: readonly string[];
   readonly binaryPath?: string;
+  /** A non-#0 Codex account id (plan r5 §4b). Absent = account #0, `~/.codex`. */
+  readonly account?: string;
 }
 
 export interface StdioDeps {
@@ -103,6 +106,11 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   let endInput: (() => void) | null = null;
   let fatal = false;
   let session: BridgeSession;
+  // The account this pane runs on: its private home and its file credential store.
+  const account = args.tool === 'codex' && args.account && isCodexAccountId(args.account) ? codexInstanceSettings(home, args.account) : null;
+  const launchArgs = args.tool === 'claude'
+    ? claudeLaunchArgs({ briefingFile: args.briefingFile })
+    : [account?.launchArgs ?? '', codexLaunchArgs({ briefingFile: args.briefingFile })].filter(Boolean).join(' ');
   try {
     session = await BridgeSession.open({
       tool: args.tool,
@@ -113,7 +121,10 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       paneId: args.paneId || randomUUID(),
       ...(args.resume ? { resumeNativeThreadId: args.resume } : {}),
       ...(args.binaryPath ? { binaryPath: args.binaryPath } : {}),
-      launchArgs: args.tool === 'claude' ? claudeLaunchArgs({ briefingFile: args.briefingFile }) : codexLaunchArgs({ briefingFile: args.briefingFile }),
+      launchArgs,
+      ...(account ? { codexHome: { homePath: account.homePath, shadowHomePath: account.shadowHomePath } } : {}),
+      // The account's live windows, for the server's switch and the Settings bars (never a secret).
+      onUsageLimits: (u) => emit({ type: 'system', subtype: 'dc_usage', dc_tool: args.tool, windows: u.windows, checked_at: u.checkedAt }),
       env: { ...scrubbedCodexEnv(deps.env), TMPDIR: privateTmp },
       stateRoot: join(home, '.dreamcontext', 't3'),
       extraRoots: args.extraRoots ?? [],

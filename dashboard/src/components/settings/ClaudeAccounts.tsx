@@ -74,7 +74,7 @@ import './ClaudeAccounts.css';
 const STALE_AFTER_MS = 10 * 60 * 1000;
 
 /** How old a reading is, in the shortest form that is still exact enough to act on. */
-function ageLabel(fetchedAtMs: number | null): { text: string; stale: boolean } {
+export function ageLabel(fetchedAtMs: number | null): { text: string; stale: boolean } {
   if (!fetchedAtMs) return { text: 'never read', stale: true };
   const ms = Date.now() - fetchedAtMs;
   const stale = ms > STALE_AFTER_MS;
@@ -101,7 +101,7 @@ function planLabel(tier: string): string {
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
-function resetLabel(resetsAt: number): string {
+export function resetLabel(resetsAt: number): string {
   if (!resetsAt) return '';
   const d = new Date(resetsAt);
   const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -122,7 +122,7 @@ function resetLabel(resetsAt: number): string {
  * Coarse on purpose: the reading it labels is a cached percentage, so minute precision past
  * the first hour would imply an accuracy the number does not have.
  */
-function fmtLeft(ms: number): string {
+export function fmtLeft(ms: number): string {
   const mins = Math.max(0, Math.round(ms / 60_000));
   if (mins < 60) return `${mins}m`;
   const hours = Math.floor(mins / 60);
@@ -148,7 +148,7 @@ function fmtLeft(ms: number): string {
  * time can reveal it. The bar says WHEN it rolled over instead, because "not measured" alone
  * would send the reader looking for a broken probe.
  */
-function Bar({ label, percent, resetsAt, locked, now }: {
+export function Bar({ label, percent, resetsAt, locked, now }: {
   label: string;
   percent: number | null;
   resetsAt: number;

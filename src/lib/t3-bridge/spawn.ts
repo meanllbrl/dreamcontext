@@ -5,6 +5,7 @@
 import { homedir } from 'node:os';
 import { codexCachedModels, codexDefaultModel } from './registry.js';
 import { CODEX_THREAD_RE, codexThreadOwnership } from './codex-threads.js';
+import { isCodexAccountId } from './accounts.js';
 
 /** A path that may sit inside double quotes in a login-shell script: no quote, `$`, backtick or backslash. */
 export function isScriptSafePath(p: string): boolean {
@@ -26,6 +27,8 @@ export interface BridgeScriptInput {
   readonly briefingArg: readonly string[];
   /** Folders a sandboxed turn may also write (linked code repos). */
   readonly extraRoots?: readonly string[];
+  /** A non-#0 Codex account (plan r5 §4b). */
+  readonly account?: string;
   readonly node?: string;
   readonly cli?: string;
   readonly home?: string;
@@ -49,6 +52,8 @@ export function bridgeChatScript(i: BridgeScriptInput): string | null {
   if (briefing && isScriptSafePath(briefing)) args.push('--briefing-file', briefing);
   // A root that is not shell-safe is left out, never quoted around: the sandbox only gets narrower.
   const roots = (i.extraRoots ?? []).filter(isScriptSafePath);
+  if (i.tool === 'codex' && i.account && isCodexAccountId(i.account)) args.push('--account', i.account);
+  // Last: `--extra-root` takes every value after it.
   if (roots.length) args.push('--extra-root', ...roots);
   return `exec "${node}" "${cli}" ${args.map((a) => `"${a}"`).join(' ')}`;
 }

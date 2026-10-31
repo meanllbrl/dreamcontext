@@ -433,6 +433,10 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // OMITTED when empty, and LAST, for the same append-only reason: no agent names any today, so
     // nobody re-blocks. Present, it opens tools in a light job, so a synced edit must block.
     ...(m.readTools?.length ? { readTools: [...m.readTools].sort() } : {}),
+    // OMITTED when empty, and LAST (Track T W2, plan r5 §4e): no automation names a fallback tool
+    // today, so every hash stays byte-for-byte what it was. Present, it lets a run leave its own
+    // tool, so adding or changing it re-approves exactly that automation.
+    ...(m.fallbackTools?.length ? { fallbackTools: [...m.fallbackTools] } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }

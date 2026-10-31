@@ -236,6 +236,59 @@ export function useClaudeAccounts(enabled: boolean) {
   });
 }
 
+// ─── Codex accounts (Track T W2) ─────────────────────────────────────────────────────
+// MIRRORED from `src/server/routes/agent-tool-accounts.ts` (`ToolAccountWire`).
+
+/** One T3 usage window as read (monthly and credit windows included), for the Stats screen. */
+export interface ToolUsageWindow {
+  id: string;
+  kind: string;
+  label: string;
+  usedPercent: number;
+  resetsAt?: string;
+  windowDurationMins?: number;
+}
+
+export interface ToolAccountWire {
+  id: string;
+  tool: 'codex';
+  email: string;
+  planType: string;
+  isPrimary: boolean;
+  preferred: boolean;
+  state: 'ok' | 'needs-relogin';
+  limits: UsageLimitWire[];
+  fetchedAtMs: number | null;
+  windows: ToolUsageWindow[];
+  refusedUntil?: number;
+  refusedWindow?: 'session' | 'weekly';
+}
+
+export interface ToolAccountsResponse {
+  tool: 'codex';
+  accounts: ToolAccountWire[];
+  nextSessionAccountId?: string | null;
+  autoSwitch?: boolean;
+  /** `~/.codex` was removed from the list and is still signed in: it can be added back. */
+  primaryHidden?: boolean;
+}
+
+const NO_TOOL_ACCOUNTS: ToolAccountsResponse = { tool: 'codex', accounts: [] };
+
+/** Every Codex account with its cached windows. The route never probes; Refresh does. */
+export function useCodexAccounts(enabled: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['agent-codex-accounts'],
+    queryFn: () => api.get<ToolAccountsResponse>('/agent/accounts/codex'),
+    enabled,
+    refetchInterval: enabled ? () => pollMs(30_000) : false,
+    staleTime: 20_000,
+    retry: false,
+    placeholderData: NO_TOOL_ACCOUNTS,
+  });
+}
+
 // ─── The pinned shelf's two reads ────────────────────────────────────────────────────
 //
 // Both shapes are MIRRORED from the server (`src/server/routes/agent-shelf.ts` for
