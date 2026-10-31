@@ -25,7 +25,7 @@ export function registerInstallToolCommand(program: Command): void {
         const agents = ensureAgentsMdBlock(projectRoot);
         console.log(`${hooks.changed ? 'Wrote' : 'Unchanged'}: .codex/hooks.json`);
         console.log(`AGENTS.md: ${agents}`);
-        console.log('Codex runs project hooks only in a trusted project: trust it once in Codex if asked.');
+        console.log('Codex runs project hooks only after you trust them: open `codex` here once and trust both the folder and its hooks.');
       } catch (err) {
         process.stderr.write(`install: ${(err as Error).message}\n`);
         process.exit(1);

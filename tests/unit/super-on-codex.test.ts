@@ -93,8 +93,15 @@ describe('a narrow Codex surface', () => {
     expect(codexEnvGateReady(cwd, home)).toBe(false);
     writeFileSync(join(home, '.codex', 'config.toml'), `[projects."${cwd}"]\ntrust_level = "untrusted"\n`);
     expect(codexEnvGateReady(cwd, home)).toBe(false);
-    writeFileSync(join(home, '.codex', 'config.toml'), `[projects."${cwd}"]\ntrust_level = "trusted"\n`);
+    const folder = `[projects."${cwd}"]\ntrust_level = "trusted"\n`;
+    // The folder alone is not enough: Codex asks about the hooks separately.
+    writeFileSync(join(home, '.codex', 'config.toml'), folder);
+    expect(codexEnvGateReady(cwd, home)).toBe(false);
+    const hook = `[hooks.state."${join(cwd, '.codex', 'hooks.json')}:pre_tool_use:0:0"]\ntrusted_hash = "sha256:abc"\n`;
+    writeFileSync(join(home, '.codex', 'config.toml'), `${folder}\n${hook}`);
     expect(codexEnvGateReady(cwd, home)).toBe(true);
+    writeFileSync(join(home, '.codex', 'config.toml'), `${folder}\n${hook}enabled = false\n`);
+    expect(codexEnvGateReady(cwd, home)).toBe(false);
     rmSync(home, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
   });

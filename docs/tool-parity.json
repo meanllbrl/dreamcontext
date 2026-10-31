@@ -1,0 +1,17 @@
+{
+  "features": [
+    { "name": "Chat", "claude": "works", "codex": "works", "note": "Checked live on the owner's account in W1." },
+    { "name": "Model picker, Sign in, favourites", "claude": "works", "codex": "works" },
+    { "name": "Switching tool inside a chat", "claude": "works", "codex": "experimental", "note": "Opens a new chat beside the old one after one confirm. The text goes to the other vendor." },
+    { "name": "Several accounts, limit switch", "claude": "works", "codex": "works", "note": "Automatic moves between tools stay off." },
+    { "name": "Brain, recall, task log", "claude": "works", "codex": "experimental", "note": "Runs the same hooks. In a chat the `.env` gate works only after `dreamcontext install --tool codex` and trusting the folder and its hooks. The live check is the owner's." },
+    { "name": "Eco mode", "claude": "works", "codex": "experimental", "note": "Proved against a replayed Codex." },
+    { "name": "Automations", "claude": "works", "codex": "experimental", "note": "No home board, no task steps. Sandboxed with no network, so a job that needs the web stays on Claude. Runs only after `dreamcontext install --tool codex` and trusting the folder and its hooks in Codex, which is what keeps `.env` closed." },
+    { "name": "AI Team agents", "claude": "works", "codex": "experimental", "note": "Same limits as automations. Changing the tool asks for approval again." },
+    { "name": "Super Agent", "claude": "works", "codex": "Claude only", "note": "The lead stays on Claude: its verbs are off the brain MCP on purpose." },
+    { "name": "Super Agent's delegated child", "claude": "works", "codex": "experimental", "note": "`super delegate --tool codex`. stdio MCP servers only, and the same `.env` gate as automations." },
+    { "name": "Terminal", "claude": "works", "codex": "experimental", "note": "`codex` on the chat's account, always workspace-write." },
+    { "name": "Sleep", "claude": "works", "codex": "experimental", "note": "`sleep auto-run --tool codex`. One turn with no sub-agents. No live run recorded yet." },
+    { "name": "Antigravity, OpenCode", "claude": "-", "codex": "-", "note": "Wave 5." }
+  ]
+}
