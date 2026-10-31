@@ -49,6 +49,7 @@ import { DELEGATE_AGENT_EVENT, type DelegateAgentDetail } from '../../lib/delega
 import { OPEN_SESSION_EVENT, type OpenSessionDetail } from '../../lib/openSession';
 import { setFocusedChat } from '../../lib/focusedChat';
 import { raiseAskAttention } from '../../lib/attention';
+import { applySeen, sessionsInView } from './ownerSees';
 import {
   AUTOMATION_RUN_CHAT_EVENT, automationRunTabTitle,
   type AutomationRunChatDetail, type AutomationRunRef,
@@ -5727,6 +5728,21 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       if (s.kind === 'chat') (s as ChatSession).setOnScreen(id === onScreenChatId);
     }
   }, [onScreenChatId, sessionList]);
+  // The unseen dot's one rule (ownerSees.ts): drawn on screen with the window in front. Every
+  // render, because what it reads moves in the panes, the stage, the dock and the sessions alike;
+  // a flag raised on a chat in view (a question, say) goes on the render that shows it.
+  useEffect(() => {
+    const inView = sessionsInView({
+      projectOnScreen: isActive,
+      foreground: new Set(expanded
+        ? homedSessions({ handedOver, superSid, shownSid: superShownSid, paneActives: shownPanes.map((p) => p.active) })
+        : dockOpen && superSid ? [superSid] : []),
+      panesCovered: windowed && !!superPeek && !handedOver,
+      // Only Mac mode's phone has a list screen; any other narrow layout always draws its active tab.
+      phoneChat: isMobile ? (expanded && !mobileEscaped && (!macPhone || phoneView === 'chat') ? (mobileActive?.id ?? '') : '') : null,
+    });
+    if (applySeen(sessions.current.values(), inView, windowActivity.focused)) bumpStatus();
+  });
   // The phone stack (AC19) and list (AC21): the open tabs with the conversation each holds, the
   // live session's AND the roster's (a dormant tab has only the latter, and the two can differ), so
   // a Mac chat this phone holds is never listed twice.

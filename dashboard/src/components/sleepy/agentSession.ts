@@ -146,6 +146,7 @@ export interface Session {
   asking: boolean;      // a question is on screen — Claude is blocked on YOUR answer
   attention: boolean;   // finished / rang the bell since you last looked
   minimized: boolean;   // mirrored from layout state so the idle timer can read it
+  seen: boolean;        // the owner sees it right now (ownerSees.ts): nothing it does is news
   /** Open the terminal into its container once it is in the DOM and visible.
    *
    *  `focus` (default `true`) exists because one window now holds several LIVE projects:
@@ -294,7 +295,7 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
   const session: Session = {
     id, bypass, kind, claudeId, container, term, fit, ws,
     status: 'connecting', opened: false,
-    busy: false, asking: false, attention: false, minimized: false,
+    busy: false, asking: false, attention: false, minimized: false, seen: false,
     ensureOpen, fitAndResize, applyZoom, sendText, runCommand, focus: () => term.focus(),
     setParkHandler: (fn) => { parkHandler = fn; },
     markFocus,
@@ -441,7 +442,7 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
     session.busy = false;
     session.asking = false;
     // Finished while you weren't looking → flag the bubble's notification badge.
-    if (session.minimized && !session.attention) session.attention = true;
+    if (!session.seen && !session.attention) session.attention = true;
     notify();
   }
 
@@ -464,7 +465,7 @@ export function createSession(vault: string, bypass: boolean, notify: () => void
   // and classify the screen on a short fuse so a question flips the chip to "needs you"
   // fast instead of waiting out the full idle window.
   const bellSub = term.onBell(() => {
-    if (!session.attention) { session.attention = true; notify(); }
+    if (!session.seen && !session.attention) { session.attention = true; notify(); }
     armSettle(200);
   });
 

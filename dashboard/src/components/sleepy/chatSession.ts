@@ -507,6 +507,8 @@ export interface ChatSession {
    *  Turning it OFF fires the subscribers once, so a pane that held its renders while hidden
    *  (chat/hiddenRenderGate.ts) catches up before it paints. */
   minimized: boolean;
+  /** The owner sees it right now (ownerSees.ts): nothing it does is news. */
+  seen: boolean;
   capabilities: string[];
   model: string;
   effort: string;
@@ -1318,7 +1320,7 @@ export function createChatSession(
     // running before any frame arrives, so the working indicator, the dock chip and the
     // "don't inject into a busy session" guards must all see it (a spawn with no prompt
     // stays idle — it is genuinely waiting for the user).
-    busy: serverSubmitsPrompt, asking: false, attention: false, minimized: false,
+    busy: serverSubmitsPrompt, asking: false, attention: false, minimized: false, seen: false,
     get agentsWorking() { return teammatesWorking || agentRunRunning(conv.subAgents); },
     superChild: false,
     capabilities: [],
@@ -2056,9 +2058,9 @@ export function createChatSession(
         closeOpenBlocks();
         // The turn is over, so a trailing partial chunk will never be closed by more text.
         speech?.flushTurn();
-        // Finished while minimized (not looking at it) -> flag the dock's attention badge,
+        // Finished while the owner was not looking -> flag the dock's attention badge,
         // mirroring agentSession.ts's onSettle (no chime here — only a fresh question chimes).
-        if (session.minimized && !session.attention) session.attention = true;
+        if (!session.seen && !session.attention) session.attention = true;
         return;
       }
       case 'prompt-echo': {

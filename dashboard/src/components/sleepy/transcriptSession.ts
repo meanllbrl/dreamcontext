@@ -54,6 +54,7 @@ export function createTranscriptSession(
     attention: false,
     agentsWorking: false,
     minimized: false,
+    seen: false,
     capabilities: [],
     mcp: null,
     mcpAuth: {},
