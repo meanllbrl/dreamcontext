@@ -136,10 +136,12 @@ export function buildRoster(
     const readOnly = agent.readOnly === true;
     const approval = !readOnly && pendingApprovals(agent, routines).length > 0;
     const paused = routines.length > 0 && routines.every((r) => !r.enabled);
+    // A member whose routines are all off raises no alarm: nothing will run, so nothing waits
+    // on the owner. Its pending approval/question stays visible on the AI Team page itself.
     const status: TeamStatus = since !== null ? 'working'
-      : needs ? 'needs'
-        : approval ? 'approval'
-          : paused ? 'paused'
+      : paused ? 'paused'
+        : needs ? 'needs'
+          : approval ? 'approval'
             : 'idle';
 
     let unread = 0;

@@ -6,7 +6,7 @@ import { threadEntriesHere } from './agent-sync.js';
 import { listSharedAgentSlugs } from '../automations/sharing.js';
 import { listAutomations, readAutomationCache } from '../automations/store.js';
 import { isThreadDayFile, parseDayFile, threadReadWatermark, threadSlugDir } from '../automations/threads.js';
-import { FEED_UNREAD_DAYS, runUnread } from '../automations/feed.js';
+import { feedCutoffDay, runUnread } from '../automations/feed.js';
 import { privateSources } from '../automations/history.js';
 import type { RunEvent, ThreadEntry } from '../automations/types.js';
 import {
@@ -119,7 +119,7 @@ function sourcesFor(contextRoot: string, slug: string, audience: HistoryAudience
 const dayCache = new Map<string, { mtimeMs: number; size: number; entries: ThreadEntry[] }>();
 
 /** Every entry of a source, by id, plus the ids inside the feed's unread window (the newest
- *  {@link FEED_UNREAD_DAYS} days of files, the feed's own I/O window). */
+ *  14 calendar days, the feed's own window). */
 function readSource(contextRoot: string, source: string): { entries: ThreadEntry[]; windowIds: Set<string> } {
   let dir: string;
   try { dir = threadSlugDir(contextRoot, source); } catch { return { entries: [], windowIds: new Set() }; }
@@ -129,7 +129,8 @@ function readSource(contextRoot: string, source: string): { entries: ThreadEntry
   // A day file retention deleted leaves the cache with its folder's listing.
   for (const p of [...dayCache.keys()]) if (p.startsWith(dir + sep) && !present.has(p)) dayCache.delete(p);
   const days = [...new Set(names.map((n) => n.slice(0, 10)))];
-  const windowDays = new Set(days.slice(Math.max(0, days.length - FEED_UNREAD_DAYS)));
+  const cutoffDay = feedCutoffDay();
+  const windowDays = new Set(days.filter((d) => d >= cutoffDay));
   const byId = new Map<string, ThreadEntry>();
   const windowIds = new Set<string>();
   for (const name of names) {

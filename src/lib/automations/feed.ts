@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { listAutomations, readAutomationCache, resolveAutomationPhoto } from './store.js';
 import { extractNotificationSummary } from './runner.js';
 import { allPendingQuestions } from './hitl.js';
-import { readThread, threadReadWatermark } from './threads.js';
+import { readThread, threadDateStamp, threadReadWatermark } from './threads.js';
 import type {
   AutomationManifest, AutomationQuestion, RunEvent, ThreadEntry, ThreadSummaryRow,
 } from './types.js';
@@ -191,6 +191,12 @@ const RESULT_READ_BYTES = 4096;
  * revisiting this, or two screens will disagree about the same channel.
  */
 const FEED_DAY_WINDOW = 14;
+
+/** The first LOCAL calendar day inside the feed window (thread day files are named by local
+ *  date, so the cutoff is too). */
+export function feedCutoffDay(now: Date = new Date()): string {
+  return threadDateStamp(new Date(now.getTime() - FEED_DAY_WINDOW * 86_400_000));
+}
 
 /** Absolute → brain-relative, so the card's path opens the same way a posted
  *  `files[]` path does. A path already relative is returned untouched. */
@@ -531,9 +537,10 @@ export const FEED_UNREAD_DAYS = FEED_DAY_WINDOW;
  */
 export function buildFeed(
   contextRoot: string,
-  opts: { limit?: number; home?: string } = {},
+  opts: { limit?: number; home?: string; now?: Date } = {},
 ): FeedResult {
   const home = opts.home ?? homedir();
+  const cutoffDay = feedCutoffDay(opts.now);
   let manifests: AutomationManifest[] = [];
   try { manifests = listAutomations(contextRoot); } catch { manifests = []; }
 
@@ -569,7 +576,28 @@ export function buildFeed(
     // places that could drift apart. Deriving it here makes the chip count and
     // the per-message bars the same computation by construction, which is the
     // property that matters more than the saving.
-    const entries = readThread(contextRoot, manifest.slug, { days: FEED_DAY_WINDOW });
+    // The window is the last 14 CALENDAR days, not the newest 14 day files: an agent that
+    // runs rarely would otherwise keep a month-old run (and its unanswered `asked`) forever.
+    // A run stopped on an OPEN question record is the exception — it stays however old, so
+    // a real question never falls out of the window and vanishes.
+    const openDays = [...questionByRun.entries()]
+      .filter(([k]) => k.startsWith(`${manifest.slug}::`))
+      .map(([k]) => {
+        const t = Date.parse(k.slice(manifest.slug.length + 2));
+        return Number.isNaN(t) ? '' : threadDateStamp(new Date(t));
+      })
+      .filter((d) => d !== '' && d < cutoffDay)
+      .sort();
+    const all = readThread(contextRoot, manifest.slug, { fromDay: openDays[0] ?? cutoffDay });
+    // A run stays when ANY of its entries is inside the window (an old run answered today is
+    // alive again) or when an open question record points at it.
+    const liveRuns = new Set<string>();
+    for (const e of all) {
+      const t = Date.parse(e.at);
+      if ((!Number.isNaN(t) && threadDateStamp(new Date(t)) >= cutoffDay)
+        || questionByRun.has(`${manifest.slug}::${e.runId}`)) liveRuns.add(e.runId);
+    }
+    const entries = all.filter((e) => liveRuns.has(e.runId));
     if (entries.length === 0) continue;
 
     const watermark = threadReadWatermark(contextRoot, manifest.slug, home);

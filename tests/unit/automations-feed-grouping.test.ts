@@ -24,6 +24,7 @@ let seq = 0;
 
 const MANIFEST = { slug: 'digest', title: 'Daily digest' };
 const RUN = '2026-09-20T18:00:00.000Z';
+const FEED_NOW = new Date('2026-09-22T00:00:00.000Z');
 
 /** Ids are the sort key, so the fixture mints them in call order. */
 function entry(over: Partial<ThreadEntry> & Pick<ThreadEntry, 'kind'>): ThreadEntry {
@@ -381,14 +382,14 @@ describe('buildFeed — the whole channel', () => {
       now: new Date('2026-09-20T11:00:00.000Z'),
     });
 
-    const feed = buildFeed(contextRoot, { home });
+    const feed = buildFeed(contextRoot, { now: FEED_NOW, home });
     expect(feed.messages.map((m) => m.slug)).toEqual(['digest', 'watcher', 'digest']);
     expect(feed.unreadTotal).toBe(3);
     expect(feed.unreadBySlug).toEqual({ digest: 2, watcher: 1 });
   });
 
   it('lists an agent that has never run, so a new agent is in the channel before its first fire', () => {
-    const feed = buildFeed(contextRoot, { home });
+    const feed = buildFeed(contextRoot, { now: FEED_NOW, home });
     expect(feed.messages).toEqual([]);
     expect(feed.agents.map((a) => a.slug).sort()).toEqual(['digest', 'watcher']);
   });
@@ -399,12 +400,12 @@ describe('buildFeed — the whole channel', () => {
         runId: at, kind: 'system', event: 'started', text: 'Run started.', via: 'runner', now: new Date(at),
       });
     }
-    const before = buildFeed(contextRoot, { home });
+    const before = buildFeed(contextRoot, { now: FEED_NOW, home });
     expect(before.unreadBySlug.digest).toBe(2);
     expect(before.messages.filter((m) => m.unread)).toHaveLength(2);
 
     markThreadRead(contextRoot, 'digest', before.messages[0].newestId as string, home);
-    const after = buildFeed(contextRoot, { home });
+    const after = buildFeed(contextRoot, { now: FEED_NOW, home });
     expect(after.unreadBySlug.digest).toBe(1);
     expect(after.messages.filter((m) => m.unread)).toHaveLength(1);
   });
@@ -425,7 +426,7 @@ describe('buildFeed — the whole channel', () => {
     const opened = readdirSync(dir).length;
     expect(opened).toBe(40);
 
-    const feed = buildFeed(contextRoot, { home });
+    const feed = buildFeed(contextRoot, { now: FEED_NOW, home });
     // The window, not the file count — proof the slice happened BEFORE the
     // reads, not after. A feed that returned all 40 would mean every poll
     // parsed the whole retained history.
@@ -442,7 +443,7 @@ describe('buildFeed — the whole channel', () => {
         runId: at, kind: 'system', event: 'started', text: at, via: 'runner', now: new Date(at),
       });
     }
-    const feed = buildFeed(contextRoot, { home, limit: 2 });
+    const feed = buildFeed(contextRoot, { now: FEED_NOW, home, limit: 2 });
     expect(feed.messages.map((m) => m.runId)).toEqual(['2026-09-20T10:00:00.000Z', '2026-09-20T11:00:00.000Z']);
   });
 });
@@ -576,7 +577,7 @@ describe('the open question a message is stopped on', () => {
     });
     const q = ask(run);
 
-    const feed = buildFeed(contextRoot, { home });
+    const feed = buildFeed(contextRoot, { now: FEED_NOW, home });
     const [m] = feed.messages;
     expect(m.question).toEqual({ id: q.id, text: 'Publish the digest?', choices: ['approve', 'reject'] });
     expect(m.needsYou).toBe(true);
@@ -593,7 +594,7 @@ describe('the open question a message is stopped on', () => {
     }
     ask(asked);
 
-    const feed = buildFeed(contextRoot, { home });
+    const feed = buildFeed(contextRoot, { now: FEED_NOW, home });
     const byRun = new Map(feed.messages.map((m) => [m.runId, m]));
     expect(byRun.get(asked)!.question).not.toBeNull();
     expect(byRun.get(other)!.question).toBeNull();
@@ -614,7 +615,7 @@ describe('the open question a message is stopped on', () => {
       question: 'The manifest changed — re-approve?', choices: ['approve', 'reject'],
     });
 
-    const feed = buildFeed(contextRoot, { home });
+    const feed = buildFeed(contextRoot, { now: FEED_NOW, home });
     expect(feed.messages[0].question).toBeNull();
     expect(feed.needsYouTotal).toBe(0);
   });
@@ -628,7 +629,7 @@ describe('the open question a message is stopped on', () => {
     });
     ask(run);
 
-    const [m] = buildFeed(contextRoot, { home }).messages;
+    const [m] = buildFeed(contextRoot, { now: FEED_NOW, home }).messages;
     expect(m.status).toBe('done');
     expect(m.needsYou).toBe(true);
   });
@@ -638,7 +639,7 @@ describe('the open question a message is stopped on', () => {
     appendThreadEntry(contextRoot, 'digest', {
       runId: run, kind: 'system', event: 'asked', text: 'Asked: publish?', via: 'runner', now: new Date(run),
     });
-    const [m] = buildFeed(contextRoot, { home }).messages;
+    const [m] = buildFeed(contextRoot, { now: FEED_NOW, home }).messages;
     expect(m.question).toBeNull();
     expect(m.status).toBe('needs-you');
     expect(m.needsYou).toBe(true);
@@ -664,5 +665,53 @@ describe('the summary block on a message', () => {
       entry({ kind: 'agent', via: 'cli', text: 'nothing numeric' }),
     ];
     expect(buildFeedMessage(contextRoot, MANIFEST, false, RUN, entries, runEvent(), null).summary).toBeNull();
+  });
+});
+
+describe('buildFeed — the window is 14 CALENDAR days', () => {
+  const NOW = new Date('2026-10-31T10:00:00.000Z');
+  const at = (runId: string, event: 'started' | 'asked') => appendThreadEntry(contextRoot, 'rare', {
+    runId, kind: 'system', event, text: event, via: 'runner', now: new Date(runId),
+  });
+  beforeEach(() => { createAutomation(contextRoot, { slug: 'rare', title: 'Rare', days: 'daily', at: '18:00', prompt: 'go' }); });
+
+  it('a month-old unanswered `asked` of a rarely-running agent is out of the window (no needs-you)', () => {
+    const old = '2026-09-29T09:00:00.000Z';
+    at(old, 'started'); at(old, 'asked');
+    const feed = buildFeed(contextRoot, { now: NOW, home });
+    expect(feed.messages).toEqual([]);
+    expect(feed.needsYouTotal).toBe(0);
+  });
+
+  it('a run inside the 14 days stays', () => {
+    const recent = '2026-10-25T09:00:00.000Z';
+    at(recent, 'started'); at(recent, 'asked');
+    const feed = buildFeed(contextRoot, { now: NOW, home });
+    expect(feed.messages).toHaveLength(1);
+    expect(feed.messages[0].status).toBe('needs-you');
+  });
+
+  it('an OPEN question record keeps its old run in the feed', () => {
+    const old = '2026-09-29T09:00:00.000Z';
+    at(old, 'started'); at(old, 'asked');
+    createQuestion(contextRoot, {
+      slug: 'rare', runFiredAt: old, kind: 'flow-hitl', sessionId: null, channel: 'chat',
+      question: 'Which one?', choices: ['a', 'b'],
+    });
+    const feed = buildFeed(contextRoot, { now: NOW, home });
+    expect(feed.messages).toHaveLength(1);
+    expect(feed.messages[0].question?.text).toBe('Which one?');
+  });
+});
+
+describe('buildFeed — an old run revived today stays', () => {
+  it('keeps a month-old run that got a fresh entry inside the window', () => {
+    createAutomation(contextRoot, { slug: 'rv', title: 'Rv', days: 'daily', at: '18:00', prompt: 'go' });
+    const old = '2026-09-29T09:00:00.000Z';
+    appendThreadEntry(contextRoot, 'rv', { runId: old, kind: 'system', event: 'started', text: 's', via: 'runner', now: new Date(old) });
+    const fresh = new Date('2026-10-31T09:00:00.000Z');
+    appendThreadEntry(contextRoot, 'rv', { runId: old, kind: 'agent', text: 'result', via: 'runner', now: fresh });
+    const feed = buildFeed(contextRoot, { now: new Date('2026-10-31T10:00:00.000Z'), home });
+    expect(feed.messages).toHaveLength(1);
   });
 });
