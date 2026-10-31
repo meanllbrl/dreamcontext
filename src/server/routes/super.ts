@@ -42,7 +42,7 @@ import { padJobOver, padRolledOff, padStale, withoutTwins } from '../../lib/supe
 import { childDefaultEffort } from '../../lib/model-facts.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
-import { findLiveChat } from './agent-chat-live.js';
+import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
 import { stageMediaFrame } from '../../lib/super/phone-mirror.js';
 import { imageAspects, setAspect } from '../../lib/super/image-aspect.js';
 import { askShowState, recentAskCards, recordAskShow } from '../../lib/super/ask-show.js';
@@ -2418,13 +2418,20 @@ const END_REFUSALS: Partial<Record<ParkOutcome, string>> = {
   no_answer: 'the window did not answer in time; check `dreamcontext super state` and try once more',
 };
 
+/** An idle child's window to leave on stdin EOF before it is cut. A forced end gives none. */
+const END_EXIT_GRACE_MS = 2000;
+
 interface EndResult { child: string; ended: boolean; reason?: string; message?: string; background?: number; noProcess?: boolean }
 
 /**
  * End one recorded child: park it with `end` (the window closes the tab, so no relaunch brings it
- * back; the transcript stays), then record it ended: its card goes, its open queue items close, a
- * done `ended` item records who, when and its last brief. A child with no process is only
- * recorded (a dormant tab of it is closed by the window when the record arrives).
+ * back; the transcript stays), stop its process, and only once that process is gone record it
+ * ended: its card goes, its open queue items close, a done `ended` item records who, when and its
+ * last brief. Closing the tab alone only drains: a running turn goes on for up to
+ * CLOSE_LINGER_MS (field 2026-10-31: "ended" twice while the child kept editing its worktree).
+ * A forced end also stops a child whose window never answered (its tab stays, showing the
+ * exit). A child with no process is only recorded (a dormant tab of it is closed by the window when the
+ * record arrives).
  */
 async function endChild(c: SuperCaller, sid: string, force: boolean): Promise<EndResult> {
   const ch = c.state.children[sid];
@@ -2444,8 +2451,12 @@ async function endChild(c: SuperCaller, sid: string, force: boolean): Promise<En
         message: `${n ? `${n} background task${n === 1 ? '' : 's'} (a shell, a dev server or a sub-agent) still run` : 'an agent it started (a headless teammate) still runs'} in it and would die; wait for it, or pass --force only if the owner asked`,
       };
     }
-    if (outcome !== 'parked' && outcome !== 'drained' && outcome !== 'already') {
+    const closing = outcome === 'parked' || outcome === 'drained' || outcome === 'already';
+    if (!closing && !(force && outcome === 'no_answer')) {
       return { child: sid, ended: false, reason: outcome, message: END_REFUSALS[outcome] ?? 'the child was not ended' };
+    }
+    if (!await stopLiveChat(sid, { graceMs: force ? 0 : END_EXIT_GRACE_MS })) {
+      return { child: sid, ended: false, reason: 'still_running', message: 'its process survived the kill and it was not recorded as ended; check `dreamcontext super state` and try once more' };
     }
   } else {
     noProcess = true;
