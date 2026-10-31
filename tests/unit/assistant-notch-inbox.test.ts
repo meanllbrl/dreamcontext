@@ -33,7 +33,7 @@ const { spawnModelFor } = await import('../../src/server/routes/agent-chat.js');
 const { DEFAULT_ASSISTANT_CONFIG, sanitizeConfigPatch } = await import('../../src/lib/assistant/home.js');
 const { splitNotchCue, stripNotchCue, readingTimeMs } = await import('../../dashboard/src/lib/notchCue');
 const { sttRetryable, STT_RETRIES } = await import('../../dashboard/src/lib/voice/useVoiceCapture');
-const { announcesStart, assistantActivityLine, pillHeadline, readInbox, accountLine, recentFinishedVault, enqueuePeeks, FINISHED_PILL_MS } = await import('../../dashboard/src/components/assistant/notchModel');
+const { freshStarts, assistantActivityLine, pillHeadline, readInbox, accountLine, recentFinishedVault, enqueuePeeks, FINISHED_PILL_MS } = await import('../../dashboard/src/components/assistant/notchModel');
 
 function makeRes() {
   let status = 0;
@@ -281,9 +281,15 @@ describe('transcription retries (useVoiceCapture.ts)', () => {
 describe('a Super job at work (notchModel.ts)', () => {
   it('keeps the server\'s mark on a running row, and only a literal true', () => {
     const row = { vault: 'korus', slug: 'desk', title: 'Desk', since: 1, runId: 'r' };
-    const { running } = readInbox({ running: [{ ...row, superJob: true }, { ...row, superJob: 'yes' }] });
+    const { running } = readInbox({ running: [{ ...row, superJob: true }, { ...row, slug: 'plain', superJob: 'yes' }] });
     expect(running.map((r) => r.superJob)).toEqual([true, undefined]);
-    expect(running.map(announcesStart)).toEqual([false, true]);
+    const seen = new Set<string>();
+    expect(freshStarts(running, seen)).toEqual([running[1]]);
+    expect(seen.size).toBe(1);
+    const other = { ...running[0], slug: 'other', superJob: true as const };
+    expect(freshStarts([other], seen)).toEqual([]);
+    expect(seen.size).toBe(2);
+    expect(freshStarts([other, running[1]], seen)).toEqual([]);
   });
 });
 

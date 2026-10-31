@@ -287,9 +287,16 @@ export interface RunningAutomation {
   superJob?: true;
 }
 
-/** A run's "started" is news, unless it is a job the Super Agent gave: that one reports to it. */
-export function announcesStart(r: Pick<RunningAutomation, 'superJob'>): boolean {
-  return r.superJob !== true;
+/** The runs not seen before, each marked seen once. A run's "started" is news, unless it is a job
+ *  the Super Agent gave: that one reports to it. */
+export function freshStarts(running: readonly RunningAutomation[], seen: Set<string>): RunningAutomation[] {
+  const out: RunningAutomation[] = [];
+  for (const r of running) {
+    if (seen.has(runKey(r))) continue;
+    seen.add(runKey(r));
+    if (r.superJob !== true) out.push(r);
+  }
+  return out;
 }
 
 /** A task job's row waiting on the owner (M1), across projects: it opens its task. */

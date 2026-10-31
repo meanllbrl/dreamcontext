@@ -1882,7 +1882,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // A task step's banner is the host's (the delivery, with the task's link), never the run's own.
     // A clean end of a job the Super Agent gave this member reports to the Super (`team=<job>
     // event=done`), not to the owner. A failure, or a verdict he must give, still reaches him.
-    const superJob = params.status === 'ok' && !params.reviewCardId && superRunQuiet(contextRoot, slug, fireAt.toISOString(), home);
+    const superJob = params.status === 'ok' && !params.reviewCardId && superRunQuiet(contextRoot, slug, fireAt.toISOString());
     if (params.notify && manifest.notify && !taskStep && !superJob) {
       // Success and failure sound DIFFERENT on purpose. Nobody is at the
       // keyboard when these fire; if both made the same noise, the sound would

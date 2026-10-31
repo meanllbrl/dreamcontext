@@ -210,7 +210,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
   const projectRoot = dirname(contextRoot);
   const candidates: Candidate[] = [];
   let unreadCount = 0;
-  const quietOf = superQuietReader(contextRoot, home);
+  const quietOf = superQuietReader(contextRoot);
   const agentTitle = (() => {
     try {
       const a = getAgent(contextRoot, slug);

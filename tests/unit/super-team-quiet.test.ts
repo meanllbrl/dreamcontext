@@ -21,18 +21,20 @@ vi.mock('../../src/lib/automations/notifier.js', async (importOriginal) => ({
   notifyViaBundle,
 }));
 
-const { announceTurn, appendThreadEntry, threadUnread, markThreadRead, readThread } = await import('../../src/lib/automations/threads.js');
+const { announceTurn, appendThreadEntry, threadUnread, markThreadRead, readThread, threadSlugDir } = await import('../../src/lib/automations/threads.js');
 const { buildFeed } = await import('../../src/lib/automations/feed.js');
 const { createAutomation } = await import('../../src/lib/automations/store.js');
-const { createQuestion } = await import('../../src/lib/automations/hitl.js');
+const { claimQuestion, createQuestion } = await import('../../src/lib/automations/hitl.js');
+const { noteTeamJobEnd } = await import('../../src/lib/super/team.js');
+const { emptySuperState } = await import('../../src/lib/super/types.js');
 const { listAgentHistory } = await import('../../src/lib/agents/history.js');
 const { superRunQuiet } = await import('../../src/lib/automations/super-quiet.js');
 const { SUPER_STATE_REL } = await import('../../src/lib/super/store.js');
-const sharingModule = await import('../../src/lib/automations/sharing.js');
 const { runAutomation } = await import('../../src/lib/automations/runner.js');
 const { approveAutomation } = await import('../../src/lib/automations/registry.js');
 
 const RUN = '2026-10-31T06:30:00.000Z';
+const serialise = (e: unknown) => `<!-- dc-thread-entry -->\n\`\`\`json\n${JSON.stringify(e)}\n\`\`\`\n`;
 const slug = 'desk';
 let projectRoot: string;
 let contextRoot: string;
@@ -109,7 +111,7 @@ describe('what a Super job says counts for nobody', () => {
     writeFileSync(elsewhere, JSON.stringify({ enabled: true }));
     symlinkSync(elsewhere, path);
     expect(counts(contextRoot).bySlug).toBe(1);
-    expect(superRunQuiet(contextRoot, slug, RUN, home)).toBe(false);
+    expect(superRunQuiet(contextRoot, slug, RUN)).toBe(false);
     rmSync(path);
     writeFileSync(path, `{"enabled":true,"pad":"${'x'.repeat(2 * 1024 * 1024)}"}`);
     expect(counts(contextRoot).bySlug).toBe(1);
@@ -125,7 +127,7 @@ describe('what a Super job says counts for nobody', () => {
     expect(counts(contextRoot)).toEqual(ZERO);
     writeFileSync(path, record());
     expect(counts(contextRoot).bySlug).toBe(1);
-    expect(superRunQuiet(contextRoot, slug, RUN, home)).toBe(false);
+    expect(superRunQuiet(contextRoot, slug, RUN)).toBe(false);
   });
 
   it('each project answers for itself', () => {
@@ -166,19 +168,19 @@ describe('what the owner must still hear', () => {
     say(contextRoot, 'agent', 'cli', 'Morning digest');
     sys(contextRoot, 'ok');
     expect(counts(contextRoot).bySlug).toBe(1);
-    expect(superRunQuiet(contextRoot, slug, RUN, home)).toBe(false);
+    expect(superRunQuiet(contextRoot, slug, RUN)).toBe(false);
     const mine = '2026-10-31T07:00:00.000Z';
     say(contextRoot, 'user', 'dashboard', 'How is it?', mine);
     say(contextRoot, 'user', 'super', 'Also this', mine);
     say(contextRoot, 'agent', 'cli', 'Good', mine);
-    expect(superRunQuiet(contextRoot, slug, mine, home)).toBe(false);
+    expect(superRunQuiet(contextRoot, slug, mine)).toBe(false);
   });
 
   it('a question of a Super job waits on him, even a resumed turn\'s with a fire time of its own', () => {
     superJob(contextRoot);
     const q = createQuestion(contextRoot, { slug, runFiredAt: new Date().toISOString(), kind: 'flow-hitl', sessionId: null, channel: 'chat', question: 'Publish?', choices: [] });
     expect(counts(contextRoot).bySlug).toBe(1);
-    expect(superRunQuiet(contextRoot, slug, RUN, home)).toBe(false);
+    expect(superRunQuiet(contextRoot, slug, RUN)).toBe(false);
     expect(q.state).toBe('pending');
   });
 
@@ -197,12 +199,43 @@ describe('what the owner must still hear', () => {
     expect(counts(contextRoot).bySlug).toBe(0);
   });
 
-  it('an ask a teammate\'s synced file carries silences nothing', () => {
-    const sharing = vi.spyOn(sharingModule, 'listSharedSlugs').mockReturnValue([slug]);
-    superJob(contextRoot);
+  it('an ask a teammate\'s file carries silences nothing, even with a real id copied', () => {
+    const dir = threadSlugDir(contextRoot, slug);
+    mkdirSync(dir, { recursive: true });
+    const mine = say(contextRoot, 'user', 'dashboard', 'Real ask of mine');
+    say(contextRoot, 'agent', 'cli', 'Answer for the owner');
+    const forged = { ...mine, via: 'super' };
+    writeFileSync(join(dir, `${mine.at.slice(0, 10)}-000000000000.md`), `${serialise(forged)}\n`);
+    expect(readThread(contextRoot, slug).find((e) => e.id === mine.id)?.via).toBe('super');
     expect(counts(contextRoot).bySlug).toBe(1);
-    expect(superRunQuiet(contextRoot, slug, RUN, home)).toBe(false);
-    sharing.mockRestore();
+    expect(superRunQuiet(contextRoot, slug, RUN)).toBe(false);
+  });
+
+  it('a job the Super ended before his answer stays his: an answered question keeps the run loud', () => {
+    superJob(contextRoot);
+    const q = createQuestion(contextRoot, { slug, runFiredAt: RUN, kind: 'flow-hitl', sessionId: null, channel: 'chat', question: 'Publish?', choices: [] });
+    claimQuestion(contextRoot, q, 'yes', 'chat');
+    expect(counts(contextRoot).bySlug).toBe(1);
+    expect(superRunQuiet(contextRoot, slug, RUN)).toBe(false);
+  });
+
+  it('a question is matched by its run id alone when the times are days apart', () => {
+    const old = '2026-10-20T01:00:00.000Z';
+    appendThreadEntry(contextRoot, slug, { runId: old, kind: 'user', via: 'super', text: 'Old', now: new Date(old) });
+    appendThreadEntry(contextRoot, slug, { runId: old, kind: 'agent', via: 'cli', text: 'Old answer', now: new Date(old) });
+    expect(superRunQuiet(contextRoot, slug, old)).toBe(true);
+    createQuestion(contextRoot, { slug, runFiredAt: old, kind: 'flow-hitl', sessionId: null, channel: 'chat', question: 'Publish?', choices: [] });
+    expect(superRunQuiet(contextRoot, slug, old)).toBe(false);
+  });
+
+  it('a job that ends after the take-back is never told, so it comes to the owner', () => {
+    superJob(contextRoot);
+    const job = { id: 'team-a', member: slug, runId: RUN, jobKind: 'run', startedAt: Date.parse(RUN), brief: '', open: true } as never;
+    const s = { ...emptySuperState(), session: 'sup-1', enabled: false, team: [job] };
+    expect(noteTeamJobEnd(contextRoot, s, 'team-a', null)).toBe(false);
+    expect(s.queue).toEqual([]);
+    writeFileSync(join(contextRoot, SUPER_STATE_REL), JSON.stringify(s));
+    expect(counts(contextRoot).bySlug).toBe(1);
   });
 
   it.each(['failed', 'timeout', 'skipped'] as const)('a Super job that ended %s never vanishes', (event) => {

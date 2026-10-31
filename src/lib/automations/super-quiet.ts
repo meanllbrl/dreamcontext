@@ -1,10 +1,9 @@
-import { lstatSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { threadEntriesHere } from '../agents/agent-sync.js';
+import { readMachineIdentity } from '../machine-id.js';
 import { MAX_FILE_BYTES, SUPER_STATE_REL } from '../super/store.js';
 import { listQuestions } from './hitl.js';
-import { listSharedAgentSlugs, listSharedSlugs } from './sharing.js';
-import { readThread } from './threads.js';
+import { parseDayFile, readThread, threadSlugDir } from './threads.js';
 import type { AutomationQuestion, ThreadEntry } from './types.js';
 
 /**
@@ -17,8 +16,8 @@ import type { AutomationQuestion, ThreadEntry } from './types.js';
  *  - it OPENED with the Super's ask (`via: 'super'`) and nobody else spoke in it. A run the owner
  *    or a schedule opened stays theirs, even with a Super ask queued into it: that ask shares the
  *    turn order of work he is waiting for, and a thread cannot tell the two apart.
- *  - this machine wrote that ask. A thread can be synced from a teammate's, and nothing written
- *    there may silence the owner here.
+ *  - this machine wrote that ask, in its own day file. A thread can be synced from a teammate's,
+ *    and nothing written there may silence the owner here.
  *  - no question was asked during it. Waiting or answered, a question is between the member and
  *    the owner: his answer is his own conversation, and he hears how it ended.
  *  - it did not fail: a failure must not vanish if the Super says nothing about it.
@@ -58,16 +57,23 @@ function askedDuring(q: AutomationQuestion, ordered: readonly ThreadEntry[]): bo
   return at >= Date.parse(ordered[0].at) - QUESTION_SLACK_MS && at <= Date.parse(ordered[ordered.length - 1].at) + QUESTION_SLACK_MS;
 }
 
-/** Could a teammate's file have put this slug's entries here? Then only this machine's ledger
- *  vouches for an ask; with no ledger yet, nothing does. */
-function asksHere(contextRoot: string, slug: string, home?: string): (id: string) => boolean {
-  let here: Set<string> | null = null;
-  let shared = true;
+/** Is this ask in a thread file only this machine writes, saying the same thing? A teammate's file
+ *  merges into the read and can copy a real id, so the merged entry alone vouches for nothing. */
+function askedHere(contextRoot: string, slug: string, ask: ThreadEntry): boolean {
   try {
-    here = threadEntriesHere(contextRoot, slug, home);
-    shared = listSharedSlugs(contextRoot).includes(slug) || listSharedAgentSlugs(contextRoot).includes(slug);
-  } catch { /* unknown: trust nothing */ }
-  return (id) => (here ? here.has(id) : !shared);
+    const dir = threadSlugDir(contextRoot, slug);
+    const me = readMachineIdentity().id;
+    const ms = Date.parse(ask.at);
+    // A file is named by the writer's local date: the day either side covers every zone.
+    return [-1, 0, 1].some((d) => {
+      const day = new Date(ms + d * 86_400_000).toISOString().slice(0, 10);
+      const path = join(dir, `${day}-${me}.md`);
+      if (!existsSync(path) || !lstatSync(path).isFile()) return false;
+      return parseDayFile(readFileSync(path, 'utf-8')).some((e) => e.id === ask.id && e.runId === ask.runId && e.kind === 'user' && e.via === 'super');
+    });
+  } catch {
+    return false;
+  }
 }
 
 const NOTHING: ReadonlySet<string> = new Set();
@@ -79,10 +85,9 @@ export type QuietReader = (slug: string, run: readonly ThreadEntry[]) => Readonl
  * record, the questions and the ledger are read at most once, and only for a run that opened with
  * the Super's ask, so a project that never used it pays nothing.
  */
-export function superQuietReader(contextRoot: string, home?: string): QuietReader {
+export function superQuietReader(contextRoot: string): QuietReader {
   let record: SuperRecord | null | undefined;
   const questions = new Map<string, AutomationQuestion[]>();
-  const trusted = new Map<string, (id: string) => boolean>();
   return (slug, run) => {
     const ordered = [...run].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const ask = ordered[0];
@@ -92,8 +97,7 @@ export function superQuietReader(contextRoot: string, home?: string): QuietReade
     if (record === undefined) record = readRecord(contextRoot);
     if (!record) return NOTHING;
     if (!record.enabled && record.open.has(`${slug}::${ask.runId}`)) return NOTHING;
-    if (!trusted.has(slug)) trusted.set(slug, asksHere(contextRoot, slug, home));
-    if (!ordered.every((e) => e.kind !== 'user' || trusted.get(slug)!(e.id))) return NOTHING;
+    if (!ordered.every((e) => e.kind !== 'user' || askedHere(contextRoot, slug, e))) return NOTHING;
     if (!questions.has(slug)) {
       let all: AutomationQuestion[] = [];
       try { all = listQuestions(contextRoot, slug); } catch { all = []; }
@@ -106,19 +110,16 @@ export function superQuietReader(contextRoot: string, home?: string): QuietReade
 
 /** Would a banner about this run be noise: a Super job, with the project handed over right now?
  *  A run ending after the take-back rings: nobody else will tell the owner. */
-export function superRunQuiet(contextRoot: string, slug: string, runId: string, home?: string): boolean {
+export function superRunQuiet(contextRoot: string, slug: string, runId: string): boolean {
   try {
     if (!readRecord(contextRoot)?.enabled) return false;
     const fired = Date.parse(runId);
     const fromDay = Number.isFinite(fired) ? new Date(fired - 86_400_000).toISOString().slice(0, 10) : undefined;
     const run = readThread(contextRoot, slug, { runId, ...(fromDay ? { fromDay } : {}) });
-    return superQuietReader(contextRoot, home)(slug, run).size > 0 || isBareAsk(contextRoot, slug, run, home);
+    return superQuietReader(contextRoot)(slug, run).size > 0
+      // Nothing in the run but the ask yet (the moment it starts): quiet too.
+      || (run.length === 1 && run[0].kind === 'user' && run[0].via === 'super' && askedHere(contextRoot, slug, run[0]));
   } catch {
     return false;
   }
-}
-
-/** A run with nothing in it but the Super's ask yet (the moment it starts): quiet too. */
-function isBareAsk(contextRoot: string, slug: string, run: readonly ThreadEntry[], home?: string): boolean {
-  return run.length === 1 && run[0].kind === 'user' && run[0].via === 'super' && asksHere(contextRoot, slug, home)(run[0].id);
 }

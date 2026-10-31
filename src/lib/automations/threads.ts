@@ -691,7 +691,7 @@ export function threadUnread(
   const last = entries[entries.length - 1] ?? null;
   const watermark = readAll(home)[dirname(contextRoot)]?.[slug] ?? null;
   // One rule with the feed: what a Super Agent's job said counts for nobody (super-quiet.ts).
-  const quietOf = superQuietReader(contextRoot, home);
+  const quietOf = superQuietReader(contextRoot);
   const byRun = new Map<string, ThreadEntry[]>();
   for (const e of entries) byRun.set(e.runId, [...(byRun.get(e.runId) ?? []), e]);
   const quiet = new Set<string>();
@@ -813,7 +813,7 @@ export function announceTurn(
     if (last && watermark !== null && watermark >= last.id) return false;
     // A Super Agent's job reports to the Super; a question it asks is still the owner's.
     const runId = last?.runId ?? readThread(contextRoot, slug, { days: 2 }).find((e) => e.id === sinceId)?.runId;
-    if (last?.kind !== 'system' && runId && superRunQuiet(contextRoot, slug, runId, home)) return false;
+    if (last?.kind !== 'system' && runId && superRunQuiet(contextRoot, slug, runId)) return false;
     const body = plainPostText(last?.text ?? fallback ?? '');
     if (!body) return false;
     const title = last?.kind === 'system' ? `${manifest.title} — needs your answer` : manifest.title;

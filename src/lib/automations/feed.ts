@@ -545,7 +545,7 @@ export function buildFeed(
   const messages: FeedMessage[] = [];
   const unreadBySlug: Record<string, number> = {};
   const agents: FeedResult['agents'] = [];
-  const quietOf = superQuietReader(contextRoot, home);
+  const quietOf = superQuietReader(contextRoot);
 
   // ONE questions read for the WHOLE feed, indexed by the run each question
   // belongs to. Per-run `pendingQuestion` calls would re-walk the same
