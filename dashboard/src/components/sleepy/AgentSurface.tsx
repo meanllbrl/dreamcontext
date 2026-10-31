@@ -3350,7 +3350,7 @@ export function AgentSurface({ stageBesideDrawer = false }: {
     setExpanded(true);
     let target = liveSession(focusedSessionId);
     if (!target) {
-      const liveMeta = sessionList.find((m) => liveSession(m.id));
+      const liveMeta = sessionList.find((m) => liveSession(m.id) && inChatWindow(m));
       if (liveMeta) { target = liveSession(liveMeta.id); focusSession(liveMeta.id); }
     }
     if (target) { target.sendText(text); target.focus(); return; }

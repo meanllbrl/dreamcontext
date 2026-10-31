@@ -467,6 +467,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-title-world-',
   'dc-tomb-',
   'dc-transcript-cwd-',
+  'dc-trim-',
   'dc-tsc-check-',
   'dc-usage-limit-',
   'dc-usage-limit-home-',

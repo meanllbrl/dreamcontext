@@ -235,6 +235,8 @@ export interface OrbitArc { side: 'left' | 'right'; x0: number; cy: number; ymax
  *  place in the record (a group's is its first card's), so sides never shift under a grouping. */
 export interface StageItem {
   id: string;
+  /** Who sized it: the owner's size is never overruled for the rail's sake. */
+  sizeBy?: SuperContainer['sizeBy'];
   kind: SuperContainer['kind'] | 'group';
   shape: ContainerShape;
   place: SuperContainer['place'];
@@ -303,7 +305,7 @@ export function stageItems(
     const page = c.kind === 'web' ? pageAspect(c) : undefined;
     const aspect = c.kind === 'image' && typeof c.aspect === 'number' && Number.isFinite(c.aspect) && c.aspect > 0 ? c.aspect
       : typeof page === 'number' && Number.isFinite(page) && page > 0 ? page : undefined;
-    if (!g || shown.has(c.id)) out.push({ id: c.id, kind: c.kind, shape: c.shape, place: c.place, ...(c.pos ? { pos: c.pos } : {}), slot: i, ...(size !== 'small' ? { size } : {}), ...(live ? { live } : {}), ...(aspect ? { aspect } : {}) });
+    if (!g || shown.has(c.id)) out.push({ id: c.id, kind: c.kind, shape: c.shape, place: c.place, ...(c.pos ? { pos: c.pos } : {}), slot: i, ...(size !== 'small' ? { size } : {}), ...(c.sizeBy ? { sizeBy: c.sizeBy } : {}), ...(live ? { live } : {}), ...(aspect ? { aspect } : {}) });
     if (g && !placed.has(g.id) && g.cards[0] !== undefined && index.has(g.cards[0])) {
       placed.add(g.id);
       const gLive = g.cards.some((id) => { const k = containers[index.get(id) ?? -1]; return !!k && k.kind === 'chat' && isLive(k); });
@@ -1099,18 +1101,27 @@ function planWith(
     const rail = narrow ? [] : list.filter((c) => c.live && c.kind === 'chat' && c.place === 'float' && !picked.includes(c.id));
     const { TILE: T, GAP, BAND } = STAGE;
     // Tight: every job one line, so the chat reads. A card the owner sized keeps the rail of tiles.
-    if (presenting && opts.miniRail && rail.length && f.width < STAGE.MINI_RAIL_STAGE && !rail.some((c) => (c as { sizeBy?: string }).sizeBy === 'owner' && sizeOf(c) !== 'small')) {
+    const tilesFit = f.content.width - (T + GAP) >= STAGE.PRESENT_MIN + GAP + STAGE.REGION_MIN && capacity(f.content.height) >= rail.length;
+    const ownerSized = rail.some((c) => c.sizeBy === 'owner' && sizeOf(c) !== 'small');
+    if (presenting && opts.miniRail && rail.length && f.width < STAGE.MINI_RAIL_STAGE && !(ownerSized && tilesFit)) {
       const { MINI_RAIL_W: W, MINI_RAIL_H: H, MINI_RAIL_GAP: G } = STAGE;
       const fits = Math.max(0, Math.floor((f.content.height + G) / (H + G)));
-      if (fits >= rail.length) {
-        let y = f.content.y + (f.content.height - rail.length * H - (rail.length - 1) * G) / 2;
-        for (const c of rail) {
-          cards[c.id] = { id: c.id, rect: { x: f.content.x, y, width: W, height: H }, where: 'float', shape: 'square', size: 'small', owner: false, z: z.get(c.id) ?? 0, mini: true };
-          y += H + G;
-        }
-        railSaved = T - W;
-        return { ...f.content, x: f.content.x + W + GAP, width: f.content.width - W - GAP };
+      // Past what the column holds, the rest wait in the "more" tile at its foot, on the stage.
+      const shown = fits >= rail.length ? rail : rail.slice(0, Math.max(0, fits - 1));
+      const rest = rail.slice(shown.length);
+      const rows = shown.length + (rest.length ? 1 : 0);
+      let y = f.content.y + (f.content.height - rows * H - (rows - 1) * G) / 2;
+      for (const c of shown) {
+        cards[c.id] = { id: c.id, rect: { x: f.content.x, y, width: W, height: H }, where: 'float', shape: 'square', size: 'small', owner: false, z: z.get(c.id) ?? 0, mini: true };
+        y += H + G;
       }
+      if (rest.length) {
+        const rect: Rect = { x: f.content.x, y, width: W, height: H };
+        more = { rect, ids: rest.map((c) => c.id) };
+        for (const c of rest) cards[c.id] = { id: c.id, rect, where: 'others', shape: c.shape, owner: false, z: z.get(c.id) ?? 0 };
+      }
+      railSaved = T - W;
+      return { ...f.content, x: f.content.x + W + GAP, width: f.content.width - W - GAP };
     }
     // The rail never squeezes what the owner looks at: the centre keeps PRESENT_MIN and the page
     // (or the presented cards' region) REGION_MIN, else there is no rail and its jobs lead Others.
@@ -1239,7 +1250,9 @@ function planWith(
       // The chat's floor gives way (down to REGION_MIN) only so two cards keep FIT_MIN side by side
       // (a 968 px touch stage).
       const share = Math.min(STAGE.PRESENT_MAX, Math.max(STAGE.PRESENT_MIN, STAGE.PRESENT_FRAC * (content.width + 2 * STAGE.MARGIN)));
-      const w = Math.max(STAGE.REGION_MIN, Math.min(share + railSaved, content.width - 2 * STAGE.GAP - 2 * STAGE.FIT_MIN.w));
+      const plainW = Math.max(STAGE.REGION_MIN, Math.min(share, content.width - 2 * STAGE.GAP - 2 * STAGE.FIT_MIN.w));
+      // A one-line rail hands its width to the chat, up to its floor before the cards' own.
+      const w = railSaved ? Math.max(plainW, Math.min(Math.max(plainW + railSaved, STAGE.PRESENT_MIN), content.width - STAGE.GAP - STAGE.REGION_MIN)) : plainW;
       const centre: Rect = { x: content.x, y: content.y, width: w, height: content.height };
       const region: Rect = { x: content.x + w + STAGE.GAP, y: content.y, width: content.width - w - STAGE.GAP, height: content.height };
       const { rects } = fitArrange(region, ordered.map((id) => ({ aspect: list.find((x) => x.id === id)?.aspect })));
