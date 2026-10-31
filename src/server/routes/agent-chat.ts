@@ -121,6 +121,9 @@ import {
 import { BRIDGE_TOOLS, sanitizeTool, type ToolId } from '../../lib/t3-bridge/registry.js';
 import { codexHistoryFor } from '../../lib/t3-bridge/codex-history-route.js';
 import { bridgeChatScript, bridgeResumeTarget } from '../../lib/t3-bridge/spawn.js';
+import { bridgeNode, nodeTooOldMessage } from '../../lib/t3-bridge/node-floor.js';
+import { readAgentUiSettings } from './launcher.js';
+import { linkedWritableRoots } from '../../lib/t3-bridge/roots.js';
 import { CODEX_THREAD_RE } from '../../lib/t3-bridge/codex-threads.js';
 const isCodexThreadId = (id: string): boolean => CODEX_THREAD_RE.test(id);
 import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOptions, type ParkOutcome } from '../chat-park.js';
@@ -1031,6 +1034,7 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
       const entries = registry.filter((r) => r.conversationId === e.conversationId);
       return {
         conversationId: e.conversationId, vault, title: vault ? liveChatTitle(e.projectRoot, e.conversationId) : null,
+        ...(e.tool ? { tool: e.tool } : {}),
         busy: e.busy, state: liveChatState(e.busy, entries.map((r) => r.status)),
         lastLine: vault ? liveChatLastLine(entries) : null,
         updatedAt: liveChatUpdatedAt(e, entries),
@@ -1365,11 +1369,15 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     const toolAsked = url.searchParams.get('tool');
     const toolParsed = sanitizeTool(toolAsked);
     if (toolAsked !== null && !toolParsed) { rejectUpgrade(socket, 400); return; }
-    const bridgeTool = toolParsed && (BRIDGE_TOOLS as readonly string[]).includes(toolParsed) ? toolParsed as BridgeTool : null;
+    const bridgeTool = toolParsed && (BRIDGE_TOOLS as readonly string[]).includes(toolParsed) ? toolParsed as 'codex' : null;
     if (bridgeTool && (assistant || card || chatAgent || mode === 'super' || url.searchParams.get('lean') === '1')) {
       rejectUpgrade(socket, 400); return;
     }
-    const toolOpt = bridgeTool ? { tool: bridgeTool } : {};
+    // The Claude engine setting (plan r5 §5, default off): a plain Claude chat through T3's driver.
+    // Everything that needs today's engine stays on it, exactly the surfaces a bridge tool refuses.
+    const t3Claude = !bridgeTool && !assistant && !card && !chatAgent && mode !== 'super' && url.searchParams.get('lean') !== '1'
+      && readAgentUiSettings().claudeEngine === 't3';
+    const toolOpt = bridgeTool ? { tool: bridgeTool } : t3Claude ? { tool: 'claude' as const } : {};
 
     // T24 — the automation-bound resume gate (see the block comment on
     // `shouldRejectAutomationResume` above). Evaluated HERE, before `startChatSession` is
@@ -1628,7 +1636,8 @@ interface ChatSpawnOpts {
   tool?: BridgeTool;
 }
 
-type BridgeTool = Exclude<ToolId, 'claude'>;
+/** `claude` only through the Claude engine setting: `?tool=` never selects it. */
+type BridgeTool = ToolId;
 
 /** Interrupt watchdog: if no result/exit follows an interrupt request within this window,
  *  escalate to SIGINT then SIGKILL rather than leave the session hung. Empirically, a real
@@ -1870,7 +1879,7 @@ export function startChatSession(
   const mappedId = resumeId ? resolveAgentSession(contextRoot, resumeId) : '';
   // A bridge pane resumes its tool's own thread, found through the same tab map (the bridge
   // records it) and only when that thread belongs to THIS project (`bridgeResumeTarget`).
-  const resumeTarget = bridgeTool
+  const resumeTarget = bridgeTool === 'codex'
     ? bridgeResumeTarget({ tool: bridgeTool, mapped: mappedId, resumeId, projectRoot, held: liveConversations })
     : [mappedId, resumeId].find(
       (c) => c && !liveConversations.has(c) && claudeConversationExists(c),
@@ -2268,11 +2277,15 @@ export function startChatSession(
   // fixed literal whose parens, colon, space and star are all inert inside double quotes.)
   // A bridge pane runs our own CLI's `t3-chat` (the same stream-json in and out) instead of
   // `claude`; Claude-only flags never reach it. Refused when a path is not shell-safe.
-  const bridgeScript = bridgeTool
-    ? bridgeChatScript({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg })
+  // The bridge child runs on a Node at its floor, found beside the machine's default, never by
+  // changing it (`node-floor.ts`). No such Node: the pane says so instead of crashing in a chat.
+  const bridgeNodePath = bridgeTool ? bridgeNode() : null;
+  const bridgeScript = bridgeTool && bridgeNodePath
+    ? bridgeChatScript({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot) })
     : null;
   if (bridgeTool && !bridgeScript) {
-    try { ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', message: `${bridgeTool} could not start: the dreamcontext install path is not shell-safe.` })); } catch { /* gone */ }
+    const why = bridgeNodePath ? `${bridgeTool} could not start: the dreamcontext install path is not shell-safe.` : nodeTooOldMessage(bridgeTool === 'codex' ? 'Codex' : 'The T3 Claude engine');
+    try { ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', message: why })); } catch { /* gone */ }
     try { ws.close(); } catch { /* already closed */ }
     releaseHeld();
     cleanupBriefing(); cleanupAgents(); cleanupModeNote(); cleanupDeferred();
@@ -2577,6 +2590,7 @@ export function startChatSession(
   // session (nothing to reattach by) keep the old drain-on-close lifecycle.
   const live: LiveChatEntry | null = !isAssistant && pinId ? {
     conversationId: pinId,
+    ...(bridgeTool === 'codex' ? { tool: bridgeTool } : {}),
     projectRoot,
     busy: false,
     turnStartedAt: null,

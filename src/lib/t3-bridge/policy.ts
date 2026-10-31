@@ -36,6 +36,23 @@ export interface PolicyInput {
   readonly home?: string;
 }
 
+/**
+ * Our modes → T3's Claude runtime modes, one to one: unlike Codex, T3's `auto` here IS Claude's
+ * own auto mode, the one our chats run today. Claude keeps its own permission rules, so no
+ * sandbox policy is added on top (`--permission-mode` semantics stay Claude's).
+ */
+export function claudeRuntimePolicy(input: { mode: string; cwd: string }): CodexRuntimePolicy {
+  const mode = normalizeMode(input.mode);
+  const cwd = input.cwd || null;
+  switch (mode) {
+    case 'bypassPermissions': return { runtimeMode: 'full-access', interactionMode: 'default', cwd };
+    case 'auto': return { runtimeMode: 'auto', interactionMode: 'default', cwd };
+    case 'acceptEdits': return { runtimeMode: 'auto-accept-edits', interactionMode: 'default', cwd };
+    case 'plan': return { runtimeMode: 'approval-required', interactionMode: 'plan', cwd };
+    default: return { runtimeMode: 'approval-required', interactionMode: 'default', cwd };
+  }
+}
+
 /** Normalize anything the client may send to one of our five modes (unknown → `default`). */
 export function normalizeMode(mode: string): ChatPermissionMode {
   return mode === 'acceptEdits' || mode === 'plan' || mode === 'auto' || mode === 'bypassPermissions' ? mode : 'default';

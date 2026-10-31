@@ -948,6 +948,18 @@ interface AgentUiSettings {
   /** Remembered default EFFORT level for a new Chat session, same menu, same empty-string
    *  = inherit-the-CLI contract as chatDefaultModel. Mirrors dashboard/src/lib/agentSettings. */
   chatDefaultEffort: string;
+  /** The tool a new chat opens on: '' = Claude (the resting value), `codex` = Codex. Saved with
+   *  the default model. Mirrors dashboard/src/lib/agentSettings. */
+  chatDefaultTool: '' | 'codex';
+  /** Codex's own default model and effort, kept apart so a Codex id can never reach
+   *  `claude --model`. '' = the Codex account's own. */
+  codexDefaultModel: string;
+  codexDefaultEffort: string;
+  /** The Super Agent's tool. Stored for W4; a Super Agent runs on Claude until then. */
+  superTool: '' | 'codex';
+  /** Which engine runs a Claude chat: `dreamcontext` (today's, the default) or `t3`, T3's Claude
+   *  driver through the bridge (plan r5 §5, experimental). */
+  claudeEngine: 'dreamcontext' | 't3';
   /** Light mode (Settings → Performance): 'auto' (on for ≤ 8 GB or on battery), 'on', 'off'.
    *  Mirrors dashboard/src/lib/agentSettings (the effective value is computed client-side). */
   lightMode: 'auto' | 'on' | 'off';
@@ -975,6 +987,11 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   chatPermissionMode: 'auto',
   chatDefaultModel: '',
   chatDefaultEffort: '',
+  chatDefaultTool: '',
+  codexDefaultModel: '',
+  codexDefaultEffort: '',
+  superTool: '',
+  claudeEngine: 'dreamcontext',
   lightMode: 'auto',
   parkIdleChats: true,
   superModel: SUPER_AGENT_DEFAULT.model,
@@ -1029,6 +1046,12 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
     // which is not a failure state but the documented "inherit the CLI's own default".
     chatDefaultModel: sanitizeModel(typeof raw.chatDefaultModel === 'string' ? raw.chatDefaultModel : null),
     chatDefaultEffort: sanitizeEffort(typeof raw.chatDefaultEffort === 'string' ? raw.chatDefaultEffort : null),
+    chatDefaultTool: raw.chatDefaultTool === 'codex' ? 'codex' : '',
+    codexDefaultModel: sanitizeModel(typeof raw.codexDefaultModel === 'string' ? raw.codexDefaultModel : null),
+    codexDefaultEffort: sanitizeEffort(typeof raw.codexDefaultEffort === 'string' ? raw.codexDefaultEffort : null),
+    superTool: raw.superTool === 'codex' ? 'codex' : '',
+    // Only an explicit 't3' leaves today's engine.
+    claudeEngine: raw.claudeEngine === 't3' ? 't3' : 'dreamcontext',
     // Only an explicit 'on' / 'off' pins Light mode; anything else is Auto.
     lightMode: raw.lightMode === 'on' || raw.lightMode === 'off' ? raw.lightMode : 'auto',
     // No `superAgent` key any more: the Super Agent is on for everyone (2026-10-29). An old
@@ -1047,7 +1070,7 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
 }
 
 /** The persisted blob as it is on disk right now, coerced (defaults if absent or unreadable). */
-function readAgentUiSettings(): AgentUiSettings {
+export function readAgentUiSettings(): AgentUiSettings {
   try {
     const p = agentSettingsPath();
     if (existsSync(p)) return coerceAgentSettings(JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>);

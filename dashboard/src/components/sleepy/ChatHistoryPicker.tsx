@@ -6,6 +6,7 @@ import { fanOutHistory, historyPath, superGroupRow, HISTORY_DEBOUNCE_MS, HISTORY
 import { useOverlayId } from '../../lib/useOverlayId';
 import { CommandModal, useListKeyboardNav } from '../search/CommandModal';
 import { highlight, queryTokens } from './phoneList';
+import { bindChatTool } from '../../lib/chatToolBinding';
 import './ChatHistoryPicker.css';
 
 /**
@@ -49,6 +50,8 @@ export interface PastSession {
   gitBranch: string;
   /** The new shell's cross-project History: the project this chat belongs to. */
   vault?: string;
+  /** A conversation on another tool (Track T). Absent = Claude. */
+  tool?: 'codex';
   /** A Super Agent's session, in a search or its opened entry. */
   super?: boolean;
   /** This row is a project's Super Agent entry, standing for this many sessions. */
@@ -249,6 +252,8 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
 
   const pick = useCallback((s: PastSession) => {
     if (s.superCount !== undefined) { setSuperOf(s.vault ?? null); setData(null); setRetry(0); return; }
+    // Bound here because a pick can cross projects: only the id travels on that road.
+    if (s.tool) bindChatTool(s.id, s.tool);
     if (onPickIn && s.vault) onPickIn(s.vault, s);
     else onPick(s);
   }, [onPick, onPickIn]);
@@ -376,6 +381,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
                     {cross && scope === ALL && s.vault && <span className="chp-row-tag chp-row-vault">{s.vault}</span>}
                     {s.superCount !== undefined && <span className="chp-row-tag chp-row-tag--super" data-testid="chp-super-count">{t(s.superCount === 1 ? 'shell.history.superSession' : 'shell.history.superSessions').replace('{n}', String(s.superCount))}</span>}
                     {s.super && !superOf && <span className="chp-row-tag chp-row-tag--super" data-testid="chp-super-tag">{t('shell.history.superAgent')}</span>}
+                    {s.tool === 'codex' && <span className="chp-row-tag" data-testid="chp-tool-tag">Codex</span>}
                     {isOpen && <span className="chp-row-tag">open</span>}
                     {s.gitBranch && <span className="chp-row-branch" title={s.gitBranch}>{s.gitBranch}</span>}
                     {s.superCount === undefined && <span className="chp-row-size">{sizeLabel(s.sizeBytes)}</span>}

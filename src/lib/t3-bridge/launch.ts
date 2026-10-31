@@ -36,6 +36,11 @@ export function codexLaunchArgs(o: { briefingFile?: string }): string {
   return args.join(' ');
 }
 
+/** T3's Claude driver: its `--append-system-prompt-file` launch argument carries our briefing. */
+export function claudeLaunchArgs(o: { briefingFile?: string }): string {
+  return o.briefingFile ? `--append-system-prompt-file ${quoteLaunchToken(o.briefingFile)}` : '';
+}
+
 /**
  * The environment `codex app-server` inherits. `T3CODE_CODEX_LAUNCH_ARGS` is removed: T3 lets it
  * REPLACE the launch args (`codexLaunchArgs.ts`), so an inherited value would drop our overrides.

@@ -13,6 +13,7 @@
 import { join } from 'node:path';
 import { recordAgentSession } from '../agent-session-map.js';
 import { findCodexRollout } from './codex-threads.js';
+import { findTranscriptBySessionId } from '../transcript-locate.js';
 import { maybeNudge, renderHandoffBanner, selectHandoffForSessionStart, stampHandoffRecord } from '../context-watch.js';
 import type { AppContext } from './stdio.js';
 
@@ -22,12 +23,13 @@ export interface EcoJoins {
   onResult: (nativeThreadId: string, contextTokens: number) => AppContext[];
 }
 
-export function ecoJoins(projectRoot: string, env: NodeJS.ProcessEnv, o: { codexHome?: string } = {}): EcoJoins {
+export function ecoJoins(projectRoot: string, env: NodeJS.ProcessEnv, o: { codexHome?: string; tool?: 'codex' | 'claude' } = {}): EcoJoins {
   const contextRoot = join(projectRoot, '_dream_context');
   const tab = typeof env.DREAMCONTEXT_TAB_SESSION === 'string' ? env.DREAMCONTEXT_TAB_SESSION : '';
   const record = (id: string): void => {
     // Only a thread Codex has written down: a mapped thread with no rollout is refused on reopen.
-    if (tab && id && findCodexRollout(id, o.codexHome)) recordAgentSession(contextRoot, tab, id);
+    const written = o.tool === 'claude' ? !!findTranscriptBySessionId([id]) : !!findCodexRollout(id, o.codexHome);
+    if (tab && id && written) recordAgentSession(contextRoot, tab, id);
   };
   return {
     // Recorded once a turn has run (`onResult`), never at thread start: Codex writes a thread's

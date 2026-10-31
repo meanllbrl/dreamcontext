@@ -769,7 +769,7 @@ export async function handleAgentSessionsGet(
 
 /** One Mac window tab as a remote screen seeds it: never a path, a mode, an agent or an
  *  automation. */
-export interface DesktopSeedTab { title: string; sessionId: string; pane: number; kind: 'agent' | 'chat'; bypass: boolean; active?: true }
+export interface DesktopSeedTab { title: string; sessionId: string; pane: number; kind: 'agent' | 'chat'; bypass: boolean; active?: true; tool?: 'codex' }
 
 /**
  * The Mac window's tabs a remote screen may seed from (`GET /api/agent/sessions?of=desktop` on a
@@ -783,7 +783,7 @@ export function desktopSeed(saved: Pick<SavedSurface, 'sessions'>, superState: {
   for (const m of saved.sessions) {
     const kind = m.kind ?? 'agent';
     if ((kind !== 'agent' && kind !== 'chat') || !m.sessionId || m.sessionId === superState.session || m.mode === 'super') continue;
-    out.push({ title: m.title, sessionId: m.sessionId, pane: m.pane ?? 0, kind, bypass: m.bypass, ...(m.active ? { active: true as const } : {}) });
+    out.push({ title: m.title, sessionId: m.sessionId, pane: m.pane ?? 0, kind, bypass: m.bypass, ...(m.active ? { active: true as const } : {}), ...(m.tool ? { tool: m.tool } : {}) });
   }
   return out;
 }

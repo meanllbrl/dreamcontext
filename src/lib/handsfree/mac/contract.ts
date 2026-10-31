@@ -109,6 +109,8 @@ export const HEAT_HOT = ['serious', 'critical'] as const;
 /** GET /api/agent/live-chats — names, never paths. */
 export interface LiveChatWire {
   conversationId: string;
+  /** A tool other than Claude (Track T): a screen adopting this chat must speak to it. */
+  tool?: string;
   /** The registered vault name the child runs in (null when its folder is not registered). */
   vault: string | null;
   title: string | null;

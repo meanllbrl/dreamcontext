@@ -449,6 +449,8 @@ export interface AgentToolInfo {
   ready: boolean;
   installed: boolean;
   signedIn: boolean;
+  /** A Node at the bridge floor exists on this machine. Absent on an older server. */
+  nodeOk?: boolean;
   defaultModel: string | null;
   models: { id: string; label: string; efforts: string[]; defaultEffort: string | null }[];
 }

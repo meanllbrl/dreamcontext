@@ -23,7 +23,7 @@ export function registerT3ChatCommand(program: Command): void {
   program
     .command('t3-chat', { hidden: true })
     .description('Run one chat on a T3 provider adapter over stream-json stdio (used by the chat server)')
-    .requiredOption('--tool <tool>', 'the tool to drive (codex)')
+    .requiredOption('--tool <tool>', 'the tool to drive (codex, or claude through T3\'s driver)')
     .option('--cwd <path>', 'the project folder (default: the current folder)')
     .option('--model <model>', 'model id (default: the Codex account\'s own)')
     .option('--effort <effort>', 'reasoning effort')
@@ -36,12 +36,12 @@ export function registerT3ChatCommand(program: Command): void {
       tool: string; cwd?: string; model?: string; effort?: string; mode: string; pane?: string;
       resume?: string; briefingFile?: string; extraRoot?: string[];
     }) => {
-      if (o.tool !== 'codex') {
+      if (o.tool !== 'codex' && o.tool !== 'claude') {
         process.stderr.write(`t3-chat: unknown tool ${o.tool}\n`);
         process.exit(2);
       }
       const { runT3Chat } = await loadBridge();
-      const code = await runT3Chat({ ...o, tool: 'codex', cwd: o.cwd ?? process.cwd() });
+      const code = await runT3Chat({ ...o, tool: o.tool, cwd: o.cwd ?? process.cwd() });
       process.exit(code);
     });
 }

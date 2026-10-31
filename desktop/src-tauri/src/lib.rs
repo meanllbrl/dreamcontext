@@ -758,7 +758,7 @@ fn poll_health(port: u16, timeout: Duration) -> Result<(), String> {
 }
 
 fn host_dashboard(app: AppHandle) -> Result<(), String> {
-    // No usable Node (none, or older than 18): the setup screen installs a private one and
+    // No usable Node (none, or older than 22.16): the setup screen installs a private one and
     // boot continues on it. `fresh_install` marks that path for the longer first-boot wait
     // and the setup screen's own hand-over to the Launcher.
     let (node, node_version, fresh_install) = match node_runtime::resolve_usable_node() {

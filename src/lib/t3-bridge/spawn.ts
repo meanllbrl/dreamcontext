@@ -15,7 +15,8 @@ const TOKEN_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const PANE_RE = /^[0-9a-f-]{36}$/i;
 
 export interface BridgeScriptInput {
-  readonly tool: 'codex';
+  /** `claude` = T3's Claude driver, behind the Claude engine setting. */
+  readonly tool: 'codex' | 'claude';
   readonly model: string;
   readonly effort: string;
   readonly mode: string;
@@ -23,6 +24,8 @@ export interface BridgeScriptInput {
   readonly resume: string;
   /** The Claude briefing argv pair (`--append-system-prompt-file <path>`), reused as the briefing. */
   readonly briefingArg: readonly string[];
+  /** Folders a sandboxed turn may also write (linked code repos). */
+  readonly extraRoots?: readonly string[];
   readonly node?: string;
   readonly cli?: string;
   readonly home?: string;
@@ -35,7 +38,7 @@ export function bridgeChatScript(i: BridgeScriptInput): string | null {
   if (!isScriptSafePath(node) || !isScriptSafePath(cli)) return null;
   // No model asked for: the account's own default (config.toml), else the first model Codex
   // cached for this login. Never a guessed id (a ChatGPT login refuses unknown models).
-  const model = TOKEN_RE.test(i.model) ? i.model : codexDefaultModel(i.home ?? homedir()) ?? codexCachedModels(i.home ?? homedir())[0]?.id ?? null;
+  const model = TOKEN_RE.test(i.model) ? i.model : i.tool === 'claude' ? null : codexDefaultModel(i.home ?? homedir()) ?? codexCachedModels(i.home ?? homedir())[0]?.id ?? null;
   const briefIdx = i.briefingArg.indexOf('--append-system-prompt-file');
   const briefing = briefIdx >= 0 ? i.briefingArg[briefIdx + 1] ?? '' : '';
   const args = ['t3-chat', '--tool', i.tool, '--mode', TOKEN_RE.test(i.mode) ? i.mode : 'default'];
@@ -44,6 +47,9 @@ export function bridgeChatScript(i: BridgeScriptInput): string | null {
   if (PANE_RE.test(i.pane)) args.push('--pane', i.pane);
   if (CODEX_THREAD_RE.test(i.resume)) args.push('--resume', i.resume);
   if (briefing && isScriptSafePath(briefing)) args.push('--briefing-file', briefing);
+  // A root that is not shell-safe is left out, never quoted around: the sandbox only gets narrower.
+  const roots = (i.extraRoots ?? []).filter(isScriptSafePath);
+  if (roots.length) args.push('--extra-root', ...roots);
   return `exec "${node}" "${cli}" ${args.map((a) => `"${a}"`).join(' ')}`;
 }
 

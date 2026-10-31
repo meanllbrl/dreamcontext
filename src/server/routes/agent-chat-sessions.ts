@@ -7,6 +7,7 @@ import { contentOf, ensureContentIndex } from '../../lib/transcript-content-inde
 import { readSessionTitles } from '../../lib/session-titles.js';
 import { readSuperState } from '../../lib/super/store.js';
 import { superSanitizeOpts } from '../../lib/super/inbox.js';
+import { listCodexSessions, mergeSessionRows } from '../../lib/t3-bridge/codex-sessions.js';
 
 /**
  * `GET /api/agent/chat-sessions` — the project's PAST Claude conversations, newest first,
@@ -95,9 +96,26 @@ export async function computeChatSessions(
     titles: readSessionTitles(contextRoot),
     ...(superRows ? { superRows } : {}),
   });
+  const merged = withCodexRows(result, contextRoot, projectRoot, { query, limit, superOnly: superRows?.mode === 'only', home: opts.home });
   return query.trim() && !indexed
-    ? { ...result, indexing: { done: build.progress.done, total: build.progress.total } }
-    : result;
+    ? { ...merged, indexing: { done: build.progress.done, total: build.progress.total } }
+    : merged;
+}
+
+/** This project's Codex threads beside its Claude conversations (Track T). The Super-only listing
+ *  has none: a Super Agent runs on Claude. A failed read is simply no Codex rows. */
+function withCodexRows<R extends { sessions: Array<{ updatedAt: number; matchIn?: string }>; total: number }>(
+  result: R, contextRoot: string, projectRoot: string,
+  o: { query: string; limit: number; superOnly: boolean; home?: string },
+): R {
+  if (o.superOnly) return result;
+  try {
+    const rows = listCodexSessions(projectRoot, { home: o.home, query: o.query, limit: o.limit, contextRoot, titles: readSessionTitles(contextRoot) });
+    if (!rows.length) return result;
+    return { ...result, sessions: mergeSessionRows(result.sessions, rows, o.limit, !!o.query.trim()), total: result.total + rows.length };
+  } catch {
+    return result;
+  }
 }
 
 /** Every session the project's Super record owns. No readable record: none, the list stays whole. */

@@ -2151,8 +2151,11 @@ export function Composer({
     const at = { model, effort: effortValue };
     // The Super Agent keeps its own default (plan r4 D12): "Set as default" there writes it, not the chat's.
     const write = mode === 'super'
-      ? patchAgentSettings({ superModel: at.model, superEffort: at.effort })
-      : patchAgentSettings({ chatDefaultModel: at.model, chatDefaultEffort: at.effort });
+      ? patchAgentSettings({ superModel: at.model, superEffort: at.effort, superTool: '' })
+      : session.tool === 'codex'
+        // Codex's pair is its own: Claude's default stays what it was for a Claude chat.
+        ? patchAgentSettings({ chatDefaultTool: 'codex', codexDefaultModel: at.model, codexDefaultEffort: at.effort })
+        : patchAgentSettings({ chatDefaultTool: '', chatDefaultModel: at.model, chatDefaultEffort: at.effort });
     void savedDefaultReceipt(write, at, () => pickRef.current).then((show) => { if (show) setSavedDefault(true); });
   };
 
@@ -2191,10 +2194,13 @@ export function Composer({
   const newShell = useIsNewShell();
   const newChatsLine = () => {
     const s = readAgentSettings();
-    const [m, e] = mode === 'super' ? [s.superModel, s.superEffort] : [s.chatDefaultModel, s.chatDefaultEffort];
-    const value = [m || t('shell.settings.models.inherit'), e].filter(Boolean).join(' · ');
+    const codex = mode !== 'super' && s.chatDefaultTool === 'codex';
+    const [m, e] = mode === 'super' ? [s.superModel, s.superEffort] : codex ? [s.codexDefaultModel, s.codexDefaultEffort] : [s.chatDefaultModel, s.chatDefaultEffort];
+    const value = [codex ? 'Codex' : '', m || t('shell.settings.models.inherit'), e].filter(Boolean).join(' · ');
     return t('shell.composer.newChats').replace('{value}', value);
   };
+  /** Who this box talks to: the agent, else the tool this chat runs on. */
+  const speaker = agent ? agentName : session.tool === 'codex' ? 'Codex' : 'Claude';
   const stableAccountChange = useStableHandler((id: string) => { onAccountChange?.(id); menu.close(); });
   const stableHandoffChange = useStableHandler((enabled: boolean) => onContextHandoffChange?.(enabled));
   const stablePick = useStableHandler((kind: 'files' | 'folders', close: () => void) => { void pickPaths(kind, close); });
@@ -2288,8 +2294,7 @@ export function Composer({
             effort={effortValue}
             onModelChange={stableModelChange}
             onEffortChange={stableEffortChange}
-            // The saved default is Claude's: a Codex pane never writes its model into it.
-            onSetDefault={session.tool ? undefined : stableSaveDefault}
+            onSetDefault={stableSaveDefault}
             savedDefault={savedDefault}
             close={menu.close}
             head={modelMenu?.head}
@@ -2421,7 +2426,7 @@ export function Composer({
             // two are saying something more urgent than where to find a feature.
             // Blank while the meter has the slot: two things in one place, one of them a
             // sentence about how to start something that has already started.
-            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : unavailable ? unavailable.reason : aboutOnly ? aboutPlaceholder : busy ? `${agent ? agentName : 'Claude'} is working — ⏎ queues your next message…` : idlePlaceholder ?? `Message ${agent ? agentName : 'Claude'}…   ·   "/" for skills`}
+            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : unavailable ? unavailable.reason : aboutOnly ? aboutPlaceholder : busy ? `${speaker} is working — ⏎ queues your next message…` : idlePlaceholder ?? `Message ${speaker}…   ·   "/" for skills`}
             value={draft}
             disabled={disabled}
             onChange={(e) => {
@@ -2668,7 +2673,7 @@ export function Composer({
             className="chat-cmp-compact-btn"
             onClick={runCompact}
             disabled={!canCompose}
-            title="Ask Claude to compact the conversation"
+            title={`Ask ${speaker} to compact the conversation`}
           >
             <span aria-hidden>⚠</span>
             <span className="chat-cmp-compact-label">/compact</span>

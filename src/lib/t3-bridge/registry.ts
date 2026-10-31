@@ -10,6 +10,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
+import { bridgeNode } from './node-floor.js';
 
 export type ToolId = 'claude' | 'codex';
 export const BRIDGE_TOOLS: readonly ToolId[] = ['codex'];
@@ -25,10 +26,12 @@ export interface ToolModel {
 export interface ToolInfo {
   readonly tool: ToolId;
   readonly label: string;
-  /** installed + signed in */
+  /** installed + signed in + a Node that can run it */
   readonly ready: boolean;
   readonly installed: boolean;
   readonly signedIn: boolean;
+  /** A Node at the bridge floor exists on this machine (always true for Claude). */
+  readonly nodeOk: boolean;
   readonly defaultModel: string | null;
   readonly models: readonly ToolModel[];
 }
@@ -82,18 +85,19 @@ export function codexCachedModels(home: string = homedir()): ToolModel[] {
   }
 }
 
-export function codexInfo(o: { home?: string; path?: string } = {}): ToolInfo {
+export function codexInfo(o: { home?: string; path?: string; node?: string | null } = {}): ToolInfo {
   const home = o.home ?? homedir();
   const installed = onPath(process.platform === 'win32' ? 'codex.cmd' : 'codex', o.path ?? process.env.PATH ?? '');
   const signedIn = existsSync(join(home, '.codex', 'auth.json'));
   const models = codexCachedModels(home);
   const defaultModel = codexDefaultModel(home) ?? models[0]?.id ?? null;
-  return { tool: 'codex', label: 'Codex', installed, signedIn, ready: installed && signedIn, defaultModel, models };
+  const nodeOk = (o.node === undefined ? bridgeNode() : o.node) !== null;
+  return { tool: 'codex', label: 'Codex', installed, signedIn, nodeOk, ready: installed && signedIn && nodeOk, defaultModel, models };
 }
 
-export function listTools(o: { home?: string; path?: string } = {}): ToolInfo[] {
+export function listTools(o: { home?: string; path?: string; node?: string | null } = {}): ToolInfo[] {
   return [
-    { tool: 'claude', label: 'Claude', installed: true, signedIn: true, ready: true, defaultModel: null, models: [] },
+    { tool: 'claude', label: 'Claude', installed: true, signedIn: true, nodeOk: true, ready: true, defaultModel: null, models: [] },
     codexInfo(o),
   ];
 }

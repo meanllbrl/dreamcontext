@@ -9,8 +9,8 @@
  * by a keyword in the prompt:
  *   APPROVE → a shell command that asks for approval     QUESTION → a structured question
  *   DIFF    → a file change behind an approval           INTERRUPT → a turn that waits to be stopped
- *   PLAN    → a plan (todo list)                          anything else → a short text reply,
- *                                                          which also names the tab (title block)
+ *   PLAN    → a plan (todo list)                          anything else → a short text reply. The tab name only
+ *                                                          comes from the bridge's hidden follow-up turn.
  *
  *   FAKE_CODEX_FIXTURES=<fixtures dir> codex app-server [-c …]   (the -c overrides are ignored)
  */
@@ -42,6 +42,8 @@ const TITLE = '\n\n```dream-view\n{"type":"title","text":"Codex verify chat"}\n`
 
 let thread = '';
 let cwd = '';
+/** This turn is the bridge's hidden tab-title follow-up: it answers with the title block. */
+let wantTitle = false;
 
 /** Like real Codex: one rollout per thread under ~/.codex/sessions/YYYY/MM/DD, `session_meta` first. */
 function rolloutPath() {
@@ -92,7 +94,7 @@ async function pump(entries, pos, from, scenario) {
     let frame = rehome(e.frame, from);
     // Responses to requests already answered (or never sent by this client) are not replayed.
     if (frame.id !== undefined && !frame.method) continue;
-    if (scenario === 'simple' && frame.method === 'item/completed' && frame.params?.item?.type === 'agentMessage') {
+    if (wantTitle && scenario === 'simple' && frame.method === 'item/completed' && frame.params?.item?.type === 'agentMessage') {
       out({ method: 'item/agentMessage/delta', params: { threadId: thread, turnId: frame.params.turnId, itemId: frame.params.item.id, delta: TITLE } });
       frame = { ...frame, params: { ...frame.params, item: { ...frame.params.item, text: frame.params.item.text + TITLE } } };
     }
@@ -131,6 +133,7 @@ async function onRequest(msg) {
         setTimeout(() => process.exit(9), 300);
         return;
       }
+      wantTitle = text.includes('dreamcontext_tab_title');
       const scenario = SCENARIOS.find(([re]) => re.test(text))?.[1] ?? 'simple';
       log(`turn/start "${text.slice(0, 60)}" → ${scenario}`);
       record({ type: 'message', role: 'user', content: [{ type: 'input_text', text }] });

@@ -81,7 +81,7 @@ import { parseChatActions } from './chat/chatActions';
 import { Glyph, Notice } from './chat/Notice';
 import { cleanTabTitle } from '../../lib/chatViewSpec';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
-import { useAgentModelConfig, useAgentCapabilities } from '../../hooks/useAgentCapabilities';
+import { useAgentModelConfig, useAgentCapabilities, useAgentTools } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
 import { pickFiles, pickFolders, confirmAction } from '../../lib/desktop';
 import { listenForChecklistSubmits, type ChecklistSubmitPayload } from '../../lib/checklistBridge';
@@ -1192,6 +1192,9 @@ export function AgentSurface({ stageBesideDrawer = false }: {
   // string diff would read "probe recovered" as an account switch. The epoch only ever
   // advances on a confirmed change (claude-auth-watch.ts).
   const { data: polledCaps } = useAgentCapabilities();
+  const agentTools = useAgentTools().data;
+  const agentToolsRef = useRef(agentTools);
+  agentToolsRef.current = agentTools?.length ? agentTools : undefined;
   const authEpochRef = useRef<number | null>(null);
   useEffect(() => {
     const auth = polledCaps?.claudeAuth;
@@ -1813,9 +1816,18 @@ export function AgentSurface({ stageBesideDrawer = false }: {
     // roster records the session's own answer rather than a second copy of the constant.
     // `launch` is the documented exemption (the drawer's Super Agent row, D6): that exact mode,
     // never the remembered one, and the remembered one is left as it is.
+    // A plain new chat opens on the default tool when that tool can run. An unknown state (the
+    // list not read yet) trusts the setting: the server says why, should it refuse.
+    const defaults = agentSettingsRef.current;
+    const codexInfo = agentToolsRef.current?.find((t) => t.tool === 'codex');
+    const onCodex = !launch && kind === 'chat' && defaults.chatDefaultTool === 'codex' && (codexInfo?.ready ?? true);
+    const codexId = onCodex ? newClaudeId() : undefined;
+    if (codexId) bindChatTool(codexId, 'codex');
     const s = launch
       ? spawn(launch.bypass, undefined, false, kind, '', '', true, '', false, '', true)
-      : spawn(bypass, undefined, false, kind);
+      : codexId
+        ? spawn(bypass, codexId, false, 'chat', '', defaults.codexDefaultModel, true, '', false, defaults.codexDefaultEffort)
+        : spawn(bypass, undefined, false, kind);
     // Gated by its only callers: `addSession` and `addSplitSession` pass admitTab() first.
     setSessionList((prev) => [...prev, {
       id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId,
@@ -2682,7 +2694,9 @@ export function AgentSurface({ stageBesideDrawer = false }: {
     // transcript is the conversation, not the surface it was originally typed into. `reattach`
     // '1' (Mac mode's drawer): adopt the live chat even from the screen holding it.
     if (!admitTab()) return;
-    const s = reattach ? spawn(bypass, past.id, true, 'chat', '', '', true, '', false, '', false, DEFAULT_CHAT_MODE, '', '', reattach) : spawn(bypass, past.id, true, claudeKind);
+    // A chat on another tool reopens as a chat on it: it has no terminal surface.
+    if (past.tool) bindChatTool(past.id, past.tool);
+    const s = reattach ? spawn(bypass, past.id, true, 'chat', '', '', true, '', false, '', false, DEFAULT_CHAT_MODE, '', '', reattach) : spawn(bypass, past.id, true, chatToolFor(past.id) ? 'chat' : claudeKind);
     // Titled with the row's own label rather than "Chat 7": it is the only thing that tells two
     // resumed tabs apart. A remembered tab name (`named`) comes back whole — it was a tab title
     // once, and clipping it would also overwrite the stored name with its stub; a first prompt
@@ -2707,7 +2721,7 @@ export function AgentSurface({ stageBesideDrawer = false }: {
 
   // ── Mac mode: adopt a chat the Mac runs (the phone drawer's "Mac'te açık") ───────────
   const adoptLiveChat = useCallback((chat: LiveChatWire) => {
-    resumePastSession({ id: chat.conversationId, title: chat.title || 'Chat', named: true, updatedAt: Date.now(), preview: '' } as unknown as PastSession, '1');
+    resumePastSession({ id: chat.conversationId, title: chat.title || 'Chat', named: true, updatedAt: Date.now(), preview: '', ...(chat.tool ? { tool: chat.tool } : {}) } as unknown as PastSession, '1');
   }, [resumePastSession]);
   // The phone opens a handed-over Super Agent as an ordinary chat tab on its conversation. The
   // Mac decides it is a MIRROR (agent-chat.ts `phoneSuperOpen`): never `reattach=1`, so not even a

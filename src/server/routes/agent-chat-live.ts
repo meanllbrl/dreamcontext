@@ -55,6 +55,8 @@ export interface LiveChatSnapshotEntry {
   readonly projectRoot: string;
   /** A turn is running inside the CLI right now. */
   readonly busy: boolean;
+  /** A tool other than Claude (Track T). */
+  readonly tool?: string;
   /** When the running turn started (epoch ms), null when idle. */
   readonly turnStartedAt: number | null;
   /** When the last turn ended (epoch ms), null until one has. */
@@ -70,6 +72,8 @@ export interface LiveChatEntry {
   conversationId: string;
   /** The project the child runs in. A reattach for another project never adopts it. */
   projectRoot: string;
+  /** A tool other than Claude (Track T): a screen that adopts this chat must speak to it. */
+  tool?: string;
   busy: boolean;
   turnStartedAt: number | null;
   lastTurnEndedAt: number | null;
@@ -167,6 +171,7 @@ export function liveChatsSnapshot(): readonly LiveChatSnapshotEntry[] {
     busy: e.busy,
     turnStartedAt: e.turnStartedAt,
     lastTurnEndedAt: e.lastTurnEndedAt,
+    ...(e.tool ? { tool: e.tool } : {}),
   }));
   const draining = [...drainingChats].map((e) => Object.freeze({
     conversationId: e.conversationId,

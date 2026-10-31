@@ -79,6 +79,15 @@ export interface AgentSettings {
   /** Remembered default EFFORT level for a new Chat session — same menu, same
    *  empty-string-means-inherit contract as {@link AgentSettings.chatDefaultModel}. */
   chatDefaultEffort: string;
+  /** The tool a new chat opens on: '' = Claude, `codex` = Codex. Saved with the default model. */
+  chatDefaultTool: '' | 'codex';
+  /** Codex's own default model and effort ('' = the Codex account's own), apart from Claude's. */
+  codexDefaultModel: string;
+  codexDefaultEffort: string;
+  /** Stored for W4: a Super Agent runs on Claude until then. */
+  superTool: '' | 'codex';
+  /** `dreamcontext` = today's engine, `t3` = T3's Claude driver (experimental, plan r5 §5). */
+  claudeEngine: 'dreamcontext' | 't3';
   /** One-time marker that this blob has been through the "Chat is the default screen"
    *  flip (0.22). Before the flip, `chatView:false` was written into EVERY persisted
    *  blob as the old opt-out default, so a raw `false` is not evidence anybody chose
@@ -125,6 +134,11 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   titleMigrated: true,
   chatDefaultModel: '',
   chatDefaultEffort: '',
+  chatDefaultTool: '',
+  codexDefaultModel: '',
+  codexDefaultEffort: '',
+  superTool: '',
+  claudeEngine: 'dreamcontext',
   lightMode: 'auto',
   parkIdleChats: true,
   superModel: 'opus',
@@ -178,6 +192,11 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
       ? r.chatDefaultModel : '',
     chatDefaultEffort: typeof r.chatDefaultEffort === 'string' && CHAT_DEFAULT_EFFORT_LEVELS.includes(r.chatDefaultEffort)
       ? r.chatDefaultEffort : '',
+    chatDefaultTool: r.chatDefaultTool === 'codex' ? 'codex' : '',
+    codexDefaultModel: typeof r.codexDefaultModel === 'string' && CHAT_DEFAULT_MODEL_RE.test(r.codexDefaultModel) ? r.codexDefaultModel : '',
+    codexDefaultEffort: typeof r.codexDefaultEffort === 'string' && /^[a-z]{1,16}$/.test(r.codexDefaultEffort) ? r.codexDefaultEffort : '',
+    superTool: r.superTool === 'codex' ? 'codex' : '',
+    claudeEngine: r.claudeEngine === 't3' ? 't3' : 'dreamcontext',
     lightMode: r.lightMode === 'on' || r.lightMode === 'off' ? r.lightMode : 'auto',
     // No `superAgent` key any more: the Super Agent is on for everyone (2026-10-29). An old
     // blob's `superAgent:false` is dropped here like any unknown key, so it hides nothing.

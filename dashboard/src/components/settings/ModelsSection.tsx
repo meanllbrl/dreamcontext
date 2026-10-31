@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
+import { useAgentTools } from '../../hooks/useAgentCapabilities';
 import {
   SUPER_EFFORT_CHOICES, SUPER_MODEL_CHOICES, patchAgentSettings, type AgentSettings,
 } from '../../lib/agentSettings';
@@ -69,6 +70,10 @@ export function ModelsSection({ agentCfg, onOpenSleep }: {
 }) {
   const { t } = useI18n();
   const chatSave = useInstantSave();
+  const engineSave = useInstantSave();
+  const codexInfo = useAgentTools().data?.find((x) => x.tool === 'codex');
+  const codexModels = codexInfo?.models ?? [];
+  const codexEfforts = [...new Set(codexModels.flatMap((m) => m.efforts))];
   const superSave = useInstantSave();
   const assistantSave = useInstantSave();
   const sleepSave = useInstantSave();
@@ -114,11 +119,40 @@ export function ModelsSection({ agentCfg, onOpenSleep }: {
         status={<SaveMark state={chatSave.state} />}
         control={agentCfg && (
           <span className="settings-models-pair">
-            <Pick aria={`${t('shell.settings.models.chat')} model`} testId="models-chat-model" value={agentCfg.chatDefaultModel} choices={CHAT_MODELS} inherit={inherit}
-              onChange={(v) => void chatSave.save(() => patchOrThrow({ chatDefaultModel: v }))} />
-            <Pick aria={`${t('shell.settings.models.chat')} effort`} testId="models-chat-effort" value={agentCfg.chatDefaultEffort} choices={EFFORTS} inherit={inherit}
-              onChange={(v) => void chatSave.save(() => patchOrThrow({ chatDefaultEffort: v }))} />
+            {/* The tool first: the two beside it are that tool's own default. */}
+            <select className="settings-text-input" aria-label={`${t('shell.settings.models.chat')} tool`} data-testid="models-chat-tool" value={agentCfg.chatDefaultTool}
+              onChange={(e) => void chatSave.save(() => patchOrThrow({ chatDefaultTool: e.target.value === 'codex' ? 'codex' : '' }))}>
+              <option value="">Claude</option>
+              <option value="codex">Codex</option>
+            </select>
+            {agentCfg.chatDefaultTool === 'codex' ? (
+              <>
+                <Pick aria={`${t('shell.settings.models.chat')} model`} testId="models-chat-model" value={agentCfg.codexDefaultModel} choices={codexModels.map((m) => m.id)} inherit={inherit}
+                  onChange={(v) => void chatSave.save(() => patchOrThrow({ codexDefaultModel: v }))} />
+                <Pick aria={`${t('shell.settings.models.chat')} effort`} testId="models-chat-effort" value={agentCfg.codexDefaultEffort} choices={codexEfforts} inherit={inherit}
+                  onChange={(v) => void chatSave.save(() => patchOrThrow({ codexDefaultEffort: v }))} />
+              </>
+            ) : (
+              <>
+                <Pick aria={`${t('shell.settings.models.chat')} model`} testId="models-chat-model" value={agentCfg.chatDefaultModel} choices={CHAT_MODELS} inherit={inherit}
+                  onChange={(v) => void chatSave.save(() => patchOrThrow({ chatDefaultModel: v }))} />
+                <Pick aria={`${t('shell.settings.models.chat')} effort`} testId="models-chat-effort" value={agentCfg.chatDefaultEffort} choices={EFFORTS} inherit={inherit}
+                  onChange={(v) => void chatSave.save(() => patchOrThrow({ chatDefaultEffort: v }))} />
+              </>
+            )}
           </span>
+        )}
+      />
+      <SettingRow
+        title={t('shell.settings.models.claudeEngine')}
+        hint={t('shell.settings.models.claudeEngineHint')}
+        status={<SaveMark state={engineSave.state} />}
+        control={agentCfg && (
+          <select className="settings-text-input" aria-label={t('shell.settings.models.claudeEngine')} data-testid="models-claude-engine" value={agentCfg.claudeEngine}
+            onChange={(e) => void engineSave.save(() => patchOrThrow({ claudeEngine: e.target.value === 't3' ? 't3' : 'dreamcontext' }))}>
+            <option value="dreamcontext">dreamcontext</option>
+            <option value="t3">T3 SDK</option>
+          </select>
         )}
       />
       <SettingRow

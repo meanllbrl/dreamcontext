@@ -187,6 +187,28 @@ async function main() {
     ok('Codex text streams into the chat', await h.waitText('fixture simple ok'));
     ok('the tab is named by the agent', await h.until(async () => ((await h.vis('.agent-tab-title').allInnerTexts()).join('|')).includes('Codex verify chat'), 15000), (await h.vis('.agent-tab-title').allInnerTexts()).join('|'));
     await h.settled();
+    const hiddenText = await h.paneText();
+    ok('the hidden naming turn draws nothing', (hiddenText.match(/fixture simple ok/g) ?? []).length === 1 && !hiddenText.includes('dreamcontext_tab_title'), hiddenText.slice(0, 300));
+    const box = await h.vis('.chat-cmp-input').first().getAttribute('placeholder').catch(() => '');
+    ok('the Codex composer says Codex, not Claude', /Message Codex/.test(box ?? ''), box);
+
+    // ── History: the Codex thread is a row, and a default tool opens the next chat on Codex ──
+    const rows = await page.evaluate(async () => {
+      const vault = new URLSearchParams(location.search).get('vault') ?? 'proj';
+      const r = await fetch('/api/agent/chat-sessions?limit=20', { headers: { 'X-Dreamcontext-Vault': vault } });
+      return (await r.json()).sessions;
+    });
+    ok('Past chats lists the Codex thread, as Codex', rows.some((r) => r.tool === 'codex' && r.title === 'hello codex'), JSON.stringify(rows).slice(0, 300));
+    await page.locator('.chat-cmp-modeltrigger[title^="Model and reasoning effort"]:visible').first().click();
+    await page.waitForTimeout(400);
+    const saveDefault = h.vis('.chat-cmp-modelmenu').first().getByRole('button', { name: /Set as default/ });
+    ok('a Codex pane offers Set as default', (await saveDefault.count()) === 1);
+    if (await saveDefault.count()) await saveDefault.click();
+    await page.keyboard.press('Escape');
+    const uiFile = join(HOME, '.dreamcontext', 'agent-ui.json');
+    ok('the default tool is saved with the default model', await h.until(async () => existsSync(uiFile) && JSON.parse(readFileSync(uiFile, 'utf-8')).chatDefaultTool === 'codex', 8000), existsSync(uiFile) ? readFileSync(uiFile, 'utf-8').slice(0, 300) : 'no file');
+    const claudeAfter = JSON.parse(readFileSync(uiFile, 'utf-8')).chatDefaultModel;
+    ok('saving Codex leaves Claude\'s default model alone', !/^gpt/.test(claudeAfter ?? ''), claudeAfter);
 
     await h.send('APPROVE this command');
     ok('an approval card opens', await h.until(async () => (await h.vis('.chat-permcard').count()) > 0, 20000));
@@ -268,6 +290,8 @@ async function main() {
     ok('the handoff card reaches done ("Fresh session"), not stuck on "Resuming task"',
       await h2.until(async () => (await r2.page.locator('[data-testid="handoff-card"]:visible', { hasText: 'Fresh session' }).count()) > 0, 30000));
     await r2.page.screenshot({ path: join(SHOTS, 'eco-rotation.png') });
+    const reopened = await h2.paneText();
+    ok('a reopened pane never shows the hidden prompt', !reopened.includes('dreamcontext_tab_title'), reopened.slice(0, 200));
     report.notes.push(...r2.errors);
     await r2.page.close();
 

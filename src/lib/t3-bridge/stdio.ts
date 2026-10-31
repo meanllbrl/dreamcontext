@@ -14,13 +14,14 @@ import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BridgeSession, type BridgeSessionOptions } from './session.js';
-import { codexLaunchArgs, scrubbedCodexEnv } from './launch.js';
+import { claudeLaunchArgs, codexLaunchArgs, scrubbedCodexEnv } from './launch.js';
+import { HIDDEN_TITLE_PROMPT, TabTitler, titleBlock, titleIn } from './tab-title.js';
 import type { WireFrame } from './to-wire.js';
 
 export type AppContext = { key: string; text: string };
 
 export interface StdioArgs {
-  readonly tool: 'codex';
+  readonly tool: 'codex' | 'claude';
   readonly cwd: string;
   readonly model: string;
   readonly effort?: string;
@@ -47,6 +48,8 @@ export interface StdioDeps {
   readonly handleSignals?: boolean;
   /** Called once the session holds its thread (records pane → thread for resume). */
   readonly onReady?: (nativeThreadId: string) => void;
+  /** Does this pane's tab still want a name from its agent? Absent = never (tests, headless). */
+  readonly tabWantsTitle?: () => boolean;
   /** Called on every `result` (Eco measurement). What it returns rides the next turn. */
   readonly onResult?: (session: BridgeSession, frame: WireFrame) => AppContext[] | void;
 }
@@ -73,7 +76,18 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     const req = (f.request ?? f.response) as { subtype?: unknown; request_id?: unknown } | undefined;
     try { appendFileSync(debugFile, `${new Date().toISOString()} ${dir} ${String(f.type)}${f.subtype ? `/${String(f.subtype)}` : ''}${req?.subtype ? ` ${String(req.subtype)}` : ''}${req?.request_id ? ` ${String(req.request_id).slice(-12)}` : ''}\n`); } catch { /* best effort */ }
   };
-  const emit = (frame: WireFrame): void => { trace('out', frame); deps.write(JSON.stringify(frame) + '\n'); };
+  const titler = new TabTitler(deps.tabWantsTitle ?? (() => false));
+  /** A turn just ended with the tab unnamed: ask once, out of sight, then send only the name. */
+  const nameTab = async (): Promise<void> => {
+    const title = titleIn(await session.hiddenTurn(HIDDEN_TITLE_PROMPT));
+    if (title) emit({ type: 'assistant', message: { role: 'assistant', model: args.model, content: [{ type: 'text', text: titleBlock(title) }] }, parent_tool_use_id: null, session_id: session.nativeThreadId });
+  };
+  const emit = (frame: WireFrame): void => {
+    trace('out', frame);
+    deps.write(JSON.stringify(frame) + '\n');
+    // After the frame, on a later tick: the session clears its run only once this `result` is out.
+    if (titler.observe(frame)) setImmediate(() => { nameTab().catch((err) => { trace('err', { type: String(err).slice(0, 200) }); }); });
+  };
   // A private temp folder for this process: Codex's only writable temp (plan §6).
   const privateTmp = mkdtempSync(join(tmpdir(), 'dc-codex-'));
   /** App context owed to the next turn (a handoff banner, an Eco nudge). */
@@ -96,7 +110,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       paneId: args.paneId || randomUUID(),
       ...(args.resume ? { resumeNativeThreadId: args.resume } : {}),
       ...(args.binaryPath ? { binaryPath: args.binaryPath } : {}),
-      launchArgs: codexLaunchArgs({ briefingFile: args.briefingFile }),
+      launchArgs: args.tool === 'claude' ? claudeLaunchArgs({ briefingFile: args.briefingFile }) : codexLaunchArgs({ briefingFile: args.briefingFile }),
       env: { ...scrubbedCodexEnv(deps.env), TMPDIR: privateTmp },
       stateRoot: join(home, '.dreamcontext', 't3'),
       extraRoots: args.extraRoots ?? [],
@@ -116,7 +130,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       },
     });
   } catch (err) {
-    emit({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `Codex did not start: ${String(err).slice(0, 400)}`, num_turns: 0, total_cost_usd: 0, usage: {}, dc_tool: args.tool });
+    emit({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `${args.tool === 'claude' ? 'Claude' : 'Codex'} did not start: ${String(err).slice(0, 400)}`, num_turns: 0, total_cost_usd: 0, usage: {}, dc_tool: args.tool });
     rmSync(privateTmp, { recursive: true, force: true });
     return 1;
   }
@@ -137,6 +151,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   let chain: Promise<void> = Promise.resolve();
   const handle = async (frame: Record<string, unknown>): Promise<void> => {
     trace('in ', frame);
+    // The owner came back while a hidden turn runs: it gives way, nothing they send waits on it.
+    if (frame.type === 'user' || frame.type === 'control_request') await session.cancelHidden();
     if (frame.type === 'user') {
       const text = userText(frame);
       if (!text) return;
@@ -158,7 +174,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
         owe(deps.onRotated?.(id));
         return;
       }
-      await session.send(text, session.busy ? [] : pending.splice(0));
+      await session.send(text, session.busy ? [] : [...titler.nudge(), ...pending.splice(0)]);
       return;
     }
     if (frame.type === 'control_response') {

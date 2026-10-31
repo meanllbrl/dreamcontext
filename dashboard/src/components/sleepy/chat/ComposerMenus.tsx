@@ -320,13 +320,13 @@ function ModelRow({
 export interface ToolPick {
   current: '' | 'codex';
   /** Codex's readiness from `/api/agent/tools`; null = the server does not offer it. */
-  codex: { ready: boolean; installed: boolean; signedIn: boolean } | null;
+  codex: { ready: boolean; installed: boolean; signedIn: boolean; nodeOk: boolean } | null;
   onPick: (tool: '' | 'codex') => void;
 }
 
 function ToolRows({ pick, close }: { pick: ToolPick; close: () => void }) {
   const codex = pick.codex;
-  const codexNote = !codex ? null : !codex.installed ? 'Not installed' : !codex.signedIn ? 'Sign in with codex login' : null;
+  const codexNote = !codex ? null : !codex.installed ? 'Not installed' : !codex.signedIn ? 'Sign in with codex login' : !codex.nodeOk ? 'Needs Node 22.16 or newer' : null;
   const row = (tool: '' | 'codex', label: string, note: string | null, disabled: boolean) => (
     <button
       key={tool || 'claude'}

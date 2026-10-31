@@ -136,7 +136,7 @@ function ChatPaneHostInner({
   const pickTool = actions.pickTool;
   const toolPick = useMemo<ToolPick | undefined>(() => (pickTool && codexInfo ? {
     current: session.tool,
-    codex: { ready: codexInfo.ready, installed: codexInfo.installed, signedIn: codexInfo.signedIn },
+    codex: { ready: codexInfo.ready, installed: codexInfo.installed, signedIn: codexInfo.signedIn, nodeOk: codexInfo.nodeOk !== false },
     onPick: (tool) => pickTool(session.id, tool),
   } : undefined), [pickTool, codexInfo, session]);
 
