@@ -198,7 +198,7 @@ async function main() {
       const r = await fetch('/api/agent/chat-sessions?limit=20', { headers: { 'X-Dreamcontext-Vault': vault } });
       return (await r.json()).sessions;
     });
-    ok('Past chats lists the Codex thread, as Codex', rows.some((r) => r.tool === 'codex' && r.title === 'hello codex'), JSON.stringify(rows).slice(0, 300));
+    ok('Past chats lists the Codex thread, as Codex', rows.some((r) => r.tool === 'codex' && r.title === 'Codex verify chat' && r.named), JSON.stringify(rows).slice(0, 300));
     await page.locator('.chat-cmp-modeltrigger[title^="Model and reasoning effort"]:visible').first().click();
     await page.waitForTimeout(400);
     const saveDefault = h.vis('.chat-cmp-modelmenu').first().getByRole('button', { name: /Set as default/ });

@@ -80,7 +80,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   /** A turn just ended with the tab unnamed: ask once, out of sight, then send only the name. */
   const nameTab = async (): Promise<void> => {
     const title = titleIn(await session.hiddenTurn(HIDDEN_TITLE_PROMPT));
-    if (title) emit({ type: 'assistant', message: { role: 'assistant', model: args.model, content: [{ type: 'text', text: titleBlock(title) }] }, parent_tool_use_id: null, session_id: session.nativeThreadId });
+    // `<synthetic>`: a local reply, not a turn starting; the pane stays idle.
+    if (title) emit({ type: 'assistant', message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: titleBlock(title) }] }, parent_tool_use_id: null, session_id: session.nativeThreadId });
   };
   const emit = (frame: WireFrame): void => {
     trace('out', frame);

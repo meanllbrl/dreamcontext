@@ -44,6 +44,7 @@ let thread = '';
 let cwd = '';
 /** This turn is the bridge's hidden tab-title follow-up: it answers with the title block. */
 let wantTitle = false;
+let turnSeq = 0;
 
 /** Like real Codex: one rollout per thread under ~/.codex/sessions/YYYY/MM/DD, `session_meta` first. */
 function rolloutPath() {
@@ -68,7 +69,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Re-home a recorded frame onto this process's thread. */
 function rehome(frame, fromThread) {
   if (!fromThread || !thread) return frame;
-  return JSON.parse(JSON.stringify(frame).split(fromThread).join(thread));
+  // A recording has one id per message; real Codex never reuses one across turns.
+  return JSON.parse(JSON.stringify(frame).split(fromThread).join(thread).replace(/msg_[0-9a-f]+/g, `$&${turnSeq}`));
 }
 
 function threadReply(id, threadId) {
@@ -134,6 +136,7 @@ async function onRequest(msg) {
         return;
       }
       wantTitle = text.includes('dreamcontext_tab_title');
+      turnSeq += 1;
       const scenario = SCENARIOS.find(([re]) => re.test(text))?.[1] ?? 'simple';
       log(`turn/start "${text.slice(0, 60)}" → ${scenario}`);
       record({ type: 'message', role: 'user', content: [{ type: 'input_text', text }] });
