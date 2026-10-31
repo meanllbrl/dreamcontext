@@ -10,6 +10,8 @@ import { isValidAppLinkPath } from '../../lib/appLink';
 import { agentFileKind } from '../../lib/agentFileKind';
 import { resolveWikilinkTarget, type WikilinkCandidate } from '../../lib/wikilinks';
 import { buildSandboxSrcdoc, SANDBOX_ALLOW } from '../../lib/sandboxHtml';
+import { SELECTION_BRIDGE } from '../../lib/textSelection';
+import { useFrameSelection } from '../sleepy/chat/SelectionBar';
 import { pageDefaultCss } from '../../lib/pageDefaultCss';
 import { desktopScale, htmlFrameGeometry } from '../../lib/webDevice';
 import { PAGE_FIT_BRIDGE, readPageFit } from '../../lib/pageFit';
@@ -482,6 +484,7 @@ function HtmlPage({
   const { resolved: theme } = useTheme();
   const state = useProjectHtml(path, vaultReads);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
+  useFrameSelection(frameRef);
   const loads = useRef(0);
   const [height, setHeight] = useState<number | null>(null);
   const [torn, setTorn] = useState(false);
@@ -508,7 +511,7 @@ function HtmlPage({
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
       html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, overrideCss: pageDefaultCss(fill),
-      headScript: [HEIGHT_BRIDGE, LINK_GUARD, ...(zoomBridge ? [ZOOM_BRIDGE] : []), ...(reportsFit ? [PAGE_FIT_BRIDGE] : [])].join('\n'),
+      headScript: [HEIGHT_BRIDGE, SELECTION_BRIDGE, LINK_GUARD, ...(zoomBridge ? [ZOOM_BRIDGE] : []), ...(reportsFit ? [PAGE_FIT_BRIDGE] : [])].join('\n'),
     })),
     [html, theme, zoomBridge, fill, reportsFit],
   );

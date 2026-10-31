@@ -23,6 +23,7 @@ import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
 import { LOOK_RENEW_MS, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
 import type { ContainerSize } from '../../../lib/superTypes';
 import { CardFullscreenView } from './CardFullscreenView';
+import { SelectionScope } from '../chat/SelectionBar';
 import { cardTitle } from './superTitles';
 import { BrandMark } from '../../brand/BrandMark';
 import { useTasks } from '../../../hooks/useTasks';
@@ -85,8 +86,14 @@ export interface SuperSurfaceProps {
   onStageReady: (stage: { origin: DOMRect; plan: StagePlan }) => void;
   /** O11: the owner dropped a card on the centre (or pressed its "Ask about this"). */
   onAskAbout: (id: string, title: string) => void;
+  /** A card chip in a Super message was clicked (owner 2026-10-31): bring this card or group into
+   *  view the way a click on it does, then say so with `onFocusCardDone`. */
+  focusCard?: string | null;
+  onFocusCardDone?: () => void;
   /** Inspect picked an element in a web card's page (`page`: its address as the dev server knows it). */
   onPickElement?: (id: string, pick: WebPick, page: string) => void;
+  /** Comment on words selected on a card: they go to the Super Agent's composer as a chip. */
+  onCommentCardText?: (id: string, text: string) => void;
   /** "Write about this" on an agenda line: the line becomes the About chip in the centre's composer. */
   onWriteAbout?: (row: AgendaRow) => void;
   /** The owner ended a child from its card (`whenDone`: once its turn ends). */
@@ -171,6 +178,17 @@ const BACK_TO_GROUP_MS = 3000;
  * Nothing polls: the state is pushed (`super_state`) and handed down; the cards read the
  * children's live sessions. The owner's gestures go up through `onLayout` as patches.
  */
+/** A card as a place a selection counts: Comment hands its words to the Super Agent's composer. */
+function CardSelectionScope({ id, onComment, onCommented, children }: {
+  id: string; onComment?: (id: string, text: string) => void; onCommented?: () => void; children: ReactNode;
+}) {
+  return (
+    <SelectionScope handler={{ canComment: () => !!onComment, comment: (text) => { onComment?.(id, text); onCommented?.(); } }}>
+      {children}
+    </SelectionScope>
+  );
+}
+
 export function SuperSurface(props: SuperSurfaceProps) {
   const { state, pending, motion, superSession, onSlotsChanged } = props;
   const remote = props.remote ?? null;
@@ -551,6 +569,18 @@ export function SuperSurface(props: SuperSurfaceProps) {
     },
     onFullscreen: (id: string, subject: CardFullscreen) => setFull({ id, subject }),
   };
+  // A card chip clicked in the chat: the same as a click on the card (side by side) or its group's
+  // tile (the group's panel). A card gone meanwhile does nothing.
+  const focusCardDone = props.onFocusCardDone;
+  const focusCard = props.focusCard;
+  const focusRef = useRef({ side: actions.onSideBySide, group: openFromTile });
+  focusRef.current = { side: actions.onSideBySide, group: openFromTile };
+  useEffect(() => {
+    if (!focusCard) return;
+    if (byId.has(focusCard)) focusRef.current.side(focusCard);
+    else if (groupsById.has(focusCard)) focusRef.current.group(focusCard);
+    focusCardDone?.();
+  }, [focusCard, focusCardDone, byId, groupsById]);
   /**
    * Where a card grows (owner 2026-10-29, "alan var mı?"): a card he placed, or one he grows by its
    * corner (`pin`), grows from its inner top corner where it is drawn; an auto card sized from the
@@ -903,6 +933,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
           const cue = ghost ? { kind: 'close' as const } : stageCues.cueFor(c.id);
           const rect = cp.rect;
           return (
+            <CardSelectionScope key={c.id} id={c.id} onComment={props.onCommentCardText}>
             <SuperContainer
               key={c.id}
               container={c}
@@ -945,6 +976,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               onSelectThumb={setSelected}
               {...actions}
             />
+            </CardSelectionScope>
           );
         })}
         {state.groups.map((g) => {
@@ -1068,7 +1100,11 @@ export function SuperSurface(props: SuperSurfaceProps) {
         );
       })()}
       <div ref={layerRef} className="super-stage-layer" aria-hidden />
-      {full && <CardFullscreenView subject={full.subject} cardId={full.id} onClose={() => setFull(null)} />}
+      {full && (
+        <CardSelectionScope id={full.id} onComment={props.onCommentCardText} onCommented={() => setFull(null)}>
+          <CardFullscreenView subject={full.subject} cardId={full.id} onClose={() => setFull(null)} />
+        </CardSelectionScope>
+      )}
     </div>
   );
 }

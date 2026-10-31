@@ -1,0 +1,32 @@
+/* Copy and Comment under selected text. Over the viewers (1200): a page read full screen has it too. */
+.sel-bar {
+  position: fixed;
+  z-index: 1250;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.sel-bar-btn {
+  min-height: 26px;
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sel-bar-btn:hover,
+.sel-bar-btn:focus-visible { background: var(--color-bg-tertiary); }
+.sel-bar-btn--main { font-weight: 600; }
+@media (pointer: coarse) {
+  .sel-bar-btn { min-height: 44px; padding: 0 var(--space-3); }
+}

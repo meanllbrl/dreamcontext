@@ -24,6 +24,7 @@
  *
  * No React, no CSS imports — importable by root vitest with a `.js` specifier.
  */
+import { SELECTION_BRIDGE } from '../../../lib/textSelection';
 import {
   SANDBOX_CSP, SANDBOX_GRANT, SANDBOX_ALLOW, resolveTokens, buildSandboxSrcdoc,
 } from '../../../lib/sandboxHtml';
@@ -447,6 +448,7 @@ export function buildChatSrcdoc(input: ChatSrcdocInput): string {
     // BOTH legs in both modes: the reach bridge is what lets a click land and ⌘D/Esc be
     // heard, and a fullscreen deck needs Esc more than an inline card does.
     headScript: `${HEIGHT_BRIDGE}
+${SELECTION_BRIDGE}
 ${REACH_BRIDGE}
 ${KIT_BEHAVIOUR}`,
   });

@@ -1,17 +1,20 @@
 import { memo, useMemo, useRef, useState } from 'react';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
+import { SelectionItemContext } from './SelectionBar';
 import { agentFileUrl, type ApiClient } from '../../../api/client';
 import { useApi, useVault } from '../../../context/VaultContext';
 import {
   useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateTokens,
-  inlineMediaKind, pictureRuns, splitPictureParts, splitUserBoardRefs, splitUserMediaAndPictures, revealPath,
+  inlineMediaKind, inlineRuns, splitUserBoardRefs, splitUserMediaAndPictures, revealPath,
 } from './chatEntities';
 import { parseChatActions, type ChatAction, type ChatSegment } from './chatActions';
 import type { ReplyHead } from './replyLinks';
 import { ActionRow } from './ActionRow';
 import { PictureChip } from './ComposerRefLayer';
-import { GLYPH_IMAGE } from './composerRefs';
+import { GLYPH_IMAGE, refLabel } from './composerRefs';
+import { cardGlyph } from '../../../lib/cardMention';
+import { useStageCards } from '../super/stageCards';
 import './composer.css';
 import { BoardEmbed } from './BoardEmbed';
 import { MediaEmbed } from './MediaEmbed';
@@ -162,6 +165,7 @@ function UserMessage({
             onJump={onReplyJump ? () => onReplyJump(about.ref, about.from, item.id) : undefined}
           />
         )
+        : about?.kind === 'card' ? <ReplyStrip label={t('super.reply.toCard')} quotes={[about.quote]} />
         : about && <AgendaAboutStrip about={about} superSid={session && (session.mode === 'super' || session.superMirror) ? session.claudeId : null} />}
       {page && <PageStrip label={t('super.page.label')} text={pageChipName(page, (p) => (p in PAGE_LABEL_KEY ? t(PAGE_LABEL_KEY[p as Page]) : p))} />}
       {media.length > 0 && (
@@ -178,7 +182,7 @@ function UserMessage({
       )}
       {parts
         ? <PartsBubble preamble={text} parts={parts} itemId={item.id} superSid={superView && session ? session.claudeId : null} onReplyJump={onReplyJump} onOpenFile={onOpenFile} />
-        : text && (splitPictureParts(text)
+        : text && (inlineRuns(text)
           ? <div className="chat-msg-user-bubble"><PictureWords text={text} onOpenFile={onOpenFile} /></div>
           : <div className="chat-msg-user-bubble">{text}</div>)}
       {/* The one item whose position in the transcript runs ahead of the truth: a steered
@@ -217,18 +221,21 @@ function UserMessage({
 /**
  * His words with the pictures he put in them (owner 2026-10-28: "exactly like in the composer"):
  * one line of text, each `[Picture N: <path>]` drawn as the composer's own picture chip where it
- * stood, his words continuing after it. The marker never reaches the DOM; a click on a chip opens
- * the picture large. Text without a picture line is returned as it is.
+ * stood, his words continuing after it, and each stage card he named (`@card:<id> “<title>”`,
+ * owner 2026-10-31) as the card's chip. The marker never reaches the DOM; a click on a picture
+ * opens it large, on a card brings the card into view. Text with neither is returned as it is.
  */
 function PictureWords({ text, onOpenFile }: { text: string; onOpenFile?: (path: string) => void }) {
   const { vault } = useVault();
-  const runs = pictureRuns(text);
+  const runs = inlineRuns(text);
   if (!runs) return <>{text}</>;
   return (
     <span className="chat-msg-pics" data-testid="chat-msg-pictures">
       {runs.map((r, i) => (r.kind === 'text'
         // eslint-disable-next-line react/no-array-index-key -- runs are positional in one sent text
         ? <span key={i}>{r.text}</span>
+        // eslint-disable-next-line react/no-array-index-key -- runs are positional in one sent text
+        : r.kind === 'card' ? <SentCardChip key={i} id={r.id} title={r.title} />
         : (
           <PictureChip
             // eslint-disable-next-line react/no-array-index-key -- runs are positional in one sent text
@@ -242,6 +249,33 @@ function PictureWords({ text, onOpenFile }: { text: string; onOpenFile?: (path: 
           />
         )))}
     </span>
+  );
+}
+
+/**
+ * A stage card named in a sent message (owner 2026-10-31): the composer's chip, its picture (a
+ * picture card) or its kind's icon, then the title it was sent with. A click brings the card into
+ * view; a card no longer on the stage keeps its title and does nothing (its tooltip says so).
+ */
+function SentCardChip({ id, title }: { id: string; title: string }) {
+  const { t } = useI18n();
+  const stage = useStageCards();
+  const card = stage?.cardOf(id) ?? null;
+  const name = title || id;
+  return (
+    <PictureChip
+      sent
+      img={card?.img}
+      icon={card?.img ? undefined : cardGlyph(card?.kind)}
+      lead={GLYPH_IMAGE}
+      rest={`\u00A0${refLabel({ name })}`}
+      refId={id}
+      testId="chat-msg-card"
+      // Nothing to press (gone, or no stage in this window): drawn quieter, never as an error.
+      state={card ? 'ready' : 'gone'}
+      title={stage && !card ? `${name} · ${t('chat.chip.cardGone')}` : name}
+      onOpen={stage && card ? () => stage.open(id) : undefined}
+    />
   );
 }
 
@@ -500,6 +534,7 @@ function AssistantMessage({
   }
 
   return (
+    <SelectionItemContext.Provider value={item.id}>
     <div className="chat-msg-assistant-row" data-done={item.done} data-item-id={item.id} data-reply-grp={replyGroup} tabIndex={-1}>
       {/* WRITTEN ORDER. Prose runs and blocks are siblings in the row's own flex column, so
           a card sits between the paragraph that introduces it and the one that says what to
@@ -563,6 +598,7 @@ function AssistantMessage({
         />
       )}
     </div>
+    </SelectionItemContext.Provider>
   );
 }
 

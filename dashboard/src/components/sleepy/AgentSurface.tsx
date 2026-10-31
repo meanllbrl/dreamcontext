@@ -4,7 +4,7 @@ import {
 } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import './AgentTerminal.css';
-import { api, RequestError } from '../../api/client';
+import { agentFileUrl, api, RequestError } from '../../api/client';
 import { useVault, useApi, useInstanceEvent, emitInstance } from '../../context/VaultContext';
 import { uploadAgentFile } from '../../lib/agentDrop';
 import {
@@ -143,7 +143,10 @@ import {
   SUPER_CHILD_VERBS, windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
   linkOpensSuperStage, presenceChatId, leanMcpFor, agendaAboutBlock, agendaRefName, type AgendaRow,
   freshPending, superDockLift, superDockOn, superDockPill, superSlotFor,
+  cardSelectionBlock, selectionQuote,
 } from './super/superHandover';
+import { StageCardsContext, type StageCardInfo, type StageCards } from './super/stageCards';
+import { cardMentionText, cleanCardTitle } from '../../lib/cardMention';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
 import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperPad, postSuperRecap, remoteSkippedTitles } from './super/superApi';
 import { fetchRemoteStage, postRemoteLayout, remoteLayoutPatch, remoteStageState } from './super/remoteStage';
@@ -4157,12 +4160,54 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     return () => clearInterval(tick);
   }, [endPending, chatByClaudeId, endChildNow]);
 
+  /** What the Super chat knows of a stage card (its icon, a picture card's picture), by id. A new
+   *  function only when the set of cards changes (one closed, one opened), so a sent chip redraws
+   *  then, and not on every other state push. */
+  const stageCardsKey = useMemo(() => [
+    ...(superState?.containers ?? []).map((c) => `${c.id}:${c.kind}:${c.kind === 'image' ? c.ref : ''}`),
+    ...(superState?.groups ?? []).map((g) => g.id),
+  ].join('\n'), [superState?.containers, superState?.groups]);
+  const stageCardOf = useCallback((id: string): StageCardInfo | null => {
+    const st = superStateRef.current;
+    const c = st?.containers.find((x) => x.id === id);
+    // `(`, `)` and `'` escaped too: the URL is painted in `url("…")` and a kept draft only takes it
+    // without them (a "photo (2).png" keeps its picture).
+    const img = c?.kind === 'image' && c.ref ? agentFileUrl(vault, c.ref, { raw: true }).replace(/[()']/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`) : '';
+    if (c) return { kind: c.kind, ...(img ? { img } : {}) };
+    return st?.groups.some((g) => g.id === id) ? { kind: 'group' } : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the key IS the cards it reads
+  }, [vault, stageCardsKey]);
+
+  /**
+   * A card dropped on the centre (O11; owner 2026-10-31: a chip, not its raw words): a chip at the
+   * caret in the Super Agent's composer, its icon or its picture and its title, the way a picked
+   * element arrives. The send writes `@card:<id> “<title>”` where it stands, as the drop always did.
+   */
   const askAboutCard = useCallback((id: string, title: string) => {
     const cs = superChatRef.current;
     if (!cs || cs.status === 'closed') return;
-    cs.sendText(cardReference(id, title, cs.getModel().draft));
+    const convId = cs.scratchId || cs.claudeId;
+    const info = stageCardOf(id);
+    if (!convId) { cs.sendText(cardReference(id, title, cs.getModel().draft)); return; }
+    addAttachments(convId, [{
+      id: nextAttachmentId(), kind: 'card', name: cleanCardTitle(title) || id, text: cardMentionText(id, title),
+      ...(info ? { cardKind: info.kind } : {}), ...(info?.img ? { url: info.img } : {}),
+      inline: true, pending: true,
+    }]);
     requestAnimationFrame(() => cs.focus());
-  }, []);
+  }, [stageCardOf]);
+
+  /** A card chip in a Super message was clicked: bring the stage up and that card into view. */
+  const [cardFocus, setCardFocus] = useState<string | null>(null);
+  const stageCards = useMemo<StageCards>(() => ({
+    cardOf: stageCardOf,
+    open: (id: string) => {
+      if (!stageCardOf(id)) return;
+      setSuperView('super');
+      setExpanded(true);
+      setCardFocus(id);
+    },
+  }), [stageCardOf]);
 
   /**
    * Inspect picked an element in a web card's page (owner 2026-10-22: "the selected component
@@ -4191,6 +4236,17 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       trackUpload(convId, job);
     }
   }, [vault]);
+
+  /** Comment on words selected on a card (owner 2026-10-31): a chip at the caret, like ↩'s. */
+  const commentOnCard = useCallback((id: string, text: string) => {
+    const cs = superChatRef.current;
+    if (!cs || cs.status === 'closed') return;
+    const convId = cs.scratchId || cs.claudeId;
+    const block = cardSelectionBlock(id, text);
+    if (!convId || !block) return;
+    insertRef(convId, { id: nextAttachmentId(), kind: 'about', name: `${t('super.ref.card')} ${selectionQuote(text)}`, text: block });
+    requestAnimationFrame(() => cs.focus());
+  }, [t]);
 
   /**
    * "Write about this" on an agenda line (owner 2026-10-23): the line drops into the Super
@@ -6040,6 +6096,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
         {handedOver && superState && (
           <SuperSurface
             state={superState}
+            focusCard={cardFocus}
+            onFocusCardDone={() => setCardFocus(null)}
             initialWidth={superWidth || hostRef.current?.clientWidth || 0}
             initialHeight={hostRef.current?.clientHeight || 0}
             visible={expanded && !windowActivity.hidden}
@@ -6066,6 +6124,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             onStageReady={onStageReady}
             onAskAbout={askAboutCard}
             onPickElement={pickElementFromCard}
+            onCommentCardText={commentOnCard}
             onWriteAbout={writeAboutRow}
             onEndChild={endChildFromCard}
             onKeepChild={keepChildRunning}
@@ -6586,6 +6645,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
           `/model`/`/effort` slash path — chatChangeModelFor/EffortFor just update the picker
           state for the NEXT resume; see the plan's scope call C). */}
       {chatPanes.map((cs) => createPortal(
+        <StageCardsContext.Provider key={cs.id} value={cs.mode === 'super' && handedOver ? stageCards : null}>
         <ChatPaneHost
           key={cs.id}
           session={cs}
@@ -6616,7 +6676,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
           readOnly={marked.has(cs.claudeId)}
           idlePlaceholder={cs.mode === 'super' ? t('super.centre.placeholder') : undefined}
           aboveComposer={cs.id === mobileActive?.id ? phoneToastEl : undefined}
-        />,
+        />
+        </StageCardsContext.Provider>,
         cs.container,
         `chat-${cs.id}`,
       ))}

@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { useI18n } from '../../context/I18nContext';
 import { useTheme } from '../../context/ThemeContext';
 import { SANDBOX_ALLOW, buildSandboxSrcdoc } from '../../lib/sandboxHtml';
+import { SELECTION_BRIDGE } from '../../lib/textSelection';
+import { frameEscSpent, useFrameSelection } from '../sleepy/chat/SelectionBar';
 import { pageDefaultCss } from '../../lib/pageDefaultCss';
 import {
   CHAT_HTML_KIT_CSS, CHAT_HTML_SANDBOX, HEIGHT_BRIDGE, HEIGHT_REQUEST_KEY, MAX_HTML_HEIGHT,
@@ -55,7 +57,9 @@ export function FrameViewer({ subject, deviceKey, onClose }: { subject: FrameSub
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [stage, setStage] = useState<Size | null>(null);
   const [pageHeight, setPageHeight] = useState<number | null>(null);
-  const [interact, setInteract] = useState(false);
+  // A project page opens ready to read: a drag selects its words (the zoom bridge keeps wheel and
+  // pinch). Not by touch: a finger pans through the shield, and the bridge carries no drag.
+  const [interact, setInteract] = useState(() => subject.kind === 'html' && !window.matchMedia?.('(pointer: coarse)').matches);
   const title = subject.kind === 'html' ? fileNameOf(subject.path) : subject.title;
   const [chosenDevice, setDevice] = useWebDevice(deviceKey ?? null);
   const device = subject.kind === 'page' ? chosenDevice : null;
@@ -152,7 +156,7 @@ export function FrameViewer({ subject, deviceKey, onClose }: { subject: FrameSub
       if (h !== null) { setPageHeight(Math.min(MAX_HTML_HEIGHT, Math.max(1, h))); return; }
       const m = readZoomMessage(event.data);
       if (!m) return;
-      if (m.kind === 'escape') { onClose(); return; }
+      if (m.kind === 'escape') { if (!frameEscSpent()) onClose(); return; }
       if (m.kind === 'dblclick') return;
       // The frame's coordinates, on the screen: its box is already transformed.
       const r = frameRef.current!.getBoundingClientRect();
@@ -245,13 +249,14 @@ function HtmlFrame({ path, frameRef, onHeightRequest }: {
 }) {
   const { t } = useI18n();
   const { resolved: theme } = useTheme();
+  useFrameSelection(frameRef);
   const state = useProjectHtml(path);
   const [torn, setTorn] = useState(false);
   const loads = useRef(0);
   const html = state.html;
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
-      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, overrideCss: pageDefaultCss(true), headScript: `${HEIGHT_BRIDGE}\n${LINK_GUARD}\n${ZOOM_BRIDGE}`,
+      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, overrideCss: pageDefaultCss(true), headScript: `${HEIGHT_BRIDGE}\n${SELECTION_BRIDGE}\n${LINK_GUARD}\n${ZOOM_BRIDGE}`,
     })),
     [html, theme],
   );
