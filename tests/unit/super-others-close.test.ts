@@ -12,11 +12,12 @@
  * Fictional names throughout.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { panelCloseOf, panelCols, panelRect, runPanelClose, type PanelClose } from '../../dashboard/src/components/sleepy/super/GroupPanel.js';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const read = (f: string) => readFileSync(join(ROOT, f), 'utf-8');
 
 const paths = () => ({ closeCard: vi.fn(), endChat: vi.fn(), closeGroup: vi.fn() });

@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promises as fsp } from 'node:fs';
 import { homedir } from 'node:os';
+import { normalize } from 'node:path';
 import { resolveLinkedRepos } from '../linked-repos.js';
 import { worktreeIsolationAllowed } from '../worktree-gate.js';
 import { safeChildPath } from '../../server/safe-path.js';
@@ -94,12 +95,13 @@ export function resolveWorktreeRepo(projectRoot: string, name: unknown, home?: s
 
 interface PorcelainEntry { path: string; branch: string | null }
 
+/** git prints `D:/a/b` on Windows; the paths compared against these are `D:\a\b`. */
 async function porcelain(repoPath: string): Promise<PorcelainEntry[]> {
   const out = await gitOk(repoPath, ['worktree', 'list', '--porcelain'], 'git worktree list');
   const entries: PorcelainEntry[] = [];
   let cur: PorcelainEntry | null = null;
   for (const line of out.split('\n')) {
-    if (line.startsWith('worktree ')) { cur = { path: line.slice(9), branch: null }; entries.push(cur); }
+    if (line.startsWith('worktree ')) { cur = { path: normalize(line.slice(9)), branch: null }; entries.push(cur); }
     else if (cur && line.startsWith('branch ')) cur.branch = line.slice(7).replace(/^refs\/heads\//, '');
   }
   return entries;

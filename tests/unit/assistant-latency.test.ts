@@ -329,9 +329,10 @@ describe('the Assistant carries its own settings, not the owner\'s global ones',
       for (const mode of ['assistant', 'basic'] as const) {
         const { child } = spawnChat({ mode });
         const a = argvOf(child);
-        expect(a.slice(a.indexOf('--mcp-config') + 1)).toContain('$DREAMCONTEXT_MCP_CFG_0');
+        const win = process.platform === 'win32'; // no shell there: the argv carries the path
+        expect(a.slice(a.indexOf('--mcp-config') + 1)).toContain(win ? store : '$DREAMCONTEXT_MCP_CFG_0');
         expect(child.env.DREAMCONTEXT_MCP_CFG_0).toBe(store);
-        expect(child.script).not.toContain(store);
+        if (!win) expect(child.script).not.toContain(store);
       }
     } finally {
       rmSync(join(fakeHome, '.claude.json'), { force: true });

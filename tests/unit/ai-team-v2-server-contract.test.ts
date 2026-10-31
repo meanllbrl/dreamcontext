@@ -18,7 +18,7 @@
 import { onTestFinished, describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, normalize } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createProgram } from '../../src/cli/program.js';
@@ -600,7 +600,7 @@ describe('AC-A1-5 the figure', () => {
     const past = new Date(NOW.getTime() - 86_400_000);
     utimesSync(older, past, past);
     const stamped = backfillFaces(contextRoot);
-    expect(stamped.sort()).toEqual([newer, older].sort());
+    expect(stamped.map((p) => normalize(p)).sort()).toEqual([newer, older].sort());
     expect(getAgent(contextRoot, twin)!.face).toEqual(baseFigure(twin));
     expect(getAgent(contextRoot, 'alpha')!.face).not.toEqual(baseFigure('alpha'));
     const snapshot = [readFileSync(older, 'utf-8'), readFileSync(newer, 'utf-8')];
@@ -738,7 +738,7 @@ describe('review r1: the backfill never stamps a shared file', () => {
     writeFileSync(shared, '---\nid: agt_s\ntitle: Team scout\nshared: true\n---\n\n## Prompt\n\nS.\n');
     writeFileSync(own, '---\nid: agt_o\ntitle: Own scout\nshared: false\n---\n\n## Prompt\n\nO.\n');
     const before = readFileSync(shared, 'utf-8');
-    expect(backfillFaces(contextRoot)).toEqual([own]);
+    expect(backfillFaces(contextRoot).map((p) => normalize(p))).toEqual([own]);
     expect(readFileSync(shared, 'utf-8')).toBe(before);
     expect(backfillFaces(contextRoot)).toEqual([]);
   });

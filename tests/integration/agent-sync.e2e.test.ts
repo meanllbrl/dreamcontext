@@ -287,7 +287,8 @@ describe('B1 e2e: agents ride the brain sync', { timeout: 120_000 }, () => {
     expect(deferred.action).toBe('awaiting-agent');
     writeFileSync(join(m2.ctx, 'knowledge', 'shared.md'), '# shared\n\n## Notes\n\nalice\nbob\n', 'utf-8');
     expect((await sync(m2, { continue: true })).action).toBe('pushed');
-    expect(readFileSync(join(m2.ctx, 'automations', 'output', 'researcher', '2026-10-25.md'), 'utf-8')).toBe(warnText);
+    // Line endings aside: a fake HOME drops the job's autocrlf=false, and Git for Windows defaults it on.
+    expect(readFileSync(join(m2.ctx, 'automations', 'output', 'researcher', '2026-10-25.md'), 'utf-8').replace(/\r\n/g, '\n')).toBe(warnText);
     await sync(m1);
     await sync(m2);
     expect(readFileSync(join(m1.ctx, 'automations', 'output', 'researcher', '2026-10-25.md'), 'utf-8')).toBe(warnText);
@@ -426,8 +427,9 @@ describe('B1 e2e: agents ride the brain sync', { timeout: 120_000 }, () => {
     writeFileSync(join(b.ctx, 'automations', 'threads', 'diary', `${TODAY}.md`), 'private thoughts\n', 'utf-8');
     git(b.proj, ['add', '-A']);
     const pass = agentStagePass(b.proj, b.ctx, { home });
-    const nfc = sub.normalize('NFC');
-    expect(pass.held.sort()).toEqual([`${nfc}/_dream_context/agents/diary.md`, `${nfc}/_dream_context/automations/threads/diary/${TODAY}.md`]);
+    // git reports the name as the filesystem keeps it: precomposed on macOS, as written elsewhere.
+    const name = process.platform === 'darwin' ? sub.normalize('NFC') : sub;
+    expect(pass.held.sort()).toEqual([`${name}/_dream_context/agents/diary.md`, `${name}/_dream_context/automations/threads/diary/${TODAY}.md`]);
     expect(git(b.repo, ['diff', '--cached', '--name-only'])).toBe('');
     // alice pushes an agent file of the same name: bob's pull is skipped, his file stays.
     writeFileSync(join(a.ctx, 'agents', 'diary.md'), '---\nslug: diary\n---\n\nalice.\n', 'utf-8');

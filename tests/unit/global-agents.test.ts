@@ -250,9 +250,11 @@ describe('its memory: a journal, folded by one consolidator at a time (AC-D1-3)'
       consolidateGlobalMemory('scout');
     `);
     const runOne = (project: string, n: number) => new Promise<number>((resolve) => {
-      const child = spawn(join(REPO, 'node_modules', '.bin', 'vite-node'), [script, project, String(n)], {
+      // node + the package's own entry: on Windows .bin holds a .cmd that spawn cannot start.
+      const child = spawn(process.execPath, [join(REPO, 'node_modules', 'vite-node', 'dist', 'cli.mjs'), script, project, String(n)], {
         cwd: REPO, env: { ...process.env, HOME: fakeHome }, stdio: 'ignore',
       });
+      child.on('error', () => resolve(1));
       child.on('exit', (code) => resolve(code ?? 1));
     });
     const codes = await Promise.all(Array.from({ length: 10 }, (_, i) => runOne(i % 2 ? a.project : b.project, i)));

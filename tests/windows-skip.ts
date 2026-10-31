@@ -220,12 +220,12 @@ export const WINDOWS_SKIPS: readonly WindowsSkip[] = [
   {
     file: 'tests/unit/super-disk-leftovers.test.ts',
     test: 'measureLeftovers',
-    reason: 'Red on the Linux CI job too (run 40111187972; passes on macOS): the Rust-target scan finds none on a fresh runner.',
+    reason: 'Sizes come from `du`, which Windows does not ship, so every row measures 0. (On Linux this was a real bug, fixed in diskUsage: GNU du skips a path nested in another it was given.)',
   },
   {
     file: 'tests/unit/super-disk-leftovers.test.ts',
     test: 'super clean',
-    reason: 'Same fixture as measureLeftovers above; red on the Linux CI job too.',
+    reason: 'Same `du` dependency as measureLeftovers above.',
   },
   {
     file: 'tests/unit/sleep-eval-score.test.ts',
@@ -315,5 +315,210 @@ export const WINDOWS_SKIPS: readonly WindowsSkip[] = [
     file: 'tests/integration/automations-cli.test.ts',
     test: 'on a flow-hitl question resumes the asking session',
     reason: 'Needs a spawnable stand-in for claude: on POSIX the `$SHELL -ilc` fallback starts a process even with no claude installed (SAFE_PATH hides it), so the run spawns and then fails. On Windows with no claude the spawn fails synchronously, which by design (the same branch POSIX takes on a synchronous spawn failure) leaves the question pending for the next tick.',
+  },
+  {
+    file: 'tests/unit/mcp-store.test.ts',
+    test: 'puts every server in the right store',
+    reason: 'Asserts mode 0600 on the written stores; Windows reports no POSIX mode.',
+  },
+  {
+    file: 'tests/unit/mcp-store.test.ts',
+    test: 'skips a project store that is not 0600',
+    reason: 'The 0600 gate is POSIX only: Windows has no mode to read (mcp-store.ts).',
+  },
+  {
+    file: 'tests/unit/mcp-store.test.ts',
+    test: 'skips a store owned by another uid',
+    reason: 'Fakes process.getuid, which does not exist on Windows.',
+  },
+  {
+    file: 'tests/unit/agent-mcp-routes.test.ts',
+    test: 'a new server with the default scope',
+    reason: 'Asserts mode 0600 on the written store; Windows reports no POSIX mode.',
+  },
+  {
+    file: 'tests/unit/ai-team-v2-server-contract.test.ts',
+    test: 'writes the home session once',
+    reason: 'Asserts POSIX modes on the session file; Windows reports none.',
+  },
+  {
+    file: 'tests/unit/voice-cue.test.ts',
+    test: 'renders with an argument list',
+    reason: 'Asserts POSIX modes on the cue folder; Windows reports none.',
+  },
+  {
+    file: 'tests/unit/voice-take-store.test.ts',
+    test: 'an existing 0755 directory becomes 0700',
+    reason: 'Asserts POSIX modes; Windows reports none.',
+  },
+  {
+    file: 'tests/unit/task-history-workspace.test.ts',
+    test: 'a refill replaces a hard link',
+    reason: 'Asserts mode 0600 on the replaced file; Windows reports no POSIX mode.',
+  },
+  {
+    file: 'tests/unit/super-ask-show.test.ts',
+    test: 'keeps project pictures',
+    reason: 'An absolute src here is join(project, ...), and a backslash in an HTML src is refused by design (ask-show-src.ts).',
+  },
+  {
+    file: 'tests/unit/npm-target.test.ts',
+    test: 'reads the prefix off the bin symlink',
+    reason: 'The prefix/bin/dreamcontext symlink layout is POSIX; a Windows npm global is a .cmd shim beside node.',
+  },
+  {
+    file: 'tests/unit/npm-target.test.ts',
+    test: 'a prefix without npm',
+    reason: 'POSIX bin/npm layout; on Windows npm is npm.cmd beside node.',
+  },
+  {
+    file: 'tests/unit/super-worktree-sweep.test.ts',
+    test: 'keeps a worktree with a process cwd inside it',
+    reason: 'POSIX fixture paths against a sep-joined match. The sweep needs lsof and ps anyway: on Windows the listing fails and it keeps everything.',
+  },
+  {
+    file: 'tests/unit/super-worktree-sweep.test.ts',
+    test: 'keeps a worktree with a command line naming it',
+    reason: 'Same POSIX fixture paths as the entry above; the sweep keeps everything on Windows.',
+  },
+  {
+    file: 'tests/unit/super-worktree-sweep.test.ts',
+    test: 'keeps a worktree with the global CLI link target',
+    reason: 'Same POSIX fixture paths as the entry above; the sweep keeps everything on Windows.',
+  },
+  {
+    file: 'tests/unit/super-worktree-sweep.test.ts',
+    test: 'planSweep and applySweep on a scratch root',
+    reason: 'Needs `du`, and POSIX ages set on directories git then touches. Every Windows row stays kept, which is the safe side.',
+  },
+  {
+    file: 'tests/unit/voice-phone-stt.test.ts',
+    test: 'the retry ladder',
+    reason: 'Same #!/bin/sh fake whisper-server.',
+  },
+  {
+    file: 'tests/unit/voice-whisper.test.ts',
+    test: 'which language is sent',
+    reason: 'Same #!/bin/sh fake whisper-server.',
+  },
+  {
+    file: 'tests/unit/voice-whisper.test.ts',
+    test: 'the primer is withheld',
+    reason: 'Same #!/bin/sh fake whisper-server.',
+  },
+  {
+    file: 'tests/unit/voice-server.test.ts',
+    test: 'answers from the local engine',
+    reason: 'Same #!/bin/sh fake whisper-server.',
+  },
+  {
+    file: 'tests/unit/voice-server.test.ts',
+    test: 'an installed whisper that does not answer',
+    reason: 'Same #!/bin/sh fake whisper-server.',
+  },
+  {
+    file: 'tests/integration/task-jobs.e2e.test.ts',
+    test: 'two agents\' due tasks start in one tick',
+    reason: 'The stand-in claude is a #!/usr/bin/env node script, which Windows cannot start as a binary.',
+  },
+  {
+    file: 'tests/integration/task-jobs.e2e.test.ts',
+    test: 'AC-C1-3: a host that dies',
+    reason: 'Same stand-in claude; it also needs SIGKILL semantics.',
+  },
+  {
+    file: 'tests/integration/task-jobs.e2e.test.ts',
+    test: 'AC-C1-5 + AC-C1-12',
+    reason: 'Same stand-in claude: a node script Windows cannot start as a binary.',
+  },
+  {
+    file: 'tests/integration/task-jobs.e2e.test.ts',
+    test: 'AC-C1-11: a second machine',
+    reason: 'Same stand-in claude: a node script Windows cannot start as a binary.',
+  },
+  {
+    file: 'tests/integration/agent-sync.e2e.test.ts',
+    test: 'a teammate\'s .gitignore negation',
+    reason: 'Builds its incoming symlink with `ln -s`, whose target spelling is POSIX.',
+  },
+  {
+    file: 'tests/unit/task-history-workspace.test.ts',
+    test: 'a task worktree is filled raw',
+    reason: 'Asserts the exec bit and a stored symlink as POSIX modes; Windows reports neither.',
+  },
+  {
+    file: 'tests/unit/voice-retranscribe.test.ts',
+    test: 'own take → one pass forced',
+    reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
+  },
+  {
+    file: 'tests/unit/voice-retranscribe.test.ts',
+    test: 'no ref → the chat',
+    reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
+  },
+  {
+    file: 'tests/unit/voice-retranscribe.test.ts',
+    test: 'a third retry of one take',
+    reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
+  },
+  {
+    file: 'tests/unit/voice-dictation-choice.test.ts',
+    test: 'a take loads it, and it is unloaded',
+    reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
+  },
+  {
+    file: 'tests/unit/voice-dictation-choice.test.ts',
+    test: 'pressure unloads a loaded model at once',
+    reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
+  },
+  {
+    file: 'tests/unit/voice-dictation-choice.test.ts',
+    test: 'the watch that runs while loaded',
+    reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
+  },
+  {
+    file: 'tests/unit/voice-dictation-choice.test.ts',
+    test: '/stt under pressure refuses',
+    reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
+  },
+  {
+    file: 'tests/unit/voice-dictation-choice.test.ts',
+    test: 'a chosen model the machine cannot carry',
+    reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
+  },
+  {
+    file: 'tests/unit/voice-dictation-choice.test.ts',
+    test: 'a server WE stop while it loads',
+    reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
+  },
+  {
+    file: 'tests/unit/voice-dictation-choice.test.ts',
+    test: 'pressure during a take waits',
+    reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
+  },
+  {
+    file: 'tests/unit/voice-dictation-choice.test.ts',
+    test: 'our own loaded model is credited back',
+    reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
+  },
+  {
+    file: 'tests/unit/voice-dictation-choice.test.ts',
+    test: 'a take for a different model stops the old server',
+    reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
+  },
+  {
+    file: 'tests/unit/voice-phone-stt.test.ts',
+    test: 'a phone take within the caps',
+    reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
+  },
+  {
+    file: 'tests/unit/voice-phone-stt.test.ts',
+    test: 'a phone take over 2 minutes',
+    reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
+  },
+  {
+    file: 'tests/unit/voice-phone-stt.test.ts',
+    test: 'one phone take in flight',
+    reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
   },
 ];
