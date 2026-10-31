@@ -34,6 +34,14 @@ describe('New Chat instead of a closed window', () => {
     const [r] = buildDrawerRows({ projects: [project('a')], activeVault: null, expanded: ['a'], facts: {}, fanout: {} });
     expect(kinds(r)).toEqual(['super']);
   });
+  it('a mounted project still restoring offers nothing', () => {
+    const [r] = buildDrawerRows({ projects: [project('a', { mounted: true })], activeVault: 'a', expanded: ['a'], facts: { a: { superOn: false, superSelected: false, chatOpen: false, team: [] } }, fanout: {} });
+    expect(kinds(r)).toEqual(['super']);
+  });
+  it('a failed read is not an empty project', () => {
+    const [r] = buildDrawerRows({ projects: [project('a')], activeVault: null, expanded: ['a'], facts: {}, fanout: { a: { tabs: 0, superOn: false, team: [] } } });
+    expect(kinds(r)).toEqual(['super']);
+  });
 });
 
 describe("a Super Agent's job is not on the drawer", () => {
@@ -90,8 +98,16 @@ describe('one step to what was clicked', () => {
 describe('a project is a job, the first project is the only job', () => {
   const flow = src('dashboard/src/pages/onboarding/Onboarding.tsx');
   it('no project yet: nothing to skip to', () => {
-    expect(flow).toMatch(/\{purpose !== 'first-run' && \(\s*<button[^>]*ob-skip/);
-    expect(src('dashboard/src/pages/LauncherPage.tsx')).toContain("purpose={vaults.length === 0 ? 'first-run'");
+    expect(flow).toMatch(/\{purpose !== 'first-run' && !\(task && stage === 'handoff'\) && \(\s*<button[^>]*ob-skip/);
+    const launcher = src('dashboard/src/pages/LauncherPage.tsx');
+    expect(launcher).toContain("purpose={!newShell ? 'setup' : data && vaults.length === 0 ? 'first-run'");
+  });
+  it('the Mac step never traps a first run', () => {
+    expect(flow).toMatch(/purpose === 'first-run' && stage === 'machine' && !welcoming[\s\S]*setStage\('project'\)/);
+  });
+  it('an existing project opens as it is, never on a fresh chat', () => {
+    expect(src('dashboard/src/components/layout/newshell/NewProjectFlow.tsx')).toContain("onLand(name, 'existing')");
+    expect(src('dashboard/src/components/layout/WindowChrome.tsx')).toContain("how ? { kind: 'open-window' } : { kind: 'new-window' }");
   });
   it('from the drawer: a task, no steps, and Cancel', () => {
     expect(src('dashboard/src/components/layout/newshell/NewProjectFlow.tsx')).toContain('purpose="new-project"');

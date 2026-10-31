@@ -455,6 +455,8 @@ function carryQueueInto(next: ChatSession, held: string[], queued: { texts: stri
 const LINKED_SESSION_WAIT_MS = 8_000;
 /** On top of that wait, the longest a drawer arrival may stand before the wait gives up. */
 const ARRIVAL_SLACK_MS = 12_000;
+/** How long a fresh chat tries to take the keys while its pane lands (about a second). */
+const FOCUS_SETTLE_FRAMES = 60;
 const LINKED_SESSION_POLL_MS = 150;
 /** The onboarding start intent's wait for caps, settings and roster: the plan's 10 s bound. */
 const START_INTENT_WAIT_MS = 10_000;
@@ -767,6 +769,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   /** Cards the owner closed whose close has not reached the record yet (an exit names them). */
   const pendingCloses = useCallback(() => pendingPatchesRef.current.flatMap((p) => p.closed ?? []), []);
   const [superView, setSuperView] = useState<'panes' | 'super'>('panes');
+  /** `hydratedRef` as state: the drawer's window facts wait for it. */
+  const [rosterKnown, setRosterKnown] = useState(false);
   const superViewRef = useRef(superView);
   superViewRef.current = superView;
   const [superMotion, setSuperMotion] = useState<'idle' | 'running'>('idle');
@@ -1528,7 +1532,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
           setChatWindows(seeded);
         }
       } catch { /* no saved roster (or non-desktop 403) — just start fresh */ }
-      finally { if (!cancelled) { hydratedRef.current = true; openOnRestoreRef.current(); } }
+      finally { if (!cancelled) { hydratedRef.current = true; setRosterKnown(true); openOnRestoreRef.current(); } }
     })();
     return () => { cancelled = true; };
   }, [caps, settingsReady, agentSettings.restoreTabs, agentSettings.chatView, scopedApi, rehydrateNonce, windowed]);
@@ -5225,7 +5229,15 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     if (shownPanes.length === 0 && canSpawn) {
       const sid = addSession(claudeKind);
       // Ready to type: the composer exists once its pane has landed.
-      if (sid) requestAnimationFrame(() => requestAnimationFrame(() => focusTerm(sid)));
+      if (sid) {
+        let frames = 0;
+        const settle = () => {
+          focusTerm(sid);
+          const box = sessions.current.get(sid)?.container;
+          if (!box?.contains(document.activeElement) && (frames += 1) < FOCUS_SETTLE_FRAMES) requestAnimationFrame(settle);
+        };
+        requestAnimationFrame(settle);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freshTabNonce]);
@@ -5759,10 +5771,12 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   });
   const peekMember = superPeek?.kind === 'member' ? superPeek.slug : null;
   const superMarks = superRowMarks(superState);
-  const windowFactsKey = JSON.stringify([chatWindows.activeId, windowFacts, shownFacts, peekMember, superMarks, arriving]);
+  const windowFactsKey = JSON.stringify([chatWindows.activeId, windowFacts, shownFacts, peekMember, superMarks, arriving, rosterKnown]);
   useEffect(() => {
     emitInstance<DrawerSurfaceState>(bus, DRAWER_SURFACE_EVENT, {
-      superOn, superSelected: (superSelected || arriving === 'super') && !peekMember, windows: windowFacts, activeWindowId: chatWindows.activeId,
+      superOn, superSelected: (superSelected || arriving === 'super') && !peekMember,
+      // Before the roster is restored every window reads empty: the drawer must not believe it.
+      ...(rosterKnown ? { windows: windowFacts, activeWindowId: chatWindows.activeId } : {}),
       shown: shownFacts, ...(peekMember ? { member: peekMember } : {}), superMarks,
     });
     // The facts are read through their key: a rebuilt array with the same rows sends nothing.

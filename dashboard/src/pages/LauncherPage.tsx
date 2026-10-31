@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo, useState } from 'react';
-import { LauncherOpenContext, NewProjectLandContext } from '../lib/uxMode';
+import { LauncherOpenContext, NewProjectLandContext, useIsNewShell } from '../lib/uxMode';
 import {
   useLauncherStatus,
   useUpdateProject,
@@ -71,6 +71,7 @@ export function LauncherPage({ embedded }: { embedded?: { startAddProject?: bool
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   /** The new shell lands a project in this window; null (classic) opens its own. */
   const landHere = useContext(NewProjectLandContext);
+  const newShell = useIsNewShell();
   /** Opened to add a project, not to finish setting the Mac up. */
   const [onboardingAdding, setOnboardingAdding] = useState(false);
   const readiness = useReadiness('machine');
@@ -400,11 +401,12 @@ export function LauncherPage({ embedded }: { embedded?: { startAddProject?: bool
         <Onboarding
           initialStage={onboarding}
           welcome={onboardingWelcome}
-          purpose={vaults.length === 0 ? 'first-run' : onboardingAdding ? 'new-project' : 'setup'}
+          // The classic shell keeps its flow. An unread list says nothing about having no projects.
+          purpose={!newShell ? 'setup' : data && vaults.length === 0 ? 'first-run' : onboardingAdding ? 'new-project' : 'setup'}
           onClose={() => { setOnboarding(null); setOnboardingDismissed(true); }}
           onOpenProject={async (vaultName) => {
             setOnboarding(null);
-            if (landHere) { landHere(vaultName); return; }
+            if (landHere) { landHere(vaultName, 'existing'); return; }
             await openVault(vaultName);
           }}
           onFinished={(vaultName) => {

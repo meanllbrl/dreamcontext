@@ -2565,6 +2565,7 @@ const translations: Record<string, Record<string, string>> = {
     'onboarding.project.firstTitle': 'Create your first project',
     'onboarding.project.firstSubtitle': 'Everything in dreamcontext lives in a project. Start something new, or bring a folder you already have.',
     'onboarding.cancel': 'Cancel',
+    'onboarding.machineLater': 'Do this later',
     'onboarding.project.subtitle': 'Start something new, or bring a folder you already have.',
     'onboarding.project.create.title': 'Create new',
     'onboarding.project.create.desc': 'Make a new folder and set dreamcontext up in it.',

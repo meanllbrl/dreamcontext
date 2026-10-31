@@ -33,7 +33,7 @@ import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { COARSE_POINTER_QUERY, useRemoteDesktop } from '../../hooks/useIsMobile';
 import { ChromeSlotsProvider, type ChromeSlots } from './chromeSlots';
 import { ProjectTabs, type ProjectChip } from './ProjectTabs';
-import { useIsNewShell } from '../../lib/uxMode';
+import { useIsNewShell, type NewProjectLanding } from '../../lib/uxMode';
 import { readLayoutPrefs, writeLayoutPrefs } from '../../lib/launcherPrefs';
 import { useLauncherStatus } from '../../hooks/useLauncher';
 import { TitleBar } from './newshell/TitleBar';
@@ -1014,7 +1014,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   }, []);
   /** New project landed: its row open and selected at once, with no reload. */
   const queueDrawerIntentRef = useRef<(vault: string, intent: DrawerIntent) => Promise<AddTabResult>>(async () => 'refused-ceiling');
-  const landNewProject = useCallback((name: string, start?: 'initializer') => {
+  const landNewProject = useCallback<NewProjectLanding>((name, how) => {
     setNewProjectOpen(false);
     setDrawerExpanded((cur) => {
       if (cur.includes(name)) return cur;
@@ -1024,11 +1024,11 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     });
     // It lands on its chat like any drawer click (its own start, the initializer, opens the chat
     // itself), so it comes up selected in the drawer, never on the page a project starts on.
-    void queueDrawerIntentRef.current(name, start ? { kind: 'open-window' } : { kind: 'new-window' }).then((result) => {
-      if (start && (result === 'added' || result === 'focused-tab')) {
+    void queueDrawerIntentRef.current(name, how ? { kind: 'open-window' } : { kind: 'new-window' }).then((result) => {
+      if (how === 'initializer' && (result === 'added' || result === 'focused-tab')) {
         startSeqRef.current += 1;
         const nonce = startSeqRef.current;
-        setPendingStarts((prev) => ({ ...prev, [name]: { intent: start, nonce } }));
+        setPendingStarts((prev) => ({ ...prev, [name]: { intent: 'initializer', nonce } }));
       }
     });
   }, []);

@@ -86,12 +86,18 @@ export function Onboarding({ initialStage, welcome = false, purpose = 'setup', o
   }, [report?.ready]);
 
   const task = purpose === 'new-project';
+  /** The project is being made on the server: leaving now would strand it, unopened. */
+  const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
+  const handleCreating = useCallback((busy: boolean) => { creatingRef.current = busy; setCreating(busy); }, []);
+  const stageRef = useRef(stage);
+  stageRef.current = stage;
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   useEffect(() => {
     if (!task) return undefined;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented || busyRef.current) return;
+      if (e.key !== 'Escape' || e.defaultPrevented || busyRef.current || creatingRef.current || stageRef.current === 'handoff') return;
       e.preventDefault();
       onCloseRef.current();
     };
@@ -142,6 +148,7 @@ export function Onboarding({ initialStage, welcome = false, purpose = 'setup', o
       return (
         <ProjectStep
           report={report}
+          onBusyChange={handleCreating}
           title={task ? t('onboarding.project.newTitle') : purpose === 'first-run' ? t('onboarding.project.firstTitle') : undefined}
           subtitle={purpose === 'first-run' ? t('onboarding.project.firstSubtitle') : undefined}
           onCreated={(p) => { setProject(p); setStage('handoff'); }}
@@ -164,8 +171,18 @@ export function Onboarding({ initialStage, welcome = false, purpose = 'setup', o
       <header className="ob-top">
         {/* Welcome is not a step: the dots appear with the first one. */}
         {welcoming || task ? <span aria-hidden="true" /> : <StepDots stage={stage} />}
-        {purpose !== 'first-run' && (
-          <button type="button" className="ob-btn ob-btn--ghost ob-skip" data-no-drag onClick={onClose}>
+        {/* The first project cannot be skipped, but the Mac's checks can wait: a check that cannot
+            pass here must never keep someone from their first project. */}
+        {purpose === 'first-run' && stage === 'machine' && !welcoming && (
+          <button type="button" className="ob-btn ob-btn--ghost ob-skip" data-no-drag
+            onClick={() => { if (!busyRef.current) setStage('project'); }}>
+            {t('onboarding.machineLater')}
+          </button>
+        )}
+        {/* Once the project exists there is nothing left to cancel: the hand-off is the way on. */}
+        {purpose !== 'first-run' && !(task && stage === 'handoff') && (
+          <button type="button" className="ob-btn ob-btn--ghost ob-skip" data-no-drag disabled={creating}
+            onClick={() => { if (!creatingRef.current) onClose(); }}>
             {task ? t('onboarding.cancel') : t('onboarding.skip')}
           </button>
         )}

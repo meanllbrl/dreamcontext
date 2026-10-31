@@ -3,7 +3,7 @@ import { NewProjectLandContext, useShellMode } from '../lib/uxMode';
 import { readLayoutPrefs, writeLayoutPrefs } from '../lib/launcherPrefs';
 import { appLinksDrained } from '../lib/appLink';
 import { findWindowForVault } from '../lib/windowRegistry';
-import { isDesktop, vaultWindowLabel } from '../lib/desktop';
+import { isDesktop, openVaultWindow, vaultWindowLabel } from '../lib/desktop';
 import { useLauncherStatus, type VaultStatus } from '../hooks/useLauncher';
 import { UpgradeRelaunchBanner } from '../components/layout/UpgradeRelaunchBanner';
 import { ProjectSwitcher } from '../components/search/ProjectSwitcher';
@@ -70,18 +70,22 @@ export function LauncherRoot() {
 
   // A project made here (the app's first, most often) opens in THIS window, on its chat, with the
   // drawer beside it: never a second window over a launcher nobody needs any more.
-  const [landed, setLanded] = useState<{ name: string; start?: 'initializer' } | null>(null);
+  const [landed, setLanded] = useState<{ name: string; how?: 'initializer' | 'existing' } | null>(null);
   if (landed) {
-    return <WindowChrome initialVault={landed.name} initialStart={landed.start ?? null}
-      initialIntent={landed.start ? { kind: 'open-window' } : { kind: 'new-window' }} />;
+    return <WindowChrome initialVault={landed.name} initialStart={landed.how === 'initializer' ? 'initializer' : null}
+      initialIntent={landed.how ? { kind: 'open-window' } : { kind: 'new-window' }} />;
   }
   if (!newShell) return <TodayLauncher />;
   if (pick === null) {
     return (
-      <NewProjectLandContext.Provider value={(name, start) => {
-        const expanded = readLayoutPrefs().drawerExpanded ?? [];
-        if (!expanded.includes(name)) writeLayoutPrefs({ drawerExpanded: [...expanded, name] });
-        setLanded({ name, start });
+      <NewProjectLandContext.Provider value={(name, how) => {
+        void (async () => {
+          // One project, one home: a project another window holds comes forward there.
+          if (await heldElsewhere(name)) { await openVaultWindow(name); return; }
+          const expanded = readLayoutPrefs().drawerExpanded ?? [];
+          if (!expanded.includes(name)) writeLayoutPrefs({ drawerExpanded: [...expanded, name] });
+          setLanded({ name, how });
+        })().catch((err) => console.warn('[launcher] could not open the project:', err));
       }}>
         <TodayLauncher />
       </NewProjectLandContext.Provider>

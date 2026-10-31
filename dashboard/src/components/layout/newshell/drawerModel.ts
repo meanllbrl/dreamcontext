@@ -193,8 +193,9 @@ export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout
         selected: windowsOn,
       });
     }
-    // Before anything is read nothing is known: no row is better than a wrong one.
-    if (children.length === before && (mine || far)) children.push({ kind: 'new-chat' });
+    // Only on a known answer: before the roster is restored, or after a failed read, no row is
+    // better than offering a chat over chats that are there.
+    if (children.length === before && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
     return { ...base, source, children };
   });
 }

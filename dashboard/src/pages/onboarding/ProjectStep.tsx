@@ -26,6 +26,8 @@ export interface CreatedProject {
 
 interface Props {
   report: ReadinessReport | undefined;
+  /** A project is being made or registered right now. */
+  onBusyChange?: (busy: boolean) => void;
   /** The step's heading, when it is not the setup's "Add your project". */
   title?: string;
   subtitle?: string;
@@ -47,11 +49,16 @@ interface PickedFolder {
  * detect and recommends the packs that fit. A GitHub description and a detected stack still
  * ride along silently, so the scaffold's `init` starts from them.
  */
-export function ProjectStep({ report, title, subtitle, onCreated, onOpenExisting }: Props) {
+export function ProjectStep({ report, onBusyChange, title, subtitle, onCreated, onOpenExisting }: Props) {
   const { t } = useI18n();
   const defaults = useLauncherDefaults();
   const scaffold = useScaffoldProject();
   const register = useRegisterVault();
+  const busy = scaffold.isPending || register.isPending;
+  useEffect(() => {
+    onBusyChange?.(busy);
+    return () => onBusyChange?.(false);
+  }, [busy, onBusyChange]);
 
   const [mode, setMode] = useState<Mode | null>(null);
   const [error, setError] = useState<string | null>(null);

@@ -89,7 +89,7 @@ describe('drawer rows', () => {
       activeVault: 'acme', expanded: ['acme', 'globex'], facts: { acme: facts, globex: facts }, fanout: {},
     });
     expect(rows[0].children[0]).toMatchObject({ kind: 'super', selected: true });
-    expect(rows[0].children.at(-1)).toMatchObject({ kind: 'new-chat' });
+    expect(rows[0].children.map((c) => c.kind)).toEqual(['super']);
     expect(rows[1].children[0]).toMatchObject({ kind: 'super', selected: false });
   });
 
