@@ -11,6 +11,8 @@
  *     the answer the report is still on the stage;
  *  Q  two question cards at once (two children's questions; a child's question beside the Super's
  *     own ask): answering one leaves the other open.
+ *  R  (VERIFY_ONLY=R) the report card's page: margins, one left edge with the head strip, the
+ *     sandbox note on its own strip, a bare page's rhythm, a page with CSS left alone.
  *  Shots at 1440x900 and a 390 px phone (Mac mode). VERIFY_MODE=before runs the same steps on a
  *  base build (VERIFY_REPO) for the before shots and the Q check, without this change's asserts.
  *
@@ -340,6 +342,114 @@ const REPORT = `<!doctype html><html><body><div class="dc-doc">
 <h2 class="dc-h2">Money</h2><p class="dc-p">Item 15 lowers one invoice; item 11 fixes the revenue report.</p>
 </div></body></html>`;
 
+const BARE = `<!doctype html><html><body><h1>Plain report</h1><p>A page with no classes and no CSS.</p><h2>Items</h2><ul><li>One</li><li>Two</li></ul><table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table></body></html>`;
+const OWN = `<!doctype html><html><head><style>body{padding:3px}h1{margin:1px}</style></head><body><h1>Own CSS</h1><p>Mine.</p></body></html>`;
+const SCRIPTED = `<!doctype html><html><head><title>S</title><script>var s=document.createElement('style');s.textContent='body{padding:5px;max-width:none}';document.head.appendChild(s);</script></head><body><h1>Scripted</h1><p>Mine.</p></body></html>`;
+const PREPENDED = `<!doctype html><html><body><h1>Prepended</h1><script>var s=document.createElement('style');s.textContent='h1{color:inherit}';document.head.prepend(s);</script></body></html>`;
+const DEEP = `<!doctype html><html><body><div><div style="display:grid;padding:7px"><h1>Deep</h1><p>Mine.</p></div></div></body></html>`;
+const DONE = new Error('done');
+
+/** Where the page and its strips sit, from the card's left edge. */
+async function reportGeo(page, id) {
+  const card = page.locator(`[data-testid="super-container"][data-container-id="${id}"]`);
+  const frameEl = card.locator('iframe.doc-reader-html-frame');
+  const handle = await frameEl.elementHandle();
+  const frame = await handle.contentFrame();
+  const inner = await frame.evaluate(() => {
+    const b = getComputedStyle(document.body);
+    const box = (q) => { const el = document.querySelector(q); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x, right: r.right, top: r.top, bottom: r.bottom, mt: parseFloat(getComputedStyle(el).marginTop), mb: parseFloat(getComputedStyle(el).marginBottom) }; };
+    return { pad: parseFloat(b.paddingLeft), maxWidth: b.maxWidth, width: document.documentElement.clientWidth, scrollW: document.documentElement.scrollWidth, h1: box('h1'), p: box('p'), li: box('li'), th: box('th') };
+  });
+  const outer = await card.evaluate((el) => {
+    const c = el.getBoundingClientRect();
+    const rel = (q) => { const n = el.querySelector(q); if (!n) return null; const r = n.getBoundingClientRect(); return { x: r.x - c.x, top: r.top - c.y, bottom: r.bottom - c.y }; };
+    return { head: rel('.wb-widget-head .wb-widget-title, .wb-widget-head h3, .wb-widget-head > *'), frame: rel('iframe.doc-reader-html-frame'), foot: rel('.doc-reader-html-foot'), note: rel('.doc-reader-html-note') };
+  });
+  return { inner, outer, sandbox: await frameEl.getAttribute('sandbox'), csp: await frame.evaluate(() => document.querySelector('meta[http-equiv]')?.getAttribute('content')) };
+}
+
+async function reportCardStep(page) {
+  const tag = BEFORE ? 'once' : 'sonra';
+  const dir = join(PROJ, '_dream_context', 'tmp', 'super');
+  mkdirSync(dir, { recursive: true });
+  for (const [f, body] of [['sprint-4-plan.html', REPORT], ['bare.html', BARE], ['own.html', OWN], ['scripted.html', SCRIPTED], ['prepended.html', PREPENDED], ['deep.html', DEEP]]) writeFileSync(join(dir, f), body);
+  const open = async (f, title) => {
+    await superVerb(page, `open web _dream_context/tmp/super/${f} --title ${title}`);
+    await superVerb(page, 'half --off');
+    await settle(page);
+    return record().containers.filter((c) => c.kind === 'web').at(-1);
+  };
+  const web = await open('sprint-4-plan.html', 'Sprint-4-plan');
+  await superVerb(page, `ask --json ${spec([{ question: 'Start the 7 items of the Sprint 4 plan today?', multiSelect: false, options: [{ label: 'Approve and start' }, { label: 'I will change the list' }] }], 'Sprint 4 → approve')} --show ${web?.id}`);
+  await settle(page);
+  const q = openQuestionCard(page).first();
+  await until(page, async () => (await q.count()) > 0, 15000);
+  await q.locator('.chat-surveycard-read').click();
+  await until(page, async () => record().view.mode === 'half' && record().view.card === web?.id, 10000);
+  await settle(page);
+  await page.waitForTimeout(2000);
+  await shot(page, `rapor-${tag}-1440.png`);
+  const geo = await reportGeo(page, web?.id);
+  console.log(JSON.stringify(geo));
+  // The phone surface has no stage, so a 390 px report is the dashboard itself at that width.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await settle(page);
+  await page.waitForTimeout(2000);
+  await shot(page, `rapor-${tag}-390.png`);
+  if (!BEFORE) {
+    const m = await reportGeo(page, web?.id).catch((e) => ({ error: String(e) }));
+    ok('R: at 390 the page is inset and does not overflow', m.inner?.pad === 24 && m.inner.scrollW <= m.inner.width, JSON.stringify(m.inner ?? m));
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await settle(page);
+  if (!BEFORE) {
+    const { inner, outer, sandbox, csp } = geo;
+    ok('R: the page keeps 24 px from the card', inner.pad === 24, String(inner.pad));
+    ok('R: title, paragraph and list share the head strip\'s left edge', [inner.h1.x, inner.p.x].every((x) => Math.abs(x + outer.frame.x - outer.head.x) <= 1), JSON.stringify({ h1: inner.h1.x, p: inner.p.x, frame: outer.frame.x, head: outer.head.x }));
+    ok('R: list markers stay inside the card', inner.li.x >= 24 + 12, String(inner.li.x));
+    ok('R: nothing runs past the card', inner.scrollW <= inner.width, JSON.stringify([inner.scrollW, inner.width]));
+    ok('R: the note sits on its own strip under the page, on the same edge', outer.foot.top >= outer.frame.bottom - 1 && Math.abs(outer.note.x - outer.head.x) <= 1, JSON.stringify(outer));
+    ok('R: the sandbox did not move', sandbox === 'allow-scripts' && /default-src 'none'/.test(csp), JSON.stringify({ sandbox, csp }));
+  }
+  await clickAnswer(page, 'Approve and start');
+  await until(page, async () => !openAskItem(), 15000);
+  await superVerb(page, `close ${web?.id}`);
+  const bare = await open('bare.html', 'Bare');
+  await superVerb(page, `half ${bare?.id}`);
+  await settle(page);
+  await page.waitForTimeout(1500);
+  await shot(page, `rapor-${tag}-bare-1440.png`);
+  const g2 = await reportGeo(page, bare?.id).catch((e) => ({ error: String(e) }));
+  console.log(JSON.stringify(g2));
+  await superVerb(page, `close ${bare?.id}`);
+  const own = await open('own.html', 'Own');
+  await superVerb(page, `half ${own?.id}`);
+  await settle(page);
+  await page.waitForTimeout(1500);
+  const g3 = await reportGeo(page, own?.id).catch((e) => ({ error: String(e) }));
+  console.log(JSON.stringify(g3));
+  await superVerb(page, `close ${own?.id}`);
+  const geoOf = async (f, title) => {
+    const c = await open(f, title);
+    await superVerb(page, `half ${c?.id}`);
+    await settle(page);
+    await page.waitForTimeout(1500);
+    const g = await reportGeo(page, c?.id).catch((e) => ({ error: String(e) }));
+    await superVerb(page, `close ${c?.id}`);
+    return g;
+  };
+  const g4 = await geoOf('scripted.html', 'Scripted');
+  const g5 = await geoOf('deep.html', 'Deep');
+  const g6 = await geoOf('prepended.html', 'Prepended');
+  if (!BEFORE) {
+    ok('R: a style a script puts in the head is left alone', g4.inner?.pad === 5 && g4.inner.maxWidth === 'none', JSON.stringify(g4.inner ?? g4));
+    ok('R: a style a script puts first in the head turns the default off', g6.inner?.pad === 0 && g6.inner.maxWidth === 'none', JSON.stringify(g6.inner ?? g6));
+    ok('R: a page styled by hand under a wrapper is left alone', g5.inner?.pad === 0 && g5.inner.maxWidth === 'none', JSON.stringify(g5.inner ?? g5));
+    ok('R: a bare page gets the margin and a rhythm', g2.inner?.pad === 24 && g2.inner.h1.mb > 0 && g2.inner.p.mb > 0 && g2.inner.th.x > g2.inner.p.x - 1, JSON.stringify(g2.inner));
+    ok('R: a page with its own CSS is left alone', g3.inner?.pad === 3 && g3.inner.maxWidth === 'none' && g3.inner.h1.mt === 1, JSON.stringify(g3.inner));
+  }
+}
+
 /** The phone (390 px, Mac mode) watching the Super chat, or null. */
 async function openPhone(browser, pw, base) {
   const setup = await api(base, 'POST', '/api/handsfree/mac/setup', {});
@@ -406,6 +516,12 @@ async function flow(pw, base) {
   const phone = await openPhone(browser, pw, base);
 
   const ONLY_Q = process.env.VERIFY_ONLY === 'Q';
+  if (process.env.VERIFY_ONLY === 'R') {
+    console.log('\n── R: the report card\'s page');
+    await reportCardStep(page);
+    await browser.close();
+    throw DONE;
+  }
   if (!ONLY_Q) {
   console.log('\n── A: one option preview');
   const a = await superVerb(page, `ask --json ${spec([{
@@ -608,8 +724,7 @@ try {
   const r = await flow(pw, `http://127.0.0.1:${port}`);
   ok('zero console and page errors', r.errors.length === 0, r.errors.slice(0, 8).join('\n'));
 } catch (err) {
-  results.fails.push(`crashed: ${err?.stack || err}`);
-  console.error(err);
+  if (err !== DONE) { results.fails.push(`crashed: ${err?.stack || err}`); console.error(err); }
 } finally {
   server?.kill();
   spawnSync('pkill', ['-f', join(HOME, '.local', 'bin', 'claude')]);

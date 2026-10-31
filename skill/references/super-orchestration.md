@@ -61,7 +61,7 @@ says in one line that a question waits.
 
 **Information he must read is a report card, never a question** (2026-10-30: a 7-item plan in a
 preview was cut off in a half-width tile, "okuyamıyorum"). Write it as a page
-(`_dream_context/tmp/super/<topic>.html`, the `dc-` kit), `super open web <path> --title "<name>"`,
+(`_dream_context/tmp/super/<topic>.html`, the `dc-` kit, no `<style>`: the card adds margins), `super open web <path> --title "<name>"`,
 then `super ask … --show <its card>`: the question is the decision in one short line, his card
 reads "To read: <name> →" and brings the report into view, and the report stays on the stage
 after his answer (close it once it is stale). A `preview` is only a look at an option: a mockup,

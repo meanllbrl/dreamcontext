@@ -54,6 +54,9 @@ export const SANDBOX_CSP =
   "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; " +
   "font-src data:; img-src data:";
 
+/** Marks the host's own `<style>` tags: any other is the page's CSS (lib/pageDefaultCss.ts). */
+export const HOST_STYLE_ATTR = 'data-dc-host';
+
 /** The sandbox grant — scripts yes, same-origin NEVER (that would void the CSP). */
 export const SANDBOX_GRANT = 'allow-scripts';
 
@@ -163,11 +166,11 @@ export function buildSandboxSrcdoc(input: SandboxSrcdocInput): string {
     // The face BEFORE the tokens that name it: `--font-family` resolves to a stack starting
     // with 'Inter', and inside this frame that name means nothing unless the @font-face is
     // already declared. See lib/sandboxFont.ts for why it has to travel in the document.
-    `<style>${SANDBOX_FONT_CSS}</style>`,
-    `<style>:root { color-scheme: ${scheme}; ${rootVars} }</style>`,
-    `<style>${css}</style>`,
+    `<style ${HOST_STYLE_ATTR}>${SANDBOX_FONT_CSS}</style>`,
+    `<style ${HOST_STYLE_ATTR}>:root { color-scheme: ${scheme}; ${rootVars} }</style>`,
+    `<style ${HOST_STYLE_ATTR}>${css}</style>`,
   ];
-  if (overrideCss) parts.push(`<style>${overrideCss}</style>`);
+  if (overrideCss) parts.push(`<style ${HOST_STYLE_ATTR}>${overrideCss}</style>`);
   if (headScript) parts.push(`<script>${headScript}</script>`);
   parts.push('</head><body>', html);
   parts.push('</body></html>');

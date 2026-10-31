@@ -565,6 +565,8 @@
 }
 
 /* A file in the web block: the board's reader fills the card and scrolls inside it. */
+/* A file's head strip and the page under it share a left edge (lib/pageDefaultCss.ts, INSET). */
+.wb-widget--web:has(.wb-web-file) .wb-widget-head { padding-inline: var(--space-6); }
 .wb-web-file {
   height: 100%;
   overflow: auto;

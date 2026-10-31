@@ -10,6 +10,7 @@ import { isValidAppLinkPath } from '../../lib/appLink';
 import { agentFileKind } from '../../lib/agentFileKind';
 import { resolveWikilinkTarget, type WikilinkCandidate } from '../../lib/wikilinks';
 import { buildSandboxSrcdoc, SANDBOX_ALLOW } from '../../lib/sandboxHtml';
+import { pageDefaultCss } from '../../lib/pageDefaultCss';
 import { desktopScale, htmlFrameGeometry } from '../../lib/webDevice';
 import {
   findLocalAssets, inlineLocalAssets, LINK_GUARD, MAX_ASSET_BYTES, MAX_TOTAL_BYTES,
@@ -498,10 +499,10 @@ function HtmlPage({
 
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
-      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme,
+      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, overrideCss: pageDefaultCss(fill),
       headScript: [HEIGHT_BRIDGE, LINK_GUARD, ...(zoomBridge ? [ZOOM_BRIDGE] : [])].join('\n'),
     })),
-    [html, theme, zoomBridge],
+    [html, theme, zoomBridge, fill],
   );
 
   // The only message accepted: a height, from THIS frame's window (identity is the gate).

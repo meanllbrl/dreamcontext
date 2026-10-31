@@ -175,7 +175,7 @@ describe('the sandboxed iframe (security pins — C5 unit half)', () => {
     const doc = buildSrcdoc('<div class="lk-value">42</div>', { '--chart-1': '#123456', '--color-text': 'black' });
     const cspAt = doc.indexOf('Content-Security-Policy');
     expect(cspAt).toBeGreaterThan(-1);
-    expect(cspAt).toBeLessThan(doc.indexOf('<style>'));
+    expect(cspAt).toBeLessThan(doc.indexOf('<style'));
     expect(doc).toContain('--chart-1: #123456;');
     expect(doc).toContain('.lk-table'); // the kit css really is embedded
     expect(doc).toContain('<div class="lk-value">42</div>');
