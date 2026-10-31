@@ -249,8 +249,16 @@ describe('the notch tracks a Super Agent at work (owner 2026-10-31)', () => {
     await vi.waitFor(async () => { expect((await rollup()).asking).toBe(1); });
     expect((await rollup()).working).toBe(1);
     const rows = await glance();
-    expect(rows.map((r) => [r.sessionId, r.activity])).toEqual([['c1', 'asking'], [SUPER, 'working']]);
-    expect(rows[1].jobs).toBe(1);
+    expect(rows.map((r) => [r.sessionId, r.activity])).toEqual([['c1', 'asking']]);
+  });
+
+  it('an unchanged Super run answers the same bytes: the notch\'s raw gate stays shut', async () => {
+    await makeVault({ children: children('c1') });
+    running(reg('c1'));
+    const body = async () => { const r = res(); await handleAssistantGlance(req(), r); return JSON.stringify(r.json); };
+    const first = await body();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(await body()).toBe(first);
   });
 
   it('the row cap never drops an ordinary question for a progress row', async () => {

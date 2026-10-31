@@ -780,9 +780,10 @@ export async function handleAssistantGlance(req: IncomingMessage, res: ServerRes
   // A notch is reading the rows: a Super Agent question at the head will show in it.
   noteNotchPoll();
   const heads = superGlanceRows(clip);
-  const headIds = new Set(heads.map((h) => h.sessionId));
-  const workRows = work.filter((w) => !headIds.has(w.session)).map((w) => ({
-    sessionId: w.session, vault: w.vault, activity: w.own === 'starting' ? 'starting' : 'working', since: new Date(now).toISOString(), super: true,
+  // One row per project: its question wins, and the bubble still counts the work behind it.
+  const waiting = new Set(heads.map((h) => h.vault));
+  const workRows = work.filter((w) => !waiting.has(w.vault)).map((w) => ({
+    sessionId: w.session, vault: w.vault, activity: w.own === 'starting' ? 'starting' : 'working', super: true,
     title: '', ask: null, jobs: w.jobs, ...(w.own === 'working' || w.own === 'starting' ? { selfBusy: true } : {}),
   }));
   // Asking first, always: the cap never drops a question for a progress row.
