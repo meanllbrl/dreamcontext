@@ -79,6 +79,22 @@ export interface LimitAnswer {
   windows: LimitWindow[];
 }
 
+/** Who wrote a project's prompts. `null` on a row: only Codex ran there, and its prompts are not read. */
+export interface PromptCounts { owner: number; super: number; auto: number }
+
+export interface ProjectRow {
+  key: string; label: string; tokens: number; cost: number | null;
+  prompts: PromptCounts | null;
+  /** MEASURED: the same runs as the Sleep card. */
+  sleep: { tokens: number; cost: number };
+  /** ESTIMATE, as the Memory card: chars / 3.5, priced at the row's cache rates. */
+  estMemory: { tokens: number; cost: number };
+  /** ESTIMATE, as the Eco card. */
+  estSaved: { tokens: number; cost: number };
+  /** ESTIMATE: saved minus sleep and memory. */
+  estNet: { tokens: number; cost: number };
+}
+
 export interface EcoRow { project: string; title: string; at: number; kind: 'eco' | 'fresh'; before: number; after: number | null; turns: number; estSaved: number; estSavedCost: number }
 
 export interface ToolWindow { id: string; kind: string; label: string; usedPercent: number; resetsAt: number | null; durationMins: number | null; estSleepPercent: number | null }
@@ -105,6 +121,11 @@ export interface StatsWire {
     eco: { rows: EcoRow[]; estSaved: number; estSavedCost: number; turns: number; avgBefore: number; avgAfter: number };
     memory: { first: number; carried: number; starts: number; messages: number; inputShare: number };
     answer: LimitAnswer;
+    projects: ProjectRow[];
+    /** The oldest handoff this Mac still has a record of, in any range. */
+    ecoFrom: number | null;
+    /** The range opens before `ecoFrom`: every row's saving is short of the truth. */
+    ecoPartial: boolean;
   };
   limits: ToolLimits[];
   notCounted: Array<{ id: string; name: string }>;
@@ -235,6 +256,30 @@ function draftRuns(views: FileView[]): RunDraft[] {
   return runs.sort((a, b) => a.start - b.start);
 }
 
+// ── Super's sends ────────────────────────────────────────────────────────────────────
+
+/** A send behind an open question waits for it: past this it is no longer that message. */
+const SEND_REACH_MS = 15 * 60_000;
+
+/**
+ * `<file path>|<prompt index>` of every Super send into a chat the owner opened (an adopted child).
+ * Such a turn reads exactly like the owner's, so the Super's own log says which: each `super send`
+ * claims the first unclaimed `owner` turn there at or after it.
+ */
+export function superSends(files: Record<string, LedgerFile>): Set<string> {
+  const mains = Object.entries(files).filter(([, f]) => !f.agent && f.tool === 'claude');
+  const bySession = new Map(mains.map(([path, f]) => [f.session, { path, f }]));
+  const sends = mains.flatMap(([, f]) => f.sends).sort((a, b) => a[0] - b[0]);
+  const claimed = new Set<string>();
+  for (const [at, child] of sends) {
+    const to = bySession.get(child) ?? [...bySession.values()].find((m) => m.f.session.startsWith(child));
+    if (!to) continue;
+    const i = to.f.prompts.findIndex(([ts, kind], n) => kind === 'owner' && ts >= at - 5_000 && ts <= at + SEND_REACH_MS && !claimed.has(`${to.path}|${n}`));
+    if (i >= 0) claimed.add(`${to.path}|${i}`);
+  }
+  return claimed;
+}
+
 // ── The one read ─────────────────────────────────────────────────────────────────────
 
 function handoffRecords(vaults: Vault[], toProject: (v: Vault) => string): Array<{ project: string; rec: Record<string, unknown> }> {
@@ -315,6 +360,9 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
   const unpriced = new Set<string>();
   const chart = { work: zero(), memory: zero(), sleep: zero(), estSaved: zero() };
   const memory = { first: 0, carried: 0, starts: 0, messages: 0 };
+  const memoryOf = new Map<string, { tokens: number; cost: number }>();
+  const promptsOf = new Map<string, PromptCounts>();
+  const sent = superSends(ledger.files);
   let claudeTokens = 0;
   let claudeInput = 0;
 
@@ -404,8 +452,26 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
         claudeInput += input + cacheRead + cacheWrite;
         const mem = asleep ? 0 : memFirst + memCarried;
         if (asleep) chart.sleep[i] += tokens;
-        else { chart.memory[i] += mem; chart.work[i] += Math.max(0, tokens - mem); memory.first += memFirst; memory.carried += memCarried; }
+        else {
+          chart.memory[i] += mem; chart.work[i] += Math.max(0, tokens - mem); memory.first += memFirst; memory.carried += memCarried;
+          const m = memoryOf.get(v.project) ?? { tokens: 0, cost: 0 };
+          memoryOf.set(v.project, m);
+          m.tokens += mem;
+          if (price) m.cost += (memFirst * price[3] + memCarried * price[2]) / 1e6;
+        }
       }
+    }
+    if (on && v.f.tool === 'claude') {
+      // A row with Claude work shows counts even when nobody wrote in this range.
+      if (promptsOf.has(v.project) === false && v.f.rows.some((r) => indexOf(r[0]) >= 0 && !q.off.has(`claude:${rowAccount(v.owner, r) ?? ''}`))) promptsOf.set(v.project, { owner: 0, super: 0, auto: 0 });
+      v.f.prompts.forEach(([ts, kind, who], n) => {
+        if (ts < rangeStart || ts >= rangeEnd) return;
+        const id = v.owner.accounts?.[who]?.[1] ?? v.owner.account;
+        if (q.off.has(`claude:${id ?? ''}`)) return;
+        const c = promptsOf.get(v.project) ?? { owner: 0, super: 0, auto: 0 };
+        promptsOf.set(v.project, c);
+        c[sent.has(`${v.path}|${n}`) ? 'super' : kind] += 1;
+      });
     }
     if (on && v.f.tool === 'claude' && !v.asleep && v.f.first >= rangeStart && v.f.first < rangeEnd) {
       memory.starts += v.f.snapshots; memory.messages += v.f.recalls;
@@ -555,12 +621,14 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
 
   // ── Eco and fresh sessions ────────────────────────────────────────────────────────
   const ecoRows: EcoRow[] = [];
+  let ecoFrom: number | null = null;
   const mains = views.filter((v) => !v.f.agent && v.f.tool === 'claude');
   const contextCeiling = 1_000_000;
   for (const { project, rec } of handoffRecords(vaults, (v) => projectOf(v.path))) {
     const at = typeof rec.at === 'string' ? Date.parse(rec.at) : NaN;
     const consumed = typeof rec.consumedAt === 'string' ? Date.parse(rec.consumedAt) : NaN;
     const before = typeof rec.contextTokens === 'number' ? rec.contextTokens : null;
+    if (Number.isFinite(at) && before !== null && Number.isFinite(consumed) && (ecoFrom === null || at < ecoFrom)) ecoFrom = at;
     if (!Number.isFinite(at) || at < rangeStart || at >= rangeEnd || before === null || !Number.isFinite(consumed)) continue;
     if (q.project !== null && project !== q.project) continue;
     const to = typeof rec.toSession === 'string'
@@ -618,6 +686,26 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
     windows: [...new Set([...sleptHits, ...slept.filter((w) => !w.thin), ...slept])].slice(0, 8),
   };
 
+  // ── One row per project, from the numbers the cards above already hold ─────────────
+  const spendRows = toRows(byProject);
+  const ecoOf = new Map<string, { tokens: number; cost: number }>();
+  for (const e of ecoRows) {
+    const g = ecoOf.get(e.project) ?? { tokens: 0, cost: 0 };
+    ecoOf.set(e.project, g);
+    g.tokens += e.estSaved; g.cost += e.estSavedCost;
+  }
+  const projectRows: ProjectRow[] = [...new Set([...spendRows.map((r) => r.key), ...vaultMap.keys(), ...ecoOf.keys(), ...promptsOf.keys()])].map((key) => {
+    const s = spendRows.find((r) => r.key === key);
+    const v = vaultMap.get(key);
+    const sleep = { tokens: v?.tokens ?? 0, cost: v?.cost ?? 0 };
+    const estMemory = memoryOf.get(key) ?? { tokens: 0, cost: 0 };
+    const estSaved = ecoOf.get(key) ?? { tokens: 0, cost: 0 };
+    return {
+      key, label: key, tokens: s?.tokens ?? 0, cost: s?.cost ?? 0, prompts: promptsOf.get(key) ?? null, sleep, estMemory, estSaved,
+      estNet: { tokens: estSaved.tokens - sleep.tokens - estMemory.tokens, cost: estSaved.cost - sleep.cost - estMemory.cost },
+    };
+  }).sort((a, b) => (b.cost ?? 0) - (a.cost ?? 0) || b.tokens - a.tokens);
+
   const firstRun = recorded.map((r) => r.startedAt).sort()[0] ?? null;
   return {
     scanning: scanProgress(home),
@@ -649,6 +737,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
       },
       memory: { ...memory, inputShare: claudeInput ? (memory.first + memory.carried) / claudeInput : 0 },
       answer,
+      projects: projectRows, ecoFrom, ecoPartial: ecoFrom === null || ecoFrom > rangeStart,
     },
     limits: [{ id: 'claude', name: 'Claude Code', accounts: claudeLimits }, { id: 'codex', name: 'Codex', accounts: codexLimits }],
     notCounted: NOT_COUNTED,

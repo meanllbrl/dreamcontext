@@ -22,7 +22,9 @@
  * session can copy a message. Each file keeps a hash of the keys it counted, so a rescanned file
  * skips what another file already holds and each key is counted exactly once.
  *
- * The file holds numbers, session ids and working folders. No prompt, no reply.
+ * The file holds numbers, session ids and working folders. No prompt, no reply: a prompt is a time
+ * and who wrote it (rules in usage-readers.ts `humanTurn`, `firstTurnKind`). A record's uuid goes
+ * in the same key list, so a forked session's copied prompts are counted once.
  */
 import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
@@ -31,11 +33,11 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { listClaudeAccounts } from './claude-accounts.js';
 import {
-  claudeInjection, claudeLimitHit, claudeSleepMark, firstPromptText, initialCodexState, originOfFirstPrompt,
-  parseClaudeRecord, parseCodexRecord, type CodexScanState, type LimitHit, type SessionOrigin, type UsageLine,
+  claudeInjection, claudeLimitHit, claudeSleepMark, claudeSuperSends, firstPromptText, firstTurnKind, humanTurn, initialCodexState,
+  originOfFirstPrompt, parseClaudeRecord, parseCodexRecord, type CodexScanState, type LimitHit, type PromptKind, type SessionOrigin, type UsageLine,
 } from './usage-readers.js';
 
-export const LEDGER_VERSION = 2;
+export const LEDGER_VERSION = 3;
 /** Rows older than this leave the cache: the widest range the screen shows is 90 days. */
 const KEEP_MS = 100 * 86_400_000;
 /** A sleep whose `done` never came stops claiming the chat's later turns after this long. */
@@ -45,6 +47,9 @@ const OPEN_SPAN_MS = 2 * 3_600_000;
  *  memory first read, memory carried, 1-hour cache writes (part of cacheWrite), index into
  *  `accounts`]. Positional: 100k rows must stay small on disk. */
 export type LedgerRow = [number, number, 0 | 1, number, number, number, number, number, number, number, number, number];
+
+/** [time ms, who wrote it, index into `accounts`]. Times only, never the words. */
+export type LedgerPrompt = [number, PromptKind, number];
 
 export interface LedgerFile {
   s: number;
@@ -74,6 +79,10 @@ export interface LedgerFile {
   hits: Array<LimitHit & { account?: string }>;
   snapshots: number;
   recalls: number;
+  /** A main session's prompts, as first read. An adopted chat's `owner` entry may be a Super send. */
+  prompts: LedgerPrompt[];
+  /** A Super session's `super send` calls: [time ms, child id as written]. */
+  sends: Array<[number, string]>;
   /** base64 of the Float64 hashes of the keys this file counted. */
   keys: string;
 }
@@ -235,7 +244,7 @@ async function scanFile(path: string, tool: ScanRoot['tool'], size: number, mtim
   const session = isSub ? basename(dirname(dirname(path))) : basename(path, '.jsonl');
   const file: LedgerFile = {
     s: size, m: mtime, tool, session, cwd: '', first: 0, last: 0, reqs: 0, ctx0: 0, ctx1: 0,
-    rows: [], spans: [], hits: [], snapshots: 0, recalls: 0, keys: '',
+    rows: [], spans: [], hits: [], snapshots: 0, recalls: 0, prompts: [], sends: [], keys: '',
     ...(meta.agentType ? { agent: meta.agentType } : {}), ...(meta.effort ? { effort: meta.effort } : {}),
   };
   const rowsByKey = new Map<string, LedgerRow>();
@@ -250,6 +259,24 @@ async function scanFile(path: string, tool: ScanRoot['tool'], size: number, mtim
   let openSpan = -1;
   let pendingMem = 0;
   let carriedMem = 0;
+  let sessionKind: PromptKind | null = null;
+  const promptIds = new Set<number>();
+  const sendCalls = new Set<string>();
+
+  const addPrompt = (rec: Record<string, unknown>) => {
+    const turn = humanTurn(rec);
+    if (!turn) return;
+    if (turn.uuid !== null) {
+      const id = hashKey(`prompt:${turn.uuid}`);
+      if (promptIds.has(id) || ctx.seen.has(id)) return;
+      promptIds.add(id);
+      counted.push(id);
+    }
+    const first = sessionKind === null;
+    if (first) sessionKind = firstTurnKind(turn, origin);
+    const kind = sessionKind as PromptKind;
+    file.prompts.push([turn.ts, kind, accountIndexAt(heldBy, turn.ts)]);
+  };
 
   const count = (line: UsageLine) => {
     let hash: number | null = null;
@@ -289,14 +316,19 @@ async function scanFile(path: string, tool: ScanRoot['tool'], size: number, mtim
     const usage = b.includes('"usage"');
     const hook = !usage && b.includes('"hook_success"');
     const compact = !usage && !hook && b.includes('"compact_boundary"');
-    const user = !promptRead && b.includes('"type":"user"');
+    // A tool result is most of a log and never a prompt: its raw key means no parse. In a person's
+    // text the same word has escaped quotes, so it cannot match.
+    const user = !isSub && b.includes('"type":"user"') && !b.includes('"tool_use_id"');
     if (!usage && !hook && !compact && !user) return;
     let rec: Record<string, unknown>;
     try { rec = JSON.parse(b.toString('utf-8')) as Record<string, unknown>; } catch { return; }
     if (!file.cwd && typeof rec.cwd === 'string') file.cwd = rec.cwd;
     if (user) {
-      const text = firstPromptText(rec);
-      if (text !== null) { promptRead = true; origin = originOfFirstPrompt(text); }
+      if (!promptRead) {
+        const text = firstPromptText(rec);
+        if (text !== null) { promptRead = true; origin = originOfFirstPrompt(text); }
+      }
+      addPrompt(rec);
     }
     if (compact) { if (rec.subtype === 'compact_boundary') carriedMem = 0; return; }
     if (hook) {
@@ -309,6 +341,12 @@ async function scanFile(path: string, tool: ScanRoot['tool'], size: number, mtim
       const who = heldBy?.[accountIndexAt(heldBy, hit.ts)]?.[1];
       file.hits.push(who ? { ...hit, account: who } : hit);
       return;
+    }
+    if (b.includes('super send')) {
+      const at = Date.parse(String(rec.timestamp));
+      for (const [id, child] of claudeSuperSends(rec)) {
+        if (Number.isFinite(at) && !sendCalls.has(`${id}|${child}`)) { sendCalls.add(`${id}|${child}`); file.sends.push([at, child]); }
+      }
     }
     const mark = claudeSleepMark(rec);
     if (mark === 'start' && openSpan < 0) {

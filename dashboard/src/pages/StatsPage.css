@@ -135,6 +135,15 @@ rect.st-ghost { fill: color-mix(in srgb, var(--color-success) 10%, transparent);
 .st-bal div { display: grid; grid-template-columns: 44px 1fr; align-items: center; gap: 6px; font-size: calc(11.5px * var(--zoom)); color: var(--color-text-secondary); }
 .st-bal i { display: block; height: 7px; border-radius: 3px; }
 .st-eco .st-tr { grid-template-columns: minmax(0, 1fr) 104px 64px; }
+.st-proj .st-tr { grid-template-columns: minmax(0, 1.2fr) 112px minmax(0, 1.3fr) 84px 124px; align-items: start; padding-top: 7px; padding-bottom: 7px; }
+.st-proj .st-tr.st-th { align-items: center; padding-top: 0; padding-bottom: 0; }
+.st-proj .nm2 { padding: 0; }
+.st-pc { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; min-width: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.st-pc b { font-weight: 600; white-space: nowrap; }
+.st-pc small { max-width: 100%; font-size: calc(11.5px * var(--zoom)); line-height: 1.35; color: var(--color-text-tertiary); }
+.st-est-cell b { padding: 0 4px; border: 1.2px dashed var(--color-success); border-radius: 4px; background: color-mix(in srgb, var(--color-success) 8%, transparent); }
+.st-est-cell[data-partial] b { border-color: var(--color-caution); background: color-mix(in srgb, var(--color-caution) 10%, transparent); }
+.st-pc small.st-partial { color: var(--color-warning-ink); }
 
 .st-scrim { position: absolute; inset: 0; z-index: 40; background: color-mix(in srgb, var(--color-bg) 55%, transparent); }
 .st-sheet { position: absolute; top: 0; right: 0; bottom: 0; z-index: 41; display: flex; flex-direction: column; width: min(520px, 100%); border-left: 1px solid var(--color-border); background: var(--color-bg-secondary); box-shadow: var(--shadow-xl); }
@@ -176,6 +185,13 @@ rect.st-ghost { fill: color-mix(in srgb, var(--color-success) 10%, transparent);
   .st-wins .st-tr .num .dim { display: none; }
   .st-eco .st-tr { grid-template-columns: minmax(0, 1fr) 96px 54px; }
   .st-eco .st-tr > :nth-child(4) { display: block; }
+  .st-proj .st-tr.st-th { display: none; }
+  .st-proj .st-tr { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; padding-top: 10px; padding-bottom: 10px; }
+  .st-proj .st-tr > :nth-child(1) { grid-column: 1 / -1; }
+  .st-proj .st-tr > :nth-child(4) { display: flex; }
+  .st-pc { align-items: flex-start; text-align: left; }
+  .st-pc::before { content: attr(data-k); font-size: calc(11px * var(--zoom)); font-weight: 600; color: var(--color-text-tertiary); }
+  .st-est-cell b { margin-left: -1px; }
   .st-acc { flex-wrap: wrap; }
   .st-acc .mono { flex-basis: 100%; }
   .st-acc .sp { display: none; }

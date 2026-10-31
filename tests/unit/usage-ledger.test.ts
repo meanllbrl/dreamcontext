@@ -2,9 +2,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { accountIndexAt, currentLedger, ledgerRoots, scanLedger, sessionAccounts } from '../../src/lib/usage-ledger.js';
+import { accountIndexAt, currentLedger, ledgerRoots, loadLedger, scanLedger, sessionAccounts } from '../../src/lib/usage-ledger.js';
 import { buildStats } from '../../src/lib/usage-report.js';
-import { claudeSleepMark, initialCodexState, parseCodexRecord, parseLimitHit } from '../../src/lib/usage-readers.js';
+import { SUPER_BIRTH_OPENINGS, claudeSleepMark, initialCodexState, parseCodexRecord, parseLimitHit } from '../../src/lib/usage-readers.js';
 import { resolvePrice } from '../../src/lib/usage-pricing.js';
 import { closeSleepRun, logHandoff, noteSleepRunCost, openSleepRun, readLimitHistory, readSleepRuns } from '../../src/lib/usage-records.js';
 import { recordUsageMeter } from '../../src/lib/claude-usage-meter.js';
@@ -325,5 +325,111 @@ describe('usage ledger', () => {
     const a = buildStats({ range: '24h', project: null, off: new Set(), now: NOW }, home).dc.answer;
     expect(a.hits).toBe(1);
     expect(a.verdict).toBe('unclear');
+  });
+
+  describe('prompts per project', () => {
+    const user = (uuid: string, ts: string, content: unknown, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({ type: 'user', uuid, timestamp: ts, cwd: '/work/alpha', entrypoint: 'sdk-cli', message: { role: 'user', content }, ...extra });
+    const typed = (text: string) => [{ type: 'text', text }];
+    const row = (s: ReturnType<typeof stats>, key = '-work-alpha') => s.dc.projects.find((p) => p.key === key) ?? s.dc.projects.find((p) => p.key === 'alpha');
+
+    it('counts what a person wrote, once, and nothing else', async () => {
+      write('s1.jsonl', [
+        user('a', at(50), typed('merhaba')),
+        user('b', at(49), [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }], { toolUseResult: 'ok' }),
+        user('c', at(48), '<task-notification>done</task-notification>', { origin: { kind: 'task-notification' } }),
+        user('d', at(47), typed('[super events] batch=1 items=1\n- x')),
+        user('e', at(46), 'hook text', { isMeta: true }),
+        user('f', at(45), typed('sub agent'), { isSidechain: true }),
+        user('g', at(44), typed('summary'), { isCompactSummary: true }),
+        user('h', at(43), typed('Handoff: continue task x')),
+        user('i', at(42), typed('[Request interrupted by user]')),
+        user('j', at(41), '<command-name>/compact</command-name>'),
+        user('k', at(40), typed('ikinci mesaj\n<owner-msg ref=abc123/>')),
+        user('k', at(40), typed('ikinci mesaj')),
+        assistant('m1', 'r1', at(39), U(100)),
+      ]);
+      write('fork.jsonl', [user('a', at(50), typed('merhaba')), assistant('m2', 'r2', at(38), U(100))]);
+      await scan();
+      expect(row(stats())?.prompts).toEqual({ owner: 2, super: 0, auto: 0 });
+    });
+
+    it('a machine run and an automation never reach the owner\'s count', async () => {
+      write('auto.jsonl', [user('a', at(50), 'You are scheduled dreamcontext automation "x" in /work.'), user('b', at(49), typed('continue')), assistant('m1', 'r1', at(48), U(1))]);
+      write('cli.jsonl', [user('c', at(47), 'Aşağıda bir metin var'), assistant('m2', 'r2', at(46), U(1))]);
+      write('role.jsonl', [user('d', at(45), typed('You are the reviewer of this diff.')), assistant('m3', 'r3', at(44), U(1))]);
+      await scan();
+      expect(row(stats())?.prompts).toEqual({ owner: 0, super: 0, auto: 4 });
+    });
+
+    it('a delegated child is the Super\'s whole; in an adopted chat a send is the Super\'s and the rest the owner\'s', async () => {
+      const send = (ts: string, id: string, child: string) => assistant(id, `r${id}`, ts, U(1), {}, [{ type: 'tool_use', id: `t${id}`, name: 'Bash', input: { command: `dreamcontext super send ${child} "$(cat /tmp/m.txt)"` } }]);
+      write('super1.jsonl', [
+        user('s1', at(100), typed('[super events] batch=1 items=1\n- x')),
+        user('s2', at(99), typed('ne durumdayız?\n<owner-msg ref=abc123/>')),
+        send(at(50), 'm1', 'child111'),
+      ]);
+      write('child111-full.jsonl', [
+        user('c1', at(90), typed('If you start a dev server, pin its url (a `dream-view` pin) so the owner sees the site.\n\nGörev: x')),
+        user('c2', at(50), typed('Durdun: devam et')),
+        user('c3', at(20), typed('ben yazdım')),
+        assistant('m9', 'r9', at(19), U(1)),
+      ]);
+      write('adopted1.jsonl', [
+        user('o1', at(80), typed('kendi sohbetim')),
+        user('o2', at(40), typed('Super devraldı, devam et')),
+        assistant('m8', 'r8', at(39), U(1)),
+      ]);
+      write('super2.jsonl', [send(at(40), 'm2', 'adopted1')]);
+      await scan();
+      expect(row(stats())?.prompts).toEqual({ owner: 2, super: 4, auto: 0 });
+    });
+
+    it('a row holds the cards\' numbers, the net is saved minus eaten, and the range cuts prompts', async () => {
+      write('s1.jsonl', [
+        user('old', at(26 * 60), typed('dün')),
+        JSON.stringify({ type: 'attachment', timestamp: at(50), attachment: { type: 'hook_success', hookEvent: 'SessionStart', command: 'dreamcontext hook session-start', content: 'x'.repeat(3500) } }),
+        user('new', at(49), typed('bugün')),
+        assistant('m1', 'r1', at(48), U(5000)),
+      ]);
+      await scan();
+      const week = stats('7d');
+      const r = week.dc.projects[0];
+      expect(r.prompts?.owner).toBe(2);
+      expect(stats('24h').dc.projects[0].prompts?.owner).toBe(1);
+      expect(r.estMemory.tokens).toBe(1000);
+      expect(r.estMemory.tokens).toBe(week.dc.memory.first + week.dc.memory.carried);
+      expect(r.estMemory.cost).toBeGreaterThan(0);
+      expect(r.sleep.cost).toBe(week.dc.sleep.cost);
+      expect(r.estSaved.tokens).toBe(week.dc.eco.estSaved);
+      expect(r.estNet.cost).toBeCloseTo(r.estSaved.cost - r.sleep.cost - r.estMemory.cost, 10);
+      expect(buildStats({ range: '7d', project: null, off: new Set(['claude']), now: NOW }, home).dc.projects).toEqual([]);
+    });
+
+    it('with no Eco record every row says so; an older record covers the range; a project filter leaves its one row', async () => {
+      write('s1.jsonl', [user('a', at(50), typed('x')), assistant('m1', 'r1', at(49), U(100))]);
+      await scan();
+      expect(stats().dc.ecoPartial).toBe(true);
+      expect(stats().dc.ecoFrom).toBeNull();
+      const key = stats().dc.projects[0].key;
+      expect(buildStats({ range: '7d', project: key, off: new Set(), now: NOW }, home).dc.projects.map((p) => p.key)).toEqual([key]);
+      expect(buildStats({ range: '7d', project: 'nothing-here', off: new Set(), now: NOW }, home).dc.projects).toEqual([]);
+      const root = join(home, 'v', '_dream_context');
+      mkdirSync(join(root, 'state'), { recursive: true });
+      writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ version: 1, vaults: [{ name: 'v', path: join(home, 'v') }] }));
+      logHandoff(root, { title: 't', at: at(10 * 1440), contextTokens: 900_000, fromSession: 'x', consumedAt: at(10 * 1440) });
+      expect(stats().dc.ecoPartial).toBe(false);
+      expect(buildStats({ range: '90d', project: null, off: new Set(), now: NOW }, home).dc.ecoPartial).toBe(true);
+    });
+
+    it('an old cache is read again, so no count stays empty', () => {
+      writeFileSync(join(home, '.dreamcontext', 'usage-scan-cache.json'), JSON.stringify({ version: 2, models: [], files: { x: { rows: [] } } }));
+      expect(Object.keys(loadLedger(home).files)).toEqual([]);
+    });
+
+    it('the openings of a delegate brief are the server\'s own words', () => {
+      const src = readFileSync(join(process.cwd(), 'src/server/routes/super.ts'), 'utf-8');
+      for (const opening of SUPER_BIRTH_OPENINGS) expect(src).toContain(opening);
+    });
   });
 });

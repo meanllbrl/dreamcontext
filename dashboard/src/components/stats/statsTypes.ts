@@ -17,6 +17,12 @@ export interface LimitWindow {
   runs: Array<{ project: string; cost: number }>; hit: boolean; estSleepShare: number; thin?: boolean;
 }
 export interface LimitAnswer { verdict: 'yes' | 'partly' | 'no' | 'none' | 'unclear'; hits: number; counted: number; doubtful: number; worst: LimitWindow | null; twoProject: number; windows: LimitWindow[] }
+export interface PromptCounts { owner: number; super: number; auto: number }
+export interface ProjectRow {
+  key: string; label: string; tokens: number; cost: number | null; prompts: PromptCounts | null;
+  sleep: { tokens: number; cost: number }; estMemory: { tokens: number; cost: number };
+  estSaved: { tokens: number; cost: number }; estNet: { tokens: number; cost: number };
+}
 export interface EcoRow { project: string; title: string; at: number; kind: 'eco' | 'fresh'; before: number; after: number | null; turns: number; estSaved: number; estSavedCost: number }
 export interface ToolWindow { id: string; kind: string; label: string; usedPercent: number; resetsAt: number | null; durationMins: number | null; estSleepPercent: number | null }
 export interface ToolAccount { id: string; label: string; plan: string; fetchedAt: number | null; windows: ToolWindow[]; signedIn: boolean }
@@ -41,6 +47,9 @@ export interface StatsWire {
     eco: { rows: EcoRow[]; estSaved: number; estSavedCost: number; turns: number; avgBefore: number; avgAfter: number };
     memory: { first: number; carried: number; starts: number; messages: number; inputShare: number };
     answer: LimitAnswer;
+    projects: ProjectRow[];
+    ecoFrom: number | null;
+    ecoPartial: boolean;
   };
   limits: ToolLimits[];
   notCounted: Array<{ id: string; name: string }>;

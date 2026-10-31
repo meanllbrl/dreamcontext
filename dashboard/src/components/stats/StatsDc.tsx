@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
+import { StatsProjects } from './StatsProjects';
 import { ChartLegend, GhostBar, StatsChart, type ChartSeries } from './StatsChart';
 import { fmtCost, fmtDay, fmtPct, fmtTokens, fmtWhen } from './statsFormat';
 import type { LimitWindow, SleepRun, StatsWire } from './statsTypes';
@@ -161,6 +162,7 @@ export function StatsDc({ data, onRun }: { data: StatsWire; onRun: (r: SleepRun)
           </div>
         </div>
       </div>
+      <StatsProjects data={data} />
       <div className="st-card">
         <div className="st-ch">
           <div><div className="st-k">{t('stats.claudeTokens')} · {rangeLabel}</div><div className="st-big">{fmtTokens(dc.claudeTokens)}</div></div>

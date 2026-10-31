@@ -15,6 +15,9 @@
  * limit ran out. None of those add a token: they mark tokens already on the ledger.
  */
 
+import { ownerWords } from './agents/team-roster.js';
+import { isAgentRun } from './transcript-sessions.js';
+
 export const CLAUDE_SYNTHETIC_MODEL = '<synthetic>';
 
 export interface TokenTotals {
@@ -167,6 +170,92 @@ export function firstPromptText(record: Record<string, unknown>): string | null 
     if (b?.type === 'text' && typeof b.text === 'string') return b.text;
   }
   return null;
+}
+
+// ── Who wrote a prompt ────────────────────────────────────────────────────────────────
+
+/** `owner`: a person typed it. `super`: the Super Agent's brief or send to a child. `auto`: a
+ *  machine run's (automation, sleep, builder, reviewer, one-shot `claude -p`). */
+export type PromptKind = 'owner' | 'super' | 'auto';
+
+/** Server-written turns no marker tells apart, by their fixed opening. They count for nobody. */
+const SERVER_TURNS = ['[Request interrupted', '[ran in chat]', '[delegated-session event]', 'The previous turn ', 'Your previous turn was stopped'];
+/** Every `super delegate` brief opens with one of these (routes/super.ts `delegateJob`). */
+export const SUPER_BIRTH_OPENINGS = ['If you start a dev server, pin its url', 'You work in your own git worktree:'];
+/** A record's own word that nobody typed it. `scheduled` still goes on, as a machine run's turn. */
+const NOT_A_TURN = new Set(['task_notification', 'peer', 'system']);
+
+export interface HumanTurn { ts: number; uuid: string | null; text: string; machineShaped: boolean; scheduled: boolean }
+
+/**
+ * A user record that may be a prompt, or null: tool results, hook text, sub-agent turns, compaction
+ * summaries, notifications, slash-command stubs and Super event turns are not.
+ *
+ * `machineShaped`: the app's chats send content blocks, while `claude -p "<text>"` writes a plain
+ * string under the SDK entrypoint. So a session that OPENS that way was started by a program.
+ */
+export function humanTurn(record: Record<string, unknown>): HumanTurn | null {
+  if (record.type !== 'user') return null;
+  if (record.isMeta === true || record.isSynthetic === true || record.isCompactSummary === true || record.isSidechain === true) return null;
+  if (record.toolUseResult !== undefined) return null;
+  const origin = record.origin as { kind?: unknown } | string | undefined;
+  const originKind = typeof origin === 'object' && origin !== null ? origin.kind : origin;
+  if (originKind && originKind !== 'human') return null;
+  if (typeof record.turnOrigin === 'string' && NOT_A_TURN.has(record.turnOrigin)) return null;
+  const ts = tsOf(record.timestamp);
+  if (ts === null) return null;
+  const content = (record.message as { content?: unknown } | undefined)?.content;
+  let text = '';
+  let picture = false;
+  if (typeof content === 'string') text = content;
+  else if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const b of content as Array<Record<string, unknown>>) {
+      if (b?.type === 'tool_result') return null;
+      if (b?.type === 'image') picture = true;
+      if (b?.type === 'text' && typeof b.text === 'string') parts.push(b.text);
+    }
+    text = parts.join('\n');
+  } else return null;
+  const words = ownerWords(text.trimStart());
+  if (words === null || (!words && !picture) || words.startsWith('<')) return null;
+  if (SERVER_TURNS.some((p) => words.startsWith(p))) return null;
+  return {
+    ts, uuid: typeof record.uuid === 'string' ? record.uuid : null, text: words,
+    machineShaped: typeof content === 'string' && record.entrypoint === 'sdk-cli',
+    scheduled: record.turnOrigin === 'scheduled',
+  };
+}
+
+/**
+ * Who a session's FIRST turn says opened it, and so who writes all of it. A delegated child's later
+ * turns read like a person's and are the Super's: its resumes, its "the owner picked A". On the
+ * real logs a sample of them held almost nothing else, so a word the owner typed into a child's own
+ * tab counts as the Super's. An owner's chat stays the owner's until a send claims a turn in it
+ * (usage-report.ts `superSends`): that is the adopted child.
+ */
+export function firstTurnKind(turn: HumanTurn, origin: SessionOrigin): PromptKind {
+  if (SUPER_BIRTH_OPENINGS.some((p) => turn.text.startsWith(p))) return 'super';
+  if (origin || turn.scheduled || turn.machineShaped || isAgentRun(turn.text)) return 'auto';
+  return 'owner';
+}
+
+/** The start of a shell command only, as `SLEEP_CMD`: a brief quoting the words is no send. */
+const SUPER_SEND = /(?:^|[;&|\n(])\s*(?:\w+=\S*\s+)*(?:\S*\/)?dreamcontext\s+super\s+send\s+['"]?([0-9a-zA-Z][0-9a-zA-Z-]{5,})\b/g;
+
+/** `dreamcontext super send <child>` calls on this assistant line: [tool call id, child]. */
+export function claudeSuperSends(record: Record<string, unknown>): Array<[string, string]> {
+  if (record.type !== 'assistant') return [];
+  const content = (record.message as { content?: unknown } | undefined)?.content;
+  if (!Array.isArray(content)) return [];
+  const out: Array<[string, string]> = [];
+  for (const block of content as Array<Record<string, unknown>>) {
+    if (block?.type !== 'tool_use' || block.name !== 'Bash' || typeof block.id !== 'string') continue;
+    const command = (block.input as { command?: unknown } | undefined)?.command;
+    if (typeof command !== 'string') continue;
+    for (const m of command.matchAll(SUPER_SEND)) out.push([block.id, m[1]]);
+  }
+  return out;
 }
 
 // ── Codex ─────────────────────────────────────────────────────────────────────────────

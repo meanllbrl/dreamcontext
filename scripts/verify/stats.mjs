@@ -54,6 +54,8 @@ for (let i = 0; i < 90; i++) {
 }
 const stats = await fetch(`${base}/api/agent/stats?range=30d`).then((x) => x.json());
 writeFileSync(join(out, 'stats-30d.json'), JSON.stringify(stats));
+// A rule check over the counted prompts (session ids and times, no words) reads this copy.
+if (process.env.STATS_CACHE_OUT) copyFileSync(join(home, '.dreamcontext', 'usage-scan-cache.json'), process.env.STATS_CACHE_OUT);
 
 const tab = async (page, name) => { await page.getByRole('tab', { name, exact: true }).click(); await page.waitForTimeout(250); };
 const shot = (page, name) => page.screenshot({ path: join(out, `${name}.png`) });
@@ -74,6 +76,33 @@ for (const theme of ['dark', 'light']) {
     await tab(page, 'dreamcontext');
     await page.getByTestId('stats-answer').waitFor({ timeout: 5_000 });
     await shot(page, `stats-dc-${tag}`);
+    const table = page.getByTestId('stats-projects');
+    const toTable = async () => { await table.evaluate((el) => el.scrollIntoView({ block: 'start' })); await page.waitForTimeout(200); };
+    await toTable();
+    await shot(page, `stats-proje-${tag}`);
+    if (await table.evaluate((el) => el.scrollWidth - el.clientWidth) > 1) findings.push(`${tag}: the project table overflows sideways`);
+    const rows = page.getByTestId('stats-project-row');
+    const costs = await rows.evaluateAll((els) => els.map((e) => e.querySelector('.nm .dim')?.textContent ?? ''));
+    if (!costs.length) findings.push(`${tag}: the project table has no rows`);
+    if (theme === 'dark') {
+      const name = (await rows.first().locator('.nm b').textContent()) ?? '';
+      const projectMenu = page.locator('.st-menuwrap .st-btn').first();
+      await projectMenu.click();
+      await page.locator('.st-mi', { hasText: name }).first().click();
+      await page.waitForTimeout(1200);
+      if (await rows.count() !== 1) findings.push(`${tag}: one project should leave one row`);
+      await toTable();
+      await shot(page, `stats-proje-tek-${tag}`);
+      await projectMenu.click();
+      await page.locator('.st-mi', { hasText: 'All projects' }).first().click();
+      await page.waitForTimeout(800);
+    }
+    await page.getByRole('button', { name: '90d' }).click();
+    await page.waitForTimeout(1200);
+    await toTable();
+    await shot(page, `stats-proje-90d-${tag}`);
+    await page.getByRole('button', { name: '7d' }).click();
+    await page.waitForTimeout(800);
     if (await page.locator('.st-body').evaluate((el) => el.scrollWidth - el.clientWidth) > 1) findings.push(`${tag}: the page body overflows sideways`);
     if (w.width > 1000 && theme === 'dark') {
       await page.locator('.st-body').evaluate((el) => { el.scrollTop = el.scrollHeight; });
