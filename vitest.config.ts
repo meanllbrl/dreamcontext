@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config';
 import { WINDOWS_SKIPS } from './tests/windows-skip';
 import { fileURLToPath } from 'node:url';
+import { t3VitePlugin } from './scripts/t3-aliases.mjs';
 
 /**
  * Unit + integration tests live under tests/ as *.test.ts.
@@ -11,6 +12,8 @@ import { fileURLToPath } from 'node:url';
 const isCI = !!process.env.CI;
 
 export default defineConfig({
+  // The bridge (src/lib/t3-bridge) imports the vendored T3 packages by their own names.
+  plugins: [t3VitePlugin],
   resolve: {
     alias: {
       // A few tests exercise dashboard modules directly (markdown rendering, the chat view

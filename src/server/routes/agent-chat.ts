@@ -118,6 +118,11 @@ import {
   CUT_KILL_GRACE_MS, detachBusyCapMs, detachIdleMs, findLiveChat, liveChatsSnapshot, markLiveChatDraining, markTurnEnded, markTurnStarted, registerLiveChat,
   signalGroup, unregisterLiveChat, wsPingMs, type LiveChatEntry,
 } from './agent-chat-live.js';
+import { BRIDGE_TOOLS, sanitizeTool, type ToolId } from '../../lib/t3-bridge/registry.js';
+import { codexHistoryFor } from '../../lib/t3-bridge/codex-history-route.js';
+import { bridgeChatScript, bridgeResumeTarget } from '../../lib/t3-bridge/spawn.js';
+import { CODEX_THREAD_RE } from '../../lib/t3-bridge/codex-threads.js';
+const isCodexThreadId = (id: string): boolean => CODEX_THREAD_RE.test(id);
 import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOptions, type ParkOutcome } from '../chat-park.js';
 import {
   isLoopback, isSameOriginStrict, isCrossSiteRequest, requireLocalDesktop, requireOwnerWindow, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
@@ -1353,6 +1358,18 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // The agent's STAGE (AI Team page): an agent chat whose first accepted conversation becomes
     // the stage's home session, recorded once in the machine-local store (lib/local-store.ts).
     const stageAgent = chatAgent && url.searchParams.get('stage') === '1' ? chatAgent : null;
+    // Which tool this pane runs on (Track T W1). Absent or `claude` = today's path. A bridge tool
+    // runs ordinary project chats only for now: the Assistant, a card, an agent's tab, the Super
+    // Agent and its lean children stay on Claude until their wave (W4), refused rather than opened
+    // half-wired.
+    const toolAsked = url.searchParams.get('tool');
+    const toolParsed = sanitizeTool(toolAsked);
+    if (toolAsked !== null && !toolParsed) { rejectUpgrade(socket, 400); return; }
+    const bridgeTool = toolParsed && (BRIDGE_TOOLS as readonly string[]).includes(toolParsed) ? toolParsed as BridgeTool : null;
+    if (bridgeTool && (assistant || card || chatAgent || mode === 'super' || url.searchParams.get('lean') === '1')) {
+      rejectUpgrade(socket, 400); return;
+    }
+    const toolOpt = bridgeTool ? { tool: bridgeTool } : {};
 
     // T24 — the automation-bound resume gate (see the block comment on
     // `shouldRejectAutomationResume` above). Evaluated HERE, before `startChatSession` is
@@ -1460,7 +1477,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
             if (outcome !== 'unadoptable') { releaseOpening(); return; }
             const child = childNow();
             if (child) { toWatch(ws, child); return; }
-            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
+            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...toolOpt });
             releaseOpening();
           });
           return;
@@ -1471,7 +1488,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         // A reattach that found nothing to adopt (the child exited while the client was away)
         // resumes the conversation in a new process — and never re-submits an opening prompt.
         if (reattach) {
-          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
+          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...toolOpt });
           releaseOpening();
           return;
         }
@@ -1496,7 +1513,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           if (!stageAgent) return;
           try { recordStageHomeSession(projectRoot, stageAgent, conversation); } catch { /* the stage opens a fresh one next time */ }
         };
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...toolOpt });
         settleSupersede(accepted);
         releaseOpening();
       });
@@ -1606,7 +1623,12 @@ interface ChatSpawnOpts {
   /** A LEAN Super Agent child (orchestration plan r5 D14): `--strict-mcp-config` with only these
    *  of the user's MCP servers plus the app's own configs. Absent = every chat as before. */
   leanMcp?: string[];
+  /** A tool other than Claude (plan r5, Track T): the pane runs `dreamcontext t3-chat`, the T3
+   *  bridge child, which speaks the same stream-json. Absent = today's Claude path, unchanged. */
+  tool?: BridgeTool;
 }
+
+type BridgeTool = Exclude<ToolId, 'claude'>;
 
 /** Interrupt watchdog: if no result/exit follows an interrupt request within this window,
  *  escalate to SIGINT then SIGKILL rather than leave the session hung. Empirically, a real
@@ -1792,6 +1814,9 @@ export function startChatSession(
   /** The project's Super Agent (task chat-gets-a-super-agent-mode…): its inbox, the owner-frame
    *  hold (D8) and its own verbs' pre-approval under `auto` (D15). */
   const isSuper = mode === 'super';
+  /** The pane runs on a T3 bridge tool (Codex) instead of `claude`. Every branch below that reads
+   *  it leaves the Claude path exactly as it was when it is null. */
+  const bridgeTool = opts.tool ?? null;
   const assistantConfig = isAssistant ? (readAssistantConfig() ?? DEFAULT_ASSISTANT_CONFIG) : null;
 
   // Which Claude account this process is about to inherit. Captured BEFORE the spawn (it is
@@ -1843,9 +1868,13 @@ export function startChatSession(
   //  • resume requested but no resumable transcript → fresh-pin via --session-id so the
   //    session stays resumable going forward instead of erroring.
   const mappedId = resumeId ? resolveAgentSession(contextRoot, resumeId) : '';
-  const resumeTarget = [mappedId, resumeId].find(
-    (c) => c && !liveConversations.has(c) && claudeConversationExists(c),
-  ) ?? '';
+  // A bridge pane resumes its tool's own thread, found through the same tab map (the bridge
+  // records it) and only when that thread belongs to THIS project (`bridgeResumeTarget`).
+  const resumeTarget = bridgeTool
+    ? bridgeResumeTarget({ tool: bridgeTool, mapped: mappedId, resumeId, projectRoot, held: liveConversations })
+    : [mappedId, resumeId].find(
+      (c) => c && !liveConversations.has(c) && claudeConversationExists(c),
+    ) ?? '';
   const pinId = resumeId || sessionId;
   // Who chose this pane's account — see `autoPlacedAccounts`. Only an auto-placed pane comes home.
   const accountAutoPlaced = !account || autoPlacedAccounts.get(pinId) === account;
@@ -1853,9 +1882,20 @@ export function startChatSession(
   else autoPlacedAccounts.delete(pinId);
   if (!account) handPickedAccounts.delete(pinId);
   else if (!accountAutoPlaced && activeAccountId) notePane(handPickedAccounts, pinId, activeAccountId);
-  const freshPin = !resumeTarget && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
-    ? pinId : '';
+  // A bridge pane always holds its pane id (its tool's thread is found through the tab map, so
+  // there is no Claude transcript to pin): `--session-id` is a Claude flag the bridge never reads.
+  // When the pane's map names a thread this open cannot take (not this project's, or no longer
+  // resolvable), it REFUSES below like a Claude resume, rather than starting a fresh
+  // thread whose record would overwrite the map and lose the conversation for good.
+  const bridgeMapped = !!bridgeTool && !!mappedId && mappedId !== resumeId && isCodexThreadId(mappedId);
+  const freshPin = bridgeTool
+    ? (resumeTarget || bridgeMapped ? '' : pinId)
+    : !resumeTarget && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
+      ? pinId : '';
   const idArg = resumeTarget ? ['--resume', resumeTarget] : freshPin ? ['--session-id', freshPin] : [];
+  /** This pane keeps a stable id across respawns (Claude: a pinned or resumed conversation; a bridge
+   *  pane: always, since the bridge records its thread under the pane id). */
+  const pinned = bridgeTool ? !!pinId : idArg.length > 0;
 
   /**
    * A RESUME THAT CANNOT TAKE ITS CONVERSATION REFUSES — it never quietly forks.
@@ -1960,7 +2000,9 @@ export function startChatSession(
   // The MCP stores every account shares (task mcp-management), by env reference.
   const storeMcp = chatStoreMcp({ scopedCard, lean: !!opts.leanMcp, projectRoot });
 
-  const heldConversation = resumeTarget || freshPin;
+  // A bridge pane holds its PANE id (its thread changes on rotation; the pane does not), so a
+  // respawn of the same pane waits for the old child exactly as a Claude resume does.
+  const heldConversation = bridgeTool ? pinId : resumeTarget || freshPin;
   if (heldConversation) liveConversations.add(heldConversation);
   /** The hold was handed to a respawn while this child was detached and busy (`supersedeLive`):
    *  the conversation is not ours to release any more, so `releaseHeld` must leave it alone. */
@@ -2224,13 +2266,25 @@ export function startChatSession(
   // reference (`$DREAMCONTEXT_MCP_CFG_n`, a fixed name): it expands to a path held in the env,
   // so HOME's text never enters the script. (`Bash(dreamcontext assistant:*)` is a
   // fixed literal whose parens, colon, space and star are all inert inside double quotes.)
-  const script = `exec claude ${argv.map((a) => `"${a}"`).join(' ')}`;
+  // A bridge pane runs our own CLI's `t3-chat` (the same stream-json in and out) instead of
+  // `claude`; Claude-only flags never reach it. Refused when a path is not shell-safe.
+  const bridgeScript = bridgeTool
+    ? bridgeChatScript({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg })
+    : null;
+  if (bridgeTool && !bridgeScript) {
+    try { ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', message: `${bridgeTool} could not start: the dreamcontext install path is not shell-safe.` })); } catch { /* gone */ }
+    try { ws.close(); } catch { /* already closed */ }
+    releaseHeld();
+    cleanupBriefing(); cleanupAgents(); cleanupModeNote(); cleanupDeferred();
+    return;
+  }
+  const script = bridgeScript ?? `exec claude ${argv.map((a) => `"${a}"`).join(' ')}`;
 
   // An agent-chat process exports its tab's STABLE roster id so the SessionStart/Stop
   // hooks (which inherit this env through `claude`) record roster id → live conversation
   // id on every rotation — the SAME map the embedded terminal writes/reads (AC7: chat and
   // terminal resume interop through one registry). Only when actually pinned/resumed.
-  const tabEnv = pinId && idArg.length ? tabSessionEnv(pinId) : {};
+  const tabEnv = pinId && pinned ? tabSessionEnv(pinId) : {};
 
   // ── Seed this pane's context-handoff toggle BEFORE the child starts ─────────
   //
@@ -2242,7 +2296,7 @@ export function startChatSession(
   // machine) > `.config.json` (the team default) > off. An EXISTING tab file is left
   // alone: a pane that has been toggled owns its own answer across resumes.
   try {
-    if (pinId && idArg.length && !readTabHandoff(contextRoot, pinId)) {
+    if (pinId && pinned && !readTabHandoff(contextRoot, pinId)) {
       const seed = resolveTabSeed(
         readBrainLocal(projectRoot).contextHandoffDefault,
         readSetupConfig(projectRoot)?.contextHandoff,
@@ -2846,7 +2900,7 @@ export function startChatSession(
     }
   };
   // Right after spawn most servers are still `pending`: read until they settle (≤ 20 s).
-  if (!scopedCard) setImmediate(() => mcpSettle());
+  if (!scopedCard && !bridgeTool) setImmediate(() => mcpSettle());
 
   /** The socket's MCP verbs. Refused unless the socket holding the chat RIGHT NOW is the desktop. */
   const onMcpMessage = (msg: { type?: string; name?: unknown }): void => {
@@ -3399,7 +3453,7 @@ export function startChatSession(
       if (mainResult) {
         closeTurn();
         // The turn may have used, broken or fixed an MCP server: read again once it settles.
-        if (!scopedCard) {
+        if (!scopedCard && !bridgeTool) {
           if (mcpTurnTimer) clearTimeout(mcpTurnTimer);
           mcpTurnTimer = setTimeout(() => { mcpTurnTimer = null; mcpSettle(10_000); }, 2000);
         }
@@ -3462,8 +3516,10 @@ export function startChatSession(
       // was read once, above the result block.)
       // Every turn states this account's usage exactly; kept, so the panel and the chooser read
       // what the account said a moment ago rather than a cache up to an hour old.
-      if (obj.type === 'rate_limit_event') noteTurnUsage(obj);
-      if (limit) onLimitRejected(limit);
+      // A bridge tool's limits and sign-in are its own accounts' (W2): Claude's observers stay off it.
+      if (obj.type === 'rate_limit_event' && !bridgeTool) noteTurnUsage(obj);
+      if (bridgeTool) { /* not a Claude account's reading */ }
+      else if (limit) onLimitRejected(limit);
       else if (!obj.parent_tool_use_id && isAuthFailureFrame(obj)) onAuthFailed();
       else if (obj.type === 'assistant' && !obj.parent_tool_use_id) turnProgressed = true;
       // A turn that went through says the account is signed in again (claude-signed-out.ts).
@@ -3976,6 +4032,8 @@ export function startChatSession(
 
   /** True when the turn was HELD (a restart is coming); false when the caller should send it. */
   const maybeSwitchAccount = async (text: string, opts: { resubmit?: boolean } = {}): Promise<boolean> => {
+    // A bridge tool switches its own accounts (W2); never a Claude switch.
+    if (bridgeTool) return false;
     const resubmit = opts.resubmit ?? true;
     // One switch at a time per conversation. An owner message arriving while a restart is owed
     // JOINS it — held, re-announced, resubmitted after the restart in typing order — instead of
@@ -4619,8 +4677,18 @@ export async function handleAgentChatHistory(
   const id = sanitizeUuid(url.searchParams.get('claudeId'));
   if (!id) { sendJson(res, 200, { items: [] }); return; }
   const liveId = contextRoot ? resolveAgentSession(contextRoot, id) : '';
-  const path = findFirstTranscriptPath([liveId, id]);
-  if (!path) { sendJson(res, 200, { items: [] }); return; }
+  // A Codex pane (Track T): its history is the Codex rollout, served only when that thread is
+  // THIS project's. A foreign or unresolvable thread is refused (403), on every socket, phone too.
+  // A Claude pane never pays for this: Codex is looked at only when asked for, or when no Claude
+  // transcript answers (an older client opening a Codex pane without `tool=`).
+  const tool = sanitizeTool(url.searchParams.get('tool'));
+  const path = tool === 'codex' ? null : findFirstTranscriptPath([liveId, id]);
+  if (!path) {
+    const codex = await codexHistoryFor({ tool, id, liveId, contextRoot });
+    if (codex === 'refuse') { sendError(res, 403, 'thread_not_in_project', 'That Codex thread does not belong to this project.'); return; }
+    sendJson(res, 200, { items: codex?.items ?? [] });
+    return;
+  }
   // AC16: a phone reads only the chosen projects' conversations (a sub-agent's by its parent's).
   if (phoneTranscriptRefused(req, contextRoot, path)) { sendError(res, 403, 'phone_unavailable', 'Hands-free does not serve that conversation.'); return; }
 

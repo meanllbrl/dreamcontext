@@ -1,0 +1,25 @@
+{
+  "name": "@t3tools/provider-testing",
+  "exports": {
+    "./fakeCli": {
+      "types": "./src/fakeCli.ts",
+      "import": "./src/fakeCli.ts"
+    },
+    "./replayGate": {
+      "types": "./src/replayGate.ts",
+      "import": "./src/replayGate.ts"
+    },
+    "./replayTranscript": {
+      "types": "./src/replayTranscript.ts",
+      "import": "./src/replayTranscript.ts"
+    },
+    "./replayWorkspace": {
+      "types": "./src/replayWorkspace.ts",
+      "import": "./src/replayWorkspace.ts"
+    },
+    "./TestProviderHost": {
+      "types": "./src/TestProviderHost.ts",
+      "import": "./src/TestProviderHost.ts"
+    }
+  }
+}

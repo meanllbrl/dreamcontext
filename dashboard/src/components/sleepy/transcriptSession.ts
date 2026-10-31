@@ -66,6 +66,7 @@ export function createTranscriptSession(
     accountId: '',
     mode: DEFAULT_CHAT_MODE,
     agent: '',
+    tool: '',
     superMirror: false,
     superDigest: null,
     onSuperDigest: off,

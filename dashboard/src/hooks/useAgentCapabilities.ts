@@ -441,3 +441,44 @@ export function useAgentCouncilLive(claudeId: string | undefined, enabled: boole
     placeholderData: COUNCIL_LIVE_INACTIVE,
   });
 }
+
+/** One tool a chat can run on (`GET /api/agent/tools`, src/lib/t3-bridge/registry.ts). */
+export interface AgentToolInfo {
+  tool: 'claude' | 'codex';
+  label: string;
+  ready: boolean;
+  installed: boolean;
+  signedIn: boolean;
+  defaultModel: string | null;
+  models: { id: string; label: string; efforts: string[]; defaultEffort: string | null }[];
+}
+
+/**
+ * The tools a chat can run on (Track T W1: Claude and Codex) with their readiness and models.
+ * Read from disk on the server (no process, no model call), so a 30 s poll is cheap; an
+ * unreachable endpoint (an older server) is an empty list, and the menu then shows Claude only.
+ */
+export function useAgentTools() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['agent-tools'],
+    queryFn: () => api.get<{ tools: AgentToolInfo[] }>('/agent/tools').then((r) => r.tools),
+    staleTime: 10_000,
+    refetchInterval: () => pollMs(30_000),
+    retry: false,
+    placeholderData: [] as AgentToolInfo[],
+  });
+}
+
+/** Codex's models as the composer's model menu reads them (its efforts are its own). */
+export function codexModelConfig(info: AgentToolInfo | undefined): ModelConfig | null {
+  if (!info || info.tool !== 'codex' || info.models.length === 0) return null;
+  const efforts = [...new Set(info.models.flatMap((m) => m.efforts))];
+  const def = info.models.find((m) => m.id === info.defaultModel) ?? info.models[0]!;
+  return {
+    models: info.models.map((m) => ({ id: m.id, label: m.label })),
+    efforts,
+    defaultModel: def.id,
+    defaultEffort: def.defaultEffort ?? efforts[0] ?? '',
+  };
+}

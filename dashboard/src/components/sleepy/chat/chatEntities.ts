@@ -352,6 +352,25 @@ export function parseEditDiff(input: unknown): EditDiff | null {
     return { removed: [], added, addedN: added.length, removedN: 0 };
   }
 
+  // A unified diff (`Edit {patch}`): how a Codex file change arrives through the T3 bridge.
+  // Headers (`---`, `+++`, `@@`, `diff`, `index`) are not content lines.
+  if (typeof obj.patch === 'string') {
+    const removed: string[] = [];
+    const added: string[] = [];
+    let inHunk = false;
+    for (const line of obj.patch.split('\n')) {
+      // File headers (`---`/`+++`, `diff`, `index`) only come before the first hunk; inside one, a
+      // line starting `--` or `++` is content (a removed SQL comment, an added `++i`).
+      if (line.startsWith('@@')) { inHunk = true; continue; }
+      if (line.startsWith('\\ No newline')) continue;
+      if (!inHunk && /^(---|\+\+\+|diff |index )/.test(line)) continue;
+      if (line.startsWith('-')) removed.push(line.slice(1));
+      else if (line.startsWith('+')) added.push(line.slice(1));
+    }
+    if (!removed.length && !added.length) return null;
+    return { removed, added, addedN: added.length, removedN: removed.length };
+  }
+
   return null;
 }
 

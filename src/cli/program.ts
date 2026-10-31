@@ -52,6 +52,7 @@ import { registerPatternsCommand } from './commands/patterns.js';
 import { registerWhiteboardCommand } from './commands/whiteboard.js';
 import { registerNotifyCommand } from './commands/notify.js';
 import { registerHandsfreeCommand } from './commands/handsfree.js';
+import { registerT3ChatCommand } from './commands/t3-chat.js';
 
 /**
  * The command TREE, with no entrypoint attached.
@@ -192,6 +193,7 @@ export function createProgram(): Command {
   registerLinkCommand(program);
   registerNotifyCommand(program);
   registerHandsfreeCommand(program);
+  registerT3ChatCommand(program);
 
   return program;
 }

@@ -1,0 +1,301 @@
+# Vendored: T3 Code provider layer
+
+Source: https://github.com/pingdotgg/t3code at `36dac688a17c6de1c6398e62d01546fb787c185b`, MIT (see `LICENSE`).
+Written by `node scripts/sync-t3.mjs <t3-checkout> <commit>`. Never edit a file here by hand:
+a behaviour change is a new `patches/*.patch` with a `# reason:` line, re-applied by the script.
+`tests/unit/vendor-t3-drift.test.ts` fails when a file differs from `vendor-manifest.json`.
+
+Files: 249 copied (186869 upstream lines), 18 stubs, 0 patches.
+
+## Stubs (cut seams, plan §2)
+
+- `apps/server/src/environment/ServerEnvironment.ts`: T3's environment service pulls its cloud, self-update and database-migration modules; dreamcontext only needs a stable environment id, which the bridge provides.
+- `apps/server/src/mcp/toolkits/environment/tools.ts`: test-only. T3's own MCP server toolkit (EnvironmentToolkit) reaches T3's thread store, git and headless Chrome; dreamcontext has its own MCP surface, and the one T3 test that reads these toolkit annotations is excluded by name.
+- `apps/server/src/mcp/toolkits/html/tools.ts`: test-only. T3's own MCP server toolkit (HtmlToolkit) reaches T3's thread store, git and headless Chrome; dreamcontext has its own MCP surface, and the one T3 test that reads these toolkit annotations is excluded by name.
+- `apps/server/src/mcp/toolkits/orchestrator/tools.ts`: test-only. T3's own MCP server toolkit (OrchestratorToolkit) reaches T3's thread store, git and headless Chrome; dreamcontext has its own MCP surface, and the one T3 test that reads these toolkit annotations is excluded by name.
+- `apps/server/src/mcp/toolkits/previewControls/tools.ts`: test-only. T3's own MCP server toolkit (PreviewControlsToolkit) reaches T3's thread store, git and headless Chrome; dreamcontext has its own MCP surface, and the one T3 test that reads these toolkit annotations is excluded by name.
+- `apps/server/src/mcp/toolkits/project/tools.ts`: test-only. T3's own MCP server toolkit (ProjectToolkit) reaches T3's thread store, git and headless Chrome; dreamcontext has its own MCP surface, and the one T3 test that reads these toolkit annotations is excluded by name.
+- `apps/server/src/mcp/toolkits/thread/tools.ts`: test-only. T3's own MCP server toolkit (ThreadToolkit) reaches T3's thread store, git and headless Chrome; dreamcontext has its own MCP surface, and the one T3 test that reads these toolkit annotations is excluded by name.
+- `apps/server/src/mcp/toolkits/worktree/tools.ts`: test-only. T3's own MCP server toolkit (WorktreeToolkit) reaches T3's thread store, git and headless Chrome; dreamcontext has its own MCP surface, and the one T3 test that reads these toolkit annotations is excluded by name.
+- `apps/server/src/orchestration-v2/EffectWorker.ts`: test-only. T3's orchestrator replay harness needs T3's whole server (every driver, git, terminal, SQLite, native modules); the T3 adapter tests that drive it are excluded by name in vitest.t3.config.ts.
+- `apps/server/src/orchestration-v2/Orchestrator.ts`: test-only. T3's orchestrator replay harness needs T3's whole server (every driver, git, terminal, SQLite, native modules); the T3 adapter tests that drive it are excluded by name in vitest.t3.config.ts.
+- `apps/server/src/orchestration-v2/testkit/OrchestratorScenario.ts`: test-only. T3's orchestrator replay harness needs T3's whole server (every driver, git, terminal, SQLite, native modules); the T3 adapter tests that drive it are excluded by name in vitest.t3.config.ts.
+- `apps/server/src/orchestration-v2/testkit/ProviderReplayHarness.ts`: test-only. T3's orchestrator replay harness needs T3's whole server (every driver, git, terminal, SQLite, native modules); the T3 adapter tests that drive it are excluded by name in vitest.t3.config.ts. makeReplayServerConfig is copied as is (pure path setup).
+- `apps/server/src/preview/PortScanner.ts`: dev-server preview discovery (lsof/proc walks) is a T3 app feature; dreamcontext scans no ports, so every scan is empty.
+- `apps/server/src/provider/CodexManagedRuntime.ts`: T3's managed Codex runtime (hosted token broker, cloud config, telemetry); dreamcontext never runs Codex in managed mode, so only the runtime shape the adapters type against remains.
+- `apps/server/src/provider/CodexManagedTokenBroker.ts`: T3's hosted ChatGPT token-sharing broker; dreamcontext signs each Codex account in with its own `codex login`, so there is no broker to start.
+- `apps/server/src/provider/Drivers/CodexManagedProvider.ts`: T3's "managed Codex" signs in through T3's hosted ChatGPT token sharing; dreamcontext accounts use their own `codex login`, so a managed instance is refused.
+- `apps/server/src/serverSettings.ts`: T3's settings service persists to SQLite and pulls the source-control registry; dreamcontext keeps its settings in agent-ui.json, so the bridge hands T3 a fixed, read-only snapshot.
+- `apps/server/src/usage/CodexUsageHistory.ts`: T3 reads past Codex service tiers from its orchestration SQLite store, which dreamcontext does not have; it answers with no history.
+
+## Patches
+
+- none
+
+## npm dependencies the closure imports
+
+- `@anthropic-ai/claude-agent-sdk`
+- `@effect/openapi-generator`
+- `@effect/platform-node`
+- `@effect/vitest`
+- `diff`
+- `effect`
+- `mdast`
+- `remark-gfm`
+- `remark-math`
+- `remark-parse`
+- `unified`
+- `vite-plus`
+- `yaml`
+
+## Files
+
+- `apps/server/package.json`
+- `apps/server/src/attachmentPaths.ts`
+- `apps/server/src/attachmentStore.ts`
+- `apps/server/src/auth/ServerSecretStore.ts`
+- `apps/server/src/claudeModelOptions.ts`
+- `apps/server/src/codexModelOptions.ts`
+- `apps/server/src/config.ts`
+- `apps/server/src/imageMime.ts`
+- `apps/server/src/mcpApps/McpAppSnapshot.ts`
+- `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts`
+- `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts`
+- `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts`
+- `apps/server/src/orchestration-v2/Adapters/ClaudeTaskOutputTail.ts`
+- `apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts`
+- `apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts`
+- `apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts`
+- `apps/server/src/orchestration-v2/Adapters/ProviderTextDeltaCoalescer.ts`
+- `apps/server/src/orchestration-v2/Adapters/claudeWorkflowProgress.ts`
+- `apps/server/src/orchestration-v2/ProjectStore.ts`
+- `apps/server/src/orchestration-v2/ProviderAdapterRegistry.ts`
+- `apps/server/src/orchestration-v2/RuntimePolicy.ts`
+- `apps/server/src/orchestration-v2/testkit/DeterministicRuntime.ts`
+- `apps/server/src/orchestration-v2/testkit/fixtures/shared.ts`
+- `apps/server/src/orchestration-v2/unknownField.ts`
+- `apps/server/src/orchestration-v2/workflowAgentAnswers.ts`
+- `apps/server/src/orchestration-v2/workflowAgentTranscript.ts`
+- `apps/server/src/orchestration-v2/workflowFileRead.ts`
+- `apps/server/src/provider/ClaudeModelCatalog.ts`
+- `apps/server/src/provider/ClaudeModelManifest.ts`
+- `apps/server/src/provider/ClaudeProvider.ts`
+- `apps/server/src/provider/ClaudeTurnTokenUsage.ts`
+- `apps/server/src/provider/CodexDeveloperInstructions.ts`
+- `apps/server/src/provider/CodexInstallation.ts`
+- `apps/server/src/provider/CodexManagedErrors.ts`
+- `apps/server/src/provider/CodexMcpElicitation.ts`
+- `apps/server/src/provider/CodexProvider.ts`
+- `apps/server/src/provider/CodexThreadRevert.ts`
+- `apps/server/src/provider/CodexToolPresentation.ts`
+- `apps/server/src/provider/CodexTurnTokenUsage.ts`
+- `apps/server/src/provider/DocumentText.ts`
+- `apps/server/src/provider/Drivers/ClaudeDriver.ts`
+- `apps/server/src/provider/Drivers/ClaudeExecutable.ts`
+- `apps/server/src/provider/Drivers/ClaudeHome.ts`
+- `apps/server/src/provider/Drivers/ClaudeSkillDispatch.ts`
+- `apps/server/src/provider/Drivers/ClaudeSkills.ts`
+- `apps/server/src/provider/Drivers/CodexDriver.ts`
+- `apps/server/src/provider/Drivers/CodexHomeLayout.test.ts`
+- `apps/server/src/provider/Drivers/CodexHomeLayout.ts`
+- `apps/server/src/provider/Drivers/claudeUsage.ts`
+- `apps/server/src/provider/Drivers/codexUsage.ts`
+- `apps/server/src/provider/Errors.ts`
+- `apps/server/src/provider/EventNdjsonLogger.ts`
+- `apps/server/src/provider/ModelManifest.ts`
+- `apps/server/src/provider/ProviderInstanceRegistry.ts`
+- `apps/server/src/provider/ProviderInstanceRegistryMutator.ts`
+- `apps/server/src/provider/ProviderRegistry.ts`
+- `apps/server/src/provider/builtInProviderCatalog.ts`
+- `apps/server/src/provider/claudeResetCredits.ts`
+- `apps/server/src/provider/claudeUsageLimits.ts`
+- `apps/server/src/provider/codexLaunchArgs.ts`
+- `apps/server/src/provider/codexModelCatalog.ts`
+- `apps/server/src/provider/codexUsageLimits.ts`
+- `apps/server/src/provider/model-manifest.json`
+- `apps/server/src/provider/providerCompatibility.ts`
+- `apps/server/src/provider/providerStatusCache.ts`
+- `apps/server/src/provider/resetCreditCoordinator.ts`
+- `apps/server/src/provider/unavailableProviderSnapshot.ts`
+- `apps/server/src/resourceTelemetry/ResourceAttribution.ts`
+- `apps/server/src/textGeneration/ClaudeTextGeneration.ts`
+- `apps/server/src/textGeneration/CodexTextGeneration.ts`
+- `packages/contracts/src/acpRegistry.ts`
+- `packages/contracts/src/agentSessions.ts`
+- `packages/contracts/src/applicationEvent.ts`
+- `packages/contracts/src/assets.ts`
+- `packages/contracts/src/assistantCitations.ts`
+- `packages/contracts/src/auth.ts`
+- `packages/contracts/src/background.ts`
+- `packages/contracts/src/baseSchemas.ts`
+- `packages/contracts/src/browserImport.ts`
+- `packages/contracts/src/browserProfile.ts`
+- `packages/contracts/src/chatAttachment.ts`
+- `packages/contracts/src/checkpointDiff.ts`
+- `packages/contracts/src/clientRpcPermissions.ts`
+- `packages/contracts/src/composerContext.ts`
+- `packages/contracts/src/composerContextClipboard.ts`
+- `packages/contracts/src/desktopAppActivation.ts`
+- `packages/contracts/src/desktopBootstrap.ts`
+- `packages/contracts/src/desktopBrowser.ts`
+- `packages/contracts/src/device.ts`
+- `packages/contracts/src/editor.ts`
+- `packages/contracts/src/environment.ts`
+- `packages/contracts/src/environmentHttp.ts`
+- `packages/contracts/src/filesystem.ts`
+- `packages/contracts/src/git.ts`
+- `packages/contracts/src/guestShare.ts`
+- `packages/contracts/src/guestStream.ts`
+- `packages/contracts/src/index.ts`
+- `packages/contracts/src/ipc.ts`
+- `packages/contracts/src/keybindings.ts`
+- `packages/contracts/src/mcpApps.ts`
+- `packages/contracts/src/model.ts`
+- `packages/contracts/src/modelSelection.ts`
+- `packages/contracts/src/orchestrationDispatch.ts`
+- `packages/contracts/src/orchestrationProject.ts`
+- `packages/contracts/src/orchestrationV2.ts`
+- `packages/contracts/src/orchestrationV2IdTable.ts`
+- `packages/contracts/src/orchestratorMcp.ts`
+- `packages/contracts/src/peerLink.ts`
+- `packages/contracts/src/preview.ts`
+- `packages/contracts/src/previewAutomation.ts`
+- `packages/contracts/src/previewCapture.ts`
+- `packages/contracts/src/project.ts`
+- `packages/contracts/src/projectClone.ts`
+- `packages/contracts/src/provider.ts`
+- `packages/contracts/src/providerInstance.ts`
+- `packages/contracts/src/providerPolicy.ts`
+- `packages/contracts/src/providerRuntime.ts`
+- `packages/contracts/src/providerSetup.ts`
+- `packages/contracts/src/providerUsageLimits.ts`
+- `packages/contracts/src/pullRequest.ts`
+- `packages/contracts/src/pullRequestReviewGuide.ts`
+- `packages/contracts/src/relay.ts`
+- `packages/contracts/src/relayClient.ts`
+- `packages/contracts/src/remoteAccess.ts`
+- `packages/contracts/src/resourceTelemetry.ts`
+- `packages/contracts/src/review.ts`
+- `packages/contracts/src/rpc.ts`
+- `packages/contracts/src/scheduledTask.ts`
+- `packages/contracts/src/secretRequest.ts`
+- `packages/contracts/src/server.ts`
+- `packages/contracts/src/settings.ts`
+- `packages/contracts/src/sourceControl.ts`
+- `packages/contracts/src/t3ProjectFile.ts`
+- `packages/contracts/src/terminal.ts`
+- `packages/contracts/src/threadMetadataMcp.ts`
+- `packages/contracts/src/threadPullRequest.ts`
+- `packages/contracts/src/threadSearch.ts`
+- `packages/contracts/src/threadTitle.ts`
+- `packages/contracts/src/usage.ts`
+- `packages/contracts/src/usageLimitSourceId.ts`
+- `packages/contracts/src/vcs.ts`
+- `packages/contracts/src/worktreeMcp.ts`
+- `packages/contracts/src/worktreeSetup.ts`
+- `packages/effect-codex-app-server/scripts/generate.ts`
+- `packages/effect-codex-app-server/src/_generated/meta.gen.ts`
+- `packages/effect-codex-app-server/src/_generated/namespaces.gen.ts`
+- `packages/effect-codex-app-server/src/_generated/schema.gen.ts`
+- `packages/effect-codex-app-server/src/_internal/shared.ts`
+- `packages/effect-codex-app-server/src/_internal/stdio.ts`
+- `packages/effect-codex-app-server/src/client.ts`
+- `packages/effect-codex-app-server/src/errors.ts`
+- `packages/effect-codex-app-server/src/protocol.ts`
+- `packages/effect-codex-app-server/src/replay.ts`
+- `packages/effect-codex-app-server/src/rpc.ts`
+- `packages/effect-codex-app-server/src/schema.ts`
+- `packages/provider-core/src/client.ts`
+- `packages/provider-core/src/modelShortName.ts`
+- `packages/provider-core/src/server/IdAllocator.ts`
+- `packages/provider-core/src/server/McpProviderSessions.ts`
+- `packages/provider-core/src/server/ModelCatalog.ts`
+- `packages/provider-core/src/server/ProviderAdapter.ts`
+- `packages/provider-core/src/server/ProviderContinuationRequests.ts`
+- `packages/provider-core/src/server/ProviderEventLoggers.ts`
+- `packages/provider-core/src/server/ProviderHost.ts`
+- `packages/provider-core/src/server/ProviderLatestVersions.ts`
+- `packages/provider-core/src/server/adapterDriver.ts`
+- `packages/provider-core/src/server/attachmentPrompt.ts`
+- `packages/provider-core/src/server/auth.ts`
+- `packages/provider-core/src/server/collectStreamText.ts`
+- `packages/provider-core/src/server/driver.ts`
+- `packages/provider-core/src/server/errors.ts`
+- `packages/provider-core/src/server/failure.ts`
+- `packages/provider-core/src/server/handoffBudget.ts`
+- `packages/provider-core/src/server/instanceEnvironment.ts`
+- `packages/provider-core/src/server/instanceIdentity.ts`
+- `packages/provider-core/src/server/maintenance.ts`
+- `packages/provider-core/src/server/maintenanceResolver.ts`
+- `packages/provider-core/src/server/managedProvider.ts`
+- `packages/provider-core/src/server/mcpSession.ts`
+- `packages/provider-core/src/server/mcpToolPresentation.ts`
+- `packages/provider-core/src/server/nativeProtocolLogging.ts`
+- `packages/provider-core/src/server/notification.ts`
+- `packages/provider-core/src/server/orchestrationInstructions.ts`
+- `packages/provider-core/src/server/pathExpansion.ts`
+- `packages/provider-core/src/server/processGroup.ts`
+- `packages/provider-core/src/server/providerAuthFlow.ts`
+- `packages/provider-core/src/server/randomUuid.ts`
+- `packages/provider-core/src/server/runtimeInstructions.ts`
+- `packages/provider-core/src/server/selectionTransition.ts`
+- `packages/provider-core/src/server/snapshot.ts`
+- `packages/provider-core/src/server/snapshotProbe.ts`
+- `packages/provider-core/src/server/snapshotSettings.ts`
+- `packages/provider-core/src/server/subagentProjection.ts`
+- `packages/provider-core/src/server/textGeneration.ts`
+- `packages/provider-core/src/server/textGenerationOperations.ts`
+- `packages/provider-core/src/server/textGenerationPolicy.ts`
+- `packages/provider-core/src/server/textGenerationPrompts.ts`
+- `packages/provider-core/src/server/textGenerationUtils.ts`
+- `packages/provider-core/src/server/threadTitleContext.ts`
+- `packages/provider-core/src/server/usage.ts`
+- `packages/provider-core/src/server/usageLimits.ts`
+- `packages/provider-testing/src/TestProviderHost.ts`
+- `packages/provider-testing/src/fakeCli.ts`
+- `packages/provider-testing/src/replayGate.ts`
+- `packages/provider-testing/src/replayTranscript.ts`
+- `packages/provider-testing/src/replayWorkspace.ts`
+- `packages/shared/src/AgentScope.ts`
+- `packages/shared/src/Array.ts`
+- `packages/shared/src/HostProcess.ts`
+- `packages/shared/src/Struct.ts`
+- `packages/shared/src/assistantCitations.ts`
+- `packages/shared/src/atomicWrite.ts`
+- `packages/shared/src/backgroundActivitySettings.ts`
+- `packages/shared/src/claudeCompaction.ts`
+- `packages/shared/src/cliArgs.ts`
+- `packages/shared/src/cliRelease.ts`
+- `packages/shared/src/composerInlineTokens.ts`
+- `packages/shared/src/filePreview.ts`
+- `packages/shared/src/git.ts`
+- `packages/shared/src/htmlRender.ts`
+- `packages/shared/src/image.ts`
+- `packages/shared/src/keybindings.ts`
+- `packages/shared/src/logging.ts`
+- `packages/shared/src/markdownMath.ts`
+- `packages/shared/src/mcpApp.ts`
+- `packages/shared/src/mediaPreview.ts`
+- `packages/shared/src/model.ts`
+- `packages/shared/src/nodeSqliteClient.ts`
+- `packages/shared/src/observability.ts`
+- `packages/shared/src/orchestrationV2ThreadError.ts`
+- `packages/shared/src/otelEnvironment.ts`
+- `packages/shared/src/releaseResource.ts`
+- `packages/shared/src/schemaJson.ts`
+- `packages/shared/src/semver.ts`
+- `packages/shared/src/shell.ts`
+- `packages/shared/src/symlink.ts`
+- `packages/shared/src/t3McpToolPresentation.ts`
+- `packages/shared/src/testing/symlinks.ts`
+- `packages/shared/src/themePalettes.ts`
+- `packages/shared/src/toolActivity.ts`
+- `packages/shared/src/toolOutput.ts`
+- `packages/shared/src/video.ts`
+- `apps/server/src/orchestration-v2/testkit/fixtures/simple/codex_transcript.ndjson`
+- `apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/codex_transcript.ndjson`
+- `apps/server/src/orchestration-v2/testkit/fixtures/tool_call_restricted_granular/codex_transcript.ndjson`
+- `apps/server/src/orchestration-v2/testkit/fixtures/plan_questions/codex_transcript.ndjson`
+- `apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/codex_transcript.ndjson`
+- `apps/server/src/orchestration-v2/testkit/fixtures/todo_list/codex_transcript.ndjson`
+- `apps/server/src/orchestration-v2/testkit/fixtures/command_output_streaming/codex_transcript.ndjson`

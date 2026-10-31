@@ -32,10 +32,11 @@ export function dormantLaunch(parked: ChatLaunch | undefined, launch: ChatLaunch
  *  mode as that chat, anything else as the Agent screen chosen now (`screen`). The model, effort
  *  and account ride only on a chat; a terminal reopens on the CLI's own. */
 export function resumePlan(
-  meta: { kind?: string; mode?: string; parked?: ChatLaunch & { transport: 'chat' | 'agent' }; launch?: ChatLaunch },
+  meta: { kind?: string; mode?: string; tool?: string; parked?: ChatLaunch & { transport: 'chat' | 'agent' }; launch?: ChatLaunch },
   screen: string,
 ): { asChat: boolean; spawnKind: string; launch: ChatLaunch } {
-  const asChat = meta.parked ? meta.parked.transport === 'chat' : meta.kind === 'chat' && !!meta.mode;
+  // A chat on another tool (Codex) has no terminal surface: it always resumes as a chat.
+  const asChat = meta.parked ? meta.parked.transport === 'chat' : meta.kind === 'chat' && (!!meta.mode || !!meta.tool);
   const spawnKind = asChat ? 'chat' : meta.parked ? meta.parked.transport : screen;
   return { asChat, spawnKind, launch: spawnKind === 'chat' ? (dormantLaunch(meta.parked, meta.launch) ?? {}) : {} };
 }

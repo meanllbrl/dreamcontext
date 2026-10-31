@@ -98,6 +98,12 @@ export interface SavedMeta {
    */
   agent?: string;
   /**
+   * Present only alongside `kind: 'chat'` — the tool this conversation runs on when it is not
+   * Claude (Track T: `codex`), so the tab reopens on the same tool and resumes its own thread.
+   * Absent = Claude, which every roster written before this field already means.
+   */
+  tool?: 'codex';
+  /**
    * Which PANE this tab sat in, as a 0-based index into the surface's left-to-right pane row.
    *
    * The roster used to persist titles only, and the client's own comment said so out loud:
@@ -318,6 +324,7 @@ function coerceMeta(raw: unknown): SavedMeta {
     ? (o.mode as ChatMode)
     : undefined;
   const agent = kind === 'chat' && typeof o.agent === 'string' && isSafeAutomationSlug(o.agent) ? o.agent : undefined;
+  const tool = kind === 'chat' && o.tool === 'codex' ? 'codex' as const : undefined;
   // What the chat was running on: chat only, like `mode`, and each through its spawn gate.
   const model = kind === 'chat' && typeof o.model === 'string' ? sanitizeModel(o.model) : '';
   const effort = kind === 'chat' && typeof o.effort === 'string' && EFFORT_LEVELS.includes(o.effort) ? o.effort : '';
@@ -338,6 +345,7 @@ function coerceMeta(raw: unknown): SavedMeta {
     ...(automation ? { automation } : {}),
     ...(mode ? { mode } : {}),
     ...(agent ? { agent } : {}),
+    ...(tool ? { tool } : {}),
     ...(pane !== undefined ? { pane } : {}),
     ...(o.active === true ? { active: true } : {}),
     ...(o.titleByAgent === true ? { titleByAgent: true } : {}),

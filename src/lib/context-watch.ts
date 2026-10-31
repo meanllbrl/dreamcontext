@@ -199,6 +199,9 @@ export interface HookInputLike {
   session_id?: unknown;
   agent_id?: unknown;
   agent_type?: unknown;
+  /** A tool with no Claude transcript (the T3 bridge: Codex's `usedTokens`) hands its main
+   *  chain's context in directly; the transcript is then not read. */
+  context_tokens?: unknown;
 }
 
 /**
@@ -584,12 +587,16 @@ export function maybeNudge(
     const cfg = resolveHandoffFor(contextRoot, projectRoot, tab);
     if (!cfg.enabled) return null;
 
-    const path = typeof input.transcript_path === 'string' ? input.transcript_path : '';
-    if (!path) return null;
-    const records = tailRecords(path);
-    if (!isMainChainHookInput(input, records)) return null;
-
-    const ctx = lastMainChainContextFrom(records);
+    let ctx: number | null;
+    if (typeof input.context_tokens === 'number' && Number.isFinite(input.context_tokens)) {
+      ctx = input.context_tokens > 0 ? input.context_tokens : null;
+    } else {
+      const path = typeof input.transcript_path === 'string' ? input.transcript_path : '';
+      if (!path) return null;
+      const records = tailRecords(path);
+      if (!isMainChainHookInput(input, records)) return null;
+      ctx = lastMainChainContextFrom(records);
+    }
     if (ctx === null) return null;
 
     const sessionId = typeof input.session_id === 'string' ? input.session_id : '';

@@ -1,6 +1,7 @@
 import { defineConfig } from 'tsup';
 import { chmodSync, cpSync, existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { t3EsbuildPlugin } from './scripts/t3-aliases.mjs';
 
 /**
  * The version to stamp INTO the bundle, read from package.json at build time.
@@ -34,9 +35,13 @@ function versionToStamp(): string {
 }
 
 export default defineConfig({
-  entry: ['src/cli/index.ts'],
+  // Two bundles: the CLI, and the T3 bridge child (Effect + the vendored provider layer), which
+  // only `dreamcontext t3-chat` loads, so the CLI every hook starts stays as small as before.
+  entry: { index: 'src/cli/index.ts', 't3-bridge': 'src/lib/t3-bridge/main.ts' },
   format: ['esm'],
-  target: 'node18',
+  target: 'node22',
+  // Keep `node:` on builtins: `node:sea` (T3's HostProcess) has no bare-name form.
+  removeNodeProtocol: false,
   clean: true,
   splitting: false,
   // esbuild substitutes this expression with the literal version, so the
@@ -74,7 +79,19 @@ export default defineConfig({
     // Pure-JS fractional indices for whiteboard elements (Excalidraw's own ordering scheme) —
     // every whiteboard write imports it, so leaving it external crashes the .app's CLI at load.
     'fractional-indexing',
+    // T3 Code's provider layer (src/vendor/t3) and what it imports: Effect and the markdown
+    // helpers T3's shared package uses. Loaded only by `dreamcontext t3-chat` (a dynamic import).
+    /^effect(\/|$)/,
+    /^@effect\//,
+    'diff',
+    'yaml',
+    'unified',
+    /^remark-/,
+    /^mdast-/,
+    /^micromark/,
   ],
+  // `@t3tools/*` and `effect-codex-app-server/*` resolve into src/vendor/t3 (scripts/t3-aliases.mjs).
+  esbuildPlugins: [t3EsbuildPlugin],
   // node-pty is a NATIVE module — it cannot be bundled. It's an optionalDependency,
   // loaded via dynamic import() with graceful degradation (the agent terminal falls
   // back to "Open in Terminal"). Kept external so tsup never tries to inline the .node.
