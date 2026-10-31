@@ -20,6 +20,11 @@ import {
 } from '../../lib/builder-tools.js';
 import { HEAVY_HOT_WAIT_S, acquireHeavyReporting } from '../../lib/heavy-acquire.js';
 import { RouterPlanError, parseRouterPlan, pickEndReview } from '../../lib/review-route.js';
+import {
+  BUDGET_LIMITS, HEAVY_OVER_BUDGET_EXIT, budgetPath, currentScope, heavyStep, markPhase, packageScripts, readBudget,
+  recordRed, recordStart, refusal, shellQuote, validReason, type BudgetKind, type BudgetScope,
+} from '../../lib/run-budget.js';
+import { LIGHT_LANE_MAX_LINES, laneFromGit } from '../../lib/run-lane.js';
 import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps } from './builder-sessions.js';
 
 /**
@@ -37,6 +42,9 @@ import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps 
  *                   missing (exit 3), with the line that decided it.
  *   review-pick <file>  which end review a run gets, from the review-router's plan: one
  *                   reviewer or multi-review (exit 2 = no plan in the file).
+ *   open <slug>     a run starts: from here on `heavy` counts repeats on this branch.
+ *   lane            light or full, read off the diff itself (lib/run-lane.ts).
+ *   budget          what this branch spent of its repeat limit, and every run past it.
  *   base | spawn | fork | resume | wait | test | status   start and track builder sessions,
  *                   and the lead's wave-end check (./builder-sessions.ts).
  */
@@ -124,7 +132,28 @@ export function builderReviewPick(deps: BuilderDeps, file: string): number {
   }
 }
 
-export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { maxWait?: string }): Promise<number> {
+/** `lane`: prints `light: <why>` or `full: <why>`, plus what follows from it. Always exits 0. */
+export function builderLane(deps: BuilderDeps, opts: { from?: string; to?: string }): void {
+  const pick = laneFromGit(deps.cwd(), opts.from, opts.to);
+  // Asked with the run's start tree, it is the step before the end review.
+  if (opts.from) markPhase(deps.cwd(), 'end', undefined, Date.now());
+  deps.print(`${pick.lane}: ${pick.reason}`);
+  deps.print(pick.lane === 'light'
+    ? `one reviewer, no router; browser: ${pick.visible ? 'yes, something visible changed' : 'no, nothing visible changed'}; no verify script of its own`
+    : 'review-router, then builder review-pick');
+}
+
+export function builderBudget(deps: BuilderDeps): void {
+  const cwd = deps.cwd();
+  const file = readBudget(budgetPath(cwd));
+  const scope = currentScope(cwd);
+  deps.print(`limits per phase: ${Object.entries(BUDGET_LIMITS).map(([k, n]) => `${k} ${n}`).join(', ')}; a red earns one more; light lane under ${LIGHT_LANE_MAX_LINES} lines`);
+  deps.print(scope ? `now: ${scope.branch} ${scope.run} ${scope.phase}` : 'now: no run open on this branch, nothing is limited');
+  for (const [key, b] of Object.entries(file.buckets)) deps.print(`${key}: ${b.runs} run(s), ${b.reds} red`);
+  for (const o of file.overruns) deps.print(`over the limit ${o.at} ${o.bucket}: "${o.reason}" (${o.command})`);
+}
+
+export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { maxWait?: string; because?: string }): Promise<number> {
   const plan = heavySpawnPlan(argv);
   if (!plan) {
     deps.printErr('builder heavy: give the command after --, e.g. dreamcontext builder heavy -- npx tsc --noEmit');
@@ -134,6 +163,26 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { ma
   if (maxWaitS !== undefined && (!Number.isFinite(maxWaitS) || maxWaitS < 0)) {
     deps.printErr(`builder heavy: --max-wait must be seconds, got "${opts.maxWait}"`);
     return 2;
+  }
+  if (opts.because !== undefined && !validReason(opts.because)) {
+    deps.printErr('builder heavy: --because needs a real reason (10 characters or more); it stays in the trail. NOTHING ran.');
+    return 2;
+  }
+  const command = argv.join(' ');
+  const step = heavyStep(command, packageScripts(deps.cwd()));
+  const kind: BudgetKind | null = !step || step.kind === 'check' ? null : step.kind;
+  const target = step?.target ?? '';
+  const scope: BudgetScope | null = kind ? currentScope(deps.cwd()) : null;
+  const budget = budgetPath(deps.cwd());
+  // Asked before the wait for the lock, so a refused run costs no queueing.
+  const over = kind && scope
+    ? refusal(readBudget(budget), scope, kind, target, Date.now(), kind === 'browser' ? laneFromGit(deps.cwd()) : undefined)
+    : null;
+  if (over && opts.because === undefined) {
+    deps.printErr(`builder heavy: REFUSED, ${over}. NOTHING ran, and running it again will not help.`);
+    deps.printErr(`  Is the proof already there? Use it. A fix goes through "builder test --related <files>".`);
+    deps.printErr(`  Is this run truly needed? builder heavy --because "<why>" -- ${shellQuote(command)}  (kept in "builder budget")`);
+    return HEAVY_OVER_BUDGET_EXIT;
   }
   const started = Date.now();
   const { held, busy } = await acquireHeavyReporting({
@@ -146,6 +195,10 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { ma
   }
   const waited = Math.round((Date.now() - started) / 1000);
   if (waited > 0) deps.printErr(`builder heavy: waited ${waited}s for the heavy lock`);
+  if (kind && scope) {
+    if (over) deps.printErr(`builder heavy: over the limit (${over}), run on purpose: ${opts.because}`);
+    recordStart(budget, scope, kind, target, Date.now(), over ? { command, reason: opts.because! } : undefined);
+  }
   return new Promise<number>((resolveExit) => {
     const child = spawn(plan.file, plan.args, { stdio: 'inherit', shell: plan.shell });
     const forward = (sig: NodeJS.Signals) => () => { child.kill(sig); };
@@ -156,6 +209,7 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { ma
     const done = (code: number) => {
       process.off('SIGTERM', onTerm);
       process.off('SIGINT', onInt);
+      if (code !== 0 && kind && scope) recordRed(budget, scope, target, Date.now());
       held.release();
       resolveExit(code);
     };
@@ -182,8 +236,9 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .command('heavy')
     .argument('<command...>', 'The check to run, after --')
     .option('--max-wait <seconds>', `How long to wait for the lock (default ${HEAVY_DEFAULT_WAIT_S}, ${HEAVY_HOT_WAIT_S} while the Mac is very hot)`)
-    .description(`Run a type-check, build, test run or browser verify script holding this repo's heavy lock and one of the machine's ${HEAVY_MACHINE_SLOTS} heavy slots (every repo together; 1 while macOS says the Mac is very hot), one at a time per repo (exit: the command's, or ${HEAVY_LOCK_BUSY_EXIT} = busy, nothing ran)`)
-    .action(async (command: string[], opts: { maxWait?: string }) => {
+    .option('--because <reason>', 'Run past the repeat limit; the reason stays in `builder budget`')
+    .description(`Run a type-check, build, test run or browser verify script holding this repo's heavy lock and one of the machine's ${HEAVY_MACHINE_SLOTS} heavy slots (every repo together; 1 while macOS says the Mac is very hot), one at a time per repo (exit: the command's, ${HEAVY_LOCK_BUSY_EXIT} = busy, nothing ran, or ${HEAVY_OVER_BUDGET_EXIT} = past the repeat limit, nothing ran)`)
+    .action(async (command: string[], opts: { maxWait?: string; because?: string }) => {
       process.exitCode = await builderHeavy(deps, command, opts);
     });
 
@@ -203,6 +258,28 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .action((file: string) => {
       process.exitCode = builderReviewPick(deps, file);
     });
+
+  cmd
+    .command('open')
+    .argument('<slug>', 'The task slug')
+    .option('--phase <name>', 'The phase this run enters', 'build')
+    .description('A run starts on this branch: `heavy` counts repeats from here on, per phase')
+    .action((slug: string, opts: { phase: string }) => {
+      markPhase(deps.cwd(), opts.phase, slug, Date.now());
+      deps.print(`${slug}: phase ${opts.phase}, repeat limit on (builder budget)`);
+    });
+
+  cmd
+    .command('lane')
+    .option('--from <tree>', 'The run\'s start tree (default: where this branch left the default branch)')
+    .option('--to <tree>', 'The tree to compare (default: the working tree, untracked files included)')
+    .description(`Light or full, read off the diff: light is under ${LIGHT_LANE_MAX_LINES} lines and touches no security, money, data migration or permission path`)
+    .action((opts: { from?: string; to?: string }) => builderLane(deps, opts));
+
+  cmd
+    .command('budget')
+    .description('What this branch spent of the repeat limit on browser runs, builds and full test suites, and every run past it')
+    .action(() => builderBudget(deps));
 
   registerBuilderSessionCommands(cmd, sessionDeps);
 }

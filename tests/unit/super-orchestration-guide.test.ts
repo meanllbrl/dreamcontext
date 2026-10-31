@@ -283,17 +283,17 @@ describe('super-orchestration guide: dreamcontext install ships it', () => {
 
 describe('heat and the heavy lock (the heat task, AC5)', () => {
   const FLAT = readFileSync(join(__dirname, '../../skill/references/super-orchestration.md'), 'utf8').replace(/\s+/g, ' ');
-  it('per-project lock wording, heat limits steps not children, verify scripts through builder heavy in the background', () => {
+  it('per-project lock wording, heat limits steps not children, heavy steps through builder heavy', () => {
     expect(FLAT).toContain('Heavy steps run one at a time per project, at most 2 projects at once, 1 while the Mac is very hot');
     expect(FLAT).toContain('Heat limits heavy STEPS, never children');
-    expect(FLAT).toContain('run tsc, builds, tests AND browser verify scripts only through `dreamcontext builder heavy -- <cmd>` or `builder test`');
-    expect(FLAT).toContain('a verify script in the background: `dreamcontext builder heavy --max-wait 1200 -- node scripts/verify/<x>.mjs`');
+    expect(FLAT).toContain('a hook sends tsc, builds, tests and browser scripts through `dreamcontext builder heavy`');
+    expect(FLAT).toContain('before its first reviewer starts, into that child; after, a new small job');
     expect(FLAT).not.toContain('heavy checks share 2 machine-wide slots');
   });
   it('the Develop recipe and goal-skill route verify scripts through the heavy lock', async () => {
     const goal = readFileSync(join(__dirname, '../../skill-packs/goal-skill/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
     expect(goal).toContain('`dreamcontext builder heavy --max-wait 1200 -- node scripts/verify/<x>.mjs`, never beside tests');
     const src = readFileSync(join(__dirname, '../../src/lib/develop-recipe.ts'), 'utf8');
-    expect(src).toContain('A browser verify script\n  runs through the heavy lock too, in the background, never beside tests');
+    expect(src).toContain('Every browser run goes through\n  \\`builder heavy\\`, never beside tests');
   });
 });

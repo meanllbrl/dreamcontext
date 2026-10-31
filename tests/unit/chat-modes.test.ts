@@ -295,7 +295,7 @@ describe('modeBriefing', () => {
   it('develop: the end review the diff picks, after the last wave — it does not self-approve', () => {
     const brief = modeBriefing('develop', { worktreeAllowed: false });
     expect(brief).toMatch(/you\s+do not sign off on your own work/i);
-    expect(brief).toMatch(/after the last wave, the end review the diff picks\s+\(`builder review-pick`: one clean `reviewer`, or the multi-review team for a Full tier,\s+a hot path, or UI plus another area\), in parallel with the final check/);
+    expect(brief).toMatch(/after the last wave, the end review the diff picks\s+\(`builder review-pick`: one clean `reviewer`, or the multi-review team for a Full tier,\s+a hot path, or UI plus another area\)/);
     // Neither the 2026-09-26 per-wave review nor v2's contract-wave review creeps back.
     expect(brief).not.toMatch(/reviewer\s+on that wave's files and criteria/);
     expect(brief).not.toMatch(/contract or hot-path wave/);

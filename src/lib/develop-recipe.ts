@@ -19,9 +19,42 @@ const OBSERVED_CHECK = `- The observed check, when a criterion is about what the
   real app or a headless browser at a phone (390 px) and a desktop (1440 px) width, record the
   console errors and failed requests, take a screenshot of each, and READ the screenshots
   yourself. Log their paths and the console output, and tick those criteria here, with that
-  evidence, never earlier. Errors, overflow or a broken layout = red. A browser verify script
-  runs through the heavy lock too, in the background, never beside tests:
-  \`dreamcontext builder heavy --max-wait 1200 -- node scripts/verify/<x>.mjs\`.`;
+  evidence, never earlier. Errors, overflow or a broken layout = red. No script of your own and
+  no build when the repo has the shared one (\`scripts/verify/lib/app.mjs\` for a longer flow):
+  \`dreamcontext builder heavy --max-wait 1200 -- node scripts/verify/look.mjs '<path>' --expect '<text>'\`.
+  It runs on the Vite dev server against a scratch vault. Every browser run goes through
+  \`builder heavy\`, never beside tests.`;
+
+/**
+ * The repeat limit in the words a lead needs (2026-10-31): `builder heavy` counts browser runs,
+ * builds and full suites per branch and phase (lib/run-budget.ts), so a rule that lived here as
+ * prose and did not hold is now the command's. The numbers live there, never here.
+ */
+const REPEAT_LIMIT = `\`builder heavy\` counts browser runs, builds and full test suites per branch, phase and command,
+and a red earns one more. Exit 77 = past the limit, NOTHING ran, and running it again will not help: use
+the proof you have, or, when the run is truly needed, \`builder heavy --because "<why>" -- <cmd>\`,
+which is recorded in \`builder budget\`.`;
+
+/**
+ * Light work gets a light process (2026-10-31): under the threshold in lib/run-lane.ts and on no
+ * guarded path, measured at 7 lines a minute against 23 for larger work. The command reads the
+ * diff, so the lead cannot pick its own lane.
+ */
+const LANE_STEP = `Then read the lane off the diff:
+
+  dreamcontext builder lane --from "$START" --to "$NOW"
+
+It prints \`light: <why>\` or \`full: <why>\`; log the line, you never override it. Light: ONE
+\`reviewer\`, no router and no \`review-pick\`, a browser only when it says something visible
+changed or a criterion is about what the owner sees (\`--because\` names that criterion), and no
+verify script of your own. Full: the pick below.`;
+
+const END_FINAL_CHECK = `- The final check, ONCE, after the last PASS: \`dreamcontext builder load --reap\` first; \`busy\` = check again every
+  ~60 s, for at most 15 min; still busy = run anyway, with at most 2 test workers, and record
+  the load line. Then, each through \`dreamcontext builder heavy --\`, the task's Validation
+  method when it is a command, the builds and generator scripts the change needs, and, when a
+  fix changed something visible after the observed check, that check again. The
+  full suite runs only when the Validation method names it.`;
 
 /**
  * The end review is picked by the diff, not by the lead (owner, 2026-10-14). One generalist
@@ -58,8 +91,19 @@ const END_REVIEW_TEAM = `- For \`multi-review\`, instead of that one reviewer: e
   severity is theirs. Any Critical or Major = FAIL. The map keeps one seat for the team:
   \`goal-live actor end-reviewer=multi-review\`, with the merged verdict.`;
 
+/**
+ * After a judge (2026-10-31): 13 minutes an hour went to re-running everything, more than the
+ * judges' own 8.5, so a fix runs only the tests it touched and the full check waits for the end.
+ * Later rounds read the fix alone at medium effort. Their number stays open: 6 of 10 later rounds
+ * found a real bug, so never cap them.
+ */
+const END_REVIEW_ROUND = `Take the snapshot as FIX (the same three commands), then a fresh reviewer (model opus, effort
+medium, not in the background) re-checks only the previous findings and the fix: \`git diff <the
+tree it reviewed> <FIX> -- <the files the fix changed>\`, with the previous findings word for
+word. It does not re-read the run. Rounds have no cap; each reads only the newest fix.`;
+
 const END_REVIEW_REROUND = `After a team FAIL, the fresh re-check is one specialist for each that raised a blocking
-finding, fed only its previous findings word for word and the files the fix changed; the
+finding (effort medium), fed only its previous findings word for word and the fix's diff; the
 router does not run again.
 
 A PARTIAL verdict (reviewer or specialist) means it ran out of turns, not that the change
@@ -163,6 +207,7 @@ blocks for up to 9 minutes. Never start anything with the Bash tool's run_in_bac
   ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
   mkdir -p "$ROOT/tmp/develop/$S"      # check logs and failure state live here, never in OS /tmp
   dreamcontext goal-live start --goal "$S" --mode develop || true
+  dreamcontext builder open "$S"
 
 \`start\` ADOPTS this task's unfinished Develop run (this pane's, or any pane's idle 10+ min),
 so a reopen or handoff keeps the map, the reviewed count and the receipt. "another chat is
@@ -233,9 +278,13 @@ run's paths:
 Parse it NUL-separated. A path you did not change is another session's work in this
 checkout: leave it out of the review and log it once.
 
+${LANE_STEP}
+
 ${END_REVIEW_PICK}
 
-The end review and the final check run at the same time, dispatched in ONE message:
+${OBSERVED_CHECK}
+
+Then the end review:
 
   dreamcontext goal-live phase codereview || true
   dreamcontext goal-live actor end-reviewer --kind fresh --role reviewer || true
@@ -244,18 +293,17 @@ The end review and the final check run at the same time, dispatched in ONE messa
   brief (section 4): every path you changed, enumerated by name, with START and NOW, never a
   bare \`git diff\` against a ref. It fetches its own changes; never paste a diff.
 ${END_REVIEW_TEAM}
-- The final check: \`dreamcontext builder load --reap\` first; \`busy\` = check again every
-  ~60 s, for at most 15 min; still busy = run anyway, with at most 2 test workers, and record
-  the load line. Then, each through \`dreamcontext builder heavy --\`, the task's Validation
-  method when it is a command, and the builds and generator scripts the change needs. The
-  full suite runs only when the Validation method names it.
-${OBSERVED_CHECK}
+${END_FINAL_CHECK}
+
+${REPEAT_LIMIT}
 
 Record the verdict BEFORE anything else: \`dreamcontext goal-live state end-reviewer=PASS || true\`
 (or FAIL). A reviewer FAIL or a red final check takes the same path: fix exactly the findings
-or the failure and nothing else, check the fix with \`builder test "$S" --wave final --related
-<files the fix changed>\`, then a fresh reviewer re-checks only the previous findings and the
-fix, and the final check runs again. Nothing closes on a fix no reviewer has read:
+or the failure and nothing else, and check the fix with \`builder test "$S" --wave final --related
+<files the fix changed>\`, naming a central file's tests with \`--also\` instead of the file.
+Only what the fix touched runs: no build, no browser and no Validation command here, those wait
+for the one final check. ${END_REVIEW_ROUND} After a red final check, re-run
+only what was red. Nothing closes on a fix no reviewer has read:
 
   dreamcontext goal-live actor end-reviewer --kind fresh --role reviewer --round 2 || true
 
@@ -359,6 +407,7 @@ the task log (section 6). Give every \`dreamcontext builder\` call the Bash tool
   ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
   mkdir -p "$ROOT/tmp/develop/$S"      # briefs, logs and the builder registry live here, never in OS /tmp
   dreamcontext goal-live start --goal "$S" --mode develop || true
+  dreamcontext builder open "$S"
 
 \`start\` ADOPTS this task's unfinished Develop run (this pane's, or any pane's idle 10+ min),
 so a reopen or handoff keeps the map, the reviewed count and the receipt. "another chat is
@@ -521,7 +570,7 @@ owner. Each result is printed once.
   dreamcontext goal-live phase codereview --wave N || true
   dreamcontext goal-live actor wN-reviewer --kind fresh --role reviewer --wave N || true
 
-Dispatch ONE \`reviewer\` sub-agent (Agent tool, model opus, effort high, not in the background) with the
+Dispatch ONE \`reviewer\` sub-agent (Agent tool, model opus, effort high, not in the background; a later round: effort medium, only the fix) with the
 reviewer brief (section 5), in the same message as the wave's \`builder test\` call. It
 fetches its own changes; never paste a diff. Record the verdict BEFORE the next phase:
 
@@ -563,8 +612,11 @@ ${END_REVIEW_PICK}
 The review's paths are the scope below: a run whose end review is skipped skips the pick too,
 and a review of the ticks alone is always one reviewer.
 
-The end review and the final check run at the same time, dispatched in ONE message:
+${OBSERVED_CHECK}
 
+Then the end review:
+
+  dreamcontext builder open "$S" --phase end
   dreamcontext goal-live phase codereview || true
   dreamcontext goal-live actor end-reviewer --kind fresh --role reviewer || true
 
@@ -574,16 +626,14 @@ The end review and the final check run at the same time, dispatched in ONE messa
   is about what the owner sees: then this reviewer still runs, over the task's ticks and their
   evidence alone, since no wave reviewer saw a tick.
 ${END_REVIEW_TEAM}
-- The final check: \`dreamcontext builder load --reap\` first; \`busy\` = check again every
-  ~60 s, for at most 15 min; still busy = run anyway, with at most 2 test workers, and record
-  the load line. Then, each through \`dreamcontext builder heavy --\`, the task's Validation
-  method when it is a command, and the builds and generator scripts the change needs. The
-  full suite runs only when the Validation method names it.
-${OBSERVED_CHECK}
+${END_FINAL_CHECK}
+
+${REPEAT_LIMIT}
 
 Record \`dreamcontext goal-live state end-reviewer=PASS || true\`. A finding or a red resumes
-the owning lane (2e step 4, re-checked with \`--wave final\`), then a fresh end reviewer
-re-checks only the previous findings and the fix:
+the owning lane (2e step 4, re-checked with \`--wave final\` on the files the fix changed, a
+central file's tests named with \`--also\`, no build and no browser; an end-review round passes \`--force\` to \`builder resume\`, since rounds
+are not capped). ${END_REVIEW_ROUND}
 
   dreamcontext goal-live actor end-reviewer --kind fresh --role reviewer --round 2 || true
 

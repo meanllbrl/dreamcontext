@@ -1,3 +1,4 @@
+import { directHeavy, shellQuote } from '../../lib/run-budget.js';
 import { Command } from 'commander';
 import {
   readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, mkdirSync, readdirSync,
@@ -2699,7 +2700,7 @@ export function registerHookCommand(program: Command): void {
   // --- hook pre-tool-use ---
   hook
     .command('pre-tool-use')
-    .description('Gate default sub-agents when _dream_context/ exists (called by Claude Code PreToolUse hook)')
+    .description('Gate default sub-agents and heavy shell steps (called by Claude Code PreToolUse hook)')
     .action(() => {
       const input = readStdin();
       if (!input) process.exit(0); // allow — no input means nothing to gate
@@ -2730,6 +2731,26 @@ export function registerHookCommand(program: Command): void {
           return;
         }
         // (Gate 1b, the Develop lead-edit guard, was retired 2026-10-11: the lead builds now.)
+      }
+
+      // Gate 1c: a heavy step goes through the lock and the repeat limit. Measured 2026-10-31:
+      // 88% of them went straight past `builder`, so the limit would count almost nothing.
+      if (toolName === 'Bash') {
+        const command = typeof toolInput.command === 'string' ? toolInput.command : '';
+        const kind = directHeavy(command);
+        if (!kind) process.exit(0); // allow
+        console.log(JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            permissionDecision: 'deny',
+            permissionDecisionReason: [
+              `Not run: this is a heavy step (${kind}), and those go through the lock and the repeat limit.`,
+              `Run it as: dreamcontext builder heavy -- ${shellQuote(command)}`,
+              'Changed files only? dreamcontext builder test <slug> --wave <n|final> --related <files> is faster.',
+            ].join(' '),
+          },
+        }));
+        return;
       }
 
       // Gate 2: redirect default Explore agent to dreamcontext-explore.

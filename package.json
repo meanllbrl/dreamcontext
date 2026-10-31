@@ -33,6 +33,7 @@
     "dev:dashboard": "cd dashboard && npm run dev",
     "test": "vitest",
     "test:e2e": "playwright test",
+    "verify:look": "node scripts/verify/look.mjs",
     "verify:people": "node scripts/verify/people-first.mjs",
     "verify:chat-steer": "node scripts/verify/chat-steer.mjs",
     "verify:assistant": "node scripts/verify/assistant.mjs",

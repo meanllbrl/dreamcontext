@@ -60,6 +60,7 @@ import {
 } from '../../lib/builder-test.js';
 import { claudeAwarePath } from '../../lib/claude-path.js';
 import { resolveContextRoot } from '../../lib/context-path.js';
+import { markPhase } from '../../lib/run-budget.js';
 import { acquireFileLockWithin, releaseFileLock } from '../../lib/file-lock.js';
 import { today } from '../../lib/id.js';
 import { getTaskBackend } from '../../lib/task-backend/index.js';
@@ -544,6 +545,9 @@ export interface TestOptions { wave?: string; related?: string[]; failed?: boole
 
 const MAX_PRINTED_FAILURES = 25;
 
+/** Past this, `related` was a central file's whole import graph, not "the tests it touched". */
+const RELATED_TEST_CEILING = 1500;
+
 /**
  * The lead's wave-end check: type-check + related tests once, through the heavy lock. Exit 0
  * green, 1 failures (each with its key and owning lane), 75 when a check did not run at all.
@@ -560,6 +564,7 @@ export async function builderTest(deps: SessionDeps, slug: string, opts: TestOpt
   const also = normalizeOwns(root, opts.also ?? []);
   if (!opts.failed && related.length === 0 && also.length === 0) throw new BuilderInputError('give --related <changed files...> (and/or --also <test files>), or --failed');
 
+  markPhase(root, wave === 'final' ? 'end' : `w${wave}`, slug, deps.now());
   const plan: TestPlan = planChecks(root, related, also);
   if (opts.failed) {
     plan.tsc = [...new Set([...plan.tsc, ...state.tscFailed])].sort();
@@ -632,6 +637,9 @@ export async function builderTest(deps: SessionDeps, slug: string, opts: TestOpt
       if (code !== 0 && report.failures.length === 0) {
         // vitest exits 1 on an unhandled error even when every test passed.
         failures.push({ key: `${label} exit ${code} with no failing test`, file: t.pkg, message: firstLogLine(log) });
+      }
+      if (mode === 'related' && report.total > RELATED_TEST_CEILING) {
+        deps.print(`${label}: ${report.total} tests is close to the whole suite: a central file pulled in its import graph. Next time leave it out of --related and name its tests with --also`);
       }
       if (mode === 'related' && report.total === 0) {
         uncovered.push(...files.map((f) => (t.pkg === '.' ? f : `${t.pkg}/${f}`)));
