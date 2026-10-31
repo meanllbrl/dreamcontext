@@ -753,3 +753,30 @@
 /* Phone: a compact header row (the bar above already says "Map"). */
 body[data-phone] .brain-header { padding: var(--space-1) var(--m-pad); gap: var(--space-2); }
 body[data-phone] .brain-title { font-size: var(--font-size-base); }
+
+/* ── Space / Links switch ───────────────────────────────────────────────── */
+.brain-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  margin-left: var(--space-3);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.brain-tab {
+  padding: 2px var(--space-3);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary, var(--color-text));
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.brain-tab--active {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}

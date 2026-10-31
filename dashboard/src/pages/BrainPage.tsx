@@ -25,6 +25,7 @@ import {
 import { useGraphSettings, mapForces, type GraphColorGroup } from '../hooks/useGraphSettings';
 import { parseQuery, type ParsedQuery } from '../lib/obsidian-search';
 import { BrainSettings } from '../components/brain/BrainSettings';
+import { BrainSpace } from '../components/brain/BrainSpace';
 import { NodeDrawer, type BrainNavigatePage } from '../components/brain/NodeDrawer';
 import { useTheme } from '../context/ThemeContext';
 import './BrainPage.css';
@@ -132,6 +133,15 @@ export function BrainPage({ onNavigate }: BrainPageProps) {
   // Open beside the graph on a laptop; on a phone it would cover the whole graph, so it waits for the gear.
   const [settingsOpen, setSettingsOpen] = useState(() => !readIsMobile());
   const hasFittedRef = useRef(false);
+  // Space = precomputed embedding layout (default, cheap). Links = the live force-directed graph.
+  const [mode, setMode] = useState<'space' | 'links'>(() =>
+    localStorage.getItem('brain-mode') === 'links' ? 'links' : 'space',
+  );
+  const chooseMode = (m: 'space' | 'links') => {
+    setMode(m);
+    setHoverId(null);
+    try { localStorage.setItem('brain-mode', m); } catch { /* private mode */ }
+  };
 
   // Resize observer
   useEffect(() => {
@@ -292,9 +302,11 @@ export function BrainPage({ onNavigate }: BrainPageProps) {
     return () => timeouts.forEach(clearTimeout);
   }, [data, filteredData.nodes.length]);
 
+  // Resolved from the full graph (not the Links-tab filters) so a node picked in the Space tab
+  // always opens, whatever the link-graph filters hide.
   const selectedNode = useMemo(
-    () => filteredData.nodes.find((n) => n.id === selectedId) ?? null,
-    [filteredData, selectedId],
+    () => data?.nodes.find((n) => n.id === selectedId) ?? null,
+    [data, selectedId],
   );
 
   const relatedToSelected = useMemo(() => {
@@ -401,7 +413,25 @@ export function BrainPage({ onNavigate }: BrainPageProps) {
           <span className="brain-title-mark">◉</span>
           Brain
         </h1>
-        {data && (
+        <div className="brain-tabs" role="tablist" aria-label="Brain view">
+          <button
+            role="tab"
+            aria-selected={mode === 'space'}
+            className={`brain-tab ${mode === 'space' ? 'brain-tab--active' : ''}`}
+            onClick={() => chooseMode('space')}
+          >
+            Space
+          </button>
+          <button
+            role="tab"
+            aria-selected={mode === 'links'}
+            className={`brain-tab ${mode === 'links' ? 'brain-tab--active' : ''}`}
+            onClick={() => chooseMode('links')}
+          >
+            Links
+          </button>
+        </div>
+        {data && mode === 'links' && (
           <span className="brain-stats">
             {filteredData.nodes.length}/{data.nodes.length} nodes · {filteredData.links.length} links
           </span>
@@ -410,13 +440,15 @@ export function BrainPage({ onNavigate }: BrainPageProps) {
           <button className="brain-btn" onClick={refresh} title="Refresh">
             ↻
           </button>
-          <button
-            className={`brain-btn ${settingsOpen ? 'brain-btn--active' : ''}`}
-            onClick={() => setSettingsOpen((s) => !s)}
-            title="Graph settings"
-          >
-            ⚙
-          </button>
+          {mode === 'links' && (
+            <button
+              className={`brain-btn ${settingsOpen ? 'brain-btn--active' : ''}`}
+              onClick={() => setSettingsOpen((s) => !s)}
+              title="Graph settings"
+            >
+              ⚙
+            </button>
+          )}
         </div>
       </header>
 
@@ -426,7 +458,7 @@ export function BrainPage({ onNavigate }: BrainPageProps) {
         onPointerLeave={() => setHoverId(null)}
         onPointerDown={() => setHoverId(null)}
       >
-        {settingsOpen && (
+        {mode === 'links' && settingsOpen && (
           <BrainSettings
             settings={settings}
             patch={patch}
@@ -438,10 +470,19 @@ export function BrainPage({ onNavigate }: BrainPageProps) {
 
         {isLoading && <div className="brain-loading">Loading brain…</div>}
         {error && <div className="brain-empty">Failed to load graph: {String(error)}</div>}
-        {data && filteredData.nodes.length === 0 && !isLoading && (
+        {mode === 'space' && data && dims.w > 0 && (
+          <BrainSpace
+            nodes={data.nodes}
+            isDark={isDark}
+            colors={defaultColors}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+          />
+        )}
+        {mode === 'links' && data && filteredData.nodes.length === 0 && !isLoading && (
           <div className="brain-empty">No nodes match the current filters.</div>
         )}
-        {data && filteredData.nodes.length > 0 && dims.w > 0 && settings.display.view !== '3d' && (
+        {mode === 'links' && data && filteredData.nodes.length > 0 && dims.w > 0 && settings.display.view !== '3d' && (
           <ForceGraph2D<RuntimeNode, RuntimeLink>
             ref={fgRef}
             graphData={filteredData as unknown as Graph}
@@ -512,7 +553,7 @@ export function BrainPage({ onNavigate }: BrainPageProps) {
           />
         )}
 
-        {data && filteredData.nodes.length > 0 && dims.w > 0 && settings.display.view === '3d' && (
+        {mode === 'links' && data && filteredData.nodes.length > 0 && dims.w > 0 && settings.display.view === '3d' && (
           <Suspense fallback={<div className="brain-loading">Loading 3D engine…</div>}>
             <BrainCanvas3D
               graphData={filteredData}

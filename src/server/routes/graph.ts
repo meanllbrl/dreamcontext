@@ -2,6 +2,7 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, normalize, resolve, sep } from 'node:path';
 import { buildGraph } from '../../lib/graph.js';
+import { buildSpace } from '../../lib/graph-space.js';
 import { readFrontmatter } from '../../lib/frontmatter.js';
 import { sendJson, sendError } from '../middleware.js';
 import { serveMedia } from '../media.js';
@@ -21,6 +22,26 @@ export async function handleGraphGet(
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to build graph';
     sendError(res, 500, 'graph_build_failed', message);
+  }
+}
+
+/**
+ * GET /api/graph/space — the Brain "meaning space": a 2D layout of every embedded node where
+ * related notes sit together, plus labelled clusters. Positions are precomputed (UMAP over the
+ * existing embeddings) and cached; the first call after the embedding cache changes takes a few
+ * seconds. `state: 'unavailable'` means the vault has no embedding index yet.
+ */
+export async function handleGraphSpaceGet(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    sendJson(res, 200, await buildSpace(contextRoot));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to build space';
+    sendError(res, 500, 'graph_space_failed', message);
   }
 }
 

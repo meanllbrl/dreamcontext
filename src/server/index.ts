@@ -46,7 +46,7 @@ import {
 } from './routes/core.js';
 import { handleKnowledgeList, handleKnowledgeGet, handleKnowledgeUpdate, handleKnowledgeAssets } from './routes/knowledge.js';
 import { handleChangelogGet, handleReleasesGet, handleUnreleasedGet, handleReleaseGet, handleReleasesCreate, handleReleasesUpdate, handleReleasesDelete, handleActiveVersionGet, handleActiveVersionSet } from './routes/changelog.js';
-import { handleGraphGet, handleGraphContentGet } from './routes/graph.js';
+import { handleGraphGet, handleGraphSpaceGet, handleGraphContentGet } from './routes/graph.js';
 import { handleCouncilList, handleCouncilGet, handleCouncilResearchGet } from './routes/council.js';
 import { handleConfigGet, handleConfigUpdate } from './routes/config.js';
 import { handleVaultsGet } from './routes/vaults.js';
@@ -436,6 +436,7 @@ export function buildRouter(): Router {
 
   // Graph
   router.get('/api/graph', handleGraphGet);
+  router.get('/api/graph/space', handleGraphSpaceGet);
   router.get('/api/graph/content', handleGraphContentGet);
 
   // Council

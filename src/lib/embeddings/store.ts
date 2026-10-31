@@ -599,3 +599,53 @@ export async function refreshEmbeddings(
     },
   };
 }
+
+// ─── Per-document centroids (the "meaning space" view) ──────────────────────
+
+export interface DocCentroid {
+  docKey: string;
+  /** Absolute path of the source file, as recorded at index time. */
+  path: string;
+  /** Mean of the doc's chunk vectors, L2-normalised. */
+  vector: Float32Array;
+}
+
+/** `mtime:size` of the cache file — a cheap change signature for derived artifacts. */
+export function embeddingCacheSignature(contextRoot: string): string | null {
+  try {
+    const st = statSync(cachePath(contextRoot));
+    return `${st.mtimeMs}:${st.size}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One vector per document: the normalised mean of its chunk vectors. READ-ONLY — uses the
+ * memoised cache snapshot and never embeds anything, so it is safe on a request path.
+ * Docs with no cached chunk vector are skipped.
+ */
+export function loadDocCentroids(contextRoot: string): DocCentroid[] {
+  const cache = loadCache(contextRoot);
+  const out: DocCentroid[] = [];
+  for (const [key, doc] of Object.entries(cache.docs)) {
+    let acc: Float32Array | null = null;
+    let n = 0;
+    for (const h of doc.hashes) {
+      const b64 = cache.vectors[h];
+      if (!b64) continue;
+      const v = decodeVector(b64);
+      if (!acc) acc = new Float32Array(v.length);
+      if (v.length !== acc.length) continue;
+      for (let i = 0; i < v.length; i++) acc[i] += v[i];
+      n++;
+    }
+    if (!acc || n === 0) continue;
+    let norm = 0;
+    for (let i = 0; i < acc.length; i++) norm += acc[i] * acc[i];
+    norm = Math.sqrt(norm) || 1;
+    for (let i = 0; i < acc.length; i++) acc[i] /= norm;
+    out.push({ docKey: key, path: doc.path, vector: acc });
+  }
+  return out;
+}
