@@ -175,9 +175,12 @@ export function CodexAccounts() {
             {busy === 'add' ? t('settings.codexAccounts.adding') : t('settings.codexAccounts.add')}
           </button>
           {/* `~/.codex` hidden from the list comes back here: hiding was never a delete. */}
-          {data?.primaryHidden && (
+          {/* So do signed-in folders the list lost (a sign-in that finished after its server died). */}
+          {(data?.primaryHidden || (data?.orphans ?? 0) > 0) && (
             <button type="button" className="btn btn--secondary" disabled={busy !== ''} onClick={() => void run('adopt', () => api.post('/agent/accounts/codex/adopt', {}))} data-testid="codex-adopt-primary">
-              {t('settings.codexAccounts.adopt')}
+              {(data?.orphans ?? 0) > 0
+                ? t((data?.orphans ?? 0) === 1 ? 'settings.codexAccounts.adoptFound.one' : 'settings.codexAccounts.adoptFound.many').replace('{n}', String(data?.orphans ?? 0))
+                : t('settings.codexAccounts.adopt')}
             </button>
           )}
         </div>

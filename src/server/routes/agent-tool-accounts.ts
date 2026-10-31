@@ -6,7 +6,7 @@ import { isLoopback } from './agent-spawn-shared.js';
 import { clearToolRejection, clearToolSignedOut, readToolRejections } from '../../lib/account-switch.js';
 import { autoSwitchEnabled } from '../../lib/claude-accounts.js';
 import {
-  CodexAccountError, CODEX_PRIMARY_ID, adoptPrimaryCodexAccount, codexAccountDeps, codexAccountSignedIn, codexPrimaryHidden, codexLimitsFor, getCodexAccount, listCodexAccounts, probeCodexAccount,
+  CodexAccountError, CODEX_PRIMARY_ID, adoptCodexAccounts, orphanCodexAccountIds, codexAccountDeps, codexAccountSignedIn, codexPrimaryHidden, codexLimitsFor, getCodexAccount, listCodexAccounts, probeCodexAccount,
   readCodexUsage, removeCodexAccount, reorderCodexAccounts, signInNewCodexAccount, type CodexAccountDeps, type CodexUsageWindow,
 } from '../../lib/codex-accounts.js';
 import { codexSpawnAccount } from '../../lib/codex-switch.js';
@@ -100,6 +100,8 @@ export async function handleCodexAccountsList(req: IncomingMessage, res: ServerR
     autoSwitch: autoSwitchEnabled(home),
     // `~/.codex` left the list but is still signed in: Settings offers it back (adopt).
     primaryHidden: codexPrimaryHidden(home) && codexAccountSignedIn(CODEX_PRIMARY_ID, home),
+    // Signed-in folders with no row (a sign-in that outlived its server): the same button brings them in.
+    orphans: orphanCodexAccountIds(home).length,
   });
 }
 
@@ -114,12 +116,15 @@ export async function handleCodexAccountsLogin(req: IncomingMessage, res: Server
   }
 }
 
-/** POST /api/agent/accounts/codex/adopt — list `~/.codex` (account #0) again after it was removed. */
+/**
+ * POST /api/agent/accounts/codex/adopt — list `~/.codex` (account #0) again after it was removed,
+ * and every signed-in account folder the list lost (a sign-in that finished after its server died).
+ */
 export async function handleCodexAccountsAdopt(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!guard(req, res)) return;
   try {
-    const acc = adoptPrimaryCodexAccount();
-    sendJson(res, 200, { id: acc.id, email: acc.email });
+    const out = await adoptCodexAccounts(deps());
+    sendJson(res, 200, out);
   } catch (err) {
     sendAccountError(res, err);
   }

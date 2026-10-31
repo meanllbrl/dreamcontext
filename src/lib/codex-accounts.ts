@@ -391,6 +391,15 @@ export async function signInNewCodexAccount(deps: CodexAccountDeps = {}): Promis
   const home = deps.home ?? homedir();
   if (!deps.node) throw new CodexAccountError('node_missing', 'Codex needs Node 22.16 or newer on this machine to add an account.', 409);
   const id = `acct-${randomBytes(3).toString('hex')}`;
+  signingIn.add(id);
+  try {
+    return await signInInto(id, home, deps);
+  } finally {
+    signingIn.delete(id);
+  }
+}
+
+async function signInInto(id: string, home: string, deps: CodexAccountDeps): Promise<CodexAccount> {
   const dir = codexAccountHome(home, id);
   mkdirSync(codexAccountsRoot(home), { recursive: true, mode: 0o700 });
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -425,6 +434,73 @@ export async function signInNewCodexAccount(deps: CodexAccountDeps = {}): Promis
     throw new CodexAccountError('already_connected', `That ChatGPT account (${probe.email}) is already connected. Sign in with another one.`, 409);
   }
   return getCodexAccount(id, home)!;
+}
+
+/** Ids whose sign-in is running in THIS server right now: their folder is not an orphan yet. */
+const signingIn = new Set<string>();
+
+/**
+ * Signed-in account folders the list does not know: a sign-in that finished after the server
+ * that started it died (live, 2026-10-31) leaves a logged-in home with no row. Only a plain
+ * folder directly under the accounts root, with a real `auth.json`, whose sign-in is not still
+ * running here, counts. Nothing is read from inside it.
+ */
+export function orphanCodexAccountIds(home: string = homedir()): string[] {
+  const root = codexAccountsRoot(home);
+  let names: string[];
+  try { names = readdirSync(root); } catch { return []; }
+  const known = new Set(readRegister(home).accounts.map((r) => r.id));
+  const out: string[] = [];
+  for (const name of names.sort()) {
+    if (!isCodexAccountId(name) || known.has(name) || signingIn.has(name)) continue;
+    try {
+      if (!confinedCodexHome(name, home)) continue;
+    } catch { continue; }
+    if (codexAccountSignedIn(name, home)) out.push(name);
+  }
+  return out;
+}
+
+export interface AdoptResult {
+  /** Accounts now on the list. */
+  adopted: string[];
+  /** Orphans that were a second login of an account already listed: logged out and deleted, the way a twin sign-in is. */
+  twins: string[];
+}
+
+/**
+ * The Settings "bring back" button: #0 when it was hidden, plus every orphan folder. An orphan is
+ * registered, then probed for who it is; a twin of a listed account is undone exactly like a twin
+ * sign-in (two homes never hold one login).
+ */
+export async function adoptCodexAccounts(deps: CodexAccountDeps = {}): Promise<AdoptResult> {
+  const home = deps.home ?? homedir();
+  const adopted: string[] = [];
+  const twins: string[] = [];
+  if (readRegister(home).primaryHidden && codexAccountSignedIn(CODEX_PRIMARY_ID, home)) {
+    adoptPrimaryCodexAccount(home);
+    adopted.push(CODEX_PRIMARY_ID);
+  }
+  for (const id of orphanCodexAccountIds(home)) {
+    const reg = readRegister(home);
+    if (reg.accounts.some((r) => r.id === id)) continue;
+    reg.accounts.push({ id, email: '', planType: '', addedAt: Date.now() });
+    writeRegister(reg, home);
+    const probe = await probeCodexAccount(id, deps).catch((): ProbeOutcome => ({ status: 'unknown' }));
+    const email = (probe.email ?? '').toLowerCase();
+    if (email) {
+      for (const other of listCodexAccounts(home)) {
+        if (other.id !== id && other.signedIn && !other.email) await probeCodexAccount(other.id, deps).catch(() => undefined);
+      }
+    }
+    const twin = email ? listCodexAccounts(home).find((a) => a.id !== id && a.email.toLowerCase() === email) : undefined;
+    if (twin) { await removeCodexAccount(id, deps); twins.push(id); continue; }
+    adopted.push(id);
+  }
+  if (adopted.length === 0 && twins.length === 0) {
+    throw new CodexAccountError('nothing_to_adopt', 'No signed-in Codex account was found that is not already listed.', 409);
+  }
+  return { adopted, twins };
 }
 
 /** Re-list #0 after it was removed from the list (it was never touched on disk). */

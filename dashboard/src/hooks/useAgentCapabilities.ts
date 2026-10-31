@@ -271,6 +271,8 @@ export interface ToolAccountsResponse {
   autoSwitch?: boolean;
   /** `~/.codex` was removed from the list and is still signed in: it can be added back. */
   primaryHidden?: boolean;
+  /** Signed-in account folders with no row (a sign-in that outlived its server); adopt brings them in. */
+  orphans?: number;
 }
 
 const NO_TOOL_ACCOUNTS: ToolAccountsResponse = { tool: 'codex', accounts: [] };
