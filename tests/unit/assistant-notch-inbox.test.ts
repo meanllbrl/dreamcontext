@@ -33,7 +33,7 @@ const { spawnModelFor } = await import('../../src/server/routes/agent-chat.js');
 const { DEFAULT_ASSISTANT_CONFIG, sanitizeConfigPatch } = await import('../../src/lib/assistant/home.js');
 const { splitNotchCue, stripNotchCue, readingTimeMs } = await import('../../dashboard/src/lib/notchCue');
 const { sttRetryable, STT_RETRIES } = await import('../../dashboard/src/lib/voice/useVoiceCapture');
-const { assistantActivityLine, pillHeadline, readInbox, accountLine, recentFinishedVault, enqueuePeeks, FINISHED_PILL_MS } = await import('../../dashboard/src/components/assistant/notchModel');
+const { announcesStart, assistantActivityLine, pillHeadline, readInbox, accountLine, recentFinishedVault, enqueuePeeks, FINISHED_PILL_MS } = await import('../../dashboard/src/components/assistant/notchModel');
 
 function makeRes() {
   let status = 0;
@@ -283,6 +283,7 @@ describe('a Super job at work (notchModel.ts)', () => {
     const row = { vault: 'korus', slug: 'desk', title: 'Desk', since: 1, runId: 'r' };
     const { running } = readInbox({ running: [{ ...row, superJob: true }, { ...row, superJob: 'yes' }] });
     expect(running.map((r) => r.superJob)).toEqual([true, undefined]);
+    expect(running.map(announcesStart)).toEqual([false, true]);
   });
 });
 

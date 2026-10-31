@@ -287,6 +287,11 @@ export interface RunningAutomation {
   superJob?: true;
 }
 
+/** A run's "started" is news, unless it is a job the Super Agent gave: that one reports to it. */
+export function announcesStart(r: Pick<RunningAutomation, 'superJob'>): boolean {
+  return r.superJob !== true;
+}
+
 /** A task job's row waiting on the owner (M1), across projects: it opens its task. */
 export interface OwnerTaskRow {
   key: string;

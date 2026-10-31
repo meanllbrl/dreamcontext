@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -11,6 +11,11 @@ import { tmpdir } from 'node:os';
  */
 
 const notifyViaBundle = vi.hoisted(() => vi.fn(() => true));
+const telegram = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('../../src/lib/automations/telegram.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/lib/automations/telegram.js')>()),
+  readTelegramConfigForSlug: () => ({ token: 't', chatId: 'c' }),
+}));
 vi.mock('../../src/lib/automations/notifier.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/lib/automations/notifier.js')>()),
   notifyViaBundle,
@@ -23,6 +28,7 @@ const { createQuestion } = await import('../../src/lib/automations/hitl.js');
 const { listAgentHistory } = await import('../../src/lib/agents/history.js');
 const { superRunQuiet } = await import('../../src/lib/automations/super-quiet.js');
 const { SUPER_STATE_REL } = await import('../../src/lib/super/store.js');
+const sharingModule = await import('../../src/lib/automations/sharing.js');
 const { runAutomation } = await import('../../src/lib/automations/runner.js');
 const { approveAutomation } = await import('../../src/lib/automations/registry.js');
 
@@ -42,7 +48,7 @@ function project(name: string, enabled: boolean): string {
 
 const say = (root: string, kind: 'user' | 'agent', via: 'super' | 'dashboard' | 'cli', text: string, runId = RUN) =>
   appendThreadEntry(root, slug, { runId, kind, via, text });
-const sys = (root: string, event: 'started' | 'ok' | 'failed' | 'timeout', runId = RUN) =>
+const sys = (root: string, event: 'started' | 'ok' | 'failed' | 'timeout' | 'skipped', runId = RUN) =>
   appendThreadEntry(root, slug, { runId, kind: 'system', event, text: event, via: 'runner' });
 
 function superJob(root: string) {
@@ -94,16 +100,37 @@ describe('what a Super job says counts for nobody', () => {
     expect(readThread(contextRoot, slug).length).toBe(before);
   });
 
-  it('with the mode off, or no record at all, it counts as before', () => {
+  it('with no record, a symlinked one or an oversize one, it counts as before', () => {
     superJob(contextRoot);
-    writeFileSync(join(contextRoot, SUPER_STATE_REL), JSON.stringify({ enabled: false }));
+    const path = join(contextRoot, SUPER_STATE_REL);
+    rmSync(path);
     expect(counts(contextRoot).bySlug).toBe(1);
-    rmSync(join(contextRoot, SUPER_STATE_REL));
+    const elsewhere = join(projectRoot, 'fake.json');
+    writeFileSync(elsewhere, JSON.stringify({ enabled: true }));
+    symlinkSync(elsewhere, path);
     expect(counts(contextRoot).bySlug).toBe(1);
+    expect(superRunQuiet(contextRoot, slug, RUN, home)).toBe(false);
+    rmSync(path);
+    writeFileSync(path, `{"enabled":true,"pad":"${'x'.repeat(2 * 1024 * 1024)}"}`);
+    expect(counts(contextRoot).bySlug).toBe(1);
+  });
+
+  it('after a take-back: a job the Super was told stays quiet, one still open comes to the owner', () => {
+    superJob(contextRoot);
+    const path = join(contextRoot, SUPER_STATE_REL);
+    const record = (told?: string) => JSON.stringify({ enabled: false, team: [{ id: 't', member: slug, runId: RUN, ...(told ? { told } : {}) }] });
+    writeFileSync(path, record('done'));
+    expect(counts(contextRoot)).toEqual(ZERO);
+    writeFileSync(path, JSON.stringify({ enabled: false, team: [] }));
+    expect(counts(contextRoot)).toEqual(ZERO);
+    writeFileSync(path, record());
+    expect(counts(contextRoot).bySlug).toBe(1);
+    expect(superRunQuiet(contextRoot, slug, RUN, home)).toBe(false);
   });
 
   it('each project answers for itself', () => {
     const other = project('other', false);
+    writeFileSync(join(other, SUPER_STATE_REL), JSON.stringify({ enabled: false, team: [{ member: slug, runId: RUN }] }));
     superJob(contextRoot);
     superJob(other);
     expect(counts(contextRoot).bySlug).toBe(0);
@@ -123,29 +150,68 @@ describe('what the owner must still hear', () => {
     expect(counts(contextRoot).bySlug).toBe(2);
   });
 
-  it('the owner writing into a Super job takes what follows back', () => {
+  it('the owner writing into a Super job takes the run back, whole and for good', () => {
     superJob(contextRoot);
     say(contextRoot, 'user', 'dashboard', 'And the rest?');
     say(contextRoot, 'agent', 'cli', 'Here it is');
+    expect(counts(contextRoot).bySlug).toBe(2);
+    say(contextRoot, 'user', 'super', 'One more');
+    say(contextRoot, 'agent', 'cli', 'For the owner still');
+    expect(counts(contextRoot).bySlug).toBe(3);
+  });
+
+  it('a Super ask queued into a scheduled run or the owner\'s own leaves that run his', () => {
+    sys(contextRoot, 'started');
+    say(contextRoot, 'user', 'super', 'While you are at it');
+    say(contextRoot, 'agent', 'cli', 'Morning digest');
+    sys(contextRoot, 'ok');
     expect(counts(contextRoot).bySlug).toBe(1);
+    expect(superRunQuiet(contextRoot, slug, RUN, home)).toBe(false);
+    const mine = '2026-10-31T07:00:00.000Z';
+    say(contextRoot, 'user', 'dashboard', 'How is it?', mine);
+    say(contextRoot, 'user', 'super', 'Also this', mine);
+    say(contextRoot, 'agent', 'cli', 'Good', mine);
+    expect(superRunQuiet(contextRoot, slug, mine, home)).toBe(false);
+  });
+
+  it('a question of a Super job waits on him, even a resumed turn\'s with a fire time of its own', () => {
+    superJob(contextRoot);
+    const q = createQuestion(contextRoot, { slug, runFiredAt: new Date().toISOString(), kind: 'flow-hitl', sessionId: null, channel: 'chat', question: 'Publish?', choices: [] });
+    expect(counts(contextRoot).bySlug).toBe(1);
+    expect(superRunQuiet(contextRoot, slug, RUN, home)).toBe(false);
+    expect(q.state).toBe('pending');
   });
 
   it('a question of a Super job waits on him, whole', () => {
-    superJob(contextRoot);
+    say(contextRoot, 'user', 'super', 'Check the desk', RUN);
     createQuestion(contextRoot, { slug, runFiredAt: RUN, kind: 'flow-hitl', sessionId: null, channel: 'chat', question: 'Publish?', choices: [] });
     const feed = buildFeed(contextRoot, { home });
-    expect(feed.unreadBySlug[slug]).toBe(1);
-    expect(feed.messages[0].unread).toBe(true);
     expect(feed.messages[0].needsYou).toBe(true);
-    expect(superRunQuiet(contextRoot, slug, RUN)).toBe(false);
   });
 
-  it.each(['failed', 'timeout'] as const)('a Super job that ended %s never vanishes', (event) => {
+  it('an older finished Super job stays quiet beside a later job\'s question', () => {
+    const old = '2026-10-31T01:00:00.000Z';
+    appendThreadEntry(contextRoot, slug, { runId: old, kind: 'user', via: 'super', text: 'Old', now: new Date(old) });
+    appendThreadEntry(contextRoot, slug, { runId: old, kind: 'agent', via: 'cli', text: 'Old answer', now: new Date('2026-10-31T01:01:00.000Z') });
+    createQuestion(contextRoot, { slug, runFiredAt: RUN, kind: 'flow-hitl', sessionId: null, channel: 'chat', question: 'Publish?', choices: [] });
+    expect(counts(contextRoot).bySlug).toBe(0);
+  });
+
+  it('an ask a teammate\'s synced file carries silences nothing', () => {
+    const sharing = vi.spyOn(sharingModule, 'listSharedSlugs').mockReturnValue([slug]);
+    superJob(contextRoot);
+    expect(counts(contextRoot).bySlug).toBe(1);
+    expect(superRunQuiet(contextRoot, slug, RUN, home)).toBe(false);
+    sharing.mockRestore();
+  });
+
+  it.each(['failed', 'timeout', 'skipped'] as const)('a Super job that ended %s never vanishes', (event) => {
     say(contextRoot, 'user', 'super', 'Check the desk');
     sys(contextRoot, 'started');
     sys(contextRoot, event);
     const c = counts(contextRoot);
-    expect(c).toMatchObject({ bySlug: 1, message: 1, thread: 1 });
+    expect(c).toMatchObject({ bySlug: 1, message: 1 });
+    expect(c.thread).toBeGreaterThan(0);
   });
 
   it('seen once, a loud run stays seen', () => {
@@ -182,6 +248,7 @@ describe('banners', () => {
   });
 
   async function fire(status: 'ok' | 'failed', ask: boolean): Promise<ReturnType<typeof vi.fn>> {
+    telegram.mockClear();
     const NOW = new Date(RUN);
     const manifest = createAutomation(contextRoot, { slug: 'runner-job', title: 'Runner job', days: 'daily', at: '18:00', prompt: 'go' });
     approveAutomation(projectRoot + '/acme', manifest, NOW, home);
@@ -191,7 +258,7 @@ describe('banners', () => {
     const child = Object.assign(new EventEmitter(), { pid: 77, stdout, stderr, kill: () => {} });
     const notify = vi.fn();
     const run = runAutomation(contextRoot, 'runner-job', {
-      now: () => NOW, home, spawnImpl: vi.fn(() => child) as never, killImpl: vi.fn(), notify,
+      now: () => NOW, home, spawnImpl: vi.fn(() => child) as never, killImpl: vi.fn(), notify, sendTelegram: telegram,
       ...(ask ? { fireAt: NOW } : {}),
     });
     await new Promise((r) => setImmediate(r));
@@ -203,11 +270,14 @@ describe('banners', () => {
 
   it('the runner\'s completion banner: silent for a clean Super run', async () => {
     expect(await fire('ok', true)).not.toHaveBeenCalled();
+    expect(telegram).not.toHaveBeenCalled();
   });
   it('the runner\'s completion banner: a failed Super run rings', async () => {
     expect(await fire('failed', true)).toHaveBeenCalled();
+    expect(telegram).toHaveBeenCalled();
   });
   it('the runner\'s completion banner: a scheduled run rings', async () => {
     expect(await fire('ok', false)).toHaveBeenCalled();
+    expect(telegram).toHaveBeenCalled();
   });
 });

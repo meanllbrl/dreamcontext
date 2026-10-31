@@ -1,83 +1,124 @@
-import { readFileSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { SUPER_STATE_REL } from '../super/store.js';
-import { allPendingQuestions, listQuestions } from './hitl.js';
+import { threadEntriesHere } from '../agents/agent-sync.js';
+import { MAX_FILE_BYTES, SUPER_STATE_REL } from '../super/store.js';
+import { listQuestions } from './hitl.js';
+import { listSharedAgentSlugs, listSharedSlugs } from './sharing.js';
 import { readThread } from './threads.js';
-import type { ThreadEntry } from './types.js';
+import type { AutomationQuestion, ThreadEntry } from './types.js';
 
 /**
  * A job the Super Agent gave an AI Team member (`super team ask`) reports to the Super Agent, not
  * to the owner: it comes back as `team=<job> event=done`. So what it says is no news for him: no
  * unread, no banner, no notch row (owner, 2026-10-31). It stays readable in the member's thread.
  *
- * THE ONE RULE, read by every unread count and every banner. Derived from the thread, never
- * stored, so old jobs fall out of the counts with nothing written or deleted:
- *  - an entry belongs to whoever spoke last in its run. `via: 'super'` makes what follows the
- *    Super's; the owner writing into that run takes it back.
- *  - a failure is never quiet: it must not vanish if the Super says nothing about it.
- *  - a run with a question waiting on the owner is never quiet: only he can answer it.
- *  - the project must be handed over NOW. With the mode off nobody relays the result.
+ * THE ONE RULE, read by every unread count and every banner. Derived, never stored, so old jobs
+ * fall out of the counts with nothing written or deleted. A run is the Super's only when:
+ *  - it OPENED with the Super's ask (`via: 'super'`) and nobody else spoke in it. A run the owner
+ *    or a schedule opened stays theirs, even with a Super ask queued into it: that ask shares the
+ *    turn order of work he is waiting for, and a thread cannot tell the two apart.
+ *  - this machine wrote that ask. A thread can be synced from a teammate's, and nothing written
+ *    there may silence the owner here.
+ *  - no question was asked during it. Waiting or answered, a question is between the member and
+ *    the owner: his answer is his own conversation, and he hears how it ended.
+ *  - it did not fail: a failure must not vanish if the Super says nothing about it.
+ *  - the project is handed over, or the record says the Super was told how it ended. A job still
+ *    open when the owner takes the stage back has nobody to report to; one already reported does
+ *    not come back as unread with every take-back.
  */
 
 const LOUD_EVENTS = new Set(['failed', 'timeout', 'skipped']);
+/** A question stamped a moment outside the entries of the run that asked it (one clock). */
+const QUESTION_SLACK_MS = 2_000;
 
-/** Is this project handed over to its Super Agent? Read from the record, so a CLI process (which
- *  has no in-memory index) agrees with the server. Anything unreadable reads as off: notify. */
-export function superHandedOver(contextRoot: string): boolean {
+interface SuperRecord { enabled: boolean; open: Set<string> }
+
+/** The record's two facts this rule needs, through the store's guards: a symlink, a non-file or an
+ *  oversize file is no record, and no record means notify. */
+function readRecord(contextRoot: string): SuperRecord | null {
   try {
-    return (JSON.parse(readFileSync(join(contextRoot, SUPER_STATE_REL), 'utf-8')) as { enabled?: unknown }).enabled === true;
+    const path = join(contextRoot, SUPER_STATE_REL);
+    const st = lstatSync(path);
+    if (!st.isFile() || st.size > MAX_FILE_BYTES) return null;
+    const raw = JSON.parse(readFileSync(path, 'utf-8')) as { enabled?: unknown; team?: unknown };
+    const team = Array.isArray(raw.team) ? raw.team as Array<{ runId?: unknown; member?: unknown; told?: unknown }> : [];
+    // The jobs whose ending the Super was not told. A job that fell off the record is long over.
+    const open = new Set(team.filter((j) => j.told !== 'done' && j.told !== 'stuck').map((j) => `${String(j.member)}::${String(j.runId)}`));
+    return { enabled: raw.enabled === true, open };
   } catch {
-    return false;
+    return null;
   }
 }
 
-/** The entries of one run that are the Super's job's own, by the rule above (questions apart). */
-function superOwned(run: readonly ThreadEntry[]): Set<string> {
-  const quiet = new Set<string>();
-  let asker: string | null = null;
-  for (const e of [...run].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
-    if (e.kind === 'user') { asker = e.via; continue; }
-    if (asker !== 'super') continue;
-    if (e.kind === 'system' && e.event && LOUD_EVENTS.has(e.event)) continue;
-    quiet.add(e.id);
-  }
-  return quiet;
+/** Is `run` a question's run? By its id, or by time: a resumed turn's question carries a fire time
+ *  of its own, never the thread's run id. */
+function askedDuring(q: AutomationQuestion, ordered: readonly ThreadEntry[]): boolean {
+  if (q.runFiredAt === ordered[0]?.runId) return true;
+  const at = Date.parse(q.createdAt);
+  return at >= Date.parse(ordered[0].at) - QUESTION_SLACK_MS && at <= Date.parse(ordered[ordered.length - 1].at) + QUESTION_SLACK_MS;
+}
+
+/** Could a teammate's file have put this slug's entries here? Then only this machine's ledger
+ *  vouches for an ask; with no ledger yet, nothing does. */
+function asksHere(contextRoot: string, slug: string, home?: string): (id: string) => boolean {
+  let here: Set<string> | null = null;
+  let shared = true;
+  try {
+    here = threadEntriesHere(contextRoot, slug, home);
+    shared = listSharedSlugs(contextRoot).includes(slug) || listSharedAgentSlugs(contextRoot).includes(slug);
+  } catch { /* unknown: trust nothing */ }
+  return (id) => (here ? here.has(id) : !shared);
 }
 
 const NOTHING: ReadonlySet<string> = new Set();
 
+export type QuietReader = (slug: string, run: readonly ThreadEntry[]) => ReadonlySet<string>;
+
 /**
- * A reader for one pass over a project: `(slug, run) => the ids that count for nobody`. The record
- * and the questions are read at most once, and only for a run the Super actually spoke in, so a
- * project that never used it pays nothing.
+ * A reader for one pass over a project: `(slug, run) => the entry ids that count for nobody`. The
+ * record, the questions and the ledger are read at most once, and only for a run that opened with
+ * the Super's ask, so a project that never used it pays nothing.
  */
-export function superQuietReader(contextRoot: string): (slug: string, run: readonly ThreadEntry[]) => ReadonlySet<string> {
-  let handed: boolean | null = null;
-  let asking: Set<string> | null = null;
+export function superQuietReader(contextRoot: string, home?: string): QuietReader {
+  let record: SuperRecord | null | undefined;
+  const questions = new Map<string, AutomationQuestion[]>();
+  const trusted = new Map<string, (id: string) => boolean>();
   return (slug, run) => {
-    if (!run.some((e) => e.kind === 'user' && e.via === 'super')) return NOTHING;
-    handed ??= superHandedOver(contextRoot);
-    if (!handed) return NOTHING;
-    if (!asking) {
-      asking = new Set();
-      try { for (const q of allPendingQuestions(contextRoot)) asking.add(`${q.slug}::${q.runFiredAt}`); } catch { /* unreadable: no question known */ }
+    const ordered = [...run].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const ask = ordered[0];
+    if (!ask || ask.kind !== 'user' || ask.via !== 'super') return NOTHING;
+    if (ordered.some((e) => e.kind === 'user' && e.via !== 'super')) return NOTHING;
+    if (ordered.some((e) => e.kind === 'system' && e.event && LOUD_EVENTS.has(e.event))) return NOTHING;
+    if (record === undefined) record = readRecord(contextRoot);
+    if (!record) return NOTHING;
+    if (!record.enabled && record.open.has(`${slug}::${ask.runId}`)) return NOTHING;
+    if (!trusted.has(slug)) trusted.set(slug, asksHere(contextRoot, slug, home));
+    if (!ordered.every((e) => e.kind !== 'user' || trusted.get(slug)!(e.id))) return NOTHING;
+    if (!questions.has(slug)) {
+      let all: AutomationQuestion[] = [];
+      try { all = listQuestions(contextRoot, slug); } catch { all = []; }
+      questions.set(slug, all);
     }
-    if (asking.has(`${slug}::${run[0]?.runId}`)) return NOTHING;
-    return superOwned(run);
+    if (questions.get(slug)!.some((q) => askedDuring(q, ordered))) return NOTHING;
+    return new Set(ordered.filter((e) => e.kind !== 'user').map((e) => e.id));
   };
 }
 
-/** Is the run's turn now a Super job's clean end, so a banner about it would be noise? */
-export function superRunQuiet(contextRoot: string, slug: string, runId: string): boolean {
+/** Would a banner about this run be noise: a Super job, with the project handed over right now?
+ *  A run ending after the take-back rings: nobody else will tell the owner. */
+export function superRunQuiet(contextRoot: string, slug: string, runId: string, home?: string): boolean {
   try {
-    if (!superHandedOver(contextRoot)) return false;
+    if (!readRecord(contextRoot)?.enabled) return false;
     const fired = Date.parse(runId);
     const fromDay = Number.isFinite(fired) ? new Date(fired - 86_400_000).toISOString().slice(0, 10) : undefined;
     const run = readThread(contextRoot, slug, { runId, ...(fromDay ? { fromDay } : {}) });
-    const asks = run.filter((e) => e.kind === 'user').sort((a, b) => (a.id < b.id ? -1 : 1));
-    if (asks[asks.length - 1]?.via !== 'super') return false;
-    return !listQuestions(contextRoot, slug).some((q) => q.state === 'pending' && q.runFiredAt === runId);
+    return superQuietReader(contextRoot, home)(slug, run).size > 0 || isBareAsk(contextRoot, slug, run, home);
   } catch {
     return false;
   }
+}
+
+/** A run with nothing in it but the Super's ask yet (the moment it starts): quiet too. */
+function isBareAsk(contextRoot: string, slug: string, run: readonly ThreadEntry[], home?: string): boolean {
+  return run.length === 1 && run[0].kind === 'user' && run[0].via === 'super' && asksHere(contextRoot, slug, home)(run[0].id);
 }
