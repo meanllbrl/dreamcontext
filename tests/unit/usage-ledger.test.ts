@@ -2,10 +2,12 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { currentLedger, ledgerRoots, scanLedger, sessionAccounts } from '../../src/lib/usage-ledger.js';
+import { accountAt, currentLedger, ledgerRoots, scanLedger, sessionAccounts } from '../../src/lib/usage-ledger.js';
 import { buildStats } from '../../src/lib/usage-report.js';
 import { initialCodexState, parseCodexRecord, parseLimitHit } from '../../src/lib/usage-readers.js';
 import { resolvePrice } from '../../src/lib/usage-pricing.js';
+import { closeSleepRun, noteSleepRunCost, openSleepRun, readLimitHistory, readSleepRuns } from '../../src/lib/usage-records.js';
+import { recordUsageMeter } from '../../src/lib/claude-usage-meter.js';
 
 const NOW = Date.parse('2026-10-20T15:30:00Z');
 const at = (min: number) => new Date(NOW - min * 60_000).toISOString();
@@ -107,7 +109,10 @@ describe('usage ledger', () => {
     symlinkSync(join(home, '.claude', 'projects'), join(sandbox, 'projects'));
     writeFileSync(join(home, '.dreamcontext', 'claude-accounts.json'), JSON.stringify({ accounts: [{ id: 'a-1', email: 'a@example.com', configDir: sandbox }] }));
     expect(ledgerRoots(home).filter((r) => r.tool === 'claude')).toHaveLength(1);
-    expect(sessionAccounts(home).get('sess-1')).toBe('a-1');
+    expect(sessionAccounts(home).get('sess-1')?.[0][1]).toBe('a-1');
+    expect(accountAt({ account: 'b', accounts: [[100, 'a'], [200, 'b']] }, 150)).toBe('a');
+    expect(accountAt({ account: 'b', accounts: [[100, 'a'], [200, 'b']] }, 250)).toBe('b');
+    expect(accountAt({ account: 'b', accounts: [[100, 'a'], [200, 'b']] }, 50)).toBe('a');
   });
 
   it('reads the real end of a window from the limit message', () => {
@@ -162,5 +167,40 @@ describe('usage ledger', () => {
     parseCodexRecord({ timestamp: ts(0), type: 'session_meta', payload: { id: 'c2', forked_from_id: 'c1' } }, fork);
     parseCodexRecord({ timestamp: ts(0), type: 'turn_context', payload: { model: 'gpt-x' } }, fork);
     expect(parseCodexRecord({ timestamp: ts(0), type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: u1, total_token_usage: u1 } } }, fork)).toBeNull();
+  });
+
+  it('a sleep run keeps its lines by run id, and the newest open one is the one closed', () => {
+    const root = join(home, 'v', '_dream_context');
+    const run = openSleepRun(root, 63, { CLAUDE_CODE_SESSION_ID: 's9', DREAMCONTEXT_AUTO_SLEEP: '1' } as NodeJS.ProcessEnv);
+    closeSleepRun(root, 7);
+    noteSleepRunCost(root, 's9', 1.25);
+    expect(readSleepRuns(root)).toEqual([expect.objectContaining({ run, session: 's9', trigger: 'background', debtBefore: 63, debtAfter: 7, costUsd: 1.25 })]);
+  });
+
+  it('a limit reading goes on the history only when it moved', () => {
+    const dir = join(home, '.dreamcontext', 'claude-accounts', 'a-1');
+    const reading = (percent: number, ms: number) => ({ limits: [{ key: 'session' as const, percent, resetsAt: NOW + 3_600_000 }], fetchedAtMs: ms });
+    recordUsageMeter(dir, reading(10, NOW), home);
+    recordUsageMeter(dir, reading(10, NOW + 60_000), home);
+    recordUsageMeter(dir, reading(20, NOW + 120_000), home);
+    expect(readLimitHistory(home).map((p) => p.percent)).toEqual([10, 20]);
+  });
+
+  it('a limit that ran out on far less spend than usual does not decide the answer', async () => {
+    const stamp = (min: number, hour: number) => JSON.stringify({ type: 'assistant', timestamp: at(min), error: 'rate_limit', message: { id: `h${min}`, model: '<synthetic>', usage: U(0, 0), content: [{ type: 'text', text: `You've hit your session limit · resets ${hour % 12 || 12}${hour >= 12 ? 'pm' : 'am'}` }] } });
+    const hourAfter = (min: number) => new Date(NOW - min * 60_000 + 3_600_000).getHours();
+    const big = 2 * 24 * 60;
+    write('s1.jsonl', [assistant('b1', 'r1', at(big + 60), U(5_000_000, 5000)), stamp(big, hourAfter(big))]);
+    write('s2.jsonl', [stamp(5, hourAfter(5))]);
+    const sub = join(proj, 's2', 'subagents');
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(join(sub, 'agent-a1.jsonl'), assistant('a1', 'ra', at(30), U(10_000, 100)) + '\n');
+    writeFileSync(join(sub, 'agent-a1.meta.json'), JSON.stringify({ agentType: 'sleep-state' }));
+    mkdirSync(join(home, '.claude', 'session-env', 's1'), { recursive: true });
+    mkdirSync(join(home, '.claude', 'session-env', 's2'), { recursive: true });
+    await scan();
+    const a = stats().dc.answer;
+    expect(a.hits).toBe(2);
+    expect(a.verdict).toBe('no');
   });
 });

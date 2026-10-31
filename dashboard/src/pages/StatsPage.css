@@ -166,6 +166,7 @@ rect.st-ghost { fill: color-mix(in srgb, var(--color-success) 10%, transparent);
   .st-menuwrap:first-of-type .st-menu { right: auto; left: 0; }
   .st-menu { max-width: calc(100vw - 32px); }
   .st-body { padding: 12px 12px 20px; }
+  .st-dcline-text { white-space: normal; line-height: 1.4; }
   .st-tr { grid-template-columns: minmax(0, 1fr) 68px 64px; }
   .st-tr > :nth-child(4) { display: none; }
   .st-tr .shr i { display: none; }
@@ -182,3 +183,5 @@ rect.st-ghost { fill: color-mix(in srgb, var(--color-success) 10%, transparent);
   .st-kpis { grid-template-columns: minmax(0, 1fr); }
   .st-leg { justify-content: flex-start; }
 }
+
+.st-more { padding: 8px 6px 0; font-size: 12px; font-weight: 600; color: var(--color-accent-ink); text-align: left; }

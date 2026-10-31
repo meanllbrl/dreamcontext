@@ -25,6 +25,7 @@ export function StatsSpend({ data, tab, onTab, onModel }: { data: StatsWire; tab
   const fmt = isCost ? fmtCost : fmtTokens;
   const series: ChartSeries[] = data.tools.filter((x) => x.counted && data.series[x.id]).map((x) => ({
     name: x.name, color: TOOL_COLOR[x.id] ?? 'var(--chart-6)', values: isCost ? data.series[x.id].cost : data.series[x.id].tokens,
+    unpriced: isCost && data.series[x.id].tokens.some((v) => v > 0) && !data.series[x.id].cost.some((v) => v > 0),
   }));
   const tot = data.totals;
   const notCounted = data.tools.filter((x) => !x.counted);

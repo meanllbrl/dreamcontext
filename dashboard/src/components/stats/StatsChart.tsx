@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { fmtDay } from './statsFormat';
 
-export interface ChartSeries { name: string; color: string; values: number[]; ghost?: boolean }
+export interface ChartSeries { name: string; color: string; values: number[]; ghost?: boolean; unpriced?: boolean }
 
 interface Props {
   buckets: Array<{ start: number }>;
@@ -103,12 +103,13 @@ export function StatsChart({ buckets, hourly, series, format }: Props) {
 }
 
 export function ChartLegend({ series, format }: { series: ChartSeries[]; format: (v: number) => string }) {
+  const { t } = useI18n();
   return (
     <div className="st-leg">
       {series.map((s) => (
         <span key={s.name}>
           <i style={s.ghost ? undefined : { background: s.color }} className={s.ghost ? 'st-ghost' : undefined} />
-          {s.name}<b>{s.ghost ? '~' : ''}{format(s.values.reduce((a, b) => a + b, 0))}</b>
+          {s.name}<b>{s.unpriced ? t('stats.unpriced') : `${s.ghost ? '~' : ''}${format(s.values.reduce((a, b) => a + b, 0))}`}</b>
         </span>
       ))}
     </div>

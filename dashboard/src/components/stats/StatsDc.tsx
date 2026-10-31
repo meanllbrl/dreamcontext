@@ -18,8 +18,10 @@ export function answerLine(data: StatsWire, t: T): string {
 
 function LimitAnswerCard({ data }: { data: StatsWire }) {
   const { t } = useI18n();
+  const [all, setAll] = useState(false);
   const a = data.dc.answer;
   const w = a.worst;
+  const shown = all ? a.windows : a.windows.slice(0, 4);
   return (
     <div className="st-card st-answer" data-verdict={a.verdict} data-testid="stats-answer">
       <div className="st-k">{t('stats.answer.q')}</div>
@@ -31,7 +33,7 @@ function LimitAnswerCard({ data }: { data: StatsWire }) {
       {a.windows.length > 0 && (
         <div className="st-tbl st-wins" role="table">
           <div className="st-tr st-th" role="row"><span>{t('stats.answer.window')}</span><span>{t('stats.sleep')}</span><span>{t('stats.answer.shareOfSpend')} (~)</span><span /></div>
-          {a.windows.map((x) => (
+          {shown.map((x) => (
             <div className="st-tr" role="row" key={`${x.kind}${x.account}${x.start}`}>
               <span className="nm nm2"><span>
                 <b>{fmtWhen(x.start)}{x.kind === 'weekly' ? ` · ${t('stats.weekly')}` : ''}</b>
@@ -39,9 +41,10 @@ function LimitAnswerCard({ data }: { data: StatsWire }) {
               </span></span>
               <span className="num">{fmtCost(x.sleepCost)} <span className="dim">/ {fmtCost(x.cost)}</span></span>
               <span className="shr"><i className="st-ghostbar" style={{ width: `${x.estSleepShare * 100}%` }} /><em>~{fmtPct(x.estSleepShare * 100)}</em></span>
-              <span>{x.hit && <span className="st-chip warn">{t('stats.answer.ranOut')}</span>}</span>
+              <span>{x.hit && <span className={`st-chip${x.thin ? '' : ' warn'}`} title={x.thin ? t('stats.answer.thin') : undefined}>{t('stats.answer.ranOut')}</span>}</span>
             </div>
           ))}
+          {a.windows.length > shown.length && <button type="button" className="st-more" onClick={() => setAll(true)}>{t('stats.showAll').replace('{n}', String(a.windows.length))}</button>}
         </div>
       )}
       <p className="st-foot">{t('stats.answer.foot')}</p>

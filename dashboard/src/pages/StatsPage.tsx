@@ -119,7 +119,7 @@ export function StatsPage({ onNavigate }: { onNavigate: (page: 'settings') => vo
         </Menu>
       </PageBar>
       <div className="st-body">
-        {data?.scanning && <div className="st-scan" role="status">{t('stats.scanning').replace('{d}', String(data.scanning.done)).replace('{n}', String(data.scanning.total))}</div>}
+        {data?.scanning && <div className="st-scan" role="status">{data.scanning.total === 0 ? t('stats.scanningStart') : t('stats.scanning').replace('{d}', String(data.scanning.done)).replace('{n}', String(data.scanning.total))}</div>}
         {isError && !data && <div className="st-none">{t('stats.loadFailed')}</div>}
         {data && (tab === 'cost' || tab === 'tokens') && <StatsSpend data={data} tab={tab} onTab={setTab} onModel={(r: SpendRow) => setModelKey(r.key)} />}
         {data && tab === 'limits' && <StatsLimits data={data} off={off} />}

@@ -14,7 +14,7 @@ export interface SleepRun {
 }
 export interface LimitWindow {
   kind: 'session' | 'weekly'; account: string; accountLabel: string; start: number; end: number; cost: number; sleepCost: number;
-  runs: Array<{ project: string; cost: number }>; hit: boolean; estSleepShare: number;
+  runs: Array<{ project: string; cost: number }>; hit: boolean; estSleepShare: number; thin?: boolean;
 }
 export interface LimitAnswer { verdict: 'yes' | 'partly' | 'no' | 'none'; hits: number; worst: LimitWindow | null; twoProject: number; windows: LimitWindow[] }
 export interface EcoRow { project: string; title: string; at: number; kind: 'eco' | 'fresh'; before: number; after: number | null; turns: number; estSaved: number; estSavedCost: number }

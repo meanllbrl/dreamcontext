@@ -23,7 +23,7 @@ import { resolveLinkedRepos } from './linked-repos.js';
 import { costParts, readPrices, resolvePrice, type PriceBook, type PriceSource } from './usage-pricing.js';
 import { readLimitHistory, readSleepRuns, type LimitPoint, type SleepRunRecord, type SleepTrigger } from './usage-records.js';
 import type { LimitHit } from './usage-readers.js';
-import { currentLedger, scanProgress, type Ledger, type LedgerFile, type ScanProgress } from './usage-ledger.js';
+import { accountAt, currentLedger, scanProgress, type Ledger, type LedgerFile, type ScanProgress } from './usage-ledger.js';
 import { listVaults, type Vault } from './vaults.js';
 
 export type StatsRange = '24h' | '7d' | '30d' | '90d';
@@ -60,6 +60,9 @@ export interface LimitWindow {
   runs: Array<{ project: string; cost: number }>; hit: boolean;
   /** ESTIMATE: sleep's share of this window's spend. */
   estSleepShare: number;
+  /** A limit ran out here on far less spend than this account's other ran-out windows, so the log
+   *  does not explain it (spend on another machine, a limit already low). Never decides the answer. */
+  thin?: boolean;
 }
 
 export interface LimitAnswer {
@@ -140,7 +143,9 @@ export function modelLabel(model: string): string {
 export function projectResolver(vaults: Vault[], repos: Array<{ name: string; path: string }>): (cwd: string) => string {
   const sorted = [...vaults].sort((a, b) => b.path.length - a.path.length);
   const seen = new Map<string, string>();
-  const clean = (s: string) => s.replace(/-brain$/, '');
+  // A brain and the code repo it governs are one project.
+  const repoNames = new Set(repos.map((r) => r.name));
+  const clean = (s: string) => (s.endsWith('-brain') && repoNames.has(s.slice(0, -6)) ? s.slice(0, -6) : s);
   return (cwd) => {
     if (!cwd) return 'Unknown';
     const known = seen.get(cwd);
@@ -181,7 +186,7 @@ function accountNames(home: string): AccountNames & { claude: Array<{ id: string
 
 // ── Sleep runs, rebuilt from the log ─────────────────────────────────────────────────
 
-interface FileView { path: string; f: LedgerFile; project: string; account: string | undefined; asleep: boolean }
+interface FileView { path: string; f: LedgerFile; project: string; account: string | undefined; asleep: boolean; owner: LedgerFile }
 
 interface RunDraft { id: string; session: string; project: string; account: string | undefined; trigger: SleepTrigger; start: number; end: number; files: Array<{ view: FileView; span: number | null }> }
 
@@ -227,7 +232,7 @@ function draftRuns(views: FileView[]): RunDraft[] {
 
 // ── The one read ─────────────────────────────────────────────────────────────────────
 
-function handoffRecords(vaults: Vault[]): Array<{ project: string; rec: Record<string, unknown> }> {
+function handoffRecords(vaults: Vault[], toProject: (v: Vault) => string): Array<{ project: string; rec: Record<string, unknown> }> {
   const out: Array<{ project: string; rec: Record<string, unknown> }> = [];
   for (const v of vaults) {
     const dir = join(v.path, '_dream_context', 'state', '.handoff-requests');
@@ -235,7 +240,7 @@ function handoffRecords(vaults: Vault[]): Array<{ project: string; rec: Record<s
     try { names = readdirSync(dir); } catch { continue; }
     for (const n of names) {
       if (!n.endsWith('.json')) continue;
-      try { out.push({ project: v.name.replace(/-brain$/, ''), rec: JSON.parse(readFileSync(join(dir, n), 'utf-8')) as Record<string, unknown> }); } catch { /* a torn record */ }
+      try { out.push({ project: toProject(v), rec: JSON.parse(readFileSync(join(dir, n), 'utf-8')) as Record<string, unknown> }); } catch { /* a torn record */ }
     }
   }
   return out;
@@ -284,6 +289,8 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
       path, f,
       project: projectOf(f.cwd || parent?.cwd || ''),
       account: f.account ?? parent?.account,
+      // A sub-agent ran on whichever account its session held at that hour.
+      owner: !f.account && parent ? parent : f,
       asleep: f.origin === 'sleep' || parent?.origin === 'sleep' || isSleepAgent(f),
     };
   });
@@ -336,10 +343,11 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
       const cost = parts ? parts[0] + parts[1] + parts[2] + parts[3] : 0;
       const asleep = v.asleep || span >= 0;
       const run = runOfFileSpan.get(`${v.path}|${span >= 0 ? span : '*'}`);
+      const rowAccount = claude ? accountAt(v.owner, hour + HOUR - 1) : v.account;
 
-      if (claude && v.account) {
-        const hours = spend.get(v.account) ?? new Map<number, HourSpend>();
-        spend.set(v.account, hours);
+      if (claude && rowAccount) {
+        const hours = spend.get(rowAccount) ?? new Map<number, HourSpend>();
+        spend.set(rowAccount, hours);
         const h = hours.get(hour) ?? { cost: 0, sleepCost: 0, runs: new Map<string, number>() };
         hours.set(hour, h);
         h.cost += cost;
@@ -379,7 +387,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
         if (!price) g.priced = false;
       };
       addTo(group(byModel, model, () => ({ label: modelLabel(model), tool: v.f.tool })));
-      addTo(group(byAccount, `${v.f.tool}:${v.account ?? ''}`, () => ({ label: names.label(v.f.tool, v.account), tool: v.f.tool, sub: v.f.tool === 'claude' ? names.claude.find((a) => a.id === v.account)?.plan : names.codex.find((a) => a.id === v.account)?.plan })));
+      addTo(group(byAccount, `${v.f.tool}:${rowAccount ?? ''}`, () => ({ label: names.label(v.f.tool, rowAccount), tool: v.f.tool, sub: v.f.tool === 'claude' ? names.claude.find((a) => a.id === rowAccount)?.plan : names.codex.find((a) => a.id === rowAccount)?.plan })));
       addTo(group(byProject, v.project, () => ({ label: v.project, tool: null })));
 
       if (claude) {
@@ -405,10 +413,13 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
   // ── Windows: each 5-hour stretch of an account's spend, as Claude opens them ──────
   const hitsByAccount = new Map<string, LimitHit[]>();
   for (const v of views) {
-    if (!v.account || v.f.hits.length === 0) continue;
-    const list = hitsByAccount.get(v.account) ?? [];
-    list.push(...v.f.hits);
-    hitsByAccount.set(v.account, list);
+    for (const h of v.f.hits) {
+      const who = accountAt(v.owner, h.ts);
+      if (!who) continue;
+      const list = hitsByAccount.get(who) ?? [];
+      list.push(h);
+      hitsByAccount.set(who, list);
+    }
   }
   const runById = new Map(runDrafts.map((r) => [r.id, r]));
   const history = readLimitHistory(home);
@@ -467,15 +478,16 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
   for (const r of runDrafts) {
     if (r.end < rangeStart || r.start >= rangeEnd) continue;
     if (q.project !== null && r.project !== q.project) continue;
-    if (q.off.has('claude') || q.off.has(`claude:${r.account ?? ''}`)) continue;
+    const who = accountAt(r.files[0].view.owner, r.start) ?? r.account;
+    if (q.off.has('claude') || q.off.has(`claude:${who ?? ''}`)) continue;
     const t = runTotals.get(r.id);
     if (!t || t.tokens === 0) continue;
     const rec = recorded.find((x) => x.session === r.session && Math.abs(Date.parse(x.startedAt) - r.start) < 10 * 60_000);
-    const win = windows.find((w) => w.kind === 'session' && w.account === r.account && r.start >= w.start && r.start < w.end);
+    const win = windows.find((w) => w.kind === 'session' && w.account === who && r.start >= w.start && r.start < w.end);
     const rise = win ? riseOf.get(win) ?? null : null;
     const share = win && win.cost > 0 ? t.cost / win.cost : null;
     runViews.push({
-      id: r.id, session: r.session, project: r.project, account: r.account ?? '', accountLabel: names.label('claude', r.account),
+      id: r.id, session: r.session, project: r.project, account: who ?? '', accountLabel: names.label('claude', who),
       trigger: rec?.trigger ?? r.trigger, start: r.start, end: r.end, tokens: t.tokens, cost: t.cost,
       debtBefore: rec?.debtBefore ?? null, debtAfter: rec?.debtAfter ?? null, reportedCostUsd: rec?.costUsd ?? null,
       specialists: [...t.byAgent.values()].sort((a, b) => b.cost - a.cost),
@@ -534,7 +546,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
   const ecoRows: EcoRow[] = [];
   const mains = views.filter((v) => !v.f.agent && v.f.tool === 'claude');
   const contextCeiling = 1_000_000;
-  for (const { project, rec } of handoffRecords(vaults)) {
+  for (const { project, rec } of handoffRecords(vaults, (v) => projectOf(v.path))) {
     const at = typeof rec.at === 'string' ? Date.parse(rec.at) : NaN;
     const consumed = typeof rec.consumedAt === 'string' ? Date.parse(rec.consumedAt) : NaN;
     const before = typeof rec.contextTokens === 'number' ? rec.contextTokens : null;
@@ -571,7 +583,11 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
   // ── The owner's question ──────────────────────────────────────────────────────────
   const inRange = windows.filter((w) => w.end > rangeStart && w.start < rangeEnd);
   const hitWindows = inRange.filter((w) => w.hit);
-  const sleptHits = hitWindows.filter((w) => w.sleepCost > 0).sort((a, b) => b.estSleepShare - a.estSleepShare);
+  for (const w of hitWindows.filter((x) => x.kind === 'session')) {
+    const costs = windows.filter((x) => x.hit && x.kind === 'session' && x.account === w.account).map((x) => x.cost).sort((x, y) => x - y);
+    if (w.cost < costs[costs.length >> 1] / 2) w.thin = true;
+  }
+  const sleptHits = hitWindows.filter((w) => w.sleepCost > 0 && !w.thin).sort((a, b) => b.estSleepShare - a.estSleepShare);
   const slept = inRange.filter((w) => w.sleepCost > 0).sort((a, b) => b.sleepCost - a.sleepCost);
   const worst = sleptHits[0] ?? slept[0] ?? null;
   const verdict: LimitAnswer['verdict'] = hitWindows.length === 0 ? 'none'
@@ -580,7 +596,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
   const answer: LimitAnswer = {
     verdict, hits: hitWindows.length, worst,
     twoProject: inRange.filter((w) => new Set(w.runs.map((r) => r.project)).size >= 2).length,
-    windows: [...new Set([...sleptHits, ...slept])].slice(0, 8),
+    windows: [...new Set([...sleptHits, ...slept.filter((w) => !w.thin), ...slept])].slice(0, 8),
   };
 
   const firstRun = recorded.map((r) => r.startedAt).sort()[0] ?? null;

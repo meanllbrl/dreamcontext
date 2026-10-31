@@ -57,6 +57,9 @@ export interface LedgerFile {
   origin?: 'sleep' | 'automation';
   /** Account id (`primary` included) or Codex's creator id. Absent = nothing says who. */
   account?: string;
+  /** A session that moved accounts mid-way (the auto-switch at a limit): [from ms, account],
+   *  oldest first. Row and limit-hit attribution reads this; `account` is its last entry. */
+  accounts?: Array<[number, string]>;
   first: number;
   last: number;
   reqs: number;
@@ -164,18 +167,23 @@ async function walk(dir: string, out: Array<{ path: string; tool: ScanRoot['tool
   }
 }
 
-/** Session id → account, from each config dir's `session-env/`. The newest folder wins a shared session. */
-export function sessionAccounts(home: string = homedir()): Map<string, string> {
-  const best = new Map<string, { account: string; at: number }>();
+/**
+ * Session id → the accounts it ran on, from each config dir's `session-env/`: oldest first, each
+ * from the moment its folder was born. One session can hold several: the auto-switch resumes it
+ * on the next account at a limit, so the tokens before the switch belong to the first account.
+ */
+export function sessionAccounts(home: string = homedir()): Map<string, Array<[number, string]>> {
+  const out = new Map<string, Array<[number, string]>>();
   const read = (configDir: string, account: string) => {
     const dir = join(configDir, 'session-env');
     let names: string[];
     try { names = readdirSync(dir); } catch { return; }
     for (const name of names) {
       let at = 0;
-      try { at = lstatSync(join(dir, name)).mtimeMs; } catch { continue; }
-      const prev = best.get(name);
-      if (!prev || at > prev.at) best.set(name, { account, at });
+      try { at = lstatSync(join(dir, name)).birthtimeMs; } catch { continue; }
+      const list = out.get(name) ?? [];
+      list.push([at, account]);
+      out.set(name, list);
     }
   };
   let accounts: ReturnType<typeof listClaudeAccounts> = [];
@@ -183,7 +191,17 @@ export function sessionAccounts(home: string = homedir()): Map<string, string> {
   const primary = accounts.find((a) => a.configDir === null);
   read(join(home, '.claude'), primary?.id ?? 'primary');
   for (const a of accounts) if (a.configDir) read(a.configDir, a.id);
-  return new Map([...best].map(([k, v]) => [k, v.account]));
+  for (const list of out.values()) list.sort((x, y) => x[0] - y[0]);
+  return out;
+}
+
+/** Who held the session at `ts`. Before the first switch it is the first account. */
+export function accountAt(file: Pick<LedgerFile, 'account' | 'accounts'>, ts: number): string | undefined {
+  const list = file.accounts;
+  if (!list || list.length < 2) return file.account;
+  let who = list[0][1];
+  for (const [from, id] of list) if (from <= ts) who = id;
+  return who;
 }
 
 interface SubagentMeta { agentType?: string; effort?: string }
@@ -350,6 +368,8 @@ export function scanProgress(home: string = homedir()): ScanProgress | null {
 export function scanLedger(home: string = homedir(), roots: ScanRoot[] = ledgerRoots(home)): Promise<void> {
   const state = stateFor(home);
   if (state.running) return state.running;
+  // Said at once: the first read must already know a scan is on, or the screen would not ask again.
+  state.progress = { done: 0, total: 0 };
   state.running = runScan(home, roots, state).finally(() => {
     state.running = null;
     state.progress = null;
@@ -407,8 +427,15 @@ async function runScan(home: string, roots: ScanRoot[], state: LedgerState): Pro
   for (const [path, entry] of Object.entries(ledger.files)) {
     if (entry.last && entry.last < cutoff) { delete ledger.files[path]; changed = true; continue; }
     if (entry.tool !== 'claude') continue;
-    const account = accounts.get(entry.session);
-    if (account && entry.account !== account) { entry.account = account; changed = true; }
+    const list = accounts.get(entry.session);
+    if (!list) continue;
+    const last = list[list.length - 1][1];
+    const moved = list.length > 1 ? list : undefined;
+    if (entry.account !== last || JSON.stringify(entry.accounts) !== JSON.stringify(moved)) {
+      entry.account = last;
+      if (moved) entry.accounts = moved; else delete entry.accounts;
+      changed = true;
+    }
   }
   if (changed) saveLedger(ledger, home);
 }
