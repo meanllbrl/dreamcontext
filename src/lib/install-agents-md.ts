@@ -14,7 +14,7 @@ export const AGENTS_MD_BODY = [
   '',
   'This project keeps its memory in `_dream_context/` (dreamcontext). The session snapshot and per-prompt recall arrive as context from hooks (`.codex/hooks.json`).',
   '',
-  '- Before answering a question about the project, look it up: `dreamcontext recall "<question>"`.',
+  '- Before answering a question about the project, look it up: `dreamcontext memory recall "<question>"`.',
   '- Log progress and decisions to the task you are working on: `dreamcontext tasks log <task> "<what changed and why>"`.',
   '- Never write `_dream_context/marketing/.env`; never hand-edit files under `_dream_context/` that the CLI manages (tasks, knowledge index, sleep state).',
 ].join('\n');

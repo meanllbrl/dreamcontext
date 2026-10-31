@@ -3,13 +3,13 @@
  * refuse every verb off its allowlist, every option that points at another vault, and every path
  * outside the vault or reached through a symlink below the realpath'd root.
  */
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { Command } from 'commander';
 import { BRAIN_VERBS, checkBrainArgs, confinedToVault } from '../../src/lib/brain-mcp/verbs.js';
-import { callBrainTool, handleBrainMessage, resolveBrainRoots } from '../../src/lib/brain-mcp/server.js';
+import { callBrainTool, defaultRunCli, handleBrainMessage, resolveBrainRoots } from '../../src/lib/brain-mcp/server.js';
 import { createProgram } from '../../src/cli/program.js';
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'dc-brain-mcp-')));
@@ -24,20 +24,29 @@ symlinkSync(join(base, 'outside'), join(vault, 'escape'));
 const refused = (args: string[]) => { try { checkBrainArgs(args, vault); return null; } catch (e) { return (e as Error).message; } };
 
 describe('the allowlist', () => {
-  it('every allowlisted verb path exists in this CLI (drift)', () => {
+  it('every allowlisted verb path exists in this CLI and is a LEAF command (drift)', () => {
     const program = createProgram();
-    const find = (cmd: Command, path: readonly string[]): boolean => {
-      if (path.length === 0) return true;
+    const find = (cmd: Command, path: readonly string[]): Command | null => {
+      if (path.length === 0) return cmd;
       const next = cmd.commands.find((c) => c.name() === path[0] || c.aliases().includes(path[0]!));
-      return !!next && find(next, path.slice(1));
+      return next ? find(next, path.slice(1)) : null;
     };
-    for (const verb of BRAIN_VERBS) expect(find(program, verb), verb.join(' ')).toBe(true);
+    for (const verb of BRAIN_VERBS) {
+      const cmd = find(program, verb);
+      expect(cmd, verb.join(' ')).not.toBeNull();
+      // A group (top-level `recall` holds on/off/cloud-key controls) would let an argument pick a subcommand.
+      expect(cmd!.commands.map((c) => c.name()), verb.join(' ')).toEqual([]);
+    }
+  });
+
+  it('top-level recall (recall\'s own controls: off, cloud key clear…) is refused', () => {
+    for (const args of [['recall', 'off'], ['recall', 'cloud', 'key', 'clear'], ['recall', 'how does checkout work']]) expect(refused(args), args.join(' ')).toMatch(/Not allowed/);
   });
 
   it('allows a task log, a handoff and recall', () => {
     expect(refused(['tasks', 'log', 'checkout-flow', 'Decided: three steps, see src/cart.ts'])).toBeNull();
     expect(refused(['tasks', 'handoff', 'checkout-flow', '--done', 'tests pass', '--next', 'ship'])).toBeNull();
-    expect(refused(['recall', 'how does checkout work'])).toBeNull();
+    expect(refused(['memory', 'recall', 'how does checkout work'])).toBeNull();
     expect(refused(['tasks', 'insert', 'checkout-flow', 'notes', '--file', 'state/notes.md'])).toBeNull();
   });
 
@@ -49,7 +58,7 @@ describe('the allowlist', () => {
 
   it('refuses options that point at another vault, project or home', () => {
     for (const a of ['--vault', '--vault=other', '--peers', '--all-vaults', '--root=/', '--cwd', '--home']) {
-      expect(refused(['recall', 'x', a]), a).toMatch(/refused/);
+      expect(refused(['memory', 'recall', 'x', a]), a).toMatch(/refused/);
     }
   });
 });
@@ -98,4 +107,23 @@ describe('the server', () => {
     expect(list.result.tools.map((t) => t.name)).toEqual(['recall', 'dreamcontext']);
     expect(await handleBrainMessage({ id: 3, method: 'tools/call', params: { name: 'recall', arguments: { query: 'checkout' } } }, roots, run)).toMatchObject({ result: { content: [{ text: 'hit' }] } });
   });
+});
+
+const CLI = join(__dirname, '../..', 'dist', 'index.js');
+describe.skipIf(!existsSync(CLI))('the recall tool on the real CLI (review fix)', () => {
+  it('runs `memory recall` and finds a vault note; a one-word query never switches recall', async () => {
+    mkdirSync(join(vault, 'core'), { recursive: true });
+    mkdirSync(join(vault, 'knowledge'), { recursive: true });
+    writeFileSync(join(vault, 'core', '0.soul.md'), '---\nname: "acme-shop"\ntype: soul\nupdated: "2026-01-02"\n---\n\nA fictional storefront.\n');
+    writeFileSync(join(vault, 'knowledge', 'checkout.md'), '---\nname: Checkout flow\ndescription: How the checkout works\ntags: [checkout]\nupdated: "2026-01-02"\n---\n\nThe checkout has three steps: cart, address, payment.\n');
+    const home = join(base, 'home');
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+    const env = { ...process.env, HOME: home, DREAMCONTEXT_RECALL_CLOUD: '0', DREAMCONTEXT_VERSION_CHECK: '0' };
+    const run = defaultRunCli(process.execPath, CLI, env)!;
+    const hit = await callBrainTool('recall', { query: 'how does the checkout work' }, { project, vault }, run) as { isError?: boolean; content: Array<{ text: string }> };
+    expect(hit.isError, hit.content[0]?.text).toBeUndefined();
+    expect(hit.content[0]!.text).toContain('checkout');
+    const off = await callBrainTool('recall', { query: 'off' }, { project, vault }, run) as { content: Array<{ text: string }> };
+    expect(off.content[0]!.text).not.toMatch(/recall (is )?(now )?off|turned off/i);
+  }, 60_000);
 });

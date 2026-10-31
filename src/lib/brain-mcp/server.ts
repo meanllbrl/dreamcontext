@@ -44,7 +44,7 @@ const TOOLS = [
   },
   {
     name: 'dreamcontext',
-    description: 'Run one dreamcontext CLI verb on this project\'s brain, e.g. ["tasks","log","<task>","what changed"], ["tasks","insert","<task>","notes","…"], ["tasks","handoff","<task>","--done","…","--next","…"], ["memory","remember","…"], ["tasks","list"]. Only these verbs: recall, snapshot, memory recall|remember|list, tasks list|create|insert|log|handoff|status|start|complete, bookmark add|list, knowledge index. Paths must stay inside _dream_context.',
+    description: 'Run one dreamcontext CLI verb on this project\'s brain, e.g. ["tasks","log","<task>","what changed"], ["tasks","insert","<task>","notes","…"], ["tasks","handoff","<task>","--done","…","--next","…"], ["memory","remember","…"], ["tasks","list"]. Only these verbs: snapshot, memory recall|remember|list, tasks list|create|insert|log|handoff|status|start|complete, bookmark add|list, knowledge index. Paths must stay inside _dream_context.',
     inputSchema: { type: 'object', properties: { args: { type: 'array', items: { type: 'string' }, description: 'The verb and its arguments, one string each (no shell).' } }, required: ['args'] },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   },
@@ -70,7 +70,7 @@ export async function callBrainTool(name: string, input: Record<string, unknown>
   if (name === 'recall') {
     const q = typeof input.query === 'string' ? input.query.trim() : '';
     if (!q) return text('query is required.', true);
-    args = ['recall', q];
+    args = ['memory', 'recall', q];
   } else if (name === 'dreamcontext') {
     args = Array.isArray(input.args) ? input.args as string[] : [];
   } else {

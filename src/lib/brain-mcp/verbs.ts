@@ -14,9 +14,12 @@
 import { lstatSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
-/** Verb paths a call may start with. `tasks handoff` is the Eco record (§4d). */
+/**
+ * Verb paths a call may start with. `tasks handoff` is the Eco record (§4d). Every entry is a LEAF
+ * command (no subcommands; the drift test holds it): a group such as top-level `recall` (recall's
+ * own on/off/cloud-key controls) would let its first argument pick a subcommand.
+ */
 export const BRAIN_VERBS: readonly (readonly string[])[] = [
-  ['recall'],
   ['snapshot'],
   ['memory', 'recall'],
   ['memory', 'remember'],

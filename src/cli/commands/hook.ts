@@ -1,5 +1,6 @@
 import { directHeavy, shellQuote } from '../../lib/run-budget.js';
 import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
+import { hookTool, setHookTool } from '../../lib/hook-tool.js';
 import { Command } from 'commander';
 import {
   readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, mkdirSync, readdirSync, writeSync,
@@ -2137,8 +2138,9 @@ export function codexHookAnswer(event: string, printed: string): string {
 function beginCodexHookFormat(name: string): void {
   if (process.env.DREAMCONTEXT_CONTEXT_BY === 'bridge' && name !== 'pre-tool-use') process.exit(0);
   const event = CODEX_HOOK_EVENTS[name] ?? '';
-  // The snapshot reads this for its per-tool ceiling (snapshot-budget.ts).
-  process.env.DREAMCONTEXT_HOOK_TOOL = 'codex';
+  // The snapshot reads this for its per-tool ceiling (snapshot-budget.ts). Process memory, so no
+  // child of this hook (a background sleep, a headless Claude run) inherits it.
+  setHookTool('codex');
   const lines: string[] = [];
   console.log = (...args: unknown[]) => { lines.push(formatArgs(...args)); };
   process.once('exit', () => {
@@ -2798,7 +2800,7 @@ export function registerHookCommand(program: Command): void {
         : {};
       // A Codex hook (`--format codex`): a patch or shell call is read as the Claude tool the gates
       // know. A patch touching several files is judged by the one a gate refuses, if any.
-      if (process.env.DREAMCONTEXT_HOOK_TOOL === 'codex') {
+      if (hookTool() === 'codex') {
         const calls = codexToolCallsAsClaude(toolName, toolInput);
         const at = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
         const pick = calls.find((c) => isMarketingEnvPath(typeof c.toolInput.file_path === 'string' ? c.toolInput.file_path : ''))
@@ -2991,7 +2993,7 @@ export function registerHookCommand(program: Command): void {
       // prompt sent mid-sleep is exactly when the orchestrator is deciding whether
       // to dispatch the next specialist, and that is the turn that must not lose it.
       // It names Claude's sub-agents: a Codex hook (`--format codex`) has none to dispatch.
-      if (process.env.DREAMCONTEXT_HOOK_TOOL !== 'codex') console.log(SUBAGENT_DISPATCH_AUTHORIZATION);
+      if (hookTool() !== 'codex') console.log(SUBAGENT_DISPATCH_AUTHORIZATION);
 
       const state = readSleepState(root);
 
