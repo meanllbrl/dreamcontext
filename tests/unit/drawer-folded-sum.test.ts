@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDrawerRows, fanoutTargets, type DrawerFacts, type DrawerProjectInput, type FanoutFacts } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
+import { buildDrawerRows, fanoutTargets, fanoutWithMarks, foldedTargets, type DrawerFacts, type DrawerProjectInput, type FanoutFacts } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
 
 const project = (over: Partial<DrawerProjectInput> = {}): DrawerProjectInput => ({
   name: 'acme', logo: false, logoStamp: null, mounted: true, asleep: false, otherWindow: false, rollup: null, ...over,
@@ -70,14 +70,23 @@ describe('a folded project reads the sum of its rows', () => {
   });
 });
 
-describe('the fan-out reads a folded project that is not mounted', () => {
-  it('expanded first, then folded, within the cap; mounted never', () => {
-    expect(fanoutTargets(['a'], ['m'], true, 2, ['b', 'm', 'c'])).toEqual({ poll: ['a', 'b'], once: [] });
+describe('a folded project that is not mounted is read by its marks alone', () => {
+  const marks = { working: 2, asking: false };
+  it('reads the folded ones that are not mounted, capped; the expanded fan-out does not change', () => {
+    expect(foldedTargets(['a', 'm', 'b', 'c'], ['m'], 2)).toEqual(['a', 'b']);
+    expect(fanoutTargets(['a'], [], true)).toEqual({ poll: ['a'], once: [] });
+    expect(fanoutTargets(['a'], [], false)).toEqual({ poll: [], once: ['a'] });
   });
-  it('an expanded project past the cap is still read once, a folded one is not', () => {
-    expect(fanoutTargets(['a', 'b'], [], true, 1, ['c'])).toEqual({ poll: ['a'], once: ['b'] });
+  it('a read left from when the project was open never reaches its folded row', () => {
+    const old: FanoutFacts = { tabs: 3, superOn: true, team: [], superMarks: { working: 5, asking: true } };
+    const out = fanoutWithMarks({ past: old, open: old, fresh: old }, { fresh: marks }, ['past', 'fresh']);
+    expect(out.past).toBeUndefined();
+    expect(out.open).toBe(old);
+    expect(out.fresh.superMarks).toEqual(marks);
   });
-  it('the window out of focus reads each once', () => {
-    expect(fanoutTargets(['a'], [], false, 8, ['c'])).toEqual({ poll: [], once: ['a', 'c'] });
+  it('through the model: fresh marks ring, no marks no ring', () => {
+    const fanout = fanoutWithMarks({}, { acme: marks }, ['acme']);
+    expect(both({ fanout, p: { mounted: false } }).folded.sum).toMatchObject({ working: 2, live: 2 });
+    expect(both({ fanout: fanoutWithMarks({}, {}, ['acme']), p: { mounted: false } }).folded.sum).toBeUndefined();
   });
 });

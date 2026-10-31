@@ -228,22 +228,41 @@ function sumOf(children: readonly DrawerChild[], source: DrawerProjectRow['sourc
 }
 
 /**
- * Which projects the fan-out reads (D7): only ones that are NOT mounted (a mounted one publishes
- * its own facts). While the drawer is visible and the window focused, the first
- * {@link DRAWER_POLL_CAP} poll, expanded ones first; the expanded rest are read once. A folded
- * project is read too, within the cap: its row shows its Super Agent's ring.
+ * Which expanded projects the fan-out reads (D7): only expanded ones that are NOT mounted (a
+ * mounted one publishes its own facts). While the drawer is visible and the window focused, the
+ * first {@link DRAWER_POLL_CAP} of them poll; the rest are read once.
  */
 export function fanoutTargets(
   expanded: readonly string[],
   mounted: readonly string[],
   live: boolean,
   cap = DRAWER_POLL_CAP,
-  folded: readonly string[] = [],
 ): { poll: string[]; once: string[] } {
   const far = expanded.filter((v) => !mounted.includes(v));
-  const farFolded = folded.filter((v) => !mounted.includes(v));
-  if (!live) return { poll: [], once: [...far, ...farFolded] };
-  return { poll: [...far, ...farFolded].slice(0, cap), once: far.slice(cap) };
+  if (!live) return { poll: [], once: far };
+  return { poll: far.slice(0, cap), once: far.slice(cap) };
+}
+
+/** The folded projects whose Super Agent marks are read, one summary each: not mounted, capped. */
+export function foldedTargets(folded: readonly string[], mounted: readonly string[], cap = DRAWER_POLL_CAP): string[] {
+  return folded.filter((v) => !mounted.includes(v)).slice(0, cap);
+}
+
+/**
+ * What the drawer reads for a project that is not mounted. A folded one has only its fresh marks:
+ * a full read left from when it was open has stopped updating, and a stale ring is a wrong number.
+ */
+export function fanoutWithMarks(
+  facts: Readonly<Record<string, FanoutFacts>>,
+  marks: Readonly<Record<string, NonNullable<FanoutFacts['superMarks']>>>,
+  folded: readonly string[],
+): Record<string, FanoutFacts> {
+  const out = { ...facts };
+  for (const v of folded) {
+    delete out[v];
+    if (marks[v]) out[v] = { tabs: 0, superOn: true, team: [], superMarks: marks[v] };
+  }
+  return out;
 }
 
 /** A drawer intent only travels to a project this window now shows, mounted (D5, the

@@ -7,8 +7,10 @@
  *  - `GET /agents`, `/automations`, `/automations/threads` → `buildRoster`, members with work.
  *
  * Polls every 15 s (through `pollMs`) only while the drawer is on screen and the window
- * focused, at most `DRAWER_POLL_CAP` projects, expanded ones first; the expanded rest are read
- * once. A folded project is read within the cap: its row shows its Super Agent's ring.
+ * focused, at most `DRAWER_POLL_CAP` projects; the rest are read once when they expand.
+ *
+ * A folded project's row needs only its Super Agent's marks: the same summary alone, under the
+ * same rule, for at most `DRAWER_POLL_CAP` projects. Past the cap a row has no ring.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiClient } from '../api/client';
@@ -16,10 +18,21 @@ import type { AgentSummary } from './useAgents';
 import type { AgentFeed, AutomationSummary } from './useAutomations';
 import { buildRoster, type TeamAgent } from '../components/aiteam/teamModel';
 import {
-  DRAWER_POLL_MS, fanoutTargets, teamRowsOf, type FanoutFacts,
+  DRAWER_POLL_MS, fanoutTargets, fanoutWithMarks, foldedTargets, teamRowsOf, type FanoutFacts,
 } from '../components/layout/newshell/drawerModel';
 import { moveBefore } from '../components/sleepy/chatWindows';
 import { pollMs, useWindowActivity } from '../lib/windowActivity';
+
+type SuperMarks = NonNullable<FanoutFacts['superMarks']>;
+
+function marksOf(summary: { superWorking?: unknown; superAsking?: unknown } | null): SuperMarks {
+  return { working: typeof summary?.superWorking === 'number' ? summary.superWorking : 0, asking: summary?.superAsking === true };
+}
+
+/** A folded project's marks; null when the read failed, so no old number stays on its row. */
+function readFoldedMarks(vault: string): Promise<SuperMarks | null> {
+  return new ApiClient(vault).get<{ superWorking?: unknown; superAsking?: unknown }>('/agent/sessions?summary=1').then(marksOf, () => null);
+}
 
 export async function readFanoutFacts(vault: string): Promise<FanoutFacts> {
   const api = new ApiClient(vault);
@@ -32,7 +45,7 @@ export async function readFanoutFacts(vault: string): Promise<FanoutFacts> {
   return {
     tabs: typeof summary?.tabs === 'number' ? summary.tabs : 0,
     superOn: summary?.superOn === true,
-    superMarks: { working: typeof summary?.superWorking === 'number' ? summary.superWorking : 0, asking: summary?.superAsking === true },
+    superMarks: marksOf(summary),
     team: teamRowsOf(buildRoster(agents as TeamAgent[], automations, feed)),
     ...(Array.isArray(summary?.perWindow) ? { windows: perWindowOf(summary.perWindow) } : {}),
   };
@@ -58,10 +71,10 @@ export function useDrawerProjects(expanded: readonly string[], mounted: readonly
   const live = visible && activity.focused && !activity.hidden;
   const [facts, setFacts] = useState<Record<string, FanoutFacts>>({});
   const { poll, once } = useMemo(
-    () => fanoutTargets(expanded, mounted, live, undefined, folded),
+    () => fanoutTargets(expanded, mounted, live),
     // Arrays by value: a parent re-render with the same names must not restart the polls.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [expanded.join('\n'), mounted.join('\n'), folded.join('\n'), live],
+    [expanded.join('\n'), mounted.join('\n'), live],
   );
   const readOnce = useRef(new Set<string>());
   const factsRef = useRef(facts);
@@ -136,5 +149,35 @@ export function useDrawerProjects(expanded: readonly string[], mounted: readonly
     }
   }, [expanded, mounted]);
 
-  return { facts, moveWindow };
+  // The folded rows' marks: read at once and every 15 s while live, and only the capped few are kept.
+  const [marks, setMarks] = useState<Record<string, SuperMarks>>({});
+  const targets = useMemo(
+    () => foldedTargets(folded, mounted),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [folded.join('\n'), mounted.join('\n')],
+  );
+  useEffect(() => {
+    setMarks((prev) => (Object.keys(prev).every((v) => targets.includes(v))
+      ? prev
+      : Object.fromEntries(Object.entries(prev).filter(([v]) => targets.includes(v)))));
+    if (!live || !targets.length) return undefined;
+    let gone = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const read = () => {
+      void Promise.all(targets.map((v) => readFoldedMarks(v).then((m) => [v, m] as const))).then((pairs) => {
+        if (gone) return;
+        setMarks(Object.fromEntries(pairs.filter((pair): pair is readonly [string, SuperMarks] => pair[1] !== null)));
+        timer = setTimeout(read, pollMs(DRAWER_POLL_MS));
+      });
+    };
+    read();
+    return () => { gone = true; if (timer) clearTimeout(timer); };
+  }, [targets, live]);
+
+  const merged = useMemo(
+    () => fanoutWithMarks(facts, marks, folded),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [facts, marks, folded.join('\n')],
+  );
+  return { facts: merged, moveWindow };
 }
