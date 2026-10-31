@@ -73,8 +73,10 @@ let contextRoot: string;
 let home: string;
 let realHome: string | undefined;
 
-const RUN_A = '2026-09-20T09:00:00.000Z';
-const RUN_B = '2026-09-20T18:00:00.000Z';
+// Two days back: the feed only looks at the last 14 calendar days, so a fixed date would age out.
+const DAY = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
+const RUN_A = `${DAY}T09:00:00.000Z`;
+const RUN_B = `${DAY}T18:00:00.000Z`;
 
 beforeEach(() => {
   realHome = process.env.HOME;
@@ -91,15 +93,15 @@ beforeEach(() => {
 
   appendThreadEntry(contextRoot, 'digest', {
     runId: RUN_A, kind: 'system', event: 'started', text: 'Run started.', via: 'runner',
-    now: new Date('2026-09-20T09:00:01.000Z'),
+    now: new Date(`${DAY}T09:00:01.000Z`),
   });
   appendThreadEntry(contextRoot, 'digest', {
     runId: RUN_B, kind: 'system', event: 'started', text: 'Run started.', via: 'runner',
-    now: new Date('2026-09-20T18:00:01.000Z'),
+    now: new Date(`${DAY}T18:00:01.000Z`),
   });
   appendThreadEntry(contextRoot, 'digest', {
     runId: RUN_B, kind: 'agent', text: 'WAU is down 4%.', via: 'cli',
-    now: new Date('2026-09-20T18:04:00.000Z'),
+    now: new Date(`${DAY}T18:04:00.000Z`),
   });
 });
 
@@ -219,12 +221,12 @@ describe('GET /api/automations/:slug/thread — the run\'s whole answer', () => 
   it('carries the published document, brain-relative and frontmatter-free — the detail behind the feed\'s one line', async () => {
     const dir = join(contextRoot, 'automations', 'output', 'digest');
     mkdirSync(dir, { recursive: true });
-    const doc = join(dir, '2026-09-20.md');
+    const doc = join(dir, `${DAY}.md`);
     writeFileSync(doc, '---\nx: 1\n---\nWAU is down 4%.\n\n# Detail\n\nThree cohorts moved.\n');
     recordFinished(doc);
     const answer = await answerOf();
     expect(answer).not.toBeNull();
-    expect(answer!.path).toBe('automations/output/digest/2026-09-20.md'); // brain-relative: POSIX on every OS
+    expect(answer!.path).toBe(`automations/output/digest/${DAY}.md`); // brain-relative: POSIX on every OS
     expect(answer!.text.startsWith('WAU is down 4%.')).toBe(true);
     expect(answer!.text).toContain('Three cohorts moved.');
     expect(answer!.truncated).toBe(false);
@@ -244,7 +246,7 @@ describe('GET /api/automations/:slug/thread — the run\'s whole answer', () => 
   it('a frontmatter-only document is still a document — an empty answer, not null', async () => {
     const dir = join(contextRoot, 'automations', 'output', 'digest');
     mkdirSync(dir, { recursive: true });
-    const doc = join(dir, '2026-09-20.md');
+    const doc = join(dir, `${DAY}.md`);
     writeFileSync(doc, '---\nx: 1\n---\n');
     recordFinished(doc);
     const answer = await answerOf();
@@ -255,7 +257,7 @@ describe('GET /api/automations/:slug/thread — the run\'s whole answer', () => 
   it('returns rootId and replyCount equal to the feed message for the same run', async () => {
     const dir = join(contextRoot, 'automations', 'output', 'digest');
     mkdirSync(dir, { recursive: true });
-    const doc = join(dir, '2026-09-20.md');
+    const doc = join(dir, `${DAY}.md`);
     writeFileSync(doc, 'WAU is down 4%.\n');
     recordFinished(doc);
 

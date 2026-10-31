@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Vault } from './useConnections';
+import { pollMs } from '../lib/windowActivity';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -313,7 +314,7 @@ export function useLauncherStatus(enabled = true) {
     queryFn: () => api.get<StatusResponse>('/launcher/status'),
     enabled,
     // Projects update on their own, so a yellow dot turns green without anyone clicking.
-    refetchInterval: (query) => (query.state.data?.vaults.some((v) => v.needsUpdate) ? 30_000 : false),
+    refetchInterval: (query) => (query.state.data?.vaults.some((v) => v.needsUpdate) ? pollMs(30_000) : false),
   });
 }
 
