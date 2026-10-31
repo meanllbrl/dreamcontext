@@ -4,7 +4,8 @@
  *
  *  - switching windows parks the shown window's panes and keeps every session (none is closed,
  *    none drops out of the roster; parked tabs are never pulled into the window on screen);
- *  - the last window cannot be closed; a closed window's neighbour comes up;
+ *  - the last window stays in the list but empties with no fresh tab; a closed window's
+ *    neighbour comes up, or the Super Agent when no chat is left;
  *  - each window has its own rollup (ring and count) for the drawer;
  *  - save → restore keeps each tab in its window, with ONE pane index across the surface, and a
  *    roster from before windows restores as one window;
@@ -14,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  addWindow, adoptWindowOrder, dropWindow, initialWindows, moveBefore, moveWindow, neighbourOf, parkedHomes, placeTab, pruneParked, renameWindow, restoreWindows,
+  addWindow, adoptWindowOrder, dropWindow, initialWindows, landsOnSuper, moveBefore, moveWindow, neighbourOf, parkedHomes, placeTab, pruneParked, renameWindow, restoreWindows,
   rowsByWindow, savePlacement, splitOut, joinInto, switchWindow, unparkPanes, windowOfTab, TAB_CAP,
   type WindowsState, type WinTab,
 } from '../../dashboard/src/components/sleepy/chatWindows.js';
@@ -116,12 +117,24 @@ describe('new, rename, close', () => {
     expect(neighbourOf(state, 'w2')).toBe('main');
   });
 
-  it('closing the last window empties it to a fresh tab, through the one tab-close path, with the in-app confirm', () => {
+  it('with no chat left the Super Agent comes up, only if the project has one', () => {
+    expect(landsOnSuper(0, true)).toBe(true);
+    expect(landsOnSuper(0, false)).toBe(false);
+    expect(landsOnSuper(1, true)).toBe(false);
+  });
+
+  it('closing the last window empties it with NO fresh tab, through the one tab-close path, with the in-app confirm', () => {
     const close = SURFACE.slice(SURFACE.indexOf('const closeChatWindow = useCallback('), SURFACE.indexOf('const runDrawerIntentRef'));
     expect(close).toContain('confirmAction(');
     expect(close).not.toMatch(/window\.confirm|\bconfirm\(/);
     expect(close).toContain("tRef.current('shell.windows.closeRunning.body')");
-    expect(close).toMatch(/now\.list\.length <= 1\) \{\s+for \(const m of closing\) closeSessionById\(m\.id\);\s+setFreshTabNonce/);
+    expect(close).toMatch(/now\.list\.length <= 1\) \{\s+for \(const m of closing\) closeSessionById\(m\.id\);/);
+    // A chat opened in its place reads as "it did not close" (the 0.36.8 bug).
+    expect(close).not.toContain('setFreshTabNonce');
+    expect(close).not.toContain('addSession');
+    expect(close).toContain('renameWindow(prev, id, DEFAULT_WINDOW_NAME)');
+    // Both branches land: the check sits before the last-window return.
+    expect(close.indexOf("setSuperView('super')")).toBeLessThan(close.indexOf('now.list.length <= 1'));
     // A minimized chip belongs to no window: no window's close takes it, the last one included.
     expect(close).toContain('!minimizedIdsRef.current.includes(m.id)');
     expect(close).not.toMatch(/st\.list\.length <= 1 \|\|/);

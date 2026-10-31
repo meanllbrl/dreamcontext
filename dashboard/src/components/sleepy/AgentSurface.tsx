@@ -106,9 +106,9 @@ import { PhoneAgenda, phoneEventContext } from './super/PhoneAgenda';
 import { holdSidebarCollapsed as holdClassicSidebar } from '../../hooks/useSidebarCollapse';
 import { readShellModeFrozen, useIsNewShell } from '../../lib/uxMode';
 import {
-  addWindow, adoptWindowOrder, cleanWindowName, dropWindow, moveWindow, renameWindow, initialWindows, joinInto, neighbourOf, parkedHomes, placeTab, pruneParked,
+  addWindow, adoptWindowOrder, cleanWindowName, dropWindow, landsOnSuper, moveWindow, renameWindow, initialWindows, joinInto, neighbourOf, parkedHomes, placeTab, pruneParked,
   restoreWindows, rowsByWindow, savePlacement, splitOut, switchWindow, unparkPanes, updateParked, windowOfTab,
-  DEFAULT_WINDOW_ID, TAB_CAP,
+  DEFAULT_WINDOW_ID, DEFAULT_WINDOW_NAME, TAB_CAP,
   type RestoredTab, type SavedWindowMeta, type WindowFact, type WindowsState, type WinPane,
 } from './chatWindows';
 import { wasOpenedForLink } from '../../lib/windowLaunch';
@@ -5284,7 +5284,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     setActivePaneId('');
     setFreshTabNonce((n) => n + 1);
   }, [admitTab]);
-  // The fresh chat of a new (or emptied last) window, once its empty panes are on screen: the
+  // The fresh chat of a new window, once its empty panes are on screen: the
   // ordinary ⌘T path, so it lands like any new tab. Once per request (StrictMode runs effects twice).
   const freshTabDoneRef = useRef(0);
   useEffect(() => {
@@ -5314,7 +5314,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   /**
    * Close a window = close its tabs through the one tab-close path. Chats mid-turn ask first, in
    * the app's own dialog (never `window.confirm`, a silent no-op in the desktop WebView), and the
-   * question says they stay in History. The last window is never closed: it empties to a fresh tab.
+   * question says they stay in History. The last window stays in the list, and once no chat is left
+   * it is back to its default name with no row in the drawer. Nothing opens in its place: a fresh chat here
+   * read as "it did not close" (owner, 0.36.8). With no chat left, the Super Agent comes up if the
+   * project has one; otherwise the project's empty screen.
    */
   const closeChatWindow = useCallback(async (id: string) => {
     const before = chatWindowsRef.current;
@@ -5342,9 +5345,15 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     const now = chatWindowsRef.current;
     if (!now.list.some((w) => w.id === id)) return;
     const closing = tabsOf(now);
+    const going = new Set(closing.map((m) => m.id));
+    const chatsLeft = sessionListRef.current.filter((m) => !going.has(m.id) && !isSuperSession(m, superSid) && inChatWindow(m)).length;
+    if (landsOnSuper(chatsLeft, !!superStateRef.current?.enabled)) setSuperView('super');
     if (now.list.length <= 1) {
       for (const m of closing) closeSessionById(m.id);
-      setFreshTabNonce((n) => n + 1);
+      if (chatsLeft === 0) {
+        windowsKnownRef.current = true;
+        setChatWindows((prev) => renameWindow(prev, id, DEFAULT_WINDOW_NAME));
+      }
       return;
     }
     if (now.activeId === id) {
