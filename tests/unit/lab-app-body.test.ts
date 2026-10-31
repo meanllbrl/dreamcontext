@@ -159,7 +159,7 @@ describe('buildAppSrcdoc — delegates to buildSandboxSrcdoc, never re-implement
     const doc = buildAppSrcdoc(input);
     const cspAt = doc.indexOf('Content-Security-Policy');
     expect(cspAt).toBeGreaterThan(-1);
-    expect(cspAt).toBeLessThan(doc.indexOf('<style>'));
+    expect(cspAt).toBeLessThan(doc.indexOf('<style'));
     expect(doc).toContain(SANDBOX_CSP);
   });
 

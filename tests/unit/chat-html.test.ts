@@ -168,7 +168,7 @@ describe('the sandbox is the boundary', () => {
 
   it('puts the CSP meta FIRST — a parser that already saw a resource has already lost', () => {
     const doc = buildChatSrcdoc({ html: '<b>x</b>', tokens: {} });
-    expect(doc.indexOf('Content-Security-Policy')).toBeLessThan(doc.indexOf('<style>'));
+    expect(doc.indexOf('Content-Security-Policy')).toBeLessThan(doc.indexOf('<style'));
     expect(doc.indexOf('Content-Security-Policy')).toBeLessThan(doc.indexOf('<b>x</b>'));
   });
 
@@ -215,9 +215,9 @@ describe('buildChatSrcdoc', () => {
     // checked for absence, because an empty `<style></style>` would satisfy "no override
     // css" while still being a block in the cascade.
     const bare = buildChatSrcdoc({ html: '<b>x</b>', tokens: {} });
-    expect(bare.match(/<style>/g)?.length).toBe(3);
+    expect(bare.match(/<style[ >]/g)?.length).toBe(3);
     const branded = buildChatSrcdoc({ html: '<b>x</b>', tokens: {}, overrideCss: '.dc-p{}' });
-    expect(branded.match(/<style>/g)?.length).toBe(4);
+    expect(branded.match(/<style[ >]/g)?.length).toBe(4);
   });
 
   it('carries the mode on <html> so the kit\'s slide rules can see it', () => {

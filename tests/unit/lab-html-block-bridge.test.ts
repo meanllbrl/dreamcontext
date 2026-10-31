@@ -209,7 +209,7 @@ describe('srcdoc', () => {
   const head = doc.slice(0, doc.indexOf('<body>'));
 
   it('puts the CSP first and keeps the sandbox CSP unchanged', () => {
-    expect(doc.indexOf('Content-Security-Policy')).toBeLessThan(doc.indexOf('<style>'));
+    expect(doc.indexOf('Content-Security-Policy')).toBeLessThan(doc.indexOf('<style'));
     expect(doc).toContain(`content="${SANDBOX_CSP}"`);
   });
 

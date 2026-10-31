@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useI18n } from '../../context/I18nContext';
 import { useTheme } from '../../context/ThemeContext';
 import { SANDBOX_ALLOW, buildSandboxSrcdoc } from '../../lib/sandboxHtml';
+import { pageDefaultCss } from '../../lib/pageDefaultCss';
 import {
   CHAT_HTML_KIT_CSS, CHAT_HTML_SANDBOX, HEIGHT_BRIDGE, HEIGHT_REQUEST_KEY, MAX_HTML_HEIGHT,
   readHeightMessage, resolveChatKitTokens,
@@ -250,7 +251,7 @@ function HtmlFrame({ path, frameRef, onHeightRequest }: {
   const html = state.html;
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
-      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, headScript: `${HEIGHT_BRIDGE}\n${LINK_GUARD}\n${ZOOM_BRIDGE}`,
+      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, overrideCss: pageDefaultCss(true), headScript: `${HEIGHT_BRIDGE}\n${LINK_GUARD}\n${ZOOM_BRIDGE}`,
     })),
     [html, theme],
   );
