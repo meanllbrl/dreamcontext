@@ -16,8 +16,9 @@ import type { AutomationQuestion, ThreadEntry } from './types.js';
  *  - it OPENED with the Super's ask (`via: 'super'`) and nobody else spoke in it. A run the owner
  *    or a schedule opened stays theirs, even with a Super ask queued into it: that ask shares the
  *    turn order of work he is waiting for, and a thread cannot tell the two apart.
- *  - this machine wrote that ask, in its own day file. A thread can be synced from a teammate's,
- *    and nothing written there may silence the owner here.
+ *  - that ask is in this machine's own day file. A thread can be synced from a teammate's: the
+ *    merged read alone vouches for nothing. (A file name is no signature: someone with push on a
+ *    shared brain could still forge one. What they gain is a hidden badge; the text stays.)
  *  - no question was asked during it. Waiting or answered, a question is between the member and
  *    the owner: his answer is his own conversation, and he hears how it ended.
  *  - it did not fail: a failure must not vanish if the Super says nothing about it.
@@ -39,10 +40,13 @@ function readRecord(contextRoot: string): SuperRecord | null {
     const path = join(contextRoot, SUPER_STATE_REL);
     const st = lstatSync(path);
     if (!st.isFile() || st.size > MAX_FILE_BYTES) return null;
-    const raw = JSON.parse(readFileSync(path, 'utf-8')) as { enabled?: unknown; team?: unknown };
-    const team = Array.isArray(raw.team) ? raw.team as Array<{ runId?: unknown; member?: unknown; told?: unknown }> : [];
-    // The jobs whose ending the Super was not told. A job that fell off the record is long over.
-    const open = new Set(team.filter((j) => j.told !== 'done' && j.told !== 'stuck').map((j) => `${String(j.member)}::${String(j.runId)}`));
+    const raw = JSON.parse(readFileSync(path, 'utf-8')) as { enabled?: unknown; team?: unknown; queue?: unknown };
+    const team = Array.isArray(raw.team) ? raw.team as Array<{ id?: unknown; runId?: unknown; member?: unknown; told?: unknown }> : [];
+    const queue = Array.isArray(raw.queue) ? raw.queue as Array<{ team?: unknown; state?: unknown }> : [];
+    // The jobs whose ending the Super never heard: not told, or told and still waiting in its queue.
+    // A job that fell off the record is long over.
+    const unheard = new Set(queue.filter((q) => q.team && q.state === 'pending').map((q) => q.team));
+    const open = new Set(team.filter((j) => (j.told !== 'done' && j.told !== 'stuck') || unheard.has(j.id)).map((j) => `${String(j.member)}::${String(j.runId)}`));
     return { enabled: raw.enabled === true, open };
   } catch {
     return null;
@@ -67,9 +71,12 @@ function askedHere(contextRoot: string, slug: string, ask: ThreadEntry): boolean
     // A file is named by the writer's local date: the day either side covers every zone.
     return [-1, 0, 1].some((d) => {
       const day = new Date(ms + d * 86_400_000).toISOString().slice(0, 10);
-      const path = join(dir, `${day}-${me}.md`);
-      if (!existsSync(path) || !lstatSync(path).isFile()) return false;
-      return parseDayFile(readFileSync(path, 'utf-8')).some((e) => e.id === ask.id && e.runId === ask.runId && e.kind === 'user' && e.via === 'super');
+      // `<day>.md` is what this machine wrote before files carried its id.
+      return [`${day}-${me}.md`, `${day}.md`].some((name) => {
+        const path = join(dir, name);
+        if (!existsSync(path) || !lstatSync(path).isFile()) return false;
+        return parseDayFile(readFileSync(path, 'utf-8')).some((e) => e.id === ask.id && e.runId === ask.runId && e.kind === 'user' && e.via === 'super');
+      });
     });
   } catch {
     return false;

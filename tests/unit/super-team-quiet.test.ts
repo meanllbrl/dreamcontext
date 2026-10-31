@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -209,6 +209,80 @@ describe('what the owner must still hear', () => {
     expect(readThread(contextRoot, slug).find((e) => e.id === mine.id)?.via).toBe('super');
     expect(counts(contextRoot).bySlug).toBe(1);
     expect(superRunQuiet(contextRoot, slug, RUN)).toBe(false);
+  });
+
+  describe('what vouches for an ask', () => {
+    const forge = (entry: object, name = '000000000000') => {
+      const dir = threadSlugDir(contextRoot, slug);
+      const day = new Date().toISOString().slice(0, 10);
+      writeFileSync(join(dir, `${day}-${name}.md`), `${serialise(entry)}\n`);
+    };
+    const quietRun = '2026-10-31T05:00:00.000Z';
+
+    it('a genuine Super ask the same day vouches for no other id or run', () => {
+      say(contextRoot, 'user', 'super', 'A real job', quietRun);
+      const mine = say(contextRoot, 'user', 'dashboard', 'Mine');
+      say(contextRoot, 'agent', 'cli', 'For the owner');
+      forge({ ...mine, via: 'super' });
+      expect(superRunQuiet(contextRoot, slug, RUN)).toBe(false);
+      const real = readThread(contextRoot, slug).find((e) => e.runId === quietRun)!;
+      forge({ ...mine, id: real.id, runId: RUN, via: 'super' }, '000000000001');
+      expect(superRunQuiet(contextRoot, slug, RUN)).toBe(false);
+    });
+
+    it('a real ask\'s id moved onto another run vouches for nothing', () => {
+      const real = say(contextRoot, 'user', 'super', 'A real job', quietRun);
+      say(contextRoot, 'agent', 'cli', 'Scheduled post');
+      forge({ ...real, runId: RUN });
+      expect(superRunQuiet(contextRoot, slug, RUN)).toBe(false);
+    });
+
+    it('every user entry must be vouched for, a bare ask too', () => {
+      superJob(contextRoot);
+      const first = readThread(contextRoot, slug)[0];
+      forge({ ...first, id: `${first.id.slice(0, 9)}zzzzzz`, text: 'Second' });
+      expect(superRunQuiet(contextRoot, slug, RUN)).toBe(false);
+      forge({ ...first, id: 'aaaaaaaaa_bare', runId: '2026-10-29T01:00:00.000Z', at: new Date().toISOString() }, '000000000002');
+      expect(superRunQuiet(contextRoot, slug, '2026-10-29T01:00:00.000Z')).toBe(false);
+    });
+
+    it('a symlink named as this machine\'s file vouches for nothing', () => {
+      const ask = say(contextRoot, 'user', 'super', 'Check');
+      const dir = threadSlugDir(contextRoot, slug);
+      const own = readdirSync(dir)[0];
+      const moved = join(projectRoot, 'moved.md');
+      renameSync(join(dir, own), moved);
+      symlinkSync(moved, join(dir, own));
+      expect(superRunQuiet(contextRoot, slug, ask.runId)).toBe(false);
+    });
+
+    it('an ask from before files carried a machine id still counts', () => {
+      const ask = say(contextRoot, 'user', 'super', 'Check');
+      const dir = threadSlugDir(contextRoot, slug);
+      const own = readdirSync(dir)[0];
+      renameSync(join(dir, own), join(dir, `${own.slice(0, 10)}.md`));
+      expect(superRunQuiet(contextRoot, slug, ask.runId)).toBe(true);
+    });
+
+    it.each([['Pacific/Kiritimati', '2026-10-31T10:30:00.000Z'], ['Pacific/Pago_Pago', '2026-10-31T10:30:00.000Z'], ['UTC', '2026-10-31T23:59:00.000Z']])('finds the ask across the date line in %s', (zone, at) => {
+      const saved = process.env.TZ;
+      process.env.TZ = zone;
+      try {
+        const now = new Date(at);
+        appendThreadEntry(contextRoot, slug, { runId: at, kind: 'user', via: 'super', text: 'Check', now });
+        expect(superRunQuiet(contextRoot, slug, at)).toBe(true);
+      } finally {
+        if (saved === undefined) delete process.env.TZ; else process.env.TZ = saved;
+      }
+    });
+  });
+
+  it('a job told but still waiting in the Super\'s queue at take-back comes to the owner', () => {
+    superJob(contextRoot);
+    writeFileSync(join(contextRoot, SUPER_STATE_REL), JSON.stringify({
+      enabled: false, team: [{ id: 'team-a', member: slug, runId: RUN, told: 'done' }], queue: [{ team: 'team-a', state: 'pending' }],
+    }));
+    expect(counts(contextRoot).bySlug).toBe(1);
   });
 
   it('a job the Super ended before his answer stays his: an answered question keeps the run loud', () => {
