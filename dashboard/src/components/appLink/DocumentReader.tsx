@@ -511,8 +511,7 @@ function HtmlPage({
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
       html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, overrideCss: pageDefaultCss(fill),
-      headScript: [HEIGHT_BRIDGE, SELECTION_BRIDGE, LINK_GUARD, ...(zoomBridge ? [ZOOM_BRIDGE] : []), ...(reportsFit ? [PAGE_FIT_BRIDGE] : [])].join('
-'),
+      headScript: [HEIGHT_BRIDGE, SELECTION_BRIDGE, LINK_GUARD, ...(zoomBridge ? [ZOOM_BRIDGE] : []), ...(reportsFit ? [PAGE_FIT_BRIDGE] : [])].join('\n'),
     })),
     [html, theme, zoomBridge, fill, reportsFit],
   );
