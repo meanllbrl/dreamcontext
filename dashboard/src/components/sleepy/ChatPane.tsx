@@ -5,7 +5,7 @@ import { useRemoteDesktop } from '../../hooks/useIsMobile';
 import { CouncilLivePanel } from './CouncilLivePanel';
 import { agentFileUrl } from '../../api/client';
 import { useApi, useVault } from '../../context/VaultContext';
-import { useAgentGoalLive, useHeadlessTeammates } from '../../hooks/useAgentCapabilities';
+import { useAgentGoalLive, useHeadlessTeammates, useTaskProgress } from '../../hooks/useAgentCapabilities';
 import { normalizeGoalLive } from '../../lib/goalLive';
 import { ClaudeUpdateChatNotice } from '../settings/SystemDependencies';
 import { anchorsBySession, launchedSessionIds, withTeammates } from './chat/teammates';
@@ -25,7 +25,7 @@ import {
 } from './chat/chatEntities';
 import { isDreamcontextCommand } from './chat/dreamCommand';
 import { isQuestOnlyCommand, stepStretches, type StretchProbe } from './chat/toolAction';
-import { chatLineage, deriveChatQuest, partyBatches, type Party } from './chat/questModel';
+import { chatLineage, deriveChatQuest, questTaskSlug, partyBatches, type Party } from './chat/questModel';
 import { ChatQuestBar } from './chat/ChatQuestBar';
 import { ItemView } from './chat/TranscriptItem';
 import { feedMarks, feedRunWorking, feedShift, liveDividerShown, type ChatFeed, type FeedItem } from './chat/chatFeed';
@@ -1079,10 +1079,11 @@ export function ChatPane({
   const teammatesWorking = agentRuns.some((r) => isTeammateRun(r) && r.status === 'running');
   useEffect(() => { session.setAgentsWorking(teammatesWorking); }, [session, teammatesWorking]);
   const questMode = mode === 'plan' || mode === 'develop' ? mode : null;
-  const shelfProgress = shelf.progress;
+  const questSlug = useMemo(() => (questMode ? questTaskSlug(questEntries) : null), [questMode, questEntries]);
+  const questProgress = useTaskProgress(questSlug, session.status === 'open').data ?? null;
   const quest = useMemo(
-    () => (questMode ? deriveChatQuest({ mode: questMode, entries: questEntries, parties, progress: shelfProgress }) : null),
-    [questMode, questEntries, parties, shelfProgress],
+    () => (questMode ? deriveChatQuest({ mode: questMode, entries: questEntries, parties, progress: questProgress }) : null),
+    [questMode, questEntries, parties, questProgress],
   );
   // A plan built nothing, so it has no receipt.
   const lineage = useMemo(

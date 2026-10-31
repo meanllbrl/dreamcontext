@@ -278,8 +278,6 @@ try {
       /ask/i.test(s.briefing) && s.briefing.includes('dreamcontext tasks create'));
     ok('plan: it ends by offering the develop handoff button',
       s.briefing.includes('dream-actions') && s.briefing.includes('"action": "develop"'));
-    ok('plan: it tells the agent to shelve the task it just created',
-      s.briefing.includes('"type":"progress"') && s.briefing.includes('"task":"<the-slug>"'));
     ok('plan: still exactly ONE briefing file (both parts share it)',
       s.argv.filter((a) => a === '--append-system-prompt-file').length === 1);
   }
@@ -292,9 +290,6 @@ try {
       && !/MAY\s+use\s+a\s+git\s+worktree/.test(inTree.briefing));
     ok('develop + brain IN-TREE: the prohibition says why (the brain lives in the tree)',
       inTree.briefing.includes('_dream_context/'));
-    ok('develop: the run goes on the shelf BEFORE the first edit',
-      inTree.briefing.includes('"type":"progress"')
-      && inTree.briefing.indexOf('"type":"progress"') < inTree.briefing.indexOf('Work in waves'));
     ok('develop: a dev-server URL is pinned as a tag (only the agent knows the port)',
       inTree.briefing.includes('"type":"pin"') && inTree.briefing.includes('http://localhost:PORT'));
 

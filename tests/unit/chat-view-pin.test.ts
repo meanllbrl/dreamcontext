@@ -302,48 +302,11 @@ describe('parseViewBlock — type: pin, the drop', () => {
   });
 });
 
-describe('parseViewBlock — type: progress', () => {
-  it('accepts a bare slug', () => {
-    const r = parse({ type: 'progress', task: 'my-task-slug' });
-    expect(r.view as ProgressViewSpec).toEqual({ type: 'progress', task: 'my-task-slug' });
-    expect(r.notices).toEqual([]);
-  });
-
-  it('skips a missing or non-slug task', () => {
-    for (const task of ['', '   ', '../../etc/passwd', 'a/b', 'x'.repeat(253), 42]) {
-      const r = parse({ type: 'progress', task });
-      expect(r.view, `task ${JSON.stringify(task)} was accepted`).toBeNull();
-      expect(r.notices[0]).toContain('task');
+describe('parseViewBlock — the retired type: progress', () => {
+  it('reads as nothing, with no notice, however the block was written', () => {
+    for (const raw of ['{"type":"progress","task":"t"}', '{"type":"progress"}', '{"type":"progress","task":"t","percent":40}']) {
+      expect(parseViewBlock(raw), raw).toEqual({ view: null, notices: [] });
     }
   });
 
-  /**
-   * REGRESSION (2026-09-19, the same defect as `develop`'s 64-char bound in
-   * `chat/chatActions.ts`): the ceiling used to be a guessed 120, which silently dropped the
-   * shelf row of this project's 22 longest tasks — and the Plan briefing asks for that row
-   * the moment the task exists, so the longest plans were the ones that lost it. The bound
-   * is now {@link MAX_SLUG_CHARS}: 252 = a 255-byte filename minus `.md`, i.e. every slug
-   * that can name a real task document.
-   */
-  it('accepts the sentence-style slugs dreamcontext actually creates', () => {
-    const real = 'sleep-does-not-reconcile-within-its-own-remit-116-runs-passed-over-a-feature-stuck-at-planning-with-0-22-criteria-and-additive-only-writes-left-6-contradictory-current-tool-counts-in-one-file';
-    expect(real.length).toBeGreaterThan(120);
-    expect(parse({ type: 'progress', task: real }).view).toEqual({ type: 'progress', task: real });
-    expect(parse({ type: 'progress', task: 'x'.repeat(MAX_SLUG_CHARS) }).view)
-      .toEqual({ type: 'progress', task: 'x'.repeat(MAX_SLUG_CHARS) });
-  });
-
-  it('IGNORES an agent-supplied percent and draws a notice — derived, never asserted', () => {
-    for (const key of ['percent', 'pct', 'done', 'total']) {
-      const r = parse({ type: 'progress', task: 'slug', [key]: 64 });
-      // The block still renders — the number is simply not the agent's to give.
-      expect((r.view as ProgressViewSpec).task).toBe('slug');
-      expect(r.view).not.toHaveProperty(key);
-      expect(r.notices.join(' '), `"${key}" was accepted silently`).toContain('ignored');
-    }
-  });
-
-  it('says nothing when the agent sent only the slug', () => {
-    expect(parse({ type: 'progress', task: 'slug' }).notices).toEqual([]);
-  });
 });

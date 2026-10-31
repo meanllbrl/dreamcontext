@@ -210,9 +210,12 @@ describe('readPins — entry-level validation (storage is INPUT, not private mem
     expect(readPins('vaultA', 'conv-1')[0]).not.toHaveProperty('evil');
   });
 
-  it('keeps a well-formed progress entry', () => {
-    plant([{ kind: 'progress', id: 'progress:t', task: 't', updatedAt: 7 }]);
-    expect(readPins('vaultA', 'conv-1')).toEqual([{ kind: 'progress', id: 'progress:t', task: 't', updatedAt: 7 }]);
+  it('drops a retired progress row an older session stored, and keeps the pins around it', () => {
+    plant([
+      { kind: 'progress', id: 'progress:t', task: 't', updatedAt: 7 },
+      { kind: 'pin', id: 'dev', weight: 'tag', facts: [], updatedAt: 8 },
+    ]);
+    expect(readPins('vaultA', 'conv-1').map((e) => e.id)).toEqual(['dev']);
   });
 });
 

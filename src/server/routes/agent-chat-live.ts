@@ -150,6 +150,32 @@ export function findLiveChat(conversationId: string): LiveChatEntry | null {
   return conversationId ? liveChats.get(conversationId) ?? null : null;
 }
 
+/** How long {@link stopLiveChat} waits for a cut: past the SIGKILL, so a child that survives it
+ *  is reported, never waited on for ever (a stray that keeps its pipes open delays 'close'). */
+export const STOP_CHAT_MS = CUT_KILL_GRACE_MS + 5000;
+
+/**
+ * Stop every process running this conversation, the draining ones too, and answer whether they
+ * are gone: an entry leaves this registry only in the child's teardown, on its real exit.
+ * `graceMs` lets one that was just told to leave (stdin EOF) go by itself before the cut.
+ */
+export async function stopLiveChat(conversationId: string, opts: { graceMs?: number; timeoutMs?: number } = {}): Promise<boolean> {
+  const running = (): LiveChatEntry[] => [...liveChats.values(), ...drainingChats].filter((e) => e.conversationId === conversationId);
+  const mine = running();
+  const gone = (): boolean => !running().some((e) => mine.includes(e));
+  if (mine.length === 0) return true;
+  const until = Date.now() + (opts.graceMs ?? 0);
+  while (!gone() && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+  if (gone()) return true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    Promise.allSettled(mine.map((e) => e.cut?.())),
+    new Promise((r) => { timer = setTimeout(r, opts.timeoutMs ?? STOP_CHAT_MS); }),
+  ]);
+  clearTimeout(timer);
+  return gone();
+}
+
 /** Mark a turn edge. The ONLY writers of the three activity fields. */
 export function markTurnStarted(entry: LiveChatEntry, now = Date.now()): void {
   if (entry.busy) return;

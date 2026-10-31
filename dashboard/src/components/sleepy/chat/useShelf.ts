@@ -6,10 +6,7 @@ import {
   type ShelfEntry, type ShelfFact, type ShelfLayout,
 } from '../../../lib/shelfModel';
 import { readPins, writePins } from '../../../lib/pinStore';
-import { newlyTicked } from '../../../lib/progressModel';
-import {
-  useSessionFacts, useTaskProgress, type ProgressCriterion, type TaskProgress,
-} from '../../../hooks/useAgentCapabilities';
+import { useSessionFacts } from '../../../hooks/useAgentCapabilities';
 import type { ChatViewSpec } from '../../../lib/chatViewSpec';
 import type { ChatSession } from '../chatSession';
 
@@ -17,7 +14,7 @@ import type { ChatSession } from '../chatSession';
  * The shelf's state, assembled from four sources that must not fight:
  *
  *   1. the STORE      — what this conversation pinned before the page was reloaded,
- *   2. the TRANSCRIPT — `pin`/`progress` blocks in messages that have finished streaming (a
+ *   2. the TRANSCRIPT — `pin` blocks in messages that have finished streaming (a
  *                       `pin` carrying `drop` REMOVES one, so this source both adds and takes
  *                       away),
  *   3. the SERVER     — branch + worktree, polled (the user never has to ask the agent),
@@ -45,42 +42,20 @@ export interface ShelfHandle {
   layout: ShelfLayout;
   /** The SERVER-derived session facts, as handed to `layoutShelf`. */
   facts: ShelfFact[];
-  /** The one open detail — a long pin's in-place panel, or the progress popover. One at a
-   *  time, so the shelf's height is predictable and two panels never overlap. */
+  /** The one open detail — a long pin's in-place panel. One at a time, so the shelf's height
+   *  is predictable and two panels never overlap. */
   openId: string | null;
   setOpenId: (id: string | null) => void;
   /** True when the shelf is currently more than its resting tag line — the composer's
-   *  `shelved` prop and the shell's `has-rows` class are the same question. The progress
-   *  POPOVER is deliberately not part of it: it floats, so it adds no row to be shelved. */
+   *  `shelved` prop and the shell's `has-rows` class are the same question. */
   hasRows: boolean;
   /** Remove a pin (and, if it was the open one, close it). */
   dismiss: (tagOrEntryId: string) => void;
   /** A demoted `⌃` chip was clicked: give it the newest timestamp so it wins the row back. */
   promote: (entryId: string) => void;
-  /** The live reading behind a `progress` row, or null when no run owns the row. */
-  progress: TaskProgress | null;
-  /** `criterionKey`s of criteria that flipped ticked within the flash window — the panel's
-   *  "you just saw that happen" set. Empty on the first reading of a run. */
-  justTicked: ReadonlySet<string>;
-  /** Whether the TURN is actually running. The live treatment keys off this rather than off
-   *  the panel being open: a settled run's row goes quiet and lets its clock say when it last
-   *  moved, instead of animating over a task nobody is working on. */
-  live: boolean;
   /** How many pins this conversation has evicted past the cap — reported, never silent. */
   evicted: number;
 }
-
-/**
- * How long a newly-ticked criterion stays highlighted. Comfortably longer than the 4s poll, so
- * a tick is never applied and expired between two frames the user could have been looking at.
- *
- * Expiry is evaluated when the NEXT payload lands rather than on a timer, so the flash outlives
- * this window by up to one poll. That slack is deliberate and it costs nothing visually: the
- * CSS animation is what fades the highlight and the label, and it runs on its own clock (see
- * `progressPanel.css`). Paying for a second interval here — one that re-renders the whole pane
- * every second — to make a purely decorative expiry exact would be the wrong trade.
- */
-const FLASH_MS = 6_000;
 
 /**
  * A tag's id is `<entryId>#<factIndex>` for a fact chip and the bare entry id for a demoted
@@ -129,7 +104,7 @@ export function useShelf(session: ChatSession, vault: string | null): ShelfHandl
       if (item.kind !== 'text' || !item.done || consumed.has(item.id)) continue;
       consumed.add(item.id);
       for (const view of parseChatActions(item.text).views) {
-        if (view.type === 'pin' || view.type === 'progress') fresh.push(view);
+        if (view.type === 'pin') fresh.push(view);
         // Nothing to fold — a `checkout` is applied by the SERVER, which has already updated
         // the registry by the time this text finished streaming. All that is owed here is a
         // refetch, so the chip moves with the sentence that announced it instead of at the
@@ -176,59 +151,6 @@ export function useShelf(session: ChatSession, vault: string | null): ShelfHandl
 
   const layout = useMemo(() => layoutShelf(entries, facts), [entries, facts]);
 
-  // ── The progress reading behind the row, when a run owns it ─────────────────────────
-  const progressTask = layout.row?.kind === 'progress' ? layout.row.task : null;
-  const progress = useTaskProgress(progressTask, connected).data ?? null;
-
-  // ── Liveness: which criteria flipped between two readings ──────────────────────────
-  // The complaint this answers is not that the number was wrong — it is that nothing on the
-  // panel ever moved, so a run that had stalled looked exactly like one that was working
-  // (owner, 2026-08-24). Which criteria just ticked is derived by diffing successive payloads
-  // (`newlyTicked`, pure and unit-tested), so the server is asked for nothing it was not
-  // already sending and no timer runs here at all.
-  //
-  // The OTHER half of the liveness — the clock that ticks every second — deliberately does NOT
-  // live in this hook. `useShelf` is called by `ChatPane`, so a per-second state change here
-  // would re-render the entire pane, transcript included, for the sake of one changing word.
-  // It lives in `ProgressRow` instead, which is a leaf and exists only while a progress row
-  // does. See `useSecondTick` in PinShelf.tsx.
-  const [flashes, setFlashes] = useState<{ key: string; at: number }[]>([]);
-  const prevCriteria = useRef<ProgressCriterion[]>([]);
-
-  // A different task is a different run: its first reading is the state of the world, not a
-  // burst of things that just happened. Both the baseline and the flashes reset with the slug.
-  useEffect(() => {
-    prevCriteria.current = [];
-    setFlashes([]);
-  }, [progressTask]);
-
-  useEffect(() => {
-    const next = progress?.criteria ?? [];
-    const fresh = newlyTicked(prevCriteria.current, next);
-    prevCriteria.current = next;
-    const at = Date.now();
-    setFlashes((prev) => {
-      const kept = prev.filter((f) => at - f.at < FLASH_MS);
-      // Identity-stable when nothing changed: a poll that reports no movement must not produce
-      // a new array, or every 4s tick of an idle run would re-render the shelf for nothing.
-      if (fresh.length === 0) return kept.length === prev.length ? prev : kept;
-      return [...kept, ...fresh.map((key) => ({ key, at }))];
-    });
-  }, [progress]);
-
-  const justTicked = useMemo(() => new Set(flashes.map((f) => f.key)), [flashes]);
-
-  // M3: when the run ENDS the row closes and the tag line stays. "Ends" is the conjunction of
-  // both signals — every criterion ticked on disk AND the turn settled. While the turn is
-  // still running, an all-ticked task keeps its row and says so through the route's notice,
-  // so the two M3 bullets hold at the same time rather than one hiding the other.
-  useEffect(() => {
-    if (!progressTask || progress?.state !== 'all-done' || session.busy) return;
-    const id = `progress:${progressTask}`;
-    setEntries((prev) => prev.filter((e) => e.id !== id));
-    setOpenId((cur) => (cur === id ? null : cur));
-  }, [progressTask, progress?.state, session.busy]);
-
   // ── 4. User actions ─────────────────────────────────────────────────────────────────
   // Dismissal is a REMOVAL, not a tombstone: a later message re-sending the same `id` brings
   // the pin back, because that is the agent explicitly re-asserting it. Nothing else in the
@@ -246,8 +168,5 @@ export function useShelf(session: ChatSession, vault: string | null): ShelfHandl
 
   const hasRows = layout.row !== null;
 
-  return {
-    layout, facts, openId, setOpenId, hasRows,
-    dismiss, promote, progress, justTicked, live: session.busy, evicted,
-  };
+  return { layout, facts, openId, setOpenId, hasRows, dismiss, promote, evicted };
 }

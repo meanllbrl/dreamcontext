@@ -359,12 +359,9 @@ const UNKNOWN_SESSION_FACTS: SessionFacts = {
 };
 
 /**
- * A pinned run's progress, DERIVED FROM DISK (`GET /api/agent/task-progress?slug=…`).
- *
- * Polled at 4s while a progress row is on the shelf, because the whole promise of that row is
- * that it tracks the task file as the run edits it — a frozen number would be the agent prose
- * it replaced, only harder to distrust. `slug` is null whenever no run owns the row, which
- * disables the query outright: an idle shelf costs nothing.
+ * A run's progress, DERIVED FROM DISK (`GET /api/agent/task-progress?slug=…`), for the quest
+ * map's title and criteria meter. Polled at 4s because it tracks the task file as the run edits
+ * it. `slug` is null when the chat runs no task, which disables the query outright.
  */
 export function useTaskProgress(slug: string | null, enabled: boolean) {
   const api = useApi();

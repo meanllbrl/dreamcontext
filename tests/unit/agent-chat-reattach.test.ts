@@ -394,3 +394,21 @@ describe('chat replay merge (client)', () => {
     expect(readReattachedFrame('{"type":"_meta","subtype":"handoff_progress","busy":false}')).toBeNull();
   });
 });
+
+describe('a cut does not wait on pipes', () => {
+  it('a daemon holding the pipes cannot keep a cut, dead child listed as running', async () => {
+    const { child, id } = startPinned();
+    const out = vi.fn(); const err = vi.fn();
+    Object.assign(child.stdout, { destroy: out });
+    Object.assign(child.stderr, { destroy: err });
+    (child as unknown as { pid?: number }).pid = undefined;   // never signal a made-up pid
+    const cut = findLiveChat(id)!.cut!();
+    expect(out).not.toHaveBeenCalled();
+    child.emit('exit', null, 'SIGKILL');   // dead, and `close` waits for whoever holds the pipes
+    expect(out).toHaveBeenCalledTimes(1);
+    expect(err).toHaveBeenCalledTimes(1);
+    child.emit('close', null);             // what destroying them releases
+    await cut;
+    expect(findLiveChat(id)).toBeNull();
+  });
+});

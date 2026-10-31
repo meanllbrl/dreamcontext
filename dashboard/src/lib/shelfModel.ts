@@ -80,8 +80,7 @@ export type ShelfEntry =
       /** Set ONLY here, by `foldViews` → `clampLede`. Never carried over from the agent. */
       ledeClamped?: boolean;
       updatedAt: number;
-    }
-  | { kind: 'progress'; id: string; task: string; updatedAt: number };
+    };
 
 export interface ShelfTag {
   /** Unique within one layout — used as the render key. */
@@ -141,11 +140,9 @@ export const SHELF_TAGS_PANE_FRACTION = 0.25;
  * A `row` earns its row by having something a row is for: prose to open (`detail`), or a
  * lede too long to sit in a chip. A `row` carrying neither is a tag wearing a row's clothes,
  * and honouring it would spend the whole two-row ceiling on a label — which is precisely how
- * the tag line gets pushed off screen. Progress is always a row: it has a track and a live
- * criterion, which no chip can hold.
+ * the tag line gets pushed off screen.
  */
 export function effectiveWeight(e: ShelfEntry): PinWeight {
-  if (e.kind === 'progress') return 'row';
   if (e.weight !== 'row') return 'tag';
   if (e.detail) return 'row';
   // "Tag-sized" is not a new number: it is exactly what a tag chip can hold.
@@ -302,7 +299,6 @@ export function restates(label: string, claims: Set<string>): boolean {
 
 /** The label a demoted row wears on the tag line — its lede, or its first fact. */
 function demotedLabel(e: ShelfEntry): string {
-  if (e.kind === 'progress') return 'Run progress';
   return e.lede ?? e.facts[0]?.label ?? e.id;
 }
 
@@ -322,7 +318,7 @@ function factTag(entryId: string, fact: ShelfFact, index: number): ShelfTag {
  * pin appends rather than reshuffling the line under the user's cursor), then the demoted
  * rows.
  *
- * The row slot goes to progress if a run is live, otherwise to the newest row-weight pin.
+ * The row slot goes to the newest row-weight pin.
  * Everything else that wanted a row demotes, OLDEST FIRST — "it demoted, it did not close".
  */
 export function layoutShelf(entries: ShelfEntry[], facts: ShelfFact[]): ShelfLayout {
@@ -330,11 +326,7 @@ export function layoutShelf(entries: ShelfEntry[], facts: ShelfFact[]): ShelfLay
   const byAge = [...entries].sort((a, b) => a.updatedAt - b.updatedAt);
 
   const wantRow = byAge.filter((e) => effectiveWeight(e) === 'row');
-  const progress = wantRow.filter((e) => e.kind === 'progress');
-  // A live run owns the row. Between two progress entries the newest wins, same as pins.
-  const row = progress.length > 0
-    ? progress[progress.length - 1]
-    : wantRow.length > 0 ? wantRow[wantRow.length - 1] : null;
+  const row = wantRow.length > 0 ? wantRow[wantRow.length - 1] : null;
 
   const demoted = wantRow.filter((e) => e !== row); // already oldest-first
   const demotedIds = demoted.map((e) => e.id);
@@ -377,15 +369,7 @@ export function layoutShelf(entries: ShelfEntry[], facts: ShelfFact[]): ShelfLay
 // Folding a message's views into the shelf
 // ---------------------------------------------------------------------------------------
 
-/** A progress block is keyed by its task, so re-reporting the same run updates one row. */
-function progressId(task: string): string {
-  return `progress:${task}`;
-}
-
 function entryFromView(view: ChatViewSpec, at: number): ShelfEntry | null {
-  if (view.type === 'progress') {
-    return { kind: 'progress', id: progressId(view.task), task: view.task, updatedAt: at };
-  }
   if (view.type !== 'pin') return null;
 
   const entry: ShelfEntry = {

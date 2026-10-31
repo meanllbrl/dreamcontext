@@ -228,7 +228,7 @@ export function registerSuperCommand(program: Command): void {
     .description('End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks')
     .option('--idle', 'List the idle children you started; add --yes to end them all')
     .option('--yes', 'With --idle: end every listed child')
-    .option('--force', 'ONLY when the owner asked: end it even while it works, asks or runs background tasks, or when it is his own chat')
+    .option('--force', 'ONLY when the owner asked: kill it even while it works, asks or runs background tasks, or when it is his own chat. Answers ended only once its process is gone')
     .action((children: string[], o: { idle?: boolean; yes?: boolean; force?: boolean }) => {
       if (!o.idle && children.length === 0) return usage('name the children to end, or pass --idle');
       return run('end', o.idle ? { idle: true, yes: o.yes === true } : { children, force: o.force === true });

@@ -130,12 +130,11 @@ function ChatViewItem({ view, conversationId, report, session, placeKey }: {
     // into this conversation's turn, which is what the two cards above use theirs for.
     case 'agent-thread':
       return <AgentThreadCard spec={view} />;
-    // Hoisted OUT of the transcript: a pin and a progress row live on the shelf docked to
-    // the composer, which is the whole point of them — drawn here as well, they would scroll
-    // away exactly like the inline card they exist to replace. `PinShelf` collects them.
-    // Their `notices` still render above, so a degraded block stays visible either way.
+    // Hoisted OUT of the transcript: a pin lives on the shelf docked to the composer, which is
+    // the whole point of it — drawn here as well, it would scroll away exactly like the inline
+    // card it exists to replace. `PinShelf` collects them. Their `notices` still render above,
+    // so a degraded block stays visible either way.
     case 'pin':
-    case 'progress':
       return null;
     // Applied by the SERVER off the stream (src/server/checkout-directive.ts) and answered
     // with a banner. Drawn here it would be a card restating a chip the user is already
