@@ -233,7 +233,7 @@ describe('ONE check per wave, failures routed to the owning lane', () => {
     expect(check).toContain('dreamcontext builder test "$S" --wave N --related <every changed path> --also <also-run tests>');
     expect(check).toMatch(/SHOW its output/);
     expect(check).toMatch(/"NOT GREEN: no test covers"\s+line/);
-    expect(check).toMatch(/75 = a check did not run: run it again/);
+    expect(check).toMatch(/75 = a check did not run, its place in line is kept/);
   });
 
   it('a failure resumes the owning lane with exactly its output, then re-runs only what failed', () => {

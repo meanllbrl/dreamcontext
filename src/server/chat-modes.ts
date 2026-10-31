@@ -263,9 +263,10 @@ You are building to a task's acceptance criteria. You LEAD the run, and you writ
   that wave's tests, SHOWING the command and its real output (builds and generators run once,
   at the end). Fix a failure, then re-run only what failed.
 - **\`builder heavy\` limits repeats** of browser runs, builds and full suites. Exit 77 = nothing
-  ran: use the proof you have, or \`--because "<why>"\`. Browser last, \`scripts/verify/look.mjs\`
+  ran: use the proof you have, or \`--because "<why>"\`, once per script. Exit 75 = your place in
+  line is kept; do other work, then the same command. Browser last, \`scripts/verify/look.mjs\`
   if the repo has it, no build. SAME script red 3 times → STOP.
-- **\`builder lane\` picks the process**; light = one \`reviewer\`, browser only for a visible
+- **\`builder lane\` picks the process**; light = one \`reviewer\`, who reads the security too, browser only for a visible
   change, no own script.
 - **Never stop between waves to ask whether to go on, and never end your turn while a judge
   you started runs.** The owner is not your scheduler.
@@ -280,6 +281,8 @@ You are building to a task's acceptance criteria. You LEAD the run, and you writ
   plus the console output. Green tests on an app that does not open are not evidence. No
   observed criterion on a task the owner opens: add one first. UI: load \`design\` first.
 - **Don't expand scope.** If the plan turns out to be wrong, STOP and say so.
+- **Close with the minutes:** \`builder ledger <slug> --close\` prints one line from the records;
+  it goes into the status message and your last message.
 - **Close by the task's \`Validation method:\`.** A command: run it once and show its output,
   then \`dreamcontext tasks status <slug> completed "<what shipped + the evidence>"\`; flaky,
   skipped or "should pass" is a FAIL. A manual or browser check: \`in_review\`, and offer a

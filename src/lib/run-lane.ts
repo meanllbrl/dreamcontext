@@ -24,8 +24,10 @@ interface Guard { why: string; words: readonly string[]; starts: readonly string
 
 /**
  * Paths that never take the light lane, whatever their size: security, money, data migration and
- * permissions, including the router's hot paths (endpoints, `.env`) and this repo's own owner and
- * origin gates. Matched on the path's WORDS, camelCase split, so `requireAuth.ts` and `auth/` are
+ * permissions, including `.env` and this repo's own owner and origin gates. An endpoint is NOT one
+ * of them by name (2026-10-31, the owner): a small change with a new server route, closed on the
+ * phone, stays light and its one reviewer reads the security too. The routes at a trust boundary
+ * (the Mac itself, a terminal, another project) stay guarded by file. Matched on the path's WORDS, camelCase split, so `requireAuth.ts` and `auth/` are
  * one word `auth` and `author.ts` is another. A false hit costs one fuller review; a miss would
  * cost the review that catches it, so the list leans wide. Paths only: a dangerous line in an
  * innocently named file is the reviewer's to catch.
@@ -33,9 +35,9 @@ interface Guard { why: string; words: readonly string[]; starts: readonly string
 const GUARDS: readonly Guard[] = [
   {
     why: 'security',
-    words: ['auth', 'authn', 'authz', 'login', 'logout', 'signin', 'signup', 'session', 'sessions', 'token', 'tokens', 'password', 'passwords', 'jwt', 'cookie', 'cookies', 'iam', 'acl', 'cors', 'security', 'sandbox', 'tunnel', 'loopback', 'owner', 'origin', 'guard', 'guards', 'gate', 'gates', 'webhook', 'webhooks', 'hmac', 'policy', 'policies', 'admin', 'keychain', 'env', 'routes', 'route', 'middleware', 'mfa', 'otp', 'totp', 'sso', 'saml', 'oidc', 'key', 'keys', 'apikey', 'apikeys', 'pem', 'signature'],
+    words: ['auth', 'authn', 'authz', 'login', 'logout', 'signin', 'signup', 'session', 'sessions', 'token', 'tokens', 'password', 'passwords', 'jwt', 'cookie', 'cookies', 'iam', 'acl', 'cors', 'security', 'sandbox', 'tunnel', 'loopback', 'owner', 'origin', 'guard', 'guards', 'gate', 'gates', 'webhook', 'webhooks', 'hmac', 'policy', 'policies', 'admin', 'keychain', 'env', 'middleware', 'mfa', 'otp', 'totp', 'sso', 'saml', 'oidc', 'key', 'keys', 'apikey', 'apikeys', 'pem', 'signature'],
     starts: ['authent', 'authoriz', 'oauth', 'secret', 'credential', 'crypto', 'encrypt', 'decrypt', 'csrf', 'saniti', 'askpass', 'signing'],
-    path: /\.(?:pem|key|p12|pfx)$|(?:^|\/)(?:id_rsa|\.npmrc|\.envrc)$/i,
+    path: /\.(?:pem|key|p12|pfx)$|(?:^|\/)(?:id_rsa|\.npmrc|\.envrc)$|^src\/server\/routes\/(?:handsfree[\w-]*|agent-terminal|agent-chat|agent-drop|vaults|connections|super-remote|peer|federation)\.ts$|^src\/lib\/handsfree\/mac\/contract\.ts$|^dashboard\/src\/lib\/phoneSurface\.ts$/i,
   },
   {
     why: 'money',
@@ -53,7 +55,7 @@ const GUARDS: readonly Guard[] = [
     words: ['role', 'roles', 'rbac'],
     starts: ['permission', 'consent', 'approval', 'allowlist', 'denylist'],
     // What an agent obeys, and these gates themselves, are permissions too.
-    path: /\.rules$|(?:^|\/)\.claude\/|(?:^|\/)\.github\/workflows\/|(?:^|\/)CLAUDE\.md$|(?:^|\/)skill(?:s|-[\w-]+)?\/|^agents\/|^src\/lib\/run-(?:lane|budget)\.ts$|^src\/cli\/commands\/hook\.ts$/i,
+    path: /\.rules$|(?:^|\/)\.claude\/|(?:^|\/)\.github\/workflows\/|(?:^|\/)CLAUDE\.md$|(?:^|\/)skill(?:s|-[\w-]+)?\/|^agents\/|^src\/lib\/(?:run-(?:lane|budget|ledger)|heavy-(?:queue|acquire)|review-route|builder-tools)\.ts$|^src\/cli\/commands\/builder(?:-sessions)?\.ts$|^src\/cli\/commands\/hook\.ts$/i,
   },
 ];
 
@@ -75,12 +77,32 @@ const VISIBLE_PATH = /\.(?:tsx|jsx|vue|svelte|css|scss|html)$|(?:^|\/)(?:dashboa
 /** A browser script a change added for itself (15% of all changed lines, measured). */
 const VERIFY_SCRIPT = /(?:^|\/)scripts\/verify\/[^/]+\.m?[jt]s$/;
 
+/**
+ * Every registered route must have a row here (`tests/unit/route-policy.test.ts`), so a new route
+ * always touches this file. Rows that only add `deny(...)` keep the route off the phone, the
+ * case that stays light; anything else in this file is a security change.
+ */
+export const PHONE_POLICY_PATH = 'src/lib/handsfree/mac/route-policy.ts';
+
+/** One row, one deny, nothing after it: a named reason or a plain string, and the cross-project scope. */
+const DENY_ROW = /^\+\s*'(?:GET|POST|PUT|PATCH|DELETE) \/api\/[^']*':\s*deny\((?:[A-Z_]+|'(?:[^'\\]|\\.)*')(?:,\s*'cross:deny')?\),\s*$/;
+
+/** Does this `git diff -U0` only ADD one-line deny rows? Anything else reads as no. */
+export function onlyAddsDenyRows(diff: string): boolean {
+  const hunks = diff.search(/^@@/m);
+  if (hunks < 0) return false;
+  const body = diff.slice(hunks).split('\n').filter((l) => /^[+-]/.test(l));
+  return body.length > 0 && body.every((l) => DENY_ROW.test(l));
+}
+
 export interface ChangedFile {
   path: string;
   /** Added plus deleted lines; 0 for a binary. */
   lines: number;
   /** True when the file did not exist at the base. */
   added?: boolean;
+  /** The guard on this path does not apply: see {@link PHONE_POLICY_PATH}. */
+  cleared?: boolean;
 }
 
 export interface LanePick {
@@ -114,7 +136,7 @@ export function pickLane(files: readonly ChangedFile[]): LanePick {
   const customScripts = files.filter((f) => f.added && VERIFY_SCRIPT.test(f.path)).map((f) => f.path);
   const base = { lines, visible, customScripts };
   for (const f of files) {
-    const why = guardedReason(f.path);
+    const why = f.cleared ? null : guardedReason(f.path);
     if (why) return { ...base, lane: 'full', reason: `${why} path: ${f.path}` };
   }
   if (lines >= LIGHT_LANE_MAX_LINES) return { ...base, lane: 'full', reason: `${lines} lines (light is under ${LIGHT_LANE_MAX_LINES})` };
@@ -165,7 +187,10 @@ export function changedFiles(cwd: string, from?: string, to?: string): ChangedFi
   const range = to ? [base, to] : [base];
   const files = parseNumstat(git(cwd, ['diff', '-z', '--numstat', '--no-renames', ...range]));
   const addedNames = new Set(git(cwd, ['diff', '-z', '--name-only', '--no-renames', '--diff-filter=A', ...range]).split('\0').filter(Boolean));
-  for (const f of files) if (addedNames.has(f.path)) f.added = true;
+  for (const f of files) {
+    if (addedNames.has(f.path)) f.added = true;
+    if (f.path === PHONE_POLICY_PATH) f.cleared = onlyAddsDenyRows(git(cwd, ['diff', '-U0', '--no-color', '--no-renames', ...range, '--', f.path]));
+  }
   if (!to) {
     for (const path of git(cwd, ['ls-files', '-z', '--others', '--exclude-standard']).split('\0').filter(Boolean)) {
       files.push({ path, lines: lineCount(join(cwd, path)), added: true });
