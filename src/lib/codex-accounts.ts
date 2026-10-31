@@ -27,6 +27,7 @@ import { homedir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
 import { CODEX_PRIMARY_ID, codexAccountHome, codexInstanceSettings, isCodexAccountId } from './t3-bridge/accounts.js';
 import { bridgeNode } from './t3-bridge/node-floor.js';
+import { recordLimitPoints } from './usage-records.js';
 import type { UsageLimitWire, UsageLimitsResponse } from './claude-usage.js';
 
 export { CODEX_PRIMARY_ID, isCodexAccountId };
@@ -239,9 +240,13 @@ export function recordCodexUsage(
   id: string, windows: unknown[], checkedAt: string, source: 'probe' | 'session', home: string = homedir(),
 ): CodexUsageReading {
   const fresh = windows.map(cleanWindow).filter((w): w is CodexUsageWindow => w !== null);
-  const prev = source === 'session' ? readCodexUsage(id, home) : null;
+  const before = readCodexUsage(id, home);
+  const prev = source === 'session' ? before : null;
   const merged = prev ? [...prev.windows.filter((w) => !fresh.some((f) => f.id === w.id)), ...fresh] : fresh;
   const reading: CodexUsageReading = { checkedAt: Number.isNaN(Date.parse(checkedAt)) ? new Date().toISOString() : checkedAt, windows: merged, source };
+  recordLimitPoints(fresh
+    .filter((w) => w.resetsAt && before?.windows.find((b) => b.id === w.id)?.usedPercent !== w.usedPercent)
+    .map((w) => ({ ts: Date.parse(reading.checkedAt), account: `codex:${id}`, key: w.kind, percent: w.usedPercent, resetsAt: Date.parse(w.resetsAt as string) })), home);
   const file = codexUsageFile(id, home);
   try {
     mkdirSync(dirname(file), { recursive: true, mode: 0o700 });

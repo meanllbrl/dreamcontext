@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { UsageLimitsResponse, UsageLimitWire } from './claude-usage.js';
+import { recordLimitPoints } from './usage-records.js';
 
 /**
  * Every turn's OWN usage reading — the per-turn `rate_limit_event` frame, kept.
@@ -198,6 +199,9 @@ export function recordUsageMeter(configDir: string, reading: UsageLimitsResponse
   if (prev && reading.fetchedAtMs - prev.fetchedAtMs < UNCHANGED_REWRITE_MS
     && JSON.stringify(prev.limits) === JSON.stringify(limits)) return;
   store[key] = { limits, fetchedAtMs: Math.max(reading.fetchedAtMs, prev?.fetchedAtMs ?? 0) };
+  recordLimitPoints(limits
+    .filter((l) => prev?.limits.find((p) => p.key === l.key)?.percent !== l.percent)
+    .map((l) => ({ ts: reading.fetchedAtMs as number, account: key, key: l.key, percent: l.percent, resetsAt: l.resetsAt })), home);
   const filePath = usageMeterFilePath(home);
   try {
     mkdirSync(dirname(filePath), { recursive: true });

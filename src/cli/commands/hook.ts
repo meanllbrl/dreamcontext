@@ -2682,7 +2682,7 @@ export function registerHookCommand(program: Command): void {
         if (picked) {
           console.log(renderHandoffBanner(picked.record));
           console.log('');
-          stampHandoffRecord(root, picked.key, { consumedAt: new Date().toISOString() });
+          stampHandoffRecord(root, picked.key, { consumedAt: new Date().toISOString(), ...(sid ? { toSession: sid } : {}) });
         }
       } catch (handoffErr) {
         if (process.env.DREAMCONTEXT_DEBUG) console.error('[context-handoff] banner error:', (handoffErr as Error).message ?? handoffErr);

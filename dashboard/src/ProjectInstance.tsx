@@ -12,6 +12,8 @@ import { TasksPage } from './pages/TasksPage';
 import { RoadmapPage } from './pages/RoadmapPage';
 import { HypothesesPage } from './pages/HypothesesPage';
 import { LabPage } from './pages/LabPage';
+import { StatsPage } from './pages/StatsPage';
+import { OPEN_STATS_EVENT } from './lib/openStats';
 import { AiTeamPage, type AutomationsFocus } from './pages/AiTeamPage';
 import { SleepPage } from './pages/SleepPage';
 import { CorePage } from './pages/CorePage';
@@ -164,6 +166,17 @@ function RollupBridge({
  *
  * Rendered inside Shell's children for `nav`. Renders nothing.
  */
+function OpenStatsBridge({ nav }: { nav: ShellNavigation }) {
+  const { isActive } = useVault();
+  useEffect(() => {
+    if (!isActive) return undefined;
+    const listener = () => nav.navigate('stats', null);
+    window.addEventListener(OPEN_STATS_EVENT, listener);
+    return () => window.removeEventListener(OPEN_STATS_EVENT, listener);
+  }, [isActive, nav]);
+  return null;
+}
+
 function OpenAgentsBridge({
   nav, onAgentsFocus,
 }: {
@@ -437,6 +450,8 @@ const PageRouter = memo(function PageRouter({
       return <HypothesesPage focus={focus} />;
     case 'lab':
       return <LabPage focus={focus} />;
+    case 'stats':
+      return <StatsPage onNavigate={(page) => nav.navigate(page, null)} />;
     case 'automations':
     case 'agents':
       // ONE page for both keys: the AI Team. `agents` is its old Agents page key, kept so its
@@ -621,6 +636,7 @@ export function ProjectInstance({
                     )}
                     <AgentPageNavBridge nav={nav} />
                     <OpenAgentsBridge nav={nav} onAgentsFocus={focusAgents} />
+                    <OpenStatsBridge nav={nav} />
                     <NavFocusAgentsBridge nav={nav} onAgentsFocus={focusAgents} />
                     <TalkToAgentBridge />
                     <AppLinkBridge
