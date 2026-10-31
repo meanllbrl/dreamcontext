@@ -58,6 +58,8 @@ function QueuedRow({
   const about = !split.about ? null
     : split.about.kind === 'reply'
       ? { label: t(split.about.from === 'super' ? 'super.reply.toSuper' : 'super.reply.toOwn'), text: split.about.quote, reply: true }
+      : split.about.kind === 'card'
+        ? { label: t('super.reply.toCard'), text: split.about.quote, reply: true }
       : agendaAboutStrip(split.about, [], () => '', {
         about: t('super.agenda.about'), question: t('super.agenda.aboutQuestion'),
         superQuestion: t('super.agenda.aboutSuperQuestion'), aQuestion: t('super.agenda.aboutAQuestion'),

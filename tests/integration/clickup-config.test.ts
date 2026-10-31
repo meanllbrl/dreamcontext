@@ -174,7 +174,7 @@ describe('clickup config onboarding (integration)', () => {
   it('setup --yes never asks about cloud tasks and leaves the backend unset (advanced setting)', () => {
     const fresh = makeTmpDir();
     try {
-      const out = run('setup --yes', fresh);
+      const out = run('setup --yes --skip-machine', fresh);
       expect(out).not.toContain('Cloud Task Management');
       const cfgRaw = readFileSync(join(fresh, '_dream_context', 'state', '.config.json'), 'utf-8');
       expect(JSON.parse(cfgRaw).taskBackend).toBeUndefined();

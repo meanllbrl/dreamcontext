@@ -1,92 +1,120 @@
-/* The Super chat's unread marks (owner 2026-10-30, draft A). useSuperUnread paints these
-   attributes on rows other components own; every look of the feature is here. */
+/* The Super chat's unread marks. useSuperUnread paints these attributes on rows other components
+   own; every look of the feature is here.
 
+   Nothing here takes layout room. A read flips these attributes while the owner is looking at the
+   rows, so a mark that pushed a row would move the text under the eyes, once a second.
+
+   The left of a row is not free: the reply groups' line runs there (.chat-reply-line). The dot
+   stands in the message's own top right corner, the line inside the column. */
+
+/* The dot: inside the message card's padding, so it needs no gutter at any width. */
 .chat-scroll-inner--reply [data-unread] { position: relative; }
-
-/* The dot, in the gutter left of the message. */
-.chat-scroll-inner--reply [data-unread]::before {
+.chat-scroll-inner--reply .chat-msg-assistant-row[data-unread] > .chat-msg-assistant-body { position: relative; }
+/* One dot a message: a row with a card between its prose runs has several bodies, and a row of
+   cards has none. */
+.chat-scroll-inner--reply .chat-msg-assistant-row[data-unread] > .chat-msg-assistant-body:not(.chat-msg-assistant-body ~ .chat-msg-assistant-body)::after,
+.chat-scroll-inner--reply .chat-msg-assistant-row[data-unread]:not(:has(> .chat-msg-assistant-body))::before,
+.chat-scroll-inner--reply [data-unread]:not(.chat-msg-assistant-row)::before {
   content: "";
   position: absolute;
-  left: -12px;
-  top: 7px;
+  top: var(--space-3);
+  right: var(--space-3);
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   background: var(--color-accent);
   pointer-events: none;
 }
 
-/* The line before the first unread: room above the row, the label in the line's gap. */
-.chat-scroll-inner--reply [data-unread-first] { margin-top: 28px; }
+/* The line, in the transcript's own gap above the row (.chat-scroll-inner: --space-4). */
+.chat-scroll-inner--reply [data-unread-first] { position: relative; }
 .chat-scroll-inner--reply [data-unread-first]::after {
   content: attr(data-unread-label);
   position: absolute;
   left: 0;
   right: 0;
-  top: -26px;
-  height: 16px;
-  line-height: 16px;
+  bottom: 100%;
+  height: var(--space-4);
+  line-height: var(--space-4);
   text-align: center;
-  font-size: var(--font-size-xs, 11px);
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--color-accent-ink);
   pointer-events: none;
   background:
-    linear-gradient(var(--color-accent), var(--color-accent)) left center / calc(50% - 56px) 1px no-repeat,
-    linear-gradient(var(--color-accent), var(--color-accent)) right center / calc(50% - 56px) 1px no-repeat;
+    linear-gradient(var(--color-accent), var(--color-accent)) left center / calc(50% - 44px) 1px no-repeat,
+    linear-gradient(var(--color-accent), var(--color-accent)) right center / calc(50% - 44px) 1px no-repeat;
 }
 
+/* The pill stands where "Latest" stands (.chat-jump) and takes its place while it shows. */
 .super-unread-bar {
   position: absolute;
-  top: 8px;
+  bottom: var(--space-3);
   left: 50%;
   transform: translateX(-50%);
   z-index: 5;
   display: flex;
   align-items: center;
-  max-width: calc(100% - 16px);
+  max-width: calc(100% - var(--space-4));
   padding: 2px;
   border: 1px solid var(--color-accent);
   border-radius: var(--radius-full);
   background: var(--color-bg-secondary);
-  box-shadow: var(--shadow-md, 0 6px 18px rgba(0, 0, 0, 0.35));
-  font-size: var(--font-size-xs, 12px);
+  box-shadow: var(--shadow-md);
+  font-size: var(--font-size-xs);
+  animation: chat-jump-in 0.15s ease-out;
 }
+@media (prefers-reduced-motion: reduce) { .super-unread-bar { animation: none; } }
 .super-unread-jump,
-.super-unread-all {
+.super-unread-side {
   flex: none;
   border: 0;
   background: none;
   font: inherit;
   white-space: nowrap;
   cursor: pointer;
-  padding: 3px 8px;
+  padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-full);
 }
 .super-unread-jump {
   flex: 0 1 auto;
   min-width: 0;
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
   font-weight: 600;
   color: var(--color-text-primary);
 }
 .super-unread-go { overflow: hidden; text-overflow: ellipsis; }
-.super-unread-all {
+.super-unread-side {
   color: var(--color-text-tertiary);
   border-left: 1px solid var(--color-border);
-  border-radius: 0 var(--radius-full) var(--radius-full) 0;
+  border-radius: 0;
 }
+.super-unread-side:last-child { border-radius: 0 var(--radius-full) var(--radius-full) 0; }
 .super-unread-jump:hover,
-.super-unread-all:hover { color: var(--color-accent); }
+.super-unread-side:hover { color: var(--color-accent); }
 
-/* A phone has room for the count and the two verbs, not the sentence. */
+.super-unread-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Under a finger the hit area grows, the pill does not: the same as .chat-reply-head. */
+@media (hover: none) {
+  .super-unread-jump, .super-unread-side { position: relative; }
+  .super-unread-jump::after, .super-unread-side::after {
+    content: "";
+    position: absolute;
+    inset: calc(-1 * var(--space-3)) 0;
+  }
+}
+
+/* A phone has room for the count and the verbs, not the sentence. */
 @media (max-width: 480px) {
   .super-unread-go { display: none; }
-  .super-unread-jump, .super-unread-all { padding: 6px 10px; }
-  .chat-scroll-inner--reply [data-unread]::before { left: -8px; }
+  .super-unread-jump, .super-unread-side { padding: 6px 10px; }
 }
-
-/* A phone's message rows clip sideways (MobileChat.css), so the dot stands inside the row. */
-.agent-surface[data-mobile] .chat-msg-assistant-row[data-unread] { padding-left: 10px; }
-.agent-surface[data-mobile] .chat-msg-assistant-row[data-unread]::before { left: 0; }

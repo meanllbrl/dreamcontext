@@ -7,13 +7,14 @@
  * and the wiring in AgentSurface. Fictional names throughout.
  */
 import { describe, it, expect } from 'vitest';
+import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { superDockLift, superDockOn, superDockPill, superSlotFor } from '../../dashboard/src/components/sleepy/super/superHandover.js';
 import { showQuestionCard } from '../../dashboard/src/components/sleepy/super/JobBar.js';
 import type { SuperQueueItem, SuperStateView } from '../../dashboard/src/lib/superTypes.js';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const read = (f: string) => readFileSync(join(ROOT, f), 'utf-8');
 
 const child = (startedAt: number, ended = false) => ({ sessionId: 'x', brief: 'Fix the login form', adopted: true, startedAt, ...(ended ? { endedAt: 9 } : {}) });

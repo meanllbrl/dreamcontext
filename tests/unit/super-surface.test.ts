@@ -586,7 +586,7 @@ describe('TR + EN for every new string; the button reads the owner\'s words', ()
     expect(tr).toContain("'super.button.handOver': 'Süper Ajana devret'");
     expect(tr).toContain("'super.button.takeBack': 'Geri al'");
     // The centre header names the product agent, with the app logo.
-    expect(en).toContain("'super.centre.name': 'dreamcontext Super Agent'");
+    expect(en).toContain("'super.centre.name': 'Super Agent'");
   });
 
   it('every super.* key the window uses exists in English AND Turkish', () => {

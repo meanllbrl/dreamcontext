@@ -28,7 +28,7 @@ export type TeamAutomation = Pick<
 export type TeamAgent = Pick<
   AgentSummary,
   'slug' | 'title' | 'hasPhoto' | 'roleLine' | 'description' | 'approvedForChat' | 'approvedToRun' | 'approvalReason' | 'model' | 'effort'
-> & Partial<Pick<AgentSummary, 'readOnly' | 'owner' | 'ownerLabel' | 'runsElsewhere' | 'scope'>>;
+> & Partial<Pick<AgentSummary, 'readOnly' | 'owner' | 'ownerLabel' | 'runsElsewhere' | 'scope' | 'lastTalkAt'>>;
 
 export type TeamStatus = 'working' | 'needs' | 'approval' | 'paused' | 'idle';
 
@@ -57,6 +57,9 @@ export interface TeamRow {
   elsewhere: string | null;
   /** This machine's global agent (D1): listed in every project, its chip says so. */
   global: boolean;
+  /** Everything that makes this row busy is a job the Super Agent gave it (`FeedMessage.superJob`):
+   *  the page shows it, the drawer does not. It reports to the Super, not to the owner. */
+  superOnly: boolean;
 }
 
 /** Is this automation one of `agentSlug`'s routines? An older backend names no agent: the
@@ -144,6 +147,19 @@ export function buildRoster(
           : approval ? 'approval'
             : 'idle';
 
+    // Whose is the work? A run nobody can name stays the owner's, so a row only leaves on proof.
+    const jobs = new Set(mine.filter((m) => m.superJob).map((m) => m.runId));
+    const liveRuns: Array<string | null> = [];
+    for (const s of slugs) {
+      if (working[s]) liveRuns.push(working[s].runId ?? null, ...(working[s].queued ?? []).map((q) => q.runId));
+      else if (slots[s]) liveRuns.push(slots[s].runId);
+    }
+    const theirs = status === 'working' || status === 'needs';
+    const superOnly = theirs && jobs.size > 0
+      && routines.every((r) => r.pendingQuestion === null)
+      && !mine.some((m) => !m.superJob && (m.status === 'running' || m.status === 'needs-you' || m.question !== null))
+      && liveRuns.every((id) => id !== null && jobs.has(id));
+
     let unread = 0;
     for (const s of slugs) unread += feed?.unreadBySlug?.[s] ?? 0;
 
@@ -156,13 +172,15 @@ export function buildRoster(
       status,
       workingSince: since,
       preview: last ? previewOf(last) : null,
-      lastAt: last?.at ?? null,
+      // A stage talk leaves no thread entry; the server's fact keeps a member of all projects listed.
+      lastAt: [last?.at, agent.lastTalkAt].filter((x): x is string => !!x).sort().pop() ?? null,
       unread,
       section: readOnly ? 'readonly' : status === 'needs' ? 'needs' : 'team',
       readOnly,
       ownerLabel: agent.ownerLabel ?? agent.owner ?? null,
       elsewhere: agent.runsElsewhere?.name ?? null,
       global: agent.scope === 'global',
+      superOnly,
     };
   });
 

@@ -8,7 +8,7 @@ import { TeamPanel, type PanelTab } from '../components/aiteam/TeamPanel';
 import { NewTeammate, TEAM_STARTERS, type TeamStarter } from '../components/aiteam/NewTeammate';
 import { buildRoster, messagesOf, openingView, type TeamAgent } from '../components/aiteam/teamModel';
 import {
-  clampRosterWidth, pageStorage, readPageView, readRosterWidth, writeRosterWidth, readRosterView, teamTreeOf, writePageView, writeRosterView, type PageView, type RosterView,
+  clampRosterWidth, pageStorage, listedRows, readPageView, readRosterWidth, writeRosterWidth, readRosterView, teamTreeOf, writePageView, writeRosterView, type PageView, type RosterView,
 } from '../components/aiteam/teamTree';
 import { OrgView } from '../components/aiteam/OrgChart';
 import { chainOf } from '../../../src/lib/agents/tree.js';
@@ -73,6 +73,18 @@ export function AiTeamPage({
   const automations = useMemo(() => automationsQ.data ?? [], [automationsQ.data]);
   const rows = useMemo(() => buildRoster(agents, automations, feed), [agents, automations, feed]);
   const tree = useMemo(() => teamTreeOf(rows, agentsQ.data ?? []), [rows, agentsQ.data]);
+  // The list: this project first; members of all projects join it once they have talked here.
+  const listRows = useMemo(() => listedRows(rows), [rows]);
+  const listTree = useMemo(() => {
+    const keep = new Set(listRows.map((r) => r.slug));
+    return teamTreeOf(listRows, (agentsQ.data ?? []).filter((a) => keep.has(a.slug)));
+  }, [listRows, agentsQ.data]);
+  // The chart: this project's tree, the members of all projects in their own band.
+  const band = useMemo(() => rows.filter((r) => r.global).map((r) => r.slug), [rows]);
+  const chartTree = useMemo(() => {
+    const inBand = new Set(band);
+    return teamTreeOf(rows.filter((r) => !inBand.has(r.slug)), (agentsQ.data ?? []).filter((a) => !inBand.has(a.slug)));
+  }, [rows, band, agentsQ.data]);
   const [rosterView, setRosterView] = useState<RosterView>(() => readRosterView(pageStorage()));
   const pickRosterView = useCallback((v: RosterView) => {
     setRosterView(v);
@@ -126,11 +138,12 @@ export function AiTeamPage({
   const deletedRef = useRef<string | null>(null);
   useEffect(() => {
     if (current || rows.length === 0) return;
-    const first = rows.find((r) => r.slug !== deletedRef.current) ?? null;
+    const free = (r: { slug: string }) => r.slug !== deletedRef.current;
+    const first = listRows.find(free) ?? rows.find(free) ?? null;
     if (!first) return;
     setSelected(first.slug);
     setTeamView(openingView(first));
-  }, [current, rows]);
+  }, [current, rows, listRows]);
 
   // A link or a caller asked for one teammate, the create flow, or its profile.
   useEffect(() => {
@@ -300,8 +313,10 @@ export function AiTeamPage({
     >
       {org && (
         <OrgView
-          tree={tree}
+          headless={newShell}
+          tree={chartTree}
           rows={rows}
+          band={band}
           selected={panelShown ? current?.slug ?? null : null}
           onSelect={selectInOrg}
           onTalk={talkTo}
@@ -313,14 +328,15 @@ export function AiTeamPage({
       )}
       {showList && (
         <TeamRoster
-          rows={rows}
+          rows={listRows}
+          beyond={rows.length - listRows.length}
           selected={current?.slug ?? null}
           draft={creating ? { title: creating.title } : null}
           onSelect={select}
           onNew={() => startNew()}
           onToast={setToast}
           nextRun={nextRun}
-          tree={tree}
+          tree={listTree}
           view={rosterView}
           onView={pickRosterView}
           onOrgChart={() => { pickPageView('org'); setPanel((p) => (p ? 'team' : p)); }}

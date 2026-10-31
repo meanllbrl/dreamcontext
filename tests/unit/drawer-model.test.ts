@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  buildDrawerRows, dropInOrder, intentLands, moveInOrder, teamRowsOf, type DrawerProjectInput,
+  buildDrawerRows, dropInOrder, intentLands, moveInOrder, teamRowsOf, windowDropBefore, windowDropIsNoop, type DrawerProjectInput,
 } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
 import { fanOutHistory, HISTORY_PARALLEL, HISTORY_PER_VAULT } from '../../dashboard/src/components/layout/newshell/historyFanout.js';
 import { chill, oldestEvictable } from '../../dashboard/src/components/layout/instanceCeiling.js';
@@ -46,8 +46,9 @@ describe('drawer rows', () => {
     });
     for (const r of rows) {
       expect(r.children[0].kind).toBe('super');
-      expect(r.children[r.children.length - 1].kind).toBe('window');
     }
+    // Nothing read yet: no window row is invented for it (New Chat comes with the facts).
+    expect(rows[1].children.map((c) => c.kind)).toEqual(['super']);
     expect(rows[1].source).toBe('none');
   });
 
@@ -88,7 +89,7 @@ describe('drawer rows', () => {
       activeVault: 'acme', expanded: ['acme', 'globex'], facts: { acme: facts, globex: facts }, fanout: {},
     });
     expect(rows[0].children[0]).toMatchObject({ kind: 'super', selected: true });
-    expect(rows[0].children.at(-1)).toMatchObject({ kind: 'window', selected: false });
+    expect(rows[0].children.map((c) => c.kind)).toEqual(['super']);
     expect(rows[1].children[0]).toMatchObject({ kind: 'super', selected: false });
   });
 
@@ -231,5 +232,47 @@ describe('named chat windows in the drawer (W3)', () => {
     });
     expect(rows[0].sum).toEqual({ live: 4, asking: 1, working: 2, idle: 1, flagged: 1 });
     expect(rows[0].children).toEqual([]);
+  });
+});
+
+describe('where a dragged chat row lands', () => {
+  const rows = [{ id: 'a', top: 100, height: 32 }, { id: 'b', top: 132, height: 32 }, { id: 'c', top: 164, height: 32 }];
+
+  it('lands before the first row whose middle is below the pointer, the last spot is the end', () => {
+    expect(windowDropBefore(rows, 120)).toBe('b');
+    expect(windowDropBefore(rows, 150)).toBe('c');
+    expect(windowDropBefore(rows, 190)).toBeNull();
+  });
+
+  it('pulled above the chats (over Super Agent or a team row) it stops at the first chat', () => {
+    expect(windowDropBefore(rows, 10)).toBe('a');
+  });
+
+  it('a drop on itself or right after itself is no move', () => {
+    const ids = ['a', 'b', 'c'];
+    expect(windowDropIsNoop(ids, 'b', 'b')).toBe(true);
+    expect(windowDropIsNoop(ids, 'b', 'c')).toBe(true);
+    expect(windowDropIsNoop(ids, 'c', null)).toBe(true);
+    expect(windowDropIsNoop(ids, 'a', null)).toBe(false);
+    expect(windowDropIsNoop(ids, 'c', 'a')).toBe(false);
+  });
+
+  it('only window rows are chats: Super Agent and the team sit before them, whatever the order', () => {
+    const [row] = buildDrawerRows({
+      projects: [{ name: 'acme', logo: false, logoStamp: null, mounted: true, asleep: false, otherWindow: false, rollup: null }],
+      activeVault: 'acme',
+      expanded: ['acme'],
+      facts: { acme: {
+        superOn: true, superSelected: false, chatOpen: true,
+        team: [{ slug: 'm', title: 'M', hasPhoto: false, status: 'working' }],
+        windows: [
+          { id: 'w2', name: 'Two', working: 0, asking: 0, flagged: 0, other: 1, tabs: 1 },
+          { id: 'main', name: 'Chat', working: 1, asking: 0, flagged: 0, other: 0, tabs: 1 },
+        ],
+        activeWindowId: 'main',
+      } },
+      fanout: {},
+    });
+    expect(row.children.map((c) => (c.kind === 'window' ? c.id : c.kind))).toEqual(['super', 'member', 'w2', 'main']);
   });
 });

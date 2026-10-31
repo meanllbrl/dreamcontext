@@ -107,6 +107,8 @@ export const STAGE = {
   REVIEW_ROW_FRAC: 0.34,
   REVIEW_ROW_MIN: 200,
   REVIEW_ROW_MAX: 320,
+  /** A phone stage's queue pill: this far from the edges and the chat under it. */
+  PHONE_BAND_INSET: 8,
   /** A narrow sheet's tab row (2+ cards). */
   TAB_H: 36,
   /** The top band's presentation controls at its right end: the exit, and one segment per layout
@@ -120,6 +122,9 @@ export const STAGE = {
   /** A fitted picture card's smallest: the header's buttons and the title still fit. An
    *  arrangement whose slots are under it is not offered (today's always is). */
   FIT_MIN: { w: 200, h: 140 },
+  /** A web card's widget border around its page (widgets.css `.wb-widget`): a measured page is
+   *  given exactly its width. */
+  WIDGET_BORDER_W: 2,
 } as const;
 
 /**
@@ -145,6 +150,9 @@ export const TOUCH_REMOTE_NARROW_STAGE_PX = 940;
 /** …and its centre's floor: 560 px would leave a 968 px stage 156 px a side, under one tile, and
  *  every card would still land in Others; 480 leaves each side room for a column of tiles. */
 export const TOUCH_REMOTE_CENTRE_MIN = 480;
+/** Below this stage width the floating view is the chat alone, edge to edge (owner 2026-10-31):
+ *  no margins, no card chrome, and Others opens from the chat's head instead of a pill under it. */
+export const PHONE_STAGE_PX = 640;
 
 /** Where a card is drawn this time (its record may say otherwise: overflow is drawn, not written). */
 export type CardWhere = 'float' | 'others' | 'half' | 'present' | 'sheet' | 'thumb' | 'tab';
@@ -169,6 +177,9 @@ export interface CardPlan {
   hidden?: boolean;
   /** A rail job drawn as one line (status and short name) on a tight presentation. */
   mini?: boolean;
+  /** Presented at its page's own width (StageItem.fit): the page is laid out in the card, never
+   *  at the desktop width and scaled down to it. */
+  fitted?: boolean;
 }
 
 /** A filmstrip's strip (owner 2026-10-29: "every time I select one, it swaps places"): every
@@ -193,6 +204,9 @@ export interface StagePlan {
   width: number;
   height: number;
   narrow: boolean;
+  /** The edge-to-edge chat of a phone-width floating stage ({@link PHONE_STAGE_PX}): Others and
+   *  the agenda are reached from the chat's head, so neither draws its pill. */
+  phone: boolean;
   mode: SuperView['mode'];
   centre: Rect;
   cards: Record<string, CardPlan>;
@@ -256,6 +270,9 @@ export interface StageItem {
   /** A picture's width/height, server-read from its file header; a web page's, from the device
    *  width the owner picked on it (phone, tablet, desktop). Absent = unknown / fills its box. */
   aspect?: number;
+  /** A project page's own measured width (lib/pageFit.ts), never read on a card the owner sized
+   *  or gave a device width. Absent = it needs the width it is given. */
+  fit?: number;
 }
 
 /** A card's size from its record: a preset, or small. */
@@ -295,6 +312,8 @@ export function stageItems(
   isLive: (c: SuperContainer) => boolean = () => false,
   /** A web card's shape from its device width (window state, never the record); absent = none. */
   pageAspect: (c: SuperContainer) => number | undefined = () => undefined,
+  /** A web card's page width as measured (window state, never the record); absent = none. */
+  pageFit: (c: SuperContainer) => number | undefined = () => undefined,
 ): StageItem[] {
   const shown = new Set(view.mode === 'half' && view.card ? [view.card] : view.mode === 'present' ? view.cards ?? [] : []);
   const index = new Map(containers.map((c, i) => [c.id, i] as const));
@@ -311,7 +330,8 @@ export function stageItems(
     const page = c.kind === 'web' ? pageAspect(c) : undefined;
     const aspect = c.kind === 'image' && typeof c.aspect === 'number' && Number.isFinite(c.aspect) && c.aspect > 0 ? c.aspect
       : typeof page === 'number' && Number.isFinite(page) && page > 0 ? page : undefined;
-    if (!g || shown.has(c.id)) out.push({ id: c.id, kind: c.kind, shape: c.shape, place: c.place, ...(c.pos ? { pos: c.pos } : {}), slot: i, ...(size !== 'small' ? { size } : {}), ...(c.sizeBy ? { sizeBy: c.sizeBy } : {}), ...(live ? { live } : {}), ...(aspect ? { aspect } : {}) });
+    const fit = c.kind === 'web' && !aspect && c.sizeBy !== 'owner' ? pageFit(c) : undefined;
+    if (!g || shown.has(c.id)) out.push({ id: c.id, kind: c.kind, shape: c.shape, place: c.place, ...(c.pos ? { pos: c.pos } : {}), slot: i, ...(size !== 'small' ? { size } : {}), ...(c.sizeBy ? { sizeBy: c.sizeBy } : {}), ...(live ? { live } : {}), ...(aspect ? { aspect } : {}), ...(fit ? { fit } : {}) });
     if (g && !placed.has(g.id) && g.cards[0] !== undefined && index.has(g.cards[0])) {
       placed.add(g.id);
       const gLive = g.cards.some((id) => { const k = containers[index.get(id) ?? -1]; return !!k && k.kind === 'chat' && isLive(k); });
@@ -809,12 +829,13 @@ function pushOut(rect: Rect, centre: Rect, free: Rect): Rect {
 
 // ─── The plan ───────────────────────────────────────────────────────────────────
 
-interface Frame { width: number; height: number; content: Rect; free: Rect; othersRect: Rect; othersZone: Rect; agendaPill: Rect; bandTop: number; bandBottom: number; centreMin: number }
+interface Frame { width: number; height: number; content: Rect; free: Rect; othersRect: Rect; othersZone: Rect; agendaPill: Rect; bandTop: number; bandBottom: number; centreMin: number; phone?: boolean }
 
 /** The stage's frame. `bottomBand`: the bottom band is reserved (the content stops above it);
  *  without it the content runs down to the bottom margin. */
-function frameOf(width: number, height: number, bottomBand = true, centreMin: number = STAGE.CENTRE_MIN): Frame {
+function frameOf(width: number, height: number, bottomBand = true, centreMin: number = STAGE.CENTRE_MIN, phone?: { queue: boolean; terminals: boolean }): Frame {
   const { MARGIN, BAND } = STAGE;
+  if (phone) return phoneFrame(frameOf(width, height, true, centreMin), phone);
   const below = bottomBand ? MARGIN + BAND : MARGIN;
   const content: Rect = { x: MARGIN, y: MARGIN + BAND, width: Math.max(0, width - 2 * MARGIN), height: Math.max(0, height - (MARGIN + BAND) - below) };
   const bandTop = MARGIN / 2;
@@ -827,6 +848,17 @@ function frameOf(width: number, height: number, bottomBand = true, centreMin: nu
   };
 }
 
+/** The phone's frame: the content runs to all four edges. Only what is showing takes height: the
+ *  queue pill above the chat, the terminals' dock below it. The Others rect stays bottom-right,
+ *  it is where a card flies to and what the panel opens above. */
+function phoneFrame(f: Frame, { queue, terminals }: { queue: boolean; terminals: boolean }): Frame {
+  const bandTop = STAGE.PHONE_BAND_INSET;
+  const top = queue ? bandTop + STAGE.BAND + bandTop : 0;
+  const below = terminals ? STAGE.MARGIN + STAGE.BAND : 0;
+  const content: Rect = { x: 0, y: top, width: f.width, height: Math.max(0, f.height - top - below) };
+  return { ...f, content, free: content, bandTop, phone: true };
+}
+
 function centreAt(f: Frame, w: number): Rect {
   return { x: (f.width - w) / 2, y: f.content.y, width: w, height: f.content.height };
 }
@@ -837,6 +869,13 @@ function bands(f: Frame, centre: Rect, pill = false, controls?: Rect): { queue: 
   // ResizeObserver pass). A pill that fits one row never spills over the centre's header (it
   // grows as an overlay only while the owner points at it). A presentation's controls hold the
   // band's right end: the pill stops a gap before them.
+  if (f.phone) {
+    const i = STAGE.PHONE_BAND_INSET;
+    return {
+      queue: { x: i, y: f.bandTop, width: Math.max(0, f.width - 2 * i), height: STAGE.BAND },
+      dock: { x: STAGE.MARGIN, y: f.bandBottom, width: Math.max(0, f.width - 2 * STAGE.MARGIN), height: STAGE.BAND },
+    };
+  }
   const right = controls ? Math.max(f.content.x, controls.x - STAGE.GAP) : f.content.x + f.content.width;
   const qw = Math.max(0, Math.min(STAGE.QUEUE_MAX, right - f.content.x));
   const qx = Math.min(Math.max(centre.x + (centre.width - qw) / 2, f.content.x), right - qw);
@@ -1069,7 +1108,11 @@ function planWith(
 ): StagePlan {
   // Items: at most the record's MAX_CONTAINERS cards, plus a grouped card the view presents beside its group.
   const list = containers.slice(0, MAX_CONTAINERS + MAX_FILMSTRIP);
-  const f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand, opts.centreMin);
+  // A page side by side or a presentation keeps its bands: it is drawn over the chat's head, and
+  // its exits live there.
+  const phone = stage.width > 0 && stage.width < PHONE_STAGE_PX && view.mode === 'float';
+  const f = frameOf(Math.max(0, stage.width), Math.max(0, stage.height), bottomBand, opts.centreMin,
+    phone ? { queue: !!opts.queueUp, terminals: (opts.terminals ?? 0) > 0 } : undefined);
   const narrow = f.width < (opts.narrowPx ?? NARROW_STAGE_PX);
   const ids = new Set(list.map((c) => c.id));
   // An item's place in the RECORD (a group stands at its first card's), not in this list: a
@@ -1088,7 +1131,7 @@ function planWith(
     // narrow stage, or one the owner put away himself).
     others.sort((a, b) => Number(liveIds.has(b)) - Number(liveIds.has(a)) || (z.get(a) ?? 0) - (z.get(b) ?? 0));
     return {
-      width: f.width, height: f.height, narrow, mode, centre, cards, others,
+      width: f.width, height: f.height, narrow, phone, mode, centre, cards, others,
       othersRect: f.othersRect, othersZone: f.othersZone, agendaPill: f.agendaPill, pill: opts.agendaPill ?? null, ...bands(f, centre, !!opts.agendaPill, extra.controls), free: f.free,
       centreWidth, unit, order: list.map((c) => c.id), orbit, layout: null, chat: 'column', ...(more ? { more } : {}), ...(railPlan ? { rail: railPlan } : {}), ...extra,
     };
@@ -1150,6 +1193,12 @@ function planWith(
     return { ...f.content, x: f.content.x + T + GAP, width: f.content.width - T - GAP };
   };
 
+  /** The card a measured page needs, chrome included; absent = it takes what it is given. */
+  const pageWidth = (id: string): number | undefined => {
+    const fit = list.find((x) => x.id === id)?.fit;
+    return fit ? Math.max(fit + STAGE.CARD_CHROME.w + STAGE.WIDGET_BORDER_W, STAGE.FIT_MIN.w) : undefined;
+  };
+
   // ── half (a narrow stage opens it as a sheet over the centre) ──
   const half = view.mode === 'half' && view.card && ids.has(view.card) ? view.card : null;
   if (half) {
@@ -1169,7 +1218,7 @@ function planWith(
       const C = STAGE.CARD_CHROME;
       const w = item.kind === 'web' && item.aspect
         ? Math.max(Math.min(STAGE.FIT_MIN.w, content.width / 2), Math.min(content.width - STAGE.GAP - STAGE.PRESENT_MIN, (content.height - C.h) * item.aspect + C.w))
-        : (content.width - STAGE.GAP) / 2;
+        : Math.min((content.width - STAGE.GAP) / 2, pageWidth(half) ?? Infinity);
       centre = { x: content.x, y: content.y, width: content.width - w - STAGE.GAP, height: content.height };
       region = { x: content.x + content.width - w, y: content.y, width: w, height: content.height };
       if (item.kind === 'web' && item.aspect) region = fitCard(region, item.aspect);
@@ -1258,9 +1307,18 @@ function planWith(
       const plainW = Math.max(STAGE.REGION_MIN, Math.min(share, content.width - 2 * STAGE.GAP - 2 * STAGE.FIT_MIN.w));
       // A one-line rail hands its width to the chat; two cards keep FIT_MIN side by side.
       const w = railSaved ? Math.max(plainW, Math.min(Math.max(plainW + railSaved, STAGE.PRESENT_MIN), content.width - 2 * STAGE.GAP - 2 * STAGE.FIT_MIN.w)) : plainW;
-      const centre: Rect = { x: content.x, y: content.y, width: w, height: content.height };
-      const region: Rect = { x: content.x + w + STAGE.GAP, y: content.y, width: content.width - w - STAGE.GAP, height: content.height };
-      const { rects } = fitArrange(region, ordered.map((id) => ({ aspect: list.find((x) => x.id === id)?.aspect })));
+      const items = ordered.map((id) => ({ aspect: list.find((x) => x.id === id)?.aspect }));
+      const regionAt = (cw: number): Rect => ({ x: content.x + cw + STAGE.GAP, y: content.y, width: content.width - cw - STAGE.GAP, height: content.height });
+      // Every card a measured page: the region is as wide as they need, the chat takes the rest.
+      const needs = ordered.map(pageWidth);
+      let chatW = w;
+      if (needs.every((n) => n !== undefined)) {
+        const cols = new Set(fitArrange(regionAt(w), items).slots.map((r) => r.x)).size;
+        const need = cols * Math.max(...(needs as number[])) + (cols - 1) * STAGE.GAP;
+        chatW = Math.max(w, content.width - STAGE.GAP - need);
+      }
+      const centre: Rect = { x: content.x, y: content.y, width: chatW, height: content.height };
+      const { rects } = fitArrange(regionAt(chatW), items);
       ordered.forEach((id, k) => place(id, rects[k], 'present'));
       for (const c of list) if (!cards[c.id]) toOthers(c);
       return finish(centre, centre.width, 'present', undefined, undefined, { layout, chat: 'column', controls });
@@ -1273,7 +1331,30 @@ function planWith(
     const plainMiniW = Math.min(STAGE.MINI_MAX_W, Math.max(STAGE.MINI_MIN_W, STAGE.MINI_FRAC_W * f.width));
     // With a one-line rail the chat reads at its comfortable width, and the cards keep their floor.
     const gain = railSaved ? STAGE.MINI_RAIL_W_WIDE - STAGE.MINI_RAIL_W : 0;
-    const miniW = railSaved ? Math.max(plainMiniW + railSaved, Math.min(STAGE.PRESENT_MIN, c.width - STAGE.GAP - STAGE.REGION_MIN - gain) + gain) : plainMiniW;
+    const roomyMiniW = railSaved ? Math.max(plainMiniW + railSaved, Math.min(STAGE.PRESENT_MIN, c.width - STAGE.GAP - STAGE.REGION_MIN - gain) + gain) : plainMiniW;
+    // The review's page, or the one big card: narrower than what the cards are left, a measured
+    // page gives the rest to the chat beside it (a chat folded to its bar has no use for it).
+    // A review's row keeps its cards at their floor under it.
+    const page = layout === 'review' ? ordered.find((id) => kindOf(id) === 'web') ?? ordered.find((id) => kindOf(id) === 'browser') ?? ordered[0] : ordered[0];
+    const rowFloor = layout === 'review' && ordered.length > 1 ? (ordered.length - 1) * (STAGE.FIT_MIN.w + STAGE.GAP) - STAGE.GAP : 0;
+    const pageNeed = layout !== 'filmstrip' && chat === 'mini' ? pageWidth(page) : undefined;
+    const fitted = pageNeed !== undefined && c.width - roomyMiniW - STAGE.GAP > Math.max(pageNeed, rowFloor);
+    const reviewRowH = (h: number) => Math.min(STAGE.REVIEW_ROW_MAX, Math.max(STAGE.REVIEW_ROW_MIN, STAGE.REVIEW_ROW_FRAC * h));
+    // A web page with a device width picked (owner 2026-10-31), as half does: the CARD takes the
+    // device's shape and the chat the width that leaves, down to its own floor. Its page has no
+    // measured width (stageItems), so this and `fitted` never meet. A folded chat wants no width:
+    // the card sits in the middle of what it leaves.
+    const pageItem = list.find((x) => x.id === page);
+    const device = layout !== 'filmstrip' && pageItem?.kind === 'web' ? pageItem.aspect : undefined;
+    const deviceW = device && chat === 'mini'
+      ? Math.min(c.width - STAGE.GAP - STAGE.MINI_MIN_W, Math.max(
+        Math.min(STAGE.FIT_MIN.w, c.width / 2),
+        rowFloor,
+        ((layout === 'review' ? c.height - reviewRowH(c.height) - STAGE.GAP : c.height) - STAGE.CARD_CHROME.h) * device + STAGE.CARD_CHROME.w,
+      ))
+      : undefined;
+    const pageRect = (r: Rect): Rect => (device ? fitCard(r, device) : r);
+    const miniW = deviceW !== undefined ? c.width - STAGE.GAP - deviceW : fitted ? c.width - STAGE.GAP - Math.max(pageNeed, rowFloor) : roomyMiniW;
     // The chat takes the whole left column (owner 2026-10-25): a short mini left an unused gap above it.
     const miniH = c.height;
     const centre: Rect = chat === 'bar'
@@ -1290,16 +1371,17 @@ function planWith(
     }
     if (layout === 'review') {
       // The child's page big on top (its site, else its browser), its other cards in a row under it.
-      const page = ordered.find((id) => kindOf(id) === 'web') ?? ordered.find((id) => kindOf(id) === 'browser') ?? ordered[0];
       const rest = ordered.filter((id) => id !== page);
-      const rowH = Math.min(STAGE.REVIEW_ROW_MAX, Math.max(STAGE.REVIEW_ROW_MIN, STAGE.REVIEW_ROW_FRAC * main.height));
-      place(page, { x: main.x, y: main.y, width: main.width, height: Math.max(0, main.height - rowH - STAGE.GAP) }, 'present');
+      const rowH = reviewRowH(main.height);
+      place(page, pageRect({ x: main.x, y: main.y, width: main.width, height: Math.max(0, main.height - rowH - STAGE.GAP) }), 'present');
       const rw = rest.length ? (main.width - (rest.length - 1) * STAGE.GAP) / rest.length : 0;
       rest.forEach((id, k) => place(id, { x: main.x + k * (rw + STAGE.GAP), y: main.y + main.height - rowH, width: rw, height: rowH }, 'present'));
+      if (fitted) cards[page] = { ...cards[page], fitted };
       for (const k of list) if (!cards[k.id]) toOthers(k);
       return finish(centre, centre.width, 'present', undefined, undefined, extra);
     }
-    place(ordered[0], main, 'present');
+    place(ordered[0], pageRect(main), 'present');
+    if (fitted) cards[page] = { ...cards[page], fitted };
     for (const k of list) if (!cards[k.id]) toOthers(k);
     return finish(centre, centre.width, 'present', undefined, undefined, extra);
   }

@@ -655,8 +655,10 @@ async function stage(page, base, adopted = []) {
   ok('"Ask about this" shows on the centre while the card is over it', target === 1, `target=${target}`);
   await page.waitForTimeout(900);
   const draft1 = await valueOf(composer);
-  const refs = (text, id) => (text.match(new RegExp(`@card:${id} “`, 'g')) ?? []).length;
-  ok('one @card reference lands in the super composer', refs(draft1, D.id) === 1, draft1);
+  // A dropped card is a chip in the box (owner 2026-10-31), never its raw @card words; the send
+  // still writes `@card:<id> “<title>”` (tests/unit/super-card-chip.test.ts).
+  const chips = (text) => (text.match(/\u2068\u00A0?\u2003/g) ?? []).length;
+  ok('one card chip lands in the super composer, no raw @card words', chips(draft1) === 1 && !draft1.includes('@card:'), draft1);
   ok('…the super composer has focus', await page.evaluate(() => !!document.activeElement?.closest('[data-super-slot="centre"]')));
   let g2 = await geo(page);
   ok('…the card is back where it was (<= 1 px)', near1(cardIn(g2, D.id)?.r, D.r), JSON.stringify({ got: cardIn(g2, D.id)?.r, want: D.r }));
@@ -667,7 +669,7 @@ async function stage(page, base, adopted = []) {
   await eFrame.getByTestId('super-card-ask').click();
   await page.waitForTimeout(300);
   const draft2 = await valueOf(composer);
-  ok('the card\'s "Ask about this" button adds one reference of its own', refs(draft2, E.id) === 1 && refs(draft2, D.id) === 1, draft2);
+  ok('the card\'s "Ask about this" button adds one chip of its own', chips(draft2) === 2 && !draft2.includes('@card:'), draft2);
   await composer.fill('');
 
   console.log('\n── a working child glows; its card says what it is doing (O1, O10)');
@@ -1461,7 +1463,7 @@ async function motion(engineName, browserType, base) {
     }
   }
   // Collapsed while handed over: the page shows again, at the scroll position it had.
-  await page.locator('.agent-overlay-collapse').first().click();
+  await page.evaluate(() => document.activeElement?.blur?.()); await page.keyboard.press('Escape');
   await page.waitForTimeout(800);
   const shown = await coverOf();
   const pageTop1 = await topOf();

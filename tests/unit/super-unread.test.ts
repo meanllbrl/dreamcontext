@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DWELL_MS, SAME_MESSAGE_MS, advanceDwell, firstMountedRow, leadIndex, mergeMarks, mostlyVisible, ownerCanRead, sideOf, unreadOf, unreadUnits, wordsKey, withRead,
+  DWELL_MS, GLIDE_REACH, SAME_MESSAGE_MS, advanceDwell, chooseLine, firstMountedRow, glideEase, glideFrom, nextUnreadIndex, leadIndex, mergeMarks, mostlyVisible, ownerCanRead, sideOf, unreadOf, unreadUnits, wordsKey, withRead,
   type ReadMarks, type UnreadItem,
 } from '../../dashboard/src/components/sleepy/super/superUnread';
 
@@ -110,6 +110,66 @@ describe('where the page starts', () => {
     const us = [{ itemId: null }, { itemId: 'a' }, { itemId: 'b' }];
     expect(firstMountedRow(us, [true, false, true])).toBe(2);
     expect(firstMountedRow(us, [true, false, false])).toBe(-1);
+  });
+});
+
+describe('where a jump goes', () => {
+  const view = { top: 100, bottom: 700 };
+  const above = (top: number) => ({ top, bottom: top + 50 });
+  it('the oldest out of view, above before below', () => {
+    expect(nextUnreadIndex([above(800), above(-300), above(-900)], view)).toBe(2);
+  });
+  it('nothing above: the nearest below', () => {
+    expect(nextUnreadIndex([above(1200), above(300), above(800)], view)).toBe(2);
+  });
+  it('a row above the window comes first', () => {
+    expect(nextUnreadIndex([above(800), null], view)).toBe(1);
+  });
+  it('a walk goes on forward, past a row still inside its dwell', () => {
+    const rows = [above(-300), above(-900), above(800), above(1200)];
+    expect(nextUnreadIndex(rows, view, above(-300))).toBe(2);
+    expect(nextUnreadIndex(rows, view, above(800))).toBe(3);
+  });
+  it('a walk at its end falls back to the oldest', () => {
+    expect(nextUnreadIndex([above(-900), above(-300)], view, above(-300))).toBe(0);
+  });
+  it('all on screen: nowhere to go', () => {
+    expect(nextUnreadIndex([above(200), above(300)], view)).toBe(-1);
+    expect(nextUnreadIndex([], view)).toBe(-1);
+  });
+});
+
+describe('the line stays put', () => {
+  const base = { held: true, heldInView: true, heldIsLead: false, lead: true, leadInView: false, pinned: false };
+  it('holds its row while that row is on screen, read or not', () => {
+    expect(chooseLine(base)).toBe('held');
+    expect(chooseLine({ ...base, lead: false })).toBe('held');
+  });
+  it('off screen it goes to the lead, or away', () => {
+    expect(chooseLine({ ...base, heldInView: false })).toBe('lead');
+    expect(chooseLine({ ...base, heldInView: false, lead: false })).toBe('none');
+  });
+  it('a held lead off screen does not repaint', () => {
+    expect(chooseLine({ ...base, heldInView: false, heldIsLead: true })).toBe('held');
+  });
+  it('a message arriving under a pinned view draws none', () => {
+    expect(chooseLine({ ...base, held: false, heldInView: false, leadInView: true, pinned: true })).toBe('none');
+    expect(chooseLine({ ...base, held: false, heldInView: false, leadInView: true })).toBe('lead');
+  });
+});
+
+describe('the glide', () => {
+  it('a short way glides whole', () => {
+    expect(glideFrom(1000, 700)).toBe(1000);
+  });
+  it('a long way starts one reach off the target, on the side it came from', () => {
+    expect(glideFrom(5000, 100)).toBe(100 + GLIDE_REACH);
+    expect(glideFrom(100, 5000)).toBe(5000 - GLIDE_REACH);
+  });
+  it('the ease runs from 0 to 1 and never overshoots', () => {
+    expect(glideEase(0)).toBe(0);
+    expect(glideEase(1)).toBe(1);
+    for (const t of [0.25, 0.5, 0.75, 0.99]) expect(glideEase(t)).toBeLessThan(1);
   });
 });
 

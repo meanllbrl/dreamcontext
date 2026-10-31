@@ -39,7 +39,9 @@ export const WEB_WIDGET_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
 
 export { DESKTOP_WIDTH, desktopScale } from '../../../lib/webDevice';
 
-export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zoomBridge, control, desktop, device }: WidgetProps & {
+export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zoomBridge, control, desktop, device, onPageFit }: WidgetProps & {
+  /** A project page reports its own width (lib/pageFit.ts). */
+  onPageFit?: (width: number) => void;
   /** A PAGE's frame is allowed and shown (its trust gate passed): the Super Agent's card offers
    *  it full screen only from then on. Never called for a file. */
   onFrameAllowed?: (href: string) => void;
@@ -64,7 +66,7 @@ export function WebWidget({ elementId, payload, active, size, onFrameAllowed, zo
     );
   }
   if (check.kind === 'file') {
-    return <WebFile elementId={elementId} file={check} title={payload.title || check.name} active={active} size={size} zoomBridge={zoomBridge} desktop={desktop} />;
+    return <WebFile elementId={elementId} file={check} title={payload.title || check.name} active={active} size={size} zoomBridge={zoomBridge} desktop={desktop} onPageFit={onPageFit} />;
   }
   return <WebPage page={check} title={payload.title || check.unicodeHost} active={active} size={size} onFrameAllowed={onFrameAllowed} control={control} desktop={desktop} device={device} />;
 }
@@ -310,7 +312,7 @@ function useFileAccess(src: string, attempt: number): FileAccess {
   return access;
 }
 
-function WebFile({ elementId, file, title, active, size, zoomBridge, desktop }: FrameProps & { elementId: string; file: FileCheck; zoomBridge?: boolean }) {
+function WebFile({ elementId, file, title, active, size, zoomBridge, desktop, onPageFit }: FrameProps & { elementId: string; file: FileCheck; zoomBridge?: boolean; onPageFit?: (width: number) => void }) {
   const tx = useWbText();
   const api = useApi();
   const { vault } = useVault();
@@ -395,6 +397,7 @@ function WebFile({ elementId, file, title, active, size, zoomBridge, desktop }: 
           // page's does) and the page scrolls inside it, at the desktop width when presented.
           fill
           desktop={desktop}
+          onPageFit={onPageFit}
         />
       </div>
     );

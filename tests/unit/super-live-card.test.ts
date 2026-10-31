@@ -17,6 +17,7 @@ vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { tmpdir } = require('node:os') as typeof import('node:os');
   process.env.HOME = mkdtempSync(`${tmpdir()}/super-live-card-home-`);
+  process.env.DREAMCONTEXT_DESKTOP = '1';
 });
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';

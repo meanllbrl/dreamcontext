@@ -730,9 +730,10 @@ export function superOwnerSpoke(sessionId: string, now = Date.now(), told: reado
   void track(closeOpenAsks(key, sessionId, told));
 }
 
-/** One agenda line an owner message is written about (an `[About agenda line …]` header), or
- *  a message it replies to (`[Reply to message ref=…]`, `id` its ref): one per part. */
-export interface AgendaAbout { kind: 'note' | 'item' | 'reply'; id: string }
+/** One agenda line an owner message is written about (an `[About agenda line …]` header), a
+ *  message it replies to (`[Reply to message ref=…]`, `id` its ref) or a passage of a stage card
+ *  (`[About card …]`, `id` the card): one per part. */
+export interface AgendaAbout { kind: 'note' | 'item' | 'reply' | 'card'; id: string }
 
 /**
  * A message about agenda lines (owner 2026-10-23; several in one message since 2026-10-24)

@@ -9,6 +9,7 @@ import {
 import {
   handleAgentTeammateHistory, handleAgentTeammates, launchedAt, launchedBy, parseLaunched, registeredTeammates,
 } from '../../src/server/routes/agent-teammates.js';
+import { resetLiveRunCachesForTests } from '../../src/server/routes/agent-terminal.js';
 
 // ─── Transcript fixtures (the shapes claude 2.1.281 writes for a `-p` run) ─────────
 
@@ -217,6 +218,8 @@ describe('GET /api/agent/teammates', () => {
   it('a registered run with no transcript is starting, then never started', async () => {
     writeLive([{ a: 'planner', role: 'planner', k: 'spawn', sid: SID, at: new Date().toISOString() }]);
     expect((await call(handleAgentTeammates, `claudeId=${PANE}`)).teammates[0]).toMatchObject({ status: 'running', missing: true });
+    // A same-size rewrite in one mtime tick looks unchanged to the live-file cache (coarse on Windows).
+    resetLiveRunCachesForTests();
     writeLive([{ a: 'planner', role: 'planner', k: 'spawn', sid: SID, at: new Date(Date.now() - 10 * 60_000).toISOString() }]);
     expect((await call(handleAgentTeammates, `claudeId=${PANE}`)).teammates[0]).toMatchObject({ status: 'failed', missing: true });
   });

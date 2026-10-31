@@ -282,7 +282,7 @@ async function runEngine(engineName) {
       if (page_ === 'tasks') {
         const btn = pill.first();
         ok('the pill is the Others pill (super-others-stack, name, dots/count per the record)', (await btn.getAttribute('class'))?.includes('super-others-stack')
-          && (await btn.locator('.super-others-name').innerText()).trim() === 'dreamcontext Super Agent');
+          && (await btn.locator('.super-others-name').innerText()).trim() === 'Super Agent');
         const st = await record();
         const live = Object.values(st.children ?? {}).filter((c) => c.endedAt === undefined).length;
         const countText = (await btn.locator('.super-others-count').count()) ? Number((await btn.locator('.super-others-count').innerText()).trim()) : 0;

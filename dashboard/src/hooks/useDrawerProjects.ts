@@ -9,7 +9,7 @@
  * Polls every 15 s (through `pollMs`) only while the drawer is on screen and the window
  * focused, at most `DRAWER_POLL_CAP` projects; the rest are read once when they expand.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiClient } from '../api/client';
 import type { AgentSummary } from './useAgents';
 import type { AgentFeed, AutomationSummary } from './useAutomations';
@@ -17,6 +17,7 @@ import { buildRoster, type TeamAgent } from '../components/aiteam/teamModel';
 import {
   DRAWER_POLL_MS, fanoutTargets, teamRowsOf, type FanoutFacts,
 } from '../components/layout/newshell/drawerModel';
+import { moveBefore } from '../components/sleepy/chatWindows';
 import { pollMs, useWindowActivity } from '../lib/windowActivity';
 
 export async function readFanoutFacts(vault: string): Promise<FanoutFacts> {
@@ -46,7 +47,12 @@ export function perWindowOf(raw: unknown[]): Array<{ id: string; name: string; t
   });
 }
 
-export function useDrawerProjects(expanded: readonly string[], mounted: readonly string[], visible: boolean): Record<string, FanoutFacts> {
+export function useDrawerProjects(expanded: readonly string[], mounted: readonly string[], visible: boolean): {
+  facts: Record<string, FanoutFacts>;
+  /** A window row of a project that is not mounted, dragged: the row moves now, the roster on
+   *  disk follows, and a fresh read settles it (a refused write puts the row back). */
+  moveWindow: (vault: string, id: string, before: string | null) => void;
+} {
   const activity = useWindowActivity();
   const live = visible && activity.focused && !activity.hidden;
   const [facts, setFacts] = useState<Record<string, FanoutFacts>>({});
@@ -57,6 +63,24 @@ export function useDrawerProjects(expanded: readonly string[], mounted: readonly
     [expanded.join('\n'), mounted.join('\n'), live],
   );
   const readOnce = useRef(new Set<string>());
+  const factsRef = useRef(facts);
+  factsRef.current = facts;
+  /** Drags per project: a read that began before the latest one holds the old order, so it
+   *  must not land (the row would jump back, and the next drag would save from it). */
+  const moves = useRef(new Map<string, number>());
+  const movesOf = (v: string) => moves.current.get(v) ?? 0;
+  const moveWindow = useCallback((vault: string, id: string, before: string | null) => {
+    const far = factsRef.current[vault];
+    if (!far?.windows) return;
+    const windows = moveBefore(far.windows, id, before);
+    const move = movesOf(vault) + 1;
+    moves.current.set(vault, move);
+    setFacts((prev) => (prev[vault] ? { ...prev, [vault]: { ...prev[vault], windows } } : prev));
+    void new ApiClient(vault).put<unknown>('/agent/sessions/window-order', { order: windows.map((w) => w.id) })
+      .catch((err) => console.warn('[drawer] a window order was not saved:', err))
+      .then(() => readFanoutFacts(vault))
+      .then((f) => { if (movesOf(vault) === move) setFacts((prev) => ({ ...prev, [vault]: f })); }, () => { /* each read degrades to empty */ });
+  }, []);
 
   // Once: every far project not yet read (a project that expands while the drawer is hidden is
   // read when it shows).
@@ -69,9 +93,10 @@ export function useDrawerProjects(expanded: readonly string[], mounted: readonly
       if (readOnce.current.has(v)) continue;
       readOnce.current.add(v);
       started.push(v);
+      const seen = movesOf(v);
       void readFanoutFacts(v).then((f) => {
         landed.add(v);
-        if (!gone) setFacts((prev) => ({ ...prev, [v]: f }));
+        if (!gone && movesOf(v) === seen) setFacts((prev) => ({ ...prev, [v]: f }));
       }, () => { /* each read already degrades to empty; this keeps the chain quiet */ });
     }
     // A read cut short by a change (another project expanded, focus moved) is read again next time.
@@ -88,8 +113,12 @@ export function useDrawerProjects(expanded: readonly string[], mounted: readonly
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = () => {
       timer = setTimeout(() => {
+        const seen = new Map(poll.map((v) => [v, movesOf(v)] as const));
         void Promise.all(poll.map((v) => readFanoutFacts(v).then((f) => [v, f] as const)))
-          .then((pairs) => { if (!gone) setFacts((prev) => ({ ...prev, ...Object.fromEntries(pairs) })); })
+          .then((pairs) => {
+            const fresh = pairs.filter(([v]) => movesOf(v) === seen.get(v));
+            if (!gone) setFacts((prev) => ({ ...prev, ...Object.fromEntries(fresh) }));
+          })
           .catch((err) => console.warn('[drawer] a project read failed:', err))
           // A failed round never stops the polling.
           .finally(() => { if (!gone) tick(); });
@@ -106,5 +135,5 @@ export function useDrawerProjects(expanded: readonly string[], mounted: readonly
     }
   }, [expanded, mounted]);
 
-  return facts;
+  return { facts, moveWindow };
 }

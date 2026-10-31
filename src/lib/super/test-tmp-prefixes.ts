@@ -187,6 +187,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-download-',
   'dc-droppath-',
   'dc-ds-',
+  'dc-du-',
   'dc-e2e-code-a-',
   'dc-e2e-code-b-',
   'dc-e2e-code-bare-',

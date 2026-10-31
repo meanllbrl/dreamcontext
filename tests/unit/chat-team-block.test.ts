@@ -264,8 +264,10 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
   it('the exact diff', () => {
     const before = readFileSync(join(__dirname, '..', '..', 'eval', 'super-team-routing', 'frozen', 'super-briefing.md'), 'utf-8').split('\n');
     const after = superBriefing(SUPER_ORCHESTRATION_GUIDE_PATH).split('\n');
-    const gone = before.filter((l) => !after.includes(l));
-    const added = after.filter((l) => !before.includes(l));
+    // The two lines rewrapped around `[About card …]` (rev 24) are pinned in super-briefing.
+    const card = (l: string) => /is him replying to that message[:,]$|^`quote:` is a pointer|^`\[About card @card:<id>\]` to a card passage/.test(l);
+    const gone = before.filter((l) => !after.includes(l) && !card(l));
+    const added = after.filter((l) => !before.includes(l) && !card(l));
     // The AI Team bullet and the rev are this test's subject; the other lines are the 0.36.2
     // branches merged on top (plan summary, global members, `origin=<ref>`), each pinned by its own test.
     expect(gone).toEqual([
@@ -290,7 +292,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       'the report stays after his answer. Asking him to approve or start a plan or any work: that report',
       'carries what he says yes to (the problem in one sentence, 3-6 short bullets of what will be done,',
       'his decisions, cost or risk in money, never time) and your text gives the same summary, as long as',
-      expect.stringContaining('it needs (the exception to 2-4).'),
+      'it needs (the exception to 2-4). A report on a plan or on options is DRAWN, never written: screen',
+      expect.stringContaining('mockups, options side by side, short headings; text at the minimum.'),
       '- His note on a running job: before its first reviewer, into that child; after, a new small job.',
       '  `super resume <child>` reopens it); `--force` only if the owner asked.',
       '- Your AI Team, when the project has one, is listed under `## Your AI Team` (and in `super state`',
@@ -310,8 +313,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '- New work: `super note clear`. Write a day or date, never "today"/"tomorrow".',
       expect.stringContaining('with `origin=<ref>`'),
       '  result with `<!-- re:<ref> -->`.',
-      expect.stringContaining('<super-brief rev=22>'),
+      expect.stringContaining('<super-brief rev=24>'),
     ]);
-    expect(after.length).toBe(before.length + 16);
+    expect(after.length).toBe(before.length + 17);
   });
 });

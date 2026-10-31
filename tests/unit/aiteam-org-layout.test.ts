@@ -113,3 +113,46 @@ describe('the Org chart in the page', () => {
     expect(teamCount(TEAM)).toBe(4);
   });
 });
+
+describe('the band of members of all projects', () => {
+  const team = (...slugs: string[]) => buildTree(slugs.map((slug) => ({ slug, reportsTo: null, team: null })));
+
+  it('no band: nothing about the chart moves', () => {
+    const plain = layoutOrgChart(team('a', 'b'));
+    expect(plain.band).toBeNull();
+    expect(layoutOrgChart(team('a', 'b'), { band: [] })).toEqual(plain);
+  });
+
+  it('stands below the team, holds its cards, and is on the owner\'s line past every card', () => {
+    const l = layoutOrgChart(team('a', 'b', 'c'), { band: ['x', 'y'] });
+    const teamBottom = Math.max(...l.cards.filter((c) => 'abc'.includes(c.slug)).map((c) => c.y + c.h));
+    expect(l.band!.y).toBeGreaterThan(teamBottom);
+    expect(l.band!.count).toBe(2);
+    for (const s of ['x', 'y']) {
+      const c = l.cards.find((k) => k.slug === s)!;
+      expect(c.y).toBeGreaterThan(l.band!.y);
+      expect(c.x + c.w).toBeLessThanOrEqual(l.band!.x + l.band!.w);
+    }
+    const line = l.edges.find((e) => e.to === '')!;
+    expect(line.points[0]).toEqual([l.width / 2, l.you.h]);
+    const [lx, ly] = line.points[line.points.length - 1];
+    expect(ly).toBe(l.band!.y);
+    expect(lx).toBeGreaterThan(l.band!.x);
+    expect(lx).toBeLessThan(l.band!.x + l.band!.w);
+    // The drop never crosses a card of the team.
+    for (const c of l.cards.filter((k) => 'abc'.includes(k.slug))) expect(lx < c.x || lx > c.x + c.w).toBe(true);
+    expect(l.height).toBe(l.band!.y + l.band!.h);
+  });
+
+  it('a wide band widens the chart; an empty team drops straight from the owner', () => {
+    const l = layoutOrgChart(team(), { band: ['x', 'y', 'z'] });
+    expect(l.width).toBeGreaterThanOrEqual(3 * 200);
+    expect(l.edges[0].points).toHaveLength(2);
+    expect(Math.max(...l.cards.map((c) => c.x + c.w))).toBeLessThanOrEqual(l.width);
+  });
+
+  it('a selected member lights its line', () => {
+    expect(layoutOrgChart(team('a'), { band: ['x'], selected: 'x' }).edges.find((e) => e.to === '')!.onPath).toBe(true);
+    expect(layoutOrgChart(team('a'), { band: ['x'], selected: 'a' }).edges.find((e) => e.to === '')!.onPath).toBe(false);
+  });
+});

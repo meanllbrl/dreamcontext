@@ -87,32 +87,41 @@ const NOTHING: ReadonlySet<string> = new Set();
 
 export type QuietReader = (slug: string, run: readonly ThreadEntry[]) => ReadonlySet<string>;
 
+/** Is this run the Super's, by the one rule above? True from its first entry: a job that has only
+ *  said its ask yet is already the Super's. */
+export type SuperJobReader = (slug: string, run: readonly ThreadEntry[]) => boolean;
+
 /**
- * A reader for one pass over a project: `(slug, run) => the entry ids that count for nobody`. The
- * record, the questions and the ledger are read at most once, and only for a run that opened with
- * the Super's ask, so a project that never used it pays nothing.
+ * A reader for one pass over a project. The record, the questions and the ledger are read at most
+ * once, and only for a run that opened with the Super's ask, so a project that never used it pays
+ * nothing.
  */
-export function superQuietReader(contextRoot: string): QuietReader {
+export function superJobReader(contextRoot: string): SuperJobReader {
   let record: SuperRecord | null | undefined;
   const questions = new Map<string, AutomationQuestion[]>();
   return (slug, run) => {
     const ordered = [...run].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const ask = ordered[0];
-    if (!ask || ask.kind !== 'user' || ask.via !== 'super') return NOTHING;
-    if (ordered.some((e) => e.kind === 'user' && e.via !== 'super')) return NOTHING;
-    if (ordered.some((e) => e.kind === 'system' && e.event && LOUD_EVENTS.has(e.event))) return NOTHING;
+    if (!ask || ask.kind !== 'user' || ask.via !== 'super') return false;
+    if (ordered.some((e) => e.kind === 'user' && e.via !== 'super')) return false;
+    if (ordered.some((e) => e.kind === 'system' && e.event && LOUD_EVENTS.has(e.event))) return false;
     if (record === undefined) record = readRecord(contextRoot);
-    if (!record) return NOTHING;
-    if (!record.enabled && record.open.has(`${slug}::${ask.runId}`)) return NOTHING;
-    if (!ordered.every((e) => e.kind !== 'user' || askedHere(contextRoot, slug, e))) return NOTHING;
+    if (!record) return false;
+    if (!record.enabled && record.open.has(`${slug}::${ask.runId}`)) return false;
+    if (!ordered.every((e) => e.kind !== 'user' || askedHere(contextRoot, slug, e))) return false;
     if (!questions.has(slug)) {
       let all: AutomationQuestion[] = [];
       try { all = listQuestions(contextRoot, slug); } catch { all = []; }
       questions.set(slug, all);
     }
-    if (questions.get(slug)!.some((q) => askedDuring(q, ordered))) return NOTHING;
-    return new Set(ordered.filter((e) => e.kind !== 'user').map((e) => e.id));
+    return !questions.get(slug)!.some((q) => askedDuring(q, ordered));
   };
+}
+
+/** `(slug, run) => the entry ids that count for nobody`: everything a Super job said but its ask. */
+export function superQuietReader(contextRoot: string): QuietReader {
+  const isJob = superJobReader(contextRoot);
+  return (slug, run) => (isJob(slug, run) ? new Set(run.filter((e) => e.kind !== 'user').map((e) => e.id)) : NOTHING);
 }
 
 /** Would a banner about this run be noise: a Super job, with the project handed over right now?

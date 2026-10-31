@@ -553,7 +553,7 @@ async function flow(pw, base, dashPort, restart) {
   await shot(page, 'web-15-mobile-390-clear-ask.png');
   await page.getByTestId('super-zoom-clear-no').click();
   // Zoomed on a narrow card: the steps give way, Fit (the way back) stays.
-  await page.getByTestId('super-zoom').first().evaluate((el) => el.dispatchEvent(new WheelEvent('wheel', { deltaY: -400, ctrlKey: true, bubbles: true, cancelable: true, clientX: el.getBoundingClientRect().left + 60, clientY: el.getBoundingClientRect().top + 60 })));
+  await page.getByTestId('super-zoom-stage').first().evaluate((el) => el.dispatchEvent(new WheelEvent('wheel', { deltaY: -400, ctrlKey: true, bubbles: true, cancelable: true, clientX: el.getBoundingClientRect().left + 60, clientY: el.getBoundingClientRect().top + 60 })));
   await page.waitForTimeout(400);
   const zoomed390 = await page.locator('[data-testid="super-zoom"][data-zoomed]').count();
   ok('390 px zoomed: Fit is there, the steps are not', zoomed390 > 0 && await page.getByTestId('super-zoom-fit').isVisible() && !(await page.getByTestId('super-zoom-in').isVisible()), JSON.stringify({ zoomed390 }));

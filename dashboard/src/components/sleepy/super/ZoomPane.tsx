@@ -38,6 +38,11 @@ const FIT = { scale: 1, x: 0, y: 0 };
  * 2026-10-27, "Inspect does not work, is it because it isn't localhost?" — yes). There the button
  * is the shield, named for what it does, and turning it on says why picking is not offered.
  *
+ * A live page's bar is a STRIP under the page, never over it (owner 2026-10-31: on a phone width
+ * it covered the page's bottom menu and nothing there could be tapped): the stage, and with it
+ * the page and its device fit, is shorter by the strip. The transient bar of a zoomed picture or
+ * project page floats, as it covers nothing that cannot be panned away.
+ *
  * `onDevice` (a live page's card): phone / tablet / desktop widths in the bar (lib/webDevice.ts).
  * `interactive` false (the card floating, or parked off the stage to keep its page alive): no
  * bar, no gestures, the view fitted.
@@ -151,29 +156,35 @@ export function ZoomPane({ children, live = false, interactive = true, control, 
   const canClear = !!control?.canClear;
   return (
     <div
-      ref={stageRef}
       className="super-zoom"
       data-testid="super-zoom"
-      data-pinch-owner={interactive ? 'true' : undefined}
+      data-strip={interactive && live ? 'true' : undefined}
       data-scale={view.scale.toFixed(3)}
       data-zoomed={zoomed || undefined}
       data-inspect={inspect || undefined}
       data-picker={inspect && picker ? 'true' : undefined}
       data-grabbing={pz.grabbing || undefined}
       onDoubleClick={(e) => { if (interactive && zoomed && !(e.target as HTMLElement).closest('.super-zoom-bar')) fit(); }}
-      {...(interactive && zoomed && !inspect ? pz.handlers : {})}
     >
       <div
-        className="super-zoom-content"
-        data-testid="super-zoom-content"
-        style={{ transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.scale})` }}
+        ref={stageRef}
+        className="super-zoom-stage"
+        data-testid="super-zoom-stage"
+        data-pinch-owner={interactive ? 'true' : undefined}
+        {...(interactive && zoomed && !inspect ? pz.handlers : {})}
       >
-        {children}
+        <div
+          className="super-zoom-content"
+          data-testid="super-zoom-content"
+          style={{ transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.scale})` }}
+        >
+          {children}
+        </div>
+        {interactive && inspect && !picker && <div className="super-zoom-shield" data-testid="super-zoom-shield" {...pz.handlers} />}
+        {interactive && live && inspect && !picker && !control?.proxied && !askClear && (
+          <p className="super-zoom-note" role="status" data-testid="super-zoom-nopick">{t('super.zoom.noPick')}</p>
+        )}
       </div>
-      {interactive && inspect && !picker && <div className="super-zoom-shield" data-testid="super-zoom-shield" {...pz.handlers} />}
-      {interactive && live && inspect && !picker && !control?.proxied && !askClear && (
-        <p className="super-zoom-note" role="status" data-testid="super-zoom-nopick">{t('super.zoom.noPick')}</p>
-      )}
       {interactive && (zoomed || live) && (
         <div className="super-zoom-bar" role="toolbar" aria-label={t('super.zoom.label')} onPointerDown={(e) => e.stopPropagation()}>
           {askClear ? (

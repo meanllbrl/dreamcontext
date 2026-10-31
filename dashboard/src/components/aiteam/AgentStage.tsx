@@ -413,7 +413,9 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, 
 export function AgentConversation({ slug }: { slug: string }) {
   const { vault, bus } = useVault();
   const v = vault ?? '';
-  const agent = useAgent(slug).data?.agent ?? null;
+  const { t } = useI18n();
+  const agentQ = useAgent(slug);
+  const agent = agentQ.data?.agent ?? null;
   const stage = useAgentStage(slug).data ?? null;
   const automations = useAutomations().data;
   const { data: feed } = useAgentFeed();
@@ -436,7 +438,16 @@ export function AgentConversation({ slug }: { slug: string }) {
   const onActivity = useCallback(() => requestOpenAgents({ slug }), [slug]);
   // No page toast out here: a failed reply shows as a line under the conversation.
   const [note, setNote] = useState<string | null>(null);
-  if (!agent) return null;
+  // Never a blank: it is coming, or it is gone and the way to the team is said.
+  if (!agent) {
+    return (
+      <section className="aiteam-convo aiteam-stage" data-stage={slug} data-testid="agent-conversation">
+        {agentQ.isError
+          ? <div className="aiteam-stage-note"><p>{t('aiteam.stage.unavailable')}</p><button type="button" className="aiteam-pill" onClick={onActivity}>{t('aiteam.stage.review')}</button></div>
+          : <div className="aiteam-stage-note"><p>{t('common.loading')}</p></div>}
+      </section>
+    );
+  }
   return (
     <section className="aiteam-convo aiteam-stage" data-stage={slug} data-testid="agent-conversation">
       <StageChat agent={agent} level={stage?.autonomy ?? agent.autonomy ?? 'balanced'} ready={!!stage} vault={v} bus={bus}

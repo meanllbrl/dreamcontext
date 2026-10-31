@@ -41,10 +41,9 @@
   display: none;
 }
 
-/* The header keeps its 44px row but spends it on: [☰] [title] [＋]. The two chrome
-   clearances the desktop strip reserves are meaningless without the strip. */
+/* The header keeps its 44px row but spends it on: [☰] [title] [＋]. The chrome
+   clearance the desktop strip reserves is meaningless without the strip. */
 .agent-surface[data-mobile] .agent-overlay-head {
-  --head-clear-start: 0px;
   --head-clear-end: 0px;
   gap: var(--space-2);
   padding: 0 var(--space-2);
@@ -52,7 +51,6 @@
   padding-top: env(safe-area-inset-top, 0px);
   height: calc(44px + env(safe-area-inset-top, 0px));
 }
-.agent-surface[data-mobile] .agent-overlay-collapse { display: none; }
 
 .mchat-head-btn {
   flex: 0 0 auto;

@@ -44,7 +44,11 @@ vi.mock('node:child_process', async (importOriginal) => {
     ...real,
     spawn: vi.fn((_cmd: string, args: string[], opts: { env?: Record<string, string> }) => {
       const child = new FakeChild();
-      child.script = args[args.length - 1] ?? '';
+      // win32 spawns the chat's claude directly (argv starts with -p, chatSpawnCommand): present it
+      // as the POSIX login-shell script these tests read.
+      child.script = process.platform === 'win32' && args[0] === '-p'
+        ? `exec claude ${args.map((x) => `"${x}"`).join(' ')}`
+        : args[args.length - 1] ?? '';
       child.env = opts?.env ?? {};
       spawned.push(child);
       return child as unknown as import('node:child_process').ChildProcess;
@@ -57,7 +61,7 @@ vi.mock('../../src/server/routes/agent-spawn-shared.js', async (importOriginal) 
   return { ...real, claudeConversationExists: (id: string) => state.transcripts.has(id) };
 });
 
-const { startChatSession } = await import('../../src/server/routes/agent-chat.js');
+const { startChatSession, chatStoreMcp } = await import('../../src/server/routes/agent-chat.js');
 const { _resetChatRegistry } = await import('../../src/lib/assistant/chat-registry.js');
 const { setAutoSwitchEnabled, sandboxDirFor } = await import('../../src/lib/claude-accounts.js');
 const { startPtySession, agentExecLine } = await import('../../src/server/routes/agent-terminal.js');
@@ -115,14 +119,23 @@ describe('chat', () => {
     for (const account of ['', 'work']) {
       const child = spawnChat({ account });
       const a = argvOf(child.script);
-      expect(after(a, '--mcp-config').slice(0, 2), account).toEqual(['$DREAMCONTEXT_MCP_CFG_0', '$DREAMCONTEXT_MCP_CFG_1']);
+      const win = process.platform === 'win32';
+      expect(after(a, '--mcp-config').slice(0, 2), account).toEqual(win ? [computerStorePath(fakeHome), projectStorePath(projectRoot, fakeHome)] : ['$DREAMCONTEXT_MCP_CFG_0', '$DREAMCONTEXT_MCP_CFG_1']);
       expect(child.env.DREAMCONTEXT_MCP_CFG_0).toBe(computerStorePath(fakeHome));
       expect(child.env.DREAMCONTEXT_MCP_CFG_1).toBe(projectStorePath(projectRoot, fakeHome));
-      expect(child.script).not.toContain(fakeHome);
-      expect(child.script).not.toContain('$(touch');
+      if (!win) expect(child.script).not.toContain(fakeHome);
+      if (!win) expect(child.script).not.toContain('$(touch');
       expect(child.script).not.toContain('--strict-mcp-config');
       if (account) expect(child.env.CLAUDE_CONFIG_DIR).toBe(sandboxDirFor('work', fakeHome));
     }
+  });
+
+  it('on win32, with no shell to expand a variable, the argv carries the store paths themselves', () => {
+    spawnChat({ account: '' });
+    const paths = [computerStorePath(fakeHome), projectStorePath(projectRoot, fakeHome)];
+    expect(chatStoreMcp({ scopedCard: false, lean: false, projectRoot, platform: 'win32' }).refs).toEqual(paths);
+    expect(chatStoreMcp({ scopedCard: false, lean: false, projectRoot, platform: 'linux' }).refs).toEqual(['$DREAMCONTEXT_MCP_CFG_0', '$DREAMCONTEXT_MCP_CFG_1']);
+    expect(chatStoreMcp({ scopedCard: false, lean: true, projectRoot, platform: 'win32' }).refs).toEqual([]);
   });
 
   it('a lean Super child under a HOME that is not shell-safe is refused, never spawned with a store', () => {

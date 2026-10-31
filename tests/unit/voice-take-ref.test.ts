@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { join, resolve } from 'node:path';
 
 vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -63,9 +64,9 @@ const { keepTake, voiceTakeBlock } = await import('../../src/lib/voice/voiceLog.
 const { userPromptOf } = await import('../../src/lib/transcript-history.js');
 const { CHAT_SURFACE_BRIEFING } = await import('../../src/server/chat-surface.js');
 
-const ROOT = '/tmp/voice-take-ref-test';
+const ROOT = resolve('/tmp/voice-take-ref-test');
 /** The chat's vault as the server knows it (and as `/stt` stamps a take). */
-const CTX = `${ROOT}/_dream_context`;
+const CTX = join(ROOT, '_dream_context');
 
 class FakeWs extends EventEmitter {
   OPEN = 1;

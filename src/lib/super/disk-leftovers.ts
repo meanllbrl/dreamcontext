@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promises as fsp } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { TEST_TMP_PREFIXES } from './test-tmp-prefixes.js';
 
 /**
@@ -39,11 +39,27 @@ export function isOurTestTmp(name: string): boolean {
   return TEST_TMP_PREFIXES.includes(stem) && stem.split('-').filter(Boolean).length >= 2;
 }
 
+/**
+ * `paths` split into rounds where no path sits inside another of its round. GNU du counts a
+ * directory once per call: asked about a worktree and its `target/` together, it prints only the
+ * worktree, so the inner path measured 0 (BSD du prints both). Disjoint paths mean the same on both.
+ */
+function disjointRounds(paths: readonly string[]): string[][] {
+  const unique = [...new Set(paths)];
+  const inside = (p: string, dir: string) => p.startsWith(dir.endsWith(sep) ? dir : dir + sep);
+  const rounds: string[][] = [];
+  for (const p of unique) {
+    const depth = unique.filter((q) => q !== p && inside(p, q)).length;
+    (rounds[depth] ??= []).push(p);
+  }
+  return rounds.filter(Boolean);
+}
+
 /** `du -sk` over paths, in chunks; a path du cannot read counts 0. Bytes per path. */
 export function diskUsage(paths: readonly string[], timeoutMs = 60_000): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   const chunks: string[][] = [];
-  for (let i = 0; i < paths.length; i += 200) chunks.push(paths.slice(i, i + 200));
+  for (const round of disjointRounds(paths)) for (let i = 0; i < round.length; i += 200) chunks.push(round.slice(i, i + 200));
   return chunks.reduce<Promise<void>>((p, chunk) => p.then(() => new Promise<void>((done) => {
     execFile('du', ['-sk', ...chunk], { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }, (_err, stdout) => {
       // du exits 1 when one path is unreadable but still prints the others.

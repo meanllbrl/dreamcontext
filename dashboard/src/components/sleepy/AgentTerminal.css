@@ -88,6 +88,13 @@
     inset: var(--space-2);
     border-radius: 0;
   }
+  /* The Super chat on a phone-width stage is the whole page, from the top bar to the tab bar
+     (owner 2026-10-31). Only under this line: it always stays under PHONE_STAGE_PX, so taking
+     the inset away can never widen the stage out of its phone layout. */
+  .project-instance[data-shell="new"][data-instance] .agent-surface.expanded:not([data-mobile]):has(.super-surface[data-phone]) {
+    inset: 0;
+    border: 0;
+  }
 }
 @keyframes agent-surface-zoom-in {
   from { transform: scale(0.28) translateY(24px); opacity: 0; border-radius: var(--radius-xl, 16px); }
@@ -166,9 +173,9 @@
    and folding them in here buys back the 38px the separate tab bar used to cost. */
 .agent-overlay-head {
   /* The tab strip must span the row EDGE TO EDGE so each pane's tab group can line up
-     with its pane below (see `.agent-overlay-tabs`) — so the two chrome buttons FLOAT
-     over the ends instead of taking flow space, and the strip reserves room for them
-     with the two clearances below (12px inset + the button + an 8px gap). */
+     with its pane below (see `.agent-overlay-tabs`) — so the new-session button FLOATS over
+     the end instead of taking flow space, and the strip reserves room for it with the
+     clearance below (12px inset + the button + an 8px gap). */
   position: relative;
   flex: 0 0 auto;
   display: flex;
@@ -176,9 +183,8 @@
   height: 44px;
   border-bottom: 1px solid var(--color-border);
   background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 6%, var(--color-bg)), var(--color-bg));
-  /* Width each chrome button needs from the strip's own ends. The group's base 8px side
-     padding is the breathing gap on top of these, so they are just inset + button width. */
-  --head-clear-start: 40px;   /* 12px inset + 28px collapse */
+  /* Width the button needs from the strip's end. The group's base 8px side padding is the
+     breathing gap on top of it, so this is just inset + button width. */
   --head-clear-end: 102px;    /* 12px inset + 90px "＋ New ▾" */
 }
 .agent-overlay-head[hidden] { display: none; }
@@ -217,29 +223,29 @@
 }
 .agent-peek-close:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
 .agent-peek-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* The conversation fills the body: unsized it collapses to nothing, a title over an empty page.
+   Said in full here, because `.aiteam-convo` itself lives in the AI Team page's own stylesheet. */
+.agent-peek-body > .aiteam-convo { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
-.agent-overlay-collapse {
+/* A project landing on what was clicked: the main area waits, plainly, and only says so if it
+   takes a moment. The drawer stands beside it. */
+.agent-arriving {
   position: absolute;
-  left: var(--space-3);
-  top: 50%;
-  transform: translateY(-50%);
-  /* MUST beat `.agent-pane-tabbar`'s z-index 7: the strip spans the whole row, so the end
-     groups' boxes lie OVER these two buttons and would otherwise eat every click on them. */
-  z-index: 10;
-  display: inline-flex; align-items: center; justify-content: center;
-  flex: 0 0 auto;
-  width: 28px; height: 28px;
-  border-radius: var(--radius-md);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+  inset: 0;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
 }
-.agent-overlay-collapse:hover { background: var(--color-bg-tertiary); color: var(--color-text); border-color: var(--color-border-hover); }
-.agent-overlay-collapse:focus-visible { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent-soft); }
+.agent-arriving > span { opacity: 0; animation: agent-arriving-say 160ms ease-out 240ms forwards; }
+@keyframes agent-arriving-say { to { opacity: 1; } }
+/* Opened by a drawer click: it stands there at once, no zoom over the page beneath. Kept until the
+   surface folds: dropping `animation: none` from an open surface would play the zoom. */
+.agent-surface[data-arrived].expanded { animation: none; }
+
 /* The tab strip, IN the header — one `.agent-pane-tabbar` child per pane. It spans the
    FULL header width and each group is `flex: 1 1 0`, exactly like `.agent-panes > .agent-pane`
    below it: group N therefore sits directly above pane N, edge for edge, and the hairline
@@ -260,7 +266,7 @@
   right: var(--space-3);
   top: 50%;
   transform: translateY(-50%);
-  z-index: 10;   /* over the tab strip — see `.agent-overlay-collapse` */
+  z-index: 10;   /* MUST beat `.agent-pane-tabbar`'s 7: the strip spans the row and would eat its clicks */
   display: flex;
   align-items: center;
   gap: 6px;
@@ -869,7 +875,7 @@
    `flex: 1 1 0` below, so the group sits exactly above the pane it drives. It keeps its
    own scroller (it cannot grow past its pane) and drops the standalone bar's fill/border
    — the header already draws the row. The first and last groups inset their content to
-   clear the collapse button and the "＋ New ▾" cluster floating over the row's ends; the
+   clear the "＋ New ▾" cluster floating over the row's end; the
    group BOX still spans the full pane width, so the alignment holds. */
 .agent-overlay-tabs > .agent-pane-tabbar {
   flex: 1 1 0;
@@ -879,14 +885,10 @@
   border-bottom: none;
   background: transparent;
 }
-/* The clearances are flex SPACERS inside the end groups, never padding on them: flex
+/* The clearance is a flex SPACER inside the end group, never padding on it: flex
    distributes free space equally and then adds each item's padding, so padding here would
-   make the first and last groups wider than the rest and drift every divider off its pane
+   make the last group wider than the rest and drift every divider off its pane
    edge (border-box does not change that — flex-basis: 0 floors at the padding). */
-.agent-overlay-tabs > .agent-pane-tabbar:first-child::before {
-  content: '';
-  flex: 0 0 var(--head-clear-start);
-}
 .agent-overlay-tabs > .agent-pane-tabbar:last-child::after {
   content: '';
   flex: 0 0 var(--head-clear-end);
@@ -1235,6 +1237,7 @@
   max-width: 380px;
   line-height: 1.5;
 }
+.agent-allmin-new { margin-top: var(--space-2); }
 /* When split (≥2 panes), make the action-focused pane unmistakable — a full accent
    ring + top bar — and gently recede the inactive panes, so "the session I'm in" reads
    at a glance (⌘D/⌘T/＋ and drops act on it). A lone pane needs no such marker. */

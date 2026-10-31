@@ -10,6 +10,7 @@
  *    throws nothing; the answer receipt draws on the mirror.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createElement } from '../../dashboard/node_modules/react/index.js';
@@ -28,7 +29,7 @@ const { superDigest, superDigestFrame } = await import('../../src/lib/super/phon
 const { emptySuperState } = await import('../../src/lib/super/types.js');
 type SuperState = import('../../src/lib/super/types.js').SuperState;
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf-8');
 
 function record(over: Partial<SuperState> = {}): SuperState {

@@ -5,6 +5,7 @@ import { dirname, extname, join } from 'node:path';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
 import { ownerLabel } from '../../lib/agents/owner.js';
+import { globalAgentExists } from '../../lib/agents/scope.js';
 import { memberCallState } from '../../lib/agents/team-roster.js';
 import {
   getAutomation,
@@ -1256,6 +1257,8 @@ async function createBoundFromBody(
   if (getRunTarget(contextRoot, slug, 'automation')) {
     throw new AutomationError(`An automation called "${slug}" already exists.`);
   }
+  // The app's own words; the store's sentence is also the CLI's.
+  if (globalAgentExists(slug)) throw new AutomationError(`"${slug}" is already the name of one of your teammates in all projects.`);
   registerProject(projectRoot);
   const manifest = createAutomation(contextRoot, {
     slug,

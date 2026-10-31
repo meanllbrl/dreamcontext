@@ -39,7 +39,7 @@
  * glyph and its path). Content over the caps keeps the LAST version that fit rather than a
  * truncated one: an earlier whole draft is honest, a cut one is not.
  */
-import { nextAttachmentId, type Attachment } from './composerScratch';
+import { nextAttachmentId, wasSent, type Attachment } from './composerScratch';
 import { isTokenRef, parseRefTokens, refToken, refTokenId } from './composerRefs';
 
 /** A chip as a draft keeps it: what a send needs, never an object URL or a data-URL picture. */
@@ -54,6 +54,9 @@ export interface DraftChip {
   chip?: string;
   /** The id of this chip's token in the saved text; a restore mints a new id and rewrites it. */
   tid?: string;
+  /** A stage card's kind and, for a picture card, its picture's URL (`Attachment.cardKind`/`url`). */
+  cardKind?: string;
+  url?: string;
 }
 
 export interface SavedDraft {
@@ -120,13 +123,16 @@ export function subscribeAnyDrafts(fn: () => void): () => void {
 
 /** The chips a draft keeps: what a send would carry. */
 export function keptChips(attachments: readonly Attachment[]): DraftChip[] {
-  return attachments.filter((a) => !!a.path || ((a.kind === 'element' || a.kind === 'about') && !!a.text)).map((a) => ({
+  return attachments.filter(wasSent).map((a) => ({
     kind: a.kind,
     name: a.name,
     ...(a.path ? { path: a.path } : {}),
     ...(a.text ? { text: a.text } : {}),
     ...(a.inline ? { inline: true as const } : {}),
     ...(a.chip ? { chip: a.chip } : {}),
+    // A card chip keeps its icon and an image card its picture (a server URL, not a blob).
+    ...(a.kind === 'card' && a.cardKind ? { cardKind: a.cardKind } : {}),
+    ...(a.kind === 'card' && a.url ? { url: a.url } : {}),
     ...(isTokenRef(a) ? { tid: refTokenId(a) } : {}),
   }));
 }
@@ -217,12 +223,19 @@ export function allDrafts(vault: string | null): Record<string, SavedDraft> {
   return out;
 }
 
+/** The chip kinds a kept draft carries (mirrored on the server: agent-sessions.ts). */
+export const DRAFT_CHIP_KINDS: readonly string[] = ['image', 'file', 'folder', 'ref', 'element', 'about', 'card'];
+
+/** A card chip's picture: the app's own `/api/agent/file?…` URL, nothing that can break out of
+ *  `url("…")`. */
+export const CARD_PICTURE_URL_RE = /^\/api\/agent\/file\?[^"'()\\\s]{1,2000}$/;
+
 /** Coerce one stored draft (the roster is hand-editable INPUT), or null. */
 export function coerceDraft(raw: unknown): SavedDraft | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const o = raw as Record<string, unknown>;
   if (typeof o.text !== 'string' || o.text.length > MAX_DRAFT_TEXT) return null;
-  const kinds: readonly string[] = ['image', 'file', 'folder', 'ref', 'element', 'about'];
+  const kinds: readonly string[] = DRAFT_CHIP_KINDS;
   const chips = Array.isArray(o.chips)
     ? o.chips.slice(0, MAX_DRAFT_CHIPS).flatMap((c): DraftChip[] => {
       if (!c || typeof c !== 'object') return [];
@@ -236,6 +249,9 @@ export function coerceDraft(raw: unknown): SavedDraft | null {
         ...(r.inline === true ? { inline: true as const } : {}),
         ...(typeof r.chip === 'string' && r.chip && r.chip.length <= 600 ? { chip: r.chip } : {}),
         ...(typeof r.tid === 'string' && /^\d{1,12}$/.test(r.tid) ? { tid: r.tid } : {}),
+        ...(r.kind === 'card' && typeof r.cardKind === 'string' && /^[a-z]{1,16}$/.test(r.cardKind) ? { cardKind: r.cardKind } : {}),
+        // Only this app's own file route: the URL is painted as a CSS background.
+        ...(r.kind === 'card' && typeof r.url === 'string' && CARD_PICTURE_URL_RE.test(r.url) ? { url: r.url } : {}),
       }];
     })
     : [];

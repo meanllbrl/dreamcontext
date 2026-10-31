@@ -423,11 +423,14 @@ export function assistantSettingArgs(isAssistant: boolean): string[] {
  * The MCP stores a chat spawn carries (task mcp-management): every account, #0 included, gets
  * `--mcp-config <computer> [<project>]` so one list of servers reaches all of them. The paths
  * ride in env vars and the argv names the variable ({@link storeFileRefs}): the login-shell
- * script never contains HOME's text. A scoped card and a lean child get none.
+ * script never contains HOME's text. A scoped card and a lean child get none. On win32 the chat
+ * starts claude directly ({@link chatSpawnCommand}): no shell would expand a variable, and none
+ * re-parses a path, so the argv carries the paths themselves.
  */
-export function chatStoreMcp(o: { scopedCard: boolean; lean: boolean; projectRoot: string; home?: string }): { refs: string[]; env: Record<string, string> } {
+export function chatStoreMcp(o: { scopedCard: boolean; lean: boolean; projectRoot: string; home?: string; platform?: NodeJS.Platform }): { refs: string[]; env: Record<string, string> } {
   if (o.scopedCard || o.lean) return { refs: [], env: {} };
-  return storeFileRefs(mcpStoreFiles({ home: o.home, projectRoot: o.projectRoot }).files);
+  const stores = storeFileRefs(mcpStoreFiles({ home: o.home, projectRoot: o.projectRoot }).files);
+  return (o.platform ?? process.platform) === 'win32' ? { refs: Object.values(stores.env), env: stores.env } : stores;
 }
 
 /**

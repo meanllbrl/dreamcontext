@@ -3,7 +3,7 @@ import { basename, isAbsolute, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { listAutomations, readAutomationCache, resolveAutomationPhoto } from './store.js';
 import { extractNotificationSummary } from './runner.js';
-import { superQuietReader } from './super-quiet.js';
+import { superJobReader, superQuietReader } from './super-quiet.js';
 import { allPendingQuestions } from './hitl.js';
 import { readThread, threadDateStamp, threadReadWatermark } from './threads.js';
 import type {
@@ -77,6 +77,9 @@ export interface FeedMessage {
    *  Four different claims, and a reader deciding whether to open the thread
    *  is entitled to know which one they are reading. */
   textFrom: 'post' | 'result' | 'error' | 'skipped' | 'none';
+  /** A job the Super Agent gave this member: it reports to the Super, not to the owner
+   *  (`super-quiet.ts`). Derived from the thread and the record, never stored. */
+  superJob?: boolean;
   files: FeedFile[];
   /** The body post's key/value block, or null. Figures that moved, ≤6 rows. */
   summary: ThreadSummaryRow[] | null;
@@ -399,6 +402,8 @@ export function buildFeedMessage(
   history: RunEvent[] = [],
   /** What of this run counts for nobody (`super-quiet.ts`). */
   quiet?: ReadonlySet<string>,
+  /** This run is a job the Super Agent gave (`super-quiet.ts`). */
+  superJob = false,
 ): FeedMessage {
   const ordered = [...entries].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const started = ordered.find((e) => e.kind === 'system' && e.event === 'started');
@@ -495,6 +500,7 @@ export function buildFeedMessage(
     // Your OWN replies never make a message unread — the same rule
     // `threadUnread` applies, kept identical here so the chip counts and the
     // per-message bar can never disagree.
+    ...(superJob ? { superJob: true } : {}),
     unread: runUnread(ordered, watermark, quiet).unread,
     newestId: newest?.id ?? null,
   };
@@ -553,6 +559,7 @@ export function buildFeed(
   const unreadBySlug: Record<string, number> = {};
   const agents: FeedResult['agents'] = [];
   const quietOf = superQuietReader(contextRoot);
+  const isSuperJob = superJobReader(contextRoot);
 
   // ONE questions read for the WHOLE feed, indexed by the run each question
   // belongs to. Per-run `pendingQuestion` calls would re-walk the same
@@ -633,6 +640,7 @@ export function buildFeed(
           questionByRun.get(`${manifest.slug}::${runId}`) ?? null,
           cache?.history ?? [],
           quietOf(manifest.slug, runEntries),
+          isSuperJob(manifest.slug, runEntries),
         ),
       );
     }

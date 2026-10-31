@@ -88,6 +88,20 @@ afterEach(() => {
 });
 
 describe('what a Super job says counts for nobody', () => {
+  it('the feed names the job from its first entry, on the rule the unread counts use', () => {
+    say(contextRoot, 'user', 'super', 'Check the desk');
+    expect(buildFeed(contextRoot, { home }).messages[0].superJob).toBe(true);
+    sys(contextRoot, 'started');
+    expect(buildFeed(contextRoot, { home }).messages[0].superJob).toBe(true);
+    sys(contextRoot, 'failed');
+    expect(buildFeed(contextRoot, { home }).messages[0].superJob).toBeUndefined();
+  });
+
+  it('a run the owner opened is never named one', () => {
+    say(contextRoot, 'user', 'dashboard', 'Check the desk');
+    expect(buildFeed(contextRoot, { home }).messages[0].superJob).toBeUndefined();
+  });
+
   it('no source counts it, and the answer stays readable in the thread', () => {
     superJob(contextRoot);
     expect(counts(contextRoot)).toEqual(ZERO);

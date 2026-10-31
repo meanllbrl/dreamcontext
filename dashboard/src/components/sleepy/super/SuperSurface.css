@@ -40,7 +40,7 @@
 .agent-overlay-super-slot {
   display: flex;
   align-items: center;
-  padding-left: calc(var(--head-clear-start) + var(--space-2)); /* the tab bar's own inset, so it does not move */
+  padding-left: var(--space-2); /* the tab bar's own inset, so it does not move */
 }
 .super-handover-btn-dot {
   position: absolute;
@@ -144,6 +144,9 @@
   border-radius: var(--radius-xl);
   overflow: hidden;
 }
+/* A phone-width stage: the chat is the screen, so it has no card around it. */
+.super-surface[data-phone] .super-centre-bg { border: 0; border-radius: 0; box-shadow: none; }
+.super-surface[data-phone] .super-centre-clip { border-radius: 0; }
 .super-centre--pending,
 .super-card-frame--pending { opacity: 0; }
 .super-centre-head,
@@ -1255,6 +1258,11 @@
 /* A page and a live browser fill the large card (the body scrolls, so it is not a flex box). */
 .super-card-view--web, .super-card-view--browser { height: 100%; }
 .super-card-view--web > .wb-widget { flex: 1 1 auto; min-height: 0; }
+/* The card's one title line: the widget's head stands where the card's would, and stops short of
+   the card's buttons at the top right (they are always shown on a large card). Past the file
+   head's own padding (widgets.css), which reads through :has(). */
+.super-web-one-line > .wb-widget.wb-widget--web > .wb-widget-head.wb-widget-head { height: 36px; min-height: 0; padding-block: 0; padding-inline-end: 124px; }
+.super-web-one-line .wb-widget-title { font-size: var(--font-size-sm); font-weight: 600; color: var(--color-text); }
 
 /* ── Card sizes (owner 2026-10-22: "like Apple widgets") ─────────────────────────────────── */
 
@@ -1395,11 +1403,12 @@
 
 /* ── Zoom in place (owner 2026-10-22: a picture or a page side by side or presented zooms where
       it is: pinch or ⌘/Ctrl + scroll, drag once zoomed, double click to fit) ───────────── */
-.super-zoom { position: relative; flex: 1 1 auto; min-height: 0; height: 100%; overflow: hidden; }
+.super-zoom { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; height: 100%; overflow: hidden; }
+.super-zoom-stage { position: relative; flex: 1 1 0; min-height: 0; overflow: hidden; }
 .super-zoom-content { position: absolute; inset: 0; display: flex; flex-direction: column; transform-origin: center; will-change: transform; }
 .super-zoom-content > * { flex: 1 1 auto; min-height: 0; }
-.super-zoom[data-zoomed] { cursor: grab; touch-action: none; }
-.super-zoom[data-zoomed][data-grabbing] { cursor: grabbing; }
+.super-zoom[data-zoomed] > .super-zoom-stage { cursor: grab; touch-action: none; }
+.super-zoom[data-zoomed][data-grabbing] > .super-zoom-stage { cursor: grabbing; }
 /* Zoomed, a drag pans the view: the content's own clicks and selection wait until it fits again. */
 .super-zoom[data-zoomed]:not([data-inspect]) .super-zoom-content { pointer-events: none; user-select: none; }
 .super-zoom-shield { position: absolute; inset: 0; z-index: 1; cursor: grab; }
@@ -1447,6 +1456,18 @@
   .super-zoom:not([data-zoomed]) .super-zoom-bar .super-zoom-fit { display: none; }
   .super-zoom-bar:has(.super-zoom-ask) { border-radius: var(--radius-lg); }
   .super-zoom-bar > .super-zoom-ask { flex: 1 1 auto; min-width: 0; white-space: normal; padding-left: var(--space-2); }
+}
+/* A live page's bar is a strip under the page (ZoomPane): it takes its height from the stage, so
+   no part of the page sits behind it. `safe`: a bar too long for the card scrolls from its start. */
+.super-zoom[data-strip] .super-zoom-bar {
+  position: static;
+  flex: none;
+  justify-content: safe flex-end;
+  max-width: none;
+  border-width: 1px 0 0;
+  border-radius: 0;
+  background: var(--color-bg-elevated, var(--color-bg));
+  box-shadow: none;
 }
 .super-zoom-ask { padding: 0 6px 0 10px; font-size: var(--font-size-xs); color: var(--color-text); white-space: nowrap; }
 /* Inspect picking in the page: the page takes the pointer (its bridge outlines and picks). */
@@ -1702,11 +1723,11 @@
 
 /* Phone / tablet / desktop (DeviceSwitch): an icon each. */
 .super-zoom-bar .web-device-btn { display: inline-flex; align-items: center; justify-content: center; }
-/* "Pan & zoom" on a site on the web: why there is no element picking, just above the bar. */
+/* "Pan & zoom" on a site on the web: why there is no element picking, just above the strip. */
 .super-zoom-note {
   position: absolute;
   right: var(--space-2);
-  bottom: calc(var(--space-2) + 38px);
+  bottom: var(--space-2);
   z-index: 2;
   max-width: min(360px, calc(100% - 2 * var(--space-2)));
   margin: 0;

@@ -79,6 +79,7 @@ describe('the rule rides where the Super reads it', () => {
       expect(t).toContain('3-6 short bullets of what will be done');
       expect(t).toContain('(the exception to 2-4)');
       expect(t).toContain('A `preview` is only a look at an option');
+      expect(t).toContain('A report on a plan or on options is DRAWN, never written: screen\nmockups, options side by side, short headings');
       expect(t).not.toContain("the yes option's `preview`");
     }
   });

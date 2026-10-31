@@ -41,7 +41,7 @@ import { PAGE_LABEL_KEY } from './lib/pageLabels';
 import { DrawerFactsBridge } from './components/layout/newshell/DrawerFactsBridge';
 import { DrawerIntentBridge } from './components/layout/newshell/DrawerIntentBridge';
 import type { DrawerFacts } from './components/layout/newshell/drawerModel';
-import { DRAWER_PAGE_EVENT, type PendingDrawerIntent } from './lib/drawerIntents';
+import { DRAWER_PAGE_EVENT, landsOnChat, type PendingDrawerIntent } from './lib/drawerIntents';
 import { TOGGLE_PAGE_DRAWER_EVENT, drawerTogglePanel, useIsNewShell } from './lib/uxMode';
 import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from './lib/agentSettings';
 import './ProjectInstance.css';
@@ -651,7 +651,8 @@ export function ProjectInstance({
               {/* Mounted OUTSIDE Shell, exactly as it was at the app root: the agent floater
                   keeps its PTY/scrollback alive across navigation and collapse/expand, which
                   only holds while it is not remounted by the page switch. */}
-              <AgentSurface stageBesideDrawer={drawerVisible} />
+              <AgentSurface stageBesideDrawer={drawerVisible}
+                arrival={newShell && pendingDrawerIntent && landsOnChat(pendingDrawerIntent.intent) ? pendingDrawerIntent : null} />
               {/* AFTER the surface: an intent rung before it subscribed would be lost. */}
               {newShell && <DrawerIntentBridge pending={pendingDrawerIntent} onConsumed={onDrawerIntentConsumed} />}
             </I18nProvider>
