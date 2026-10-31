@@ -1044,7 +1044,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   }, []);
 
   const mountedNames = useMemo(() => open.filter((p) => !p.cold).map((p) => p.vault), [open]);
-  const { facts: fanout, moveWindow: moveFarWindow } = useDrawerProjects(newShell ? drawerExpanded : [], mountedNames, drawerVisible);
+  const drawerFolded = useMemo(() => projectOrder.filter((name) => !drawerExpanded.includes(name)), [projectOrder, drawerExpanded]);
+  const { facts: fanout, moveWindow: moveFarWindow } = useDrawerProjects(newShell ? drawerExpanded : [], mountedNames, drawerVisible, newShell ? drawerFolded : []);
   const drawerRows = useMemo(() => {
     if (!newShell) return [];
     const byName = new Map((launcherStatus?.vaults ?? []).map((v) => [v.name, v] as const));

@@ -2,12 +2,13 @@
  * The chat drawer's rows for projects this window has NOT mounted (D7): client fan-out over the
  * existing routes, no new route. Each project's own `ApiClient` sends its vault header.
  *
- * Read for an expanded project that is not mounted (a mounted one publishes its own facts):
+ * Read for a project that is not mounted (a mounted one publishes its own facts):
  *  - `GET /agent/sessions?summary=1`: tab count and the Super flag, never the drafts;
  *  - `GET /agents`, `/automations`, `/automations/threads` → `buildRoster`, members with work.
  *
  * Polls every 15 s (through `pollMs`) only while the drawer is on screen and the window
- * focused, at most `DRAWER_POLL_CAP` projects; the rest are read once when they expand.
+ * focused, at most `DRAWER_POLL_CAP` projects, expanded ones first; the expanded rest are read
+ * once. A folded project is read within the cap: its row shows its Super Agent's ring.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiClient } from '../api/client';
@@ -47,7 +48,7 @@ export function perWindowOf(raw: unknown[]): Array<{ id: string; name: string; t
   });
 }
 
-export function useDrawerProjects(expanded: readonly string[], mounted: readonly string[], visible: boolean): {
+export function useDrawerProjects(expanded: readonly string[], mounted: readonly string[], visible: boolean, folded: readonly string[] = []): {
   facts: Record<string, FanoutFacts>;
   /** A window row of a project that is not mounted, dragged: the row moves now, the roster on
    *  disk follows, and a fresh read settles it (a refused write puts the row back). */
@@ -57,10 +58,10 @@ export function useDrawerProjects(expanded: readonly string[], mounted: readonly
   const live = visible && activity.focused && !activity.hidden;
   const [facts, setFacts] = useState<Record<string, FanoutFacts>>({});
   const { poll, once } = useMemo(
-    () => fanoutTargets(expanded, mounted, live),
+    () => fanoutTargets(expanded, mounted, live, undefined, folded),
     // Arrays by value: a parent re-render with the same names must not restart the polls.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [expanded.join('\n'), mounted.join('\n'), live],
+    [expanded.join('\n'), mounted.join('\n'), folded.join('\n'), live],
   );
   const readOnce = useRef(new Set<string>());
   const factsRef = useRef(facts);

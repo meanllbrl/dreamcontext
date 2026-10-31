@@ -7,7 +7,7 @@
  * that have work (LISTED statuses only, D7, never a job the Super Agent gave them), and one row per
  * chat window that holds a chat, with its own ring and count (W3, D8). A project with none has one
  * New Chat row instead: nothing here opens onto an empty screen. A collapsed project's row carries
- * the sum of its windows.
+ * the sum of those same rows.
  */
 import type { ProjectRollup } from '../../sleepy/agentStatus';
 import type { TeamRow, TeamStatus } from '../../aiteam/teamModel';
@@ -43,7 +43,7 @@ export interface DrawerFacts {
   /** Each chat window with its own ring and count (W3); absent = one window, the rollup's. */
   windows?: DrawerWindowFact[];
   activeWindowId?: string;
-  /** The owner's chats alone: the ring of a collapsed project. Absent = the whole rollup. */
+  /** The owner's chats alone, for a project with no window list yet. Absent = the whole rollup. */
   shown?: { live: number; asking: number; working: number; flagged: number };
   /** The member whose conversation the chat area shows. */
   member?: string;
@@ -110,7 +110,7 @@ export interface DrawerProjectRow {
   children: DrawerChild[];
   /** Collapsed: its Super Agent (or a child) waits on the owner. */
   superAsking?: boolean;
-  /** Collapsed and mounted: every window's chats summed, for the ring beside the name. */
+  /** Collapsed: the sum of the rows it would show, for the ring beside the name. */
   sum?: { live: number; asking: number; working: number; idle: number; flagged: number };
 }
 
@@ -143,77 +143,107 @@ export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout
       name: p.name, logo: p.logo, logoStamp: p.logoStamp, active, held: p.mounted || p.asleep,
       asleep: p.asleep, otherWindow: p.otherWindow, expanded: isOpen,
     };
-    if (!isOpen) {
-      const r = p.mounted ? (facts[p.name]?.shown ?? p.rollup) : null;
-      const sum = r && r.live > 0
-        ? { live: r.live, asking: r.asking, working: r.working, idle: Math.max(0, r.live - r.working - r.asking), flagged: r.flagged }
-        : undefined;
-      // Folded, a question still reaches the owner: the project row carries it.
-      const ask = (p.mounted ? facts[p.name] : fanout[p.name])?.superMarks?.asking;
-      return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(ask ? { superAsking: true } : {}) };
-    }
-
-    const mine = p.mounted ? facts[p.name] : undefined;
-    const far = p.mounted ? undefined : fanout[p.name];
-    const source: DrawerProjectRow['source'] = p.mounted ? 'mounted' : far ? 'fanout' : 'none';
-    const onChat = active && !!mine?.chatOpen;
-    const superSelected = onChat && !!mine?.superSelected;
-
-    const marks = mine?.superMarks ?? far?.superMarks;
-    const children: DrawerChild[] = [
-      // Always there, even before anything is read: it is how a project with no chat starts one.
-      { kind: 'super', on: !!(mine?.superOn ?? far?.superOn), selected: superSelected, working: marks?.working ?? 0, asking: !!marks?.asking },
-    ];
-    for (const m of (mine?.team ?? far?.team ?? [])) {
-      children.push({ kind: 'member', slug: m.slug, title: m.title, hasPhoto: m.hasPhoto, status: m.status, selected: onChat && mine?.member === m.slug });
-    }
-    const r = p.mounted ? (mine?.shown ?? p.rollup) : null;
-    const windowsOn = onChat && !superSelected && !mine?.member;
-    const before = children.length;
-    if (mine?.windows) {
-      // `tabs` counts saved chats too: a window of sleeping tabs is not empty.
-      for (const { tabs, ...w } of mine.windows) {
-        if (tabs === 0) continue;
-        children.push({ kind: 'window', ...w, selected: windowsOn && w.id === mine.activeWindowId });
-      }
-    } else if (far?.windows) {
-      // Nothing runs while a project is not mounted: no ring, only each window's tab count.
-      for (const w of far.windows) {
-        if (w.tabs > 0) children.push({ kind: 'window', id: w.id, name: w.name, working: 0, asking: 0, flagged: 0, other: w.tabs, selected: false });
-      }
-    } else if ((r?.live ?? 0) > 0 || (far?.tabs ?? 0) > 0) {
-      children.push({
-        kind: 'window',
-        id: 'main',
-        name: 'Chat',
-        working: r?.working ?? 0,
-        asking: r?.asking ?? 0,
-        flagged: r?.flagged ?? 0,
-        other: r ? Math.max(0, r.live - r.working - r.asking) : (far?.tabs ?? 0),
-        selected: windowsOn,
-      });
-    }
-    // Only on a known answer: before the roster is restored, or after a failed read, no row is
-    // better than offering a chat over chats that are there.
-    if (children.length === before && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
-    return { ...base, source, children };
+    const { source, children } = childrenOf(p, active, facts, fanout);
+    if (isOpen) return { ...base, source, children };
+    // Folded, the project row carries what its rows would say: no second count.
+    const sum = sumOf(children, source);
+    // A question still reaches the owner too.
+    const ask = children.some((c) => c.kind === 'super' && c.asking);
+    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(ask ? { superAsking: true } : {}) };
   });
 }
 
+/** The rows under a project, open or folded: the one place their numbers come from. */
+function childrenOf(
+  p: DrawerProjectInput,
+  active: boolean,
+  facts: DrawerModelInput['facts'],
+  fanout: DrawerModelInput['fanout'],
+): { source: DrawerProjectRow['source']; children: DrawerChild[] } {
+  const mine = p.mounted ? facts[p.name] : undefined;
+  const far = p.mounted ? undefined : fanout[p.name];
+  const source: DrawerProjectRow['source'] = p.mounted ? 'mounted' : far ? 'fanout' : 'none';
+  const onChat = active && !!mine?.chatOpen;
+  const superSelected = onChat && !!mine?.superSelected;
+
+  const marks = mine?.superMarks ?? far?.superMarks;
+  const children: DrawerChild[] = [
+    // Always there, even before anything is read: it is how a project with no chat starts one.
+    { kind: 'super', on: !!(mine?.superOn ?? far?.superOn), selected: superSelected, working: marks?.working ?? 0, asking: !!marks?.asking },
+  ];
+  for (const m of (mine?.team ?? far?.team ?? [])) {
+    children.push({ kind: 'member', slug: m.slug, title: m.title, hasPhoto: m.hasPhoto, status: m.status, selected: onChat && mine?.member === m.slug });
+  }
+  const r = p.mounted ? (mine?.shown ?? p.rollup) : null;
+  const windowsOn = onChat && !superSelected && !mine?.member;
+  const before = children.length;
+  if (mine?.windows) {
+    // `tabs` counts saved chats too: a window of sleeping tabs is not empty.
+    for (const { tabs, ...w } of mine.windows) {
+      if (tabs === 0) continue;
+      children.push({ kind: 'window', ...w, selected: windowsOn && w.id === mine.activeWindowId });
+    }
+  } else if (far?.windows) {
+    // Nothing runs while a project is not mounted: no ring, only each window's tab count.
+    for (const w of far.windows) {
+      if (w.tabs > 0) children.push({ kind: 'window', id: w.id, name: w.name, working: 0, asking: 0, flagged: 0, other: w.tabs, selected: false });
+    }
+  } else if ((r?.live ?? 0) > 0 || (far?.tabs ?? 0) > 0) {
+    children.push({
+      kind: 'window',
+      id: 'main',
+      name: 'Chat',
+      working: r?.working ?? 0,
+      asking: r?.asking ?? 0,
+      flagged: r?.flagged ?? 0,
+      other: r ? Math.max(0, r.live - r.working - r.asking) : (far?.tabs ?? 0),
+      selected: windowsOn,
+    });
+  }
+  // Only on a known answer: before the roster is restored, or after a failed read, no row is
+  // better than offering a chat over chats that are there.
+  if (children.length === before && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
+  return { source, children };
+}
+
 /**
- * Which expanded projects the fan-out reads (D7): only expanded ones that are NOT mounted (a
- * mounted one publishes its own facts). While the drawer is visible and the window focused, the
- * first {@link DRAWER_POLL_CAP} of them poll; the rest are read once.
+ * The folded project's ring: the Super Agent row plus every chat row. Super's children never sit
+ * in a chat window (`sessionHome`), so nothing counts twice. Team rows carry a status, no number.
+ * A project that is not mounted adds only its Super Agent: `other` there is saved tabs, none of
+ * them live, and a sleeping project gets no number.
+ */
+function sumOf(children: readonly DrawerChild[], source: DrawerProjectRow['source']): DrawerProjectRow['sum'] {
+  const sum = { live: 0, asking: 0, working: 0, idle: 0, flagged: 0 };
+  for (const c of children) {
+    if (c.kind === 'super') sum.working += c.working;
+    else if (c.kind === 'window' && source === 'mounted') {
+      sum.working += c.working;
+      sum.asking += c.asking;
+      sum.idle += c.other;
+      sum.flagged += c.flagged;
+    }
+  }
+  sum.live = sum.working + sum.asking + sum.idle;
+  return sum.live > 0 ? sum : undefined;
+}
+
+/**
+ * Which projects the fan-out reads (D7): only ones that are NOT mounted (a mounted one publishes
+ * its own facts). While the drawer is visible and the window focused, the first
+ * {@link DRAWER_POLL_CAP} poll, expanded ones first; the expanded rest are read once. A folded
+ * project is read too, within the cap: its row shows its Super Agent's ring.
  */
 export function fanoutTargets(
   expanded: readonly string[],
   mounted: readonly string[],
   live: boolean,
   cap = DRAWER_POLL_CAP,
+  folded: readonly string[] = [],
 ): { poll: string[]; once: string[] } {
   const far = expanded.filter((v) => !mounted.includes(v));
-  if (!live) return { poll: [], once: far };
-  return { poll: far.slice(0, cap), once: far.slice(cap) };
+  const farFolded = folded.filter((v) => !mounted.includes(v));
+  if (!live) return { poll: [], once: [...far, ...farFolded] };
+  return { poll: [...far, ...farFolded].slice(0, cap), once: far.slice(cap) };
 }
 
 /** A drawer intent only travels to a project this window now shows, mounted (D5, the
