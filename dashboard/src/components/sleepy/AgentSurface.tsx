@@ -1152,8 +1152,17 @@ export function AgentSurface({ stageBesideDrawer = false }: {
   }, []);
 
   const started = sessionList.length > 0;
-  // The action-focused pane (falls back to the first pane when the stored id is stale).
-  const activePane = panes.find((p) => p.id === activePaneId) ?? panes[0];
+  // What a chat window draws: only the tabs that live there (classic: every pane, as ever).
+  const shownPanes = useMemo(() => {
+    if (!windowed) return panes;
+    const metaOf = new Map(sessionList.map((m) => [m.id, m] as const));
+    return chatWindowPanes(panes, (id) => inChatWindow(metaOf.get(id) ?? {}));
+    // `superOwned` is what `inChatWindow` reads through its ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windowed, panes, sessionList, superOwned, inChatWindow]);
+  // The action-focused pane (falls back to the first pane when the stored id is stale). The shown
+  // panes: ⌘W, a drop or an injected line must never reach a tab the window does not draw.
+  const activePane = shownPanes.find((p) => p.id === activePaneId) ?? shownPanes[0];
   const panesRowRef = useRef<HTMLDivElement>(null);
   const glideRef = useRef<HTMLDivElement>(null);
   usePaneFocusGlide(panesRowRef, glideRef, activePane?.id, panes.length);
@@ -3614,14 +3623,6 @@ export function AgentSurface({ stageBesideDrawer = false }: {
   // The record's children plus the ones this window just opened for a `delegate` (D16).
   const marked = childMarks(superState, superDelegated, Date.now()).marked;
   const handedOver = superView === 'super' && !!superState && !isMobile;
-  // What a chat window draws: only the tabs that live there (classic: every pane, as ever).
-  const shownPanes = useMemo(() => {
-    if (!windowed) return panes;
-    const metaOf = new Map(sessionList.map((m) => [m.id, m] as const));
-    return chatWindowPanes(panes, (id) => inChatWindow(metaOf.get(id) ?? {}));
-    // `superOwned` is what `inChatWindow` reads through its ref.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windowed, panes, sessionList, superOwned, inChatWindow]);
   // The Super dock's ONE gate (plan R1) and whether its window is open now. Never written from
   // here: the view stays as the hand-over and take-back left it (T1).
   // In the new shell the Super Agent stays reachable on every page whichever window Chat last
@@ -4531,7 +4532,7 @@ export function AgentSurface({ stageBesideDrawer = false }: {
         .then((r) => { if (!cancelled && r?.model) setSessionModel((prev) => ({ ...prev, [sid]: r.model as string })); })
         .catch(() => { /* best-effort: keep the fallback */ });
     };
-    const activeSids = Array.from(new Set(panes.map((p) => p.active)));
+    const activeSids = Array.from(new Set(shownPanes.map((p) => p.active)));
     activeSids.forEach((sid) => {
       const meta = sessionList.find((m) => m.id === sid);
       if (!meta || meta.dormant || !meta.claudeId) return;
@@ -5464,7 +5465,7 @@ export function AgentSurface({ stageBesideDrawer = false }: {
       // fall back to the action-focused session if the point isn't over any pane.
       const at = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       const slot = (at?.closest('.agent-pane-slot[data-pane]') ?? null) as HTMLElement | null;
-      const targetPane = panes.find((p) => p.id === slot?.dataset.pane);
+      const targetPane = shownPanes.find((p) => p.id === slot?.dataset.pane);
       // Handed over, a file goes to the Super Agent: the panes it would otherwise reach are
       // not on screen.
       const targetSid = superViewRef.current === 'super' ? (superSidRef.current ?? '') : (targetPane?.active || focusedSessionId);
@@ -5694,7 +5695,8 @@ export function AgentSurface({ stageBesideDrawer = false }: {
   // Only the owner's chats count there: the rollup above stays whole, because the project's
   // live-session ceiling reads it, and a running child must never make a project look idle.
   const ownerRows = windowed ? dockRows.filter((r) => inChatWindow(sessionList.find((m) => m.id === r.id) ?? {})) : dockRows;
-  const shownRollup = rollupProject(ownerRows, { superQueueHead: superHead ? { asker: superHead.sessionId } : false });
+  // No queue head here: the Super row carries a question; a child's would count as a chat.
+  const shownRollup = rollupProject(ownerRows);
   const shownFacts = { live: shownRollup.live, asking: shownRollup.asking, working: shownRollup.working, flagged: shownRollup.flagged };
   const windowRows = rowsByWindow(chatWindows, ownerRows, (id) => sessionList.find((m) => m.id === id)?.claudeId);
   const windowFacts: WindowFact[] = chatWindows.list.map((w) => {
@@ -5719,9 +5721,9 @@ export function AgentSurface({ stageBesideDrawer = false }: {
     const st = superStateRef.current;
     const meta = sessionListRef.current.find((m) => m.claudeId === past.id);
     if (sessionHome(meta ?? { claudeId: past.id }, superOwnedRef.current, st?.session) !== 'super') return false;
-    const landing = superLanding(past.id, st);
+    // Off, a pick only reads: it never starts the Super Agent.
+    const landing = st?.enabled ? superLanding(past.id, st) : 'transcript';
     if (st?.enabled) setSuperView('super');
-    else runDrawerIntentRef.current({ kind: 'super' });
     if (landing === 'card') { setSuperPeek(null); dockShowChild(past.id); }
     else if (landing === 'transcript') setSuperPeek({ kind: 'transcript', claudeId: past.id, title: meta?.title || (st && hasOwnKey(st.children, past.id) ? st.children[past.id].brief : '') || past.title || t('super.centre.name') });
     else setSuperPeek(null);
@@ -5942,7 +5944,10 @@ export function AgentSurface({ stageBesideDrawer = false }: {
               <button type="button" className="agent-peek-close" aria-label={t('super.error.close')} data-testid="agent-peek-close" onClick={() => setSuperPeek(null)}>×</button>
             </div>
             <div className="agent-peek-body">
-              {superPeek.kind === 'member' ? renderTeamConversation(superPeek.slug) : renderChildTranscript(superPeek.claudeId)}
+              {superPeek.kind === 'transcript'
+                ? renderChildTranscript(superPeek.claudeId)
+                // The stage's gate: folded away, the session goes back to the AI Team page.
+                : (expanded || closing) && !windowActivity.hidden ? renderTeamConversation(superPeek.slug) : null}
             </div>
           </div>
         )}
@@ -5955,6 +5960,7 @@ export function AgentSurface({ stageBesideDrawer = false }: {
             pending={superPending}
             pendingCloses={pendingCloses}
             leanRight={windowed && stageBesideDrawer}
+            miniRail={windowed}
             motion={superMotion}
             superSession={superChatSession}
             vault={vault ?? ''}

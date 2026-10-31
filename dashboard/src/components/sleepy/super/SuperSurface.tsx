@@ -62,6 +62,8 @@ export interface SuperSurfaceProps {
   childTranscript?: (claudeId: string) => ReactNode;
   /** The new shell's chat drawer stands beside the stage: the centre leans right and widens. */
   leanRight?: boolean;
+  /** A tight presentation draws its live jobs as one-line cards (the new shell). */
+  miniRail?: boolean;
   /** A team card shown large: its member's conversation (SuperContainer's `teamConversation`).
    *  Absent while the surface is folded away: it hands the session back to the AI Team page. */
   teamConversation?: (member: string) => ReactNode;
@@ -291,8 +293,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const exitPatch = (): LayoutPatch => ({ exit: { cards: presented, closing: props.pendingCloses() } });
   const queueUp = !!queueHead(state);
   const plan = useMemo(
-    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, asking: ownerAsk, layoutChoices: layoutChoices.length, queueUp, narrowPx, centreMin, recent: topped, leanRight: props.leanRight }),
-    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, ownerAsk, layoutChoices.length, queueUp, narrowPx, centreMin, topped, props.leanRight],
+    () => planStage(items, view, size, { dragging: pinned, terminals: props.terminals.length, agendaPill, selected, stripStart, asking: ownerAsk, layoutChoices: layoutChoices.length, queueUp, narrowPx, centreMin, recent: topped, leanRight: props.leanRight, miniRail: props.miniRail }),
+    [items, view, size, pinned, props.terminals.length, agendaPill, selected, stripStart, ownerAsk, layoutChoices.length, queueUp, narrowPx, centreMin, topped, props.leanRight, props.miniRail],
   );
   cuesPlanRef.current = plan;
   // The big card's slot scrolls into view whenever the selection moves (keys, a press, the Super).

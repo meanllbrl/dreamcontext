@@ -130,6 +130,7 @@ async function run(browser, { w, h, dark, full }, seeded) {
   await wait(p, 2200);
   await dismiss(p);
   await p.keyboard.press('Escape');
+  if (!(await seen(p, '[data-testid="chat-drawer"]')) && w > 900) { await p.getByTestId('ns-drawer-toggle').click(); await wait(p, 500); }
   await wait(p, 300);
   await shot(p, `1-super-stage-${tag}`);
   if (full) {
@@ -161,6 +162,20 @@ async function run(browser, { w, h, dark, full }, seeded) {
     // History: a Super child goes to the Super window.
     await p.getByTestId('drawer-history').click(); await wait(p, 1200);
     await shot(p, `6-history-${tag}`);
+    // One Super Agent entry, then its sessions.
+    const entry = p.getByTestId('chp-super-group').first();
+    if (await entry.isVisible().catch(() => false)) {
+      check('note11: one entry, with its count', (await p.getByTestId('chp-super-group').count()) >= 1 && (await p.getByTestId('chp-super-count').first().textContent())?.includes('1'));
+      check('note11: the owner\'s chat is a row', (await p.locator('.chp-modal').getByText('Plan the launch').count()) >= 1);
+      await shot(p, `11-history-entry-${tag}`);
+      await p.locator('.chp-input').fill('Migrate'); await wait(p, 1200);
+      await shot(p, `11-history-search-${tag}`);
+      check('note11: a search finds the Super session, marked', await seen(p, '[data-testid="chp-super-tag"]'));
+      await p.locator('.chp-input').fill(''); await wait(p, 900);
+      await p.getByTestId('chp-super-group').first().click(); await wait(p, 900);
+      await shot(p, `11-history-opened-${tag}`);
+      check('note11: the entry lists its sessions', await seen(p, '[data-testid="chp-super-back"]'));
+    } else if (after) check('note11: the entry is there', false);
     const hist = p.locator('.chp-modal').getByText('Migrate the old table').first();
     if (await hist.isVisible().catch(() => false)) {
       await hist.click(); await wait(p, 1500);
@@ -242,14 +257,46 @@ async function run(browser, { w, h, dark, full }, seeded) {
   await ctx.close();
 }
 
+let saved = '';
+async function presentation(browser, w, h, layout, drawer, dark) {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, colorScheme: dark ? 'dark' : 'light' });
+  const p = await ctx.newPage();
+  p.setDefaultTimeout(6000);
+  // The record on disk, read fresh: three jobs at work (one asking) and two pictures presented.
+  const file = join(ACME, '_dream_context', 'state', '.super-agent.json');
+  const rec = JSON.parse(saved);
+  for (const [i, c] of Object.values(rec.children).filter((x) => x.endedAt === undefined).entries()) { c.row = i === 1 ? 'asking' : 'working'; c.rowAt = Date.now(); }
+  rec.containers = [...rec.containers, ...['pa', 'pb'].map((k) => ({ id: k, kind: 'image', ref: `tmp/${k}.png`, shape: 'landscape', place: 'float', by: 'super', title: `Picture ${k}` }))];
+  rec.view = { mode: 'present', cards: ['pa', 'pb'], layout, layoutBy: 'owner' };
+  writeFileSync(file, JSON.stringify(rec));
+  await p.goto(`http://127.0.0.1:${PORT}/?vault=acme`);
+  await wait(p, 1800);
+  await dismiss(p);
+  if (drawer !== await seen(p, '[data-testid="chat-drawer"]')) { await p.getByTestId('ns-drawer-toggle').click(); await wait(p, 900); }
+  await wait(p, 300);
+  const name = `10-present-${layout}-${w}-${drawer ? 'drawer' : 'nodrawer'}-${dark ? 'dark' : 'light'}`;
+  await shot(p, name);
+  report.present = report.present ?? {};
+  report.present[name] = { chat: await p.locator('.super-centre').first().boundingBox().catch(() => null), mini: await p.locator('[data-mini="true"]').count(), tiles: await p.locator('[data-testid="super-container"][data-where="float"]').count() };
+  await ctx.close();
+}
+
 const seeded = seed();
 const srv = await server();
 const browser = await chromium.launch();
 try {
-  await run(browser, { w: 1440, h: 900, dark: false, full: true }, seeded);
-  await run(browser, { w: 1440, h: 900, dark: true, full: true }, seeded);
-  await run(browser, { w: 1024, h: 768, dark: false, full: false }, seeded);
-  await run(browser, { w: 390, h: 844, dark: false, full: false }, seeded);
+  if (!process.argv.includes('--present-only')) await run(browser, { w: 1440, h: 900, dark: false, full: true }, seeded);
+  if (!process.argv.includes('--present-only')) await run(browser, { w: 1440, h: 900, dark: true, full: true }, seeded);
+  if (!process.argv.includes('--present-only')) await run(browser, { w: 1024, h: 768, dark: false, full: false }, seeded);
+  if (!process.argv.includes('--present-only')) await run(browser, { w: 390, h: 844, dark: false, full: false }, seeded);
+  const recordFile = join(ACME, '_dream_context', 'state', '.super-agent.json');
+  saved = readFileSync(recordFile, 'utf-8');
+  mkdirSync(join(ACME, 'tmp'), { recursive: true });
+  for (const k of ['pa', 'pb']) writeFileSync(join(ACME, 'tmp', `${k}.png`), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64'));
+  for (const [w, h] of [[1440, 900], [1024, 768]]) for (const drawer of [true, false]) for (const l of ['filmstrip', 'grid', 'spotlight']) await presentation(browser, w, h, l, drawer, false);
+  await presentation(browser, 1440, 900, 'filmstrip', true, true);
+  writeFileSync(recordFile, saved);
+  if (process.argv.includes('--present-only')) { await browser.close(); srv.kill(); console.log(JSON.stringify(report.present, null, 0)); process.exit(0); }
 } finally {
   await browser.close();
   srv.kill();

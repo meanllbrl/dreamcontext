@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useReadiness } from '../../../hooks/useOnboarding';
-import { LauncherOpenContext } from '../../../lib/uxMode';
+import { NewProjectLandContext } from '../../../lib/uxMode';
 import { Onboarding } from '../../../pages/onboarding/Onboarding';
 import { entryStage, type OnboardingStage } from '../../../pages/onboarding/handoffPlan';
 
@@ -9,7 +9,7 @@ type Stage = Exclude<OnboardingStage, 'handoff'>;
 /**
  * The new shell's New project: the app's own Add Project flow (`Onboarding`, which creates a
  * project or takes an existing folder), started from the drawer or the picker. It lands in THIS
- * window (`LauncherOpenContext`), never a new one; closing it leaves the owner where they were.
+ * window (`NewProjectLandContext`), never a new one; closing it leaves the owner where they were.
  */
 export function NewProjectFlow({ onClose, onLand }: {
   onClose: () => void;
@@ -25,8 +25,8 @@ function Flow({ stage, onClose, onLand }: { stage: Stage; onClose: () => void; o
   // The step it opened on holds while readiness refreshes underneath.
   const [initial] = useState(stage);
   return (
-    <LauncherOpenContext.Provider value={onLand}>
+    <NewProjectLandContext.Provider value={onLand}>
       <Onboarding initialStage={initial} onClose={onClose} onOpenProject={(name) => onLand(name)} onFinished={onClose} />
-    </LauncherOpenContext.Provider>
+    </NewProjectLandContext.Provider>
   );
 }

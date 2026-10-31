@@ -5,6 +5,8 @@ import { projectRootOf } from './agent-spawn-shared.js';
 import { listPastSessions, listTranscriptFiles, DEFAULT_LIMIT, MAX_LIMIT } from '../../lib/transcript-sessions.js';
 import { contentOf, ensureContentIndex } from '../../lib/transcript-content-index.js';
 import { readSessionTitles } from '../../lib/session-titles.js';
+import { readSuperState } from '../../lib/super/store.js';
+import { superSanitizeOpts } from '../../lib/super/inbox.js';
 
 /**
  * `GET /api/agent/chat-sessions` — the project's PAST Claude conversations, newest first,
@@ -85,13 +87,57 @@ export async function computeChatSessions(
     build.promise.catch(() => {});
   }
 
-  const result = listPastSessions(projectRoot, {
-    home: opts.home, query, limit, includeAgentRuns, files,
+  const listing = (o: { limit: number; includeAgentRuns: boolean }) => listPastSessions(projectRoot, {
+    home: opts.home, query, ...o, files,
     content: contentOf,
     // A closed tab's name, so the list says what the tab said (see `session-titles.ts`).
     titles: readSessionTitles(contextRoot),
   });
+  const result = q.super === 'group' || q.super === 'only'
+    ? await withSuperGrouped(contextRoot, q.super, !!query.trim(), limit, includeAgentRuns, listing)
+    : listing({ limit, includeAgentRuns });
   return query.trim() && !indexed
     ? { ...result, indexing: { done: build.progress.done, total: build.progress.total } }
     : result;
+}
+
+type Listing = ReturnType<typeof listPastSessions>;
+
+/**
+ * The new shell's History (owner 2026-10-31): one "Super Agent" entry per project, never its
+ * sessions one by one. A view over the listing, read from the Super record's ownership:
+ *  - `group`, no query: the owner's chats plus `superGroup` (how many, the last activity);
+ *  - `group`, a query: every match, a Super session's marked `super`, so a search hides nothing;
+ *  - `only`: the project's Super sessions, for the entry opened.
+ * A Super session counts whether or not the listing files it under agent runs.
+ */
+export async function withSuperGrouped(
+  contextRoot: string,
+  mode: 'group' | 'only',
+  queried: boolean,
+  limit: number,
+  includeAgentRuns: boolean,
+  listing: (o: { limit: number; includeAgentRuns: boolean }) => Listing,
+): Promise<Listing & { superGroup?: { count: number; lastAt: number } }> {
+  let owned = new Set<string>();
+  try {
+    const s = await readSuperState(contextRoot, superSanitizeOpts());
+    owned = new Set([...Object.keys(s.children), ...(s.formerChildren ?? []), ...(s.session ? [s.session] : [])]);
+  } catch { /* no readable record: nothing is the Super's, the list stays whole */ }
+  const asked = listing({ limit: queried ? MAX_LIMIT : limit, includeAgentRuns });
+  const all = listing({ limit: MAX_LIMIT, includeAgentRuns: true });
+  const supers = all.sessions.filter((s) => owned.has(s.id));
+  if (mode === 'only') return { ...asked, sessions: supers.slice(0, limit).map((s) => ({ ...s, super: true })), total: supers.length, agentRuns: 0 };
+  const shownIds = new Set(asked.sessions.map((s) => s.id));
+  const hiddenSupers = supers.filter((s) => !shownIds.has(s.id)).length;
+  const agentRuns = Math.max(0, asked.agentRuns - hiddenSupers);
+  if (queried) {
+    const rows = all.sessions.filter((s) => owned.has(s.id) || shownIds.has(s.id)).slice(0, limit);
+    return { ...asked, sessions: rows.map((s) => (owned.has(s.id) ? { ...s, super: true } : s)), agentRuns };
+  }
+  const mine = asked.sessions.filter((s) => !owned.has(s.id));
+  return {
+    ...asked, sessions: mine, total: Math.max(0, asked.total - (supers.length - hiddenSupers)), agentRuns,
+    ...(supers.length ? { superGroup: { count: supers.length, lastAt: Math.max(...supers.map((s) => s.updatedAt)) } } : {}),
+  };
 }

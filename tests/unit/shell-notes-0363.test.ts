@@ -7,6 +7,10 @@ import { planStage, STAGE, stageItems } from '../../dashboard/src/components/sle
 import { buildDrawerRows } from '../../dashboard/src/components/layout/newshell/drawerModel';
 import { drawerTogglePanel, PAGES_WITH_PANEL } from '../../dashboard/src/lib/uxMode';
 import { rosterSummary } from '../../src/server/routes/agent-sessions';
+import { withSuperGrouped } from '../../src/server/routes/agent-chat-sessions';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { superGroupRow } from '../../dashboard/src/components/layout/newshell/historyFanout';
 
 const src = (p: string) => readFileSync(join(__dirname, '..', '..', p), 'utf-8');
 const SURFACE = 'dashboard/src/components/sleepy/AgentSurface.tsx';
@@ -205,5 +209,112 @@ describe('note 9: the Super Agent row', () => {
     expect(rows[0].children[0]).toMatchObject({ kind: 'super', working: 3, asking: false });
     expect(rows[1].children[0]).toMatchObject({ kind: 'super', working: 1, asking: true });
     expect(rows[2].superAsking).toBe(true);
+  });
+});
+
+describe('note 10: a tight presentation draws its live jobs on one line', () => {
+  const card = (id: string, o = {}) => ({ id, kind: 'chat', ref: id, shape: 'portrait', place: 'float', by: 'super', live: true, ...o });
+  const pic = (id: string) => ({ id, kind: 'image', ref: `${id}.png`, shape: 'landscape', place: 'float', by: 'super' });
+  const view = (layout: string) => ({ mode: 'present', cards: ['p1', 'p2'], layout }) as never;
+  const stage = (width: number) => ({ width, height: 860 });
+  const jobs = [card('a'), card('b'), card('c')];
+  const plan = (layout: string, width: number, miniRail: boolean, cs: unknown[] = [...jobs, pic('p1'), pic('p2')]) => planStage(cs as never, view(layout), stage(width), { miniRail });
+
+  for (const layout of ['spotlight', 'compare', 'grid', 'filmstrip', 'review']) {
+    for (const width of [1024, 1075, 1310]) {
+      it(`${layout} at ${width}: jobs stay on the stage, the chat gains, nothing overlaps`, () => {
+        const off = plan(layout, width, false);
+        const on = plan(layout, width, true);
+        if (off.mode !== 'present' || off.cards.a?.where !== 'float') return;
+        for (const id of ['a', 'b', 'c']) {
+          expect(on.cards[id].where).toBe('float');
+          expect(on.cards[id].mini).toBe(true);
+          expect(on.cards[id].rect.height).toBe(STAGE.MINI_RAIL_H);
+          expect(on.cards[id].rect.x + on.cards[id].rect.width).toBeLessThanOrEqual(on.centre.x + 1e-6);
+        }
+        expect(on.others.length).toBeLessThanOrEqual(off.others.length);
+        expect(on.centre.width).toBeGreaterThan(off.centre.width);
+      });
+    }
+  }
+
+  it('a roomy stage keeps the tiles, as does the classic shell', () => {
+    expect(plan('filmstrip', 1700, true).cards.a.mini).toBeUndefined();
+    expect(plan('filmstrip', 1075, false).cards.a.mini).toBeUndefined();
+  });
+  it('a job the owner sized keeps the rail of tiles', () => {
+    const cs = [card('a', { size: 'medium', sizeBy: 'owner' }), card('b'), pic('p1'), pic('p2')];
+    expect(plan('filmstrip', 1075, true, cs).cards.b?.mini).toBeUndefined();
+  });
+});
+
+describe('note 11: History holds one Super Agent entry per project', () => {
+  const S1 = '11111111-1111-4111-8111-111111111111';
+  const S2 = '22222222-2222-4222-8222-222222222222';
+  const CHILD = '33333333-3333-4333-8333-333333333333';
+  const MINE = '44444444-4444-4444-8444-444444444444';
+  const root = () => {
+    const r = join(mkdtempSync(join(tmpdir(), 'dc-history-')), '_dream_context');
+    mkdirSync(join(r, 'state'), { recursive: true });
+    writeFileSync(join(r, 'state', '.super-agent.json'), JSON.stringify({ v: 1, session: S1, enabled: true, containers: [], groups: [], view: { mode: 'float' }, children: { [CHILD]: { sessionId: CHILD, brief: 'b', adopted: false, startedAt: 1 } }, formerChildren: [S2], queue: [], notes: {}, away: { since: null, events: 0 }, dismissed: [], pool: [], ownerBatches: [], team: [] }));
+    return r;
+  };
+  const row = (id: string, updatedAt: number) => ({ id, title: id, preview: '', updatedAt, startedAt: null, sizeBytes: 1, gitBranch: '' });
+  // CHILD is filed under agent runs: it is only in the wider listing.
+  const listing = (o: { limit: number; includeAgentRuns: boolean }) => ({
+    sessions: o.includeAgentRuns ? [row(S1, 5), row(MINE, 4), row(S2, 3), row(CHILD, 2)] : [row(S1, 5), row(MINE, 4), row(S2, 3)],
+    total: o.includeAgentRuns ? 4 : 3, agentRuns: o.includeAgentRuns ? 0 : 1, truncated: false,
+  }) as never;
+
+  it('the plain list holds the owner\'s chats and one group with its count and last activity', async () => {
+    const r = await withSuperGrouped(root(), 'group', false, 30, false, listing);
+    expect(r.sessions.map((s) => s.id)).toEqual([MINE]);
+    expect(r.superGroup).toEqual({ count: 3, lastAt: 5 });
+    expect(r.agentRuns).toBe(0);
+  });
+  it('a search still finds a Super session, marked as one', async () => {
+    const r = await withSuperGrouped(root(), 'group', true, 30, false, listing);
+    expect(r.sessions.map((s) => s.id)).toEqual([S1, MINE, S2, CHILD]);
+    expect(r.sessions.filter((s) => (s as { super?: boolean }).super)).toHaveLength(3);
+    expect(r.superGroup).toBeUndefined();
+  });
+  it('the opened entry lists the Super sessions only', async () => {
+    const r = await withSuperGrouped(root(), 'only', false, 30, false, listing);
+    expect(r.sessions.map((s) => s.id)).toEqual([S1, S2, CHILD]);
+  });
+  it('no record: the list stays whole', async () => {
+    const r = await withSuperGrouped(join(mkdtempSync(join(tmpdir(), 'dc-history-')), '_dream_context'), 'group', false, 30, false, listing);
+    expect(r.sessions).toHaveLength(3);
+    expect(r.superGroup).toBeUndefined();
+  });
+  it('the entry row is no session id, and classic never asks for grouping', () => {
+    expect(superGroupRow('acme', { count: 2, lastAt: 9 }, 'Super Agent')).toMatchObject({ id: 'super-group:acme', superCount: 2 });
+    expect(src('dashboard/src/components/sleepy/ChatHistoryPicker.tsx')).toContain('? api.get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT))\n');
+  });
+});
+
+describe('review: the hidden tab is out of every action', () => {
+  it('⌘W, a drop and an injected line act on the shown panes', () => {
+    const s = src(SURFACE);
+    expect(s).toContain('const activePane = shownPanes.find((p) => p.id === activePaneId) ?? shownPanes[0];');
+    expect(s).toContain('const targetPane = shownPanes.find((p) => p.id === slot?.dataset.pane);');
+  });
+  it('a History pick never starts the Super Agent', () => {
+    const s = src(SURFACE);
+    const door = s.slice(s.indexOf('openInSuperWindowRef.current = (past)'), s.indexOf('const showStageForDockRef'));
+    expect(door).not.toContain('runDrawerIntentRef');
+  });
+  it('a child trimmed from the record stays the Super\'s', async () => {
+    const { readSuperState } = await import('../../src/lib/super/store');
+    const r = join(mkdtempSync(join(tmpdir(), 'dc-trim-')), '_dream_context');
+    mkdirSync(join(r, 'state'), { recursive: true });
+    const children: Record<string, unknown> = {};
+    for (let i = 0; i < 40; i++) {
+      const id = `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
+      children[id] = { sessionId: id, brief: 'b', adopted: false, startedAt: 1, endedAt: 1000 + i };
+    }
+    writeFileSync(join(r, 'state', '.super-agent.json'), JSON.stringify({ v: 1, session: null, enabled: false, containers: [], groups: [], view: { mode: 'float' }, children, queue: [], notes: {}, away: { since: null, events: 0 }, dismissed: [], pool: [], ownerBatches: [], team: [] }));
+    const st = await readSuperState(r);
+    expect(Object.keys(st.children).length + (st.formerChildren ?? []).length).toBe(40);
   });
 });

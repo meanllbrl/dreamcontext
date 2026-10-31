@@ -202,7 +202,7 @@ function sanitizeAskShows(raw: unknown, containers: readonly SuperContainer[]): 
   return capAskShows(out);
 }
 
-function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOpts): Record<string, SuperChild> {
+function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOpts, trimmed?: string[]): Record<string, SuperChild> {
   const out: Record<string, SuperChild> = {};
   if (!isRecord(raw)) return out;
   for (const [key, c] of Object.entries(raw)) {
@@ -256,7 +256,7 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
   // Ended children are history: only the newest MAX_ENDED_CHILDREN stay in the record. One that
   // still owns a worktree always stays (`super merge` and `worktree remove` reach it by child).
   const ended = Object.values(out).filter((c) => c.endedAt !== undefined && !c.worktree).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
-  for (const c of ended.slice(MAX_ENDED_CHILDREN)) delete out[c.sessionId];
+  for (const c of ended.slice(MAX_ENDED_CHILDREN)) { trimmed?.push(c.sessionId); delete out[c.sessionId]; }
   return out;
 }
 
@@ -488,7 +488,9 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
   const base = emptySuperState();
   if (!isRecord(raw) || raw.v !== SUPER_STATE_VERSION) return base;
   const session = typeof raw.session === 'string' && okSessionId(raw.session) ? raw.session : null;
-  const children = sanitizeChildren(raw.children, session, opts);
+  // A child trimmed from the history is still the Super's: its id stays in `formerChildren`.
+  const trimmedChildren: string[] = [];
+  const children = sanitizeChildren(raw.children, session, opts, trimmedChildren);
   // Groups settle against the cards (a closed card leaves its group, a group of one dissolves
   // into its card), so they come back with the cards they may have changed.
   // A team card shows a recorded job: one whose job fell off the record goes with it.
@@ -504,7 +506,7 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
   const queue = sanitizeQueue(raw.queue, session);
   const held = sanitizeHeld(raw.held, queue);
   const pad = sanitizePad(raw.pad);
-  const formerChildren = sanitizeFormerChildren(raw.formerChildren);
+  const formerChildren = sanitizeFormerChildren([...(Array.isArray(raw.formerChildren) ? raw.formerChildren : []), ...trimmedChildren]);
   const askShows = sanitizeAskShows(raw.askShows, containers);
   const rawSeq = finite(raw.padSeq);
   const padSeq = rawSeq !== undefined && rawSeq > 0 && rawSeq < 1e6 ? Math.floor(rawSeq) : 0;

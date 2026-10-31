@@ -2,7 +2,7 @@ import { useState, useContext } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { useAgentSettings } from '../../hooks/useOnboarding';
 import { emitStartIntent, openVaultWindow } from '../../lib/desktop';
-import { LauncherOpenContext } from '../../lib/uxMode';
+import { NewProjectLandContext } from '../../lib/uxMode';
 import type { ReadinessReport } from '../../lib/onboardingTypes';
 import { GemConverge } from './GemConverge';
 import { canStartClaude, handoffAction } from './handoffPlan';
@@ -31,7 +31,7 @@ export function Handoff({ project, report, onDone, onFinishSetup }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const canStart = canStartClaude(report, settings);
   /** The new shell's New project lands in this window; null (the launcher) opens its own. */
-  const landHere = useContext(LauncherOpenContext);
+  const landHere = useContext(NewProjectLandContext);
 
   async function open(start: boolean) {
     if (busy) return;

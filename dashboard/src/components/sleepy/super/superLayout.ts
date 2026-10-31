@@ -57,6 +57,12 @@ export const STAGE = {
   MAX_COLS: 2,
   /** `present`: the centre's left column. */
   PRESENT_FRAC: 0.34,
+  /** The rail's one-line job card, the gap between two, and the stage width under which a
+   *  presentation is tight enough to use it. */
+  MINI_RAIL_W: 124,
+  MINI_RAIL_H: 40,
+  MINI_RAIL_GAP: 8,
+  MINI_RAIL_STAGE: 1560,
   /** The chat's floor beside cards or a page (owner 2026-10-28: "a comfortable minimum width",
    *  its head keeps one row with Agenda and New session); the cards' region keeps it too. */
   PRESENT_MIN: 480,
@@ -157,6 +163,8 @@ export interface CardPlan {
   z: number;
   /** A filmstrip thumb scrolled out of the strip's window: drawn nowhere until scrolled back. */
   hidden?: boolean;
+  /** A rail job drawn as one line (status and short name) on a tight presentation. */
+  mini?: boolean;
 }
 
 /** A filmstrip's strip (owner 2026-10-29: "every time I select one, it swaps places"): every
@@ -331,6 +339,9 @@ export interface PlanOptions {
   narrowPx?: number;
   /** The centre's floor for this screen; absent = `STAGE.CENTRE_MIN`. */
   centreMin?: number;
+  /** A presentation on a tight stage draws the live jobs as one-line cards (owner 2026-10-31):
+   *  the width goes to the chat. Off: the classic rail of tiles. */
+  miniRail?: boolean;
   /** The new shell's chat drawer stands beside the stage (owner 2026-10-31): the stage has lost
    *  width on the left, so the centre leans right and widens, and the right cards go to the margin.
    *  Only while no card stands where the owner dropped it, and only when it costs no card. */
@@ -1082,9 +1093,25 @@ function planWith(
   // is the content the view draws in. Jobs past what the column holds wait in a temporary "more"
   // tile at its foot (Others' pill, lit by their live status), gone when the view ends.
   let more: StagePlan['more'];
-  const besideRail = (picked: readonly string[]): Rect => {
+  /** What the one-line rail saved over the tiles; the presentation hands it to the chat. */
+  let railSaved = 0;
+  const besideRail = (picked: readonly string[], presenting = false): Rect => {
     const rail = narrow ? [] : list.filter((c) => c.live && c.kind === 'chat' && c.place === 'float' && !picked.includes(c.id));
     const { TILE: T, GAP, BAND } = STAGE;
+    // Tight: every job one line, so the chat reads. A card the owner sized keeps the rail of tiles.
+    if (presenting && opts.miniRail && rail.length && f.width < STAGE.MINI_RAIL_STAGE && !rail.some((c) => (c as { sizeBy?: string }).sizeBy === 'owner' && sizeOf(c) !== 'small')) {
+      const { MINI_RAIL_W: W, MINI_RAIL_H: H, MINI_RAIL_GAP: G } = STAGE;
+      const fits = Math.max(0, Math.floor((f.content.height + G) / (H + G)));
+      if (fits >= rail.length) {
+        let y = f.content.y + (f.content.height - rail.length * H - (rail.length - 1) * G) / 2;
+        for (const c of rail) {
+          cards[c.id] = { id: c.id, rect: { x: f.content.x, y, width: W, height: H }, where: 'float', shape: 'square', size: 'small', owner: false, z: z.get(c.id) ?? 0, mini: true };
+          y += H + G;
+        }
+        railSaved = T - W;
+        return { ...f.content, x: f.content.x + W + GAP, width: f.content.width - W - GAP };
+      }
+    }
     // The rail never squeezes what the owner looks at: the centre keeps PRESENT_MIN and the page
     // (or the presented cards' region) REGION_MIN, else there is no rail and its jobs lead Others.
     const keep = STAGE.PRESENT_MIN + GAP + STAGE.REGION_MIN;
@@ -1205,14 +1232,14 @@ function planWith(
     }
 
     // A wide stage keeps the live jobs beside the presentation; the layouts draw in what they leave.
-    const content = besideRail(ordered);
+    const content = besideRail(ordered, true);
     if (layout === 'compare' || layout === 'grid') {
       // The centre as a left column, the cards in a grid on the right (as before layouts); the
       // centre's share is of what the rail leaves (the rail narrows the centre and the cards alike).
       // The chat's floor gives way (down to REGION_MIN) only so two cards keep FIT_MIN side by side
       // (a 968 px touch stage).
       const share = Math.min(STAGE.PRESENT_MAX, Math.max(STAGE.PRESENT_MIN, STAGE.PRESENT_FRAC * (content.width + 2 * STAGE.MARGIN)));
-      const w = Math.max(STAGE.REGION_MIN, Math.min(share, content.width - 2 * STAGE.GAP - 2 * STAGE.FIT_MIN.w));
+      const w = Math.max(STAGE.REGION_MIN, Math.min(share + railSaved, content.width - 2 * STAGE.GAP - 2 * STAGE.FIT_MIN.w));
       const centre: Rect = { x: content.x, y: content.y, width: w, height: content.height };
       const region: Rect = { x: content.x + w + STAGE.GAP, y: content.y, width: content.width - w - STAGE.GAP, height: content.height };
       const { rects } = fitArrange(region, ordered.map((id) => ({ aspect: list.find((x) => x.id === id)?.aspect })));
@@ -1225,7 +1252,9 @@ function planWith(
     // when the owner folded it and no question of his is open), the cards take the rest.
     const c = content;
     const chat: ChatDraw = view.chat === 'bar' && !opts.asking ? 'bar' : 'mini';
-    const miniW = Math.min(STAGE.MINI_MAX_W, Math.max(STAGE.MINI_MIN_W, STAGE.MINI_FRAC_W * f.width));
+    const plainMiniW = Math.min(STAGE.MINI_MAX_W, Math.max(STAGE.MINI_MIN_W, STAGE.MINI_FRAC_W * f.width));
+    // With a one-line rail the chat reads at its comfortable width, and the cards keep their floor.
+    const miniW = railSaved ? Math.max(plainMiniW + railSaved, Math.min(STAGE.PRESENT_MIN, c.width - STAGE.GAP - STAGE.REGION_MIN)) : plainMiniW;
     // The chat takes the whole left column (owner 2026-10-25): a short mini left an unused gap above it.
     const miniH = c.height;
     const centre: Rect = chat === 'bar'

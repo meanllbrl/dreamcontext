@@ -95,7 +95,11 @@ export function ShellModeProvider({ children }: { children: ReactNode }) {
  * in THIS window (`addTab`), never in a new one. Null (the real launcher window) keeps its own
  * `openVaultWindow` exactly as today.
  */
-export const LauncherOpenContext = createContext<((name: string, start?: 'initializer') => void) | null>(null);
+export const LauncherOpenContext = createContext<((name: string) => void) | null>(null);
+
+/** The new shell's New project: its hand-off lands in THIS window, with the first run it asked for.
+ *  Null everywhere else: `Handoff` opens the project's window as ever. */
+export const NewProjectLandContext = createContext<((name: string, start?: 'initializer') => void) | null>(null);
 
 /** A page's drawer toggle (⌘B / the title-bar button) on a page that has its own drawer
  *  (Whiteboards' explorer). Emitted on the instance bus by `PageDrawerToggleBridge`. */
