@@ -381,7 +381,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
                     {cross && scope === ALL && s.vault && <span className="chp-row-tag chp-row-vault">{s.vault}</span>}
                     {s.superCount !== undefined && <span className="chp-row-tag chp-row-tag--super" data-testid="chp-super-count">{t(s.superCount === 1 ? 'shell.history.superSession' : 'shell.history.superSessions').replace('{n}', String(s.superCount))}</span>}
                     {s.super && !superOf && <span className="chp-row-tag chp-row-tag--super" data-testid="chp-super-tag">{t('shell.history.superAgent')}</span>}
-                    {s.tool === 'codex' && <span className="chp-row-tag" data-testid="chp-tool-tag">Codex</span>}
+                    {s.tool === 'codex' && <span className="chp-row-tag chp-row-tag--tool" data-testid="chp-tool-tag">Codex</span>}
                     {isOpen && <span className="chp-row-tag">open</span>}
                     {s.gitBranch && <span className="chp-row-branch" title={s.gitBranch}>{s.gitBranch}</span>}
                     {s.superCount === undefined && <span className="chp-row-size">{sizeLabel(s.sizeBytes)}</span>}
