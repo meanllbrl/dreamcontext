@@ -8,6 +8,7 @@ import { tabWantsAgentTitle } from '../chat-tab-title-nudge.js';
 import { ecoJoins } from './eco.js';
 import { codexCachedModels, codexDefaultModel } from './registry.js';
 import { runBridgeStdio } from './stdio.js';
+import type { ClaudeKit } from './claude-kit.js';
 
 export interface T3ChatOptions {
   tool: 'codex' | 'claude';
@@ -21,7 +22,9 @@ export interface T3ChatOptions {
   extraRoot?: string[];
 }
 
-export async function runT3Chat(o: T3ChatOptions): Promise<number> {
+export const runT3Chat = (o: T3ChatOptions): Promise<number> => runBridgeChat(o);
+
+export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Promise<number> {
   const eco = ecoJoins(o.cwd, process.env, { tool: o.tool });
   return runBridgeStdio(
     {
@@ -37,6 +40,7 @@ export async function runT3Chat(o: T3ChatOptions): Promise<number> {
       extraRoots: o.extraRoot ?? [],
     },
     {
+      ...(claudeKit ? { claudeKit } : {}),
       input: process.stdin,
       write: (line) => { process.stdout.write(line); },
       env: process.env,

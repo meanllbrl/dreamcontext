@@ -179,6 +179,8 @@ export interface ModelConfig {
   /** The user's default model alias + effort level from `~/.claude/settings.json`. */
   defaultModel: string;
   defaultEffort: string;
+  /** This list is the pane's own tool's (Codex), not Claude's fallback. */
+  isToolList?: boolean;
 }
 
 /** Used only until the real config arrives (or if the CLI can't be read) — deliberately

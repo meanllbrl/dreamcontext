@@ -20,7 +20,7 @@ export function takePendingMacAdopt(vault: string): LiveChatWire | null {
     if (p.vault !== vault) return null;
     sessionStorage.removeItem(KEY);
     if (typeof p.at === 'number' && Date.now() - p.at > 60_000) return null;
-    return { conversationId: p.conversationId, vault: p.vault, title: p.title, busy: p.busy, state: p.state ?? (p.busy ? 'working' : 'idle'), lastLine: typeof p.lastLine === 'string' ? p.lastLine : null, updatedAt: typeof p.updatedAt === 'number' ? p.updatedAt : null };
+    return { conversationId: p.conversationId, vault: p.vault, title: p.title, busy: p.busy, state: p.state ?? (p.busy ? 'working' : 'idle'), lastLine: typeof p.lastLine === 'string' ? p.lastLine : null, updatedAt: typeof p.updatedAt === 'number' ? p.updatedAt : null, ...(p.tool === 'codex' ? { tool: 'codex' as const } : {}) };
   } catch { return null; }
 }
 
@@ -30,7 +30,7 @@ const OPEN_KEY = 'dc-mac-pending-open';
 
 /** What a tap in the one list asked another project's surface to open once it has mounted. */
 export type PendingPhoneOpen =
-  | { vault: string; kind: 'resume'; id: string; title: string }
+  | { vault: string; kind: 'resume'; id: string; title: string; tool?: 'codex' }
   | { vault: string; kind: 'super'; id: string };
 
 /** Forget every parked open: a tap in THIS project supersedes one parked for another. */
@@ -47,12 +47,12 @@ export function takePendingPhoneOpen(vault: string): PendingPhoneOpen | null {
   try {
     const raw = sessionStorage.getItem(OPEN_KEY);
     if (!raw) return null;
-    const p = JSON.parse(raw) as Partial<PendingPhoneOpen> & { at?: number; title?: unknown };
+    const p = JSON.parse(raw) as Partial<PendingPhoneOpen> & { at?: number; title?: unknown; tool?: unknown };
     if (p.vault !== vault || typeof p.id !== 'string') return null;
     sessionStorage.removeItem(OPEN_KEY);
     if (typeof p.at === 'number' && Date.now() - p.at > 60_000) return null;
     if (p.kind === 'super') return { vault, kind: 'super', id: p.id };
-    if (p.kind === 'resume') return { vault, kind: 'resume', id: p.id, title: typeof p.title === 'string' ? p.title : '' };
+    if (p.kind === 'resume') return { vault, kind: 'resume', id: p.id, title: typeof p.title === 'string' ? p.title : '', ...(p.tool === 'codex' ? { tool: 'codex' as const } : {}) };
     return null;
   } catch { return null; }
 }

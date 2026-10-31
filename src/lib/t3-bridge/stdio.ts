@@ -38,6 +38,8 @@ export interface StdioDeps {
   readonly write: (line: string) => void;
   readonly env: NodeJS.ProcessEnv;
   readonly home?: string;
+  /** T3's Claude driver: only the Claude engine's child has it (claude-kit.ts). */
+  readonly claudeKit?: BridgeSessionOptions['claudeKit'];
   /** Tests: a replay client instead of `codex app-server`. */
   readonly clientFactory?: BridgeSessionOptions['clientFactory'];
   readonly runtimePolicyOverride?: BridgeSessionOptions['runtimePolicyOverride'];
@@ -116,6 +118,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       stateRoot: join(home, '.dreamcontext', 't3'),
       extraRoots: args.extraRoots ?? [],
       privateTmp,
+      ...(deps.claudeKit ? { claudeKit: deps.claudeKit } : {}),
       ...(deps.clientFactory ? { clientFactory: deps.clientFactory } : {}),
       ...(deps.runtimePolicyOverride ? { runtimePolicyOverride: deps.runtimePolicyOverride } : {}),
       onFatal: (message) => {

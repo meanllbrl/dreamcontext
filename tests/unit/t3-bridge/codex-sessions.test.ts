@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { clearCodexSessionCache, listCodexSessions, mergeSessionRows, tabsByThread } from '../../../src/lib/t3-bridge/codex-sessions.js';
-import { linkedWritableRoots, worktreesIn } from '../../../src/lib/t3-bridge/roots.js';
+import { isWorktreeOf, linkedWritableRoots, worktreesIn } from '../../../src/lib/t3-bridge/roots.js';
 import { computeChatSessions } from '../../../src/server/routes/agent-chat-sessions.js';
 
 const A = '11111111-1111-4111-8111-111111111111';
@@ -90,6 +91,26 @@ describe('Past chats lists a project\'s Codex threads', () => {
 describe('linked repos become writable roots', () => {
   it('reads a repo\'s worktrees from git\'s own list', () => {
     expect(worktreesIn('worktree /code/app\nHEAD abc\nbranch refs/heads/main\n\nworktree /wt/app-x\nHEAD def\n')).toEqual(['/code/app', '/wt/app-x']);
+  });
+
+  it('a stale worktree path a turn pointed elsewhere is no root', () => {
+    const repo = join(base, 'repo');
+    const git = (...a: string[]) => execFileSync('git', a, { cwd: repo, stdio: 'ignore' });
+    mkdirSync(repo);
+    git('init', '-q');
+    git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'x');
+    const live = join(base, 'wt-live');
+    const stale = join(repo, 'wt-stale');
+    git('worktree', 'add', '-q', live);
+    git('worktree', 'add', '-q', stale);
+    rmSync(stale, { recursive: true });
+    const secret = join(base, 'secret');
+    mkdirSync(secret);
+    symlinkSync(secret, stale); // what a sandboxed turn can write at the dead path
+    const common = realpathSync(join(repo, '.git'));
+    expect(isWorktreeOf(common, realpathSync(live))).toBe(true);
+    expect(isWorktreeOf(common, realpathSync(stale))).toBe(false);
+    expect(isWorktreeOf(common, repo)).toBe(false);
   });
 
   it('an unreadable project is no root at all, never a wider one', () => {

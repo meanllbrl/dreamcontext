@@ -1897,7 +1897,10 @@ export function startChatSession(
   // resolvable), it REFUSES below like a Claude resume, rather than starting a fresh
   // thread whose record would overwrite the map and lose the conversation for good.
   const bridgeMapped = !!bridgeTool && !!mappedId && mappedId !== resumeId && isCodexThreadId(mappedId);
-  const freshPin = bridgeTool
+  // Only a Codex pane holds by pane: T3's Claude engine keeps Claude's own session rules, so its
+  // "a resume never quietly forks" guard and its one-writer hold are today's.
+  const paneHeld = bridgeTool === 'codex';
+  const freshPin = paneHeld
     ? (resumeTarget || bridgeMapped ? '' : pinId)
     : !resumeTarget && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
       ? pinId : '';
@@ -2011,7 +2014,7 @@ export function startChatSession(
 
   // A bridge pane holds its PANE id (its thread changes on rotation; the pane does not), so a
   // respawn of the same pane waits for the old child exactly as a Claude resume does.
-  const heldConversation = bridgeTool ? pinId : resumeTarget || freshPin;
+  const heldConversation = paneHeld ? pinId : resumeTarget || freshPin;
   if (heldConversation) liveConversations.add(heldConversation);
   /** The hold was handed to a respawn while this child was detached and busy (`supersedeLive`):
    *  the conversation is not ours to release any more, so `releaseHeld` must leave it alone. */

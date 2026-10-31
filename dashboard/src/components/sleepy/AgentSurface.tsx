@@ -2112,6 +2112,7 @@ export function AgentSurface({ stageBesideDrawer = false }: {
   // and ChatPane's own affordance) — dispose the chat session and resume the SAME
   // conversation UUID as a terminal agent, in place (same id-swap idiom as resumeSession).
   const resumeChatInTerminal = useCallback((cs: ChatSession) => {
+    if (cs.tool) return; // another tool's conversation has no Claude terminal to continue in
     try { cs.dispose(); } catch { /* best-effort */ }
     sessions.current.delete(cs.id);
     const s = spawn(cs.bypass, cs.claudeId, true, 'agent');
@@ -2523,7 +2524,10 @@ export function AgentSurface({ stageBesideDrawer = false }: {
         });
         return;
       }
-      const s = spawn(false, undefined, false, 'chat', prepared.inline, modelForSession(cs), true, prepared.token, false, effortForSession(cs), true, 'develop');
+      // A Codex plan is built on Codex: its model means nothing to Claude.
+      const developId = cs.tool ? newClaudeId() : undefined;
+      if (developId) bindChatTool(developId, cs.tool);
+      const s = spawn(false, developId, false, 'chat', prepared.inline, modelForSession(cs), true, prepared.token, false, effortForSession(cs), true, 'develop');
       const meta: SessionMeta = {
         // Opens under the task's name read as words, and `titleByAgent` lets the Develop agent
         // replace it with a real one — the slug alone (`her-ders-ve-program-…`) is unreadable
@@ -2749,7 +2753,7 @@ export function AgentSurface({ stageBesideDrawer = false }: {
       if (open.kind === 'super') {
         openSuperOnPhone({ conversationId: open.id, vault, title: null, busy: false, state: 'idle', lastLine: null, updatedAt: null, live: true });
       } else {
-        resumePastSession({ id: open.id, title: open.title, preview: '', updatedAt: 0, startedAt: null, sizeBytes: 0, gitBranch: '' } as PastSession);
+        resumePastSession({ id: open.id, title: open.title, preview: '', updatedAt: 0, startedAt: null, sizeBytes: 0, gitBranch: '', ...(open.tool ? { tool: open.tool } : {}) } as PastSession);
       }
       setPhoneView('chat');
     }, 200);

@@ -2294,7 +2294,8 @@ export function Composer({
             effort={effortValue}
             onModelChange={stableModelChange}
             onEffortChange={stableEffortChange}
-            onSetDefault={stableSaveDefault}
+            // A Codex pane still on Claude's fallback list has no Codex model to save.
+            onSetDefault={session.tool && !modelConfig.isToolList ? undefined : stableSaveDefault}
             savedDefault={savedDefault}
             close={menu.close}
             head={modelMenu?.head}

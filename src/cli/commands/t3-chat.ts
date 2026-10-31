@@ -6,10 +6,10 @@ import type { Command } from 'commander';
  * The bridge lives in its own bundle beside this one (dist/t3-bridge.js), never inlined: a
  * non-literal import keeps the bundler out of it. From source (tests, dev) it is the module itself.
  */
-async function loadBridge(): Promise<typeof import('../../lib/t3-bridge/main.js')> {
-  const sibling = new URL('./t3-bridge.js', import.meta.url);
+async function loadBridge(tool: 'codex' | 'claude'): Promise<typeof import('../../lib/t3-bridge/main.js')> {
+  const sibling = new URL(tool === 'claude' ? './t3-bridge-claude.js' : './t3-bridge.js', import.meta.url);
   if (existsSync(fileURLToPath(sibling))) return import(sibling.href);
-  const source = ['../../lib/t3-bridge', 'main.js'].join('/');
+  const source = ['../../lib/t3-bridge', tool === 'claude' ? 'main-claude.js' : 'main.js'].join('/');
   return import(/* @vite-ignore */ source);
 }
 
@@ -40,8 +40,16 @@ export function registerT3ChatCommand(program: Command): void {
         process.stderr.write(`t3-chat: unknown tool ${o.tool}\n`);
         process.exit(2);
       }
-      const { runT3Chat } = await loadBridge();
-      const code = await runT3Chat({ ...o, tool: o.tool, cwd: o.cwd ?? process.cwd() });
-      process.exit(code);
+      let bridge: Awaited<ReturnType<typeof loadBridge>>;
+      try {
+        bridge = await loadBridge(o.tool);
+      } catch (err) {
+        // The Claude engine's Agent SDK is a real npm package: a packaged app without a global
+        // CLI does not have it. The pane says so instead of ending silently.
+        const why = o.tool === 'claude' ? 'The T3 Claude engine needs a global dreamcontext install. Switch Claude engine back to dreamcontext in Settings.' : `Codex could not load: ${String(err).slice(0, 300)}`;
+        process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: why, num_turns: 0, total_cost_usd: 0, usage: {}, dc_tool: o.tool }) + '\n');
+        process.exit(1);
+      }
+      process.exit(await bridge.runT3Chat({ ...o, tool: o.tool, cwd: o.cwd ?? process.cwd() }));
     });
 }

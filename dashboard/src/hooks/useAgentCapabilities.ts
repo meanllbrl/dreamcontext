@@ -482,5 +482,6 @@ export function codexModelConfig(info: AgentToolInfo | undefined): ModelConfig |
     efforts,
     defaultModel: def.id,
     defaultEffort: def.defaultEffort ?? efforts[0] ?? '',
+    isToolList: true,
   };
 }

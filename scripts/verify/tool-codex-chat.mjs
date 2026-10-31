@@ -20,7 +20,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -165,6 +165,13 @@ async function main() {
   const browser = await chromium.launch();
   const ok = (label, cond, detail) => report.check('flow', label, cond, detail);
   try {
+    // ── The packaged app ships dist/ with no node_modules: the Codex child must load alone ──
+    const alone = join(SCRATCH, 'dist-alone');
+    mkdirSync(alone, { recursive: true });
+    copyFileSync(join(REPO, 'dist', 't3-bridge.js'), join(alone, 't3-bridge.mjs'));
+    const loaded = spawnSync(process.execPath, ['-e', `import(${JSON.stringify(join(alone, 't3-bridge.mjs'))}).then(() => console.log('ok'))`], { cwd: alone, encoding: 'utf-8' });
+    ok('the Codex bridge bundle loads with no node_modules beside it', loaded.stdout.includes('ok'), loaded.stderr.slice(0, 300));
+
     // ── The flow, once, in dark at desktop width ──
     const { page, errors } = await openPage(browser, base);
     const h = helpers(page);

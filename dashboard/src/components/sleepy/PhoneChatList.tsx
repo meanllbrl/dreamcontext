@@ -419,7 +419,7 @@ export function PhoneChatList({
  *  takes the request once it is on screen). A swipe on the chat screen goes the same way. */
 export function openElsewhere(r: HomeRow, chrome: { addTab(vault: string): Promise<unknown> }): void {
   if (r.kind === 'super') setPendingPhoneOpen({ vault: r.vault, kind: 'super', id: r.row.conversationId });
-  else if (r.kind === 'closed') setPendingPhoneOpen({ vault: r.vault, kind: 'resume', id: r.row.id, title: r.row.title });
+  else if (r.kind === 'closed') setPendingPhoneOpen({ vault: r.vault, kind: 'resume', id: r.row.id, title: r.row.title, ...(r.row.past.tool ? { tool: r.row.past.tool } : {}) });
   else if (r.row.kind === 'mac') setPendingMacAdopt(r.row.chat);
   void chrome.addTab(r.vault);
 }

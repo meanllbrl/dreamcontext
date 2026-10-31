@@ -4,7 +4,8 @@
  * (`writableRoots`: never `~/.dreamcontext`, never home itself); this only lists them.
  */
 import { execFileSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
+import { join, resolve, sep } from 'node:path';
 import { resolveLinkedRepos } from '../linked-repos.js';
 
 const MAX_ROOTS = 32;
@@ -22,6 +23,29 @@ function gitWorktrees(repo: string): string[] {
   }
 }
 
+function gitCommonDir(repo: string): string | null {
+  try {
+    return realpathSync(execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: repo, encoding: 'utf-8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).trim());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Is this folder really a worktree of that repo? `git worktree list` keeps naming a deleted
+ * worktree, and a sandboxed turn may write a symlink at that path: resolved blindly, the next
+ * chat would get whatever the link points at as a writable root. So the folder must point back:
+ * its `.git` file names a folder under `<common>/worktrees/`.
+ */
+export function isWorktreeOf(commonDir: string, folder: string): boolean {
+  try {
+    const gitdir = /^gitdir: (.+)$/m.exec(readFileSync(join(folder, '.git'), 'utf-8'))?.[1]?.trim();
+    return !!gitdir && realpathSync(resolve(folder, gitdir)).startsWith(join(commonDir, 'worktrees') + sep);
+  } catch {
+    return false; // a real repo's `.git` is a folder; anything unreadable is no worktree
+  }
+}
+
 export function linkedWritableRoots(
   projectRoot: string,
   o: { home?: string; worktrees?: (repo: string) => string[] } = {},
@@ -36,7 +60,13 @@ export function linkedWritableRoots(
     for (const repo of resolveLinkedRepos(projectRoot, o.home)) {
       if (!repo.path) continue;
       add(repo.path);
-      for (const w of (o.worktrees ?? gitWorktrees)(repo.path)) add(w);
+      const common = gitCommonDir(repo.path);
+      if (!common) continue;
+      for (const w of (o.worktrees ?? gitWorktrees)(repo.path)) {
+        let folder = w;
+        try { folder = realpathSync(w); } catch { continue; }
+        if (isWorktreeOf(common, folder)) add(folder);
+      }
     }
   } catch { /* an unreadable config degrades to the project alone: narrower, never wider */ }
   return out.slice(0, MAX_ROOTS);

@@ -30,9 +30,7 @@ import type * as ProviderAdapter from '@t3tools/provider-core/server/ProviderAda
 import * as ProviderEventLoggers from '@t3tools/provider-core/server/ProviderEventLoggers';
 import { DEFAULT_SIGNAL_EXPORT } from '@t3tools/shared/observability';
 import * as OtelEnvironment from '@t3tools/shared/otelEnvironment';
-import * as ClaudeAdapterV2 from '@t3tools/server/orchestration-v2/Adapters/ClaudeAdapterV2';
 import * as CodexAdapterV2 from '@t3tools/server/orchestration-v2/Adapters/CodexAdapterV2';
-import * as PortScanner from '@t3tools/server/preview/PortScanner';
 import type * as ServerConfig from '@t3tools/server/config';
 import * as Crypto from 'effect/Crypto';
 import * as DateTime from 'effect/DateTime';
@@ -48,6 +46,8 @@ import * as Stream from 'effect/Stream';
 import * as ChildProcessSpawner from 'effect/process/ChildProcessSpawner';
 import { claudeRuntimePolicy, codexRuntimePolicy, type CodexRuntimePolicy } from './policy.js';
 import { ToWire, type WireFrame } from './to-wire.js';
+import type { ClaudeKit } from './claude-kit.js';
+import type { ClaudeAgentSdkQueryRunner } from '@t3tools/server/orchestration-v2/Adapters/ClaudeAdapterV2';
 
 export type ClientFactory = CodexAdapterV2.CodexAppServerClientFactoryShape;
 
@@ -77,6 +77,8 @@ export interface BridgeSessionOptions {
   /** The adapter's event stream ended while the session was open (Codex died): the caller ends
    *  the bridge. An open turn has already been closed with an error `result`. */
   readonly onFatal?: (message: string) => void;
+  /** T3's Claude driver (`tool: 'claude'`): only the Claude engine's own bundle holds it. */
+  readonly claudeKit?: ClaudeKit;
   /** Tests inject T3's replay client here; production spawns `codex app-server`. */
   readonly clientFactory?: ClientFactory;
   readonly emit: (frame: WireFrame) => void;
@@ -86,6 +88,12 @@ export interface BridgeSessionOptions {
 
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+
+function hasToolUse(frame: WireFrame): boolean {
+  if (frame.type !== 'assistant') return false;
+  const content = (frame.message as { content?: unknown } | undefined)?.content;
+  return Array.isArray(content) && content.some((b) => !!b && typeof b === 'object' && (b as { type?: unknown }).type === 'tool_use');
+}
 
 function hiddenText(frame: WireFrame): string {
   const content = (frame.message as { content?: unknown } | undefined)?.content;
@@ -153,7 +161,7 @@ export function bridgeServerConfig(stateRoot: string, cwd: string): ServerConfig
 }
 
 /** The runtime layer: Node services, T3's id allocator and MCP sessions, no provider event logs. */
-function bridgeLayer(clientFactory: ClientFactory | undefined) {
+function bridgeLayer(clientFactory: ClientFactory | undefined, kit: ClaudeKit | undefined) {
   const base = Layer.mergeAll(
     NodeServices.layer,
     IdAllocator.layer,
@@ -162,15 +170,15 @@ function bridgeLayer(clientFactory: ClientFactory | undefined) {
   const factory = clientFactory
     ? Layer.succeed(CodexAdapterV2.CodexAppServerClientFactory, CodexAdapterV2.CodexAppServerClientFactory.of(clientFactory))
     : CodexAdapterV2.layerAppServerClientFactory.pipe(Layer.provide(base));
-  const claudeRunner = ClaudeAdapterV2.layerQueryRunner.pipe(Layer.provide(Layer.mergeAll(base, PortScanner.layer)));
-  return Layer.mergeAll(base, McpProviderSessions.layer, factory, claudeRunner);
+  const layer = Layer.mergeAll(base, McpProviderSessions.layer, factory);
+  return kit ? Layer.merge(layer, kit.layerRunner.pipe(Layer.provide(Layer.merge(base, kit.layerPorts)))) : layer;
 }
 
 type Runtime = ManagedRuntime.ManagedRuntime<
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | CodexAdapterV2.CodexAppServerClientFactory
-  | ClaudeAdapterV2.ClaudeAgentSdkQueryRunner
+  | ClaudeAgentSdkQueryRunner
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
@@ -194,8 +202,11 @@ export class BridgeSession {
    *  arrives before Codex reported the turn running waits for it instead of being lost. */
   private turnKnown: { promise: Promise<void>; resolve: () => void } | null = null;
   private closed = false;
+  /** The native thread already has a turn on disk. The run counter is per process, so it cannot
+   *  say this for a reopened pane or a fresh thread; T3's Claude driver picks resume by it. */
+  private nativeHasTurns = false;
   /** A hidden turn (the tab-title follow-up): its frames are read here, never emitted. */
-  private hidden: { text: string; finished: Promise<void>; finish: () => void } | null = null;
+  private hidden: { text: string; finished: Promise<void>; finish: () => void; stopping: boolean } | null = null;
 
   private constructor(opts: BridgeSessionOptions) {
     this.opts = opts;
@@ -216,11 +227,11 @@ export class BridgeSession {
   }
 
   private get instanceId() {
-    return this.opts.tool === 'claude' ? ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID : CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID;
+    return this.opts.claudeKit?.instanceId ?? CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID;
   }
 
   private get driver() {
-    return this.opts.tool === 'claude' ? ClaudeAdapterV2.CLAUDE_PROVIDER : CodexAdapterV2.CODEX_DRIVER_KIND;
+    return this.opts.claudeKit?.driver ?? CodexAdapterV2.CODEX_DRIVER_KIND;
   }
 
   private modelSelection(): ModelSelection {
@@ -248,7 +259,7 @@ export class BridgeSession {
 
   private async start(): Promise<void> {
     const { opts } = this;
-    this.runtime = ManagedRuntime.make(bridgeLayer(opts.clientFactory)) as unknown as Runtime;
+    this.runtime = ManagedRuntime.make(bridgeLayer(opts.clientFactory, opts.claudeKit)) as unknown as Runtime;
     const scope = await this.runtime.runPromise(Scope.make());
     this.scope = scope;
     const serverConfig = bridgeServerConfig(opts.stateRoot, opts.cwd);
@@ -263,8 +274,9 @@ export class BridgeSession {
     const resumeNative = opts.resumeNativeThreadId;
     const providerSessionId = ProviderSessionId.make(`dc-${opts.paneId}`);
     const open = Effect.gen(function* () {
-      const adapter = opts.tool === 'claude' ? yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-        instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      const kit = opts.tool === 'claude' ? opts.claudeKit : undefined;
+      const adapter = kit ? yield* kit.make({
+        instanceId: kit.instanceId,
         settings: decodeClaudeSettings(settingsInput),
         environment: opts.env,
         attachmentsDir: serverConfig.attachmentsDir,
@@ -272,7 +284,7 @@ export class BridgeSession {
         path: yield* Path.Path,
         crypto: yield* Crypto.Crypto,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
-        queryRunner: yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner,
+        queryRunner: yield* kit.Runner,
       }) : yield* CodexAdapterV2.makeCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         settings: decodeCodexSettings(settingsInput),
@@ -303,6 +315,7 @@ export class BridgeSession {
       this.providerThread = await this.run(session.ensureThread({ threadId, modelSelection, runtimePolicy }));
     }
     this.wire.sessionId = this.providerThread.nativeThreadRef?.nativeId ?? '';
+    this.nativeHasTurns = !!resumeNative;
   }
 
   /** A provider thread record for a native Codex thread we hold only by id (a reopened pane). */
@@ -331,7 +344,7 @@ export class BridgeSession {
     if (this.hidden) {
       this.activeRun = null;
       this.turnKnown?.resolve();
-      this.hidden.finish();
+      this.endHidden();
     } else if (this.activeRun) {
       this.opts.emit({
         type: 'result', subtype: 'error_during_execution', is_error: true, result: message,
@@ -360,10 +373,25 @@ export class BridgeSession {
     for (const frame of this.wire.translate(event)) {
       if (!this.hidden) { this.opts.emit(frame); continue; }
       if (frame.type === 'assistant') this.hidden.text += hiddenText(frame);
-      // It was told to run no tools: an approval card nobody can see ends it.
-      if (frame.type === 'control_request') void this.interrupt().catch(() => undefined);
+      // It was told to run no tools: an approval card, or any tool at all, ends it, out of sight.
+      if ((frame.type === 'control_request' || hasToolUse(frame)) && !this.hidden.stopping) {
+        this.hidden.stopping = true;
+        void this.interrupt().catch(() => undefined);
+      }
     }
-    if (event.type === 'turn.terminal') { this.activeRun = null; this.turnKnown?.resolve(); this.hidden?.finish(); }
+    if (event.type === 'turn.terminal') {
+      if (event.status === 'completed') this.nativeHasTurns = true;
+      this.activeRun = null;
+      this.turnKnown?.resolve();
+      this.endHidden();
+    }
+  }
+
+  /** The hidden turn is really over: frames from here on are the owner's. */
+  private endHidden(): void {
+    const hidden = this.hidden;
+    this.hidden = null;
+    hidden?.finish();
   }
 
   private appThread(now: DateTime.Utc): OrchestrationV2AppThread {
@@ -407,7 +435,21 @@ export class BridgeSession {
     const session = this.session;
     const providerThread = this.providerThread;
     if (!session || !providerThread || this.closed) return;
-    const message = this.turnMessage(text);
+    // A hidden turn that would not stop: this message must not steer into it, unseen.
+    const hidden = this.hidden;
+    if (hidden) await Promise.race([hidden.finished, new Promise((r) => setTimeout(r, 10_000))]);
+    if (this.hidden) {
+      for (const frame of this.wire.beginTurn()) this.opts.emit(frame);
+      this.opts.emit({
+        type: 'result', subtype: 'error_during_execution', is_error: true, result: `${this.opts.tool === 'claude' ? 'Claude' : 'Codex'} is still finishing. Send that again in a moment.`,
+        num_turns: 0, total_cost_usd: 0, usage: {}, session_id: this.wire.sessionId, dc_tool: this.opts.tool,
+      });
+      return;
+    }
+    // T3's Claude driver ignores `appContext`: there it rides after the owner's words (a leading
+    // `<tag>` would hide the whole message in a reopened pane).
+    const context = this.opts.tool === 'claude' ? appContext.map((c) => `\n\n<${c.key}>\n${c.text}\n</${c.key}>`).join('') : '';
+    const message = this.turnMessage(text + context);
     // A message right after the turn started steers it once Codex reported it running.
     await this.awaitTurnId();
     if (this.activeRun?.providerTurnId) {
@@ -467,6 +509,7 @@ export class BridgeSession {
       message,
       modelSelection: this.modelSelection(),
       runtimePolicy: this.runtimePolicy(),
+      nativeThreadHasTurns: this.nativeHasTurns,
       ...(appContext.length ? { appContext } : {}),
     };
     const exit = await this.runtime!.runPromiseExit(session.startTurn(input));
@@ -486,30 +529,32 @@ export class BridgeSession {
     if (this.closed || this.activeRun || this.hidden || !this.session || !this.providerThread) return '';
     let finish = (): void => undefined;
     const finished = new Promise<void>((r) => { finish = r; });
-    const hidden = { text: '', finished, finish };
+    const hidden = { text: '', finished, finish, stopping: false };
     this.hidden = hidden;
     const timer = setTimeout(() => { void this.cancelHidden(); }, ms);
     try {
       const failure = await this.startRun(this.turnMessage(text), []);
-      if (!failure) await finished;
+      if (failure) this.endHidden();
+      else await finished;
     } finally {
       clearTimeout(timer);
-      if (this.hidden === hidden) this.hidden = null;
     }
     return hidden.text;
   }
 
-  /** The owner came back first: a hidden turn gives way at once (bounded). */
+  /**
+   * The owner came back first: a hidden turn gives way, waiting at most 5 s. One that has not
+   * ended by then STAYS hidden until its own terminal: clearing it early would draw its frames
+   * and let its `result` close the owner's turn on the server's books.
+   */
   async cancelHidden(): Promise<void> {
     const hidden = this.hidden;
     if (!hidden) return;
-    try { await this.interrupt(); } catch { /* it may have just ended */ }
-    await Promise.race([hidden.finished, new Promise((r) => setTimeout(r, 5000))]);
-    if (this.hidden === hidden) {
-      this.hidden = null;
-      this.activeRun = null;
-      this.turnKnown?.resolve();
-    }
+    hidden.stopping = true;
+    await Promise.race([
+      this.interrupt().catch(() => undefined).then(() => hidden.finished),
+      new Promise((r) => setTimeout(r, 5000)),
+    ]);
   }
 
   /** Stop the running turn. Resolves once Codex accepted the interrupt (or nothing was running). */
@@ -551,6 +596,7 @@ export class BridgeSession {
       forceNewNativeThread: true,
     }));
     this.wire.sessionId = this.providerThread.nativeThreadRef?.nativeId ?? '';
+    this.nativeHasTurns = false;
     this.wire.contextTokens = 0;
     this.opts.emit(this.wire.init({ dc_rotated: true }));
     // `/clear` was written as a user turn (the server opened one for it), and Claude closes that
