@@ -1461,7 +1461,7 @@ async function motion(engineName, browserType, base) {
     }
   }
   // Collapsed while handed over: the page shows again, at the scroll position it had.
-  await page.locator('.agent-overlay-collapse').first().click();
+  await page.evaluate(() => document.activeElement?.blur?.()); await page.keyboard.press('Escape');
   await page.waitForTimeout(800);
   const shown = await coverOf();
   const pageTop1 = await topOf();

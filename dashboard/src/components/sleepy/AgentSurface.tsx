@@ -6227,12 +6227,6 @@ export function AgentSurface({ stageBesideDrawer = false }: {
           )}
           {!isMobile && (
             <>
-          <button
-            className="agent-overlay-collapse"
-            title="Collapse (Esc)"
-            aria-label="Collapse agent"
-            onClick={() => setExpanded(false)}
-          >–</button>
           <div className="agent-overlay-tabs" data-split={paneVMs.length > 1 ? 'true' : undefined}>
             {/* Handed over, the strip has left (D18): the panes are not on screen. Only the
                 Super Agent's own tab stays, in the same spot, as Take back. */}

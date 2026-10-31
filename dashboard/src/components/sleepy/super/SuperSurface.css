@@ -40,7 +40,7 @@
 .agent-overlay-super-slot {
   display: flex;
   align-items: center;
-  padding-left: calc(var(--head-clear-start) + var(--space-2)); /* the tab bar's own inset, so it does not move */
+  padding-left: var(--space-2); /* the tab bar's own inset, so it does not move */
 }
 .super-handover-btn-dot {
   position: absolute;
@@ -144,6 +144,9 @@
   border-radius: var(--radius-xl);
   overflow: hidden;
 }
+/* A phone-width stage: the chat is the screen, so it has no card around it. */
+.super-surface[data-phone] .super-centre-bg { border: 0; border-radius: 0; box-shadow: none; }
+.super-surface[data-phone] .super-centre-clip { border-radius: 0; }
 .super-centre--pending,
 .super-card-frame--pending { opacity: 0; }
 .super-centre-head,

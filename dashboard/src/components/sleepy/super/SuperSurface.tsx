@@ -15,7 +15,7 @@ import { JobBar, showOwnerCard, showQuestionCard } from './JobBar';
 import { remoteLayoutPatch } from './remoteStage';
 import { SuperAgenda } from './SuperAgenda';
 import { onOpenJobRow, publishSuperEventContext } from './superJobsStore';
-import { AgendaButton, AgendaPill } from './AgendaButton';
+import { AgendaButton, AgendaPill, OthersButton } from './AgendaButton';
 import { childModelChip, type AsksOwner } from './AgentCard';
 import { SuperContainer, chatStatus, childBusyOf, isLivePage, superCentreStatus, type RemoteRow } from './SuperContainer';
 import { useLiveSession } from './liveSession';
@@ -131,8 +131,7 @@ export function jobLookOf({ sessionFor, titleFor, nameFor, children, superTitle 
 }
 
 /**
- * The Super chat's head: the dreamcontext logo, its name ("dreamcontext Super Agent", owner
- * 2026-10-25), and (as a column) the subtitle, the stage's Agenda button when one is given and
+ * The Super chat's head: the dreamcontext logo, its name ("Super Agent", owner 2026-10-31), and (as a column) the subtitle, the stage's Agenda button when one is given and
  * New session. The stage centre and the Super dock both draw it; the dock passes no agenda (the
  * agenda is a stage card) and its two buttons as `actions`.
  */
@@ -831,6 +830,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     return { id, title: titleOf(c), kind: c.kind, status: tone === null ? undefined : tone === 'starting' ? 'idle' : tone };
   };
   const othersItems: OthersItem[] = plan.others.map(pillItem);
+  const toggleOthers = () => setOpenGroup((o) => (o === 'others' ? null : 'others'));
   // The live jobs the rail's one column cannot hold, beside a page or a presentation.
   const moreItems: OthersItem[] = (plan.more?.ids ?? []).filter((id) => byId.has(id)).map(pillItem);
 
@@ -842,6 +842,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       data-super-motion={motion}
       data-mode={plan.mode}
       data-narrow={plan.narrow ? 'true' : undefined}
+      data-phone={plan.phone ? 'true' : undefined}
       data-dragging={drag ? 'true' : undefined}
       data-presenting={plan.mode === 'present' ? 'true' : undefined}
       data-layout={plan.layout ?? undefined}
@@ -862,7 +863,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
           <div className="super-centre-clip">
             <SuperCentreHead
               chat={plan.chat}
-              agenda={!agendaOnStage ? <AgendaButton state={state} look={jobLook} onOpen={openAgenda} /> : undefined}
+              agenda={(
+                <>
+                  {!agendaOnStage && <AgendaButton state={state} look={jobLook} onOpen={openAgenda} />}
+                  {plan.phone && othersItems.length > 0 && (
+                    <OthersButton count={othersItems.length} asking={othersItems.some((i) => i.status === 'asking')} open={openGroup === 'others'} buttonRef={stackRef} onToggle={toggleOthers} />
+                  )}
+                </>
+              )}
               pending={freshPending(state)}
               onNewSession={props.onNewSession}
               noNewSession={!!remote}
@@ -1015,8 +1023,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
           aria-hidden
         />
       )}
-      {agendaPill && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
-      <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={() => setOpenGroup((o) => (o === 'others' ? null : 'others'))} stackRef={stackRef} />
+      {agendaPill && !plan.phone && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
+      {!plan.phone && <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={toggleOthers} stackRef={stackRef} />}
       {plan.more && <OthersStack more stackRef={moreRef} items={moreItems} rect={plan.more.rect} open={openGroup === 'more'} onToggle={() => setOpenGroup((o) => (o === 'more' ? null : 'more'))} />}
       {openGroup && (() => {
         // The rail's "more" tile opens like Others (its cards are live jobs: no close-all there).

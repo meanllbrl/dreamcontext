@@ -91,7 +91,7 @@ async function startIdleChat() {
       .waitFor({ state: 'visible', timeout: 90000 }).catch(() => {});
   }
   // Collapse again so the next project opens onto its own page, not this overlay.
-  await page.locator('.agent-overlay-collapse').first().click().catch(() => {});
+  await page.evaluate(() => document.activeElement?.blur?.()); await page.keyboard.press('Escape');
   await page.waitForTimeout(800);
 }
 
