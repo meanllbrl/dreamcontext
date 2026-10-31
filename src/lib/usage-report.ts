@@ -68,6 +68,10 @@ export interface LimitWindow {
 export interface LimitAnswer {
   verdict: 'yes' | 'partly' | 'no' | 'none';
   hits: number;
+  /** Hits whose window the logs explain: the only ones the verdict and its sentence speak for. */
+  counted: number;
+  /** Doubtful hits (`thin`) that had a sleep in them, reported apart. */
+  doubtful: number;
   worst: LimitWindow | null;
   /** Windows where sleeps in two or more projects landed together. */
   twoProject: number;
@@ -483,7 +487,8 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
     if (r.end < rangeStart || r.start >= rangeEnd) continue;
     if (q.project !== null && r.project !== q.project) continue;
     const first = r.files[0].view;
-    const who = first.f.rows.find((row) => row[0] + HOUR > r.start) ? rowAccount(first.owner, first.f.rows.find((row) => row[0] + HOUR > r.start) as LedgerRow) : r.account;
+    const atStart = first.f.rows.find((row) => row[0] + HOUR > r.start);
+    const who = atStart ? rowAccount(first.owner, atStart as LedgerRow) : r.account;
     if (q.off.has('claude') || q.off.has(`claude:${who ?? ''}`)) continue;
     const t = runTotals.get(r.id);
     if (!t || t.tokens === 0) continue;
@@ -593,17 +598,20 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
     if (w.cost < costs[costs.length >> 1] / 2) w.thin = true;
     // One account cannot have two 5-hour windows at once: a session moved and the folder stamp
     // that says when lagged. The smaller of the two is the doubtful one.
-    const clash = windows.find((x) => x !== w && x.hit && x.kind === 'session' && x.account === w.account && x.start < w.end && w.start < x.end);
-    if (clash && clash.cost >= w.cost) w.thin = true;
+    const clash = windows.filter((x) => x !== w && x.hit && x.kind === 'session' && x.account === w.account && x.start < w.end && w.start < x.end)
+      .sort((x, y) => y.cost - x.cost)[0];
+    if (clash && (clash.cost > w.cost || (clash.cost === w.cost && clash.end > w.end))) w.thin = true;
   }
   const sleptHits = hitWindows.filter((w) => w.sleepCost > 0 && !w.thin).sort((a, b) => b.estSleepShare - a.estSleepShare);
   const slept = inRange.filter((w) => w.sleepCost > 0).sort((a, b) => b.sleepCost - a.sleepCost);
   const worst = sleptHits[0] ?? null;
-  const verdict: LimitAnswer['verdict'] = hitWindows.length === 0 ? 'none'
+  const verdict: LimitAnswer['verdict'] = hitWindows.every((w) => w.thin) ? 'none'
     : (sleptHits[0]?.estSleepShare ?? 0) >= 0.5 ? 'yes'
       : (sleptHits[0]?.estSleepShare ?? 0) >= 0.2 ? 'partly' : 'no';
   const answer: LimitAnswer = {
     verdict, hits: hitWindows.length, worst,
+    counted: hitWindows.filter((w) => !w.thin).length,
+    doubtful: hitWindows.filter((w) => w.thin && w.sleepCost > 0).length,
     twoProject: inRange.filter((w) => w.kind === 'session' && new Set(w.runs.map((r) => r.project)).size >= 2).length,
     windows: [...new Set([...sleptHits, ...slept.filter((w) => !w.thin), ...slept])].slice(0, 8),
   };

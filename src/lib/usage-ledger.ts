@@ -459,11 +459,15 @@ async function runScan(home: string, roots: ScanRoot[], state: LedgerState): Pro
     if (entry.tool !== 'claude') continue;
     const list = accounts.get(entry.session);
     if (!list) continue;
-    const last = list[list.length - 1][1];
-    const moved = list.length > 1 ? list : undefined;
-    if (entry.account !== last || JSON.stringify(entry.accounts) !== JSON.stringify(moved)) {
+    // A row and a hit point into this list, so it only ever grows at the end: an account leaving
+    // the register or a pruned folder must not move what was already counted.
+    const held = entry.accounts ?? (entry.account ? [[0, entry.account] as [number, string]] : []);
+    const merged = held.length ? [...held, ...list.filter(([, id]) => !held.some(([, o]) => o === id))] : list;
+    const last = merged[merged.length - 1][1];
+    const moved = merged.length > 1 ? merged : undefined;
+    if (entry.account !== last || (moved && JSON.stringify(entry.accounts) !== JSON.stringify(moved))) {
       entry.account = last;
-      if (moved) entry.accounts = moved; else delete entry.accounts;
+      if (moved) entry.accounts = moved;
       changed = true;
     }
   }

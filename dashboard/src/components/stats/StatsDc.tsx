@@ -13,8 +13,8 @@ export function answerLine(data: StatsWire, t: T): string {
   const a = data.dc.answer;
   const share = a.worst ? `~${fmtPct(a.worst.estSleepShare * 100)}` : '';
   if (a.verdict === 'none') return t('stats.answer.line.none');
-  if (!a.worst) return t('stats.answer.line.noSleep').replace('{n}', String(a.hits));
-  return t(`stats.answer.line.${a.verdict}`).replace('{n}', String(a.hits)).replace('{s}', share);
+  if (!a.worst) return t('stats.answer.line.noSleep').replace('{n}', String(a.counted));
+  return t(`stats.answer.line.${a.verdict}`).replace('{n}', String(a.counted)).replace('{s}', share);
 }
 
 function LimitAnswerCard({ data }: { data: StatsWire }) {
@@ -28,8 +28,9 @@ function LimitAnswerCard({ data }: { data: StatsWire }) {
       <div className="st-k">{t('stats.answer.q')}</div>
       <div className="st-answer-v">
         <b>{t(`stats.answer.${a.verdict}`)}</b>
-        <span>{t(a.verdict === 'no' && !w ? 'stats.answer.no.noSleep' : `stats.answer.${a.verdict}.why`).replace('{n}', String(a.hits)).replace('{s}', w ? `~${fmtPct(w.estSleepShare * 100)}` : '')}</span>
+        <span>{t(a.verdict === 'no' && !w ? 'stats.answer.no.noSleep' : `stats.answer.${a.verdict}.why`).replace('{n}', String(a.counted)).replace('{s}', w ? `~${fmtPct(w.estSleepShare * 100)}` : '')}</span>
       </div>
+      {a.doubtful > 0 && <p className="st-sub">{t('stats.answer.doubtful').replace('{n}', String(a.doubtful))}</p>}
       {a.twoProject > 0 && <p className="st-sub">{t('stats.answer.two').replace('{n}', String(a.twoProject))}</p>}
       {a.windows.length > 0 && (
         <div className="st-tbl st-wins" role="table">
@@ -146,7 +147,7 @@ export function StatsDc({ data, onRun }: { data: StatsWire; onRun: (r: SleepRun)
         <div className="st-card">
           <div className="st-k">{t('stats.memoryAdds')}</div>
           <div className="st-big">~{fmtTokens(added)}<small>{t('stats.tokensLower')}</small></div>
-          <div className="st-sub">~{fmtTokens(dc.memory.first)} {t('stats.firstRead')} · ~{fmtTokens(dc.memory.carried)} {t('stats.carried')} · {dc.memory.starts} {t('stats.starts')}, {dc.memory.messages} {t('stats.messages')} · {fmtPct(dc.memory.inputShare * 100)} {t('stats.ofInput')}</div>
+          <div className="st-sub">~{fmtTokens(dc.memory.first)} {t('stats.firstRead')} · ~{fmtTokens(dc.memory.carried)} {t('stats.carried')} · {dc.memory.starts} {t('stats.starts')}, {dc.memory.messages} {t('stats.messages')} · ~{fmtPct(dc.memory.inputShare * 100)} {t('stats.ofInput')}</div>
         </div>
         <div className="st-card">
           <div className="st-k">{t('stats.balance')}</div>

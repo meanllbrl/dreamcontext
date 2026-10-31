@@ -112,7 +112,7 @@ export function claudeLimitHit(record: Record<string, unknown>): LimitHit | null
 
 /** At the start of a shell command only (a brief passed through Bash mentions the words too), and
  *  never `--help`, which runs no sleep. */
-const SLEEP_CMD = /(?:^|[;&|\n(])\s*(?:\w+=\S*\s+)*(?:\S*\/)?dreamcontext\s+sleep\s+(start|done)\b(?![^\n;&|]*--help)/;
+const SLEEP_CMD = /(?:^|[;&|\n(])\s*(?:\w+=\S*\s+)*(?:timeout\s+\S+\s+)?(?:\S*\/)?dreamcontext\s+sleep\s+(start|done)\b(?![^\n;&|]*--help)/;
 
 /** `dreamcontext sleep start|done`, as a Bash call on this assistant line. A word in prose never counts. */
 export function claudeSleepMark(record: Record<string, unknown>): 'start' | 'done' | null {

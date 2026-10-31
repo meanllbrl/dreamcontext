@@ -9,10 +9,23 @@
  *
  * A write here can never fail the command it hangs off: losing a line loses a detail on a screen.
  */
-import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+
+/**
+ * Append one line to a file inside a vault's `state/`. A cloned vault can COMMIT `state` or the
+ * file itself as a symlink (context-watch.ts `ensureStateDir`), and the line carries text the
+ * vault supplies, so neither link is followed.
+ */
+function appendInState(contextRoot: string, name: string, line: string): void {
+  const state = join(contextRoot, 'state');
+  if (existsSync(state) && !lstatSync(state).isDirectory()) return;
+  mkdirSync(state, { recursive: true });
+  const fd = openSync(join(state, name), constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+  try { writeSync(fd, `${line}\n`); } finally { closeSync(fd); }
+}
 
 export interface LimitPoint { ts: number; account: string; key: string; percent: number; resetsAt: number }
 
@@ -66,10 +79,7 @@ export interface SleepRunRecord {
 const runsPath = (contextRoot: string) => join(contextRoot, 'state', '.sleep-runs.jsonl');
 
 function appendRunLine(contextRoot: string, line: Partial<SleepRunRecord> & { run: string }): void {
-  try {
-    mkdirSync(join(contextRoot, 'state'), { recursive: true });
-    appendFileSync(runsPath(contextRoot), JSON.stringify(line) + '\n');
-  } catch { /* the transcript still has the run */ }
+  try { appendInState(contextRoot, '.sleep-runs.jsonl', JSON.stringify(line)); } catch { /* the transcript still has the run */ }
 }
 
 export function sleepTriggerFromEnv(env: NodeJS.ProcessEnv = process.env): SleepTrigger {
@@ -131,10 +141,7 @@ export interface HandoffLine {
 const handoffLogPath = (contextRoot: string) => join(contextRoot, 'state', '.handoff-log.jsonl');
 
 export function logHandoff(contextRoot: string, line: HandoffLine): void {
-  try {
-    mkdirSync(join(contextRoot, 'state'), { recursive: true });
-    appendFileSync(handoffLogPath(contextRoot), JSON.stringify(line) + '\n');
-  } catch { /* one fewer row on a screen */ }
+  try { appendInState(contextRoot, '.handoff-log.jsonl', JSON.stringify(line)); } catch { /* one fewer row on a screen */ }
 }
 
 export function readHandoffLog(contextRoot: string): HandoffLine[] {

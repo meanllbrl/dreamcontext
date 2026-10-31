@@ -16,7 +16,7 @@ export interface LimitWindow {
   kind: 'session' | 'weekly'; account: string; accountLabel: string; start: number; end: number; cost: number; sleepCost: number;
   runs: Array<{ project: string; cost: number }>; hit: boolean; estSleepShare: number; thin?: boolean;
 }
-export interface LimitAnswer { verdict: 'yes' | 'partly' | 'no' | 'none'; hits: number; worst: LimitWindow | null; twoProject: number; windows: LimitWindow[] }
+export interface LimitAnswer { verdict: 'yes' | 'partly' | 'no' | 'none'; hits: number; counted: number; doubtful: number; worst: LimitWindow | null; twoProject: number; windows: LimitWindow[] }
 export interface EcoRow { project: string; title: string; at: number; kind: 'eco' | 'fresh'; before: number; after: number | null; turns: number; estSaved: number; estSavedCost: number }
 export interface ToolWindow { id: string; kind: string; label: string; usedPercent: number; resetsAt: number | null; durationMins: number | null; estSleepPercent: number | null }
 export interface ToolAccount { id: string; label: string; plan: string; fetchedAt: number | null; windows: ToolWindow[]; signedIn: boolean }

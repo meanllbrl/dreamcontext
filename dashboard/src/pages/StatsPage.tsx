@@ -57,7 +57,7 @@ export function StatsPage({ onNavigate }: { onNavigate: (page: 'settings') => vo
     refetchInterval: (q) => (isActive && allowed ? pollMs(q.state.data?.scanning ? 2000 : 60_000) : false),
   });
 
-  const sheetOpen = modelKey !== null || run !== null;
+  const sheetOpen = (modelKey !== null && data?.breakdown.model.some((m) => m.key === modelKey) === true) || run !== null;
   useEffect(() => {
     // Several projects stay mounted: only the one on screen may hear a key.
     if (!isActive || sheetOpen) return undefined;

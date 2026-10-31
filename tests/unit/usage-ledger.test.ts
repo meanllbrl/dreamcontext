@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -281,5 +281,34 @@ describe('usage ledger', () => {
     const eco = stats().dc.eco;
     expect(eco.rows).toHaveLength(1);
     expect(eco.rows[0]).toMatchObject({ before: 300000, after: 50000, turns: 1, kind: 'eco' });
+  });
+
+  it('a list of accounts only grows: losing one never moves what was counted', async () => {
+    const a = join(home, '.dreamcontext', 'claude-accounts', 'a-1');
+    const b = join(home, '.dreamcontext', 'claude-accounts', 'b-1');
+    mkdirSync(join(a, 'session-env', 's1'), { recursive: true });
+    await new Promise((r) => setTimeout(r, 20));
+    const switched = Date.now();
+    mkdirSync(join(b, 'session-env', 's1'), { recursive: true });
+    const reg = join(home, '.dreamcontext', 'claude-accounts.json');
+    writeFileSync(reg, JSON.stringify({ accounts: [{ id: 'a-1', email: 'a@example.com', configDir: a }, { id: 'b-1', email: 'b@example.com', configDir: b }] }));
+    const iso = (ms: number) => new Date(ms).toISOString();
+    write('s1.jsonl', [assistant('m1', 'r1', iso(switched - 3_600_000), U(100, 0)), assistant('m2', 'r2', iso(switched + 3_600_000), U(1000, 0))]);
+    await scan();
+    rmSync(join(a, 'session-env', 's1'), { recursive: true });
+    writeFileSync(reg, JSON.stringify({ accounts: [{ id: 'b-1', email: 'b@example.com', configDir: b }] }));
+    await scan();
+    const q = buildStats({ range: '7d', project: null, off: new Set(['claude:b-1']), now: switched + 7_200_000 }, home);
+    expect(q.totals.input).toBe(100);
+  });
+
+  it('a state file that is a committed symlink is never written through', () => {
+    const root = join(home, 'v', '_dream_context');
+    mkdirSync(join(root, 'state'), { recursive: true });
+    const target = join(home, 'outside.txt');
+    writeFileSync(target, 'keep');
+    symlinkSync(target, join(root, 'state', '.handoff-log.jsonl'));
+    logHandoff(root, { title: '$(id)', at: at(1), contextTokens: 1, fromSession: 'x', consumedAt: at(1) });
+    expect(readFileSync(target, 'utf-8')).toBe('keep');
   });
 });

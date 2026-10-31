@@ -62,6 +62,7 @@ export function ModelSheet({ row, models, range, saveFailed, onSave, onClose }: 
       <div className="st-k st-gap">{t('stats.countAs')}</div>
       <select className="st-alias" value={row.alias ?? ''} onChange={(e) => onSave({ model: row.key, alias: e.target.value || null })}>
         <option value="">{row.label} ({t('stats.itself')})</option>
+        {row.alias && !models.some((m) => m.key === row.alias) && <option value={row.alias}>{row.alias}</option>}
         {models.filter((m) => m.key !== row.key && m.priceSource !== 'none').map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
       </select>
       <p className="st-foot">{t('stats.countAsFoot')}</p>
@@ -78,8 +79,8 @@ export function RunSheet({ run, onSettings, onClose }: { run: SleepRun; onSettin
         <dt>{t('stats.tab.tokens')}</dt><dd>{fmtTokens(run.tokens)}</dd>
         <dt>{t('stats.tab.cost')}</dt><dd>{fmtCost(run.cost)}</dd>
         {run.reportedCostUsd !== null && <><dt>{t('stats.reportedCost')}</dt><dd>{fmtCost(run.reportedCostUsd)}</dd></>}
-        <dt>{t('stats.shareOfWindow')}</dt><dd>{run.estWindowShare === null ? '—' : `~${fmtPct(run.estWindowShare * 100)}`}{run.estWindowShare !== null && <GhostBar share={run.estWindowShare} />}</dd>
-        {run.estLimitPoints !== null && <><dt>{t('stats.limitPoints')}</dt><dd>~{fmtPct(run.estLimitPoints)}<GhostBar share={run.estLimitPoints / 100} /></dd></>}
+        <dt>{t('stats.shareOfWindow')}</dt><dd>{run.estWindowShare === null ? '—' : `~${fmtPct(run.estWindowShare * 100)}`}{run.estWindowShare !== null && <span className="st-kvbar"><GhostBar share={run.estWindowShare} /></span>}</dd>
+        {run.estLimitPoints !== null && <><dt>{t('stats.limitPoints')}</dt><dd>~{fmtPct(run.estLimitPoints)}<span className="st-kvbar"><GhostBar share={run.estLimitPoints / 100} /></span></dd></>}
         <dt>{t('stats.view.account')}</dt><dd>{run.accountLabel}</dd>
       </dl>
       <div className="st-k st-gap">{t('stats.sleepView.spec')}</div>
