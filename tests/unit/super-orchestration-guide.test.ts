@@ -95,8 +95,9 @@ describe('super-orchestration guide: shape', () => {
   // +700 (2026-10-29): the AI Team: §1's team check, §4's team in the prompt, a member's job's real event (measured 20,446).
   // +600 (2026-10-30): what he must read is a report card, the question only the decision (measured 21,451).
   // +700 (2026-10-31): a member's mistake, corrected with `super team amend`; refusals live in cli-reference (measured 22,164).
-  it('is at most 22,200 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(22_200);
+  // +150 (2026-10-31): a report on a plan or on options is drawn, never written (measured 22,314).
+  it('is at most 22,350 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(22_350);
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {
