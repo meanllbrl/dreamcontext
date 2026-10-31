@@ -4,12 +4,13 @@
  * hook starts dist/index.js, and must not pay to parse them.
  */
 import { ecoJoins } from './eco.js';
+import { codexCachedModels, codexDefaultModel } from './registry.js';
 import { runBridgeStdio } from './stdio.js';
 
 export interface T3ChatOptions {
   tool: 'codex';
   cwd: string;
-  model: string;
+  model?: string;
   effort?: string;
   mode: string;
   pane?: string;
@@ -24,7 +25,8 @@ export async function runT3Chat(o: T3ChatOptions): Promise<number> {
     {
       tool: o.tool,
       cwd: o.cwd,
-      model: o.model,
+      // No model asked for: the account's own default, else the first model Codex cached for it.
+      model: o.model || codexDefaultModel() || codexCachedModels()[0]?.id || 'gpt-5.5',
       ...(o.effort ? { effort: o.effort } : {}),
       mode: o.mode,
       paneId: o.pane ?? '',

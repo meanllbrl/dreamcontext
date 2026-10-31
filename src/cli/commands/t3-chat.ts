@@ -25,7 +25,7 @@ export function registerT3ChatCommand(program: Command): void {
     .description('Run one chat on a T3 provider adapter over stream-json stdio (used by the chat server)')
     .requiredOption('--tool <tool>', 'the tool to drive (codex)')
     .option('--cwd <path>', 'the project folder (default: the current folder)')
-    .option('--model <model>', 'model id', 'gpt-5.5')
+    .option('--model <model>', 'model id (default: the Codex account\'s own)')
     .option('--effort <effort>', 'reasoning effort')
     .option('--mode <mode>', 'permission mode', 'auto')
     .option('--pane <id>', "the pane's stable id")
@@ -33,7 +33,7 @@ export function registerT3ChatCommand(program: Command): void {
     .option('--briefing-file <path>', 'chat-surface briefing, sent as developer instructions')
     .option('--extra-root <path...>', 'another folder the sandboxed tool may write (a linked repo)')
     .action(async (o: {
-      tool: string; cwd?: string; model: string; effort?: string; mode: string; pane?: string;
+      tool: string; cwd?: string; model?: string; effort?: string; mode: string; pane?: string;
       resume?: string; briefingFile?: string; extraRoot?: string[];
     }) => {
       if (o.tool !== 'codex') {
