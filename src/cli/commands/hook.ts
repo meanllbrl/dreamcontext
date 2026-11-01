@@ -3,7 +3,7 @@ import { logHandoff } from '../../lib/usage-records.js';
 import { directHeavy, shellQuote } from '../../lib/run-budget.js';
 import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
 import { hookTool, setHookTool } from '../../lib/hook-tool.js';
-import { GATE_BEAT_ENV, antigravityCallAsClaude, isAntigravityGateFile, shellTouchesGuarded } from '../../lib/antigravity-gate.js';
+import { GATE_BEAT_ENV, antigravityCallAsClaude, isAntigravityGateFile, movesGuardedPlace, shellTouchesGuarded } from '../../lib/antigravity-gate.js';
 import { SESSION_START_PARTS } from '../../lib/snapshot-budget.js';
 import { Command } from 'commander';
 import {
@@ -2942,6 +2942,13 @@ export function registerHookCommand(program: Command): void {
         const path = typeof toolInput.file_path === 'string' ? resolve(agy.cwd, toolInput.file_path) : '';
         const command = toolName === 'Bash' && typeof toolInput.command === 'string' ? toolInput.command : '';
         // Its own gate first: nothing below matters once the hook can be rewritten.
+        // A move, delete or copy-over of a protected file or a folder above it takes the file along.
+        const call = input.toolCall as { name: string; args?: unknown };
+        const raw = (call.args && typeof call.args === 'object' ? call.args : {}) as Record<string, unknown>;
+        if (movesGuardedPlace(command ? 'Bash' : call.name, command ? toolInput : raw, agy.cwd)) {
+          deny('Blocked: this moves, removes or copies over a place that holds dreamcontext\'s write gate or the Meta token file. Agents never do that; leave it and say so.');
+          return;
+        }
         if ((path && isAntigravityGateFile(path)) || (command && shellWriteTarget(command, agy.cwd, isAntigravityGateFile))) {
           deny('Blocked: this is dreamcontext\'s write gate for Antigravity. Agents never change it.');
           return;

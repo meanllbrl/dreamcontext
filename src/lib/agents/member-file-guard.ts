@@ -30,7 +30,7 @@ function isMemberFile(abs: string, home: string): boolean {
   return abs.startsWith(`${globalDir}/`) && abs.endsWith('.md') && !abs.slice(globalDir.length + 1).includes('/');
 }
 
-function expandHome(p: string, home: string): string {
+export function expandHome(p: string, home: string): string {
   if (p === '~' || p.startsWith('~/')) return `${home}/${p.slice(2)}`;
   if (p.startsWith('$HOME/')) return `${home}/${p.slice(6)}`;
   if (p.startsWith('${HOME}/')) return `${home}/${p.slice(8)}`;
@@ -38,7 +38,7 @@ function expandHome(p: string, home: string): string {
 }
 
 /** Where a relative path in this command may be anchored: the shell's folder and each `cd`. */
-function anchors(command: string, cwd: string, home: string): string[] {
+export function anchors(command: string, cwd: string, home: string): string[] {
   const out = [cwd];
   let at = cwd;
   for (const m of command.matchAll(/(?:^|[;&|\n(])[ \t]*cd[ \t]+(?:--[ \t]+)?("[^"\n]{1,512}"|'[^'\n]{1,512}'|[^\s;&|)]{1,512})/g)) {
@@ -67,7 +67,7 @@ function memberFileOf(word: string, dirs: readonly string[], home: string): stri
 }
 
 /** A heredoc's body is data, not commands: `cat > x <<EOF` keeps its first line. */
-function dropHeredocBodies(command: string): string {
+export function dropHeredocBodies(command: string): string {
   return command.replace(/(<<-?[ \t]*['"]?([\w-]{1,64})['"]?[^\n]*)\n[\s\S]*?\n[ \t]*\2(?=\n|$)/g, '$1');
 }
 
@@ -91,7 +91,7 @@ function maskQuotes(s: string): string {
 }
 
 /** The shell's own segments of a command, as the original text. */
-function segmentsOf(command: string): string[] {
+export function segmentsOf(command: string): string[] {
   const masked = maskQuotes(command);
   const out: string[] = [];
   let from = 0;
