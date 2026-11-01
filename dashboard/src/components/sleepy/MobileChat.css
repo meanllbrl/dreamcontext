@@ -1,7 +1,8 @@
 /* ─── The phone layer ─────────────────────────────────────────────────────────────────
-   Everything that only exists when the app is running on a phone, in ONE file: the left
-   session drawer, and the overrides that turn the desktop chat surface into a single
-   full-viewport column.
+   Everything that only exists when the app is running on a phone, in ONE file: the overrides
+   that turn the desktop chat surface into a single full-viewport column inside the new shell's
+   frame (the drawer, title bar and bottom bar are the shell's own), its waiting toast and the
+   swipe between chats, and the tunnel drawer foot's connection-log row.
 
    The switch is `.agent-surface[data-mobile]`, set by `useIsMobile()` (narrow viewport AND
    a coarse pointer) — NOT a bare `@media (max-width:…)`. A media query alone would also fire
@@ -13,23 +14,9 @@
 
 /* ── The surface, on a phone ───────────────────────────────────────────────────────── */
 
-/* Full viewport, not the desktop's "below the header, right of the sidebar" inset: on a
-   phone the chat IS the app. `100dvh` (dynamic viewport) rather than `100vh` — on iOS Safari
-   `vh` counts the area UNDER the collapsing URL bar, so a `100vh` column puts the composer
-   permanently off-screen. */
-.agent-surface[data-mobile].expanded {
-  top: 0;
-  left: 0;
-  right: 0;
-  width: 100%;
-  height: 100dvh;
-  max-height: 100dvh;
-  border-radius: 0;
-  border: none;
-  /* The zoom-out-of-the-corner flourish is a desktop gesture — on a phone the surface is
-     not "opening over" anything, it is the screen. */
-  animation: none;
-}
+/* The surface's place on a phone is the new shell's frame, edge to edge between the title bar
+   and the bottom bar (AgentTerminal.css, `[data-mobile]`); the window is `100dvh`
+   (ProjectTabs.css, `body[data-phone]`), so the composer never sits under Safari's URL bar. */
 
 /* One pane, always. The split affordances are not merely hidden for taste: two 190px panes
    on a 390px screen are two unusable panes, and the drop-zones behind them fire on a scroll. */
@@ -41,15 +28,13 @@
   display: none;
 }
 
-/* The header keeps its 44px row but spends it on: [☰] [title] [＋]. The chrome
-   clearance the desktop strip reserves is meaningless without the strip. */
+/* The header keeps its 44px row but spends it on: [dot + title] [＋]. The chrome clearance the
+   desktop strip reserves is meaningless without the strip; the title bar above clears the notch. */
 .agent-surface[data-mobile] .agent-overlay-head {
   --head-clear-end: 0px;
   gap: var(--space-2);
-  padding: 0 var(--space-2);
-  /* Below the status bar on a notched phone. */
-  padding-top: env(safe-area-inset-top, 0px);
-  height: calc(44px + env(safe-area-inset-top, 0px));
+  padding: 0 var(--space-2) 0 var(--space-4);
+  height: 44px;
 }
 
 .mchat-head-btn {
@@ -66,14 +51,14 @@
 .mchat-head-btn:active { background: var(--color-bg-tertiary); color: var(--color-text); }
 .mchat-head-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
 
-/* The active session's name, centred between the two 44px buttons. It is the only label on
-   screen that says WHICH conversation this is, so it truncates rather than wraps. */
+/* The active session's name, beside its ＋. It is the only label on screen that says WHICH
+   conversation this is, so it truncates rather than wraps. */
 .mchat-head-title {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 6px;
   font-size: var(--font-size-sm);
   font-weight: 600;
@@ -84,216 +69,25 @@
 }
 .mchat-head-title .mchat-dot { flex: 0 0 auto; }
 
-/* The app's title bar is chrome for a WINDOW — a phone has none, and at z-index 40 it sits
-   over the surface's own header and swallows every tap meant for ☰. `data-mobile-chat` is set
-   on <body> by AgentSurface for exactly as long as chat owns the screen, so collapsing back to
-   the dashboard (drawer → "Show full dashboard") restores the bar with it. */
-body[data-mobile-chat] .window-chrome-bar { display: none; }
-
-/* ── The drawer ────────────────────────────────────────────────────────────────────── */
-
-.mchat-drawer {
-  position: fixed;
-  inset: 0;
-  z-index: 1200;   /* over the transcript and the composer, under a modal dialog */
-  pointer-events: none;
-  visibility: hidden;
-}
-.mchat-drawer[data-open] { pointer-events: auto; visibility: visible; }
-
-.mchat-scrim {
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--color-text) 45%, transparent);
-  opacity: 0;
-  transition: opacity 200ms ease;
-}
-.mchat-drawer[data-open] .mchat-scrim { opacity: 1; }
-
-.mchat-panel {
-  position: absolute;
-  top: 0; left: 0; bottom: 0;
-  width: min(86vw, 320px);
+/* ── The Chat page with no chat on it: one line and one button, never the setup screen ── */
+.mchat-empty {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg);
-  border-right: 1px solid var(--color-border);
-  box-shadow: 0 20px 25px color-mix(in srgb, var(--color-text) 18%, transparent);
-  transform: translateX(-100%);
-  transition: transform 240ms cubic-bezier(0.32, 0.72, 0, 1);
-  padding-top: env(safe-area-inset-top, 0px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-.mchat-drawer[data-open] .mchat-panel { transform: translateX(0); }
-.mchat-panel:focus { outline: none; }
-
-@media (prefers-reduced-motion: reduce) {
-  .mchat-scrim, .mchat-panel { transition: none; }
-}
-
-.mchat-panel-head {
-  flex: 0 0 auto;
-  display: flex;
   align-items: center;
-  justify-content: space-between;
-  height: 48px;
-  padding: 0 var(--space-2) 0 var(--space-4);
-  border-bottom: 1px solid var(--color-border);
-}
-/* The project row — the drawer's heading and its project switcher in one control. */
-.mchat-project {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 44px;
-  /* Padded and pulled back by the same amount: the LABEL still starts on the head's own
-     16px inset, but the focus ring now has room to draw instead of being clipped flat
-     against the panel edge. */
-  padding: 0 var(--space-2);
-  margin-left: calc(var(--space-2) * -1);
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  cursor: pointer;
-}
-.mchat-project:active { background: var(--color-bg-tertiary); }
-.mchat-project:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
-.mchat-project-name {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.mchat-project-caret {
-  flex: 0 0 auto;
-  display: inline-flex;
-  color: var(--color-text-tertiary);
-  transition: transform 180ms ease;
-}
-.mchat-project-caret[data-open] { transform: rotate(180deg); }
-@media (prefers-reduced-motion: reduce) { .mchat-project-caret { transition: none; } }
-
-/* The expanded vault list. Capped and scrollable: a machine with 20 registered projects
-   must not push the session list off the screen — the drawer's job is the sessions. */
-.mchat-projects {
-  flex: 0 0 auto;
-  max-height: 40vh;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  padding: var(--space-2);
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-secondary);
-}
-.mchat-project-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  min-height: 44px;
-  padding: var(--space-2) var(--space-3);
-  border: none;
-  background: transparent;
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-  text-align: left;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-}
-.mchat-project-row.active { background: var(--color-accent-soft); font-weight: 600; }
-.mchat-project-row:active { background: var(--color-bg-tertiary); }
-.mchat-project-row:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
-.mchat-project-row-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-/* A word, not a second colour: the row already carries a status dot, and colour alone may
-   never be the whole signal (WCAG 1.4.1). */
-.mchat-tagword {
-  flex: 0 0 auto;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-}
-
-/* Section label above each list. Small, quiet, and NOT a row — it is a divider with a name. */
-.mchat-section {
-  margin: var(--space-3) var(--space-3) var(--space-1);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
-}
-.mchat-list > .mchat-section:first-child { margin-top: var(--space-1); }
-
-/* A past chat has no live status to show, so it takes a clock glyph where a live row takes
-   its dot — same column, so the two lists read as one ladder. */
-.mchat-past-glyph {
-  flex: 0 0 auto;
-  width: 8px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--color-text-tertiary);
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-4);
   text-align: center;
 }
-
-.mchat-icon-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 40px; height: 40px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-tertiary);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-}
-.mchat-icon-btn:active { background: var(--color-bg-tertiary); color: var(--color-text); }
-.mchat-icon-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
-
-.mchat-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  padding: var(--space-2);
-}
-.mchat-empty {
-  margin: var(--space-4);
+.mchat-empty-line {
+  margin: 0;
+  max-width: 32ch;
+  color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
-  color: var(--color-text-tertiary);
   line-height: 1.5;
 }
-
-.mchat-row {
-  display: flex;
-  align-items: stretch;
-  border-radius: var(--radius-md);
-}
-.mchat-row.active { background: var(--color-accent-soft); }
-
-.mchat-row-main {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  /* 56px: two lines of text at a comfortable rhythm, well past the 44px touch floor. */
-  min-height: 56px;
-  padding: var(--space-2) var(--space-3);
-  border: none;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  border-radius: var(--radius-md);
-}
-.mchat-row-main:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
+.mchat-empty .chat-btn { min-height: 44px; padding: 0 var(--space-5); }
 
 /* Same status vocabulary as the desktop tabs — one taxonomy, two renderings. */
 .mchat-dot {
@@ -314,34 +108,6 @@ body[data-mobile-chat] .window-chrome-bar { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .mchat-dot { animation: none !important; }
 }
-
-.mchat-row-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.mchat-row-title {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: var(--color-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.mchat-row-sub {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-}
-.mchat-kind { font-family: var(--font-mono); font-size: 11px; }
-.mchat-bypass { color: var(--color-warning); }
-
-.mchat-badge {
-  flex: 0 0 auto;
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  background: var(--mood-waiting);
-}
-
-.mchat-row-close { flex: 0 0 auto; align-self: center; }
 
 /* The notification opt-in (Mac mode): one quiet row above the foot. */
 .mchat-push {
@@ -367,35 +133,6 @@ body[data-mobile-chat] .window-chrome-bar { display: none; }
   cursor: pointer;
 }
 .mchat-push-btn:disabled { opacity: 0.6; cursor: default; }
-
-.mchat-panel-foot {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border-top: 1px solid var(--color-border);
-}
-.mchat-new, .mchat-exit {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  min-height: 44px;
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-}
-.mchat-new {
-  border: none;
-  background: var(--color-accent-strong);
-  color: var(--color-accent-text);
-  font-weight: 600;
-}
-.mchat-new:active { filter: brightness(0.94); }
-.mchat-exit {
-  border: 1px solid var(--color-border);
-  background: transparent;
-  color: var(--color-text-secondary);
-}
-.mchat-exit:active { background: var(--color-bg-tertiary); }
 
 /* ── Narrow-screen readability ─────────────────────────────────────────────────────── */
 
@@ -514,11 +251,16 @@ body[data-mobile-chat] .window-chrome-bar { display: none; }
   -webkit-overflow-scrolling: touch;
 }
 
-/* The composer sits above the home indicator. The surface above is `100dvh`, so when the
-   on-screen keyboard shrinks the visual viewport this row travels up with it instead of
-   being covered. */
+/* The home indicator: at ≤600 the bottom bar below carries its inset (NewShell.css), so the
+   composer adds none; a landscape phone has no bottom bar and the composer clears it itself.
+   With the keyboard up the bar steps aside and the keyboard covers the indicator. */
 .agent-surface[data-mobile] :is(.agent-composer, .chat-cmp) {
-  padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: var(--space-2);
+}
+@media (min-width: 601px) {
+  .agent-surface[data-mobile] :is(.agent-composer, .chat-cmp) {
+    padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 /* Real touch targets for the composer strip. The desktop packs these at 24-28px, which is a
@@ -565,335 +307,7 @@ body[data-mobile-chat] .window-chrome-bar { display: none; }
 /* On a phone page the top bar carries Chat; the corner dock would only sit on the content. */
 body[data-phone] .agent-dock { display: none; }
 
-/* ── The chat stack (AC19-AC20) ─────────────────────────────────────────────────────
-   The phone's answer to the desktop's side-by-side panes: every other open chat as a one-line
-   row above the focused one. A row is a 44px tap target in the 4px grid; at most three show
-   before the stack scrolls, so the focused chat keeps its height (AC12's economy). The chip is
-   the desktop tab's own dot and title, so the two surfaces read as one app. */
-.mchat-stack {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  margin: 0;
-  padding: var(--space-1) var(--space-2);
-  list-style: none;
-  /* Three rows, two gaps, the padding and the 1px border (border-box): never more than that. */
-  max-height: calc(3 * 44px + 2 * var(--space-1) + 2 * var(--space-1) + 1px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: none;
-  border-bottom: 1px solid var(--color-border);
-}
-.mchat-stack-item { flex: 0 0 auto; display: flex; min-width: 0; }
-.mchat-stack-row {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 44px;
-  width: 100%;
-  min-width: 0;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-secondary);
-  color: var(--color-text-secondary);
-  font: inherit;
-  font-size: var(--font-size-sm);
-  text-align: left;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  animation: mchatRowIn 200ms var(--ease-out, ease-out);
-}
-.mchat-stack-row:active { background: var(--color-bg-tertiary); }
-.mchat-stack-row:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
-/* Waiting for you: the one row that asks for a thumb. A waiting-tinted edge, never a filled row. */
-.mchat-stack-row[data-waiting] {
-  border-color: color-mix(in srgb, var(--mood-waiting) 55%, var(--color-border));
-  box-shadow: inset 3px 0 0 var(--mood-waiting);
-}
-.mchat-stack-chip {
-  flex: 0 1 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: 45%;
-  padding: 2px var(--space-2);
-  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, var(--color-border));
-  border-radius: var(--radius-sm);
-  background: var(--color-accent-soft);
-  color: var(--color-text);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
-}
-.mchat-stack-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mchat-stack-state {
-  flex: 0 0 auto;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  white-space: nowrap;
-}
-.mchat-stack-row[data-waiting] .mchat-stack-state { color: var(--mood-waiting); }
-.mchat-stack-line {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-}
-
-/* The swap: the newly focused chat rises into place. Two names taken in turn (data-swap 1/2)
-   so each tap restarts it; 200 ms, inside AC20's 250. */
-.agent-surface[data-mobile] .agent-panes[data-swap="1"] { animation: mchatSwapA 200ms var(--ease-out, ease-out); }
-.agent-surface[data-mobile] .agent-panes[data-swap="2"] { animation: mchatSwapB 200ms var(--ease-out, ease-out); }
-@keyframes mchatSwapA { from { opacity: 0.4; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
-@keyframes mchatSwapB { from { opacity: 0.4; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
-@keyframes mchatRowIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) {
-  .mchat-stack-row,
-  .agent-surface[data-mobile] .agent-panes[data-swap] { animation: none; }
-}
-
-/* The move between Mac mode's two screens: forward, the chat comes in from the right; back, the
-   list comes in from the left. Only the content moves: the list's own background covers the chat
-   at once, so neither screen shows through the other. 220 ms; none under reduced motion. */
-.agent-surface[data-phone-nav="push"] .agent-overlay-head,
-.agent-surface[data-phone-nav="push"] .agent-panes { animation: mnavPush 220ms var(--ease-out, ease-out); }
-.agent-surface[data-phone-nav="pop"] .mlist-screen > * { animation: mnavPop 220ms var(--ease-out, ease-out); }
-@keyframes mnavPush { from { opacity: 0; transform: translateX(32px); } to { opacity: 1; transform: none; } }
-@keyframes mnavPop { from { opacity: 0; transform: translateX(-32px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) {
-  .agent-surface[data-phone-nav] .agent-overlay-head,
-  .agent-surface[data-phone-nav] .agent-panes,
-  .agent-surface[data-phone-nav] .mlist-screen > * { animation: none; }
-}
-
-/* ── The Sohbetler list: the phone's home on Mac mode (AC21-AC22) ────────────────────────
-   Every chat of the project, searchable, filtered Tümü / Açık / Kapalı. It covers the surface
-   (header and chat) while it is on screen; a chat opens over it and ‹ comes back. Rows are 56px
-   (two lines) in the 4px grid; the chip and the dot are the desktop tab's own, so the list and
-   the desktop read as one app. Two screens, no stack above the chat (owner, 2026-10-17). */
-.mlist-screen {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  background: var(--color-bg);
-  padding-top: env(safe-area-inset-top, 0px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-.mlist-head {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: 44px;
-  padding: 0 var(--space-2) 0 var(--space-4);
-  border-bottom: 1px solid var(--color-border);
-}
-/* The title is the one item in the row that gives way: the mark, the live badge and ＋ do not
-   shrink (flex: none / flex-shrink: 0 on their own classes), so a long title and a long badge
-   on a 320px phone truncate the title instead of pushing ＋ off the screen. */
-.mlist-h {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin: 0;
-  font-size: var(--font-size-lg);
-  font-weight: 700;
-  color: var(--color-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.mlist-projects,
-.mlist-chips {
-  flex: 0 0 auto;
-  display: flex;
-  gap: var(--space-2);
-  /* 8px below as above: a chip's 44px hit area (::after) must fit inside the scroller, or it is
-     clipped and the row scrolls vertically. */
-  padding: var(--space-2) var(--space-3);
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.mlist-search {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: 40px;
-  margin: var(--space-2) var(--space-3) 0;
-  padding: 0 var(--space-1) 0 var(--space-3);
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  background: var(--color-bg-secondary);
-  color: var(--color-text-tertiary);
-}
-.mlist-search:focus-within { border-color: var(--color-accent); background: var(--color-bg); }
-.mlist-search input {
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 100%;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--color-text);
-  /* 16px: iOS zooms the page into any field set smaller. */
-  font: inherit;
-  font-size: 16px;
-}
-.mlist-search input::-webkit-search-cancel-button { display: none; }
-.mlist-clear {
-  position: relative;
-  flex: 0 0 auto;
-  display: grid; place-items: center;
-  width: 32px; height: 32px;
-  border: none; border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-tertiary);
-}
-.mlist-chip {
-  position: relative;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: 32px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-full);
-  background: var(--color-bg);
-  color: var(--color-text-secondary);
-  font: inherit;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-}
-/* A 32px pill, a 44px target (the WCAG touch floor, as .mchat-head-btn): the hit area reaches
-   6px past the pill above and below, inside the row's 8px padding. The clear button grows the same. */
-.mlist-chip::after,
-.mlist-clear::after { content: ''; position: absolute; inset: calc(-1 * var(--space-1) - 2px) 0; }
-.mlist-clear::after { inset: calc(-1 * var(--space-1) - 2px); }
-.mlist-chip b { font-weight: 600; color: var(--color-text-tertiary); }
-.mlist-chip[data-on] {
-  background: var(--color-accent-soft);
-  border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
-  color: var(--color-accent);
-  font-weight: 600;
-}
-.mlist-chip[data-on] b { color: var(--color-accent); }
-.mlist-chip:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
-.mlist-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.mlist-sec {
-  margin: 0;
-  padding: var(--space-3) var(--space-4) var(--space-1);
-  font-size: var(--font-size-2xs, 11px);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
-}
-.mlist-rows { margin: 0; padding: 0; list-style: none; }
-.mlist-item {
-  display: flex;
-  align-items: center;
-  border-bottom: 1px solid var(--color-border);
-}
-.mlist-row {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: 56px;
-  padding: var(--space-2) var(--space-4);
-  border: none;
-  background: transparent;
-  color: var(--color-text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-.mlist-row:active { background: var(--color-bg-tertiary); }
-.mlist-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--color-accent-soft); }
-/* Waiting for you: the same waiting-tinted edge the chat's stack uses. */
-.mlist-row[data-waiting] { box-shadow: inset 3px 0 0 var(--mood-waiting); }
-.mlist-row[data-waiting] .mlist-state { color: var(--mood-waiting); }
-.mlist-close { flex: 0 0 auto; width: 44px; height: 44px; margin-right: var(--space-2); }
-.mlist-glyph { flex: 0 0 auto; width: 8px; text-align: center; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
-.mlist-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.mlist-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  font-size: var(--font-size-base);
-  font-weight: 600;
-}
-.mlist-row--closed .mlist-title { font-weight: 500; color: var(--color-text-secondary); }
-.mlist-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The Super Agent's own glyph (NavIcons SuperAgentIcon) before its name: identity, so neutral ink;
-   the state dot before it keeps the colour (colour = mood). */
-.mlist-super-icon { display: inline-flex; flex: none; color: var(--color-text-secondary); }
-.mlist-super-icon svg { display: block; }
-.mlist-mac {
-  flex: 0 0 auto;
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-2xs, 11px);
-  font-weight: 600;
-}
-.mlist-sub {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-}
-.mlist-state { font-weight: 600; color: var(--color-text); }
-.mlist-hit { background: color-mix(in srgb, var(--color-warning) 30%, transparent); color: inherit; border-radius: 2px; }
-.mlist-age { flex: 0 0 auto; font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
-.mlist-screen .push-optin, .mlist-screen [data-testid="push-optin"] { flex: 0 0 auto; }
-.mlist-foot {
-  flex: 0 0 auto;
-  display: flex;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-top: 1px solid var(--color-border);
-}
-.mlist-foot-btn {
-  flex: 1 1 0;
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  height: 44px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-bg);
-  color: var(--color-text);
-  font: inherit;
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-/* "Send the connection log to the Mac" — a quiet row above the footer, its result under it. */
+/* "Send the connection log to the Mac" — a quiet row in the tunnel drawer's foot, its result under it. */
 .mlist-log {
   flex: 0 0 auto;
   padding: var(--space-1) var(--space-3) 0;
@@ -927,63 +341,9 @@ body[data-phone] .agent-dock { display: none; }
 .mlist-foot-note:empty { display: none; }
 .mlist-foot-note[data-tone="good"] { background: var(--color-success-subtle); color: var(--color-success); }
 .mlist-foot-note[data-tone="bad"] { background: var(--color-warning-subtle); color: var(--color-warning); }
-.mlist-foot-btn--primary { background: var(--color-accent-strong); border-color: var(--color-accent-strong); color: var(--color-accent-text); }
-.mlist-foot-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
-
 /* The reply groups' line (cards.css) sits inside the phone's narrower gutter. */
 .agent-surface[data-mobile] .chat-reply-line { left: calc(-1 * var(--space-2)); }
 
-/* ── The one list over every chosen project (hands-free sekmeler W3) ────────────────────── */
-/* A row's project: the same quiet tag the Mac chip uses, never a colour of its own. */
-.mlist-tag {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 40%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-2xs);
-  font-weight: 500;
-}
-/* "Proje ▾": a chip holding the platform's own picker (no new menu to build or to trap focus in);
-   the picker fills the chip, so the whole chip is the target. */
-.mlist-project-pick { position: relative; padding: 0; }
-.mlist-project-pick select {
-  appearance: none;
-  -webkit-appearance: none;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  padding: 0 var(--space-3);
-  min-height: var(--touch-target);
-  cursor: pointer;
-}
-/* The waiting section leads in the attention tone: the INK of it, readable as text (AA). */
-.mlist-sec[data-section='waiting'] { color: var(--color-warning-ink); }
-
-/* ── The chat screen across projects: the back badge and the one-line waiting toast ─────── */
-.mchat-head-btn { position: relative; }
-.mchat-back-badge {
-  position: absolute;
-  top: var(--space-1);
-  right: 0;
-  min-width: var(--space-4);
-  height: var(--space-4);
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-full);
-  /* The ink, not the fill: white on it is 5.39:1 in light mode; the dark theme's ink is bright. */
-  background: var(--color-warning-ink);
-  color: var(--color-bg);
-  font-size: var(--font-size-2xs);
-  font-weight: 700;
-  line-height: var(--space-4);
-  text-align: center;
-}
 /* Empty, the live region stays in the accessibility tree (only collapsed out of sight): a region
    that appears together with its first words is often not announced (VoiceOver on iOS). */
 .mchat-toast-region:empty {

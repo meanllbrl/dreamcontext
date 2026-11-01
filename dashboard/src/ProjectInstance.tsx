@@ -42,7 +42,7 @@ import { DrawerFactsBridge } from './components/layout/newshell/DrawerFactsBridg
 import { DrawerIntentBridge } from './components/layout/newshell/DrawerIntentBridge';
 import type { DrawerFacts } from './components/layout/newshell/drawerModel';
 import { DRAWER_PAGE_EVENT, landsOnChat, type PendingDrawerIntent } from './lib/drawerIntents';
-import { TOGGLE_PAGE_DRAWER_EVENT, drawerTogglePanel, useIsNewShell } from './lib/uxMode';
+import { TOGGLE_PAGE_DRAWER_EVENT, drawerTogglePanel, readDeviceShell, useIsNewShell } from './lib/uxMode';
 import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from './lib/agentSettings';
 import './ProjectInstance.css';
 
@@ -86,6 +86,8 @@ function AgentPageNavBridge({ nav }: { nav: ShellNavigation }) {
     (detail) => {
       const page = detail?.page;
       if (page !== 'tasks' && page !== 'knowledge' && page !== 'core' && page !== 'whiteboards' && page !== 'settings') return;
+      // A device shell has no Settings (Shell.navigate refuses it too): the agent cannot open them.
+      if (page === 'settings' && readDeviceShell()) return;
       nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null, 'chat');
     },
   );
@@ -288,7 +290,8 @@ function StartIntentBridge({
   return (
     <div className="start-intent-notice" role="status" data-no-drag>
       <span className="start-intent-notice-text">{t('onboarding.startIntent.refused')}</span>
-      <button
+      {/* The setup lives in Settings, which a device shell does not have. */}
+      {!readDeviceShell() && <button
         type="button"
         className="start-intent-notice-action"
         onClick={() => {
@@ -297,7 +300,7 @@ function StartIntentBridge({
         }}
       >
         {t('onboarding.startIntent.openSetup')}
-      </button>
+      </button>}
       <button
         type="button"
         className="start-intent-notice-close"

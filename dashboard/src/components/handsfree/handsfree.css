@@ -225,6 +225,10 @@
   margin: var(--space-2) var(--space-3) 0;
 }
 .hf-phone-bag-note p { margin: 0; flex: 1; min-width: 0; }
+/* A child of the chat surface: `.agent-surface > *` gives every child `width: 100%`, which with
+   this note's side margins made it 24 px wider than the phone, and a focus then scrolled the whole
+   chat sideways. Auto width: the column stretches it between its margins. */
+.agent-surface > .hf-phone-bag-note { flex: 0 0 auto; width: auto; }
 .hf-phone-bag-note button {
   flex: none;
   /* 44px: the touch floor every phone control keeps (MobileChat.css); the only way to close it. */

@@ -88,7 +88,6 @@ describe('classic sidebar renders as on the base', () => {
     ['sidebar-badges', () => { state.announcements = [{}, {}]; state.agentUnread = 3; state.learningEnabled = false; }, { activePage: 'automations', collapsed: false }],
     ['sidebar-synced', () => { state.signedIn = true; state.hasRemote = true; }, { activePage: 'agents', collapsed: false }],
     ['sidebar-nochat', () => { state.desktop = false; state.learningEnabled = undefined; }, { activePage: 'settings', collapsed: false }],
-    ['sidebar-phone', () => {}, { activePage: 'tasks', collapsed: false, phone: { open: true, onClose: noop } }],
   ];
   for (const [name, arrange, props] of cases) {
     it(name, () => {

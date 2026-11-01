@@ -22,6 +22,14 @@
   padding: var(--space-3) var(--space-2) var(--space-5);
 }
 
+/* Mac mode's tunnel: the notification opt-in and the connection-log button, below the rows. */
+.ns-dr-foot {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+}
+.ns-dr-foot:empty { display: none; }
+
 .ns-dr-row {
   position: relative;
   display: flex;
@@ -319,6 +327,126 @@
   background: var(--color-accent);
 }
 
+/* ── A chat by name (W1): a dot for its state, its name, and a close for a tab here ─── */
+
+.ns-dr-chat {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.ns-dr-chat.is-closable .ns-dr-chatrow {
+  padding-right: calc(var(--space-2) + 22px);
+}
+
+/* Nested under its window's row (2+ windows): one step further in. */
+.ns-dr-chat.is-nested .ns-dr-child {
+  margin-left: calc(19px + var(--space-4));
+  width: calc(100% - 19px - var(--space-4));
+}
+
+.ns-dr-cdot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+  opacity: 0.6;
+}
+
+.ns-dr-cdot[data-state="working"] {
+  background: var(--color-success);
+  opacity: 1;
+}
+
+.ns-dr-cdot[data-state="asking"] {
+  background: var(--mood-waiting);
+  opacity: 1;
+}
+
+.ns-dr-chatrow[data-state="asking"] .ns-dr-t {
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+}
+
+/* The state in words, for a reader; the dot says it at a glance. */
+.ns-dr-cstate {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.ns-dr-cclose {
+  position: absolute;
+  right: var(--space-1);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.ns-dr-cclose svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.ns-dr-cclose:hover {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+}
+
+.ns-dr-chat:hover .ns-dr-cclose,
+.ns-dr-cclose:focus-visible {
+  opacity: 0.85;
+}
+
+.ns-dr-cclose:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: -2px;
+}
+
+/* A finger: the close is always there, and a 44 px target. */
+@media (pointer: coarse) {
+  .ns-dr-cclose {
+    width: 44px;
+    height: 44px;
+    right: 0;
+    opacity: 0.85;
+  }
+  /* The row matches its close, so the close never reaches into the row above. */
+  .ns-dr-chat .ns-dr-chatrow {
+    height: 44px;
+  }
+  .ns-dr-chat.is-closable .ns-dr-chatrow {
+    padding-right: 44px;
+  }
+  /* The entries (New chat, History), the project rows and their "+" are 44 px too. */
+  .ns-dr-entry,
+  .ns-dr-proj {
+    height: var(--touch-target);
+  }
+  .ns-dr-act {
+    width: var(--touch-target);
+    height: var(--touch-target);
+  }
+}
+
 /* A chat row in the air, and the line where it lands (`::before` is the tree line). */
 .ns-dr-win[data-dragging="true"] {
   opacity: 0.5;
@@ -475,6 +603,17 @@
     border-bottom: 1px solid var(--color-border);
     border-radius: 0 0 var(--radius-lg) var(--radius-lg);
     animation: ns-drawer-down 0.18s ease-out;
+  }
+}
+
+/* A phone's first screen (`data-home`, WindowChrome): the drawer takes the full height above the
+   bottom bar, however it opened (launch, the toggle, back). The bar (z 30) stays over it. */
+@media (max-width: 600px) {
+  .ns-drawer[data-floating="true"][data-home="true"] {
+    bottom: calc(var(--space-11) + env(safe-area-inset-bottom, 0px) + 1px);
+    max-height: none;
+    border-bottom: 0;
+    border-radius: 0;
   }
 }
 

@@ -16,6 +16,19 @@ describe('the chat head has no window minimize', () => {
     }
   });
 
+  it('a phone\'s head is the chat\'s name and its ＋, nothing else: no ‹, no ☰, no Mac chip', () => {
+    const src = read('AgentSurface.tsx');
+    const head = src.slice(src.indexOf('{/* The phone header:'), src.indexOf('{!isMobile && ('));
+    expect(head).toContain('className="mchat-head-title"');
+    expect(head).toContain('data-testid="chat-head-new"');
+    // The ＋ is held back where a phone may not start a chat (handed over, or before the live read).
+    expect(head).toMatch(/\{phoneMayStart && \(\s*<button/);
+    expect(head).not.toContain('chat-back');
+    expect(head).not.toContain('setDrawerOpen');
+    expect(head).not.toContain('<PhoneChip');
+    expect(head.match(/<button/g)).toHaveLength(1);
+  });
+
   it('each tab keeps its own minimize', () => {
     expect(read('AgentSurface.tsx')).toContain('onMinimize={minimizeSession}');
   });

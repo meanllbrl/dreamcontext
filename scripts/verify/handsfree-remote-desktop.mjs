@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 /**
- * Hands-free on a COMPUTER or a LANDSCAPE TABLET (task hands-free-bilgisayar-ve-tablette…, W2):
- * the desktop Chat with project chips, chat tabs and panes, seeded from the Mac window's live
- * tabs, and the full Super stage, read and arranged only; a portrait tablet and a phone keep the
- * phone layout.
+ * Hands-free on a COMPUTER or a LANDSCAPE TABLET (task hands-free-bilgisayar-ve-tablette…, W2;
+ * moved to the NEW SHELL by task hands-free-nin-ayri-telefon-arayuzu-kalkar…, W2): chat tabs and
+ * panes seeded from the Mac window's live tabs, the project picker over the chosen projects, and
+ * the full Super stage, read and arranged only; a portrait tablet and a phone read as a phone
+ * (the drawer open). The phone's drawer over every chosen project, the waiting count on its
+ * toggle, swipe and toast across projects.
  *
  *   npm run build && node scripts/verify/handsfree-remote-desktop.mjs
  *
@@ -20,9 +22,9 @@
  *           takes one by sending in it, then the Mac hands over: that one is skipped and named.
  *
  * CHECKS: the login page's shared-computer line (AC20); at 1440x900 and 1280x560 (mouse) and
- * 1024x768 and 1180x820 (touch) the desktop layout (AC1); the rail folded on first load and 44 px
- * chips and tabs on touch (AC19); no Settings, no hands-free button, no detach, the "Uzaktan" chip
- * (AC8); `+` lists exactly the chosen projects (AC5); three chips, switching keeps every instance
+ * 1024x768 and 1180x820 (touch) the desktop layout (AC1); 44 px targets and tabs on touch (AC19);
+ * no Settings, no hands-free button, no detach, the "Uzaktan" chip (AC8); the project picker lists
+ * exactly the chosen projects (AC5); three instances, switching keeps every one
  * (AC4); the Mac's live tabs seeded into the same panes, passively (AC6); a send in a seeded tab
  * takes the chat and is delivered once (AC7); the remote stage of `other` (AC9, AC13), an agent
  * `super open` on it within 2 s, a child card large is watch-only (AC11); the Mac's skipped-chat
@@ -43,6 +45,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import { chatRow, drawerShape, drawerShown } from './lib/phone-shell.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRATCH = join(realpathSync(tmpdir()), 'dreamcontext-verify-handsfree-remote-desktop');
@@ -274,29 +277,47 @@ const dismiss = async (page) => {
   for (let i = 0; i < 3; i++) { const x = page.locator('.announcements-modal-close'); if (!(await x.count())) break; await x.first().click().catch(() => {}); await page.waitForTimeout(300); }
 };
 
-/** What is on screen. */
+/** What is on screen (the new shell on every device since W2 of task hands-free-nin-ayri…). */
 const layout = (page) => page.evaluate(() => {
   const vis = (el) => { if (!el) return false; const r = el.getBoundingClientRect(); const cs = getComputedStyle(el); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'; };
   const any = (sel) => [...document.querySelectorAll(sel)].some(vis);
   const heights = (sel) => [...document.querySelectorAll(sel)].filter(vis).map((el) => Math.round(el.getBoundingClientRect().height));
-  const rail = document.querySelector('.project-instance:not([hidden]) .sidebar') ?? document.querySelector('.sidebar');
+  const chrome = document.querySelector('.window-chrome');
   return {
-    phoneList: any('[data-testid="phone-list"]'),
-    chrome: any('.window-chrome-bar'),
-    chips: [...document.querySelectorAll('.project-tab .project-tab-name')].map((e) => e.textContent),
-    chipHeights: heights('.project-tab'),
-    tabHeights: heights('.agent-tab'),
+    shell: chrome?.getAttribute('data-shell') ?? null,
+    phone: document.body.dataset.phone ?? null,
+    touch: chrome?.getAttribute('data-touch') ?? null,
+    drawer: any('[data-testid="chat-drawer"]'),
+    instances: document.querySelectorAll('.project-instance').length,
+    tabHeights: heights('.project-instance:not([hidden]) .agent-tab'),
     tabTitles: [...document.querySelectorAll('.agent-tab .agent-tab-title')].filter(vis).map((e) => e.textContent),
     panes: [...document.querySelectorAll('.agent-pane-tabbar')].filter(vis).length,
-    railCollapsed: !!rail?.classList.contains('sidebar--collapsed'),
-    settings: [...document.querySelectorAll('.sidebar-item .sidebar-label')].filter(vis).some((e) => /^(Settings|Ayarlar)$/.test((e.textContent ?? '').trim())),
+    settings: any('[data-testid="ns-rail-settings"], [data-testid="ns-more-settings"]'),
     hfButton: any('[data-testid="hf-button"]'),
     chip: [...document.querySelectorAll('[data-testid="phone-live-badge"]')].filter(vis).map((e) => e.textContent ?? '').join(' | '),
     stage: any('[data-testid="super-surface"]'),
+    small: [...document.querySelectorAll('[data-testid="ns-titlebar"] button, [data-testid="ns-rail"] button, [data-testid="chat-drawer"] button')].filter(vis)
+      .filter((e) => { const r = e.getBoundingClientRect(); return r.height < 43.5 || r.width < 43.5; }).map((e) => `${e.dataset.testid ?? e.className}:${Math.round(e.getBoundingClientRect().width)}x${Math.round(e.getBoundingClientRect().height)}`),
     overflow: document.documentElement.scrollWidth - window.innerWidth,
     sockets: window.__dcSockets ? window.__dcSockets.filter((w) => w.readyState === 1).length : -1,
   };
 });
+const desktopLayout = (x) => x.shell === 'new' && x.phone === null;
+const phoneLayout = (x) => x.shell === 'new' && x.phone === 'true';
+
+/** The Mac window's chat surface: the new shell's rail Chat, else the classic sidebar's. */
+async function openMacChat(desk) {
+  const rail = desk.getByTestId('ns-rail-chat');
+  if (await rail.count()) { await rail.first().click(); return; }
+  await desk.locator('.sidebar-item').filter({ has: desk.locator('.sidebar-label', { hasText: /^Chat$/ }) }).first().click();
+}
+
+/** Pick a project in the title bar's picker (the new shell's way to switch projects). */
+async function pickProject(page, name) {
+  await page.getByTestId('ns-picker-btn').click();
+  await page.getByTestId(`ns-picker-${name}`).click();
+  await page.waitForTimeout(700);
+}
 
 /** Count every WebSocket the page opens (rotation keeps them, AC2). */
 const SOCKET_HOOK = () => {
@@ -399,7 +420,7 @@ try {
   const comp = await remote('computer-1440', { viewport: { width: 1440, height: 900 } });
   const page = comp.page;
   await go(page, `${url}/?vault=proj`);
-  report.check('AC1 1440 mouse: the desktop layout (window chrome, no phone list)', await until(async () => { const l = await layout(page); return l.chrome && !l.phoneList; }, 30000), JSON.stringify(await layout(page)));
+  report.check('AC1 1440 mouse: the new shell, desktop layout (no phone layout)', await until(async () => desktopLayout(await layout(page)), 30000), JSON.stringify(await layout(page)));
   await page.waitForTimeout(2500);
   await dismiss(page);
   let l = await layout(page);
@@ -427,28 +448,26 @@ try {
   report.check('AC7: still exactly once after the take settles', said().filter((x) => x.sid === A && x.text === 'remote takes this').length === 1);
   await page.screenshot({ path: join(SHOTS, 'computer-1440-taken.png') });
 
-  // AC5: `+` lists exactly the chosen projects.
-  await page.locator('.project-tabs-add').click();
-  await until(async () => (await page.locator('.psw-row').count()) > 0, 10000);
-  const rows = (await page.locator('.psw-row .psw-row-name').allTextContents()).map((s) => s.trim());
-  report.check('AC5: the + menu lists exactly the chosen projects (no Launcher row)', JSON.stringify([...rows].sort()) === JSON.stringify(['other', 'proj', 'third']), JSON.stringify(rows));
-  await page.screenshot({ path: join(SHOTS, 'computer-1440-plus.png') });
-  // AC4: three chips; switching never unmounts an instance.
-  await page.locator('.psw-row', { hasText: 'other' }).first().click();
-  await until(async () => (await layout(page)).chips.length === 2, 10000);
-  await page.locator('.project-tabs-add').click();
-  await page.locator('.psw-row', { hasText: 'third' }).first().click();
-  report.check('AC4: three chosen projects open as chips', await until(async () => (await layout(page)).chips.length === 3, 15000), JSON.stringify((await layout(page)).chips));
+  // AC5: the project picker lists exactly the chosen projects, and no New project.
+  await page.getByTestId('ns-picker-btn').click();
+  await until(async () => (await page.locator('[data-testid^="ns-picker-"]').count()) > 2, 10000);
+  const rows = (await page.locator('[data-testid^="ns-picker-"]').evaluateAll((els) => els.map((e) => e.dataset.testid))).filter((t) => t !== 'ns-picker-btn' && t !== 'ns-picker').map((t) => t.replace('ns-picker-', ''));
+  report.check('AC5: the project picker lists exactly the chosen projects (no New project)', JSON.stringify([...rows].sort()) === JSON.stringify(['other', 'proj', 'third']), JSON.stringify(rows));
+  await page.screenshot({ path: join(SHOTS, 'computer-1440-picker.png') });
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  if (await page.getByTestId('ns-picker').isVisible().catch(() => false)) await page.getByTestId('ns-picker-btn').click();
+  // AC4: three projects open; switching never unmounts an instance.
+  await pickProject(page, 'other');
+  await pickProject(page, 'third');
+  report.check('AC4: three chosen projects open as instances', await until(async () => (await layout(page)).instances === 3, 15000), JSON.stringify((await layout(page)).instances));
   const instances = () => page.evaluate(() => [...document.querySelectorAll('.project-instance')].map((e) => e.getAttribute('data-instance-id') ?? e.id ?? ''));
   const idsBefore = await instances();
-  for (const name of ['proj', 'other', 'third', 'proj']) {
-    await page.locator('.project-tab', { hasText: name }).first().locator('.project-tab-main').click();
-    await page.waitForTimeout(700);
-  }
+  for (const name of ['proj', 'other', 'third', 'proj']) await pickProject(page, name);
   report.check('AC4: switching keeps every project instance mounted', JSON.stringify(await instances()) === JSON.stringify(idsBefore), JSON.stringify({ before: idsBefore, after: await instances() }));
 
   // AC9/AC13: the remote stage of `other`.
-  await page.locator('.project-tab', { hasText: 'other' }).first().locator('.project-tab-main').click();
+  await pickProject(page, 'other');
   report.check('AC9: the handed-over project draws the Super stage on the computer', await until(async () => (await layout(page)).stage, 25000), JSON.stringify(await layout(page)));
   await page.waitForTimeout(2500);
   const stage = await page.evaluate(() => ({
@@ -505,7 +524,7 @@ try {
   {
     const r = await remote('computer-1280x560', { viewport: { width: 1280, height: 560 } });
     await go(r.page, `${url}/?vault=proj`);
-    report.check('AC1 1280x560 mouse: the desktop layout', await until(async () => { const x = await layout(r.page); return x.chrome && !x.phoneList; }, 30000), JSON.stringify(await layout(r.page)));
+    report.check('AC1 1280x560 mouse: the desktop layout', await until(async () => desktopLayout(await layout(r.page)), 30000), JSON.stringify(await layout(r.page)));
     await r.page.waitForTimeout(2000);
     await r.page.screenshot({ path: join(SHOTS, 'computer-1280x560.png') });
     await r.ctx.close();
@@ -516,34 +535,33 @@ try {
     console.log(`\n· tablet ${w}x${h} (touch, landscape)`);
     const r = await remote(`tablet-${w}`, { viewport: { width: w, height: h }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
     await go(r.page, `${url}/?vault=proj`);
-    report.check(`AC1 ${w}x${h} touch: the desktop layout`, await until(async () => { const x = await layout(r.page); return x.chrome && !x.phoneList; }, 30000), JSON.stringify(await layout(r.page)));
+    report.check(`AC1 ${w}x${h} touch: the desktop layout`, await until(async () => desktopLayout(await layout(r.page)), 30000), JSON.stringify(await layout(r.page)));
     await r.page.waitForTimeout(3000);
     await dismiss(r.page);
     const x = await layout(r.page);
-    report.check(`AC19 ${w}x${h}: the rail is folded on first load`, x.railCollapsed, JSON.stringify(x));
+    report.check(`AC19 ${w}x${h}: a finger's title bar, every title bar / rail / drawer target 44 px`, x.touch === 'true' && x.small.length === 0, JSON.stringify({ touch: x.touch, small: x.small }));
     if (w === 1024) {
       await until(async () => (await layout(r.page)).tabHeights.length >= 1, 15000);
       const y = await layout(r.page);
-      report.check('AC19 1024x768: every project chip and chat tab is at least 44 px tall', y.chipHeights.length > 0 && y.chipHeights.every((v) => v >= 44) && y.tabHeights.length > 0 && y.tabHeights.every((v) => v >= 44), JSON.stringify({ chips: y.chipHeights, tabs: y.tabHeights }));
+      report.check('AC19 1024x768: every chat tab is at least 44 px tall', y.tabHeights.length > 0 && y.tabHeights.every((v) => v >= 44), JSON.stringify({ tabs: y.tabHeights }));
       await r.page.screenshot({ path: join(SHOTS, 'tablet-1024-landscape.png') });
       // AC2: rotation keeps every socket and the focused chat.
       const focusedTitle = async () => r.page.evaluate(() => document.querySelector('.agent-tab.active .agent-tab-title')?.textContent ?? document.querySelector('.mchat-title, [data-testid="chat-title"]')?.textContent ?? '');
       const socks0 = (await layout(r.page)).sockets;
       const title0 = await focusedTitle();
       await r.page.setViewportSize({ width: 768, height: 1024 });
-      report.check('AC2: rotated to portrait, the tablet is the phone layout', await until(async () => !(await layout(r.page)).chrome, 10000), JSON.stringify(await layout(r.page)));
+      report.check('AC2: rotated to portrait, the tablet reads as a phone (the same new shell)', await until(async () => phoneLayout(await layout(r.page)), 10000), JSON.stringify(await layout(r.page)));
       await r.page.waitForTimeout(1500);
       const socks1 = (await layout(r.page)).sockets;
       await r.page.screenshot({ path: join(SHOTS, 'tablet-1024-rotated-portrait.png') });
       await r.page.setViewportSize({ width: 1024, height: 768 });
-      report.check('AC2: back to landscape, the desktop layout again', await until(async () => (await layout(r.page)).chrome, 10000));
+      report.check('AC2: back to landscape, the desktop layout again', await until(async () => desktopLayout(await layout(r.page)), 10000));
       await r.page.waitForTimeout(1500);
       const socks2 = (await layout(r.page)).sockets;
       report.check('AC2: every chat socket stayed open through both turns', socks0 > 0 && socks1 === socks0 && socks2 === socks0, JSON.stringify({ socks0, socks1, socks2 }));
       report.check('AC2: the focused chat is the one on screen after the turns', (await focusedTitle()) === title0, JSON.stringify({ before: title0, after: await focusedTitle() }));
       // AC19: the remote stage at 1024x768 touch floats its cards.
-      await r.page.locator('.project-tabs-add').click();
-      await r.page.locator('.psw-row', { hasText: 'other' }).first().click();
+      await pickProject(r.page, 'other');
       report.check('AC19 1024x768: the Super stage is drawn', await until(async () => (await layout(r.page)).stage, 25000));
       await r.page.waitForTimeout(2500);
       const where = await r.page.evaluate(() => [...document.querySelectorAll('.super-card-frame[data-container-id]')].map((e) => e.getAttribute('data-where')));
@@ -558,7 +576,7 @@ try {
   {
     const r = await remote('tablet-portrait', { viewport: { width: 768, height: 1024 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
     await go(r.page, `${url}/?vault=proj`);
-    report.check('AC1 768x1024 touch portrait: the phone layout', await until(async () => { const x = await layout(r.page); return x.phoneList && !x.chrome; }, 30000), JSON.stringify(await layout(r.page)));
+    report.check('AC1 768x1024 touch portrait: the phone layout, the drawer open', await until(async () => { const x = await layout(r.page); return phoneLayout(x) && x.drawer; }, 30000), JSON.stringify(await layout(r.page)));
     await r.page.waitForTimeout(1500);
     await dismiss(r.page);
     await r.page.screenshot({ path: join(SHOTS, 'tablet-768-portrait.png') });
@@ -568,7 +586,7 @@ try {
   {
     const r = await remote('phone-390', { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 3 });
     await go(r.page, `${url}/?vault=proj`);
-    report.check('AC1 390x844 phone: the phone layout', await until(async () => { const x = await layout(r.page); return x.phoneList && !x.chrome; }, 30000), JSON.stringify(await layout(r.page)));
+    report.check('AC1 390x844 phone: the phone layout, the drawer open', await until(async () => { const x = await layout(r.page); return phoneLayout(x) && x.drawer; }, 30000), JSON.stringify(await layout(r.page)));
     await r.page.waitForTimeout(1500);
     await dismiss(r.page);
     await r.page.screenshot({ path: join(SHOTS, 'phone-390.png') });
@@ -585,7 +603,7 @@ try {
     await desk.goto(`${base}/?vault=third`, { waitUntil: 'domcontentloaded' });
     await desk.waitForTimeout(3000);
     await dismiss(desk);
-    await desk.locator('.sidebar-item', { hasText: /^Chat$/ }).first().click().catch(() => {});
+    await openMacChat(desk).catch(() => {});
     report.check('the Mac window restored third\'s two chats', await until(() => spawns().filter((s) => s.sid === T1 || s.sid === T2).length >= 2, 25000), JSON.stringify(spawns().slice(-4)));
     const r = await remote('computer-third', { viewport: { width: 1440, height: 900 } });
     await go(r.page, `${url}/?vault=third`);
@@ -599,7 +617,7 @@ try {
     await desk.waitForTimeout(1500);
     await dismiss(desk);
     // The Mac's chat surface, open (the rail's Chat row; its label carries a count badge).
-    await desk.locator('.sidebar-item').filter({ has: desk.locator('.sidebar-label', { hasText: /^Chat$/ }) }).first().click();
+    await openMacChat(desk);
     await until(async () => desk.locator('[data-testid="super-handover-btn"]').first().isVisible(), 10000);
     await desk.waitForTimeout(2000);
     await desk.screenshot({ path: join(SHOTS, 'mac-1440-before-handover.png') });
@@ -614,46 +632,33 @@ try {
     await deskCtx.close();
   }
 
-  // ── W3: the phone's ONE list over every chosen project, and its chat screen ────────────
-  console.log('\n· phone 390x844: one list over every chosen project (W3)');
+  // ── The phone: the drawer over every chosen project, and its chat screen (new shell, W2) ──
+  console.log('\n· phone 390x844: the drawer over every chosen project');
   {
     const r = await remote('phone-w3', { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 3 });
     const ph = r.page;
-    // From the handed-over project: its one Super row, every other project's chats beside it.
     await go(ph, `${url}/?vault=other`);
-    report.check('W3: the phone layout', await until(async () => (await layout(ph)).phoneList, 30000));
+    report.check('phone: the phone layout, the drawer open', await until(async () => { const x = await layout(ph); return phoneLayout(x) && x.drawer; }, 30000));
     await ph.waitForTimeout(2000);
     await dismiss(ph);
     // A chat that waits on the owner: B asks (the Mac holds it).
     holders.B.ws.send(JSON.stringify({ type: 'user', text: 'please ask about the port' }));
-    const listInfo = () => ph.evaluate(() => ({
-      sections: [...document.querySelectorAll('[data-testid^="list-section-"]')].map((e) => e.getAttribute('data-testid').replace('list-section-', '')),
-      rows: [...document.querySelectorAll('[data-testid="phone-list"] .mlist-row')].map((e) => ({ id: e.getAttribute('data-id'), vault: e.getAttribute('data-vault'), kind: e.getAttribute('data-kind'), text: e.textContent })),
-      tags: document.querySelectorAll('[data-testid="list-project-tag"]').length,
-    }));
+    const shapes = async () => ({ proj: await drawerShape(ph, 'proj'), other: await drawerShape(ph, 'other'), third: await drawerShape(ph, 'third') });
     const macLive = async () => { const x = await fetch(`${base}/api/agent/live-chats`, { headers: { 'x-dreamcontext-vault': 'proj' } }); return (await x.json()).chats?.map((c) => [TITLES[c.conversationId] ?? c.conversationId.slice(0, 8), c.state]); };
-    report.check('AC15: B waits on you and leads the list', await until(async () => (await listInfo()).sections[0] === 'waiting', 30000), JSON.stringify({ sections: (await listInfo()).sections, mac: await macLive(), said: said().filter((x) => x.sid === B) }));
-    const li = await listInfo();
-    const order = ['waiting', 'working', 'idle', 'closed'];
-    report.check('AC15: sections run waiting → working → idle → closed', li.sections.every((x, k) => k === 0 || order.indexOf(x) > order.indexOf(li.sections[k - 1])), JSON.stringify(li.sections));
-    const vaultsListed = [...new Set(li.rows.map((x) => x.vault))].sort();
-    report.check('AC15: chats of every chosen project are in the one list, each row tagged', JSON.stringify(vaultsListed) === JSON.stringify(['other', 'proj', 'third']) && li.tags === li.rows.length, JSON.stringify({ vaultsListed, tags: li.tags, rows: li.rows.length }));
-    report.check('AC15: a project handed over at the Mac (third) is one Super row too', li.rows.filter((x) => x.vault === 'third').every((x) => x.kind === 'super'), JSON.stringify(li.rows.filter((x) => x.vault === 'third')));
-    report.check('AC15: the handed-over project is its one Super row', li.rows.filter((x) => x.vault === 'other').every((x) => x.kind === 'super') && li.rows.some((x) => x.vault === 'other'), JSON.stringify(li.rows.filter((x) => x.vault === 'other')));
-    await ph.screenshot({ path: join(SHOTS, 'phone-390-one-list.png') });
-    // Search finds a chat in a project the phone is not in.
-    await ph.locator('[data-testid="list-search"]').fill('iade');
-    report.check('AC15: search finds a chat of another project (Turkish-folded)', await until(async () => (await listInfo()).rows.some((x) => x.vault === 'proj' && /İade/.test(x.text ?? '')), 15000), JSON.stringify((await listInfo()).rows));
-    await ph.screenshot({ path: join(SHOTS, 'phone-390-search.png') });
-    await ph.locator('.mlist-row[data-vault="proj"]', { hasText: 'İade' }).first().click();
-    report.check('AC15: tapping it opens that chat in its project', await until(async () => {
-      const t0 = await ph.evaluate(() => ({ url: location.href, title: [...document.querySelectorAll('.mchat-head-title')].filter((e) => e.getBoundingClientRect().width > 0).map((e) => e.textContent).join('|') }));
-      return /İade/.test(t0.title);
-    }, 25000), await ph.evaluate(() => [...document.querySelectorAll('.mchat-head-title')].map((e) => e.textContent).join('|')));
+    let sh = null;
+    report.check('B waits on you and leads its project in the drawer', await until(async () => { sh = await shapes(); return sh.proj.rows[0]?.id === B && sh.proj.rows[0]?.state === 'asking'; }, 30000), JSON.stringify({ proj: sh?.proj?.rows, mac: await macLive() }));
+    report.check('the chats of every chosen project are in the drawer, under their project', sh.proj.rows.length >= 2 && sh.other.rows.length >= 1 && sh.third.rows.length >= 1, JSON.stringify(sh));
+    report.check('a project handed over at the Mac (third) is its one Super row', sh.third.rows.length === 1 && sh.third.rows[0].kind === 'super', JSON.stringify(sh.third.rows));
+    report.check('the handed-over project (other) is its one Super row, no New chat', sh.other.rows.length === 1 && sh.other.rows[0].kind === 'super' && !sh.other.newChat, JSON.stringify(sh.other));
+    await ph.screenshot({ path: join(SHOTS, 'phone-390-drawer.png') });
+    // A tap on a chat of another project opens it there.
+    await chatRow(ph, 'proj', TITLES[A]).first().click();
+    const headTitle = () => ph.evaluate(() => [...document.querySelectorAll('[data-testid="chat-head-title"]')].filter((e) => e.getBoundingClientRect().width > 0).map((e) => e.textContent).join('|'));
+    report.check('a tap opens that chat in its project, the drawer closed', await until(async () => (await headTitle()).includes(TITLES[A]) && !(await drawerShown(ph)), 25000), await headTitle());
     await ph.screenshot({ path: join(SHOTS, 'phone-390-opened-elsewhere.png') });
-    // The chat screen: the back badge counts B waiting elsewhere.
-    report.check('AC16: the back badge counts the chat waiting elsewhere', await until(async () => ((await ph.locator('[data-testid="chat-back-badge"]:visible').textContent().catch(() => '')) ?? '').trim() === '1', 15000), (await ph.locator('[data-testid="chat-back-badge"]').textContent().catch(() => '')) ?? '');
-    // A swipe left moves to the next open chat in the list's order (across projects).
+    // The title bar's drawer toggle counts the chat waiting elsewhere (B).
+    report.check('the drawer toggle counts the chat waiting elsewhere', await until(async () => ((await ph.locator('[data-testid="ns-drawer-waiting"]:visible').textContent().catch(() => '')) ?? '').trim() === '1', 15000), (await ph.locator('[data-testid="ns-drawer-waiting"]').textContent().catch(() => '')) ?? '');
+    // A swipe moves to the neighbouring open chat, across projects.
     const swipe = (dx) => ph.evaluate((d) => {
       const el = [...document.querySelectorAll('.chat-scroll, .chat-transcript')].find((e) => e.getBoundingClientRect().width > 0) ?? document.querySelector('.agent-surface');
       const r0 = el.getBoundingClientRect();
@@ -662,36 +667,35 @@ try {
       el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true, touches: [mk(x)], changedTouches: [mk(x)] }));
       el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, touches: [], changedTouches: [mk(x + d)] }));
     }, dx);
-    const headTitle = () => ph.evaluate(() => [...document.querySelectorAll('.mchat-head-title')].filter((e) => e.getBoundingClientRect().width > 0).map((e) => e.textContent).join('|'));
     const before = await headTitle();
     await swipe(160);
-    report.check('AC16: a swipe right moves to the previous open chat', await until(async () => (await headTitle()) !== before, 20000), JSON.stringify({ before, after: await headTitle() }));
+    report.check('a swipe right moves to the previous open chat', await until(async () => (await headTitle()) !== before, 20000), JSON.stringify({ before, after: await headTitle() }));
     const mid = await headTitle();
     await ph.waitForTimeout(1500);
     await swipe(-160);
-    report.check('AC16: a swipe left comes back', await until(async () => (await headTitle()) !== mid, 20000), JSON.stringify({ mid, after: await headTitle() }));
+    report.check('a swipe left comes back', await until(async () => (await headTitle()) !== mid, 20000), JSON.stringify({ mid, after: await headTitle() }));
     await ph.screenshot({ path: join(SHOTS, 'phone-390-chat.png') });
     // The toast: another chat starts waiting while this one is on screen.
     // (The Super Agent's chat, which the Mac still holds, starts asking.)
     holders.super.ws.send(JSON.stringify({ type: 'user', text: 'please ask again' }));
-    report.check('AC16: the waiting toast appears above the composer', await until(async () => (await ph.locator('[data-testid="chat-waiting-toast"]:visible').count()) === 1, 20000));
+    report.check('the waiting toast appears above the composer', await until(async () => (await ph.locator('[data-testid="chat-waiting-toast"]:visible').count()) === 1, 20000));
     const box = await ph.evaluate(() => {
       const t0 = document.querySelector('[data-testid="chat-waiting-toast"]')?.getBoundingClientRect();
       const c0 = [...document.querySelectorAll('textarea.chat-cmp-input')].find((e) => e.getBoundingClientRect().width > 0)?.getBoundingClientRect();
       return t0 && c0 ? { toastBottom: t0.bottom, composerTop: c0.top } : null;
     });
-    report.check('AC16: the toast never covers the composer', !!box && box.toastBottom <= box.composerTop + 1, JSON.stringify(box));
+    report.check('the toast never covers the composer', !!box && box.toastBottom <= box.composerTop + 1, JSON.stringify(box));
     await ph.screenshot({ path: join(SHOTS, 'phone-390-toast.png') });
     await ph.locator('[data-testid="chat-waiting-toast"]').click();
-    report.check('AC16: a tap on the toast opens that chat (in its own project)', await until(async () => /Super/.test(await headTitle()), 25000), await headTitle());
+    report.check('a tap on the toast opens that chat (in its own project)', await until(async () => /Super/.test(await headTitle()), 25000), await headTitle());
     await r.ctx.close();
     const small = await remote('phone-375', { viewport: { width: 375, height: 667 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
     await go(small.page, `${url}/?vault=proj`);
-    await until(async () => (await layout(small.page)).phoneList, 30000);
+    await until(async () => (await layout(small.page)).drawer, 30000);
     await small.page.waitForTimeout(2000);
     await dismiss(small.page);
-    report.check('W3 375x667: the one list, no horizontal overflow', (await layout(small.page)).overflow <= 1, String((await layout(small.page)).overflow));
-    await small.page.screenshot({ path: join(SHOTS, 'phone-375-one-list.png') });
+    report.check('375x667: the drawer, no horizontal overflow', (await layout(small.page)).overflow <= 1, String((await layout(small.page)).overflow));
+    await small.page.screenshot({ path: join(SHOTS, 'phone-375-drawer.png') });
     await small.ctx.close();
   }
 

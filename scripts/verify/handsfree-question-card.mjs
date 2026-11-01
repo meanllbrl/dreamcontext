@@ -43,6 +43,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
 import crypto from 'node:crypto';
+import { back, drawerShown, newChat, openDrawer, submit } from './lib/phone-shell.mjs';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -273,6 +274,7 @@ try {
       };
     });
     const pageSel = '.chat-surveycard:not([data-state="submitted"]) .chat-surveycard-page:not([inert])';
+    let nextRetries = 0;
     /** Tap option i on the page in view; confirmed, and tapped again if a layout shift ate it. */
     const pickOpt = async (i) => {
       const opt = vis(`${pageSel} .chat-surveycard-opt:not(.other)`).nth(i);
@@ -282,16 +284,20 @@ try {
       }
     };
     const typeField = (t) => vis(`${pageSel} .chat-surveycard-fieldinput`).first().fill(t);
+    /** Next, confirmed, and tapped again if a slide (the card's, or the drawer closing) ate it. */
     const next = async () => {
       const was = (await card())?.page ?? -1;
-      await vis('.chat-surveycard-actions .chat-btn.primary').last().click();
-      await until(async () => ((await card())?.page ?? -1) > was, 3000, 50);
+      for (let n = 0; n < 3; n++) {
+        await vis('.chat-surveycard-actions .chat-btn.primary').last().click();
+        if (await until(async () => ((await card())?.page ?? -1) > was, 1500, 50)) break;
+        nextRetries++;
+      }
       await phone.waitForTimeout(350);   // the track slides; click the settled page
     };
     const submitBtn = () => vis('.chat-surveycard-actions .chat-btn.primary').last();
     const send = async (text) => {
       await vis('.chat-cmp-input').first().fill(text);
-      await vis('.chat-cmp-input').first().press('Enter');
+      await submit(phone);
     };
     const startScrollWatch = () => phone.evaluate(() => {
       const el = [...document.querySelectorAll('.chat-scroll')].find((e) => e.getBoundingClientRect().height > 0);
@@ -327,14 +333,14 @@ try {
     await phone.goto(qr, { waitUntil: 'domcontentloaded', timeout: 45_000 });
     report.check(`${W}: signed in through the phone listener`, await until(async () => phone.url().includes('vault=proj'), 25000), phone.url());
     report.check(`${W}: the page is the Mac phone surface`, await until(() => phone.evaluate(() => document.querySelector('meta[name="dreamcontext-surface"]')?.getAttribute('content') === 'mac'), 10000));
-    report.check(`${W}: the Sohbetler list`, await until(async () => (await vis('[data-testid="phone-list"]').count()) === 1, 20000));
+    report.check(`${W}: the drawer is open (the phone's first screen)`, await until(() => drawerShown(phone), 20000));
     for (let i = 0; i < 3; i++) { const x = phone.locator('.announcements-modal-close'); if (!(await x.count())) break; await x.first().click().catch(() => {}); await phone.waitForTimeout(300); }
     if (process.env.QC_DEBUG) console.log('    [caps]', JSON.stringify(await phone.evaluate(async () => (await fetch('/api/agent/capabilities', { credentials: 'same-origin' })).json())).slice(0, 400),
       '[settings]', await phone.evaluate(() => Object.keys(localStorage).filter((k) => /agent|chat/i.test(k)).map((k) => `${k}=${localStorage.getItem(k)}`.slice(0, 900)).join(' | ')));
     // "New chat" before the app has read its capabilities opens a terminal tab: let it settle.
     await phone.waitForLoadState('networkidle').catch(() => {});
     await phone.waitForTimeout(2500);
-    await vis('[data-testid="list-new"]').click();
+    await newChat(phone, 'proj');
     report.check(`${W}: a new chat opens`, await until(async () => (await vis('.chat-cmp-input').count()) > 0, 15000), JSON.stringify({ attempts: attempts.length, log: (await connLog()).slice(-6) }));
     await snap('chat-open');
     await waitOpen();
@@ -396,10 +402,10 @@ try {
     report.check(`${W}: the reattach was rewritten to busy:false`, await until(() => !rewriteNextReattached, 10000));
     report.check(`${W}: the server re-sent the same ask and the card mounted again`, await until(async () => (await count('card-mount')) > mountsBefore, 10000), String(await count('card-mount')));
     report.check(`${W}: picks restored after the idle-reattach remount`, await until(async () => intact(await card()), 5000), JSON.stringify(await card()));
-    await vis('[data-testid="chat-back"]').first().click();
-    report.check(`${W}: back on the list, the chat is still a row (parked, not closed)`, await until(async () => (await vis('[data-testid="list-tab-row"]').count()) >= 1, 10000));
-    await snap('list-parked');
-    await vis('[data-testid="list-tab-row"]').first().click();
+    await back(phone);
+    report.check(`${W}: back on the drawer, the chat is still a row (parked, not closed)`, await until(async () => (await vis('[data-drawer-project="proj"] [data-testid="drawer-chat-row"]').count()) >= 1, 10000));
+    await snap('drawer-parked');
+    await vis('[data-drawer-project="proj"] [data-testid="drawer-chat-row"]').first().click();
     report.check(`${W}: back in the chat, the card mounted again and everything is restored`, await until(async () => (await count('card-mount')) >= mountsBefore + 1 && intact(await card()), 15000), JSON.stringify({ mounts: await count('card-mount'), card: await card() }));
     await snap('remounted');
 
@@ -410,6 +416,7 @@ try {
     await next();
     await pickOpt(1);
     report.check(`${W}: all four answered, Submit is on the last page`, await until(async () => (await submitBtn().textContent())?.includes('Submit'), 5000));
+    if (nextRetries) console.log(`    (${W}: ${nextRetries} Next tap(s) were eaten by a slide and tapped again)`);
     const before = await card();
     const askId = (await connLog()).filter((e) => e.k === 'ask').pop()?.req8;
     await phone.waitForTimeout(5500);   // a stable open: the hold below starts the ladder at 1 s
@@ -502,10 +509,10 @@ try {
     await snap('after-switch');
     await phone.waitForTimeout(11_000);   // spread the log posts below past the 10 s limit
 
-    // ── (e) the list footers send the connection log ─────────────────────────────────
-    console.log(`\n── ${W} (e) the list's "send the connection log"`);
-    await vis('[data-testid="chat-back"]').first().click();
-    report.check(`${W}: back on the Sohbetler list`, await until(async () => (await vis('[data-testid="phone-list"]').count()) === 1, 10000));
+    // ── (e) the drawer's foot sends the connection log ─────────────────────────────────
+    console.log(`\n── ${W} (e) the drawer's "send the connection log"`);
+    await back(phone);
+    report.check(`${W}: back on the drawer (its foot holds the log button)`, await until(() => drawerShown(phone), 10000));
     const postLog = async (state) => {
       const btn = vis('[data-testid="phone-log-send"]');
       report.check(`${W} ${state}: the footer has "send the connection log"`, (await btn.count()) === 1);
@@ -547,7 +554,8 @@ try {
     const en = await api('POST', '/api/super/enable', { adopt: [MAC_ID], titles: { [MAC_ID]: 'Release notes' } });
     report.check(`${W}: the Super Agent is handed over`, en.status === 200 && typeof en.json.session === 'string', JSON.stringify(en.json).slice(0, 200));
     await laptop(`mode=super&sessionId=${en.json.session}`);
-    report.check(`${W}: the list shows the handed-over state`, await until(() => phone.evaluate(() => [...document.querySelectorAll('[data-testid="phone-list"]')].some((e) => e.getBoundingClientRect().height > 0 && e.getAttribute('data-super') === 'true')), 20000));
+    await openDrawer(phone);
+    report.check(`${W}: the drawer shows the handed-over state (proj's one row is the Super Agent)`, await until(async () => JSON.stringify(await phone.locator('[data-drawer-project="proj"] [data-testid="drawer-chat-row"] .ns-dr-t').allTextContents()) === '["Super Agent"]', 20000), JSON.stringify(await phone.locator('[data-drawer-project="proj"] [data-testid="drawer-chat-row"] .ns-dr-t').allTextContents()));
     await phone.waitForTimeout(10_500);
     await postLog('super');
     await api('POST', '/api/super/disable', {});

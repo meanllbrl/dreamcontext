@@ -5,7 +5,7 @@
  *
  * Drives a RUNNING dashboard on a scratch HOME with fictional projects (acme, globex, initech;
  * `shell: "new"`), at 1440/1024/768/390 dark plus 1440 light. 390 = a narrow viewport WITHOUT
- * touch (with touch the app correctly falls back to classic). Every shot records console errors
+ * touch (a touch phone is a device shell, checked in new-shell-w1). Every shot records console errors
  * and horizontal overflow; page shots also record how many page titles show and the title row's
  * height. Prints one JSON report; exit 1 on any error, overflow or failed check.
  *

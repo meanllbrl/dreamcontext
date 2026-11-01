@@ -32,6 +32,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, w
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { back, chatRow, drawerShown, expand, submit } from './lib/phone-shell.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 // The REAL temp path: macOS's /var is a symlink to /private/var, and the stand-in claude records its
@@ -405,7 +406,7 @@ try {
   if (!(await dvis('.chat-cmp-input').count())) await desk.getByRole('button', { name: /Start chat/ }).click().catch(() => {});
   report.check('the desktop chat opens', await until(async () => (await dvis('.chat-cmp-input').count()) > 0, 20000));
   const deskText = async () => (await dvis('.chat-pane').first().innerText().catch(() => '')).replace(/\s+/g, ' ');
-  const deskSend = async (t) => { const c = dvis('.chat-cmp-input').first(); await c.click(); await c.fill(t); await desk.waitForTimeout(120); await desk.keyboard.press('Enter'); };
+  const deskSend = async (t) => { const c = dvis('.chat-cmp-input').first(); await c.click(); await c.fill(t); await desk.waitForTimeout(120); await submit(desk); };
   await deskSend('SLOW 40');
   report.check('a long turn is running on the desktop', await until(async () => (await deskText()).includes('[TICK-02]'), 20000));
   const pid = /START pid=(\d+)/.exec(await deskText())?.[1] ?? '?';
@@ -473,7 +474,7 @@ try {
   // The first visit's "What's New" popup (same as the desktop's) is dismissed first.
   const dismiss = async (page) => { for (let i = 0; i < 3; i++) { const x = page.locator('.announcements-modal-close'); if (!(await x.count())) break; await x.first().click().catch(() => {}); await page.waitForTimeout(300); } };
   await dismiss(phone);
-  report.check('the phone opens on its Sohbetler list (AC21)', await until(async () => (await pvis('[data-testid="phone-list"]').count()) > 0, 20000));
+  report.check('the phone opens with the drawer open (new shell, W2)', await until(() => drawerShown(phone), 20000));
   await phone.screenshot({ path: join(SHOTS, 'phone-390-chat.png') });
   const reuseCtx = await phoneBrowser.newContext({ ...devices['iPhone 13'] });
   const reuse = await reuseCtx.newPage();
@@ -495,25 +496,26 @@ try {
   const desktopRoster = join(PROJ, '_dream_context', 'state', '.agent-sessions.json');
   const rosterBefore = existsSync(desktopRoster) ? readFileSync(desktopRoster, 'utf8') : '';
   const spawnsBefore = spawnLog().spawns.length;
-  report.check('the list shows BOTH live desktop chats as open "Mac" rows', await until(async () => (await phone.locator('[data-testid="mac-live-row"]').count()) >= 2, 15000));
-  report.check('AC16: one chosen project: no project switch on the list', (await phone.locator('[data-testid="list-projects"]').count()) === 0);
-  const states = await phone.locator('[data-testid="mac-live-state"]').allInnerTexts();
-  report.check('AC18: each live row reads its state (Working / Waiting for you / Idle)', states.length >= 2 && states.every((t) => /^(Working|Waiting for you|Idle)$/.test(t.trim())), JSON.stringify(states));
-  await phone.waitForTimeout(1500); // the past list has loaded (its transcripts hold the live chats too)
-  const liveIds = await phone.locator('[data-testid="mac-live-row"]').evaluateAll((els) => els.map((e) => e.dataset.id));
-  const pastIds = await phone.locator('[data-testid="past-row"]').evaluateAll((els) => els.map((e) => e.dataset.id));
+  await expand(phone, 'proj');
+  const rowsSel = '[data-drawer-project="proj"] [data-testid="drawer-chat-row"]';
+  report.check('the drawer shows BOTH live desktop chats as rows', await until(async () => (await phone.locator(rowsSel).count()) >= 2, 15000));
+  report.check('AC16: one chosen project: the drawer lists only it', (await phone.locator('[data-drawer-project]').count()) === 1);
+  const states = await phone.locator(rowsSel).evaluateAll((els) => els.map((e) => e.getAttribute('data-state')));
+  report.check('AC18: each live row carries its state (working / asking / idle)', states.length >= 2 && states.every((t) => /^(working|asking|idle)$/.test(t ?? '')), JSON.stringify(states));
+  await phone.waitForTimeout(1500);
+  const liveIds = await phone.locator(rowsSel).evaluateAll((els) => els.map((e) => e.dataset.chatId));
   // Not vacuous: the server's past-chats list DOES hold the running chats (their transcripts exist);
-  // the list is what keeps them out of Kapalı.
+  // the drawer lists each running chat once, and past chats only in History.
   const rawPast = await phone.evaluate(async () => {
     const r = await fetch('/api/agent/chat-sessions?limit=50', { headers: { accept: 'application/json', 'x-dreamcontext-vault': 'proj' } });
     return r.ok ? (await r.json()).sessions.map((x) => x.id) : [`HTTP ${r.status}`];
   });
-  report.check('AC18: a chat running on the Mac is listed once (open, as a Mac row; not under Kapalı, though the past list holds it)',
-    liveIds.length >= 2 && liveIds.some((id) => rawPast.includes(id)) && !pastIds.some((id) => liveIds.includes(id)), JSON.stringify({ liveIds, pastIds, rawPast }));
+  report.check('AC18: a chat running on the Mac is listed once (a drawer row, though the past list holds it)',
+    liveIds.length >= 2 && new Set(liveIds).size === liveIds.length && liveIds.some((id) => rawPast.includes(id)), JSON.stringify({ liveIds, rawPast }));
   report.check('zero refusal banners and zero spawns on opening the project', (await pvis('.chat-banner-ended').count()) === 0 && spawnLog().spawns.length === spawnsBefore);
-  await phone.screenshot({ path: join(SHOTS, 'phone-390-list.png') });
-  report.check('the list fits a phone', await noOverflow(phone));
-  await phone.locator('[data-testid="mac-live-row"]').filter({ hasText: 'Chat 1' }).first().click();
+  await phone.screenshot({ path: join(SHOTS, 'phone-390-drawer.png') });
+  report.check('the drawer fits a phone', await noOverflow(phone));
+  await chatRow(phone, 'proj', 'Chat 1').first().click();
   const phoneText = async () => (await pvis('.chat-pane').first().innerText().catch(() => '')).replace(/\s+/g, ' ');
   report.check('the phone shows the running turn (ticks keep coming)', await until(async () => /\[TICK-\d+\]/.test(await phoneText()), 20000));
   report.check('the desktop pane is told: "open on your phone · Take it here"', await until(async () => (await dvis('.chat-banner-taken').count()) > 0, 10000));
@@ -535,11 +537,12 @@ try {
   await phone.reload({ waitUntil: 'domcontentloaded' });
   await phone.waitForTimeout(2500);
   await dismiss(phone);
-  // A reload starts on the list (AC21): the restored chat is a row; opening it shows its banner.
-  report.check('after the reload the phone opens on its list, the restored chat a row there', await until(async () => (await pvis('[data-testid="phone-list"]').count()) > 0
-    && (await phone.locator('[data-testid="list-tab-row"]').filter({ hasText: 'Chat 1' }).count()) > 0, 25000));
-  await phone.locator('[data-testid="list-tab-row"]').filter({ hasText: 'Chat 1' }).first().click();
-  report.check('after the reload the phone shows "Buraya al" again (passive restore)', await until(async () => (await pvis('[data-testid="phone-list"]').count()) === 0 && (await pvis('.chat-banner-taken').count()) > 0, 25000));
+  // A reload opens with the drawer: the restored chat is a row; opening it shows its banner.
+  report.check('after the reload the phone opens with the drawer, the restored chat a row there', await until(async () => (await drawerShown(phone))
+    && (await chatRow(phone, 'proj', 'Chat 1').count()) > 0, 25000));
+  await expand(phone, 'proj');
+  await chatRow(phone, 'proj', 'Chat 1').first().click();
+  report.check('after the reload the phone shows "Buraya al" again (passive restore)', await until(async () => !(await drawerShown(phone)) && (await pvis('.chat-banner-taken').count()) > 0, 25000));
   await desk.waitForTimeout(2000);
   report.check('the desktop socket stayed open (no eviction, no reconnect)', (await dvis('.chat-banner-taken').count()) === 0
     && (await desk.evaluate(() => window.__chatSockets.length)) === deskSocketsBefore
@@ -584,7 +587,7 @@ try {
   report.check('the phone still holds the chat', (await pvis('.chat-banner-taken').count()) === 0 && (await phone.evaluate(() => window.__chatSockets[window.__chatSockets.length - 1].ws.readyState)) === 1);
   {
     const pc0 = phone.locator('.chat-cmp-input:visible').first();
-    await pc0.click(); await pc0.fill('EARLY PHONE'); await phone.keyboard.press('Enter');
+    await pc0.click(); await pc0.fill('EARLY PHONE'); await submit(phone);
     report.check('a chat turn from the phone (before any drop) runs on the Mac', await until(async () => (await phoneText()).includes(`ECHO EARLY PHONE pid=${pid}`), 20000));
   }
 
@@ -610,7 +613,7 @@ try {
   await phone.locator('.chat-cmp-input:visible').first().click().catch(() => {});
   report.check('the turn finishes on the phone, same process', await until(async () => (await phoneText()).includes(`FINISH pid=${pid}`), 60_000), (await phoneText()).slice(-200));
   const pc = phone.locator('.chat-cmp-input:visible').first();
-  await pc.click(); await pc.fill('FROM PHONE'); await phone.keyboard.press('Enter');
+  await pc.click(); await pc.fill('FROM PHONE'); await submit(phone);
   report.check('a chat turn from the phone runs on the Mac (same pid)', await until(async () => (await phoneText()).includes(`ECHO FROM PHONE pid=${pid}`), 20000), `${(await phoneText()).slice(-160)} || transcript has FROM PHONE: ${spawnSync('/bin/sh', ['-c', `grep -l 'FROM PHONE' ${HOME}/.claude/projects/*/*.jsonl 2>/dev/null | head -1`], { encoding: 'utf8' }).stdout.trim() || 'no'} || sockets: ${JSON.stringify(await phone.evaluate(() => window.__chatSockets.map((x) => ({ u: x.url.replace(/^.*reattach=/, 'r=').slice(0, 12), st: x.ws.readyState, sent: x.sent.filter((f) => f.includes('user')), got: x.got, msgs: x.msgs }))))} queued-rows: ${await phone.evaluate(() => document.querySelectorAll('[class*="queue"]').length)}`);
   report.check('still exactly one chat process', spawnLog().spawns.length === spawnsBefore);
 
@@ -660,14 +663,14 @@ try {
     await new Promise((r) => second.on('open', r));
     await sleep(1500);
     // Back to the chat the phone held before (chat 1), so the suppression check below is on it.
-    await pvis('[data-testid="chat-back"]').first().click().catch(() => {});
-    await until(async () => (await pvis('[data-testid="phone-list"]').count()) > 0, 8000);
-    await phone.locator('[data-testid="list-tab-row"]').filter({ hasText: 'Chat 1' }).first().click().catch(() => {});
+    await back(phone);
+    await expand(phone, 'proj');
+    await chatRow(phone, 'proj', 'Chat 1').first().click().catch(() => {});
     await phone.waitForTimeout(1500);
   }
   // Suppression (D2): the chat the phone shows on screen does not buzz the phone.
   const quietFrom = fakePush.got.length;
-  await pc.click(); await pc.fill('QUIET'); await phone.keyboard.press('Enter');
+  await pc.click(); await pc.fill('QUIET'); await submit(phone);
   report.check('the phone runs a turn in the chat it shows (chat 1)', await until(async () => (await phoneText()).includes(`ECHO QUIET pid=${pid}`), 20000), (await phoneText()).slice(-160));
   await sleep(3000);
   report.check('a turn in the chat open on the phone\'s screen sends no push', fakePush.got.slice(quietFrom).map((g) => decryptPush(keys, g.body)).filter((x) => x?.kind === 'turn').length === 0,

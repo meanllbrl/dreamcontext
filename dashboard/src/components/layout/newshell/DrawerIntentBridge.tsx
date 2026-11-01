@@ -23,7 +23,8 @@ export function DrawerIntentBridge({ pending, onConsumed }: {
     if (Date.now() - pending.at > DRAWER_INTENT_TTL_MS) return;
     const { intent } = pending;
     if (intent.kind === 'open-session') {
-      emitInstance<OpenSessionDetail>(bus, OPEN_SESSION_EVENT, { claudeId: intent.sessionId });
+      // Only History queues `open-session`: it is a pick, guarded on the tunnel.
+      emitInstance<OpenSessionDetail>(bus, OPEN_SESSION_EVENT, { claudeId: intent.sessionId, pick: true });
     } else if (intent.kind === 'page') {
       emitInstance(bus, DRAWER_PAGE_EVENT, { page: intent.page, id: intent.id ?? null });
     } else {

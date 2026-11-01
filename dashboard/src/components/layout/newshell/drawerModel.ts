@@ -12,7 +12,10 @@
 import type { ProjectRollup } from '../../sleepy/agentStatus';
 import type { TeamRow, TeamStatus } from '../../aiteam/teamModel';
 import type { AddTabResult } from '../WindowChrome';
-import type { DrawerWindowFact } from '../../../lib/drawerIntents';
+import type { DrawerChatFact, DrawerWindowFact } from '../../../lib/drawerIntents';
+import type { LiveChatWire, LiveChatsWire } from '../../handsfree/macContract';
+import { openRows, type OpenRow } from '../../sleepy/phoneList';
+import { homeRows, type HomeRow } from '../../sleepy/phoneHome';
 
 /** Team members the drawer lists by name: the ones with work. Everyone else is on AI Team. */
 export const LISTED_TEAM: ReadonlySet<TeamStatus> = new Set<TeamStatus>(['working', 'needs', 'approval']);
@@ -21,6 +24,8 @@ export const LISTED_TEAM: ReadonlySet<TeamStatus> = new Set<TeamStatus>(['workin
 export const DRAWER_POLL_CAP = 8;
 /** The fan-out and the hidden-instance facts both refresh at this cadence while visible. */
 export const DRAWER_POLL_MS = 15_000;
+/** The tunnel's chat rows refresh at this cadence the whole time the page is visible. */
+export const TUNNEL_CHATS_POLL_MS = 3_000;
 /** A queued intent nobody consumed within this long is dropped (D5). */
 export const DRAWER_INTENT_TTL_MS = 30_000;
 
@@ -49,6 +54,10 @@ export interface DrawerFacts {
   member?: string;
   /** The Super Agent row's marks: its children at work, and a question for the owner. */
   superMarks?: { working: number; asking: boolean };
+  /** The owner's chat tabs, each in its window (`DrawerSurfaceState.chats`). */
+  chats?: DrawerChatFact[];
+  /** The tab on screen. */
+  activeChatId?: string;
 }
 
 /** What the fan-out reads for an expanded project that is not mounted (D7). No ring: nothing
@@ -92,8 +101,28 @@ export type DrawerChild =
     other: number;
     selected: boolean;
   }
+  /** One chat by name: a tab of a mounted project, or a chat the Mac runs in a project this
+   *  window has not mounted. `windowId` set = nested under its window's row (2+ windows). */
+  | {
+    kind: 'chat';
+    id: string;
+    vault: string;
+    title: string;
+    state: ChatRowState;
+    flagged: boolean;
+    selected: boolean;
+    /** A tab here: it has a close button (closing ends the process). */
+    closable: boolean;
+    windowId?: string;
+    /** What a tap opens (`openChatPlan`). */
+    row: HomeRow;
+    /** A Super row the Mac runs no chat for: drawn disabled, a tap does nothing. */
+    offline?: boolean;
+  }
   /** No window here holds a chat: opens one, ready to type in. */
   | { kind: 'new-chat' };
+
+export type ChatRowState = 'asking' | 'working' | 'idle';
 
 export interface DrawerProjectRow {
   name: string;
@@ -132,10 +161,145 @@ export interface DrawerModelInput {
   expanded: readonly string[];
   facts: Readonly<Record<string, DrawerFacts | undefined>>;
   fanout: Readonly<Record<string, FanoutFacts | undefined>>;
+  /** The Mac's running chats (`GET /agent/live-chats`); absent where it is not read. */
+  live?: LiveChatsWire;
+  /** Conversations just closed here (`phoneClosed.ts`): never a live row while they exit. */
+  closed?: readonly string[];
+  /** A device shell (the tunnel, a phone on the laptop listener; `readDeviceShell`): its rows. */
+  device?: DeviceDrawerInput;
 }
 
-export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout }: DrawerModelInput): DrawerProjectRow[] {
+/** What a device shell's drawer is built from: the window's one published fact
+ *  (`ChromeApi.deviceChats`). */
+export interface DeviceDrawerInput {
+  /** Every chat row over the chosen projects (`homeRows`), Super rows included. */
+  rows: readonly HomeRow[];
+  /** Projects whose Super Agent is handed over: their Super row is all they show. */
+  handedOver: ReadonlySet<string>;
+  /** False on the tunnel until the live read has answered: no New chat is offered before it,
+   *  since an unanswered read cannot tell a quiet project from a handed-over one. */
+  liveAnswered: boolean;
+}
+
+/** The device shell's published chat facts. Off a device shell it is {@link NO_DEVICE_CHATS}. */
+export interface DeviceChats {
+  rows: HomeRow[];
+  /** The live read has answered (always true where nothing is read). */
+  liveAnswered: boolean;
+  handedOver: ReadonlySet<string>;
+  /** Conversations History must not list here: running, draining, or a Super's. */
+  hiddenIds: ReadonlySet<string>;
+}
+
+export const NO_DEVICE_CHATS: DeviceChats = { rows: [], liveAnswered: true, handedOver: new Set(), hiddenIds: new Set() };
+
+/** The device shell's published fact, from the live read and the mounted projects' tabs. Pure. */
+export function deviceChatsOf(o: {
+  activeVault: string;
+  projects: readonly string[];
+  tabsByVault: Readonly<Record<string, readonly DrawerChatFact[] | undefined>>;
+  live: LiveChatsWire | undefined;
+  /** The tunnel: rows wait for the live read. A phone on the laptop listener reads none. */
+  tunnel: boolean;
+  liveAnswered: boolean;
+  closed?: readonly string[];
+}): DeviceChats {
+  const closed = new Set(o.closed ?? []);
+  const live = o.live ? { ...o.live, chats: o.live.chats.filter((c) => !closed.has(c.conversationId)) } : undefined;
+  const otherTabs: Record<string, readonly DrawerChatFact[] | undefined> = {};
+  for (const [v, tabs] of Object.entries(o.tabsByVault)) if (v !== o.activeVault) otherTabs[v] = tabs;
+  const rows = homeRows({
+    vault: o.activeVault, tabs: o.tabsByVault[o.activeVault] ?? [], otherTabs,
+    projects: o.projects.length ? o.projects : [o.activeVault], live,
+  });
+  const handedOver = new Set((o.live?.supers ?? []).map((x) => x.vault));
+  const hiddenIds = new Set<string>([
+    ...(o.live?.chats ?? []).map((c) => c.conversationId),
+    ...(o.live?.draining ?? []),
+    ...(o.live?.supers ?? []).map((x) => x.conversationId),
+    ...closed,
+  ]);
+  return { rows, liveAnswered: o.tunnel ? o.liveAnswered : true, handedOver, hiddenIds };
+}
+
+/** A device shell's chat rows of one project, from its published rows: waiting → working →
+ *  idle. A handed-over project's is its one Super row. */
+function deviceChildren(vault: string, d: DeviceDrawerInput, sel: { onChat: boolean; activeChatId?: string; tabs: readonly DrawerChatFact[] }): DrawerChild[] {
+  const out: DrawerChild[] = [];
+  for (const row of d.rows) {
+    if (row.vault !== vault) continue;
+    if (row.kind === 'super') {
+      const sup = row.row;
+      out.push({
+        // The product's name, the same in every language (`handsfree.super.title`).
+        kind: 'chat', id: `super:${vault}`, vault, title: 'Super Agent',
+        state: sup.live ? (sup.state === 'asking' ? 'asking' : sup.state === 'working' ? 'working' : 'idle') : 'idle',
+        flagged: false, selected: false, closable: false, row, ...(sup.live ? {} : { offline: true }),
+      });
+      continue;
+    }
+    const r = row.row;
+    const tab = r.kind === 'tab' ? sel.tabs.find((c) => c.id === r.id) : undefined;
+    out.push(chatChild(vault, r, { selected: sel.onChat && r.kind === 'tab' && r.id === sel.activeChatId, flagged: !!tab?.attention }));
+  }
+  return out;
+}
+
+const stateOfDot = (dot: string): ChatRowState => (dot === 'asking' ? 'asking' : dot === 'working' || dot === 'starting' ? 'working' : 'idle');
+
+/** One drawer chat row from a phone-list open row (a tab, or a chat the Mac runs). */
+function chatChild(vault: string, r: OpenRow, o: { selected: boolean; windowId?: string; flagged: boolean }): DrawerChild {
+  const row: HomeRow = {
+    key: `${vault}:${r.key}`, vault, kind: 'open', row: r, title: r.title ?? '',
+    line: r.kind === 'mac' ? r.lastLine : '', section: r.waiting ? 'waiting' : stateOfDot(r.dot) === 'working' ? 'working' : 'idle',
+    updatedAt: r.kind === 'mac' ? r.chat.updatedAt : null,
+  };
+  return {
+    kind: 'chat', id: r.id, vault, title: r.title ?? '', state: stateOfDot(r.dot), flagged: o.flagged,
+    selected: o.selected, closable: r.kind === 'tab', ...(o.windowId ? { windowId: o.windowId } : {}), row,
+  };
+}
+
+/**
+ * A mounted project's chat rows from the tabs it published, grouped by window and ordered
+ * waiting → working → idle inside each. One window holding chats: its chats stand in for its
+ * row. Two or more: each window's row stays and its chats nest under it.
+ */
+function mountedChatChildren(vault: string, mine: DrawerFacts, windowsOn: boolean): DrawerChild[] | null {
+  if (!mine.chats || !mine.windows) return null;
+  const chats = mine.chats;
+  const byWindow = mine.windows.filter((w) => chats.some((c) => c.windowId === w.id));
+  const nest = byWindow.length > 1;
+  const out: DrawerChild[] = [];
+  for (const w of byWindow) {
+    const tabs = chats.filter((c) => c.windowId === w.id);
+    if (nest) {
+      const { tabs: _count, ...fact } = w;
+      out.push({ kind: 'window', ...fact, selected: windowsOn && w.id === mine.activeWindowId });
+    }
+    for (const r of openRows({ tabs, live: [], vault })) {
+      const tab = tabs.find((c) => c.id === r.id);
+      out.push(chatChild(vault, r, {
+        selected: windowsOn && r.id === mine.activeChatId && w.id === mine.activeWindowId,
+        flagged: !!tab?.attention,
+        ...(nest ? { windowId: w.id } : {}),
+      }));
+    }
+  }
+  return out;
+}
+
+/** The Mac's running chats of a project this window has not mounted, waiting first; one row per
+ *  conversation, never one that is draining or was just closed here. */
+function liveChatChildren(vault: string, live: LiveChatsWire, closed: readonly string[]): DrawerChild[] {
+  const chats: LiveChatWire[] = live.chats.filter((c) => c.vault === vault);
+  return openRows({ tabs: [], live: chats, draining: [...live.draining, ...closed], vault })
+    .map((r) => chatChild(vault, r, { selected: false, flagged: false }));
+}
+
+export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout, live, closed = [], device }: DrawerModelInput): DrawerProjectRow[] {
   const open = new Set(expanded);
+  if (device) return projects.map((p) => deviceProjectRow(p, { activeVault, open, facts, device }));
   return projects.map((p): DrawerProjectRow => {
     const isOpen = open.has(p.name);
     const active = p.name === activeVault;
@@ -170,7 +334,12 @@ export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout
     const r = p.mounted ? (mine?.shown ?? p.rollup) : null;
     const windowsOn = onChat && !superSelected && !mine?.member;
     const before = children.length;
-    if (mine?.windows) {
+    const mountedChats = p.mounted && mine ? mountedChatChildren(p.name, mine, windowsOn) : null;
+    if (mountedChats) {
+      // The owner's chats by name (a handed-over project's too; the Super's children are not
+      // published, they live on its stage).
+      children.push(...mountedChats);
+    } else if (mine?.windows) {
       // `tabs` counts saved chats too: a window of sleeping tabs is not empty.
       for (const { tabs, ...w } of mine.windows) {
         if (tabs === 0) continue;
@@ -193,11 +362,76 @@ export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout
         selected: windowsOn,
       });
     }
+    // A project this window has not mounted: the chats the Mac runs there, by name, beside its
+    // window rows, only when its read says plainly it is NOT handed over (a handed-over project's
+    // running chats are the Super's children; an unknown answer shows none).
+    // Never for a project another window holds: a tap there only brings that window forward.
+    if (!p.mounted && !p.otherWindow && far?.superOn === false && live) children.push(...liveChatChildren(p.name, live, closed));
     // Only on a known answer: before the roster is restored, or after a failed read, no row is
     // better than offering a chat over chats that are there.
     if (children.length === before && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
     return { ...base, source, children };
   });
+}
+
+/**
+ * A device shell's project: its Super row (handed over) or its chats by name, and nothing else:
+ * no Super Agent button (a phone never hands over), no AI Team members, no window rows. A quiet
+ * project that is not handed over offers New chat, once the tunnel's live read has answered. A
+ * project with a chat waiting on the owner opens by itself; folded, it sums its rows.
+ */
+function deviceProjectRow(p: DrawerProjectInput, o: { activeVault: string | null; open: ReadonlySet<string>; facts: Readonly<Record<string, DrawerFacts | undefined>>; device: DeviceDrawerInput }): DrawerProjectRow {
+  const active = p.name === o.activeVault;
+  const mine = p.mounted ? o.facts[p.name] : undefined;
+  const onChat = active && !!mine?.chatOpen;
+  const children = deviceChildren(p.name, o.device, { onChat, activeChatId: mine?.activeChatId, tabs: mine?.chats ?? [] });
+  const waiting = children.some((c) => c.kind === 'chat' && c.state === 'asking');
+  const isOpen = o.open.has(p.name) || waiting;
+  const base = {
+    name: p.name, logo: p.logo, logoStamp: p.logoStamp, active, held: p.mounted || p.asleep,
+    asleep: p.asleep, otherWindow: p.otherWindow, expanded: isOpen,
+  };
+  if (!isOpen) {
+    const chats = children.filter((c): c is Extract<DrawerChild, { kind: 'chat' }> => c.kind === 'chat');
+    const asking = chats.filter((c) => c.state === 'asking').length;
+    const working = chats.filter((c) => c.state === 'working').length;
+    const flagged = chats.filter((c) => c.flagged).length;
+    const sum = chats.length ? { live: chats.length, asking, working, idle: chats.length - asking - working, flagged } : undefined;
+    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}) };
+  }
+  if (!children.length && !o.device.handedOver.has(p.name) && o.device.liveAnswered) children.push({ kind: 'new-chat' });
+  return { ...base, source: p.mounted ? 'mounted' : 'none', children };
+}
+
+/**
+ * A History pick on the tunnel resumes nothing when the Mac's fresh answer says the project is
+ * handed over (its chats are the Super's), the chat is still draining, or there is no answer.
+ * Pure: the second guard of a pick (the first is the window's `onPickIn`).
+ */
+export function historyPickRefused(live: Pick<LiveChatsWire, 'supers' | 'draining'> | null | undefined, vault: string, conversationId: string): boolean {
+  if (!live) return true;
+  if ((live.supers ?? []).some((x) => x.vault === vault)) return true;
+  return (live.draining ?? []).includes(conversationId);
+}
+
+/** A drawer intent a device shell's surface refuses: the hand-over (the Super Agent button is the
+ *  Mac's), and a new chat where it may not start one (`deviceMayStartChat`). */
+export function deviceRefusesIntent(kind: string, mayStart: boolean): boolean {
+  if (kind === 'super') return true;
+  return (kind === 'new-window' || kind === 'new-tab') && !mayStart;
+}
+
+/** The drawer toggle's count on a device shell: chats waiting on the owner, except the one on
+ *  screen (it is already in front of them). */
+export function deviceWaitingCount(d: Pick<DeviceChats, 'rows'>, onScreen: { vault: string; chatId?: string } | null): number {
+  return d.rows.filter((r) => r.section === 'waiting'
+    && !(onScreen && r.vault === onScreen.vault && r.kind === 'open' && r.row.kind === 'tab' && r.row.id === onScreen.chatId)).length;
+}
+
+/** May a device shell start a chat in `vault`? Never in a handed-over project, and on the tunnel
+ *  not before the live read has answered. */
+export function deviceMayStartChat(d: Pick<DeviceChats, 'handedOver' | 'liveAnswered'>, vault: string): boolean {
+  return d.liveAnswered && !d.handedOver.has(vault);
 }
 
 /**
@@ -256,4 +490,55 @@ export function dropInOrder(order: readonly string[], name: string, beforeIndex:
   const at = Math.max(0, Math.min(rest.length, from < beforeIndex ? beforeIndex - 1 : beforeIndex));
   rest.splice(at, 0, name);
   return rest;
+}
+
+/** What a chat row's tap does in its project (`open-chat`, read by `AgentSurface`). */
+export type OpenChatPlan =
+  /** A tab here: select it (a parked window comes forward). */
+  | { kind: 'tab'; id: string }
+  /** A chat the Mac runs: ADOPT it (`reattach=1`), never a resume beside it, which would start a
+   *  second process on one conversation. */
+  | { kind: 'adopt'; chat: LiveChatWire }
+  /** A child of this project's Super Agent (a row read before a hand-over): its stage, adopting
+   *  nothing. */
+  | { kind: 'stage' }
+  /** A handed-over project's Super row (the tunnel only). */
+  | { kind: 'super'; row: HomeRow & { kind: 'super' } }
+  /** Nothing to open: the row is for another project, or its tab has gone. */
+  | { kind: 'none' };
+
+export function openChatPlan(row: HomeRow, ctx: {
+  vault: string;
+  hasTab: (tabId: string) => boolean;
+  /** This project's Super Agent is handed over now (its record, not the drawer's read). */
+  superOn: boolean;
+  /** The conversation is the Super Agent's (`sessionHome`). */
+  isSuperChild: (conversationId: string) => boolean;
+  tunnel: boolean;
+}): OpenChatPlan {
+  if (row.vault !== ctx.vault) return { kind: 'none' };
+  if (row.kind === 'super') return ctx.tunnel ? { kind: 'super', row } : { kind: 'none' };
+  if (row.kind !== 'open') return { kind: 'none' };
+  const r = row.row;
+  if (r.kind === 'tab') return ctx.hasTab(r.id) ? { kind: 'tab', id: r.id } : { kind: 'none' };
+  // A tab here already holding it is found by the adoption itself (`resumePastSession`), which
+  // also takes it back from a screen that took it over.
+  if (ctx.superOn && ctx.isSuperChild(r.chat.conversationId)) return { kind: 'stage' };
+  return { kind: 'adopt', chat: r.chat };
+}
+
+/**
+ * How often the drawer's chat rows read `GET /agent/live-chats`, or false for not at all. The
+ * route answers only the Mac's own app window and a signed-in phone: any other window reads
+ * nothing and draws its own tabs. The tunnel at its quicker cadence while the page is visible;
+ * the Mac only while the drawer is on screen and its window focused.
+ * The caller passes the result through `pollMs`.
+ */
+export function drawerChatsPollMs(o: { tunnel: boolean; desktop: boolean; drawerVisible: boolean; focused: boolean; hidden: boolean }): number | false {
+  if (o.hidden) return false;
+  // The tunnel's rows feed the drawer AND the chat screen (swipe, toast, back badge): the whole
+  // time the page is visible.
+  if (o.tunnel) return TUNNEL_CHATS_POLL_MS;
+  if (!o.desktop) return false;
+  return o.drawerVisible && o.focused ? DRAWER_POLL_MS : false;
 }

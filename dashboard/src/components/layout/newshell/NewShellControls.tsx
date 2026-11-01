@@ -3,6 +3,7 @@ import { useI18n } from '../../../context/I18nContext';
 import { useVault } from '../../../context/VaultContext';
 import { SearchIcon } from '../../sleepy/TypeIcons';
 import { useChromeSlots } from '../chromeSlots';
+import { phoneAllows } from '../../../lib/phoneSurface';
 import { SleepDebtTracker } from '../SleepDebtTracker';
 import { UpdateBadge } from '../UpdateBadge';
 import type { Page } from '../Sidebar';
@@ -56,8 +57,10 @@ export function NewShellControls({ activePage, onNavigate, onOpenSearch, canBack
       )}
       {slots.right && createPortal(
         <>
-          <SleepDebtTracker onOpen={() => onNavigate('sleep')} />
-          <UpdateBadge onManagePacks={() => onNavigate('packs')} />
+          {/* Only what the phone may read: on the tunnel a control whose route is refused is not
+              drawn at all (no local refusal, `window.__dcPhoneRefused` stays 0). */}
+          {phoneAllows('GET', '/api/sleep') && <SleepDebtTracker onOpen={() => onNavigate('sleep')} />}
+          {phoneAllows('GET', '/api/launcher/upgrade/status') && <UpdateBadge onManagePacks={() => onNavigate('packs')} />}
         </>,
         slots.right,
       )}

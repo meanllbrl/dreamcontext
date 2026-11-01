@@ -45,6 +45,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { markAnnouncementsSeen } from './lib/measure.mjs';
+import { openSuper, submit, superRows } from './lib/phone-shell.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRATCH = join(realpathSync(tmpdir()), `dreamcontext-verify-handsfree-phone-photo-${process.pid}`);
@@ -154,6 +155,10 @@ async function drawPicture(browser, label, colour, type = 'png', size = { width:
 async function setupScratch(browser) {
   rmSync(SCRATCH, { recursive: true, force: true });
   for (const d of [join(HOME, '.dreamcontext'), join(HOME, '.local', 'bin'), join(HOME, '.claude-worktrees'), PROJ, join(PROJ, 'tmp'), CODE, OTHER, join(OTHER, 'tmp'), ELSEWHERE, UPLOADS, SHOTS]) mkdirSync(d, { recursive: true });
+  // The Mac's window hands the chat over with the Super tab of the CLASSIC shell (the new shell's
+  // desktop has no such button: its drawer's Super row is the way in). The phone is a device shell
+  // and opens the new shell whatever this says.
+  writeFileSync(join(HOME, '.dreamcontext', 'launcher-ui.json'), JSON.stringify({ view: 'list', shell: 'classic' }));
   writeFileSync(join(HOME, '.dreamcontext', 'agent-ui.json'), `${JSON.stringify({
     enabled: true, restoreTabs: true, defaultAgent: 'claude', autoTitle: false, hotkey: 'Ctrl+A', renderer: 'dom',
     chatView: true, screenMigrated: true, chatPermissionMode: 'auto', chatDefaultModel: '', chatDefaultEffort: '', lightMode: 'off',
@@ -316,8 +321,8 @@ try {
   await phone.goto(qr, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   report.check('the phone signs in through the phone listener', await until(async () => phone.url().includes('vault=pocket-ledger'), 25000), phone.url());
   for (let i = 0; i < 3; i++) { const x = phone.locator('.announcements-modal-close'); if (!(await x.count())) break; await x.first().click().catch(() => {}); await phone.waitForTimeout(300); }
-  report.check('the phone lists the Super Agent', await until(async () => (await vis('[data-testid="super-row"]').count()) === 1, 25000));
-  await vis('[data-testid="super-row"]').click();
+  report.check('the phone lists the Super Agent', await until(async () => (await superRows(phone, 'pocket-ledger')) === 1, 25000));
+  await openSuper(phone, 'pocket-ledger');
   report.check('the Super Agent\'s chat opens on the phone', await until(async () => (await vis('.chat-cmp-input').count()) > 0, 15000));
 
   console.log('\n── 2a. The stage as the phone joined');
@@ -329,7 +334,7 @@ try {
     await box.click();
     await box.fill(text);
     await phone.waitForTimeout(150);
-    await phone.keyboard.press('Enter');
+    await submit(phone);
   };
   const pane = '.chat-pane';
 

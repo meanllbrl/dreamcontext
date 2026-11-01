@@ -137,6 +137,9 @@ function setupScratch() {
   if (!bin) throw new Error('no pinned cloudflared in ~/.dreamcontext/bin: set up Mac mode once on this machine');
   copyFileSync(join(real, bin), join(HOME, '.dreamcontext', 'bin', bin));
   chmodSync(join(HOME, '.dreamcontext', 'bin', bin), 0o755);
+  // The Mac's window hands over with the CLASSIC shell's Super tab (the new shell's desktop has no
+  // such button); the phone is a device shell and opens the new shell whatever this says.
+  writeFileSync(join(HOME, '.dreamcontext', 'launcher-ui.json'), JSON.stringify({ view: 'list', shell: 'classic' }));
   writeFileSync(join(HOME, '.dreamcontext', 'agent-ui.json'), `${JSON.stringify({
     enabled: true, restoreTabs: true, defaultAgent: 'claude', autoTitle: false, hotkey: 'Ctrl+A', renderer: 'dom',
     chatView: true, screenMigrated: true, titleMigrated: true, chatPermissionMode: 'auto', chatDefaultModel: '', chatDefaultEffort: '', lightMode: 'off',

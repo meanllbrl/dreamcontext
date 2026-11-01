@@ -31,6 +31,7 @@ import { chmodSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { drawerShown, newChat, submit } from './lib/phone-shell.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRATCH = join(realpathSync(tmpdir()), 'dreamcontext-verify-phone-chat-no-inner-scroll');
@@ -200,16 +201,16 @@ try {
     });
     const page = await ctx.newPage();
     await page.goto(`http://127.0.0.1:${port}/?vault=proj`, { waitUntil: 'domcontentloaded' });
-    await until(async () => (await page.locator('[data-testid="phone-list"]:visible').count()) === 1, 25000);
+    await until(() => drawerShown(page), 25000);
     await page.waitForTimeout(3000);
     for (let i = 0; i < 3; i++) { const x = page.locator('.announcements-modal-close'); if (!(await x.count())) break; await x.first().click().catch(() => {}); await page.waitForTimeout(300); }
-    await page.locator('[data-testid="list-new"]').click();
+    await newChat(page, 'proj');
     const input = page.locator('.chat-cmp-input:visible').first();
     const opened = await until(async () => (await input.count()) > 0, 20000);
     if (!opened) await page.screenshot({ path: join(SHOTS, `${size.name}-no-chat.png`) });
     report.check('"New chat" opens a chat', opened);
     await page.waitForTimeout(800);
-    await input.click(); await input.fill('RICH'); await page.keyboard.press('Enter');
+    await input.click(); await input.fill('RICH'); await submit(page);
     report.check('the rich turn arrived (its last line is on screen)', await until(async () => (await page.locator('.chat-scroll:visible').innerText()).includes('tests pass'), 30000));
     await page.waitForTimeout(1500);
     // Open everything a tap opens: tool runs, tool cards, thinking, the sub-agent report.
