@@ -1031,6 +1031,14 @@
       ]
     },
     {
+      "path": "builder why",
+      "desc": "Why each recent check of this repo waited, one line per wait: this checkout's lock, full slots, or others ahead in the slot line",
+      "args": [],
+      "valueFlags": [
+        "--last"
+      ]
+    },
+    {
       "path": "changelog",
       "desc": "Browse core/CHANGELOG.json chronologically (newest first)",
       "args": [],
