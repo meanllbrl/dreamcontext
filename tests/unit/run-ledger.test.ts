@@ -8,7 +8,7 @@ import { heavyLockPath } from '../../src/lib/builder-tools.js';
 import { builderHeavy, builderLedger, builderMark, type BuilderDeps } from '../../src/cli/commands/builder.js';
 import { markPhase } from '../../src/lib/run-budget.js';
 import { appendLedger, ledgerPath, readLedger } from '../../src/lib/run-ledger.js';
-import { ledgerLine, summarize, type LedgerRow } from '../../src/lib/run-ledger.js';
+import { NO_RUN, ledgerLine, recordCheck, recordStart, summarize, waitWhy, type LedgerRow } from '../../src/lib/run-ledger.js';
 
 const MIN = 60_000;
 const mark = (what: 'open' | 'review-start' | 'review-end' | 'close', m: number): LedgerRow => ({ type: 'mark', run: 'r', what, at: m * MIN });
@@ -71,5 +71,29 @@ describe('the ledger through the commands', () => {
     expect(readFileSync(path, 'utf-8')).not.toContain('sk-FAKE');
     expect(out.join('\n')).toMatch(/^ledger task: code .*queue .*checks .*review 0\.0 min \(total /m);
     rmSync(repo, { recursive: true, force: true });
+  });
+});
+
+describe('every check is in the ledger, and every wait says why', () => {
+  const base = { type: 'check' as const, run: 'r', label: 'tests', line: 'heavy', asked: 0, ran: 300_000, ended: 300_000, exit: null };
+
+  it('splits the wait into the checkout lock, full slots and the slot line', () => {
+    const line = waitWhy({ ...base, lockMs: 200_000, slotFullMs: 90_000, slotLineMs: 10_000, limit: 2 });
+    expect(line).toContain("waited 5m00s: 3m20s behind this checkout's lock, 1m30s all 2 slots full, 10s behind others in the slot line, gave up, nothing ran");
+  });
+
+  it('a row from before the reasons says so, and a check that ran does not read as given up', () => {
+    expect(waitWhy({ ...base, ended: 400_000, exit: 0 })).toMatch(/no reason kept \(an older row\)$/);
+  });
+
+  it('a branch with no open run is written too, and a killed check leaves its start', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dc-ledger-norun-'));
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: dir });
+      recordStart(dir, { label: 'tests', line: 'heavy', asked: 1, ran: 2 });
+      recordCheck(dir, { label: 'tests', line: 'heavy', asked: 1, ran: 2, ended: 3, exit: 0 });
+      const rows = readLedger(ledgerPath(dir));
+      expect(rows.map((r) => [r.type, r.run])).toEqual([['start', NO_RUN], ['check', NO_RUN]]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

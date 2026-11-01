@@ -43,7 +43,8 @@ export function fastSlotLimit(heatLimit: number, machineBusy: boolean): number {
   return machineBusy ? 1 : FAST_SLOTS;
 }
 
-export interface QueuePick { line: QueueLine; size: number; why: string }
+/** `shared`: only tests and type-checks, which need no turn on the checkout (the fast line never took one). */
+export interface QueuePick { line: QueueLine; size: number; why: string; shared: boolean }
 
 const SIZE = { check: 1, look: 2, unknown: 3, build: 3, browser: 4, suite: 5 } as const;
 
@@ -141,10 +142,11 @@ export function queueOf(command: string, scripts: Record<string, string> = {}, c
     else if (!GLUE.test(s)) unknown = true;
   }
   const size = Math.max(steps.length === 0 || unknown ? SIZE.unknown : 0, ...steps.map(stepSize));
-  if (unknown || steps.length === 0) return { line: 'heavy', size, why: 'not a known short check' };
+  if (unknown || steps.length === 0) return { line: 'heavy', size, why: 'not a known short check', shared: false };
+  const shared = steps.every((s) => s.kind === 'check');
   const long = steps.find((s) => !isFast(s, countRelated));
-  if (long) return { line: 'heavy', size, why: long.kind === 'check' ? `${long.target}: too many tests, or unnamed` : `${long.kind} ${long.target}` };
-  return { line: 'fast', size, why: steps.map((s) => s.target).join(' + ') };
+  if (long) return { line: 'heavy', size, why: long.kind === 'check' ? `${long.target}: too many tests, or unnamed` : `${long.kind} ${long.target}`, shared };
+  return { line: 'fast', size, why: steps.map((s) => s.target).join(' + '), shared };
 }
 
 /** The same command from the same checkout is the same job: that is what keeps its place. */

@@ -46,7 +46,7 @@ import {
 import { HEAVY_LOCK_BUSY_EXIT, heavyLockPath, heavySlotDir, listProcesses, repoToplevel } from '../../lib/builder-tools.js';
 import { acquireHeavyReporting } from '../../lib/heavy-acquire.js';
 import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-queue.js';
-import { recordCheck } from '../../lib/run-ledger.js';
+import { recordCheck, recordStart } from '../../lib/run-ledger.js';
 import {
   ownerOf,
   parseTestReport,
@@ -143,19 +143,20 @@ async function runCheckLocked(argv: string[], cwd: string, logFile: string): Pro
   const pick = queueOf(command, {}, (files) => countRelatedTests(cwd, files));
   const label = safeLabel(command);
   const asked = Date.now();
-  const { held, busy, line } = await acquireHeavyReporting({
+  const { held, busy, line, waits } = await acquireHeavyReporting({
     cwd, lockPath: heavyLockPath(cwd), slotDir: heavySlotDir(), ps: listProcesses,
     // The report's path is not the job: a retry of the same check must find its place.
-    job: { key: jobKey(cwd, command.replace(/--outputFile=\S+/, '')), size: pick.size, label, line: pick.line },
+    job: { key: jobKey(cwd, command.replace(/--outputFile=\S+/, '')), size: pick.size, label, line: pick.line, shared: pick.shared },
     note: (l) => { process.stderr.write(`builder test: ${l}\n`); },
   });
   if (!held) {
     const gaveUp = Date.now();
-    recordCheck(cwd, { label, line: line ?? pick.line, asked, ran: gaveUp, ended: gaveUp, exit: null });
+    recordCheck(cwd, { label, line: line ?? pick.line, asked, ran: gaveUp, ended: gaveUp, exit: null, waits });
     process.stderr.write(`builder test: ${busy}\n`);
     return null;
   }
   const ran = Date.now();
+  recordStart(cwd, { label, line: line ?? pick.line, asked, ran });
   const fd = openSync(logFile, 'w');
   let exit: number | null = null;
   try {
@@ -167,7 +168,7 @@ async function runCheckLocked(argv: string[], cwd: string, logFile: string): Pro
     return exit;
   } finally {
     closeSync(fd);
-    recordCheck(cwd, { label, line: line ?? pick.line, asked, ran, ended: Date.now(), exit });
+    recordCheck(cwd, { label, line: line ?? pick.line, asked, ran, ended: Date.now(), exit, waits });
     held.release();
   }
 }

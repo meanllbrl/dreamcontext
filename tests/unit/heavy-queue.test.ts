@@ -198,7 +198,7 @@ describe('builder heavy in two lines', () => {
 
   it('while very hot it takes the one heavy line, and so waits', async () => {
     limit = 1;
-    expect(acquireFileLock(lock(), Date.now(), 5_000)).toBe(true);
+    expect(acquireFileLock(heavySlotPaths(slots)[0], Date.now(), 5_000)).toBe(true);
     expect(await builderHeavy(deps(), [shim()], { maxWait: '0' })).toBe(75);
   });
 
