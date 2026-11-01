@@ -31,8 +31,7 @@ import { UpgradeRelaunchBanner } from './UpgradeRelaunchBanner';
 import { HandsfreeButton } from '../handsfree/HandsfreeButton';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { COARSE_POINTER_QUERY, readIsMobile, useIsMobile, useRemoteDesktop } from '../../hooks/useIsMobile';
-import { PushOptIn } from '../handsfree/phone/PushOptIn';
-import { PhoneLogSend } from '../handsfree/phone/PhoneLogSend';
+import { PhoneDrawerFoot } from '../handsfree/phone/PhoneDrawerFoot';
 import { wasOpenedForLink } from '../../lib/windowLaunch';
 import { useKeyboardUp } from '../../hooks/useKeyboardUp';
 import { ChromeSlotsProvider, type ChromeSlots } from './chromeSlots';
@@ -1201,11 +1200,20 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     const mark = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     window.history.pushState({ phoneChat: mark }, '');
     // A docked drawer is already on screen; only a floating one opens.
-    const onPop = () => { if (drawerFloatsRef.current) setFloatingOpen(true); };
+    // Landing ON the mark is a phone sheet going (PhoneSheet.tsx), not a step back off the chat.
+    const onPop = () => { if (window.history.state?.phoneChat !== mark && drawerFloatsRef.current) setFloatingOpen(true); };
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);
-      if (window.history.state?.phoneChat === mark) window.history.back();
+      const top = window.history.state;
+      if (top?.phoneChat === mark) window.history.back();
+      // A phone sheet going in the same commit is still on top. Its step back is on its way, and
+      // WebKit drops a second one taken before the first lands: this mark's step waits for it.
+      else if (top?.phoneSheet) {
+        window.addEventListener('popstate', () => {
+          if (window.history.state?.phoneChat === mark) window.history.back();
+        }, { once: true });
+      }
     };
   }, [backMarkOn]);
   const chrome = useMemo<ChromeApi>(
@@ -1404,7 +1412,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                 onCloseProject={(name) => closeTab(name)}
                 newWindowNonce={newWindowNonce}
                 {...(deviceShell ? { device: true } : {})}
-                {...(tunnel ? { foot: <><PushOptIn /><PhoneLogSend /></> } : {})}
+                {...(tunnel ? { foot: <PhoneDrawerFoot /> } : {})}
               />
             )}
             <div className="window-chrome-body">

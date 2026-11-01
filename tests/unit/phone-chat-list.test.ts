@@ -101,7 +101,9 @@ describe('the phone is the new shell (hands-free W2)', () => {
     const chrome = code('dashboard/src/components/layout/WindowChrome.tsx');
     // Unwinding ANY phoneChat entry stepped out of the app after a reload: the old entry kept its state.
     expect(chrome).not.toMatch(/if \(window\.history\.state\?\.phoneChat\) window\.history\.back\(\)/);
-    expect(chrome).toMatch(/if \(window\.history\.state\?\.phoneChat === mark\) window\.history\.back\(\)/);
+    expect(chrome).toMatch(/if \(top\?\.phoneChat === mark\) window\.history\.back\(\)/);
+    // Under a sheet going in the same commit, the mark's step waits for the sheet's: WebKit drops a second immediate back.
+    expect(chrome).toMatch(/else if \(top\?\.phoneSheet\) \{\s*window\.addEventListener\('popstate', \(\) => \{\s*if \(window\.history\.state\?\.phoneChat === mark\) window\.history\.back\(\);\s*\}, \{ once: true \}\);/);
     expect(chrome).toMatch(/if \(isMobile && window\.history\.state\?\.phoneChat\) window\.history\.replaceState\(null, ''\)/);
     expect(surface).not.toContain('history.state?.phoneChat');
   });
@@ -115,7 +117,7 @@ describe('the phone is the new shell (hands-free W2)', () => {
   });
 
   it('the list\'s duties moved to the tunnel drawer\'s foot: the notification opt-in and the connection log', () => {
-    expect(chrome).toMatch(/\{\.\.\.\(tunnel \? \{ foot: <><PushOptIn \/><PhoneLogSend \/><\/> \} : \{\}\)\}/);
+    expect(chrome).toMatch(/\{\.\.\.\(tunnel \? \{ foot: <PhoneDrawerFoot \/> \} : \{\}\)\}/);
     expect(code('dashboard/src/components/layout/newshell/ChatDrawer.tsx')).toMatch(/\{p\.foot && <div className="ns-dr-foot" data-testid="drawer-foot">\{p\.foot\}<\/div>\}/);
   });
 
