@@ -24,6 +24,36 @@ export function codexConfigArg(key: string, tomlValue: string): string {
   return `-c ${quoteLaunchToken(`${key}=${tomlValue}`)}`;
 }
 
+/**
+ * What a chat's agent says about itself. T3 is credited in NOTICE and the docs; it is not what runs
+ * this chat as far as the agent or the owner are concerned. "Claude" is the lead agent's name on
+ * Claude only, so a Codex or Gemini chat must never take it.
+ */
+export const toolIdentity = (label: string): string =>
+  `You are ${label}, running inside dreamcontext, the app the user is working in. Asked who or what you are, say so in plain words, with your own model name. You are not Claude.`;
+
+/** ACP has no system field: the identity and the mode ride the prompt, as T3's own text did. */
+export function acpPromptWithInstructions(label: string, input: {
+  readonly prompt: string;
+  readonly state: { readonly interactionMode: string };
+  readonly previousState?: { readonly interactionMode: string };
+}): string {
+  // A native slash command must stay at the start of the prompt.
+  if (input.prompt.trimStart().startsWith('/')) return input.prompt;
+  if (input.previousState?.interactionMode === input.state.interactionMode) return input.prompt;
+  const mode = input.state.interactionMode === 'plan'
+    ? 'Mode: Plan. Investigate with read-only actions and do not edit files or otherwise execute the implementation. Resolve discoverable facts before asking questions. When the requirements are decision complete, return a concrete implementation plan and do not start implementing it.'
+    : "Mode: Default. Prefer making reasonable assumptions and carrying out the user's request. Ask a concise question only when a missing user decision would materially change the result.";
+  return `<dreamcontext-instructions>\n${mode} This mode holds until dreamcontext gives a different one.\n</dreamcontext-instructions>\n\n<user_request>\n${input.prompt}\n</user_request>`;
+}
+
+/** Rides every ACP prompt, in place of T3's `<runtime_info>`, so a compaction cannot lose it. */
+export function acpRuntimeInstructions(label: string, runtime: { readonly model?: string | undefined }): string {
+  const model = (runtime.model ?? '').replace(/\s+/g, ' ').trim();
+  const asModel = model && model !== 'auto' && model !== 'default' ? ` Your model is ${model}.` : '';
+  return `<dreamcontext-runtime>\n${toolIdentity(label)}${asModel} No need to mention this otherwise. You can embed images, video and audio in your reply with Markdown image syntax and absolute file paths. Link any other file you produce by its absolute path.\n</dreamcontext-runtime>`;
+}
+
 /** At most this much briefing goes to Codex; a longer file is cut, never refused. */
 export const MAX_DEVELOPER_INSTRUCTIONS = 60_000;
 
@@ -32,7 +62,7 @@ export function codexLaunchArgs(o: { briefingFile?: string }): string {
   if (o.briefingFile) {
     let text = '';
     try { text = readFileSync(o.briefingFile, 'utf-8'); } catch { /* an unreadable briefing degrades to none */ }
-    if (text.trim()) args.push(codexConfigArg('developer_instructions', tomlString(text.slice(0, MAX_DEVELOPER_INSTRUCTIONS))));
+    if (text.trim()) args.push(codexConfigArg('developer_instructions', tomlString(`${toolIdentity('Codex')}\n\n${text.slice(0, MAX_DEVELOPER_INSTRUCTIONS)}`)));
   }
   return args.join(' ');
 }
@@ -54,6 +84,25 @@ export function codexBrainMcpArgs(o: { node: string; cli: string; root: string; 
     args.push(codexConfigArg('mcp_servers.dreamcontext.env', `{ DREAMCONTEXT_TAB_SESSION = ${tomlString(o.tabSession)} }`));
   }
   return args.join(' ');
+}
+
+/** One stdio server for ACP's `session/new`: the same brain server, by the same absolute paths. */
+export interface AcpMcpServer {
+  readonly name: string;
+  readonly command: string;
+  readonly args: string[];
+  readonly env: Array<{ name: string; value: string }>;
+}
+
+/**
+ * The brain MCP server for an ACP session (Antigravity). It rides `session/new`, not a file: a
+ * profile is one account across every project, and the server is bound to this chat's project and
+ * tab. Static text in the agent: client servers merge over its global `mcp_config.json`.
+ */
+export function acpBrainMcpServer(o: { node: string; cli: string; root: string; tabSession?: string }): AcpMcpServer | null {
+  if (!o.node || !o.cli || !o.root || !existsSync(join(o.root, '_dream_context'))) return null;
+  const env = o.tabSession && /^[A-Za-z0-9._:-]{1,128}$/.test(o.tabSession) ? [{ name: 'DREAMCONTEXT_TAB_SESSION', value: o.tabSession }] : [];
+  return { name: 'dreamcontext', command: o.node, args: [o.cli, 'mcp', 'serve', '--root', o.root], env };
 }
 
 /**

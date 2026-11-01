@@ -200,7 +200,7 @@
     "packages/effect-codex-app-server/src/rpc.ts": "124b29b8b22f32d09df3a35ef775d44994712cb1e0282f9d90eda1cb9f245b9e",
     "packages/effect-codex-app-server/src/schema.ts": "67b555b2e1b5efaa38aa8a56ab00cbda154f53bfd89b9a2134fa02f52eb7bb19",
     "packages/provider-acp/src/server/AcpSessionRuntime.ts": "dd782221efd1c8bfe700f7b286a5a3b914e52502fdc5b3b958771e39d4be0557",
-    "packages/provider-acp/src/server/adapter.ts": "ee1fbf7bfae26fef1eb326c5f59db9b15ab2586d25e938161f4e9783910a957b",
+    "packages/provider-acp/src/server/adapter.ts": "d0c248ff5e203c45cfd3e9fd0b963787ae9296b948614d315e0e083402a25e88",
     "packages/provider-acp/src/server/clientPolicy.ts": "42a3234b348459d3ad8c061fc87e4dd6f5af05de10ad207d6713541689012524",
     "packages/provider-acp/src/server/clientTerminals.ts": "f79e6e310117de909ffca95d356fdd39ee0f99f28a1cee6aa26852c6e3826cfe",
     "packages/provider-acp/src/server/mcpOverAcpBridge.ts": "1f114d86e848c552db40bf87b861a62bd1d106abba2637604f6313efbde84607",
@@ -385,17 +385,18 @@
   },
   "patches": [
     {
-      "file": "01-antigravity-auth-logout-ts59.patch",
-      "reason": "TypeScript 5.9 cannot yield* a Schema.is-narrowed ProviderSetupError in a ternary (T3 checks with tsc-rs); Effect.fail on the same value, behaviour unchanged.",
+      "file": "01-antigravity-ts59.patch",
+      "reason": "TypeScript 5.9 differs from T3's tsc-rs in two places, behaviour unchanged: it cannot yield* a Schema.is-narrowed ProviderSetupError in a ternary (AntigravityAuth.ts, Effect.fail on the same value), and it infers the generic error of an Effect.fn generator as any, which leaks into probeUsage (antigravityUsageLimits.ts; swallowed by orElseSucceed, so unknown is exact).",
       "touches": [
-        "apps/server/src/provider/AntigravityAuth.ts"
+        "apps/server/src/provider/AntigravityAuth.ts",
+        "apps/server/src/provider/antigravityUsageLimits.ts"
       ]
     },
     {
-      "file": "02-antigravity-usage-fetchwindows-ts59.patch",
-      "reason": "TypeScript 5.9 infers the generic error of an Effect.fn generator as any, which leaks into probeUsage; the error is swallowed by orElseSucceed, so unknown is exact.",
+      "file": "02-acp-bridge-mcp-servers.patch",
+      "reason": "T3 gives an ACP session only its own MCP server and tells the agent it runs in T3 Code, in a prompt text the bridge cannot reach. dreamcontext's brain server belongs to one chat's project and tab, so a bridge child hands its stdio servers to the session (session/new, load, resume) instead of a profile file shared by every project, and supplies the instruction text itself, so the agent says it runs in dreamcontext. T3's tool instructions stay tied to a real T3 MCP session.",
       "touches": [
-        "apps/server/src/provider/antigravityUsageLimits.ts"
+        "packages/provider-acp/src/server/adapter.ts"
       ]
     },
     {

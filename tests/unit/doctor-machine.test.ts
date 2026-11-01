@@ -62,11 +62,11 @@ describe('doctor --machine', () => {
     expect(doctor?.options.map((o) => o.long)).toContain('--machine');
   });
 
-  it('--json prints exactly { version: 1, machine } and exits 0 when ready', async () => {
+  it('--json prints exactly { version: 1, machine, antigravity } and exits 0 when ready', async () => {
     const d = deps();
     expect(await runDoctorMachine({ json: true }, d)).toBe(0);
     const parsed = JSON.parse(d.lines.join('\n')) as Record<string, unknown>;
-    expect(Object.keys(parsed).sort()).toEqual(['machine', 'version']);
+    expect(Object.keys(parsed).sort()).toEqual(['antigravity', 'machine', 'version']);
     expect(parsed.version).toBe(1);
     expect((parsed.machine as ReadinessReport).checks).toHaveLength(ALL_OK.length);
   });

@@ -11,15 +11,16 @@
  */
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { codexChildEnv, codexCommand } from '../codex-bin.js';
-import { BridgeSession, toolLabel, type BridgeSessionOptions } from './session.js';
-import { isInstanceAccountId, isInstanceTool } from '../instance-accounts.js';
+import { BridgeOpenTimeout, BridgeSession, toolLabel, type BridgeSessionOptions } from './session.js';
+import { syncAntigravitySkills } from '../antigravity-skills.js';
+import { INSTANCE_PRIMARY_ID, isInstanceAccountId, isInstanceTool } from '../instance-accounts.js';
 import { carriedText, recordThreadTurn } from './instance-threads.js';
 import { antigravityFailureKind } from './to-wire.js';
-import { MAX_DEVELOPER_INSTRUCTIONS, claudeLaunchArgs, codexBrainMcpArgs, codexLaunchArgs, codexLeanMcpArgs, codexStrictArgs, leanMcpNames, parseCodexMcpList, scrubbedCodexEnv } from './launch.js';
+import { MAX_DEVELOPER_INSTRUCTIONS, acpBrainMcpServer, claudeLaunchArgs, codexBrainMcpArgs, codexLaunchArgs, codexLeanMcpArgs, codexStrictArgs, leanMcpNames, parseCodexMcpList, scrubbedCodexEnv } from './launch.js';
 import { codexInstanceSettings, isCodexAccountId } from './accounts.js';
 import { HIDDEN_TITLE_PROMPT, TabTitler, titleBlock, titleIn } from './tab-title.js';
 import type { WireFrame } from './to-wire.js';
@@ -71,6 +72,8 @@ export interface StdioDeps {
   readonly tabWantsTitle?: () => boolean;
   /** Called on every `result` (Eco measurement). What it returns rides the next turn. */
   readonly onResult?: (session: BridgeSession, frame: WireFrame) => AppContext[] | void;
+  /** Tests: a start that never answers is refused sooner. */
+  readonly openLimitMs?: number;
   /** The brain (context.ts): the snapshot at session start and after `/clear`, the prompt hook on
    *  every owner turn. Absent = no brain (tests, the T3 Claude engine). */
   readonly brain?: Pick<BrainContext, 'session' | 'prompt' | 'drain'> & Partial<Pick<BrainContext, 'takeNotice'>>;
@@ -172,6 +175,13 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     rmSync(privateTmp, { recursive: true, force: true });
     return 1;
   }
+  const instanceAccount = isInstanceTool(args.tool) && args.account && isInstanceAccountId(args.account) ? args.account : null;
+  // The skills go in the account's profile as a chat opens, so no project and no sign-in owes a step.
+  const skills = isInstanceTool(args.tool) ? syncAntigravitySkills(instanceAccount ?? INSTANCE_PRIMARY_ID, { home }) : null;
+  let skillsLoss = skills && !skills.ok ? `${toolLabel(args.tool)} is running without dreamcontext's skills: ${skills.reason}.` : null;
+  const brainServer = isInstanceTool(args.tool) && deps.brain
+    ? acpBrainMcpServer({ node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', root: args.cwd, tabSession: deps.env.DREAMCONTEXT_TAB_SESSION })
+    : null;
   const launchArgs = isInstanceTool(args.tool) ? '' : args.tool === 'claude'
     ? claudeLaunchArgs({ briefingFile: args.briefingFile })
     : [
@@ -182,8 +192,19 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       deps.brain ? codexBrainMcpArgs({ node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', root: args.cwd, tabSession: deps.env.DREAMCONTEXT_TAB_SESSION }) : '',
       args.mcpConfig ? codexLeanMcpArgs(args.mcpConfig, { node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '' }) : '',
     ].filter(Boolean).join(' ');
+  // Before the open: a pane closed during a stuck start must still end the agent T3 started.
+  const opening = new AbortController();
+  let opened = false;
+  const onSignal = (): void => {
+    if (!opened) { opening.abort(); return; }
+    // A Codex that ignores the close must not hold the exit: the app-server ends at stdin's EOF.
+    setTimeout(() => { process.exit(0); }, CLOSE_LIMIT_MS).unref();
+    void session.close().finally(() => { rmSync(privateTmp, { recursive: true, force: true }); process.exit(0); });
+  };
+  if (deps.handleSignals) { process.once('SIGTERM', onSignal); process.once('SIGINT', onSignal); }
   try {
     session = await BridgeSession.open({
+      abortOpen: opening.signal,
       tool: args.tool,
       cwd: args.cwd,
       model: args.model,
@@ -194,7 +215,9 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       ...(binaryPath ? { binaryPath } : {}),
       launchArgs,
       ...(account ? { codexHome: { homePath: account.homePath, shadowHomePath: account.shadowHomePath } } : {}),
-      ...(isInstanceTool(args.tool) && args.account && isInstanceAccountId(args.account) ? { accountId: args.account } : {}),
+      ...(instanceAccount ? { accountId: instanceAccount } : {}),
+      ...(brainServer ? { mcpServers: [brainServer] } : {}),
+      ...(deps.openLimitMs ? { openLimitMs: deps.openLimitMs } : {}),
       // The account's live windows, for the server's switch and the Settings bars (never a secret).
       onUsageLimits: (u) => emit({ type: 'system', subtype: 'dc_usage', dc_tool: args.tool, windows: u.windows, checked_at: u.checkedAt }),
       // DREAMCONTEXT_CONTEXT_BY: the bridge injects the brain, so a project's opt-in `.codex/hooks.json`
@@ -226,15 +249,20 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       },
     });
   } catch (err) {
-    const signedOut = isInstanceTool(args.tool) && (requiresSignIn(err) || causeChain(err).some((m) => antigravityFailureKind(m) === 'signed-out'));
+    // A timeout measured nothing about the sign-in: its text must not read as a refusal from the tool.
+    const signedOut = !(err instanceof BridgeOpenTimeout) && isInstanceTool(args.tool) && (requiresSignIn(err) || causeChain(err).some((m) => antigravityFailureKind(m) === 'signed-out'));
     emit({
       type: 'result', subtype: 'error_during_execution', is_error: true,
-      result: signedOut ? `${toolLabel(args.tool)} is signed out. Sign in from the model picker, then open this chat again.` : `${toolLabel(args.tool)} did not start: ${String(err).slice(0, 400)}`,
+      result: signedOut ? `${toolLabel(args.tool)} is signed out. Sign in from the model picker, then open this chat again.`
+        : err instanceof BridgeOpenTimeout ? err.message
+          : `${toolLabel(args.tool)} did not start: ${String(err).slice(0, 400)}`,
       num_turns: 0, total_cost_usd: 0, usage: {}, dc_tool: args.tool, ...(signedOut ? { dc_signed_out: true } : {}),
     });
+    if (deps.handleSignals) { process.off('SIGTERM', onSignal); process.off('SIGINT', onSignal); }
     rmSync(privateTmp, { recursive: true, force: true });
     return 1;
   }
+  opened = true;
   // The thread id is known before any turn: announce it, so a reopened pane can be resumed.
   // NOT a `system/init`: the server opens a turn on an init it did not ask for ("an idle child
   // emits no init"), so the thread is announced on its own frame the client ignores.
@@ -261,12 +289,17 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   // so the first turn already carries it.
   // A tool with no launch argument for it gets the chat-surface briefing with a thread's first turn.
   const briefingOwed = (): AppContext[] => {
-    if (!isInstanceTool(args.tool) || !args.briefingFile) return [];
+    if (!isInstanceTool(args.tool)) return [];
+    // A project's own skills are read where they are: copying them would be a step per project.
+    const own: AppContext[] = existsSync(join(args.cwd, '.claude', 'skills'))
+      ? [{ key: 'dreamcontext-project-skills', text: "This project's skills are in .claude/skills/<name>/SKILL.md. When one covers the work, read it first." }]
+      : [];
+    if (!args.briefingFile) return own;
     try {
       const text = readFileSync(args.briefingFile, 'utf-8').slice(0, MAX_DEVELOPER_INSTRUCTIONS);
-      return text.trim() ? [{ key: 'dreamcontext-briefing', text }] : [];
+      return text.trim() ? [{ key: 'dreamcontext-briefing', text }, ...own] : own;
     } catch {
-      return [];
+      return own;
     }
   };
   owe(briefingOwed());
@@ -320,7 +353,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       // A steer joins the running turn as Claude's mid-turn message does: no hook, no context.
       const brain = session.busy || !deps.brain ? [] : await deps.brain.prompt(text, session.nativeThreadId).catch(() => []);
       // Lost context is said, once, in the owner's own chat: `<synthetic>` keeps the pane's books as they are.
-      const notice = deps.brain?.takeNotice?.();
+      const notice = [deps.brain?.takeNotice?.(), skillsLoss].filter(Boolean).join('\n\n');
+      skillsLoss = null;
       if (notice) emit({ type: 'assistant', message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: notice }] }, parent_tool_use_id: null, session_id: session.nativeThreadId });
       if (keepsThread) recordThreadTurn(session.nativeThreadId, args.cwd, 'user', text, home, args.account);
       const context = session.busy ? [] : [...titler.nudge(), ...pending.splice(0), ...onceAThread(brain)];
@@ -359,14 +393,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     }
   };
 
-  // The server ends a pane with SIGTERM (then SIGKILL): close the session first, which ends the
-  // `codex app-server` child T3 spawned in its own group, and remove the private temp folder.
-  const onSignal = (): void => {
-    // A Codex that ignores the close must not hold the exit: the app-server ends at stdin's EOF.
-    setTimeout(() => { process.exit(0); }, CLOSE_LIMIT_MS).unref();
-    void session.close().finally(() => { rmSync(privateTmp, { recursive: true, force: true }); process.exit(0); });
-  };
-  if (deps.handleSignals) { process.once('SIGTERM', onSignal); process.once('SIGINT', onSignal); }
+  // The server ends a pane with SIGTERM (then SIGKILL): `onSignal` closes the session first, which
+  // ends the child T3 spawned in its own group, and removes the private temp folder.
   await new Promise<void>((resolve) => {
     let buf = '';
     deps.input.on('data', (chunk: Buffer | string) => {

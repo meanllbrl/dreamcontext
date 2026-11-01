@@ -6,9 +6,9 @@
  * `antigravity-accounts.test.ts` pins this path to T3's own function.
  */
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { basename, delimiter, join } from 'node:path';
 
 export const ANTIGRAVITY_PRIMARY_ID = 'primary';
 
@@ -43,4 +43,39 @@ export function antigravityInstalled(o: { home?: string; path?: string; platform
   const target = `${o.platform ?? process.platform}-${o.arch ?? process.arch}`;
   if (existsSync(join(t3StateRoot(home), 'tools', 'antigravity-acp', target, 'active.json'))) return true;
   return (o.path ?? process.env.PATH ?? '').split(delimiter).some((dir) => !!dir && existsSync(join(dir, 'agy_acp_server.par')));
+}
+
+export interface AntigravityRuntime {
+  /** T3's own install record, or null: an agent found some other way, or no agent. */
+  readonly version: string | null;
+  /** The record's two files are there at the size it wrote. Null = no record to compare with. */
+  readonly intact: boolean | null;
+}
+
+/**
+ * The managed runtime, from the record T3 wrote when it validated the install, and the files
+ * themselves. Never started to ask: every launch unpacks about 1 GB.
+ */
+export function antigravityRuntime(o: { home?: string; platform?: string; arch?: string } = {}): AntigravityRuntime {
+  const platform = o.platform ?? process.platform;
+  const root = join(t3StateRoot(o.home ?? homedir()), 'tools', 'antigravity-acp', `${platform}-${o.arch ?? process.arch}`);
+  let releaseId = '';
+  try {
+    releaseId = String((JSON.parse(readFileSync(join(root, 'active.json'), 'utf-8')) as { releaseId?: unknown }).releaseId ?? '');
+  } catch {
+    return { version: null, intact: existsSync(join(root, 'active.json')) ? false : null };
+  }
+  if (!/^[a-f0-9]{64}$/.test(releaseId)) return { version: null, intact: false };
+  const dir = join(root, 'versions', releaseId);
+  try {
+    const r = JSON.parse(readFileSync(join(dir, '.install-complete.json'), 'utf-8')) as { version?: unknown; executable?: { name?: unknown; bytes?: unknown }; harness?: { name?: unknown; bytes?: unknown } };
+    const whole = (f: { name?: unknown; bytes?: unknown } | undefined): boolean => {
+      if (typeof f?.name !== 'string' || f.name !== basename(f.name)) return false;
+      const st = statSync(join(dir, f.name));
+      return st.isFile() && st.size === f.bytes && (platform === 'win32' || (st.mode & 0o111) !== 0);
+    };
+    return { version: typeof r.version === 'string' ? r.version.slice(0, 32) : null, intact: whole(r.executable) && whole(r.harness) };
+  } catch {
+    return { version: null, intact: false };
+  }
 }

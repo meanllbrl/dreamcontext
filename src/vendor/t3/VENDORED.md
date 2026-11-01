@@ -31,8 +31,8 @@ Files: 303 copied (239939 upstream lines), 19 stubs, 3 patches.
 
 ## Patches
 
-- `01-antigravity-auth-logout-ts59.patch` (apps/server/src/provider/AntigravityAuth.ts): TypeScript 5.9 cannot yield* a Schema.is-narrowed ProviderSetupError in a ternary (T3 checks with tsc-rs); Effect.fail on the same value, behaviour unchanged.
-- `02-antigravity-usage-fetchwindows-ts59.patch` (apps/server/src/provider/antigravityUsageLimits.ts): TypeScript 5.9 infers the generic error of an Effect.fn generator as any, which leaks into probeUsage; the error is swallowed by orElseSucceed, so unknown is exact.
+- `01-antigravity-ts59.patch` (apps/server/src/provider/AntigravityAuth.ts, apps/server/src/provider/antigravityUsageLimits.ts): TypeScript 5.9 differs from T3's tsc-rs in two places, behaviour unchanged: it cannot yield* a Schema.is-narrowed ProviderSetupError in a ternary (AntigravityAuth.ts, Effect.fail on the same value), and it infers the generic error of an Effect.fn generator as any, which leaks into probeUsage (antigravityUsageLimits.ts; swallowed by orElseSucceed, so unknown is exact).
+- `02-acp-bridge-mcp-servers.patch` (packages/provider-acp/src/server/adapter.ts): T3 gives an ACP session only its own MCP server and tells the agent it runs in T3 Code, in a prompt text the bridge cannot reach. dreamcontext's brain server belongs to one chat's project and tab, so a bridge child hands its stdio servers to the session (session/new, load, resume) instead of a profile file shared by every project, and supplies the instruction text itself, so the agent says it runs in dreamcontext. T3's tool instructions stay tied to a real T3 MCP session.
 - `03-antigravity-runtime-temp-per-pane.patch` (apps/server/src/provider/acp/AntigravitySessionFiles.ts): T3 runs one instance per server and clears the whole runtime temp at create; each dreamcontext pane is its own process on one account's profile, so a second pane deleted the first pane's unpacked runtime. Only run folders a week old go.
 
 ## npm dependencies the closure imports

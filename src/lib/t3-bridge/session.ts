@@ -41,6 +41,7 @@ import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as FileSystem from 'effect/FileSystem';
 import * as Path from 'effect/Path';
+import * as References from 'effect/References';
 import * as Layer from 'effect/Layer';
 import * as ManagedRuntime from 'effect/ManagedRuntime';
 import * as Schema from 'effect/Schema';
@@ -52,6 +53,8 @@ import { ANTIGRAVITY_DEFAULT_MODEL } from '@t3tools/contracts';
 import { antigravityInstanceId } from '../antigravity-accounts.js';
 import { isInstanceTool, type InstanceTool } from '../instance-accounts.js';
 import { ToWire, type WireFrame } from './to-wire.js';
+import { contextInWords } from './context.js';
+import type { AcpMcpServer } from './launch.js';
 import type { ClaudeKit } from './claude-kit.js';
 import type { ClaudeAgentSdkQueryRunner } from '@t3tools/server/orchestration-v2/Adapters/ClaudeAdapterV2';
 
@@ -77,6 +80,12 @@ export interface BridgeSessionOptions {
   readonly codexHome?: { readonly homePath: string; readonly shadowHomePath: string };
   /** The account of a tool whose accounts are T3 instances. Absent = #0. */
   readonly accountId?: string;
+  /** Stdio servers for an ACP session (the brain); Codex's come on `launchArgs`. */
+  readonly mcpServers?: readonly AcpMcpServer[];
+  /** The bridge is being ended: a start under way stops here rather than at its limit. */
+  readonly abortOpen?: AbortSignal;
+  /** How long a start may take before it is refused. Default {@link OPEN_LIMIT_MS}. */
+  readonly openLimitMs?: number;
   /** A live limit update from the account (T3 `onUsageLimits`): windows as T3 builds them. */
   readonly onUsageLimits?: (update: { readonly windows: ReadonlyArray<unknown>; readonly checkedAt: string }) => void;
   /** The environment the Codex process inherits (already scrubbed by the caller). */
@@ -104,6 +113,18 @@ const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const TOOL_LABEL: Record<BridgeSessionOptions['tool'], string> = { codex: 'Codex', claude: 'Claude', antigravity: 'Antigravity' };
 export const toolLabel = (tool: BridgeSessionOptions['tool']): string => TOOL_LABEL[tool];
+
+/** A start the tool never finished: a dead sign-in or a stuck process answers nothing at all. */
+export const OPEN_LIMIT_MS = 120_000;
+const CLOSE_LIMIT_MS = 5_000;
+
+/** The tool neither started nor refused in time. Its message is what the owner reads. */
+export class BridgeOpenTimeout extends Error {
+  constructor(tool: BridgeSessionOptions['tool'], ms: number) {
+    const label = toolLabel(tool);
+    super(`${label} did not answer within ${Math.round(ms / 1000)} seconds, so this chat was stopped. If its sign-in has expired, sign in again from the model picker, then open this chat again.`);
+  }
+}
 
 function hasToolUse(frame: WireFrame): boolean {
   if (frame.type !== 'assistant') return false;
@@ -191,6 +212,8 @@ function bridgeLayer(clientFactory: ClientFactory | undefined, kit: ClaudeKit | 
   const base = Layer.mergeAll(
     NodeServices.layer,
     IdAllocator.layer,
+    // `bridgeServerConfig` says Error, and stdout is the stream-json channel: T3's warnings stay off it.
+    Layer.succeed(References.MinimumLogLevel, 'Error'),
     Layer.succeed(ProviderEventLoggers.ProviderEventLoggers, ProviderEventLoggers.NoOpProviderEventLoggers),
   );
   const factory = clientFactory
@@ -247,8 +270,24 @@ export class BridgeSession {
 
   static async open(opts: BridgeSessionOptions): Promise<BridgeSession> {
     const s = new BridgeSession(opts);
-    await s.start();
-    return s;
+    const ms = opts.openLimitMs ?? OPEN_LIMIT_MS;
+    let timer: NodeJS.Timeout | undefined;
+    const limit = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new BridgeOpenTimeout(opts.tool, ms)), ms);
+      opts.abortOpen?.addEventListener('abort', () => reject(new Error('the chat was closed')), { once: true });
+    });
+    try {
+      await Promise.race([s.start(), limit]);
+      return s;
+    } catch (err) {
+      // Bounded too: closing asks the same process that did not answer.
+      let closeTimer: NodeJS.Timeout | undefined;
+      await Promise.race([s.close(), new Promise((r) => { closeTimer = setTimeout(r, CLOSE_LIMIT_MS); })]);
+      clearTimeout(closeTimer);
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private get threadId(): ThreadId {
@@ -317,6 +356,7 @@ export class BridgeSession {
         tool: opts.tool as InstanceTool,
         accountId: opts.accountId ?? '',
         ...(opts.binaryPath ? { binaryPath: opts.binaryPath } : {}),
+        ...(opts.mcpServers?.length ? { mcpServers: opts.mcpServers } : {}),
       })).orchestrationAdapter : kit ? yield* kit.make({
         instanceId: kit.instanceId,
         settings: decodeClaudeSettings(settingsInput),
@@ -509,9 +549,9 @@ export class BridgeSession {
       });
       return;
     }
-    // Only Codex's adapter reads `appContext`. Everywhere else it rides after the owner's words (a
-    // leading `<tag>` would hide the whole message in a reopened pane).
-    const context = this.opts.tool !== 'codex' ? appContext.map((c) => `\n\n<${c.key}>\n${c.text}\n</${c.key}>`).join('') : '';
+    // Only Codex's adapter reads `appContext`, as untrusted entries. Everywhere else it rides after
+    // the owner's words, in the user message (context.ts `contextInWords`).
+    const context = this.opts.tool !== 'codex' ? contextInWords(appContext) : '';
     const message = this.turnMessage(text + context);
     // A message right after the turn started steers it once Codex reported it running.
     await this.awaitTurnId();

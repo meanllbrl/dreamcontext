@@ -7,6 +7,10 @@ import chalk from 'chalk';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { header } from '../../lib/format.js';
 import { CHECK_COPY } from '../../lib/onboarding/copy.js';
+import { antigravityRuntime } from '../../lib/antigravity-accounts.js';
+import { listInstanceAccounts } from '../../lib/instance-accounts.js';
+import { findTool } from '../../lib/tool-finder.js';
+import { bridgeNode, BRIDGE_MIN_NODE_TEXT } from '../../lib/t3-bridge/node-floor.js';
 import type { ReadinessReport } from '../../lib/onboarding/types.js';
 import { createTtyDeps, renderReadiness, type TtyDeps } from '../onboarding-tty.js';
 import { listUnfencedDataStructures } from '../../lib/data-structures-migration.js';
@@ -1595,6 +1599,26 @@ function checkTaskFeatureLinks(root: string): CheckResult[] {
  * that is not done is an error, anything else not done is a warning. Codes are
  * `doctor/machine-<id>`; a manual fix travels as the supported fix.
  */
+/**
+ * Antigravity, as far as this machine can say without a chat. The sign-in file proves a sign-in
+ * happened, not that it still works, and nothing here sees whether context reaches the model, so
+ * the row says what it did not check. It is the app's answer too: T3's install record and folders,
+ * never this terminal's PATH alone. Not installed is no fault: the tool is opt-in.
+ */
+export function checkAntigravity(o: { home?: string; node?: string | null; path?: string; loginPath?: (() => string | null) | null } = {}): CheckResult {
+  const name = 'Antigravity';
+  const code = 'doctor/machine-antigravity';
+  const notChecked = 'not checked without a live chat: whether the sign-in still works, and whether context reaches the model';
+  const rt = antigravityRuntime(o.home ? { home: o.home } : {});
+  const onPath = rt.intact === null ? findTool(['agy_acp_server.par'], { ...(o.home ? { home: o.home } : {}), ...(o.path === undefined ? {} : { path: o.path }), ...(o.loginPath === undefined ? {} : { loginPath: o.loginPath }) }) : null;
+  if (rt.intact === false) return { name, status: 'warn', code, message: 'Antigravity: the install is damaged. Install it again from the model picker.' };
+  if (rt.intact === null && !onPath) return { name, status: 'ok', code, message: 'Antigravity: not installed (optional)' };
+  const label = rt.version ? `Antigravity ${rt.version}` : 'Antigravity';
+  if ((o.node === undefined ? bridgeNode() : o.node) === null) return { name, status: 'warn', code, message: `${label}: needs Node ${BRIDGE_MIN_NODE_TEXT} or newer to run` };
+  if (!listInstanceAccounts('antigravity', o.home).some((a) => a.signedIn)) return { name, status: 'warn', code, message: `${label}: signed out. Sign in from the model picker.` };
+  return { name, status: 'ok', code, message: `${label}: installed, a sign-in is on file; ${notChecked}` };
+}
+
 export function machineToDoctorResults(report: ReadinessReport): CheckResult[] {
   return report.checks
     .filter((c) => c.scopes.includes('machine'))
@@ -1603,7 +1627,7 @@ export function machineToDoctorResults(report: ReadinessReport): CheckResult[] {
       return {
         name: CHECK_COPY[c.id].title,
         status: done ? 'ok' : c.tier === 'required' ? 'error' : 'warn',
-        message: `${CHECK_COPY[c.id].title}: ${done ? 'ready' : c.status}`,
+        message: `${CHECK_COPY[c.id].title}: ${c.status === 'unknown' ? 'not checked' : done ? 'ready' : c.status}`,
         code: `doctor/machine-${c.id}`,
         subject: { check: c.id },
         ...(c.fix?.manual ? { supportedFixes: [c.fix.manual] } : {}),
@@ -1622,14 +1646,16 @@ export async function runDoctorMachine(
 ): Promise<number> {
   const pending = deps.runPendingGitInits();
   const machine = await deps.probe();
+  const antigravity = checkAntigravity();
   if (opts.json) {
-    deps.print(JSON.stringify({ version: 1, machine }, null, 2));
+    deps.print(JSON.stringify({ version: 1, machine, antigravity }, null, 2));
     return machine.ready ? 0 : 1;
   }
   deps.print(header('Doctor: this machine'));
   for (const p of pending) deps.print(`  ${chalk.green('✓')} Set up Git in ${p}`);
   for (const line of renderReadiness(machine)) deps.print(line);
-  const results = machineToDoctorResults(machine);
+  deps.print(`  ${antigravity.status === 'ok' ? chalk.cyan('ℹ') : chalk.yellow('⚠')} ${antigravity.message}`);
+  const results = [...machineToDoctorResults(machine), antigravity];
   const errors = results.filter((r) => r.status === 'error').length;
   const warnings = results.filter((r) => r.status === 'warn').length;
   deps.print('');
@@ -1723,6 +1749,7 @@ export function registerDoctorCommand(program: Command): void {
         ...checkLab(root),
         ...checkRecallTier(root),
         ...checkTheses(root),
+        checkAntigravity(),
 
         // Snapshot health. Core files FIRST so the snapshot-size message's
         // "trim the core files flagged above" points at lines already printed.

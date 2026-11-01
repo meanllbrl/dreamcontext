@@ -182,3 +182,16 @@ describe('a Codex turn carries the brain as untrusted app context (T3 replay)', 
     }, long);
   }, 40_000);
 });
+
+describe('what a Codex chat is told about itself', () => {
+  it('says dreamcontext, not Claude and not T3', async () => {
+    const { codexLaunchArgs } = await import('../../../src/lib/t3-bridge/launch.js');
+    const dir = mkdtempSync(join(tmpdir(), 'dc-codex-id-'));
+    writeFileSync(join(dir, 'brief.md'), 'SURFACE');
+    const args = codexLaunchArgs({ briefingFile: join(dir, 'brief.md') });
+    expect(args).toContain('You are Codex, running inside dreamcontext');
+    expect(args).toContain('You are not Claude');
+    expect(args).toContain('SURFACE');
+    expect(args).not.toMatch(/T3/);
+  });
+});

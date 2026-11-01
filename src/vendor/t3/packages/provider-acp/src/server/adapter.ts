@@ -598,12 +598,26 @@ interface AcpMcpContext {
   readonly authorization?: string;
 }
 
+/** A dreamcontext bridge child runs one chat: what that chat's sessions are given and told. */
+let bridgeMcpServers: ReadonlyArray<EffectAcpSchema.McpServer> = [];
+let bridgePrompt: typeof t3AcpPromptWithInstructions | undefined;
+let bridgeRuntimeInstructions: typeof buildRuntimeInstructions | undefined;
+export const setBridgeAcp = (bridge: {
+  readonly mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
+  readonly promptWithInstructions: typeof t3AcpPromptWithInstructions;
+  readonly runtimeInstructions: typeof buildRuntimeInstructions;
+}): void => {
+  bridgeMcpServers = bridge.mcpServers;
+  bridgePrompt = bridge.promptWithInstructions;
+  bridgeRuntimeInstructions = bridge.runtimeInstructions;
+};
+
 function acpMcpContext(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
   self: SelfInvocation,
 ): AcpMcpContext {
   if (session === undefined) {
-    return { servers: [], acpServers: [] };
+    return { servers: bridgeMcpServers, acpServers: [] };
   }
   // codex-acp 1.2.0 and pi-acp drop injected HTTP servers; bridge through stdio instead.
   return {
@@ -7188,7 +7202,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
           const instructionState = {
             interactionMode: turnInput.runtimePolicy.interactionMode,
-            hasT3Mcp: acpMcpContext(mcpSession, self).servers.length > 0,
+            hasT3Mcp: mcpSession !== undefined,
             hasDeviceTools: mcpSession?.capabilities?.has("device") === true,
           } satisfies T3AcpInstructionState;
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
@@ -7211,7 +7225,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             resolveExtractedTextPath: host.resolveExtractedTextPath,
           });
           const isNativeSlashCommand = userText.trimStart().startsWith("/");
-          const text = t3AcpPromptWithInstructions({
+          const text = (bridgePrompt ?? t3AcpPromptWithInstructions)({
             prompt: messageText,
             state: instructionState,
             ...(previousInstructionState === undefined || compactionMarker !== undefined
@@ -7284,7 +7298,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (!isNativeSlashCommand) {
             prompt.push({
               type: "text",
-              text: buildRuntimeInstructions({
+              text: (bridgeRuntimeInstructions ?? buildRuntimeInstructions)({
                 harness: flavor.runtimeHarness ?? driver,
                 model: turnInput.modelSelection.model,
               }),

@@ -4,6 +4,7 @@
  * driver reads. Account = instance id; nothing here reaches into a profile.
  */
 import { AntigravitySettings, ProviderDriverKind, ProviderInstanceId } from '@t3tools/contracts';
+import { setBridgeAcp } from '@t3tools/provider-acp/server/adapter';
 import * as ModelCatalog from '@t3tools/provider-core/server/ModelCatalog';
 import type { ProviderInstance } from '@t3tools/provider-core/server/driver';
 import * as AntigravityInstallation from '@t3tools/server/provider/AntigravityInstallation';
@@ -16,6 +17,7 @@ import * as Layer from 'effect/Layer';
 import * as Schema from 'effect/Schema';
 import { antigravityInstanceId } from '../antigravity-accounts.js';
 import type { InstanceTool } from '../instance-accounts.js';
+import { acpPromptWithInstructions, acpRuntimeInstructions, type AcpMcpServer } from './launch.js';
 import { providerHostLayer } from './provider-host.js';
 
 const decodeAntigravity = Schema.decodeSync(AntigravitySettings);
@@ -40,13 +42,18 @@ export interface InstanceInput {
   readonly accountId: string;
   /** Tests: the fake agent. Production: T3's managed runtime, or the agent on PATH. */
   readonly binaryPath?: string;
+  /** Stdio servers this chat's sessions are given (the brain). A bridge child runs one chat. */
+  readonly mcpServers?: readonly AcpMcpServer[];
 }
 
 /** One account's instance. It lives as long as the scope it is created in. */
-export const createInstance = (i: InstanceInput) => AntigravityDriver.create({
-  instanceId: ProviderInstanceId.make(antigravityInstanceId(i.accountId)),
-  displayName: undefined,
-  environment: [],
-  enabled: true,
-  config: decodeAntigravity({ enabled: true, ...(i.binaryPath ? { binaryPath: i.binaryPath } : {}) }),
-}) as Effect.Effect<ProviderInstance, unknown, never>;
+export const createInstance = (i: InstanceInput) => {
+  setBridgeAcp({ mcpServers: i.mcpServers ?? [], promptWithInstructions: (input) => acpPromptWithInstructions('Antigravity', input), runtimeInstructions: (runtime) => acpRuntimeInstructions('Antigravity', runtime) });
+  return AntigravityDriver.create({
+    instanceId: ProviderInstanceId.make(antigravityInstanceId(i.accountId)),
+    displayName: undefined,
+    environment: [],
+    enabled: true,
+    config: decodeAntigravity({ enabled: true, ...(i.binaryPath ? { binaryPath: i.binaryPath } : {}) }),
+  }) as Effect.Effect<ProviderInstance, unknown, never>;
+};
