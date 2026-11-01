@@ -77,6 +77,7 @@ export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Pr
         return eco.onResult(session.nativeThreadId, session.wire.contextTokens);
       },
       ...(brain ? { brain } : {}),
+      transcriptFor: (id) => (o.tool === 'codex' ? findCodexRollout(id) : o.tool === 'antigravity' ? writeAntigravityTranscript(id, o.account || 'primary') : null),
     },
   );
 }

@@ -67,3 +67,19 @@ describe('edit checks on the bridge', () => {
     expect(stopBlockReason(null)).toBeNull();
   });
 });
+
+describe('a compaction on the bridge (TABLO row 28)', () => {
+  it('runs the PreCompact hook with the transcript, once per compaction', async () => {
+    const { ToWire } = await import('../../../src/lib/t3-bridge/to-wire.js');
+    let n = 0;
+    const w = new ToWire({ tool: 'codex', model: 'm', cwd: '/p', permissionMode: 'auto', onCompacting: () => { n++; } });
+    w.translate({ type: 'provider_turn.updated', providerTurn: { status: 'running' } } as never);
+    for (const status of ['running', 'completed']) w.translate({ type: 'turn_item.updated', turnItem: { id: 'cmp-1', type: 'compaction', status } } as never);
+    expect(n).toBe(1);
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    const brain = new BrainContext({ cwd: '/tmp/x-no-brain', env: {}, run: async (name, input) => { calls.push([name, input]); return ''; } });
+    brain.compacting('t1', '/r/rollout.jsonl');
+    await brain.drain();
+    expect(calls).toEqual([['pre-compact', expect.objectContaining({ session_id: 't1', transcript_path: '/r/rollout.jsonl', trigger: 'auto' })]]);
+  });
+});

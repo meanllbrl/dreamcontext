@@ -93,7 +93,9 @@ export interface StdioDeps {
   readonly openLimitMs?: number;
   /** The brain (context.ts): the snapshot at session start and after `/clear`, the prompt hook on
    *  every owner turn. Absent = no brain (tests, the T3 Claude engine). */
-  readonly brain?: Pick<BrainContext, 'session' | 'prompt' | 'drain'> & Partial<Pick<BrainContext, 'takeNotice' | 'edited' | 'onStopBlock'>>;
+  readonly brain?: Pick<BrainContext, 'session' | 'prompt' | 'drain'> & Partial<Pick<BrainContext, 'takeNotice' | 'edited' | 'onStopBlock' | 'compacting'>>;
+  /** The thread's transcript on disk (Codex's rollout, Antigravity's conversation), for the hooks. */
+  readonly transcriptFor?: (nativeThreadId: string) => string | null;
 }
 
 const userText = (frame: Record<string, unknown>): string => {
@@ -325,6 +327,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       },
       // A sub-agent's steps, where its card's drill-in reads them (subagent-log.ts).
       onSidechain: (taskId, frame) => { if (session) appendSubagentStep(home, session.nativeThreadId, args.cwd, taskId, frame); },
+      // Codex announces a compaction as it starts: the PreCompact hook digests the thread first.
+      onCompacting: () => { if (session) deps.brain?.compacting?.(session.nativeThreadId, deps.transcriptFor?.(session.nativeThreadId) ?? null); },
       emit: (frame) => {
         emit(frame);
         noteEdit(frame);
@@ -478,6 +482,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       // steer it waits: that message carries no context.
       if (!session.busy && session.wire.takeCompacted()) {
         brainSent = false;
+        // Antigravity only shows it after: its digest is taken now, from the full conversation file.
+        if (isInstanceTool(args.tool)) deps.brain?.compacting?.(session.nativeThreadId, deps.transcriptFor?.(session.nativeThreadId) ?? null);
         // The briefing rode the words too (no developer channel on ACP), so it went with them (row 14).
         owe(briefingOwed());
         await deps.brain?.session('compact', session.nativeThreadId).catch(() => undefined);

@@ -89,3 +89,15 @@ describe('recipe output per tool', () => {
     expect(forEnvTool('the Agent tool', { DREAMCONTEXT_AGENT_TOOL: 'claude' })).toBe('the Agent tool');
   });
 });
+
+describe('the worktree sentence on a tool with no worktree tool (TABLO row 39)', () => {
+  it('points at git worktree add and the checkout block, on both tools', async () => {
+    const { toolText } = await import('../../src/lib/tool-text.js');
+    for (const tool of ['codex', 'antigravity'] as const) {
+      const out = toolText('Moving checkout? Prefer the EnterWorktree tool. The shelf reads it.', tool);
+      expect(out).not.toContain('EnterWorktree');
+      expect(out).toContain('git worktree add');
+      expect(out).toContain('`checkout` block');
+    }
+  });
+});

@@ -35,6 +35,8 @@ export interface ToWireOptions {
    * step: it goes under that sub-agent's card, never into the chat. Absent = one thread (tests).
    */
   readonly threadId?: string;
+  /** The tool started compacting the chat's thread (Codex announces it; the PreCompact hook runs). */
+  readonly onCompacting?: () => void;
   /** A sub-agent step, for its drill-in (`subagent-log.ts`). The frame is what the card replays. */
   readonly onSidechain?: (taskId: string, frame: WireFrame) => void;
 }
@@ -211,6 +213,7 @@ export class ToWire {
   private readonly subNotes = new Map<string, { prompt: string; title: string | null; childThreadId: string | null; result: string | null; nativeTaskId: string | null }>();
   /** The card id → the sub-agent's T3 node id, so a Stop on the card finds the tool's own task. */
   private readonly nodeByTask = new Map<string, string>();
+  private readonly compactionsSeen = new Set<string>();
   /** Plan cards open in this turn (`plan.updated`), closed at its end. */
   private readonly openPlans = new Set<string>();
   /** What this tool's `/` menu offers (slash.ts), on every `system/init`. */
@@ -334,6 +337,10 @@ export class ToWire {
         // A sub-agent's own step: under its card, and never a turn of the chat.
         if (this.isChildThread(item.threadId)) return this.childItem(item);
         if (item.type === 'compaction' && item.status === 'completed') this.compacted = true;
+        if (item.type === 'compaction' && !this.compactionsSeen.has(item.id)) {
+          this.compactionsSeen.add(item.id);
+          this.opts.onCompacting?.();
+        }
         // A sub-agent that ends after the chat's turn did (Antigravity's run on) closes its card
         // without opening a turn the server would wait on.
         if (item.type === 'subagent') return [...(this.subRuns.has(item.id) ? [] : this.beginTurn(now)), ...this.subagentItem(item)];

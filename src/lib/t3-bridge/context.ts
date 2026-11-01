@@ -32,7 +32,7 @@ import { dirname } from 'node:path';
 import { resolveContextRoot } from '../context-path.js';
 import type { AppContext } from './stdio.js';
 
-export type HookName = 'session-start' | 'user-prompt-submit' | 'stop' | 'post-tool-use';
+export type HookName = 'session-start' | 'user-prompt-submit' | 'stop' | 'post-tool-use' | 'pre-compact';
 
 /** Runs one hook, returns its stdout; null = it did not finish (timed out, or failed printing nothing). Injectable for tests. */
 export type HookRunner = (name: HookName, input: Record<string, unknown>, o: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }) => Promise<string | null>;
@@ -322,6 +322,18 @@ export class BrainContext {
         this.onStopBlock(why);
       }
     }).catch(() => undefined);
+  }
+
+  /**
+   * The tool is compacting (Codex says so as it starts; Antigravity only shows it after): the
+   * PreCompact hook records it and digests the transcript now, so recall can bring back what the
+   * compaction drops (TABLO row 28). In the background, with the session records.
+   */
+  compacting(threadId: string, transcriptPath: string | null, trigger: 'auto' | 'manual' = 'auto'): void {
+    if (!this.run || !threadId) return;
+    const input = { hook_event_name: 'PreCompact', session_id: threadId, trigger, cwd: this.o.cwd, ...(transcriptPath ? { transcript_path: transcriptPath } : {}) };
+    const run = this.run;
+    this.stops = this.stops.then(() => run('pre-compact', input, { cwd: this.o.cwd, env: this.env, timeoutMs: STOP_HOOK_TIMEOUT_MS })).catch(() => undefined);
   }
 
   /** Wait (bounded) for the last turn's session record. */

@@ -111,6 +111,8 @@ export interface BridgeSessionOptions {
   readonly emit: (frame: WireFrame) => void;
   /** A sub-agent's step, for its card's drill-in (subagent-log.ts). */
   readonly onSidechain?: (taskId: string, frame: WireFrame) => void;
+  /** The tool started compacting this thread. */
+  readonly onCompacting?: () => void;
   /** A frame that is not chat output (bridge diagnostics) — never anything secret. */
   readonly log?: (line: string) => void;
 }
@@ -303,7 +305,7 @@ export class BridgeSession {
     this.mode = opts.mode;
     this.model = opts.model;
     this.effort = opts.effort ?? '';
-    this.wire = new ToWire({ tool: opts.tool, model: opts.model, cwd: opts.cwd, permissionMode: opts.mode, threadId: opts.paneId, ...(opts.onSidechain ? { onSidechain: opts.onSidechain } : {}) });
+    this.wire = new ToWire({ tool: opts.tool, model: opts.model, cwd: opts.cwd, permissionMode: opts.mode, threadId: opts.paneId, ...(opts.onSidechain ? { onSidechain: opts.onSidechain } : {}), ...(opts.onCompacting ? { onCompacting: opts.onCompacting } : {}) });
   }
 
   static async open(opts: BridgeSessionOptions): Promise<BridgeSession> {
