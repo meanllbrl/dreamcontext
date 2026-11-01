@@ -234,7 +234,7 @@ dreamcontext dashboard --launcher      # vault-agnostic launcher mode (resolves 
 ```
 A SessionStart hook auto-opens it when a session starts and no server is running (opt out with `DREAMCONTEXT_AUTO_DASHBOARD=0`).
 
-The sidebar is grouped into **Workspace** (Tasks, Roadmap, Hypotheses, Insights, Automations, Council), **Memory** (Core, Knowledge, Features, Taxonomy), **Brain** (Map, Sleep Cycle), and **Control** (Packs, Settings), plus a "What is this?" page.
+The sidebar is grouped into **Workspace** (Tasks, Roadmap, Hypotheses, Insights, Automations, Council), **Memory** (Core, Knowledge, Features, Taxonomy), **Brain** (Map, Sleep Cycle), and **Control** (Packs, Settings).
 
 **What's in it:**
 - **Search + Ask** (top bar) — the dashboard's recall surface: a scoped recall widget that runs the same engine as the CLI (empty query = browse; typing = live debounced BM25; "Intelligent" = a Haiku intent pass), plus an in-app **interactive Claude Code** agent (multi-session tabs, split panes; desktop-gated, read-only by default) with an optional **Chat view (BETA)** — see below. The overlay's chrome is a single 44px row (window controls + tab strip merged, no page title), and tab kinds read as mono glyphs rather than emoji: `◇` Claude agent, `◆` Claude chat, `>_` plain login shell.
@@ -249,7 +249,6 @@ The sidebar is grouped into **Workspace** (Tasks, Roadmap, Hypotheses, Insights,
 - **Sleep Cycle** (sleep tracker) — debt gauge, session-history timeline, and a list of every manual change made through the dashboard (recorded to `.sleep.json` so the agent consolidates your edits during sleep).
 - **Map** (brain graph) — interactive network of memory/knowledge/features/decisions with explicit + inferred edges.
 - **Council Hall** — every debate as a searchable card grid; detail view with Overview / Agents / Matrix tabs.
-- **"What is this?"** explainer page with live faculty diagrams.
 - **What's New** (sidebar footer) — the release history, plus a once-only popup on the launch after something ships (unread tracked per entry in localStorage). **Exactly one announcement per version**: the feed is a version history, not a feature stream, so a release that shipped three things is three blocks in ONE page, and a second entry claiming the same version is dropped at parse time. Each page is a JSON *story* (`dashboard/public/announcements/<version-slug>.json` + an entry in `announcements.json`) built from real screenshots of the app — and, since 0.22, real **clips**: a `video` block or a hero `clip` plays an mp4/webm recorded by driving the actual app, with a required poster standing in wherever a still is needed. Video is served by `src/server/static.ts` through the shared `serveMedia` helper with byte ranges (`206`), because WKWebView refuses a clip the server won't range-serve — silently. Authoring one is the repo-local `announcements` skill's job; producing a motion-graphics promo instead of a screen recording is the `dreamcontext-reel` skill's.
 
 Light/dark with system detection.

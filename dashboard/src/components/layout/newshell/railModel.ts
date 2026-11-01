@@ -29,7 +29,7 @@ export const RAIL_ENTRIES: readonly RailEntry[] = [
 export const RAIL_FOOT: Page = 'settings';
 
 /** More's rows, in order. Announcements carries its unread count. */
-export const MORE_PAGES: readonly Page[] = ['council', 'core', 'taxonomy', 'sleep', 'stats', 'packs', 'announcements', 'about'];
+export const MORE_PAGES: readonly Page[] = ['council', 'core', 'taxonomy', 'sleep', 'stats', 'packs', 'announcements'];
 
 /** At 600px and below the rail is a bottom bar of five; everything else, Settings included,
  *  moves into More. */

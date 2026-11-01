@@ -103,7 +103,7 @@
   display: none;
 }
 
-/* Pin the "What is this?" entry to the bottom of the rail. */
+/* Pin the footer rows to the bottom of the rail. */
 .sidebar-footer {
   margin-top: auto;
   padding-top: var(--space-3);
@@ -275,7 +275,7 @@
 }
 
 /* ─── First-run nudge ─────────────────────────────────────────────────────── */
-/* Until the user opens "What is this?" once, the entry stands out and gently
+/* Until the user opens it once, the GitHub sync row stands out and gently
    bounces to invite the first click. The prominent styling (accent fill + dot)
    is motion-independent, so it stays discoverable under prefers-reduced-motion
    even though the global reduced-motion guard freezes the bounce. */
