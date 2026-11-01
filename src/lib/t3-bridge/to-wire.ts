@@ -78,6 +78,22 @@ export function antigravityFailureKind(message: string): 'limit' | 'signed-out' 
   return null;
 }
 
+/**
+ * Antigravity answers a turn past its quota with a normal reply, not a failure (real turn,
+ * 2 Nov 2026: "Usage Limit Reached\n\nYou have reached your current quota for this period. Your
+ * limit will reset in 6 days, 17 hours."). Read as the limit it is, with the reset it names.
+ * `null` = not that reply; `{ resetsAtMs: null }` = the limit, reset unknown.
+ */
+export function antigravityQuotaReply(text: string, now: number): { resetsAtMs: number | null } | null {
+  const t = text.trim();
+  if (!/^usage limit reached\b/i.test(t) || !/quota/i.test(t) || t.length > 400) return null;
+  const m = /reset in ([^.]+)/i.exec(t);
+  if (!m) return { resetsAtMs: null };
+  const unit = (re: RegExp): number => Number(re.exec(m[1]!)?.[1] ?? 0);
+  const ms = ((unit(/(\d+)\s*day/i) * 24 + unit(/(\d+)\s*hour/i)) * 60 + unit(/(\d+)\s*min/i)) * 60_000;
+  return { resetsAtMs: ms > 0 ? now + ms : null };
+}
+
 export function toolCallFor(item: TurnItem): { name: string; input: Record<string, unknown> } | null {
   switch (item.type) {
     case 'command_execution':
@@ -705,8 +721,9 @@ export class ToWire {
     // A usage-limit refusal (T3 `failure.class === 'usage_limit'`): the server's switch reads it
     // like Claude's refusal frame, with the reset T3 knows (plan r5 §4d "Limit detection").
     const kind = this.opts.tool === 'antigravity' ? antigravityFailureKind(failure?.message ?? '') : null;
-    const limited = failure?.class === 'usage_limit' || kind === 'limit';
-    const limitResetMs = failure?.class === 'usage_limit' && failure.resetAt ? Date.parse(failure.resetAt) : NaN;
+    const quota = ok && this.opts.tool === 'antigravity' ? antigravityQuotaReply(this.lastAssistantText, now) : null;
+    const limited = failure?.class === 'usage_limit' || kind === 'limit' || !!quota;
+    const limitResetMs = failure?.class === 'usage_limit' && failure.resetAt ? Date.parse(failure.resetAt) : quota?.resetsAtMs ?? NaN;
     out.push({
       type: 'result',
       subtype: ok ? 'success' : 'error_during_execution',

@@ -151,3 +151,18 @@ describe('the drill-in file', () => {
     expect(readSubagentLog(home, 'thread-1', 't3-x', proj)).toBeNull();
   });
 });
+
+describe("Antigravity's quota reply", () => {
+  it('is read as a limit with the reset it names, not as a turn that went through', async () => {
+    const { antigravityQuotaReply } = await import('../../../src/lib/t3-bridge/to-wire.js');
+    const now = Date.UTC(2026, 10, 2);
+    expect(antigravityQuotaReply('Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 6 days, 17 hours.', now))
+      .toEqual({ resetsAtMs: now + (6 * 24 + 17) * 3_600_000 });
+    expect(antigravityQuotaReply('The usage limit reached a new high', now)).toBeNull();
+    const w = new ToWire({ tool: 'antigravity', model: 'm', cwd: '/p', permissionMode: 'auto' });
+    w.translate({ type: 'provider_turn.updated', providerTurn: { status: 'running' } } as never, now);
+    w.translate({ type: 'turn_item.updated', turnItem: { id: 'a', type: 'assistant_message', status: 'completed', streaming: false, text: 'Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 2 hours.' } } as never, now);
+    const result = w.translate({ type: 'turn.terminal', status: 'completed', failure: null } as never, now).find((f) => f.type === 'result')!;
+    expect(result.dc_limit).toEqual({ resetsAtMs: now + 2 * 3_600_000 });
+  });
+});
