@@ -3766,12 +3766,13 @@
     },
     {
       "path": "t3-account",
-      "desc": "Prepare a Codex account home or read its limits, through T3 (used by the server)",
+      "desc": "Prepare an account, sign it in or read its limits, through T3 (used by the server)",
       "args": [
         "<action>"
       ],
       "valueFlags": [
         "--account",
+        "--tool",
         "--in",
         "--out"
       ]
@@ -3791,6 +3792,7 @@
         "--briefing-file",
         "--extra-root",
         "--account",
+        "--carry",
         "--mcp-config"
       ]
     },

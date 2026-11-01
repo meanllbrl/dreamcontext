@@ -1,0 +1,29 @@
+# reason: TypeScript 5.9 differs from T3's tsc-rs in two places, behaviour unchanged: it cannot yield* a Schema.is-narrowed ProviderSetupError in a ternary (AntigravityAuth.ts, Effect.fail on the same value), and it infers the generic error of an Effect.fn generator as any, which leaks into probeUsage (antigravityUsageLimits.ts; swallowed by orElseSucceed, so unknown is exact).
+--- a/apps/server/src/provider/AntigravityAuth.ts
++++ b/apps/server/src/provider/AntigravityAuth.ts
+@@ -533,9 +533,8 @@
+           );
+           if (Exit.isFailure(result)) {
+             const failure = Cause.findErrorOption(result.cause);
+-            return yield* Option.isSome(failure) && isSetupError(failure.value)
+-              ? failure.value
+-              : setupError("logout", "Antigravity sign-out failed. Try again.");
++            if (Option.isSome(failure) && isSetupError(failure.value)) return yield* Effect.fail(failure.value);
++            return yield* setupError("logout", "Antigravity sign-out failed. Try again.");
+           }
+           return yield* currentState("");
+         }),
+--- a/apps/server/src/provider/antigravityUsageLimits.ts
++++ b/apps/server/src/provider/antigravityUsageLimits.ts
+@@ -247,9 +247,9 @@
+       account = cached.account;
+     }
+     // Merge endpoints because quota groups differ; keep each bucket's most-used reading.
+-    const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
++    const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* (
+       operation: string,
+-      parse: (response: unknown) => Effect.Effect<ServerProviderUsageWindow[], E>,
++      parse: (response: unknown) => Effect.Effect<ServerProviderUsageWindow[], unknown>,
+     ) {
+       const responses = yield* Effect.forEach(
+         ENDPOINTS,

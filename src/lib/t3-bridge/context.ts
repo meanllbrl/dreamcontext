@@ -15,6 +15,10 @@
  * thread. The snapshot rides every turn so T3's restore after a compaction (it re-injects the LAST
  * turn's app context) always includes it; Codex itself re-sends app context only when it changes.
  *
+ * ANTIGRAVITY IS THE EXCEPTION (owner's decision, 2026-11-01): ACP has no untrusted context channel,
+ * so there the brain rides in the user message, after the owner's words ({@link contextInWords}).
+ * The model cannot tell it from what the owner typed by channel, only by its tags.
+ *
  * Running the hooks, not a copy of their logic, is what keeps Claude's output byte-identical: the
  * Claude path never changes, and the Codex path prints the very same text.
  */
@@ -90,6 +94,18 @@ export function cliHookRunner(node: string, cli: string): HookRunner {
  */
 export const brainPathLine = (root: string): string =>
   `This project's brain is at ${root}. From a folder with no brain (a linked repo, a worktree), run dreamcontext commands from there: \`cd ${root} && dreamcontext …\`.`;
+
+const OUR_TAG = /<(\s*\/?\s*)(dreamcontext-)/gi;
+
+/**
+ * Context for a tool with no context channel: tagged blocks in the user message, after the owner's
+ * words (a leading `<tag>` would hide the whole message in a reopened pane). The owner's words are
+ * theirs and stay as they are. A tag of ours inside recalled text is escaped, so a note or a peer's
+ * page cannot close its block and go on as if it were outside it, or open a block of its own.
+ */
+export function contextInWords(entries: readonly AppContext[]): string {
+  return entries.map((c) => `\n\n<${c.key}>\n${c.text.replace(OUR_TAG, '&lt;$1$2')}\n</${c.key}>`).join('');
+}
 
 /** The folder holding this project's brain, or null: a project without one owes no snapshot. */
 function brainRoot(cwd: string): string | null {
