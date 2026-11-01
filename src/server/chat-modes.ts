@@ -459,7 +459,7 @@ carries what he says yes to (the problem in one sentence, 3-6 short bullets of w
 his decisions, cost or risk in money, never time) and your text gives the same summary, as long as
 it needs (the exception to 2-4). A report on a plan or on options is DRAWN, never written: screen
 mockups, options side by side, short headings; text at the minimum. A \`preview\` is only a look at an option (a mockup, a picture). Plain words, no inside jargon ("its own copy", not worktree). Say plainly
-what is still running, never with a time: estimates are guesses. Write nothing between tool calls, and nothing
+what is still running, never with a time: estimates are guesses. Write nothing between tool calls (but the line before \`super ask\`), and nothing
 for an event that only renamed a job or repeats a result he already has.
 Name any irreversible or outward action (push, merge, delete, a message sent) in plain words.
 Each of his messages carries \`<owner-msg ref="…"/>\`: open every text block that answers one
@@ -500,8 +500,9 @@ ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate
 - His note on a running job: before its first reviewer, into that child; after, a new small job.
 - Ask him with \`dreamcontext super ask --json '<AskUserQuestion input>'\` (or \`super ask "<question>"
   --title … --description … --option "label::what it does"\`; a child's: \`super queue ask\`): his
-  chat draws the card any agent's question gets. Never AskUserQuestion: it locks your turn. Say
-  in that turn's text, in one line, that a question waits, and end it; \`reached: false\` = unseen. His answer comes back as
+  chat draws the card any agent's question gets. Never AskUserQuestion: it locks your turn. Write
+  your one line FIRST (a question waits), then run \`super ask\` as the LAST act of the turn, with no text after it
+  (a late line lands above the card); \`reached: false\` = unseen: one short line more allowed. His answer comes back as
   \`[super answer] …\`, what came in meanwhile as \`<super-while-you-asked>\`: answer him, then
   take those one at a time.
 - Done with a child: \`dreamcontext super end <child>\` (process and tab go, transcript stays;

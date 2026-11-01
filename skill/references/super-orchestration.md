@@ -56,8 +56,11 @@ metadata.source) or `super ask "<q>" --title … --description … --option "lab
 chat draws the very card a normal agent's question gets; his answer comes back as one `[super
 answer]` message, whatever came in meanwhile as `<super-while-you-asked>`: answer him, then tell or
 ask each of those one at a time. ONE open at a time, the rest keeps running. A choice he must make
-lives in the card, never only as a question at the end of your text (it slips by unseen); the text
-says in one line that a question waits.
+lives in the card, never only as a question at the end of your text (it slips by unseen). Write the
+one line (a question waits) FIRST, then run `super ask` as the LAST act of the turn, with no text after
+it: the card opens the moment the command runs, so a line written after it lands above the card and
+pushes it down (the one exception to "write nothing between tool calls"). `reached: false`: one short
+line more is fine.
 
 **Information he must read is a report card, never a question** (2026-10-30: a 7-item plan in a
 preview was cut off in a half-width tile, "okuyamıyorum"). Write it as a page
