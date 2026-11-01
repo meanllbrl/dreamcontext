@@ -1,9 +1,9 @@
-import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { listAutomations, readAutomationCache, resolveAutomationPhoto } from './store.js';
 import { extractNotificationSummary } from './runner.js';
-import { superJobReader, superQuietReader } from './super-quiet.js';
+import { ownerQuietReader, superJobReader } from './super-quiet.js';
 import { allPendingQuestions } from './hitl.js';
 import { readThread, threadDateStamp, threadReadWatermark } from './threads.js';
 import type {
@@ -308,6 +308,42 @@ export function runDocumentPath(contextRoot: string, run: RunEvent | null): stri
   }
 }
 
+/** How much of a document `readRunHead` reads: the sentence comes first, by the preamble's rule. */
+const RUN_HEAD_BYTES = 8 * 1024;
+/** Documents do not change once published; the bound is what a long-open server keeps. */
+const RUN_HEAD_CACHE_MAX = 500;
+const runHeads = new Map<string, { mtimeMs: number; size: number; line: string | null }>();
+
+/**
+ * The line a banner would have shown for an OLD run: one whose terminal entry has no `result`.
+ * `run` is its cache row, read by the caller. At most 8 KB of the document, through
+ * `runDocumentPath` (a symlink or a path out of the brain is no document), cached by path and
+ * mtime because the history is re-read every few seconds while a run works. Never throws.
+ */
+export function readRunHead(contextRoot: string, run: RunEvent | null): string | null {
+  const path = runDocumentPath(contextRoot, run);
+  if (!path) return null;
+  try {
+    const st = statSync(path);
+    const hit = runHeads.get(path);
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.line;
+    const fd = openSync(realpathSync(path), 'r');
+    let head: string;
+    try {
+      const buf = Buffer.alloc(Math.min(RUN_HEAD_BYTES, st.size));
+      head = buf.toString('utf-8', 0, readSync(fd, buf, 0, buf.length, 0));
+    } finally {
+      closeSync(fd);
+    }
+    const line = extractNotificationSummary(head.replace(/\r\n/g, '\n'));
+    if (runHeads.size >= RUN_HEAD_CACHE_MAX) runHeads.delete(runHeads.keys().next().value as string);
+    runHeads.set(path, { mtimeMs: st.mtimeMs, size: st.size, line });
+    return line;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The entry a thread hangs off: the human's ask when the run opened with one
  * (the rule `buildFeedMessage` keys the exchange on), otherwise the agent's
@@ -558,7 +594,7 @@ export function buildFeed(
   const messages: FeedMessage[] = [];
   const unreadBySlug: Record<string, number> = {};
   const agents: FeedResult['agents'] = [];
-  const quietOf = superQuietReader(contextRoot);
+  const quietOf = ownerQuietReader(contextRoot);
   const isSuperJob = superJobReader(contextRoot);
 
   // ONE questions read for the WHOLE feed, indexed by the run each question

@@ -20,7 +20,7 @@ export interface FeedMeta {
   sessionKind: 'run' | 'talk';
   /** A run's routine title; a talk's agent name. */
   title: string;
-  status: 'ok' | 'failed' | 'skipped' | 'running' | null;
+  status: 'ok' | 'failed' | 'skipped' | 'running' | 'waiting' | 'stopped' | null;
   /** The thread slug a run was posted in (its read mark is per slug). */
   source: string;
   /** The run's newest entry id (what its read mark advances to); null for a talk. */
@@ -34,8 +34,13 @@ export interface FeedMeta {
   missing?: boolean;
   /** A talk longer than the pane shows: its earlier part is in Chat. */
   truncated?: boolean;
-  /** A session with no row (a run that posted nothing): one placeholder carries its boundary. */
+  /** A session with no row (a run still working with nothing to show but its indicator): one
+   *  placeholder carries its boundary. */
   empty?: boolean;
+  /** This row is a silent run's body, not a post: what it is (`HistoryRow.origin`). */
+  origin?: 'answer' | 'failure' | 'note';
+  /** The run published a document here. */
+  hasDocument?: boolean;
   readOnly: true;
 }
 
@@ -50,6 +55,10 @@ export interface FeedLabels {
   live: string;
   /** Under a routine run still in flight: Chat's working indicator says it. */
   working: string;
+  /** The pane's own words for a body row that only states the run's status; null keeps the row's. */
+  note: (meta: FeedMeta) => string | null;
+  /** The link under a run with a result: opens the same place its boundary does. */
+  report: string;
   end: string;
   loading: string;
   error: string;
@@ -105,6 +114,11 @@ export interface FeedMarks {
  */
 export function feedRunWorking(meta: FeedMeta, marks: Pick<FeedMarks, 'last'>): boolean {
   return marks.last && meta.sessionKind === 'run' && meta.status === 'running';
+}
+
+/** Does this row end a run that has a report to open? */
+export function feedReportShown(meta: FeedMeta, marks: Pick<FeedMarks, 'last'>): boolean {
+  return marks.last && meta.sessionKind === 'run' && (meta.origin === 'answer' || meta.hasDocument === true);
 }
 
 /** Any run in the feed still in flight: the host re-reads the history often until it ends. */

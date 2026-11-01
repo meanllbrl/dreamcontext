@@ -285,6 +285,14 @@ function withoutSelf(page: AgentHistoryPage, selfId: string | null): AgentHistor
 /** How many extra pages an open (or a re-read that does not connect) may walk. */
 const EXTRA_PAGES = 3;
 const FIRST_READ_RETRIES = [2000, 5000];
+/** An open's read that never answers fails like one that was refused: a Retry, never "Loading". */
+const OPEN_READ_TIMEOUT_MS = 15_000;
+
+function withinOpenRead<T>(read: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const late = new Promise<never>((_, fail) => { timer = setTimeout(() => fail(new Error('history read timed out')), OPEN_READ_TIMEOUT_MS); });
+  return Promise.race([read, late]).finally(() => clearTimeout(timer));
+}
 
 /**
  * An OPEN of the agent: the feed this entry held is discarded and page 1 is read fresh; the
@@ -326,14 +334,14 @@ async function readFirst(vault: string, agent: string, gen: number, attempt: num
   let page: AgentHistoryPage;
   const pages: AgentHistoryPage[] = [];
   try {
-    page = withoutSelf(await readHistory(vault, agent, { exclude: selfId }), entries.get(key)?.session?.claudeId ?? selfId);
+    page = withoutSelf(await withinOpenRead(readHistory(vault, agent, { exclude: selfId })), entries.get(key)?.session?.claudeId ?? selfId);
     pages.push(page);
     // The divider waits for the unread it names: up to 3 more pages until the loaded sessions
     // hold every unread message the badge counts.
     let all = readingOrder(page);
     let next = page.nextBefore;
     for (let i = 0; i < EXTRA_PAGES && next && loadedUnread(all) < page.unreadCount; i++) {
-      const older = await readHistory(vault, agent, { before: next, exclude: selfId });
+      const older = await withinOpenRead(readHistory(vault, agent, { before: next, exclude: selfId }));
       if (genOf(key) !== gen) return;
       all = prependOlder(all, older);
       next = older.nextBefore;

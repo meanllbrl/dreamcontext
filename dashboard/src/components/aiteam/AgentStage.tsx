@@ -174,7 +174,7 @@ export function AgentStage({
             : t('aiteam.elsewhere.chat').replace('{machine}', elsewhere?.name ?? '').replace('{name}', agent.title)}</p>
         </div>
       ) : (
-        <StageChat agent={agent} level={autonomy} ready={!!stage} vault={vault ?? ''} bus={bus} feedNewestId={feedNewestId} onActivity={onActivity} inActivity={inActivity} onToast={onToast} />
+        <StageChat agent={agent} level={autonomy} ready={!!stage} stageFailed={stageQ.isError && !stage} onRetryStage={() => { void stageQ.refetch(); }} vault={vault ?? ''} bus={bus} feedNewestId={feedNewestId} onActivity={onActivity} inActivity={inActivity} onToast={onToast} />
       )}
     </section>
   );
@@ -239,10 +239,13 @@ async function openRunSession(vault: string, bus: EventTarget, meta: FeedMeta): 
   }
 }
 
-function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, inActivity, onToast }: {
+function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus, feedNewestId, onActivity, inActivity, onToast }: {
   agent: AgentSummary;
   level: string;
   ready: boolean;
+  /** The agent's stage could not be read: said here with a Retry, or this waits for ever. */
+  stageFailed: boolean;
+  onRetryStage: () => void;
   vault: string;
   bus: EventTarget;
   feedNewestId: string | null;
@@ -264,6 +267,16 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, 
   useEffect(() => {
     if (!session && ready && opened && agent.approvedForChat) open();
   }, [session, ready, opened, agent.approvedForChat, open]);
+  // Back on a teammate whose open ended while it was off screen (a Super card closed over it): the
+  // pick did not change, so the page opens nothing. Asked after every effect of this commit, so a
+  // real open from the page still comes first and decides.
+  const newestRef = useLatest(feedNewestId);
+  useEffect(() => {
+    if (opened) return;
+    let alive = true;
+    queueMicrotask(() => { if (alive && stageFeed(vault, agent.slug) === null) beginStageOpen(vault, agent.slug, newestRef.current); });
+    return () => { alive = false; };
+  }, [opened, vault, agent.slug, newestRef]);
   // The level changed (the Edit dialog): the server decides the permission mode only at a spawn,
   // so the same conversation is respawned at the new level, once the turn in flight has ended.
   const openedAt = session ? stageSessionLevel(vault, agent.slug) : null;
@@ -274,7 +287,6 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, 
 
   // The history: kept within this open across remounts, re-read when the roster's newest id moves
   // and once a minute while the pane is open.
-  const newestRef = useLatest(feedNewestId);
   useEffect(() => { remountStageFeed(vault, agent.slug, newestRef.current); }, [vault, agent.slug, newestRef]);
   useEffect(() => {
     if (feedNewestId === null) return;
@@ -314,7 +326,15 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, 
       if (m.status === 'failed') parts.push(t('aiteam.history.statusFailed'));
       else if (m.status === 'skipped') parts.push(t('aiteam.history.skipped'));
       else if (m.status === 'running') parts.push(t('aiteam.history.running'));
+      else if (m.status === 'waiting') parts.push(t('aiteam.history.statusWaiting'));
+      else if (m.status === 'stopped') parts.push(t('aiteam.history.statusStopped'));
       return parts.join(' · ');
+    };
+    const note = (m: FeedMeta): string | null => {
+      if (m.origin !== 'note') return null;
+      if (m.status === 'waiting') return t('aiteam.history.noteWaiting');
+      if (m.status === 'stopped') return t('aiteam.history.noteStopped');
+      return null;
     };
     return {
       day: (iso) => dayRuleLabel(iso, now, t),
@@ -324,6 +344,8 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, 
         ? t('aiteam.history.continuing').replace('{time}', hhmm(liveStarted))
         : t('aiteam.history.new'),
       working: t('aiteam.working.label'),
+      note,
+      report: t('aiteam.history.fullReport'),
       end: t('aiteam.history.start').replace('{name}', agent.title),
       loading: t('aiteam.history.loading'),
       error: t('aiteam.history.failedRead'),
@@ -388,7 +410,16 @@ function StageChat({ agent, level, ready, vault, bus, feedNewestId, onActivity, 
       </div>
     );
   }
-  if (!session) return <div className="aiteam-stage-note"><p>{t('common.loading')}</p></div>;
+  if (!session) {
+    return stageFailed
+      ? (
+        <div className="aiteam-stage-note" data-stage-failed>
+          <p>{t('aiteam.stage.failedRead')}</p>
+          <button type="button" className="aiteam-pill" onClick={onRetryStage}>{t('aiteam.history.retry')}</button>
+        </div>
+      )
+      : <div className="aiteam-stage-note"><p>{t('common.loading')}</p></div>;
+  }
   // Writing here starts the stage's OWN conversation, never a run's: while it has nothing yet,
   // the composer says so (the live line under the history waits for its first turn).
   const conv = session.getModel();
@@ -416,7 +447,8 @@ export function AgentConversation({ slug }: { slug: string }) {
   const { t } = useI18n();
   const agentQ = useAgent(slug);
   const agent = agentQ.data?.agent ?? null;
-  const stage = useAgentStage(slug).data ?? null;
+  const stageQ = useAgentStage(slug);
+  const stage = stageQ.data ?? null;
   const automations = useAutomations().data;
   const { data: feed } = useAgentFeed();
   const feedNewestId = useMemo(() => {
@@ -450,7 +482,7 @@ export function AgentConversation({ slug }: { slug: string }) {
   }
   return (
     <section className="aiteam-convo aiteam-stage" data-stage={slug} data-testid="agent-conversation">
-      <StageChat agent={agent} level={stage?.autonomy ?? agent.autonomy ?? 'balanced'} ready={!!stage} vault={v} bus={bus}
+      <StageChat agent={agent} level={stage?.autonomy ?? agent.autonomy ?? 'balanced'} ready={!!stage} stageFailed={stageQ.isError && !stage} onRetryStage={() => { void stageQ.refetch(); }} vault={v} bus={bus}
         feedNewestId={feedNewestId} onActivity={onActivity} inActivity={() => false} onToast={setNote} />
       {note && <p role="status" className="aiteam-stage-note">{note}</p>}
     </section>

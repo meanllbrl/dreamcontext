@@ -1326,6 +1326,11 @@ function slotFiles(contextRoot: string, slug: string): { locks: string[]; sideca
   return { locks: pick('.lock'), sidecars: pick('.run.json') };
 }
 
+/** Is a child of this run still alive? Its runner may be gone: an orphan still works and posts. */
+export function runChildAlive(contextRoot: string, slug: string, runId: string): boolean {
+  return listRunSidecars(contextRoot, slug).some((s) => s.fireAt === runId && pidAlive(s.childPgid));
+}
+
 /** Every in-flight child of this member, the exclusive one and each parallel turn's, newest first. */
 export function listRunSidecars(contextRoot: string, slug: string): RunSidecar[] {
   const all = ['', ...slotFiles(contextRoot, slug).sidecars]

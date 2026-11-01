@@ -289,7 +289,7 @@ describe('AC3 unread', () => {
     }
     const failed = all.find((s) => s.key === 'daily-sum::2026-10-27T09:00:00.000Z')!;
     expect(failed.status).toBe('failed');
-    expect(failed.rows).toEqual([]);
+    expect(failed.rows.map((r) => r.origin)).toEqual(['failure']);
     expect(failed.unread).toBe(true);
   });
 });
