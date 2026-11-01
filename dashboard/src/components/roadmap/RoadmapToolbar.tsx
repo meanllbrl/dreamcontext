@@ -1,7 +1,7 @@
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { PageTitle } from '../layout/PageBar';
 import {
-  type RoadmapLayout, type RoadmapSortKey, type RoadmapMenuKey,
+  type RoadmapLayout, type RoadmapLevel, type RoadmapSortKey, type RoadmapMenuKey, isPriorityLayout,
   SORT_LABEL, STATUS_COLOR, SIGNAL_COLOR,
   chipTrigger, popBase, optRow, sectionLabel, radioBox, checkBox, incBtn, excBtn,
 } from './chrome';
@@ -30,6 +30,13 @@ interface RoadmapToolbarProps {
   toggleSortDir: () => void;
   layout: RoadmapLayout;
   setLayout: (l: RoadmapLayout) => void;
+  /** Lanes / Map level (objectives first, then tasks). */
+  level: RoadmapLevel;
+  setLevel: (l: RoadmapLevel) => void;
+  /** The agent button (✦ Score N / suggestions), drawn left of "+ New Objective". */
+  agentSlot?: ReactNode;
+  /** Map is hidden under 768 px (without writing the pref). */
+  mapAvailable?: boolean;
   cardProps: RoadmapCardProps;
   toggleCardProp: (k: keyof RoadmapCardProps) => void;
   filters: RoadmapFilters;
@@ -40,10 +47,33 @@ interface RoadmapToolbarProps {
   onNewObjective: () => void;
 }
 
-const VIEW_TYPES: { v: RoadmapLayout; label: string; icon: string }[] = [
-  { v: 'timeline', label: 'Timeline', icon: 'M4 6h10M8 11h11M4 16h7' },
-  { v: 'board', label: 'Board', icon: 'M3 4h4v12H3zM10 4h4v9h-4zM17 4h4v6h-4z' },
+const VIEW_TYPES: { v: RoadmapLayout; label: string }[] = [
+  { v: 'lanes', label: 'Lanes' },
+  { v: 'map', label: 'Map' },
+  { v: 'timeline', label: 'Timeline' },
+  { v: 'board', label: 'Board' },
 ];
+const LEVELS: { v: RoadmapLevel; label: string }[] = [
+  { v: 'objectives', label: 'Objectives' },
+  { v: 'tasks', label: 'Tasks' },
+];
+
+/** A segmented control (`.rm-seg` in Priority.css): one choice of a few, always visible. */
+function Segmented<T extends string>({ options, value, onChange, label, className }: {
+  options: { v: T; label: string }[]; value: T; onChange: (v: T) => void; label: string; className?: string;
+}) {
+  return (
+    <div className={`rm-seg${className ? ` ${className}` : ''}`} role="radiogroup" aria-label={label}>
+      {options.map((o) => (
+        <button
+          key={o.v} type="button" role="radio" aria-checked={value === o.v}
+          className={`rm-seg-opt${value === o.v ? ' is-on' : ''}`}
+          onClick={() => onChange(o.v)}
+        >{o.label}</button>
+      ))}
+    </div>
+  );
+}
 
 const STATUS_OPTS: { value: string; label: string }[] = [
   { value: 'not_started', label: 'Not started' },
@@ -63,11 +93,14 @@ const PROP_DEFS: [keyof RoadmapCardProps, string][] = [
 ];
 
 export function RoadmapToolbar({
-  search, setSearch, sortBy, setSort, sortDir, toggleSortDir, layout, setLayout,
+  search, setSearch, sortBy, setSort, sortDir, toggleSortDir, layout, setLayout, level, setLevel, agentSlot, mapAvailable = true,
   cardProps, toggleCardProp, filters, cycleFilter, clearAllFilters, openMenu, setOpenMenu, onNewObjective, pageTitle,
 }: RoadmapToolbarProps) {
   const toggle = (m: RoadmapMenuKey) => setOpenMenu(openMenu === m ? null : m);
-  const curVT = VIEW_TYPES.find((x) => x.v === layout) ?? VIEW_TYPES[0];
+  const priority = isPriorityLayout(layout);
+  // Filter is objective status and signal: hidden at the Tasks level (search stays).
+  const showFilter = !(priority && level === 'tasks');
+  const viewTypes = mapAvailable ? VIEW_TYPES : VIEW_TYPES.filter((v) => v.v !== 'map');
   const activeCount = filters.status.inc.length + filters.status.exc.length + filters.signal.inc.length + filters.signal.exc.length;
 
   const toggleRow = (section: keyof RoadmapFilters, value: string, label: string, color: string) => {
@@ -86,19 +119,19 @@ export function RoadmapToolbar({
   const spacer: CSSProperties = { flex: 1, minWidth: 8 };
 
   return (
-    <div data-page-row={pageTitle ? '' : undefined} style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 16px', background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)', flexWrap: 'nowrap' }}>
+    <div className="rm-toolbar" data-page-row={pageTitle ? '' : undefined} style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 10, padding: '11px 16px', background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)' }}>
       {pageTitle && <PageTitle title={pageTitle} />}
       {/* search */}
       <div style={{ position: 'relative', flex: '0 1 212px', minWidth: 130 }}>
         <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', fontSize: 14, color: 'var(--color-text-tertiary)', pointerEvents: 'none' }}>⌕</span>
         <input
-          className="bd-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search objectives…" spellCheck={false}
+          className="bd-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={priority && level === 'tasks' ? 'Search tasks…' : 'Search objectives…'} spellCheck={false}
           style={{ width: '100%', height: 34, padding: '0 12px 0 32px', borderRadius: 9, border: '1px solid var(--color-border)', background: 'var(--color-bg)', color: 'var(--color-text)', fontSize: 13, fontFamily: 'var(--font-family-text)', outline: 'none' }}
         />
       </div>
 
       {/* Filter */}
-      <div style={{ position: 'relative', flex: '0 0 auto' }}>
+      {showFilter && <div style={{ position: 'relative', flex: '0 0 auto' }}>
         <div className="bd-chip" onClick={() => toggle('filter')} style={chipTrigger(activeCount > 0)}>
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ flex: '0 0 auto' }}><path d="M2 3.2h12L9.2 8.6V13L6.8 14V8.6L2 3.2Z" fill="currentColor" /></svg>
           <span>Filter</span>
@@ -117,10 +150,14 @@ export function RoadmapToolbar({
             {SIGNAL_OPTS.map((o) => toggleRow('signal', o.value, o.label, SIGNAL_COLOR[o.value]))}
           </div>
         )}
-      </div>
+      </div>}
 
-      {/* Sort */}
-      <div style={{ position: 'relative', flex: '0 0 auto' }}>
+      {priority && (
+        <Segmented options={LEVELS} value={level} onChange={setLevel} label="Level" className="rm-level-seg" />
+      )}
+
+      {/* Sort (objectives-only views: Lanes and Map order by RICE) */}
+      {!priority && <div style={{ position: 'relative', flex: '0 0 auto' }}>
         <div className="bd-chip" onClick={() => toggle('sort')} style={chipTrigger(sortBy !== 'manual')}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M7 4v16M7 4l-3 3M7 4l3 3M17 20V4M17 20l-3-3M17 20l3-3" /></svg>
           <span>{SORT_LABEL[sortBy]}</span>
@@ -141,32 +178,17 @@ export function RoadmapToolbar({
             </div>
           </div>
         )}
-      </div>
+      </div>}
 
       <div style={spacer} />
 
       {/* View type */}
-      <div style={{ position: 'relative', flex: '0 0 auto' }}>
-        <div className="bd-chip" onClick={() => toggle('viewtype')} style={chipTrigger(false)}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d={curVT.icon} /></svg>
-          <span>{curVT.label}</span>
-          <span style={{ fontSize: 9, opacity: 0.7 }}>{openMenu === 'viewtype' ? '▲' : '▼'}</span>
-        </div>
-        {openMenu === 'viewtype' && (
-          <div className="bd-pop" style={{ ...popBase, right: 0, width: 196 }}>
-            <div style={sectionLabel}>View type</div>
-            {VIEW_TYPES.map((vt) => { const active = layout === vt.v; return (
-              <div key={vt.v} className="bd-row" onClick={() => { setLayout(vt.v); setOpenMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 9px', borderRadius: 7, cursor: 'pointer', fontSize: 13, color: active ? 'var(--color-accent)' : 'var(--color-text-secondary)', background: active ? 'var(--color-accent-soft)' : 'transparent' }}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={active ? 'var(--color-accent)' : 'currentColor'} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d={vt.icon} /></svg>
-                <span style={{ flex: 1 }}>{vt.label}</span>
-              </div>
-            ); })}
-          </div>
-        )}
-      </div>
+      <Segmented options={viewTypes} value={layout} onChange={(v) => { setLayout(v); setOpenMenu(null); }} label="View" className="rm-view-seg" />
+
+      {agentSlot}
 
       {/* Properties */}
-      <div style={{ position: 'relative', flex: '0 0 auto' }}>
+      {!priority && <div style={{ position: 'relative', flex: '0 0 auto' }}>
         <div className="bd-chip" onClick={() => toggle('props')} title="Choose which properties show on cards" style={{ ...chipTrigger(false), gap: 5, padding: '0 10px' }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><circle cx="8" cy="7" r="2.4" /><path d="M13 7h7" /><circle cx="16" cy="17" r="2.4" /><path d="M4 17h7" /></svg>
           <span style={{ fontSize: 12.5 }}>Properties</span>
@@ -183,10 +205,10 @@ export function RoadmapToolbar({
             ))}
           </div>
         )}
-      </div>
+      </div>}
 
       {/* new objective */}
-      <div onClick={onNewObjective} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>+ New Objective</div>
+      <div onClick={onNewObjective} className="bd-chip rm-new" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>+ New Objective</div>
     </div>
   );
 }

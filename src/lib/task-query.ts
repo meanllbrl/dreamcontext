@@ -1,5 +1,6 @@
 import { isFiledBy, readFilingBasis, type FiledBy, type FilingBasis } from './filing-basis.js';
 import { normalizeRice, type RiceFields } from './rice.js';
+import { normalizePrioritySuggestion, type PrioritySuggestion } from './priority-suggestion.js';
 import { DEFAULT_STATUSES, isTerminal, sortByOrder, type StatusDef } from './task-status.js';
 
 /**
@@ -21,6 +22,8 @@ export interface TaskRecord {
   /** Objective slugs this task serves (many-to-many, local-only). */
   objectives: string[];
   rice: RiceFields | null;
+  /** The agent's RICE/link proposal (local-only); absent when the task has none. */
+  priority_suggestion?: PrioritySuggestion;
   /** Project-declared custom field values (overrides/task.md); {} when none. */
   custom_fields: Record<string, string | number | null>;
   /**
@@ -142,6 +145,9 @@ export function toTaskRecord(
       ? (data.objectives as unknown[]).map((s) => String(s).trim()).filter(Boolean)
       : [],
     rice: normalizeRice(data.rice),
+    ...(normalizePrioritySuggestion(data.priority_suggestion)
+      ? { priority_suggestion: normalizePrioritySuggestion(data.priority_suggestion)! }
+      : {}),
     custom_fields:
       data.custom_fields && typeof data.custom_fields === 'object' && !Array.isArray(data.custom_fields)
         ? (data.custom_fields as Record<string, string | number | null>)

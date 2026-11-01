@@ -95,6 +95,16 @@ import {
   handleRoadmapModel,
 } from './routes/objectives.js';
 import {
+  handleRoadmapPriority,
+  handleRoadmapScoringStart,
+  handleRoadmapScoringStop,
+  handleTaskSuggestionAccept,
+  handleTaskSuggestionDismiss,
+  handleTaskObjectivesMove,
+  handleObjectiveSuggestionAccept,
+  handleObjectiveSuggestionDismiss,
+} from './routes/roadmap-priority.js';
+import {
   handleLabList,
   handleLabShow,
   handleLabSync,
@@ -366,6 +376,10 @@ export function buildRouter(): Router {
   router.delete('/api/tasks/:slug', handleTasksDelete);
   router.patch('/api/tasks/:slug', handleTasksUpdate);
   router.post('/api/tasks/:slug/changelog', handleTasksChangelog);
+  // The priority board: accept/dismiss the agent's suggestion, move one objective link.
+  router.post('/api/tasks/:slug/suggestion/accept', handleTaskSuggestionAccept);
+  router.post('/api/tasks/:slug/suggestion/dismiss', handleTaskSuggestionDismiss);
+  router.post('/api/tasks/:slug/objectives/move', handleTaskObjectivesMove);
   // Assign to agent: sets `agent:`, applies the status rule, starts the agent's
   // call-target run with the task as data (409 when it is not approved to run).
   router.post('/api/tasks/:slug/assign-agent', handleTasksAssignAgent);
@@ -787,6 +801,10 @@ export function buildRouter(): Router {
 
   // Roadmap computed model (progress, forecast, member tasks, warnings).
   router.get('/api/roadmap', handleRoadmapModel);
+  // The priority board (Lanes / Map): ONE payload, plus the scoring marker.
+  router.get('/api/roadmap/priority', handleRoadmapPriority);
+  router.post('/api/roadmap/scoring/start', handleRoadmapScoringStart);
+  router.post('/api/roadmap/scoring/stop', handleRoadmapScoringStop);
 
   // Objectives — the PO-authored OKR roadmap write path (list + create + edit).
   router.get('/api/objectives', handleObjectivesList);
@@ -795,6 +813,8 @@ export function buildRouter(): Router {
   router.delete('/api/objectives/:slug', handleObjectivesDelete);
   router.post('/api/objectives/:slug/dependencies', handleObjectivesAddDependency);
   router.delete('/api/objectives/:slug/dependencies/:to', handleObjectivesRemoveDependency);
+  router.post('/api/objectives/:slug/suggestion/accept', handleObjectiveSuggestionAccept);
+  router.post('/api/objectives/:slug/suggestion/dismiss', handleObjectiveSuggestionDismiss);
 
   // Lab (analytics insights) — same sync engine the CLI uses. Router.match
   // filters by HTTP METHOD first, so POST /api/lab/sync can never be captured by

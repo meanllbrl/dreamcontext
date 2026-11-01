@@ -123,6 +123,9 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'DELETE /api/tasks/:slug': allow(PROJECT_WRITE),
   'PATCH /api/tasks/:slug': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/changelog': allow(PROJECT_WRITE),
+  'POST /api/tasks/:slug/suggestion/accept': allow(PROJECT_WRITE),
+  'POST /api/tasks/:slug/suggestion/dismiss': allow(PROJECT_WRITE),
+  'POST /api/tasks/:slug/objectives/move': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/assign-agent': allow(PROJECT_WRITE),
   'POST /api/tasks/:slug/agent-action': allow('the owner answers its task\'s agent job from the drawer (start now, stop, continue, approve), as its inbox row does; a teammate\'s agent is refused not_owner'),
   'POST /api/tasks/:slug/objection': allow(PROJECT_WRITE),
@@ -419,12 +422,17 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
 
   // Roadmap
   'GET /api/roadmap': allow(READ),
+  'GET /api/roadmap/priority': allow(READ),
+  'POST /api/roadmap/scoring/start': allow(PROJECT_WRITE),
+  'POST /api/roadmap/scoring/stop': allow(PROJECT_WRITE),
   'GET /api/objectives': allow(READ),
   'POST /api/objectives': allow(PROJECT_WRITE),
   'PATCH /api/objectives/:slug': allow(PROJECT_WRITE),
   'DELETE /api/objectives/:slug': allow(PROJECT_WRITE),
   'POST /api/objectives/:slug/dependencies': allow(PROJECT_WRITE),
   'DELETE /api/objectives/:slug/dependencies/:to': allow(PROJECT_WRITE),
+  'POST /api/objectives/:slug/suggestion/accept': allow(PROJECT_WRITE),
+  'POST /api/objectives/:slug/suggestion/dismiss': allow(PROJECT_WRITE),
 
   // Lab
   'GET /api/lab': allow(READ),

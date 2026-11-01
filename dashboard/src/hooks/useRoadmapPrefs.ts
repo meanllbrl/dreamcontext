@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { usePersistedState } from './usePersistedState';
 import { useApi } from '../context/VaultContext';
-import type { RoadmapLayout, RoadmapSortKey } from '../components/roadmap/chrome';
-import type { RoadmapFilters, RoadmapCardProps } from '../components/roadmap/RoadmapToolbar';
+import type { RoadmapLayout, RoadmapLevel, RoadmapSortKey } from '../components/roadmap/chrome';
+import type { RoadmapCardProps, RoadmapFilters } from '../components/roadmap/RoadmapToolbar';
+import { DEFAULT_ROADMAP_PREFS, mergePrefs, type RoadmapPrefs } from './roadmapPrefs';
 
 /**
  * Roadmap toolbar preferences — filters, sort, view-type, properties, search.
@@ -16,39 +17,7 @@ import type { RoadmapFilters, RoadmapCardProps } from '../components/roadmap/Roa
  * origin. See `knowledge/patterns/shared-local-config-split.md`.
  */
 
-export interface RoadmapPrefs {
-  search: string;
-  sortBy: RoadmapSortKey;
-  sortDir: 'asc' | 'desc';
-  layout: RoadmapLayout;
-  cardProps: RoadmapCardProps;
-  filters: RoadmapFilters;
-}
-
-export const DEFAULT_ROADMAP_PREFS: RoadmapPrefs = {
-  search: '',
-  sortBy: 'manual',
-  sortDir: 'asc',
-  layout: 'timeline',
-  cardProps: { target: true, forecast: true, progress: true, status: true, dependencies: true, priority: true, tasks: false },
-  filters: { status: { inc: [], exc: [] }, signal: { inc: [], exc: [] } },
-};
-
-/** Merge a (possibly partial) server blob over the defaults, section by section. */
-function mergePrefs(server: Partial<RoadmapPrefs>): RoadmapPrefs {
-  const d = DEFAULT_ROADMAP_PREFS;
-  return {
-    search: typeof server.search === 'string' ? server.search : d.search,
-    sortBy: server.sortBy ?? d.sortBy,
-    sortDir: server.sortDir === 'desc' ? 'desc' : 'asc',
-    layout: server.layout ?? d.layout,
-    cardProps: { ...d.cardProps, ...(server.cardProps ?? {}) },
-    filters: {
-      status: { ...d.filters.status, ...(server.filters?.status ?? {}) },
-      signal: { ...d.filters.signal, ...(server.filters?.signal ?? {}) },
-    },
-  };
-}
+export { DEFAULT_ROADMAP_PREFS, mergePrefs, type RoadmapPrefs } from './roadmapPrefs';
 
 interface RoadmapPrefsResponse {
   settings: Partial<RoadmapPrefs>;
@@ -56,7 +25,7 @@ interface RoadmapPrefsResponse {
 
 export function useRoadmapPrefs() {
   const api = useApi();
-  const [stored, setPrefs] = usePersistedState<RoadmapPrefs>('roadmap:prefs:v1', DEFAULT_ROADMAP_PREFS);
+  const [stored, setPrefs] = usePersistedState<RoadmapPrefs>('roadmap:prefs:v2', DEFAULT_ROADMAP_PREFS);
   // Normalize on read: a prefs blob saved before a new field existed (e.g. a new
   // card property) would be missing that key. Merging over the defaults backfills
   // any absent key so newly-shipped controls work without a storage-version bump.
@@ -112,6 +81,7 @@ export function useRoadmapPrefs() {
   const setSort = useCallback((sortBy: RoadmapSortKey) => update((p) => ({ ...p, sortBy })), [update]);
   const toggleSortDir = useCallback(() => update((p) => ({ ...p, sortDir: p.sortDir === 'asc' ? 'desc' : 'asc' })), [update]);
   const setLayout = useCallback((layout: RoadmapLayout) => update((p) => ({ ...p, layout })), [update]);
+  const setLevel = useCallback((level: RoadmapLevel) => update((p) => ({ ...p, level })), [update]);
   const toggleCardProp = useCallback((k: keyof RoadmapCardProps) =>
     update((p) => ({ ...p, cardProps: { ...p.cardProps, [k]: !p.cardProps[k] } })), [update]);
   const clearAllFilters = useCallback(() =>
@@ -128,5 +98,5 @@ export function useRoadmapPrefs() {
     });
   }, [update]);
 
-  return { prefs, setSearch, setSort, toggleSortDir, setLayout, toggleCardProp, cycleFilter, clearAllFilters };
+  return { prefs, setSearch, setSort, toggleSortDir, setLayout, setLevel, toggleCardProp, cycleFilter, clearAllFilters };
 }

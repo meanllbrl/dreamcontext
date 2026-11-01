@@ -62,6 +62,8 @@ export const REMOTE_MAPPED_TASK_FIELDS: ReadonlySet<string> = new Set([
 export const KNOWN_LOCAL_ONLY_TASK_FIELDS: readonly string[] = [
   'objectives',
   'rice',
+  // The agent's RICE/link proposal (lib/priority-suggestion.ts): never an owner value, no remote field.
+  'priority_suggestion',
   'parent_task',
   'related_feature',
   'description',

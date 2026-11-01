@@ -1,5 +1,6 @@
 import type { FiledBy, FilingBasis } from '../filing-basis.js';
 import type { RiceFields } from '../rice.js';
+import type { ObjectiveLiveness, PrioritySuggestion, RiceKey, RicePart, SuggestionInput } from '../priority-suggestion.js';
 import type { TaskFilter, TaskRecord } from '../task-query.js';
 
 /**
@@ -85,6 +86,8 @@ export interface TaskData {
   related_feature: string | null;
   version: string | null;
   rice: RiceFields | null;
+  /** The agent's RICE/link proposal (local-only). Absent when the task has none. */
+  priority_suggestion?: PrioritySuggestion;
   start_date: string | null;
   due_date: string | null;
   /** Objective slugs this task serves (many-to-many, local-only). Empty when none. */
@@ -400,6 +403,56 @@ export interface TaskBackend {
   provisionRemote?(opts?: { dryRun?: boolean }): Promise<RemoteProvisionResult>;
   /** Enumerate pickable remote containers (lists/boards). Absent on local. */
   discoverContainers?(): Promise<RemoteContainer[]>;
+
+  /**
+   * Store an agent's RICE/link suggestion in `priority_suggestion` (never in
+   * `rice` / `objectives`). The owner-value refusal and the write run in ONE task
+   * lock against a fresh read; throws SuggestionError on a refusal. Does not bump
+   * `updated_at`.
+   */
+  suggestPriority(slug: string, input: SuggestionInput, liveness: readonly ObjectiveLiveness[], opts?: { again?: boolean }): Promise<TaskData>;
+  /**
+   * Accept the stored suggestion whose identity is `at`: applies only its effective
+   * part plus the owner's `edits`, RICE and link together in one write. Throws
+   * SuggestionError('suggestion_changed') on a stale `at` and writes nothing.
+   */
+  acceptSuggestion(slug: string, at: string, edits: RicePart, liveness: readonly ObjectiveLiveness[]): Promise<TaskAcceptResult>;
+  /** Dismiss the stored suggestion whose identity is `at`. */
+  dismissSuggestion(slug: string, at: string): Promise<TaskData>;
+  /**
+   * Move ONE objective link (drag on the priority board) against a fresh read
+   * under the lock: other links, including ones added meanwhile, stay. Returns
+   * the undo op computed from what actually changed.
+   */
+  moveObjectiveLink(slug: string, op: ObjectiveLinkMove, liveness: readonly ObjectiveLiveness[]): Promise<ObjectiveLinkMoveResult>;
+}
+
+export interface TaskAcceptResult {
+  outcome: 'applied' | 'already_applied' | 'nothing_to_apply';
+  task: TaskData;
+  /** The suggested link pointed at a done or missing objective and was dropped. */
+  linkDropped: string | null;
+  /** RICE keys that were empty and are filled now. */
+  filled: RiceKey[];
+}
+
+export interface ObjectiveLinkMove {
+  /** The link to remove (the card's source column), or null. */
+  remove?: string | null;
+  /** The objective to link, or null (drop on Unlinked). */
+  add?: string | null;
+  /** Position for `add` (undo restores the original position). */
+  index?: number;
+  /** An undo: `add` only has to exist (a done objective may be restored). */
+  undo?: boolean;
+}
+
+export interface ObjectiveLinkMoveResult {
+  task: TaskData;
+  changed: boolean;
+  /** 'already_linked': the drop target was already linked; only the source link was removed. */
+  note: 'already_linked' | null;
+  undo: ObjectiveLinkMove;
 }
 
 /** A pickable remote container with its human-readable path. */

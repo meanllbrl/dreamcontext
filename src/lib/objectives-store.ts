@@ -3,6 +3,25 @@ import { join, basename } from 'node:path';
 import fg from './glob.js';
 import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from './frontmatter.js';
 import { today } from './id.js';
+import { withLockFileAt, withTaskFileLock } from './task-file-lock.js';
+import { computeRiceScore } from './rice.js';
+import {
+  normalizePrioritySuggestion,
+  serializePrioritySuggestion,
+  suggestionRefusal,
+  suggestionGaps,
+  validatePrioritySuggestion,
+  buildSuggestionRecord,
+  planAccept,
+  planDismiss,
+  SuggestionError,
+  type ObjectiveLiveness,
+  type PrioritySuggestion,
+  type RicePart,
+  type RiceKey,
+  type SuggestionInput,
+  type SuggestionTarget,
+} from './priority-suggestion.js';
 
 /**
  * Objectives store — PO-authored OKR roadmap items (task_uO60nZRt).
@@ -64,6 +83,13 @@ export interface Objective {
   /** Prioritization (value/effort 2×2). Impact 1–5; effort in weeks (>0, ≤52). */
   impact: number | null;
   effort: number | null;
+  /** Full RICE: reach 1–10, confidence 25|50|75|100. Score = computeRiceScore over the four. */
+  reach: number | null;
+  confidence: number | null;
+  /** RICE score over reach, impact, confidence, effort; null unless all four are set. */
+  score: number | null;
+  /** The agent's pending/dismissed/accepted proposal (local-only, never an owner value). */
+  priority_suggestion: PrioritySuggestion | null;
   /** Optional manual PO override; null = status is computed from member tasks. */
   status: ObjectiveStatus | null;
   /** Optional Key Result metric; when set, it drives progress instead of tasks. */
@@ -85,6 +111,8 @@ export interface CreateObjectiveInput {
   feature?: string | null;
   impact?: number | null;
   effort?: number | null;
+  reach?: number | null;
+  confidence?: number | null;
   metric?: ObjectiveMetric | null;
   why?: string;
 }
@@ -99,6 +127,8 @@ export interface UpdateObjectiveInput {
   /** `null` clears the prioritization value. */
   impact?: number | null;
   effort?: number | null;
+  reach?: number | null;
+  confidence?: number | null;
   /** `null` clears the manual override (back to computed). */
   status?: ObjectiveStatus | null;
   /** Full Key Result metric object, or `null` to remove it (back to task-based). */
@@ -147,7 +177,18 @@ function numOrNull(v: unknown): number | null {
  * (`rice.ts`): impact is an integer 1–5, effort a number of weeks in (0, 52].
  * `null`/`undefined` clears the field and is always allowed.
  */
-function validateImpactEffort(impact: number | null | undefined, effort: number | null | undefined): void {
+function validateImpactEffort(
+  impact: number | null | undefined,
+  effort: number | null | undefined,
+  reach?: number | null,
+  confidence?: number | null,
+): void {
+  if (reach !== null && reach !== undefined && (!Number.isInteger(reach) || reach < 1 || reach > 10)) {
+    throw new ObjectiveError(`Reach must be an integer 1–10, got "${reach}".`);
+  }
+  if (confidence !== null && confidence !== undefined && ![25, 50, 75, 100].includes(confidence)) {
+    throw new ObjectiveError(`Confidence must be one of 25, 50, 75, 100, got "${confidence}".`);
+  }
   if (impact !== null && impact !== undefined && (!Number.isInteger(impact) || impact < 1 || impact > 5)) {
     throw new ObjectiveError(`Impact must be an integer 1–5, got "${impact}".`);
   }
@@ -227,6 +268,15 @@ function readObjectiveFile(filePath: string): Objective {
     feature: strOrNull(data.feature),
     impact: numOrNull(data.impact),
     effort: numOrNull(data.effort),
+    reach: numOrNull(data.reach),
+    confidence: numOrNull(data.confidence),
+    score: computeRiceScore({
+      reach: numOrNull(data.reach),
+      impact: numOrNull(data.impact),
+      confidence: numOrNull(data.confidence),
+      effort: numOrNull(data.effort),
+    }),
+    priority_suggestion: normalizePrioritySuggestion(data.priority_suggestion),
     status: toObjectiveStatus(data.status),
     metric: parseMetric(data.metric),
     created_at: dateOrNull(data.created_at),
@@ -314,7 +364,7 @@ export function createObjective(contextRoot: string, input: CreateObjectiveInput
     throw new ObjectiveError(`Objective already exists: ${slug}`);
   }
   validateDateRange(input.start_date, input.target_date);
-  validateImpactEffort(input.impact, input.effort);
+  validateImpactEffort(input.impact, input.effort, input.reach, input.confidence);
   if (input.metric) validateMetric(input.metric);
 
   const existing = listObjectives(contextRoot);
@@ -338,6 +388,10 @@ export function createObjective(contextRoot: string, input: CreateObjectiveInput
     feature: input.feature ?? null,
     impact: input.impact ?? null,
     effort: input.effort ?? null,
+    // reach/confidence are written only when given, so an objective created
+    // without them keeps the exact pre-RICE frontmatter shape.
+    ...(input.reach != null ? { reach: input.reach } : {}),
+    ...(input.confidence != null ? { confidence: input.confidence } : {}),
     status: null,
     metric: input.metric ?? null,
     created_at: date,
@@ -363,6 +417,7 @@ export function updateObjective(
   slug: string,
   patch: UpdateObjectiveInput,
 ): Objective {
+  return withObjectiveLock(contextRoot, slug, () => {
   const existing = getObjective(contextRoot, slug);
   if (!existing) throw new ObjectiveError(`Objective not found: ${slug}`);
   if ('start_date' in patch || 'target_date' in patch) {
@@ -371,10 +426,12 @@ export function updateObjective(
       'target_date' in patch ? patch.target_date : existing.target_date,
     );
   }
-  if ('impact' in patch || 'effort' in patch) {
+  if ('impact' in patch || 'effort' in patch || 'reach' in patch || 'confidence' in patch) {
     validateImpactEffort(
       'impact' in patch ? patch.impact : existing.impact,
       'effort' in patch ? patch.effort : existing.effort,
+      'reach' in patch ? patch.reach : existing.reach,
+      'confidence' in patch ? patch.confidence : existing.confidence,
     );
   }
   if ('status' in patch && patch.status !== null && patch.status !== undefined
@@ -389,12 +446,15 @@ export function updateObjective(
   if ('start_date' in patch) updates.start_date = patch.start_date ?? null;
   if ('impact' in patch) updates.impact = patch.impact ?? null;
   if ('effort' in patch) updates.effort = patch.effort ?? null;
+  if ('reach' in patch) updates.reach = patch.reach ?? null;
+  if ('confidence' in patch) updates.confidence = patch.confidence ?? null;
   if ('target_date' in patch) updates.target_date = patch.target_date ?? null;
   if ('feature' in patch) updates.feature = patch.feature ?? null;
   if ('status' in patch) updates.status = patch.status ?? null;
   if ('metric' in patch) updates.metric = patch.metric ?? null;
   updateFrontmatterFields(existing.path, updates);
   return readObjectiveFile(existing.path);
+  });
 }
 
 /**
@@ -409,6 +469,7 @@ export function updateObjectiveMetric(
   slug: string,
   patch: MetricPatch,
 ): Objective {
+  return withObjectiveLock(contextRoot, slug, () => {
   const existing = getObjective(contextRoot, slug);
   if (!existing) throw new ObjectiveError(`Objective not found: ${slug}`);
   const base = existing.metric;
@@ -425,6 +486,7 @@ export function updateObjectiveMetric(
   validateMetric(merged);
   updateFrontmatterFields(existing.path, { metric: merged, updated_at: today() });
   return readObjectiveFile(existing.path);
+  });
 }
 
 /**
@@ -442,12 +504,16 @@ export function updateObjectiveMetric(
 export function deleteObjective(contextRoot: string, slug: string): { unhealedTasks: string[] } {
   const existing = getObjective(contextRoot, slug);
   if (!existing) throw new ObjectiveError(`Objective not found: ${slug}`);
-  // Heal other objectives' depends_on edges.
+  // Heal other objectives' depends_on edges (each under its own lock, re-read fresh).
   for (const other of listObjectives(contextRoot)) {
     if (other.slug !== slug && other.depends_on.includes(slug)) {
-      updateFrontmatterFields(other.path, {
-        depends_on: other.depends_on.filter((d) => d !== slug),
-        updated_at: today(),
+      withObjectiveLock(contextRoot, other.slug, () => {
+        const fresh = getObjective(contextRoot, other.slug);
+        if (!fresh || !fresh.depends_on.includes(slug)) return;
+        updateFrontmatterFields(fresh.path, {
+          depends_on: fresh.depends_on.filter((d) => d !== slug),
+          updated_at: today(),
+        });
       });
     }
   }
@@ -472,7 +538,14 @@ export function deleteObjective(contextRoot: string, slug: string): { unhealedTa
       }
       if (objectives.includes(slug)) {
         try {
-          updateFrontmatterFields(file, { objectives: objectives.filter((o) => o !== slug) });
+          // Under the task's own lock, re-read fresh: a concurrent link move must not be lost.
+          withTaskFileLock(contextRoot, basename(file, '.md'), () => {
+            const { data } = readFrontmatter<Record<string, unknown>>(file);
+            const now = Array.isArray(data.objectives)
+              ? data.objectives.map((s) => String(s).trim()).filter(Boolean)
+              : [];
+            if (now.includes(slug)) updateFrontmatterFields(file, { objectives: now.filter((o) => o !== slug) });
+          });
         } catch (err) {
           unhealedTasks.push(basename(file));
           console.error(`[objectives] delete "${slug}": could not rewrite task ${basename(file)} to drop the reference:`, err);
@@ -480,7 +553,9 @@ export function deleteObjective(contextRoot: string, slug: string): { unhealedTa
       }
     }
   }
-  unlinkSync(existing.path);
+  withObjectiveLock(contextRoot, slug, () => {
+    if (existsSync(existing.path)) unlinkSync(existing.path);
+  });
   return { unhealedTasks };
 }
 
@@ -503,14 +578,20 @@ export function addDependency(contextRoot: string, from: string, to: string): Ob
       + `(${to} already reaches ${from} through the dependency chain).`,
     );
   }
-  updateFrontmatterFields(a.path, {
-    depends_on: [...a.depends_on, to],
-    updated_at: today(),
+  return withObjectiveLock(contextRoot, from, () => {
+    const fresh = getObjective(contextRoot, from);
+    if (!fresh) throw new ObjectiveError(`Objective not found: ${from}`);
+    if (fresh.depends_on.includes(to)) throw new ObjectiveError(`${from} already depends on ${to}.`);
+    updateFrontmatterFields(fresh.path, {
+      depends_on: [...fresh.depends_on, to],
+      updated_at: today(),
+    });
+    return readObjectiveFile(fresh.path);
   });
-  return readObjectiveFile(a.path);
 }
 
 export function removeDependency(contextRoot: string, from: string, to: string): Objective {
+  return withObjectiveLock(contextRoot, from, () => {
   const a = getObjective(contextRoot, from);
   if (!a) throw new ObjectiveError(`Objective not found: ${from}`);
   if (!a.depends_on.includes(to)) {
@@ -521,4 +602,120 @@ export function removeDependency(contextRoot: string, from: string, to: string):
     updated_at: today(),
   });
   return readObjectiveFile(a.path);
+  });
+}
+
+// ─── Lock ────────────────────────────────────────────────────────────────────
+
+/** Machine-local lock file for one objective (tmp/ is gitignored). */
+export function objectiveLockPath(contextRoot: string, slug: string): string {
+  return join(contextRoot, 'tmp', 'locks', 'objectives', `${slug}.lock`);
+}
+
+/**
+ * Every objective writer runs inside this per-objective lock, re-reading the file
+ * inside it, so a compare-and-write (an accept checking `at`) and a plain edit can
+ * never interleave and drop one side. Not reentrant: never nest two writers.
+ */
+export function withObjectiveLock<T>(contextRoot: string, slug: string, fn: () => T): T {
+  // The slug names a lock FILE: validate before the first filesystem effect, or a crafted
+  // `../../x` slug would create and delete `*.lock` files outside the vault.
+  if (!isSafeObjectiveSlug(slug)) throw new ObjectiveError(`Objective not found: ${slug}`);
+  return withLockFileAt(
+    objectiveLockPath(contextRoot, slug),
+    () => new ObjectiveError(`Objective file busy: another process is writing "${slug}". Retry in a moment.`),
+    fn,
+  );
+}
+
+// ─── Priority suggestion (agent proposal) ───────────────────────────────────
+
+export function objectiveSuggestionTarget(o: Objective): SuggestionTarget {
+  return {
+    kind: 'objective',
+    rice: { reach: o.reach, impact: o.impact, confidence: o.confidence, effort: o.effort },
+    priority_suggestion: o.priority_suggestion,
+  };
+}
+
+/**
+ * Store an agent's RICE suggestion on an objective. Refused per field when the
+ * owner already set that field (owner_scored), when the stored one was dismissed
+ * and `again` is not given, or when it would not close the objective's score.
+ * The refusal check and the write run in ONE lock against a fresh read. Does not
+ * bump `updated_at`: a suggestion is not an edit.
+ */
+export function suggestObjective(
+  contextRoot: string,
+  slug: string,
+  input: SuggestionInput,
+  liveness: readonly ObjectiveLiveness[],
+  opts: { again?: boolean } = {},
+): Objective {
+  const invalid = validatePrioritySuggestion(input, 'objective');
+  if (invalid.length > 0) throw new SuggestionError('invalid', invalid.join('; '));
+  return withObjectiveLock(contextRoot, slug, () => {
+    const o = getObjective(contextRoot, slug);
+    if (!o) throw new SuggestionError('not_found', `Objective not found: ${slug}`);
+    const target = objectiveSuggestionTarget(o);
+    const refusal = suggestionRefusal(target, input, liveness, opts);
+    if (refusal) throw SuggestionError.refusal(refusal, slug);
+    const gaps = suggestionGaps(target, input, liveness);
+    if (gaps.length > 0) throw new SuggestionError('incomplete', gaps.join('; '));
+    updateFrontmatterFields(o.path, { priority_suggestion: serializePrioritySuggestion(buildSuggestionRecord(input)) });
+    return readObjectiveFile(o.path);
+  });
+}
+
+export interface ObjectiveAcceptResult {
+  outcome: 'applied' | 'already_applied' | 'nothing_to_apply';
+  objective: Objective;
+  filled: RiceKey[];
+}
+
+/** Accept an objective's suggestion (see planAccept). One lock, one write. */
+export function acceptObjectiveSuggestion(
+  contextRoot: string,
+  slug: string,
+  at: string,
+  edits: RicePart,
+  liveness: readonly ObjectiveLiveness[],
+): ObjectiveAcceptResult {
+  return withObjectiveLock(contextRoot, slug, () => {
+    const o = getObjective(contextRoot, slug);
+    if (!o) throw new SuggestionError('not_found', `Objective not found: ${slug}`);
+    const plan = planAccept(objectiveSuggestionTarget(o), at, edits, liveness);
+    if (typeof plan === 'string') {
+      throw new SuggestionError(plan, plan === 'suggestion_changed'
+        ? 'The suggestion changed since it was shown. Reload it.'
+        : 'This suggestion was dismissed.');
+    }
+    if (plan.outcome === 'already_applied') return { outcome: plan.outcome, objective: o, filled: [] };
+    const updates: Record<string, unknown> = {};
+    if (plan.rice) {
+      updates.reach = plan.rice.reach;
+      updates.impact = plan.rice.impact;
+      updates.confidence = plan.rice.confidence;
+      updates.effort = plan.rice.effort;
+      updates.updated_at = today();
+    }
+    if (plan.record) updates.priority_suggestion = serializePrioritySuggestion(plan.record);
+    updateFrontmatterFields(o.path, updates);
+    return { outcome: plan.outcome, objective: readObjectiveFile(o.path), filled: plan.filled };
+  });
+}
+
+/** Dismiss an objective's suggestion. A repeat dismiss of the same `at` is a no-op. */
+export function dismissObjectiveSuggestion(contextRoot: string, slug: string, at: string): Objective {
+  return withObjectiveLock(contextRoot, slug, () => {
+    const o = getObjective(contextRoot, slug);
+    if (!o) throw new SuggestionError('not_found', `Objective not found: ${slug}`);
+    const next = planDismiss(objectiveSuggestionTarget(o), at);
+    if (next === 'already_dismissed') return o;
+    if (next === 'suggestion_changed') {
+      throw new SuggestionError('suggestion_changed', 'The suggestion changed since it was shown. Reload it.');
+    }
+    updateFrontmatterFields(o.path, { priority_suggestion: serializePrioritySuggestion(next) });
+    return readObjectiveFile(o.path);
+  });
 }

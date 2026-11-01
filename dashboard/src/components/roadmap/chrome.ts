@@ -10,7 +10,11 @@ import type { CSSProperties } from 'react';
  * always in the bundle, so we reuse them directly by className.
  */
 
-export type RoadmapLayout = 'timeline' | 'board';
+export type RoadmapLayout = 'lanes' | 'map' | 'timeline' | 'board';
+/** Lanes and Map work at two levels: which objective to work for, then which task. */
+export type RoadmapLevel = 'objectives' | 'tasks';
+/** The layouts the priority board draws (the others are objectives-only views). */
+export const isPriorityLayout = (l: RoadmapLayout): boolean => l === 'lanes' || l === 'map';
 export type RoadmapSortKey = 'manual' | 'target' | 'forecast' | 'progress' | 'title';
 export type RoadmapMenuKey = 'filter' | 'viewtype' | 'sort' | 'props' | null;
 

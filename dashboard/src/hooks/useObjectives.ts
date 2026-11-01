@@ -24,6 +24,10 @@ export interface Objective {
   /** Value/effort 2×2: impact 1–5, effort in weeks (>0, ≤52). */
   impact: number | null;
   effort: number | null;
+  /** Full RICE: reach 1–10, confidence 25|50|75|100; score over the four or null. */
+  reach?: number | null;
+  confidence?: number | null;
+  score?: number | null;
   status: 'not_started' | 'active' | 'review' | 'done' | null;
   /** Optional Key Result metric; when set, drives progress instead of tasks. */
   metric: ObjectiveMetric | null;
@@ -65,6 +69,10 @@ export interface RoadmapModelObjective {
   target_date: string | null;
   impact: number | null;
   effort: number | null;
+  reach?: number | null;
+  confidence?: number | null;
+  score?: number | null;
+  created_at?: string | null;
   depends_on: string[];
   dependents: string[];
   feature: string | null;
@@ -98,19 +106,23 @@ export interface RoadmapModel {
  * dependents, and warnings. Merged with `useObjectives` (which carries the authored
  * start_date/impact/effort) by slug in the board. Empty on an older backend.
  */
-export function useRoadmap() {
+export function useRoadmap(opts: { enabled?: boolean } = {}) {
   const api = useApi();
   return useQuery({
-    queryKey: ['roadmap'],
+    // ['roadmap', 'model'], not ['roadmap']: the priority board's ['roadmap', 'priority'] must
+    // not be the same query; invalidating ['roadmap'] still refreshes both (prefix match).
+    queryKey: ['roadmap', 'model'],
     queryFn: () => api.get<RoadmapModel>('/roadmap'),
     retry: 0,
+    enabled: opts.enabled ?? true,
   });
 }
 
 /** List every objective. Empty array when none / the route is absent (older backend). */
-export function useObjectives() {
+export function useObjectives(opts: { enabled?: boolean } = {}) {
   const api = useApi();
   return useQuery({
+    enabled: opts.enabled ?? true,
     queryKey: ['objectives'],
     queryFn: () => api.get<{ objectives: Objective[] }>('/objectives').then((r) => r.objectives),
     // The route may not exist on an older backend build — don't spin on retries.
@@ -137,6 +149,8 @@ export interface UpdateObjectivePatch {
   target_date?: string | null;
   impact?: number | null;
   effort?: number | null;
+  reach?: number | null;
+  confidence?: number | null;
   status?: Objective['status'];
   feature?: string | null;
   /** Full metric object, or null to clear it (back to task-based progress). */
@@ -197,5 +211,68 @@ export function useRemoveDependency() {
       queryClient.invalidateQueries({ queryKey: ['objectives'] });
       queryClient.invalidateQueries({ queryKey: ['roadmap'] });
     },
+  });
+}
+
+/** The RICE keys an accept may carry as the owner's own edits. */
+export interface RiceEdits {
+  reach?: number;
+  impact?: number;
+  confidence?: number;
+  effort?: number;
+}
+
+/** What an accept answers: which RICE fields got filled, and whether a link was dropped. */
+export interface AcceptSuggestionResult {
+  outcome: 'applied' | 'already_applied' | 'nothing_to_apply';
+  link_dropped: string | null;
+  filled: Array<'reach' | 'impact' | 'confidence' | 'effort'>;
+}
+
+function invalidatePriority(queryClient: ReturnType<typeof useQueryClient>): void {
+  queryClient.invalidateQueries({ queryKey: ['roadmap'] });
+  queryClient.invalidateQueries({ queryKey: ['objectives'] });
+  queryClient.invalidateQueries({ queryKey: ['tasks'] });
+}
+
+/** Accept an objective's suggestion; `rice` carries only the fields the owner changed. */
+export function useAcceptObjectiveSuggestion() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: ({ slug, at, rice }: { slug: string; at: string; rice?: RiceEdits }) =>
+      api.post<AcceptSuggestionResult>(`/objectives/${slug}/suggestion/accept`, { at, rice }),
+    onSettled: () => invalidatePriority(queryClient),
+  });
+}
+
+export function useDismissObjectiveSuggestion() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: ({ slug, at }: { slug: string; at: string }) =>
+      api.post<{ dismissed: true }>(`/objectives/${slug}/suggestion/dismiss`, { at }),
+    onSettled: () => invalidatePriority(queryClient),
+  });
+}
+
+/** Accept a task's suggestion; `rice` carries only the fields the owner changed. */
+export function useAcceptTaskSuggestion() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: ({ slug, at, rice }: { slug: string; at: string; rice?: RiceEdits }) =>
+      api.post<AcceptSuggestionResult>(`/tasks/${slug}/suggestion/accept`, { at, rice }),
+    onSettled: () => invalidatePriority(queryClient),
+  });
+}
+
+export function useDismissTaskSuggestion() {
+  const queryClient = useQueryClient();
+  const api = useApi();
+  return useMutation({
+    mutationFn: ({ slug, at }: { slug: string; at: string }) =>
+      api.post<{ dismissed: true }>(`/tasks/${slug}/suggestion/dismiss`, { at }),
+    onSettled: () => invalidatePriority(queryClient),
   });
 }

@@ -12,6 +12,7 @@ import {
   type ObjectiveStatus,
 } from './objectives-store.js';
 import { listTheses } from './theses/store.js';
+import type { PrioritySuggestion } from './priority-suggestion.js';
 import type { ThesisStatus, ThesisKind } from './theses/types.js';
 
 /**
@@ -56,6 +57,14 @@ export interface RoadmapObjective {
   /** Prioritization 2×2 (echoed from the objective): impact 1–5, effort in weeks. */
   impact: number | null;
   effort: number | null;
+  /** Full RICE (reach 1–10, confidence 25|50|75|100) and its score over the four, or null. */
+  reach: number | null;
+  confidence: number | null;
+  score: number | null;
+  /** The stored agent suggestion (raw record; the effective part is derived by the priority resolver). */
+  priority_suggestion: PrioritySuggestion | null;
+  /** created_at of the objective file (YYYY-MM-DD) or null. */
+  created_at: string | null;
   depends_on: string[];
   /** Computed reverse edges: objectives that depend on THIS one. */
   dependents: string[];
@@ -447,6 +456,11 @@ export function buildRoadmapModel(contextRoot: string): RoadmapModel {
       target_date: o.target_date,
       impact: o.impact,
       effort: o.effort,
+      reach: o.reach,
+      confidence: o.confidence,
+      score: o.score,
+      priority_suggestion: o.priority_suggestion,
+      created_at: o.created_at,
       depends_on: [...o.depends_on],
       dependents: (dependentsOf.get(o.slug) ?? []).sort(),
       feature: o.feature,
