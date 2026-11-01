@@ -15,14 +15,15 @@ import {
   CLAUDE_SEED_BYTES, handoffMessages, removeRawHandoff, seedOutputPath, writeRawHandoff,
   type RawHandoffMessage,
 } from '../../lib/t3-bridge/tool-handoff.js';
+import { instanceHistory } from '../../lib/t3-bridge/instance-threads.js';
 
-type Tool = 'claude' | 'codex';
+type Tool = 'claude' | 'codex' | 'antigravity';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CODEX_SEED_BYTES = 16_000;
 const SEED_TIMEOUT_MS = 45_000;
-const LABEL: Record<Tool, string> = { claude: 'Claude', codex: 'Codex' };
+const LABEL: Record<Tool, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
 
-const asTool = (v: unknown): Tool | null => (v === 'claude' || v === 'codex' ? v : null);
+const asTool = (v: unknown): Tool | null => (v === 'claude' || v === 'codex' || v === 'antigravity' ? v : null);
 
 /** Tests hand in their own runner; the server runs the bridge bundle's `t3-account seed`. */
 export const handoffDeps: { run: CodexRunner; node: () => string | null } = { run: defaultCodexRunner, node: () => bridgeNode() };
@@ -30,6 +31,10 @@ export const handoffDeps: { run: CodexRunner; node: () => string | null } = { ru
 /** This project's messages from `id`, or 'refuse' when the conversation is not this project's. */
 async function sourceMessages(tool: Tool, id: string, contextRoot: string): Promise<RawHandoffMessage[] | 'refuse'> {
   const liveId = resolveAgentSession(contextRoot, id);
+  if (tool === 'antigravity') {
+    const history = instanceHistory({ thread: liveId || id, contextRoot });
+    return history === 'refuse' ? 'refuse' : handoffMessages(history.items);
+  }
   if (tool === 'codex') {
     const codex = await codexHistoryFor({ tool, id, liveId, contextRoot });
     if (codex === 'refuse' || !codex) return 'refuse';

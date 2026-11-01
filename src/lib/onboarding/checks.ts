@@ -31,7 +31,9 @@ export function nodeMajor(version: string | undefined): number | null {
 function fixKindFor(id: FixId, platform: NodeJS.Platform, facts: ShellFacts): FixKind {
   switch (id) {
     case 'claude-signin':
+    case 'antigravity-signin':
     case 'codex-signin': return 'browser';
+    case 'antigravity-install':
     case 'codex-install':
     case 'codex-update': return platform === 'win32' ? 'manual' : 'auto';
     case 'github-signin':

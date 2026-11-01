@@ -2816,7 +2816,7 @@ export function ChatPane({
             {automation && <AutomationQuestionSlot automation={automation} onPendingChange={setHitlPending} />}
             {working && (
               <WorkingIndicator
-                label={session.opened ? 'Working…' : session.tool === 'codex' ? 'Starting Codex…' : 'Starting Claude…'}
+                label={session.opened ? 'Working…' : session.tool === 'codex' ? 'Starting Codex…' : session.tool === 'antigravity' ? 'Starting Antigravity…' : 'Starting Claude…'}
                 startedAt={conv.turnStartedAt}
               />
             )}

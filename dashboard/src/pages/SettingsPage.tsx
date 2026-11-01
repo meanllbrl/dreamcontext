@@ -27,7 +27,7 @@ import { OriginSetup } from '../components/brain/OriginSetup';
 import { SystemDependencies, FeatureDepsNotice } from '../components/settings/SystemDependencies';
 import { AutoUpdateSetting } from '../components/settings/AutoUpdateSetting';
 import { ClaudeAccounts } from '../components/settings/ClaudeAccounts';
-import { CodexAccounts } from '../components/settings/ToolAccounts';
+import { AntigravityAccounts, CodexAccounts } from '../components/settings/ToolAccounts';
 import { McpServers } from '../components/settings/McpServers';
 import { LinkedRepos } from '../components/brain/LinkedRepos';
 import { HandsfreeSettingsCard } from '../components/handsfree/HandsfreeSettingsCard';
@@ -326,8 +326,8 @@ export function SettingsPage({ focus }: SettingsPageProps) {
     else if (focus?.id === 'system') setActiveSection('system');
     // The composer's model picker (Track T W4): "Models ›" and a tool's "Sign in" / "Add ›".
     else if (focus?.id === 'models') setActiveSection(newShell ? 'models' : 'agents');
-    else if (focus?.id === 'accounts' || focus?.id === 'accounts-codex') {
-      const target = focus.id === 'accounts-codex' ? 'settings-codex-accounts' : 'settings-claude-accounts';
+    else if (focus?.id === 'accounts' || focus?.id === 'accounts-codex' || focus?.id === 'accounts-antigravity') {
+      const target = focus.id === 'accounts-codex' ? 'settings-codex-accounts' : focus.id === 'accounts-antigravity' ? 'settings-antigravity-accounts' : 'settings-claude-accounts';
       setActiveSection('agents');
       requestAnimationFrame(() => document.getElementById(target)?.scrollIntoView({ block: 'start' }));
     }
@@ -457,6 +457,10 @@ export function SettingsPage({ focus }: SettingsPageProps) {
           <div id="settings-codex-accounts" />
           <SettingGroup title={t('settings.agents.codexAccounts.title')}>
             <CodexAccounts />
+          </SettingGroup>
+          <div id="settings-antigravity-accounts" />
+          <SettingGroup title={t('settings.agents.antigravityAccounts.title')}>
+            <AntigravityAccounts />
           </SettingGroup>
 
           {/* Directly under the accounts, because it answers the question the accounts raise:

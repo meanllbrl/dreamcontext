@@ -52,7 +52,7 @@ export function ComposerModelPicker({ pick, model, effort, onModelChange, onEffo
       onCrossTool={(m) => pick.onPick(m.tool === 'claude' ? '' : m.tool, m.id)}
       lock={pick.lock && {
         ...pick.lock,
-        onOpen: embedded ? undefined : (tool) => { if (tool === 'codex') emitInstance<OpenToolChatDetail>(bus, OPEN_TOOL_CHAT_EVENT, { tool }); },
+        onOpen: embedded ? undefined : (tool) => { if (tool !== 'claude') emitInstance<OpenToolChatDetail>(bus, OPEN_TOOL_CHAT_EVENT, { tool }); },
       }}
       accounts={accounts}
       activeAccountId={activeAccountId}

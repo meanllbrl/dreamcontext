@@ -6,7 +6,7 @@ import type { Command } from 'commander';
  * The bridge lives in its own bundle beside this one (dist/t3-bridge.js), never inlined: a
  * non-literal import keeps the bundler out of it. From source (tests, dev) it is the module itself.
  */
-async function loadBridge(tool: 'codex' | 'claude'): Promise<typeof import('../../lib/t3-bridge/main.js')> {
+async function loadBridge(tool: string): Promise<typeof import('../../lib/t3-bridge/main.js')> {
   const sibling = new URL(tool === 'claude' ? './t3-bridge-claude.js' : './t3-bridge.js', import.meta.url);
   if (existsSync(fileURLToPath(sibling))) return import(sibling.href);
   const source = ['../../lib/t3-bridge', tool === 'claude' ? 'main-claude.js' : 'main.js'].join('/');
@@ -23,7 +23,7 @@ export function registerT3ChatCommand(program: Command): void {
   program
     .command('t3-chat', { hidden: true })
     .description('Run one chat on a T3 provider adapter over stream-json stdio (used by the chat server)')
-    .requiredOption('--tool <tool>', 'the tool to drive (codex, or claude through T3\'s driver)')
+    .requiredOption('--tool <tool>', 'the tool to drive (codex, antigravity, or claude through T3\'s driver)')
     .option('--cwd <path>', 'the project folder (default: the current folder)')
     .option('--model <model>', 'model id (default: the Codex account\'s own)')
     .option('--effort <effort>', 'reasoning effort')
@@ -33,13 +33,14 @@ export function registerT3ChatCommand(program: Command): void {
     .option('--briefing-file <path>', 'chat-surface briefing, sent as developer instructions')
     .option('--extra-root <path...>', 'another folder the sandboxed tool may write (a linked repo)')
     .option('--account <id>', 'a Codex account other than #0 (its own home under ~/.dreamcontext/codex-accounts)')
+    .option('--carry <threadId>', 'an earlier thread whose end a fresh thread carries')
     .option('--mcp-config <path>', 'a lean MCP subset ({ mcpServers }) a Super child may use')
     .option('--strict-mcp', 'nothing from the Codex config: no MCP servers, no web search')
     .action(async (o: {
       tool: string; cwd?: string; model?: string; effort?: string; mode: string; pane?: string;
-      resume?: string; briefingFile?: string; extraRoot?: string[]; account?: string; mcpConfig?: string; strictMcp?: boolean;
+      resume?: string; briefingFile?: string; extraRoot?: string[]; account?: string; carry?: string; mcpConfig?: string; strictMcp?: boolean;
     }) => {
-      if (o.tool !== 'codex' && o.tool !== 'claude') {
+      if (o.tool !== 'codex' && o.tool !== 'claude' && o.tool !== 'antigravity') {
         process.stderr.write(`t3-chat: unknown tool ${o.tool}\n`);
         process.exit(2);
       }
@@ -49,7 +50,7 @@ export function registerT3ChatCommand(program: Command): void {
       } catch (err) {
         // The Claude engine's Agent SDK is a real npm package: a packaged app without a global
         // CLI does not have it. The pane says so instead of ending silently.
-        const why = o.tool === 'claude' ? 'The T3 Claude engine needs a global dreamcontext install. Switch Claude engine back to dreamcontext in Settings.' : `Codex could not load: ${String(err).slice(0, 300)}`;
+        const why = o.tool === 'claude' ? 'The T3 Claude engine needs a global dreamcontext install. Switch Claude engine back to dreamcontext in Settings.' : `${o.tool === 'antigravity' ? 'Antigravity' : 'Codex'} could not load: ${String(err).slice(0, 300)}`;
         process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: why, num_turns: 0, total_cost_usd: 0, usage: {}, dc_tool: o.tool }) + '\n');
         process.exit(1);
       }
@@ -82,13 +83,14 @@ export function registerT3ChatCommand(program: Command): void {
   // sign-in, and a limits probe with no model call. Only the server runs it.
   program
     .command('t3-account', { hidden: true })
-    .description('Prepare a Codex account home or read its limits, through T3 (used by the server)')
-    .argument('<action>', 'prepare | probe | seed')
-    .option('--account <id>', 'the Codex account (default: #0, ~/.codex)')
+    .description('Prepare an account, sign it in or read its limits, through T3 (used by the server)')
+    .argument('<action>', 'prepare | probe | seed | install | signin')
+    .option('--account <id>', 'the account (default: #0)')
+    .option('--tool <tool>', 'the tool (default: codex)')
     .option('--in <path>', 'seed: the raw messages the route wrote')
     .option('--out <path>', 'seed: where the rendered text goes')
-    .action(async (action: string, o: { account?: string; in?: string; out?: string }) => {
-      if (action !== 'prepare' && action !== 'probe' && action !== 'seed') {
+    .action(async (action: string, o: { account?: string; tool?: string; in?: string; out?: string }) => {
+      if (action !== 'prepare' && action !== 'probe' && action !== 'seed' && action !== 'install' && action !== 'signin') {
         process.stderr.write(`t3-account: unknown action ${action}\n`);
         process.exit(2);
       }
@@ -99,6 +101,6 @@ export function registerT3ChatCommand(program: Command): void {
         process.stdout.write(JSON.stringify({ ok: false, signedIn: false, error: `Codex could not load: ${String(err).slice(0, 300)}` }) + '\n');
         process.exit(1);
       }
-      process.exit(await bridge.runT3Account({ action, ...(o.account ? { account: o.account } : {}), ...(o.in ? { in: o.in } : {}), ...(o.out ? { out: o.out } : {}) }));
+      process.exit(await bridge.runT3Account({ action, ...(o.tool ? { tool: o.tool } : {}), ...(o.account ? { account: o.account } : {}), ...(o.in ? { in: o.in } : {}), ...(o.out ? { out: o.out } : {}) }));
     });
 }

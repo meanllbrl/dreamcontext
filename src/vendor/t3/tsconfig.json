@@ -24,6 +24,9 @@
       "@t3tools/shared/*": ["./packages/shared/src/*.ts"],
       "@t3tools/provider-testing/*": ["./packages/provider-testing/src/*.ts"],
       "effect-codex-app-server/*": ["./packages/effect-codex-app-server/src/*.ts"],
+      "@t3tools/provider-acp/*": ["./packages/provider-acp/src/*.ts"],
+      "effect-acp/schema-v1": ["./packages/effect-acp/src/_generated/schema-v1.gen.ts"],
+      "effect-acp/*": ["./packages/effect-acp/src/*.ts"],
       "vite-plus/test": ["../../../node_modules/vitest"]
     }
   },
@@ -36,7 +39,9 @@
     "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts",
     "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts",
     "apps/server/src/textGeneration/ClaudeTextGeneration.ts",
-    "apps/server/src/textGeneration/CodexTextGeneration.ts"
+    "apps/server/src/textGeneration/CodexTextGeneration.ts",
+    "apps/server/src/provider/Drivers/AntigravityDriver.ts",
+    "apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts"
   ],
   "include": ["packages/contracts/src", "packages/provider-core/src", "packages/effect-codex-app-server/src"],
   "exclude": ["**/*.test.ts", "**/*.testkit.ts"]

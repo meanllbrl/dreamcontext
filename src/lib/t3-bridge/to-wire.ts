@@ -32,6 +32,13 @@ export interface ToWireOptions {
 }
 
 /** Our canonical tool name and input for one T3 tool turn item, or null for a non-tool item. */
+/** T3's ACP adapter has no failure class for these, so Antigravity's own words are read. */
+export function antigravityFailureKind(message: string): 'limit' | 'signed-out' | null {
+  if (/resource.?exhausted|quota|rate.?limit|too many requests|\b429\b/i.test(message)) return 'limit';
+  if (/\bsign(ed)?[ -]?(in(to)?|out)\b|unauthenticated|authentication.?required|re-?authenticate|\b401\b/i.test(message)) return 'signed-out';
+  return null;
+}
+
 export function toolCallFor(item: TurnItem): { name: string; input: Record<string, unknown> } | null {
   switch (item.type) {
     case 'command_execution':
@@ -373,6 +380,8 @@ export class ToWire {
     const failure = event.status === 'failed' ? event.failure : null;
     // A usage-limit refusal (T3 `failure.class === 'usage_limit'`): the server's switch reads it
     // like Claude's refusal frame, with the reset T3 knows (plan r5 §4d "Limit detection").
+    const kind = this.opts.tool === 'antigravity' ? antigravityFailureKind(failure?.message ?? '') : null;
+    const limited = failure?.class === 'usage_limit' || kind === 'limit';
     const limitResetMs = failure?.class === 'usage_limit' && failure.resetAt ? Date.parse(failure.resetAt) : NaN;
     out.push({
       type: 'result',
@@ -387,7 +396,8 @@ export class ToWire {
       session_id: this.sessionId,
       dc_tool: this.opts.tool,
       ...(this.turnUsage ? { dc_turn_usage: this.turnUsage } : {}),
-      ...(failure?.class === 'usage_limit' ? { dc_limit: { resetsAtMs: Number.isFinite(limitResetMs) ? limitResetMs : null } } : {}),
+      ...(limited ? { dc_limit: { resetsAtMs: Number.isFinite(limitResetMs) ? limitResetMs : null } } : {}),
+      ...(kind === 'signed-out' ? { dc_signed_out: true } : {}),
     });
     this.turnOpen = false;
     return out;

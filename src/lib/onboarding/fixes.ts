@@ -9,6 +9,9 @@ import {
   CLI_RC_MARKER, NODE_RC_MARKER, RC_MARKER, claudeAwarePath, ensureDirOnShellPath, findClaudeBin, fixClaudeShellPath,
   type ShellPathFix,
 } from '../claude-path.js';
+import { clearToolSignedOut } from '../account-switch.js';
+import { INSTANCE_PRIMARY_ID } from '../instance-accounts.js';
+import { bridgeNode } from '../t3-bridge/node-floor.js';
 import { codexChildEnv, codexHealth, codexTooOld, findCodexBin, forgetCodexHealth, refreshCodexHealth } from '../codex-bin.js';
 import { ensureCliInstalled, type EnsureCliResult } from '../ensure-cli.js';
 import { findBridgeNode, resetBridgeNodeCache } from '../t3-bridge/node-floor.js';
@@ -353,6 +356,51 @@ async function codexSignin({ ctx, sink, signal, deps }: RecipeEnv): Promise<FixO
   }
 }
 
+/**
+ * Antigravity through T3 (`dreamcontext t3-account`): T3 manages the install and the Google sign-in,
+ * so both are one child. Only the sign-in page's address reaches the screen, and the client opens it.
+ */
+export const ANTIGRAVITY_INSTALL_TIMEOUT_MS = 50 * 60_000;
+
+async function antigravityAccountJob(action: 'install' | 'signin', { ctx, sink, signal, deps }: RecipeEnv): Promise<FixOutcome> {
+  const node = bridgeNode();
+  const cli = deps.env.DREAMCONTEXT_CLI || process.argv[1] || '';
+  if (!node) return fail('failed', 'Antigravity needs a newer Node. Update Codex in the picker first: it brings one.');
+  if (!cli) return fail('failed', 'dreamcontext could not find itself.');
+  if (action === 'signin') sink.awaiting('browser');
+  try {
+    let seen = '';
+    const onlyTheSignInPage: RunSink = {
+      ...sink,
+      output: (c) => {
+        seen = (seen + c).slice(-8_000);
+        for (;;) {
+          const nl = seen.indexOf('\n');
+          if (nl < 0) return;
+          const line = seen.slice(0, nl);
+          seen = seen.slice(nl + 1);
+          try {
+            const page = (JSON.parse(line) as { signInUrl?: unknown }).signInUrl;
+            if (typeof page === 'string' && page.startsWith('https://accounts.google.com/')) sink.output(`${page}\n`);
+          } catch { /* not a line of ours */ }
+        }
+      },
+    };
+    // The install has its own clock: T3 allows a slow download 45 minutes, and a sign-in only starts
+    // counting once the page can open. A no-op when the runtime is there.
+    const installed = await deps.run(node, [cli, 't3-account', 'install', '--tool', 'antigravity'], { cwd: ctx.home, env: deps.env, timeoutMs: ANTIGRAVITY_INSTALL_TIMEOUT_MS, stream: true }, onlyTheSignInPage, signal);
+    const r = action === 'install' || !installed.ok
+      ? installed
+      : await deps.run(node, [cli, 't3-account', 'signin', '--tool', 'antigravity'], { cwd: ctx.home, env: deps.env, timeoutMs: CLAUDE_LOGIN_TIMEOUT_MS, stream: true }, onlyTheSignInPage, signal);
+    if (r.canceled) return fail('canceled', 'Canceled.');
+    if (r.timedOut) return fail('timeout', action === 'signin' ? 'The sign-in timed out.' : 'The install timed out.');
+    if (r.ok && action === 'signin') clearToolSignedOut('antigravity', INSTANCE_PRIMARY_ID, ctx.home);
+    return r.ok ? { ok: true } : fail('failed', action === 'signin' ? 'The sign-in did not complete.' : 'The install did not complete.');
+  } finally {
+    if (action === 'signin') sink.awaiting(null);
+  }
+}
+
 function nodeShellPath({ ctx, deps }: RecipeEnv): FixOutcome {
   const dirs = isManagedNode(ctx)
     ? [join(managedNodeRoot(ctx.home), 'current', 'bin'), join(managedNpmGlobal(ctx.home), 'bin')]
@@ -616,6 +664,8 @@ const RECIPES: Readonly<Record<FixId, (env: RecipeEnv) => FixOutcome | Promise<F
   'github-signin': githubSignin,
   'gh-signin': ghSignin,
   'pty-install': ptyInstall,
+  'antigravity-install': (env) => antigravityAccountJob('install', env),
+  'antigravity-signin': (env) => antigravityAccountJob('signin', env),
 };
 
 /**

@@ -13,6 +13,7 @@ export type CheckId = typeof CHECK_IDS[number];
 export const FIX_IDS = [
   'node-shell-path', 'cli-install', 'cli-shell-path', 'claude-install', 'claude-path', 'claude-signin',
   'codex-install', 'codex-update', 'codex-signin', 'git-install', 'gh-install', 'github-signin', 'gh-signin', 'pty-install',
+  'antigravity-install', 'antigravity-signin',
 ] as const;
 export type FixId = typeof FIX_IDS[number];
 

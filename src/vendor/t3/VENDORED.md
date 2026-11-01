@@ -5,7 +5,7 @@ Written by `node scripts/sync-t3.mjs <t3-checkout> <commit>`. Never edit a file 
 a behaviour change is a new `patches/*.patch` with a `# reason:` line, re-applied by the script.
 `tests/unit/vendor-t3-drift.test.ts` fails when a file differs from `vendor-manifest.json`.
 
-Files: 249 copied (186869 upstream lines), 18 stubs, 0 patches.
+Files: 303 copied (239939 upstream lines), 19 stubs, 3 patches.
 
 ## Stubs (cut seams, plan §2)
 
@@ -25,12 +25,15 @@ Files: 249 copied (186869 upstream lines), 18 stubs, 0 patches.
 - `apps/server/src/provider/CodexManagedRuntime.ts`: T3's managed Codex runtime (hosted token broker, cloud config, telemetry); dreamcontext never runs Codex in managed mode, so only the runtime shape the adapters type against remains.
 - `apps/server/src/provider/CodexManagedTokenBroker.ts`: T3's hosted ChatGPT token-sharing broker; dreamcontext signs each Codex account in with its own `codex login`, so there is no broker to start.
 - `apps/server/src/provider/Drivers/CodexManagedProvider.ts`: T3's "managed Codex" signs in through T3's hosted ChatGPT token sharing; dreamcontext accounts use their own `codex login`, so a managed instance is refused.
+- `apps/server/src/provider/ProviderAuthService.ts`: T3's server-wide auth service drives sign-in through its own orchestrator and projection store; dreamcontext's bridge calls each instance's auth controller directly, so only the controller type is kept.
 - `apps/server/src/serverSettings.ts`: T3's settings service persists to SQLite and pulls the source-control registry; dreamcontext keeps its settings in agent-ui.json, so the bridge hands T3 a fixed, read-only snapshot.
 - `apps/server/src/usage/CodexUsageHistory.ts`: T3 reads past Codex service tiers from its orchestration SQLite store, which dreamcontext does not have; it answers with no history.
 
 ## Patches
 
-- none
+- `01-antigravity-auth-logout-ts59.patch` (apps/server/src/provider/AntigravityAuth.ts): TypeScript 5.9 cannot yield* a Schema.is-narrowed ProviderSetupError in a ternary (T3 checks with tsc-rs); Effect.fail on the same value, behaviour unchanged.
+- `02-antigravity-usage-fetchwindows-ts59.patch` (apps/server/src/provider/antigravityUsageLimits.ts): TypeScript 5.9 infers the generic error of an Effect.fn generator as any, which leaks into probeUsage; the error is swallowed by orElseSucceed, so unknown is exact.
+- `03-antigravity-runtime-temp-per-pane.patch` (apps/server/src/provider/acp/AntigravitySessionFiles.ts): T3 runs one instance per server and clears the whole runtime temp at create; each dreamcontext pane is its own process on one account's profile, so a second pane deleted the first pane's unpacked runtime. Only run folders a week old go.
 
 ## npm dependencies the closure imports
 
@@ -47,10 +50,13 @@ Files: 249 copied (186869 upstream lines), 18 stubs, 0 patches.
 - `unified`
 - `vite-plus`
 - `yaml`
+- `yauzl`
 
 ## Files
 
 - `apps/server/package.json`
+- `apps/server/scripts/acp-mock-agent.ts`
+- `apps/server/scripts/acpMockCancellationState.ts`
 - `apps/server/src/attachmentPaths.ts`
 - `apps/server/src/attachmentStore.ts`
 - `apps/server/src/auth/ServerSecretStore.ts`
@@ -59,6 +65,8 @@ Files: 249 copied (186869 upstream lines), 18 stubs, 0 patches.
 - `apps/server/src/config.ts`
 - `apps/server/src/imageMime.ts`
 - `apps/server/src/mcpApps/McpAppSnapshot.ts`
+- `apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.test.ts`
+- `apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts`
 - `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts`
 - `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts`
 - `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts`
@@ -77,6 +85,11 @@ Files: 249 copied (186869 upstream lines), 18 stubs, 0 patches.
 - `apps/server/src/orchestration-v2/workflowAgentAnswers.ts`
 - `apps/server/src/orchestration-v2/workflowAgentTranscript.ts`
 - `apps/server/src/orchestration-v2/workflowFileRead.ts`
+- `apps/server/src/provider/AntigravityAuth.test.ts`
+- `apps/server/src/provider/AntigravityAuth.ts`
+- `apps/server/src/provider/AntigravityInstallation.test.ts`
+- `apps/server/src/provider/AntigravityInstallation.ts`
+- `apps/server/src/provider/AntigravityProvider.ts`
 - `apps/server/src/provider/ClaudeModelCatalog.ts`
 - `apps/server/src/provider/ClaudeModelManifest.ts`
 - `apps/server/src/provider/ClaudeProvider.ts`
@@ -90,6 +103,10 @@ Files: 249 copied (186869 upstream lines), 18 stubs, 0 patches.
 - `apps/server/src/provider/CodexToolPresentation.ts`
 - `apps/server/src/provider/CodexTurnTokenUsage.ts`
 - `apps/server/src/provider/DocumentText.ts`
+- `apps/server/src/provider/Drivers/AntigravityDriver.ts`
+- `apps/server/src/provider/Drivers/AntigravitySkills.test.ts`
+- `apps/server/src/provider/Drivers/AntigravitySkills.ts`
+- `apps/server/src/provider/Drivers/AntigravityUsage.ts`
 - `apps/server/src/provider/Drivers/ClaudeDriver.ts`
 - `apps/server/src/provider/Drivers/ClaudeExecutable.ts`
 - `apps/server/src/provider/Drivers/ClaudeHome.ts`
@@ -98,6 +115,8 @@ Files: 249 copied (186869 upstream lines), 18 stubs, 0 patches.
 - `apps/server/src/provider/Drivers/CodexDriver.ts`
 - `apps/server/src/provider/Drivers/CodexHomeLayout.test.ts`
 - `apps/server/src/provider/Drivers/CodexHomeLayout.ts`
+- `apps/server/src/provider/Drivers/antigravityUsageReader.test.ts`
+- `apps/server/src/provider/Drivers/antigravityUsageReader.ts`
 - `apps/server/src/provider/Drivers/claudeUsage.ts`
 - `apps/server/src/provider/Drivers/codexUsage.ts`
 - `apps/server/src/provider/Errors.ts`
@@ -106,6 +125,20 @@ Files: 249 copied (186869 upstream lines), 18 stubs, 0 patches.
 - `apps/server/src/provider/ProviderInstanceRegistry.ts`
 - `apps/server/src/provider/ProviderInstanceRegistryMutator.ts`
 - `apps/server/src/provider/ProviderRegistry.ts`
+- `apps/server/src/provider/acp/AcpJsonRpcConnection.test.ts`
+- `apps/server/src/provider/acp/AntigravityAcpSupport.test.ts`
+- `apps/server/src/provider/acp/AntigravityAcpSupport.ts`
+- `apps/server/src/provider/acp/AntigravityClientFiles.ts`
+- `apps/server/src/provider/acp/AntigravityProtocol.test.ts`
+- `apps/server/src/provider/acp/AntigravityProtocol.ts`
+- `apps/server/src/provider/acp/AntigravitySessionFiles.ts`
+- `apps/server/src/provider/antigravityAuthSupport.test.ts`
+- `apps/server/src/provider/antigravityAuthSupport.ts`
+- `apps/server/src/provider/antigravityCallback.test.ts`
+- `apps/server/src/provider/antigravityCallback.ts`
+- `apps/server/src/provider/antigravityRelease.ts`
+- `apps/server/src/provider/antigravityUsageLimits.test.ts`
+- `apps/server/src/provider/antigravityUsageLimits.ts`
 - `apps/server/src/provider/builtInProviderCatalog.ts`
 - `apps/server/src/provider/claudeResetCredits.ts`
 - `apps/server/src/provider/claudeUsageLimits.ts`
@@ -118,8 +151,10 @@ Files: 249 copied (186869 upstream lines), 18 stubs, 0 patches.
 - `apps/server/src/provider/resetCreditCoordinator.ts`
 - `apps/server/src/provider/unavailableProviderSnapshot.ts`
 - `apps/server/src/resourceTelemetry/ResourceAttribution.ts`
+- `apps/server/src/textGeneration/AntigravityTextGeneration.ts`
 - `apps/server/src/textGeneration/ClaudeTextGeneration.ts`
 - `apps/server/src/textGeneration/CodexTextGeneration.ts`
+- `apps/server/src/zipArchive.ts`
 - `packages/contracts/src/acpRegistry.ts`
 - `packages/contracts/src/agentSessions.ts`
 - `packages/contracts/src/applicationEvent.ts`
@@ -193,6 +228,18 @@ Files: 249 copied (186869 upstream lines), 18 stubs, 0 patches.
 - `packages/contracts/src/vcs.ts`
 - `packages/contracts/src/worktreeMcp.ts`
 - `packages/contracts/src/worktreeSetup.ts`
+- `packages/effect-acp/src/_generated/meta.gen.ts`
+- `packages/effect-acp/src/_generated/schema-v1.gen.ts`
+- `packages/effect-acp/src/_generated/schema.gen.ts`
+- `packages/effect-acp/src/_internal/shared.ts`
+- `packages/effect-acp/src/_internal/stdio.ts`
+- `packages/effect-acp/src/agent.ts`
+- `packages/effect-acp/src/client.ts`
+- `packages/effect-acp/src/compat.ts`
+- `packages/effect-acp/src/errors.ts`
+- `packages/effect-acp/src/protocol.ts`
+- `packages/effect-acp/src/rpc.ts`
+- `packages/effect-acp/src/schema.ts`
 - `packages/effect-codex-app-server/scripts/generate.ts`
 - `packages/effect-codex-app-server/src/_generated/meta.gen.ts`
 - `packages/effect-codex-app-server/src/_generated/namespaces.gen.ts`
@@ -205,6 +252,15 @@ Files: 249 copied (186869 upstream lines), 18 stubs, 0 patches.
 - `packages/effect-codex-app-server/src/replay.ts`
 - `packages/effect-codex-app-server/src/rpc.ts`
 - `packages/effect-codex-app-server/src/schema.ts`
+- `packages/provider-acp/src/server/AcpSessionRuntime.ts`
+- `packages/provider-acp/src/server/adapter.ts`
+- `packages/provider-acp/src/server/clientPolicy.ts`
+- `packages/provider-acp/src/server/clientTerminals.ts`
+- `packages/provider-acp/src/server/mcpOverAcpBridge.ts`
+- `packages/provider-acp/src/server/nativeLogging.ts`
+- `packages/provider-acp/src/server/runtimeModel.ts`
+- `packages/provider-acp/src/server/sessionConfig.ts`
+- `packages/provider-acp/src/server/stderr.ts`
 - `packages/provider-core/src/client.ts`
 - `packages/provider-core/src/modelShortName.ts`
 - `packages/provider-core/src/server/IdAllocator.ts`
@@ -275,8 +331,10 @@ Files: 249 copied (186869 upstream lines), 18 stubs, 0 patches.
 - `packages/shared/src/logging.ts`
 - `packages/shared/src/markdownMath.ts`
 - `packages/shared/src/mcpApp.ts`
+- `packages/shared/src/mcpResponsePayloads.ts`
 - `packages/shared/src/mediaPreview.ts`
 - `packages/shared/src/model.ts`
+- `packages/shared/src/nodeRuntime.ts`
 - `packages/shared/src/nodeSqliteClient.ts`
 - `packages/shared/src/observability.ts`
 - `packages/shared/src/orchestrationV2ThreadError.ts`

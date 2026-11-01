@@ -4,7 +4,7 @@
  */
 import { canonicalModelId, currentFamilyRow, modelFamily, type ModelConfig } from '../../../../lib/agentComposer';
 
-export type PickerTool = 'claude' | 'codex';
+export type PickerTool = 'claude' | 'codex' | 'antigravity';
 
 export interface PickerModel {
   tool: PickerTool;
@@ -52,7 +52,11 @@ export function blockerOf(r: Pick<ToolReadiness, 'installed' | 'signedIn' | 'nod
 }
 
 /** The fix that clears a Codex blocker, or null. A bad Node or a dead install: the same install. */
-export function blockerFix(b: PickerToolState['blocker']): 'codex-install' | 'codex-update' | 'codex-signin' | null {
+export function blockerFix(b: PickerToolState['blocker'], tool: PickerTool = 'codex'): 'codex-install' | 'codex-update' | 'codex-signin' | 'antigravity-install' | 'antigravity-signin' | null {
+  if (tool === 'antigravity') {
+    // T3 keeps Antigravity's runtime current itself. A Node too old is fixed by the Codex row's update.
+    return b === 'not-installed' ? 'antigravity-install' : b === 'signed-out' ? 'antigravity-signin' : null;
+  }
   if (b === 'not-installed') return 'codex-install';
   if (b === 'wont-start' || b === 'needs-node' || b === 'outdated') return 'codex-update';
   return b === 'signed-out' ? 'codex-signin' : null;
@@ -113,11 +117,12 @@ export function effortsFor(t: PickerToolState, model: string): string[] {
 }
 
 export function codexState(r: ToolReadiness): PickerToolState {
-  const { current, legacy } = splitByVersion(r.models, 'codex');
+  const tool = r.tool === 'antigravity' ? 'antigravity' : 'codex';
+  const { current, legacy } = splitByVersion(r.models, tool);
   // A fresh sign-in has no model list until Codex first ran: its own default keeps the chat reachable.
-  if (r.ready && r.models.length === 0) current.push({ tool: 'codex', id: r.defaultModel ?? '', label: 'Codex default model' });
+  if (r.ready && r.models.length === 0) current.push({ tool, id: r.defaultModel ?? '', label: `${r.label || 'Codex'} default model` });
   return {
-    tool: 'codex',
+    tool,
     label: r.label || 'Codex',
     ready: r.ready,
     blocker: r.ready ? '' : blockerOf(r) || 'signed-out',

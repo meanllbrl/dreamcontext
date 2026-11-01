@@ -21,7 +21,7 @@ import {
 import { CodexFix } from './CodexFix';
 import './model-picker.css';
 
-export type SettingsTarget = 'models' | 'accounts' | 'accounts-codex';
+export type SettingsTarget = 'models' | 'accounts' | 'accounts-codex' | 'accounts-antigravity';
 
 export interface ModelPickerProps {
   /** Rail order: Claude, then Codex (a tool the server does not offer is absent). */
@@ -54,6 +54,13 @@ function ToolMark({ tool }: { tool: PickerTool }) {
     return (
       <svg className="mp-mark mp-mark--claude" viewBox="0 0 24 24" aria-hidden>
         {[0, 30, 60, 90, 120, 150].map((a) => <line key={a} x1="12" y1="2.5" x2="12" y2="21.5" transform={`rotate(${a} 12 12)`} />)}
+      </svg>
+    );
+  }
+  if (tool === 'antigravity') {
+    return (
+      <svg className="mp-mark" viewBox="0 0 24 24" aria-hidden>
+        <path d="M12 3.5 21 20.5h-4.6L12 12l-4.4 8.5H3z" />
       </svg>
     );
   }
@@ -185,8 +192,8 @@ export function ModelPicker(p: ModelPickerProps) {
             {!searching && tool && !tool.ready && (
               <p className="mp-note mp-note--warn" data-testid="model-picker-signin">
                 {blockerLine(tool)}
-                {tool.tool === 'codex' && blockerFix(tool.blocker) && <CodexFix fix={blockerFix(tool.blocker)!} />}
-                {tool.tool !== 'codex' && tool.blocker === 'signed-out' && (
+                {tool.tool !== 'claude' && blockerFix(tool.blocker, tool.tool) && <CodexFix fix={blockerFix(tool.blocker, tool.tool)!} />}
+                {tool.tool === 'claude' && tool.blocker === 'signed-out' && (
                   <> · <button type="button" className="mp-link" onClick={() => { p.onOpenSettings('accounts'); p.close(); }}>Sign in</button></>
                 )}
               </p>
@@ -247,7 +254,7 @@ export function ModelPicker(p: ModelPickerProps) {
                     <span>Auto-switch near a limit</span>
                   </label>
                 )}
-                <button type="button" className="mp-link mp-link--quiet" onClick={() => { p.onOpenSettings(p.currentTool === 'codex' ? 'accounts-codex' : 'accounts'); p.close(); }}>Add ›</button>
+                <button type="button" className="mp-link mp-link--quiet" onClick={() => { p.onOpenSettings(p.currentTool === 'codex' ? 'accounts-codex' : p.currentTool === 'antigravity' ? 'accounts-antigravity' : 'accounts'); p.close(); }}>Add ›</button>
               </div>
             </div>
           )}

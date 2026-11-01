@@ -4,14 +4,16 @@ import { openExternalUrl } from '../../../../lib/desktop';
 import { fetchRunStatus, postFix } from '../../../../hooks/useOnboarding';
 import type { FixId } from '../../../../lib/onboardingTypes';
 
-type CodexFixId = Extract<FixId, 'codex-install' | 'codex-update' | 'codex-signin'>;
+type CodexFixId = Extract<FixId, 'codex-install' | 'codex-update' | 'codex-signin' | 'antigravity-install' | 'antigravity-signin'>;
 
 const WORKING: Record<CodexFixId, string> = {
   'codex-install': 'Installing Codex…',
   'codex-update': 'Updating Codex…',
   'codex-signin': 'Finish signing in in your browser.',
+  'antigravity-install': 'Installing Antigravity…',
+  'antigravity-signin': 'Finish signing in in your browser.',
 };
-const LABEL: Record<CodexFixId, string> = { 'codex-install': 'Install', 'codex-update': 'Update', 'codex-signin': 'Sign in' };
+const LABEL: Record<CodexFixId, string> = { 'codex-install': 'Install', 'codex-update': 'Update', 'codex-signin': 'Sign in', 'antigravity-install': 'Install', 'antigravity-signin': 'Sign in' };
 const READ_FAILURES_ALLOWED = 3;
 
 interface FixState { running: boolean; error: string; signInPage: string }
@@ -53,7 +55,9 @@ async function run(fix: CodexFixId, qc: QueryClient): Promise<void> {
       }
       misses = 0;
       if (s.state === 'running') {
-        const page = /https:\/\/auth\.openai\.com\/\S+/.exec(s.output)?.[0];
+        const page = /https:\/\/(?:auth\.openai\.com|accounts\.google\.com)\/\S+/.exec(s.output)?.[0];
+        // Codex opens its own browser; T3 holds Antigravity's back and hands the page over.
+        if (page && fix === 'antigravity-signin' && stateOf(fix).signInPage !== page) void openExternalUrl(page);
         if (page) put(fix, { signInPage: page });
         continue;
       }

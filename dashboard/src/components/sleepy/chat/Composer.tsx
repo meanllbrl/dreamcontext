@@ -29,7 +29,7 @@ import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { enterSends } from '../../../lib/enterKey';
 import { PHONE_PHOTOS_PER_MESSAGE, jpegName, photoUploadSignal, preparePhonePhotoQueued, withPhotoUploadSlot } from '../../../lib/phonePhoto';
 import { PHONE_FILE_UPLOAD_TIMEOUT_MS, splitPhonePicks } from '../../../lib/phoneAttach';
-import { useAgentSessionStats, useClaudeAccounts, useCodexAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
+import { googleAccountLabel, useAgentSessionStats, useClaudeAccounts, useToolAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
 import {
   effortLabel, effortsForModel, modelLabelFor, quotePath, isSignInCommand, isMcpCommand, contextLimitFor, usageLimits,
   fmtTokens, CONTEXT_TIGHT_PCT, contextBands,
@@ -1488,9 +1488,9 @@ export function Composer({
   // rolled over — so an absent cap draws NO bar rather than an empty one.
   // A Codex pane spends a CODEX account (Track T W2): its chip lists Codex accounts and its bars
   // are that account's 5-hour and weekly windows. Claude's two reads are off for it.
-  const isCodex = session.tool === 'codex';
+  const isCodex = session.tool === 'codex' || session.tool === 'antigravity';
   const claudeUsageRes = useUsageLimits(connected && !isCodex, activeAccountId).data ?? null;
-  const codexRes = useCodexAccounts(connected && isCodex).data ?? null;
+  const codexRes = useToolAccounts(session.tool === 'antigravity' ? 'antigravity' : 'codex', connected && isCodex).data ?? null;
   const usageRes = useMemo(() => {
     if (!isCodex) return claudeUsageRes;
     // Only THIS pane's account: another account's bars would read as this chat's room.
@@ -1512,8 +1512,8 @@ export function Composer({
     () => (isCodex
       ? (codexRes?.accounts ?? []).map((a) => ({
         id: a.id,
-        email: a.email || (a.isPrimary ? '~/.codex' : a.id),
-        organizationName: a.planType ? `ChatGPT ${a.planType.charAt(0).toUpperCase()}${a.planType.slice(1)}` : 'ChatGPT',
+        email: a.email || (session.tool === 'antigravity' ? googleAccountLabel(a, t) : a.isPrimary ? '~/.codex' : a.id),
+        organizationName: session.tool === 'antigravity' ? 'Google' : a.planType ? `ChatGPT ${a.planType.charAt(0).toUpperCase()}${a.planType.slice(1)}` : 'ChatGPT',
         preferred: a.preferred,
         state: a.state,
         sessionPercent: a.limits.find((l) => l.key === 'session')?.percent ?? null,
@@ -1526,7 +1526,7 @@ export function Composer({
         state: a.state,
         sessionPercent: a.limits.find((l) => l.key === 'session')?.percent ?? null,
       }))),
-    [isCodex, codexRes, accountsRes],
+    [isCodex, session.tool, codexRes, accountsRes, t],
   );
   // Re-derived when a reading changes or every 30 s (the staleness check reads the clock),
   // not on every keystroke — the open usage panel is memoized on these.
@@ -2244,7 +2244,7 @@ export function Composer({
     return t('shell.composer.newChats').replace('{value}', value);
   };
   /** Who this box talks to: the agent, else the tool this chat runs on. */
-  const speaker = agent ? agentName : session.tool === 'codex' ? 'Codex' : 'Claude';
+  const speaker = agent ? agentName : session.tool === 'codex' ? 'Codex' : session.tool === 'antigravity' ? 'Antigravity' : 'Claude';
   const stableAccountChange = useStableHandler((id: string) => { onAccountChange?.(id); menu.close(); });
   const stableHandoffChange = useStableHandler((enabled: boolean) => onContextHandoffChange?.(enabled));
   const stablePick = useStableHandler((kind: 'files' | 'folders', close: () => void) => { void pickPaths(kind, close); });
@@ -2344,7 +2344,7 @@ export function Composer({
               onAccountChange={onAccountChange ? stableAccountChange : undefined}
               newChatsLine={newChatsLine()}
               // A Codex pane still on Claude's fallback list has no Codex model to save.
-              onSetDefault={session.tool && !modelConfig.isToolList ? undefined : stableSaveDefault}
+              onSetDefault={session.tool === 'antigravity' || (session.tool && !modelConfig.isToolList) ? undefined : stableSaveDefault}
               savedDefault={savedDefault}
               close={menu.close}
             />
@@ -2355,7 +2355,7 @@ export function Composer({
             onModelChange={stableModelChange}
             onEffortChange={stableEffortChange}
             // A Codex pane still on Claude's fallback list has no Codex model to save.
-            onSetDefault={session.tool && !modelConfig.isToolList ? undefined : stableSaveDefault}
+            onSetDefault={session.tool === 'antigravity' || (session.tool && !modelConfig.isToolList) ? undefined : stableSaveDefault}
             savedDefault={savedDefault}
             close={menu.close}
             head={modelMenu?.head}

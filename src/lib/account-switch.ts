@@ -31,7 +31,7 @@ export {
 } from './claude-account-switch.js';
 
 /** A tool whose accounts can be switched. Mirrors `t3-bridge/registry.ts` `ToolId`. */
-export type SwitchTool = 'claude' | 'codex';
+export type SwitchTool = 'claude' | 'codex' | 'antigravity';
 
 /** Where a chat should run next. Today `tool` is always the chat's own tool (§4e). */
 export interface SwitchTarget {

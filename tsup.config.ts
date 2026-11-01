@@ -87,6 +87,8 @@ export default defineConfig({
     /^effect(\/|$)/,
     /^@effect\//,
     'diff',
+    // T3's Antigravity install unpacks a release zip: pure JS, and the .app has no node_modules.
+    'yauzl',
     'yaml',
     'unified',
     /^remark-/,

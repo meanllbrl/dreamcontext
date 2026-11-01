@@ -1,3 +1,4 @@
+import type { ChatTool } from '../../../lib/chatToolBinding';
 import type { PickerToolState } from './model-picker/pickerModel';
 import { requestOpenStats } from '../../../lib/openStats';
 import { useState, type ReactNode } from 'react';
@@ -320,9 +321,9 @@ function ModelRow({
 /** What the r29 picker draws for an ordinary chat (Track T W4): every tool's models, and how to
  *  open a chat on another tool. Absent = the plain menu below (AI Team, Super Agent). */
 export interface ToolPick {
-  current: '' | 'codex';
+  current: ChatTool;
   tools: PickerToolState[];
-  onPick: (tool: '' | 'codex', model: string) => void;
+  onPick: (tool: ChatTool, model: string) => void;
   /** This chat cannot change tool (the Super Agent, an agent's chat): the other tools stay on
    *  view, unpickable, with this line and a way to a new chat there. */
   lock?: { note: string; openLabel: string };

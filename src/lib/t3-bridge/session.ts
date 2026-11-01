@@ -15,6 +15,8 @@ import {
   MessageId,
   NodeId,
   ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   ProviderSessionId,
   RunAttemptId,
   RunId,
@@ -45,7 +47,10 @@ import * as Schema from 'effect/Schema';
 import * as Scope from 'effect/Scope';
 import * as Stream from 'effect/Stream';
 import * as ChildProcessSpawner from 'effect/process/ChildProcessSpawner';
-import { claudeRuntimePolicy, codexRuntimePolicy, type CodexRuntimePolicy } from './policy.js';
+import { bypassNeedsOwner, claudeRuntimePolicy, codexRuntimePolicy, instanceRuntimePolicy, type CodexRuntimePolicy } from './policy.js';
+import { ANTIGRAVITY_DEFAULT_MODEL } from '@t3tools/contracts';
+import { antigravityInstanceId } from '../antigravity-accounts.js';
+import { isInstanceTool, type InstanceTool } from '../instance-accounts.js';
 import { ToWire, type WireFrame } from './to-wire.js';
 import type { ClaudeKit } from './claude-kit.js';
 import type { ClaudeAgentSdkQueryRunner } from '@t3tools/server/orchestration-v2/Adapters/ClaudeAdapterV2';
@@ -54,7 +59,7 @@ export type ClientFactory = CodexAdapterV2.CodexAppServerClientFactoryShape;
 
 export interface BridgeSessionOptions {
   /** `claude` = T3's Claude driver, only behind the Claude engine setting (plan r5 §5). */
-  readonly tool: 'codex' | 'claude';
+  readonly tool: 'codex' | 'claude' | InstanceTool;
   readonly cwd: string;
   readonly model: string;
   readonly effort?: string;
@@ -70,6 +75,8 @@ export interface BridgeSessionOptions {
   /** A non-#0 Codex account (plan r5 §4b): `homePath ~/.codex` + its private `shadowHomePath`.
    *  Absent = account #0, `~/.codex` itself. */
   readonly codexHome?: { readonly homePath: string; readonly shadowHomePath: string };
+  /** The account of a tool whose accounts are T3 instances. Absent = #0. */
+  readonly accountId?: string;
   /** A live limit update from the account (T3 `onUsageLimits`): windows as T3 builds them. */
   readonly onUsageLimits?: (update: { readonly windows: ReadonlyArray<unknown>; readonly checkedAt: string }) => void;
   /** The environment the Codex process inherits (already scrubbed by the caller). */
@@ -94,6 +101,9 @@ export interface BridgeSessionOptions {
 
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+
+const TOOL_LABEL: Record<BridgeSessionOptions['tool'], string> = { codex: 'Codex', claude: 'Claude', antigravity: 'Antigravity' };
+export const toolLabel = (tool: BridgeSessionOptions['tool']): string => TOOL_LABEL[tool];
 
 function hasToolUse(frame: WireFrame): boolean {
   if (frame.type !== 'assistant') return false;
@@ -175,7 +185,9 @@ const codexAccountSettings = (settings: typeof CodexSettings.Type) => Effect.gen
   return { ...settings, homePath: layout.effectiveHomePath ?? '' } as typeof CodexSettings.Type;
 });
 
-function bridgeLayer(clientFactory: ClientFactory | undefined, kit: ClaudeKit | undefined) {
+type InstanceKit = typeof import('./instances.js');
+
+function bridgeLayer(clientFactory: ClientFactory | undefined, kit: ClaudeKit | undefined, instance?: { kit: InstanceKit; config: ServerConfig.ServerConfig['Service'] }) {
   const base = Layer.mergeAll(
     NodeServices.layer,
     IdAllocator.layer,
@@ -185,6 +197,7 @@ function bridgeLayer(clientFactory: ClientFactory | undefined, kit: ClaudeKit | 
     ? Layer.succeed(CodexAdapterV2.CodexAppServerClientFactory, CodexAdapterV2.CodexAppServerClientFactory.of(clientFactory))
     : CodexAdapterV2.layerAppServerClientFactory.pipe(Layer.provide(base));
   const layer = Layer.mergeAll(base, McpProviderSessions.layer, factory);
+  if (instance) return Layer.mergeAll(layer, instance.kit.instanceLayer(instance.config).pipe(Layer.provide(base)));
   return kit ? Layer.merge(layer, kit.layerRunner.pipe(Layer.provide(Layer.merge(base, kit.layerPorts)))) : layer;
 }
 
@@ -216,6 +229,8 @@ export class BridgeSession {
    *  arrives before Codex reported the turn running waits for it instead of being lost. */
   private turnKnown: { promise: Promise<void>; resolve: () => void } | null = null;
   private closed = false;
+  /** Requests answered for Bypass: their cancel frames are nobody's to read. */
+  private readonly bypassAnswered = new Set<string>();
   /** The native thread already has a turn on disk. The run counter is per process, so it cannot
    *  say this for a reopened pane or a fresh thread; T3's Claude driver picks resume by it. */
   private nativeHasTurns = false;
@@ -241,14 +256,18 @@ export class BridgeSession {
   }
 
   private get instanceId() {
+    if (isInstanceTool(this.opts.tool)) return ProviderInstanceId.make(antigravityInstanceId(this.opts.accountId ?? ''));
     return this.opts.claudeKit?.instanceId ?? CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID;
   }
 
   private get driver() {
+    if (isInstanceTool(this.opts.tool)) return ProviderDriverKind.make(this.opts.tool);
     return this.opts.claudeKit?.driver ?? CodexAdapterV2.CODEX_DRIVER_KIND;
   }
 
   private modelSelection(): ModelSelection {
+    // These tools name their reasoning in the model id; an empty model is the tool's own default.
+    if (isInstanceTool(this.opts.tool)) return { instanceId: this.instanceId, model: this.model || ANTIGRAVITY_DEFAULT_MODEL } as ModelSelection;
     return {
       instanceId: this.instanceId,
       model: this.model,
@@ -259,6 +278,7 @@ export class BridgeSession {
   policy(): CodexRuntimePolicy {
     if (this.opts.runtimePolicyOverride) return this.opts.runtimePolicyOverride;
     if (this.opts.tool === 'claude') return claudeRuntimePolicy({ mode: this.mode, cwd: this.opts.cwd });
+    if (isInstanceTool(this.opts.tool)) return instanceRuntimePolicy({ mode: this.mode, cwd: this.opts.cwd });
     return codexRuntimePolicy({ mode: this.mode, cwd: this.opts.cwd, extraRoots: this.opts.extraRoots, privateTmp: this.opts.privateTmp ?? null });
   }
 
@@ -273,10 +293,12 @@ export class BridgeSession {
 
   private async start(): Promise<void> {
     const { opts } = this;
-    this.runtime = ManagedRuntime.make(bridgeLayer(opts.clientFactory, opts.claudeKit)) as unknown as Runtime;
+    const serverConfig = bridgeServerConfig(opts.stateRoot, opts.cwd);
+    // Loaded only for these tools: their driver reaches `node:sqlite`, which a Codex pane never needs.
+    const instanceKit = isInstanceTool(opts.tool) ? await import('./instances.js') : null;
+    this.runtime = ManagedRuntime.make(bridgeLayer(opts.clientFactory, opts.claudeKit, instanceKit ? { kit: instanceKit, config: serverConfig } : undefined)) as unknown as Runtime;
     const scope = await this.runtime.runPromise(Scope.make());
     this.scope = scope;
-    const serverConfig = bridgeServerConfig(opts.stateRoot, opts.cwd);
     const settingsInput = {
       enabled: true,
       ...(opts.binaryPath ? { binaryPath: opts.binaryPath } : {}),
@@ -291,7 +313,11 @@ export class BridgeSession {
     const providerSessionId = ProviderSessionId.make(`dc-${opts.paneId}`);
     const open = Effect.gen(function* () {
       const kit = opts.tool === 'claude' ? opts.claudeKit : undefined;
-      const adapter = kit ? yield* kit.make({
+      const adapter = instanceKit ? (yield* instanceKit.createInstance({
+        tool: opts.tool as InstanceTool,
+        accountId: opts.accountId ?? '',
+        ...(opts.binaryPath ? { binaryPath: opts.binaryPath } : {}),
+      })).orchestrationAdapter : kit ? yield* kit.make({
         instanceId: kit.instanceId,
         settings: decodeClaudeSettings(settingsInput),
         environment: opts.env,
@@ -315,7 +341,7 @@ export class BridgeSession {
         serverConfig,
       });
       return yield* adapter.openSession({ threadId, providerSessionId, modelSelection, runtimePolicy });
-    }).pipe(Effect.provideService(Scope.Scope, scope));
+    }).pipe(Effect.provideService(Scope.Scope, scope)) as Effect.Effect<ProviderAdapter.ProviderAdapterV2SessionRuntime, unknown, never>;
     this.session = await this.runtime.runPromise(open);
     const session = this.session;
     // Every adapter event, translated and printed, for the life of the session.
@@ -323,7 +349,7 @@ export class BridgeSession {
       Stream.runForEach(session.events, (event) => Effect.sync(() => this.onEvent(event))).pipe(
         Effect.catchCause((cause) => Effect.sync(() => this.opts.log?.(`t3 event stream ended: ${String(cause).slice(0, 300)}`))),
         // Ended while open = Codex is gone: close the open turn loudly, then end the bridge.
-        Effect.ensuring(Effect.sync(() => { if (!this.closed) this.fatal(`${this.opts.tool === 'claude' ? 'Claude' : 'Codex'} stopped running.`); })),
+        Effect.ensuring(Effect.sync(() => { if (!this.closed) this.fatal(`${toolLabel(this.opts.tool)} stopped running.`); })),
         Effect.provideService(Scope.Scope, scope),
       ),
     );
@@ -390,6 +416,7 @@ export class BridgeSession {
       this.providerThread = event.providerThread;
     }
     for (const frame of this.wire.translate(event)) {
+      if (this.answeredForBypass(frame)) continue;
       if (!this.hidden) { this.opts.emit(frame); continue; }
       if (frame.type === 'assistant') this.hidden.text += hiddenText(frame);
       // It was told to run no tools: an approval card, or any tool at all, ends it, out of sight.
@@ -404,6 +431,23 @@ export class BridgeSession {
       this.turnKnown?.resolve();
       this.endHidden();
     }
+  }
+
+  /**
+   * Bypass on a tool whose agent always asks: the bridge says yes, so the mode is read at every
+   * request and turning Bypass off holds from the next one. The gated writes still reach the owner.
+   */
+  private answeredForBypass(frame: WireFrame): boolean {
+    if (!isInstanceTool(this.opts.tool)) return false;
+    const id = typeof frame.request_id === 'string' ? frame.request_id : '';
+    if (frame.type === 'control_cancel_request') return this.bypassAnswered.delete(id);
+    if (frame.type !== 'control_request' || this.mode !== 'bypassPermissions' || !id) return false;
+    const req = frame.request as { subtype?: unknown; tool_name?: unknown; input?: unknown } | undefined;
+    if (req?.subtype !== 'can_use_tool' || req.tool_name === 'AskUserQuestion') return false;
+    if (bypassNeedsOwner(String(req.tool_name), req.input, this.opts.cwd)) return false;
+    this.bypassAnswered.add(id);
+    void this.answer(id, { behavior: 'allow' }).catch((err) => this.opts.log?.(`bypass answer failed: ${String(err).slice(0, 200)}`));
+    return true;
   }
 
   /** The hidden turn is really over: frames from here on are the owner's. */
@@ -460,14 +504,14 @@ export class BridgeSession {
     if (this.hidden) {
       for (const frame of this.wire.beginTurn()) this.opts.emit(frame);
       this.opts.emit({
-        type: 'result', subtype: 'error_during_execution', is_error: true, result: `${this.opts.tool === 'claude' ? 'Claude' : 'Codex'} is still finishing. Send that again in a moment.`,
+        type: 'result', subtype: 'error_during_execution', is_error: true, result: `${toolLabel(this.opts.tool)} is still finishing. Send that again in a moment.`,
         num_turns: 0, total_cost_usd: 0, usage: {}, session_id: this.wire.sessionId, dc_tool: this.opts.tool,
       });
       return;
     }
-    // T3's Claude driver ignores `appContext`: there it rides after the owner's words (a leading
-    // `<tag>` would hide the whole message in a reopened pane).
-    const context = this.opts.tool === 'claude' ? appContext.map((c) => `\n\n<${c.key}>\n${c.text}\n</${c.key}>`).join('') : '';
+    // Only Codex's adapter reads `appContext`. Everywhere else it rides after the owner's words (a
+    // leading `<tag>` would hide the whole message in a reopened pane).
+    const context = this.opts.tool !== 'codex' ? appContext.map((c) => `\n\n<${c.key}>\n${c.text}\n</${c.key}>`).join('') : '';
     const message = this.turnMessage(text + context);
     // A message right after the turn started steers it once Codex reported it running.
     await this.awaitTurnId();
@@ -486,7 +530,7 @@ export class BridgeSession {
     if (failure) {
       this.opts.emit({
         type: 'result', subtype: 'error_during_execution', is_error: true,
-        result: `Codex could not start the turn: ${failure}`,
+        result: `${toolLabel(this.opts.tool)} could not start the turn: ${failure}`,
         num_turns: 0, total_cost_usd: 0, usage: {}, session_id: this.wire.sessionId, dc_tool: this.opts.tool,
       });
     }
@@ -552,7 +596,7 @@ export class BridgeSession {
     const hidden = { text: '', finished, finish, stopping: false };
     this.hidden = hidden;
     const timer = setTimeout(() => { void this.cancelHidden(); }, ms);
-    const deadline = setTimeout(() => { if (this.hidden === hidden) this.fatal(`${this.opts.tool === 'claude' ? 'Claude' : 'Codex'} stopped responding.`); }, ms + 20_000);
+    const deadline = setTimeout(() => { if (this.hidden === hidden) this.fatal(`${toolLabel(this.opts.tool)} stopped responding.`); }, ms + 20_000);
     try {
       const failure = await this.startRun(this.turnMessage(text), []);
       if (failure) this.endHidden();

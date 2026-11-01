@@ -1,0 +1,15 @@
+# reason: TypeScript 5.9 cannot yield* a Schema.is-narrowed ProviderSetupError in a ternary (T3 checks with tsc-rs); Effect.fail on the same value, behaviour unchanged.
+--- a/apps/server/src/provider/AntigravityAuth.ts
++++ b/apps/server/src/provider/AntigravityAuth.ts
+@@ -533,9 +533,8 @@
+           );
+           if (Exit.isFailure(result)) {
+             const failure = Cause.findErrorOption(result.cause);
+-            return yield* Option.isSome(failure) && isSetupError(failure.value)
+-              ? failure.value
+-              : setupError("logout", "Antigravity sign-out failed. Try again.");
++            if (Option.isSome(failure) && isSetupError(failure.value)) return yield* Effect.fail(failure.value);
++            return yield* setupError("logout", "Antigravity sign-out failed. Try again.");
+           }
+           return yield* currentState("");
+         }),
