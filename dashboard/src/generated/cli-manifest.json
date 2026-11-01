@@ -3847,11 +3847,12 @@
     },
     {
       "path": "t3-run",
-      "desc": "Run one headless turn on Codex; prints one JSON document (used by automations)",
+      "desc": "Run one headless turn on Codex or Antigravity; prints one JSON document (used by automations, sleep, AI Team)",
       "args": [],
       "valueFlags": [
         "--surface",
         "--prompt",
+        "--tool",
         "--model",
         "--effort",
         "--account",

@@ -2798,12 +2798,20 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       return;
     }
     if (!admitTab()) return;
-    const s = spawn(bypass, undefined, false, claudeKind, SLEEP_AGENT_PROMPT, '', serverCurrent);
+    // Sleep runs on the tool of the chat the owner is in (TABLO row 43): a Codex or Antigravity
+    // chat's Sleep tab is a chat on that tool, which reads the prompt in its own words.
+    const focusedMeta = sessionList.find((m) => m.id === focusedSessionId);
+    const sleepTool = focusedMeta?.claudeId ? chatToolFor(focusedMeta.claudeId) : '';
+    const sleepId = sleepTool ? newClaudeId() : undefined;
+    if (sleepId) bindChatTool(sleepId, sleepTool);
+    const s = sleepTool
+      ? spawn(bypass, sleepId, false, 'chat', SLEEP_AGENT_PROMPT, '', true, '', false, '', false, DEFAULT_CHAT_MODE, '')
+      : spawn(bypass, undefined, false, claudeKind, SLEEP_AGENT_PROMPT, '', serverCurrent);
     setSessionList((prev) => [...prev, { id: s.id, title: SLEEP_AGENT_TITLE, kind: s.kind, bypass: s.bypass, claudeId: s.claudeId }]);
     const pid = nextPaneId();
     setPanes((prev) => [...prev, { id: pid, tabs: [s.id], active: s.id }]);
     setActivePaneId(pid);
-  }, [caps, agentSettings.enabled, sessionList, spawn, bypass, focusSession, serverCurrent, claudeKind, claudeReady, resubmitPrompt]);
+  }, [caps, agentSettings.enabled, sessionList, spawn, bypass, focusSession, serverCurrent, claudeKind, claudeReady, resubmitPrompt, focusedSessionId]);
 
   // This project's tracker only. A consolidation rewrites one brain; on `window` a single
   // click would start one in every project the chip strip is holding.

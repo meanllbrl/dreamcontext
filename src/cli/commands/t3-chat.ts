@@ -61,26 +61,32 @@ export function registerT3ChatCommand(program: Command): void {
       process.exit(await bridge.runT3Chat({ ...o, tool: o.tool, cwd: o.cwd ?? process.cwd() }));
     });
 
-  // One unattended turn on Codex (plan r5 §6, W4): the runner reads its stdout as `claude -p`'s.
+  // One unattended turn on Codex or Antigravity (plan r5 §6, W4): the runner reads its stdout as `claude -p`'s.
   program
     .command('t3-run', { hidden: true })
-    .description('Run one headless turn on Codex; prints one JSON document (used by automations)')
+    .description('Run one headless turn on Codex or Antigravity; prints one JSON document (used by automations, sleep, AI Team)')
     .requiredOption('--surface <surface>', 'which headless surface this is (headless-envelope.ts)')
     .requiredOption('--prompt <text>', 'the turn')
+    .option('--tool <tool>', 'codex (default) or antigravity', 'codex')
     .option('--model <model>', 'model id')
     .option('--effort <effort>', 'reasoning effort')
     .option('--account <id>', 'a Codex account other than #0')
     .option('--resume <threadId>', 'a native thread to continue')
     .option('--extra-root <path...>', 'another folder the sandboxed run may write (a linked repo)')
-    .action(async (o: { surface: string; prompt: string; model?: string; effort?: string; account?: string; resume?: string; extraRoot?: string[] }) => {
+    .action(async (o: { surface: string; prompt: string; tool: string; model?: string; effort?: string; account?: string; resume?: string; extraRoot?: string[] }) => {
+      if (o.tool !== 'codex' && o.tool !== 'antigravity') {
+        process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `t3-run: unknown tool ${String(o.tool).slice(0, 40)}`, num_turns: 0, total_cost_usd: 0 }) + '\n');
+        process.exit(2);
+      }
+      const label = o.tool === 'antigravity' ? 'Antigravity' : 'Codex';
       let bridge: Awaited<ReturnType<typeof loadBridge>>;
       try {
-        bridge = await loadBridge('codex');
+        bridge = await loadBridge(o.tool);
       } catch (err) {
-        process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `Codex could not load: ${String(err).slice(0, 300)}`, num_turns: 0, total_cost_usd: 0, dc_tool: 'codex' }) + '\n');
+        process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `${label} could not load: ${String(err).slice(0, 300)}`, num_turns: 0, total_cost_usd: 0, dc_tool: o.tool }) + '\n');
         process.exit(1);
       }
-      process.exit(await bridge.runT3Headless({ ...o, surface: o.surface as never, cwd: process.cwd() }));
+      process.exit(await bridge.runT3Headless({ ...o, tool: o.tool, surface: o.surface as never, cwd: process.cwd() }));
     });
 
   // The account jobs that need T3's own code (plan r5 §4b, W2): a shadow home laid out before a
