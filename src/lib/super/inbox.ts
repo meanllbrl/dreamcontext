@@ -1328,7 +1328,7 @@ function backgroundQuietMs(): number {
  *  shell, a Monitor, a background agent). Its turn ended, its job did not: a child checking in
  *  on a long test run is working, not done (Tilki 2026-10-21: six `done` in 18 minutes). Past
  *  BACKGROUND_QUIET_MS of silence it no longer holds the row. */
-function backgroundBusy(e: ChatEntry | null, now = Date.now()): boolean {
+export function backgroundBusy(e: ChatEntry | null, now = Date.now()): boolean {
   if (!e || (e.backgroundTasks ?? 0) <= 0) return false;
   const quiet = now - quietSince(e);
   if (quiet < backgroundQuietMs()) return true;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superRowMarks } from '../../dashboard/src/components/sleepy/super/sessionHome';
+import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superRowMarks, workingChildren } from '../../dashboard/src/components/sleepy/super/sessionHome';
 import { adoptionBody, needsOwner } from '../../dashboard/src/components/sleepy/super/superHandover';
 import { planStage, STAGE, stageItems } from '../../dashboard/src/components/sleepy/super/superLayout';
 import { buildDrawerRows } from '../../dashboard/src/components/layout/newshell/drawerModel';
@@ -184,6 +184,34 @@ describe('note 9: the Super Agent row', () => {
     const st = record({ children: { a: child({ row: 'working' }), b: child({ row: 'working' }), c: child({ row: 'done' }), d: child({ row: 'working', endedAt: 3 }) } });
     expect(superRowMarks(st)).toEqual({ working: 2, asking: false });
     expect(superRowMarks(null)).toEqual({ working: 0, asking: false });
+  });
+  it('with the live chats at hand, a row with nothing running it does not count (owner 2026-11-01)', () => {
+    const st = record({ children: { busy: child({ row: 'working' }), starting: child({ row: 'working' }), ended: child({ row: 'working' }), settling: child({ row: 'working' }), none: child({ row: 'working' }) } });
+    const live = { busy: 'working', starting: 'starting', ended: 'ended', settling: 'ready' } as Record<string, 'working'>;
+    expect(superRowMarks(st, (sid) => live[sid] ?? null)).toEqual({ working: 2, asking: false });
+    expect(workingChildren((st as { children: never }).children, (sid) => live[sid] ?? null)).toEqual(['busy', 'starting']);
+  });
+  it('turned off, the row has no ring and a running child is the owner\'s chat, the Super never', () => {
+    const st = record({ enabled: false, children: { busy: child({ row: 'working' }), old: child({ row: 'gone' }) } }) as { enabled: boolean; session: string; children: never; queue: never };
+    expect(superRowMarks(st).working).toBe(0);
+    expect(rosterSummary({ sessions: [] as never, windows: undefined as never }, st as never, () => true).superWorking).toBe(0);
+    const owned = superOwnedIds(st as never, new Map(), new Set(['busy', 'sup']));
+    expect([...owned].sort()).toEqual(['old', 'sup']);
+    expect(sessionHome({ claudeId: 'busy' }, owned, 'sup')).toBe('chat');
+  });
+  it("the server's count for a project not mounted asks the same question", () => {
+    const st = record({ children: { busy: child({ row: 'working' }), dead: child({ row: 'working' }), done: child({ row: 'done' }) } });
+    const count = (runs: (sid: string) => boolean) => rosterSummary({ sessions: [] as never, windows: undefined as never }, st, runs).superWorking;
+    expect(count((sid) => sid === 'busy')).toBe(1);
+    expect(rosterSummary({ sessions: [] as never, windows: undefined as never }, st).superWorking).toBe(0); // no process in the registry
+  });
+  it('Turn off asks through confirmAction, and a remote screen has none', () => {
+    const surface = src(SURFACE);
+    const off = surface.slice(surface.indexOf('const turnOffSuper'), surface.indexOf('A terminal in the Terminals row'));
+    expect(off).toMatch(/await confirmAction\(/);
+    expect(off).not.toMatch(/window\.confirm|[^a-zA-Z]confirm\(/);
+    expect(off).toMatch(/if \(ok\) await takeBack\(\)/);
+    expect(surface).toMatch(/onTurnOff=\{remoteDesktop \? undefined : turnOffSuper\}/);
   });
   it('asks while an item waits on the owner, and stops when it is done', () => {
     expect(superRowMarks(record({ queue: [q({ kind: 'owner' })] })).asking).toBe(true);

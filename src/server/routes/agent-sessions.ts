@@ -14,7 +14,8 @@ import { isAutomationBoundSession } from '../../lib/automations/session-registry
 import { isSafeAutomationSlug } from '../../lib/automations/store.js';
 import { CHAT_MODES, type ChatMode } from '../chat-modes.js';
 import { readSuperState } from '../../lib/super/store.js';
-import { superSanitizeOpts } from '../../lib/super/inbox.js';
+import { backgroundBusy, superSanitizeOpts } from '../../lib/super/inbox.js';
+import { activityOf, getChat } from '../../lib/assistant/chat-registry.js';
 import { superRestoreHold, type SuperRestoreHold } from '../../lib/super/restore.js';
 import { emptySuperState, type SuperState } from '../../lib/super/types.js';
 import { parkedSince } from '../chat-park.js';
@@ -813,7 +814,16 @@ export interface RosterSummary {
   superAsking: boolean;
 }
 
-export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>, superState: Pick<SuperState, 'enabled' | 'session'> & Partial<Pick<SuperState, 'children' | 'formerChildren' | 'queue'>>): RosterSummary {
+/** Does a process run this child now? A row can outlive its process, so the record alone is not
+ *  the drawer's count (the window's `workingChildren` asks its live chats the same question). */
+function childRunsNow(sid: string): boolean {
+  const e = getChat(sid);
+  if (!e) return false;
+  const act = activityOf(e);
+  return act !== 'gone' && (act !== 'idle' || backgroundBusy(e));
+}
+
+export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>, superState: Pick<SuperState, 'enabled' | 'session'> & Partial<Pick<SuperState, 'children' | 'formerChildren' | 'queue'>>, runsNow: (sid: string) => boolean = childRunsNow): RosterSummary {
   const settled = withWindows({ sessions: saved.sessions }, saved.windows);
   // The drawer's count of a project: the owner's chats, never the Super Agent's sessions (they
   // stay in the roster; only this count leaves them out).
@@ -823,7 +833,8 @@ export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>,
   const perWindow = settled.windows.map((w) => ({ id: w.id, name: w.name, tabs: own.filter((m) => m.window === w.id).length }));
   // Mirrors the window's `needsOwner` (pinned by the super-row-marks test).
   const superAsking = (superState.queue ?? []).some((q) => q.state !== 'done' && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && q.direct === true && !q.team)));
-  const superWorking = Object.values(superState.children ?? {}).filter((c) => c.endedAt === undefined && c.row === 'working').length;
+  // Off, nothing works for the Super Agent (the window's `superRowMarks` says the same).
+  const superWorking = !superState.enabled ? 0 : Object.entries(superState.children ?? {}).filter(([sid, c]) => c.endedAt === undefined && c.row === 'working' && runsNow(sid)).length;
   return { windows: perWindow.length, tabs: own.length, superOn: superState.enabled, perWindow, superWorking, superAsking };
 }
 
