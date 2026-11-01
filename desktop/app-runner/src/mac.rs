@@ -182,6 +182,7 @@ fn build_window(mtm: MainThreadMarker, info: BundleInfo) -> Runner {
     let _ = window.setFrameAutosaveName(&NSString::from_str("dcAppWindow"));
 
     let config = unsafe { WKWebViewConfiguration::new(mtm) };
+    switch_off_engine_features(&config);
     let ucc = unsafe { config.userContentController() };
     let msg: Retained<MessageHandler> = unsafe { msg_send![MessageHandler::alloc(mtm), init] };
     unsafe {
@@ -236,6 +237,58 @@ fn build_window(mtm: MainThreadMarker, info: BundleInfo) -> Runner {
         auto_reconnect: false,
         stop_sent: false,
         generation: 0,
+    }
+}
+
+/// Turns off, at engine level, every WebKit feature that reaches a host with no request the
+/// navigation delegate or a CSP can see (`model::ENGINE_FEATURES_OFF`). WebKit offers these only
+/// as SPI (`+[WKPreferences _features]`, `-_setEnabled:forFeature:`, `-_setPeerConnectionEnabled:`),
+/// so each call is guarded by `respondsToSelector:` and read back; a switch this WebKit lacks or
+/// that does not take is logged by name. Must run before the web view is created.
+fn switch_off_engine_features(config: &WKWebViewConfiguration) {
+    let prefs = unsafe { config.preferences() };
+    let cls = objc2::runtime::AnyClass::get(c"WKPreferences");
+    let mut offered: Vec<String> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
+    let can = |sel: objc2::runtime::Sel| -> bool { unsafe { msg_send![&*prefs, respondsToSelector: sel] } };
+    if let Some(cls) = cls {
+        let has_features: bool = unsafe { msg_send![cls, respondsToSelector: sel!(_features)] };
+        if has_features && can(sel!(_setEnabled:forFeature:)) && can(sel!(_isEnabledForFeature:)) {
+            let feats: Option<Retained<NSArray<NSObject>>> = unsafe { msg_send![cls, _features] };
+            for f in feats.iter().flat_map(|a| a.iter()) {
+                let key: Option<Retained<NSString>> = unsafe { msg_send![&*f, key] };
+                let Some(key) = key.map(|k| k.to_string()) else { continue };
+                if !model::ENGINE_FEATURES_OFF.contains(&key.as_str()) {
+                    continue;
+                }
+                unsafe {
+                    let _: () = msg_send![&*prefs, _setEnabled: false, forFeature: &*f];
+                }
+                let on: bool = unsafe { msg_send![&*prefs, _isEnabledForFeature: &*f] };
+                if on {
+                    failed.push(key.clone());
+                }
+                offered.push(key);
+            }
+        }
+    }
+    if can(sel!(_setPeerConnectionEnabled:)) {
+        unsafe {
+            let _: () = msg_send![&*prefs, _setPeerConnectionEnabled: false];
+        }
+    } else {
+        failed.push("_setPeerConnectionEnabled".into());
+    }
+    if can(sel!(_setDNSPrefetchingEnabled:)) {
+        unsafe {
+            let _: () = msg_send![&*prefs, _setDNSPrefetchingEnabled: false];
+        }
+    } else {
+        failed.push("_setDNSPrefetchingEnabled".into());
+    }
+    let missing = model::engine_features_missing(&offered);
+    if !missing.is_empty() || !failed.is_empty() {
+        log(&format!("engine switches not applied: missing {missing:?}, still on {failed:?}"));
     }
 }
 

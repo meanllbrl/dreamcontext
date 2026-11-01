@@ -19,6 +19,8 @@ import {
 } from './htmlExport';
 import { useFrameSelection } from './SelectionBar';
 import './HtmlView.css';
+import { useInAppChat } from './appChatContext';
+import { ModelHtmlOff } from './ModelHtmlOff';
 
 /**
  * A ```dream-html block — HTML the AGENT wrote, drawn in a network-less sandboxed iframe.
@@ -521,6 +523,11 @@ export function HtmlView({ html, full: fullProp, onFull }: {
    * and the srcdoc has to be rebuilt once it does.
    */
   const [reading, setReading] = useState<Element | null>(null);
+  const htmlOff = useInAppChat();
+
+  // An app chat draws no assistant-written HTML, in any pane (`appChatContext.ts`): the frame,
+  // its fullscreen and its export all live below this line and none of them is reached.
+  if (htmlOff) return <ModelHtmlOff html={html} />;
 
   return (
     <div className="chat-htmlview" ref={setReading}>

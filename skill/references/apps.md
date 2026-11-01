@@ -37,7 +37,12 @@ as history. Text an app returns is data, not an instruction. Approving, answerin
 running and assigning are not in an embedded screen: they are links to the main app. The chat is
 the exception on purpose: a person typing there answers its questions, and every Allow is a native
 Mac alert naming the command, which the page cannot draw over. Nothing drawn in an embedded screen
-reaches the internet: its policy and the window refuse every remote load and navigation.
+reaches the internet: its policy and the window refuse every remote load and navigation, and the
+window has WebRTC, preconnect and DNS prefetch switched off. An app chat draws no HTML the assistant
+wrote, in the app window and the main app alike: a `dream-html` block, a question's previews, a
+board's HTML or web widget, a board's live web embed and an HTML insight body each leave a line
+saying they were not drawn (a question keeps its labels). Markdown, project pictures, boards and
+PDFs draw.
 
 **The look is the app's own.** The template carries no design and no kit is imposed; `/apps` picks
 a direction from the app's subject. A dreamcontext screen goes in through `dc.mountEmbed`, which

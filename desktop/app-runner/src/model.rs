@@ -279,6 +279,26 @@ pub fn subframe_allowed(url: &str, gateway_port: Option<u16>, dashboard_port: Op
     [gateway_port, dashboard_port].into_iter().flatten().filter(|p| *p != 0).any(|p| is_gateway_url(inner, p))
 }
 
+/// WebKit features the app window switches OFF before its web view exists. Each one lets a page
+/// reach a host with no request the navigation and CSP gates can see: WebRTC (STUN/TURN carry
+/// data in the server address and the TURN username), `<link rel=preconnect>` and DNS prefetch
+/// (data in a host name), prefetch and speculation rules. The rule that an app chat draws no
+/// model-written HTML is what closes this; these are the engine-level second layer.
+pub const ENGINE_FEATURES_OFF: &[&str] = &[
+    "PeerConnectionEnabled",
+    "LinkPreconnect",
+    "LinkPreconnectEarlyHintsEnabled",
+    "LinkDNSPrefetchEnabled",
+    "LinkPrefetchEnabled",
+    "SpeculationRulesPrefetchEnabled",
+];
+
+/// The `ENGINE_FEATURES_OFF` keys this WebKit does not offer, to be logged: a missing switch
+/// is named, never assumed off.
+pub fn engine_features_missing(offered: &[String]) -> Vec<&'static str> {
+    ENGINE_FEATURES_OFF.iter().copied().filter(|k| !offered.iter().any(|o| o == k)).collect()
+}
+
 fn is_token(s: &str) -> bool {
     !s.is_empty() && s.len() <= 256 && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
 }
@@ -474,6 +494,17 @@ mod tests {
         assert!(!ok("about:blank#x"));
         assert!(!ok("blob:https://evil.example/abc"));
         assert!(!subframe_allowed("http://127.0.0.1:0/", Some(0), Some(0)));
+    }
+
+    #[test]
+    fn engine_switches() {
+        assert!(ENGINE_FEATURES_OFF.contains(&"PeerConnectionEnabled"));
+        assert!(ENGINE_FEATURES_OFF.contains(&"LinkPreconnect"));
+        let all: Vec<String> = ENGINE_FEATURES_OFF.iter().map(|s| s.to_string()).collect();
+        assert!(engine_features_missing(&all).is_empty());
+        let some = vec!["LinkPreconnect".to_string(), "Other".to_string()];
+        let missing = engine_features_missing(&some);
+        assert!(missing.contains(&"PeerConnectionEnabled") && !missing.contains(&"LinkPreconnect"));
     }
 
     #[test]

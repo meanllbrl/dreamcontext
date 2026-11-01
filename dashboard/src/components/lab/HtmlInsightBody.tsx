@@ -1,3 +1,5 @@
+import { useInAppChat } from '../sleepy/chat/appChatContext';
+import { ModelHtmlOff } from '../sleepy/chat/ModelHtmlOff';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   buildSrcdoc, resolveKitTokens, readHtmlHeightMessage,
@@ -81,7 +83,13 @@ function clampHeight(px: number, full: boolean): number {
     : Math.min(CARD_MAX_HEIGHT, Math.max(CARD_MIN_HEIGHT, rounded));
 }
 
-export function HtmlInsightBody({ html, title, full = false, fill = false }: {
+/** An app chat draws no supplied HTML (`appChatContext.ts`): the notice stands where the frame
+ *  would have been. A wrapper, so the frame's own hooks never run in an app chat. */
+export function HtmlInsightBody(props: Parameters<typeof HtmlInsightBodyLive>[0]) {
+  return useInAppChat() ? <ModelHtmlOff compact /> : <HtmlInsightBodyLive {...props} />;
+}
+
+function HtmlInsightBodyLive({ html, title, full = false, fill = false }: {
   html: string;
   title: string;
   full?: boolean;

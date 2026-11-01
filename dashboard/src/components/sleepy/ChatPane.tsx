@@ -32,7 +32,7 @@ import { ItemView } from './chat/TranscriptItem';
 import { feedMarks, feedRunWorking, feedShift, liveDividerShown, type ChatFeed, type FeedItem } from './chat/chatFeed';
 import { ToolRunCard } from './chat/ToolRunCard';
 import { SurveyCard } from './chat/SurveyCard';
-import { StripRemoteMedia } from './chat/stripRemoteMediaContext';
+import { AppChatContext } from './chat/appChatContext';
 import { PermissionCard } from './chat/PermissionCard';
 import { PlanCard } from './chat/PlanCard';
 import { BypassNoticeCard } from './chat/BypassNoticeCard';
@@ -2599,7 +2599,7 @@ export function ChatPane({
 
   const inAppFrame = useEmbed();
   return (
-    <StripRemoteMedia.Provider value={!!session.appChat || !!inAppFrame}>
+    <AppChatContext.Provider value={!!session.appChat || !!inAppFrame}>
     <div className="chat-pane" ref={paneRef} data-status={session.status}>
       {!bare && (
         <ChatLiveRail
@@ -3050,6 +3050,6 @@ export function ChatPane({
       {pdf && <PdfViewer path={pdf.path} label={pdf.label} onClose={() => setPdf(null)} />}
       {boardFull && <BoardFullscreen path={boardFull} onClose={() => setBoardFull(null)} />}
     </div>
-    </StripRemoteMedia.Provider>
+    </AppChatContext.Provider>
   );
 }
