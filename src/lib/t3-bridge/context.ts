@@ -15,6 +15,10 @@
  * thread. The snapshot rides every turn so T3's restore after a compaction (it re-injects the LAST
  * turn's app context) always includes it; Codex itself re-sends app context only when it changes.
  *
+ * Codex cuts every app-context entry down to 1,000 of its tokens (4,000 BYTES of value, the middle
+ * goes; measured on 0.164.0: no ceiling on the sum, 40 entries of 3,900 bytes all arrived), so
+ * {@link fitCodexContext} splits a long entry into several untrusted entries before the turn starts.
+ *
  * Running the hooks, not a copy of their logic, is what keeps Claude's output byte-identical: the
  * Claude path never changes, and the Codex path prints the very same text.
  */
@@ -45,6 +49,46 @@ export function hookEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { ...env };
   for (const k of STRIPPED_ENV) delete out[k];
   return out;
+}
+
+/** Below Codex's 4,000 bytes per entry, with room to spare if it counts a little differently. */
+export const CODEX_ENTRY_MAX_BYTES = 3_800;
+
+/**
+ * Cut `text` into parts of at most `maxBytes` UTF-8 bytes that join back to exactly `text`: at the
+ * last `## ` section that fits, else the last line, else the last whole character.
+ */
+export function splitContextText(text: string, maxBytes = CODEX_ENTRY_MAX_BYTES): string[] {
+  const parts: string[] = [];
+  let rest = text;
+  while (Buffer.byteLength(rest) > maxBytes) {
+    let bytes = 0;
+    let fits = 0;
+    for (const ch of rest) {
+      bytes += Buffer.byteLength(ch);
+      if (bytes > maxBytes) break;
+      fits += ch.length;
+    }
+    const head = rest.slice(0, fits);
+    const section = head.lastIndexOf('\n## ');
+    const line = head.lastIndexOf('\n');
+    const cut = section > 0 ? section : line > 0 ? line : fits;
+    parts.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  parts.push(rest);
+  return parts;
+}
+
+/**
+ * The entries as Codex must receive them: one that fits keeps its key, a longer one becomes `key`,
+ * `key-02`, `key-03`… Each part is still a plain entry, so it stays untrusted, rides every turn and
+ * comes back in T3's restore after a compaction. Numbers are padded because Codex orders entries by
+ * key: `-10` must not land before `-02`.
+ */
+export function fitCodexContext(entries: readonly AppContext[]): AppContext[] {
+  return entries.flatMap(({ key, text }) =>
+    splitContextText(text).map((part, i) => ({ key: i === 0 ? key : `${key}-${String(i + 1).padStart(2, '0')}`, text: part })));
 }
 
 /** The `additionalContext` a `--format codex` hook printed, or '' (nothing, or not that shape). */
