@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { runBridgeStdio } from '../../../src/lib/t3-bridge/stdio.js';
-import { BrainContext, hookContext, hookEnv, type HookRunner } from '../../../src/lib/t3-bridge/context.js';
+import { BrainContext, CODEX_ENTRY_MAX_BYTES, fitCodexContext, hookContext, hookEnv, splitContextText, type HookRunner } from '../../../src/lib/t3-bridge/context.js';
 import { codexBrainMcpArgs, codexLaunchArgs } from '../../../src/lib/t3-bridge/launch.js';
 import { loadFixture, policyFor, replayFactory } from './replay-harness.js';
 
@@ -76,6 +76,42 @@ describe('BrainContext (the hooks, for a bridge tool)', () => {
   });
 });
 
+describe('a long entry reaches Codex whole (Codex cuts each entry at 4,000 bytes)', () => {
+  const section = (i: number): string => `\n## Section ${i}\n\n${'- şarkı öğretmeni satırı 🦊\n'.repeat(40)}`;
+  const doc = '# Snapshot' + [1, 2, 3, 4, 5, 6, 7].map(section).join('');
+
+  it('no part passes the limit and the parts join back to the exact text', () => {
+    for (const text of [doc, 'x'.repeat(20_000), '🦊'.repeat(5_000), 'ş'.repeat(9_001), `a\n${'b'.repeat(9_000)}`]) {
+      const parts = splitContextText(text);
+      expect(parts.length).toBeGreaterThan(1);
+      for (const p of parts) expect(Buffer.byteLength(p)).toBeLessThanOrEqual(CODEX_ENTRY_MAX_BYTES);
+      expect(parts.join('')).toBe(text);
+      expect(parts.every((p) => p.length > 0 && !p.includes('\uFFFD'))).toBe(true);
+    }
+  });
+
+  it('cuts at a section when one fits, so a part opens with its heading', () => {
+    for (const p of splitContextText(doc).slice(1)) expect(p.startsWith('\n## Section')).toBe(true);
+  });
+
+  it('counts bytes, not characters', () => {
+    expect(splitContextText('ş'.repeat(2_000))).toHaveLength(2);
+    expect(splitContextText('x'.repeat(CODEX_ENTRY_MAX_BYTES))).toHaveLength(1);
+    expect(splitContextText('')).toEqual(['']);
+  });
+
+  it('an entry that fits is untouched; a long one keeps its key and gets padded siblings in Codex order', () => {
+    expect(fitCodexContext([{ key: 'dreamcontext-brain', text: SNAP }])).toEqual([{ key: 'dreamcontext-brain', text: SNAP }]);
+    const fitted = fitCodexContext([{ key: 'dreamcontext-brain', text: 'x'.repeat(40_000) }]);
+    expect(fitted.length).toBeGreaterThanOrEqual(10);
+    expect(fitted[0]!.key).toBe('dreamcontext-brain');
+    expect(fitted[1]!.key).toBe('dreamcontext-brain-02');
+    expect(fitted[9]!.key).toBe('dreamcontext-brain-10');
+    const keys = fitted.map((e) => e.key);
+    expect([...keys].sort()).toEqual(keys);
+  });
+});
+
 describe('memory never rides developer instructions', () => {
   it('the launch args carry the briefing and the brain MCP server, never brain content', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dc-codex-ctx-'));
@@ -91,16 +127,15 @@ describe('memory never rides developer instructions', () => {
 });
 
 describe('a Codex turn carries the brain as untrusted app context (T3 replay)', () => {
-  it('turn/start sends exactly the snapshot and the prompt hook as untrusted additionalContext, and no frame shows them', async () => {
+  const replay = async (additionalContext: Record<string, { kind: string; value: string }>, snapshot?: string) => {
     const f = loadFixture('tool_call_read_only_on_request');
     // The recorded turn/start, edited to expect our two entries. The replay refuses any other frame.
     const start = f.transcript.entries.find((e) => e.type === 'expect_outbound' && (e.frame as { method?: string }).method === 'turn/start') as { frame: { params: Record<string, unknown> } };
-    start.frame.params.additionalContext = {
-      'dreamcontext-brain': { kind: 'untrusted', value: `${SNAP} (startup)` },
-      'dreamcontext-prompt': { kind: 'untrusted', value: RECALL },
-    };
+    start.frame.params.additionalContext = additionalContext;
     const calls: Array<{ name: string; input: Record<string, unknown>; env: NodeJS.ProcessEnv }> = [];
-    const brain = new BrainContext({ cwd: f.workspace, env: {}, run: fakeRunner(calls) });
+    const runner = fakeRunner(calls);
+    const run: HookRunner = async (name, hookInput, o) => (snapshot && name === 'session-start' ? (await runner(name, hookInput, o), codexAnswer('SessionStart', snapshot)) : runner(name, hookInput, o));
+    const brain = new BrainContext({ cwd: f.workspace, env: {}, run });
     const input = new PassThrough();
     const out: Record<string, unknown>[] = [];
     let buf = '';
@@ -127,5 +162,23 @@ describe('a Codex turn carries the brain as untrusted app context (T3 replay)', 
     expect(calls.map((c) => c.name)).toEqual(['session-start', 'user-prompt-submit']);
     input.end();
     await done;
+  };
+
+  it('turn/start sends exactly the snapshot and the prompt hook as untrusted additionalContext, and no frame shows them', async () => {
+    await replay({
+      'dreamcontext-brain': { kind: 'untrusted', value: `${SNAP} (startup)` },
+      'dreamcontext-prompt': { kind: 'untrusted', value: RECALL },
+    });
+  }, 40_000);
+
+  it('a snapshot over the limit goes out in parts, every part untrusted, none in a frame the chat draws', async () => {
+    const long = `${SNAP}\n## Rules\n${'- kural satırı\n'.repeat(130)}\n## Memory\n${'- anı satırı\n'.repeat(130)}`;
+    const parts = splitContextText(long);
+    expect(parts).toHaveLength(2);
+    await replay({
+      'dreamcontext-brain': { kind: 'untrusted', value: parts[0]! },
+      'dreamcontext-brain-02': { kind: 'untrusted', value: parts[1]! },
+      'dreamcontext-prompt': { kind: 'untrusted', value: RECALL },
+    }, long);
   }, 40_000);
 });

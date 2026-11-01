@@ -149,7 +149,8 @@ export function resolveBudget(env: string | undefined): number | null {
  * Per-tool ceiling on the SessionStart snapshot (Track T W3). Claude has none: its budget is
  * exactly {@link resolveBudget}. A bridge tool (Codex) is never unbounded — `off` or a number above
  * the ceiling still caps at it — because its context arrives as app context the model re-reads
- * after every compaction, and Codex's own hooks spill anything above ~2,500 tokens to disk.
+ * after every compaction. Codex truncates each app-context ENTRY at 4,000 bytes, not the sum, so
+ * this ceiling does not make the snapshot fit one entry: the bridge splits it (fitCodexContext).
  */
 export const TOOL_SNAPSHOT_CEILING_TOKENS: Readonly<Record<string, number>> = { codex: DEFAULT_SNAPSHOT_BUDGET_TOKENS };
 

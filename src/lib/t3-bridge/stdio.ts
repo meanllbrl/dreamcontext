@@ -20,7 +20,7 @@ import { claudeLaunchArgs, codexBrainMcpArgs, codexLaunchArgs, codexLeanMcpArgs,
 import { codexInstanceSettings, isCodexAccountId } from './accounts.js';
 import { HIDDEN_TITLE_PROMPT, TabTitler, titleBlock, titleIn } from './tab-title.js';
 import type { WireFrame } from './to-wire.js';
-import type { BrainContext } from './context.js';
+import { fitCodexContext, type BrainContext } from './context.js';
 
 export type AppContext = { key: string; text: string };
 
@@ -240,7 +240,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       }
       // A steer joins the running turn as Claude's mid-turn message does: no hook, no context.
       const brain = session.busy || !deps.brain ? [] : await deps.brain.prompt(text, session.nativeThreadId).catch(() => []);
-      await session.send(text, session.busy ? [] : [...titler.nudge(), ...pending.splice(0), ...brain]);
+      const context = session.busy ? [] : [...titler.nudge(), ...pending.splice(0), ...brain];
+      await session.send(text, args.tool === 'codex' ? fitCodexContext(context) : context);
       return;
     }
     if (frame.type === 'control_response') {
