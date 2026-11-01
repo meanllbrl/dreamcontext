@@ -1007,12 +1007,16 @@ export interface AgentFeed {
 /** What one agent is doing right now. Mirrors `AgentActivity` in
  *  `src/server/automation-job.ts`. */
 export interface AgentActivity {
-  /** When the turn holding the agent's run lock began, epoch ms. */
+  /** When the oldest turn in flight began, epoch ms. */
   since: number;
   /** The run whose thread that turn writes into, when the server knows it. */
   runId: string | null;
-  /** Replies waiting behind it, oldest first. */
+  /** Replies waiting behind a turn of their own conversation, oldest first. */
   queued: { entryId: string; runId: string }[];
+  /** Every turn in flight, oldest first: an agent works on several things at once. */
+  runs?: { runId: string | null; since: number }[];
+  /** How many: what a row says. */
+  count?: number;
 }
 
 /** One row of a posted summary — a figure that moved, not prose. Mirrors

@@ -982,8 +982,11 @@ export interface RunSidecar {
   slug: string;
   /** A light job: `automations kill` then moves no schedule watermark. Absent on any other run. */
   light?: true;
-  /** `runLeavesNoSession`: what queues behind this run would have no session to resume. */
+  /** `runLeavesNoSession`: a follow-up to this run has no session to resume. */
   noSession?: true;
+  /** The parallel turn's slot (`runSlotKey`), when it has one: its lock and this record are its
+   *  own files. Absent: the member's one exclusive run (a scheduled fire, a task step). */
+  slot?: string;
   runnerPid: number;
   childPid: number;
   childPgid: number;

@@ -4,7 +4,7 @@ import { AgentAvatar } from '../agents/AgentAvatar';
 import { AutomationsDispatcherBar } from '../automations/AutomationsDispatcherBar';
 import { runDuration, useNow } from '../agents/agentRunState';
 import { useI18n } from '../../context/I18nContext';
-import { filterRoster, routineCountLabel, type TeamRow } from './teamModel';
+import { filterRoster, routineCountLabel, workingLine, type TeamRow } from './teamModel';
 import { teamCount } from './teamTree';
 import { edgePath, layoutOrgChart } from './orgLayout';
 import { TeamIcon } from './TeamIcons';
@@ -265,7 +265,7 @@ function OrgCard({
         {row.status === 'needs' && <span className="aiteam-tag aiteam-tag--warn">{t('aiteam.tag.needs')}</span>}
         {working && (
           <span className="aiteam-org-live">
-            {t('aiteam.working').replace('{time}', (row.workingSince ? runDuration(now - row.workingSince) : null) ?? '')}
+            {workingLine(row, (row.workingSince ? runDuration(now - row.workingSince) : null) ?? '', t)}
           </span>
         )}
         {row.status === 'approval' && <span className="aiteam-tag"><TeamIcon name="lock" size={10} />{t('aiteam.tag.approval')}</span>}

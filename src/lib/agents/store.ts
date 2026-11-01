@@ -1,7 +1,7 @@
 import { stopAgentTaskJobs } from './task-starter.js';
 import { chmodSync, mkdirSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { lockHolderPid } from '../file-lock.js';
+import { lockHolderPid, withFileLockSync } from '../file-lock.js';
 import fg from '../glob.js';
 import matter from 'gray-matter';
 import { ensureGitignoreEntries } from '../gitignore.js';
@@ -34,7 +34,9 @@ import {
   extractSection,
   getRunTarget,
   listManifestFiles,
+  listRunSlots,
   lockPathFor,
+  memberMutexPath,
   numberOrDefault,
   parseEffort,
   parseFlowSection,
@@ -683,7 +685,8 @@ export function removeGlobalAgent(slug: string, opts: { home?: string } = {}): R
   if (usedBy.length > 0) return { removed: false, usedBy };
   // A run of it in any project still holds its lock (in its folder, which the delete removes).
   for (const root of projects) {
-    const pid = lockHolderPid(lockPathFor(join(root, '_dream_context'), slug));
+    const ctx = join(root, '_dream_context');
+    const pid = lockHolderPid(lockPathFor(ctx, slug)) ?? listRunSlots(ctx, slug)[0]?.pid ?? null;
     if (pid !== null && pidAlive(pid)) throw new AutomationError(`"${slug}" is running in ${basename(root)}: delete it once that run ends.`);
   }
   // Every key's death BEFORE the file goes, while its paths still resolve to its own folder.
@@ -804,10 +807,14 @@ export function recordAgentLesson(contextRoot: string, slug: string, input: Reco
     return readGlobalAgent(slug) as AgentManifest;
   }
   // The lesson lands on the pattern as THIS machine adopted it (B1-6), and the result is adopted.
-  writeLessonToFile(agent.path, effectivePattern(contextRoot, slug, agent.pattern), input);
-  const after = getAgent(contextRoot, slug) as AgentManifest;
-  adoptIfSyncing(contextRoot, slug, after.pattern);
-  return after;
+  // Read inside the lock: two parallel turns of this agent can each learn something.
+  return withFileLockSync(memberMutexPath(contextRoot, slug, 'lesson'), () => {
+    const now = getAgent(contextRoot, slug) as AgentManifest;
+    writeLessonToFile(now.path, effectivePattern(contextRoot, slug, now.pattern), input);
+    const after = getAgent(contextRoot, slug) as AgentManifest;
+    adoptIfSyncing(contextRoot, slug, after.pattern);
+    return after;
+  });
 }
 
 export interface AgentUsage {

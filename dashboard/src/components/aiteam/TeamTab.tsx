@@ -4,7 +4,7 @@ import { AgentAvatar } from '../agents/AgentAvatar';
 import { runDuration, useNow } from '../agents/agentRunState';
 import { useI18n } from '../../context/I18nContext';
 import { usePlaceAgent } from '../../hooks/useAgents';
-import { routineCountLabel, type TeamRow } from './teamModel';
+import { routineCountLabel, workingLine, type TeamRow } from './teamModel';
 import { ManagerPicker, useTeamTree } from './PlaceInTeam';
 
 /**
@@ -165,7 +165,7 @@ function MemberCard({ row, now, onOpen }: { row: TeamRow; now: number; onOpen: (
         </span>
         <span className={`aiteam-teamtab-member-line${working ? ' aiteam-row-preview--live' : ''}`}>
           {working
-            ? t('aiteam.working').replace('{time}', (row.workingSince ? runDuration(now - row.workingSince) : null) ?? '')
+            ? workingLine(row, (row.workingSince ? runDuration(now - row.workingSince) : null) ?? '', t)
             : row.status === 'needs' ? t('aiteam.tag.needs')
               : row.status === 'approval' ? t('aiteam.tag.approval')
                 : row.preview ?? row.role}

@@ -390,6 +390,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-origin-link-',
   'dc-orphan-sweep-',
   'dc-outside-',
+  'dc-parallel-',
+  'dc-parallel-home-',
   'dc-parity-',
   'dc-pattern-',
   'dc-patterns-',

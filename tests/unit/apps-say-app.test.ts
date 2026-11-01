@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 
 /**
  * An app asking an agent (dreamcontext-apps plan r19, W4): `sayFromApp` through the real store,
- * thread and approval code, with only the job start replaced. Busy, bound session, fresh run,
+ * thread and approval code, with only the job start replaced. A busy agent, bound session, fresh run,
  * the scheduled job left alone, and the words never reading as the owner's anywhere.
  */
 
@@ -21,10 +21,12 @@ const HOME = vi.hoisted(() => {
 
 const job = vi.hoisted(() => ({
   running: false,
+  live: 0,
   started: [] as Array<{ slug: string; ask: { text: string; target?: string; app?: { slug: string; ownerTyped?: boolean } } }>,
 }));
 vi.mock('../../src/server/automation-job.js', async (orig) => ({
   ...(await orig<typeof import('../../src/server/automation-job.js')>()),
+  liveTurnCount: () => job.live,
   currentAutomationJob: () => (job.running ? { status: 'running', runId: 'r' } : null),
   startAutomationJob: (_root: string, slug: string, ask: never) => {
     job.started.push({ slug, ask });
@@ -74,12 +76,22 @@ describe('sayFromApp', () => {
     expect(entry).toMatchObject({ kind: 'user', via: 'app', app: 'meta-ads' });
   });
 
-  it('a busy agent answers say_busy: nothing written, nothing queued', () => {
+  it('a busy agent still starts now: each ask is its own run, with its own run id', () => {
     member('ua');
     job.running = true;
-    expect(ask('ua')).toMatchObject({ ok: false, status: 409, code: 'say_busy' });
-    expect(job.started).toHaveLength(0);
+    const one = ask('ua', 'first') as { ok: true; body: { runId: string } };
+    const two = ask('ua', 'second') as { ok: true; body: { runId: string } };
+    expect(one.ok && two.ok).toBe(true);
+    expect(job.started.map((j) => j.ask.text)).toEqual(['first', 'second']);
+    expect(readThread(root, 'ua', {})).toHaveLength(2);
+  });
+
+  it('the machine-wide limit refuses before anything reaches a thread', () => {
+    member('ua');
+    job.live = 15;
+    expect(ask('ua')).toMatchObject({ ok: false, status: 429, code: 'say_at_limit' });
     expect(readThread(root, 'ua', {})).toEqual([]);
+    job.live = 0;
   });
 
   it('refuses in order: missing, turned off, unapproved', () => {

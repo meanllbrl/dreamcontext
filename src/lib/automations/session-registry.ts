@@ -33,8 +33,8 @@
  *      file itself is moved or renamed.
  *   2. Two writers on one JSON file is a lost-update race (the reason the tick
  *      heartbeat got its own file, and the card bindings after it). Per-slug
- *      removes it by construction for different automations; the same slug is
- *      already serialized by the per-slug run lock.
+ *      removes it by construction for different automations; the same slug's
+ *      parallel turns serialize on this file's own short mutex.
  *   3. Removing an automation removes one file. No orphan sweep, no shared file
  *      that only grows.
  *
@@ -85,6 +85,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSyn
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
+import { withFileLockSync } from '../file-lock.js';
 import { isSafeSessionId } from '../transcript-locate.js';
 import { isSafeAutomationSlug, readAutomationCache } from './store.js';
 import { AutomationError } from './types.js';
@@ -111,7 +112,13 @@ interface SessionBinding {
    *  becomes the agent's conversation. */
   kind?: 'task';
   taskId?: string;
+  /** The thread runs whose follow-ups this session answers, newest first: its own fire, and each
+   *  fresh talk that resumed it. Absent on a binding from before a member ran in parallel. */
+  runs?: string[];
 }
+
+/** How many thread runs one binding remembers. */
+const BINDING_RUNS_MAX = 50;
 
 /** The tag a task step's binding carries. */
 export interface BindingTag {
@@ -182,6 +189,7 @@ function readAll(slug: string, home: string, nowMs: number): Record<string, Sess
         slug,
         at: typeof b.at === 'string' ? b.at : '',
         ...(b.kind === 'task' && typeof b.taskId === 'string' ? { kind: 'task' as const, taskId: b.taskId } : {}),
+        ...(Array.isArray(b.runs) ? { runs: b.runs.filter((r): r is string => typeof r === 'string').slice(0, BINDING_RUNS_MAX) } : {}),
       };
       if (!isLive(binding, nowMs)) continue;
       out[id] = binding;
@@ -243,19 +251,51 @@ export function recordAutomationSession(
   home: string = homedir(),
   nowMs: number = Date.now(),
   tag?: BindingTag,
+  /** The thread run this session answers. */
+  run?: string,
 ): boolean {
   if (!isSafeAutomationSlug(slug)) return false;
   if (!isSafeSessionId(sessionId)) return false;
-  const all = readAll(slug, home, nowMs);
-  // A tag is never dropped by a later untagged write: once a task's, always a task's.
-  const prior = all[sessionId];
-  const keep = tag ?? (prior?.kind === 'task' && prior.taskId ? { kind: 'task' as const, taskId: prior.taskId } : undefined);
-  all[sessionId] = { sessionId, slug, at: new Date(nowMs).toISOString(), ...(keep ?? {}) };
-  writeAll(slug, home, all, nowMs);
-  return true;
+  return withBindings(slug, home, () => {
+    const all = readAll(slug, home, nowMs);
+    // A tag is never dropped by a later untagged write: once a task's, always a task's.
+    const prior = all[sessionId];
+    const keep = tag ?? (prior?.kind === 'task' && prior.taskId ? { kind: 'task' as const, taskId: prior.taskId } : undefined);
+    const runs = run ? [run, ...(prior?.runs ?? []).filter((r) => r !== run)].slice(0, BINDING_RUNS_MAX) : prior?.runs;
+    all[sessionId] = { sessionId, slug, at: new Date(nowMs).toISOString(), ...(keep ?? {}), ...(runs ? { runs } : {}) };
+    writeAll(slug, home, all, nowMs);
+    return true;
+  });
+}
+
+/** One read-modify-write of this slug's bindings file: its parallel turns share it. A binding is
+ *  what makes a finished run resumable, so a lock that cannot be had never fails the run. */
+function withBindings<T>(slug: string, home: string, fn: () => T): T {
+  return withFileLockSync(`${automationSessionsPath(slug, home)}.lock`, fn, { failOpen: true });
 }
 
 // ─── The lookups ─────────────────────────────────────────────────────────────
+
+/**
+ * The session that answers a follow-up in ONE thread run, or null when none does.
+ *
+ * Asked in order: a binding that names the run; the run's history row, believed only when THIS
+ * machine bound that session and no other run owns it; and, for the member's NEWEST thread
+ * (`isNewest`), its latest binding when that comes from before bindings named their runs. Never
+ * another named run's session: that would put these words into a different conversation.
+ */
+export function sessionForRun(contextRoot: string, slug: string, runId: string, home: string = homedir(), isNewest = false): string | null {
+  if (!isSafeAutomationSlug(slug)) return null;
+  const all = Object.values(readAll(slug, home, Date.now())).filter((b) => b.kind !== 'task');
+  const named = all.filter((b) => b.runs?.includes(runId)).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).pop();
+  if (named) return named.sessionId;
+  let row: string | null = null;
+  try { row = readAutomationCache(contextRoot, slug)?.history.find((e) => e.firedAt === runId)?.sessionId ?? null; } catch { row = null; }
+  if (row && all.some((b) => b.sessionId === row && !b.runs)) return row;
+  if (!isNewest) return null;
+  const latest = latestBoundSession(slug, home);
+  return latest && !all.find((b) => b.sessionId === latest)?.runs ? latest : null;
+}
 
 /**
  * THE AUTHORITY on whether a session may be resumed for this automation.
@@ -385,10 +425,18 @@ export function retireAutomationSession(
 ): void {
   if (!isSafeAutomationSlug(slug)) return;
   if (!isSafeSessionId(sessionId)) return;
-  const all = readAll(slug, home, nowMs);
-  if (!(sessionId in all)) return;
-  delete all[sessionId];
-  writeAll(slug, home, all, nowMs);
+  withBindings(slug, home, () => {
+    const all = readAll(slug, home, nowMs);
+    if (!(sessionId in all)) return;
+    delete all[sessionId];
+    writeAll(slug, home, all, nowMs);
+  });
+}
+
+/** Does this binding name a thread run? Follow-ups there still need it. */
+export function sessionNamesRun(slug: string, sessionId: string, home: string = homedir()): boolean {
+  if (!isSafeAutomationSlug(slug)) return false;
+  return !!readAll(slug, home, Date.now())[sessionId]?.runs?.length;
 }
 
 // ─── Foreign-run evidence (the approve-time duplicate warning) ───────────────

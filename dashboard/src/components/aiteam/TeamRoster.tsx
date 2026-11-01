@@ -3,7 +3,7 @@ import type { TeamTree, TreeLine } from '../../../../src/lib/agents/tree.js';
 import { AgentAvatar } from '../agents/AgentAvatar';
 import { AutomationsDispatcherBar } from '../automations/AutomationsDispatcherBar';
 import { useI18n } from '../../context/I18nContext';
-import { filterRoster, type TeamRow } from './teamModel';
+import { filterRoster, type TeamRow, workingLine } from './teamModel';
 import { clampRosterWidth, ROSTER_MAX_WIDTH, ROSTER_MIN_WIDTH, ROSTER_WIDTH_STEP, rollupOf, teamTreeOf, treeSections, visibleTreeLines, type RosterView, type TeamRollup } from './teamTree';
 import { TeamIcon } from './TeamIcons';
 
@@ -367,6 +367,9 @@ function Row({
           <span className="aiteam-row-mark" title={t('aiteam.tag.globalHint')} aria-label={t('aiteam.tag.global')} data-global-chip>
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true"><circle cx="6" cy="6" r="4.8" /><path d="M1.2 6h9.6M6 1.2c1.6 1.4 1.6 8.2 0 9.6M6 1.2c-1.6 1.4-1.6 8.2 0 9.6" /></svg>
           </span>
+        )}
+        {row.workingCount > 1 && (
+          <span className="aiteam-row-count" data-working-count={row.workingCount} title={workingLine(row, '', t).replace(/ · $/, '')}>{row.workingCount}</span>
         )}
         {dot && <span className={`aiteam-row-dot aiteam-row-dot--${dot}`} aria-label={t(dot === 'working' ? 'aiteam.time.now' : `aiteam.tag.${dot}`)} />}
         {row.unread > 0 && <span className="sidebar-badge">{row.unread}</span>}

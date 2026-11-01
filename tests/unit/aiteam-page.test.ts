@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createElement } from '../../dashboard/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
 import type { TeamRow } from '../../dashboard/src/components/aiteam/teamModel';
+import { workingLine } from '../../dashboard/src/components/aiteam/teamModel';
 
 vi.mock('../../dashboard/src/context/I18nContext.js', () => ({
   useI18n: () => ({
@@ -260,5 +261,13 @@ describe('the page (A1, A9)', () => {
     expect(page).toMatch(/TEAM_STARTERS\.map/);
     expect(page).toMatch(/t\('agents\.empty\.blank'\)/);
     expect(page).toMatch(/t\('aiteam\.zero\.safety'\)/);
+  });
+});
+
+describe('several jobs on one row', () => {
+  const t = (k: string): string => ({ 'aiteam.working': 'Working · {time}', 'aiteam.workingMany': '{n} jobs · {time}' } as Record<string, string>)[k];
+  it('names the count only above one', () => {
+    expect(workingLine({ workingCount: 1 }, '1m', t)).toBe('Working · 1m');
+    expect(workingLine({ workingCount: 3 }, '1m', t)).toBe('3 jobs · 1m');
   });
 });

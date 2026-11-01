@@ -12,9 +12,11 @@ import { makeRoom } from './room.js';
 /**
  * The Super Agent's jobs for the project's AI Team (`super team ask`, task
  * super-agent-ai-team-uyelerine-is-verir-…). A job is NOT a second mechanism: it went into the
- * member's own thread through the AI Team's say path (`sayToAgent`), so the member's model,
- * approval and queue rule it. The record only names where it landed; what it says now is read
- * from the say job while that is in memory, and from the member's thread after.
+ * member's own thread through the AI Team's say path (`sayToAgent`), so the member's model and
+ * approval rule it, and it runs at once in its own session and thread run. The record only names
+ * where it landed; what it says now is read from the say job while that is in memory, and from
+ * the member's thread after. A `reply` job with `queued` is a record from before jobs ran in
+ * parallel, written when a busy member queued it: still read, never written.
  */
 
 export function newTeamJobId(): string {
@@ -136,10 +138,9 @@ function cachedRunStatus(contextRoot: string, job: SuperTeamJob): TeamJobStatus 
 
 /**
  * A team job's status and last line, from its member's thread (and the live job when there is
- * one). Only what came AFTER the job's own ask counts: a busy member's run went on past it, and
- * that run's ending and posts are not this job's.
+ * one). Only what came AFTER the job's own ask counts.
  *
- * A REPLY (a busy member's queue, or a scheduled member's conversation) cannot be read from the
+ * A REPLY (a scheduled member's conversation, or an old record's queue) cannot be read from the
  * thread alone: its ending is a `replied`/`failed` like the busy turn's. So its ending is the say
  * job's (live, or `outcome` recorded when it settled), and its last line only the member's posts
  * from the moment it got the lock. A reply the say path no longer knows and that never recorded an

@@ -36,7 +36,7 @@ import { approvalFields, checkApproval, getApproval, renderApprovalReview } from
 import { ownerLabel } from '../agents/owner.js';
 import { effectivePattern } from '../agents/agent-sync.js';
 import { placement } from '../agents/active.js';
-import { backfillQuestionSession, createQuestion, pendingQuestionFor } from './hitl.js';
+import { backfillQuestionSession, createQuestion, pendingQuestionFor, pendingQuestionOfRun } from './hitl.js';
 import { foreignRunEvidence, recordAutomationSession } from './session-registry.js';
 import { enqueueFire } from './queue.js';
 import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner.js';
@@ -65,6 +65,8 @@ import {
   outputDirFor,
   outputRootDir,
   readRunSidecar,
+  runSlotKey,
+  slotLockPath,
   recordRun,
   writeRunSidecar,
 } from './store.js';
@@ -1025,10 +1027,11 @@ function writeOutputFile(contextRoot: string, path: string, text: string): void 
   writeFileSync(path, text, 'utf-8');
 }
 
-/** Same-day re-run suffixes `-2`, `-3`, …; never clobbers a prior day's output. */
-export function outputPathFor(contextRoot: string, m: AutomationManifest, fireAt: Date): string {
+/** Same-day re-run suffixes `-2`, `-3`, …; never clobbers a prior day's output. A parallel turn's
+ *  name carries its own fire time: two turns running side by side would both find `-2` free. */
+export function outputPathFor(contextRoot: string, m: AutomationManifest, fireAt: Date, parallel = false): string {
   const { dir } = outputDirFor(contextRoot, m);
-  const date = localDateString(fireAt);
+  const date = parallel ? `${localDateString(fireAt)}-${fireAt.getTime().toString(36)}` : localDateString(fireAt);
   let candidate = join(dir, `${date}.md`);
   let n = 2;
   while (existsSync(candidate)) {
@@ -1725,6 +1728,9 @@ interface RunOptionsBase extends BoardTurnInput {
   override?: SpawnModelOverride | null;
   /** Injectable so no test spawns a real `claude /usage` while the account is picked. */
   probeUsage?: (configDir: string) => Promise<ProbeOutcome>;
+  /** A person's new question or job: it takes its own slot and starts now, beside whatever this
+   *  member already runs. Absent: the one exclusive run per slug (a scheduled fire, a task step). */
+  parallel?: boolean;
   /** Nobody is watching this start (the scheduler, a task job): account protection applies
    *  (`protectedAutomationAccount`). A person's own run, ask or answer never sets it. */
   unattended?: boolean;
@@ -1869,7 +1875,12 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
   }
 
   const projectRoot = dirname(contextRoot);
-  const lockPath = lockPathFor(contextRoot, slug);
+  const fireIso = fireAt.toISOString();
+  // One slot per parallel turn, the one per-slug lock for an exclusive run.
+  const slot = opts.parallel ? runSlotKey(`run:${fireIso}`) : undefined;
+  const lockPath = slot ? slotLockPath(contextRoot, slug, slot) : lockPathFor(contextRoot, slug);
+  // A light read or a person's question stands in for no scheduled fire: the fire stays owed.
+  const consumesFire = !opts.override?.light && !opts.parallel;
 
   /** Set the moment any claude child exists for this fire (the task host's "a child ran"). */
   let spawnedAny = false;
@@ -2182,7 +2193,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
   // A guard placed AFTER the lock would report a misleading `deferred` for
   // that whole window instead of the truth — this ordering was the single
   // most-reviewed invariant in this file's design history.
-  const sidecar = readRunSidecar(contextRoot, slug);
+  // A parallel turn starts anyway: a loose child of another run is that run's to clear.
+  const sidecar = opts.parallel ? null : readRunSidecar(contextRoot, slug);
   if (sidecar) {
     let childAlive = false;
     try {
@@ -2226,8 +2238,11 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
   // Per TARGET, not per slug: a same-slug pair is two run targets, and the
   // agent's open question must not hold the automation's scheduled fires (nor
   // the other way round).
+  //
+  // A person's new ask is not a scheduled document: a question another run left open belongs to
+  // that run. Only the approval ask stops it, since that is about whether this member may run.
   const openQuestion = pendingQuestionFor(contextRoot, slug, isAgentTarget ? 'agent' : 'automation');
-  if (openQuestion) {
+  if (openQuestion && (!opts.parallel || openQuestion.kind === 'approval')) {
     return shortCircuit(
       openQuestion.kind === 'approval' ? 'awaiting-approval' : 'awaiting-review',
       isAgentTarget
@@ -2280,7 +2295,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
   // same automation is the self-overlap the lock exists to prevent — the fact
   // that it is read-only makes it cheaper, not exempt.
   const staleMs = manifest.timeoutMinutes * 60_000 + 300_000;
-  const gotLock = acquireFileLock(lockPath, nowFn().getTime(), staleMs, { verifyPidLiveness: true });
+  const gotLock = acquireFileLock(lockPath, nowFn().getTime(), staleMs, { verifyPidLiveness: true, meta: { run: fireIso } });
   if (!gotLock) {
     // THE QUEUE. A fire that could not start because the lock was busy is OWED,
     // not lost: recorded machine-locally so the next tick drains it with its
@@ -2297,7 +2312,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // same-slug pair's JOB in place of its agent, or the agent without its task.
     // Its caller reports the deferral instead.
     // A light job is never replayed: the queue holds a bare slug, a full run of the agent.
-    if (!opts.target && !opts.task && !opts.override?.light) {
+    if (!opts.target && !opts.task && !opts.override?.light && !opts.parallel) {
       try {
         enqueueFire(projectRoot, slug, fireAt.toISOString(), home);
       } catch (err) {
@@ -2465,6 +2480,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       contextRoot,
       useFlowOutput ? { ...manifest, outputDir: flow.reportTarget } : manifest,
       fireAt,
+      opts.parallel === true,
     );
     // THE BOARD SCOPE, decided here, after the approval question (whose envelope is its own
     // and weaker) and before anything spawns. A home-board agent that cannot be confined to
@@ -2494,7 +2510,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         durationMs: 0,
         // Consumed, not owed: the cause (a deleted board, a symlink) outlives the next tick,
         // so leaving the fire owed would raise this same banner every five minutes.
-        advanceWatermark: !opts.override?.light,
+        advanceWatermark: consumesFire,
         notify: true,
       });
     }
@@ -2517,7 +2533,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
             : 'Codex needs Node 22.16 or newer on this Mac.',
         outputPath: null, exitCode: null, sessionId: null, costUsd: null, numTurns: null, permissionDenials: 0,
         startedAt: n, finishedAt: n, durationMs: 0,
-        advanceWatermark: !opts.override?.light,
+        advanceWatermark: consumesFire,
         notify: true,
       });
     }
@@ -2604,6 +2620,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
           fireAt: fireAt.toISOString(),
           startedAt: spawnedAt.toISOString(),
           timeoutAt: new Date(spawnedAt.getTime() + budgetMs).toISOString(),
+          ...(slot ? { slot } : {}),
           ...(opts.target === 'agent' ? { target: 'agent' as const } : {}),
           ...(opts.override?.light ? { light: true as const } : {}),
           ...(runLeavesNoSession(manifest, opts.override) ? { noSession: true as const } : {}),
@@ -2808,7 +2825,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         backfillQuestionSession(contextRoot, slug, fireAt.toISOString(), claudeResult.sessionId);
         // A task step's binding carries its task (`kind: task`): the talk path never resumes it.
         const bindSession = (sid: string | null): void => {
-          recordAutomationSession(slug, sid, home, Date.now(), taskStep ? { kind: 'task', taskId: taskStep.taskId } : undefined);
+          recordAutomationSession(slug, sid, home, Date.now(), taskStep ? { kind: 'task', taskId: taskStep.taskId } : undefined, fireIso);
         };
         // The machine-local binding that a resume actually trusts, written for
         // EVERY run that produced a session — not only one that asked a
@@ -2820,15 +2837,15 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         // which session belongs to which slug.
         // A run that leaves no session still binds one that stopped on a question: an answer
         // resumes it, and a question nothing can answer would hold the agent for good.
-        if (!runLeavesNoSession(manifest, opts.override) || pendingQuestionFor(contextRoot, slug, isAgentTarget ? 'agent' : 'automation')) {
+        if (!runLeavesNoSession(manifest, opts.override) || pendingQuestionOfRun(contextRoot, slug, fireIso)) {
           bindSession(claudeResult.sessionId);
         }
 
         // Did this fire end with a human owing a verdict? Either the run asked
         // for one itself (`review: agent` → `automations propose`), or the
         // manifest asks for one on every document (`review: output`).
-        // This target's own: the other half of a same-slug pair may have an older one open.
-        const proposedQuestion = pendingQuestionFor(contextRoot, slug, isAgentTarget ? 'agent' : 'automation');
+        // This run's own: a parallel sibling, or the other half of a same-slug pair, may have one open.
+        const proposedQuestion = pendingQuestionOfRun(contextRoot, slug, fireIso);
         // A CONVERSATION IS NOT A DOCUMENT FOR SIGN-OFF. A run a human started by calling
         // the agent by name, with a question, answers that question in the thread. The two
         // BLANKET gates below (a graph `hitl` node, `review: output`) exist for the
@@ -3039,7 +3056,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       finishedAt,
       durationMs,
       // A light read stands in for no scheduled fire.
-      advanceWatermark: !opts.override?.light,
+      advanceWatermark: consumesFire,
       notify: true,
     });
   } finally {
@@ -3054,9 +3071,10 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // Clear the sidecar ONLY when it is this exact invocation's own record.
     // A spawn-failure return above never wrote one (runnerPid never matches),
     // so this never erases a DIFFERENT, still-live orphan's only record.
-    const currentSidecar = readRunSidecar(contextRoot, slug);
+    // Read by its exact name: never a sibling turn's record.
+    const currentSidecar = readRunSidecar(contextRoot, slug, slot ?? '');
     if (currentSidecar && currentSidecar.runnerPid === process.pid) {
-      clearRunSidecar(contextRoot, slug);
+      clearRunSidecar(contextRoot, slug, slot);
     }
   }
 }
@@ -3089,13 +3107,16 @@ export function killRunGroup(
     killImpl?: KillImpl; nowMs?: number; force?: boolean; log?: (l: string) => void;
     /** Test seam for the win32 pid-reuse guard ({@link recordedChildIsOurs}). */
     isOurs?: (childPid: number, runnerPid: number) => boolean;
+    /** Which in-flight child (`slot`, '' the exclusive one). Read fresh here: it may have ended
+     *  while the operator was asked. Absent: what `readRunSidecar` reads first. */
+    slot?: string;
   },
 ): KillRunResult {
   const killFn: KillImpl = opts?.killImpl ?? ((pid, signal) => { killPortable(pid, signal); });
   const nowMs = opts?.nowMs ?? Date.now();
   const logFn = opts?.log ?? (() => {});
 
-  const sidecar = readRunSidecar(contextRoot, slug);
+  const sidecar = readRunSidecar(contextRoot, slug, opts?.slot);
   if (!sidecar) {
     return { found: false, killed: false, childPgid: null, ageMs: null, runnerAlive: false, groupAlive: false, refusedReason: null };
   }
@@ -3148,7 +3169,7 @@ export function killRunGroup(
   // stale content. KNOWN RESIDUAL: if the lock is already gone (the runner
   // released it but died before clearing the sidecar), this check is
   // skipped — inherent, covered by the human confirming pgid/age below.
-  const lockPath = lockPathFor(contextRoot, slug);
+  const lockPath = sidecar.slot ? slotLockPath(contextRoot, slug, sidecar.slot) : lockPathFor(contextRoot, slug);
   if (existsSync(lockPath)) {
     let lockPid: number | null = null;
     try {
@@ -3222,11 +3243,12 @@ export function killRunGroup(
     numTurns: null,
     permissionDenials: 0, // "not collected", never "none occurred" on this path
   };
-  recordRun(contextRoot, slug, event, { advanceWatermark: !sidecar.light });
+  // A parallel turn (an ask, a reply) stands in for no scheduled fire, killed or not.
+  recordRun(contextRoot, slug, event, { advanceWatermark: !sidecar.light && !sidecar.slot });
   logFn(`automation "${slug}": operator killed process group ${sidecar.childPgid}`);
 
   // Guard 7 — clear.
-  clearRunSidecar(contextRoot, slug);
+  clearRunSidecar(contextRoot, slug, sidecar.slot);
 
   return { found: true, killed: true, childPgid: sidecar.childPgid, ageMs, runnerAlive, groupAlive, refusedReason: null };
 }
