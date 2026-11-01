@@ -19,7 +19,7 @@ import { createServer } from 'node:net';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 import { distIndex, markAnnouncementsSeen, scratchDir, shotsDir } from './measure.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -99,7 +99,8 @@ export async function openApp({ suite = 'look', build = false, desktop = false }
       base = `http://127.0.0.1:${vitePort}`;
       await waitFor(base, 'the Vite dev server', vite);
     }
-    browser = await chromium.launch();
+    // DC_VERIFY_ENGINE=webkit: the engine the Mac app runner draws with.
+    browser = await (process.env.DC_VERIFY_ENGINE === 'webkit' ? webkit : chromium).launch();
   } catch (err) {
     killAll();
     throw err;

@@ -49,8 +49,11 @@ describe('the frame gate', () => {
     const tk = mintEmbedToken(grant);
     const r = res();
     expect(refuseForeignFrame(frameReq(tk) as never, r as never)).toBe(false);
-    expect(r.headers['Content-Security-Policy']).toContain('frame-ancestors http://127.0.0.1:5100;');
-    expect(r.headers['Content-Security-Policy']).toContain("img-src 'self' data: blob:");
+    const csp = r.headers['Content-Security-Policy'];
+    expect(csp).toContain('frame-ancestors http://127.0.0.1:5100');
+    for (const d of ["default-src 'self'", "script-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "media-src 'self' blob:", "font-src 'self' data:", "frame-src 'self'", "form-action 'none'"]) expect(csp).toContain(d);
+    // No directive lets a remote host in.
+    expect(csp).not.toMatch(/https?:(?!\/\/127\.0\.0\.1:5100)|\*|'unsafe-eval'/);
   });
 
   // Each of these holds a valid token and still gets 403.
@@ -165,5 +168,13 @@ describe('the frame locks what leaves it (plan r9, D12)', () => {
     const W = (win as unknown as { WebSocket: new (u: string) => unknown }).WebSocket;
     expect(() => new W('ws://127.0.0.1:9/api/agent/terminal')).toThrow();
     expect(() => new W('ws://127.0.0.1:9/api/agent/chat?app=yuk&tk=T')).not.toThrow();
+  });
+});
+
+describe('the embed policy', () => {
+  it('lets the socket reach this server only, and no remote host in', async () => {
+    const { embedCsp } = await import('../../src/server/middleware.js');
+    expect(embedCsp(5100, '127.0.0.1:4000')).toContain("connect-src 'self' ws://127.0.0.1:4000");
+    expect(embedCsp(5100, 'evil.example:80')).not.toContain('evil');
   });
 });

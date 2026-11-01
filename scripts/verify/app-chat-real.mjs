@@ -40,8 +40,13 @@ let init = false; let n = 0; let stopped = false;
 const ask = (tool, input) => out({ type: 'control_request', request_id: 'r' + (++n), request: { subtype: 'can_use_tool', tool_name: tool, input } });
 function turn(text) {
   if (!init) { init = true; out({ type: 'system', subtype: 'init', session_id: id, model: 'x', tools: [], mcp_servers: [], slash_commands: [], permissionMode: 'default', cwd: process.cwd() }); }
-  const dir = join(homedir(), '.claude', 'projects', require('node:fs').realpathSync(process.cwd()).replace(/[^a-zA-Z0-9]/g, '-')); mkdirSync(dir, { recursive: true });
-  appendFileSync(join(dir, id + '.jsonl'), JSON.stringify({ type: 'user', sessionId: id, cwd: process.cwd(), uuid: 'u' + Date.now(), timestamp: new Date().toISOString(), message: { role: 'user', content: text } }) + '\\n');
+  // A real claude names the folder after its cwd's realpath (/private/var/…); the scratch vault is
+  // registered as /var/… (macOS's symlink), so the server looks under that name. Both, as a real
+  // project with no symlink in its path gets by itself.
+  for (const p of [require('node:fs').realpathSync(process.cwd()), ${JSON.stringify(app.proj)}]) {
+  if (!p) continue;
+  const dir = join(homedir(), '.claude', 'projects', p.replace(/[^a-zA-Z0-9]/g, '-')); mkdirSync(dir, { recursive: true });
+  appendFileSync(join(dir, id + '.jsonl'), JSON.stringify({ type: 'user', sessionId: id, cwd: process.cwd(), uuid: 'u' + Date.now(), timestamp: new Date().toISOString(), message: { role: 'user', content: text } }) + '\\n'); }
   stopped = false;
   if (text === 'PERM') return ask('Bash', { command: 'grep -r TOKEN .' });
   if (text === 'BIDI') return ask('Bash', { command: 'echo safe\\u202e\\u200bdanger' });
@@ -289,9 +294,16 @@ try {
       if (spawnCount() !== spawned) app.findings.push(`${where}: a reload spawned ${spawnCount() - spawned} child(ren) beside live ones`);
 
       // History: the app's own rows, and a pick lands back on the strip.
+      const listed = p.waitForResponse((r) => r.url().includes('/agent/chat-sessions'), { timeout: 8000 }).catch(() => null);
       await f3.locator('.app-chat-history').click();
-      await p.waitForTimeout(800);
-      if (!await f3.locator('.chp-list [role="option"], .chp-list button').first().isVisible().catch(() => false)) app.findings.push(`${where}: the history shows nothing`);
+      const lr = await listed;
+      const lb = lr ? await lr.json().catch(() => null) : null;
+      await p.waitForTimeout(1200);
+      const histRows = await f3.locator('.chp-list .chp-row, .chp-list [data-row-index]').count();
+      if (!histRows) {
+        await p.screenshot({ path: join(app.shots, `history-${w.name}.png`) });
+        app.findings.push(`${where}: the history shows nothing (listing ${lr?.status() ?? 'no request'}, ${lb?.sessions?.length ?? '?'} rows, ${lr?.url().replace(/^.*\/api/, '') ?? ''})`);
+      }
       await p.keyboard.press('Escape');
       const refused = await f3.evaluate(() => { try { new WebSocket('ws://127.0.0.1:1/api/agent/terminal'); return false; } catch { return true; } });
       if (!refused) app.findings.push(`${where}: a non-app WebSocket opened`);

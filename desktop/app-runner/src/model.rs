@@ -242,6 +242,8 @@ pub struct LaunchWindow {
     pub state: String,
     pub theme: Theme,
     pub last_error: Option<String>,
+    /// The dashboard server's port (desktop-server.json): an embedded screen's own origin.
+    pub dashboard_port: u16,
 }
 
 pub fn parse_launch_window(raw: &[u8]) -> Result<LaunchWindow, String> {
@@ -262,7 +264,19 @@ pub fn parse_launch_window(raw: &[u8]) -> Result<LaunchWindow, String> {
         state: v.get("state").and_then(Value::as_str).unwrap_or("running").to_string(),
         theme: Theme::parse(v.get("theme").and_then(Value::as_str)),
         last_error: v.get("lastError").and_then(Value::as_str).map(|s| s.chars().take(400).collect()),
+        dashboard_port: 0,
     })
+}
+
+/// May a SUBFRAME load this URL? Only the app's gateway, the dashboard (an embedded screen), and
+/// the documents a frame holds without a fetch. Whatever a frame on screen draws, a page it
+/// navigates to elsewhere would carry what it read off this machine in its URL, with no click.
+pub fn subframe_allowed(url: &str, gateway_port: Option<u16>, dashboard_port: Option<u16>) -> bool {
+    if url == "about:blank" || url == "about:srcdoc" {
+        return true;
+    }
+    let inner = url.strip_prefix("blob:").unwrap_or(url);
+    [gateway_port, dashboard_port].into_iter().flatten().filter(|p| *p != 0).any(|p| is_gateway_url(inner, p))
 }
 
 fn is_token(s: &str) -> bool {
@@ -439,6 +453,28 @@ pub fn theme_change_script(theme: Theme) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subframes_stay_on_the_two_origins() {
+        let ok = |u: &str| subframe_allowed(u, Some(5100), Some(4000));
+        assert!(ok("http://127.0.0.1:5100/x"));
+        assert!(ok("http://127.0.0.1:4000/?embed=chat"));
+        assert!(ok("about:srcdoc"));
+        assert!(ok("about:blank"));
+        assert!(ok("blob:http://127.0.0.1:4000/abc"));
+        assert!(!ok("https://attacker.example/?d=SECRET"));
+        assert!(!ok("http://127.0.0.1:4001/"));
+        assert!(!ok("http://127.0.0.1:40000/"));
+        assert!(!ok("http://localhost:4000/"));
+        assert!(!ok("http://127.0.0.1:4000.evil.example/"));
+        assert!(!ok("http://127.0.0.1:4000@evil.example/"));
+        assert!(!ok("data:text/html,x"));
+        assert!(!ok("javascript:alert(1)"));
+        assert!(!ok("file:///etc/passwd"));
+        assert!(!ok("about:blank#x"));
+        assert!(!ok("blob:https://evil.example/abc"));
+        assert!(!subframe_allowed("http://127.0.0.1:0/", Some(0), Some(0)));
+    }
 
     #[test]
     fn notify_payload() {

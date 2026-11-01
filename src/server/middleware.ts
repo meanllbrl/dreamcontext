@@ -93,6 +93,35 @@ export function isForeignFrameNavigation(req: Pick<IncomingMessage, 'headers'>):
   return typeof site !== 'string' || site.trim().toLowerCase() !== 'same-origin';
 }
 
+/**
+ * The ONE gate on what an embedded screen can reach (plan r9, security review): nothing it draws,
+ * whichever block or renderer, can load or navigate anywhere but this server. A list of filters
+ * per format never closes this class; a document policy does. Inline script stays allowed: a
+ * `dream-html` block is a sandboxed srcdoc frame, which INHERITS this policy, and its scripts (its
+ * own, and the height bridge) are what make it work; scripts were never the way out, loads and
+ * navigations are, and every one of those is held to this server here. The app runner holds the
+ * same line for subframe navigations (`subframe_allowed`, model.rs).
+ */
+export function embedCsp(gwPort: number, host: string | undefined): string {
+  const ws = typeof host === 'string' && /^(127\.0\.0\.1|localhost):\d{1,5}$/.test(host) ? ` ws://${host}` : '';
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "media-src 'self' blob:",
+    "font-src 'self' data:",
+    `connect-src 'self'${ws}`,
+    "frame-src 'self'",
+    "worker-src 'self' blob:",
+    // No `object-src` of its own: it falls back to 'self', so a PDF of this server still draws in
+    // its frame (WebKit's viewer is a plugin) and nothing remote does.
+    "base-uri 'none'",
+    "form-action 'none'",
+    `frame-ancestors http://127.0.0.1:${gwPort}`,
+  ].join('; ');
+}
+
 /** {@link isForeignFrameNavigation} as a gate: sends the 403, true when refused. */
 export function refuseForeignFrame(req: IncomingMessage, res: ServerResponse): boolean {
   if (!isForeignFrameNavigation(req)) return false;
@@ -100,9 +129,7 @@ export function refuseForeignFrame(req: IncomingMessage, res: ServerResponse): b
   // `frame-ancestors` then names that app's gateway, so the document holds nowhere else.
   const grant = embedFrameGrant(req);
   if (grant) {
-    // Elements fetch without asking `lockEmbedWrites`: a remote image in model text would carry
-    // what the model read off this machine, with no card and no click.
-    res.setHeader('Content-Security-Policy', `frame-ancestors http://127.0.0.1:${grant.gwPort}; img-src 'self' data: blob:; media-src 'self' blob:`);
+    res.setHeader('Content-Security-Policy', embedCsp(grant.gwPort, req.headers.host));
     return false;
   }
   sendError(res, 403, 'forbidden', 'This page cannot be shown inside another site.');

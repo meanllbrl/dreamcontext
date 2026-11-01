@@ -29,6 +29,12 @@ import { dc } from './lib/dc.mjs';
 | `dc.mountEmbed(host, view, params)` | ✓ | ✗ | draws that screen into `host`, with the height it needs and the page's colours; the iframe's `dcRetheme()` reloads it after a theme change |
 | `dc.api(method, path, body)` | subset | ✓ | any dashboard API route |
 
+**An embedded screen reaches this Mac only.** Nothing drawn inside it (a picture, a `dream-html`
+block, a question preview, a board, a PDF) can load or open anything from the internet: the screen's
+policy and the window both refuse it. A remote picture or video in a chat answer, a board's live web
+embed (YouTube, Figma) and the board's handwritten fonts do not draw there; open the chat in the main
+app for those. The app's own page keeps its own rules.
+
 **Embedding takes height.** Use `dc.mountEmbed`, not your own `<iframe>`: it fills `host` and keeps
 both at the minimum or above (560px; insight 360px), so a shorter `host` grows. Give `host` a height
 to fill it with `height`, e.g. the app's full height: the helper sets `min-height` on `host` itself,

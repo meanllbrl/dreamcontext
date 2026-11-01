@@ -62,6 +62,8 @@ struct Runner {
     _activity: Option<Retained<ProtocolObject<dyn NSObjectProtocol>>>,
     /// Gateway port + runner token of the current connection.
     conn: Option<(u16, String)>,
+    /// The dashboard's port: the only other origin a subframe may load.
+    dashboard_port: Option<u16>,
     /// Some while one of the runner's own screens is showing instead of the app.
     screen: Option<Screen>,
     theme: Theme,
@@ -223,6 +225,7 @@ fn build_window(mtm: MainThreadMarker, info: BundleInfo) -> Runner {
         _keep: keep,
         _activity: activity,
         conn: None,
+        dashboard_port: None,
         screen: None,
         theme: Theme::System,
         rev: None,
@@ -501,7 +504,10 @@ fn try_launch(info: &BundleInfo) -> Attempt {
     match res {
         Ok(r) if r.status == 200 => match model::parse_launch_window(&r.body) {
             Ok(lw) if lw.state == "error" => Attempt::Backend(lw.last_error.unwrap_or_else(|| "backend error".into())),
-            Ok(lw) => Attempt::Ok(lw),
+            Ok(mut lw) => {
+                lw.dashboard_port = file.port;
+                Attempt::Ok(lw)
+            }
             Err(e) => {
                 log(&e);
                 Attempt::Unreachable
@@ -539,6 +545,7 @@ fn finish_connect(outcome: Outcome) {
             let generation = with(|r| {
                 r.generation += 1;
                 r.conn = Some((lw.gateway_port, lw.runner_token.clone()));
+                r.dashboard_port = Some(lw.dashboard_port);
                 r.hb_failures = 0;
                 r.rev = None;
                 if let Some(t) = &lw.title {
@@ -1009,14 +1016,16 @@ fn navigation_action_policy(action: &WKNavigationAction) -> WKNavigationActionPo
         .map(|s| s.to_string())
         .unwrap_or_default();
     let target = unsafe { action.targetFrame() };
-    let (gw, internal) = with(|r| (r.conn.as_ref().map(|(p, _)| *p), r.screen.is_some())).unwrap_or((None, false));
+    let (gw, internal, dash) = with(|r| (r.conn.as_ref().map(|(p, _)| *p), r.screen.is_some(), r.dashboard_port)).unwrap_or((None, false, None));
     match target {
-        // A subframe (a dreamcontext embed, a widget): anything but local files.
+        // A subframe: the app's own origin or an embedded dreamcontext screen, nothing else.
+        // The embed's CSP says the same; this holds whatever a page or a frame inside it does.
         Some(f) if !unsafe { f.isMainFrame() } => {
-            if url.to_ascii_lowercase().starts_with("file:") {
-                WKNavigationActionPolicy::Cancel
-            } else {
+            if model::subframe_allowed(&url, gw, dash) {
                 WKNavigationActionPolicy::Allow
+            } else {
+                log("a subframe navigation outside the app and dreamcontext was refused");
+                WKNavigationActionPolicy::Cancel
             }
         }
         // target=_blank / window.open: the same rule, but nothing opens a second window.
