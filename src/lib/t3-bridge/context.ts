@@ -205,6 +205,8 @@ export class BrainContext {
   private owedNotice: string | null = null;
   /** What the edit checks (PostToolUse: format, type errors) said since the last owner turn. */
   private checks: string[] = [];
+  /** How many of {@link checks} an earlier turn's end already weighed. */
+  private checksSeen = 0;
   private edits: Promise<unknown> = Promise.resolve();
   /** The next Stop is the continuation of a block: it must not block again (Claude's `stop_hook_active`). */
   private continuing = false;
@@ -267,6 +269,7 @@ export class BrainContext {
   takeChecks(): string {
     const text = this.checks.join('\n\n');
     this.checks = [];
+    this.checksSeen = 0;
     return text;
   }
 
@@ -302,11 +305,21 @@ export class BrainContext {
     this.continuing = false;
     const run = this.run;
     // After this turn's edit checks: the Stop check reads what they recorded.
+    const continuation = input.stop_hook_active;
+    const seen = this.checksSeen;
     this.stops = this.stops.then(() => this.edits).then(async () => {
       const reason = stopBlockReason(await run('stop', input, { cwd: this.o.cwd, env: this.env, timeoutMs: STOP_HOOK_TIMEOUT_MS }));
-      if (reason && this.onStopBlock) {
+      // Claude reads an edit check's errors in the turn that made them. Here they come after it:
+      // a check that found an error sends the turn on with it, once (a continuation does not).
+      // Only what this turn's own edits said: an older note already had its turn.
+      const fresh = this.checks.slice(seen);
+      const errors = this.onStopBlock && !continuation && fresh.some((c) => /\berror\b/i.test(c)) ? fresh.join('\n\n') : '';
+      if (errors) this.checks.splice(seen);
+      this.checksSeen = this.checks.length;
+      const why = [errors ? `The edit checks found problems in what you changed:\n${errors}` : '', reason ?? ''].filter(Boolean).join('\n\n');
+      if (why && this.onStopBlock) {
         this.continuing = true;
-        this.onStopBlock(reason);
+        this.onStopBlock(why);
       }
     }).catch(() => undefined);
   }

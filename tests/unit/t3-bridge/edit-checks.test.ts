@@ -39,6 +39,28 @@ describe('edit checks on the bridge', () => {
     expect(stops.map((s) => s.stop_hook_active)).toEqual([false, true]);
   });
 
+  it('an edit check that found an error sends the turn on once with it; a format note waits', async () => {
+    let out = 'Type error: src/a.ts(1,14): error TS2322';
+    const run: HookRunner = async (name) => (name === 'post-tool-use' ? JSON.stringify({ hookSpecificOutput: { additionalContext: out } }) : '');
+    const brain = new BrainContext({ cwd: '/tmp/x-no-brain', env: {}, run });
+    const blocks: string[] = [];
+    brain.onStopBlock = (r) => { blocks.push(r); };
+    brain.edited('t', 'src/a.ts');
+    brain.turnEnded('t', null, '');
+    await brain.drain();
+    expect(blocks).toEqual([expect.stringContaining('error TS2322')]);
+    // The continuation edits again with the error still there: it is not sent on a second time.
+    brain.edited('t', 'src/a.ts');
+    brain.turnEnded('t', null, '');
+    await brain.drain();
+    expect(blocks).toHaveLength(1);
+    out = 'Formatted a.ts with prettier.';
+    brain.edited('t', 'src/a.ts');
+    brain.turnEnded('t', null, '');
+    await brain.drain();
+    expect(blocks).toHaveLength(1);
+  });
+
   it('reads only a real block answer', () => {
     expect(stopBlockReason('{"decision":"block","reason":"x"}\n')).toBe('x');
     expect(stopBlockReason('{"hookSpecificOutput":{}}')).toBeNull();
