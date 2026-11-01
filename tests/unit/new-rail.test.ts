@@ -22,7 +22,7 @@ describe('new rail', () => {
   it('every classic page is reachable exactly once (rail or More)', () => {
     // Stats joined More only: the classic sidebar stays as it was (shell-render-equality), and ⌘U and
     // the composer's Usage details reach the page there.
-    const classic = new Set<string>(['announcements', 'about', 'stats']);
+    const classic = new Set<string>(['announcements', 'stats']);
     for (const g of NAV_GROUPS) for (const i of g.items as any[]) if (!('launch' in i)) classic.add(i.page);
     const reach = [...railPages, RAIL_FOOT, ...MORE_PAGES];
     expect(new Set(reach).size).toBe(reach.length);

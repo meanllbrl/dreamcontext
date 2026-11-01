@@ -26,8 +26,7 @@ const VIEWPORTS: Viewport[] = [
   { width: 390, height: 844, label: '390' },
 ];
 
-// The 10 navigable pages via sidebar text.
-// About uses 'What is this?' — the .sidebar-item--about button label.
+// The navigable pages via sidebar text.
 type PageEntry = { page: string; label: string };
 const PAGES: PageEntry[] = [
   { page: 'brain', label: 'Brain' },
@@ -39,7 +38,6 @@ const PAGES: PageEntry[] = [
   { page: 'sleep', label: 'Sleep State' },
   { page: 'packs', label: 'Packs' },
   { page: 'settings', label: 'Settings' },
-  { page: 'about', label: 'What is this?' },
 ];
 
 // Master-detail pages that should stack at <=1024px.

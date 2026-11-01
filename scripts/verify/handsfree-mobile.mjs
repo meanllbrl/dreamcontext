@@ -72,7 +72,7 @@ const PAGES = [
   ['automations', 'AI Team'], ['tasks', 'Tasks'], ['knowledge', 'Knowledge'], ['lab', 'Insights'], ['whiteboards', 'Whiteboard'],
   ['roadmap', 'Roadmap'], ['sleep', 'Sleep Cycle'], ['core', 'Core'], ['brain', 'Map'],
   ['council', 'Council'], ['hypotheses', 'Hypotheses'], ['packs', 'Packs'], ['taxonomy', 'Taxonomy'],
-  ['announcements', 'Announcements'], ['about', 'What is this?'],
+  ['announcements', 'Announcements']],
 ];
 const SIZES = [
   { name: '390x844', device: 'iPhone 13', viewport: { width: 390, height: 844 } },

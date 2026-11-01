@@ -196,17 +196,6 @@ function LabIcon() {
   );
 }
 
-/** About — "What is this?": a question mark in a circle. */
-function AboutIcon() {
-  return (
-    <Svg>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M9.3 9.2a2.8 2.8 0 0 1 5.4 1c0 1.9-2.7 2.5-2.7 2.5" />
-      <circle cx="11.9" cy="16.6" r="0.7" fill="currentColor" stroke="none" />
-    </Svg>
-  );
-}
-
 /** Announcements — a megaphone: what's new, said out loud. */
 function AnnouncementsIcon() {
   return (
@@ -324,7 +313,6 @@ export const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   announcements: AnnouncementsIcon,
   packs: PacksIcon,
   settings: SettingsIcon,
-  about: AboutIcon,
 };
 
 /** Render the custom nav icon for a page, or null if none is mapped. */

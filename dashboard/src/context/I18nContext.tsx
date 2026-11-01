@@ -535,7 +535,6 @@ const translations: Record<string, Record<string, string>> = {
     'nav.settings': 'Settings',
     'nav.packs': 'Packs',
     'nav.taxonomy': 'Taxonomy',
-    'nav.about': 'What is this?',
     // The new shell (Settings → New layout). Every key the three waves need, pinned in W1.
     'nav.relations': 'Project Relations',
     'nav.more': 'More',

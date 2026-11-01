@@ -28,7 +28,7 @@ const INLINE: Record<string, [string, string, RegExp]> = {
   whiteboards: ['pages/WhiteboardsPage.tsx', 'nav.whiteboard', /\{newShell && <PageTitle title=\{t\('nav\.whiteboard'\)\} \/>\}/],
   automations: ['pages/AiTeamPage.tsx', 'nav.aiTeam', /if \(!newShell\) return page;[\s\S]*<PageBar title=\{t\('nav\.aiTeam'\)\}>/],
 };
-const TITLE_ONLY = ['core', 'taxonomy', 'sleep', 'packs', 'announcements', 'about'];
+const TITLE_ONLY = ['core', 'taxonomy', 'sleep', 'packs', 'announcements'];
 
 describe('page headers', () => {
   it('every inline title sits in its row, from the rail label, gated on the new shell', () => {
@@ -59,9 +59,9 @@ describe('page headers', () => {
     expect(src).toMatch(/\{newShell \? \(\s*<NewShellPage nav=\{nav\}>/);
   });
 
-  it('covers all sixteen non-chat pages with exactly one title each (Settings draws its own bar)', () => {
+  it('covers all fifteen non-chat pages with exactly one title each (Settings draws its own bar)', () => {
     const pages = [...Object.keys(INLINE), ...TITLE_ONLY, 'settings'];
-    expect(new Set(pages).size).toBe(16);
+    expect(new Set(pages).size).toBe(15);
     expect(read('pages/SettingsPage.tsx')).toMatch(/<PageBar[^>]*title=\{t\('nav\.settings'\)\}/);
     // The AI Team roster drops its own h1 under the page bar.
     expect(read('components/aiteam/TeamRoster.tsx')).toMatch(/\{!headless && \(\s*<div className="aiteam-roster-head">/);
