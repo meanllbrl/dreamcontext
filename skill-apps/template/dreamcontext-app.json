@@ -3,6 +3,7 @@
   "name": "__NAME__",
   "icon": "icon.png",
   "backend": { "command": "node server.mjs", "health": "/health" },
+  "agent": { "own": true },
   "actions": [
     { "id": "hello", "title": "Say hello and count visits", "method": "GET", "path": "/api/hello" }
   ]

@@ -26,7 +26,7 @@ import { listVaults } from '../../lib/vaults.js';
 import { HOLDER_PROBE_MS, MAC_CLOSE_HANDED_OVER, MAC_CLOSE_TAKEN_OVER, REATTACH_EVICT, REATTACH_PASSIVE, SUPER_STAGE_FRAME, type LiveChatWire } from '../../lib/handsfree/mac/contract.js';
 import { cutProcessGroups } from '../../lib/automations/runner.js';
 import { trackChild } from '../lifecycle.js';
-import { resolveAgentSession, resolveAgentSessionAccount } from '../../lib/agent-session-map.js';
+import { recordAgentSession as recordTabSession, resolveAgentSession, resolveAgentSessionAccount } from '../../lib/agent-session-map.js';
 import { writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, contextTokensFromUsage } from '../../lib/context-watch.js';
 import { handleRotationAtResult, rotationFinished } from './handoff-rotation.js';
 import { clearFresh, isRotating, markFreshDelivered, stopRotating } from '../../lib/super/fresh-session.js';
@@ -45,6 +45,7 @@ import {
   chatSpawnRoster, collectTeam, renderSuperTeamBlock, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
 } from '../../lib/agents/team-roster.js';
 import { SUPER_BRIEF_TEXT, modeBriefing, type ChatMode } from '../chat-modes.js';
+import { appChatBriefing } from '../chat-surface.js';
 import { heldModeFromTranscript, modeNoteHookOutput, modeNoteSettings, modeNoteSources, modeSwitchNote, superBriefState } from '../chat-mode-drift.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
 import { autoModeSettings } from '../../lib/auto-mode-rules.js';
@@ -85,6 +86,11 @@ import { dropFromOutbox } from '../../lib/super/outbox.js';
 import { clearAccountRejection, readAccountRejections, recordAccountRejection } from '../../lib/claude-limit-rejections.js';
 import { meterEndsRefusal, meterShowsRoomSince, readUsageMeter, readUsageMeterFrame, recordUsageMeter } from '../../lib/claude-usage-meter.js';
 import { chatSpawnAccount } from '../../lib/automations/account.js';
+import { appChatUpgrade } from '../apps/app-chat-gate.js';
+import { APP_CHAT_MAX_LIVE, appChatHasRoom, prepareAppChat, reserveAppChat, userChatDefaults, type AppChatEnvelope } from '../../lib/apps/assistant.js';
+import { appChatRoot, lookupAppChat, lookupAppChatOf, newestAppChat, rotateAppChat, type AppChatRecord } from '../../lib/apps/chat-store.js';
+import { getApp, real, appDataDir } from '../../lib/apps/registry.js';
+import { cliAwarePath } from '../../lib/automations/cli-path.js';
 import { clearToolSignedOut, readToolRejections, recordToolRejection, recordToolSignedOut } from '../../lib/account-switch.js';
 import { isAccountTool, toolSwitchFor } from '../../lib/tool-switch.js';
 import { isInstanceTool, type InstanceTool } from '../../lib/instance-accounts.js';
@@ -411,8 +417,20 @@ export function superAllowedTools(isSuper: boolean, bypass: boolean): string[] {
  * that was inside native plan mode before the upgrade may hit one ExitPlanMode tool error on
  * resume and recover. Cron and RemoteTrigger stay: /loop and /schedule are user-typed skills.
  */
-export function chatDeniedToolArgs(scopedCard: boolean): string[] {
-  return scopedCard ? [] : ['--disallowedTools', 'EnterPlanMode,ExitPlanMode'];
+export function chatDeniedToolArgs(scopedCard: boolean, also: readonly string[] = []): string[] {
+  return scopedCard ? [] : ['--disallowedTools', ['EnterPlanMode,ExitPlanMode', ...also].join(',')];
+}
+
+/** What of a chat open an app conversation keeps: its ids, its model, nothing that decides what it
+ *  may do. The upgrade's rebuilt URL drops the rest too; this holds for every other way in. */
+export function appChatOpts(o: ChatSpawnOpts): ChatSpawnOpts {
+  return {
+    bypass: false, sessionId: o.sessionId, resumeId: o.resumeId, model: o.model, effort: o.effort, mode: 'basic', account: '',
+    initialPrompt: '', deferPrompt: false, vault: o.vault,
+    ...(o.reattachFallback ? { reattachFallback: true } : {}),
+    ...(o.onAccepted ? { onAccepted: o.onAccepted } : {}),
+    ...(o.inheritedSurfaceDispose ? { inheritedSurfaceDispose: o.inheritedSurfaceDispose } : {}),
+  };
 }
 
 /**
@@ -1251,12 +1269,12 @@ let leanSwept = false;
 export function attachAgentChat(server: Server, opts: { networkToken?: string | null; windowControlPort?: number } = {}): void {
   if (!leanSwept) { leanSwept = true; try { sweepLeanMcpDir(); } catch { /* next start */ } }
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-    let url: URL;
-    try { url = new URL(req.url || '/', `http://${req.headers.host}`); }
+    let parsedUrl: URL;
+    try { parsedUrl = new URL(req.url || '/', `http://${req.headers.host}`); }
     catch { socket.destroy(); return; }
-    if (url.pathname !== '/api/agent/chat') return; // not ours — leave for others
+    if (parsedUrl.pathname !== '/api/agent/chat') return; // not ours — leave for others
 
-    const vault = url.searchParams.get('vault');
+    const vault = parsedUrl.searchParams.get('vault');
 
     // The dreamcontext Assistant's hidden vault: loopback + desktop, UNCONDITIONALLY. This
     // branch runs BEFORE the tailnet OR below, so a remote peer holding a valid network token
@@ -1290,6 +1308,19 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
 
     const projectRoot = resolveVaultProjectRoot(vault, { allowAssistant: assistant });
     if (!projectRoot) { rejectUpgrade(socket, 400); return; }
+
+    // An app's conversation, from its frame or from any other pane (apps/app-chat-gate.ts): every
+    // reader below sees the rebuilt URL, so what the page asked for beyond it reaches nothing.
+    const appUpgrade = appChatUpgrade({
+      url: parsedUrl, vault, projectRoot, phone, assistant,
+      sameOrigin: () => isLoopback(req) && isSameOriginStrict(req),
+      isLive: (id) => !!findLiveChat(id), hasTranscript: claudeConversationExists,
+    });
+    if (appUpgrade && 'refuse' in appUpgrade) { rejectUpgrade(socket, appUpgrade.refuse); return; }
+    // Refused with words the pane shows, and no record left behind.
+    if (appUpgrade && 'say' in appUpgrade) { refuseAppSocket(req, socket, head, appUpgrade.say); return; }
+    const url = appUpgrade?.url ?? parsedUrl;
+    socket.once('close', () => appUpgrade?.hold?.());
 
     const bypass = url.searchParams.get('bypass') === '1';
     const sessionId = sanitizeUuid(url.searchParams.get('sessionId'));
@@ -1554,11 +1585,26 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           try { recordStageHomeSession(projectRoot, stageAgent, conversation); } catch { /* the stage opens a fresh one next time */ }
         };
         startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...toolOpt });
+        appUpgrade?.hold?.();
         settleSupersede(accepted);
         releaseOpening();
       });
     })();
   });
+}
+
+/** A socket opened only to say why: an upgrade refusal has no text the pane could show. */
+function refuseAppSocket(req: IncomingMessage, socket: Duplex, head: Buffer, message: string): void {
+  void (async () => {
+    let WebSocketServer: typeof import('ws').WebSocketServer;
+    try { ({ WebSocketServer } = await import('ws')); }
+    catch { rejectUpgrade(socket, 501); return; }
+    new WebSocketServer({ noServer: true }).handleUpgrade(req, socket, head, (ws) => {
+      ws.on('error', () => { /* the close that follows is what counts */ });
+      try { ws.send(JSON.stringify({ type: '_meta', subtype: 'error', code: 'app_refused', message })); } catch { /* gone */ }
+      try { ws.close(); } catch { /* already closed */ }
+    });
+  })();
 }
 
 /**
@@ -1851,8 +1897,33 @@ export const CLOSE_KILL_GRACE_MS = 5000;
 export function startChatSession(
   initialWs: import('ws').WebSocket,
   projectRoot: string,
-  opts: ChatSpawnOpts,
+  requested: ChatSpawnOpts,
 ): void {
+  // ── An app's conversation runs in the app's envelope, whichever pane named it ───────
+  // Membership is the record file. Decided before anything else reads the options, so a record id
+  // reaches no Super, no agent, no lean list, no bridge tool, no mode brief, no prompt, no bypass.
+  const refuseApp = (message: string): void => {
+    try { initialWs.send(JSON.stringify({ type: '_meta', subtype: 'error', code: 'app_refused', message })); } catch { /* gone */ }
+    try { initialWs.close(); } catch { /* already closed */ }
+  };
+  const appHit = lookupAppChatOf([requested.resumeId, requested.sessionId, requested.resumeId ? resolveAgentSession(join(projectRoot, '_dream_context'), requested.resumeId) : '']);
+  if (appHit.kind === 'damaged') { refuseApp('This app conversation cannot be read, so it stays closed.'); return; }
+  let app: AppChatEnvelope | null = null;
+  /** The record the live conversation answers to, the tip of its chain; moves on a rotation. */
+  const appTip = appHit.kind === 'record' ? lookupAppChat(newestAppChat(appHit.record.id)) : null;
+  let appRecord: AppChatRecord | null = appHit.kind === 'record' ? (appTip?.kind === 'record' ? appTip.record : appHit.record) : null;
+  /** Its seat, by the pin: a respawn after a rotation is the same chat. */
+  const appSeat = appRecord ? appChatRoot(appRecord.id) : '';
+  if (appRecord) {
+    if (!appChatHasRoom(appRecord.hash, appSeat)) {
+      refuseApp(`This app already has ${APP_CHAT_MAX_LIVE} chats running. Close one to start another.`);
+      return;
+    }
+    const prep = prepareAppChat(appRecord, { projectRoot });
+    if (!prep.ok) { refuseApp(`This app's chat cannot open: ${prep.reason}.`); return; }
+    app = prep.app;
+  }
+  const opts = app ? appChatOpts(requested) : requested;
   // The socket this child is bound to RIGHT NOW. Reassigned only by `adoptSocket` (a client's
   // reattach after a dropped socket); every send below reads it at call time, so output flows
   // to whichever socket currently owns the child.
@@ -2072,9 +2143,9 @@ export function startChatSession(
       return;
     }
   }
-  const browserOverride = scopedCard ? null : prepareBrowserOverride(projectRoot);
+  const browserOverride = scopedCard || app?.own ? null : prepareBrowserOverride(projectRoot);
   // The MCP stores every account shares (task mcp-management), by env reference.
-  const storeMcp = chatStoreMcp({ scopedCard, lean: !!opts.leanMcp, projectRoot });
+  const storeMcp = chatStoreMcp({ scopedCard: scopedCard || !!app?.own, lean: !!opts.leanMcp, projectRoot });
 
   // A bridge pane holds its PANE id (its thread changes on rotation; the pane does not), so a
   // respawn of the same pane waits for the old child exactly as a Claude resume does.
@@ -2107,7 +2178,8 @@ export function startChatSession(
   // than swallowed. A `git checkout` on the user's tree is not something to do quietly, and
   // the refusal arm matters even more than the success one: in this repo `_dream_context/`
   // rides the working tree, so "staying put, the tree is dirty" is the common answer.
-  const freshStart = resumeTarget || card ? null : freshSessionOnDefaultBranch(projectRoot);
+  // An app chat never moves the project's branch: it opens beside the owner's work.
+  const freshStart = resumeTarget || card || app ? null : freshSessionOnDefaultBranch(projectRoot);
 
   // Deferred initial prompt ("the user speaks first"): mirrors
   // agent-terminal.ts's parking pattern exactly. A non-deferred prompt is instead sent as
@@ -2147,12 +2219,12 @@ export function startChatSession(
   // its own block below. An ordinary Chat tab's roster is the routing rule (suggest the member, call
   // it on the owner's yes); a Super's child (the Super already chose who does the job) and an
   // agent's own tab (it speaks AS a member) keep the plain sub-agent wording.
-  const teamRouting = !opts.leanMcp && !opts.agent;
+  const teamRouting = !opts.leanMcp && !opts.agent && !app;
   // A scoped agent's allowlist disallows the Agent tool, so a roster there would name a door it lacks.
   // A Codex or Antigravity pane never gets the `--agents` definitions, so it is not told about them
   // either (docs/tool-parity.md: the AI Team as sub-agents is Claude-only for now).
-  if (!isAssistant && !card && !scopedCard && !isSuper && !bridgeTool) {
-    try { subagents = chatSpawnRoster(contextRoot, { exclude: opts.agent, routing: teamRouting }); } catch { subagents = null; }
+  if (!isAssistant && !card && !scopedCard && !isSuper && !bridgeTool && !app?.own) {
+    try { subagents = chatSpawnRoster(contextRoot, { exclude: opts.agent ?? app?.member ?? undefined, routing: teamRouting }); } catch { subagents = null; }
   }
   // The Super's `## Your AI Team` ('' without a team; a failed read costs the block, never the spawn).
   let superTeamBlock = '';
@@ -2205,12 +2277,12 @@ export function startChatSession(
     // A card speaks as its agent: the card briefing takes the mode brief's place. An agent in a
     // Chat tab keeps the tab's mode too: who it is first, then how this tab asked it to work.
     const tabBrief = modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot), assistant: assistantCtx });
-    const ownBrief = card ? card.briefing : agentChat ? [agentChat.briefing, tabBrief].filter(Boolean).join('\n\n') : tabBrief;
+    const ownBrief = app ? app.briefing : card ? card.briefing : agentChat ? [agentChat.briefing, tabBrief].filter(Boolean).join('\n\n') : tabBrief;
     // Named only when the `--agents` definitions really ride this spawn (`subagents` is cleared
     // when their file could not be written), so the model is never told about agents it lacks.
     const modeBrief = [ownBrief, subagents?.roster ?? '', superTeamBlock].filter(Boolean).join('\n\n');
     // A Super Agent's delegated child (lean, above) is also told how to reach its Super Agent.
-    const surface = opts.leanMcp ? `${CHAT_SURFACE_BRIEFING}\n${SUPER_CHILD_BRIEFING}` : CHAT_SURFACE_BRIEFING;
+    const surface = app ? `${CHAT_SURFACE_BRIEFING}\n${appChatBriefing(app)}` : opts.leanMcp ? `${CHAT_SURFACE_BRIEFING}\n${SUPER_CHILD_BRIEFING}` : CHAT_SURFACE_BRIEFING;
     const briefing = modeBrief ? `${surface}\n${modeBrief}` : surface;
     writeFileSync(brief, briefing, { encoding: 'utf-8', mode: 0o600 });
     briefingArg = ['--append-system-prompt-file', brief];
@@ -2265,6 +2337,10 @@ export function startChatSession(
       }
     } catch { /* the model keeps the mode it was born with — the defect, not a crash */ }
   }
+  // An app chat's Bash gate rides here, AFTER the mode note's assign, which a plain assign of its
+  // own would drop; a member's has none. The carve-out for builders is not an app chat's business.
+  if (app) delete spawnSettings.autoMode;
+  if (app?.hooks) spawnSettings.hooks = { ...(spawnSettings.hooks as Record<string, unknown> | undefined), ...app.hooks };
   try {
     const settings = join(tmpdir(), `dreamcontext-chat-settings-${randomUUID()}.json`);
     if (!tmpPathOk(settings)) throw new Error('unsafe tmpdir');
@@ -2272,7 +2348,17 @@ export function startChatSession(
     tmpFiles.push(settings);
     modeNoteArg = ['--settings', settings];
     
-  } catch { /* no carve-outs and no mode note this spawn — auto mode keeps its defaults */ }
+  } catch {
+    // No carve-outs and no mode note this spawn — auto mode keeps its defaults. An app chat with no
+    // gate is no chat: read-only Bash would run past the allow list.
+    if (app?.hooks) {
+      releaseHeld();
+      cleanupBriefing(); cleanupAgents(); cleanupModeNote(); cleanupDeferred();
+      app.dispose();
+      refuseApp('This app\'s chat cannot open: its settings could not be written.');
+      return;
+    }
+  }
   if (tmpFiles.length) {
     cleanupModeNote = () => {
       for (const p of tmpFiles) { try { rmSync(p, { force: true }); } catch { /* tmp cleanup */ } }
@@ -2286,10 +2372,12 @@ export function startChatSession(
   // (live, or gone and not yet deleted). Checked before this spawn registers its own entry.
   const delegated = !isAssistant && (!!opts.fromAssistant
     || [resumeTarget, resumeId].some((c) => !!c && isDelegatedConversation(c)));
+  // `--setting-sources project` drops the owner's own defaults, so an app chat names them.
+  const appDefaults = app?.own ? userChatDefaults(accountConfigDir) : null;
   const spawnEffort = spawnEffortFor({
     isAssistant, assistantEffort: assistantConfig?.effort, delegated, mode, urlEffort: effort,
-  });
-  const spawnModel = spawnModelFor({ isAssistant, assistantModel: assistantConfig?.model, urlModel: model });
+  }) || appDefaults?.effort || '';
+  const spawnModel = spawnModelFor({ isAssistant, assistantModel: assistantConfig?.model, urlModel: model }) || appDefaults?.model || '';
   let recallEnv: Record<string, string> = {};
   if (isAssistant || delegated) {
     try {
@@ -2317,7 +2405,10 @@ export function startChatSession(
     // allowlist), in place of the pane's mode, exactly as its runs do (board-scope.ts).
     // An agent in a Chat tab (its stage included) runs at its autonomy level (agents/permission.ts),
     // decided above from its manifest; the pane's bypass flag never reaches it.
-    ...(envelope?.permissionArgs ?? agentChat?.levelArgs ?? ['--permission-mode', assistantConfig ? assistantPermissionMode(assistantConfig.autonomy) : permissionModeFor(bypass)]),
+    ...(app ? ['--permission-mode', app.permissionMode] : envelope?.permissionArgs ?? agentChat?.levelArgs ?? ['--permission-mode', assistantConfig ? assistantPermissionMode(assistantConfig.autonomy) : permissionModeFor(bypass)]),
+    ...(app?.allowed.length ? ['--allowedTools', ...app.allowed] : []),
+    ...(app?.settingSources ? ['--setting-sources', app.settingSources] : []),
+    ...(app?.addDirs.flatMap((d) => ['--add-dir', d]) ?? []),
     ...briefingArg,
     ...agentsArg,
     // The `--settings` file is a flag source the scope cannot narrow: a scoped card goes without.
@@ -2328,7 +2419,7 @@ export function startChatSession(
     ...(assistantConfig ? assistantAllowedTools(assistantConfig.autonomy) : []),
     ...superAllowedTools(isSuper, bypass),
     // Variadic, but every later element is a `--` flag, so it swallows nothing.
-    ...chatDeniedToolArgs(scopedCard),
+    ...chatDeniedToolArgs(scopedCard, app?.denied),
     ...assistantSettingArgs(isAssistant),
     // Every account (#0 included) reaches the MCP stores BY REFERENCE (`mcp-store.ts`): the
     // computer file, then the project file (the later one wins a name). They are named as env
@@ -2339,7 +2430,8 @@ export function startChatSession(
     // and the stores may carry the owner's headed `playwright` too.
     // A LEAN child (D14) instead: strict, and only its subset, the project's own `.mcp.json`
     // (strict would drop it) and the browser override, LAST as above. Never a store.
-    ...(scopedCard ? [] : leanChildMcpArgs(opts.leanMcp ? { leanMcpPath, projectMcp: leanProjectMcpSafe, browser: browserOverride?.configPath ?? null } : null, [...storeMcp.refs, computerMcpPath, browserOverride?.configPath ?? null])),
+    // An app's own assistant: strict, and only the manifest's servers.
+    ...(scopedCard ? [] : leanChildMcpArgs(app?.own ? { leanMcpPath: app.mcpConfig, projectMcp: null, browser: null } : opts.leanMcp ? { leanMcpPath, projectMcp: leanProjectMcpSafe, browser: browserOverride?.configPath ?? null } : null, [...storeMcp.refs, computerMcpPath, browserOverride?.configPath ?? null])),
   ];
   // Quoted for the login-shell script string exactly like the terminal/title/capture
   // spawns: every element here is either a fixed flag literal or a whitelist-sanitized
@@ -2427,7 +2519,7 @@ export function startChatSession(
     : null;
 
   if (mirrors) superMirrorSets.add(mirrors);
-  const windowControl = !isAssistant && !card
+  const windowControl = !isAssistant && !card && !app
     ? mintWindowToken({
       send: (frame) => {
         if (ws.readyState !== ws.OPEN) return false;
@@ -2449,7 +2541,11 @@ export function startChatSession(
   // `leanMcp` too: a delegated child opens BEFORE its record lands, and a resumed one is out of the
   // index, and both carry that flag; a forged one only narrows what the sender may do.
   const superCrewEnv = isSuper || !!opts.leanMcp || [resumeId, sessionId].some((id) => !!id && isHandedOverChild(id)) ? '1' : '';
-  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', DREAMCONTEXT_TEAM_ROUTE: teamRoute, [SUPER_CREW_ENV]: superCrewEnv, ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...storeMcp.env, ...(envelope?.env ?? {}) } as Record<string, string | undefined>;
+  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', DREAMCONTEXT_TEAM_ROUTE: teamRoute, [SUPER_CREW_ENV]: superCrewEnv, ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...storeMcp.env, ...(envelope?.env ?? {}), ...(app?.env ?? {}) } as Record<string, string | undefined>;
+  // An app chat's hook and listed verbs call `dreamcontext` with no login-shell PATH behind them.
+  if (app) childEnv.PATH = cliAwarePath(childEnv.PATH ?? '');
+  // Held from the spawn to the child's exit; nothing async ran since `appChatHasRoom`.
+  const releaseAppSlot = app ? reserveAppChat(app.hash, appSeat) : () => { /* not an app chat */ };
   // Its own process group on POSIX, so the whole tree can be ended at once (win32: see chatSpawnCommand).
   const spawnCmd = chatSpawnCommand({ argv, script });
   const child: ChildProcessWithoutNullStreams = spawn(spawnCmd.file, spawnCmd.args, {
@@ -2935,7 +3031,7 @@ export function startChatSession(
     sendMeta({ subtype: 'mcp_status', servers, at: mcpLastAt });
     if (mcpTab) writeMcpHealth(contextRoot, mcpTab, servers);
     // A lean child sees only its subset: not the account's truth, so it writes no cell.
-    if (mcpAccount && !opts.leanMcp) {
+    if (mcpAccount && !opts.leanMcp && !app?.own) {
       try { writeStatusCache(mcpAccount, servers, redactContextFor(projectRoot)); } catch { /* shown anyway */ }
     }
   };
@@ -3193,6 +3289,7 @@ export function startChatSession(
   // and the default may have skipped a full account — so the composer's account chip reads
   // this, not its own request. Said again on every reattach for a client that just arrived.
   // A Codex pane names its CODEX account (and the tool), so the chip lists Codex accounts.
+  if (app) sendMeta({ subtype: 'app_chat' });
   if (isAccountTool(bridgeTool)) { if (toolAccountId) sendMeta({ subtype: 'account_active', accountId: toolAccountId, tool: bridgeTool }); }
   else if (activeAccountId) sendMeta({ subtype: 'account_active', accountId: activeAccountId });
 
@@ -3292,6 +3389,8 @@ export function startChatSession(
     browserOverride?.dispose();
     removeLeanMcpConfig(leanMcpPath);
     envelope?.dispose();
+    app?.dispose();
+    releaseAppSlot();
     unwatchAuth();
     registry?.exited();
     // A respawn in place hands the notch's surface to its successor on the same socket.
@@ -3436,6 +3535,7 @@ export function startChatSession(
     // A spoken turn still being answered: the new socket reads the rest of it aloud.
     if (isSuper && voiceArmed) sendMeta({ subtype: 'voice_turn' });
     if (activeAccountId) sendMeta({ subtype: 'account_active', accountId: activeAccountId });
+    if (app) sendMeta({ subtype: 'app_chat' });
     for (const line of outstandingAsks.values()) {
       try { ws.send(line); } catch { /* closing */ }
     }
@@ -3589,6 +3689,17 @@ export function startChatSession(
       // read is the right price for closing that direction against a future CLI change.
       if (obj.type === 'system' && obj.subtype === 'init' && typeof obj.session_id === 'string') {
         observedConversation = obj.session_id;
+      }
+      // An app conversation that rotated (`/clear`, a compaction, a handoff): its successor gets
+      // its record from the stream itself, so the envelope holds with hooks off too.
+      // Its pin keeps pointing at the live conversation, as a hook would write it. Only the main
+      // thread's frames: a sub-agent's id is no rotation.
+      if (appRecord && typeof obj.session_id === 'string' && obj.session_id !== appRecord.id && !obj.parent_tool_use_id
+        && ((obj.type === 'system' && obj.subtype === 'init') || obj.type === 'result')) {
+        const next = rotateAppChat(appRecord, obj.session_id);
+        const known = next ? null : lookupAppChat(obj.session_id);
+        appRecord = next ?? (known?.kind === 'record' ? known.record : appRecord);
+        recordTabSession(contextRoot, pinId, obj.session_id);
       }
 
       // A rotation in progress moves through its stages on these same frames. Read BEFORE the
@@ -4128,6 +4239,9 @@ export function startChatSession(
    * visible half; the memory is the half that makes it stay fixed.
    */
   const onLimitRejected = (signal: LimitSignal): void => {
+    // An app chat never holds a turn or moves accounts: the limit stays on screen, written down
+    // for the next open, which starts on an account with room.
+    if (app) { recordAccountRejection(activeAccountId, signal); return; }
     // Before any early return: a refusal anywhere in the turn holds its rotation (only while a
     // turn of ours is open — a background task's late refusal belongs to no turn).
     if (turnsInFlight > 0) limitHitThisTurn = true;
@@ -4185,6 +4299,8 @@ export function startChatSession(
   const onAuthFailed = (): void => {
     authFailedTurn = true;
     if (activeAccountId) recordSignedOut(activeAccountId);
+    // An app chat moves no account and holds no turn: the banner says it, the next open has room.
+    if (app) return;
     if (switchPending || switchAbandoned) return;
     if (listClaudeAccounts().length < 2) return;   // nowhere to go: the banner says sign in
     const text = isAssistant
@@ -4329,6 +4445,7 @@ export function startChatSession(
 
   /** True when the turn was HELD (a restart is coming); false when the caller should send it. */
   const maybeSwitchAccount = async (text: string, opts: { resubmit?: boolean } = {}): Promise<boolean> => {
+    if (app) return false;
     // A bridge tool switches its own tool's accounts (W2), never a Claude account.
     if (bridgeTool && !isAccountTool(bridgeTool)) return false;
     const resubmit = opts.resubmit ?? true;
@@ -4722,7 +4839,7 @@ export function startChatSession(
     // CLI. Verified end to end: the respawned `--resume` session boots on `bypassPermissions`.
     // The Assistant's permission mode is its AUTONOMY setting — a pane switch must not move it.
     // An agent's mode is its autonomy level, so a pane switch must not move it either.
-    if (msg.type === 'setPermissionMode' && !isAssistant && !scopedCard && !agentChat?.levelArgs && (msg.mode === 'auto' || msg.mode === 'bypass')) {
+    if (msg.type === 'setPermissionMode' && !app && !isAssistant && !scopedCard && !agentChat?.levelArgs && (msg.mode === 'auto' || msg.mode === 'bypass')) {
       const requestId = sanitizeControlId(msg.requestId) || randomUUID();
       writeStdin({
         type: 'control_request',
@@ -5016,7 +5133,9 @@ export async function handleAgentChatHistory(
 
   let raw = '';
   try { raw = await readTranscript(path); } catch { sendJson(res, 200, { items: [] }); return; }
-  sendJson(res, 200, { items: parseTranscriptHistory(raw) });
+  // An app's conversation says so with its history: an image in it must not paint before the
+  // socket's `app_chat` arrives, or when no socket ever opens.
+  sendJson(res, 200, { items: parseTranscriptHistory(raw), ...(lookupAppChat(id).kind === 'none' ? {} : { appChat: true }) });
 }
 
 /** A transcript's text. */
@@ -5270,19 +5389,29 @@ function addGrant(contextRoot: string, abs: string): void {
  * Existence is deliberately NOT checked for an outside path before answering `needs_grant`:
  * a 404-vs-403 split there would let a page probe for arbitrary files it may not read.
  */
+/** The folders an app chat's own session may open files from: the record of `session`, this
+ *  project's, the app still registered. Empty for every other session. */
+function appChatRoots(contextRoot: string, session: string): string[] {
+  const hit = lookupAppChat(session);
+  if (hit.kind !== 'record' || hit.record.removedAt || hit.record.projectRoot !== real(projectRootOf(contextRoot))) return [];
+  const rec = getApp(homedir(), hit.record.projectRoot, hit.record.slug);
+  return rec ? [rec.root, appDataDir(homedir(), rec.hash)] : [];
+}
+
 function resolveServablePath(
   contextRoot: string,
   rawPath: string,
   /** A phone socket passes false: project root only, grants refused. */
-  opts: { grants: boolean; /** The session's own registered worktree (session-worktree.ts), or null. */ worktree?: string | null } = { grants: true },
+  opts: { grants: boolean; /** The session's own registered worktree (session-worktree.ts), or null. */ worktree?: string | null; /** An app chat's app folder and data dir (`appChatRoots`): its own files open with no grant. */ appRoots?: readonly string[] } = { grants: true },
 ): { abs: string } | { deny: 'invalid' | 'needs_grant' | 'outside'; abs?: string } {
   // A session working in its own worktree names files relative to THAT tree, so a reference
   // is tried there first; only a hit that really is inside it counts (an absolute path or a
   // tail match elsewhere falls through to the project-root reading below).
   let ref: ReturnType<typeof resolveChatReference> = null;
-  if (opts.worktree) {
-    const w = resolveChatReference(opts.worktree, contextRoot, rawPath);
-    if (w && !w.missing && !w.outside) ref = w;
+  const ownRoots = [...(opts.worktree ? [opts.worktree] : []), ...(opts.appRoots ?? [])];
+  for (const root of ownRoots) {
+    const w = resolveChatReference(root, contextRoot, rawPath);
+    if (w && !w.missing && !w.outside) { ref = w; break; }
   }
   ref ??= resolveChatReference(contextRoot ? projectRootOf(contextRoot) : null, contextRoot, rawPath);
   if (!ref) return { deny: 'invalid' };
@@ -5302,12 +5431,13 @@ function resolveServablePath(
   //
   // Any OTHER realpath failure (a permission error, a race, a loop) still fails CLOSED to
   // `needs_grant`: an answer we could not verify must ask rather than serve.
-  let outside = ref.outside && !(opts.worktree && isInside(resolve(opts.worktree), ref.abs));
+  const refAbs = ref.abs;
+  let outside = ref.outside && !ownRoots.some((root) => isInside(resolve(root), refAbs));
   if (contextRoot) {
     try {
       const realAbs = realpathSync.native(ref.abs);
       outside = !isInside(realpathSync.native(projectRootOf(contextRoot)), realAbs)
-        && !(opts.worktree && isInside(realpathSync.native(opts.worktree), realAbs));
+        && !ownRoots.some((root) => isInside(realpathSync.native(root), realAbs));
     } catch (err) {
       if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') outside = true;
     }
@@ -5355,8 +5485,9 @@ export async function handleAgentFile(
   const phone = isPhoneSocket(req);
   // Desktop only: the phone keeps project-root rules, and reaches a worktree solely through
   // `phoneOutsideMedia` (media only, bytes sniffed) — never the text/folder/SVG paths below.
-  const worktree = phone ? null : await sessionWorktreeRoot(contextRoot, projectRootOf(contextRoot), sanitizeUuid(url.searchParams.get('session')) || null);
-  const resolved = resolveServablePath(contextRoot, rawPath, { grants: !phone, worktree });
+  const session = sanitizeUuid(url.searchParams.get('session'));
+  const worktree = phone ? null : await sessionWorktreeRoot(contextRoot, projectRootOf(contextRoot), session || null);
+  const resolved = resolveServablePath(contextRoot, rawPath, { grants: !phone, worktree, appRoots: phone ? [] : appChatRoots(contextRoot, session) });
   let phoneMedia: { abs: string; type: string } | null = null;
   if ('deny' in resolved && phone && resolved.deny === 'outside' && resolved.abs) {
     const v = await phoneOutsideMedia(req, contextRoot, resolved.abs, { granted: true });

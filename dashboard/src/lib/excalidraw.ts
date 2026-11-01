@@ -61,3 +61,11 @@ export function isExcalidrawSlug(slug: string): boolean {
 export function boardInstanceKey(identity: string | null | undefined): string {
   return (identity ?? '').trim() || 'board';
 }
+
+/** Excalidraw's own `iframe` element draws `customData.generationData.html` as a live srcdoc frame
+ *  (its text-to-diagram feature) with no embed check at all. The dashboard never creates one, so a
+ *  board that carries one had it written in from outside: `ExcalidrawCanvas` (every read-only board:
+ *  chat, previews, a whiteboard's read view) drops it. */
+export function withoutHtmlFrames(elements: readonly unknown[]): readonly unknown[] {
+  return elements.filter((el) => !(el && typeof el === 'object' && (el as { type?: unknown }).type === 'iframe'));
+}

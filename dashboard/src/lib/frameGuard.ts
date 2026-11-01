@@ -28,6 +28,9 @@ export interface EmbedGrant {
   vault: string;
   member: string | null;
   insight: string | null;
+  /** The app's look, allowlisted by the gateway; never dreamcontext's own. */
+  theme: 'light' | 'dark' | 'system' | null;
+  colors: { bg: string | null; surface: string | null; text: string | null; accent: string | null };
 }
 
 let grant: EmbedGrant | null = null;
@@ -54,9 +57,12 @@ export async function checkEmbedFrame(win: Window, fetchImpl: typeof fetch = fet
     const body = await r.json() as { slug?: unknown; vault?: unknown };
     if (typeof body.slug !== 'string' || body.vault !== vault) return false;
     const theme = params.get('theme');
-    if (theme === 'light' || theme === 'dark' || theme === 'system') win.localStorage.setItem('dreamcontext-theme', theme);
-    grant = { tk, view, slug: body.slug, vault, member: params.get('member'), insight: params.get('insight') };
-    lockEmbedWrites(win, body.slug);
+    grant = {
+      tk, view, slug: body.slug, vault, member: params.get('member'), insight: params.get('insight'),
+      theme: theme === 'light' || theme === 'dark' || theme === 'system' ? theme : null,
+      colors: { bg: params.get('bg'), surface: params.get('surface'), text: params.get('text'), accent: params.get('accent') },
+    };
+    lockEmbedWrites(win, body.slug, tk);
     const url = new URL(win.location.href);
     url.searchParams.delete('tk');
     win.history.replaceState(win.history.state, '', url.toString());
@@ -66,13 +72,24 @@ export async function checkEmbedFrame(win: Window, fetchImpl: typeof fetch = fet
   }
 }
 
-/** The one write an embedded screen makes: its chat's send, as the app. */
+/** The writes an embedded screen makes: its chat's send as the app, its own chat list, a file drop. */
 export function embedWriteAllowed(method: string, url: string, base: string, slug: string): boolean {
   const m = method.toUpperCase();
   if (m === 'GET' || m === 'HEAD' || m === 'OPTIONS') return true;
   let path: string;
   try { path = new URL(url, base).pathname; } catch { return false; }
-  return m === 'POST' && (path === `/api/apps/${encodeURIComponent(slug)}/say` || path === '/api/apps/embed-check');
+  const app = `/api/apps/${encodeURIComponent(slug)}`;
+  return m === 'POST' && [`${app}/say`, `${app}/chats/close`, `${app}/chats/title`, '/api/apps/embed-check', '/api/agent/drop'].includes(path);
+}
+
+/** The one socket an embedded screen opens: this app's chat, through its gate. */
+export function embedSocketAllowed(url: string | URL, base: string, slug: string, tk: string): boolean {
+  try {
+    const u = new URL(String(url), base);
+    return u.pathname === '/api/agent/chat' && u.searchParams.get('app') === slug && u.searchParams.get('tk') === tk;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -81,7 +98,7 @@ export function embedWriteAllowed(method: string, url: string, base: string, slu
  * owner requests. So in the frame every write is refused HERE, before it leaves, whatever control
  * issued it: fetch and XMLHttpRequest alike. Hidden buttons are the courtesy; this is the wall.
  */
-export function lockEmbedWrites(win: Window, slug: string): void {
+export function lockEmbedWrites(win: Window, slug: string, tk = ''): void {
   const base = win.location.href;
   const refused = () => new Error('An app window shows dreamcontext; changes are made in the main app.');
   const realFetch = win.fetch.bind(win);
@@ -91,6 +108,15 @@ export function lockEmbedWrites(win: Window, slug: string): void {
     if (!embedWriteAllowed(method, url, base, slug)) return Promise.reject(refused());
     return realFetch(input, init);
   }) as typeof fetch;
+  const W = (win as Window & { WebSocket?: typeof WebSocket }).WebSocket;
+  if (W) {
+    (win as Window & { WebSocket: typeof WebSocket }).WebSocket = class extends W {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        if (!embedSocketAllowed(url, base, slug, tk)) throw refused();
+        super(url, protocols);
+      }
+    };
+  }
   const X = (win as Window & { XMLHttpRequest?: typeof XMLHttpRequest }).XMLHttpRequest;
   if (X) {
     const open = X.prototype.open;

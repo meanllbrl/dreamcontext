@@ -1,0 +1,134 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook session-start || exec npx dreamcontext hook session-start",
+            "timeout": 10
+          }
+        ],
+        "matcher": "startup|resume|compact|clear"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook ensure-dashboard || exec npx dreamcontext hook ensure-dashboard",
+            "timeout": 10
+          }
+        ],
+        "matcher": "startup|resume"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook session-start-part 2 || exec npx dreamcontext hook session-start-part 2",
+            "timeout": 10
+          }
+        ],
+        "matcher": "startup|resume|compact|clear"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook session-start-part 3 || exec npx dreamcontext hook session-start-part 3",
+            "timeout": 10
+          }
+        ],
+        "matcher": "startup|resume|compact|clear"
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook stop || exec npx dreamcontext hook stop",
+            "timeout": 45
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook subagent-start || exec npx dreamcontext hook subagent-start",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook pre-tool-use || exec npx dreamcontext hook pre-tool-use",
+            "timeout": 5
+          }
+        ],
+        "matcher": "Agent"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook pre-tool-use || exec npx dreamcontext hook pre-tool-use",
+            "timeout": 5
+          }
+        ],
+        "matcher": "Edit|Write|MultiEdit"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook pre-tool-use || exec npx dreamcontext hook pre-tool-use",
+            "timeout": 5
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook user-prompt-submit || exec npx dreamcontext hook user-prompt-submit",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook post-tool-use || exec npx dreamcontext hook post-tool-use",
+            "timeout": 30
+          }
+        ],
+        "matcher": "Edit|Write"
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook pre-compact || exec npx dreamcontext hook pre-compact",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

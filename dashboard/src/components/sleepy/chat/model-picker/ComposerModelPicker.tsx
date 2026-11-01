@@ -74,7 +74,7 @@ export function ComposerModelPicker({ pick, model, effort, onModelChange, onEffo
       accounts={accounts}
       activeAccountId={activeAccountId}
       onAccountChange={onAccountChange}
-      autoSwitch={autoSwitch === undefined ? undefined : {
+      autoSwitch={autoSwitch === undefined || embedded ? undefined : {
         enabled: autoSwitch,
         onToggle: toggleAutoSwitch,
       }}

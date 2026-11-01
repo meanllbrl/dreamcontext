@@ -110,6 +110,8 @@ interface ChatHistoryPickerProps {
   hiddenIds?: ReadonlySet<string>;
   /** A device shell: no Super Agent entry and no `super=` read (a phone never opens one). */
   noSuper?: boolean;
+  /** An app's window: only that app's conversations, and no agent-run rows. */
+  app?: string;
 }
 
 /** The new shell's list-plus-projects-column box. Classic renders no box at all, so its markup
@@ -163,7 +165,7 @@ function sizeLabel(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, currentVault = null, onPickIn, hiddenIds, noSuper = false }: ChatHistoryPickerProps) {
+export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, currentVault = null, onPickIn, hiddenIds, noSuper = false, app }: ChatHistoryPickerProps) {
   const api = useApi();
   const { t } = useI18n();
   const cross = !!projects;
@@ -226,7 +228,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
     };
     const handle = setTimeout(() => {
       const read: Promise<ChatHistoryResponse> = !cross
-        ? api.get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT))
+        ? api.get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT, undefined, app))
         : superOf
           ? new ApiClient(superOf).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT, superRows === 'group' ? 'only' : undefined))
             .then((r) => ({ ...r, sessions: r.sessions.map((x) => ({ ...x, vault: superOf })) }))
@@ -242,7 +244,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
             if (r.failed.length && r.failed.length === (projects ?? []).length) throw new Error('every project failed');
             return { sessions: r.sessions, total: r.total, agentRuns: r.agentRuns, truncated: false };
           })
-          : new ApiClient(scope).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT, superRows))
+          : new ApiClient(scope).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT, superRows, app))
             .then((r) => withEntry({ ...r, sessions: r.sessions.map((x) => ({ ...x, vault: scope })) }, scope));
       read
         .then((r) => {

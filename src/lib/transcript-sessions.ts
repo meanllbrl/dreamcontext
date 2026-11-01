@@ -682,6 +682,8 @@ export function listPastSessions(
     content?: ContentLookup;
     /** Precomputed {@link listTranscriptFiles} (the caller already needed it to index). */
     files?: { files: TranscriptFile[]; truncated: boolean };
+    /** Only these conversations, judged before `limit` (an app's window lists its own). */
+    onlyIds?: ReadonlySet<string>;
   } = {},
 ): ListPastSessionsResult {
   const home = opts.home ?? homedir();
@@ -690,6 +692,7 @@ export function listPastSessions(
 
   const all: Array<IndexedSession & { path: string }> = [];
   for (const c of scanned) {
+    if (opts.onlyIds && !opts.onlyIds.has(c.id)) continue;
     const hit = summaryCache.get(c.path);
     let summary: IndexedSession | null;
     if (hit && hit.mtimeMs === c.mtimeMs && hit.size === c.size) {

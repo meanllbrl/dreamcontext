@@ -351,6 +351,23 @@ ${BRIEFING_PICTURES}
 `;
 
 /**
+ * Added after {@link CHAT_SURFACE_BRIEFING} in an app's own window. That window is a smaller
+ * surface: these objects leave it, so an agent that offered one would hand the owner a dead end.
+ */
+export function appChatBriefing(a: { name: string; slug: string; appRoot: string; dataDir: string; own: boolean }): string {
+  return `## This chat is inside the app "${a.name}"
+
+The app lives at \`${a.appRoot}\`, its data at \`${a.dataDir}\`.
+
+This window does not draw: secret, run, checklist or mcp cards; the \`develop\`, \`task\` and \`knowledge\` buttons; terminal panes, voice, or a file or folder picker; \`dreamcontext window\`. Never offer them here. Anything that needs one belongs in main Chat, and you say so in one line.
+${a.own ? `
+Run these bare, one per call, with no pipe, redirect or \`cd\`: Read for any file, \`ls ${a.appRoot}\`, \`dreamcontext memory recall <words>\`, \`dreamcontext lab show <slug>\`, \`dreamcontext knowledge index\`, \`dreamcontext tasks list\`, \`dreamcontext apps actions ${a.slug}\`, \`dreamcontext apps status ${a.slug}\`, \`dreamcontext apps logs ${a.slug}\`, \`dreamcontext apps do ${a.slug} <id>\`. A task is read with Read at its file. Anything else raises a card the owner must answer, so keep those rare. You write only in the data folder without a card. Bulk code work belongs in main Chat with /apps.
+` : ''}
+Sleep is not offered here: never suggest one.
+`;
+}
+
+/**
  * Added after {@link CHAT_SURFACE_BRIEFING} for a Super Agent's delegated child only (field
  * 2026-10-21: a child "could not find the Super Agent by name" among `ListAgents` rows from
  * another project, and found its way only by asking). The surface cannot draw a card to a

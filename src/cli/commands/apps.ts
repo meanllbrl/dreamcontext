@@ -10,7 +10,7 @@ import { error, info, success } from '../../lib/format.js';
 import { AppsClientError, appsApi, bundleRunning, resolveProject, type ProjectRef } from '../../lib/apps/client.js';
 import { appHash, runnerBundleId, APP_SLUG_RE } from '../../lib/apps/bundle.js';
 import { iconIssue, isDefaultIcon, writeDefaultIcon } from '../../lib/apps/icon.js';
-import { MANIFEST_FILE, readManifest, type AppManifest } from '../../lib/apps/manifest.js';
+import { MANIFEST_FILE, ROLE_FILE, readManifest, roleFileProblem, type AppManifest } from '../../lib/apps/manifest.js';
 import { appRootFor, getApp, listApps, registerApp } from '../../lib/apps/registry.js';
 import { copyShotTo, copyShotToProject } from '../../lib/apps/shots.js';
 import { notifierIconPath, NOTIFY_SOUND_FAILED } from '../../lib/automations/notifier.js';
@@ -64,7 +64,12 @@ function manifestOf(p: ProjectRef, slug: string): { rec: NonNullable<ReturnType<
 }
 
 function starterManifest(slug: string, name: string): string {
-  return JSON.stringify({ slug, name, icon: 'icon.png' }, null, 2) + '\n';
+  return JSON.stringify({ slug, name, icon: 'icon.png', agent: { own: true } }, null, 2) + '\n';
+}
+
+/** The role a new app starts with, when no template brings one. */
+function starterRole(name: string): string {
+  return `# ${name}\n\nYou are the assistant of ${name}.\n\nSubject: what this app is about.\nReads: what you look at to answer.\nDoes: what you may do on your own.\nAsks first: what needs the owner's word.\n`;
 }
 
 function starterPage(name: string): string {
@@ -123,10 +128,13 @@ export function registerAppsCommand(program: Command): void {
           writeFileSync(join(root, MANIFEST_FILE), manifestText);
           const page = join(root, 'public', 'index.html');
           writeFileSync(page, readFileSync(page, 'utf-8').replace('<title>App</title>', `<title>${esc(name)}</title>`).replace('<h1 id="title">App</h1>', `<h1 id="title">${esc(name)}</h1>`));
+          const role = join(root, ROLE_FILE);
+          writeFileSync(role, existsSync(role) ? readFileSync(role, 'utf-8').replaceAll('__NAME__', name) : starterRole(name));
         } else {
           mkdirSync(join(root, 'public'), { recursive: true });
           writeFileSync(join(root, MANIFEST_FILE), starterManifest(slug, name));
           writeFileSync(join(root, 'public', 'index.html'), starterPage(name));
+          writeFileSync(join(root, ROLE_FILE), starterRole(name));
           writeFileSync(join(root, '.gitignore'), 'node_modules/\n.env\n.env.*\n*.log\ndata/\n');
         }
         // The SDK for the backend, byte for byte the page's /__dc/sdk.js (drift-tested).
@@ -141,6 +149,7 @@ export function registerAppsCommand(program: Command): void {
         const issue = created.ok ? iconIssue(created.manifest.icon, notifierIconPath()) : null;
         if (issue) error(`icon: ${issue.problem}. Fix: ${issue.fix}`);
         else info("icon.png is a placeholder letter: replace it with this app's own icon (/apps).");
+        info(`${ROLE_FILE} is the assistant's role: write it for this app's subject.`);
         info(`Open it: dreamcontext apps open ${slug}`);
       } catch (e) { fail(e); }
     });
@@ -236,6 +245,11 @@ export function registerAppsCommand(program: Command): void {
         if (issue) {
           // The app keeps opening; only this check is red, so "done" cannot be said past it.
           console.log(`error icon: ${issue.problem}. Fix: ${issue.fix}`);
+          process.exit(1);
+        }
+        const role = m.manifest.agent?.own && !m.manifest.agent.member ? roleFileProblem(root) : null;
+        if (role) {
+          console.log(`error ${role.field}: ${role.problem}. Fix: ${role.fix}`);
           process.exit(1);
         }
         if (isDefaultIcon(m.manifest.icon, m.manifest.slug, m.manifest.name)) {
@@ -336,14 +350,28 @@ export function registerAppsCommand(program: Command): void {
     });
 
   apps
-    .command('assign <slug> <agent>')
-    .description('Assign an AI Team agent to the app (written to its manifest)')
-    .action((slug: string, agent: string) => {
+    .command('assign <slug> [agent]')
+    .description("Assign an AI Team agent to the app, or `--own` to give it its own assistant (written to its manifest)")
+    .option('--own', 'The app\'s own assistant: its role in ASSISTANT.md, no team member')
+    .action((slug: string, agent: string | undefined, opts: { own?: boolean }) => {
       try {
         const p = project();
         const rec = getApp(homedir(), p.projectRoot, slug);
         if (!rec) throw new AppsClientError('app_not_found', `No app "${slug}" in this project.`);
-        if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(agent)) throw new AppsClientError('bad_agent', 'Name the agent by its slug.');
+        if (opts.own) {
+          if (agent) throw new AppsClientError('bad_agent', 'Either --own or an agent, not both.');
+          const file = join(rec.root, MANIFEST_FILE);
+          const raw = JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>;
+          const prev = (raw.agent && typeof raw.agent === 'object' ? raw.agent : {}) as Record<string, unknown>;
+          const role = join(rec.root, ROLE_FILE);
+          if (!existsSync(role)) writeFileSync(role, typeof prev.brief === 'string' && prev.brief.trim() ? `${prev.brief.trim()}\n` : starterRole(rec.name));
+          const { member: _member, brief: _brief, ...rest } = prev;
+          raw.agent = { ...rest, own: true };
+          writeFileSync(file, JSON.stringify(raw, null, 2) + '\n');
+          success(`${slug}: its own assistant (${ROLE_FILE})`);
+          return;
+        }
+        if (!agent || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(agent)) throw new AppsClientError('bad_agent', 'Name the agent by its slug.');
         // A board agent reads apps and acts on nothing: the brief would name a verb that fails.
         if (getRunTarget(join(p.projectRoot, '_dream_context'), agent, 'agent')?.whiteboard) {
           throw new AppsClientError('board_agent_cannot_act', `${agent} is confined to a whiteboard and cannot run an app's actions. Assign a member without a home board.`);

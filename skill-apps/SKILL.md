@@ -38,9 +38,9 @@ app's. It need not resemble dreamcontext, there is no kit to use, and what the o
 5. Not done until you have taken `dreamcontext apps screenshot <slug>` and READ it.
 
 dreamcontext's theme is an option, not a duty: `<html data-theme>`, `dc.theme()` and the `dc-theme`
-event let the app follow light/dark if that suits it. Embedding a dreamcontext screen (chat,
-tasks…) brings that screen's own look inside its frame; use `dc.mountEmbed` (references/sdk.md),
-which guarantees the height the screen needs.
+event let the app follow light/dark if that suits it. Use `dc.mountEmbed` (references/sdk.md) to embed
+a dreamcontext screen (chat, tasks…): it guarantees the height the screen needs, and the screen
+follows the colours around it (`theme: 'auto'`, or pass theme, bg, surface, text, accent).
 
 ## Making one
 
@@ -48,9 +48,25 @@ which guarantees the height the screen needs.
 dreamcontext apps new <slug> --name "<Display Name>"    # folder, manifest, template, lib/dc.mjs, git init
 cd <project>-apps/<slug>                                  # work here; the project resolves from the registry
 # draw this app's own icon.png (below): a required step
+# write ASSISTANT.md (below): a required step
 dreamcontext apps validate                               # every problem with its fix; red = not done
 dreamcontext apps open <slug>                             # the window, its own Dock icon
 ```
+
+**Required: the assistant's role.** Every app comes with its own assistant, plain Claude whose role
+is one file, `ASSISTANT.md` at the app root, in the app's git. It is no AI Team member: no agent page,
+no thread. `apps new` leaves a template; rewrite it for this app's subject, short: what it is about,
+what it reads, what it may do on its own, what it asks first. An app's chat (`dc.mountEmbed(host,
+'chat')`) is the real Chat, with its history and up to six chats at once. An edit reaches new
+conversations only (a resume keeps the prompt it was born with). `apps validate` is red without the
+file, and on a symlink.
+
+An AI Team member can be bound instead (`"agent": {"member": "<slug>"}`, `apps assign <slug> <agent>`,
+never a board agent): same chat, under the member's own level, capped at `auto`. `apps assign <slug>
+--own` converts back. Literal MCP tools the own assistant may run with no card go in
+`"agent": {"own": true, "readTools": ["mcp__meta-ads__list_campaigns"]}`; a name is a claim, so only
+write tools that truly only read. Anything else it does raises a card the owner answers, so bulk code
+work stays in main Chat with /apps. Its writes go in the data folder.
 
 **Required: the app's own icon.** `apps new` leaves a placeholder letter, never the finished icon,
 and the dreamcontext logo is never an app icon, not even for a moment. Replace `icon.png` with a
@@ -117,8 +133,9 @@ It MUST:
 - serve `public/` for the page. Escape everything it puts into HTML (`esc()` in the template).
 
 The dreamcontext SDK is `lib/dc.mjs` in the backend and `/__dc/sdk.js` in the page:
-see references/sdk.md. Asking an agent, MCP calls, automations and changing a task's status are
-BACKEND ONLY.
+see references/sdk.md. Asking the assistant (`dc.ask`), asking an agent, MCP calls, automations and
+changing a task's status are BACKEND ONLY. `dc.ask` is read-only: it reads the app's files and runs
+nothing, so a role never promises actions there, and the backend puts the facts in the text.
 
 ## Driving an app as an agent
 

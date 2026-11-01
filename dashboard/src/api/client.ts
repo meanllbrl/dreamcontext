@@ -1,3 +1,4 @@
+import { fileSessionParam } from '../lib/chatAppBinding';
 import { phoneAllows } from '../lib/phoneSurface';
 
 const BASE_URL = '/api';
@@ -69,7 +70,7 @@ export function agentFileUrl(vault: string | null, path: string, opts: { raw?: b
   const scope = vault ? `&vault=${encodeURIComponent(vault)}` : '';
   // The chat session the path was written in: a child working in its own worktree names files
   // relative to THAT tree, which only the server can map back (session-worktree.ts).
-  const session = opts.session ? `&session=${encodeURIComponent(opts.session)}` : '';
+  const session = opts.session ? `&session=${encodeURIComponent(opts.session)}` : fileSessionParam();
   return `${BASE_URL}/agent/file?path=${encodeURIComponent(path)}${raw}${scope}${session}`;
 }
 

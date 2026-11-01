@@ -185,10 +185,10 @@
     },
     {
       "path": "apps assign",
-      "desc": "Assign an AI Team agent to the app (written to its manifest)",
+      "desc": "Assign an AI Team agent to the app, or `--own` to give it its own assistant (written to its manifest)",
       "args": [
         "<slug>",
-        "<agent>"
+        "[agent]"
       ]
     },
     {
@@ -1794,6 +1794,16 @@
       "desc": "Hook handlers for Claude Code (stop, session-start, subagent-start, pre-tool-use, user-prompt-submit, post-tool-use, pre-compact)",
       "args": [],
       "group": true
+    },
+    {
+      "path": "hook app-bash-gate",
+      "desc": "Classify a Bash command of an app assistant (called by its per-chat PreToolUse hook)",
+      "args": [
+        "<gateFile>"
+      ],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook ensure-dashboard",

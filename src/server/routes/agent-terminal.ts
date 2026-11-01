@@ -1,3 +1,4 @@
+import { appChatRefusal } from '../../lib/apps/chat-store.js';
 import { bridgeResumeTarget } from '../../lib/t3-bridge/spawn.js';
 import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
 import { sanitizeTool } from '../../lib/t3-bridge/registry.js';
@@ -718,6 +719,8 @@ export function attachAgentTerminal(server: Server): void {
     // touch the shell command string, so a non-UUID is dropped and neither can inject.
     const sessionId = sanitizeUuid(url.searchParams.get('sessionId'));
     const resumeId = sanitizeUuid(url.searchParams.get('resume'));
+    // An app's conversation runs only in its envelope, which only Chat applies (plan r9, D4).
+    if (appChatRefusal(sessionId) || appChatRefusal(resumeId) || appChatRefusal(resolveAgentSession(join(projectRoot, '_dream_context'), resumeId))) { rejectUpgrade(socket, 403); return; }
     // Model chosen in the composer bar (`claude --model <id>`). Strictly sanitized to a
     // whitelist charset before it can touch the shell command, so a hostile value is
     // dropped rather than injected. Empty → no flag (Claude Code's own default).

@@ -8,6 +8,7 @@ import { splitReplyMark, type ReplySection } from '../../lib/replyMark';
 import { contextLimitFor } from '../../lib/agentComposer';
 import { DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { chatAgentFor, isStageChat } from '../../lib/chatAgentBinding';
+import { appChatParam } from '../../lib/chatAppBinding';
 import { chatToolFor, chatToolParam, type ChatTool } from '../../lib/chatToolBinding';
 import { raiseAskAttention } from '../../lib/attention';
 import {
@@ -510,6 +511,8 @@ export interface ChatSession {
   minimized: boolean;
   /** The owner sees it right now (ownerSees.ts): nothing it does is news. */
   seen: boolean;
+  /** An app's conversation, in whichever pane: its text draws no remote media. */
+  appChat?: boolean;
   capabilities: string[];
   model: string;
   effort: string;
@@ -1088,6 +1091,8 @@ export function createChatSession(
   // The tool this conversation runs on (Track T), on BOTH URLs: a reconnect that respawns a Codex
   // pane must respawn it on Codex. '' for Claude, so a Claude URL is unchanged byte-for-byte.
   const toolParam = chatToolParam(claudeId);
+  // An app's conversation, on BOTH URLs: a reconnect goes through the app gate again.
+  const appParam = appChatParam(claudeId);
   const bypassParam = bypass ? '1' : '0';
   const serverSubmitsPrompt = !!initialPrompt || !!promptToken;
   const promptParam = !serverSubmitsPrompt
@@ -1097,7 +1102,7 @@ export function createChatSession(
       : `&prompt=${encodeURIComponent(initialPrompt)}`;
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
-    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}${stageParam}${leanParam}${toolParam}`;
+    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}${stageParam}${leanParam}${toolParam}${appParam}`;
   /** The reconnect after a DROPPED socket: the same conversation, `reattach` so the server
    *  adopts the live child instead of spawning a twin — PASSIVE, because it is automatic: a
    *  live screen holding the chat is never evicted by it (the server answers 4409 instead).
@@ -1106,7 +1111,7 @@ export function createChatSession(
    *  a live permission switch may have moved it. */
   const reconnectUrl = (how: typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = REATTACH_PASSIVE): string => `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
     + `&bypass=${session.bypass ? '1' : '0'}&resume=${encodeURIComponent(claudeId)}&reattach=${how}`
-    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}${stageParam}${leanParam}${toolParam}`;
+    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}${stageParam}${leanParam}${toolParam}${appParam}`;
   // Reassigned by every reconnect attempt; handlers check they belong to the CURRENT socket.
   let ws = new WebSocket(url);
 
@@ -1581,6 +1586,10 @@ export function createChatSession(
       }
       case 'account-active': {
         conv = { ...conv, activeAccountId: ev.accountId };
+        return;
+      }
+      case 'app-chat': {
+        session.appChat = true;
         return;
       }
       case 'slash-commands': {
@@ -3160,7 +3169,9 @@ export function createChatSession(
 
   async function fetchTranscriptHistory(): Promise<HistoryEntry[]> {
     try {
-      const r = await api.get<{ items: HistoryEntry[] }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}${chatToolParam(claudeId)}`);
+      const r = await api.get<{ items: HistoryEntry[]; appChat?: boolean }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}${chatToolParam(claudeId)}`);
+      // Set before the items enter the model: an image must not paint ahead of the socket's word.
+      if (r?.appChat) session.appChat = true;
       return Array.isArray(r?.items) ? r.items : [];
     } catch { return []; }
   }
@@ -3207,9 +3218,10 @@ export function createChatSession(
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const r = await Promise.race([
-          api.get<{ items: HistoryEntry[] }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}${chatToolParam(claudeId)}`),
+          api.get<{ items: HistoryEntry[]; appChat?: boolean }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}${chatToolParam(claudeId)}`),
           new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), CONNECT_TIMEOUT_MS); }),
         ]);
+        if (r?.appChat) session.appChat = true;
         entries = Array.isArray(r?.items) ? r.items : [];
       } catch { entries = null; } finally { clearTimeout(timer); }
       if (disposed || gen !== replayGen) return;

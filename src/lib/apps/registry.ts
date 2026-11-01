@@ -47,6 +47,10 @@ export function appsHome(home: string = homedir()): string {
 export function registryPath(home: string = homedir()): string {
   return join(appsHome(home), 'registry.json');
 }
+/** `~/.dreamcontext/apps/chats/`: one record per app conversation (chat-store.ts). */
+export function appChatsDir(home: string = homedir()): string {
+  return join(appsHome(home), 'chats');
+}
 export function appDataDir(home: string, hash: string): string {
   return join(appsHome(home), 'data', hash);
 }

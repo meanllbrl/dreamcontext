@@ -58,6 +58,43 @@ const enc = encodeURIComponent;
 // `/__dc/api/tasks`. A path without the `/api` prefix is taken as already relative to it.
 const api = (method, path, body) => call(method, `/__dc/api${path.startsWith('/api/') ? path.slice(4) : path}`, body);
 
+/** A CSS colour as #rrggbb plus its alpha, through a canvas: oklch, color() and rgba all land here. */
+function cssHex(color) {
+  const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.clearRect(0, 0, 1, 1);
+  ctx.fillStyle = '#000';
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, 1, 1);
+  const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+  return { hex: `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`, alpha: a };
+}
+
+/** The first opaque background from `host` up, with the text colour read the same way. */
+function pageColors(host) {
+  for (let el = host; el; el = el.parentElement) {
+    const cs = getComputedStyle(el);
+    const bg = cs.backgroundColor ? cssHex(cs.backgroundColor) : null;
+    if (bg && bg.alpha === 255) return { bg: bg.hex, text: cssHex(cs.color)?.hex };
+  }
+  return null;
+}
+
+function themeParams(host, params) {
+  const { theme = 'auto', ...rest } = params;
+  if (theme !== 'auto' || typeof getComputedStyle !== 'function') return theme === 'auto' ? rest : { theme, ...rest };
+  const seen = pageColors(host);
+  if (seen) return { theme: luminance(seen.bg) < 0.4 ? 'dark' : 'light', ...seen, ...rest };
+  // Nothing opaque: the page's declared scheme, else the Mac's. Never dreamcontext's own.
+  const scheme = getComputedStyle(document.documentElement).colorScheme || '';
+  return { theme: /dark/.test(scheme) && !/light/.test(scheme) ? 'dark' : /light/.test(scheme) && !/dark/.test(scheme) ? 'light' : 'system', ...rest };
+}
+
+function luminance(hex) {
+  const v = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+}
+
 export const dc = {
   /** True in the page, false in the backend. */
   isBrowser,
@@ -91,6 +128,31 @@ export const dc = {
     ask: (member, text) => { backendOnly('dc.team.ask'); return call('POST', '/__dc/team/say', { member, text }); },
     thread: (member) => { backendOnly('dc.team.thread'); return api('GET', `/api/automations/${enc(member)}/thread`); },
   },
+  /**
+   * Ask this app's assistant one question and wait for the answer. Backend only. Works the same
+   * for its own assistant and a bound member. Read-only: it reads the app's files, runs nothing,
+   * so put the facts it needs in the text. Returns {ok: true, answer} or {ok: false, code}.
+   */
+  ask: async (text) => {
+    backendOnly('dc.ask');
+    let id;
+    try { ({ id } = await call('POST', '/__dc/ask', { text })); } catch (e) {
+      if (e instanceof DcError) return { ok: false, code: e.code, message: e.message };
+      throw e;
+    }
+    const until = Date.now() + 130_000;
+    while (Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 700));
+      let s;
+      try { s = await call('GET', `/__dc/ask/${enc(id)}`); } catch (e) {
+        if (e instanceof DcError) return { ok: false, code: e.code, message: e.message };
+        throw e;
+      }
+      if (s.state === 'done') return { ok: true, answer: s.answer };
+      if (s.state === 'failed') return { ok: false, code: s.code, message: s.message };
+    }
+    return { ok: false, code: 'ask_timeout', message: 'The assistant took too long.' };
+  },
   mcp: {
     /** Call a key-based MCP server named in the manifest's `mcp` list. Backend only. */
     call: (server, tool, args = {}) => { backendOnly('dc.mcp.call'); return call('POST', `/__dc/mcp/${enc(server)}/${enc(tool)}`, args); },
@@ -115,19 +177,27 @@ export const dc = {
     if (window.dcRunner && typeof window.dcRunner.copy === 'function') { window.dcRunner.copy(String(text)); return; }
     await navigator.clipboard.writeText(String(text));
   },
-  /** The URL of an embeddable dreamcontext screen: chat | insight | tasks | roadmap | team. */
+  /**
+   * The URL of an embeddable dreamcontext screen: chat | insight | tasks | roadmap | team.
+   * params: {theme?: 'light'|'dark'|'system', bg?, surface?, text?, accent?: '#rrggbb'}, plus
+   * member (old apps) and insight.
+   */
   embed: (view, params = {}) => {
     const q = new URLSearchParams(params).toString();
     return `/__dc/embed/${enc(view)}${q ? `?${q}` : ''}`;
   },
   /** Draw an embeddable screen into `host`: fills it, and neither is ever shorter than that screen
-   *  needs, so a fixed or clipping `host` grows rather than hiding the chat's box. Unstyled
-   *  otherwise. Page only. Returns the iframe. */
+   *  needs, so a fixed or clipping `host` grows rather than hiding the chat's box. It follows the
+   *  page's look: `theme: 'auto'` (the default) reads the colours around `host`; pass theme, bg,
+   *  surface, text, accent to say them yourself. Page only. Returns the iframe; after a theme
+   *  change of your own, call its `dcRetheme()`. */
   mountEmbed: (host, view, params = {}) => {
     if (!isBrowser) throw new DcError('page_only', 'dc.mountEmbed works in the page.', 0);
     const frame = document.createElement('iframe');
     frame.title = view;
-    frame.src = dc.embed(view, params);
+    const src = () => dc.embed(view, themeParams(host, params));
+    frame.src = src();
+    frame.dcRetheme = () => { frame.src = src(); };
     frame.style.display = 'block';
     frame.style.width = '100%';
     frame.style.height = '100%';

@@ -1,0 +1,39 @@
+/* ModelHtmlOff: the line left where an app chat did not draw assistant-written HTML. The quiet
+   notice idiom of `.chat-view-notice`: tokens only, never alarming. */
+.chat-html-off {
+  align-self: stretch;
+  width: 100%;
+  max-width: var(--chat-line-width, 100%);
+  padding: var(--space-1) var(--space-2);
+  border-left: 2px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+.chat-html-off.compact {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  border-left: none;
+  text-align: center;
+}
+.chat-html-off-text { margin: 0; }
+.chat-html-off-source summary {
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  margin-top: var(--space-1);
+}
+.chat-html-off-source pre {
+  margin: var(--space-1) 0 0;
+  max-height: 240px;
+  overflow: auto;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

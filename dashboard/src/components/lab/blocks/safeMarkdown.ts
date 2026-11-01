@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify';
 /**
  * `text` and `callout` blocks render markdown in the APP document (not a
  * sandbox), through MarkdownPreview (DOMPurify). DOMPurify strips scripts and
@@ -33,4 +34,38 @@ export function stripRemoteMedia(markdown: string): string {
   out = out.replace(/url\(\s*(['"]?)([^'")]*)\1\s*\)/gi, (whole, _q: string, url: string) => (isDataUrl(url) ? whole : 'none'));
   out = out.replace(/@import[^;]*;?/gi, '');
   return out;
+}
+
+/** A picture or clip of this page's own origin, or inline. Judged by the browser's own URL parser,
+ *  so no spelling (a tab, a backslash, a control character) reads as local and fetches remotely. */
+function localMedia(url: string | null): boolean {
+  if (!url) return false;
+  if (/^[a-z]:[\\/]/i.test(url)) return true; // a Windows path: the chat's media hook rewrites it
+  try {
+    const u = new URL(url, location.href);
+    return u.protocol === 'data:' || u.protocol === 'blob:' || u.origin === location.origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * For text that came from a model: an ALLOWLIST, because a list of what fetches is never finished
+ * (SVG `image`, `<style>@import`, `mask="url()"`, `ht\ttps:`). Plain HTML only, no style of any
+ * kind, and media kept only when it is local. Links stay: they fetch on a click, not on a draw.
+ * Local paths stay too: the chat's media hook rewrites them.
+ */
+export function dropRemoteMedia(html: string): string {
+  const clean = DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+    ADD_ATTR: ['target'],
+    FORBID_TAGS: ['style', 'link', 'base', 'meta', 'iframe', 'object', 'embed', 'form', 'input', 'picture'],
+    FORBID_ATTR: ['style', 'srcset', 'poster', 'background', 'ping', 'action', 'formaction'],
+  });
+  const box = document.createElement('template');
+  box.innerHTML = clean;
+  for (const el of box.content.querySelectorAll('img, video, audio, source, track')) {
+    if (el.hasAttribute('src') ? !localMedia(el.getAttribute('src')) : el.tagName !== 'VIDEO' && el.tagName !== 'AUDIO') el.remove();
+  }
+  return box.innerHTML;
 }

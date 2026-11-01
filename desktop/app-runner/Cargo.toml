@@ -32,7 +32,7 @@ objc2-web-kit = { version = "0.3", default-features = false, features = [
     "WKDownloadDelegate", "WKNavigation", "WKNavigationDelegate", "WKUserContentController",
     "WKScriptMessageHandler", "WKUIDelegate", "WKOpenPanelParameters", "WKFrameInfo",
     "WKSecurityOrigin", "WKScriptMessage", "WKNavigationAction", "WKNavigationResponse",
-    "WKUserScript", "WKWindowFeatures", "WKSnapshotConfiguration",
+    "WKUserScript", "WKWindowFeatures", "WKSnapshotConfiguration", "WKPreferences",
 ] }
 
 [profile.release]

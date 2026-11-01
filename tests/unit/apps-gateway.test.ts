@@ -178,8 +178,17 @@ describe('gateway', () => {
 
   it('the embed redirect is the page\'s, carries a token only in its Location, and names known views', async () => {
     expect((await req(gw.port, { path: '/__dc/embed/tasks', headers: { authorization: `Bearer ${a.dcToken}` } })).status).toBe(403);
-    expect((await req(gw.port, { path: '/__dc/embed/secrets', headers: { cookie } })).status).toBe(404);
-    const r = await req(gw.port, { path: '/__dc/embed/chat?member=ua&evil=1', headers: { cookie } });
+    const framed = { cookie, 'sec-fetch-dest': 'iframe' };
+    expect((await req(gw.port, { path: '/__dc/embed/secrets', headers: framed })).status).toBe(404);
+    // A top-level navigation would land the token in the page's history.
+    expect((await req(gw.port, { path: '/__dc/embed/chat', headers: { cookie, 'sec-fetch-dest': 'document' } })).status).toBe(403);
+    const themed = await req(gw.port, { path: '/__dc/embed/chat?theme=dark&bg=%23101214&surface=url(x)&prompt=hi', headers: framed });
+    const themedTo = new URL(String(themed.headers.location));
+    expect(themedTo.searchParams.get('theme')).toBe('dark');
+    expect(themedTo.searchParams.get('bg')).toBe('#101214');
+    expect(themedTo.searchParams.get('surface')).toBeNull();
+    expect(themedTo.searchParams.get('prompt')).toBeNull();
+    const r = await req(gw.port, { path: '/__dc/embed/chat?member=ua&evil=1', headers: framed });
     expect(r.status).toBe(302);
     const to = new URL(String(r.headers.location));
     expect(to.origin).toBe(`http://127.0.0.1:${dashPort}`);
@@ -188,7 +197,7 @@ describe('gateway', () => {
     expect(to.searchParams.get('evil')).toBeNull();
     expect(to.searchParams.get('tk')).toHaveLength(43);
     expect(r.headers['referrer-policy']).toBe('no-referrer');
-    const bad = await req(gw.port, { path: '/__dc/embed/chat?member=../x', headers: { cookie } });
+    const bad = await req(gw.port, { path: '/__dc/embed/chat?member=../x', headers: framed });
     expect(new URL(String(bad.headers.location)).searchParams.get('member')).toBeNull();
   });
 

@@ -11,6 +11,11 @@
   overflow: hidden;
 }
 
+/* The Chat pane fills its frame; a narrow frame keeps its strip and composer. */
+.embed-root[data-embed='chat'] .agent-chat-pane-host {
+  height: 100%;
+}
+
 /* The chat embed draws no roster and no side panel: its conversation takes the whole frame. */
 .embed-root[data-embed='chat'] .aiteam {
   grid-template-columns: minmax(0, 1fr);

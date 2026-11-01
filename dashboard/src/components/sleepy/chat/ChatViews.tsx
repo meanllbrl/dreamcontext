@@ -1,3 +1,4 @@
+import { OpenInMainApp, useEmbed } from '../../embed/embedMode';
 import { useVaultId } from '../../../context/VaultContext';
 import { isDesktop, openChecklistWindow } from '../../../lib/desktop';
 import { writeEnvelope } from '../../../lib/checklistStore';
@@ -107,6 +108,11 @@ function ChatViewItem({ view, conversationId, report, session, placeKey }: {
   session?: ChatSession;
   placeKey?: string;
 }) {
+  const embed = useEmbed();
+  // These cards act on the machine or a window an app's frame does not have.
+  if (embed && (view.type === 'secret' || view.type === 'run' || view.type === 'mcp' || view.type === 'checklist')) {
+    return <p className="chat-view-notice"><OpenInMainApp grant={embed} page="settings" /></p>;
+  }
   switch (view.type) {
     case 'insight':
       return <InsightView spec={view} />;

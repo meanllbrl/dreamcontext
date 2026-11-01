@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { homedir } from 'node:os';
 import { sendJson } from '../middleware.js';
 import { isAgentHost } from '../desktop.js';
 import { projectRootOf } from './agent-spawn-shared.js';
@@ -6,6 +7,8 @@ import { listPastSessions, listTranscriptFiles, DEFAULT_LIMIT, MAX_LIMIT } from 
 import { contentOf, ensureContentIndex } from '../../lib/transcript-content-index.js';
 import { readSessionTitles } from '../../lib/session-titles.js';
 import { readSuperState } from '../../lib/super/store.js';
+import { appChatIds, appChatRoot } from '../../lib/apps/chat-store.js';
+import { getApp, real } from '../../lib/apps/registry.js';
 import { superSanitizeOpts } from '../../lib/super/inbox.js';
 import { listCodexSessions, mergeSessionRows } from '../../lib/t3-bridge/codex-sessions.js';
 import { listInstanceSessions } from '../../lib/t3-bridge/instance-threads.js';
@@ -90,13 +93,29 @@ export async function computeChatSessions(
   }
 
   const superRows = q.super === 'group' || q.super === 'only' ? { owned: await superOwned(contextRoot), mode: q.super as 'group' | 'only' } : undefined;
+  // An app's window lists its own conversations and nothing else (`?app=<slug>`).
+  const appRec = q.app ? getApp(opts.home ?? homedir(), real(projectRoot), q.app) : null;
+  const onlyIds = q.app ? (appRec ? appChatIds(appRec.hash, appRec.projectRoot, opts.home ?? homedir()) : new Set<string>()) : null;
   const result = listPastSessions(projectRoot, {
     home: opts.home, query, limit, includeAgentRuns, files,
+    ...(onlyIds ? { onlyIds } : {}),
     content: contentOf,
     // A closed tab's name, so the list says what the tab said (see `session-titles.ts`).
     titles: readSessionTitles(contextRoot),
     ...(superRows ? { superRows } : {}),
   });
+  // A rotated chain is one row, under its pin, as the strip knows it: newest first, so its current
+  // name wins. A second row would be a second tab on one conversation.
+  if (onlyIds) {
+    const seen = new Set<string>();
+    const sessions = result.sessions.flatMap((s) => {
+      const id = appChatRoot(s.id, opts.home ?? homedir());
+      if (seen.has(id)) return [];
+      seen.add(id);
+      return [{ ...s, id }];
+    });
+    return { ...result, sessions, total: sessions.length };
+  }
   const merged = withCodexRows(result, contextRoot, projectRoot, { query, limit, superOnly: superRows?.mode === 'only', home: opts.home });
   return query.trim() && !indexed
     ? { ...merged, indexing: { done: build.progress.done, total: build.progress.total } }

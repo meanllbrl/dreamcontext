@@ -1,3 +1,5 @@
+import { useInAppChat } from '../sleepy/chat/appChatContext';
+import { ModelHtmlOff } from '../sleepy/chat/ModelHtmlOff';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { useQueryClient } from '@tanstack/react-query';
@@ -527,6 +529,12 @@ function ViewerDocument({
   );
 }
 
+/** An app chat draws no supplied HTML (`appChatContext.ts`): the notice stands where the frame
+ *  would have been. A wrapper, so the frame's own hooks never run in an app chat. */
+function HtmlPage(props: Parameters<typeof HtmlPageLive>[0]) {
+  return useInAppChat() ? <ModelHtmlOff compact /> : <HtmlPageLive {...props} />;
+}
+
 /**
  * A web page (`.html`/`.htm`), drawn in the CHAT's strict sandbox: scripts yes; same-origin,
  * network, navigation, popups and forms no (CSP `default-src 'none'`). Built the way the board's
@@ -537,7 +545,7 @@ function ViewerDocument({
  * still blocks every fetch; a link click does nothing (LINK_GUARD), which the line under the
  * frame says.
  */
-function HtmlPage({
+function HtmlPageLive({
   path, vaultReads, fileActions, zoomBridge = false, fill = false, desktop = false, onPageFit,
 }: { path: string; embedded: boolean; vaultReads: boolean; fileActions: boolean; zoomBridge?: boolean; fill?: boolean; desktop?: boolean; onPageFit?: (width: number) => void }) {
   const tx = useText();

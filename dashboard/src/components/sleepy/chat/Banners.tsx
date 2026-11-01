@@ -1,3 +1,4 @@
+import { useEmbed } from '../../embed/embedMode';
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -267,6 +268,7 @@ function OtherAccounts({ rejected, exclude, accounts }: {
   accounts: ClaudeAccountWire[];
 }) {
   const { busy, relogin } = useRelogin();
+  const embedded = !!useEmbed();
   const rows = rejected.filter((r) => !exclude.includes(r.id));
   if (rows.length === 0) return null;
   return (
@@ -274,7 +276,7 @@ function OtherAccounts({ rejected, exclude, accounts }: {
       {rows.map((r) => {
         const who = labelFor(r.id, accounts);
         const st = rejectedState(r.why);
-        const canSignIn = st.signIn && who.account && !who.account.isPrimary;
+        const canSignIn = !embedded && st.signIn && who.account && !who.account.isPrimary;
         const chip = (
           <NoticeChip tone={st.tone} title={`${who.email}: ${r.why}`}>
             <AccountAvatar email={who.email} off={st.tone !== undefined} />
