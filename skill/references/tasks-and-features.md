@@ -129,7 +129,7 @@ Filters compose (AND across flags), case-insensitive; version/priority/feature m
 
 ## RICE prioritization
 
-Optional, additive to priority/urgency; powers the dashboard Scatter view and RICE sort.
+Optional, additive to priority/urgency; drives the Roadmap's priority board (Lanes / Map) and the RICE sort.
 ```bash
 dreamcontext tasks create <name> --reach 5 --impact 3 --confidence 75 --effort 2
 dreamcontext tasks rice <name>                 # print current values
@@ -138,6 +138,22 @@ dreamcontext tasks rice <name> --clear         # remove all RICE values
 ```
 - `--reach` integer 1–10 · `--impact` integer 1–5 · `--confidence` one of 25/50/75/100 (%) · `--effort` person-weeks (>0, ≤52, 0.5 steps).
 - Score = `(reach × impact × confidence/100) / effort`, computed server-side, stored in frontmatter.
+
+### Priority board: what next, and the agent's suggestions
+The Roadmap opens on **Objectives + Lanes**: Now / Next / Later bands by RICE (tasks: Now ≥ 20, Next ≥ 8; objectives: Now ≥ 5, Next ≥ 2), plus a Map (value × effort). Objectives carry full RICE too (`reach`, `impact`, `confidence`, `effort`; effort also drives the forecast). Only open TOP-LEVEL tasks are on it.
+
+**An agent never writes owner values.** When asked to score ("Score N" on the board dispatches you), read the work, then SUGGEST:
+```bash
+dreamcontext roadmap unscored --json            # the items: what each lacks (missing RICE keys, needs_link) + live objectives
+dreamcontext tasks suggest <slug> --reach 6 --impact 3 --confidence 75 --effort 0.5 --objective <slug> --why "one sentence"
+dreamcontext tasks suggest <slug> --objective <slug> --why "…"     # a scored task with no live link: link only
+dreamcontext tasks suggest <slug> --no-objective --why "…"         # verdict: no live objective fits
+dreamcontext roadmap objective suggest <slug> --reach 7 --confidence 75 --why "…"   # only the EMPTY fields
+dreamcontext roadmap unscored --done            # finished: releases the board's "Scoring…" button
+```
+- A suggestion carries exactly the RICE fields the target lacks (all four on an unscored task) and closes the link side of an unlinked task (`--objective` or `--no-objective`); `--why` alone is not a suggestion. It lands in the local-only `priority_suggestion` key, never in `rice`/`objectives`; the owner accepts, edits or dismisses it on the board.
+- Refusals: `owner_scored` (a RICE field you sent is already set), `owner_linked` (the task already has a live link), `dismissed` (the owner said no; `--again` only when asked to re-score). Respect them: do not route around one.
+- `tasks rice` and `roadmap objective edit --reach/--impact/--confidence/--effort` refuse to change an existing value from an agent session (`CLAUDE_CODE_SESSION_ID` set) without `--owner`. Pass `--owner` ONLY when the owner said so in this conversation; the guard only sees that one variable.
 
 ## Dates & urgency
 A task has an optional **date range** — a planned `start` and a `due`/end. Either end is independently settable or clearable, and both sync to the remote backend.

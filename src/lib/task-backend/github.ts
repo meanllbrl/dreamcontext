@@ -311,6 +311,18 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     return (await super.get(task.slug))!;
   }
 
+  /** A locked owner write (accept, link move) carries the actor, like updateFields. */
+  protected lockedWriteStamp(): Record<string, unknown> {
+    if (this.applyingRemote) return {};
+    const actor = resolveActor(this.config);
+    return actor ? { updated_by: actor } : {};
+  }
+
+  /** Queue the push only when a locked write landed: a refused accept queues nothing. */
+  protected afterLockedWrite(slug: string): void {
+    this.recordLocalMutation(slug, 'push');
+  }
+
   async updateFields(
     slug: string,
     fields: Record<string, unknown>,

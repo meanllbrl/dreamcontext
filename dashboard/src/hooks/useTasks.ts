@@ -42,6 +42,12 @@ export interface Task {
   agent?: string | null;
   custom_fields?: Record<string, string | number | null>;
   rice: RiceFields | null;
+  /** The agent's RICE/link proposal (local-only); absent when none. Accept/dismiss: useObjectives.ts. */
+  priority_suggestion?: {
+    reach?: number; impact?: number; confidence?: number; effort?: number;
+    objective?: string; no_objective?: boolean; why?: string;
+    at: string; dismissed_at: string | null; accepted_at: string | null;
+  };
   why: string;
   user_stories: string;
   acceptance_criteria: string;
@@ -260,7 +266,7 @@ export function useUpdateTask() {
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.slug] });
       // A task's `objectives` link feeds the roadmap rollup (progress, member tasks,
       // forecast) — refresh it so the roadmap reflects the change immediately.
-      if (variables.updates.objectives !== undefined) {
+      if (variables.updates.objectives !== undefined || variables.updates.rice !== undefined) {
         queryClient.invalidateQueries({ queryKey: ['roadmap'] });
       }
       // A `related_feature` change writes through to the target/previous feature's

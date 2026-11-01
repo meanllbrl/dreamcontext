@@ -37,13 +37,15 @@ export interface RoadmapItem {
   slipUpstream: string[];
 }
 
-export function useRoadmapItems(): {
+export function useRoadmapItems(opts: { enabled?: boolean } = {}): {
   items: RoadmapItem[];
   warnings: string[];
   isLoading: boolean;
 } {
-  const { data: objectives = [], isLoading } = useObjectives();
-  const { data: model } = useRoadmap();
+  // Off in Lanes / Map: the priority board reads its own payload, so the model is not built twice.
+  const enabled = opts.enabled ?? true;
+  const { data: objectives = [], isLoading } = useObjectives({ enabled });
+  const { data: model } = useRoadmap({ enabled });
 
   const items = useMemo<RoadmapItem[]>(() => {
     const bySlug = new Map((model?.objectives ?? []).map((m) => [m.slug, m]));

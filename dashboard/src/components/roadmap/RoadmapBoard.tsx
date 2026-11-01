@@ -6,7 +6,10 @@ import { ObjectiveCreateModal } from './ObjectiveCreateModal';
 import { RoadmapTimeline } from './RoadmapTimeline';
 import { RoadmapBoardView } from './RoadmapBoardView';
 import { ObjectiveDetailPanel } from './ObjectiveDetailPanel';
-import type { RoadmapMenuKey } from './chrome';
+import { isPriorityLayout, type RoadmapMenuKey } from './chrome';
+import { PriorityView, PriorityAgentButton } from './PriorityView';
+import { usePriorityBoard } from '../../hooks/usePriorityBoard';
+import { useIsNarrowWindow } from '../../hooks/useIsNarrowWindow';
 import type { RoadmapFilterField } from './RoadmapToolbar';
 import { buildForecasts } from './roadmap-forecast';
 import { useRoadmapPrefs } from '../../hooks/useRoadmapPrefs';
@@ -46,22 +49,32 @@ interface RoadmapBoardProps {
 export function RoadmapBoard({ onNavigate, focus }: RoadmapBoardProps = {}) {
   // An app's window shows the roadmap; objectives are made and changed in the main app.
   const embedded = !!useEmbed();
-  const { prefs, setSearch, setSort, toggleSortDir, setLayout, toggleCardProp, cycleFilter, clearAllFilters } = useRoadmapPrefs();
-  const { search, sortBy, sortDir, layout, cardProps, filters } = prefs;
+  const { prefs, setSearch, setSort, toggleSortDir, setLayout, setLevel, toggleCardProp, cycleFilter, clearAllFilters } = useRoadmapPrefs();
+  const { search, sortBy, sortDir, cardProps, filters, level } = prefs;
+  // Map is hidden under 768 px WITHOUT writing the pref: a wider window gets it back.
+  const narrow = useIsNarrowWindow(768);
+  const layout = narrow && prefs.layout === 'map' ? 'lanes' : prefs.layout;
+  const priority = isPriorityLayout(layout);
+  const board = usePriorityBoard(priority);
+  const [walkRequest, setWalkRequest] = useState(0);
   const [openMenu, setOpenMenu] = useState<RoadmapMenuKey>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [warnDismissed, setWarnDismissed] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
 
   // Opening an `objective` recall hit from the ⌘K palette lands here — open its
   // detail panel rather than leaving the user on the bare board wondering which
   // of 7 objectives the search meant.
   useFocusTarget(focus, setSelected);
 
-  const { items, warnings, isLoading } = useRoadmapItems();
+  // Off in Lanes / Map (the priority payload carries everything, so the model is not built twice)
+  // UNLESS an objective's detail panel is open there (⌘K focus, "Open objective"), which reads it.
+  const { items, warnings: itemWarnings, isLoading } = useRoadmapItems({ enabled: !priority || !!selected });
+  const warnings = priority ? (board.data?.warnings ?? []) : itemWarnings;
 
-  const flash = useCallback((msg: string) => setToast(msg), []);
+  const flash = useCallback((msg: string) => setToast({ text: msg }), []);
+  const flashError = useCallback((msg: string) => setToast({ text: msg, error: true }), []);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 2600); return () => clearTimeout(t); }, [toast]);
   const closeMenu = useCallback(() => setOpenMenu(null), []);
 
@@ -113,6 +126,11 @@ export function RoadmapBoard({ onNavigate, focus }: RoadmapBoardProps = {}) {
         search={search} setSearch={setSearch}
         sortBy={sortBy} setSort={setSort} sortDir={sortDir} toggleSortDir={toggleSortDir}
         layout={layout} setLayout={setLayout}
+        level={level} setLevel={setLevel}
+        mapAvailable={!narrow}
+        agentSlot={priority ? (
+          <PriorityAgentButton scoring={board.data?.scoring} onOpenSuggestions={() => setWalkRequest((n) => n + 1)} onError={flashError} />
+        ) : undefined}
         cardProps={cardProps} toggleCardProp={toggleCardProp}
         filters={filters} cycleFilter={cycleFilter} clearAllFilters={clearAllFilters}
         openMenu={openMenu} setOpenMenu={setOpenMenu}
@@ -130,7 +148,23 @@ export function RoadmapBoard({ onNavigate, focus }: RoadmapBoardProps = {}) {
       )}
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--color-bg)' }}>
-        {isLoading ? (
+        {priority ? (
+          <PriorityView
+            data={board.data}
+            isLoading={board.isLoading}
+            isError={board.isError}
+            refetch={() => { void board.refetch(); }}
+            level={level}
+            layout={layout === 'map' ? 'map' : 'lanes'}
+            search={search}
+            filters={filters}
+            walkRequest={walkRequest}
+            onShowLanes={() => setLayout('lanes')}
+            onOpenTask={onNavigate ? (slug) => onNavigate('tasks', slug) : undefined}
+            onOpenObjective={setSelected}
+            onNewObjective={() => setShowCreate(true)}
+          />
+        ) : isLoading ? (
           <Centered>Loading objectives…</Centered>
         ) : items.length === 0 ? (
           <EmptyState onCreate={embedded ? undefined : () => setShowCreate(true)} />
@@ -171,7 +205,7 @@ export function RoadmapBoard({ onNavigate, focus }: RoadmapBoardProps = {}) {
 
       {toast && (
         <div className="bd-pop" style={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', zIndex: 60, display: 'flex', alignItems: 'center', gap: 9, padding: '10px 16px', borderRadius: 11, background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-lg)', fontSize: 13, color: 'var(--color-text)' }}>
-          <span style={{ color: 'var(--color-accent)' }}>✓</span>{toast}
+          <span style={{ color: toast.error ? 'var(--color-error)' : 'var(--color-accent)' }}>{toast.error ? '!' : '✓'}</span>{toast.text}
         </div>
       )}
     </div>
