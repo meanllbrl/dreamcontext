@@ -32,7 +32,7 @@ import { dirname } from 'node:path';
 import { resolveContextRoot } from '../context-path.js';
 import type { AppContext } from './stdio.js';
 
-export type HookName = 'session-start' | 'user-prompt-submit' | 'stop';
+export type HookName = 'session-start' | 'user-prompt-submit' | 'stop' | 'post-tool-use' | 'pre-compact';
 
 /** Runs one hook, returns its stdout; null = it did not finish (timed out, or failed printing nothing). Injectable for tests. */
 export type HookRunner = (name: HookName, input: Record<string, unknown>, o: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }) => Promise<string | null>;
@@ -109,6 +109,17 @@ export function hookContext(stdout: string | null): string {
   } catch {
     return '';
   }
+}
+
+/** The reason a Stop hook blocked the turn with (`{"decision":"block","reason":…}`), or null. */
+export function stopBlockReason(stdout: string | null): string | null {
+  for (const line of (stdout ?? '').trim().split('\n').reverse()) {
+    try {
+      const o = JSON.parse(line) as { decision?: unknown; reason?: unknown };
+      if (o?.decision === 'block' && typeof o.reason === 'string' && o.reason.trim()) return o.reason;
+    } catch { /* not that line */ }
+  }
+  return null;
 }
 
 /** The real runner: `<node> <cli> hook <name> --format codex`, JSON on stdin, no shell. */
@@ -192,6 +203,15 @@ export class BrainContext {
   private stops: Promise<unknown> = Promise.resolve();
   private readonly said = new Set<'snapshot' | 'prompt'>();
   private owedNotice: string | null = null;
+  /** What the edit checks (PostToolUse: format, type errors) said since the last owner turn. */
+  private checks: string[] = [];
+  /** How many of {@link checks} an earlier turn's end already weighed. */
+  private checksSeen = 0;
+  private edits: Promise<unknown> = Promise.resolve();
+  /** The next Stop is the continuation of a block: it must not block again (Claude's `stop_hook_active`). */
+  private continuing = false;
+  /** Set by the bridge: the Stop hook asked the turn to go on (type errors), with its reason. */
+  onStopBlock: ((reason: string) => void) | null = null;
 
   constructor(private readonly o: BrainContextOptions) {
     this.env = hookEnv(o.env);
@@ -240,14 +260,39 @@ export class BrainContext {
     if (printed === null) this.tell('prompt', 'Memory recall did not run for this message: the prompt hook did not finish. This note is not repeated if it happens again in this chat.');
     const ctx = hookContext(printed);
     if (ctx) out.push({ key: 'dreamcontext-prompt', text: ctx });
+    const checks = this.takeChecks();
+    if (checks) out.push({ key: 'dreamcontext-checks', text: checks });
     return out;
+  }
+
+  /** The edit checks owed to the next turn, once. */
+  takeChecks(): string {
+    const text = this.checks.join('\n\n');
+    this.checks = [];
+    this.checksSeen = 0;
+    return text;
+  }
+
+  /**
+   * The agent changed a file: the PostToolUse hook formats it and type-checks it, as it does after
+   * Claude's Edit (TABLO row 11). In the background, one at a time; what it says rides the next
+   * turn, and a type error still standing at the turn's end comes back through the Stop hook.
+   */
+  edited(threadId: string, filePath: string): void {
+    if (!this.run || !threadId || !filePath) return;
+    const input = { hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_input: { file_path: filePath }, session_id: threadId, cwd: this.o.cwd };
+    const run = this.run;
+    this.edits = this.edits.then(async () => {
+      const ctx = hookContext(await run('post-tool-use', input, { cwd: this.o.cwd, env: this.env, timeoutMs: STOP_HOOK_TIMEOUT_MS }));
+      if (ctx && this.checks.length < 20) this.checks.push(ctx);
+    }).catch(() => undefined);
   }
 
   /**
    * A turn ended: the Stop hook records the session for sleep, with the rollout as its transcript.
    * In the background, one at a time; {@link drain} waits for the last before the bridge exits.
    */
-  turnEnded(threadId: string, rolloutPath: string | null, lastMessage: string): void {
+  turnEnded(threadId: string, rolloutPath: string | null, lastMessage: string, opts: { canContinue?: boolean } = {}): void {
     if (!this.run || !threadId) return;
     const input = {
       hook_event_name: 'Stop',
@@ -255,10 +300,43 @@ export class BrainContext {
       ...(rolloutPath ? { transcript_path: rolloutPath } : {}),
       ...(lastMessage ? { last_assistant_message: lastMessage.slice(0, 4000) } : {}),
       cwd: this.o.cwd,
-      stop_hook_active: false,
+      stop_hook_active: this.continuing,
     };
+    this.continuing = false;
     const run = this.run;
-    this.stops = this.stops.then(() => run('stop', input, { cwd: this.o.cwd, env: this.env, timeoutMs: STOP_HOOK_TIMEOUT_MS })).catch(() => undefined);
+    // After this turn's edit checks: the Stop check reads what they recorded.
+    const continuation = input.stop_hook_active;
+    // A turn the owner stopped, or one that failed or hit a limit, is never sent on: Claude runs
+    // no Stop hook after an interrupt, and a refused account would only refuse again.
+    const canContinue = opts.canContinue !== false;
+    const seen = this.checksSeen;
+    this.stops = this.stops.then(() => this.edits).then(async () => {
+      const reason = stopBlockReason(await run('stop', input, { cwd: this.o.cwd, env: this.env, timeoutMs: STOP_HOOK_TIMEOUT_MS }));
+      // Claude reads an edit check's errors in the turn that made them. Here they come after it:
+      // a check that found an error sends the turn on with it, once (a continuation does not).
+      // Only what this turn's own edits said: an older note already had its turn.
+      const fresh = this.checks.slice(seen);
+      const errors = this.onStopBlock && canContinue && !continuation && fresh.some((c) => /\berror\b/i.test(c)) ? fresh.join('\n\n') : '';
+      if (errors) this.checks.splice(seen);
+      this.checksSeen = this.checks.length;
+      const why = [errors ? `The edit checks found problems in what you changed:\n${errors}` : '', reason ?? ''].filter(Boolean).join('\n\n');
+      if (why && this.onStopBlock && canContinue) {
+        this.continuing = true;
+        this.onStopBlock(why);
+      }
+    }).catch(() => undefined);
+  }
+
+  /**
+   * The tool is compacting (Codex says so as it starts; Antigravity only shows it after): the
+   * PreCompact hook records it and digests the transcript now, so recall can bring back what the
+   * compaction drops (TABLO row 28). In the background, with the session records.
+   */
+  compacting(threadId: string, transcriptPath: string | null, trigger: 'auto' | 'manual' = 'auto'): void {
+    if (!this.run || !threadId) return;
+    const input = { hook_event_name: 'PreCompact', session_id: threadId, trigger, cwd: this.o.cwd, ...(transcriptPath ? { transcript_path: transcriptPath } : {}) };
+    const run = this.run;
+    this.stops = this.stops.then(() => run('pre-compact', input, { cwd: this.o.cwd, env: this.env, timeoutMs: STOP_HOOK_TIMEOUT_MS })).catch(() => undefined);
   }
 
   /** Wait (bounded) for the last turn's session record. */

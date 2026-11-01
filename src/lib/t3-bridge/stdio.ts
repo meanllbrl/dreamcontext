@@ -7,7 +7,8 @@
  *                                 into a fresh thread (Eco handoff, plan §4d)
  *   - `control_response`        → the owner's answer to an approval or question card
  *   - `control_request` interrupt / set_model / set_permission_mode → done, then acked
- *   - any other control_request → acked with an error (rewind, stop_task, MCP: not on this tool yet)
+ *   - control_request stop_task → one sub-agent stopped when the tool can (Codex), else an error
+ *   - any other control_request → acked with an error (rewind, MCP: not on this tool yet)
  */
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -30,6 +31,8 @@ import { codexInstanceSettings, isCodexAccountId } from './accounts.js';
 import { HIDDEN_TITLE_PROMPT, TabTitler, titleBlock, titleIn } from './tab-title.js';
 import type { WireFrame } from './to-wire.js';
 import { fitCodexContext, type BrainContext } from './context.js';
+import { appendSubagentStep } from './subagent-log.js';
+import { expandSlash, slashCommandNames } from './slash.js';
 import { codexStorePlan, planLaunchArgs } from '../codex-mcp.js';
 
 export type AppContext = { key: string; text: string };
@@ -90,7 +93,9 @@ export interface StdioDeps {
   readonly openLimitMs?: number;
   /** The brain (context.ts): the snapshot at session start and after `/clear`, the prompt hook on
    *  every owner turn. Absent = no brain (tests, the T3 Claude engine). */
-  readonly brain?: Pick<BrainContext, 'session' | 'prompt' | 'drain'> & Partial<Pick<BrainContext, 'takeNotice'>>;
+  readonly brain?: Pick<BrainContext, 'session' | 'prompt' | 'drain'> & Partial<Pick<BrainContext, 'takeNotice' | 'edited' | 'onStopBlock' | 'compacting'>>;
+  /** The thread's transcript on disk (Codex's rollout, Antigravity's conversation), for the hooks. */
+  readonly transcriptFor?: (nativeThreadId: string) => string | null;
 }
 
 const userText = (frame: Record<string, unknown>): string => {
@@ -166,6 +171,35 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   /** Local answers (an `/effort` sent mid-turn) owed AFTER the running turn's result: the server
    *  counts a turn per result, so answering early would close the running turn on its books. */
   const heldAnswers: WireFrame[] = [];
+  /** Owner messages sent while an Antigravity turn ran: ACP cannot steer a running turn, so each
+   *  waits for the turn's end and then goes in as the next turn (TABLO row 3). */
+  const heldMessages: string[] = [];
+  /** A local answer the pane reads as the agent's, keeping its books (`<synthetic>`). */
+  const say = (text: string): void => emit({ type: 'assistant', message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text }] }, parent_tool_use_id: null, session_id: session?.nativeThreadId ?? '' });
+  /** A local reply to a command the server opened a turn for: its text, then a synthetic result. */
+  const answerLocally = (text: string): void => {
+    const answer: WireFrame[] = [
+      { type: 'assistant', message: { role: 'assistant', model: args.model, content: [{ type: 'text', text }] }, parent_tool_use_id: null, session_id: session.nativeThreadId },
+      { type: 'result', subtype: 'success', is_error: false, result: '', num_turns: 0, total_cost_usd: 0, usage: {}, session_id: session.nativeThreadId, dc_tool: args.tool, dc_synthetic: true },
+    ];
+    if (session.busy) heldAnswers.push(...answer);
+    else for (const f of answer) emit(f);
+  };
+  /** Edit cards open in this turn (tool_use id → file): a clean result runs the edit checks (row 11). */
+  const openEdits = new Map<string, string>();
+  const noteEdit = (frame: WireFrame): void => {
+    if (!deps.brain?.edited || frame.parent_tool_use_id) return;
+    const content = (frame.message as { content?: unknown } | undefined)?.content;
+    if (!Array.isArray(content)) return;
+    for (const b of content as Array<Record<string, any>>) {
+      if (frame.type === 'assistant' && b?.type === 'tool_use' && b.name === 'Edit' && typeof b.input?.file_path === 'string') openEdits.set(String(b.id), b.input.file_path);
+      if (frame.type === 'user' && b?.type === 'tool_result' && openEdits.has(String(b.tool_use_id))) {
+        const file = openEdits.get(String(b.tool_use_id))!;
+        openEdits.delete(String(b.tool_use_id));
+        if (b.is_error !== true) deps.brain.edited(session.nativeThreadId, file);
+      }
+    }
+  };
   /** Codex died: stop reading stdin so the bridge exits (non-zero) and the pane shows it ended. */
   let endInput: (() => void) | null = null;
   /** A tool without Codex's app context: has this thread really had the snapshot? */
@@ -291,8 +325,13 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
         emit({ type: 'system', subtype: 'bridge_error', message, dc_tool: args.tool });
         endInput?.();
       },
+      // A sub-agent's steps, where its card's drill-in reads them (subagent-log.ts).
+      onSidechain: (taskId, frame) => { if (session) appendSubagentStep(home, session.nativeThreadId, args.cwd, taskId, frame); },
+      // Codex announces a compaction as it starts: the PreCompact hook digests the thread first.
+      onCompacting: () => { if (session) deps.brain?.compacting?.(session.nativeThreadId, deps.transcriptFor?.(session.nativeThreadId) ?? null); },
       emit: (frame) => {
         emit(frame);
+        noteEdit(frame);
         if (keepsThread && frame.type === 'assistant' && (frame.message as { model?: unknown } | undefined)?.model !== '<synthetic>') {
           const content = (frame.message as { content?: unknown } | undefined)?.content;
           const said = Array.isArray(content) ? content.map((b) => (b && typeof b === 'object' && typeof (b as { text?: unknown }).text === 'string' ? (b as { text: string }).text : '')).join('') : '';
@@ -304,6 +343,11 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
         if (frame.type === 'result' && !frame.dc_synthetic) owe(deps.onResult?.(session, frame));
         // A local answer held behind a running turn goes out after that turn's own result.
         if (frame.type === 'result' && !frame.dc_synthetic && heldAnswers.length) for (const f of heldAnswers.splice(0)) emit(f);
+        // Messages that waited for this turn go in now, as one turn, the way a steer joins one.
+        if (frame.type === 'result' && !frame.dc_synthetic && heldMessages.length) {
+          const text = heldMessages.splice(0).join('\n\n');
+          setImmediate(() => { chain = chain.then(() => handle({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } })).catch(() => undefined); });
+        }
       },
     });
   } catch (err) {
@@ -321,6 +365,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     return 1;
   }
   opened = true;
+  session.wire.slashCommands = slashCommandNames(args.tool, args.cwd, home);
   // The thread id is known before any turn: announce it, so a reopened pane can be resumed.
   // NOT a `system/init`: the server opens a turn on an init it did not ask for ("an idle child
   // emits no init"), so the thread is announced on its own frame the client ignores.
@@ -349,9 +394,17 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   const briefingOwed = (): AppContext[] => {
     if (!isInstanceTool(args.tool)) return [];
     // A project's own skills are read where they are: copying them would be a step per project.
-    const own: AppContext[] = existsSync(join(args.cwd, '.claude', 'skills'))
-      ? [{ key: 'dreamcontext-project-skills', text: "This project's skills are in .claude/skills/<name>/SKILL.md. When one covers the work, read it first." }]
+    // The owner's own skills too (TABLO row 4): read where they are, like the project's.
+    const skillDirs = [
+      ...(existsSync(join(args.cwd, '.claude', 'skills')) ? ["This project's skills are in .claude/skills/<name>/SKILL.md."] : []),
+      ...(existsSync(join(home, '.claude', 'skills')) ? [`The owner's own skills are in ${join(home, '.claude', 'skills')}/<name>/SKILL.md.`] : []),
+    ];
+    const own: AppContext[] = skillDirs.length
+      ? [{ key: 'dreamcontext-project-skills', text: `${skillDirs.join(' ')} When one covers the work, read it first. A message that starts with /<name> asks for that skill.` }]
       : [];
+    // A sub-agent of this agent starts with none of this (TABLO row 8, real turn 2 Nov: "No
+    // dreamcontext project brain or snapshot in context"): it is told how to get the brain itself.
+    own.push({ key: 'dreamcontext-subagents', text: `Your sub-agents (invoke_subagent) start without this project's brain or these notes. Begin every task you give one with: "First run \`dreamcontext snapshot\` in ${args.cwd} and read what it prints; it is this project's memory."` });
     // No sub-agents on ACP: the note says where a role's file is, so its work is done here.
     const roleDirs = [findPackageDir('agents'), join(home, '.claude', 'agents'), join(args.cwd, '.claude', 'agents')].filter((d): d is string => !!d && existsSync(d));
     own.push({ key: 'dreamcontext-tools', text: toolNote('antigravity', { roleDirs }) });
@@ -372,6 +425,13 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     if (out.some((c) => c.key === 'dreamcontext-brain')) brainSent = true;
     return out;
   };
+  // The Stop hook found type errors in what this turn edited: the turn goes on once, with its
+  // reason, as Claude's does when its Stop hook blocks (the next Stop does not block again).
+  if (deps.brain && 'onStopBlock' in deps.brain) {
+    deps.brain.onStopBlock = (reason) => {
+      chain = chain.then(() => handle({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `Stop hook feedback:\n${reason}` }] } })).catch(() => undefined);
+    };
+  }
   let chain: Promise<void> = deps.brain
     ? deps.brain.session(args.resume ? 'resume' : 'startup', session.nativeThreadId).catch(() => undefined)
     : Promise.resolve();
@@ -386,13 +446,26 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       // Claude answers itself: so does the bridge, without a Codex turn (the server opened one).
       const effort = /^\/effort\s+([a-z]{1,16})\s*$/.exec(text.trim());
       if (effort) {
+        // Antigravity names its reasoning in the model id and takes no effort: saying "set" would be false.
+        if (isInstanceTool(args.tool)) {
+          answerLocally(`${toolLabel(args.tool)} has no effort setting: each of its models names how hard it thinks. Pick one in the model picker.`);
+          return;
+        }
         session.setEffort(effort[1]!);
-        const answer: WireFrame[] = [
-          { type: 'assistant', message: { role: 'assistant', model: args.model, content: [{ type: 'text', text: `Set effort level to ${effort[1]}` }] }, parent_tool_use_id: null, session_id: session.nativeThreadId },
-          { type: 'result', subtype: 'success', is_error: false, result: '', num_turns: 0, total_cost_usd: 0, usage: {}, session_id: session.nativeThreadId, dc_tool: args.tool, dc_synthetic: true },
-        ];
-        if (session.busy) heldAnswers.push(...answer);
-        else for (const f of answer) emit(f);
+        answerLocally(`Set effort level to ${effort[1]}`);
+        return;
+      }
+      if (text.trim() === '/compact') {
+        if (session.canCompact && !session.busy) { await session.compact(); return; }
+        answerLocally(session.canCompact
+          ? `${toolLabel(args.tool)} is busy: send /compact again when this turn ends.`
+          : `${toolLabel(args.tool)} has no compact command: it compacts by itself when its context fills, and the brain is sent again after.`);
+        return;
+      }
+      // ACP takes no message into a running turn: this one waits for the turn's end (row 3).
+      if (isInstanceTool(args.tool) && session.busy) {
+        heldMessages.push(text);
+        say(`${toolLabel(args.tool)} cannot take a message while it works: this one goes in as soon as the turn ends.`);
         return;
       }
       if (text.trim() === '/clear') {
@@ -409,10 +482,17 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       // steer it waits: that message carries no context.
       if (!session.busy && session.wire.takeCompacted()) {
         brainSent = false;
+        // Antigravity only shows it after: its digest is taken now, from the full conversation file.
+        if (isInstanceTool(args.tool)) deps.brain?.compacting?.(session.nativeThreadId, deps.transcriptFor?.(session.nativeThreadId) ?? null);
+        // The briefing rode the words too (no developer channel on ACP), so it went with them (row 14).
+        owe(briefingOwed());
         await deps.brain?.session('compact', session.nativeThreadId).catch(() => undefined);
       }
+      // A `/name` of the project's or the owner's: a command's body or a skill to read (slash.ts).
+      session.wire.slashCommands = slashCommandNames(args.tool, args.cwd, home);
+      const expanded = expandSlash(text, args.cwd, home);
       // The agent's own commands (`/plan`, `/usage`, `/logout`) must arrive alone to be commands.
-      const nativeCommand = isInstanceTool(args.tool) && /^\/[a-z]+$/.test(text.trim());
+      const nativeCommand = !expanded && isInstanceTool(args.tool) && /^\/[a-z]+$/.test(text.trim());
       // A steer joins the running turn as Claude's mid-turn message does: no hook, no context.
       const brain = session.busy || nativeCommand || !deps.brain ? [] : await deps.brain.prompt(text, session.nativeThreadId).catch(() => []);
       // Lost context is said, once, in the owner's own chat: `<synthetic>` keeps the pane's books as they are.
@@ -423,7 +503,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       if (notice) emit({ type: 'assistant', message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: notice }] }, parent_tool_use_id: null, session_id: session.nativeThreadId });
       if (keepsThread) recordThreadTurn(session.nativeThreadId, args.cwd, 'user', text, home, args.account);
       const context = session.busy || nativeCommand ? [] : [...titler.nudge(), ...pending.splice(0), ...onceAThread(brain)];
-      await session.send(text, args.tool === 'codex' ? fitCodexContext(context) : context);
+      await session.send(expanded ?? text, args.tool === 'codex' ? fitCodexContext(context) : context);
       return;
     }
     if (frame.type === 'control_response') {
@@ -448,6 +528,12 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
           if (typeof req.model === 'string' && req.model) session.setModel(req.model);
           ack(frame.request_id);
           return;
+        case 'stop_task': {
+          // One sub-agent's card asked to stop. The tool says whether it can (Codex can close one).
+          const done = typeof req.task_id === 'string' ? await session.stopSubagent(req.task_id).catch(() => false) : false;
+          ack(frame.request_id, done ? undefined : `${toolLabel(args.tool)} cannot stop that sub-agent alone: Stop ends the whole turn.`);
+          return;
+        }
         case 'set_permission_mode':
           // No gate: Bypass stays off, whatever the composer sends.
           if (typeof req.mode === 'string' && !gateLoss) session.setMode(req.mode);

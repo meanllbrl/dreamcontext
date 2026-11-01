@@ -3187,8 +3187,9 @@ export function registerHookCommand(program: Command): void {
       // Emitted BEFORE the consolidation-lock early return below, deliberately: a
       // prompt sent mid-sleep is exactly when the orchestrator is deciding whether
       // to dispatch the next specialist, and that is the turn that must not lose it.
-      // It names Claude's sub-agents: a Codex hook (`--format codex`) has none to dispatch.
-      if (hookTool() !== 'codex') console.log(SUBAGENT_DISPATCH_AUTHORIZATION);
+      // Every tool: Codex dispatches with `spawn_agent` (our agents are its roles), Antigravity with
+      // `invoke_subagent`; the flows that fan out are the same skills on each (TABLO row 10).
+      console.log(SUBAGENT_DISPATCH_AUTHORIZATION);
 
       const state = readSleepState(root);
 

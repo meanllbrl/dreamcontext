@@ -332,6 +332,13 @@ describe.skipIf(nodeMajor < 22)('Antigravity on the bridge (fake ACP agent)', ()
     expect(existsSync(join(skills, 'dreamcontext', 'SKILL.md'))).toBe(true);
   }, 120_000);
 
+  it("tells the agent its sub-agents start without the brain, and how they get it (row 8)", async () => {
+    const { requests } = await chat('auto', 'hello');
+    const prompt = requests.split('\n').find((l) => l.includes('session/prompt') && l.includes('hello')) ?? '';
+    expect(prompt).toContain('dreamcontext-subagents');
+    expect(prompt).toContain('dreamcontext snapshot');
+  }, 60_000);
+
   it("points the agent at a project's own skills once a thread, and copies nothing", async () => {
     const cwd = join(dir, 'project');
     mkdirSync(join(cwd, '.claude', 'skills'), { recursive: true });

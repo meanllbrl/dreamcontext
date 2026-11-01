@@ -29,6 +29,8 @@ const RULES: Record<TextTool, ReadonlyArray<readonly [RegExp, string]>> = {
     [/\bsubagent_type\b/g, 'agent_type'],
     [/\bthe Bash tool's `timeout: 600000`/g, 'a 10-minute command timeout'],
     [/\bthe Bash tool's run_in_background\b/g, 'a background shell'],
+    // No EnterWorktree on this tool: a worktree is made in the shell and declared (TABLO row 39).
+    [/\bPrefer the EnterWorktree tool\./g, 'There is no worktree tool here: make one with `git worktree add`, work in it, and declare it with the `checkout` block.'],
   ],
   antigravity: [
     [new RegExp(`\\(Agent tool, model ${MODELS}, `, 'gi'), '(the role, '],
@@ -44,6 +46,8 @@ const RULES: Record<TextTool, ReadonlyArray<readonly [RegExp, string]>> = {
     [/\bsubagent_type\b/g, 'role'],
     [/\bthe Bash tool's `timeout: 600000`/g, 'a 10-minute command timeout'],
     [/\bthe Bash tool's run_in_background\b/g, 'a background shell'],
+    // No EnterWorktree on this tool: a worktree is made in the shell and declared (TABLO row 39).
+    [/\bPrefer the EnterWorktree tool\./g, 'There is no worktree tool here: make one with `git worktree add`, work in it, and declare it with the `checkout` block.'],
   ],
 };
 

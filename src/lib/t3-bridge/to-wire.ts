@@ -13,6 +13,7 @@
  *
  * Pure: no I/O, no Effect. `session.ts` feeds it events and writes the frames it returns.
  */
+import { createHash } from 'node:crypto';
 import type { ProviderAdapterV2Event } from '@t3tools/provider-core/server/ProviderAdapter';
 import type { OrchestrationV2TurnItem } from '@t3tools/contracts';
 
@@ -29,6 +30,46 @@ export interface ToWireOptions {
   readonly model: string;
   readonly cwd: string;
   readonly permissionMode: string;
+  /**
+   * The chat's own app thread (the pane id). A turn item on any other thread is a sub-agent's
+   * step: it goes under that sub-agent's card, never into the chat. Absent = one thread (tests).
+   */
+  readonly threadId?: string;
+  /** The tool started compacting the chat's thread (Codex announces it; the PreCompact hook runs). */
+  readonly onCompacting?: () => void;
+  /** A sub-agent step, for its drill-in (`subagent-log.ts`). The frame is what the card replays. */
+  readonly onSidechain?: (taskId: string, frame: WireFrame) => void;
+}
+
+/** One sub-agent the tool started, drawn as Claude draws its Agent call (plan: TABLO row 41). */
+interface SubRun {
+  readonly itemId: string;
+  readonly toolUseId: string;
+  /** The card's id: short and `[a-z0-9-]`, which the drill-in route accepts (agent-chat.ts). */
+  readonly taskId: string;
+  childThreadId: string | null;
+  description: string;
+  prompt: string;
+  /** The prompt came from the sub-agent's own first message: nothing overwrites it. */
+  promptFromChild: boolean;
+  steps: number;
+  ended: boolean;
+}
+
+/** `/root/context_check` (a Codex agent path) reads as `context check`. */
+function subagentName(title: string | null | undefined): string {
+  const t = (title ?? '').trim();
+  if (!t) return 'Sub-agent';
+  const last = t.startsWith('/') ? t.split('/').filter(Boolean).pop() ?? t : t;
+  return last.replace(/_/g, ' ');
+}
+
+/** A one-line label for a step, as the card's live activity. */
+function stepLabel(call: { name: string; input: Record<string, unknown> }): string {
+  const i = call.input;
+  const detail = [i.command, i.file_path, i.pattern, i.query, i.description].find((v): v is string => typeof v === 'string' && v.trim().length > 0);
+  const line = detail ? `${call.name} ${detail.replace(/\s+/g, ' ').trim()}` : call.name;
+  return line.length > 120 ? `${line.slice(0, 119)}…` : line;
 }
 
 /** Our canonical tool name and input for one T3 tool turn item, or null for a non-tool item. */
@@ -37,6 +78,22 @@ export function antigravityFailureKind(message: string): 'limit' | 'signed-out' 
   if (/resource.?exhausted|quota|rate.?limit|too many requests|\b429\b/i.test(message)) return 'limit';
   if (/\bsign(ed)?[ -]?(in(to)?|out)\b|unauthenticated|authentication.?required|re-?authenticate|\b401\b/i.test(message)) return 'signed-out';
   return null;
+}
+
+/**
+ * Antigravity answers a turn past its quota with a normal reply, not a failure (real turn,
+ * 2 Nov 2026: "Usage Limit Reached\n\nYou have reached your current quota for this period. Your
+ * limit will reset in 6 days, 17 hours."). Read as the limit it is, with the reset it names.
+ * `null` = not that reply; `{ resetsAtMs: null }` = the limit, reset unknown.
+ */
+export function antigravityQuotaReply(text: string, now: number): { resetsAtMs: number | null } | null {
+  const t = text.trim();
+  if (!/^usage limit reached\b/i.test(t) || !/quota/i.test(t) || t.length > 400) return null;
+  const m = /reset in ([^.]+)/i.exec(t);
+  if (!m) return { resetsAtMs: null };
+  const unit = (re: RegExp): number => Number(re.exec(m[1]!)?.[1] ?? 0);
+  const ms = ((unit(/(\d+)\s*day/i) * 24 + unit(/(\d+)\s*hour/i)) * 60 + unit(/(\d+)\s*min/i)) * 60_000;
+  return { resetsAtMs: ms > 0 ? now + ms : null };
 }
 
 export function toolCallFor(item: TurnItem): { name: string; input: Record<string, unknown> } | null {
@@ -57,7 +114,7 @@ export function toolCallFor(item: TurnItem): { name: string; input: Record<strin
     case 'dynamic_tool':
       return { name: item.toolName ? `mcp__${item.toolName}` : 'mcp__tool', input: isRecord(item.input) ? item.input : { input: item.input } };
     case 'subagent':
-      return { name: 'Agent', input: { description: item.title ?? 'Sub-agent', prompt: item.prompt } };
+      return { name: 'Agent', input: { description: subagentName(item.title), prompt: item.prompt } };
     default:
       return null;
   }
@@ -143,6 +200,30 @@ export class ToWire {
   private peakTokens = 0;
   /** The native thread id (`system/init` `session_id`). */
   sessionId = '';
+  /** The chat's own provider thread: a terminal for any other thread is a sub-agent's. */
+  providerThreadId = '';
+  /** Sub-agents by their turn item id, by the thread they run on, and by T3's node id. */
+  private readonly subRuns = new Map<string, SubRun>();
+  private readonly runByChild = new Map<string, SubRun>();
+  /** A sub-agent's steps that came before its card (ACP sends the prompt first), by thread. */
+  private readonly earlySteps = new Map<string, TurnItem[]>();
+  /** Statuses a sub-agent reached: Antigravity ends one as `idle` once it ran. */
+  private readonly ranSubs = new Set<string>();
+  /** What `subagent.updated` said about a sub-agent before (or after) its turn item. */
+  private readonly subNotes = new Map<string, { prompt: string; title: string | null; childThreadId: string | null; result: string | null; nativeTaskId: string | null }>();
+  /** The card id → the sub-agent's T3 node id, so a Stop on the card finds the tool's own task. */
+  private readonly nodeByTask = new Map<string, string>();
+  private readonly compactionsSeen = new Set<string>();
+  /** Plan cards open in this turn (`plan.updated`), closed at its end. */
+  private readonly openPlans = new Set<string>();
+  /** What this tool's `/` menu offers (slash.ts), on every `system/init`. */
+  slashCommands: string[] = [];
+
+  /** The tool's own id for the sub-agent behind a card, or null. */
+  nativeTaskIdFor(taskId: string): string | null {
+    const node = this.nodeByTask.get(taskId);
+    return node ? this.subNotes.get(node)?.nativeTaskId ?? null : null;
+  }
   private turnStartedAt = 0;
 
   constructor(opts: ToWireOptions) {
@@ -159,7 +240,8 @@ export class ToWire {
       cwd: this.opts.cwd,
       permissionMode: this.opts.permissionMode,
       tools: [],
-      slash_commands: [],
+      // Never an empty list the tool did not mean: the client takes a list as the whole menu.
+      ...(this.slashCommands.length ? { slash_commands: this.slashCommands } : {}),
       dc_tool: this.opts.tool,
       ...extra,
     };
@@ -216,6 +298,8 @@ export class ToWire {
   translate(event: ProviderAdapterV2Event, now: number = Date.now()): WireFrame[] {
     switch (event.type) {
       case 'provider_thread.updated': {
+        // A sub-agent's thread: its context is not the chat's.
+        if (this.isChildThread(event.providerThread.appThreadId)) return [];
         const used = event.providerThread.contextUsage?.usedTokens;
         if (typeof used === 'number' && used > 0) this.noteUsed(used);
         const native = event.providerThread.nativeThreadRef?.nativeId;
@@ -223,6 +307,8 @@ export class ToWire {
         return [];
       }
       case 'provider_turn.updated': {
+        // A sub-agent's turn starting is a step of its card, not a turn of the chat.
+        if (this.isChildThread(event.threadId)) return [];
         // Codex reports the context of its last request per turn (`last.totalTokens`); T3's
         // orchestrator copies it onto the thread's `contextUsage`, which we read above too.
         const usage = event.providerTurn.tokenUsage;
@@ -234,9 +320,32 @@ export class ToWire {
         }
         return event.providerTurn.status === 'running' ? this.beginTurn(now) : [];
       }
-      case 'turn_item.updated':
-        if (event.turnItem.type === 'compaction' && event.turnItem.status === 'completed') this.compacted = true;
-        return [...this.beginTurn(now), ...this.item(event.turnItem)];
+      case 'subagent.updated': {
+        const t = event.subagent;
+        const prior = this.subNotes.get(t.id);
+        this.subNotes.set(t.id, {
+          prompt: t.prompt || prior?.prompt || '',
+          title: t.title ?? prior?.title ?? null,
+          childThreadId: t.childThreadId ?? prior?.childThreadId ?? null,
+          result: t.result ?? prior?.result ?? null,
+          nativeTaskId: t.nativeTaskRef?.nativeId ?? prior?.nativeTaskId ?? null,
+        });
+        return [];
+      }
+      case 'turn_item.updated': {
+        const item = event.turnItem;
+        // A sub-agent's own step: under its card, and never a turn of the chat.
+        if (this.isChildThread(item.threadId)) return this.childItem(item);
+        if (item.type === 'compaction' && item.status === 'completed') this.compacted = true;
+        if (item.type === 'compaction' && !this.compactionsSeen.has(item.id)) {
+          this.compactionsSeen.add(item.id);
+          this.opts.onCompacting?.();
+        }
+        // A sub-agent that ends after the chat's turn did (Antigravity's run on) closes its card
+        // without opening a turn the server would wait on.
+        if (item.type === 'subagent') return [...(this.subRuns.has(item.id) ? [] : this.beginTurn(now)), ...this.subagentItem(item)];
+        return [...this.beginTurn(now), ...this.item(item)];
+      }
       case 'runtime_request.updated': {
         const req = event.runtimeRequest;
         if (req.status !== 'pending' && this.openAsks.has(req.id)) {
@@ -245,13 +354,228 @@ export class ToWire {
         }
         return [];
       }
-      case 'plan.updated':
-        return [];
+      case 'plan.updated': {
+        // The tool's own plan (Codex in Plan mode writes a `proposed_plan`): drawn as Claude's plan
+        // card draws one, the plan as markdown (TABLO row 20). A to-do list arrives as its own item.
+        const plan = event.plan;
+        if (plan.kind !== 'proposed_plan' || !plan.markdown.trim() || this.isChildThread(plan.threadId)) return [];
+        const toolUseId = `toolu_plan_${plan.id}`;
+        this.openPlans.add(toolUseId);
+        return [...this.beginTurn(now), {
+          type: 'assistant',
+          message: { id: `msg_plan_${plan.id}`, role: 'assistant', model: this.opts.model, content: [{ type: 'tool_use', id: toolUseId, name: 'ExitPlanMode', input: { plan: plan.markdown } }] },
+          parent_tool_use_id: null,
+          session_id: this.sessionId,
+        }];
+      }
       case 'turn.terminal':
+        // A sub-agent's turn ending: its card closes on its own item, the chat's turn runs on.
+        if (this.providerThreadId && event.providerThreadId !== this.providerThreadId) return [];
         return this.terminal(event, now);
       default:
         return [];
     }
+  }
+
+  /** Is this app thread a sub-agent's (not the chat's own)? */
+  private isChildThread(threadId: string | null | undefined): boolean {
+    return !!this.opts.threadId && !!threadId && threadId !== this.opts.threadId;
+  }
+
+  /** The sub-agent a step on `threadId` belongs to. A thread not seen yet is the newest open
+   *  sub-agent's that has none: its turn item names the thread a moment after it starts. */
+  private runFor(threadId: string): SubRun | null {
+    const known = this.runByChild.get(threadId);
+    if (known) return known;
+    // A thread a sub-agent was announced on whose card is not drawn yet: its card claims it.
+    if ([...this.subNotes.values()].some((n) => n.childThreadId === threadId)) return null;
+    const open = [...this.subRuns.values()].filter((r) => !r.ended && !r.childThreadId);
+    const run = open[open.length - 1] ?? null;
+    if (run) {
+      run.childThreadId = threadId;
+      this.runByChild.set(threadId, run);
+    }
+    return run;
+  }
+
+  /** The card's live line: what it is doing now, and how many steps it took. */
+  private progress(run: SubRun, p: { activity?: string; lastTool?: string; summary?: string }): WireFrame {
+    return {
+      type: 'system',
+      subtype: 'task_progress',
+      task_id: run.taskId,
+      tool_use_id: run.toolUseId,
+      ...(p.activity ? { description: p.activity } : {}),
+      ...(p.lastTool ? { last_tool_name: p.lastTool } : {}),
+      ...(p.summary ? { summary: p.summary } : {}),
+      usage: { tool_uses: run.steps },
+      session_id: this.sessionId,
+    };
+  }
+
+  /** The Agent call and its `task_started`, as Claude's CLI sends them: the card's identity. */
+  private announce(run: SubRun): WireFrame[] {
+    const input = { description: run.description, prompt: run.prompt };
+    this.toolCalls.set(run.itemId, { toolUseId: run.toolUseId, name: 'Agent', input });
+    return [
+      {
+        type: 'assistant',
+        message: { id: `msg_${run.itemId}`, role: 'assistant', model: this.opts.model, content: [{ type: 'tool_use', id: run.toolUseId, name: 'Agent', input }] },
+        parent_tool_use_id: null,
+        session_id: this.sessionId,
+      },
+      {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: run.taskId,
+        tool_use_id: run.toolUseId,
+        description: run.description,
+        ...(run.prompt ? { prompt: run.prompt } : {}),
+        task_type: 'local_agent',
+        session_id: this.sessionId,
+      },
+    ];
+  }
+
+  /** A sub-agent the chat's agent started: one card, filled in as the tool tells more. */
+  private subagentItem(item: Extract<TurnItem, { type: 'subagent' }>): WireFrame[] {
+    const note = this.subNotes.get(String(item.subagentId));
+    const prompt = item.prompt || note?.prompt || '';
+    const named = subagentName(item.title ?? note?.title);
+    const out: WireFrame[] = [];
+    let run = this.subRuns.get(item.id);
+    if (!run) {
+      run = {
+        itemId: item.id,
+        toolUseId: `toolu_${item.id}`,
+        taskId: `t3-${createHash('sha256').update(item.id).digest('hex').slice(0, 20)}`,
+        childThreadId: null,
+        description: named,
+        prompt,
+        promptFromChild: false,
+        steps: 0,
+        ended: false,
+      };
+      this.subRuns.set(item.id, run);
+      this.nodeByTask.set(run.taskId, String(item.subagentId));
+      out.push(...this.announce(run));
+      const call = this.toolCalls.get(item.id);
+      if (call && item.nativeItemRef?.nativeId) this.toolByNative.set(item.nativeItemRef.nativeId, call);
+    } else {
+      const better = !run.promptFromChild && !!prompt && prompt !== run.prompt;
+      const renamed = named !== 'Sub-agent' && named !== run.description;
+      if (better) run.prompt = prompt;
+      if (renamed) run.description = named;
+      if ((better || renamed) && !run.ended) out.push(...this.announce(run));
+    }
+    const child = item.childThreadId ?? note?.childThreadId ?? null;
+    if (child && run.childThreadId !== child) {
+      run.childThreadId = child;
+      this.runByChild.set(child, run);
+    }
+    // Its steps that came first, now under its card.
+    if (child && this.earlySteps.has(child)) {
+      const held = this.earlySteps.get(child)!;
+      this.earlySteps.delete(child);
+      for (const step of held) out.push(...this.childItem(step));
+    }
+    if (item.status === 'running') this.ranSubs.add(item.id);
+    // Antigravity leaves a sub-agent that finished `idle` (it could be woken again): it ran, so it ended.
+    const terminal = TERMINAL_ITEM.has(item.status) || (item.status === 'idle' && this.ranSubs.has(item.id));
+    if (item.progress && !terminal && !run.ended) out.push(this.progress(run, { activity: item.progress }));
+    if (terminal && !run.ended) {
+      run.ended = true;
+      this.closedItems.add(item.id);
+      const result = item.result ?? note?.result ?? item.progress ?? '';
+      const status = item.status === 'completed' || item.status === 'idle' ? 'completed' : item.status === 'failed' ? 'failed' : 'stopped';
+      const summary = result.trim().split('\n')[0]?.slice(0, 200) ?? '';
+      out.push({
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: run.taskId,
+        tool_use_id: run.toolUseId,
+        status,
+        ...(summary ? { summary } : {}),
+        usage: { tool_uses: run.steps },
+        session_id: this.sessionId,
+      });
+      out.push({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: run.toolUseId, content: [{ type: 'text', text: result }], is_error: item.status === 'failed' }] },
+        parent_tool_use_id: null,
+        session_id: this.sessionId,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * A sub-agent's own step. Its words and tool calls go to the card's drill-in (`onSidechain`),
+   * and the card hears what it is doing now; none of it reaches the chat, where a sub-agent's
+   * text would read as the main agent's. A card it asks the owner still goes to the owner.
+   */
+  private childItem(item: TurnItem): WireFrame[] {
+    if (item.type === 'approval_request') return this.approval(item);
+    if (item.type === 'user_input_request') return this.question(item);
+    const run = this.runFor(String(item.threadId));
+    if (!run) {
+      // Before its card: kept (bounded) until the card names this thread.
+      const held = this.earlySteps.get(String(item.threadId)) ?? [];
+      if (held.length < 50) held.push(item);
+      this.earlySteps.set(String(item.threadId), held);
+      return [];
+    }
+    const side = (frame: WireFrame): void => { this.opts.onSidechain?.(run.taskId, frame); };
+    if (item.type === 'user_message') {
+      const text = item.text ?? '';
+      if (run.promptFromChild || !text.trim()) return [];
+      run.prompt = text;
+      run.promptFromChild = true;
+      side({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] }, parent_tool_use_id: run.toolUseId });
+      return run.ended ? [] : this.announce(run);
+    }
+    if (item.type === 'assistant_message' || item.type === 'reasoning') {
+      if ((item.streaming && !TERMINAL_ITEM.has(item.status)) || this.closedItems.has(item.id)) return [];
+      this.closedItems.add(item.id);
+      const text = item.text ?? '';
+      if (!text.trim()) return [];
+      const thinking = item.type === 'reasoning';
+      side({
+        type: 'assistant',
+        message: { id: `msg_${item.id}`, role: 'assistant', model: this.opts.model, content: [thinking ? { type: 'thinking', thinking: text, signature: '' } : { type: 'text', text }] },
+        parent_tool_use_id: run.toolUseId,
+      });
+      if (thinking || run.ended) return [];
+      return [this.progress(run, { summary: text.trim().split('\n')[0]!.slice(0, 200) })];
+    }
+    // A sub-agent of the sub-agent: its steps are this card's too.
+    if (item.type === 'subagent' && item.childThreadId && !this.runByChild.has(item.childThreadId)) this.runByChild.set(item.childThreadId, run);
+    const call = toolCallFor(item);
+    if (!call) return [];
+    const out: WireFrame[] = [];
+    let open = this.toolCalls.get(item.id);
+    if (!open) {
+      open = { toolUseId: `toolu_${item.id}`, ...call };
+      this.toolCalls.set(item.id, open);
+      if (item.nativeItemRef?.nativeId) this.toolByNative.set(item.nativeItemRef.nativeId, open);
+      run.steps += 1;
+      side({
+        type: 'assistant',
+        message: { id: `msg_${item.id}`, role: 'assistant', model: this.opts.model, content: [{ type: 'tool_use', id: open.toolUseId, name: open.name, input: open.input }] },
+        parent_tool_use_id: run.toolUseId,
+      });
+      if (!run.ended) out.push(this.progress(run, { activity: stepLabel(open), lastTool: open.name }));
+    }
+    if (TERMINAL_ITEM.has(item.status) && !this.closedItems.has(item.id)) {
+      this.closedItems.add(item.id);
+      const { text, isError } = toolResultText(item);
+      side({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: open.toolUseId, content: [{ type: 'text', text }], is_error: isError }] },
+        parent_tool_use_id: run.toolUseId,
+      });
+    }
+    return out;
   }
 
   private item(item: TurnItem): WireFrame[] {
@@ -410,6 +734,11 @@ export class ToWire {
 
   private terminal(event: Extract<ProviderAdapterV2Event, { type: 'turn.terminal' }>, now: number): WireFrame[] {
     const out: WireFrame[] = [];
+    // A plan card is done when its turn is: the owner reads it and picks the next mode.
+    for (const id of this.openPlans) {
+      out.push({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text: 'Plan written. Switch to Develop to build it.' }], is_error: false }] }, parent_tool_use_id: null, session_id: this.sessionId });
+    }
+    this.openPlans.clear();
     // Cards still open when the turn ends can no longer be answered.
     for (const id of this.openAsks) out.push({ type: 'control_cancel_request', request_id: this.wireIdFor(id) });
     this.openAsks.clear();
@@ -418,8 +747,9 @@ export class ToWire {
     // A usage-limit refusal (T3 `failure.class === 'usage_limit'`): the server's switch reads it
     // like Claude's refusal frame, with the reset T3 knows (plan r5 §4d "Limit detection").
     const kind = this.opts.tool === 'antigravity' ? antigravityFailureKind(failure?.message ?? '') : null;
-    const limited = failure?.class === 'usage_limit' || kind === 'limit';
-    const limitResetMs = failure?.class === 'usage_limit' && failure.resetAt ? Date.parse(failure.resetAt) : NaN;
+    const quota = ok && this.opts.tool === 'antigravity' ? antigravityQuotaReply(this.lastAssistantText, now) : null;
+    const limited = failure?.class === 'usage_limit' || kind === 'limit' || !!quota;
+    const limitResetMs = failure?.class === 'usage_limit' && failure.resetAt ? Date.parse(failure.resetAt) : quota?.resetsAtMs ?? NaN;
     out.push({
       type: 'result',
       subtype: ok ? 'success' : 'error_during_execution',
