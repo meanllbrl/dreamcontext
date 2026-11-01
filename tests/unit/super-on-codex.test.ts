@@ -9,6 +9,7 @@ import { codexLeanMcpArgs, codexStrictArgs, parseCodexMcpList } from '../../src/
 import { runT3Headless } from '../../src/lib/t3-bridge/run.js';
 import { leanServerCommand } from '../../src/lib/super/lean-exec.js';
 import { serverBehindLine } from '../../src/cli/commands/super.js';
+import { codexHookCommand } from '../../src/lib/t3-bridge/codex-user-gate.js';
 import { codexEnvGateGap, codexEnvGateReady } from '../../src/lib/t3-bridge/env-gate.js';
 import { HEADLESS_ENVELOPES } from '../../src/lib/t3-bridge/headless-envelope.js';
 import { bridgeChatScript } from '../../src/lib/t3-bridge/spawn.js';
@@ -84,34 +85,22 @@ describe('a narrow Codex surface', () => {
     expect(lines.join('')).toContain('could not be switched off');
   });
 
-  it('runs unattended only with the .env gate live and the project trusted', () => {
+  it('runs unattended only when Codex itself says the gate is live', () => {
     const home = mkdtempSync(join(tmpdir(), 'dc-lean-'));
     const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'dc-lean-')));
     mkdirSync(join(home, '.codex'));
     mkdirSync(join(cwd, '.codex'));
     expect(codexEnvGateReady(cwd, home)).toBe(false);
-    expect(codexEnvGateGap(cwd, home)).toMatch(/no \.codex\/hooks\.json/);
+    expect(codexEnvGateGap(cwd, home)).toMatch(/not on this Mac yet/);
     writeFileSync(join(cwd, '.codex', 'hooks.json'), '{"hooks":{"PreToolUse":[{"command":"dreamcontext hook pre-tool-use --format codex"}]}}');
-    expect(codexEnvGateReady(cwd, home)).toBe(false);
-    writeFileSync(join(home, '.codex', 'config.toml'), `[projects."${cwd}"]\ntrust_level = "untrusted"\n`);
-    expect(codexEnvGateReady(cwd, home)).toBe(false);
-    expect(codexEnvGateGap(cwd, home)).toMatch(/project folder yet/);
-    const folder = `[projects."${cwd}"]\ntrust_level = "trusted"\n`;
-    // The folder alone is not enough: Codex asks about the hooks separately.
-    writeFileSync(join(home, '.codex', 'config.toml'), folder);
-    expect(codexEnvGateReady(cwd, home)).toBe(false);
-    expect(codexEnvGateGap(cwd, home)).toMatch(/hooks yet/);
-    const hook = `[hooks.state."${join(cwd, '.codex', 'hooks.json')}:pre_tool_use:0:0"]\ntrusted_hash = "sha256:abc"\n`;
-    writeFileSync(join(home, '.codex', 'config.toml'), `${folder}\n${hook}`);
-    expect(codexEnvGateReady(cwd, home, () => true)).toBe(true);
+    const says = (trustStatus: string, enabled = true) => () => [{ result: { data: [{ hooks: [{ key: 'k', eventName: 'preToolUse', handlerType: 'command', command: codexHookCommand('pre-tool-use'), source: 'project', sourcePath: join(cwd, '.codex', 'hooks.json'), enabled, currentHash: 'h', trustStatus }] }] } }];
+    expect(codexEnvGateGap(cwd, home, () => true, null, says('trusted'))).toBeNull();
+    // An edited hook, one Codex never trusted, one switched off, and hooks off altogether.
+    for (const rpc of [says('modified'), says('untrusted'), says('trusted', false), () => [{ result: { data: [{ hooks: [] }] } }]]) expect(codexEnvGateGap(cwd, home, () => true, null, rpc)).toMatch(/approved here/);
+    expect(codexEnvGateGap(cwd, home, () => true, null, () => null)).toMatch(/did not answer/);
     // An older global CLI refuses `--format`: Codex would go on with no gate.
-    expect(codexEnvGateReady(cwd, home, () => false)).toBe(false);
-    expect(codexEnvGateGap(cwd, home, () => false)).toMatch(/did not answer/);
-    expect(codexEnvGateGap(cwd, home, () => true)).toBeNull();
-    writeFileSync(join(home, '.codex', 'config.toml'), `${folder}\n${hook}enabled = false\n`);
-    expect(codexEnvGateReady(cwd, home, () => true)).toBe(false);
-    rmSync(home, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    expect(codexEnvGateReady(cwd, home, () => false, null, says('trusted'))).toBe(false);
+    expect(codexEnvGateGap(cwd, home, () => false, null, says('trusted'))).toMatch(/did not answer/);
   });
 });
 

@@ -49,7 +49,7 @@ export async function runT3Headless(o: T3RunOptions, deps: RunDeps = {}): Promis
   const fail = (result: string): Record<string, unknown> => ({ type: 'result', subtype: 'error_during_execution', is_error: true, result, session_id: null, total_cost_usd: 0, num_turns: 0, duration_ms: 0, permission_denials: [], dc_tool: 'codex' });
   if (!envelope?.codex) return say(fail(`${o.surface} runs on Claude only. ${envelope?.why ?? ''}`.trim()), 1);
 
-  if (!(deps.envGate ?? codexEnvGateReady(o.cwd, deps.home))) return say(fail(NO_ENV_GATE), 1);
+  if (!(deps.envGate ?? codexEnvGateReady(o.cwd, deps.home, undefined, o.account))) return say(fail(NO_ENV_GATE), 1);
 
   const env = deps.env ?? process.env;
   const model = o.model || codexDefaultModel() || codexCachedModels()[0]?.id || 'gpt-5.5';
