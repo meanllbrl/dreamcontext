@@ -901,7 +901,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               agenda={(
                 <>
                   {!agendaOnStage && <AgendaButton state={state} look={jobLook} onOpen={openAgenda} />}
-                  {plan.phone && othersItems.length > 0 && (
+                  {plan.othersInHead && othersItems.length > 0 && (
                     <OthersButton count={othersItems.length} asking={othersItems.some((i) => i.status === 'asking')} open={openGroup === 'others'} buttonRef={stackRef} onToggle={toggleOthers} />
                   )}
                 </>
@@ -1060,8 +1060,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
           aria-hidden
         />
       )}
-      {agendaPill && !plan.phone && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
-      {!plan.phone && <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={toggleOthers} stackRef={stackRef} />}
+      {agendaPill && !plan.agendaInHead && <AgendaPill state={state} look={jobLook} rect={plan.agendaPill} onOpen={openAgenda} />}
+      {!plan.othersInHead && <OthersStack items={othersItems} rect={plan.othersRect} open={openGroup === 'others'} onToggle={toggleOthers} stackRef={stackRef} />}
       {plan.more && <OthersStack more stackRef={moreRef} items={moreItems} rect={plan.more.rect} open={openGroup === 'more'} onToggle={() => setOpenGroup((o) => (o === 'more' ? null : 'more'))} />}
       {openGroup && (() => {
         // The rail's "more" tile opens like Others (its cards are live jobs: no close-all there).
