@@ -120,15 +120,17 @@ function seed() {
   writeFileSync(join(HOME, '.local', 'bin', 'claude'), STANDIN);
   chmodSync(join(HOME, '.local', 'bin', 'claude'), 0o755);
   writeFileSync(join(HOME, '.dreamcontext', 'agent-ui.json'), JSON.stringify({ enabled: true, restoreTabs: true, defaultAgent: 'claude', autoTitle: false, hotkey: 'Ctrl+A', renderer: 'dom', chatView: true, screenMigrated: true, chatPermissionMode: 'auto', chatDefaultModel: '', chatDefaultEffort: '', lightMode: 'off', superAgent: true }));
-  writeFileSync(join(HOME, '.dreamcontext', 'launcher-ui.json'), JSON.stringify({ view: 'list', shell: 'new', drawerOpen: true, drawerExpanded: ['acme', 'globex'], projectOrder: ['acme', 'globex'], lastVault: 'acme' }));
+  writeFileSync(join(HOME, '.dreamcontext', 'launcher-ui.json'), JSON.stringify({ view: 'list', shell: 'new', drawerOpen: true, drawerExpanded: ['acme', 'globex', 'initech'], projectOrder: ['acme', 'globex', 'initech'], lastVault: 'acme' }));
   const EXTRA = Number(arg('tabs', 0));
   const chatsA = [{ title: 'Alpha', id: randomUUID() }, { title: 'Beta', id: randomUUID() }, ...Array.from({ length: EXTRA }, (_, i) => ({ title: `Extra ${i}`, id: randomUUID() }))];
   const chatsG = [{ title: 'Gamma', id: randomUUID() }];
   const A = project('acme', chatsA);
   const G = project('globex', chatsG);
+  const chatsI = [{ title: 'Iota', id: randomUUID() }, { title: 'Kappa', id: randomUUID() }];
+  const I = project('initech', chatsI);
   const dir = join(HOME, '.claude', 'projects', 'scratch-proj');
   mkdirSync(dir, { recursive: true });
-  const ids = [A.superId, chatsA[0].id, chatsA[1].id, G.superId, chatsG[0].id, ...chatsA.slice(2).map((c) => c.id)];
+  const ids = [A.superId, chatsA[0].id, chatsA[1].id, G.superId, chatsG[0].id, ...chatsA.slice(2).map((c) => c.id), I.superId, ...chatsI.map((c) => c.id)];
   ids.forEach((id, i) => {
     const f = join(dir, `${id}.jsonl`);
     if (REAL[i % (REAL.length || 1)]) copyFileSync(REAL[i % REAL.length], f);
@@ -250,6 +252,16 @@ async function main() {
     if (await p.locator('[data-testid="ns-rail-chat"]').first().isVisible().catch(() => false)) { await p.locator('[data-testid="ns-rail-chat"]').first().click(); await wait(p, 900); }
     await p.screenshot({ path: join(OUT, `${TAG}-start.png`) });
 
+    // The first click on a project that is not mounted: the row picked must be the one that opens.
+    await rowOf(p, 'initech', 'Kappa').click();
+    await wait(p, 3500);
+    report.cold = {
+      selected: await p.locator('[data-drawer-project="initech"] .ns-dr-child.is-sel').first().textContent().catch(() => null),
+      arriving: await p.locator('[data-testid="agent-arriving"]').filter({ visible: true }).count(),
+    };
+    report.coldOk = /Kappa/.test(report.cold.selected ?? '') && report.cold.arriving === 0;
+    await p.screenshot({ path: join(OUT, `${TAG}-cold.png`) });
+
     const hops = [
       ['acme:super', () => superOf(p, 'acme').click()],
       ['globex:super', () => superOf(p, 'globex').click()],
@@ -306,8 +318,10 @@ async function main() {
   line(`${TAG} cpu×${CPU} rounds ${ROUNDS} real ${REAL.length}  (ms; median unless max)`);
   line('first visit  ' + report.firstVisit.map((h) => `${h.hop} paint ${h.paint} settle ${h.settle} shift ${h.shift} blank ${h.blank}`).join(' | '));
   for (const [k, v] of Object.entries(report.hops)) line(`${k.padEnd(14)} sel ${v.sel} first ${v.first} paint ${v.paint} (max ${v.paintMax}) settle ${v.settle} (max ${v.settleMax}) shiftMax ${v.shiftMax} blankFrames ${v.blank} longMax ${v.longMax} click ${v.clickTotal} ${JSON.stringify(v.end)}`);
+  line(`cold project first click: ${report.coldOk ? 'ok' : 'WRONG'} ${JSON.stringify(report.cold)}`);
   if (report.profile) report.profile.forEach(line);
   if (report.errors?.length) line(`console errors: ${JSON.stringify(report.errors)}`);
+  if (!report.coldOk) process.exitCode = 1;
 }
 
-main().catch((e) => { process.stderr.write(`${e?.stack ?? e}\n`); process.exit(1); });
+main().then(() => { if (process.exitCode) process.exit(process.exitCode); }).catch((e) => { process.stderr.write(`${e?.stack ?? e}\n`); process.exit(1); });

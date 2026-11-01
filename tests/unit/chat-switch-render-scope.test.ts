@@ -39,9 +39,9 @@ describe('a window render does not reach the transcripts', () => {
     expect('isActive' in seen).toBe(false);
   });
 
-  it('a drawer intent lands before the click paints', () => {
+  it('a drawer intent lands before the click paints, but never before the listeners exist', () => {
     const src = read('components/layout/newshell/DrawerIntentBridge.tsx');
-    expect(src).toContain('useLayoutEffect(() => {');
-    expect(src).not.toMatch(/\buseEffect\(/);
+    expect(src).toContain('if (mounted.current) ring();');
+    expect(src).toMatch(/useEffect\(\(\) => \{\n\s+mounted\.current = true;\n\s+ring\(\);/);
   });
 });
