@@ -108,6 +108,8 @@ export interface BridgeSessionOptions {
   /** Folders Codex lists skills from, beside its own (codex-skills.ts): set once, right after `initialized`. */
   readonly skillRoots?: readonly string[];
   readonly emit: (frame: WireFrame) => void;
+  /** A sub-agent's step, for its card's drill-in (subagent-log.ts). */
+  readonly onSidechain?: (taskId: string, frame: WireFrame) => void;
   /** A frame that is not chat output (bridge diagnostics) — never anything secret. */
   readonly log?: (line: string) => void;
 }
@@ -298,7 +300,7 @@ export class BridgeSession {
     this.mode = opts.mode;
     this.model = opts.model;
     this.effort = opts.effort ?? '';
-    this.wire = new ToWire({ tool: opts.tool, model: opts.model, cwd: opts.cwd, permissionMode: opts.mode });
+    this.wire = new ToWire({ tool: opts.tool, model: opts.model, cwd: opts.cwd, permissionMode: opts.mode, threadId: opts.paneId, ...(opts.onSidechain ? { onSidechain: opts.onSidechain } : {}) });
   }
 
   static async open(opts: BridgeSessionOptions): Promise<BridgeSession> {
@@ -433,6 +435,7 @@ export class BridgeSession {
       this.providerThread = await this.run(session.ensureThread({ threadId, modelSelection, runtimePolicy }));
     }
     this.wire.sessionId = this.providerThread.nativeThreadRef?.nativeId ?? '';
+    this.wire.providerThreadId = this.providerThread.id;
     this.nativeHasTurns = !!resumeNative;
   }
 
@@ -481,7 +484,9 @@ export class BridgeSession {
   }
 
   private onEvent(event: ProviderAdapter.ProviderAdapterV2Event): void {
-    if (event.type === 'provider_turn.updated' && this.activeRun && event.providerTurn.status === 'running') {
+    // A sub-agent's turn (its own thread) is never the run a Stop or a steer is for.
+    const childTurn = event.type === 'provider_turn.updated' && !!event.threadId && event.threadId !== this.threadId;
+    if (event.type === 'provider_turn.updated' && !childTurn && this.activeRun && event.providerTurn.status === 'running') {
       this.activeRun.providerTurnId = event.providerTurn.id;
       this.turnKnown?.resolve();
     }
@@ -498,7 +503,7 @@ export class BridgeSession {
         void this.interrupt().catch(() => undefined);
       }
     }
-    if (event.type === 'turn.terminal') {
+    if (event.type === 'turn.terminal' && (!this.providerThread || event.providerThreadId === this.providerThread.id)) {
       if (event.status === 'completed') this.nativeHasTurns = true;
       this.activeRun = null;
       this.turnKnown?.resolve();
@@ -760,6 +765,7 @@ export class BridgeSession {
       forceNewNativeThread: true,
     }));
     this.wire.sessionId = this.providerThread.nativeThreadRef?.nativeId ?? '';
+    this.wire.providerThreadId = this.providerThread.id;
     this.nativeHasTurns = false;
     this.wire.resetContext();
     this.opts.emit(this.wire.init({ dc_rotated: true }));

@@ -13,6 +13,7 @@
  *
  * Pure: no I/O, no Effect. `session.ts` feeds it events and writes the frames it returns.
  */
+import { createHash } from 'node:crypto';
 import type { ProviderAdapterV2Event } from '@t3tools/provider-core/server/ProviderAdapter';
 import type { OrchestrationV2TurnItem } from '@t3tools/contracts';
 
@@ -29,6 +30,44 @@ export interface ToWireOptions {
   readonly model: string;
   readonly cwd: string;
   readonly permissionMode: string;
+  /**
+   * The chat's own app thread (the pane id). A turn item on any other thread is a sub-agent's
+   * step: it goes under that sub-agent's card, never into the chat. Absent = one thread (tests).
+   */
+  readonly threadId?: string;
+  /** A sub-agent step, for its drill-in (`subagent-log.ts`). The frame is what the card replays. */
+  readonly onSidechain?: (taskId: string, frame: WireFrame) => void;
+}
+
+/** One sub-agent the tool started, drawn as Claude draws its Agent call (plan: TABLO row 41). */
+interface SubRun {
+  readonly itemId: string;
+  readonly toolUseId: string;
+  /** The card's id: short and `[a-z0-9-]`, which the drill-in route accepts (agent-chat.ts). */
+  readonly taskId: string;
+  childThreadId: string | null;
+  description: string;
+  prompt: string;
+  /** The prompt came from the sub-agent's own first message: nothing overwrites it. */
+  promptFromChild: boolean;
+  steps: number;
+  ended: boolean;
+}
+
+/** `/root/context_check` (a Codex agent path) reads as `context check`. */
+function subagentName(title: string | null | undefined): string {
+  const t = (title ?? '').trim();
+  if (!t) return 'Sub-agent';
+  const last = t.startsWith('/') ? t.split('/').filter(Boolean).pop() ?? t : t;
+  return last.replace(/_/g, ' ');
+}
+
+/** A one-line label for a step, as the card's live activity. */
+function stepLabel(call: { name: string; input: Record<string, unknown> }): string {
+  const i = call.input;
+  const detail = [i.command, i.file_path, i.pattern, i.query, i.description].find((v): v is string => typeof v === 'string' && v.trim().length > 0);
+  const line = detail ? `${call.name} ${detail.replace(/\s+/g, ' ').trim()}` : call.name;
+  return line.length > 120 ? `${line.slice(0, 119)}…` : line;
 }
 
 /** Our canonical tool name and input for one T3 tool turn item, or null for a non-tool item. */
@@ -57,7 +96,7 @@ export function toolCallFor(item: TurnItem): { name: string; input: Record<strin
     case 'dynamic_tool':
       return { name: item.toolName ? `mcp__${item.toolName}` : 'mcp__tool', input: isRecord(item.input) ? item.input : { input: item.input } };
     case 'subagent':
-      return { name: 'Agent', input: { description: item.title ?? 'Sub-agent', prompt: item.prompt } };
+      return { name: 'Agent', input: { description: subagentName(item.title), prompt: item.prompt } };
     default:
       return null;
   }
@@ -143,6 +182,13 @@ export class ToWire {
   private peakTokens = 0;
   /** The native thread id (`system/init` `session_id`). */
   sessionId = '';
+  /** The chat's own provider thread: a terminal for any other thread is a sub-agent's. */
+  providerThreadId = '';
+  /** Sub-agents by their turn item id, by the thread they run on, and by T3's node id. */
+  private readonly subRuns = new Map<string, SubRun>();
+  private readonly runByChild = new Map<string, SubRun>();
+  /** What `subagent.updated` said about a sub-agent before (or after) its turn item. */
+  private readonly subNotes = new Map<string, { prompt: string; title: string | null; childThreadId: string | null; result: string | null }>();
   private turnStartedAt = 0;
 
   constructor(opts: ToWireOptions) {
@@ -216,6 +262,8 @@ export class ToWire {
   translate(event: ProviderAdapterV2Event, now: number = Date.now()): WireFrame[] {
     switch (event.type) {
       case 'provider_thread.updated': {
+        // A sub-agent's thread: its context is not the chat's.
+        if (this.isChildThread(event.providerThread.appThreadId)) return [];
         const used = event.providerThread.contextUsage?.usedTokens;
         if (typeof used === 'number' && used > 0) this.noteUsed(used);
         const native = event.providerThread.nativeThreadRef?.nativeId;
@@ -223,6 +271,8 @@ export class ToWire {
         return [];
       }
       case 'provider_turn.updated': {
+        // A sub-agent's turn starting is a step of its card, not a turn of the chat.
+        if (this.isChildThread(event.threadId)) return [];
         // Codex reports the context of its last request per turn (`last.totalTokens`); T3's
         // orchestrator copies it onto the thread's `contextUsage`, which we read above too.
         const usage = event.providerTurn.tokenUsage;
@@ -234,9 +284,27 @@ export class ToWire {
         }
         return event.providerTurn.status === 'running' ? this.beginTurn(now) : [];
       }
-      case 'turn_item.updated':
-        if (event.turnItem.type === 'compaction' && event.turnItem.status === 'completed') this.compacted = true;
-        return [...this.beginTurn(now), ...this.item(event.turnItem)];
+      case 'subagent.updated': {
+        const t = event.subagent;
+        const prior = this.subNotes.get(t.id);
+        this.subNotes.set(t.id, {
+          prompt: t.prompt || prior?.prompt || '',
+          title: t.title ?? prior?.title ?? null,
+          childThreadId: t.childThreadId ?? prior?.childThreadId ?? null,
+          result: t.result ?? prior?.result ?? null,
+        });
+        return [];
+      }
+      case 'turn_item.updated': {
+        const item = event.turnItem;
+        // A sub-agent's own step: under its card, and never a turn of the chat.
+        if (this.isChildThread(item.threadId)) return this.childItem(item);
+        if (item.type === 'compaction' && item.status === 'completed') this.compacted = true;
+        // A sub-agent that ends after the chat's turn did (Antigravity's run on) closes its card
+        // without opening a turn the server would wait on.
+        if (item.type === 'subagent') return [...(this.subRuns.has(item.id) ? [] : this.beginTurn(now)), ...this.subagentItem(item)];
+        return [...this.beginTurn(now), ...this.item(item)];
+      }
       case 'runtime_request.updated': {
         const req = event.runtimeRequest;
         if (req.status !== 'pending' && this.openAsks.has(req.id)) {
@@ -248,10 +316,196 @@ export class ToWire {
       case 'plan.updated':
         return [];
       case 'turn.terminal':
+        // A sub-agent's turn ending: its card closes on its own item, the chat's turn runs on.
+        if (this.providerThreadId && event.providerThreadId !== this.providerThreadId) return [];
         return this.terminal(event, now);
       default:
         return [];
     }
+  }
+
+  /** Is this app thread a sub-agent's (not the chat's own)? */
+  private isChildThread(threadId: string | null | undefined): boolean {
+    return !!this.opts.threadId && !!threadId && threadId !== this.opts.threadId;
+  }
+
+  /** The sub-agent a step on `threadId` belongs to. A thread not seen yet is the newest open
+   *  sub-agent's that has none: its turn item names the thread a moment after it starts. */
+  private runFor(threadId: string): SubRun | null {
+    const known = this.runByChild.get(threadId);
+    if (known) return known;
+    const open = [...this.subRuns.values()].filter((r) => !r.ended && !r.childThreadId);
+    const run = open[open.length - 1] ?? null;
+    if (run) {
+      run.childThreadId = threadId;
+      this.runByChild.set(threadId, run);
+    }
+    return run;
+  }
+
+  /** The card's live line: what it is doing now, and how many steps it took. */
+  private progress(run: SubRun, p: { activity?: string; lastTool?: string; summary?: string }): WireFrame {
+    return {
+      type: 'system',
+      subtype: 'task_progress',
+      task_id: run.taskId,
+      tool_use_id: run.toolUseId,
+      ...(p.activity ? { description: p.activity } : {}),
+      ...(p.lastTool ? { last_tool_name: p.lastTool } : {}),
+      ...(p.summary ? { summary: p.summary } : {}),
+      usage: { tool_uses: run.steps },
+      session_id: this.sessionId,
+    };
+  }
+
+  /** The Agent call and its `task_started`, as Claude's CLI sends them: the card's identity. */
+  private announce(run: SubRun): WireFrame[] {
+    const input = { description: run.description, prompt: run.prompt };
+    this.toolCalls.set(run.itemId, { toolUseId: run.toolUseId, name: 'Agent', input });
+    return [
+      {
+        type: 'assistant',
+        message: { id: `msg_${run.itemId}`, role: 'assistant', model: this.opts.model, content: [{ type: 'tool_use', id: run.toolUseId, name: 'Agent', input }] },
+        parent_tool_use_id: null,
+        session_id: this.sessionId,
+      },
+      {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: run.taskId,
+        tool_use_id: run.toolUseId,
+        description: run.description,
+        ...(run.prompt ? { prompt: run.prompt } : {}),
+        task_type: 'local_agent',
+        session_id: this.sessionId,
+      },
+    ];
+  }
+
+  /** A sub-agent the chat's agent started: one card, filled in as the tool tells more. */
+  private subagentItem(item: Extract<TurnItem, { type: 'subagent' }>): WireFrame[] {
+    const note = this.subNotes.get(String(item.subagentId));
+    const prompt = item.prompt || note?.prompt || '';
+    const named = subagentName(item.title ?? note?.title);
+    const out: WireFrame[] = [];
+    let run = this.subRuns.get(item.id);
+    if (!run) {
+      run = {
+        itemId: item.id,
+        toolUseId: `toolu_${item.id}`,
+        taskId: `t3-${createHash('sha256').update(item.id).digest('hex').slice(0, 20)}`,
+        childThreadId: null,
+        description: named,
+        prompt,
+        promptFromChild: false,
+        steps: 0,
+        ended: false,
+      };
+      this.subRuns.set(item.id, run);
+      out.push(...this.announce(run));
+      const call = this.toolCalls.get(item.id);
+      if (call && item.nativeItemRef?.nativeId) this.toolByNative.set(item.nativeItemRef.nativeId, call);
+    } else {
+      const better = !run.promptFromChild && !!prompt && prompt !== run.prompt;
+      const renamed = named !== 'Sub-agent' && named !== run.description;
+      if (better) run.prompt = prompt;
+      if (renamed) run.description = named;
+      if ((better || renamed) && !run.ended) out.push(...this.announce(run));
+    }
+    const child = item.childThreadId ?? note?.childThreadId ?? null;
+    if (child && run.childThreadId !== child) {
+      run.childThreadId = child;
+      this.runByChild.set(child, run);
+    }
+    const terminal = TERMINAL_ITEM.has(item.status);
+    if (item.progress && !terminal && !run.ended) out.push(this.progress(run, { activity: item.progress }));
+    if (terminal && !run.ended) {
+      run.ended = true;
+      this.closedItems.add(item.id);
+      const result = item.result ?? note?.result ?? item.progress ?? '';
+      const status = item.status === 'completed' ? 'completed' : item.status === 'failed' ? 'failed' : 'stopped';
+      const summary = result.trim().split('\n')[0]?.slice(0, 200) ?? '';
+      out.push({
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: run.taskId,
+        tool_use_id: run.toolUseId,
+        status,
+        ...(summary ? { summary } : {}),
+        usage: { tool_uses: run.steps },
+        session_id: this.sessionId,
+      });
+      out.push({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: run.toolUseId, content: [{ type: 'text', text: result }], is_error: item.status === 'failed' }] },
+        parent_tool_use_id: null,
+        session_id: this.sessionId,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * A sub-agent's own step. Its words and tool calls go to the card's drill-in (`onSidechain`),
+   * and the card hears what it is doing now; none of it reaches the chat, where a sub-agent's
+   * text would read as the main agent's. A card it asks the owner still goes to the owner.
+   */
+  private childItem(item: TurnItem): WireFrame[] {
+    if (item.type === 'approval_request') return this.approval(item);
+    if (item.type === 'user_input_request') return this.question(item);
+    const run = this.runFor(String(item.threadId));
+    if (!run) return [];
+    const side = (frame: WireFrame): void => { this.opts.onSidechain?.(run.taskId, frame); };
+    if (item.type === 'user_message') {
+      const text = item.text ?? '';
+      if (run.promptFromChild || !text.trim()) return [];
+      run.prompt = text;
+      run.promptFromChild = true;
+      side({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] }, parent_tool_use_id: run.toolUseId });
+      return run.ended ? [] : this.announce(run);
+    }
+    if (item.type === 'assistant_message' || item.type === 'reasoning') {
+      if ((item.streaming && !TERMINAL_ITEM.has(item.status)) || this.closedItems.has(item.id)) return [];
+      this.closedItems.add(item.id);
+      const text = item.text ?? '';
+      if (!text.trim()) return [];
+      const thinking = item.type === 'reasoning';
+      side({
+        type: 'assistant',
+        message: { id: `msg_${item.id}`, role: 'assistant', model: this.opts.model, content: [thinking ? { type: 'thinking', thinking: text, signature: '' } : { type: 'text', text }] },
+        parent_tool_use_id: run.toolUseId,
+      });
+      if (thinking || run.ended) return [];
+      return [this.progress(run, { summary: text.trim().split('\n')[0]!.slice(0, 200) })];
+    }
+    // A sub-agent of the sub-agent: its steps are this card's too.
+    if (item.type === 'subagent' && item.childThreadId && !this.runByChild.has(item.childThreadId)) this.runByChild.set(item.childThreadId, run);
+    const call = toolCallFor(item);
+    if (!call) return [];
+    const out: WireFrame[] = [];
+    let open = this.toolCalls.get(item.id);
+    if (!open) {
+      open = { toolUseId: `toolu_${item.id}`, ...call };
+      this.toolCalls.set(item.id, open);
+      if (item.nativeItemRef?.nativeId) this.toolByNative.set(item.nativeItemRef.nativeId, open);
+      run.steps += 1;
+      side({
+        type: 'assistant',
+        message: { id: `msg_${item.id}`, role: 'assistant', model: this.opts.model, content: [{ type: 'tool_use', id: open.toolUseId, name: open.name, input: open.input }] },
+        parent_tool_use_id: run.toolUseId,
+      });
+      if (!run.ended) out.push(this.progress(run, { activity: stepLabel(open), lastTool: open.name }));
+    }
+    if (TERMINAL_ITEM.has(item.status) && !this.closedItems.has(item.id)) {
+      this.closedItems.add(item.id);
+      const { text, isError } = toolResultText(item);
+      side({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: open.toolUseId, content: [{ type: 'text', text }], is_error: isError }] },
+        parent_tool_use_id: run.toolUseId,
+      });
+    }
+    return out;
   }
 
   private item(item: TurnItem): WireFrame[] {

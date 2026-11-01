@@ -89,6 +89,7 @@ import { clearToolSignedOut, readToolRejections, recordToolRejection, recordTool
 import { isAccountTool, toolSwitchFor } from '../../lib/tool-switch.js';
 import { isInstanceTool, type InstanceTool } from '../../lib/instance-accounts.js';
 import { instanceHistory, instanceThreadAccount } from '../../lib/t3-bridge/instance-threads.js';
+import { readSubagentLog } from '../../lib/t3-bridge/subagent-log.js';
 import { planReplacement } from '../../lib/t3-bridge/replace-session.js';
 import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
@@ -4985,6 +4986,15 @@ export async function handleAgentChatHistory(
   // A Claude pane never pays for this: Codex is looked at only when asked for, or when no Claude
   // transcript answers (an older client opening a Codex pane without `tool=`).
   const tool = sanitizeTool(url.searchParams.get('tool'));
+  // A Codex or Antigravity sub-agent's own steps: the bridge keeps them per chat thread, and serves
+  // them only to the project the thread ran in (subagent-log.ts). A Claude conversation has none.
+  const bridgeSub = sanitizeSubagentId(url.searchParams.get('subagent'));
+  if (bridgeSub && contextRoot && tool !== 'claude') {
+    for (const thread of [...new Set([liveId, id].filter(Boolean))]) {
+      const raw = readSubagentLog(homedir(), thread, bridgeSub, projectRootOf(contextRoot));
+      if (raw !== null) { sendJson(res, 200, { items: parseTranscriptHistory(raw, { sidechain: true }) }); return; }
+    }
+  }
   if (tool === 'antigravity') {
     const history = instanceHistory({ thread: liveId || id, contextRoot });
     if (history === 'refuse') { sendError(res, 403, 'thread_not_in_project', 'That thread does not belong to this project.'); return; }

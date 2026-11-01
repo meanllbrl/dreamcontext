@@ -30,6 +30,7 @@ import { codexInstanceSettings, isCodexAccountId } from './accounts.js';
 import { HIDDEN_TITLE_PROMPT, TabTitler, titleBlock, titleIn } from './tab-title.js';
 import type { WireFrame } from './to-wire.js';
 import { fitCodexContext, type BrainContext } from './context.js';
+import { appendSubagentStep } from './subagent-log.js';
 import { codexStorePlan, planLaunchArgs } from '../codex-mcp.js';
 
 export type AppContext = { key: string; text: string };
@@ -291,6 +292,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
         emit({ type: 'system', subtype: 'bridge_error', message, dc_tool: args.tool });
         endInput?.();
       },
+      // A sub-agent's steps, where its card's drill-in reads them (subagent-log.ts).
+      onSidechain: (taskId, frame) => { if (session) appendSubagentStep(home, session.nativeThreadId, args.cwd, taskId, frame); },
       emit: (frame) => {
         emit(frame);
         if (keepsThread && frame.type === 'assistant' && (frame.message as { model?: unknown } | undefined)?.model !== '<synthetic>') {
