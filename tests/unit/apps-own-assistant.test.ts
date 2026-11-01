@@ -220,11 +220,16 @@ describe('a bound member', () => {
   const dc = (...args: string[]) => spawnSync(process.execPath, [resolve('dist/index.js'), ...args], { cwd: project, encoding: 'utf-8', env: { ...clean(), HOME: home } });
   it.skipIf(!existsSync(resolve('dist/index.js')))('runs free at auto, with danger actions and apps call denied, no gate, no strict settings', () => {
     addVault('acme', project, home);
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+    writeFileSync(join(home, '.dreamcontext', '.secrets.json'), '{"github":{"token":"gho_fake_verify_token","login":"verify-user"}}');
     expect(dc('agents', 'create', 'ua', '--title', 'UA', '--prompt', 'Run the ads.').status).toBe(0);
     expect(dc('agents', 'edit', 'ua', '--autonomy', 'free').status).toBe(0);
+    expect(dc('agents', 'approve', 'ua', '--yes').status).toBe(0);
+    const saved = process.env.HOME;
+    process.env.HOME = home;
     const p = prep(rec({ member: 'ua' }));
-    expect(p).toMatchObject({ ok: true });
-    if (!p.ok) return;
+    process.env.HOME = saved;
+    if (!p.ok) throw new Error(p.reason);
     expect(p.app).toMatchObject({ own: false, member: 'ua', permissionMode: 'auto', settingSources: null, hooks: null, allowed: [] });
     expect(p.app.denied).toContain('Bash(dreamcontext apps call:*)');
     expect(p.app.denied).toContain('Bash(dreamcontext apps do yuk wipe:*)');
