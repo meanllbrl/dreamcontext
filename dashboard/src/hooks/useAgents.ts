@@ -56,7 +56,7 @@ export interface AgentSummary {
   model: string | null;
   effort: AgentEffort | null;
   /** The tool it runs on, and the Codex account it is pinned to. */
-  tool?: 'claude' | 'codex';
+  tool?: 'claude' | 'codex' | 'antigravity';
   account?: string | null;
   /** Its home board, or null. */
   whiteboard: string | null;
@@ -132,7 +132,7 @@ export interface AgentIdentityDraft {
   model?: string | null;
   effort?: AgentEffort | null;
   /** A changed tool waits for the owner's approval. */
-  tool?: 'claude' | 'codex';
+  tool?: 'claude' | 'codex' | 'antigravity';
   account?: string | null;
   whiteboard?: string | null;
   learning?: boolean;

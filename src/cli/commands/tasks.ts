@@ -101,6 +101,7 @@ import {
   type TaskFilter,
   type GroupBy,
 } from '../../lib/task-query.js';
+import { agentSessionId, inAgentSession } from '../../lib/session-id.js';
 
 function getStateDir(): string {
   const root = ensureContextRoot();
@@ -1307,7 +1308,7 @@ export function registerTasksCommand(program: Command): void {
         declinedAt: new Date().toISOString(),
         reason,
         // Best-effort provenance: an unset env records nobody rather than a placeholder.
-        ...(process.env.CLAUDE_CODE_SESSION_ID ? { session: process.env.CLAUDE_CODE_SESSION_ID } : {}),
+        ...(agentSessionId() ? { session: agentSessionId()! } : {}),
       });
       success(existing ? `Decline updated: ${key}` : `Declined: ${key}`);
       info(`No sleep cycle will re-file this. If the decision changes: dreamcontext tasks undecline ${key}`);
@@ -1728,7 +1729,7 @@ export function registerTasksCommand(program: Command): void {
         as,
         target,
         note,
-        by: process.env.CLAUDE_CODE_SESSION_ID ? 'agent' : 'owner',
+        by: inAgentSession() ? 'agent' : 'owner',
         via: 'agent',
         ...(opts.resume ? { resume: opts.resume } : {}),
       });

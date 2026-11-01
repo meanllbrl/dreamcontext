@@ -18,7 +18,8 @@ export interface ApprovalCardFacts {
   cadence: string;
   mode: 'sched' | 'call';
   until: 'until-turned-off' | 'only-when-called';
-  reach: 'computer' | 'board';
+  reach: 'computer' | 'project' | 'board';
+  tool: 'claude' | 'codex' | 'antigravity';
   board: string | null;
   mcp: string[];
   review: 'off' | 'agent' | 'output';
@@ -139,7 +140,7 @@ export function AutomationApprovalCard({ spec, session, report }: {
         <dd>
           {f.reach === 'board'
             ? SLOT(t('chat.autocard.reach.board'), { board: f.board ?? '' })
-            : t('chat.autocard.reach.computer')}
+            : t(f.reach === 'project' ? 'chat.autocard.reach.project' : 'chat.autocard.reach.computer')}
           {f.mcp.length > 0 && <span className="chat-autocard-sub">{SLOT(t('chat.autocard.reach.mcp'), { list: f.mcp.join(', ') })}</span>}
         </dd>
         <dt>{t('chat.autocard.changes')}</dt>

@@ -1,4 +1,5 @@
 import { isCodexAccountId } from '../t3-bridge/accounts.js';
+import { isInstanceAccountId } from '../instance-accounts.js';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { withFileLockSync } from '../file-lock.js';
@@ -82,8 +83,7 @@ import {
   type RunSidecar,
   type Schedule,
   type ScheduleSlot,
-  type Weekday,
-} from './types.js';
+  type Weekday, type RunTool } from './types.js';
 
 /**
  * Automations store — mirrors `src/lib/lab/store.ts`. Manifests are FLAT at
@@ -206,11 +206,16 @@ export function strOrNull(v: unknown): string | null {
  *  direction is "omit `--effort` and let `claude` pick its own default",
  *  never "guess a level"; strict rejection of a bad value lives only in
  *  `validateAutomationForWrite`, the write-time path. */
-/** `tool` / `account` from a file: anything but a real Codex choice reads as Claude. */
-export function toolFieldsOf(data: Record<string, unknown>): { tool?: 'codex'; account?: string } {
-  if (data.tool !== 'codex') return {};
-  const account = typeof data.account === 'string' && isCodexAccountId(data.account) ? data.account : '';
-  return { tool: 'codex', ...(account ? { account } : {}) };
+/** `tool` / `account` from a file: anything but a real Codex or Antigravity choice reads as Claude. */
+export function toolFieldsOf(data: Record<string, unknown>): { tool?: RunTool; account?: string } {
+  if (data.tool !== 'codex' && data.tool !== 'antigravity') return {};
+  const account = typeof data.account === 'string' && runAccountIdOk(data.tool, data.account) ? data.account : '';
+  return { tool: data.tool, ...(account ? { account } : {}) };
+}
+
+/** An account id `tool` could hold (its first account is never pinned by id). */
+export function runAccountIdOk(tool: RunTool, id: string): boolean {
+  return tool === 'codex' ? isCodexAccountId(id) : isInstanceAccountId(id);
 }
 
 export function parseEffort(v: unknown): EffortLevel | null {
@@ -1372,8 +1377,8 @@ export function listRunSlots(contextRoot: string, slug: string): RunSlot[] {
 export interface CreateAutomationInput {
   slug: string;
   title: string;
-  /** Runs on Codex, optionally pinned to one of its accounts (Track T W4). */
-  tool?: 'codex';
+  /** Runs on Codex or Antigravity, optionally pinned to one of its accounts (Track T W4). */
+  tool?: RunTool;
   account?: string | null;
   /** The agent this automation runs as. Omitted ⇒ an unsplit (legacy-format)
    *  manifest that is its own agent, exactly as every create wrote before the
@@ -1782,7 +1787,7 @@ function createLegacyManifest(contextRoot: string, slug: string, path: string, i
  */
 export interface UpdateAutomationInput {
   /** null = back to Claude. A changed tool is never re-approved quietly. */
-  tool?: 'codex' | null;
+  tool?: RunTool | null;
   account?: string | null;
   title?: string;
   mode?: AutomationMode;

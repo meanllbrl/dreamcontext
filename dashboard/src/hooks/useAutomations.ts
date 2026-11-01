@@ -109,7 +109,7 @@ export interface AutomationSummary {
    *  rather than fetching the manifest and flashing a default first. */
   effort: 'low' | 'medium' | 'high' | null;
   /** The tool it runs on, and the Codex account it is pinned to. */
-  tool?: 'claude' | 'codex';
+  tool?: 'claude' | 'codex' | 'antigravity';
   account?: string | null;
   timeoutMinutes: number;
   catchupHours: number;
@@ -295,7 +295,7 @@ export interface AutomationManifestDetail {
   autonomy?: 'ask' | 'balanced' | 'free';
   /** Hashed when named, LAST: the MCP read tools a light job of it may call. */
   readTools?: string[];
-  tool?: 'claude' | 'codex';
+  tool?: 'claude' | 'codex' | 'antigravity';
   prompt: string;
   outputInstructions: string;
   pattern: AutomationPattern;
@@ -590,7 +590,7 @@ export interface AutomationDraft {
   /** The legacy shape's prompt; ignored when `agent` is set. */
   prompt?: string;
   /** Its tool and pinned Codex account; a changed tool waits for the owner's approval. */
-  tool?: 'claude' | 'codex';
+  tool?: 'claude' | 'codex' | 'antigravity';
   account?: string;
   mode: AutomationMode;
   /** Every time it fires. Wins over the one-slot `days`/`at`. */

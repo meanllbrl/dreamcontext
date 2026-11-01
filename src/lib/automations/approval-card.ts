@@ -17,7 +17,9 @@ import type { AutomationCache, AutomationManifest, ReviewMode } from './types.js
  * not what the agent wrote about it. CLI and server read the same function.
  *
  * Honest about capability, not intent: a scheduled run is spawned with `bypassPermissions`
- * (runner.ts `buildClaudeArgs`), or inside its home board's envelope. Whether its prompt only
+ * (runner.ts `buildClaudeArgs`), or inside its home board's envelope. On Codex it runs in
+ * Codex's sandbox (`auto`: the project and linked repos, no network); on Antigravity, which has
+ * no OS sandbox, it has Claude's reach behind the write gate (headless-envelope.ts). Whether its prompt only
  * reads is the prompt's claim, so the card says what the run CAN do and shows the prompt's
  * opening words beside it; the owner judges the two together.
  */
@@ -43,8 +45,12 @@ export interface ApprovalCardFacts {
   mode: 'sched' | 'call';
   /** No schedule kind ends on a date: it runs until it is turned off or removed. */
   until: 'until-turned-off' | 'only-when-called';
-  /** `computer`: every tool on this Mac, without asking; `board`: only its home board. */
-  reach: 'computer' | 'board';
+  /** `computer`: every tool on this Mac, without asking (Claude, and Antigravity, which has no
+   *  OS sandbox); `project`: Codex's sandbox, the project and its linked repos with no network;
+   *  `board`: only its home board. */
+  reach: 'computer' | 'project' | 'board';
+  /** The tool the run goes out on. */
+  tool: 'claude' | 'codex' | 'antigravity';
   board: string | null;
   /** The MCP servers the run is handed (none on a board). */
   mcp: string[];
@@ -95,7 +101,8 @@ export function approvalCardFacts(
     cadence: cadenceLabel(m),
     mode: m.mode,
     until: m.mode === 'call' ? 'only-when-called' : 'until-turned-off',
-    reach: onBoard ? 'board' : 'computer',
+    reach: onBoard ? 'board' : m.tool === 'codex' ? 'project' : 'computer',
+    tool: m.tool ?? 'claude',
     board: m.whiteboard ?? null,
     mcp: onBoard ? [] : mcpOf(projectRoot),
     review: m.review,

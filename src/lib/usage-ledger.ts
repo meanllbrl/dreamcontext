@@ -54,7 +54,7 @@ export type LedgerPrompt = [number, PromptKind, number];
 export interface LedgerFile {
   s: number;
   m: number;
-  tool: 'claude' | 'codex';
+  tool: 'claude' | 'codex' | 'antigravity';
   session: string;
   cwd: string;
   /** A sub-agent's file: its `agentType` and the effort it ran at (`agent-*.meta.json`). */
@@ -95,7 +95,7 @@ export interface Ledger {
 
 export interface ScanProgress { done: number; total: number }
 
-export interface ScanRoot { dir: string; tool: 'claude' | 'codex' }
+export interface ScanRoot { dir: string; tool: 'claude' | 'codex' | 'antigravity' }
 
 function emptyLedger(): Ledger { return { version: LEDGER_VERSION, models: [], files: {} }; }
 
@@ -163,6 +163,9 @@ export function ledgerRoots(home: string = homedir()): ScanRoot[] {
   for (const a of accounts) if (a.configDir) add(join(a.configDir, 'projects'), 'claude');
   add(join(home, '.codex', 'sessions'), 'codex');
   add(join(home, '.codex', 'archived_sessions'), 'codex');
+  // Antigravity: the transcripts Stop writes from each conversation (antigravity-conversation.ts),
+  // in Claude's line shape with the agent's own token counts. No model name rides along.
+  add(join(home, '.dreamcontext', 't3', 'transcripts'), 'antigravity');
   return roots;
 }
 
@@ -370,7 +373,7 @@ async function scanFile(path: string, tool: ScanRoot['tool'], size: number, mtim
     if (line) count(line);
   };
 
-  const onLine = tool === 'claude' ? claudeLine : codexLine;
+  const onLine = tool === 'codex' ? codexLine : claudeLine;
   try {
     let tail: Buffer = Buffer.alloc(0);
     for await (const chunk of createReadStream(path, { highWaterMark: 1 << 20 })) {

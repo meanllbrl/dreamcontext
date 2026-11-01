@@ -625,6 +625,11 @@ export interface PromptRecall {
  */
 export async function selectPromptRecall(prompt: string, root: string, recallMode: RecallMode, deps: PromptRecallDeps = {}): Promise<PromptRecall> {
   const env = deps.env ?? process.env;
+  // The Haiku extractor is a `claude` call: under a Codex or Antigravity prompt hook it would spend
+  // the owner's Claude account behind that tool's back (row 30). BM25 there, and the header says so.
+  if (recallMode === 'haiku' && hookTool() !== null) {
+    return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_HAIKU_TOP_K), label: 'BM25 · Haiku is Claude only', haiku: false, timing: null };
+  }
   if (recallMode === 'haiku') {
     const result = (deps.haiku ?? haikuRecall)(prompt, root);
     if (result === 'skip') {

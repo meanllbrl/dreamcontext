@@ -31,7 +31,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
 import { dirname, join } from 'node:path';
-import { codexRunAccountArg, pickCodexRunAccount } from './codex-account.js';
+import { pickToolRunAccount, toolRunAccountArg } from './codex-account.js';
 import { codexModelOf, codexRunArgs } from '../t3-bridge/headless-envelope.js';
 import { bridgeNode } from '../t3-bridge/node-floor.js';
 import { linkedWritableRoots } from '../t3-bridge/roots.js';
@@ -940,7 +940,7 @@ function spawnSessionResume(
   const scopeArgs = resume ? boardScopeArgs(resume.scope, resume.paths) : null;
   // Never an "Only mine" account (account protection): the owner's reply resumes agent work, so
   // it leaves the accounts they keep for themself alone; the threshold does not gate it.
-  if (m.tool === 'codex') return spawnCodexResume();
+  if (m.tool === 'codex' || m.tool === 'antigravity') return spawnCodexResume(m.tool);
   const quick = automationAccountWithoutProbe({ home: opts.home });
   return quick
     ? spawnOn(withoutOwnerOnly(quick, { home: opts.home }))
@@ -964,19 +964,23 @@ function spawnSessionResume(
   }
 
   /** The thread lives in the shared `~/.codex`, so any signed-in account resumes it. */
-  function spawnCodexResume(): Promise<ClaudeExecution> {
+  // Antigravity keeps a conversation in its account's profile: the resume goes to the pinned
+  // account, else the first signed-in one, which is where an unpinned run went out too.
+  function spawnCodexResume(tool: 'codex' | 'antigravity'): Promise<ClaudeExecution> {
     const at = nowFn();
     const node = bridgeNode();
     const cli = process.env.DREAMCONTEXT_CLI || process.argv[1] || '';
-    const pick = pickCodexRunAccount({ pinned: m.account, home: opts.home });
+    const pick = pickToolRunAccount(tool, { pinned: m.account, home: opts.home });
+    const name = tool === 'antigravity' ? 'Antigravity' : 'Codex';
     if (resume || !node || !cli || !('account' in pick)) {
-      return Promise.resolve({ spawned: false, timedOut: false, exitCode: null, stdout: '', stderrTail: resume ? 'A home board stays on Claude.' : 'Codex cannot resume here: no signed-in account or no Node 22.16.', startedAt: at, finishedAt: at, result: null });
+      return Promise.resolve({ spawned: false, timedOut: false, exitCode: null, stdout: '', stderrTail: resume ? 'A home board stays on Claude.' : `${name} cannot resume here: no signed-in account or no Node 22.16.`, startedAt: at, finishedAt: at, result: null });
     }
     const { model, effort } = spawnModel(m, opts.override);
     const said = opts.override?.light ? `${LIGHT_JOB_BLOCK}\n\n${prompt}` : prompt;
     return executeClaudeDetached(codexRunArgs({
       surface: opts.override?.light ? 'light' : 'verdict', prompt: sanitizeAutomationPrompt(said), model: codexModelOf(model), effort,
-      account: codexRunAccountArg(pick.account), resume: sessionId, extraRoots: linkedWritableRoots(dirname(contextRoot)),
+      ...(tool === 'antigravity' ? { tool: 'antigravity' as const } : {}),
+      account: toolRunAccountArg(tool, pick.account), resume: sessionId, extraRoots: linkedWritableRoots(dirname(contextRoot)),
     }), {
       command: { file: node, prefix: [cli] },
       cwd: dirname(contextRoot),

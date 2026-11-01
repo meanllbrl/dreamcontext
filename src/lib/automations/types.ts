@@ -315,6 +315,9 @@ export type AutomationSlot = 'absent' | 'legacy-call' | 'automation' | 'unreadab
  *  client-supplied filename. */
 export const AUTOMATION_PHOTOS_DIR = 'automations/photos';
 
+/** A tool an automation or agent runs on when it is not Claude. */
+export type RunTool = 'codex' | 'antigravity';
+
 export interface AutomationManifest {
   slug: string;
   id: string;
@@ -503,7 +506,7 @@ export interface AutomationManifest {
   fallbackTools?: string[];
   /** The tool it runs on when that is not Claude (Track T W4). Hashed: it decides which vendor
    *  sees the prompt and which envelope runs it, so a change re-approves. Absent = Claude. */
-  tool?: 'codex';
+  tool?: RunTool;
   /** The Codex account it is pinned to, unhashed (who pays, not what runs). Absent = chosen per
    *  run, by the owner's order and `agentThreshold`. Claude runs keep their chooser. */
   account?: string;

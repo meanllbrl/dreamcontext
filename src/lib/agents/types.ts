@@ -97,8 +97,8 @@ export interface AgentManifest {
    *  file; `light-run.ts`). Absent = none: a light job then has the file readers only. Hashed. */
   readTools?: string[];
   /** Runs on this tool when it is not Claude (Track T W4). Hashed through the composed target. */
-  tool?: 'codex';
-  /** The Codex account it is pinned to, unhashed. Absent = chosen per run. */
+  tool?: 'codex' | 'antigravity';
+  /** The account it is pinned to, unhashed. Absent = chosen per run. */
   account?: string;
   /** Its creator's GitHub login (`owner:`), `machine:<id>` before anyone signed in on that machine,
    *  `unowned` when no creator could be worked out, null on a file the migration has not stamped
@@ -144,7 +144,7 @@ export interface AgentInput {
  */
 export type AgentIdentityPatch = Partial<Pick<AgentInput, 'title' | 'prompt' | 'soul' | 'model' | 'effort' | 'learning' | 'whiteboard' | 'photo' | 'autonomy'>> & {
   /** null = back to Claude. Changing it leaves the agent awaiting the owner's approval. */
-  tool?: 'codex' | null;
+  tool?: 'codex' | 'antigravity' | null;
   account?: string | null;
 };
 

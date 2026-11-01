@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { liveElements } from './ops.js';
 import { whiteboardsDir } from './store.js';
 import { elementTag, type WhiteboardElement } from './widgets.js';
+import { agentSessionId } from '../session-id.js';
 
 /**
  * What a session saw at its last `whiteboard show`, so the next `show` can say "this board
@@ -49,7 +50,7 @@ export interface SinceLastShow {
 const SEEN_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
 function sessionKey(): string {
-  const raw = process.env.CLAUDE_CODE_SESSION_ID?.trim();
+  const raw = agentSessionId() ?? undefined;
   if (!raw) return 'terminal';
   return /^[A-Za-z0-9_-]{1,80}$/.test(raw) ? raw : createHash('sha1').update(raw).digest('hex');
 }

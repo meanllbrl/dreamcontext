@@ -3,6 +3,8 @@ import { codexRules } from '../account-rules.js';
 import { readToolRejections } from '../account-switch.js';
 import { codexLimitsFor, listCodexAccounts, readCodexUsage } from '../codex-accounts.js';
 import { CODEX_PRIMARY_ID } from '../t3-bridge/accounts.js';
+import { INSTANCE_PRIMARY_ID, instanceLimitsFor, listInstanceAccounts, readInstanceUsage } from '../instance-accounts.js';
+import type { HeadlessTool } from '../t3-bridge/headless-envelope.js';
 
 /** How long an unattended run waits when no reading says when an account frees up. */
 const WAIT_WITHOUT_READING_MS = 60 * 60_000;
@@ -45,4 +47,36 @@ export function pickCodexRunAccount(o: {
 /** The `--account` a run passes: none for #0, whose home is the default. */
 export function codexRunAccountArg(id: string): string | null {
   return id && id !== CODEX_PRIMARY_ID ? id : null;
+}
+
+/**
+ * The same pick for any tool a run can go out on. Antigravity's accounts are its instance
+ * accounts (instance-accounts.ts), with their own refusal store and limit readings; the threshold
+ * is Codex's (the one switch policy the non-Claude tools share today).
+ */
+export function pickToolRunAccount(tool: HeadlessTool, o: Parameters<typeof pickCodexRunAccount>[0]): CodexPick {
+  if (tool === 'codex') return pickCodexRunAccount(o);
+  const home = o.home ?? homedir();
+  const now = o.now ?? Date.now();
+  const threshold = codexRules(home).agentThreshold;
+  const rejected = readToolRejections('antigravity', home, now);
+  const accounts = listInstanceAccounts('antigravity', home).filter((a) => a.signedIn && (!o.pinned || a.id === o.pinned) && !o.exclude?.includes(a.id));
+  if (accounts.length === 0) return { none: true };
+  let earliest = Infinity;
+  for (const a of accounts) {
+    const refusal = rejected[a.id];
+    if (refusal) { earliest = Math.min(earliest, refusal.until); continue; }
+    if (!o.unattended) return { account: a.id };
+    const limits = instanceLimitsFor(readInstanceUsage('antigravity', a.id, home)).limits.filter((l) => l.percent >= threshold);
+    if (limits.length === 0) return { account: a.id };
+    earliest = Math.min(earliest, Math.max(...limits.map((l) => l.resetsAt)));
+  }
+  if (o.unattended) return { waitUntil: Number.isFinite(earliest) ? earliest : now + WAIT_WITHOUT_READING_MS };
+  return { account: accounts[0]!.id };
+}
+
+/** The `--account` a run passes on `tool`: none for its first account. */
+export function toolRunAccountArg(tool: HeadlessTool, id: string): string | null {
+  if (tool === 'codex') return codexRunAccountArg(id);
+  return id && id !== INSTANCE_PRIMARY_ID ? id : null;
 }

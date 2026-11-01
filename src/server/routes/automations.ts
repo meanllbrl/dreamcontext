@@ -33,8 +33,7 @@ import {
   automationPath,
   getRunTarget,
   pathOccupied,
-  readManifestParts,
-} from '../../lib/automations/store.js';
+  readManifestParts, runAccountIdOk } from '../../lib/automations/store.js';
 import { getAgent, removeAgent, withRestamp } from '../../lib/agents/store.js';
 import { agentKeyOf, readManifestFrontmatter } from '../../lib/agents/slot.js';
 import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
@@ -219,7 +218,7 @@ interface AutomationSummary {
    *  the form flashes a default effort the owner never chose. */
   effort: AutomationManifest['effort'];
   /** Which tool it runs on, and the Codex account it is pinned to (null = chosen per run). */
-  tool: 'claude' | 'codex';
+  tool: 'claude' | 'codex' | 'antigravity';
   account: string | null;
   timeoutMinutes: number;
   catchupHours: number;
@@ -1158,13 +1157,14 @@ function readMode(v: unknown): AutomationMode | undefined {
 }
 
 /** The tool and account a save asks for. Absent stays; `''` or null is Claude / no pin. */
-function readToolChoice(body: Record<string, unknown>): { tool: 'codex' | null | undefined; account: string | null | undefined } {
+function readToolChoice(body: Record<string, unknown>): { tool: 'codex' | 'antigravity' | null | undefined; account: string | null | undefined } {
   const t = body.tool;
-  if (t !== undefined && t !== null && t !== '' && t !== 'claude' && t !== 'codex') throw new AutomationError('Invalid tool: Claude or Codex.');
+  if (t !== undefined && t !== null && t !== '' && t !== 'claude' && t !== 'codex' && t !== 'antigravity') throw new AutomationError('Invalid tool: Claude, Codex or Antigravity.');
   const a = body.account;
-  if (a !== undefined && a !== null && a !== '' && !(typeof a === 'string' && isCodexAccountId(a))) throw new AutomationError('Invalid account.');
+  const accountTool = t === 'antigravity' ? 'antigravity' : 'codex';
+  if (a !== undefined && a !== null && a !== '' && !(typeof a === 'string' && runAccountIdOk(accountTool, a))) throw new AutomationError('Invalid account.');
   return {
-    tool: t === undefined ? undefined : t === 'codex' ? 'codex' : null,
+    tool: t === undefined ? undefined : t === 'codex' || t === 'antigravity' ? t : null,
     account: a === undefined ? undefined : (a as string) || null,
   };
 }
@@ -1342,7 +1342,7 @@ export async function createFromBody(
       slots: readSlots(body.slots),
       model: str(body.model) ?? null,
       effort: readEffort(body.effort) ?? null,
-      ...(!whiteboard && readToolChoice(body).tool === 'codex' ? { tool: 'codex' as const, account: readToolChoice(body).account ?? null } : {}),
+      ...(!whiteboard && readToolChoice(body).tool ? { tool: readToolChoice(body).tool!, account: readToolChoice(body).account ?? null } : {}),
       timeoutMinutes: readTimeout(body.timeoutMinutes),
       prompt,
       whiteboard,
@@ -1543,7 +1543,7 @@ function updateSplitTarget(
     effort: EffortLevel | null | undefined;
     prompt: string | undefined;
     job: string | null | undefined;
-    tool: 'codex' | null | undefined;
+    tool: 'codex' | 'antigravity' | null | undefined;
     account: string | null | undefined;
   },
   /** The automation target as read before this save, or null. */
