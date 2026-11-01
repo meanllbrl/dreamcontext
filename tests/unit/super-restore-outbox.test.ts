@@ -270,7 +270,7 @@ describe('Resume on a dormant super child (AgentSurface.tsx, checked against the
     expect(plan).toContain("const asChat = meta.parked ? meta.parked.transport === 'chat' : meta.kind === 'chat' && (!!meta.mode || !!meta.tool);");
     expect(src).toMatch(/if \(asChat\) bindChatAgent\(meta\.claudeId, meta\.agent \?\? ''\);/);
     // On the model, effort and account it ran on: parked first, else the roster's (resumePlan).
-    expect(src).toContain('const plan = resumePlan(meta, claudeKind);');
+    expect(src).toContain('const plan = resumePlan({ ...meta, tool: chatToolFor(meta.claudeId) }, claudeKind);');
     expect(src).toMatch(/: asChat\s*\n\s*\? spawn\(meta\.bypass, meta\.claudeId, true, 'chat', '', launch\.model \?\? '', true, '', false, launch\.effort \?\? '', true, meta\.mode \?\? DEFAULT_CHAT_MODE, launch\.account \?\? ''\)/);
   });
 
