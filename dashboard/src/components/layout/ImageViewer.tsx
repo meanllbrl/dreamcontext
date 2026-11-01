@@ -23,6 +23,8 @@ interface Props {
    *  and any action belong to it; absent one, the viewer still says the picture didn't
    *  load rather than drawing a broken glyph. */
   fallback?: ReactNode;
+  /** Several pictures: ← / → (and the side buttons) step through them. `pos` is "2 / 5". */
+  step?: { onStep: (d: -1 | 1) => void; pos: string };
   onClose: () => void;
 }
 
@@ -53,7 +55,7 @@ const FOCUSABLE = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"]
  * between here and the root — which is how a lightbox ends up trapped inside the
  * pane that opened it.
  */
-export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose }: Props) {
+export function ImageViewer({ src, alt = '', caption, actions, fallback, step, onClose }: Props) {
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -122,6 +124,8 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose
   fitRef.current = setView;
   useEffect(() => { fitRef.current(FIT); }, [src]);
 
+  const stepRef = useRef(step);
+  stepRef.current = step;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -148,7 +152,10 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose
         else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
         return;
       }
-      if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomAround((s) => s * STEP); }
+      if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && stepRef.current) {
+        e.preventDefault();
+        stepRef.current.onStep(e.key === 'ArrowLeft' ? -1 : 1);
+      } else if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomAround((s) => s * STEP); }
       else if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomAround((s) => s / STEP); }
       else if (e.key === '0') { e.preventDefault(); setView(FIT); }
     };
@@ -259,6 +266,15 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, onClose
         {!zoomed && !failed && <p className="image-viewer-hint">{t('imageViewer.hint')}</p>}
       </div>
 
+      {step && (
+        <>
+          <button type="button" className="image-viewer-btn image-viewer-step image-viewer-step--prev" onClick={() => step.onStep(-1)}
+            aria-label={t('imageViewer.prev')} title={t('imageViewer.prev')}>‹</button>
+          <button type="button" className="image-viewer-btn image-viewer-step image-viewer-step--next" onClick={() => step.onStep(1)}
+            aria-label={t('imageViewer.next')} title={t('imageViewer.next')}>›</button>
+          <span className="image-viewer-pos" aria-live="polite">{step.pos}</span>
+        </>
+      )}
       <button
         type="button"
         className="image-viewer-close"
