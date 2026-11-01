@@ -2,7 +2,7 @@
 //
 // The dashboard server is Node, so without a usable Node the app has nothing to show. A
 // Finder-launched app also has no shell PATH, so `node` is resolved from an ordered list of
-// candidates, each one asked for its version: an old Node (the server needs 18+) used to be
+// candidates, each one asked for its version: an old Node (the server needs 22.16+) used to be
 // accepted and then crash the server, which the user saw as a 15 s timeout and an error.
 //
 // When no candidate is usable, the shell installs a PRIVATE Node for dreamcontext alone,
@@ -31,8 +31,8 @@ use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// The dashboard server's floor (package.json `engines.node`).
-pub(crate) const MIN_NODE_MAJOR: u32 = 18;
+/// The dashboard server's floor (package.json `engines.node`): the vendored T3 layer needs it.
+pub(crate) const MIN_NODE: (u32, u32, u32) = (22, 16, 0);
 
 /// The single source of the pinned build: the same file the CLI and install.sh read.
 const PINS_JSON: &str = include_str!("../../../assets/runtime-pins.json");
@@ -255,6 +255,39 @@ fn windows_node_candidates(var: &dyn Fn(&str) -> Option<String>) -> Vec<String> 
     .collect()
 }
 
+/// Newest-first Nodes from the version managers' own folders, only those at the floor: the
+/// user's DEFAULT may be an older one (nvm's), while a good version sits right beside it. The
+/// folder name is the version, so nothing is started to learn it and no default is touched.
+#[cfg(not(windows))]
+fn version_manager_nodes(home: &Path, nvm_dir: Option<&str>) -> Vec<String> {
+    let nvm = nvm_dir.filter(|d| !d.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".nvm"));
+    let roots: [(PathBuf, &[&str]); 6] = [
+        (nvm.join("versions/node"), &["bin", "node"]),
+        (home.join(".local/share/fnm/node-versions"), &["installation", "bin", "node"]),
+        (home.join("Library/Application Support/fnm/node-versions"), &["installation", "bin", "node"]),
+        (home.join(".fnm/node-versions"), &["installation", "bin", "node"]),
+        (home.join(".asdf/installs/nodejs"), &["bin", "node"]),
+        (home.join(".local/share/mise/installs/node"), &["bin", "node"]),
+    ];
+    let mut found: Vec<((u32, u32, u32), String)> = Vec::new();
+    for (root, tail) in roots {
+        let Ok(entries) = fs::read_dir(&root) else { continue };
+        for entry in entries.flatten() {
+            let Some(version) = entry.file_name().to_str().and_then(parse_node_version) else { continue };
+            if version < MIN_NODE {
+                continue;
+            }
+            let mut path = entry.path();
+            for part in tail {
+                path.push(part);
+            }
+            found.push((version, path.to_string_lossy().into_owned()));
+        }
+    }
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.into_iter().map(|(_, p)| p).collect()
+}
+
 /// Every place a Node may live, most-preferred first. The private copy is last: a user's own
 /// working Node always wins over the one dreamcontext installed for itself.
 fn candidate_paths(home: Option<&Path>) -> Vec<(String, bool)> {
@@ -274,10 +307,16 @@ fn candidate_paths(home: Option<&Path>) -> Vec<(String, bool)> {
         out.push(("/opt/homebrew/bin/node".into(), false));
         out.push(("/usr/local/bin/node".into(), false));
         out.push(("/usr/bin/node".into(), false));
+        out.push(("/opt/homebrew/opt/node@24/bin/node".into(), false));
+        out.push(("/opt/homebrew/opt/node@22/bin/node".into(), false));
     }
     if let Some(home) = home {
         #[cfg(not(windows))]
         out.push((home.join(".volta/bin/node").to_string_lossy().into_owned(), false));
+        #[cfg(not(windows))]
+        for p in version_manager_nodes(home, std::env::var("NVM_DIR").ok().as_deref()) {
+            out.push((p, false));
+        }
         out.push((managed_node_bin(home).to_string_lossy().into_owned(), true));
     }
     let mut seen = std::collections::HashSet::new();
@@ -285,7 +324,7 @@ fn candidate_paths(home: Option<&Path>) -> Vec<(String, bool)> {
     out
 }
 
-/// Pick the first candidate whose version is at least [`MIN_NODE_MAJOR`]. Probing stops at
+/// Pick the first candidate whose version is at least [`MIN_NODE`]. Probing stops at
 /// the first good one; a too-old one is remembered so the setup screen can say so.
 pub(crate) fn resolve_from(
     candidates: &[(String, bool)],
@@ -298,7 +337,7 @@ pub(crate) fn resolve_from(
             continue;
         }
         let Some(version) = probe(path) else { continue };
-        if version.0 >= MIN_NODE_MAJOR {
+        if version >= MIN_NODE {
             return Ok(NodeChoice { path: path.clone(), version, managed: *managed });
         }
         if too_old.is_none() {
@@ -683,7 +722,7 @@ pub(crate) fn install_into(
         let node = root.join("current").join("bin").join("node");
         let node = node.to_string_lossy().into_owned();
         match probe_version(&node) {
-            Some(v) if v.0 >= MIN_NODE_MAJOR => {}
+            Some(v) if v >= MIN_NODE => {}
             _ => return Err(SetupError::Other("The installed Node.js did not start.".into())),
         }
         let mut keep = vec![version.to_string()];
@@ -775,6 +814,37 @@ mod tests {
             progress(n);
             Ok(())
         }
+    }
+
+    #[test]
+    fn the_floor_is_a_full_version_not_a_major() {
+        let at = |v| resolve_from(&[("/n".to_string(), false)], |_| true, |_| Some(v));
+        assert!(matches!(at((22, 15, 9)), Err(NodeProblem::TooOld { .. })));
+        assert!(matches!(at((20, 19, 0)), Err(NodeProblem::TooOld { .. })));
+        assert!(at((22, 16, 0)).is_ok());
+        assert!(at((23, 7, 0)).is_ok());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn version_manager_nodes_find_a_good_one_beside_an_old_default_newest_first() {
+        let home = std::env::temp_dir().join(format!("dc-node-managers-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        for v in ["v20.19.0", "v22.16.0", "v24.1.0", "not-a-version"] {
+            fs::create_dir_all(home.join(".nvm/versions/node").join(v).join("bin")).unwrap();
+        }
+        fs::create_dir_all(home.join(".local/share/fnm/node-versions/v22.20.0/installation/bin")).unwrap();
+        let found = version_manager_nodes(&home, None);
+        let tail = |p: &str| p.strip_prefix(home.to_str().unwrap()).unwrap().to_string();
+        assert_eq!(
+            found.iter().map(|p| tail(p)).collect::<Vec<_>>(),
+            vec![
+                "/.nvm/versions/node/v24.1.0/bin/node".to_string(),
+                "/.local/share/fnm/node-versions/v22.20.0/installation/bin/node".to_string(),
+                "/.nvm/versions/node/v22.16.0/bin/node".to_string(),
+            ]
+        );
+        fs::remove_dir_all(&home).unwrap();
     }
 
     #[cfg(windows)]

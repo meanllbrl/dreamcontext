@@ -1624,47 +1624,74 @@
     {
       "path": "hook ensure-dashboard",
       "desc": "Windows only: open the web dashboard if it is not already running (called by Claude Code SessionStart hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook post-tool-use",
       "desc": "Auto-format + type-check after Edit/Write on JS/TS files (called by Claude Code PostToolUse hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook pre-compact",
       "desc": "Save sleep state before context compaction (called by Claude Code PreCompact hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook pre-tool-use",
       "desc": "Gate default sub-agents and heavy shell steps (called by Claude Code PreToolUse hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook refresh-asset-drift",
       "desc": "Recompute whether `dreamcontext update` would change any asset this project uses (detached cache refresh)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook session-start",
       "desc": "Analyze previous session + output context snapshot (called by Claude Code SessionStart hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook stop",
       "desc": "Record session metadata (called by Claude Code Stop hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook subagent-start",
       "desc": "Inject context briefing into sub-agents (called by Claude Code SubagentStart hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "hook user-prompt-submit",
       "desc": "Inject sleep debt reminder on every user message (called by Claude Code UserPromptSubmit hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--format"
+      ]
     },
     {
       "path": "init",
@@ -1678,6 +1705,14 @@
         "--priority",
         "--platforms",
         "--multi-product"
+      ]
+    },
+    {
+      "path": "install",
+      "desc": "Opt this project in to the brain for another tool's own terminal sessions (writes that tool's hook file and instructions block)",
+      "args": [],
+      "valueFlags": [
+        "--tool"
       ]
     },
     {
@@ -2494,6 +2529,28 @@
       "args": []
     },
     {
+      "path": "mcp",
+      "desc": "The brain as an MCP server (started by a bridge tool)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "mcp lean-exec",
+      "desc": "Start one server of a lean MCP subset file, with stdio passed through",
+      "args": [
+        "<file>",
+        "<name>"
+      ]
+    },
+    {
+      "path": "mcp serve",
+      "desc": "Serve this project's brain over stdio MCP: recall and an allowlisted set of verbs, confined to the vault",
+      "args": [],
+      "valueFlags": [
+        "--root"
+      ]
+    },
+    {
       "path": "memory",
       "desc": "Search and explore the project corpus (knowledge, features, tasks, memory)",
       "args": [],
@@ -2993,7 +3050,10 @@
     {
       "path": "sleep auto-run",
       "desc": "INTERNAL: run one background consolidation now (spawned detached by the Stop hook)",
-      "args": []
+      "args": [],
+      "valueFlags": [
+        "--tool"
+      ]
     },
     {
       "path": "sleep config",
@@ -3220,7 +3280,8 @@
         "--slug",
         "--base",
         "--task",
-        "--mcp"
+        "--mcp",
+        "--tool"
       ]
     },
     {
@@ -3361,7 +3422,8 @@
         "--slug",
         "--base",
         "--task",
-        "--mcp"
+        "--mcp",
+        "--tool"
       ]
     },
     {
@@ -3534,6 +3596,50 @@
       "desc": "Remove a child's worktree; refuses one that is dirty or unmerged",
       "args": [
         "<child>"
+      ]
+    },
+    {
+      "path": "t3-account",
+      "desc": "Prepare a Codex account home or read its limits, through T3 (used by the server)",
+      "args": [
+        "<action>"
+      ],
+      "valueFlags": [
+        "--account",
+        "--in",
+        "--out"
+      ]
+    },
+    {
+      "path": "t3-chat",
+      "desc": "Run one chat on a T3 provider adapter over stream-json stdio (used by the chat server)",
+      "args": [],
+      "valueFlags": [
+        "--tool",
+        "--cwd",
+        "--model",
+        "--effort",
+        "--mode",
+        "--pane",
+        "--resume",
+        "--briefing-file",
+        "--extra-root",
+        "--account",
+        "--mcp-config"
+      ]
+    },
+    {
+      "path": "t3-run",
+      "desc": "Run one headless turn on Codex; prints one JSON document (used by automations)",
+      "args": [],
+      "valueFlags": [
+        "--surface",
+        "--prompt",
+        "--model",
+        "--effort",
+        "--account",
+        "--resume",
+        "--extra-root"
       ]
     },
     {

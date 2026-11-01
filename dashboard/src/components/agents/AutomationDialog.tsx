@@ -8,6 +8,7 @@ import {
   useUploadAgentPhoto,
 } from '../../hooks/useAutomations';
 import { findAgent, useAgents } from '../../hooks/useAgents';
+import { useAgentTools, useCodexAccounts } from '../../hooks/useAgentCapabilities';
 import { RequestError } from '../../api/client';
 import { requestOpenAgents } from '../../lib/openAgents';
 import { useI18n } from '../../context/I18nContext';
@@ -35,6 +36,8 @@ import './AutomationDialog.css';
  *  it, so it must not cost a row of height that grows as the dialog narrows. */
 const MODELS = ['opus', 'sonnet', 'fable', 'haiku'] as const;
 const EFFORTS = ['low', 'medium', 'high'] as const;
+/** What a Claude alias reads as on Codex: its account's own default. */
+const CODEX_DEFAULT = '';
 
 /** Day chips, in the order a week is read. Short labels so seven fit one row
  *  at every dialog width. */
@@ -323,6 +326,17 @@ export function AutomationDialog({
   const [rows, setRows] = useState<SlotRow[]>(() =>
     initialSlotRows(agent?.schedule?.slots, agent ? undefined : start, new Date()));
   const [model, setModel] = useState(agent?.model ?? 'opus');
+  const [tool, setTool] = useState<'claude' | 'codex'>(agent?.tool ?? 'claude');
+  const [account, setAccount] = useState(agent?.account ?? '');
+  // A home board's read denies stay on Claude (Track T W4), and a Codex run cannot hold them.
+  const hasBoard = !!(start?.whiteboard || agent?.whiteboard);
+  const toolInfo = useAgentTools().data?.find((t) => t.tool === 'codex');
+  const codexAccounts = useCodexAccounts(tool === 'codex').data?.accounts ?? [];
+  const pickTool = (next: 'claude' | 'codex') => {
+    setTool(next);
+    setAccount('');
+    setModel(next === 'codex' ? CODEX_DEFAULT : 'opus');
+  };
   const [effort, setEffort] = useState<string>(agent?.effort ?? 'medium');
 
   /** The photo bytes waiting to be uploaded once the slug exists, and a local
@@ -490,6 +504,8 @@ export function AutomationDialog({
       mode,
       ...(mode === 'sched' && !('error' in parsedSlots) ? { slots: parsedSlots.slots } : {}),
       model,
+      tool,
+      account: tool === 'codex' ? account : '',
       effort: effort as AutomationDraft['effort'],
       // Edit only: a changed Job ('' removes it). The server re-approves the edit like any other.
       ...(editsJob && job.trim() !== (jobSeed.current ?? '').trim() ? { job: job.trim() } : {}),
@@ -753,9 +769,29 @@ export function AutomationDialog({
           <label className="agent-field">
             <span className="agent-label">Model</span>
             <select className="agent-select" value={model} onChange={(e) => setModel(e.target.value)}>
-              {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+              {tool === 'codex'
+                ? <><option value={CODEX_DEFAULT}>Account default</option>{(toolInfo?.models ?? []).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</>
+                : MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
           </label>
+          {(toolInfo || tool === 'codex') && !hasBoard && !bound && (
+            <label className="agent-field">
+              <span className="agent-label">Tool</span>
+              <select className="agent-select" value={tool} onChange={(e) => pickTool(e.target.value as 'claude' | 'codex')} data-testid="automation-tool">
+                <option value="claude">Claude</option>
+                <option value="codex" disabled={!toolInfo?.ready}>{toolInfo?.ready ? 'Codex' : 'Codex (sign in first)'}</option>
+              </select>
+            </label>
+          )}
+          {tool === 'codex' && (
+            <label className="agent-field">
+              <span className="agent-label">Account</span>
+              <select className="agent-select" value={account} onChange={(e) => setAccount(e.target.value)} data-testid="automation-account">
+                <option value="">Picked per run</option>
+                {codexAccounts.filter((a) => !a.isPrimary).map((a) => <option key={a.id} value={a.id}>{a.email || a.id}</option>)}
+              </select>
+            </label>
+          )}
           <label className="agent-field">
             <span className="agent-label">Effort</span>
             <select className="agent-select" value={effort} onChange={(e) => setEffort(e.target.value)}>

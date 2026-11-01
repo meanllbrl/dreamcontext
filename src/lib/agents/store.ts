@@ -62,6 +62,7 @@ import { assertOwned, currentLogin, parseOwner } from './owner.js';
 import { adoptPattern, agentSyncSwitchOn, effectivePattern, recordCreatedLocally } from './agent-sync.js';
 import { composeRun, legacyPair } from './compose.js';
 import { readToolsOf } from './read-tools.js';
+import { toolFieldsOf } from '../automations/store.js';
 import { normalizeSoul } from './soul-templates.js';
 import { validateSoul } from './soul.js';
 import { normalizeTeamLabel, readTeamLabel, wouldCycle } from './tree.js';
@@ -165,6 +166,7 @@ export function readAgentFile(filePath: string, scope: AgentScope = 'project'): 
     call: callSettings,
     autonomy: parseAutonomy(data.autonomy),
     ...(readToolsOf(data.read_tools).length ? { readTools: readToolsOf(data.read_tools) } : {}),
+    ...toolFieldsOf(data),
     face: parseFace(data.face),
     owner: parseOwner(data.owner),
     updated: strOrNull(data.updated),
@@ -359,22 +361,27 @@ export function ensureAgentsGitignore(contextRoot: string): void {
   }
 }
 
-const IDENTITY_PATCH_KEYS: ReadonlySet<string> = new Set(['title', 'prompt', 'soul', 'model', 'effort', 'learning', 'whiteboard', 'photo', 'autonomy']);
+const IDENTITY_PATCH_KEYS: ReadonlySet<string> = new Set(['title', 'prompt', 'soul', 'model', 'effort', 'learning', 'whiteboard', 'photo', 'autonomy', 'tool', 'account']);
 
 /** An identity patch at runtime too: a caller passing call settings (or anything
  *  else) through an untyped surface is refused, never silently dropped. */
 function assertIdentityPatch(patch: AgentIdentityPatch): void {
   for (const key of Object.keys(patch)) {
     if (!IDENTITY_PATCH_KEYS.has(key)) {
-      throw new AutomationError(`An agent edit cannot change "${key}": only its name, prompt, soul, model, effort, learning, home board, photo and autonomy.`);
+      throw new AutomationError(`An agent edit cannot change "${key}": only its name, prompt, soul, model, effort, learning, home board, photo, autonomy, tool and account.`);
     }
   }
 }
 
 /** `agent` with `patch` applied in memory, values normalised as a write stores them. */
 function applyIdentityPatch(agent: AgentManifest, patch: AgentIdentityPatch): AgentManifest {
+  const tool = patch.tool === undefined ? agent.tool : patch.tool ?? undefined;
+  const account = patch.account === undefined ? agent.account : patch.account ?? undefined;
+  const { tool: _t, account: _a, ...rest } = agent;
   return {
-    ...agent,
+    ...rest,
+    ...(tool ? { tool } : {}),
+    ...(tool && account ? { account } : {}),
     title: patch.title === undefined ? agent.title : patch.title.trim(),
     prompt: patch.prompt === undefined ? agent.prompt : patch.prompt.trim(),
     // The same normalisation the write applies, so `withRestamp`'s expected hash
@@ -425,6 +432,9 @@ function identityFrontmatter(a: AgentManifest): Record<string, unknown> {
     ...(a.whiteboard ? { whiteboard: a.whiteboard } : {}),
     // Only a level other than the default is written, so an ordinary agent's file is unchanged.
     ...(a.autonomy !== DEFAULT_AGENT_AUTONOMY ? { autonomy: a.autonomy } : {}),
+    // Only off Claude, so an ordinary agent's file is unchanged.
+    ...(a.tool ? { tool: a.tool } : {}),
+    ...(a.tool && a.account ? { account: a.account } : {}),
   };
 }
 
@@ -559,6 +569,10 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
     throw new AutomationError(`"${slug}" still lives in its old automation file, which cannot hold an autonomy level: run \`dreamcontext update\` (it splits old files into an agent and its routine), then try again.`);
   }
 
+  if (next.tool && next.whiteboard) {
+    throw new AutomationError('An agent with a home board stays on Claude: Codex cannot keep it out of credential folders.');
+  }
+
   if (agent.implicit) {
     const fields: Record<string, unknown> = {};
     if (patch.title !== undefined) fields.title = next.title;
@@ -567,12 +581,14 @@ export function updateAgent(contextRoot: string, slug: string, patch: AgentIdent
     if (patch.learning !== undefined) fields.learning = next.learning;
     if (patch.whiteboard !== undefined) fields.whiteboard = next.whiteboard;
     if (patch.photo !== undefined) fields.photo = next.photo;
+    if (patch.tool !== undefined) fields.tool = next.tool ?? null;
+    if (patch.tool !== undefined || patch.account !== undefined) fields.account = next.account ?? null;
     if (Object.keys(fields).length > 0) patchManifestFrontmatter(agent.path, fields);
   } else {
     assertRegularFile(agent.path);
     const { data, content } = parseManifestFrontmatter(readFileSync(agent.path, 'utf-8'));
     const nextData: Record<string, unknown> = { ...data, title: next.title };
-    for (const key of ['photo', 'model', 'effort', 'learning', 'whiteboard', 'autonomy']) delete nextData[key];
+    for (const key of ['photo', 'model', 'effort', 'learning', 'whiteboard', 'autonomy', 'tool', 'account']) delete nextData[key];
     rewriteManifestText(agent.path, matter.stringify(content, { ...nextData, ...identityFrontmatter(next) }));
   }
   if (patch.prompt !== undefined) {
@@ -865,6 +881,9 @@ export function withRestamp(
   const agent = getAgent(contextRoot, agentSlug);
   if (!agent) throw new AutomationError(`No agent named "${agentSlug}" in this project.`);
   const next = applyIdentityPatch(agent, patch);
+  // Another tool means another vendor reads the prompt: that needs the owner's approval of the
+  // new hash, never a quiet re-stamp of the old one (Track T W4).
+  if ((next.tool ?? '') !== (agent.tool ?? '')) return updateAgent(contextRoot, agentSlug, patch);
 
   const plan = restampTargets(contextRoot, agentSlug).map(({ kind, target }) => {
     const verdict = checkApproval(projectRoot, target, home, 'run');
@@ -910,6 +929,8 @@ function withIdentity(target: AutomationManifest, agent: AgentManifest): Automat
     whiteboard: agent.whiteboard,
     autonomy: agent.autonomy,
     ...(agent.readTools?.length ? { readTools: agent.readTools } : {}),
+    ...(agent.tool ? { tool: agent.tool } : {}),
+    ...(agent.tool && agent.account ? { account: agent.account } : {}),
   };
 }
 

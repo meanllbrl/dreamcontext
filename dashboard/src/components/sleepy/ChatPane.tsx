@@ -11,7 +11,7 @@ import { ClaudeUpdateChatNotice } from '../settings/SystemDependencies';
 import { anchorsBySession, launchedSessionIds, withTeammates } from './chat/teammates';
 import type { ModelConfig } from '../../lib/agentComposer';
 import type { ChatMode } from '../../lib/chatModes';
-import type { ChatAgentPick } from './chat/ComposerMenus';
+import type { ChatAgentPick, ToolPick } from './chat/ComposerMenus';
 import { isJudgeRole } from '../../lib/agentRoles';
 import type { QuestLineage, QuestView } from '../../lib/quest';
 import {
@@ -649,7 +649,7 @@ interface PdfState { path: string; label?: string }
 export function ChatPane({
   session, modelConfig, model, effort, onModelChange, onEffortChange, onAccountChange,
   taskSlug, onContinueInTerminal,
-  permissionMode, onPermissionModeChange, mode, onModeChange, onAgentPick, onHandoffToDevelop,
+  permissionMode, onPermissionModeChange, mode, onModeChange, onAgentPick, toolPick, onHandoffToDevelop,
   onResume, automation, onOpenAppPage, onSignIn,
   canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, readOnly = false, aboveComposer, feed,
 }: {
@@ -689,6 +689,8 @@ export function ChatPane({
   /** The composer's agent picker. Optional: a host that fixes the agent (a whiteboard card)
    *  or has none to offer omits it, and the menu draws no Agent section. */
   onAgentPick?: (agent: ChatAgentPick | null) => void;
+  /** Claude / Codex in the composer's model menu (Track T W1). */
+  toolPick?: ToolPick;
   /** A `develop` action button asked to hand this plan off. Opens a NEW Develop session
    *  carrying the slug and closes this tab (AgentSurface's `handoffToDevelop`). */
   onHandoffToDevelop: (taskSlug: string) => void;
@@ -2814,7 +2816,7 @@ export function ChatPane({
             {automation && <AutomationQuestionSlot automation={automation} onPendingChange={setHitlPending} />}
             {working && (
               <WorkingIndicator
-                label={session.opened ? 'Working…' : 'Starting Claude…'}
+                label={session.opened ? 'Working…' : session.tool === 'codex' ? 'Starting Codex…' : 'Starting Claude…'}
                 startedAt={conv.turnStartedAt}
               />
             )}
@@ -2966,6 +2968,7 @@ export function ChatPane({
           onModeChange={bare || agentBound || mode === 'super' ? undefined : onModeChange}
           agent={session.agent}
           onAgentPick={bare || agentBound || mode === 'super' ? undefined : onAgentPick}
+          toolPick={bare || agentBound || mode === 'super' ? undefined : toolPick}
           showModel={!bare}
           idlePlaceholder={idlePlaceholder}
           // One object, not two cards: whenever the shelf grows a bordered shell above the

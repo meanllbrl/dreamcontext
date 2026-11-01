@@ -32,10 +32,12 @@
     "dev": "tsup --watch",
     "dev:dashboard": "cd dashboard && npm run dev",
     "test": "vitest",
+    "test:t3": "vitest run -c vitest.t3.config.ts",
     "test:e2e": "playwright test",
     "verify:look": "node scripts/verify/look.mjs",
     "verify:people": "node scripts/verify/people-first.mjs",
     "verify:chat-steer": "node scripts/verify/chat-steer.mjs",
+    "verify:tool-codex-chat": "node scripts/verify/tool-codex-chat.mjs",
     "verify:assistant": "node scripts/verify/assistant.mjs",
     "verify:super-jarvis": "node scripts/verify/super-jarvis.mjs",
     "verify:super-web-session": "node scripts/verify/super-web-session.mjs",
@@ -136,23 +138,39 @@
   ],
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=18"
+    "node": ">=22.16"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.276",
+    "@anthropic-ai/sdk": "0.93.0",
+    "@effect/platform-node": "4.0.5",
     "@inquirer/prompts": "^7.10.1",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "boxen": "^8.0.1",
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
+    "diff": "8.0.3",
+    "effect": "4.0.5",
     "fast-glob": "^3.3.3",
     "fractional-indexing": "^4.0.0",
     "gray-matter": "^4.0.3",
     "nanoid": "^5.1.2",
-    "ws": "^8.21.0"
+    "remark-gfm": "4.0.1",
+    "remark-math": "6.0.0",
+    "remark-parse": "11.0.0",
+    "unified": "11.0.5",
+    "ws": "^8.21.0",
+    "yaml": "^2.9.0",
+    "zod": "4.6.5"
   },
   "devDependencies": {
+    "@effect/vitest": "4.0.5",
     "@playwright/test": "^1.60.0",
+    "@types/hast": "^3.0.5",
+    "@types/mdast": "^4.0.4",
     "@types/node": "^22.13.4",
     "@types/ws": "^8.18.1",
+    "mdast-util-to-hast": "^13.2.1",
     "postcss": "^8.5.26",
     "sharp": "^0.34.5",
     "tsup": "^8.4.0",
@@ -163,5 +181,10 @@
   "optionalDependencies": {
     "@huggingface/transformers": "^4.2.0",
     "node-pty": "^1.1.0"
+  },
+  "overrides": {
+    "@effect/vitest": {
+      "vitest": "$vitest"
+    }
   }
 }

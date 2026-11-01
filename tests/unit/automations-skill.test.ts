@@ -316,8 +316,8 @@ describe('agents/sleep-product.md — automation-output consumption contract', (
   });
 });
 
-describe('approval surface — fourteen hashed fields, everywhere it is claimed', () => {
-  it('APPROVAL_DIFF_FIELDS is the fourteen-tuple including effort, learning, review, flow, whiteboard, job, soul, autonomy and readTools', () => {
+describe('approval surface — fifteen hashed fields, everywhere it is claimed', () => {
+  it('APPROVAL_DIFF_FIELDS is the fifteen-tuple including effort, learning, review, flow, whiteboard, job, soul, autonomy, readTools and tool', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt',
       'outputInstructions',
@@ -348,6 +348,8 @@ describe('approval surface — fourteen hashed fields, everywhere it is claimed'
       'autonomy',
       // The MCP tools a light job of the agent may call. LAST, omitted when none.
       'readTools',
+      // Which vendor reads the prompt and under which envelope it runs (Track T W4).
+      'tool',
     ]);
   });
 
@@ -727,12 +729,12 @@ describe('skill/references/cli-reference.md — post/propose rows carry the new 
   });
 });
 
-describe('skill/references/integrations.md — agent-thread is the eighth dream-view', () => {
+describe('skill/references/integrations.md — the dream-view count follows its type union', () => {
   const content = INTEGRATIONS_MD;
 
-  it('counts eight, not seven', () => {
-    expect(content).toMatch(/the eight things HTML must NOT be/);
-    expect(content).not.toMatch(/the seven things HTML must NOT be/);
+  it('counts seven: the Run progress view left in 0.36.8', () => {
+    expect(content).toMatch(/the seven things HTML must NOT be/);
+    expect(content).not.toMatch(/the eight things HTML must NOT be/);
   });
 
   it('carries agent-thread in the type union', () => {

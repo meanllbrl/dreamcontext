@@ -31,6 +31,8 @@ export interface Job {
   /** The user's MCP servers this child may use (`--mcp a,b`, orchestration plan r5 D14); a
    *  delegated child gets ONLY these. Syntax here; existence is the route's (it needs the vault). */
   mcp?: string[];
+  /** The child runs on this tool (Track T W4). Absent = Claude. */
+  tool?: 'codex';
 }
 
 // eslint-disable-next-line no-control-regex
@@ -68,6 +70,8 @@ export function parseJob(b: Record<string, unknown>): { job: Job } | { error: st
   if (task && !TASK_SLUG_RE.test(task)) return { error: 'task is a task slug (a-z, 0-9, -)' };
   const mcp = parseMcpNames(b.mcp);
   if ('error' in mcp) return { error: mcp.error };
+  const tool = str(b.tool);
+  if (tool && tool !== 'claude' && tool !== 'codex') return { error: 'tool must be claude or codex' };
   const brief = oneLine(str(b.brief) ?? '').slice(0, MAX_BRIEF);
   const title = (brief || firstLine(prompt, 60)).slice(0, MAX_TITLE);
   return {
@@ -77,6 +81,7 @@ export function parseJob(b: Record<string, unknown>): { job: Job } | { error: st
       ...(worktree ? { worktree } : {}), ...(slug ? { slug } : {}), ...(base ? { base } : {}),
       ...(task ? { task } : {}),
       ...(mcp.names.length ? { mcp: mcp.names } : {}),
+      ...(tool === 'codex' ? { tool: 'codex' as const } : {}),
     },
   };
 }

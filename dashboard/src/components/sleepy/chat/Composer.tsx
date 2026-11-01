@@ -29,7 +29,7 @@ import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { enterSends } from '../../../lib/enterKey';
 import { PHONE_PHOTOS_PER_MESSAGE, jpegName, photoUploadSignal, preparePhonePhotoQueued, withPhotoUploadSlot } from '../../../lib/phonePhoto';
 import { PHONE_FILE_UPLOAD_TIMEOUT_MS, splitPhonePicks } from '../../../lib/phoneAttach';
-import { useAgentSessionStats, useClaudeAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
+import { useAgentSessionStats, useClaudeAccounts, useCodexAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
 import {
   effortLabel, modelLabelFor, quotePath, isSignInCommand, isMcpCommand, contextLimitFor, usageLimits,
   fmtTokens, CONTEXT_TIGHT_PCT, contextBands,
@@ -63,7 +63,8 @@ import { MIRROR_TAIL, syncMirror } from './composerMirror';
 import { PictureChip, RefPopover, RefSrList, refMirrorSegments, refsInOrder } from './ComposerRefLayer';
 import { persistDraft, readDraft, restoreDraftBody, subscribeDraft, type SavedDraft } from './composerDrafts';
 import { Popover } from '../SkillPickerPopover';
-import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick } from './ComposerMenus';
+import { ComposerModelPicker } from './model-picker/ComposerModelPicker';
+import { AgentTriggerName, ModeMenu, ModelMenu, UsageMenu, type AccountOption, type ChatAgentPick, type ToolPick } from './ComposerMenus';
 import { useAnchoredMenu, MENU_TRIGGER_ATTR } from './useAnchoredMenu';
 import { ConcentricRings } from './UsageRings';
 import type { ComposerHost } from './composerHost';
@@ -459,7 +460,7 @@ export function Composer({
   session, model, effort, modelConfig, onModelChange, onEffortChange, busy, connected,
   quote, onClearQuote, permissionMode = 'auto', projectPermissionMode,
   onPermissionModeChange, onSignIn, mcpPicker, onPeerMessage,
-  mode = DEFAULT_CHAT_MODE, onModeChange, agent = '', onAgentPick, onSetModelDefault, shelved = false,
+  mode = DEFAULT_CHAT_MODE, onModeChange, agent = '', onAgentPick, toolPick, onSetModelDefault, shelved = false,
   mentions, renderMentionFace, mentionsLabel = 'Connected projects',
   idlePlaceholder, unavailable,
   showModel = true,
@@ -551,6 +552,8 @@ export function Composer({
   agent?: string;
   /** The mode menu's Agent section. Absent = no section (see ModeMenu). */
   onAgentPick?: (agent: ChatAgentPick | null) => void;
+  /** Claude / Codex in the model menu (Track T W1). Absent = no tool choice on this composer. */
+  toolPick?: ToolPick;
   /**
    * OVERRIDE for "Set as default" — not the thing that makes the button work.
    *
@@ -1471,24 +1474,47 @@ export function Composer({
   // One 60s poll shared by every pane on the same account (see useUsageLimits); `usageLimits`
   // drops any cap whose source is missing, stale or describing a window that has already
   // rolled over — so an absent cap draws NO bar rather than an empty one.
-  const usageRes = useUsageLimits(connected, activeAccountId).data ?? null;
+  // A Codex pane spends a CODEX account (Track T W2): its chip lists Codex accounts and its bars
+  // are that account's 5-hour and weekly windows. Claude's two reads are off for it.
+  const isCodex = session.tool === 'codex';
+  const claudeUsageRes = useUsageLimits(connected && !isCodex, activeAccountId).data ?? null;
+  const codexRes = useCodexAccounts(connected && isCodex).data ?? null;
+  const usageRes = useMemo(() => {
+    if (!isCodex) return claudeUsageRes;
+    // Only THIS pane's account: another account's bars would read as this chat's room.
+    const acct = codexRes?.accounts.find((a) => a.id === activeAccountId);
+    if (!acct) return null;
+    // A Free/Go plan has only a monthly window: drawn as its own bar (T3's first monthly window).
+    const month = acct.windows.find((w) => w.kind === 'monthly' && w.resetsAt);
+    const monthly = month ? [{ key: 'monthly' as const, percent: Math.round(month.usedPercent), resetsAt: Date.parse(month.resetsAt!) }] : [];
+    return { limits: [...acct.limits, ...monthly], fetchedAtMs: acct.fetchedAtMs };
+  }, [isCodex, claudeUsageRes, codexRes, activeAccountId]);
   // The connected accounts, fetched HERE for the same reason the usage limits are: they are
   // machine-global, one shared cache entry serves every pane, and threading them down through
   // three layers would buy nothing. `sessionPercent` comes off each account's OWN cached
   // reading — which is what makes a NON-ACTIVE account's usage visible without switching to
   // it. An account with nothing cached carries `null`, drawn as "—" and never as 0%, because
   // 0% would read as "plenty left" about a number we do not have.
-  const accountsRes = useClaudeAccounts(connected).data ?? null;
+  const accountsRes = useClaudeAccounts(connected && !isCodex).data ?? null;
   const accounts = useMemo<AccountOption[]>(
-    () => (accountsRes?.accounts ?? []).map((a) => ({
-      id: a.id,
-      email: a.email,
-      organizationName: a.organizationName,
-      preferred: a.preferred,
-      state: a.state,
-      sessionPercent: a.limits.find((l) => l.key === 'session')?.percent ?? null,
-    })),
-    [accountsRes],
+    () => (isCodex
+      ? (codexRes?.accounts ?? []).map((a) => ({
+        id: a.id,
+        email: a.email || (a.isPrimary ? '~/.codex' : a.id),
+        organizationName: a.planType ? `ChatGPT ${a.planType.charAt(0).toUpperCase()}${a.planType.slice(1)}` : 'ChatGPT',
+        preferred: a.preferred,
+        state: a.state,
+        sessionPercent: a.limits.find((l) => l.key === 'session')?.percent ?? null,
+      }))
+      : (accountsRes?.accounts ?? []).map((a) => ({
+        id: a.id,
+        email: a.email,
+        organizationName: a.organizationName,
+        preferred: a.preferred,
+        state: a.state,
+        sessionPercent: a.limits.find((l) => l.key === 'session')?.percent ?? null,
+      }))),
+    [isCodex, codexRes, accountsRes],
   );
   // Re-derived when a reading changes or every 30 s (the staleness check reads the clock),
   // not on every keystroke — the open usage panel is memoized on these.
@@ -2157,8 +2183,11 @@ export function Composer({
     const at = { model, effort: effortValue };
     // The Super Agent keeps its own default (plan r4 D12): "Set as default" there writes it, not the chat's.
     const write = mode === 'super'
-      ? patchAgentSettings({ superModel: at.model, superEffort: at.effort })
-      : patchAgentSettings({ chatDefaultModel: at.model, chatDefaultEffort: at.effort });
+      ? patchAgentSettings({ superModel: at.model, superEffort: at.effort, superTool: '' })
+      : session.tool === 'codex'
+        // Codex's pair is its own: Claude's default stays what it was for a Claude chat.
+        ? patchAgentSettings({ chatDefaultTool: 'codex', codexDefaultModel: at.model, codexDefaultEffort: at.effort })
+        : patchAgentSettings({ chatDefaultTool: '', chatDefaultModel: at.model, chatDefaultEffort: at.effort });
     void savedDefaultReceipt(write, at, () => pickRef.current).then((show) => { if (show) setSavedDefault(true); });
   };
 
@@ -2197,10 +2226,13 @@ export function Composer({
   const newShell = useIsNewShell();
   const newChatsLine = () => {
     const s = readAgentSettings();
-    const [m, e] = mode === 'super' ? [s.superModel, s.superEffort] : [s.chatDefaultModel, s.chatDefaultEffort];
-    const value = [m || t('shell.settings.models.inherit'), e].filter(Boolean).join(' · ');
+    const codex = mode !== 'super' && s.chatDefaultTool === 'codex';
+    const [m, e] = mode === 'super' ? [s.superModel, s.superEffort] : codex ? [s.codexDefaultModel, s.codexDefaultEffort] : [s.chatDefaultModel, s.chatDefaultEffort];
+    const value = [codex ? 'Codex' : '', m || t('shell.settings.models.inherit'), e].filter(Boolean).join(' · ');
     return t('shell.composer.newChats').replace('{value}', value);
   };
+  /** Who this box talks to: the agent, else the tool this chat runs on. */
+  const speaker = agent ? agentName : session.tool === 'codex' ? 'Codex' : 'Claude';
   const stableAccountChange = useStableHandler((id: string) => { onAccountChange?.(id); menu.close(); });
   const stableHandoffChange = useStableHandler((enabled: boolean) => onContextHandoffChange?.(enabled));
   const stablePick = useStableHandler((kind: 'files' | 'folders', close: () => void) => { void pickPaths(kind, close); });
@@ -2288,20 +2320,37 @@ export function Composer({
       )}
       {menu.open === 'model' && showModel && (
         <div ref={menu.menuRef}>
-          <MemoModelMenu
+          {toolPick && !modelMenu ? (
+            <ComposerModelPicker
+              pick={toolPick}
+              model={model}
+              effort={effortValue}
+              onModelChange={stableModelChange}
+              onEffortChange={stableEffortChange}
+              accounts={accounts}
+              activeAccountId={activeAccountId}
+              onAccountChange={onAccountChange ? stableAccountChange : undefined}
+              newChatsLine={newChatsLine()}
+              // A Codex pane still on Claude's fallback list has no Codex model to save.
+              onSetDefault={session.tool && !modelConfig.isToolList ? undefined : stableSaveDefault}
+              savedDefault={savedDefault}
+              close={menu.close}
+            />
+          ) : <MemoModelMenu
             config={modelConfig}
             model={model}
             effort={effortValue}
             onModelChange={stableModelChange}
             onEffortChange={stableEffortChange}
-            onSetDefault={stableSaveDefault}
+            // A Codex pane still on Claude's fallback list has no Codex model to save.
+            onSetDefault={session.tool && !modelConfig.isToolList ? undefined : stableSaveDefault}
             savedDefault={savedDefault}
             close={menu.close}
             head={modelMenu?.head}
             foot={modelMenu?.foot}
             defaultId={modelMenu?.defaultId}
             defaultLine={newShell && !modelMenu?.foot && !onSetModelDefault ? newChatsLine() : undefined}
-          />
+          />}
         </div>
       )}
       {menu.open === 'usage' && (
@@ -2425,7 +2474,7 @@ export function Composer({
             // two are saying something more urgent than where to find a feature.
             // Blank while the meter has the slot: two things in one place, one of them a
             // sentence about how to start something that has already started.
-            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : unavailable ? unavailable.reason : aboutOnly ? aboutPlaceholder : busy ? `${agent ? agentName : 'Claude'} is working — ⏎ queues your next message…` : idlePlaceholder ?? `Message ${agent ? agentName : 'Claude'}…   ·   "/" for skills`}
+            placeholder={meterPhase ? '' : !connected ? 'Connecting…' : unavailable ? unavailable.reason : aboutOnly ? aboutPlaceholder : busy ? `${speaker} is working — ⏎ queues your next message…` : idlePlaceholder ?? `Message ${speaker}…   ·   "/" for skills`}
             value={draft}
             disabled={disabled}
             onChange={(e) => {
@@ -2672,7 +2721,7 @@ export function Composer({
             className="chat-cmp-compact-btn"
             onClick={runCompact}
             disabled={!canCompose}
-            title="Ask Claude to compact the conversation"
+            title={`Ask ${speaker} to compact the conversation`}
           >
             <span aria-hidden>⚠</span>
             <span className="chat-cmp-compact-label">/compact</span>

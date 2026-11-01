@@ -1331,9 +1331,10 @@ export function registerSleepCommand(program: Command): void {
   sleep
     .command('auto-run', { hidden: true })
     .description('INTERNAL: run one background consolidation now (spawned detached by the Stop hook)')
-    .action(async () => {
+    .option('--tool <tool>', 'codex: run the cycle on Codex (experimental, docs/tool-parity.md)')
+    .action(async (o: { tool?: string }) => {
       const root = ensureContextRoot();
-      const res = await runAutoSleep(root);
+      const res = await runAutoSleep(root, o.tool === 'codex' ? { tool: 'codex' } : {});
       if (!res.started) process.exitCode = 1;
     });
 }

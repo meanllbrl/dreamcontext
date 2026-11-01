@@ -13,6 +13,7 @@ import {
   type AgentSummary,
 } from '../../hooks/useAgents';
 import { useWhiteboardList } from '../../hooks/useWhiteboards';
+import { useAgentTools, useCodexAccounts } from '../../hooks/useAgentCapabilities';
 import { SOUL_MAX_CHARS, SOUL_TEMPLATES, normalizeSoul, soulProblem, soulTemplate, type SoulTemplateId } from '../../generated/soul-templates';
 import { AgentAvatar } from './AgentAvatar';
 import { tx } from './AgentRosterCard';
@@ -28,6 +29,8 @@ export interface IdentityForm {
   title: string;
   prompt: string;
   model: string;
+  tool: 'claude' | 'codex';
+  account: string;
   effort: '' | AgentEffort;
   whiteboard: string;
   learning: boolean;
@@ -41,7 +44,7 @@ const AUTONOMY_LEVELS: readonly AgentAutonomy[] = ['ask', 'balanced', 'free'];
 
 /** A new agent's form: blank, and learning on (the store's own default for a new agent). */
 export const EMPTY_IDENTITY_FORM: IdentityForm = {
-  title: '', prompt: '', model: '', effort: '', whiteboard: '', learning: true, soul: '', autonomy: 'balanced',
+  title: '', prompt: '', model: '', tool: 'claude', account: '', effort: '', whiteboard: '', learning: true, soul: '', autonomy: 'balanced',
 };
 
 /** A new agent's form, with its home board preset when the create was asked for from a board. */
@@ -57,6 +60,8 @@ export function formFromAgent(agent: AgentSummary, prompt: string, learning: boo
     title: agent.title,
     prompt,
     model: agent.model ?? '',
+    tool: agent.tool ?? 'claude',
+    account: agent.account ?? '',
     effort: agent.effort ?? '',
     whiteboard: agent.whiteboard ?? '',
     learning,
@@ -96,6 +101,8 @@ export function identityPatch(before: IdentityForm, after: IdentityForm): AgentI
   if (after.title.trim() !== before.title.trim()) patch.title = after.title.trim();
   if (after.prompt.trim() !== before.prompt.trim()) patch.prompt = after.prompt.trim();
   if (after.model !== before.model) patch.model = after.model || null;
+  if (after.tool !== before.tool) patch.tool = after.tool;
+  if (after.account !== before.account) patch.account = after.account || null;
   if (after.effort !== before.effort) patch.effort = after.effort || null;
   if (after.whiteboard !== before.whiteboard) patch.whiteboard = after.whiteboard || null;
   if (after.learning !== before.learning) patch.learning = after.learning;
@@ -158,6 +165,8 @@ export function AgentIdentityDialog({
   draftTitle.current = onDraftTitle;
   useEffect(() => { if (!editing) draftTitle.current?.(form.title); }, [editing, form.title]);
   const [original, setOriginal] = useState<IdentityForm | null>(editing ? null : EMPTY_IDENTITY_FORM);
+  const codexInfo = useAgentTools().data?.find((x) => x.tool === 'codex');
+  const codexAccounts = useCodexAccounts(form.tool === 'codex').data?.accounts ?? [];
   const [error, setError] = useState<string | null>(null);
   const [photo, setPhoto] = useState<Blob | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -395,12 +404,38 @@ export function AgentIdentityDialog({
         </div>
 
         <div className="aid-row">
+          {(codexInfo || form.tool === 'codex') && !form.whiteboard && (
+            <label className="aid-field">
+              <span className="aid-label">{t('agents.identity.tool')}</span>
+              <select
+                className="aid-select"
+                value={form.tool}
+                disabled={!ready}
+                data-testid="agent-tool"
+                onChange={(e) => { const next = e.target.value as 'claude' | 'codex'; setForm((f) => ({ ...f, tool: next, account: '', model: '' })); }}
+              >
+                <option value="claude">Claude</option>
+                <option value="codex" disabled={!codexInfo?.ready}>{codexInfo?.ready ? 'Codex' : t('agents.identity.toolSignIn')}</option>
+              </select>
+            </label>
+          )}
+          {form.tool === 'codex' && (
+            <label className="aid-field">
+              <span className="aid-label">{t('agents.identity.account')}</span>
+              <select className="aid-select" value={form.account} disabled={!ready} onChange={(e) => set('account', e.target.value)}>
+                <option value="">{t('agents.identity.accountAuto')}</option>
+                {codexAccounts.filter((a) => !a.isPrimary).map((a) => <option key={a.id} value={a.id}>{a.email || a.id}</option>)}
+              </select>
+            </label>
+          )}
           <label className="aid-field">
             <span className="aid-label">{t('agents.identity.model')}</span>
             <select className="aid-select" value={form.model} onChange={(e) => set('model', e.target.value)} disabled={!ready}>
               <option value="">{t('agents.profile.modelDefault')}</option>
-              {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
-              {form.model && !(MODELS as readonly string[]).includes(form.model) && (
+              {form.tool === 'codex'
+                ? (codexInfo?.models ?? []).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)
+                : MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+              {form.tool === 'claude' && form.model && !(MODELS as readonly string[]).includes(form.model) && (
                 <option value={form.model}>{form.model}</option>
               )}
             </select>

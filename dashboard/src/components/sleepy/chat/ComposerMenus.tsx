@@ -1,3 +1,4 @@
+import type { PickerToolState } from './model-picker/pickerModel';
 import { useState, type ReactNode } from 'react';
 import {
   CONTEXT_TIGHT_PCT,
@@ -313,6 +314,14 @@ function ModelRow({
       {note && <span className="chat-cmp-modelrow-insight">{note.insight}</span>}
     </button>
   );
+}
+
+/** What the r29 picker draws for an ordinary chat (Track T W4): every tool's models, and how to
+ *  open a chat on another tool. Absent = the plain menu below (AI Team, Super Agent). */
+export interface ToolPick {
+  current: '' | 'codex';
+  tools: PickerToolState[];
+  onPick: (tool: '' | 'codex', model: string) => void;
 }
 
 export function ModelMenu({

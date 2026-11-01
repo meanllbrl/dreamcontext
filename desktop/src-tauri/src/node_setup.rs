@@ -1,7 +1,7 @@
 // dreamcontext desktop shell — the Node setup screen (and the startup error screen).
 //
 // A first launch on a Mac with no usable Node used to end in a plain error window that said
-// "install Node 18+" and nothing else: a dead end before the app had shown anything. Now the
+// "install Node" and nothing else: a dead end before the app had shown anything. Now the
 // boot thread stops at `run_blocking`, which opens `frontend-placeholder/node-setup.html` (a
 // self-contained page, like the splash) and waits while the page drives the install of a
 // private Node (src/node_runtime.rs). When it lands, boot continues on that Node and

@@ -290,6 +290,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   // Agent surface (chat)
   'GET /api/agent/capabilities': agnostic(`${CHAT}: what this host offers; side-effect free`),
   'GET /api/agent/model-config': agnostic(`${CHAT}: models and efforts; side-effect free`),
+  'GET /api/agent/tools': agnostic(`${CHAT}: which tools a chat can run on, their readiness and models; read from disk, side-effect free`),
   'GET /api/agent/usage-limits': agnostic(`${CHAT}: the cached usage reading; side-effect free`),
   'GET /api/agent/accounts': agnostic(`${CHAT}: the account list (no credentials); side-effect free`),
   'POST /api/agent/accounts/adopt': deny(SIGN_IN),
@@ -303,6 +304,14 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agent/accounts/switch-policy': agnostic(`${CHAT}: how accounts are switched`),
   'POST /api/agent/accounts/owner-only': agnostic(`${CHAT}: which accounts unattended agent work may use`),
   'POST /api/agent/accounts/agent-threshold': agnostic(`${CHAT}: how full an account may be before unattended agent work waits`),
+  // Per-tool accounts (Track T W2): each row is its Claude twin's class.
+  'GET /api/agent/accounts/codex': agnostic(`${CHAT}: the Codex account list and cached windows (no credentials); side-effect free`),
+  'POST /api/agent/accounts/codex/login': deny(SIGN_IN),
+  'POST /api/agent/accounts/codex/adopt': deny(SIGN_IN),
+  'POST /api/agent/accounts/codex/remove': deny(SIGN_IN),
+  'POST /api/agent/accounts/codex/reorder': agnostic(`${CHAT}: the order Codex accounts are tried in`),
+  'POST /api/agent/accounts/codex/refresh': agnostic(`${CHAT}: re-reads the Codex accounts' usage`),
+  'POST /api/agent/tool-handoff': deny('laptop-only: sends a conversation\'s text to another vendor, after a confirm on this Mac'),
   // MCP management (task mcp-management): Settings' matrix, probes, sign-ins and store edits are
   // the owner window's alone (they spawn `claude` and save commands that run on every spawn).
   'GET /api/agent/mcp/overview': deny(SETTINGS),

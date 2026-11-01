@@ -1,3 +1,9 @@
+import { handleAgentTools } from './routes/agent-tools.js';
+import { handleAgentToolHandoff } from './routes/agent-tool-handoff.js';
+import {
+  handleCodexAccountsAdopt, handleCodexAccountsList, handleCodexAccountsLogin, handleCodexAccountsRefresh,
+  handleCodexAccountsRemove, handleCodexAccountsReorder,
+} from './routes/agent-tool-accounts.js';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { networkInterfaces } from 'node:os';
@@ -588,6 +594,9 @@ export function buildRouter(): Router {
   // Model/effort options + the user's CLI defaults, and a session's current model (from its
   // transcript). Vault-agnostic — they read the Claude CLI's own state, not the vault.
   router.get('/api/agent/model-config', handleAgentModelConfig);
+  // The tools a chat can run on (Track T): read from disk, agnostic like model-config.
+  router.get('/api/agent/tools', handleAgentTools);
+  router.post('/api/agent/tool-handoff', handleAgentToolHandoff);
   // The account's 5-hour + weekly caps, from Claude Code's own cache. Vault-agnostic for
   // the same reason model-config is: it reads the user's install, not a project.
   router.get('/api/agent/usage-limits', handleAgentUsageLimits);
@@ -605,6 +614,13 @@ export function buildRouter(): Router {
   router.post('/api/agent/accounts/switch-policy', handleAgentAccountsSwitchPolicy);
   router.post('/api/agent/accounts/owner-only', handleAgentAccountsOwnerOnly);
   router.post('/api/agent/accounts/agent-threshold', handleAgentAccountsAgentThreshold);
+  // Per-tool accounts (Track T W2): Codex's, each route with its Claude twin's guard.
+  router.get('/api/agent/accounts/codex', handleCodexAccountsList);
+  router.post('/api/agent/accounts/codex/login', handleCodexAccountsLogin);
+  router.post('/api/agent/accounts/codex/adopt', handleCodexAccountsAdopt);
+  router.post('/api/agent/accounts/codex/remove', handleCodexAccountsRemove);
+  router.post('/api/agent/accounts/codex/reorder', handleCodexAccountsReorder);
+  router.post('/api/agent/accounts/codex/refresh', handleCodexAccountsRefresh);
   // Settings → MCP (task mcp-management): every server × every Claude account, the probes that
   // fill it, a sign-in per account, and the store edits. Owner window only, reads included.
   // `/mcp` in Chat talks to its OWN process over the chat socket instead (agent-chat.ts).
@@ -1007,7 +1023,7 @@ export function buildRouter(): Router {
  * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
  * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

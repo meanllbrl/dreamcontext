@@ -1,3 +1,4 @@
+import { isCodexAccountId } from '../t3-bridge/accounts.js';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import matter from 'gray-matter';
@@ -190,6 +191,13 @@ export function strOrNull(v: unknown): string | null {
  *  direction is "omit `--effort` and let `claude` pick its own default",
  *  never "guess a level"; strict rejection of a bad value lives only in
  *  `validateAutomationForWrite`, the write-time path. */
+/** `tool` / `account` from a file: anything but a real Codex choice reads as Claude. */
+export function toolFieldsOf(data: Record<string, unknown>): { tool?: 'codex'; account?: string } {
+  if (data.tool !== 'codex') return {};
+  const account = typeof data.account === 'string' && isCodexAccountId(data.account) ? data.account : '';
+  return { tool: 'codex', ...(account ? { account } : {}) };
+}
+
 export function parseEffort(v: unknown): EffortLevel | null {
   return typeof v === 'string' && (EFFORT_LEVELS as readonly string[]).includes(v) ? (v as EffortLevel) : null;
 }
@@ -719,6 +727,7 @@ function legacyManifestFrom(filePath: string, data: Record<string, unknown>, con
     scheduleError: parsedSchedule.error,
     model: strOrNull(data.model),
     effort: parseEffort(data.effort),
+    ...toolFieldsOf(data),
     timeoutMinutes: numberOrDefault(data.timeout_minutes, DEFAULT_TIMEOUT_MINUTES, 1, MAX_TIMEOUT_MINUTES),
     catchupHours: numberOrDefault(data.catchup_hours, DEFAULT_CATCHUP_HOURS, 1, MAX_CATCHUP_HOURS),
     outputDir: strOrNull(output?.dir),
@@ -1261,6 +1270,9 @@ export function clearRunSidecar(contextRoot: string, slug: string): void {
 export interface CreateAutomationInput {
   slug: string;
   title: string;
+  /** Runs on Codex, optionally pinned to one of its accounts (Track T W4). */
+  tool?: 'codex';
+  account?: string | null;
   /** The agent this automation runs as. Omitted ⇒ an unsplit (legacy-format)
    *  manifest that is its own agent, exactly as every create wrote before the
    *  agent split. Given ⇒ a split automation file (`agent: <slug>`) carrying
@@ -1615,6 +1627,8 @@ function createLegacyManifest(contextRoot: string, slug: string, path: string, i
     schedule: serializeSchedule(schedule),
     model: i.model ?? null,
     effort: i.effort ?? null,
+    // Only off Claude, so an ordinary manifest is unchanged.
+    ...(i.tool ? { tool: i.tool, ...(i.account ? { account: i.account } : {}) } : {}),
     timeout_minutes: numberOrDefault(i.timeoutMinutes, DEFAULT_TIMEOUT_MINUTES, 1, MAX_TIMEOUT_MINUTES),
     catchup_hours: numberOrDefault(i.catchupHours, DEFAULT_CATCHUP_HOURS, 1, MAX_CATCHUP_HOURS),
     output: { dir: i.outputDir ?? null },
@@ -1655,6 +1669,9 @@ function createLegacyManifest(contextRoot: string, slug: string, path: string, i
  * edited from a surface that only knows its title keeps every slot.
  */
 export interface UpdateAutomationInput {
+  /** null = back to Claude. A changed tool is never re-approved quietly. */
+  tool?: 'codex' | null;
+  account?: string | null;
   title?: string;
   mode?: AutomationMode;
   /** Replaces the whole schedule with these slots. Wins over `days`/`at`. */
@@ -1816,6 +1833,11 @@ function updateLegacyManifest(
   if (nextSchedule !== undefined) fields.schedule = serializeSchedule(nextSchedule);
   if (patch.model !== undefined) fields.model = patch.model;
   if (patch.effort !== undefined) fields.effort = patch.effort;
+  if (patch.tool !== undefined) fields.tool = patch.tool;
+  if (patch.tool !== undefined || patch.account !== undefined) {
+    const stays = patch.tool === undefined ? manifest.tool : patch.tool;
+    fields.account = stays ? (patch.account === undefined ? manifest.account ?? null : patch.account) : null;
+  }
   if (patch.timeoutMinutes !== undefined) {
     fields.timeout_minutes = numberOrDefault(patch.timeoutMinutes, DEFAULT_TIMEOUT_MINUTES, 1, MAX_TIMEOUT_MINUTES);
   }

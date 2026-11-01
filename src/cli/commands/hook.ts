@@ -1,8 +1,11 @@
 import { directHeavy, shellQuote } from '../../lib/run-budget.js';
+import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
+import { hookTool, setHookTool } from '../../lib/hook-tool.js';
 import { Command } from 'commander';
 import {
-  readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, mkdirSync, readdirSync,
+  readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, mkdirSync, readdirSync, writeSync,
 } from 'node:fs';
+import { format as formatArgs } from 'node:util';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { execFileSync, execSync, spawn } from 'node:child_process';
@@ -193,7 +196,7 @@ export function analyzeTranscript(
     const stat = statSync(transcriptPath);
     if (stat.size === 0 || stat.size > MAX_TRANSCRIPT_BYTES) return ZERO_ANALYSIS;
     const scan = new TranscriptScan(sinceISO ?? null);
-    scan.consume(readFileSync(transcriptPath, 'utf-8'));
+    scan.consume(readTranscriptText(transcriptPath));
     return scan.result(subtractStartup);
   } catch {
     return ZERO_ANALYSIS;
@@ -1132,7 +1135,8 @@ export function mergeAnalyses(main: TranscriptAnalysis, subs: TranscriptAnalysis
  */
 export function analyzeSession(loc: TranscriptLocation, sinceISO?: string | null, cache?: SessionAnalysisCache): TranscriptAnalysis {
   // With a cache (the Stop hook), each transcript is read from where the last Stop left off.
-  const analyze = (p: string, opts: { subtractStartup?: boolean } = {}) => (cache
+  // A Codex rollout is converted whole on every read (codex-rollout.ts): never resumed by offset.
+  const analyze = (p: string, opts: { subtractStartup?: boolean } = {}) => (cache && !isCodexRollout(p)
     ? analyzeTranscriptResumable(p, sinceISO, opts, cache)
     : analyzeTranscript(p, sinceISO, opts));
   const main = loc.mainPath ? analyze(loc.mainPath) : ZERO_ANALYSIS;
@@ -2089,10 +2093,94 @@ export function isMcpProbeChild(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.DREAMCONTEXT_MCP_PROBE === '1';
 }
 
+// ─── `--format codex`: the same hooks, printed in Codex's hook shape (Track T W3) ──────────
+
+/** Our hook subcommands → Codex's hook event names (`.codex/hooks.json`, Claude-compatible). */
+export const CODEX_HOOK_EVENTS: Readonly<Record<string, string>> = {
+  'session-start': 'SessionStart',
+  'user-prompt-submit': 'UserPromptSubmit',
+  'post-tool-use': 'PostToolUse',
+  'pre-tool-use': 'PreToolUse',
+  'pre-compact': 'PreCompact',
+  'subagent-start': 'SubagentStart',
+  stop: 'Stop',
+};
+
+/** Events whose plain-text answer Codex takes as `additionalContext`; the rest must answer in JSON. */
+const CODEX_CONTEXT_EVENTS = new Set(['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'SubagentStart']);
+
+/**
+ * What a Codex hook prints for what our handler printed. A handler that already answers in JSON
+ * (a pre-tool-use deny, a stop block, a sub-agent briefing) is passed through; plain text becomes
+ * `hookSpecificOutput.additionalContext` on the events that can carry it, and nothing on the rest.
+ */
+export function codexHookAnswer(event: string, printed: string): string {
+  const text = printed.trim();
+  if (!text) return '';
+  if (text.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return text + '\n';
+    } catch { /* plain text that starts with a brace */ }
+  }
+  if (!CODEX_CONTEXT_EVENTS.has(event)) return '';
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } }) + '\n';
+}
+
+/**
+ * `dreamcontext hook <name> --format codex`. Two rules, both only under this flag, so a Claude
+ * hook (no flag) is untouched byte for byte:
+ *   - DREAMCONTEXT_CONTEXT_BY=bridge (set on the `codex app-server` a desktop Codex chat runs): the
+ *     bridge already injects the brain, so a project's opt-in `.codex/hooks.json` stays quiet —
+ *     EXCEPT pre-tool-use, whose `.env` / member-file gates must always fire;
+ *   - everything the handler prints is collected and written once, at exit, in Codex's shape.
+ */
+function beginCodexHookFormat(name: string): void {
+  if (process.env.DREAMCONTEXT_CONTEXT_BY === 'bridge' && name !== 'pre-tool-use') process.exit(0);
+  const event = CODEX_HOOK_EVENTS[name] ?? '';
+  // The snapshot reads this for its per-tool ceiling (snapshot-budget.ts). Process memory, so no
+  // child of this hook (a background sleep, a headless Claude run) inherits it.
+  setHookTool('codex');
+  const lines: string[] = [];
+  console.log = (...args: unknown[]) => { lines.push(formatArgs(...args)); };
+  process.once('exit', () => {
+    const out = codexHookAnswer(event, lines.join('\n'));
+    if (!out) return;
+    const buf = Buffer.from(out, 'utf-8');
+    let off = 0;
+    for (let tries = 0; off < buf.length && tries < 1000; tries++) {
+      try { off += writeSync(1, buf, off); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EAGAIN') return; }
+    }
+  });
+}
+
+/**
+ * A Codex tool call in the Claude shape the gates read: a patch becomes one Write/Edit per file,
+ * a shell call becomes Bash. Anything else is returned as it came.
+ */
+export function codexToolCallsAsClaude(toolName: string, toolInput: Record<string, unknown>): Array<{ toolName: string; toolInput: Record<string, unknown> }> {
+  const raw = [toolInput.command, toolInput.patch, toolInput.input, toolInput.cmd]
+    .map((v) => (Array.isArray(v) ? v.join(' ') : typeof v === 'string' ? v : ''))
+    .find((v) => v) ?? '';
+  if (toolName === 'apply_patch' || /\*\*\* Begin Patch/.test(raw)) {
+    const out: Array<{ toolName: string; toolInput: Record<string, unknown> }> = [];
+    const re = /^\*\*\* (Add|Update|Delete) File: (.+)$/gm;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(raw)) !== null) out.push({ toolName: m[1] === 'Add' ? 'Write' : 'Edit', toolInput: { file_path: m[2]!.trim() } });
+    return out.length ? out : [{ toolName, toolInput }];
+  }
+  if (toolName === 'shell' || toolName === 'exec_command' || toolName === 'local_shell') return [{ toolName: 'Bash', toolInput: { command: raw } }];
+  return [{ toolName, toolInput }];
+}
+
 export function registerHookCommand(program: Command): void {
   const hook = program
     .command('hook')
     .description('Hook handlers for Claude Code (stop, session-start, subagent-start, pre-tool-use, user-prompt-submit, post-tool-use, pre-compact)');
+  // `--format codex` (declared on each handler below the definitions): the Codex hook shape.
+  hook.hook('preAction', (_group, action) => {
+    if ((action.opts() as { format?: unknown }).format === 'codex') beginCodexHookFormat(action.name());
+  });
 
   // --- hook stop ---
   hook
@@ -2706,10 +2794,21 @@ export function registerHookCommand(program: Command): void {
       const input = readStdin();
       if (!input) process.exit(0); // allow — no input means nothing to gate
 
-      const toolName = typeof input.tool_name === 'string' ? input.tool_name : '';
-      const toolInput = (typeof input.tool_input === 'object' && input.tool_input !== null)
+      let toolName = typeof input.tool_name === 'string' ? input.tool_name : '';
+      let toolInput = (typeof input.tool_input === 'object' && input.tool_input !== null)
         ? input.tool_input as Record<string, unknown>
         : {};
+      // A Codex hook (`--format codex`): a patch or shell call is read as the Claude tool the gates
+      // know. A patch touching several files is judged by the one a gate refuses, if any.
+      if (hookTool() === 'codex') {
+        const calls = codexToolCallsAsClaude(toolName, toolInput);
+        const at = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
+        const pick = calls.find((c) => isMarketingEnvPath(typeof c.toolInput.file_path === 'string' ? c.toolInput.file_path : ''))
+          ?? calls.find((c) => memberFileWriteTarget(c.toolName, c.toolInput, at))
+          ?? calls[0]!;
+        toolName = pick.toolName;
+        toolInput = pick.toolInput;
+      }
 
       // Gate 1: block direct writes/edits to _dream_context/marketing/.env
       // (Edit, Write, MultiEdit). Token files must only be touched by `mk init`
@@ -2876,6 +2975,17 @@ export function registerHookCommand(program: Command): void {
         }
       } catch { /* advisory — must never break the prompt path */ }
 
+      // ── A chat carried over from another tool (Track T W4) ──────────────────
+      // Once: the owner's pick in the model picker left this pane the other tool's text. Every
+      // other turn finds no file and prints nothing. Nested-guarded like the lines above.
+      try {
+        if (process.env.DREAMCONTEXT_TAB_SESSION && !isNestedClaudeHook()) {
+          const { consumeToolHandoffSeed } = await import('../../lib/t3-bridge/tool-handoff.js');
+          const seed = consumeToolHandoffSeed(root, process.env.DREAMCONTEXT_TAB_SESSION);
+          if (seed) console.log(seed);
+        }
+      } catch { /* advisory — must never break the prompt path */ }
+
       // ── A whiteboard agent card: the board, fresh, beside this message ────
       // Only a card session's child carries the two env vars (card-chat.ts), so
       // every other chat stays silent. Before the sleep-lock return: the board is
@@ -2893,7 +3003,8 @@ export function registerHookCommand(program: Command): void {
       // Emitted BEFORE the consolidation-lock early return below, deliberately: a
       // prompt sent mid-sleep is exactly when the orchestrator is deciding whether
       // to dispatch the next specialist, and that is the turn that must not lose it.
-      console.log(SUBAGENT_DISPATCH_AUTHORIZATION);
+      // It names Claude's sub-agents: a Codex hook (`--format codex`) has none to dispatch.
+      if (hookTool() !== 'codex') console.log(SUBAGENT_DISPATCH_AUTHORIZATION);
 
       const state = readSleepState(root);
 
@@ -3531,4 +3642,8 @@ export function registerHookCommand(program: Command): void {
       }
       process.exit(0);
     });
+
+  // Every handler takes `--format codex` (read by the preAction hook above). Absent = Claude's
+  // output, unchanged.
+  for (const c of hook.commands) c.option('--format <format>', 'claude (default) or codex: print in that tool\'s hook shape');
 }

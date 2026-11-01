@@ -8,9 +8,49 @@
     "strict": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "declaration": true,
+    "declaration": false,
     "sourceMap": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "lib": [
+      "ESNext",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "node"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@t3tools/contracts": [
+        "./src/vendor/t3/packages/contracts/src/index.ts"
+      ],
+      "@t3tools/contracts/*": [
+        "./src/vendor/t3/packages/contracts/src/*.ts"
+      ],
+      "@t3tools/provider-core/*": [
+        "./src/vendor/t3/packages/provider-core/src/*.ts"
+      ],
+      "@t3tools/shared/*": [
+        "./src/vendor/t3/packages/shared/src/*.ts"
+      ],
+      "@t3tools/provider-testing/*": [
+        "./src/vendor/t3/packages/provider-testing/src/*.ts"
+      ],
+      "@t3tools/server/*": [
+        "./src/vendor/t3/apps/server/src/*.ts"
+      ],
+      "effect-codex-app-server/*": [
+        "./src/vendor/t3/packages/effect-codex-app-server/src/*.ts"
+      ]
+    }
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "src/vendor/t3"
+  ],
+  "//vendor": "src/vendor/t3 is T3 Code's provider layer (MIT): excluded here, so only what the bridge imports is checked under these settings; src/vendor/t3/tsconfig.json checks the whole runtime tree with T3's own strictness."
 }

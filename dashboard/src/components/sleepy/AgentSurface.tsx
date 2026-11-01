@@ -61,6 +61,7 @@ import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { CHAT_MODE_ROWS, DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { bindChatAgent } from '../../lib/chatAgentBinding';
+import { bindChatTool, chatToolFor, type ChatTool } from '../../lib/chatToolBinding';
 import { TALK_TO_AGENT_EVENT, type TalkToAgentDetail } from '../../lib/talkToAgent';
 import { useAgents, findAgent } from '../../hooks/useAgents';
 import { preparePrompt, promptFitsInline, developKickoffPrompt, trainKickoffPrompt, initializerKickoffPrompt } from '../../lib/agentPrompt';
@@ -80,7 +81,7 @@ import { parseChatActions } from './chat/chatActions';
 import { Glyph, Notice } from './chat/Notice';
 import { cleanTabTitle } from '../../lib/chatViewSpec';
 import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
-import { useAgentModelConfig, useAgentCapabilities } from '../../hooks/useAgentCapabilities';
+import { useAgentModelConfig, useAgentCapabilities, useAgentTools } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
 import { pickFiles, pickFolders, confirmAction } from '../../lib/desktop';
 import { listenForChecklistSubmits, type ChecklistSubmitPayload } from '../../lib/checklistBridge';
@@ -335,6 +336,8 @@ interface SavedMeta {
   mode?: ChatMode;
   /** The agent this chat tab speaks as. Mirrors the server's `SavedMeta.agent`. */
   agent?: string;
+  /** The tool this chat runs on when it is not Claude. Mirrors the server's `SavedMeta.tool`. */
+  tool?: 'codex';
   /** 0-based index of the pane this tab sat in, left to right. Absent on legacy rosters →
    *  pane 0, which is exactly the single-pane restore this surface used to do unconditionally. */
   pane?: number;
@@ -1200,6 +1203,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // string diff would read "probe recovered" as an account switch. The epoch only ever
   // advances on a confirmed change (claude-auth-watch.ts).
   const { data: polledCaps } = useAgentCapabilities();
+  const agentTools = useAgentTools().data;
+  const agentToolsRef = useRef(agentTools);
+  agentToolsRef.current = agentTools?.length ? agentTools : undefined;
   const authEpochRef = useRef<number | null>(null);
   useEffect(() => {
     const auth = polledCaps?.claudeAuth;
@@ -1343,6 +1349,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
           // tab without one restores DORMANT (manual Resume). Spawn happens here, once —
           // and only on the non-cancelled invocation, so StrictMode can't double-spawn.
           const restored: SessionMeta[] = fresh.map((m, i) => {
+            // Bound before any spawn or Resume below: `createChatSession` reads the tool from it.
+            if (m.sessionId) bindChatTool(m.sessionId, m.kind === 'chat' && m.tool === 'codex' ? 'codex' : '');
             // Shells restore as shells; an 'automation' entry KEEPS that display kind (see
             // the branch below — C11/C12); every other Claude-backed tab (saved as agent OR
             // chat) reopens as the CURRENTLY chosen Agent screen — the preference is a swap,
@@ -1351,7 +1359,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             // a persisted 'automation' kind fell through to `claudeKind` here and came back
             // as a plain agent — the server-side fix (agent-sessions.ts's `coerceMeta`) was
             // necessary but not sufficient without this read-side counterpart.
-            const kind: SessionKind = m.kind === 'shell' ? 'shell' : m.kind === 'automation' ? 'automation' : claudeKind;
+            // A Codex chat has no terminal surface: it restores as a chat whatever the Agent screen
+            // says, or the next save would drop its `tool` and resume its thread on Claude.
+            const codexChat = m.kind === 'chat' && m.tool === 'codex';
+            const kind: SessionKind = codexChat ? 'chat' : m.kind === 'shell' ? 'shell' : m.kind === 'automation' ? 'automation' : claudeKind;
             if (kind === 'automation' && m.sessionId) {
               // X2 (blocking): an automation session this MACHINE never bound must not
               // attempt a WS connect at all. T24's server-side gate `rejectUpgrade`s it at
@@ -1631,6 +1642,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             // state on BOTH sides, so a plain chat tab's payload is unchanged.
             ...(m.kind === 'chat' && m.mode && m.mode !== DEFAULT_CHAT_MODE ? { mode: m.mode } : {}),
             ...(m.kind === 'chat' && m.agent ? { agent: m.agent } : {}),
+            ...(chatToolFor(m.claudeId) ? { tool: chatToolFor(m.claudeId) } : {}),
             // The model, effort and account it runs on, so a relaunch resumes it on them: a
             // running chat's own, else (dormant, parked) the ones its Resume will use.
             // A relaunch-parked Super child has an empty `parked` beside its `launch`: each field
@@ -1708,8 +1720,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // and '' means "inherit whatever the CLI's own settings.json says" — which is what a
       // user who never pressed the button still gets. A terminal agent is untouched by this:
       // its defaults come from the CLI directly, and this preference is a Chat-surface one.
-      const chatModel = model || agentSettingsRef.current.chatDefaultModel;
-      const chatEffort = effort || agentSettingsRef.current.chatDefaultEffort;
+      // A conversation bound to another tool (Codex) takes ITS tool's own default: the saved
+      // default is a Claude model and effort, which mean nothing there.
+      const boundTool = !!(claudeId && chatToolFor(claudeId));
+      const chatModel = model || (boundTool ? '' : agentSettingsRef.current.chatDefaultModel);
+      const chatEffort = effort || (boundTool ? '' : agentSettingsRef.current.chatDefaultEffort);
       // Chat (BETA) is a headless stream-json engine, not a PTY — createChatSession has its
       // own factory (chatSession.ts), takes `effort` at spawn (the terminal only ever
       // switches it live via `/effort`, so its own createSession has no such param), and has
@@ -1765,7 +1780,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       return cs;
     }
     // A shell has no permission model, so bypass is meaningless for it — force it off.
-    const s = createSession(vault ?? '', kind === 'shell' ? false : bp, bumpStatus, claudeId ?? newClaudeId(), resume, kind, initialPrompt, model, submitInitial, promptToken, deferPrompt);
+    const s = createSession(vault ?? '', kind === 'shell' ? false : bp, bumpStatus, claudeId ?? newClaudeId(), resume, kind, initialPrompt, model, submitInitial, promptToken, deferPrompt, accountId);
     s.applyZoom(currentZoom());
     sessions.current.set(s.id, s);
     if (kind === 'agent') s.setParkHandler((req) => parkVerdictRef.current(s.id, { focusGraceMs: req.focusGraceMs }));
@@ -1821,9 +1836,18 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     // roster records the session's own answer rather than a second copy of the constant.
     // `launch` is the documented exemption (the drawer's Super Agent row, D6): that exact mode,
     // never the remembered one, and the remembered one is left as it is.
+    // A plain new chat opens on the default tool when that tool can run. An unknown state (the
+    // list not read yet) trusts the setting: the server says why, should it refuse.
+    const defaults = agentSettingsRef.current;
+    const codexInfo = agentToolsRef.current?.find((t) => t.tool === 'codex');
+    const onCodex = !launch && kind === 'chat' && defaults.chatDefaultTool === 'codex' && (codexInfo?.ready ?? true);
+    const codexId = onCodex ? newClaudeId() : undefined;
+    if (codexId) bindChatTool(codexId, 'codex');
     const s = launch
       ? spawn(launch.bypass, undefined, false, kind, '', '', true, '', false, '', true)
-      : spawn(bypass, undefined, false, kind);
+      : codexId
+        ? spawn(bypass, codexId, false, 'chat', '', defaults.codexDefaultModel, true, '', false, defaults.codexDefaultEffort)
+        : spawn(bypass, undefined, false, kind);
     // Gated by its only callers: `addSession` and `addSplitSession` pass admitTab() first.
     setSessionList((prev) => [...prev, {
       id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId,
@@ -1943,7 +1967,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     // agent with no `parked`: it too comes back as the chat it was, under its own bypass.
     // How, and on what (parked first, else the roster's settings): `resumePlan` (chatLaunch.ts),
     // which `super resume` reports from too.
-    const plan = resumePlan(meta, claudeKind);
+    const plan = resumePlan({ ...meta, tool: chatToolFor(meta.claudeId) }, claudeKind);
     const { asChat, launch } = plan;
     if (asChat) bindChatAgent(meta.claudeId, meta.agent ?? '');
     const s = meta.kind === 'shell'
@@ -2110,7 +2134,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const resumeChatInTerminal = useCallback((cs: ChatSession) => {
     try { cs.dispose(); } catch { /* best-effort */ }
     sessions.current.delete(cs.id);
-    const s = spawn(cs.bypass, cs.claudeId, true, 'agent');
+    // A Codex conversation keeps its binding, so its terminal is `codex` on the same account.
+    const s = spawn(cs.bypass, cs.claudeId, true, 'agent', '', '', true, '', false, '', false, DEFAULT_CHAT_MODE, cs.tool ? cs.accountId : '');
     setSessionList((prev) => prev.map((m) => (m.id === cs.id ? { ...m, id: s.id, kind: 'agent', bypass: s.bypass, claudeId: s.claudeId } : m)));
     setPanes((prev) => prev.map((p) => ({
       ...p,
@@ -2293,7 +2318,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       try { chat.dispose(); } catch { /* best-effort */ }
       sessions.current.delete(chat.id);
     }
-    const s = spawn(chat.bypass, claudeId, false, 'chat', '', modelForSession(chat), true, '', false, effortForSession(chat), true, chat.mode, chat.accountId) as ChatSession;
+    // An agent speaks on Claude: from a Codex pane, Codex's model, effort and account stay behind.
+    const sameTool = !chat.tool;
+    const s = spawn(chat.bypass, claudeId, false, 'chat', '', sameTool ? modelForSession(chat) : '', true, '', false, sameTool ? effortForSession(chat) : '', true, chat.mode, sameTool ? chat.accountId : '') as ChatSession;
     carryDraftInto(s, carried);
     // The box moved to the new conversation; its kept copy under the old id would be orphaned.
     if (carried) clearDraft(vault, chat.claudeId);
@@ -2320,6 +2347,71 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       return { ...p, tabs, active: s.id };
     }));
   }, [spawn, modelForSession, effortForSession]);
+
+  /**
+   * The model picker's cross-tool pick (Track T W4): a NEW conversation on the other tool, in THIS
+   * tab when nothing has been said in it yet, beside it otherwise, so the old one keeps running.
+   * With history, the owner confirms once that its text goes to the other vendor; the server then
+   * prepares the seed the new pane's first turn carries. A refusal leaves everything as it was.
+   * Effort and account stay the new tool's own; mode, permission and an unsent draft carry over.
+   */
+  const pickChatTool = useCallback(async (sid: string, tool: ChatTool, pickedModel = '') => {
+    const cs = sessions.current.get(sid);
+    if (!cs || cs.kind !== 'chat') return;
+    const chat = cs as ChatSession;
+    if (chat.tool === tool) return;
+    const fresh = !chat.busy && chat.getModel().items.length === 0;
+    if (!fresh && !admitTab()) return;
+    const carried = fresh ? chat.getModel().draft : '';
+    const claudeId = newClaudeId();
+    if (!fresh) {
+      const name = tool === 'codex' ? 'Codex' : 'Claude';
+      const ok = await confirmAction({
+        title: tRef.current('chat.toolHandoff.title').replace('{tool}', name),
+        body: tRef.current('chat.toolHandoff.body').replace('{tool}', name).replace('{vendor}', tool === 'codex' ? 'OpenAI' : 'Anthropic'),
+        confirmLabel: tRef.current('chat.toolHandoff.confirm'),
+        cancelLabel: tRef.current('chat.toolHandoff.cancel'),
+      });
+      if (!ok) return;
+      try {
+        await scopedApi.post('/agent/tool-handoff', { from: chat.tool || 'claude', to: tool || 'claude', id: chat.claudeId, pane: claudeId });
+      } catch (err) {
+        void confirmAction({ title: tRef.current('chat.toolHandoff.failed'), body: err instanceof Error ? err.message : String(err), confirmLabel: tRef.current('chat.toolHandoff.ok') });
+        return;
+      }
+    }
+    bindChatTool(claudeId, tool);
+    bindChatAgent(claudeId, '');
+    if (fresh) {
+      try { chat.dispose(); } catch { /* best-effort */ }
+      sessions.current.delete(chat.id);
+    }
+    // Another tool never inherits this one's effort or account; the model is the owner's pick.
+    const s = spawn(chat.bypass, claudeId, false, 'chat', '', pickedModel, true, '', false, '', true, chat.mode, '') as ChatSession;
+    carryDraftInto(s, carried);
+    if (carried) clearDraft(vault, chat.claudeId);
+    const meta: SessionMeta = {
+      id: s.id, title: titleFor(s), kind: 'chat', bypass: s.bypass, claudeId,
+      ...(chat.mode !== DEFAULT_CHAT_MODE ? { mode: chat.mode } : {}),
+    };
+    if (fresh) {
+      setSessionList((prev) => prev.map((m) => (m.id === chat.id ? meta : m)));
+      setPanes((prev) => prev.map((p) => ({
+        ...p,
+        tabs: p.tabs.map((t) => (t === chat.id ? s.id : t)),
+        active: p.active === chat.id ? s.id : p.active,
+      })));
+      return;
+    }
+    setSessionList((prev) => [...prev, meta]);
+    setPanes((prev) => prev.map((p) => {
+      const at = p.tabs.indexOf(chat.id);
+      if (at < 0) return p;
+      const tabs = [...p.tabs];
+      tabs.splice(at + 1, 0, s.id);
+      return { ...p, tabs, active: s.id };
+    }));
+  }, [spawn, modelForSession, effortForSession, vault, admitTab, scopedApi]);
 
   /**
    * The `bypass` segment in ONE chat composer. Switches THAT conversation, and remembers the
@@ -2469,7 +2561,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
         });
         return;
       }
-      const s = spawn(false, undefined, false, 'chat', prepared.inline, modelForSession(cs), true, prepared.token, false, effortForSession(cs), true, 'develop');
+      // A Codex plan is built on Codex: its model means nothing to Claude.
+      const developId = cs.tool ? newClaudeId() : undefined;
+      if (developId) bindChatTool(developId, cs.tool);
+      const s = spawn(false, developId, false, 'chat', prepared.inline, modelForSession(cs), true, prepared.token, false, effortForSession(cs), true, 'develop');
       const meta: SessionMeta = {
         // Opens under the task's name read as words, and `titleByAgent` lets the Develop agent
         // replace it with a real one — the slug alone (`her-ders-ve-program-…`) is unreadable
@@ -2640,7 +2735,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     // transcript is the conversation, not the surface it was originally typed into. `reattach`
     // '1' (Mac mode's drawer): adopt the live chat even from the screen holding it.
     if (!admitTab()) return;
-    const s = reattach ? spawn(bypass, past.id, true, 'chat', '', '', true, '', false, '', false, DEFAULT_CHAT_MODE, '', '', reattach) : spawn(bypass, past.id, true, claudeKind);
+    // A chat on another tool reopens as a chat on it: it has no terminal surface.
+    if (past.tool) bindChatTool(past.id, past.tool);
+    const s = reattach ? spawn(bypass, past.id, true, 'chat', '', '', true, '', false, '', false, DEFAULT_CHAT_MODE, '', '', reattach) : spawn(bypass, past.id, true, chatToolFor(past.id) ? 'chat' : claudeKind);
     // Titled with the row's own label rather than "Chat 7": it is the only thing that tells two
     // resumed tabs apart. A remembered tab name (`named`) comes back whole — it was a tab title
     // once, and clipping it would also overwrite the stored name with its stub; a first prompt
@@ -2665,7 +2762,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
 
   // ── Mac mode: adopt a chat the Mac runs (the phone drawer's "Mac'te açık") ───────────
   const adoptLiveChat = useCallback((chat: LiveChatWire) => {
-    resumePastSession({ id: chat.conversationId, title: chat.title || 'Chat', named: true, updatedAt: Date.now(), preview: '' } as unknown as PastSession, '1');
+    resumePastSession({ id: chat.conversationId, title: chat.title || 'Chat', named: true, updatedAt: Date.now(), preview: '', ...(chat.tool ? { tool: chat.tool } : {}) } as unknown as PastSession, '1');
   }, [resumePastSession]);
   // The phone opens a handed-over Super Agent as an ordinary chat tab on its conversation. The
   // Mac decides it is a MIRROR (agent-chat.ts `phoneSuperOpen`): never `reattach=1`, so not even a
@@ -2693,7 +2790,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       if (open.kind === 'super') {
         openSuperOnPhone({ conversationId: open.id, vault, title: null, busy: false, state: 'idle', lastLine: null, updatedAt: null, live: true });
       } else {
-        resumePastSession({ id: open.id, title: open.title, preview: '', updatedAt: 0, startedAt: null, sizeBytes: 0, gitBranch: '' } as PastSession);
+        resumePastSession({ id: open.id, title: open.title, preview: '', updatedAt: 0, startedAt: null, sizeBytes: 0, gitBranch: '', ...(open.tool ? { tool: open.tool } : {}) } as PastSession);
       }
       setPhoneView('chat');
     }, 200);
@@ -3977,6 +4074,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       if (!admitTab()) return { ok: false, error: 'tabs_full' };
       const childId = newClaudeId();
       leanOpeningRef.current.set(childId, d.mcp);
+      if (d.tool) bindChatTool(childId, d.tool);
       const s = spawn(false, childId, false, 'chat', prepared.inline, d.model, true, prepared.token, false, d.effort, false, d.mode) as ChatSession;
       s.setSuperChild(true);
       // …and it STAYS marked until the server's push names it (the mark effect would otherwise
@@ -4728,6 +4826,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     changePermissionMode: changeChatPermissionMode,
     changeMode: changeChatMode,
     pickAgent: pickChatAgent,
+    pickTool: pickChatTool,
     changeAccount: changeChatAccountFor,
     handoffToDevelop,
     openAppPage: onOpenAppPage,
@@ -4743,6 +4842,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     changePermissionMode: (sid, mode) => chatActionsRef.current.changePermissionMode(sid, mode),
     changeMode: (sid, mode) => chatActionsRef.current.changeMode(sid, mode),
     pickAgent: (sid, agent) => chatActionsRef.current.pickAgent?.(sid, agent),
+    pickTool: (sid, tool, model) => chatActionsRef.current.pickTool?.(sid, tool, model),
     changeAccount: (sid, accountId) => chatActionsRef.current.changeAccount(sid, accountId),
     handoffToDevelop: (cs, taskSlug) => chatActionsRef.current.handoffToDevelop(cs, taskSlug),
     openAppPage: (page, id) => chatActionsRef.current.openAppPage(page, id),

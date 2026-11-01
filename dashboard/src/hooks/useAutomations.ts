@@ -108,6 +108,9 @@ export interface AutomationSummary {
   /** On the summary so the Edit dialog can prefill straight from the list
    *  rather than fetching the manifest and flashing a default first. */
   effort: 'low' | 'medium' | 'high' | null;
+  /** The tool it runs on, and the Codex account it is pinned to. */
+  tool?: 'claude' | 'codex';
+  account?: string | null;
   timeoutMinutes: number;
   catchupHours: number;
   approved: boolean;
@@ -292,6 +295,7 @@ export interface AutomationManifestDetail {
   autonomy?: 'ask' | 'balanced' | 'free';
   /** Hashed when named, LAST: the MCP read tools a light job of it may call. */
   readTools?: string[];
+  tool?: 'claude' | 'codex';
   prompt: string;
   outputInstructions: string;
   pattern: AutomationPattern;
@@ -585,6 +589,9 @@ export interface AutomationDraft {
   job?: string;
   /** The legacy shape's prompt; ignored when `agent` is set. */
   prompt?: string;
+  /** Its tool and pinned Codex account; a changed tool waits for the owner's approval. */
+  tool?: 'claude' | 'codex';
+  account?: string;
   mode: AutomationMode;
   /** Every time it fires. Wins over the one-slot `days`/`at`. */
   slots?: ScheduleSlot[];

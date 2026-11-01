@@ -589,6 +589,7 @@ async function keepInPool(root: string, job: Job, extra: { held?: boolean; note?
       ...(job.model ? { model: job.model } : {}), ...(job.effort ? { effort: job.effort } : {}),
       ...(job.worktree ? { worktree: job.worktree } : {}), ...(job.slug ? { slug: job.slug } : {}), ...(job.base ? { base: job.base } : {}),
       ...(job.mcp ? { mcp: job.mcp } : {}),
+      ...(job.tool ? { tool: job.tool } : {}),
       ...(extra.held ? { held: true } : {}),
     };
     if (Buffer.byteLength(JSON.stringify([...s.pool, row]), 'utf-8') > MAX_POOL_BYTES) { out = { error: 'pool_full' }; return; }
@@ -664,6 +665,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
       mode: job.mode, model: job.model ?? '', effort: job.effort ?? '', brief: job.brief, title: job.title, deadline,
       // The child runs LEAN (D14): only these of the user's MCP servers ([] = none).
       mcp: job.mcp ?? [],
+      ...(job.tool ? { tool: job.tool } : {}),
     }, { timeoutMs: DELEGATE_TIMEOUT_MS + DELEGATE_GRACE_MS });
     const sid = r.ok && r.result && typeof r.result === 'object' ? (r.result as { sessionId?: unknown }).sessionId : undefined;
     if (!r.ok || typeof sid !== 'string' || !SESSION_ID_RE.test(sid)) {
@@ -701,6 +703,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
         sessionId: sid, brief: job.brief || job.title, adopted: false, startedAt: now, row: 'working', rowAt: now,
         ...(job.mode !== 'basic' ? { mode: job.mode } : {}), ...(job.model ? { model: job.model } : {}), ...(job.effort ? { effort: job.effort } : {}),
         ...(job.mcp ? { mcp: job.mcp } : {}),
+        ...(job.tool ? { tool: job.tool } : {}),
         ...(wt ? { worktree: wt.path, branch: wt.branch } : {}),
         ...(job.task ? { task: job.task } : {}),
         ...(awaited ? { awaited: true as const } : {}),

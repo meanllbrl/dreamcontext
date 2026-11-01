@@ -146,6 +146,21 @@ export function resolveBudget(env: string | undefined): number | null {
 }
 
 /**
+ * Per-tool ceiling on the SessionStart snapshot (Track T W3). Claude has none: its budget is
+ * exactly {@link resolveBudget}. A bridge tool (Codex) is never unbounded — `off` or a number above
+ * the ceiling still caps at it — because its context arrives as app context the model re-reads
+ * after every compaction, and Codex's own hooks spill anything above ~2,500 tokens to disk.
+ */
+export const TOOL_SNAPSHOT_CEILING_TOKENS: Readonly<Record<string, number>> = { codex: DEFAULT_SNAPSHOT_BUDGET_TOKENS };
+
+export function resolveBudgetForTool(env: string | undefined, tool: string | undefined): number | null {
+  const base = resolveBudget(env);
+  const ceiling = tool ? TOOL_SNAPSHOT_CEILING_TOKENS[tool] : undefined;
+  if (ceiling === undefined) return base;
+  return base === null ? ceiling : Math.min(base, ceiling);
+}
+
+/**
  * Resolve the sub-agent briefing budget from DREAMCONTEXT_SNAPSHOT_BUDGET.
  *
  * The one escape hatch is shared: `0` / `off` / `false` lifts BOTH budgets, so

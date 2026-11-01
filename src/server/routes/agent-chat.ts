@@ -83,6 +83,10 @@ import { dropFromOutbox } from '../../lib/super/outbox.js';
 import { clearAccountRejection, readAccountRejections, recordAccountRejection } from '../../lib/claude-limit-rejections.js';
 import { meterEndsRefusal, meterShowsRoomSince, readUsageMeter, readUsageMeterFrame, recordUsageMeter } from '../../lib/claude-usage-meter.js';
 import { chatSpawnAccount } from '../../lib/automations/account.js';
+import { clearToolSignedOut, readToolRejections, recordToolRejection, recordToolSignedOut } from '../../lib/account-switch.js';
+import { codexAccountDeps, codexAccountSignedIn, codexLimitsFor, getCodexAccount, listCodexAccounts, readCodexUsage, recordCodexUsage, type CodexAccountDeps } from '../../lib/codex-accounts.js';
+import { codexPaneAccount, decideCodexTarget, probeReading } from '../../lib/codex-switch.js';
+import { planReplacement } from '../../lib/t3-bridge/replace-session.js';
 import { automationCacheDir, isSafeAutomationSlug, readAutomationCache } from '../../lib/automations/store.js';
 import { isAutomationBoundSession } from '../../lib/automations/session-registry.js';
 import { taskOfAnySession } from '../../lib/agents/task-starter.js';
@@ -118,6 +122,17 @@ import {
   CUT_KILL_GRACE_MS, detachBusyCapMs, detachIdleMs, findLiveChat, liveChatsSnapshot, markLiveChatDraining, markTurnEnded, markTurnStarted, registerLiveChat,
   signalGroup, unregisterLiveChat, wsPingMs, type LiveChatEntry,
 } from './agent-chat-live.js';
+import { BRIDGE_TOOLS, sanitizeTool, type ToolId } from '../../lib/t3-bridge/registry.js';
+import { codexHistoryFor } from '../../lib/t3-bridge/codex-history-route.js';
+import { bridgeChatScript, bridgeResumeTarget } from '../../lib/t3-bridge/spawn.js';
+import { HEADLESS_ENVELOPES } from '../../lib/t3-bridge/headless-envelope.js';
+import { pruneToolHandoffSeeds } from '../../lib/t3-bridge/tool-handoff.js';
+import { NO_ENV_GATE, codexEnvGateReady } from '../../lib/t3-bridge/env-gate.js';
+import { bridgeNode, nodeTooOldMessage } from '../../lib/t3-bridge/node-floor.js';
+import { readAgentUiSettings } from './launcher.js';
+import { linkedWritableRoots } from '../../lib/t3-bridge/roots.js';
+import { CODEX_THREAD_RE } from '../../lib/t3-bridge/codex-threads.js';
+const isCodexThreadId = (id: string): boolean => CODEX_THREAD_RE.test(id);
 import { registerParkable, parkFocusGraceMs, PARK_ANSWER_MS, type ParkOptions, type ParkOutcome } from '../chat-park.js';
 import {
   isLoopback, isSameOriginStrict, isCrossSiteRequest, requireLocalDesktop, requireOwnerWindow, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
@@ -1029,6 +1044,7 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
       const entries = registry.filter((r) => r.conversationId === e.conversationId);
       return {
         conversationId: e.conversationId, vault, title: vault ? liveChatTitle(e.projectRoot, e.conversationId) : null,
+        ...(e.tool ? { tool: e.tool } : {}),
         busy: e.busy, state: liveChatState(e.busy, entries.map((r) => r.status)),
         lastLine: vault ? liveChatLastLine(entries) : null,
         updatedAt: liveChatUpdatedAt(e, entries),
@@ -1356,6 +1372,23 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // The agent's STAGE (AI Team page): an agent chat whose first accepted conversation becomes
     // the stage's home session, recorded once in the machine-local store (lib/local-store.ts).
     const stageAgent = chatAgent && url.searchParams.get('stage') === '1' ? chatAgent : null;
+    // Which tool this pane runs on (Track T W1). Absent or `claude` = today's path. A bridge tool
+    // runs ordinary project chats and a Super Agent's lean children (W4). The Assistant, a card, an
+    // agent's tab and the Super Agent itself stay on Claude: their verbs are off the brain MCP
+    // allowlist on purpose, so they are refused rather than opened half-wired.
+    const toolAsked = url.searchParams.get('tool');
+    const toolParsed = sanitizeTool(toolAsked);
+    if (toolAsked !== null && !toolParsed) { rejectUpgrade(socket, 400); return; }
+    const bridgeTool = toolParsed && (BRIDGE_TOOLS as readonly string[]).includes(toolParsed) ? toolParsed as 'codex' : null;
+    if (bridgeTool && (assistant || card || chatAgent || mode === 'super')) {
+      rejectUpgrade(socket, 400); return;
+    }
+    // The T3 Claude engine (plan r5 §5) is shut until Wave 4: the server does not keep T3's thread
+    // id yet, so two tabs could write one transcript. A saved `claudeEngine: 't3'` does nothing.
+    const t3Claude = T3_CLAUDE_ENGINE_OPEN
+      && !bridgeTool && !assistant && !card && !chatAgent && mode !== 'super' && url.searchParams.get('lean') !== '1'
+      && readAgentUiSettings().claudeEngine === 't3';
+    const toolOpt = bridgeTool ? { tool: bridgeTool } : t3Claude ? { tool: 'claude' as const } : {};
 
     // T24 — the automation-bound resume gate (see the block comment on
     // `shouldRejectAutomationResume` above). Evaluated HERE, before `startChatSession` is
@@ -1463,7 +1496,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
             if (outcome !== 'unadoptable') { releaseOpening(); return; }
             const child = childNow();
             if (child) { toWatch(ws, child); return; }
-            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
+            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...toolOpt });
             releaseOpening();
           });
           return;
@@ -1474,7 +1507,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         // A reattach that found nothing to adopt (the child exited while the client was away)
         // resumes the conversation in a new process — and never re-submits an opening prompt.
         if (reattach) {
-          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
+          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...toolOpt });
           releaseOpening();
           return;
         }
@@ -1499,7 +1532,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           if (!stageAgent) return;
           try { recordStageHomeSession(projectRoot, stageAgent, conversation); } catch { /* the stage opens a fresh one next time */ }
         };
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}) });
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...toolOpt });
         settleSupersede(accepted);
         releaseOpening();
       });
@@ -1609,7 +1642,16 @@ interface ChatSpawnOpts {
   /** A LEAN Super Agent child (orchestration plan r5 D14): `--strict-mcp-config` with only these
    *  of the user's MCP servers plus the app's own configs. Absent = every chat as before. */
   leanMcp?: string[];
+  /** A tool other than Claude (plan r5, Track T): the pane runs `dreamcontext t3-chat`, the T3
+   *  bridge child, which speaks the same stream-json. Absent = today's Claude path, unchanged. */
+  tool?: BridgeTool;
 }
+
+/** Wave 4 opens this, with the thread id kept by the server. Until then the path is dead. */
+const T3_CLAUDE_ENGINE_OPEN = false as boolean;
+
+/** `claude` only through the Claude engine setting: `?tool=` never selects it. */
+type BridgeTool = ToolId;
 
 /** Interrupt watchdog: if no result/exit follows an interrupt request within this window,
  *  escalate to SIGINT then SIGKILL rather than leave the session hung. Empirically, a real
@@ -1748,6 +1790,11 @@ export const AUTH_CONTINUE_TEXT =
   'The previous turn failed because this chat\'s Claude account was signed out, and the chat has moved to a signed-in account. '
   + 'Continue exactly where you stopped; do not redo finished work.';
 
+/** What a Codex pane moved off a refused account is told after the restart (Track T W2). */
+export const CODEX_LIMIT_CONTINUE_TEXT =
+  'The previous turn was cut off by a Codex usage limit, and this chat has moved to another ChatGPT account. '
+  + 'Continue exactly where you stopped; do not redo finished work.';
+
 export const LIMIT_CONTINUE_TEXT =
   'The previous turn was cut off by a Claude usage limit, and this chat has moved to another account. '
   + 'Continue exactly where you stopped; do not redo finished work.';
@@ -1795,6 +1842,10 @@ export function startChatSession(
   /** The project's Super Agent (task chat-gets-a-super-agent-mode…): its inbox, the owner-frame
    *  hold (D8) and its own verbs' pre-approval under `auto` (D15). */
   const isSuper = mode === 'super';
+  /** The pane runs on a T3 bridge tool (Codex) instead of `claude`. Every branch below that reads
+   *  it leaves the Claude path exactly as it was when it is null. */
+  const bridgeTool = opts.tool ?? null;
+  try { pruneToolHandoffSeeds(join(projectRoot, '_dream_context')); } catch { /* the next chat tries again */ }
   const assistantConfig = isAssistant ? (readAssistantConfig() ?? DEFAULT_ASSISTANT_CONFIG) : null;
 
   // Which Claude account this process is about to inherit. Captured BEFORE the spawn (it is
@@ -1815,7 +1866,13 @@ export function startChatSession(
   // cache already shows as full (or a recorded refusal) is skipped here, so the chat opens on
   // one with room instead of restarting on the first message (`chatSpawnAccount`). An account
   // somebody picked is never second-guessed at spawn.
-  const spawnAccount = account || (chatSpawnAccount().id ?? '');
+  // A Codex pane's `account` names a CODEX account (Track T W2): it never reaches the Claude
+  // gate, which would refuse an id it does not know. Claude panes read `account` exactly as before.
+  const claudeAccountArg = opts.tool === 'codex' ? '' : account;
+  /** The Codex account a Codex pane runs on: the one asked for when it is registered, else the
+   *  one a new Codex chat opens on (codex-switch.ts). '' on every other pane. */
+  const codexAccountId = opts.tool === 'codex' ? codexPaneAccount(account) : '';
+  const spawnAccount = claudeAccountArg || (chatSpawnAccount().id ?? '');
   let accountConfigDir: string;
   try {
     accountConfigDir = resolveConfigDir(spawnAccount || null);
@@ -1846,19 +1903,38 @@ export function startChatSession(
   //  • resume requested but no resumable transcript → fresh-pin via --session-id so the
   //    session stays resumable going forward instead of erroring.
   const mappedId = resumeId ? resolveAgentSession(contextRoot, resumeId) : '';
-  const resumeTarget = [mappedId, resumeId].find(
-    (c) => c && !liveConversations.has(c) && claudeConversationExists(c),
-  ) ?? '';
+  // A bridge pane resumes its tool's own thread, found through the same tab map (the bridge
+  // records it) and only when that thread belongs to THIS project (`bridgeResumeTarget`).
+  const resumeTarget = bridgeTool === 'codex'
+    ? bridgeResumeTarget({ tool: bridgeTool, mapped: mappedId, resumeId, projectRoot, held: liveConversations })
+    // A T3 Claude pane's thread id is not its pin, so a held pin is a running child too.
+    : [mappedId, resumeId].find(
+      (c) => c && !liveConversations.has(c) && !(bridgeTool && liveConversations.has(resumeId || sessionId)) && claudeConversationExists(c),
+    ) ?? '';
   const pinId = resumeId || sessionId;
   // Who chose this pane's account — see `autoPlacedAccounts`. Only an auto-placed pane comes home.
-  const accountAutoPlaced = !account || autoPlacedAccounts.get(pinId) === account;
+  const accountAutoPlaced = !claudeAccountArg || autoPlacedAccounts.get(pinId) === claudeAccountArg;
   if (accountAutoPlaced) noteAutoPlaced(pinId, activeAccountId);
   else autoPlacedAccounts.delete(pinId);
-  if (!account) handPickedAccounts.delete(pinId);
+  if (!claudeAccountArg) handPickedAccounts.delete(pinId);
   else if (!accountAutoPlaced && activeAccountId) notePane(handPickedAccounts, pinId, activeAccountId);
-  const freshPin = !resumeTarget && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
-    ? pinId : '';
+  // A bridge pane always holds its pane id (its tool's thread is found through the tab map, so
+  // there is no Claude transcript to pin): `--session-id` is a Claude flag the bridge never reads.
+  // When the pane's map names a thread this open cannot take (not this project's, or no longer
+  // resolvable), it REFUSES below like a Claude resume, rather than starting a fresh
+  // thread whose record would overwrite the map and lose the conversation for good.
+  const bridgeMapped = !!bridgeTool && !!mappedId && mappedId !== resumeId && isCodexThreadId(mappedId);
+  // A bridge pane holds by pane. T3's Claude engine allocates its own thread id, so a pane that
+  // already has a transcript under its id must not open fresh either: that open refuses below.
+  const paneHeld = !!bridgeTool;
+  const freshPin = paneHeld
+    ? (resumeTarget || bridgeMapped || (bridgeTool === 'claude' && (liveConversations.has(pinId) || claudeConversationExists(pinId))) ? '' : pinId)
+    : !resumeTarget && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
+      ? pinId : '';
   const idArg = resumeTarget ? ['--resume', resumeTarget] : freshPin ? ['--session-id', freshPin] : [];
+  /** This pane keeps a stable id across respawns (Claude: a pinned or resumed conversation; a bridge
+   *  pane: always, since the bridge records its thread under the pane id). */
+  const pinned = bridgeTool ? !!pinId : idArg.length > 0;
 
   /**
    * A RESUME THAT CANNOT TAKE ITS CONVERSATION REFUSES — it never quietly forks.
@@ -1963,14 +2039,20 @@ export function startChatSession(
   // The MCP stores every account shares (task mcp-management), by env reference.
   const storeMcp = chatStoreMcp({ scopedCard, lean: !!opts.leanMcp, projectRoot });
 
-  const heldConversation = resumeTarget || freshPin;
+  // A bridge pane holds its PANE id (its thread changes on rotation; the pane does not), so a
+  // respawn of the same pane waits for the old child exactly as a Claude resume does.
+  const heldConversation = paneHeld ? pinId : resumeTarget || freshPin;
   if (heldConversation) liveConversations.add(heldConversation);
+  // The T3 Claude engine writes the resumed transcript itself: one writer, like today's engine.
+  const threadHold = bridgeTool === 'claude' && resumeTarget !== pinId ? resumeTarget : '';
+  if (threadHold) liveConversations.add(threadHold);
   /** The hold was handed to a respawn while this child was detached and busy (`supersedeLive`):
    *  the conversation is not ours to release any more, so `releaseHeld` must leave it alone. */
   let holdLent = false;
   let releaseHeld = () => {
     releaseHeld = () => { /* once */ };
     if (heldConversation && !holdLent) liveConversations.delete(heldConversation);
+    if (threadHold) liveConversations.delete(threadHold);
   };
 
   // ── A FRESH session starts on the default branch ──────────────────────────────────────
@@ -2227,13 +2309,31 @@ export function startChatSession(
   // reference (`$DREAMCONTEXT_MCP_CFG_n`, a fixed name): it expands to a path held in the env,
   // so HOME's text never enters the script. (`Bash(dreamcontext assistant:*)` is a
   // fixed literal whose parens, colon, space and star are all inert inside double quotes.)
-  const script = `exec claude ${argv.map((a) => `"${a}"`).join(' ')}`;
+  // A bridge pane runs our own CLI's `t3-chat` (the same stream-json in and out) instead of
+  // `claude`; Claude-only flags never reach it. Refused when a path is not shell-safe.
+  // The bridge child runs on a Node at its floor, found beside the machine's default, never by
+  // changing it (`node-floor.ts`). No such Node: the pane says so instead of crashing in a chat.
+  const bridgeNodePath = bridgeTool ? bridgeNode() : null;
+  // A Super child runs with nobody watching it: no live write gate, no child on Codex.
+  const noEnvGate = bridgeTool === 'codex' && !!opts.leanMcp && !codexEnvGateReady(projectRoot);
+  const bridgeScript = bridgeTool && bridgeNodePath && !noEnvGate
+    ? bridgeChatScript({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : opts.leanMcp ? HEADLESS_ENVELOPES['super-child'].codex ?? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(leanMcpPath ? { mcpConfig: leanMcpPath } : {}), ...(opts.leanMcp ? { strictMcp: true } : {}), ...(codexAccountId ? { account: codexAccountId } : {}) })
+    : null;
+  if (bridgeTool && !bridgeScript) {
+    const why = noEnvGate ? NO_ENV_GATE : bridgeNodePath ? `${bridgeTool} could not start: the dreamcontext install path is not shell-safe.` : nodeTooOldMessage(bridgeTool === 'codex' ? 'Codex' : 'The T3 Claude engine');
+    try { ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', message: why })); } catch { /* gone */ }
+    try { ws.close(); } catch { /* already closed */ }
+    releaseHeld();
+    cleanupBriefing(); cleanupAgents(); cleanupModeNote(); cleanupDeferred();
+    return;
+  }
+  const script = bridgeScript ?? `exec claude ${argv.map((a) => `"${a}"`).join(' ')}`;
 
   // An agent-chat process exports its tab's STABLE roster id so the SessionStart/Stop
   // hooks (which inherit this env through `claude`) record roster id → live conversation
   // id on every rotation — the SAME map the embedded terminal writes/reads (AC7: chat and
   // terminal resume interop through one registry). Only when actually pinned/resumed.
-  const tabEnv = pinId && idArg.length ? tabSessionEnv(pinId) : {};
+  const tabEnv = pinId && pinned ? tabSessionEnv(pinId) : {};
 
   // ── Seed this pane's context-handoff toggle BEFORE the child starts ─────────
   //
@@ -2245,7 +2345,7 @@ export function startChatSession(
   // machine) > `.config.json` (the team default) > off. An EXISTING tab file is left
   // alone: a pane that has been toggled owns its own answer across resumes.
   try {
-    if (pinId && idArg.length && !readTabHandoff(contextRoot, pinId)) {
+    if (pinId && pinned && !readTabHandoff(contextRoot, pinId)) {
       const seed = resolveTabSeed(
         readBrainLocal(projectRoot).contextHandoffDefault,
         readSetupConfig(projectRoot)?.contextHandoff,
@@ -2533,6 +2633,7 @@ export function startChatSession(
   // session (nothing to reattach by) keep the old drain-on-close lifecycle.
   const live: LiveChatEntry | null = !isAssistant && pinId ? {
     conversationId: pinId,
+    ...(bridgeTool === 'codex' ? { tool: bridgeTool } : {}),
     projectRoot,
     busy: false,
     turnStartedAt: null,
@@ -2856,7 +2957,7 @@ export function startChatSession(
     }
   };
   // Right after spawn most servers are still `pending`: read until they settle (≤ 20 s).
-  if (!scopedCard) setImmediate(() => mcpSettle());
+  if (!scopedCard && !bridgeTool) setImmediate(() => mcpSettle());
 
   /** The socket's MCP verbs. Refused unless the socket holding the chat RIGHT NOW is the desktop. */
   const onMcpMessage = (msg: { type?: string; name?: unknown }): void => {
@@ -2993,7 +3094,9 @@ export function startChatSession(
   // Which account this process really runs on. The client asked for one (or for the default),
   // and the default may have skipped a full account — so the composer's account chip reads
   // this, not its own request. Said again on every reattach for a client that just arrived.
-  if (activeAccountId) sendMeta({ subtype: 'account_active', accountId: activeAccountId });
+  // A Codex pane names its CODEX account (and the tool), so the chip lists Codex accounts.
+  if (bridgeTool === 'codex') { if (codexAccountId) sendMeta({ subtype: 'account_active', accountId: codexAccountId, tool: 'codex' }); }
+  else if (activeAccountId) sendMeta({ subtype: 'account_active', accountId: activeAccountId });
 
   // A reattach found no live child (it exited while the client was away), so this is a fresh
   // resume: nothing is running, and the client replays the transcript it missed.
@@ -3409,7 +3512,7 @@ export function startChatSession(
       if (mainResult) {
         closeTurn();
         // The turn may have used, broken or fixed an MCP server: read again once it settles.
-        if (!scopedCard) {
+        if (!scopedCard && !bridgeTool) {
           if (mcpTurnTimer) clearTimeout(mcpTurnTimer);
           mcpTurnTimer = setTimeout(() => { mcpTurnTimer = null; mcpSettle(10_000); }, 2000);
         }
@@ -3472,13 +3575,15 @@ export function startChatSession(
       // was read once, above the result block.)
       // Every turn states this account's usage exactly; kept, so the panel and the chooser read
       // what the account said a moment ago rather than a cache up to an hour old.
-      if (obj.type === 'rate_limit_event') noteTurnUsage(obj);
-      if (limit) onLimitRejected(limit);
+      // A bridge tool's limits and sign-in are its own accounts' (W2): Claude's observers stay off it.
+      if (obj.type === 'rate_limit_event' && !bridgeTool) noteTurnUsage(obj);
+      if (bridgeTool) { if (bridgeTool === 'codex') onCodexFrame(obj); }
+      else if (limit) onLimitRejected(limit);
       else if (!obj.parent_tool_use_id && isAuthFailureFrame(obj)) onAuthFailed();
       else if (obj.type === 'assistant' && !obj.parent_tool_use_id) turnProgressed = true;
       // A turn that went through says the account is signed in again (claude-signed-out.ts).
       if (obj.type === 'result' && !obj.parent_tool_use_id) {
-        if (!authFailedTurn && obj.is_error !== true && activeAccountId) clearSignedOut(activeAccountId);
+        if (!bridgeTool && !authFailedTurn && obj.is_error !== true && activeAccountId) clearSignedOut(activeAccountId);
         authFailedTurn = false;
       }
       // After this frame's own refusal was dispatched (it may set the latch again): the turn is over.
@@ -3984,8 +4089,134 @@ export function startChatSession(
         .catch(() => false)));
   };
 
+  // ── Codex accounts (Track T W2) ──────────────────────────────────────────────────────
+  // The same join points as Claude's (plan r5 §4d), on Codex's own accounts: readings from the
+  // bridge's live limit updates and T3's limits probe, the same chooser (`chooseTarget` →
+  // `chooseAccount`) and thresholds, Codex's own refusal store. The move itself is the restart
+  // every switch uses: the client reopens this pane on the target account, and since every Codex
+  // account shares `~/.codex/sessions` (one continuation key, replace-session.ts) the reopened
+  // pane resumes the SAME thread. Claude panes never reach anything in this block.
+  const codexDeps = (): CodexAccountDeps => codexAccountDeps();
+
+  /** One frame from the Codex bridge: a live limit update, a refusal, or a turn that went through. */
+  const onCodexFrame = (obj: Record<string, unknown>): void => {
+    if (!codexAccountId) return;
+    // An account removed while this pane runs on it: its readings are not kept (no file comes back).
+    const registered = !!getCodexAccount(codexAccountId);
+    if (obj.type === 'system' && obj.subtype === 'dc_usage' && Array.isArray(obj.windows)) {
+      if (registered) recordCodexUsage(codexAccountId, obj.windows as unknown[], typeof obj.checked_at === 'string' ? obj.checked_at : new Date().toISOString(), 'session');
+      return;
+    }
+    if (obj.type !== 'result' || obj.parent_tool_use_id) return;
+    const limit = obj.dc_limit as { resetsAtMs?: unknown } | undefined;
+    if (limit && typeof limit === 'object') {
+      onCodexLimit({ window: 'unknown', resetsAtMs: typeof limit.resetsAtMs === 'number' ? limit.resetsAtMs : null, via: 'rateLimitEvent' });
+      return;
+    }
+    if (obj.is_error !== true) { clearToolSignedOut('codex', codexAccountId); return; }
+    // A failed turn on an account that is gone or signed out (removed in Settings, its sign-in
+    // deleted): Claude's `onAuthFailed`, for Codex. Written down, and the pane moves to a signed-in
+    // account whatever auto-switch says, since nothing here can serve it again.
+    if (registered && codexAccountSignedIn(codexAccountId)) return;
+    recordToolSignedOut('codex', codexAccountId);
+    if (switchPending || switchAbandoned) return;
+    if (!listCodexAccounts().some((a) => a.id !== codexAccountId && a.signedIn)) return;
+    const text = lastSentText && !turnProgressed ? lastSentText : CODEX_LIMIT_CONTINUE_TEXT;
+    switchGate = switchGate.then(() => (switchPending
+      ? false
+      : decideCodexAndAnnounce(text, 'needs_relogin', { id: codexAccountId, problem: 'needs-relogin' }, undefined, true).catch(() => false)));
+  };
+
+  /** Codex refused a turn for a usage limit: write it down, then move the pane if it can. */
+  const onCodexLimit = (signal: LimitSignal): void => {
+    if (turnsInFlight > 0) limitHitThisTurn = true;
+    if (switchPending) return;
+    const recorded = recordToolRejection('codex', codexAccountId, signal);
+    if (switchAbandoned) return;
+    if (!autoSwitchEnabled()) {
+      sendMeta({ subtype: 'account_switch', switched: false, reason: 'auto_switch_disabled', accountId: codexAccountId, tool: 'codex', earliestResetAt: recorded.until });
+      return;
+    }
+    if (listCodexAccounts().length < 2) return;
+    registry?.markLimited();
+    const text = lastSentText && !turnProgressed ? lastSentText : CODEX_LIMIT_CONTINUE_TEXT;
+    switchGate = switchGate.then(() => (switchPending
+      ? false
+      : decideCodexAndAnnounce(text, 'limit_hit', { id: codexAccountId, problem: 'unknown' }, recorded.until, true).catch(() => false)));
+  };
+
+  /** Before a turn goes out: move ahead of the wall when this Codex account is nearly full. */
+  const maybeSwitchCodex = async (text: string, resubmit: boolean): Promise<boolean> => {
+    if (!codexAccountId) return false;
+    const standing = readToolRejections('codex')[codexAccountId];
+    let active = codexLimitsFor(readCodexUsage(codexAccountId));
+    if (!autoSwitchEnabled()) {
+      if (standing || shouldSwitchAway(active)) {
+        sendMeta({ subtype: 'account_switch', switched: false, reason: 'auto_switch_disabled', accountId: codexAccountId, tool: 'codex', limits: active.limits, ...(standing ? { earliestResetAt: standing.until } : {}) });
+      }
+      return false;
+    }
+    if (listCodexAccounts().length < 2) return false;
+    if (standing) return decideCodexAndAnnounce(text, 'limit_known', { id: codexAccountId, problem: 'unknown' }, standing.until, resubmit);
+    if (switchStrategyFor() === 'sequential') return false;
+    // The bridge reports this account's windows on every turn, so the cached reading is fresh;
+    // only past the probe line is it read again for real before acting on it.
+    if (!shouldProbe(active)) return false;
+    const probed = await probeReading(codexAccountId, codexDeps());
+    if (!alive) return true;
+    if (probed.limits) active = probed.limits;
+    if (probed.problem !== 'needs-relogin' && !shouldSwitchAway(active)) return false;
+    return decideCodexAndAnnounce(text, probed.problem === 'needs-relogin' ? 'needs_relogin' : 'limit_near',
+      probed.limits ? { id: codexAccountId, limits: probed.limits } : { id: codexAccountId, problem: probed.problem ?? 'unknown' }, undefined, resubmit);
+  };
+
+  /** Choose among this tool's accounts and announce the move (Claude's `decideAndAnnounce`, for Codex). */
+  const decideCodexAndAnnounce = async (
+    text: string, cause: SwitchCause, activeReading: AccountReading, previousResetAt: number | undefined, resubmit: boolean,
+  ): Promise<boolean> => {
+    const choice = await decideCodexTarget({ activeId: codexAccountId, active: activeReading, probe: (id) => probeReading(id, codexDeps()) });
+    if (!alive) return true;
+    if (!choice.target || choice.target.accountId === codexAccountId) {
+      if (!choice.target || cause === 'limit_hit' || cause === 'limit_known') {
+        sendMeta({
+          subtype: 'account_switch', switched: false, reason: choice.target ? 'stayed_put' : 'all_exhausted',
+          accountId: codexAccountId, tool: 'codex', rejected: choice.rejected,
+          ...(choice.earliestResetAt === undefined ? {} : { earliestResetAt: choice.earliestResetAt }),
+        });
+      }
+      return false;
+    }
+    const target = getCodexAccount(choice.target.accountId);
+    if (!target) return false;
+    switchPending = true;
+    heldTexts = resubmit && text ? [text] : [];
+    if (isSuper && resubmit && text && lastSentSpoken && text === lastSentText) spokenTexts.add(text);
+    // The restart the client performs: same tool, the target account, the SAME thread
+    // (planReplacement: one continuation key across Codex accounts → resume, no handoff).
+    const plan = planReplacement({ tool: 'codex', accountId: codexAccountId, threadId: observedConversation || '' }, choice.target);
+    pendingSwitchFrame = {
+      subtype: 'account_switch',
+      switched: true,
+      reason: cause,
+      tool: 'codex',
+      accountId: target.id,
+      email: target.email,
+      fromAccountId: codexAccountId,
+      resumes: !plan.handoff,
+      ...(choice.sessionPercent === undefined ? {} : { sessionPercent: choice.sessionPercent }),
+      ...(choice.weeklyPercent === undefined ? {} : { weeklyPercent: choice.weeklyPercent }),
+      ...(choice.unmeasured ? { unmeasured: true } : {}),
+      ...(previousResetAt === undefined ? {} : { earliestResetAt: previousResetAt }),
+      rejected: choice.rejected,
+    };
+    reannounceSwitch();
+    return true;
+  };
+
   /** True when the turn was HELD (a restart is coming); false when the caller should send it. */
   const maybeSwitchAccount = async (text: string, opts: { resubmit?: boolean } = {}): Promise<boolean> => {
+    // A bridge tool switches its own tool's accounts (W2), never a Claude account.
+    if (bridgeTool && bridgeTool !== 'codex') return false;
     const resubmit = opts.resubmit ?? true;
     // One switch at a time per conversation. An owner message arriving while a restart is owed
     // JOINS it — held, re-announced, resubmitted after the restart in typing order — instead of
@@ -3999,6 +4230,7 @@ export function startChatSession(
       return true;
     }
     if (switchAbandoned) return false;
+    if (bridgeTool === 'codex') return maybeSwitchCodex(text, resubmit);
 
     // The API's own refusal, remembered from an earlier turn (this pane or any other). It
     // OUTRANKS the percentages below, which is the point: the account that produced the
@@ -4629,8 +4861,18 @@ export async function handleAgentChatHistory(
   const id = sanitizeUuid(url.searchParams.get('claudeId'));
   if (!id) { sendJson(res, 200, { items: [] }); return; }
   const liveId = contextRoot ? resolveAgentSession(contextRoot, id) : '';
-  const path = findFirstTranscriptPath([liveId, id]);
-  if (!path) { sendJson(res, 200, { items: [] }); return; }
+  // A Codex pane (Track T): its history is the Codex rollout, served only when that thread is
+  // THIS project's. A foreign or unresolvable thread is refused (403), on every socket, phone too.
+  // A Claude pane never pays for this: Codex is looked at only when asked for, or when no Claude
+  // transcript answers (an older client opening a Codex pane without `tool=`).
+  const tool = sanitizeTool(url.searchParams.get('tool'));
+  const path = tool === 'codex' ? null : findFirstTranscriptPath([liveId, id]);
+  if (!path) {
+    const codex = await codexHistoryFor({ tool, id, liveId, contextRoot });
+    if (codex === 'refuse') { sendError(res, 403, 'thread_not_in_project', 'That Codex thread does not belong to this project.'); return; }
+    sendJson(res, 200, { items: codex?.items ?? [] });
+    return;
+  }
   // AC16: a phone reads only the chosen projects' conversations (a sub-agent's by its parent's).
   if (phoneTranscriptRefused(req, contextRoot, path)) { sendError(res, 403, 'phone_unavailable', 'Hands-free does not serve that conversation.'); return; }
 

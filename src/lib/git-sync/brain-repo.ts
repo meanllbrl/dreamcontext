@@ -210,6 +210,7 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
     'state/.version-check.json',
     'state/.auto-upgrade.json',
     'state/.brain-local.json',
+    'state/.tool-handoff/',
     'state/.lab-prefs.json',
     'state/.whiteboard-prefs.json',
     // The Super Agent's hand-over state: this machine's live sessions, layout and queue.
@@ -280,6 +281,8 @@ export const FULL_REPO_LOCAL_GITIGNORE_ENTRIES = [
   // in the sync lock's case, cross-machine lock contention).
   '_dream_context/state/.brain-merge/',
   '_dream_context/state/.brain-local.json',
+  // A conversation's text waiting for its new tab (the model picker's cross-tool switch).
+  '_dream_context/state/.tool-handoff/',
   // Per-session pointer at the task in hand; `bookmark add` uses it as an
   // implicit `--task`, so a synced one would misfile a teammate's bookmarks.
   '_dream_context/state/.active-task',

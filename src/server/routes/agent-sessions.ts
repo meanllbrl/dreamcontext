@@ -98,6 +98,12 @@ export interface SavedMeta {
    */
   agent?: string;
   /**
+   * Present only alongside `kind: 'chat'` — the tool this conversation runs on when it is not
+   * Claude (Track T: `codex`), so the tab reopens on the same tool and resumes its own thread.
+   * Absent = Claude, which every roster written before this field already means.
+   */
+  tool?: 'codex';
+  /**
    * Which PANE this tab sat in, as a 0-based index into the surface's left-to-right pane row.
    *
    * The roster used to persist titles only, and the client's own comment said so out loud:
@@ -323,6 +329,7 @@ function coerceMeta(raw: unknown): SavedMeta {
     ? (o.mode as ChatMode)
     : undefined;
   const agent = kind === 'chat' && typeof o.agent === 'string' && isSafeAutomationSlug(o.agent) ? o.agent : undefined;
+  const tool = kind === 'chat' && o.tool === 'codex' ? 'codex' as const : undefined;
   // What the chat was running on: chat only, like `mode`, and each through its spawn gate.
   const model = kind === 'chat' && typeof o.model === 'string' ? sanitizeModel(o.model) : '';
   const effort = kind === 'chat' && typeof o.effort === 'string' && EFFORT_LEVELS.includes(o.effort) ? o.effort : '';
@@ -343,6 +350,7 @@ function coerceMeta(raw: unknown): SavedMeta {
     ...(automation ? { automation } : {}),
     ...(mode ? { mode } : {}),
     ...(agent ? { agent } : {}),
+    ...(tool ? { tool } : {}),
     ...(pane !== undefined ? { pane } : {}),
     ...(o.active === true ? { active: true } : {}),
     ...(o.titleByAgent === true ? { titleByAgent: true } : {}),
@@ -773,7 +781,7 @@ export async function handleAgentSessionsGet(
 
 /** One Mac window tab as a remote screen seeds it: never a path, a mode, an agent or an
  *  automation. */
-export interface DesktopSeedTab { title: string; sessionId: string; pane: number; kind: 'agent' | 'chat'; bypass: boolean; active?: true }
+export interface DesktopSeedTab { title: string; sessionId: string; pane: number; kind: 'agent' | 'chat'; bypass: boolean; active?: true; tool?: 'codex' }
 
 /**
  * The Mac window's tabs a remote screen may seed from (`GET /api/agent/sessions?of=desktop` on a
@@ -787,7 +795,7 @@ export function desktopSeed(saved: Pick<SavedSurface, 'sessions'>, superState: {
   for (const m of saved.sessions) {
     const kind = m.kind ?? 'agent';
     if ((kind !== 'agent' && kind !== 'chat') || !m.sessionId || m.sessionId === superState.session || m.mode === 'super') continue;
-    out.push({ title: m.title, sessionId: m.sessionId, pane: m.pane ?? 0, kind, bypass: m.bypass, ...(m.active ? { active: true as const } : {}) });
+    out.push({ title: m.title, sessionId: m.sessionId, pane: m.pane ?? 0, kind, bypass: m.bypass, ...(m.active ? { active: true as const } : {}), ...(m.tool ? { tool: m.tool } : {}) });
   }
   return out;
 }

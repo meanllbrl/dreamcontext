@@ -509,3 +509,20 @@ describe('parkIdleChats (Settings → Chat → Park idle chats under load)', () 
     }
   });
 });
+
+describe('the default tool and the Claude engine', () => {
+  it('rest on Claude and on today\'s engine, and only known values are kept', async () => {
+    const { coerceAgentSettings } = await import('../../src/server/routes/launcher.js');
+    expect(coerceAgentSettings({})).toMatchObject({ chatDefaultTool: '', codexDefaultModel: '', superTool: '', claudeEngine: 'dreamcontext' });
+    expect(coerceAgentSettings({ chatDefaultTool: 'codex', codexDefaultModel: 'gpt-5.5', codexDefaultEffort: 'high', claudeEngine: 't3' }))
+      .toMatchObject({ chatDefaultTool: 'codex', codexDefaultModel: 'gpt-5.5', codexDefaultEffort: 'high', claudeEngine: 't3' });
+    expect(coerceAgentSettings({ chatDefaultTool: 'gemini', claudeEngine: 'other', codexDefaultModel: 'a b;c' }))
+      .toMatchObject({ chatDefaultTool: '', claudeEngine: 'dreamcontext', codexDefaultModel: '' });
+  });
+
+  it('a Codex default never touches Claude\'s own model', async () => {
+    const { coerceAgentSettings } = await import('../../src/server/routes/launcher.js');
+    const s = coerceAgentSettings({ chatDefaultModel: 'opus', chatDefaultTool: 'codex', codexDefaultModel: 'gpt-5.5' });
+    expect(s.chatDefaultModel).toBe('opus');
+  });
+});
