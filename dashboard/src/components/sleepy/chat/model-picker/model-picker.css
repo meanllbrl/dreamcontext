@@ -131,3 +131,6 @@
 @media (max-width: 480px) {
   .chat-cmp-modelmenu.mp { width: calc(100vw - 24px); right: 0; }
 }
+
+/* A failed install's reason can hold a path: it wraps instead of leaving the panel. */
+.mp-note { overflow-wrap: anywhere; }

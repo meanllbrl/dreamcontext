@@ -19,7 +19,7 @@ export interface PickerToolState {
   /** Usable now. False draws the list greyed under a "Sign in" line. */
   ready: boolean;
   /** Why not, in one line; '' when ready. */
-  blocker: '' | 'not-installed' | 'signed-out' | 'needs-node';
+  blocker: '' | 'not-installed' | 'wont-start' | 'signed-out' | 'needs-node';
   current: PickerModel[];
   legacy: PickerModel[];
   efforts: string[];
@@ -33,14 +33,24 @@ export interface ToolReadiness {
   installed: boolean;
   signedIn: boolean;
   nodeOk?: boolean;
+  /** Absent on an older server: read as starting. */
+  runs?: boolean;
   models: { id: string; label: string; efforts: string[] }[];
 }
 
-export function blockerOf(r: Pick<ToolReadiness, 'installed' | 'signedIn' | 'nodeOk'>): PickerToolState['blocker'] {
+export function blockerOf(r: Pick<ToolReadiness, 'installed' | 'signedIn' | 'nodeOk' | 'runs'>): PickerToolState['blocker'] {
   if (!r.installed) return 'not-installed';
+  if (r.runs === false) return 'wont-start';
   if (!r.signedIn) return 'signed-out';
   if (r.nodeOk === false) return 'needs-node';
   return '';
+}
+
+/** The fix that clears a Codex blocker, or null. A bad Node or a dead install: the same install. */
+export function blockerFix(b: PickerToolState['blocker']): 'codex-install' | 'codex-update' | 'codex-signin' | null {
+  if (b === 'not-installed') return 'codex-install';
+  if (b === 'wont-start' || b === 'needs-node') return 'codex-update';
+  return b === 'signed-out' ? 'codex-signin' : null;
 }
 
 /** A model's version family: `gpt-6.1-sol` → 6.1, `GPT-6 Luna` → 6. NaN when it has none. */

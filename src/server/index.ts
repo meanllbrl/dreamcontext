@@ -308,6 +308,8 @@ import { startOrphanSweep } from './orphan-sweep.js';
 import { startTaskJobLoop } from './task-job-loop.js';
 import { startClaudeUpdateJob } from './claude-update-job.js';
 import { readyVersionOnDisk, startSelfUpdateJob } from './self-update-job.js';
+import { startCodexEnsureJob } from './codex-ensure-job.js';
+import { warmLoginPath } from '../lib/tool-finder.js';
 import { startProjectCatchUpJob } from './project-catch-up-job.js';
 import { configureMacListener, macSession, registerHandsfreeMacRoutes, writeMacServerHint } from './routes/handsfree-mac.js';
 import { setThermalSource } from '../lib/voice/whisperPressure.js';
@@ -1575,6 +1577,9 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // The CLI itself: upgraded from the app (launch + every 6 h), not only from a Claude
       // prompt, then every project refreshed. Self-gates to the app-owned desktop server.
       stopSelfUpdate = startSelfUpdateJob();
+      startCodexEnsureJob();
+      // Asked now, in the background, so no request has to wait for a login shell.
+      void warmLoginPath();
       // Every registered project follows the CLI on disk, however that CLI got there.
       stopProjectCatchUp = startProjectCatchUpJob();
     };

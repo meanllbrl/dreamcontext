@@ -25,6 +25,7 @@ import {
   type Manifest,
 } from '../../lib/manifest.js';
 import { migrateThenStampSetupVersion } from '../../lib/migrate-and-stamp.js';
+import { ensureCodex } from '../ensure-codex.js';
 import { refreshManagedInstructionsBlock, type ManagedBlockRefreshAction } from './install-claude-md.js';
 
 // ─── Update Summary ──────────────────────────────────────────────────────────
@@ -376,6 +377,7 @@ export function registerUpdateCommand(program: Command): void {
         console.log();
         console.log(miniBox(summary.split('\n'), { color: 'green' }));
         console.log();
+        if (!opts.packsOnly) await ensureCodex();
       } catch (err: any) {
         if (err.name === 'ExitPromptError') {
           console.log();

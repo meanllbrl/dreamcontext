@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join, win32 } from 'node:path';
 import { win32AbsolutePathDirs } from './proc.js';
+import { findTool } from './tool-finder.js';
 
 /**
  * Finding `claude` when the shell can't — and the one-line rc export that fixes
@@ -74,7 +75,8 @@ export function findClaudeBin(): string | null {
       if (existsSync(bin)) return bin;
     }
   }
-  return null;
+  // An `npm install -g` under a version manager. Folder reads only: this runs on hot paths.
+  return findTool(BIN_NAMES, { path: '', loginPath: null, system: [] });
 }
 
 export interface Win32ClaudeProbe {

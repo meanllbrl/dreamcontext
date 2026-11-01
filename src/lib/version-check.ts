@@ -2,7 +2,7 @@ import { existsSync, readFileSync, mkdirSync, rmSync, writeFileSync } from 'node
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { execFileSync, spawn } from 'node:child_process';
-import { npmInstallCommand, resolveNpmTarget, type NpmTarget } from './npm-target.js';
+import { npmInstallCommand, pathWithNode, resolveNpmTarget, type NpmTarget } from './npm-target.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -196,6 +196,8 @@ export function buildNudge(
 export function refreshVersionCache(root: string, opts?: RefreshOpts): void {
   const runner: NpmRunner = opts?.runner ?? ((args: string[]) =>
     execFileSync('npm', args, {
+      // A Finder-started app has no `npm` by name: without this every check read as "offline".
+      env: { ...process.env, PATH: pathWithNode() },
       timeout: NPM_TIMEOUT_MS,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],

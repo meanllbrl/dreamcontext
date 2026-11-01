@@ -503,6 +503,8 @@ export interface AgentToolInfo {
   signedIn: boolean;
   /** A Node at the bridge floor exists on this machine. Absent on an older server. */
   nodeOk?: boolean;
+  /** Codex's file is there and `--version` answered. */
+  runs?: boolean;
   defaultModel: string | null;
   models: { id: string; label: string; efforts: string[]; defaultEffort: string | null }[];
 }

@@ -154,7 +154,7 @@ type StartResult = { ok: true; runId: string } | { ok: false; error: FixStartErr
  * fields the generic client drops: a 409 `in_progress` names the run already going (we attach
  * to it instead of failing), a 409 `blocked` names what comes first, a 422 the manual command.
  */
-async function postFix(fix: FixId): Promise<StartResult> {
+export async function postFix(fix: FixId): Promise<StartResult> {
   let res: Response;
   try {
     res = await fetch('/api/onboarding/fix', {

@@ -7,10 +7,13 @@ import {
   readGlobalGitHubLogin, readGlobalGitHubNeedsReconnect, readGlobalGitHubToken,
 } from '../git-sync/auth-store.js';
 import { evaluateChecks } from './checks.js';
+import { CODEX_MIN_VERSION, codexChildEnv, codexHealth, compareVersions, managedCodexVersion } from '../codex-bin.js';
+import { CODEX_PIN } from '../codex-pin.js';
+import { bridgeNode } from '../t3-bridge/node-floor.js';
 import { nextNeedingUser, planFixes } from './plan.js';
 import { detectLinuxPackageManager, managedNpmGlobal } from './platform.js';
 import { SHELL_FACTS_SCRIPT, parseShellFacts } from './runner.js';
-import type { ExtraFacts, FixId, ProbeContext, ReadinessReport } from './types.js';
+import type { CodexFacts, ExtraFacts, FixId, ProbeContext, ReadinessReport } from './types.js';
 
 const SHELL_TIMEOUT_MS = 15_000;
 const NETWORK_TIMEOUT_MS = 3_000;
@@ -31,6 +34,8 @@ export interface ReadinessDeps {
   exists(path: string): boolean;
   linuxPm(): ReturnType<typeof detectLinuxPackageManager>;
   now(): number;
+  /** Codex's own answers. Absent in a test that is not about Codex. */
+  codex?(ctx: ProbeContext): Promise<CodexFacts>;
 }
 
 export const defaultReadinessDeps: ReadinessDeps = {
@@ -48,7 +53,20 @@ export const defaultReadinessDeps: ReadinessDeps = {
   exists: existsSync,
   linuxPm: () => detectLinuxPackageManager(),
   now: Date.now,
+  codex: probeCodex,
 };
+
+/** Ask Codex itself: whether it starts, its version, and who it thinks is signed in. */
+export async function probeCodex(ctx: ProbeContext): Promise<CodexFacts> {
+  const h = codexHealth({ home: ctx.home });
+  const managed = h.managed ? managedCodexVersion(ctx.home) : null;
+  const outdated = !!h.version && compareVersions(h.version, CODEX_MIN_VERSION) < 0
+    || (!!managed && compareVersions(managed, CODEX_PIN.version) < 0);
+  const base = { bin: h.bin, runs: h.runs, version: h.version, outdated, nodeOk: bridgeNode() !== null };
+  if (!h.bin || !h.runs) return { ...base, signedIn: h.bin ? null : false };
+  const r = await ctx.runner.exec(h.bin, ['login', 'status'], { timeoutMs: 10_000, env: codexChildEnv() });
+  return { ...base, signedIn: r.ok };
+}
 
 // ─── Active fixes (in-process registry) ─────────────────────────────────────────
 
@@ -80,12 +98,13 @@ export async function probeReadiness(
   const facts = parseShellFacts(shellOut.stdout, shell);
   const claudeBin = deps.findClaudeBin();
 
-  const [claudeAuth, ghAuthed] = await Promise.all([
+  const [claudeAuth, ghAuthed, codex] = await Promise.all([
     facts.claude || claudeBin ? deps.claudeAuth(deps.preferredConfigDir()).catch(() => null) : Promise.resolve(null),
     facts.gh
       ? ctx.runner.exec(facts.gh, ['auth', 'status', '--hostname', 'github.com'], { timeoutMs: GH_AUTH_TIMEOUT_MS })
         .then((r) => (r.ok ? true : online ? false : null))
       : Promise.resolve(null),
+    deps.codex ? deps.codex(ctx).catch(() => undefined) : Promise.resolve(undefined),
   ]);
 
   const nodeDir = dirname(ctx.execPath);
@@ -97,6 +116,7 @@ export async function probeReadiness(
     cliBinOffPath: [join(managedNpmGlobal(ctx.home), 'bin', 'dreamcontext'), join(nodeDir, 'dreamcontext')]
       .find((p) => deps.exists(p)) ?? null,
     claudeAuth,
+    ...(codex ? { codex } : {}),
     ghAuthed,
     github: deps.github(ctx.home),
     ptyPresent: ctx.ptyPresent ? ctx.ptyPresent() : null,

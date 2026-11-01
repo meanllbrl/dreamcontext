@@ -7,19 +7,19 @@
  * `GET /api/onboarding/readiness`, `POST /api/onboarding/fix` and `/api/agent/install/status`.
  */
 
-export const CHECK_IDS = ['network', 'node', 'npm', 'cli', 'claude', 'claude-auth', 'git', 'github', 'gh', 'terminal'] as const;
+export const CHECK_IDS = ['network', 'node', 'npm', 'cli', 'claude', 'claude-auth', 'codex', 'codex-auth', 'git', 'github', 'gh', 'terminal'] as const;
 export type CheckId = typeof CHECK_IDS[number];
 
 export const FIX_IDS = [
   'node-shell-path', 'cli-install', 'cli-shell-path', 'claude-install', 'claude-path', 'claude-signin',
-  'git-install', 'gh-install', 'github-signin', 'gh-signin', 'pty-install',
+  'codex-install', 'codex-update', 'codex-signin', 'git-install', 'gh-install', 'github-signin', 'gh-signin', 'pty-install',
 ] as const;
 export type FixId = typeof FIX_IDS[number];
 
 /** Runtime list of the reason codes, so the mirror test can compare it with the lib's copy keys. */
 export const REASON_CODES = [
   'not-installed', 'too-old', 'not-on-path', 'signed-out', 'unverifiable', 'offline', 'needs-dialog',
-  'no-npm', 'desktop-only', 'platform', 'symlink', 'unsafe-path',
+  'no-npm', 'desktop-only', 'platform', 'symlink', 'unsafe-path', 'wont-start', 'needs-node',
 ] as const;
 export type ReasonCode = typeof REASON_CODES[number];
 

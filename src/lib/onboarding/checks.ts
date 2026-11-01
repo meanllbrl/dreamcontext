@@ -30,7 +30,10 @@ export function nodeMajor(version: string | undefined): number | null {
 /** How a fix runs on this platform, given what the shell can see. */
 function fixKindFor(id: FixId, platform: NodeJS.Platform, facts: ShellFacts): FixKind {
   switch (id) {
-    case 'claude-signin': return 'browser';
+    case 'claude-signin':
+    case 'codex-signin': return 'browser';
+    case 'codex-install':
+    case 'codex-update': return platform === 'win32' ? 'manual' : 'auto';
     case 'github-signin':
     case 'gh-signin': return 'device-code';
     case 'git-install': return platform === 'darwin' ? 'system-dialog' : 'manual';
@@ -91,6 +94,21 @@ function judge(id: CheckId, facts: ShellFacts, extra: ExtraFacts): Verdict {
       if (auth.loggedIn === null) return { status: 'unknown', reason: 'unverifiable' };
       if (auth.loggedIn) return { status: 'ok', ...(auth.email ? { account: auth.email } : {}) };
       return { status: 'needs-action', reason: 'signed-out', fix: 'claude-signin' };
+    }
+    case 'codex': {
+      const c = extra.codex;
+      if (!c) return { status: 'unknown', reason: 'unverifiable' };
+      if (!c.bin) return { status: 'missing', reason: 'not-installed', fix: 'codex-install' };
+      const version = c.version ?? undefined;
+      if (!c.runs) return { status: 'needs-action', reason: 'wont-start', fix: 'codex-update', ...(version ? { version } : {}) };
+      if (!c.nodeOk) return { status: 'needs-action', reason: 'needs-node', fix: 'codex-update', ...(version ? { version } : {}) };
+      if (c.outdated) return { status: 'needs-action', reason: 'too-old', fix: 'codex-update', ...(version ? { version } : {}) };
+      return { status: 'ok', ...(version ? { version } : {}) };
+    }
+    case 'codex-auth': {
+      const signedIn = extra.codex?.signedIn;
+      if (signedIn === null || signedIn === undefined) return { status: 'unknown', reason: 'unverifiable' };
+      return signedIn ? { status: 'ok' } : { status: 'needs-action', reason: 'signed-out', fix: 'codex-signin' };
     }
     case 'git':
       if (facts.git) return { status: 'ok' };

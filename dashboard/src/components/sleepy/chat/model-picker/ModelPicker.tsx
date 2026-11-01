@@ -14,7 +14,9 @@ import type { AccountOption } from '../ComposerMenus';
 import {
   favouriteKey, favouriteModels, searchModels, shortcutFor, toggleFavourite,
   type PickerModel, type PickerTool, type PickerToolState,
+  blockerFix,
 } from './pickerModel';
+import { CodexFix } from './CodexFix';
 import './model-picker.css';
 
 export type SettingsTarget = 'models' | 'accounts' | 'accounts-codex';
@@ -62,6 +64,7 @@ function ToolMark({ tool }: { tool: PickerTool }) {
 
 function blockerLine(t: PickerToolState): string {
   if (t.blocker === 'not-installed') return `${t.label} is not installed`;
+  if (t.blocker === 'wont-start') return `${t.label} is installed but does not start`;
   if (t.blocker === 'needs-node') return `${t.label} needs Node 22.16 or newer`;
   return `${t.label} is not signed in`;
 }
@@ -169,8 +172,9 @@ export function ModelPicker(p: ModelPickerProps) {
             {!searching && tool && !tool.ready && (
               <p className="mp-note mp-note--warn" data-testid="model-picker-signin">
                 {blockerLine(tool)}
-                {tool.blocker === 'signed-out' && (
-                  <> · <button type="button" className="mp-link" onClick={() => { p.onOpenSettings(tool.tool === 'codex' ? 'accounts-codex' : 'accounts'); p.close(); }}>Sign in</button></>
+                {tool.tool === 'codex' && blockerFix(tool.blocker) && <CodexFix fix={blockerFix(tool.blocker)!} />}
+                {tool.tool !== 'codex' && tool.blocker === 'signed-out' && (
+                  <> · <button type="button" className="mp-link" onClick={() => { p.onOpenSettings('accounts'); p.close(); }}>Sign in</button></>
                 )}
               </p>
             )}

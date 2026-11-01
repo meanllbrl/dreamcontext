@@ -25,6 +25,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
+import { codexChildEnv, codexCommand } from './codex-bin.js';
 import { CODEX_PRIMARY_ID, codexAccountHome, codexInstanceSettings, isCodexAccountId } from './t3-bridge/accounts.js';
 import { bridgeNode } from './t3-bridge/node-floor.js';
 import { recordLimitPoints } from './usage-records.js';
@@ -424,7 +425,7 @@ async function signInInto(id: string, home: string, deps: CodexAccountDeps): Pro
     throw new CodexAccountError('prepare_failed', 'Could not prepare a folder for the new account.', 500);
   }
   const { env, pre } = codexArgsEnv(id, deps);
-  const login = await (deps.run ?? defaultCodexRunner)('codex', [...pre, 'login'], { env, timeoutMs: LOGIN_TIMEOUT_MS, keepStdout: false });
+  const login = await (deps.run ?? defaultCodexRunner)(deps.run ? 'codex' : codexCommand({ home }), [...pre, 'login'], { env: codexChildEnv(env), timeoutMs: LOGIN_TIMEOUT_MS, keepStdout: false });
   if (!login.spawned) { removeCodexHome(id, home); throw new CodexAccountError('spawn_failed', 'Could not start the sign-in: the Codex CLI did not launch.', 500); }
   if (login.timedOut) { removeCodexHome(id, home); throw new CodexAccountError('login_timeout', 'The sign-in timed out. Nothing was saved; you can try again.', 504); }
   if (!codexAccountSignedIn(id, home)) { removeCodexHome(id, home); throw new CodexAccountError('login_incomplete', 'The sign-in did not complete. Nothing was saved; you can try again.', 409); }
@@ -588,7 +589,7 @@ export async function removeCodexAccount(id: string, deps: CodexAccountDeps = {}
   const confined = confinedCodexHome(id, home);
   if (confined && codexAccountSignedIn(id, home)) {
     const { env, pre } = codexArgsEnv(id, deps);
-    await (deps.run ?? defaultCodexRunner)('codex', [...pre, 'logout'], { env, timeoutMs: 30_000, keepStdout: false });
+    await (deps.run ?? defaultCodexRunner)(deps.run ? 'codex' : codexCommand({ home }), [...pre, 'logout'], { env: codexChildEnv(env), timeoutMs: 30_000, keepStdout: false });
   }
   removeCodexHome(id, home);
   // Read again after the (slow) logout: a row added meanwhile must survive this write.

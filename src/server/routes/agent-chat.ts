@@ -129,6 +129,7 @@ import { HEADLESS_ENVELOPES } from '../../lib/t3-bridge/headless-envelope.js';
 import { pruneToolHandoffSeeds } from '../../lib/t3-bridge/tool-handoff.js';
 import { NO_ENV_GATE, codexEnvGateReady } from '../../lib/t3-bridge/env-gate.js';
 import { bridgeNode, nodeTooOldMessage } from '../../lib/t3-bridge/node-floor.js';
+import { codexStartProblem } from '../../lib/codex-bin.js';
 import { readAgentUiSettings } from './launcher.js';
 import { linkedWritableRoots } from '../../lib/t3-bridge/roots.js';
 import { CODEX_THREAD_RE } from '../../lib/t3-bridge/codex-threads.js';
@@ -2316,11 +2317,13 @@ export function startChatSession(
   const bridgeNodePath = bridgeTool ? bridgeNode() : null;
   // A Super child runs with nobody watching it: no live write gate, no child on Codex.
   const noEnvGate = bridgeTool === 'codex' && !!opts.leanMcp && !codexEnvGateReady(projectRoot);
-  const bridgeScript = bridgeTool && bridgeNodePath && !noEnvGate
+  // Said before anything starts: a chat on a Codex that cannot start would only end in silence.
+  const codexMissing = bridgeTool === 'codex' ? codexStartProblem() : null;
+  const bridgeScript = bridgeTool && bridgeNodePath && !noEnvGate && !codexMissing
     ? bridgeChatScript({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : opts.leanMcp ? HEADLESS_ENVELOPES['super-child'].codex ?? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(leanMcpPath ? { mcpConfig: leanMcpPath } : {}), ...(opts.leanMcp ? { strictMcp: true } : {}), ...(codexAccountId ? { account: codexAccountId } : {}) })
     : null;
   if (bridgeTool && !bridgeScript) {
-    const why = noEnvGate ? NO_ENV_GATE : bridgeNodePath ? `${bridgeTool} could not start: the dreamcontext install path is not shell-safe.` : nodeTooOldMessage(bridgeTool === 'codex' ? 'Codex' : 'The T3 Claude engine');
+    const why = noEnvGate ? NO_ENV_GATE : bridgeNodePath && codexMissing ? codexMissing : bridgeNodePath ? `${bridgeTool} could not start: the dreamcontext install path is not shell-safe.` : nodeTooOldMessage(bridgeTool === 'codex' ? 'Codex' : 'The T3 Claude engine');
     try { ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', message: why })); } catch { /* gone */ }
     try { ws.close(); } catch { /* already closed */ }
     releaseHeld();
