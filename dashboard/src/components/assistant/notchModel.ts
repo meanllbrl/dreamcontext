@@ -45,6 +45,41 @@ export function pillBubbles(r: Rollup): PillBubble[] {
   return bubbles.filter((b) => b.count > 0);
 }
 
+/**
+ * THE QUIET PILL (owner, 2026-11-01: "notch'u büyütmek yerine minimal kullanıp elegant kalmak").
+ * Folded with no peek, the pill draws ONE mark beside the camera housing and no words, most
+ * urgent first: something waits on the owner (a prompt or a proposal) → the filled count;
+ * anything at work (a chat's turn, an automation, the Assistant's own turn) → a breathing dot;
+ * unread news only → a dim dot; nothing → nothing, and the notch keeps the hardware's own size.
+ * The words come back only when the island is wide anyway: a peek, a hover, the open panel.
+ */
+export type QuietSignal =
+  | { kind: 'asking'; count: number }
+  | { kind: 'working' }
+  | { kind: 'unread' }
+  | null;
+
+export function quietSignal(r: Rollup, x: { running: number; inbox: number; busy: boolean }): QuietSignal {
+  const waits = r.asking + r.proposals;
+  if (waits > 0) return { kind: 'asking', count: waits };
+  if (r.working + r.starting > 0 || x.running > 0 || x.busy) return { kind: 'working' };
+  if (x.inbox > 0) return { kind: 'unread' };
+  return null;
+}
+
+/** One quiet ear beside the housing, logical px: room for a 16px mark and its ring. */
+export const QUIET_EAR_W = 30;
+
+/** The quiet ear's width: 0 when there is nothing to say, so the island IS the housing. */
+export function quietEarWidth(s: QuietSignal): number {
+  return s ? QUIET_EAR_W : 0;
+}
+
+/** A count in a 16px bead: "9+" past nine, so the bead never outgrows its ear. */
+export function beadCount(n: number): string {
+  return n > 9 ? '9+' : String(n);
+}
+
 /** The same counts in words, for the aria-label and the tooltip: "1 working, 4 idle, 5 stale". */
 export function pillLabel(r: Rollup): string {
   const parts: string[] = [];

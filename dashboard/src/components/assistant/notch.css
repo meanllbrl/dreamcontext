@@ -976,3 +976,48 @@ html:has(.dc-notch) #root {
   .dc-handoff[data-phase='running'] .dc-glance__dot,
   .dc-peek__row .dc-glance__dot { animation: none; }
 }
+
+/* ── THE QUIET PILL (Notch.tsx `quiet`, notchModel `quietSignal`) ─────────────────────────────
+   Owner, 2026-11-01: "notch'u büyütmek yerine minimal kullanıp elegant kalmak lazım". Folded
+   with no peek, the island is the housing plus one 30px ear each side (none at all when there
+   is nothing to say): the face on the left, ONE mark on the right, no words. Colour says the
+   state (green at work, the tab strip's filled waiting bead), motion says it is alive (the dot
+   breathes) — one channel each. The words return when the island is wide anyway: a peek, a
+   hover, the open panel. */
+.dc-notch--quiet .dc-notch__pill { padding: 0; }
+.dc-notch--quiet .dc-notch__ear { justify-content: center; }
+.dc-notch--quiet .dc-notch__avatar {
+  width: var(--space-4);
+  height: var(--space-4);
+}
+.dc-notch--quiet .dc-notch__avatar--initial { font-size: var(--font-size-2xs); }
+/* The dot already says "at work": the busy hairline would say it twice. */
+.dc-notch--quiet.dc-notch--busy .dc-notch__pill::after { content: none; }
+/* The mark carries the mood: no amber pool under the housing beside a pink bead (two colours,
+   one message). Waiting, the face's ring takes the bead's colour, thin, so the two read as one. */
+.dc-notch--quiet .dc-notch__pill { background-image: none; }
+.dc-notch--quiet.dc-notch--attention .dc-notch__face::after {
+  box-shadow: 0 0 0 1.5px var(--notch-surface), 0 0 0 3px var(--mood-waiting);
+}
+
+.dc-notch__dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-success);
+  animation: var(--dc-motion-status-name, dc-notch-breathe) 1.6s ease-in-out infinite;
+  animation-play-state: var(--dc-motion-play, running);
+}
+/* Only unread news: present, not urgent, not alive. */
+.dc-notch__dot[data-kind='unread'] {
+  background: var(--color-text-tertiary);
+  animation: none;
+}
+@keyframes dc-notch-breathe {
+  0%, 100% { opacity: 0.4; transform: scale(0.75); }
+  50% { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dc-notch__dot { animation: none; }
+}

@@ -20,7 +20,7 @@ import {
   EMPTY_INBOX, EMPTY_ROLLUP, assistantActivityLine, enqueuePeeks, freshStarts, handoffPhase, notchMood, pillBubbles, pillHeadline, pillLabel,
   PEEK_TTL_MS, noticeKey, offScreenAsks, peekTtlMs, permissionWord, readGlance, readHandoffs, readInbox, readRollup, recentFinishedVault, runKey,
   type ActivityItem, type GlanceChat, type Handoff, type Inbox, type Rollup,
-  createRawGate, startsFresh,
+  createRawGate, startsFresh, QUIET_EAR_W, beadCount, quietEarWidth, quietSignal,
 } from './notchModel';
 import { createSessionStarter } from './sessionStarter';
 import { readingTimeMs } from '../../lib/notchCue';
@@ -71,11 +71,18 @@ import './notch.css';
 
 export const ASSISTANT_VAULT = '__assistant__';
 
-/** Collapsed pill without a notch, logical px (assistant.rs seats the first frame at this). */
-const PILL_W = 300;
+/** Collapsed pill's height without a notch, logical px (assistant.rs seats the first frame at
+ *  300 x 38 before this page re-seats it to the quiet pill). */
 const PILL_H = 38;
-/** One "ear" beside the camera housing, logical px. */
-const EAR_W = 130;
+/** The quiet pill without a notch (an external display): one quiet ear each side of nothing. */
+const NO_NOTCH_W = 4 * QUIET_EAR_W;
+/**
+ * The folded pill's ear width right now (notchModel `quietEarWidth`): 0 with nothing to say, so
+ * the island is exactly the camera housing; one quiet ear while a mark is drawn. Module state,
+ * like `switchedOff`: every seat (pill, peek, fold) reads the same frame. The component keeps it
+ * current and re-seats when it changes.
+ */
+let restEarW = 0;
 /** The open notch: a small island grown out of the housing, never a window-sized sheet. */
 /** Grown 2026-09-27 (owner: "mesajları görmek çok zor") from 460x400. */
 const PANEL_W = 580;
@@ -177,7 +184,7 @@ function pillHeight(geo: Geometry | null): number {
 /** The notch seat's frame for a state. The pill spans the camera housing plus two "ears". */
 function notchFrame(expanded: boolean, geo: Geometry | null): { width: number; height: number; x?: number; y?: number } {
   const hasNotch = !!geo && geo.notch_width > 0;
-  const earsW = hasNotch ? geo!.notch_width + 2 * EAR_W : PILL_W;
+  const earsW = hasNotch ? geo!.notch_width + 2 * restEarW : NO_NOTCH_W;
   const width = expanded ? Math.max(PANEL_W, earsW) : earsW;
   const height = expanded ? PANEL_H : pillHeight(geo);
   return geo ? { width, height, x: geo.x + (geo.width - width) / 2, y: geo.y } : { width, height };
@@ -1637,12 +1644,27 @@ export function Notch() {
   const hotkeyMode = status?.config?.hotkey?.mode === 'toggle' ? 'toggle' : 'hold';
   // Folding, the island is still drawn open until its shrink is over (and the panel stays mounted either way).
   const drawnOpen = expanded || drawsOpen(motion);
+  // THE QUIET PILL (notchModel `quietSignal`): folded with no peek, one mark and no words. The
+  // island is wide only when it has something to show — a peek, the open panel, a window.
+  const quiet = !drawnOpen && !peekShown && !popped;
+  const signal = quietSignal(rollup, { running: inbox.running.length, inbox: inboxCount, busy });
+  const earW = quietEarWidth(signal);
+  // With nothing to say the island is the housing itself; without a housing there is nothing
+  // to hide behind, so the face stays to give the pill something to be.
+  const showFace = !quiet || !!signal || !hasNotch;
+  // The ear grows or folds with its mark. Only the resting pill is re-seated here: a peek, an
+  // open panel or a fold read `restEarW` when they land on the pill.
+  useEffect(() => {
+    if (restEarW === earW) return;
+    restEarW = earW;
+    if (!expandedRef.current && seatRef.current === 'notch' && !peekShown && motion === 'closed') void seat(false, geo);
+  }, [earW, peekShown, motion, geo]);
 
   return (
     <div
       ref={rootRef}
       data-mood={mood}
-      className={`dc-notch surface-night${drawnOpen ? ' dc-notch--open' : ''}${motion === 'opening' || motion === 'folding' ? ' dc-notch--moving' : ''}${popped ? ' dc-notch--window' : ''}${attention || rollup.asking > 0 ? ' dc-notch--attention' : ''}${active && (popped || expanded) ? ' dc-notch--working' : ''}${peekShown ? ' dc-notch--peek' : ''}${(busyCount > 0 || busy) && !expanded ? ' dc-notch--busy' : ''}`}
+      className={`dc-notch surface-night${drawnOpen ? ' dc-notch--open' : ''}${motion === 'opening' || motion === 'folding' ? ' dc-notch--moving' : ''}${popped ? ' dc-notch--window' : ''}${attention || rollup.asking > 0 ? ' dc-notch--attention' : ''}${active && (popped || expanded) ? ' dc-notch--working' : ''}${peekShown ? ' dc-notch--peek' : ''}${(busyCount > 0 || busy) && !expanded ? ' dc-notch--busy' : ''}${quiet ? ' dc-notch--quiet' : ''}`}
       onPointerEnter={onHoverIn}
       onPointerLeave={onHoverOut}
       onPointerDown={engage}
@@ -1664,12 +1686,17 @@ export function Notch() {
         aria-expanded={expanded}
       >
         <span className="dc-notch__ear dc-notch__ear--left">
-          <span className="dc-notch__face">
-            {status?.avatar
-              ? <img className="dc-notch__avatar" src={status.avatar} alt="" />
-              : <span className="dc-notch__avatar dc-notch__avatar--initial">{name.slice(0, 1)}</span>}
-          </span>
-          <span className="dc-notch__name">{pillText}</span>
+          {showFace && (
+            <span className="dc-notch__face">
+              {status?.avatar
+                ? <img className="dc-notch__avatar" src={status.avatar} alt="" />
+                : <span className="dc-notch__avatar dc-notch__avatar--initial">{name.slice(0, 1)}</span>}
+            </span>
+          )}
+          {/* Words only in the open panel (or popped out). Quiet there is nothing to say them
+              with; peeking, the card under this row already says it (owner, 2026-11-01: the
+              row said "tilki needs y…" above "tilki needs permission"). */}
+          {(drawnOpen || popped) && <span className="dc-notch__name">{pillText}</span>}
         </span>
         {/* Always drawn: it is the grid's middle column (0 wide without a camera housing), so
             the right ear keeps the right column instead of dropping into the middle one. */}
@@ -1683,6 +1710,13 @@ export function Notch() {
           aria-label={`${label}${inbox.running.length ? `, ${inbox.running.length} teammate${inbox.running.length === 1 ? '' : 's'} working` : ''}${inboxCount ? `, ${inboxCount} notification${inboxCount === 1 ? '' : 's'}` : ''}`}
           title={label}
         >
+          {quiet ? (
+            signal?.kind === 'asking' ? (
+              <span className="project-tab-bubble dc-notch__bead" data-state="asking" aria-hidden="true">
+                <span className="project-tab-bubble-n">{beadCount(signal.count)}</span>
+              </span>
+            ) : signal ? <span className="dc-notch__dot" data-kind={signal.kind} aria-hidden="true" /> : null
+          ) : (<>
           {bubbles.length > 0 && (
             <span className="project-tab-bubbles dc-notch__bubbles" aria-hidden="true">
               {bubbles.map(({ state, count }) => (
@@ -1703,6 +1737,7 @@ export function Notch() {
             </span>
           )}
           {inboxCount > 0 && <span className="dc-notch__inbox" aria-hidden="true">{inboxCount}</span>}
+          </>)}
         </span>
       </button>
 
