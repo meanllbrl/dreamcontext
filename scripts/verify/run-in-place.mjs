@@ -197,6 +197,9 @@ async function macPass(name, viewport) {
 const transcript = () => join(HOME, '.claude', 'projects', PROJ.replace(/[^a-zA-Z0-9]/g, '-'), `${BOUND}.jsonl`);
 const turnsResumed = () => (readFileSync(transcript(), 'utf-8').match(/"RESUMED /g) ?? []).length;
 
+/** The send button: Enter only makes a new line on a phone. */
+const send = async (p) => { await p.locator('.aiteam-stage .chat-cmp-send.is-enabled:visible').first().click(); };
+
 /** Continue on the bound run: the pin, a firing routine, the send, the same session, the sentence. */
 async function continuePass(name, v) {
   const { p } = v;
@@ -213,7 +216,7 @@ async function continuePass(name, v) {
   check(`${name}: a routine firing does not move the pin`, (await p.locator(`[data-run-pin="${key(runs.bound)}"]`).count()) === 1 && (await box.inputValue()) === `please look again ${name}`);
   await v.shot('5-pin');
   const before = turnsResumed();
-  await box.press('Enter');
+  await send(p);
   check(`${name}: the send carries the captured run`, await until(() => replies.length > 0) && replies[0].runId === runs.bound, JSON.stringify(replies));
   check(`${name}: Continue resumes the SAME session`, await until(() => turnsResumed() > before, 20000));
   check(`${name}: the box is empty after the send`, (await box.inputValue()) === '');
@@ -223,7 +226,7 @@ async function continuePass(name, v) {
   // A refusal: the same pin, the same box.
   seed('approval');
   await box.fill(`refused ${name}`);
-  await box.press('Enter');
+  await send(p);
   check(`${name}: a refusal shows the server's sentence`, await until(async () => (await p.locator('[data-run-pin-refused]').innerText()).includes('waiting for you to approve'), 10000));
   check(`${name}: the words go back in the box`, await until(async () => (await box.inputValue()).includes(`refused ${name}`)));
   await v.shot('6-refused');
@@ -246,11 +249,6 @@ try {
   console.log('\n── Continue, on the Mac');
   const { p } = desk;
   const text = () => p.locator('.aiteam-stage').first().innerText();
-  await continuePass('1440', desk);
-  await continuePass('390', small);
-  await small.ctx.close();
-  const box = p.locator('.aiteam-stage .chat-cmp-input').first();
-
   console.log('\n── A question from the flow, on the Mac');
   const answer = async (page, name, words, pick) => {
     const shelf = page.locator('[data-stage-questions]');
@@ -264,6 +262,10 @@ try {
     check(`${name}: answered from the flow`, await until(async () => (await shelf.count()) === 0, 12000));
   };
   await answer(p, 'mac-1440', 'Which line should I watch?', 'Line A');
+  // After the question: the route refuses on the oldest question open, and that one takes a reply.
+  await continuePass('1440', desk);
+  await continuePass('390', small);
+  await small.ctx.close();
 
   console.log('\n── Phone listener');
   const qr = (await api('POST', '/api/handsfree/mac/qr')).json.url;
