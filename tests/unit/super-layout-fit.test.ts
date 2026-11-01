@@ -44,7 +44,7 @@ function expectSound(p: StagePlan, cs: readonly SuperContainer[], label: string)
   const shown = cs.filter((c) => c.place === 'float' && !c.min).map((c) => c.id);
   for (const id of shown) expect(p.cards[id]?.where === 'float' || p.others.includes(id), `${label}: ${id} is nowhere`).toBe(true);
   // The Others stack and the agenda's pill never sit under the centre.
-  if (p.others.length) expect(overlaps(p.othersRect, p.centre), `${label}: Others under the centre`).toBe(false);
+  if (p.others.length && !p.othersInHead) expect(overlaps(p.othersRect, p.centre), `${label}: Others under the centre`).toBe(false);
 }
 
 describe('the centre takes the stage\'s height in a window (problem 1)', () => {

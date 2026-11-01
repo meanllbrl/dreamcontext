@@ -12,7 +12,8 @@
  * page when told to. The owner's moves go through the window's own route (POST /api/super/layout):
  * the agenda sized medium, two cards dropped on nearly one spot, one card put in Others.
  *
- * WHAT IT PROVES, at 1140x710, 1440x900 and 1920x1080: (1) the centre chat runs the stage's
+ * WHAT IT PROVES, at 1108x932, 900x1000, 1140x710, 1280x720, 1440x900, 1920x1080 and 2560x1440:
+ * the bare stage's chat runs margin to margin (metrics in $OUT/<tag>-<engine>-metrics.json). (1) the centre chat runs the stage's
  * height, margin to margin; (2) the agenda is drawn no wider than leaves the centre its 560 px
  * floor in the middle (the 1x1 counts on a small window); (3) no floating card overlaps another or the centre, none
  * is off the stage, and every card is on the stage or in Others; (4) side by side, the web card's
@@ -274,6 +275,9 @@ ${Array.from({ length: 12 }, (_, i) => `<div style="height:90px;border-radius:12
 
 // The owner's window (~1140x710 asked; his screenshot measures as a ~1280x800 CSS window), 1440, 1920.
 const WINDOWS = [[1140, 710], [1280, 800], [1440, 900], [1920, 1080]];
+/** Height by proportion (owner 2026-11-01): tall-narrow, short-wide and ordinary windows. */
+const HEIGHT_WINDOWS = [[1108, 932], [900, 1000], [1140, 710], [1280, 720], [1440, 900], [1920, 1080], [2560, 1440]];
+const NARROW_STAGE = 1040;
 const ASPECT = { phone: 390 / 844, tablet: 820 / 1180, desktop: 1440 / 900 };
 
 /** The stage as drawn: its box, the centre's, every card's (float or not), Others. */
@@ -288,7 +292,8 @@ const measure = (page) => page.evaluate(() => {
   // A group is one floating tile on the stage, like a card.
   for (const g of st.querySelectorAll('[data-testid="super-group"]')) cards.push({ id: g.dataset.groupId, where: g.dataset.where, group: true, ...rel(g.getBoundingClientRect()) });
   const others = st.querySelector('[data-testid="super-others"]');
-  const othersCount = Number(others?.querySelector('.super-others-count')?.textContent || 0);
+  // The pill's count, or the chat head's button when no room is left beside the chat.
+  const othersCount = Number((others?.querySelector('.super-others-count') ?? st.querySelector('[data-testid="super-others-open"] .super-agenda-open-n'))?.textContent || 0);
   return { stage: { w: Math.round(s.width), h: Math.round(s.height) }, centre, cards, others: others ? rel(others.getBoundingClientRect()) : null, othersCount };
 });
 const hit = (a, b, gap = 0) => a.x < b.x + b.w + gap - 1 && b.x < a.x + a.w + gap - 1 && a.y < b.y + b.h + gap - 1 && b.y < a.y + a.h + gap - 1;
@@ -331,8 +336,15 @@ try {
   if (!(await page.locator('.chat-cmp-input:visible').count())) await page.getByRole('button', { name: /Start chat/ }).click().catch(() => {});
   ok('a chat opens', await until(page, async () => (await page.locator('.chat-cmp-input:visible').count()) > 0));
   await sleep(1500);
-  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+  // The shell's sidebar row (0.36.3); an older build still has the chat's hand-over button.
+  const handover = page.locator('[data-testid="super-handover-btn"]:visible').first();
+  if (await handover.count()) await handover.click();
+  else await page.locator('aside, nav').getByText('Super Agent', { exact: true }).first().click();
   ok('the surface shows', await until(page, async () => (await page.locator('[data-testid="super-surface"]:visible').count()) > 0));
+  await until(page, async () => (await superComposer(page).count()) > 0);
+  if (!(await handover.count())) {
+    for (const c of ['super open task ship-the-share-sheet', 'super open image pics/release-diagram.png', 'super open image pics/onboarding-flow.png', 'super open whiteboard share-flow', 'super open task import-bank-csv']) await agent(page, c);
+  }
   ok('the super agent opened its five cards', await until(page, async () => record().containers.filter((c) => c.kind !== 'agenda').length >= 5, 60000));
   await settle(page);
   const url = `http://127.0.0.1:${sitePort}/`;
@@ -355,7 +367,8 @@ try {
   ok('the stage floats', await until(page, async () => (await page.locator('[data-testid="super-surface"][data-mode="float"]').count()) === 1, 8000));
   await page.waitForTimeout(1500);
 
-  for (const [w, h] of WINDOWS) {
+  const floatWindows = [...new Map([...WINDOWS, ...HEIGHT_WINDOWS].map((x) => [x.join('x'), x])).values()];
+  for (const [w, h] of floatWindows) {
     const name = `${w}x${h}`;
     console.log(`\n── float at ${name}`);
     await page.setViewportSize({ width: w, height: h });
@@ -370,8 +383,8 @@ try {
     const a = m.cards.find((c) => c.id === ag);
     // The agenda (owner 2026-10-29, "Agenda büyümüyor?"): as wide as leaves the centre its 560 px
     // floor in the middle; the 1x1 counts only when even that does not fit.
-    check(`${name}: the agenda is on the stage and leaves the centre its floor, centred (share ${Math.round(share)} px)`, a?.where === 'float' && (a.w <= 160 || (m.centre.w >= 560 - 2 && Math.abs(m.centre.x + m.centre.w / 2 - m.stage.w / 2) <= 2)), JSON.stringify({ centre: m.centre, agenda: a }));
-    if (m.stage.w < 1300) check(`${name}: on a small window the agenda is the 1x1 counts`, a?.size === 'small', JSON.stringify(a));
+    if (m.stage.w >= NARROW_STAGE) check(`${name}: the agenda is on the stage and leaves the centre its floor, centred (share ${Math.round(share)} px)`, a?.where === 'float' && (a.w <= 160 || (m.centre.w >= 560 - 2 && Math.abs(m.centre.x + m.centre.w / 2 - m.stage.w / 2) <= 2)), JSON.stringify({ centre: m.centre, agenda: a }));
+    if (m.stage.w >= NARROW_STAGE && m.stage.w < 1300) check(`${name}: on a small window the agenda is the 1x1 counts`, a?.size === 'small', JSON.stringify(a));
     const bad = [];
     for (const c of fl) {
       if (hit(c, m.centre)) bad.push(`${c.id} over the centre`);
@@ -387,6 +400,61 @@ try {
     if (m.others) check(`${name}: the Others stack sits beside the centre, not under it`, !hit(m.others, m.centre), JSON.stringify(m.others));
   }
 
+  // Only the chat, the Others pill and the agenda's pill: the owner's tall-narrow window.
+  console.log('\n── the bare stage: every card in Others, the agenda minimised');
+  const grouped0 = new Set((record().groups ?? []).flatMap((g) => g.cards));
+  const putAway = [...record().containers.filter((c) => c.kind !== 'agenda' && c.place !== 'others' && !grouped0.has(c.id)).map((c) => c.id), ...(record().groups ?? []).map((g) => g.id)];
+  ok('owner: every card put in Others', (await owner(page, { cards: putAway.map((id) => ({ id, place: 'others' })) })) === 200);
+  ok('owner: the agenda minimised', (await owner(page, { agenda: 'min' })) === 200);
+  const metrics = [];
+  for (const [w, h] of HEIGHT_WINDOWS) {
+    const name = `${w}x${h}`;
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(1000);
+    await settle(page);
+    const m = await measure(page);
+    const head = await page.locator('[data-testid="super-others-open"]:visible').count();
+    const pillAt = page.locator('[data-testid="super-agenda-pill"]:visible');
+    const pill = (await pillAt.count()) ? await pillAt.boundingBox() : null;
+    const agendaBtn = await page.locator('[data-testid="super-centre"] .super-agenda-open:not(.super-others-open):visible').count();
+    const row = { window: name, stage: `${m.stage.w}x${m.stage.h}`, top: m.centre.y, bottom: m.stage.h - m.centre.y - m.centre.h, left: m.centre.x, right: m.stage.w - m.centre.x - m.centre.w, chatH: m.centre.h, ratio: +(m.centre.h / m.stage.h).toFixed(3), others: m.others ? 'pill' : head ? 'head' : 'none', agenda: pill ? 'pill' : agendaBtn ? 'head' : 'none' };
+    metrics.push(row);
+    console.log(`  · ${JSON.stringify(row)}`);
+    await shot(page, `${name}-bare`);
+    check(`${name}: bare stage, top = bottom = 24`, row.top === 24 && row.bottom === 24, JSON.stringify(row));
+    // A wider stage's chat leans right, beside the shell's drawer (leanRight): only the margins hold there.
+    check(`${name}: bare stage, the sides keep the margin (equal on a narrow stage)`, row.left >= 24 && row.right >= 24 && (m.stage.w >= NARROW_STAGE || row.left === row.right), JSON.stringify(row));
+    check(`${name}: Others is reachable and clear of the chat`, row.others === 'head' || (row.others === 'pill' && !hit(m.others, m.centre)), JSON.stringify({ row, others: m.others }));
+    check(`${name}: the agenda is reachable and clear of the chat`, row.agenda === 'head' || (row.agenda === 'pill' && !hit({ x: pill.x, y: pill.y, w: pill.width, h: pill.height }, { ...m.centre, x: m.centre.x + (await page.locator('[data-testid="super-surface"]').boundingBox()).x, y: m.centre.y + (await page.locator('[data-testid="super-surface"]').boundingBox()).y })), JSON.stringify(row));
+  }
+  writeFileSync(join(OUT, `${TAG}-${ENGINE}-metrics.json`), `${JSON.stringify(metrics, null, 2)}\n`);
+  // The head's button opens the same panel as the pill, on the owner's window.
+  await page.setViewportSize({ width: 1108, height: 932 });
+  await page.waitForTimeout(1000);
+  await settle(page);
+  const headBtn = page.locator('[data-testid="super-others-open"]:visible');
+  if (await headBtn.count()) {
+    await headBtn.click();
+    await page.waitForTimeout(600);
+    check('1108x932: the head\'s Others opens its panel', (await page.locator('.super-group-panel:visible').count()) === 1);
+    await shot(page, '1108x932-bare-others-open');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+  } else check('1108x932: the head has an Others button', false);
+  // The phone-width stage is its own task: it only must not break.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(1000);
+  await settle(page);
+  const ph = await measure(page);
+  console.log(`  · phone 390x844: stage ${ph.stage.w}x${ph.stage.h}, centre ${JSON.stringify(ph.centre)}`);
+  await shot(page, '390x844-bare');
+  check('390x844: the phone stage is still the chat, edge to edge', ph.centre.x === 0 && ph.centre.y === 0 && ph.centre.w === ph.stage.w && ph.centre.h === ph.stage.h, JSON.stringify(ph));
+  if (process.env.HEIGHT_ONLY) throw new Error('HEIGHT_ONLY: stop here');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(800);
+  ok('owner: the cards back on the stage', (await owner(page, { cards: putAway.map((id) => ({ id, place: 'float' })) })) === 200);
+  ok('owner: the agenda back', (await owner(page, { agenda: 'open' })) === 200);
+
   console.log('\n── side by side: the web card\'s device width reshapes the card');
   await page.setViewportSize({ width: 1440, height: 900 });
   await settle(page);
@@ -401,6 +469,9 @@ try {
     await page.setViewportSize({ width: w, height: h });
     await page.waitForTimeout(1000);
     await settle(page);
+    // A narrow stage opens side by side as a sheet: there is no split to reshape (the shell's
+    // sidebar leaves 1140 and 1280 windows under the line since 0.36.3).
+    if ((await measure(page)).stage.w < NARROW_STAGE) { console.log(`  · ${name}: narrow stage, a sheet`); continue; }
     const widths = {};
     for (const d of ['phone', 'tablet', 'desktop']) {
       await hoverCard(page, web);

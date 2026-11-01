@@ -37,8 +37,9 @@ export function AgendaButton({ state, look, onOpen }: { state: SuperStateView; l
 }
 
 /**
- * Others in the centre's head, on a phone-width stage (owner 2026-10-31: the pill under the chat
- * cost the height): the same panel, opened beside Agenda, its count on the button.
+ * Others in the centre's head, wherever the chat leaves its pill no room beside it (owner
+ * 2026-10-31 on a phone, 2026-11-01 on any stage: the pill under the chat cost the height): the
+ * same panel, opened beside Agenda, its count on the button.
  */
 export function OthersButton({ count, asking, open, buttonRef, onToggle }: {
   count: number;

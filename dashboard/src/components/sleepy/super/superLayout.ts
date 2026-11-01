@@ -36,9 +36,9 @@ export const STAGE = {
   MARGIN: 24,
   GAP: 24,
   /** The two thin bands above and below the centre: the job bar on top, dock + Others below.
-   *  The top one is always reserved; the bottom one only while it holds something (terminals in
-   *  the dock, a card in Others) or the stage is narrow: otherwise the centre and its columns run
-   *  down to the margin (owner 2026-10-21: the centre takes the height, its width unchanged). */
+   *  Side cards keep both; the floating chat gives up each one unless it holds something (the
+   *  queue pill on top; the terminals' dock or the first-run hint below): no band is decoration
+   *  (owner 2026-10-21, 2026-11-01). */
   BAND: 40,
   /** The queue pill's widest: no card is ever in the top band, so it may outgrow the centre and
    *  keep one row (a who, the text, two or three buttons) inside the band. */
@@ -207,6 +207,11 @@ export interface StagePlan {
   /** The edge-to-edge chat of a phone-width floating stage ({@link PHONE_STAGE_PX}): Others and
    *  the agenda are reached from the chat's head, so neither draws its pill. */
   phone: boolean;
+  /** No room beside the chat (owner 2026-11-01: a pill must not cost the chat its height): Others
+   *  is its button in the chat's head, the same panel. */
+  othersInHead: boolean;
+  /** The same for the minimised agenda: its pill is not drawn, the head's Agenda button stands in. */
+  agendaInHead: boolean;
   mode: SuperView['mode'];
   centre: Rect;
   cards: Record<string, CardPlan>;
@@ -1121,6 +1126,8 @@ function planWith(
   const liveIds = new Set(list.filter((c) => c.live).map((c) => c.id));
   const cards: Record<string, CardPlan> = {};
   const others: string[] = [];
+  /** The corners that found no room beside the chat, on a floating stage. */
+  const inHead = { others: false, agenda: false };
   const toOthers = (c: StageItem) => {
     cards[c.id] = { id: c.id, rect: f.othersRect, where: 'others', shape: c.shape, owner: false, z: z.get(c.id) ?? 0 };
     others.push(c.id);
@@ -1131,7 +1138,7 @@ function planWith(
     // narrow stage, or one the owner put away himself).
     others.sort((a, b) => Number(liveIds.has(b)) - Number(liveIds.has(a)) || (z.get(a) ?? 0) - (z.get(b) ?? 0));
     return {
-      width: f.width, height: f.height, narrow, phone, mode, centre, cards, others,
+      width: f.width, height: f.height, narrow, phone, othersInHead: phone || inHead.others, agendaInHead: phone || inHead.agenda, mode, centre, cards, others,
       othersRect: f.othersRect, othersZone: f.othersZone, agendaPill: f.agendaPill, pill: opts.agendaPill ?? null, ...bands(f, centre, !!opts.agendaPill, extra.controls), free: f.free,
       centreWidth, unit, order: list.map((c) => c.id), orbit, layout: null, chat: 'column', ...(more ? { more } : {}), ...(railPlan ? { rail: railPlan } : {}), ...extra,
     };
@@ -1389,7 +1396,15 @@ function planWith(
   // ── narrow: the centre takes the width, every card is in Others ──
   if (narrow) {
     for (const c of list) toOthers(c);
-    return finish({ ...f.content }, f.content.width, 'float');
+    if (phone) return finish({ ...f.content }, f.content.width, 'float');
+    // No side room at all, whatever the window's proportions: both corners go to the chat's head
+    // and the chat runs margin to margin. Only the terminals' dock or the first-run hint keeps the
+    // bottom band, and neither is a reason to give up the top.
+    const docked = (list.length === 0 && !opts.agendaPill) || (opts.terminals ?? 0) > 0;
+    inHead.others = inHead.agenda = !docked;
+    const top = opts.queueUp ? f.content.y : STAGE.MARGIN;
+    const bottom = docked ? f.content.y + f.content.height : f.height - STAGE.MARGIN;
+    return finish({ ...f.content, y: top, height: Math.max(0, bottom - top) }, f.content.width, 'float');
   }
 
   // ── float ──
@@ -1440,21 +1455,27 @@ function planWith(
   // from the top margin to the bottom margin, its width unchanged, the side cards where they were.
   // The top band is kept only while the queue pill shows there. The bottom band's corners (the
   // Others stack, the agenda's pill) narrow into the side room beside the centre, down to
-  // OTHERS_MIN_W, so they never take the centre's height; it keeps the band only while the
-  // terminals dock runs under it, a corner cannot fit beside it, or the stage is empty (its hint).
+  // OTHERS_MIN_W; a corner with no room there moves to the chat's head (owner 2026-11-01, a centre
+  // leaning right leaves none), so neither ever takes the centre's height. It keeps the bottom
+  // band only while the terminals dock runs under it or the stage is empty (its hint).
   const sc = sol.centre;
   const rightRoom = f.width - STAGE.MARGIN - (sc.x + sc.width + STAGE.GAP);
   const leftRoom = sc.x - STAGE.GAP - STAGE.MARGIN;
-  const cornersFit = rightRoom >= STAGE.OTHERS_MIN_W - 1e-9 && (!opts.agendaPill || leftRoom >= STAGE.OTHERS_MIN_W - 1e-9);
-  const tallBottom = list.length > 0 && !(opts.terminals ?? 0) && cornersFit;
+  const othersFit = rightRoom >= STAGE.OTHERS_MIN_W - 1e-9;
+  const pillFits = leftRoom >= STAGE.OTHERS_MIN_W - 1e-9;
+  // A minimised agenda is out of the list but the stage is not empty: no hint, no band.
+  const tallBottom = (list.length > 0 || !!opts.agendaPill) && !(opts.terminals ?? 0);
   if (tallBottom) {
-    const ow = Math.min(STAGE.OTHERS_W, rightRoom);
-    f.othersRect = { ...f.othersRect, x: f.width - STAGE.MARGIN - ow, width: ow };
-    const zx = Math.max(f.othersZone.x, sc.x + sc.width + STAGE.GAP);
+    inHead.others = !othersFit;
+    inHead.agenda = !!opts.agendaPill && !pillFits;
+    if (othersFit) f.othersRect = { ...f.othersRect, x: f.width - STAGE.MARGIN - Math.min(STAGE.OTHERS_W, rightRoom), width: Math.min(STAGE.OTHERS_W, rightRoom) };
+    if (pillFits) f.agendaPill = { ...f.agendaPill, width: Math.min(STAGE.AGENDA_PILL_W, leftRoom) };
+    // The drop corner stays beside the chat (a pointer over the chat asks about the card): with
+    // no stack there it still holds the strip to the stage's edge.
+    const zx = Math.max(f.othersZone.x, sc.x + sc.width + (othersFit ? STAGE.GAP : 0));
     f.othersZone = { ...f.othersZone, x: zx, width: f.width - zx };
-    f.agendaPill = { ...f.agendaPill, width: Math.min(STAGE.AGENDA_PILL_W, leftRoom) };
   }
-  const top = list.length > 0 && !opts.queueUp ? STAGE.MARGIN : sc.y;
+  const top = opts.queueUp ? sc.y : STAGE.MARGIN;
   const bottom = tallBottom ? f.height - STAGE.MARGIN : sc.y + sc.height;
   const centre: Rect = { ...sc, y: top, height: Math.max(0, bottom - top) };
 
