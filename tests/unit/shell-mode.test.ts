@@ -145,7 +145,9 @@ describe('the Settings switch and the layout writes', () => {
     env.macPhone = true;
     expect(await ux.settleShellMode()).toBe('new');
     const beacons: unknown[] = [];
-    (globalThis as any).navigator = { sendBeacon: (...a: unknown[]) => { beacons.push(a); return true; } };
+    // Node 21+ has a getter-only `navigator` on globalThis: redefine it, and put it back after.
+    const hadNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    Object.defineProperty(globalThis, 'navigator', { value: { sendBeacon: (...a: unknown[]) => { beacons.push(a); return true; } }, configurable: true, writable: true });
     const listeners: Array<() => void> = [];
     (globalThis as any).addEventListener = (ev: string, fn: () => void) => { if (ev === 'pagehide') listeners.push(fn); };
     prefs.writeLayoutPrefs({ lastVault: 'acme', drawerExpanded: ['acme'], projectOrder: ['acme', 'globex'], drawerWidth: 300 });
@@ -155,5 +157,6 @@ describe('the Settings switch and the layout writes', () => {
     expect(beacons).toEqual([]);
     expect(env.gets).toBe(0);
     expect(prefs.readLayoutPrefs()).toMatchObject({ lastVault: 'acme', drawerExpanded: ['acme'], drawerWidth: 300 });
+    if (hadNavigator) Object.defineProperty(globalThis, 'navigator', hadNavigator); else delete (globalThis as any).navigator;
   });
 });

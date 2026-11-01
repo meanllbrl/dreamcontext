@@ -42,6 +42,11 @@ vi.mock('../../src/lib/t3-bridge/node-floor.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../src/lib/t3-bridge/node-floor.js')>();
   return { ...real, bridgeNode: () => '/usr/local/bin/node' };
 });
+// A Codex pane starts only where a Codex is found; this test fakes the bridge child, not the install.
+vi.mock('../../src/lib/codex-bin.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../src/lib/codex-bin.js')>();
+  return { ...real, codexStartProblem: () => null };
+});
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';

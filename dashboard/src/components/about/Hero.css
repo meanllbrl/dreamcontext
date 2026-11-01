@@ -198,3 +198,9 @@
     transition: none;
   }
 }
+
+/* Lived in the removed About page's stylesheet; the hero's aura still plays it. */
+@keyframes about-breathe {
+  0%, 100% { opacity: 0.28; transform: scale(1); }
+  50% { opacity: 0.44; transform: scale(1.06); }
+}

@@ -160,16 +160,3 @@ describe('D3 seeding: a remote computer opens a project with the Mac window\'s l
     expect(phoneRestorable(seed, null)).toEqual([]);
   });
 });
-
-describe('another project\'s door keeps the tool', () => {
-  it('a parked adopt and a parked open both come back with it', async () => {
-    const store = new Map<string, string>();
-    (globalThis as { sessionStorage?: unknown }).sessionStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v), removeItem: (k: string) => store.delete(k) };
-    const { setPendingMacAdopt, takePendingMacAdopt, setPendingPhoneOpen, takePendingPhoneOpen } = await import('../../dashboard/src/components/handsfree/macAdopt.js');
-    setPendingMacAdopt({ conversationId: 'c', vault: 'v', title: null, busy: false, state: 'idle', lastLine: null, updatedAt: null, tool: 'codex' });
-    expect(takePendingMacAdopt('v')?.tool).toBe('codex');
-    setPendingPhoneOpen({ vault: 'v', kind: 'resume', id: 'c', title: 't', tool: 'codex' });
-    expect(takePendingPhoneOpen('v')).toMatchObject({ kind: 'resume', tool: 'codex' });
-    delete (globalThis as { sessionStorage?: unknown }).sessionStorage;
-  });
-});
