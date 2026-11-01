@@ -7,7 +7,7 @@ import {
 import { SubAgentReport } from './SubAgentReport';
 import { peerForAgent, type PeerMention } from '../../../lib/agentComposer';
 import { peerLogoUrl } from '../../../api/client';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import { AGENT_ROLES, type AgentRoleId } from '../../../lib/agentRoles';
 import { VERDICT_LABELS, freshExplainer, type Verdict } from '../../../lib/quest';
 import { AgentAvatar, QuestBadge, VerdictChip } from './atoms';
@@ -133,7 +133,7 @@ export function SubAgentCard({
    *  as the avatar and its NAME on a chip — instead of the generic agent look. */
   peers?: PeerMention[];
 }) {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   // AGENT runs only. Background shells ride the identical `task_*` frames but belong to
   // `BackgroundShellsTray`: this card's whole affordance is drilling into a sidechain
   // transcript, and a shell has none — clicking one used to open a panel that said the
@@ -348,7 +348,7 @@ export function SubAgentRail({ runs: allRuns, party: partyProp, onJump, onWheel,
   /** Same as {@link SubAgentCard}'s — a peer envoy chip wears its vault's logo and name. */
   peers?: PeerMention[];
 }) {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const runs = allRuns.filter(isAgentRun);
   const party = resolveParty(runs, partyProp);
   const { running } = summarizeSubAgents(runs);

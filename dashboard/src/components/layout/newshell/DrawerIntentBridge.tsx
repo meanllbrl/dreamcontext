@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import { emitInstance, useVault } from '../../../context/VaultContext';
 import { OPEN_SESSION_EVENT, type OpenSessionDetail } from '../../../lib/openSession';
 import { DRAWER_INTENT_EVENT, DRAWER_PAGE_EVENT, type PendingDrawerIntent } from '../../../lib/drawerIntents';
@@ -9,6 +9,10 @@ import { DRAWER_INTENT_TTL_MS } from './drawerModel';
  * instance's bus, once per nonce, and tell the window it was taken. A History pick rides the
  * existing `OPEN_SESSION` path, so it reopens the chat exactly as a `dreamcontext://` link does,
  * in this project and never in the one that happened to be on screen. Renders nothing.
+ *
+ * A layout effect, and that is the point: what the surface sets from a passive effect is scheduled
+ * as a task, so the click paints first with the old chat on screen. From here it lands in the
+ * click's own frame.
  */
 export function DrawerIntentBridge({ pending, onConsumed }: {
   pending: PendingDrawerIntent | null;
@@ -16,7 +20,7 @@ export function DrawerIntentBridge({ pending, onConsumed }: {
 }) {
   const { vault, bus } = useVault();
   const landed = useRef(-1);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!pending || !vault || pending.nonce === landed.current) return;
     landed.current = pending.nonce;
     onConsumed?.(vault, pending.nonce);

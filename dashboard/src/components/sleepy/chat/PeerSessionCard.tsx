@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { createChatSession, type ChatSession, type ChatItem } from '../chatSession';
 import { useChrome } from '../../layout/WindowChrome';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import { peerLogoUrl } from '../../../api/client';
 import { ItemView } from './TranscriptItem';
 import { PermissionCard } from './PermissionCard';
@@ -227,7 +227,7 @@ function PeerSessionRow({
  * box — the glyph is the floor, not a loading state.
  */
 function PeerMark({ peer, className }: { peer: PeerMention; className: string }) {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const [failed, setFailed] = useState(false);
   if (!peer.logo || failed) return <span className={className} aria-hidden>◈</span>;
   return (

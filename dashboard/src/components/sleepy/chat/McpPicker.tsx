@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { emitInstance, useVault } from '../../../context/VaultContext';
+import { emitInstance, useVaultId } from '../../../context/VaultContext';
 import { openExternalUrl } from '../../../lib/desktop';
 import { readDeviceShell } from '../../../lib/uxMode';
 import type { McpLiveServer } from '../../../lib/mcpWire';
@@ -28,7 +28,7 @@ export function McpPicker({ session, onClose, inputRef }: {
    *  Enter or Esc anywhere else in the app is never captured (end review). */
   inputRef?: { current: HTMLElement | null };
 }) {
-  const { bus } = useVault();
+  const { bus } = useVaultId();
   const accountEmail = useChatAccountEmail(session);
   const { status, auth } = useMcpLive(session);
   const servers = useMemo(() => sortNeedsYouFirst(status?.servers ?? []), [status]);

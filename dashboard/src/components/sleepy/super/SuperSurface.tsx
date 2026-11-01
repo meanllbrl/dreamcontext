@@ -28,7 +28,7 @@ import { cardTitle } from './superTitles';
 import { BrandMark } from '../../brand/BrandMark';
 import { useTasks } from '../../../hooks/useTasks';
 import { useOwnerInbox } from '../../../hooks/useAgents';
-import { emitInstance, useVault } from '../../../context/VaultContext';
+import { emitInstance, useVaultId } from '../../../context/VaultContext';
 import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
 import { freshPending, hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
@@ -280,7 +280,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const devicesKey = useWebDevices();
   // Each project page's measured width: a report's card takes it, the chat the rest.
   const fitsVersion = useSyncExternalStore(subscribePageFits, pageFitsVersion);
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const liveJobsKey = state.containers.filter((c) => c.kind === 'chat'
     && childIsLive(state, c.ref, props.sessionFor(c.ref) ? chatStatus(props.sessionFor(c.ref)).kind : null)).map((c) => c.id).join(',');
   const items = useMemo(() => {
@@ -898,7 +898,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     : undefined;
   // Task jobs waiting on the owner (M1, AI Team v2 C2): listed in Waiting on you, no session needed.
   const taskRows = (useOwnerInbox().data ?? []).filter((r) => r.kind.startsWith('task-'));
-  const { bus } = useVault();
+  const { bus } = useVaultId();
   const renderAgenda = (variant: 'tile' | 'full', wide: boolean) => (
     <SuperAgenda
       state={state}

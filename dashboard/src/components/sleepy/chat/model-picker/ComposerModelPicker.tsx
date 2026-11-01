@@ -2,7 +2,7 @@
  * The r29 picker in the composer (Track T W4): the part that reads the machine. Mounted only
  * while the menu is open, so the auto-switch flag costs nothing otherwise.
  */
-import { useApi, useVault, emitInstance } from '../../../../context/VaultContext';
+import { useApi, useVaultId, emitInstance } from '../../../../context/VaultContext';
 import { useClaudeAccounts } from '../../../../hooks/useAgentCapabilities';
 import { OPEN_TOOL_CHAT_EVENT, type OpenToolChatDetail } from '../../../../lib/chatToolBinding';
 import { useEmbed } from '../../../embed/embedMode';
@@ -25,7 +25,7 @@ export function ComposerModelPicker({ pick, model, effort, onModelChange, onEffo
   close: () => void;
 }) {
   const api = useApi();
-  const { bus } = useVault();
+  const { bus } = useVaultId();
   // An embed has no chat surface to open a new chat in.
   const embedded = !!useEmbed();
   const res = useClaudeAccounts(true);

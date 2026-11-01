@@ -22,7 +22,7 @@ import { registerPushToTalk, ownsPushToTalk } from '../../../lib/voice/pushToTal
 import { onExternalPushToTalk, pushToTalkAction } from '../../../lib/voice/externalPushToTalk';
 import { DEFAULT_PUSH_TO_TALK } from '../../../lib/voice/hotkeyDefaults';
 
-import { useVault, useInstanceEvent } from '../../../context/VaultContext';
+import { useVaultId, useInstanceEvent } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
 import { copyPickedPicture, uploadAgentFile } from '../../../lib/agentDrop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
@@ -661,7 +661,7 @@ export function Composer({
   // Which project a pasted image is uploaded into. From THIS subtree, never a module global:
   // with several projects live in one window the bytes would otherwise land in the temp dir of
   // whichever chip the user last touched.
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const { t } = useI18n();
   // Re-read on every render (the pane re-renders on every applied event — see ChatPane): this
   // is the live conversation model, not a snapshot.

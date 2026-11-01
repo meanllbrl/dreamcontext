@@ -1,6 +1,6 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { agentFileUrl, peerLogoUrl } from '../../../api/client';
-import { useApi, useVault } from '../../../context/VaultContext';
+import { useApi, useVaultId } from '../../../context/VaultContext';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { ItemView } from './TranscriptItem';
 import {
@@ -110,7 +110,7 @@ function NumberedText({ content }: { content: string }) {
  * left the panel telling the user to click something that was not on the screen.
  */
 function MediaPreview({ path, kind }: { path: string; kind: 'image' | 'video' | 'audio' }) {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const [failed, setFailed] = useState(false);
   // Consent changes the SERVER's answer, so a granted file has to be re-requested; the new
   // URL is also what makes the browser fetch rather than re-serve the failed response.
@@ -352,7 +352,7 @@ const TEAMMATE_POLL_MS = 4000;
 
 function SubAgentSlideOver({ run, conversationId, peers = [], onShowOutput, onClose }: SlideOverSubAgentProps) {
   const api = useApi();
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const [state, setState] = useState<{ loading: boolean; items: ChatItem[] }>({ loading: true, items: [] });
   const path = runHistoryPath(run, conversationId);
   const following = !!run.session && run.status === 'running';

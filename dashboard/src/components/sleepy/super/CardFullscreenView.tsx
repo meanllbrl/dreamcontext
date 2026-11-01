@@ -1,5 +1,5 @@
 import { agentFileUrl } from '../../../api/client';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import { FrameViewer } from '../../layout/FrameViewer';
 import { ImageViewer } from '../../layout/ImageViewer';
 import { BoardFullscreen } from '../chat/BoardEmbed';
@@ -14,7 +14,7 @@ import type { CardFullscreen } from './SuperContainer';
  * back to the button that opened it. A page keeps the card's phone / tablet / desktop width.
  */
 export function CardFullscreenView({ subject, cardId, onClose }: { subject: CardFullscreen; cardId?: string; onClose: () => void }) {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   switch (subject.kind) {
     case 'image':
       return <ImageViewer src={agentFileUrl(vault, subject.path, { raw: true })} alt={subject.title} caption={subject.title} onClose={onClose} />;

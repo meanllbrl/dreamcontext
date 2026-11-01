@@ -3,7 +3,7 @@ import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { SelectionItemContext } from './SelectionBar';
 import { agentFileUrl, type ApiClient } from '../../../api/client';
-import { useApi, useVault } from '../../../context/VaultContext';
+import { useApi, useVaultId } from '../../../context/VaultContext';
 import {
   useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateTokens,
   inlineMediaKind, inlineRuns, splitUserBoardRefs, splitUserMediaAndPictures, revealPath,
@@ -74,7 +74,7 @@ function grantFile(api: ApiClient, path: string): Promise<boolean> {
  * image icon.
  */
 function UserMediaItem({ path, onOpenFile }: { path: string; onOpenFile?: (path: string) => void }) {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const api = useApi();
   const [failed, setFailed] = useState(false);
   // Why the OS opener refused, if it did. The chip promised "still opens" and used to break
@@ -226,7 +226,7 @@ function UserMessage({
  * opens it large, on a card brings the card into view. Text with neither is returned as it is.
  */
 function PictureWords({ text, onOpenFile }: { text: string; onOpenFile?: (path: string) => void }) {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const runs = inlineRuns(text);
   if (!runs) return <>{text}</>;
   return (
