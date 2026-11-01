@@ -31,7 +31,7 @@ import { isNotOwnerError } from '../../lib/agents/owner.js';
 import { AutomationError } from '../../lib/automations/types.js';
 import { checkApproval } from '../../lib/automations/registry.js';
 import {
-  agendaMissing, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, superOpenBatch,
+  agendaMissing, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, startFailedDraft, superOpenBatch, takeStartError, expectChild,
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation,
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach } from '../../lib/super/owner-question.js';
@@ -722,6 +722,7 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     }
     let container: string | null = null;
     let noted: SuperPadItem | 'full' | null = null;
+    let startError: string | null = null;
     const after = await writeSuper(root, (s) => {
       const now = Date.now();
       s.children[sid] = {
@@ -734,23 +735,28 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
         ...(awaited ? { awaited: true as const } : {}),
         ...(awaited && origin ? { origin } : {}),
       };
+      startError = takeStartError(sid);
+      if (startError) startFailedDraft(s, sid, startError, now);
       delete s.notes[sid];
-      container = (succeeds ? succeedChild(s, succeeds, sid, { brief: job.brief }) : null) ?? ensureChatContainer(s, sid, job.title, true);
+      // A successor that never started takes nothing over: the old child keeps its work.
+      const heir = succeeds && !startError ? succeeds : undefined;
+      container = (heir ? succeedChild(s, heir, sid, { brief: job.brief }) : null) ?? ensureChatContainer(s, sid, job.title, true);
       // Havuz → Çalışıyor in ONE write: the row leaves the pool as the child enters the list.
-      if (fromRow) s.pool = s.pool.filter((p) => p.id !== fromRow.id);
+      if (fromRow && !startError) s.pool = s.pool.filter((p) => p.id !== fromRow.id);
       // One job, one owner: the agenda lines about the old child follow its successor (the old
       // one is ended, which would otherwise close a line whose work goes on).
-      if (succeeds) s.pad = s.pad?.map((p) => (p.for === succeeds ? { ...p, for: sid } : p));
+      if (heir) s.pad = s.pad?.map((p) => (p.for === heir ? { ...p, for: sid } : p));
       // Its agenda line, in the same write: Now, and it follows this child from here on.
       if (noteText) noted = putPadNote(s, 'now', noteText, sid);
     });
-    const predecessor = succeeds ? await retirePredecessor(c, succeeds) : null;
+    if (startError) void pumpSuper(root); else expectChild(root, sid);
+    const predecessor = succeeds && !startError ? await retirePredecessor(c, succeeds) : null;
     // A job that looks like a ready AI Team member's field: a warning, never a block (owner,
     // 2026-10-29). Not for a pool job: it was judged when it was kept.
     const hint = fromRow ? null : delegateTeamHint(root, job, sid);
     // A child with no card is said out loud (`card: 'not_opened'`), never a quiet null.
     ok(res, {
-      sessionId: sid, ...cardOutcome(container, sid, after), ...(wt ? { worktree: wt.path, branch: wt.branch } : {}), ...(fromRow ? { from: fromRow.id } : {}),
+      sessionId: sid, ...cardOutcome(container, sid, after), ...(startError ? { started: false, startError: wrapUntrusted(vaultNameOf(root), startError) } : {}), ...(wt ? { worktree: wt.path, branch: wt.branch } : {}), ...(fromRow ? { from: fromRow.id } : {}),
       ...(hint ? { teamHint: hint } : {}),
       ...(predecessor ? { predecessor } : {}),
       ...(noted === 'full' ? { note: null, noteRefused: `pad_full: the agenda holds ${MAX_PAD} notes` } : noted ? { note: noted } : {}),
@@ -1125,7 +1131,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         asking: e?.pendingQuestion ? { requestId: e.pendingQuestion.requestId, kind: e.pendingQuestion.isPermission ? 'permission' : 'question' } : null,
       };
       // The live row rides on the child itself; `status[]` stays for older readers.
-      children[sid] = { ...ch, brief: ch.brief ? wrapUntrusted(vault, ch.brief) : '', ...row };
+      children[sid] = { ...ch, brief: ch.brief ? wrapUntrusted(vault, ch.brief) : '', ...(ch.startError ? { startError: wrapUntrusted(vault, ch.startError) } : {}), ...row };
       status.push({ sessionId: sid, ...row, ...(ch.worktree ? { worktree: ch.worktree, branch: ch.branch } : {}) });
     }
     let machine: unknown = null;
@@ -1482,7 +1488,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const raw = typeof b.bytes === 'number' && Number.isFinite(b.bytes) && b.bytes > 0;
     const want = raw ? Math.min(b.bytes as number, MAX_READ_BYTES) : DEFAULT_READ_BYTES;
     const path = liveTranscriptPath(root, child);
-    if (!path) { refuse(res, 404, 'no_transcript', 'that child has no transcript yet'); return; }
+    if (!path) {
+      const never = c.state.children[child]?.startError;
+      refuse(res, 404, 'no_transcript', never ? wrapUntrusted(vaultNameOf(root), `that child never started: ${never}`) : 'that child has no transcript yet');
+      return;
+    }
     try {
       // The default is the child's last reply, whole; `--bytes` asks for the raw tail.
       if (!raw) {
@@ -2011,21 +2021,26 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       // reports nothing: the request.
       const used = usedSettings(r.result, { mode, model, effort });
       let container: string | null = null;
+      let startError: string | null = null;
       const after = await writeSuper(root, (s) => {
         const x = s.children[child];
         if (!x) return;
         if (phoneHeld(child)) throw new PhoneHeldError(child);
         delete x.endedAt;
+        setRow(x, 'working');
+        startError = takeStartError(child);
+        if (startError) startFailedDraft(s, child, startError);
         if (used.mode === 'basic') delete x.mode; else x.mode = used.mode;
         if (used.model) x.model = used.model; else if (used.reported) delete x.model;
         if (used.effort) x.effort = used.effort; else if (used.reported) delete x.effort;
         container = ensureChatContainer(s, child, x.brief, true);
       });
+      if (startError) void pumpSuper(root); else if (!isLiveChat(child)) expectChild(root, child);
       await markOwnersJob(c, child);
       const asked = { mode: str(b.mode), model: str(b.model), effort: str(b.effort) };
       const ignored = (['mode', 'model', 'effort'] as const).filter((k) => asked[k] && asked[k] !== used[k]);
       ok(res, {
-        child, resumed: true, mode: used.mode, ...(used.model ? { model: used.model } : {}), ...(used.effort ? { effort: used.effort } : {}),
+        child, resumed: !startError, ...(startError ? { started: false, startError: wrapUntrusted(vaultNameOf(root), startError) } : {}), mode: used.mode, ...(used.model ? { model: used.model } : {}), ...(used.effort ? { effort: used.effort } : {}),
         ...cardOutcome(container, child, after),
         ...(ignored.length ? { note: `it came back as it was parked (${ignored.join(', ')} unchanged); \`super update\` changes that` } : {}),
       });

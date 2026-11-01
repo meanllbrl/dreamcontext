@@ -334,6 +334,8 @@ export interface SuperChild {
   settling?: boolean;
   task?: string;
   stuckReason?: StuckReason;
+  /** Why this child never started, in the server's words. */
+  startError?: string;
   mode?: string;
   model?: string;
   effort?: string;
@@ -349,7 +351,7 @@ export interface SuperChild {
 /** `waiting`: its turn ended on something only the owner can do (an `owner` item is open). */
 export const CHILD_ROWS = ['working', 'asking', 'done', 'stuck', 'gone', 'waiting'] as const;
 export type ChildRow = typeof CHILD_ROWS[number];
-export const STUCK_REASONS = ['error', 'stale'] as const;
+export const STUCK_REASONS = ['error', 'stale', 'no_start'] as const;
 export type StuckReason = typeof STUCK_REASONS[number];
 
 /** `approval`: an AI Team member the Super Agent chose is not approved here (server-written). */

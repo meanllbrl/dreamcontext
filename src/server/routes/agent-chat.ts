@@ -107,7 +107,7 @@ import { remoteViewOf } from './super-remote.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, type PhoneSuperRecord, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superOwnerSpoke, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superOwnerSpoke, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
 } from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
@@ -127,7 +127,7 @@ import { codexHistoryFor } from '../../lib/t3-bridge/codex-history-route.js';
 import { bridgeChatScript, bridgeResumeTarget } from '../../lib/t3-bridge/spawn.js';
 import { HEADLESS_ENVELOPES } from '../../lib/t3-bridge/headless-envelope.js';
 import { pruneToolHandoffSeeds } from '../../lib/t3-bridge/tool-handoff.js';
-import { NO_ENV_GATE, codexEnvGateReady } from '../../lib/t3-bridge/env-gate.js';
+import { NO_ENV_GATE, codexEnvGateGap } from '../../lib/t3-bridge/env-gate.js';
 import { bridgeNode, nodeTooOldMessage } from '../../lib/t3-bridge/node-floor.js';
 import { codexStartProblem } from '../../lib/codex-bin.js';
 import { readAgentUiSettings } from './launcher.js';
@@ -2035,6 +2035,10 @@ export function startChatSession(
   // Every lean path rides the double-quoted login-shell script: only a shell-safe one may
   // (security review r1). The project's `.mcp.json` under an odd project folder name is left
   // out (narrower, never a shell expansion); an unsafe subset path refuses the spawn.
+  /** A Super child that cannot start registers nothing, so its record hears it here or never. */
+  const noteLeanChildFailed = (why: string): void => {
+    if (opts.leanMcp && pinId) void noteChildStartFailed(contextRoot, pinId, why).catch((err) => { console.warn(`[super] child ${pinId}: its start failure was not recorded: ${(err as Error).message}`); });
+  };
   const leanProjectMcp = opts.leanMcp ? projectMcpJson(projectRoot) : null;
   const leanProjectMcpSafe = leanProjectMcp && tmpPathOk(leanProjectMcp) ? leanProjectMcp : null;
   if (opts.leanMcp && !scopedCard) {
@@ -2047,7 +2051,9 @@ export function startChatSession(
         throw new Error('its MCP config path is not shell-safe');
       }
     } catch (err) {
-      try { ws.send(JSON.stringify({ type: '_meta', subtype: 'error', code: 'mcp_refused', message: `This child cannot start: ${(err as Error).message}.` })); } catch { /* gone */ }
+      const why = `This child cannot start: ${(err as Error).message}.`;
+      noteLeanChildFailed(why);
+      try { ws.send(JSON.stringify({ type: '_meta', subtype: 'error', code: 'mcp_refused', message: why })); } catch { /* gone */ }
       try { ws.close(); } catch { /* already closed */ }
       return;
     }
@@ -2332,15 +2338,18 @@ export function startChatSession(
   // changing it (`node-floor.ts`). No such Node: the pane says so instead of crashing in a chat.
   const bridgeNodePath = bridgeTool ? bridgeNode() : null;
   // A Super child runs with nobody watching it: no live write gate, no child on Codex.
-  const noEnvGate = bridgeTool === 'codex' && !!opts.leanMcp && !codexEnvGateReady(projectRoot);
+  const envGateGap = bridgeTool === 'codex' && opts.leanMcp ? codexEnvGateGap(projectRoot) : null;
+  const noEnvGate = envGateGap !== null;
   // Said before anything starts: a chat on a Codex that cannot start would only end in silence.
   const codexMissing = bridgeTool === 'codex' ? codexStartProblem() : null;
   const bridgeScript = bridgeTool && bridgeNodePath && !noEnvGate && !codexMissing
     ? bridgeChatScript({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : opts.leanMcp ? HEADLESS_ENVELOPES['super-child'].codex ?? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(leanMcpPath ? { mcpConfig: leanMcpPath } : {}), ...(opts.leanMcp ? { strictMcp: true } : {}), ...(codexAccountId ? { account: codexAccountId } : {}) })
     : null;
   if (bridgeTool && !bridgeScript) {
-    const why = noEnvGate ? NO_ENV_GATE : bridgeNodePath && codexMissing ? codexMissing : bridgeNodePath ? `${bridgeTool} could not start: the dreamcontext install path is not shell-safe.` : nodeTooOldMessage(bridgeTool === 'codex' ? 'Codex' : 'The T3 Claude engine');
-    try { ws.send(JSON.stringify({ type: 'dc_meta', subtype: 'error', message: why })); } catch { /* gone */ }
+    const why = noEnvGate ? `${envGateGap} ${NO_ENV_GATE}` : bridgeNodePath && codexMissing ? codexMissing : bridgeNodePath ? `${bridgeTool} could not start: the dreamcontext install path is not shell-safe.` : nodeTooOldMessage(bridgeTool === 'codex' ? 'Codex' : 'The T3 Claude engine');
+    noteLeanChildFailed(why);
+    // `_meta`, not `dc_meta`: the chat shows the parser's `lastError`, so the owner reads why.
+    try { ws.send(JSON.stringify({ type: '_meta', subtype: 'error', code: 'tool_refused', message: why })); } catch { /* gone */ }
     try { ws.close(); } catch { /* already closed */ }
     releaseHeld();
     cleanupBriefing(); cleanupAgents(); cleanupModeNote(); cleanupDeferred();
@@ -3668,6 +3677,7 @@ export function startChatSession(
   child.on('error', (err) => {
     teardown();
     if (handedOff) { spawnSuccessor(); return; }
+    noteLeanChildFailed(`Couldn't start ${bridgeTool ?? 'claude'}: ${err.message}`);
     sendMeta({ subtype: 'error', message: `Couldn't start claude: ${err.message}` });
     try { ws.close(); } catch { /* already closed */ }
   });
@@ -3686,6 +3696,10 @@ export function startChatSession(
     if (code !== 0 && stderrMessage) {
       sendMeta({ subtype: 'error', message: stderrMessage });
     }
+    // A new child that failed on its own before saying which conversation it is never started. A
+    // resumed one waits silently for its first frame, and a signal (null, or 128+n through the
+    // shell) is somebody ending it, not a failure.
+    if (code !== null && code !== 0 && code <= 128 && !observedConversation && !resumeTarget) noteLeanChildFailed(stderrMessage.slice(-500) || `It exited with code ${code} before its first reply.`);
     try { ws.close(); } catch { /* already closed */ }
   });
 

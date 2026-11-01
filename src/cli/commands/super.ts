@@ -2,6 +2,8 @@ import { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { windowEnv } from './window.js';
+import { dreamcontextVersion } from '../../lib/manifest.js';
+import { compareVersions } from '../../lib/version-check.js';
 import { MAX_LIVE_CHILDREN } from '../../lib/super/types.js';
 import { insideAgentRun } from '../../lib/automations/types.js';
 import { ensureContextRoot } from '../../lib/context-path.js';
@@ -78,9 +80,35 @@ function print(r: CallResult): void {
     const e = (result.cardError ?? {}) as { message?: unknown; todo?: unknown };
     process.stderr.write(`CARD NOT OPENED: ${String(e.message ?? 'the owner cannot see this child')}. Next: ${String(e.todo ?? '`super state`')}\n`);
   }
+  if (result && result.started === false) process.stderr.write(`CHILD DID NOT START: ${String(result.startError)}\n`);
 }
 
 const run = (verb: string, body: Record<string, unknown>) => callSuper(verb, body).then(print);
+
+/** The running server's version, asked of the server; null when it cannot say. */
+function serverVersion(env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  const e = windowEnv(env);
+  if (!e) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const req = request(new URL('/api/health', e.url), { timeout: 3_000 }, (res) => {
+      let data = '';
+      res.setEncoding('utf-8');
+      res.on('data', (c: string) => { data += c; });
+      res.on('end', () => {
+        try { const v = (JSON.parse(data) as { version?: unknown }).version; resolve(typeof v === 'string' ? v : null); } catch { resolve(null); }
+      });
+    });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => resolve(null));
+    req.end();
+  });
+}
+
+/** The warning when a server older than this CLI will run the job: null when it is not. */
+export function serverBehindLine(server: string | null, cli: string): string | null {
+  if (!server || compareVersions(server, cli) >= 0) return null;
+  return `SERVER OLDER THAN THE CLI: the app's server runs ${server}, the installed dreamcontext is ${cli}. This job runs on ${server} until the owner relaunches the app; say so if it misbehaves.\n`;
+}
 
 /** What each `super open` kind takes as its ref (2026-10-29: `board <whiteboard slug>` drew a dead card). */
 export const OPEN_REF_HELP = [
@@ -132,7 +160,9 @@ export function registerSuperCommand(program: Command): void {
     .option('--succeeds <child>', 'It takes this child\'s work over (a context handoff): the card, brief and task pass to it, and the old child is ended (told to stop first if busy)')
     .option('--note <line>', 'Its Now line on the owner\'s agenda, linked to this child: it moves to Done by itself when the job is done, ended or gone')
     .option('--origin <ref>', ORIGIN_HELP))
-    .action((o: JobOpts & { from?: string; force?: boolean; succeeds?: string; note?: string; origin?: string }) => {
+    .action(async (o: JobOpts & { from?: string; force?: boolean; succeeds?: string; note?: string; origin?: string }) => {
+      const behind = serverBehindLine(await serverVersion(), dreamcontextVersion());
+      if (behind) process.stderr.write(behind);
       const note = o.note !== undefined ? { note: o.note } : {};
       const origin = o.origin !== undefined ? { origin: o.origin } : {};
       if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds, ...note, ...origin });

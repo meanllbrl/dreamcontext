@@ -24,7 +24,7 @@ import {
   updateSuperState, type SanitizeOpts,
 } from './store.js';
 import {
-  DONE_SETTLE_MS, STOPPED_SETTLE_MS, MAX_BATCH, MAX_CONTAINERS, MAX_FLOAT, MAX_WAIT_KEY, MAX_OWNER_BATCHES, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS,
+  CHILD_ARRIVE_MS, DONE_SETTLE_MS, MAX_START_ERROR, STOPPED_SETTLE_MS, MAX_BATCH, MAX_CONTAINERS, MAX_FLOAT, MAX_WAIT_KEY, MAX_OWNER_BATCHES, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS,
   SUPER_FRAME_STATE, floatCount, leaveGroups, AGENDA_REF, AGENDA_SIZE,
   type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
   MAX_HELD, PAD_ID_RE, type SuperHeldEvent, type SuperQueueItem, type SuperState, type SuperStateView,
@@ -211,6 +211,7 @@ export function setRow(ch: SuperChild, row: ChildRow, reason?: StuckReason, now 
   ch.row = row;
   ch.rowAt = now;
   if (row === 'stuck' && reason) ch.stuckReason = reason; else delete ch.stuckReason;
+  if (reason !== 'no_start') delete ch.startError;
   if (row !== 'working') delete ch.settling;
   return true;
 }
@@ -920,6 +921,7 @@ function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueI
   const brief = ch?.brief || (e ? chatTopic(e) : '');
   if (brief) lines.push(wrapUntrusted(vault, `Brief: ${brief}`));
   if (item.kind === 'owner' && item.ownerText) lines.push(wrapUntrusted(vault, `Waits on the owner for: ${item.ownerText}`));
+  if (item.kind === 'stuck' && ch?.startError) lines.push(wrapUntrusted(vault, `It never started: ${ch.startError}`));
   if (pq) {
     if (pq.text) lines.push(wrapUntrusted(vault, `Question: ${pq.text}`));
     if (pq.options.length) lines.push(wrapUntrusted(vault, `Options: ${pq.options.join(' | ')}`));
@@ -1506,6 +1508,59 @@ export function reconcileDraft(s: SuperState, now: number, armed: (sid: string) 
   return { changed, added, arm };
 }
 
+/** Refusals that beat the child's record: the window opens the chat BEFORE `delegate` writes it. */
+const unclaimedStartErrors = new Map<string, { why: string; at: number }>();
+const MAX_UNCLAIMED = 32;
+/** Longer than any delegate or resume answer: an older refusal is about another start. */
+const UNCLAIMED_MS = 2 * 60_000;
+
+/** A child's start refusal not yet written to a record; the caller writes it. */
+export function takeStartError(sid: string): string | null {
+  const e = unclaimedStartErrors.get(sid);
+  unclaimedStartErrors.delete(sid);
+  return e && Date.now() - e.at < UNCLAIMED_MS ? e.why : null;
+}
+
+/** Mark a child as never started, in a `writeSuper` draft: row, reason, one `stuck` event. */
+export function startFailedDraft(s: SuperState, sid: string, why: string, now = Date.now()): boolean {
+  const ch = s.children[sid];
+  // Only a job still starting: a finished or asking child has plainly started once.
+  if (!ch || ch.endedAt !== undefined || (ch.row !== undefined && ch.row !== 'working')) return false;
+  setRow(ch, 'stuck', 'no_start', now);
+  ch.startError = why.slice(0, MAX_START_ERROR);
+  return pushRowItem(s, sid, 'stuck', now);
+}
+
+/**
+ * A chat that may be a Super child could not start. Nothing registered, so no registry change will
+ * ever tell the record: this is its only word. Not recorded yet, or still ended (the window opens
+ * a `delegate` or `resume` before the verb writes), it waits for that verb to claim it; a chat that
+ * is no child leaves one bounded entry behind.
+ */
+export async function noteChildStartFailed(contextRoot: string, sid: string, why: string): Promise<void> {
+  const key = keyOf(contextRoot);
+  let known = false;
+  let added = false;
+  await writeSuper(key, (s) => {
+    if (!s.enabled || !s.children[sid] || s.children[sid].endedAt !== undefined) return;
+    known = true;
+    added = startFailedDraft(s, sid, why);
+  });
+  if (added) void pumpSuper(key);
+  if (known) return;
+  if (unclaimedStartErrors.size >= MAX_UNCLAIMED) {
+    const oldest = unclaimedStartErrors.keys().next().value;
+    if (oldest !== undefined) unclaimedStartErrors.delete(oldest);
+  }
+  unclaimedStartErrors.set(sid, { why, at: Date.now() });
+}
+
+/** A delegated child that never opens a chat has no registry change to say so: it is gone after
+ *  this wait, with the event every other gone child gets. */
+export function expectChild(contextRoot: string, sid: string, ms = CHILD_ARRIVE_MS): void {
+  armGone(keyOf(contextRoot), sid, ms, regraceTimers);
+}
+
 /** Reconcile one vault's rows against the registry: read, and write only when something moves. */
 export async function reconcileRows(contextRoot: string, now = Date.now()): Promise<void> {
   const key = keyOf(contextRoot);
@@ -1617,7 +1672,8 @@ async function addGone(root: string, sid: string): Promise<void> {
   let added = false;
   await writeSuper(root, (s) => {
     // Already reported gone (and not started since): nothing new to say (field 2026-10-21).
-    if (!s.enabled || !s.children[sid] || s.children[sid].row === 'gone') return;
+    // A child that never started has said why; `gone` would only erase that.
+    if (!s.enabled || !s.children[sid] || s.children[sid].row === 'gone' || s.children[sid].startError) return;
     resolveAnswered(s, sid, null);
     closeOwnerItems(s, sid);
     setRow(s.children[sid], 'gone');

@@ -481,8 +481,11 @@ export interface SuperChild {
   settling?: boolean;
   /** The task this job belongs to (`super brief --task`, `delegate --task`): a slug under state/. */
   task?: string;
-  /** Why the row is `stuck`: an error turn, or a working turn silent past the stale bar. */
+  /** Why the row is `stuck`: an error turn, a working turn silent past the stale bar, or a child
+   *  that never started. */
   stuckReason?: StuckReason;
+  /** Why this child never started, in the server's words; it goes when the row leaves `stuck`. */
+  startError?: string;
   /** The owner waits on this job's result: the super agent started it in the owner's own turn,
    *  not in an event turn. Its done/stuck/gone event asks the super to tell him; spent when that
    *  turn ends. */
@@ -533,7 +536,9 @@ export const MAX_ENDED_CHILDREN = 30;
  *  it): never done, never settled, until he does it (task a-super-child-waiting-on-the-owner-…). */
 export const CHILD_ROWS = ['working', 'asking', 'done', 'stuck', 'gone', 'waiting'] as const;
 export type ChildRow = typeof CHILD_ROWS[number];
-export const STUCK_REASONS = ['error', 'stale'] as const;
+/** The longest `startError` a record keeps. */
+export const MAX_START_ERROR = 600;
+export const STUCK_REASONS = ['error', 'stale', 'no_start'] as const;
 export type StuckReason = typeof STUCK_REASONS[number];
 
 /**
@@ -1447,6 +1452,8 @@ export const MAX_READ_BYTES = 256 * 1024;
 /** After a server restart, a recorded child absent from the registry has this long to register
  *  again before it is reported `gone` (D7). */
 export const READOPT_GRACE_MS = 2 * 60_000;
+/** A delegated child that opened no chat by now is reported gone, not left `working`. */
+export const CHILD_ARRIVE_MS = 60_000;
 
 /**
  * The state the window gets (`super_state`): the store's record and the vault it belongs to.
