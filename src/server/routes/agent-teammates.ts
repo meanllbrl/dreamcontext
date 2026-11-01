@@ -6,7 +6,7 @@ import { sanitizeUuid } from './agent-spawn-shared.js';
 import { goalLiveRunFor } from './agent-terminal.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
 import { isPhoneSocket, phoneTranscriptRefused } from '../phone-origin.js';
-import { isRunSession, phoneRunItems, runSessionCheck } from '../../lib/automations/run-chat.js';
+import { isRunSession, phoneReadsAsRun, phoneRunItems } from '../../lib/automations/run-chat.js';
 import type { ChatHistoryItem } from '../../lib/transcript-history.js';
 
 /** AC16: a phone sees a pane's teammates only when the PANE's conversation is a chosen
@@ -170,10 +170,12 @@ export async function handleAgentTeammates(
   try {
     // K4: what a run's nested sessions were given stays on the Mac.
     if (isPhoneSocket(req)) {
-      const isRun = runSessionCheck(contextRoot);
-      if (isRun(query.claudeId ?? '')) { sendJson(res, 200, { teammates: [] }); return; }
+      if (phoneReadsAsRun(contextRoot, [query.claudeId ?? ''])) { sendJson(res, 200, { teammates: [] }); return; }
       const { teammates } = await computeTeammates(contextRoot, query);
-      sendJson(res, 200, { teammates: teammates.filter((t) => !isRun(t.session)) });
+      sendJson(res, 200, {
+        teammates: teammates.filter((t) => !isRunSession(contextRoot, [t.session]))
+          .map((t) => (phoneReadsAsRun(contextRoot, [t.session]) ? phoneTeammate(t) : t)),
+      });
       return;
     }
     sendJson(res, 200, await computeTeammates(contextRoot, query));
@@ -223,17 +225,29 @@ export async function handleAgentTeammateHistory(
   if (phonePaneRefused(req, contextRoot, query.claudeId)) { sendJson(res, 200, { items: [] }); return; }
   try {
     const history = computeTeammateHistory(contextRoot, query);
-    const run = isPhoneSocket(req) && isRunSession(contextRoot, [query.claudeId ?? '', query.session ?? '']);
+    // The id the read itself uses: a spaced or uppercased one must not read as another's.
+    const run = isPhoneSocket(req) && phoneReadsAsRun(contextRoot, [query.claudeId ?? '', teammateSessionOf(query)]);
     sendJson(res, 200, run ? { items: phoneRunItems(history.items as ChatHistoryItem[]) } : history);
   } catch {
     sendJson(res, 200, { items: [] });
   }
 }
 
+/** The session a request names, as the read resolves it. */
+function teammateSessionOf(q: Record<string, string>): string {
+  return (q.session ?? '').trim().toLowerCase();
+}
+
+/** A teammate as a phone may see it: what it was told and each tool's input stay on the Mac. */
+function phoneTeammate(t: TeammateWire): TeammateWire {
+  const { brief: _brief, ...rest } = t as TeammateWire & { brief?: string };
+  return { ...rest, steps: t.steps.map((s) => ({ toolUseId: s.toolUseId, name: s.name, status: s.status })) } as TeammateWire;
+}
+
 /** One teammate's history. */
 export function computeTeammateHistory(contextRoot: string, q: Record<string, string>): { items: unknown[] } {
   const claudeId = sanitizeUuid(q.claudeId ?? null);
-  const session = (q.session ?? '').trim().toLowerCase();
+  const session = teammateSessionOf(q);
   if (!claudeId || !TEAMMATE_SESSION_RE.test(session)) return { items: [] };
   const allowed = authorized(contextRoot, claudeId, q.launched ? session : null);
   if (!allowed.has(session)) return { items: [] };

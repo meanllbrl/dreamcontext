@@ -34,8 +34,6 @@ import { isPhoneSocket } from '../phone-origin.js';
  * which the picker uses to ask again. The server is never blocked by it.
  */
 
-const PHONE_RUN_TITLE = 'Agent run';
-
 /** How long a search waits for a running content index before answering partially. */
 const CONTENT_WAIT_MS = 1500;
 
@@ -54,8 +52,7 @@ export async function handleAgentChatSessions(
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const query = Object.fromEntries(url.searchParams);
   try {
-    const list = await computeChatSessions(contextRoot, query);
-    sendJson(res, 200, isPhoneSocket(req) ? phoneChatSessions(contextRoot, list) : list);
+    sendJson(res, 200, await computeChatSessions(contextRoot, query, { phone: isPhoneSocket(req) }));
   } catch {
     // A history list is a convenience surface: an unreadable projects dir degrades to
     // "no past chats", never to a broken popup.
@@ -63,27 +60,11 @@ export async function handleAgentChatSessions(
   }
 }
 
-/** K4: a run's title and search snippet are its composed prompt, which stays on the Mac. */
-function phoneChatSessions(contextRoot: string, list: unknown): unknown {
-  const o = list as { sessions?: Array<Record<string, unknown>> };
-  if (!Array.isArray(o.sessions)) return list;
-  const isRun = runSessionCheck(contextRoot);
-  return {
-    ...o,
-    sessions: o.sessions.flatMap((s) => {
-      if (!isRun(String(s.id ?? ''))) return [s];
-      // Found by what its prompt says: the row itself would confirm the words.
-      if (s.match !== undefined || s.matchIn !== undefined) return [];
-      return [{ ...s, title: PHONE_RUN_TITLE, preview: '' }];
-    }),
-  };
-}
-
 /** The list itself. Throws on an unreadable dir. */
 export async function computeChatSessions(
   contextRoot: string,
   q: Record<string, string>,
-  opts: { home?: string; waitMs?: number } = {},
+  opts: { home?: string; waitMs?: number; phone?: boolean } = {},
 ): Promise<unknown> {
   const query = (q.q || '').slice(0, MAX_QUERY_CHARS);
   const rawLimit = Number.parseInt(q.limit || '', 10);
@@ -95,6 +76,9 @@ export async function computeChatSessions(
   // council personas) are withheld by default — they outnumber real conversations several to
   // one. `agentRuns=1` is the picker's "show them anyway".
   const includeAgentRuns = q.agentRuns === '1';
+  // K4: a run's title, snippet and search hits are its prompt and its steps. A phone reads runs on
+  // the AI Team page; here it is told nothing of them, not even by a count.
+  const isRun = opts.phone ? runSessionCheck(contextRoot, opts.home) : null;
 
   const projectRoot = projectRootOf(contextRoot);
   const files = listTranscriptFiles(projectRoot, opts.home);
@@ -113,12 +97,14 @@ export async function computeChatSessions(
   const superRows = q.super === 'group' || q.super === 'only' ? { owned: await superOwned(contextRoot), mode: q.super as 'group' | 'only' } : undefined;
   const result = listPastSessions(projectRoot, {
     home: opts.home, query, limit, includeAgentRuns, files,
+    // Whoever owns it: a tab the Super adopted is still that run, and a phone asks with `super=`.
+    ...(isRun ? { hide: (s: { id: string; unattended: boolean }) => s.unattended || isRun(s.id) } : {}),
     content: contentOf,
     // A closed tab's name, so the list says what the tab said (see `session-titles.ts`).
     titles: readSessionTitles(contextRoot),
     ...(superRows ? { superRows } : {}),
   });
-  const merged = withCodexRows(result, contextRoot, projectRoot, { query, limit, superOnly: superRows?.mode === 'only', home: opts.home });
+  const merged = withCodexRows(result, contextRoot, projectRoot, { query, limit, superOnly: superRows?.mode === 'only', home: opts.home, isRun });
   return query.trim() && !indexed
     ? { ...merged, indexing: { done: build.progress.done, total: build.progress.total } }
     : merged;
@@ -128,7 +114,7 @@ export async function computeChatSessions(
  *  has none: a Super Agent runs on Claude. A failed read is simply no Codex rows. */
 function withCodexRows<R extends { sessions: Array<{ updatedAt: number; matchIn?: string }>; total: number }>(
   result: R, contextRoot: string, projectRoot: string,
-  o: { query: string; limit: number; superOnly: boolean; home?: string },
+  o: { query: string; limit: number; superOnly: boolean; home?: string; isRun?: ((id: string) => boolean) | null },
 ): R {
   if (o.superOnly) return result;
   try {
@@ -136,7 +122,7 @@ function withCodexRows<R extends { sessions: Array<{ updatedAt: number; matchIn?
     const rows = [
       ...listCodexSessions(projectRoot, { home: o.home, query: o.query, limit: o.limit, contextRoot, titles }),
       ...listInstanceSessions(projectRoot, { home: o.home, query: o.query, limit: o.limit, contextRoot, titles }),
-    ] as ReturnType<typeof listCodexSessions>;
+    ].filter((r) => !o.isRun?.(r.id)) as ReturnType<typeof listCodexSessions>;
     if (!rows.length) return result;
     return { ...result, sessions: mergeSessionRows(result.sessions, rows, o.limit, !!o.query.trim()), total: result.total + rows.length };
   } catch {

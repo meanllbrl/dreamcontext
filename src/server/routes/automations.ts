@@ -386,7 +386,7 @@ export async function handleAutomationsList(
     const projectRoot = dirname(contextRoot);
     const automations = listAutomations(contextRoot).map((m) => summarize(projectRoot, contextRoot, m));
     // An absolute path of this Mac stays home.
-    sendJson(res, 200, { automations: isPhoneSocket(req) ? automations.map((a) => ({ ...a, outputPath: null })) : automations });
+    sendJson(res, 200, { automations: isPhoneSocket(req) ? automations.map((a) => (a.cache ? { ...a, cache: { ...a.cache, outputPath: null } } : a)) : automations });
   } catch {
     sendError(res, 500, 'list_failed', 'Failed to read automations.');
   }

@@ -4927,7 +4927,7 @@ export function startChatSession(
 // `tests/unit/agent-chat-history.test.ts` — keeps its import path.
 import { parseTranscriptHistory, type ChatHistoryItem } from '../../lib/transcript-history.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
-import { isRunSession, phoneRunItems } from '../../lib/automations/run-chat.js';
+import { phoneReadsAsRun, phoneRunItems } from '../../lib/automations/run-chat.js';
 
 export {
   parseTranscriptHistory,
@@ -4979,7 +4979,7 @@ export async function handleAgentChatHistory(
   const liveId = contextRoot ? resolveAgentSession(contextRoot, id) : '';
   // K4: a phone reads a member's or routine's run as its words and tool names, on every way out
   // of this route. A run's prompt, commands and results stay on the Mac.
-  const phoneRun = isPhoneSocket(req) && isRunSession(contextRoot, [id, liveId]);
+  const phoneRun = isPhoneSocket(req) && phoneReadsAsRun(contextRoot, [id, liveId]);
   const shown = (items: ChatHistoryItem[]): ChatHistoryItem[] => (phoneRun ? phoneRunItems(items) : items);
   // A Codex pane (Track T): its history is the Codex rollout, served only when that thread is
   // THIS project's. A foreign or unresolvable thread is refused (403), on every socket, phone too.
@@ -5063,7 +5063,7 @@ export async function handleAgentBackgroundOutput(
   const claudeId = sanitizeUuid(url.searchParams.get('claudeId'));
   if (!claudeId) { sendError(res, 400, 'invalid_claude_id', 'Query parameter "claudeId" is required.'); return; }
   // K4: a background shell's output is what a tool returned.
-  if (isPhoneSocket(req) && isRunSession(contextRoot, [claudeId, resolveAgentSession(contextRoot, claudeId)])) {
+  if (isPhoneSocket(req) && phoneReadsAsRun(contextRoot, [claudeId, resolveAgentSession(contextRoot, claudeId)])) {
     sendError(res, 403, 'phone_unavailable', 'A run\'s tool output stays on the Mac.');
     return;
   }

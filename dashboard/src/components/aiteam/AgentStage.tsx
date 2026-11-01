@@ -271,9 +271,9 @@ function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus,
   // so the same conversation is respawned at the new level, once the turn in flight has ended.
   const openedAt = session ? stageSessionLevel(vault, agent.slug) : null;
   useEffect(() => {
-    if (!ready || !session || session.busy || openedAt === null || openedAt === level) return;
+    if (!ready || !session || session.busy || openedAt === null || openedAt === level || closedNote !== undefined) return;
     open('resume');
-  }, [ready, session, session?.busy, openedAt, level, open]);
+  }, [ready, session, session?.busy, openedAt, level, open, closedNote]);
 
   // The history: kept within this open across remounts, re-read when the roster's newest id moves
   // and once a minute while the pane is open.

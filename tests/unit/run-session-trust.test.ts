@@ -14,6 +14,7 @@ import { listAgentHistory } from '../../src/lib/agents/history.js';
 import { appendThreadEntry } from '../../src/lib/automations/threads.js';
 import { createAgent } from '../../src/lib/agents/store.js';
 import { parseTranscriptHistory } from '../../src/lib/transcript-history.js';
+import { isUnattendedRun } from '../../src/lib/transcript-sessions.js';
 
 const A = '6f02f3ed-0e2e-434e-b0b3-b4f606e32879';
 const B = '7f02f3ed-0e2e-434e-b0b3-b4f606e32870';
@@ -171,6 +172,16 @@ describe('isRunSession: the phone rule knows a run however it ended', () => {
     recordAutomationSession('watcher', B, home, Date.now(), undefined, RUN);
     plantCache('old', C);
     for (const id of [A, B, C]) expect(isRunSession(root, [id.toUpperCase()], home)).toBe(true);
+  });
+});
+
+describe('isUnattendedRun: who was at it', () => {
+  it('a scheduled run and a role brief ran alone; a task handed to a tab did not', () => {
+    expect(isUnattendedRun('You are scheduled dreamcontext automation "watch".')).toBe(true);
+    expect(isUnattendedRun('You are the goal-planner for this run.')).toBe(true);
+    expect(isUnattendedRun('Work on this dreamcontext task and drive it to completion: x')).toBe(false);
+    expect(isUnattendedRun('Summarize this dreamcontext task for me: x')).toBe(false);
+    expect(isUnattendedRun('fix the login page')).toBe(false);
   });
 });
 

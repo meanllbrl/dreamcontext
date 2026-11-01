@@ -25,6 +25,7 @@ import { appendThreadEntry } from '../../src/lib/automations/threads.js';
 import { claudeProjectDirName } from '../../src/lib/transcript-sessions.js';
 import { recordAutomationSession } from '../../src/lib/automations/session-registry.js';
 import { noteRunSession } from '../../src/lib/automations/run-session.js';
+import { updateSuperState } from '../../src/lib/super/store.js';
 import type { Router } from '../../src/server/router.js';
 
 const ORIGIN = 'https://quiet-lake-1234.trycloudflare.com';
@@ -48,6 +49,10 @@ const TEAMMATE_ID = '44444444-4444-4444-8444-444444444444';
 const RUN_ID = '55555555-5555-4555-8555-555555555555';
 const KILLED_ID = '66666666-6666-4666-8666-666666666666';
 const RUN_TOKEN = 'FIXTURE-TOKEN-5f3a';
+/** A builder from before run notes: no marker, no binding, only its first prompt says what it is. */
+const OLD_ID = '77777777-7777-4777-8777-777777777777';
+/** A task handed to a chat tab: a machine wrote its first prompt, a person sits at it. */
+const TASK_ID = '88888888-8888-4888-8888-888888888888';
 const RUN_AT = '2026-10-30T10:00:00.000Z';
 
 interface Reply { status: number; headers: http.IncomingHttpHeaders; body: string }
@@ -88,6 +93,8 @@ function upgrade(port: number, path: string, headers: Record<string, string> = {
   });
 }
 
+const context0 = (): string => join(dir, PROJECT, '_dream_context');
+
 /** A concrete path for a registered pattern. */
 function concrete(path: string): string {
   return path.replace(/\*[a-zA-Z_]+/g, 'a/b').replace(/:[a-zA-Z_]+/g, 'x');
@@ -124,7 +131,8 @@ beforeAll(async () => {
   const jsonl = (rows: unknown[]) => rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
   // Each in its project's own folder, as Claude files them; the cwd-less one in an unrelated one.
   const folder = (root: string) => { const f = join(dir, '.claude', 'projects', claudeProjectDirName(root)); mkdirSync(f, { recursive: true }); return f; };
-  writeFileSync(join(folder(join(dir, PROJECT)), `${MINE_ID}.jsonl`), jsonl([...head, ...turn(join(dir, PROJECT), 'MINE-MARKER', MINE_ID)]));
+  // The owner's chat launched two headless builders: the teammate routes authorize them from this.
+  writeFileSync(join(folder(join(dir, PROJECT)), `${MINE_ID}.jsonl`), jsonl([...head, ...turn(join(dir, PROJECT), `MINE-MARKER claude -p --session-id ${KILLED_ID} and --session-id ${OLD_ID}`, MINE_ID)]));
   writeFileSync(join(folder(join(dir, OTHER)), `${OTHER_ID}.jsonl`), jsonl([...head, ...turn(join(dir, OTHER), 'OTHER-SECRET-MARKER', OTHER_ID)]));
   writeFileSync(join(tdir, `${NOCWD_ID}.jsonl`), jsonl([...head, ...turn(null, 'NOCWD-SECRET-MARKER', NOCWD_ID)]));
   // A run: its composed prompt, a Bash command and its output carry a token, and so does a sub-agent.
@@ -139,6 +147,14 @@ beforeAll(async () => {
   const runFolder = folder(join(dir, PROJECT));
   writeFileSync(join(runFolder, `${RUN_ID}.jsonl`), jsonl([...head, ...runRows(RUN_ID)]));
   writeFileSync(join(runFolder, `${KILLED_ID}.jsonl`), jsonl([...head, ...runRows(KILLED_ID)]));
+  writeFileSync(join(runFolder, `${OLD_ID}.jsonl`), jsonl([
+    { type: 'user', cwd: join(dir, PROJECT), sessionId: OLD_ID, uuid: `${OLD_ID}-u`, message: { role: 'user', content: `You are the goal-planner. Use ${RUN_TOKEN}` } },
+    { type: 'assistant', cwd: join(dir, PROJECT), sessionId: OLD_ID, uuid: `${OLD_ID}-a`, message: { role: 'assistant', content: [{ type: 'text', text: 'OLD-WORDS planned.' }, { type: 'tool_use', id: 'toolu_old', name: 'Bash', input: { command: `curl ${RUN_TOKEN}` } }] } },
+  ]));
+  writeFileSync(join(runFolder, `${TASK_ID}.jsonl`), jsonl([
+    { type: 'user', cwd: join(dir, PROJECT), sessionId: TASK_ID, uuid: `${TASK_ID}-u`, message: { role: 'user', content: 'Work on this dreamcontext task and drive it to completion: fix the login.' } },
+    { type: 'assistant', cwd: join(dir, PROJECT), sessionId: TASK_ID, uuid: `${TASK_ID}-a`, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_task', name: 'Bash', input: { command: 'TASK-COMMAND-MARKER' } }] } },
+  ]));
   mkdirSync(join(runFolder, RUN_ID, 'subagents'), { recursive: true });
   writeFileSync(join(runFolder, RUN_ID, 'subagents', 'agent-abc123.jsonl'), jsonl(runRows(RUN_ID).map((r) => ({ ...r, isSidechain: true }))));
   const context = join(dir, PROJECT, '_dream_context');
@@ -146,7 +162,7 @@ beforeAll(async () => {
   recordAutomationSession('run-watcher', RUN_ID, dir, Date.now(), undefined, RUN_AT);
   noteRunSession(context, 'run-watcher', '2026-10-30T11:00:00.000Z', KILLED_ID, Date.now(), dir);
   mkdirSync(join(context, 'automations', 'cache'), { recursive: true });
-  writeFileSync(join(context, 'automations', 'cache', 'run-watcher.json'), JSON.stringify({ slug: 'run-watcher', history: [{ firedAt: RUN_AT, startedAt: RUN_AT, status: 'ok', sessionId: RUN_ID, costUsd: 0, numTurns: 1, permissionDenials: 0, outputPath: null, error: null }] }));
+  writeFileSync(join(context, 'automations', 'cache', 'run-watcher.json'), JSON.stringify({ slug: 'run-watcher', outputPath: join(context, 'automations', 'output', 'r.md'), lastRunAt: RUN_AT, history: [{ firedAt: RUN_AT, startedAt: RUN_AT, status: 'ok', sessionId: RUN_ID, costUsd: 0, numTurns: 1, permissionDenials: 0, outputPath: join(context, 'automations', 'output', 'r.md'), error: null }] }));
   writeFileSync(join(dir, PROJECT, '_dream_context', 'state', 'phone-task.md'), '---\nid: task_x\nname: Phone task\nstatus: todo\npriority: medium\n---\n\n## Why\n\nA task.\n');
   macAuth = new HandsfreeAuth({ dir: join(dir, 'mac') });
   for (const d of ['mac']) { try { (await import('node:fs')).mkdirSync(join(dir, d), { recursive: true }); } catch { /* exists */ } }
@@ -259,6 +275,10 @@ describe('phone listener: the route policy over the FULL route table (AC4/AC5)',
       `/api/agent/chat-history?claudeId=${RUN_ID}`,
       `/api/agent/chat-history?claudeId=${KILLED_ID}`,
       `/api/agent/chat-history?claudeId=${RUN_ID}&subagent=abc123`,
+      `/api/agent/chat-history?claudeId=${RUN_ID.toUpperCase()}`,
+      `/api/agent/teammate-history?claudeId=${MINE_ID}&session=${KILLED_ID}&launched=1`,
+      `/api/agent/teammate-history?claudeId=${MINE_ID}&session=%20${KILLED_ID}&launched=1`,
+      `/api/agent/teammate-history?claudeId=${MINE_ID}&session=${KILLED_ID.toUpperCase()}&launched=1`,
       '/api/automations/run-watcher/session?run=1',
     ];
     for (const p of paths) {
@@ -266,7 +286,7 @@ describe('phone listener: the route policy over the FULL route table (AC4/AC5)',
       expect(r.status, p).toBe(200);
       expect(r.body, p).toContain('RUN-WORDS');
       expect(r.body, p).not.toContain(RUN_TOKEN);
-      expect(r.body, p).not.toContain('curl');
+      expect(r.body, p).not.toContain('curl -H');
     }
     const main = JSON.parse((await request(phonePort, 'GET', `/api/agent/chat-history?claudeId=${RUN_ID}`, H())).body).items;
     expect(main).toEqual([{ kind: 'text', text: 'RUN-WORDS Acme is healthy.' }, { kind: 'tool', toolUseId: 'toolu_run', name: 'Bash', status: 'done' }]);
@@ -277,19 +297,51 @@ describe('phone listener: the route policy over the FULL route table (AC4/AC5)',
     const shown = JSON.parse((await request(phonePort, 'GET', '/api/automations/run-watcher', H())).body);
     expect(shown.cache.history[0].outputPath).toBeNull();
     expect(shown.cache.history[0].sessionId).toBe(RUN_ID);
-    const upper = await request(phonePort, 'GET', `/api/agent/chat-history?claudeId=${RUN_ID.toUpperCase()}`, H());
-    expect(upper.body).not.toContain(RUN_TOKEN);
-    const listed = await request(phonePort, 'GET', '/api/agent/chat-sessions?agentRuns=1', H());
-    expect(listed.body).not.toContain(RUN_TOKEN);
-    expect(listed.body).not.toContain('composed prompt');
-    const found = await request(phonePort, 'GET', '/api/agent/chat-sessions?agentRuns=1&q=composed', H());
-    expect(found.body).not.toContain(RUN_TOKEN);
-    expect(found.body).not.toContain('composed prompt');
-    const steps = await request(phonePort, 'GET', `/api/agent/teammates?claudeId=${RUN_ID}&launched=${KILLED_ID}`, H());
-    expect(steps.body).not.toContain(RUN_TOKEN);
+    const listRoute = await request(phonePort, 'GET', '/api/automations', H());
+    expect(listRoute.status).toBe(200);
+    expect(listRoute.body).toContain('run-watcher');
+    expect(listRoute.body).not.toContain(join('automations', 'output'));
+
+    // The session list tells a phone nothing of a run: no row, no count, however it searches.
+    const listed = JSON.parse((await request(phonePort, 'GET', '/api/agent/chat-sessions?agentRuns=1', H())).body);
+    expect(listed.sessions.map((s: { id: string }) => s.id)).toContain(MINE_ID);
+    for (const id of [RUN_ID, KILLED_ID, OLD_ID]) expect(listed.sessions.map((s: { id: string }) => s.id)).not.toContain(id);
+    for (const q of ['composed', RUN_TOKEN, 'curl']) {
+      const found = JSON.parse((await request(phonePort, 'GET', `/api/agent/chat-sessions?q=${q}`, H())).body);
+      expect(found, q).toMatchObject({ total: 0, agentRuns: 0, sessions: [] });
+    }
+
+    // A run the Super adopted stays a run: `super=` shows no more of it.
+    await updateSuperState(context0(), (s) => { s.formerChildren = [RUN_ID, OLD_ID]; });
+    for (const q of ['super=only', 'super=group&q=composed', `super=only&q=${RUN_TOKEN}`]) {
+      const r = await request(phonePort, 'GET', `/api/agent/chat-sessions?${q}`, H());
+      expect(r.status, q).toBe(200);
+      expect(r.body, q).not.toContain(RUN_ID);
+      expect(r.body, q).not.toContain(OLD_ID);
+      expect(r.body, q).not.toContain('composed prompt');
+    }
+    await updateSuperState(context0(), (s) => { s.formerChildren = []; });
+
+    // A delegated task is a person's chat: listed, and read whole on the phone.
+    expect(listed.sessions.map((s: { id: string }) => s.id)).toContain(TASK_ID);
+    expect((await request(phonePort, 'GET', `/api/agent/chat-history?claudeId=${TASK_ID}`, H())).body).toContain('TASK-COMMAND-MARKER');
+    expect((await request(phonePort, 'GET', `/api/agent/teammates?claudeId=${TASK_ID}`, H())).status).toBe(200);
+    expect((await request(phonePort, 'GET', `/api/agent/bg-output?claudeId=${TASK_ID}&taskId=abc`, H())).status).toBe(200);
+
+    // A run's nested session: gone from a pane's list, words only by id.
+    const steps = await request(phonePort, 'GET', `/api/agent/teammates?claudeId=${MINE_ID}&launched=${KILLED_ID}`, H());
+    expect(steps.status).toBe(200);
     expect(JSON.parse(steps.body).teammates).toEqual([]);
-    const child = await request(phonePort, 'GET', `/api/agent/teammate-history?claudeId=${MINE_ID}&session=${KILLED_ID}&launched=1`, H());
-    expect(child.body).not.toContain(RUN_TOKEN);
+    expect(JSON.parse((await request(phonePort, 'GET', `/api/agent/teammates?claudeId=${RUN_ID}&launched=${KILLED_ID}`, H())).body).teammates).toEqual([]);
+    // One from before run notes: its first prompt speaks for it, on the list and by id.
+    const old = JSON.parse((await request(phonePort, 'GET', `/api/agent/teammates?claudeId=${MINE_ID}&launched=${OLD_ID}`, H())).body).teammates;
+    expect(JSON.stringify(old)).not.toContain(RUN_TOKEN);
+    expect(old[0].steps[0]).toEqual({ toolUseId: 'toolu_old', name: 'Bash', status: expect.any(String) });
+    for (const p of [`/api/agent/chat-history?claudeId=${OLD_ID}`, `/api/agent/teammate-history?claudeId=${MINE_ID}&session=${OLD_ID}&launched=1`]) {
+      const r = await request(phonePort, 'GET', p, H());
+      expect(r.body, p).toContain('OLD-WORDS');
+      expect(r.body, p).not.toContain(RUN_TOKEN);
+    }
     expect((await request(phonePort, 'GET', `/api/agent/bg-output?claudeId=${RUN_ID}&taskId=abc`, H())).status).toBe(403);
     // An ordinary chat on the phone keeps everything, and the laptop reads the run whole.
     expect((await request(phonePort, 'GET', `/api/agent/chat-history?claudeId=${MINE_ID}`, H())).body).toContain('MINE-MARKER');

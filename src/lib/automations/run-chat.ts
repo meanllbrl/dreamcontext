@@ -2,6 +2,7 @@ import { readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { findTranscriptBySessionId } from '../transcript-locate.js';
+import { transcriptIsUnattendedRun } from '../transcript-sessions.js';
 import type { ChatHistoryItem } from '../transcript-history.js';
 import { isAutomationBoundSession, readAutomationSession, sessionForRun } from './session-registry.js';
 import { isNotedRunSession, runningSessionFor } from './run-session.js';
@@ -81,6 +82,20 @@ function cachedRunSessions(contextRoot: string): Set<string> {
     } catch { /* one bad cache never blinds the others */ }
   }
   return out;
+}
+
+/**
+ * The phone's question: does this conversation read as a run? A session from before run notes has
+ * no marker and, if it was a nested or failed-over one, no binding either, so its transcript's
+ * first prompt speaks for it.
+ */
+export function phoneReadsAsRun(contextRoot: string | null, ids: readonly string[], home: string = homedir()): boolean {
+  if (isRunSession(contextRoot, ids, home)) return true;
+  // One at a time: a pane and its teammate are two conversations, and only one may be a run's.
+  return ids.some((id) => {
+    const path = id ? findTranscriptBySessionId([id], home) : null;
+    return !!path && transcriptIsUnattendedRun(path);
+  });
 }
 
 /**
