@@ -96,12 +96,13 @@ export const NAV_GROUPS: NavGroup[] = [
       { page: 'automations', labelKey: 'nav.aiTeam', hero: true },
       { page: 'lab', labelKey: 'nav.labpage', maturity: 'beta' },
       { page: 'roadmap', labelKey: 'nav.roadmap', maturity: 'beta' },
+      // dreamcontext Apps: this project's own local web apps, each in its own Mac window.
+      // Beta, so it sits above the alpha rows (owner rule, 2026-10-02).
+      { page: 'apps', labelKey: 'nav.apps', maturity: 'beta' },
       { page: 'hypotheses', labelKey: 'nav.hypotheses', maturity: 'alpha' },
       // "Whiteboard" opens the default board, "Control Panel", directly (A15). The page id
       // stays 'whiteboards': persisted nav state and the chat's appNav deep links carry it.
       { page: 'whiteboards', labelKey: 'nav.whiteboard', maturity: 'alpha' },
-      // dreamcontext Apps: this project's own local web apps, each in its own Mac window.
-      { page: 'apps', labelKey: 'nav.apps', maturity: 'beta' },
       { page: 'council', labelKey: 'nav.council', maturity: 'alpha' },
     ],
   },
