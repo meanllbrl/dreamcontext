@@ -7,7 +7,7 @@
  * It asks nothing of the agent's HTML: any `<img>` of 48px or more (icons and ornaments stay
  * plain) is clickable. It only LISTENS (bubble phase, no preventDefault, no stopPropagation), so
  * the page's own click handlers and an `<a>` around the picture behave as they always did; a
- * click the page already handled (`defaultPrevented`) or one on a button is left alone.
+ * click the page already handled (`defaultPrevented`, outside a link) or one on a button is left alone.
  *
  * The page's own scripts can read this script and post the same message, so the host trusts
  * nothing beyond "open these pictures": it keeps only `data:image/` sources (the host writes the
@@ -33,7 +33,9 @@ export const IMAGE_BRIDGE = `(function () {
   });
   document.addEventListener('click', function (e) {
     var t = e.target;
-    if (e.defaultPrevented || !t || t.tagName !== 'IMG' || !big(t) || t.closest('button')) return;
+    // A link around the picture is stopped by the page guard (preventDefault) before this runs, so
+    // defaultPrevented there is not the page handling the click; elsewhere it still means that.
+    if (!t || t.tagName !== 'IMG' || (e.defaultPrevented && !t.closest('a')) || !big(t) || t.closest('button')) return;
     var all = [].slice.call(document.images).filter(big);
     var i = all.indexOf(t);
     if (i < 0) return;
@@ -66,4 +68,19 @@ export function readImageMessage(data: unknown): ImageMessage | null {
   });
   // The clicked one must survive the filter: opening a different picture would be wrong.
   return index < 0 ? null : { index, images };
+}
+
+/** Ms after the viewer closes in which the same page cannot open it again. */
+export const REOPEN_COOLDOWN_MS = 500;
+
+/**
+ * May a page's picture message open the viewer now? Only as the answer to a click: the top window
+ * must hold a live user activation (a click inside a child frame activates its ancestors), and the
+ * viewer must not have just closed. A page cannot otherwise lock the app behind a modal or put a
+ * fake dialog over the window on a timer. Where the browser has no `userActivation`, the cooldown
+ * alone gates it.
+ */
+export function mayOpenFromFrame(o: { now: number; closedAt: number; active: boolean | undefined }): boolean {
+  if (o.now - o.closedAt < REOPEN_COOLDOWN_MS) return false;
+  return o.active !== false;
 }

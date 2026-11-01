@@ -43,3 +43,14 @@ describe('IMAGE_BRIDGE', () => {
     expect(() => new Function(IMAGE_BRIDGE)).not.toThrow();
   });
 });
+
+describe('mayOpenFromFrame: a page opens the viewer only as the answer to a click', () => {
+  it('needs a live user activation where the browser reports one, and a quiet moment after a close', async () => {
+    const { mayOpenFromFrame, REOPEN_COOLDOWN_MS } = await import('../../dashboard/src/components/layout/frameImageBridge');
+    expect(mayOpenFromFrame({ now: 10_000, closedAt: 0, active: true })).toBe(true);
+    expect(mayOpenFromFrame({ now: 10_000, closedAt: 0, active: false })).toBe(false); // a timer in the page
+    expect(mayOpenFromFrame({ now: 10_000, closedAt: 0, active: undefined })).toBe(true); // no userActivation API
+    expect(mayOpenFromFrame({ now: 10_000, closedAt: 10_000 - REOPEN_COOLDOWN_MS + 1, active: true })).toBe(false);
+    expect(mayOpenFromFrame({ now: 10_000, closedAt: 10_000 - REOPEN_COOLDOWN_MS, active: true })).toBe(true);
+  });
+});

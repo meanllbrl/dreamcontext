@@ -32,7 +32,7 @@ import { BoardEmbed, BoardFullscreen } from '../sleepy/chat/BoardEmbed';
 import { CloseIcon } from '../whiteboard/PanelIcons';
 import { fileNameOf, resolveDocumentRef, stripFrontmatter } from './viewerPaths';
 import { ZOOM_BRIDGE } from '../layout/frameZoomBridge';
-import { IMAGE_BRIDGE, readImageMessage, type ImageMessage } from '../layout/frameImageBridge';
+import { IMAGE_BRIDGE, mayOpenFromFrame, readImageMessage, type ImageMessage } from '../layout/frameImageBridge';
 import { ImageViewer } from '../layout/ImageViewer';
 import '../sleepy/chat/cards.css';
 import '../sleepy/chat/overlays.css';
@@ -492,6 +492,7 @@ function HtmlPage({
   const [torn, setTorn] = useState(false);
   // A picture the owner clicked in the page: the app's own viewer, over the whole window.
   const [shot, setShot] = useState<ImageMessage | null>(null);
+  const shotClosedAt = useRef(0);
   const html = state.html;
   // Filling at the desktop width: the scale its box's width asks for (a 0-wide box keeps the last).
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -529,7 +530,7 @@ function HtmlPage({
       const w = readPageFit(event.data);
       if (w !== undefined) pageFit.current?.(w);
       const img = readImageMessage(event.data);
-      if (img) setShot(img);
+      if (img && mayOpenFromFrame({ now: Date.now(), closedAt: shotClosedAt.current, active: (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation?.isActive })) setShot(img);
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -580,7 +581,7 @@ function HtmlPage({
             pos: `${shot.index + 1} / ${shot.images.length}`,
             onStep: (d) => setShot((s) => (s ? { ...s, index: (s.index + d + s.images.length) % s.images.length } : s)),
           } : undefined}
-          onClose={() => setShot(null)}
+          onClose={() => { shotClosedAt.current = Date.now(); setShot(null); }}
         />
       )}
       {frame && (fill ? <div ref={boxRef} className="doc-reader-html-box">{frame}</div> : frame)}
