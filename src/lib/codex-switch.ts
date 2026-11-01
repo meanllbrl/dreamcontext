@@ -10,7 +10,7 @@ import {
   chooseTarget, poolReadings, provenPastThreshold, readToolRejections, readToolSignedOut, readingFor,
   SWITCH_THRESHOLD_PERCENT, type AccountReading, type ChooseTargetResult, type FallbackPolicy,
 } from './account-switch.js';
-import { switchStrategyFor, switchWeightsFor } from './claude-accounts.js';
+import { codexRules } from './account-rules.js';
 import {
   CODEX_PRIMARY_ID, codexLimitsFor, listCodexAccounts, probeCodexAccount, readCodexUsage, type CodexAccount, type CodexAccountDeps,
 } from './codex-accounts.js';
@@ -72,8 +72,9 @@ export async function decideCodexTarget(input: CodexDecisionInput): Promise<Choo
     preferredId: accounts[0]?.id ?? null,
     orderedIds: accounts.map((a) => a.id),
     rejectedUntil: readToolRejections('codex', home, now),
-    strategy: switchStrategyFor(home),
-    weights: switchWeightsFor(home),
+    // Codex's OWN rules (Settings → Models → Codex); they read Claude's until first edited.
+    strategy: codexRules(home).strategy,
+    weights: codexRules(home).weights,
     now,
   }, input.policy);
 }

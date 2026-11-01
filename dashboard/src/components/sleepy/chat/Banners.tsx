@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { BotMark } from '../AgentSetup';
-import { useClaudeAccounts, type ClaudeAccountWire } from '../../../hooks/useAgentCapabilities';
+import { useClaudeAccounts, useCodexAccounts, type ClaudeAccountWire } from '../../../hooks/useAgentCapabilities';
 import { useApi } from '../../../context/VaultContext';
 import { fmtTokens } from '../../../lib/agentComposer';
 import type { HandoffProgress } from '../../../lib/chatProtocol';
@@ -306,7 +306,7 @@ function OtherAccounts({ rejected, exclude, accounts }: {
 type AccountMove = {
   switched: boolean;
   reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted'
-    | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled' | 'come_home';
+    | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled' | 'come_home' | 'resumed_at_reset';
   accountId: string;
   fromAccountId?: string;
   email?: string;
@@ -340,6 +340,7 @@ function moveSentence(move: AccountMove, who: string, when: string): string {
       : 'Every account is at its limit. This message went out on the current account.';
   }
   if (move.reason === 'stayed_put') return `This account hit its limit and no other account is in better shape${when ? `, so work resumes at ${when}` : ''}.`;
+  if (move.reason === 'resumed_at_reset') return 'The usage limit reset, so this chat went on by itself (Settings → Models → Limit rules → Continue at reset).';
   if (move.reason === 'switch_stalled') return 'This chat could not be moved to another account, so your messages went out on this one. Open a new chat to start on another account.';
   if (move.reason === 'auto_switch_disabled' && when) return `This account is at its limit until ${when}. Auto-switch is off, so nothing was changed.`;
   return 'This account is close to its limit. Auto-switch is off, so nothing was changed.';
@@ -363,14 +364,14 @@ function moveSentence(move: AccountMove, who: string, when: string): string {
  *   • switch_stalled — a move was announced and never performed.
  *   • auto_switch_disabled — reporting without acting, plus the switch that would act.
  */
-export function AccountSwitchBanner({ move, onDismiss }: {
+export function AccountSwitchBanner({ move, onDismiss, tool = '' }: {
   move: AccountMove;
   onDismiss: () => void;
+  /** The pane's tool. A Codex chat's "Turn on auto-switch" is Codex's own rule, never Claude's. */
+  tool?: '' | 'codex';
 }) {
   const accountsQ = useClaudeAccounts(true);
   const accounts = accountsQ.data?.accounts ?? [];
-  const api = useApi();
-  const qc = useQueryClient();
   const { busy, relogin } = useRelogin();
   const to = labelFor(move.accountId, accounts, move.email);
   const when = move.earliestResetAt
@@ -454,6 +455,20 @@ export function AccountSwitchBanner({ move, onDismiss }: {
     );
   }
 
+  if (move.reason === 'resumed_at_reset') {
+    return (
+      <Notice
+        tone="good"
+        slim
+        icon={<Glyph.check />}
+        title="Went on at the reset"
+        detail={detail}
+        onDismiss={onDismiss}
+        testId="account-switch"
+      />
+    );
+  }
+
   if (move.reason === 'switch_stalled') {
     return (
       <Notice
@@ -468,13 +483,43 @@ export function AccountSwitchBanner({ move, onDismiss }: {
     );
   }
 
-  // auto_switch_disabled: the limit is close (or hit) and the setting is OFF. Reporting
-  // without acting is what "off" means — so the card carries the switch that would act.
+  return <AutoSwitchOffNotice move={move} detail={detail} when={when} onDismiss={onDismiss} tool={tool} claudeOn={accountsQ.data?.autoSwitch === true} claudeCount={accounts.length} />;
+}
+
+/**
+ * auto_switch_disabled: the limit is close (or hit) and the setting is OFF. Reporting without
+ * acting is what "off" means, so the card carries the switch that would act: the pane's OWN
+ * tool's (account-rules.ts), so a Codex chat never flips Claude's rule.
+ */
+function AutoSwitchOffNotice({ move, detail, when, onDismiss, tool, claudeOn, claudeCount }: {
+  move: AccountMove;
+  detail: string;
+  when: string;
+  onDismiss: () => void;
+  tool: '' | 'codex';
+  claudeOn: boolean;
+  claudeCount: number;
+}) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const codex = tool === 'codex';
+  const codexCount = useCodexAccounts(codex).data?.accounts?.length ?? 0;
+  const rules = useQuery({
+    queryKey: ['agent-account-rules'],
+    queryFn: () => api.get<{ codex: { autoSwitch: boolean } }>('/agent/accounts/rules'),
+    enabled: codex,
+  });
+  const count = codex ? codexCount : claudeCount;
   const enable = () => {
-    void api.post('/agent/accounts/auto-switch', { enabled: true })
-      .finally(() => { void qc.invalidateQueries({ queryKey: ['agent-claude-accounts'] }); });
+    const done = codex
+      ? api.post('/agent/accounts/rules', { tool: 'codex', patch: { autoSwitch: true } })
+      : api.post('/agent/accounts/auto-switch', { enabled: true });
+    void done.finally(() => {
+      void qc.invalidateQueries({ queryKey: [codex ? 'agent-account-rules' : 'agent-claude-accounts'] });
+    });
   };
-  const autoOn = accountsQ.data?.autoSwitch === true && accounts.length > 0;
+  const autoOn = (codex ? rules.data?.codex.autoSwitch === true : claudeOn) && count > 0;
+  const accounts = { length: count };
   return (
     <Notice
       tone="warn"

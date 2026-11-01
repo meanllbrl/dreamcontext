@@ -16,9 +16,10 @@ import {
 import { readProjectMcp } from '../../lib/mcp-project.js';
 import { MCP_NAME_RE, FORBIDDEN_KEYS } from '../../lib/super/lean-mcp.js';
 import {
-  isUsableServerName, type McpHome, type McpOverview, type McpOverviewAccount, type McpOverviewCell,
-  type McpOverviewServer,
+  isUsableServerName, type CodexMcpAuth, type CodexMcpList, type CodexMcpRow, type McpHome, type McpOverview,
+  type McpOverviewAccount, type McpOverviewCell, type McpOverviewServer,
 } from '../../lib/mcp-wire.js';
+import { defaultCodexRunner, type CodexRunner } from '../../lib/codex-accounts.js';
 
 /**
  * Settings → MCP (task mcp-management W2): one overview of every server × every Claude account,
@@ -140,6 +141,68 @@ export function buildOverview(projectRoot: string, home: string = homedir()): Mc
 export async function handleMcpOverview(req: IncomingMessage, res: ServerResponse, _p: Record<string, string>, contextRoot: string | null): Promise<void> {
   if (!guard(req, res, contextRoot)) return;
   sendJson(res, 200, buildOverview(projectRootOf(contextRoot)));
+}
+
+// ─── Codex (read only, first version) ──────────────────────────────────────────────────
+
+const CODEX_MCP_TIMEOUT_MS = 15_000;
+
+function codexAuth(v: unknown): CodexMcpAuth {
+  if (v === 'unsupported' || v === 'not_logged_in' || v === 'bearer_token') return v;
+  if (v === 'oauth' || v === 'o_auth') return 'oauth';
+  return 'unknown';
+}
+
+/**
+ * `codex mcp list --json` → rows, WHITELISTED field by field: name, enabled, auth status and
+ * the transport's TYPE. The transport object also holds the command, its args, a cwd and the
+ * env, so it is never spread or passed on. A row with an unusable name is dropped; anything
+ * that is not an array is `null` (the caller reports `failed`).
+ */
+export function parseCodexMcpList(stdout: string): CodexMcpRow[] | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(stdout.trim()); } catch { return null; }
+  if (!Array.isArray(parsed)) return null;
+  const rows: CodexMcpRow[] = [];
+  const seen = new Set<string>();
+  for (const raw of parsed) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const o = raw as Record<string, unknown>;
+    if (!isUsableServerName(o.name) || seen.has(o.name)) continue;
+    seen.add(o.name);
+    const t = o.transport && typeof o.transport === 'object' ? (o.transport as Record<string, unknown>).type : undefined;
+    rows.push({
+      name: o.name,
+      enabled: o.enabled === true,
+      authStatus: codexAuth(o.auth_status),
+      transport: t === 'stdio' ? 'stdio' : t === 'streamable_http' || t === 'http' ? 'http' : 'other',
+    });
+  }
+  return rows;
+}
+
+let codexMcpRunner: CodexRunner = defaultCodexRunner;
+/** Tests: replace how `codex` is run. */
+export function setCodexMcpRunnerForTests(run: CodexRunner | null): void {
+  codexMcpRunner = run ?? defaultCodexRunner;
+}
+
+/** Ask Codex for its configured servers. Account #0's home: every account shares this config. */
+export async function readCodexMcp(env: NodeJS.ProcessEnv = process.env): Promise<CodexMcpList> {
+  const childEnv = { ...env };
+  delete childEnv.CODEX_HOME;
+  delete childEnv.T3CODE_CODEX_LAUNCH_ARGS;
+  const r = await codexMcpRunner('codex', ['mcp', 'list', '--json'], { env: childEnv, timeoutMs: CODEX_MCP_TIMEOUT_MS, keepStdout: true });
+  if (!r.spawned) return { state: 'not_installed', servers: [] };
+  if (r.timedOut || r.code !== 0) return { state: 'failed', servers: [] };
+  const rows = parseCodexMcpList(r.stdout);
+  return rows ? { state: 'ok', servers: rows } : { state: 'failed', servers: [] };
+}
+
+/** GET /api/agent/mcp/codex: the servers Codex has, read only. No sign-in, no writes. */
+export async function handleMcpCodex(req: IncomingMessage, res: ServerResponse, _p: Record<string, string>, contextRoot: string | null): Promise<void> {
+  if (!guard(req, res, contextRoot)) return;
+  sendJson(res, 200, await readCodexMcp());
 }
 
 /** POST /api/agent/mcp/check `{account?}`: probe one account, or every account. */

@@ -252,6 +252,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/assistant/profile': deny(ASSISTANT),
   'GET /api/assistant/avatar': deny(ASSISTANT),
   'POST /api/assistant/avatar': deny(ASSISTANT),
+  'DELETE /api/assistant/avatar': deny(ASSISTANT),
   'GET /api/assistant/proposals': deny(ASSISTANT),
   'POST /api/assistant/proposals/:id': deny(ASSISTANT),
   'POST /api/assistant/windows': deny(ASSISTANT),
@@ -306,6 +307,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agent/accounts/switch-policy': agnostic(`${CHAT}: how accounts are switched`),
   'POST /api/agent/accounts/owner-only': agnostic(`${CHAT}: which accounts unattended agent work may use`),
   'POST /api/agent/accounts/agent-threshold': agnostic(`${CHAT}: how full an account may be before unattended agent work waits`),
+  'GET /api/agent/accounts/rules': agnostic(`${CHAT}: each tool's account limit rules (no credentials); side-effect free`),
+  'POST /api/agent/accounts/rules': agnostic(`${CHAT}: one tool's account limit rules`),
   // Per-tool accounts (Track T W2): each row is its Claude twin's class.
   'GET /api/agent/accounts/codex': agnostic(`${CHAT}: the Codex account list and cached windows (no credentials); side-effect free`),
   'POST /api/agent/accounts/codex/login': deny(SIGN_IN),
@@ -317,6 +320,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   // MCP management (task mcp-management): Settings' matrix, probes, sign-ins and store edits are
   // the owner window's alone (they spawn `claude` and save commands that run on every spawn).
   'GET /api/agent/mcp/overview': deny(SETTINGS),
+  'GET /api/agent/mcp/codex': deny(SETTINGS),
   'POST /api/agent/mcp/check': deny(SETTINGS),
   'POST /api/agent/mcp/connect': deny(SIGN_IN),
   'GET /api/agent/mcp/connect/:ticket': deny(SIGN_IN),

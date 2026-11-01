@@ -2227,7 +2227,7 @@ export function ChatPane({
       notices.push({
         key: 'account-switch',
         cut,
-        node: <AccountSwitchBanner key="notice-account-switch" move={conv.accountSwitch} onDismiss={session.dismissAccountSwitch} />,
+        node: <AccountSwitchBanner key="notice-account-switch" move={conv.accountSwitch} onDismiss={session.dismissAccountSwitch} tool={session.tool === 'codex' ? 'codex' : ''} />,
       });
     }
   }

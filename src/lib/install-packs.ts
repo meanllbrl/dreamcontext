@@ -34,7 +34,7 @@ import {
   type ManagedFileKind,
 } from './manifest.js';
 import { SUPPORTED_PLATFORMS, type PlatformId } from './platforms.js';
-import { readSetupConfig, isSleepSpecialist } from './setup-config.js';
+import { readSetupConfig, isSleepSpecialist, effectiveSpecialist } from './setup-config.js';
 import {
   applySpecialistFrontmatter,
   agentBaselineSha,
@@ -134,7 +134,7 @@ export function installAgentForPlatform(
   const name = file.replace(/\.md$/, '');
   let content = source;
   if (isSleepSpecialist(name)) {
-    const override = readSetupConfig(projectRoot)?.sleep?.specialists?.[name];
+    const override = effectiveSpecialist(readSetupConfig(projectRoot)?.sleep, name);
     content = applySpecialistFrontmatter(source, override);
   }
 
@@ -180,7 +180,7 @@ export function applySleepSpecialistOverrides(
     const dest = join(projectRoot, relPath);
     if (!existsSync(dest)) { skipped.push(relPath); continue; }
 
-    const override = config?.sleep?.specialists?.[name];
+    const override = effectiveSpecialist(config?.sleep, name);
     try {
       const installed = readFileSync(dest, 'utf-8');
       const baselineSha = manifest?.files[relPath]?.baselineSha;

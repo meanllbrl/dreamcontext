@@ -3,6 +3,7 @@
  * while the menu is open, so the auto-switch flag and the favourites cost nothing otherwise.
  */
 import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi, useVault, emitInstance } from '../../../../context/VaultContext';
 import { useClaudeAccounts } from '../../../../hooks/useAgentCapabilities';
 import { onAgentSettings, patchAgentSettings, readAgentSettings } from '../../../../lib/agentSettings';
@@ -28,7 +29,23 @@ export function ComposerModelPicker({ pick, model, effort, onModelChange, onEffo
   const res = useClaudeAccounts(true);
   const [favourites, setFavourites] = useState<string[]>(() => readAgentSettings().modelFavourites);
   useEffect(() => onAgentSettings((cfg) => setFavourites(cfg.modelFavourites)), []);
-  const autoSwitch = res.data?.autoSwitch;
+  // Each tool keeps its own limit rules (account-rules.ts): a Codex chat's switch is Codex's.
+  const codex = pick.current === 'codex';
+  const qc = useQueryClient();
+  const rules = useQuery({
+    queryKey: ['agent-account-rules'],
+    queryFn: () => api.get<{ codex: { autoSwitch: boolean } }>('/agent/accounts/rules'),
+    enabled: codex,
+  });
+  const autoSwitch = codex ? rules.data?.codex.autoSwitch : res.data?.autoSwitch;
+  const toggleAutoSwitch = (): void => {
+    if (codex) {
+      void api.post('/agent/accounts/rules', { tool: 'codex', patch: { autoSwitch: !autoSwitch } })
+        .then(() => qc.invalidateQueries({ queryKey: ['agent-account-rules'] }));
+      return;
+    }
+    void api.post('/agent/accounts/auto-switch', { enabled: !autoSwitch }).then(() => res.refetch());
+  };
   const openSettings = (target: SettingsTarget): void => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'settings', id: target });
 
   return (
@@ -45,7 +62,7 @@ export function ComposerModelPicker({ pick, model, effort, onModelChange, onEffo
       onAccountChange={onAccountChange}
       autoSwitch={autoSwitch === undefined ? undefined : {
         enabled: autoSwitch,
-        onToggle: () => { void api.post('/agent/accounts/auto-switch', { enabled: !autoSwitch }).then(() => res.refetch()); },
+        onToggle: toggleAutoSwitch,
       }}
       favourites={favourites}
       onFavouritesChange={(keys) => { setFavourites(keys); void patchAgentSettings({ modelFavourites: keys }); }}

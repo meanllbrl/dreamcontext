@@ -19,6 +19,19 @@ import './model-picker.css';
 
 export type SettingsTarget = 'models' | 'accounts' | 'accounts-codex';
 
+/**
+ * Settings mode (the Settings window's model chip): the pick is a saved default, not this chat's
+ * model. No "opens a new chat" note (a tool switch is just written), a locked tool's rail is
+ * passive and says why, the effort list may be the job's own, and there is no account chip and
+ * no "Models ›" (it is already Models).
+ */
+export interface PickerTarget {
+  /** Tools this job cannot run on, with the one-line reason shown in their place. */
+  lockedTools?: Partial<Record<PickerTool, string>>;
+  /** The job's own effort levels (Sleep takes low, medium, high). */
+  efforts?: string[];
+}
+
 export interface ModelPickerProps {
   /** Rail order: Claude, then Codex (a tool the server does not offer is absent). */
   tools: PickerToolState[];
@@ -42,10 +55,11 @@ export interface ModelPickerProps {
   savedDefault?: boolean;
   onOpenSettings: (target: SettingsTarget) => void;
   close: () => void;
+  target?: PickerTarget;
 }
 
 /** Each tool's mark in the rail, drawn here: the app ships no vendor artwork of its own. */
-function ToolMark({ tool }: { tool: PickerTool }) {
+export function ToolMark({ tool }: { tool: PickerTool }) {
   if (tool === 'claude') {
     return (
       <svg className="mp-mark mp-mark--claude" viewBox="0 0 24 24" aria-hidden>
@@ -73,6 +87,8 @@ export function ModelPicker(p: ModelPickerProps) {
   const [panel, setPanel] = useState<'' | 'effort' | 'account'>('');
   const tool = rail === 'fav' ? null : p.tools.find((t) => t.tool === rail) ?? null;
   const own = p.tools.find((t) => t.tool === p.currentTool) ?? null;
+  const locked = (t: PickerTool): string | undefined => p.target?.lockedTools?.[t];
+  const ownEfforts = p.target?.efforts ?? own?.efforts ?? [];
 
   const rows = useMemo<PickerModel[]>(() => {
     if (query.trim()) return searchModels(p.tools, query);
@@ -81,7 +97,7 @@ export function ModelPicker(p: ModelPickerProps) {
     return legacyOpen ? [...tool.current, ...tool.legacy] : tool.current;
   }, [query, rail, tool, legacyOpen, p.tools, p.favourites]);
 
-  const usable = (m: PickerModel): boolean => p.tools.find((t) => t.tool === m.tool)?.ready ?? false;
+  const usable = (m: PickerModel): boolean => !locked(m.tool) && (p.tools.find((t) => t.tool === m.tool)?.ready ?? false);
   const pick = (m: PickerModel): void => {
     if (!usable(m)) return;
     if (m.tool === p.currentTool) p.onModelChange(m.id);
@@ -143,13 +159,14 @@ export function ModelPicker(p: ModelPickerProps) {
               key={t.tool}
               type="button"
               className={`mp-tool${rail === t.tool ? ' is-on' : ''}${t.tool === p.currentTool ? ' is-current' : ''}`}
-              aria-label={t.ready ? t.label : `${t.label} (${blockerLine(t)})`}
+              aria-label={locked(t.tool) ? `${t.label} (${locked(t.tool)})` : t.ready ? t.label : `${t.label} (${blockerLine(t)})`}
+              aria-disabled={locked(t.tool) ? true : undefined}
               aria-pressed={rail === t.tool}
               data-tool={t.tool}
               onClick={() => { setRail(t.tool); setQuery(''); setLegacyOpen(false); setPanel(''); }}
             >
               <ToolMark tool={t.tool} />
-              {!t.ready && <span className="mp-tool-dot" aria-hidden />}
+              {!t.ready && !locked(t.tool) && <span className="mp-tool-dot" aria-hidden />}
             </button>
           ))}
         </nav>
@@ -166,7 +183,10 @@ export function ModelPicker(p: ModelPickerProps) {
             />
           </label>
           <div className="mp-list">
-            {!searching && tool && !tool.ready && (
+            {!searching && tool && locked(tool.tool) && (
+              <p className="mp-note mp-note--warn" data-testid="model-picker-locked">{locked(tool.tool)}</p>
+            )}
+            {!searching && tool && !tool.ready && !locked(tool.tool) && (
               <p className="mp-note mp-note--warn" data-testid="model-picker-signin">
                 {blockerLine(tool)}
                 {tool.blocker === 'signed-out' && (
@@ -174,7 +194,7 @@ export function ModelPicker(p: ModelPickerProps) {
                 )}
               </p>
             )}
-            {!searching && tool && tool.ready && tool.tool !== p.currentTool && (
+            {!p.target && !searching && tool && tool.ready && tool.tool !== p.currentTool && (
               <p className="mp-note">Opens a new {tool.label} chat with a summary of this one</p>
             )}
             {!searching && rail === 'fav' && rows.length === 0 && (
@@ -194,9 +214,9 @@ export function ModelPicker(p: ModelPickerProps) {
             {showLegacyRow && legacyOpen && tool!.legacy.map((m) => row(m, rows.indexOf(m)))}
           </div>
 
-          {panel === 'effort' && own && own.efforts.length > 0 && (
+          {panel === 'effort' && ownEfforts.length > 0 && (
             <div className="mp-efforts" role="radiogroup" aria-label="Reasoning effort">
-              {own.efforts.map((lvl) => (
+              {ownEfforts.map((lvl) => (
                 <button key={lvl} type="button" role="radio" aria-checked={lvl === p.effort} className={`mp-effort${lvl === p.effort ? ' is-on' : ''}`} onClick={() => p.onEffortChange(lvl)}>
                   {effortLabel(lvl)}
                 </button>
@@ -231,12 +251,12 @@ export function ModelPicker(p: ModelPickerProps) {
           )}
 
           <div className="mp-chips">
-            {own && own.efforts.length > 0 ? (
+            {ownEfforts.length > 0 ? (
               <button type="button" className={`mp-chip${panel === 'effort' ? ' is-on' : ''}`} aria-expanded={panel === 'effort'} onClick={() => setPanel((x) => (x === 'effort' ? '' : 'effort'))}>
                 <span className="mp-chip-label">Effort</span> {effortLabel(p.effort)}
               </button>
             ) : <span />}
-            {active && (
+            {active && !p.target && (
               <button type="button" className={`mp-chip${panel === 'account' ? ' is-on' : ''}`} aria-expanded={panel === 'account'} onClick={() => setPanel((x) => (x === 'account' ? '' : 'account'))} data-testid="model-picker-account-chip">
                 <span className={`mp-dot${active.state === 'ok' ? '' : ' is-warn'}`} aria-hidden />
                 <span className="mp-chip-email">{active.email}</span>
@@ -246,15 +266,17 @@ export function ModelPicker(p: ModelPickerProps) {
           </div>
         </div>
       </div>
-      <div className="mp-foot">
-        <span className="mp-foot-line">
-          {newChats && <span>{newChats[0]}: <strong>{newChats[1]}</strong></span>}
-          {p.onSetDefault && (
-            <button type="button" className="mp-link mp-link--quiet" onClick={p.onSetDefault}>{p.savedDefault ? 'Saved as default' : 'Set as default'}</button>
-          )}
-        </span>
-        <button type="button" className="mp-link mp-link--quiet" onClick={() => { p.onOpenSettings('models'); p.close(); }}>Models ›</button>
-      </div>
+      {!p.target && (
+        <div className="mp-foot">
+          <span className="mp-foot-line">
+            {newChats && <span>{newChats[0]}: <strong>{newChats[1]}</strong></span>}
+            {p.onSetDefault && (
+              <button type="button" className="mp-link mp-link--quiet" onClick={p.onSetDefault}>{p.savedDefault ? 'Saved as default' : 'Set as default'}</button>
+            )}
+          </span>
+          <button type="button" className="mp-link mp-link--quiet" onClick={() => { p.onOpenSettings('models'); p.close(); }}>Models ›</button>
+        </div>
+      )}
     </div>
   );
 }

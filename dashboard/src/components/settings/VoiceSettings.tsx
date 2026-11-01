@@ -24,7 +24,7 @@ import { notifyDictationChanged } from '../../lib/voice/useDictationReady';
  * Modelled on the existing embeddings/Hybrid card's shape, which is why it is cheap.
  */
 
-interface VoiceStatus {
+export interface VoiceStatus {
   key: boolean;
   voice: string;
   sttLanguage: string;
@@ -54,7 +54,7 @@ interface VoiceStatus {
  * leaves through, so a deep duck is a quieter ANSWER, not a quieter room. Below half there is
  * no compensation that gets it back, so the option is not offered.
  */
-const DUCKS = [
+export const DUCKS = [
   { value: 1, label: 'Leave it alone (default)' },
   { value: 0.7, label: 'A little' },
   { value: 0.5, label: 'Half' },
@@ -63,13 +63,13 @@ const DUCKS = [
 /** The voices the speech endpoint offers. The JARVIS character does NOT come from this list —
  *  there is no British male voice — it comes from the `instructions` parameter the route
  *  sends. This picks the timbre the character is spoken in. */
-const VOICES = ['onyx', 'ash', 'echo', 'alloy', 'fable', 'nova', 'shimmer'] as const;
+export const VOICES = ['onyx', 'ash', 'echo', 'alloy', 'fable', 'nova', 'shimmer'] as const;
 
 /** `auto` sends no `language` at all. The rest exist because auto-detect on SHORT takes is
  *  UNPROVEN on this code path — the only benchmark ever run used an explicit `-l tr` against
  *  local whisper, which is a different engine entirely. If it misfires, pinning one here is
  *  the documented fix, and it needs no code change. */
-const LANGUAGES = [
+export const LANGUAGES = [
   { id: 'auto', label: 'Detect automatically' },
   { id: 'tr', label: 'Turkish' },
   { id: 'en', label: 'English' },
@@ -77,7 +77,7 @@ const LANGUAGES = [
 
 /** The languages offered for "Languages I speak". A display list only: the server normalizes
  *  every entry against whisper's own table and drops anything else. */
-const SPOKEN = [
+export const SPOKEN = [
   { id: 'tr', label: 'Turkish' }, { id: 'en', label: 'English' }, { id: 'de', label: 'German' },
   { id: 'fr', label: 'French' }, { id: 'es', label: 'Spanish' }, { id: 'it', label: 'Italian' },
   { id: 'pt', label: 'Portuguese' }, { id: 'nl', label: 'Dutch' }, { id: 'ru', label: 'Russian' },
@@ -87,7 +87,7 @@ const SPOKEN = [
 /** The speeds offered. A short list rather than a slider: the useful range is narrow — the
  *  character stops being calm and precise past it — and a slider would invite the settings
  *  where it does. */
-const RATES = [
+export const RATES = [
   { value: 0.9, label: 'Slower (0.9x)' },
   { value: 1, label: 'Normal' },
   { value: 1.15, label: 'Brisk (1.15x)' },

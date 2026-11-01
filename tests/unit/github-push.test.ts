@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -252,9 +252,12 @@ describe('github PUSH (A3/A7, mocked transport)', () => {
     expect(report.errors.length).toBeGreaterThan(0);
     expect(report.errors[0]).toMatch(/repo/i);
 
-    const saved = { GITHUB_TOKEN: process.env.GITHUB_TOKEN, GH_TOKEN: process.env.GH_TOKEN };
+    const saved = { GITHUB_TOKEN: process.env.GITHUB_TOKEN, GH_TOKEN: process.env.GH_TOKEN, HOME: process.env.HOME };
     delete process.env.GITHUB_TOKEN;
     delete process.env.GH_TOKEN;
+    // The machine's GitHub sign-in is the last token tier: an empty HOME, so the developer's own
+    // sign-in cannot stand in for the missing token.
+    process.env.HOME = mkdtempSync(join(tmpdir(), 'dc-gh-push-nohome-'));
     try {
       const noToken = new GitHubTaskBackend(contextRoot, CONFIG, {});
       const tokenReport = await noToken.sync('push');
@@ -263,6 +266,8 @@ describe('github PUSH (A3/A7, mocked transport)', () => {
     } finally {
       if (saved.GITHUB_TOKEN !== undefined) process.env.GITHUB_TOKEN = saved.GITHUB_TOKEN;
       if (saved.GH_TOKEN !== undefined) process.env.GH_TOKEN = saved.GH_TOKEN;
+      rmSync(process.env.HOME!, { recursive: true, force: true });
+      if (saved.HOME === undefined) delete process.env.HOME; else process.env.HOME = saved.HOME;
     }
   });
 });

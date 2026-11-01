@@ -415,7 +415,7 @@ export interface ConversationModel {
   accountSwitch?: {
     switched: boolean;
     reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted' | 'come_home'
-      | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled';
+      | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled' | 'resumed_at_reset';
     accountId: string;
     fromAccountId?: string;
     email?: string;

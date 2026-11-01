@@ -1,4 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { createElement } from '../../dashboard/node_modules/react/index.js';
+import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
+import { ModelPicker, type ModelPickerProps } from '../../dashboard/src/components/sleepy/chat/model-picker/ModelPicker';
 import {
   blockerOf, claudeState, codexState, favouriteKey, favouriteModels, searchModels, shortcutFor,
   splitByVersion, toggleFavourite, type ToolReadiness,
@@ -62,5 +67,49 @@ describe('r29 model picker data', () => {
     expect(shortcutFor(0)).toBe('⌘1');
     expect(shortcutFor(8)).toBe('⌘9');
     expect(shortcutFor(9)).toBeNull();
+  });
+});
+
+describe('settings mode (the Settings window chip)', () => {
+  const tools = [claudeState(CONFIG, 'opus'), codexState(codex())];
+  const base: ModelPickerProps = {
+    tools, currentTool: 'claude', model: 'opus', effort: 'high',
+    onModelChange: () => {}, onEffortChange: () => {}, onCrossTool: () => {},
+    accounts: [{ id: 'a', email: 'ada@example.com', state: 'ok', sessionPercent: 10 } as never],
+    activeAccountId: 'a', favourites: [], onFavouritesChange: () => {}, onOpenSettings: () => {}, close: () => {},
+  };
+  const html = (over: Partial<ModelPickerProps> = {}) => renderToStaticMarkup(createElement(ModelPicker, { ...base, ...over }));
+
+  it('the composer keeps its account chip and Models ›', () => {
+    const out = html();
+    expect(out).toContain('model-picker-account-chip');
+    expect(out).toContain('Models ›');
+  });
+
+  it('a target draws no account chip and no Models ›', () => {
+    const out = html({ target: {} });
+    expect(out).not.toContain('model-picker-account-chip');
+    expect(out).not.toContain('Models ›');
+    expect(out).not.toContain('Opens a new');
+  });
+
+  it('a locked tool is passive in the rail and says why', () => {
+    const out = html({ target: { lockedTools: { codex: 'The Super Agent runs on Claude Code only.' } } });
+    expect(out).toContain('aria-label="Codex (The Super Agent runs on Claude Code only.)"');
+    expect(out).toMatch(/aria-disabled="true"[^>]*data-tool="codex"|data-tool="codex"[^>]*aria-disabled="true"/);
+  });
+
+  it('a locked tool\'s models can never be picked, even from search', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'dashboard', 'src', 'components', 'sleepy', 'chat', 'model-picker', 'ModelPicker.tsx'), 'utf-8');
+    expect(src).toMatch(/const usable = \(m: PickerModel\): boolean => !locked\(m\.tool\) &&/);
+  });
+
+  it('the job\'s own efforts replace the tool\'s', () => {
+    // The effort chip reads the job's list: Sleep has no xhigh even where Claude does.
+    const src = readFileSync(join(__dirname, '..', '..', 'dashboard', 'src', 'components', 'sleepy', 'chat', 'model-picker', 'ModelPicker.tsx'), 'utf-8');
+    expect(src).toMatch(/const ownEfforts = p\.target\?\.efforts \?\? own\?\.efforts \?\? \[\];/);
+    expect(src).toMatch(/\{ownEfforts\.map\(\(lvl\) =>/);
+    expect(html({ target: { efforts: [] } })).not.toContain('Effort</span>');
+    expect(html({ target: { efforts: ['low', 'medium', 'high'] } })).toContain('Effort</span>');
   });
 });

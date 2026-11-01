@@ -24,7 +24,7 @@ import { TaskDetailPanel } from './TaskDetailPanel';
 import { TaskCreateModal } from './TaskCreateModal';
 import { AuthorTaskComposer } from './AuthorTaskComposer';
 import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCapabilities';
-import { readAgentSettings, AGENT_SETTINGS_EVENT } from '../../lib/agentSettings';
+import { agentSurfaceSettings, readAgentSettings, AGENT_SETTINGS_EVENT } from '../../lib/agentSettings';
 import './Board.css';
 
 const AVATAR_PALETTE = ['#9d8cff', '#4aa8ff', '#4ade80', '#f0abfc', '#fbbf24', '#5eead4', '#f9a8d4'];
@@ -62,7 +62,8 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     window.addEventListener(AGENT_SETTINGS_EVENT, onChange);
     return () => window.removeEventListener(AGENT_SETTINGS_EVENT, onChange);
   }, []);
-  const agentReady = isSleepAgentReady(agentCaps, agentSettings.chatView) && agentSettings.enabled;
+  const surface = agentSurfaceSettings(agentSettings);
+  const agentReady = isSleepAgentReady(agentCaps, surface.chatView) && surface.enabled;
 
   const [openMenu, setOpenMenu] = useState<MenuKey>(null);
   const [viewMenuId, setViewMenuId] = useState<string | null>(null);

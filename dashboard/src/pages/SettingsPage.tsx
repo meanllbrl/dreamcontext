@@ -1,11 +1,5 @@
-import { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { useIsNewShell } from '../lib/uxMode';
-import { PageBar } from '../components/layout/PageBar';
-import { ModelsSection } from '../components/settings/ModelsSection';
-import { EcoModeRow } from '../components/settings/EcoModeRow';
-import { applySettingsSearch } from '../components/settings/settingsSearch';
+import { useState, useEffect, useRef } from 'react';
 import { useI18n } from '../context/I18nContext';
-import { useVault } from '../context/VaultContext';
 import { useConfig, useUpdateConfig, type PlatformId } from '../hooks/useConfig';
 import { SleepSettings } from '../components/settings/SleepSettings';
 import { ConnectionsManager } from '../components/settings/ConnectionsManager';
@@ -19,11 +13,10 @@ import { SettingGroup, SettingRow, Toggle } from '../components/settings/Setting
 import { VoiceSettings } from '../components/settings/VoiceSettings';
 import { useInstantSave, SaveMark } from '../components/settings/useInstantSave';
 import { useAgentCapabilities } from '../hooks/useAgentCapabilities';
-import { useAuthStatus, useBrainSettings, useBrainStatus, useUpdateBrainSettings } from '../hooks/useBrainStatus';
+import { useAuthStatus } from '../hooks/useBrainStatus';
 import { useSleep, useUpdateSleep, type RecallMode } from '../hooks/useSleep';
 import { useTheses, useSetLearningEnabled } from '../hooks/useTheses';
 import { GitHubLogin } from '../components/brain/GitHubLogin';
-import { OriginSetup } from '../components/brain/OriginSetup';
 import { SystemDependencies, FeatureDepsNotice } from '../components/settings/SystemDependencies';
 import { AutoUpdateSetting } from '../components/settings/AutoUpdateSetting';
 import { ClaudeAccounts } from '../components/settings/ClaudeAccounts';
@@ -31,7 +24,7 @@ import { CodexAccounts } from '../components/settings/ToolAccounts';
 import { McpServers } from '../components/settings/McpServers';
 import { LinkedRepos } from '../components/brain/LinkedRepos';
 import { HandsfreeSettingsCard } from '../components/handsfree/HandsfreeSettingsCard';
-import { readAutoCheckpointOnOpen, writeAutoCheckpointOnOpen } from '../lib/brainSyncPrefs';
+import { TeamSyncRows } from '../components/settings/TeamSyncRows';
 import { isDesktop } from '../lib/desktop';
 import {
   initAgentSettingsFromServer,
@@ -69,7 +62,7 @@ type SettingsSectionId =
   | 'platforms' | 'format' | 'linkedrepos' | 'agents'
   | 'memory' | 'sleep' | 'learning' | 'recall'
   | 'github' | 'teamsync' | 'clickup' | 'connections'
-  | 'system' | 'models';
+  | 'system';
 
 interface SettingsNavItem {
   id: SettingsSectionId;
@@ -77,8 +70,6 @@ interface SettingsNavItem {
   desktopOnly?: boolean;
   beta?: boolean;
   lab?: boolean;
-  /** Only the new shell offers it (Settings → Models, W2-C). */
-  newShellOnly?: boolean;
 }
 
 interface SettingsNavGroup {
@@ -136,7 +127,6 @@ const SETTINGS_NAV: SettingsNavGroup[] = [
     labelKey: 'settings.group.machine',
     items: [
       { id: 'system', labelKey: 'settings.nav.system' },
-      { id: 'models', labelKey: 'shell.settings.models', newShellOnly: true },
     ],
   },
 ];
@@ -180,17 +170,8 @@ export function SettingsPage({ focus }: SettingsPageProps) {
 
   // Team sync's two preconditions, read here so the SWITCH can be gated on them rather
   // than offered and then refused by the server (400 `no_origin`).
-  const { data: brainSettings } = useBrainSettings();
-  const { data: brainStatus } = useBrainStatus();
   const { data: githubAuth } = useAuthStatus();
-  const updateBrainSettings = useUpdateBrainSettings();
   const githubConnected = githubAuth?.connected === true;
-  const hasOrigin = brainStatus?.hasRemote === true;
-  // Machine-local "auto-checkpoint on open" preference (localStorage, not team
-  // config), and PER VAULT: it decides whether opening THIS project auto-commits its
-  // uncommitted work, so it is read and written against this instance's vault.
-  const { vault } = useVault();
-  const [autoCheckpoint, setAutoCheckpoint] = useState<boolean>(() => readAutoCheckpointOnOpen(vault));
 
   // Memory recall mode lives in .sleep.json (not the setup config).
   const { data: sleepState } = useSleep();
@@ -205,58 +186,11 @@ export function SettingsPage({ focus }: SettingsPageProps) {
   // In-page section nav: only one settings group is shown at a time so a
   // specific setting is quick to find instead of buried in one long scroll.
   const [activeSection, setActiveSection] = useState<SettingsSectionId>('platforms');
-  const newShell = useIsNewShell();
   const navGroups = SETTINGS_NAV
-    .map((g) => ({ ...g, items: g.items.filter((item) => (!item.desktopOnly || desktopSurfaces) && (!item.newShellOnly || newShell)) }))
+    .map((g) => ({ ...g, items: g.items.filter((item) => !item.desktopOnly || desktopSurfaces) }))
     .filter((g) => g.items.length > 0);
-
-  // The new shell's settings search (W2-C): while a query is typed every section is drawn and
-  // `applySettingsSearch` filters what shows by its own text. Classic has no search, so a
-  // section shows exactly when it is the active one, as before.
-  const [query, setQuery] = useState('');
-  const searching = newShell && query.trim() !== '';
-  const show = (id: SettingsSectionId) => searching || activeSection === id;
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const searchRef = useRef<HTMLInputElement | null>(null);
-  const [shownBlocks, setShownBlocks] = useState(1);
-  useLayoutEffect(() => {
-    if (!newShell || !contentRef.current) return;
-    setShownBlocks(applySettingsSearch(contentRef.current, searching ? query : ''));
-  });
-  useEffect(() => () => { if (contentRef.current) applySettingsSearch(contentRef.current, ''); }, []);
-  // Sections load their own data after the keystroke: re-apply when their rows arrive. Only
-  // nodes and text are watched, never attributes, so the filter's own marks do not re-trigger it.
-  useEffect(() => {
-    const root = contentRef.current;
-    if (!searching || !root || typeof MutationObserver === 'undefined') return undefined;
-    let raf = 0;
-    const obs = new MutationObserver(() => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        setShownBlocks(applySettingsSearch(root, query));
-      });
-    });
-    obs.observe(root, { childList: true, subtree: true, characterData: true });
-    return () => { obs.disconnect(); if (raf) cancelAnimationFrame(raf); };
-  }, [searching, query]);
-  // `/` and ⌘F put the cursor in the search, unless the owner is typing somewhere already.
-  const { isActive } = useVault();
-  useEffect(() => {
-    if (!newShell || !isActive) return undefined;
-    const onKey = (e: KeyboardEvent) => {
-      const el = e.target instanceof Element ? e.target : null;
-      if (el?.closest('input, textarea, select, [contenteditable="true"], .xterm, .agent-surface.expanded')) return;
-      if (document.querySelector('.agent-surface.expanded')) return;
-      const slash = e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey;
-      const find = e.key.toLowerCase() === 'f' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
-      if (!slash && !find) return;
-      e.preventDefault();
-      searchRef.current?.focus();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [newShell, isActive]);
+  // Classic only (the new layout opens the Settings window): one section at a time.
+  const show = (id: SettingsSectionId) => activeSection === id;
 
   // Config-backed switches read straight from the server copy, so a write that
   // fails leaves the control showing what is actually on disk instead of a value
@@ -265,7 +199,6 @@ export function SettingsPage({ focus }: SettingsPageProps) {
   const disableNativeMemory = config?.disableNativeMemory ?? true;
   const platformsSave = useInstantSave();
   const nativeMemorySave = useInstantSave();
-  const brainToggleSave = useInstantSave();
 
 
 
@@ -325,7 +258,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
     else if (focus?.id === 'github') setActiveSection('github');
     else if (focus?.id === 'system') setActiveSection('system');
     // The composer's model picker (Track T W4): "Models ›" and a tool's "Sign in" / "Add ›".
-    else if (focus?.id === 'models') setActiveSection(newShell ? 'models' : 'agents');
+    else if (focus?.id === 'models') setActiveSection('agents');
     else if (focus?.id === 'accounts' || focus?.id === 'accounts-codex') {
       const target = focus.id === 'accounts-codex' ? 'settings-codex-accounts' : 'settings-claude-accounts';
       setActiveSection('agents');
@@ -336,7 +269,6 @@ export function SettingsPage({ focus }: SettingsPageProps) {
       setActiveSection('agents');
       requestAnimationFrame(() => document.getElementById('settings-mcp')?.scrollIntoView({ block: 'start' }));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- `newShell` only picks the section name
   }, [focus?.id, focus?.nonce]);
 
   if (configLoading) {
@@ -359,25 +291,6 @@ export function SettingsPage({ focus }: SettingsPageProps) {
 
   return (
     <div className="settings-page">
-      {newShell && (
-        <PageBar flush title={t('nav.settings')}>
-          <label className="settings-search">
-            <span className="settings-search-icon" aria-hidden="true">⌕</span>
-            <input
-              ref={searchRef}
-              type="search"
-              className="settings-search-input"
-              placeholder={t('shell.settings.search')}
-              aria-label={t('shell.settings.search')}
-              value={query}
-              data-testid="settings-search"
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Escape' && query) { e.preventDefault(); e.stopPropagation(); setQuery(''); } }}
-            />
-            <kbd className="settings-search-kbd">/</kbd>
-          </label>
-        </PageBar>
-      )}
       {config === null && (
         <div className="settings-empty-notice">{t('settings.no_config')}</div>
       )}
@@ -396,7 +309,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                     type="button"
                     className={`settings-nav-item${active ? ' settings-nav-item--active' : ''}`}
                     aria-current={active ? 'page' : undefined}
-                    onClick={() => { setActiveSection(item.id); setQuery(''); }}
+                    onClick={() => setActiveSection(item.id)}
                   >
                     <span className="settings-nav-icon" aria-hidden="true">
                       {NavIcon ? <NavIcon /> : null}
@@ -412,7 +325,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
           ))}
         </nav>
 
-        <div className="settings-content" ref={newShell ? contentRef : undefined}>
+        <div className="settings-content">
 
       {/* ─── Project ─────────────────────────────────────────────────────── */}
 
@@ -699,7 +612,6 @@ export function SettingsPage({ focus }: SettingsPageProps) {
               carry it): the owner reaches for it while thinking about how they talk to the
               agent, not while auditing what is installed. The card's own text still says
               where the key lives. */}
-          {newShell && <EcoModeRow />}
           <VoiceSettings />
 
           {/* The Super Agent, the very last group. No on/off row since 2026-10-29: it is on for
@@ -716,13 +628,6 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                 hint={t('settings.super.ports.note')}
                 control={<LoopbackPorts />}
               />
-              {newShell ? (
-                <SettingRow
-                  title={t('settings.agents.super_model')}
-                  hint={t('shell.settings.models.moved')}
-                  control={<button type="button" className="settings-models-link" onClick={() => { setActiveSection('models'); setQuery(''); }}>{t('shell.settings.models')} ›</button>}
-                />
-              ) : (
               <>
               {/* Its own model and effort (plan r4 D3, D12): Opus at high unless changed here
                   or with the super composer's "Set as default"; never the chat default. */}
@@ -759,7 +664,6 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                 }
               />
               </>
-              )}
             </SettingGroup>
           )}
         </section>
@@ -865,44 +769,7 @@ export function SettingsPage({ focus }: SettingsPageProps) {
             }
           />
         ) : (
-          <SettingGroup>
-            {/* THE SWITCH IS GATED ON THE REPO, not just styled as if it were. The server
-                refuses to enable sync with no origin (400 `no_origin`), so an enabled
-                control here was a switch that could only fail — the user flipped it, it
-                bounced back, and nothing said why. */}
-            <SettingRow
-              title={t('brain.cloudSync.label')}
-              hint={hasOrigin ? t('brain.cloudSync.hint') : t('settings.teamsync.needsRepo')}
-              tone={hasOrigin ? 'default' : 'warn'}
-              status={<SaveMark state={brainToggleSave.state} />}
-              control={
-                <Toggle
-                  label={t('brain.cloudSync.label')}
-                  checked={brainSettings?.enabled ?? false}
-                  disabled={!hasOrigin || updateBrainSettings.isPending || brainToggleSave.state.kind === 'saving'}
-                  onChange={(next) => { void brainToggleSave.save(() => updateBrainSettings.mutateAsync(next)); }}
-                />
-              }
-            />
-
-            {/* The repo it syncs to — create, attach, change or disconnect. */}
-            <SettingRow title={t('settings.teamsync.repo.title')} hint={t('settings.teamsync.repo.hint')}>
-              <OriginSetup compact />
-            </SettingRow>
-
-            <SettingRow
-              title={t('brain.scope.autoCheckpoint.label')}
-              hint={t('brain.scope.autoCheckpoint.hint')}
-              more={t('brain.scope.autoCheckpoint.more')}
-              control={
-                <Toggle
-                  label={t('brain.scope.autoCheckpoint.label')}
-                  checked={autoCheckpoint}
-                  onChange={(next) => { setAutoCheckpoint(next); writeAutoCheckpointOnOpen(vault, next); }}
-                />
-              }
-            />
-          </SettingGroup>
+          <TeamSyncRows />
         )}
       </section>
       )}
@@ -927,15 +794,6 @@ export function SettingsPage({ focus }: SettingsPageProps) {
 
       {/* ─── This machine ────────────────────────────────────────────────── */}
 
-      {newShell && show('models') && (
-      <section className="settings-section">
-        <SectionHead titleKey="shell.settings.models" descKey="shell.settings.models.hint" />
-        <ModelsSection agentCfg={agentCfg} onOpenSleep={() => { setActiveSection('sleep'); setQuery(''); }} />
-      </section>
-      )}
-      {searching && shownBlocks === 0 && (
-        <div className="settings-search-empty" data-testid="settings-search-empty">{t('shell.settings.noMatch')}</div>
-      )}
 
       {show('system') && (
       <section className="settings-section">

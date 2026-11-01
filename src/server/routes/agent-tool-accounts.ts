@@ -4,7 +4,7 @@ import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isAgentRequest, isDesktop } from '../desktop.js';
 import { isLoopback } from './agent-spawn-shared.js';
 import { clearToolRejection, clearToolSignedOut, readToolRejections } from '../../lib/account-switch.js';
-import { autoSwitchEnabled } from '../../lib/claude-accounts.js';
+import { codexRules } from '../../lib/account-rules.js';
 import {
   CodexAccountError, CODEX_PRIMARY_ID, adoptCodexAccounts, orphanCodexAccountIds, codexAccountDeps, codexAccountSignedIn, codexPrimaryHidden, codexLimitsFor, getCodexAccount, listCodexAccounts, probeCodexAccount,
   readCodexUsage, removeCodexAccount, reorderCodexAccounts, signInNewCodexAccount, type CodexAccountDeps, type CodexUsageWindow,
@@ -97,7 +97,8 @@ export async function handleCodexAccountsList(req: IncomingMessage, res: ServerR
     tool: 'codex',
     accounts: codexAccountsWire(home),
     nextSessionAccountId,
-    autoSwitch: autoSwitchEnabled(home),
+    autoSwitch: codexRules(home).autoSwitch,
+    rules: codexRules(home),
     // `~/.codex` left the list but is still signed in: Settings offers it back (adopt).
     primaryHidden: codexPrimaryHidden(home) && codexAccountSignedIn(CODEX_PRIMARY_ID, home),
     // Signed-in folders with no row (a sign-in that outlived its server): the same button brings them in.

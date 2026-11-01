@@ -3,7 +3,7 @@ import { useI18n } from '../../context/I18nContext';
 import { useSleep, getSleepLevelKey, getSleepMood, displayDebt, sleepThresholds, sleepDebtMax } from '../../hooks/useSleep';
 import { useAutoSleep } from '../../hooks/useAutoSleep';
 import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCapabilities';
-import { readAgentSettings, AGENT_SETTINGS_EVENT, type AgentSettings } from '../../lib/agentSettings';
+import { agentSurfaceSettings, readAgentSettings, AGENT_SETTINGS_EVENT, type AgentSettings } from '../../lib/agentSettings';
 import { useVault, useInstanceEvent } from '../../context/VaultContext';
 import {
   runSleepAgent,
@@ -116,7 +116,8 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
   const pct = sleeping ? 100 : Math.min(100, (debt / debtMax) * 100);
   const level = t(`sleep.${levelKey}`);
 
-  const agentReady = isSleepAgentReady(caps, agentSettings.chatView) && agentSettings.enabled;
+  const surface = agentSurfaceSettings(agentSettings);
+  const agentReady = isSleepAgentReady(caps, surface.chatView) && surface.enabled;
 
   const runAgent = () => {
     setMenuOpen(false);

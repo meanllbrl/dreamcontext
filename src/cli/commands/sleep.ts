@@ -13,7 +13,7 @@ import { getTaskBackend } from '../../lib/task-backend/index.js';
 import { ProgressBar } from '../../lib/progress.js';
 import type { SyncOptions } from '../../lib/task-backend/types.js';
 import { runMigrations } from '../../lib/migration-runner.js';
-import { readSetupConfig, updateSetupConfig, readBrainLocal, writeBrainLocal, SLEEP_SPECIALISTS } from '../../lib/setup-config.js';
+import { readSetupConfig, updateSetupConfig, readBrainLocal, writeBrainLocal, SLEEP_SPECIALISTS, effectiveSpecialist } from '../../lib/setup-config.js';
 import {
   setSleepConfigKey,
   resetSleepConfigKey,
@@ -1139,11 +1139,12 @@ export function registerSleepCommand(program: Command): void {
 
       console.log(`\n  ${chalk.bold('Specialists')}`);
       for (const name of SLEEP_SPECIALISTS) {
-        const o = cfg?.specialists?.[name];
+        const pinned = cfg?.specialists?.[name];
+        const o = effectiveSpecialist(cfg, name);
         const shipped = readInstalledSpecialistDefaults(projectRoot, name);
         const model = o?.model ?? shipped.model ?? chalk.dim('(package default)');
         const effort = o?.effort ?? shipped.effort ?? chalk.dim('(package default)');
-        const mark = o?.model || o?.effort ? chalk.yellow(' *') : '  ';
+        const mark = pinned?.model || pinned?.effort ? chalk.yellow(' *') : '  ';
         console.log(`   ${mark}${name.padEnd(17)} ${model}  ${chalk.dim('effort')} ${effort}`);
       }
 

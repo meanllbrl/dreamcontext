@@ -195,7 +195,11 @@ export function Bar({ label, percent, resetsAt, locked, now }: {
   );
 }
 
-export function ClaudeAccounts() {
+/**
+ * `policy={false}` (the Settings window): the limit rules are drawn per tool by `ToolRules`
+ * under the list, so this panel shows the accounts alone. Classic passes nothing.
+ */
+export function ClaudeAccounts({ policy = true }: { policy?: boolean } = {}) {
   const api = useApi();
   const qc = useQueryClient();
   const { bus } = useVault();
@@ -634,6 +638,7 @@ export function ClaudeAccounts() {
             rather than in the panels below, because it is a policy ABOUT this list —
             but it is written in the page's row grammar so it reads as a setting, not
             as another piece of account state. */}
+        {policy && (
         <div className="setting-rows dc-acct-policy">
           <SettingRow
             title="Auto-switch accounts near a limit"
@@ -692,6 +697,7 @@ export function ClaudeAccounts() {
             />
           )}
         </div>
+        )}
 
         {error && <p className="dc-acct-warn">{error}</p>}
       </div>

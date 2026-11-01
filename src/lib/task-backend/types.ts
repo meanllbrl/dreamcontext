@@ -439,7 +439,7 @@ export type ConnectionTestResult =
 export interface TokenStatus {
   set: boolean;
   /** Where the resolved token came from, or null when none is configured. */
-  source: 'env' | 'secrets' | null;
+  source: 'env' | 'secrets' | 'global' | null;
   /** Last-4 masked token (e.g. "••••••••1234"), or null when none is set. */
   masked: string | null;
 }

@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { useApi } from '../../context/VaultContext';
 import { openExternalUrl } from '../../lib/desktop';
 import type {
-  McpOverview, McpOverviewAccount, McpOverviewCell, McpOverviewServer, McpHome,
+  McpOverview, McpOverviewAccount, McpOverviewCell, McpOverviewServer, McpHome, CodexMcpList,
 } from '../../lib/mcpWire';
 import { McpServerForm, type McpFormInitial } from './McpServerForm';
 import './McpServers.css';
@@ -71,7 +71,13 @@ function cellLabel(c: McpOverviewCell | undefined): string {
 
 interface Row { key: string; name: string; home: McpHome; transport: string; server?: McpOverviewServer }
 
-export function McpServers() {
+/**
+ * `codex` (the Settings window): one read-only Codex column beside the Claude accounts, a
+ * "Found in Codex" group for servers only Codex has, and an All / Claude / Codex filter. Every
+ * Codex account shares one config, so the column is one fact, read from `codex mcp list`. No
+ * sign-in or Add control acts on Codex here. Classic passes nothing and is unchanged.
+ */
+export function McpServers({ codex = false }: { codex?: boolean } = {}) {
   const api = useApi();
   const [data, setData] = useState<McpOverview | null>(null);
   const [error, setError] = useState('');
@@ -83,6 +89,14 @@ export function McpServers() {
   const [fallback, setFallback] = useState<{ name: string; email: string } | null>(null);
   const openedUrl = useRef<string | null>(null);
   const autoChecked = useRef(false);
+  const [codexList, setCodexList] = useState<CodexMcpList | null>(null);
+  const [filter, setFilter] = useState<'all' | 'claude' | 'codex'>('all');
+  useEffect(() => {
+    if (!codex) return;
+    let live = true;
+    api.get<CodexMcpList>('/agent/mcp/codex').then((l) => { if (live) setCodexList(l); }, () => { if (live) setCodexList({ state: 'failed', servers: [] }); });
+    return () => { live = false; };
+  }, [api, codex]);
 
   const load = useCallback(async () => {
     setError('');
@@ -148,13 +162,34 @@ export function McpServers() {
   }
 
   const rows = rowsOf(data);
-  const accounts = data.accounts;
+  const showCodex = codex && filter !== 'claude';
+  const accounts = codex && filter === 'codex' ? [] : data.accounts;
+  const codexServers = codexList?.state === 'ok' ? codexList.servers : [];
+  const codexOnly = showCodex ? codexServers.filter((c) => !rows.some((r) => r.name === c.name)) : [];
+  const extraCols = showCodex ? 1 : 0;
+  const codexCell = (r: Row) => {
+    if (r.home === 'claudeai') return <span className="mcpm-absent" title="claude.ai connectors exist only in Claude Code.">—</span>;
+    if (codexList === null) return <span className="mcpm-muted">…</span>;
+    if (codexList.state !== 'ok') return <span className="mcpm-absent" title={codexList.state === 'not_installed' ? 'Codex is not installed.' : 'codex mcp list gave no answer.'}>—</span>;
+    const hit = codexServers.find((c) => c.name === r.name);
+    if (!hit) return <span className="mcpm-muted" data-codex="absent">Not in Codex</span>;
+    return hit.enabled ? <span className="mcpm-ok" data-codex="on">In Codex</span> : <span className="mcpm-muted" data-codex="off">Off</span>;
+  };
   const newest = Math.max(0, ...accounts.map((a) => a.checkedAt ?? 0));
 
   return (
     <div className="mcpm">
       <p className="mcpm-lede">Every server, every account, side by side. Each dot is what that account&apos;s live session reports.</p>
       <div className="mcpm-toolbar">
+        {codex && (
+          <span className="sw-seg" role="radiogroup" aria-label="Show">
+            {(['all', 'claude', 'codex'] as const).map((f) => (
+              <button key={f} type="button" role="radio" aria-checked={filter === f} className={`sw-seg-btn${filter === f ? ' on' : ''}`} onClick={() => setFilter(f)} data-mcp-filter={f}>
+                {f === 'all' ? 'All' : f === 'claude' ? 'Claude Code' : 'Codex'}
+              </button>
+            ))}
+          </span>
+        )}
         <button type="button" className="btn btn--secondary btn--sm" onClick={() => setForm({ mode: 'add', scope: 'computer' })}>+ Add server</button>
         <button type="button" className="btn btn--secondary btn--sm" disabled={!!checking} onClick={() => { void check(); }}>
           {checking === '*' ? 'Checking every account…' : 'Check all accounts'}
@@ -202,6 +237,7 @@ export function McpServers() {
               <th scope="col">Server</th>
               <th scope="col">Lives in</th>
               {accounts.map((a) => <th scope="col" key={a.id} className="mcpm-acc" title={ago(a.checkedAt)}>{a.label}</th>)}
+              {showCodex && <th scope="col" className="mcpm-acc" title="Every Codex account shares one MCP config.">Codex</th>}
               <th scope="col" aria-label="Actions" />
             </tr>
           </thead>
@@ -212,7 +248,7 @@ export function McpServers() {
               if (!groupRows.length && !outside.length) return null;
               return (
                 <Fragment key={g.home}>
-                  <tr className="mcpm-group"><th colSpan={accounts.length + 3} scope="colgroup">{g.title} <span>· {g.sub}</span></th></tr>
+                  <tr className="mcpm-group"><th colSpan={accounts.length + 3 + extraCols} scope="colgroup">{g.title} <span>· {g.sub}</span></th></tr>
                   {groupRows.map((r) => {
                     const cells = data.cells[r.key] ?? {};
                     const needing = accounts.filter((a) => cells[a.id]?.status === 'needs-auth');
@@ -236,6 +272,7 @@ export function McpServers() {
                             </td>
                           );
                         })}
+                        {showCodex && <td className="mcpm-cell mcpm-cell--codex">{codexCell(r)}</td>}
                         <td className="mcpm-actions">
                           {needing.length > 0 && (
                             <span className="mcpm-menu-wrap">
@@ -301,6 +338,7 @@ export function McpServers() {
                       </td>
                       <td><code className="mcpm-chip">outside</code></td>
                       {accounts.map((a) => <td key={a.id} className="mcpm-cell"><span className="mcpm-absent">—</span></td>)}
+                      {showCodex && <td className="mcpm-cell"><span className="mcpm-absent">—</span></td>}
                       <td className="mcpm-actions">
                         {o.reason === 'removed-in-app' && <button type="button" className="btn btn--secondary btn--sm" onClick={() => { void act('/agent/mcp/import', { name: o.name, source: o.source }, `${o.name} is back.`); }}>Import again</button>}
                         {o.reason === 'differs' && <button type="button" className="btn btn--secondary btn--sm" onClick={() => { void act('/agent/mcp/import', { name: o.name, source: o.source }, `${o.name} now follows Claude Code again.`); }}>Use Claude Code&apos;s</button>}
@@ -315,6 +353,23 @@ export function McpServers() {
                 </Fragment>
               );
             })}
+            {codexOnly.length > 0 && (
+              <Fragment key="codex-only">
+                <tr className="mcpm-group"><th colSpan={accounts.length + 3 + extraCols} scope="colgroup">Found in Codex <span>· set up in Codex itself, read only here</span></th></tr>
+                {codexOnly.map((c) => (
+                  <tr key={`codex|${c.name}`} className="mcpm-row" data-codex-only={c.name}>
+                    <td>
+                      <span className="mcpm-name">{c.name}</span>
+                      <span className="mcpm-sub">{c.transport}</span>
+                    </td>
+                    <td><code className="mcpm-chip">codex</code></td>
+                    {accounts.map((a) => <td key={a.id} className="mcpm-cell"><span className="mcpm-absent" title="not on this account">—</span></td>)}
+                    <td className="mcpm-cell mcpm-cell--codex">{c.enabled ? <span className="mcpm-ok" data-codex="on">In Codex</span> : <span className="mcpm-muted" data-codex="off">Off</span>}</td>
+                    <td className="mcpm-actions" />
+                  </tr>
+                ))}
+              </Fragment>
+            )}
           </tbody>
         </table>
       </div>

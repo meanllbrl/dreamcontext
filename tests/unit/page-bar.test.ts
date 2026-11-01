@@ -59,10 +59,13 @@ describe('page headers', () => {
     expect(src).toMatch(/\{newShell \? \(\s*<NewShellPage nav=\{nav\}>/);
   });
 
-  it('covers all sixteen non-chat pages with exactly one title each (Settings draws its own bar)', () => {
+  it('covers all sixteen non-chat pages with exactly one title each (Settings is a window with its own crumb)', () => {
     const pages = [...Object.keys(INLINE), ...TITLE_ONLY, 'settings'];
     expect(new Set(pages).size).toBe(16);
-    expect(read('pages/SettingsPage.tsx')).toMatch(/<PageBar[^>]*title=\{t\('nav\.settings'\)\}/);
+    // The new shell opens Settings as a window over the page (task settings-konuya-gore-17-menuye…):
+    // its title is the window's crumb, never a page bar.
+    expect(read('components/settings/window/SettingsWindow.tsx')).toMatch(/<span className="sw-crumb">[\s\S]{0,200}\{t\('nav\.settings'\)\}/);
+    expect(read('pages/SettingsPage.tsx')).not.toMatch(/<PageBar/);
     // The AI Team roster drops its own h1 under the page bar.
     expect(read('components/aiteam/TeamRoster.tsx')).toMatch(/\{!headless && \(\s*<div className="aiteam-roster-head">/);
   });

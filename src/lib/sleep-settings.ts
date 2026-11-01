@@ -294,6 +294,51 @@ export function applySleepConfigPatch(
     }
   }
 
+  // --- the Sleep line (model / effort every unpinned specialist follows) ---
+  // Any change to the line can move every follower, so all five are re-injected;
+  // `applySleepSpecialistOverrides` writes each one's EFFECTIVE value, so a pinned
+  // helper is rewritten to what it already had.
+  const lineTouched = patch.model !== undefined || patch.effort !== undefined;
+  if (lineTouched) {
+    const hadLine = config.model !== undefined || config.effort !== undefined;
+    const next: SleepConfig = { ...config };
+    if (patch.model !== undefined) {
+      if (patch.model === null) delete next.model;
+      else if (typeof patch.model !== 'string') return fail('model must be a string.');
+      else {
+        const safe = sanitizeModel(patch.model);
+        if (!safe) return fail(`"${patch.model}" is not a valid model id (letters, digits, dot, dash, underscore; max 64 chars).`);
+        if (!isKnownSleepModel(safe)) return fail(`"${safe}" is not a model this build knows about. Known: ${KNOWN_SLEEP_MODELS.join(', ')}.`);
+        next.model = safe;
+      }
+    }
+    if (patch.effort !== undefined) {
+      if (patch.effort === null) delete next.effort;
+      else if (typeof patch.effort !== 'string' || !(SLEEP_EFFORT_LEVELS as readonly string[]).includes(patch.effort)) {
+        return fail(`effort must be one of: ${SLEEP_EFFORT_LEVELS.join(', ')}.`);
+      }
+      else next.effort = patch.effort as SleepEffort;
+    }
+    // Legacy: Settings used to write the same model/effort into all five
+    // specialists, because no line existed. The FIRST line write turns such a
+    // uniform set into followers; mixed values were chosen one by one and stay pinned.
+    if (!hadLine && (next.model !== undefined || next.effort !== undefined)) {
+      const entries = SLEEP_SPECIALISTS.map((n) => next.specialists?.[n]);
+      const first = entries[0];
+      const uniform = !!first?.model && !!first?.effort
+        && entries.every((e) => e?.model === first.model && e?.effort === first.effort);
+      // The half the write did not send carries over from the old set: a first write of only
+      // the effort must not drop the model all five had (and the reverse).
+      if (uniform) {
+        if (next.model === undefined) next.model = first!.model;
+        if (next.effort === undefined) next.effort = first!.effort;
+        delete next.specialists;
+      }
+    }
+    config = prune(next);
+    for (const n of SLEEP_SPECIALISTS) changed.add(n);
+  }
+
   // --- specialists ---
   if (patch.specialists !== undefined) {
     if (patch.specialists === null) {

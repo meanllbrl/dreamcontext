@@ -288,7 +288,7 @@ export type ChatEvent =
       kind: 'account-switch';
       switched: boolean;
       reason: 'limit_near' | 'limit_hit' | 'limit_known' | 'needs_relogin' | 'all_exhausted'
-        | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled' | 'come_home';
+        | 'stayed_put' | 'switch_stalled' | 'auto_switch_disabled' | 'come_home' | 'resumed_at_reset';
       accountId: string;
       fromAccountId?: string;
       email?: string;
@@ -1168,7 +1168,7 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       switched: obj.switched === true,
       reason: reason === 'limit_near' || reason === 'limit_hit' || reason === 'limit_known'
         || reason === 'needs_relogin' || reason === 'all_exhausted' || reason === 'stayed_put'
-        || reason === 'switch_stalled' || reason === 'come_home'
+        || reason === 'switch_stalled' || reason === 'come_home' || reason === 'resumed_at_reset'
         ? reason
         : 'auto_switch_disabled',
       accountId: str(obj.accountId) ?? '',

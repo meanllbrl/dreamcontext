@@ -16,6 +16,7 @@ import { api } from '../api/client';
 import { SCOPE_PREFIX } from './scopedStorage';
 import { emitInstance } from '../context/VaultContext';
 import { getWindowActivity, onWindowActivity } from './windowActivity';
+import { readShellModeFrozen } from './uxMode';
 
 /** localStorage key (versioned so a shape change can invalidate cleanly). */
 const CONFIG_KEY = 'agent:settings:v1';
@@ -213,6 +214,15 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     // NOTE: a legacy blob's `chatPermissionMode` is dropped here, on purpose — it is no
     // longer part of this shape. See {@link readChatPermissionMode}.
   };
+}
+
+/**
+ * The agent surface as the window runs it. The new layout is always Chat and always on (owner,
+ * 2026-11-01: no Show Chat, no Open sessions as); classic keeps the saved choice. Applied at
+ * READ sites only, never on write, so going back to classic restores what was saved.
+ */
+export function agentSurfaceSettings<T extends { enabled: boolean; chatView: boolean }>(s: T): T {
+  return readShellModeFrozen() === 'new' && (!s.enabled || !s.chatView) ? { ...s, enabled: true, chatView: true } : s;
 }
 
 export function readAgentSettings(): AgentSettings {

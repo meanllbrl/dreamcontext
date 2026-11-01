@@ -190,6 +190,28 @@ describe('avatar — magic bytes, size, fixed name, no traversal', () => {
     await routes.handleAssistantAvatarSet(mkReq({ method: 'POST', remote: '100.64.1.2', raw: PNG }), r.res);
     expect(r.status()).toBe(403);
   });
+
+  it('DELETE removes the picture, then reports nothing removed (idempotent)', async () => {
+    await upload(PNG);
+    expect(readdirSync(assets())).toEqual(['avatar.png']);
+    const r1 = makeRes();
+    await routes.handleAssistantAvatarDelete(mkReq({ method: 'DELETE', url: '/api/assistant/avatar' }), r1.res);
+    expect(r1.status()).toBe(200);
+    expect(r1.body()).toEqual({ ok: true, removed: true });
+    expect(readdirSync(assets())).toEqual([]);
+    expect(avatar.findAvatar(HOME)).toBeNull();
+    const r2 = makeRes();
+    await routes.handleAssistantAvatarDelete(mkReq({ method: 'DELETE', url: '/api/assistant/avatar' }), r2.res);
+    expect(r2.body()).toEqual({ ok: true, removed: false });
+  });
+
+  it('DELETE refuses a non-loopback caller and leaves the picture', async () => {
+    await upload(PNG);
+    const r = makeRes();
+    await routes.handleAssistantAvatarDelete(mkReq({ method: 'DELETE', remote: '100.64.1.2' }), r.res);
+    expect(r.status()).toBe(403);
+    expect(readdirSync(assets())).toEqual(['avatar.png']);
+  });
 });
 
 // ─── Broadcast ───────────────────────────────────────────────────────────────────────
