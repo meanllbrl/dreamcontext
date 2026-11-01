@@ -184,6 +184,11 @@ export function dropWindow(state: WindowsState, id: string): WindowsState {
   return { ...state, list: state.list.filter((w) => w.id !== id) };
 }
 
+/** After a window closes: with no chat left in the project, its Super Agent comes up (if any). */
+export function landsOnSuper(chatsLeft: number, superEnabled: boolean): boolean {
+  return chatsLeft === 0 && superEnabled;
+}
+
 /** The window to show when `id` closes: the one after it, else the one before. */
 export function neighbourOf(state: WindowsState, id: string): string | null {
   const i = state.list.findIndex((w) => w.id === id);

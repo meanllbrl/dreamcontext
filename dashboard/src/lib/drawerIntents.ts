@@ -25,7 +25,7 @@ export type DrawerIntent =
   | { kind: 'open-window'; windowId?: string }
   /** A window row's Rename (inline in the drawer; a blank name reverts). */
   | { kind: 'rename-window'; windowId: string; name: string }
-  /** A window row's Close window: its tabs close; the last window empties to a fresh tab. */
+  /** A window row's Close window: its tabs close; nothing opens in their place, even in the last window. */
   | { kind: 'close-window'; windowId: string }
   /** A window row dragged: it lands before `before` (null = the end). Nothing else changes, not
    *  even which project is on screen. */
