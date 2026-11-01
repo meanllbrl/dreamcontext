@@ -103,6 +103,8 @@ export interface BridgeSessionOptions {
   readonly claudeKit?: ClaudeKit;
   /** Tests inject T3's replay client here; production spawns `codex app-server`. */
   readonly clientFactory?: ClientFactory;
+  /** Folders Codex lists skills from, beside its own (codex-skills.ts): set once, right after `initialized`. */
+  readonly skillRoots?: readonly string[];
   readonly emit: (frame: WireFrame) => void;
   /** A frame that is not chat output (bridge diagnostics) — never anything secret. */
   readonly log?: (line: string) => void;
@@ -208,7 +210,27 @@ const codexAccountSettings = (settings: typeof CodexSettings.Type) => Effect.gen
 
 type InstanceKit = typeof import('./instances.js');
 
-function bridgeLayer(clientFactory: ClientFactory | undefined, kit: ClaudeKit | undefined, instance?: { kit: InstanceKit; config: ServerConfig.ServerConfig['Service'] }) {
+/**
+ * The factory's client, plus our skill folders: `skills/extraRoots/set` rides the moment the
+ * adapter says `initialized` (the app-server refuses it before), so the first thread already
+ * lists them. The roots live only as long as this app-server; a refusal (or no answer in 5 s)
+ * leaves Codex's own list and the chat opens anyway.
+ */
+export function withSkillRoots(inner: ClientFactory, roots: readonly string[]): ClientFactory {
+  if (!roots.length) return inner;
+  return {
+    open: (input) => Effect.map(inner.open(input), (client) => ({
+      ...client,
+      notify: ((method: string, payload: unknown) => (client.notify as (m: string, p: unknown) => Effect.Effect<void, unknown>)(method, payload).pipe(
+        Effect.tap(() => (method === 'initialized'
+          ? client.request('skills/extraRoots/set', { extraRoots: [...roots] }).pipe(Effect.timeout('5 seconds'), Effect.ignore)
+          : Effect.void)),
+      )) as typeof client.notify,
+    })),
+  };
+}
+
+function bridgeLayer(clientFactory: ClientFactory | undefined, kit: ClaudeKit | undefined, instance?: { kit: InstanceKit; config: ServerConfig.ServerConfig['Service'] }, skillRoots: readonly string[] = []) {
   const base = Layer.mergeAll(
     NodeServices.layer,
     IdAllocator.layer,
@@ -216,9 +238,15 @@ function bridgeLayer(clientFactory: ClientFactory | undefined, kit: ClaudeKit | 
     Layer.succeed(References.MinimumLogLevel, 'Error'),
     Layer.succeed(ProviderEventLoggers.ProviderEventLoggers, ProviderEventLoggers.NoOpProviderEventLoggers),
   );
-  const factory = clientFactory
+  const inner = clientFactory
     ? Layer.succeed(CodexAdapterV2.CodexAppServerClientFactory, CodexAdapterV2.CodexAppServerClientFactory.of(clientFactory))
     : CodexAdapterV2.layerAppServerClientFactory.pipe(Layer.provide(base));
+  const factory = skillRoots.length
+    ? Layer.effect(CodexAdapterV2.CodexAppServerClientFactory, Effect.gen(function* () {
+      const f = yield* CodexAdapterV2.CodexAppServerClientFactory;
+      return CodexAdapterV2.CodexAppServerClientFactory.of(withSkillRoots(f, skillRoots));
+    })).pipe(Layer.provide(inner))
+    : inner;
   const layer = Layer.mergeAll(base, McpProviderSessions.layer, factory);
   if (instance) return Layer.mergeAll(layer, instance.kit.instanceLayer(instance.config).pipe(Layer.provide(base)));
   return kit ? Layer.merge(layer, kit.layerRunner.pipe(Layer.provide(Layer.merge(base, kit.layerPorts)))) : layer;
@@ -335,7 +363,7 @@ export class BridgeSession {
     const serverConfig = bridgeServerConfig(opts.stateRoot, opts.cwd);
     // Loaded only for these tools: their driver reaches `node:sqlite`, which a Codex pane never needs.
     const instanceKit = isInstanceTool(opts.tool) ? await import('./instances.js') : null;
-    this.runtime = ManagedRuntime.make(bridgeLayer(opts.clientFactory, opts.claudeKit, instanceKit ? { kit: instanceKit, config: serverConfig } : undefined)) as unknown as Runtime;
+    this.runtime = ManagedRuntime.make(bridgeLayer(opts.clientFactory, opts.claudeKit, instanceKit ? { kit: instanceKit, config: serverConfig } : undefined, opts.tool === 'codex' ? opts.skillRoots : [])) as unknown as Runtime;
     const scope = await this.runtime.runPromise(Scope.make());
     this.scope = scope;
     const settingsInput = {

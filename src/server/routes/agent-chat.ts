@@ -2148,7 +2148,9 @@ export function startChatSession(
   // agent's own tab (it speaks AS a member) keep the plain sub-agent wording.
   const teamRouting = !opts.leanMcp && !opts.agent;
   // A scoped agent's allowlist disallows the Agent tool, so a roster there would name a door it lacks.
-  if (!isAssistant && !card && !scopedCard && !isSuper) {
+  // A Codex or Antigravity pane never gets the `--agents` definitions, so it is not told about them
+  // either (docs/tool-parity.md: the AI Team as sub-agents is Claude-only for now).
+  if (!isAssistant && !card && !scopedCard && !isSuper && !bridgeTool) {
     try { subagents = chatSpawnRoster(contextRoot, { exclude: opts.agent, routing: teamRouting }); } catch { subagents = null; }
   }
   // The Super's `## Your AI Team` ('' without a team; a failed read costs the block, never the spawn).

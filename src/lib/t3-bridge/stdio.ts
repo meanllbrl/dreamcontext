@@ -17,6 +17,9 @@ import { join } from 'node:path';
 import { codexChildEnv, codexCommand } from '../codex-bin.js';
 import { BridgeOpenTimeout, BridgeSession, toolLabel, type BridgeSessionOptions } from './session.js';
 import { syncAntigravitySkills } from '../antigravity-skills.js';
+import { findPackageDir } from '../catalog.js';
+import { codexRoleArgs, prepareCodexKit, type CodexKit, type CodexKitOptions } from '../codex-skills.js';
+import { toolNote, toolText } from '../tool-text.js';
 import { INSTANCE_PRIMARY_ID, isInstanceAccountId, isInstanceTool } from '../instance-accounts.js';
 import { carriedText, recordThreadTurn } from './instance-threads.js';
 import { antigravityFailureKind } from './to-wire.js';
@@ -62,6 +65,8 @@ export interface StdioDeps {
   /** Tests: a replay client instead of `codex app-server`. */
   readonly clientFactory?: BridgeSessionOptions['clientFactory'];
   readonly runtimePolicyOverride?: BridgeSessionOptions['runtimePolicyOverride'];
+  /** Tests: what a Codex chat reads (skills, roles); production lays it out under ~/.dreamcontext/codex. */
+  readonly codexKit?: (o: CodexKitOptions) => CodexKit;
   /** Tests: stands in for `codex mcp list --json`. */
   readonly listMcp?: () => string[] | null;
   /** Called by `/clear` after the fresh thread opened (consumes the handoff record). What it
@@ -182,7 +187,13 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   const instanceAccount = isInstanceTool(args.tool) && args.account && isInstanceAccountId(args.account) ? args.account : null;
   // The skills go in the account's profile as a chat opens, so no project and no sign-in owes a step.
   const skills = isInstanceTool(args.tool) ? syncAntigravitySkills(instanceAccount ?? INSTANCE_PRIMARY_ID, { home }) : null;
-  let skillsLoss = skills && !skills.ok ? `${toolLabel(args.tool)} is running without dreamcontext's skills: ${skills.reason}.` : null;
+  // Codex: our skills, the project's and the owner's Claude skills, and Claude's agents as roles,
+  // all under ~/.dreamcontext/codex, pointed at for this app-server only (codex-skills.ts).
+  // A replay client (tests) answers only what it recorded: it gets the kit only when one is given.
+  const kitOf = deps.codexKit ?? (deps.clientFactory ? null : prepareCodexKit);
+  const codexKit = args.tool === 'codex' && kitOf ? kitOf({ home, cwd: args.cwd }) : null;
+  const toolSkills = skills ?? codexKit?.skills ?? null;
+  let skillsLoss = toolSkills && !toolSkills.ok ? `${toolLabel(args.tool)} is running without dreamcontext's skills: ${toolSkills.reason}.` : null;
   const brainServer = isInstanceTool(args.tool) && deps.brain
     ? acpBrainMcpServer({ node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', root: args.cwd, tabSession: deps.env.DREAMCONTEXT_TAB_SESSION })
     : null;
@@ -193,7 +204,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     ? claudeLaunchArgs({ briefingFile: args.briefingFile })
     : [
       account?.launchArgs ?? '',
-      codexLaunchArgs({ briefingFile: args.briefingFile }),
+      codexLaunchArgs({ ...(args.briefingFile ? { briefingFile: args.briefingFile } : {}), note: toolNote('codex', { roles: codexKit?.roles.map((r) => r.name) ?? [] }) }),
+      codexKit ? codexRoleArgs(codexKit.roles) : '',
       strictArgs,
       // The brain's write path (§4a): only with a brain, i.e. when the chat gets its context.
       deps.brain ? codexBrainMcpArgs({ node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', root: args.cwd, tabSession: deps.env.DREAMCONTEXT_TAB_SESSION }) : '',
@@ -230,12 +242,14 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       onUsageLimits: (u) => emit({ type: 'system', subtype: 'dc_usage', dc_tool: args.tool, windows: u.windows, checked_at: u.checkedAt }),
       // DREAMCONTEXT_CONTEXT_BY: the bridge injects the brain, so a project's opt-in `.codex/hooks.json`
       // stays quiet in this session (its `.env` gate still runs; hook.ts beginCodexHookFormat).
-      env: { ...scrubbedCodexEnv(childEnv), TMPDIR: privateTmp, ...(deps.brain ? { DREAMCONTEXT_CONTEXT_BY: 'bridge' } : {}) },
+      // DREAMCONTEXT_AGENT_TOOL: a dreamcontext command the agent runs prints in its words (tool-text.ts).
+      env: { ...scrubbedCodexEnv(childEnv), TMPDIR: privateTmp, ...(args.tool !== 'claude' ? { DREAMCONTEXT_AGENT_TOOL: args.tool } : {}), ...(deps.brain ? { DREAMCONTEXT_CONTEXT_BY: 'bridge' } : {}) },
       stateRoot: join(home, '.dreamcontext', 't3'),
       extraRoots: args.extraRoots ?? [],
       privateTmp,
       ...(deps.claudeKit ? { claudeKit: deps.claudeKit } : {}),
       ...(deps.clientFactory ? { clientFactory: deps.clientFactory } : {}),
+      ...(codexKit?.skillRoots.length ? { skillRoots: codexKit.skillRoots } : {}),
       ...(deps.runtimePolicyOverride ? { runtimePolicyOverride: deps.runtimePolicyOverride } : {}),
       onFatal: (message) => {
         emit({ type: 'system', subtype: 'bridge_error', message, dc_tool: args.tool });
@@ -302,10 +316,13 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     const own: AppContext[] = existsSync(join(args.cwd, '.claude', 'skills'))
       ? [{ key: 'dreamcontext-project-skills', text: "This project's skills are in .claude/skills/<name>/SKILL.md. When one covers the work, read it first." }]
       : [];
+    // No sub-agents on ACP: the note says where a role's file is, so its work is done here.
+    const roleDirs = [findPackageDir('agents'), join(home, '.claude', 'agents'), join(args.cwd, '.claude', 'agents')].filter((d): d is string => !!d && existsSync(d));
+    own.push({ key: 'dreamcontext-tools', text: toolNote('antigravity', { roleDirs }) });
     if (!args.briefingFile) return own;
     try {
       const text = readFileSync(args.briefingFile, 'utf-8').slice(0, MAX_DEVELOPER_INSTRUCTIONS);
-      return text.trim() ? [{ key: 'dreamcontext-briefing', text }, ...own] : own;
+      return text.trim() ? [{ key: 'dreamcontext-briefing', text: toolText(text, 'antigravity') }, ...own] : own;
     } catch {
       return own;
     }

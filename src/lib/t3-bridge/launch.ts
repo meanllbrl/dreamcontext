@@ -8,6 +8,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { toolText } from '../tool-text.js';
 
 /** Quote one argument for T3's `tokenizeCliArgs` (POSIX single quotes; `'` as `'\''`). */
 export function quoteLaunchToken(token: string): string {
@@ -57,14 +58,19 @@ export function acpRuntimeInstructions(label: string, runtime: { readonly model?
 /** At most this much briefing goes to Codex; a longer file is cut, never refused. */
 export const MAX_DEVELOPER_INSTRUCTIONS = 60_000;
 
-export function codexLaunchArgs(o: { briefingFile?: string }): string {
-  const args: string[] = [];
+/**
+ * The briefing as Codex's developer instructions, in Codex's words ({@link toolText}), after the
+ * identity and `note` (how dreamcontext's skills and roles work there, tool-text.ts `toolNote`).
+ * The note goes even without a briefing: it is the only trusted place Codex reads it from.
+ */
+export function codexLaunchArgs(o: { briefingFile?: string; note?: string }): string {
+  let text = '';
   if (o.briefingFile) {
-    let text = '';
     try { text = readFileSync(o.briefingFile, 'utf-8'); } catch { /* an unreadable briefing degrades to none */ }
-    if (text.trim()) args.push(codexConfigArg('developer_instructions', tomlString(`${toolIdentity('Codex')}\n\n${text.slice(0, MAX_DEVELOPER_INSTRUCTIONS)}`)));
   }
-  return args.join(' ');
+  const parts = [o.note?.trim() ?? '', text.trim() ? toolText(text.slice(0, MAX_DEVELOPER_INSTRUCTIONS), 'codex') : ''].filter(Boolean);
+  if (!parts.length) return '';
+  return codexConfigArg('developer_instructions', tomlString(`${toolIdentity('Codex')}\n\n${parts.join('\n\n')}`));
 }
 
 /**

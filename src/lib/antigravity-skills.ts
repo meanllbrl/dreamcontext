@@ -9,19 +9,13 @@
  * T3 leaves a real folder as it is. Static text in the agent says `config/skills` follows
  * `GEMINI_HOME`; whether it lists them is for a live turn. Effect-free, and it never throws.
  */
-import { createHash } from 'node:crypto';
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, statSync, symlinkSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, relative } from 'node:path';
+import { join } from 'node:path';
 import { antigravityProfileDir } from './antigravity-accounts.js';
-import { findPackageDir } from './catalog.js';
+import { copyToolSkills, type SkillsResult } from './tool-skills.js';
 
-/** What every project gets at install. `skill-agent-core` is for sub-agents, which do not run here. */
-const SOURCES = ['skill', 'skill-initializer', 'skill-curator', 'skill-sync', 'skill-deep-research', 'skill-patterns', 'skill-apps'];
-const MARKER = '.dreamcontext-skills.json';
-const SAFE_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
-
-export type SkillsResult = { ok: true; names: string[] } | { ok: false; reason: string };
+export type { SkillsResult };
 
 export interface SkillsOptions {
   readonly home?: string;
@@ -31,17 +25,6 @@ export interface SkillsOptions {
   readonly packageDir?: (sub: string) => string | null;
 }
 
-/** Every regular file under `dir`; a symlink is never followed out of the package. */
-function filesOf(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir).sort()) {
-    const p = join(dir, name);
-    const st = lstatSync(p);
-    if (st.isDirectory()) filesOf(p, out);
-    else if (st.isFile()) out.push(p);
-  }
-  return out;
-}
-
 const realDir = (p: string): boolean => {
   try {
     return lstatSync(p).isDirectory();
@@ -49,19 +32,6 @@ const realDir = (p: string): boolean => {
     return false;
   }
 };
-
-/** The agent can write in this folder, so the record is checked, and a link is never read or written through. */
-function readMarker(dir: string): { digest?: string; names?: string[] } {
-  try {
-    const p = join(dir, MARKER);
-    if (!lstatSync(p).isFile()) return {};
-    const m = JSON.parse(readFileSync(p, 'utf-8')) as { digest?: unknown; names?: unknown } | null;
-    const names = Array.isArray(m?.names) ? m.names.filter((n): n is string => typeof n === 'string' && SAFE_NAME.test(n)) : [];
-    return typeof m?.digest === 'string' ? { digest: m.digest, names } : {};
-  } catch {
-    return {};
-  }
-}
 
 /** The owner's own skills, one link each. A link whose target went is taken away. */
 function linkOwnSkills(dir: string, own: string, ours: ReadonlySet<string>): void {
@@ -89,7 +59,6 @@ export function syncAntigravitySkills(accountId: string, o: SkillsOptions = {}):
   const profile = antigravityProfileDir(accountId, home);
   const config = join(profile, 'config');
   const dir = join(config, 'skills');
-  let staging = '';
   try {
     mkdirSync(profile, { recursive: true, mode: 0o700 });
     mkdirSync(join(profile, 'antigravity-acp'), { recursive: true, mode: 0o700 });
@@ -100,53 +69,13 @@ export function syncAntigravitySkills(accountId: string, o: SkillsOptions = {}):
     } catch { /* not there yet */ }
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     if (!realDir(dir)) return { ok: false, reason: 'the skills folder is not a plain folder' };
-
-    const packageDir = o.packageDir ?? ((sub: string) => findPackageDir(sub));
-    const hash = createHash('sha256');
-    const skills: { name: string; src: string }[] = [];
-    for (const sub of SOURCES) {
-      const src = packageDir(sub);
-      if (!src || !existsSync(join(src, 'SKILL.md'))) return { ok: false, reason: `${sub} is missing from this install` };
-      const name = /^name:\s*["']?([^"'\s]+)/m.exec(readFileSync(join(src, 'SKILL.md'), 'utf-8'))?.[1] ?? '';
-      if (!SAFE_NAME.test(name)) return { ok: false, reason: `${sub} has no usable name` };
-      skills.push({ name, src });
-      for (const f of filesOf(src)) hash.update(`${name}/${relative(src, f)}\0`).update(readFileSync(f)).update('\0');
-    }
-    const digest = hash.digest('hex');
-    const names = skills.map((s) => s.name);
-    const was = readMarker(dir);
-    const ours = new Set([...names, ...(was.names ?? []).filter((n) => SAFE_NAME.test(n))]);
-    if (was.digest !== digest || names.some((n) => !existsSync(join(dir, n, 'SKILL.md')))) {
-      // Staged inside the profile, on the same disk, and outside what the agent scans.
-      staging = mkdtempSync(join(profile, 'antigravity-acp', 'skills-staging-'));
-      for (const s of skills) {
-        const dest = join(staging, s.name);
-        for (const f of filesOf(s.src)) cpSync(f, join(dest, relative(s.src, f)), { dereference: false, recursive: false });
-      }
-      for (const n of ours) if (!names.includes(n)) rmSync(join(dir, n), { recursive: true, force: true });
-      for (const s of skills) {
-        const dest = join(dir, s.name);
-        rmSync(dest, { recursive: true, force: true });
-        try {
-          renameSync(join(staging, s.name), dest);
-        } catch (err) {
-          // A second pane on this profile, refreshing at the same moment, got there first.
-          if (!existsSync(join(dest, 'SKILL.md'))) throw err;
-        }
-      }
-      // By rename: it replaces a link planted here instead of writing through it.
-      writeFileSync(join(staging, MARKER), JSON.stringify({ digest, names }));
-      renameSync(join(staging, MARKER), join(dir, MARKER));
-    }
+    // Staged inside the profile, on the same disk, and outside what the agent scans.
+    const { names } = copyToolSkills(dir, { tool: 'antigravity', stagingParent: join(profile, 'antigravity-acp'), ...(o.packageDir ? { packageDir: o.packageDir } : {}) });
     try {
       linkOwnSkills(dir, o.userGemini ? join(o.userGemini, 'config', 'skills') : join(home, '.gemini', 'config', 'skills'), new Set(names));
     } catch { /* the owner's own skills are extra; ours are in */ }
     return { ok: true, names };
   } catch (err) {
     return { ok: false, reason: String((err as Error)?.message ?? err).slice(0, 200) };
-  } finally {
-    try {
-      if (staging) rmSync(staging, { recursive: true, force: true });
-    } catch { /* the next refresh is unaffected */ }
   }
 }

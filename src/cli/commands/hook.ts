@@ -3504,10 +3504,15 @@ export function registerHookCommand(program: Command): void {
       if (hadRecallHits || gatedSkills) {
         const g: string[] = ['', '⛔ Before you act, get the full picture from project memory — not optional:'];
         if (hadRecallHits) {
-          g.push('  • READ the related knowledge/feature file(s) recalled above in full (Read tool) — plus anything relevant in your knowledge index. The source code will NOT show the decisions and constraints they hold.');
+          // Any non-Claude turn (`--format codex`; hookTool() names the tool) has no Read or Skill tool: its words, not Claude's.
+          g.push(hookTool() !== null
+            ? '  • READ the related knowledge/feature file(s) recalled above in full — plus anything relevant in your knowledge index. The source code will NOT show the decisions and constraints they hold.'
+            : '  • READ the related knowledge/feature file(s) recalled above in full (Read tool) — plus anything relevant in your knowledge index. The source code will NOT show the decisions and constraints they hold.');
         }
         if (process.env.DREAMCONTEXT_SKILLS_HOOK !== '0') {
-          g.push('  • REVIEW the skills available to you (the full list is already in your context) and INVOKE any that fit this task via the Skill tool — do NOT limit yourself to a pre-selected few; scan them all and decide.');
+          g.push(hookTool() !== null
+            ? "  • REVIEW the skills in your skill list (dreamcontext's own and this project's) and OPEN the SKILL.md of any that fit this task before acting — do NOT limit yourself to a pre-selected few; scan them all and decide."
+            : '  • REVIEW the skills available to you (the full list is already in your context) and INVOKE any that fit this task via the Skill tool — do NOT limit yourself to a pre-selected few; scan them all and decide.');
         }
         g.push('  • For depth, RECALL more: dreamcontext memory recall "<your keywords>" [--types knowledge,feature,task,memory] — try a few keyword sets and read the relevant hits in full.');
         g.push('  • CHECK whether a task already exists for this work: dreamcontext memory recall "<keywords>" --types task (or look in _dream_context/state/). If one exists, follow it; if the work is untracked and non-trivial, create one.');
