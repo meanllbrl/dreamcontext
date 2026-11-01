@@ -39,6 +39,8 @@ export interface BridgeScriptInput {
   readonly strictMcp?: boolean;
   /** The owner's MCP servers from the app's stores (a normal chat). */
   readonly storeMcp?: boolean;
+  /** A Super child on a tool with no sandbox. */
+  readonly unattended?: boolean;
   readonly node?: string;
   readonly cli?: string;
   readonly home?: string;
@@ -65,9 +67,10 @@ export function bridgeChatScript(i: BridgeScriptInput): string | null {
   if (i.tool === 'codex' && i.account && isCodexAccountId(i.account)) args.push('--account', i.account);
   if (isInstanceTool(i.tool) && i.account && isInstanceAccountId(i.account)) args.push('--account', i.account);
   if (isInstanceTool(i.tool) && i.carry && TOKEN_RE.test(i.carry)) args.push('--carry', i.carry);
-  if (i.tool === 'codex' && i.mcpConfig && isScriptSafePath(i.mcpConfig)) args.push('--mcp-config', i.mcpConfig);
+  if ((i.tool === 'codex' || isInstanceTool(i.tool)) && i.mcpConfig && isScriptSafePath(i.mcpConfig)) args.push('--mcp-config', i.mcpConfig);
   if (i.tool === 'codex' && i.strictMcp) args.push('--strict-mcp');
-  if (i.tool === 'codex' && i.storeMcp && !i.strictMcp) args.push('--store-mcp');
+  if ((i.tool === 'codex' || isInstanceTool(i.tool)) && i.storeMcp && !i.strictMcp) args.push('--store-mcp');
+  if (isInstanceTool(i.tool) && i.unattended) args.push('--unattended');
   // Last: `--extra-root` takes every value after it.
   if (roots.length) args.push('--extra-root', ...roots);
   return `exec "${node}" "${cli}" ${args.map((a) => `"${a}"`).join(' ')}`;

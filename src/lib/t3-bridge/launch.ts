@@ -9,6 +9,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { toolText } from '../tool-text.js';
+import type { StoreRoute } from '../codex-mcp.js';
 
 /** Quote one argument for T3's `tokenizeCliArgs` (POSIX single quotes; `'` as `'\''`). */
 export function quoteLaunchToken(token: string): string {
@@ -92,12 +93,34 @@ export function codexBrainMcpArgs(o: { node: string; cli: string; root: string; 
   return args.join(' ');
 }
 
-/** One stdio server for ACP's `session/new`: the same brain server, by the same absolute paths. */
-export interface AcpMcpServer {
-  readonly name: string;
-  readonly command: string;
-  readonly args: string[];
-  readonly env: Array<{ name: string; value: string }>;
+/** One server for ACP's `session/new`: the brain, or the owner's, by the same absolute paths. */
+export type AcpMcpServer =
+  | { readonly name: string; readonly command: string; readonly args: string[]; readonly env: Array<{ name: string; value: string }> }
+  | { readonly type: 'http'; readonly name: string; readonly url: string; readonly headers: Array<{ name: string; value: string }> };
+
+/**
+ * The app's stores as ACP servers (`codexStorePlan`'s routes). They ride `session/new`, never the
+ * profile's `mcp_config.json`: a profile serves every project, and a store can be one project's.
+ * No secret rides: a server starts through our own child, which reads its 0600 store file, and
+ * only an address with nothing secret in it goes as a URL.
+ */
+export function acpStoreServers(routes: readonly StoreRoute[], o: { node: string; cli: string }): AcpMcpServer[] {
+  return routes.map((r) => (r.via === 'url'
+    ? { type: 'http' as const, name: r.name, url: r.url, headers: [] }
+    : { name: r.name, command: o.node, args: [o.cli, 'mcp', r.via, r.file, r.name], env: [] }));
+}
+
+/** A Super child's lean subset, the same way: read from its 0600 file by our own child. */
+export function acpLeanMcpServers(path: string, o: { node: string; cli: string }): AcpMcpServer[] {
+  let servers: Record<string, { command?: unknown }>;
+  try {
+    servers = (JSON.parse(readFileSync(path, 'utf-8')) as { mcpServers?: typeof servers }).mcpServers ?? {};
+  } catch {
+    return [];
+  }
+  return Object.entries(servers)
+    .filter(([name, c]) => /^[A-Za-z0-9_-]{1,64}$/.test(name) && typeof c?.command === 'string' && name !== 'dreamcontext')
+    .map(([name]) => ({ name, command: o.node, args: [o.cli, 'mcp', 'lean-exec', path, name], env: [] }));
 }
 
 /**

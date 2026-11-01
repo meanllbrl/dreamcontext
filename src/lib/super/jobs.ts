@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { sanitizeModel } from '../claude-args.js';
-import { MAX_BRIEF, MAX_TITLE, SUPER_SLUG_RE, TASK_SLUG_RE } from './types.js';
+import { MAX_BRIEF, MAX_TITLE, SUPER_SLUG_RE, TASK_SLUG_RE, type SuperChildTool } from './types.js';
 import { parseMcpNames } from './lean-mcp.js';
 
 /**
@@ -32,7 +32,7 @@ export interface Job {
    *  delegated child gets ONLY these. Syntax here; existence is the route's (it needs the vault). */
   mcp?: string[];
   /** The child runs on this tool (Track T W4). Absent = Claude. */
-  tool?: 'codex';
+  tool?: SuperChildTool;
 }
 
 // eslint-disable-next-line no-control-regex
@@ -71,7 +71,7 @@ export function parseJob(b: Record<string, unknown>): { job: Job } | { error: st
   const mcp = parseMcpNames(b.mcp);
   if ('error' in mcp) return { error: mcp.error };
   const tool = str(b.tool);
-  if (tool && tool !== 'claude' && tool !== 'codex') return { error: 'tool must be claude or codex' };
+  if (tool && tool !== 'claude' && tool !== 'codex' && tool !== 'antigravity') return { error: 'tool must be claude, codex or antigravity' };
   const brief = oneLine(str(b.brief) ?? '').slice(0, MAX_BRIEF);
   const title = (brief || firstLine(prompt, 60)).slice(0, MAX_TITLE);
   return {
@@ -81,7 +81,7 @@ export function parseJob(b: Record<string, unknown>): { job: Job } | { error: st
       ...(worktree ? { worktree } : {}), ...(slug ? { slug } : {}), ...(base ? { base } : {}),
       ...(task ? { task } : {}),
       ...(mcp.names.length ? { mcp: mcp.names } : {}),
-      ...(tool === 'codex' ? { tool: 'codex' as const } : {}),
+      ...(tool === 'codex' || tool === 'antigravity' ? { tool } : {}),
     },
   };
 }

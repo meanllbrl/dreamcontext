@@ -6,8 +6,9 @@
  * T3 links that folder to the real `~/.gemini/config/skills`, so writing through the link would
  * write in the owner's own home. It is replaced by a real folder first, the link alone removed,
  * never its target; the owner's own skills there are linked in one by one, so they stay readable.
- * T3 leaves a real folder as it is. Static text in the agent says `config/skills` follows
- * `GEMINI_HOME`; whether it lists them is for a live turn. Effect-free, and it never throws.
+ * `antigravity-cli/skills`, the agent's second folder, gets the same, so the agent (which writes
+ * there in Bypass) cannot reach `~/.gemini` through it. T3 leaves a real folder as it is. A live
+ * turn listed all seven (agent 1.4.1). Effect-free, and it never throws.
  */
 import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, statSync, symlinkSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -71,9 +72,20 @@ export function syncAntigravitySkills(accountId: string, o: SkillsOptions = {}):
     if (!realDir(dir)) return { ok: false, reason: 'the skills folder is not a plain folder' };
     // Staged inside the profile, on the same disk, and outside what the agent scans.
     const { names } = copyToolSkills(dir, { tool: 'antigravity', stagingParent: join(profile, 'antigravity-acp'), ...(o.packageDir ? { packageDir: o.packageDir } : {}) });
+    const gemini = o.userGemini ?? join(home, '.gemini');
     try {
-      linkOwnSkills(dir, o.userGemini ? join(o.userGemini, 'config', 'skills') : join(home, '.gemini', 'config', 'skills'), new Set(names));
+      linkOwnSkills(dir, join(gemini, 'config', 'skills'), new Set(names));
     } catch { /* the owner's own skills are extra; ours are in */ }
+    try {
+      const cli = join(profile, 'antigravity-cli');
+      mkdirSync(cli, { recursive: true, mode: 0o700 });
+      const second = join(cli, 'skills');
+      try {
+        if (lstatSync(second).isSymbolicLink()) unlinkSync(second);
+      } catch { /* not there yet */ }
+      mkdirSync(second, { recursive: true, mode: 0o700 });
+      if (realDir(cli) && realDir(second)) linkOwnSkills(second, join(gemini, 'antigravity-cli', 'skills'), new Set());
+    } catch { /* that folder is the owner's extras only */ }
     return { ok: true, names };
   } catch (err) {
     return { ok: false, reason: String((err as Error)?.message ?? err).slice(0, 200) };

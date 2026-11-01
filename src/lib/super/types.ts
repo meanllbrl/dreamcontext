@@ -12,6 +12,9 @@ import type { OwnerWaitKind } from './owner-wait.js';
 
 export const SUPER_STATE_VERSION = 1 as const;
 
+/** The tools a child can run on besides Claude; each is refused with no live write gate. */
+export type SuperChildTool = 'codex' | 'antigravity';
+
 /** What a container can show. `chat` is a child chat's card; `agenda` the super's own agenda
  *  (Waiting on you / Now / Done / Up next, one per stage); the rest are read-only views. */
 export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'pdf', 'video', 'browser', 'team', 'agenda'] as const;
@@ -509,7 +512,7 @@ export interface SuperChild {
    *  runs lean, with only these; Resume keeps the same set. */
   mcp?: string[];
   /** The child runs on this tool (Track T W4). Absent = Claude. */
-  tool?: 'codex';
+  tool?: SuperChildTool;
   /** `super end` closed it (epoch ms): no process, no tab, no card; the transcript stays and
    *  `super resume` reopens it (which clears this). Absent = a child that may be running. */
   endedAt?: number;
@@ -728,7 +731,7 @@ export interface SuperPoolItem {
   base?: string;
   mcp?: string[];
   /** The child runs on this tool (Track T W4). Absent = Claude. */
-  tool?: 'codex';
+  tool?: SuperChildTool;
   /** Kept because `delegate` hit the cap. */
   held?: boolean;
   /** A `delegate --from` went unconfirmed: the child may be running. */

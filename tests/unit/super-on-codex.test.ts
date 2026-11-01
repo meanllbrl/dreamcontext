@@ -22,7 +22,11 @@ describe('a delegated job on Codex', () => {
     expect('job' in ok && ok.job.tool).toBe('codex');
     const plain = parseJob({ prompt: 'Do it' });
     expect('job' in plain && plain.job.tool).toBeUndefined();
-    expect(parseJob({ prompt: 'Do it', tool: 'other' })).toEqual({ error: 'tool must be claude or codex' });
+    expect(parseJob({ prompt: 'Do it', tool: 'other' })).toEqual({ error: 'tool must be claude, codex or antigravity' });
+    const agy = parseJob({ prompt: 'Do it', tool: 'antigravity' });
+    expect('job' in agy && agy.job.tool).toBe('antigravity');
+    const ad = delegateArgs({ prompt: 'Do it', tool: 'antigravity' });
+    expect(ad.ok && ad.tool).toBe('antigravity');
     const d = delegateArgs({ prompt: 'Do it', tool: 'codex' });
     expect(d.ok && d.tool).toBe('codex');
     const none = delegateArgs({ prompt: 'Do it', tool: 'x' });

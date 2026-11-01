@@ -37,9 +37,16 @@ export interface CodexStorePlan {
   /** The servers that reach this Codex, with their transport. */
   reached: Array<{ name: string; transport: 'stdio' | 'http' }>;
   left: CodexMcpLeft[];
+  /** The same servers as launch routes: a tool that takes a server list (ACP) reads these. */
+  routes: StoreRoute[];
 }
 
-const emptyPlan = (): CodexStorePlan => ({ pairs: [], reached: [], left: [] });
+/** How a stored server starts: through our own child from its 0600 file, or a plain address. */
+export type StoreRoute =
+  | { name: string; via: 'lean-exec' | 'http-relay'; file: string }
+  | { name: string; via: 'url'; url: string };
+
+const emptyPlan = (): CodexStorePlan => ({ pairs: [], reached: [], left: [], routes: [] });
 
 function usesVariable(def: McpDefinition): boolean {
   const strings = (v: unknown): string[] => {
@@ -80,8 +87,10 @@ export function codexStorePlan(o: { home?: string; projectRoot: string | null; n
       if (hasHeaders || !plainAddress(def.url)) {
         plan.pairs.push([at('command'), tomlString(o.node)]);
         plan.pairs.push([at('args'), arr([o.cli, 'mcp', 'http-relay', file, name])]);
+        plan.routes.push({ name, via: 'http-relay', file });
       } else {
         plan.pairs.push([at('url'), tomlString(def.url)]);
+        plan.routes.push({ name, via: 'url', url: def.url });
       }
       plan.pairs.push([at('startup_timeout_sec'), String(STARTUP_TIMEOUT_SEC)]);
       plan.reached.push({ name, transport: 'http' });
@@ -90,6 +99,7 @@ export function codexStorePlan(o: { home?: string; projectRoot: string | null; n
       plan.pairs.push([at('args'), arr([o.cli, 'mcp', 'lean-exec', file, name])]);
       plan.pairs.push([at('startup_timeout_sec'), String(STARTUP_TIMEOUT_SEC)]);
       plan.reached.push({ name, transport: 'stdio' });
+      plan.routes.push({ name, via: 'lean-exec', file });
     } else {
       plan.left.push({ name, why: 'transport' });
     }

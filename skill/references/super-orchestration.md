@@ -199,7 +199,7 @@ child that spots a mistake tells you; only you amend. Each refusal says what to 
 sending a WhatsApp message → `whatsapp`; email → `apple-mail`; a meeting's notes or transcript →
 `fathom`; product analytics → `posthog`; the browser is always there; anything else → name it from `super state`.
 
-**Tool.** `--tool codex` runs a child on Codex, when the owner asks: sandboxed, no network.
+**Tool.** When the owner asks: `--tool codex` (sandboxed, no network) or `--tool antigravity` (gate, no sandbox).
 
 **Handoffs.** A child's work moving to a fresh session goes through `delegate --succeeds <old child>`:
 the card, brief and task pass to the new child and the old one is ended (told to stop first if busy).

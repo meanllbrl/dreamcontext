@@ -8,6 +8,7 @@ import { tabWantsAgentTitle } from '../chat-tab-title-nudge.js';
 import { ecoJoins } from './eco.js';
 import { BrainContext } from './context.js';
 import { findCodexRollout } from './codex-threads.js';
+import { writeAntigravityTranscript } from '../antigravity-conversation.js';
 import { codexCachedModels, codexDefaultModel } from './registry.js';
 import { runBridgeStdio } from './stdio.js';
 import type { BridgeSessionOptions } from './session.js';
@@ -28,10 +29,12 @@ export interface T3ChatOptions {
   mcpConfig?: string;
   strictMcp?: boolean;
   storeMcp?: boolean;
+  unattended?: boolean;
 }
 
 export const runT3Chat = (o: T3ChatOptions): Promise<number> => runBridgeChat(o);
 export { runT3Account } from './account-cli.js';
+export { runAntigravityMcpProbe } from './mcp-probe.js';
 export { runT3Headless } from './run.js';
 
 export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Promise<number> {
@@ -56,6 +59,7 @@ export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Pr
       ...(o.mcpConfig ? { mcpConfig: o.mcpConfig } : {}),
       ...(o.strictMcp ? { strictMcp: true } : {}),
       ...(o.storeMcp ? { storeMcp: true } : {}),
+      ...(o.unattended ? { unattended: true } : {}),
     },
     {
       ...(claudeKit ? { claudeKit } : {}),
@@ -68,7 +72,8 @@ export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Pr
       onRotated: (id) => eco.onRotated(id),
       onResult: (session, frame) => {
         // Sleep sees the turn: the Stop hook records it, the rollout as its transcript.
-        brain?.turnEnded(session.nativeThreadId, o.tool === 'codex' ? findCodexRollout(session.nativeThreadId) : null, typeof frame.result === 'string' ? frame.result : '');
+        const transcript = o.tool === 'codex' ? findCodexRollout(session.nativeThreadId) : o.tool === 'antigravity' ? writeAntigravityTranscript(session.nativeThreadId, o.account || 'primary') : null;
+        brain?.turnEnded(session.nativeThreadId, transcript, typeof frame.result === 'string' ? frame.result : '');
         return eco.onResult(session.nativeThreadId, session.wire.contextTokens);
       },
       ...(brain ? { brain } : {}),

@@ -21,7 +21,8 @@
  *
  * ANTIGRAVITY IS THE EXCEPTION (owner's decision, 2026-11-01): ACP has no untrusted context channel,
  * so there the brain rides in the user message, after the owner's words ({@link contextInWords}).
- * The model cannot tell it from what the owner typed by channel, only by its tags.
+ * The model cannot tell it from what the owner typed by channel, only by its tags. A very long
+ * message carries it first ({@link wordsWithContext}): the agent loses the end of one.
  *
  * Running the hooks, not a copy of their logic, is what keeps Claude's output byte-identical: the
  * Claude path never changes, and the Codex path prints the very same text.
@@ -142,6 +143,13 @@ export const brainPathLine = (root: string): string =>
 const OUR_TAG = /<(\s*\/?\s*)(dreamcontext-)/gi;
 
 /**
+ * Past this the context leads the message. Measured on agent 1.4.1: one message of about 170,000
+ * tokens came back at 145,500 with its end gone, and the snapshot behind it with it, while the
+ * same words under a smaller message were answered. The owner's own words stay as typed.
+ */
+export const CONTEXT_FIRST_CHARS = 50_000;
+
+/**
  * Context for a tool with no context channel: tagged blocks in the user message, after the owner's
  * words (a leading `<tag>` would hide the whole message in a reopened pane). The owner's words are
  * theirs and stay as they are. A tag of ours inside recalled text is escaped, so a note or a peer's
@@ -149,6 +157,13 @@ const OUR_TAG = /<(\s*\/?\s*)(dreamcontext-)/gi;
  */
 export function contextInWords(entries: readonly AppContext[]): string {
   return entries.map((c) => `\n\n<${c.key}>\n${c.text.replace(OUR_TAG, '&lt;$1$2')}\n</${c.key}>`).join('');
+}
+
+/** The owner's words with their context, in the order this size of message survives. */
+export function wordsWithContext(text: string, entries: readonly AppContext[]): string {
+  const context = contextInWords(entries);
+  if (!context) return text;
+  return text.length > CONTEXT_FIRST_CHARS ? `${context.trimStart()}\n\n${text}` : text + context;
 }
 
 /** The folder holding this project's brain, or null: a project without one owes no snapshot. */

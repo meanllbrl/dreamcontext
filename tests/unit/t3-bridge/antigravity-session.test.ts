@@ -363,6 +363,73 @@ describe.skipIf(nodeMajor < 22)('Antigravity on the bridge (fake ACP agent)', ()
     expect(prompt.split('</dreamcontext-prompt>').length).toBe(3); // the owner's words, and the block's own end
   }, 60_000);
 
+  async function unattended(armed: boolean, turns: readonly string[] = ['one']) {
+    process.env.T3_ACP_EMIT_TOOL_CALLS = '1';
+    const bin = fakeAgent(dir);
+    if (armed) writeFileSync(bin, readFileSync(bin, 'utf-8').replace('exec ', 'touch "$DREAMCONTEXT_GATE_BEAT"\nexec '));
+    const input = new PassThrough();
+    const frames: Record<string, unknown>[] = [];
+    const cwd = join(dir, 'project');
+    mkdirSync(cwd, { recursive: true });
+    const done = runBridgeStdio({ tool: 'antigravity', cwd, model: '', mode: 'auto', paneId: 'pane-1', binaryPath: bin, unattended: true }, { input, write: (l) => { frames.push(JSON.parse(l) as Record<string, unknown>); }, env: process.env, home: dir });
+    for (const t of turns) input.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: t } })}\n`);
+    for (let i = 0; i < 400 && !frames.some((f) => f.type === 'result'); i++) await new Promise((r) => setTimeout(r, 50));
+    input.end();
+    return { code: await done, frames };
+  }
+
+  it('a child: nothing is allowed until the gate proved it ran, and it stops out loud', async () => {
+    const { code, frames } = await unattended(false);
+    expect(code).toBe(1);
+    expect(frames.filter((f) => f.type === 'control_request')).toEqual([]);
+    expect(String(frames.find((f) => f.type === 'result')!.result)).toContain('write gate did not run');
+    expect(frames.some((f) => f.type === 'system' && f.subtype === 'bridge_error')).toBe(true);
+  }, 60_000);
+
+  it('a child with its gate running shows no card and finishes its turn', async () => {
+    const { code, frames } = await unattended(true);
+    expect(code).toBe(0);
+    expect(frames.filter((f) => f.type === 'control_request')).toEqual([]);
+    expect(frames.find((f) => f.type === 'result')!.is_error).toBe(false);
+  }, 60_000);
+
+  it('a child with no gate in place does not start', async () => {
+    writeFileSync(join(dir, 'blocker'), '');
+    const profile = antigravityProfileDir('primary', dir);
+    mkdirSync(profile, { recursive: true });
+    writeFileSync(join(profile, 'config'), 'not a folder');
+    const { code, frames } = await unattended(true);
+    expect(code).toBe(1);
+    expect(String(frames.find((f) => f.type === 'result')!.result)).toContain('write gate could not be set up');
+  }, 60_000);
+
+  it('a server that does not answer stays out of the session, and the owner hears which', async () => {
+    const input = new PassThrough();
+    const frames: Record<string, unknown>[] = [];
+    const cwd = join(dir, 'project');
+    mkdirSync(cwd, { recursive: true });
+    const lean = join(dir, 'lean.json');
+    writeFileSync(lean, JSON.stringify({ mcpServers: { 'fox-ok': { command: 'fox' }, 'owl-down': { command: 'owl' } } }));
+    const done = runBridgeStdio(
+      { tool: 'antigravity', cwd, model: '', mode: 'auto', paneId: 'pane-1', binaryPath: fakeAgent(dir), mcpConfig: lean },
+      { input, write: (l) => { frames.push(JSON.parse(l) as Record<string, unknown>); }, env: process.env, home: dir, checkServers: async (servers) => new Map(servers.map((s) => [s.name, s.name === 'fox-ok' ? 'connected' as const : 'needs-auth' as const])) },
+    );
+    input.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'one' } })}\n`);
+    for (let i = 0; i < 400 && !frames.some((f) => f.type === 'result'); i++) await new Promise((r) => setTimeout(r, 50));
+    input.end();
+    expect(await done).toBe(0);
+    const sent = readFileSync(log, 'utf-8').split('\n').find((l) => l.includes('session/new')) ?? '';
+    expect(sent).toContain('fox-ok');
+    expect(sent).not.toContain('owl-down');
+    expect(JSON.stringify(frames.filter((f) => f.type === 'assistant'))).toContain('without owl-down');
+  }, 60_000);
+
+  it("the agent's own command arrives alone, and the brain waits for the next turn", async () => {
+    const { prompts } = await brainChat(['/usage', 'two'], async () => SNAPSHOT);
+    expect(prompts[0]).not.toContain('SNAPSHOT-MARKER');
+    expect(prompts[1]).toContain('SNAPSHOT-MARKER');
+  }, 60_000);
+
   it('Bypass answers for the owner, never sends yolo, and turning it off holds from the next turn', async () => {
     process.env.T3_ACP_EMIT_TOOL_CALLS = '1';
     const input = new PassThrough();

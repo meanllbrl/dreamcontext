@@ -16,11 +16,16 @@ import {
 import { readProjectMcp } from '../../lib/mcp-project.js';
 import { MCP_NAME_RE, FORBIDDEN_KEYS } from '../../lib/super/lean-mcp.js';
 import {
-  isUsableServerName, type CodexMcpAuth, type CodexMcpList, type CodexMcpRow, type McpHome, type McpOverview,
+  isUsableServerName, type AntigravityMcpList, type CodexMcpAuth, type CodexMcpList, type CodexMcpRow, type McpHome, type McpOverview,
   type McpOverviewAccount, type McpOverviewCell, type McpOverviewServer,
 } from '../../lib/mcp-wire.js';
 import { codexArgsEnv, codexAccountDeps, defaultCodexRunner, listCodexAccounts, type CodexRunner } from '../../lib/codex-accounts.js';
+import { spawn } from 'node:child_process';
 import { codexChildEnv, codexCommand } from '../../lib/codex-bin.js';
+import { antigravityInstalled } from '../../lib/antigravity-accounts.js';
+import type { ProbeReport } from '../../lib/antigravity-mcp.js';
+import { INSTANCE_PRIMARY_ID, listInstanceAccounts } from '../../lib/instance-accounts.js';
+import { bridgeNode } from '../../lib/t3-bridge/node-floor.js';
 import { codexStorePlan, planArgv, probeCodexMcp, startCodexConnect, type AppServerOptions, type CodexLiveServer } from '../../lib/codex-mcp.js';
 
 /**
@@ -233,6 +238,58 @@ export async function readCodexMcp(projectRoot: string, env: NodeJS.ProcessEnv =
 export async function handleMcpCodex(req: IncomingMessage, res: ServerResponse, _p: Record<string, string>, contextRoot: string | null): Promise<void> {
   if (!guard(req, res, contextRoot)) return;
   sendJson(res, 200, await readCodexMcp(projectRootOf(contextRoot)));
+}
+
+const ANTIGRAVITY_PROBE_LIMIT_MS = 60_000;
+const ANTIGRAVITY_PROBE_KEEP_MS = 5 * 60_000;
+const antigravityProbes = new Map<string, { at: number; list: Promise<AntigravityMcpList> }>();
+
+/** Tests: stands in for the live session. */
+let antigravityProbe: (projectRoot: string, account: string) => Promise<ProbeReport | null> = probeAntigravitySession;
+export function setAntigravityMcpProbeForTests(fn: typeof antigravityProbe | null): void {
+  antigravityProbe = fn ?? probeAntigravitySession;
+  antigravityProbes.clear();
+}
+
+/** A bridge child opens one real session on the account a new chat starts on, and prints its report. */
+function probeAntigravitySession(projectRoot: string, account: string): Promise<ProbeReport | null> {
+  const node = bridgeNode();
+  const cli = process.env.DREAMCONTEXT_CLI || process.argv[1] || '';
+  if (!node || !cli) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const child = spawn(node, [cli, 't3-chat', '--tool', 'antigravity', '--mcp-probe', '--cwd', projectRoot, ...(account === INSTANCE_PRIMARY_ID ? [] : ['--account', account])], { cwd: projectRoot, env: { ...process.env, DREAMCONTEXT_CLI: cli }, stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    const timer = setTimeout(() => { try { child.kill('SIGTERM'); } catch { /* gone */ } }, ANTIGRAVITY_PROBE_LIMIT_MS);
+    child.stdout.on('data', (c: Buffer) => { if (out.length < 1_000_000) out += c.toString('utf-8'); });
+    child.on('error', () => { clearTimeout(timer); resolve(null); });
+    child.on('close', () => {
+      clearTimeout(timer);
+      try { resolve(JSON.parse(out.trim().split('\n').pop() ?? '') as ProbeReport); } catch { resolve(null); }
+    });
+  });
+}
+
+/** What a live Antigravity session says about every server the app has for this project. */
+export async function readAntigravityMcp(projectRoot: string, home: string = homedir()): Promise<AntigravityMcpList> {
+  if (!antigravityInstalled({ home })) return { state: 'not_installed', servers: [], left: [] };
+  const plan = codexStorePlan({ home, projectRoot, node: process.execPath, cli: process.env.DREAMCONTEXT_CLI || process.argv[1] || '', listed: [], sync: false });
+  const account = listInstanceAccounts('antigravity', home).find((a) => a.signedIn)?.id;
+  if (!account) return { state: 'signed_out', servers: [], left: plan.left };
+  const report = await antigravityProbe(projectRoot, account);
+  if (!report) return { state: 'failed', servers: [], left: plan.left };
+  return { state: report.state, servers: report.servers, left: plan.left };
+}
+
+/** GET /api/agent/mcp/antigravity: asks a live session, at most once in five minutes (`?fresh=1` asks now). */
+export async function handleMcpAntigravity(req: IncomingMessage, res: ServerResponse, _p: Record<string, string>, contextRoot: string | null): Promise<void> {
+  if (!guard(req, res, contextRoot)) return;
+  const root = projectRootOf(contextRoot);
+  const fresh = new URL(req.url ?? '/', 'http://x').searchParams.get('fresh') === '1';
+  const held = antigravityProbes.get(root);
+  if (held && !fresh && Date.now() - held.at < ANTIGRAVITY_PROBE_KEEP_MS) { sendJson(res, 200, await held.list); return; }
+  const list = readAntigravityMcp(root);
+  antigravityProbes.set(root, { at: Date.now(), list });
+  sendJson(res, 200, await list);
 }
 
 /** POST /api/agent/mcp/codex/connect `{name}`: Codex's own sign-in for one server. */

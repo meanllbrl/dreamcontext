@@ -28,10 +28,12 @@ export function isMarketingEnvPath(filePath: string, from?: string): boolean {
   const realRoot = realpathOrSelf(root);
   const target = resolve(realRoot, 'marketing', '.env');
   const realCandidate = realpathOfNearestAncestor(resolve(filePath));
-  if (realCandidate === target) return true;
+  // Lower-cased: on a case-insensitive disk `Marketing/.ENV` IS this file.
+  const candidate = realCandidate.toLowerCase();
+  if (candidate === target.toLowerCase()) return true;
   // Scope: only match candidates inside the resolved context root.
-  if (!realCandidate.startsWith(realRoot + sep)) return false;
-  return realCandidate.endsWith(`${sep}marketing${sep}.env`);
+  if (!candidate.startsWith((realRoot + sep).toLowerCase())) return false;
+  return candidate.endsWith(`${sep}marketing${sep}.env`);
 }
 
 function realpathOrSelf(p: string): string {

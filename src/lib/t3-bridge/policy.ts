@@ -75,7 +75,8 @@ export function bypassNeedsOwner(tool: string, input: unknown, cwd: string): boo
   const path = typeof record.file_path === 'string' ? record.file_path : '';
   // An edit that names no real path cannot be judged, so the owner judges it.
   if (tool === 'Edit' && !/[\\/]/.test(path)) return true;
-  return /marketing[\\/]+\.env/.test(JSON.stringify(record))
+  return /marketing[\\/]+\.env/i.test(JSON.stringify(record))
+    || /config[\\/]+hooks\.json/i.test(JSON.stringify(record))
     || (!!path && isMarketingEnvPath(isAbsolute(path) ? path : join(cwd, path)))
     || !!memberFileWriteTarget(tool, record, cwd);
 }

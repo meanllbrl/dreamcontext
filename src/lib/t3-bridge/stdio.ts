@@ -20,10 +20,12 @@ import { syncAntigravitySkills } from '../antigravity-skills.js';
 import { findPackageDir } from '../catalog.js';
 import { codexRoleArgs, prepareCodexKit, type CodexKit, type CodexKitOptions } from '../codex-skills.js';
 import { toolNote, toolText } from '../tool-text.js';
+import { GATE_BEAT_ENV, syncAntigravityGate } from '../antigravity-gate.js';
+import { checkAcpServers } from '../antigravity-mcp.js';
 import { INSTANCE_PRIMARY_ID, isInstanceAccountId, isInstanceTool } from '../instance-accounts.js';
 import { carriedText, recordThreadTurn } from './instance-threads.js';
 import { antigravityFailureKind } from './to-wire.js';
-import { MAX_DEVELOPER_INSTRUCTIONS, acpBrainMcpServer, claudeLaunchArgs, codexBrainMcpArgs, codexLaunchArgs, codexLeanMcpArgs, codexStrictArgs, leanMcpNames, parseCodexMcpList, scrubbedCodexEnv } from './launch.js';
+import { MAX_DEVELOPER_INSTRUCTIONS, acpBrainMcpServer, acpLeanMcpServers, acpStoreServers, claudeLaunchArgs, codexBrainMcpArgs, codexLaunchArgs, codexLeanMcpArgs, codexStrictArgs, leanMcpNames, parseCodexMcpList, scrubbedCodexEnv } from './launch.js';
 import { codexInstanceSettings, isCodexAccountId } from './accounts.js';
 import { HIDDEN_TITLE_PROMPT, TabTitler, titleBlock, titleIn } from './tab-title.js';
 import type { WireFrame } from './to-wire.js';
@@ -53,6 +55,8 @@ export interface StdioArgs {
   readonly strictMcp?: boolean;
   /** The owner's MCP servers from the app's stores: a chat's, as Claude gets `--mcp-config`. */
   readonly storeMcp?: boolean;
+  /** Nobody is watching (a Super child on a tool with no sandbox): no card, and no gate no run. */
+  readonly unattended?: boolean;
 }
 
 export interface StdioDeps {
@@ -74,6 +78,8 @@ export interface StdioDeps {
   readonly onRotated?: (nativeThreadId: string) => AppContext[] | void;
   /** The real child (main.ts): end the session on SIGTERM/SIGINT. Never in tests. */
   readonly handleSignals?: boolean;
+  /** Tests: stands in for asking each tool server. */
+  readonly checkServers?: typeof checkAcpServers;
   /** Called once the session holds its thread (records pane → thread for resume). */
   readonly onReady?: (nativeThreadId: string) => void;
   /** Does this pane's tab still want a name from its agent? Absent = never (tests, headless). */
@@ -194,12 +200,41 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   const codexKit = args.tool === 'codex' && kitOf ? kitOf({ home, cwd: args.cwd }) : null;
   const toolSkills = skills ?? codexKit?.skills ?? null;
   let skillsLoss = toolSkills && !toolSkills.ok ? `${toolLabel(args.tool)} is running without dreamcontext's skills: ${toolSkills.reason}.` : null;
+  // The gate hook, the same way: per account profile, as a chat opens (antigravity-gate.ts).
+  const gate = isInstanceTool(args.tool) ? syncAntigravityGate(instanceAccount ?? INSTANCE_PRIMARY_ID, { node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', home }) : null;
+  if (gate && !gate.ok && args.unattended) {
+    emit({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `${toolLabel(args.tool)} did not start: its write gate could not be set up (${gate.reason}).`, num_turns: 0, total_cost_usd: 0, usage: {}, dc_tool: args.tool });
+    rmSync(privateTmp, { recursive: true, force: true });
+    return 1;
+  }
+  // No gate, no Bypass: the owner's card stands in, and the owner hears why.
+  const gateLoss = gate && !gate.ok ? `${toolLabel(args.tool)} is running without its write gate (${gate.reason}), so every action asks you, Bypass included.` : null;
+  const startMode = gateLoss ? 'default' : args.mode;
+  let gateNotice = gateLoss;
+  const gateBeat = args.unattended ? join(privateTmp, 'gate-beat') : '';
+  if (gateBeat) deps.env[GATE_BEAT_ENV] = gateBeat;
+  // The agent inherits this: the hook knows it is one of ours, and keeps the heavy-step limit.
+  if (isInstanceTool(args.tool)) deps.env.DREAMCONTEXT_CONTEXT_BY = 'bridge';
   const brainServer = isInstanceTool(args.tool) && deps.brain
     ? acpBrainMcpServer({ node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', root: args.cwd, tabSession: deps.env.DREAMCONTEXT_TAB_SESSION })
     : null;
   const storePlan = args.storeMcp && args.tool === 'codex' && !args.strictMcp
     ? codexStorePlan({ home, projectRoot: args.cwd, node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', listed: listMcp() })
     : null;
+  const mcpNode = process.execPath;
+  const mcpCli = deps.env.DREAMCONTEXT_CLI || process.argv[1] || '';
+  // The owner's servers ride `session/new` as the brain does; a child gets its lean subset only.
+  const askedServers = !isInstanceTool(args.tool) ? [] : [
+    ...(args.storeMcp && !args.strictMcp ? acpStoreServers(codexStorePlan({ home, projectRoot: args.cwd, node: mcpNode, cli: mcpCli, listed: [] }).routes, { node: mcpNode, cli: mcpCli }) : []),
+    ...(args.mcpConfig ? acpLeanMcpServers(args.mcpConfig, { node: mcpNode, cli: mcpCli }) : []),
+  ];
+  // One server that will not start refuses every turn of the session (antigravity-mcp.ts): each is
+  // asked first, and one that does not answer stays out and the owner hears which.
+  const checked = askedServers.length ? await (deps.checkServers ?? checkAcpServers)(askedServers, { env: deps.env }) : new Map<string, string>();
+  const keptServers = askedServers.filter((s) => checked.get(s.name) === 'connected');
+  const leftServers = askedServers.filter((s) => checked.get(s.name) !== 'connected').map((s) => s.name);
+  let serversNotice = leftServers.length ? `${toolLabel(args.tool)} is running without ${leftServers.join(', ')}: ${leftServers.length > 1 ? 'they' : 'it'} did not answer, or asked for a sign-in this tool cannot do. Settings > Tool servers shows why.` : null;
+  const instanceServers = [...(brainServer ? [brainServer] : []), ...keptServers];
   const launchArgs = isInstanceTool(args.tool) ? '' : args.tool === 'claude'
     ? claudeLaunchArgs({ briefingFile: args.briefingFile })
     : [
@@ -229,15 +264,16 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       cwd: args.cwd,
       model: args.model,
       ...(args.effort ? { effort: args.effort } : {}),
-      mode: args.mode,
+      mode: startMode,
       paneId: args.paneId || randomUUID(),
       ...(args.resume ? { resumeNativeThreadId: args.resume } : {}),
       ...(binaryPath ? { binaryPath } : {}),
       launchArgs,
       ...(account ? { codexHome: { homePath: account.homePath, shadowHomePath: account.shadowHomePath } } : {}),
       ...(instanceAccount ? { accountId: instanceAccount } : {}),
-      ...(brainServer ? { mcpServers: [brainServer] } : {}),
+      ...(instanceServers.length ? { mcpServers: instanceServers } : {}),
       ...(deps.openLimitMs ? { openLimitMs: deps.openLimitMs } : {}),
+      ...(gateBeat ? { gateBeat } : {}),
       // The account's live windows, for the server's switch and the Settings bars (never a secret).
       onUsageLimits: (u) => emit({ type: 'system', subtype: 'dc_usage', dc_tool: args.tool, windows: u.windows, checked_at: u.checkedAt }),
       // DREAMCONTEXT_CONTEXT_BY: the bridge injects the brain, so a project's opt-in `.codex/hooks.json`
@@ -375,14 +411,18 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
         brainSent = false;
         await deps.brain?.session('compact', session.nativeThreadId).catch(() => undefined);
       }
+      // The agent's own commands (`/plan`, `/usage`, `/logout`) must arrive alone to be commands.
+      const nativeCommand = isInstanceTool(args.tool) && /^\/[a-z]+$/.test(text.trim());
       // A steer joins the running turn as Claude's mid-turn message does: no hook, no context.
-      const brain = session.busy || !deps.brain ? [] : await deps.brain.prompt(text, session.nativeThreadId).catch(() => []);
+      const brain = session.busy || nativeCommand || !deps.brain ? [] : await deps.brain.prompt(text, session.nativeThreadId).catch(() => []);
       // Lost context is said, once, in the owner's own chat: `<synthetic>` keeps the pane's books as they are.
-      const notice = [deps.brain?.takeNotice?.(), skillsLoss].filter(Boolean).join('\n\n');
+      const notice = [deps.brain?.takeNotice?.(), skillsLoss, gateNotice, serversNotice].filter(Boolean).join('\n\n');
       skillsLoss = null;
+      gateNotice = null;
+      serversNotice = null;
       if (notice) emit({ type: 'assistant', message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: notice }] }, parent_tool_use_id: null, session_id: session.nativeThreadId });
       if (keepsThread) recordThreadTurn(session.nativeThreadId, args.cwd, 'user', text, home, args.account);
-      const context = session.busy ? [] : [...titler.nudge(), ...pending.splice(0), ...onceAThread(brain)];
+      const context = session.busy || nativeCommand ? [] : [...titler.nudge(), ...pending.splice(0), ...onceAThread(brain)];
       await session.send(text, args.tool === 'codex' ? fitCodexContext(context) : context);
       return;
     }
@@ -409,7 +449,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
           ack(frame.request_id);
           return;
         case 'set_permission_mode':
-          if (typeof req.mode === 'string') session.setMode(req.mode);
+          // No gate: Bypass stays off, whatever the composer sends.
+          if (typeof req.mode === 'string' && !gateLoss) session.setMode(req.mode);
           ack(frame.request_id);
           return;
         default:

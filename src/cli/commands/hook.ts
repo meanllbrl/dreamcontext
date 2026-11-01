@@ -3,6 +3,7 @@ import { logHandoff } from '../../lib/usage-records.js';
 import { directHeavy, shellQuote } from '../../lib/run-budget.js';
 import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
 import { hookTool, setHookTool } from '../../lib/hook-tool.js';
+import { GATE_BEAT_ENV, antigravityCallAsClaude, isAntigravityGateFile, shellTouchesGuarded } from '../../lib/antigravity-gate.js';
 import { SESSION_START_PARTS } from '../../lib/snapshot-budget.js';
 import { Command } from 'commander';
 import {
@@ -55,7 +56,7 @@ import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { codexProjectOptedIn } from '../../lib/t3-bridge/codex-user-gate.js';
-import { memberFileRefusal, memberFileWriteTarget } from '../../lib/agents/member-file-guard.js';
+import { memberFileRefusal, memberFileWriteTarget, shellWriteTarget } from '../../lib/agents/member-file-guard.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
 import { bm25Search, loadSkillDocs, RECALL_STRONG_SCORE, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
 import { stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
@@ -2159,6 +2160,26 @@ function beginCodexHookFormat(name: string): void {
 }
 
 /**
+ * `dreamcontext hook pre-tool-use --format antigravity`: only the gate runs in this format. The
+ * agent reads `{decision, reason}`; empty stdout is an allow, anything else it cannot read a deny.
+ */
+function beginAntigravityHookFormat(name: string): void {
+  if (name !== 'pre-tool-use') process.exit(0);
+  setHookTool('antigravity');
+  const lines: string[] = [];
+  console.log = (...args: unknown[]) => { lines.push(formatArgs(...args)); };
+  process.once('exit', () => {
+    if (!lines.length) return;
+    let reason = '';
+    try {
+      const out = (JSON.parse(lines.join('\n')) as { hookSpecificOutput?: { permissionDecision?: unknown; permissionDecisionReason?: unknown } }).hookSpecificOutput;
+      if (out?.permissionDecision === 'deny') reason = String(out.permissionDecisionReason ?? 'Denied by dreamcontext.');
+    } catch { reason = 'Denied by dreamcontext: the gate could not read its own answer.'; }
+    if (reason) writeStdoutSync(`${JSON.stringify({ decision: 'deny', reason })}\n`);
+  });
+}
+
+/**
  * Claude's SessionStart: everything this hook prints is held, then cut for the part hooks at exit
  * (an exit on any path, so a hook that stops early still releases them and the session does not
  * wait on them). `parts` false: a project without the part hooks, one hook carries it all.
@@ -2234,7 +2255,9 @@ export function registerHookCommand(program: Command): void {
     .description('Hook handlers for Claude Code (stop, session-start, subagent-start, pre-tool-use, user-prompt-submit, post-tool-use, pre-compact)');
   // `--format codex` (declared on each handler below the definitions): the Codex hook shape.
   hook.hook('preAction', (_group, action) => {
-    if ((action.opts() as { format?: unknown }).format === 'codex') beginCodexHookFormat(action.name());
+    const format = (action.opts() as { format?: unknown }).format;
+    if (format === 'codex') beginCodexHookFormat(action.name());
+    if (format === 'antigravity') beginAntigravityHookFormat(action.name());
   });
 
   // --- hook stop ---
@@ -2886,6 +2909,15 @@ export function registerHookCommand(program: Command): void {
     .description('Gate default sub-agents and heavy shell steps (called by Claude Code PreToolUse hook)')
     .action(() => {
       const input = readStdin();
+      const deny = (reason: string): void => {
+        console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }));
+      };
+      // Antigravity has no sandbox: a call this gate cannot read is refused, never waved through.
+      const agy = hookTool() === 'antigravity' ? (input ? antigravityCallAsClaude(input) : null) : undefined;
+      if (agy === null) { deny('Denied by dreamcontext: the gate could not read this tool call.'); return; }
+      if (agy && process.env[GATE_BEAT_ENV]) {
+        try { writeFileSync(process.env[GATE_BEAT_ENV], ''); } catch { /* a child without its beat stops itself */ }
+      }
       if (!input) process.exit(0); // allow — no input means nothing to gate
 
       let toolName = typeof input.tool_name === 'string' ? input.tool_name : '';
@@ -2902,6 +2934,25 @@ export function registerHookCommand(program: Command): void {
           ?? calls[0]!;
         toolName = pick.toolName;
         toolInput = pick.toolInput;
+      }
+      if (agy) {
+        toolName = agy.toolName;
+        toolInput = agy.toolInput;
+        input.cwd = agy.cwd;
+        const path = typeof toolInput.file_path === 'string' ? resolve(agy.cwd, toolInput.file_path) : '';
+        const command = toolName === 'Bash' && typeof toolInput.command === 'string' ? toolInput.command : '';
+        // Its own gate first: nothing below matters once the hook can be rewritten.
+        if ((path && isAntigravityGateFile(path)) || (command && shellWriteTarget(command, agy.cwd, isAntigravityGateFile))) {
+          deny('Blocked: this is dreamcontext\'s write gate for Antigravity. Agents never change it.');
+          return;
+        }
+        // No sandbox here, so the shell is read for the token file too: Claude's rule names file
+        // tools. Any brain's token file counts: the hook may run in another project.
+        const tokenFile = (p: string): boolean => isMarketingEnvPath(p, agy.cwd) || /\/_dream_context\/marketing\/\.env$/i.test(p);
+        if ((path && tokenFile(path)) || (command && (shellWriteTarget(command, agy.cwd, tokenFile) || shellTouchesGuarded(command)))) {
+          deny('Blocked: this file holds Meta access tokens, or this command touches dreamcontext\'s gate. Agents never write them: setup is `mk init`, and rotation is the owner\'s. To verify config, run `dreamcontext mk config check`.');
+          return;
+        }
       }
 
       // Gate 1: block direct writes/edits to _dream_context/marketing/.env
@@ -3758,5 +3809,5 @@ export function registerHookCommand(program: Command): void {
 
   // Every handler takes `--format codex` (read by the preAction hook above). Absent = Claude's
   // output, unchanged.
-  for (const c of hook.commands) c.option('--format <format>', 'claude (default) or codex: print in that tool\'s hook shape');
+  for (const c of hook.commands) c.option('--format <format>', 'claude (default), codex or antigravity: print in that tool\'s hook shape');
 }

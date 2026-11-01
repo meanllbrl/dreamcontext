@@ -243,7 +243,7 @@ import {
   handleAgentAccountsReorder, handleAgentAccountsRemove,
 } from './routes/agent-accounts.js';
 import {
-  handleMcpOverview, handleMcpCodex, handleMcpCodexConnect, handleMcpCheck, handleMcpConnect, handleMcpConnectStatus, handleMcpConnectCancel,
+  handleMcpOverview, handleMcpCodex, handleMcpAntigravity, handleMcpCodexConnect, handleMcpCheck, handleMcpConnect, handleMcpConnectStatus, handleMcpConnectCancel,
   handleMcpServerSave, handleMcpServerRemove, handleMcpServerMove, handleMcpImport,
 } from './routes/agent-mcp.js';
 import {
@@ -693,6 +693,7 @@ export function buildRouter(): Router {
   // `/mcp` in Chat talks to its OWN process over the chat socket instead (agent-chat.ts).
   router.get('/api/agent/mcp/overview', handleMcpOverview);
   router.get('/api/agent/mcp/codex', handleMcpCodex);
+  router.get('/api/agent/mcp/antigravity', handleMcpAntigravity);
   router.post('/api/agent/mcp/codex/connect', handleMcpCodexConnect);
   router.post('/api/agent/mcp/check', handleMcpCheck);
   router.post('/api/agent/mcp/connect', handleMcpConnect);
