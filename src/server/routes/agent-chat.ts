@@ -131,6 +131,7 @@ import { bridgeChatScript, bridgeResumeTarget } from '../../lib/t3-bridge/spawn.
 import { HEADLESS_ENVELOPES } from '../../lib/t3-bridge/headless-envelope.js';
 import { pruneToolHandoffSeeds } from '../../lib/t3-bridge/tool-handoff.js';
 import { NO_ENV_GATE, codexEnvGateGap } from '../../lib/t3-bridge/env-gate.js';
+import { NO_ANTIGRAVITY_GATE, antigravityGateGap } from '../../lib/antigravity-gate.js';
 import { bridgeNode, nodeTooOldMessage } from '../../lib/t3-bridge/node-floor.js';
 import { codexStartProblem } from '../../lib/codex-bin.js';
 import { readAgentUiSettings } from './launcher.js';
@@ -2351,16 +2352,17 @@ export function startChatSession(
   // changing it (`node-floor.ts`). No such Node: the pane says so instead of crashing in a chat.
   const bridgeNodePath = bridgeTool ? bridgeNode() : null;
   // A Super child runs with nobody watching it: no live write gate, no child on Codex.
-  const envGateGap = bridgeTool === 'codex' && opts.leanMcp ? codexEnvGateGap(projectRoot, undefined, undefined, toolAccountId) : null;
+  const envGateGap = !opts.leanMcp ? null
+    : bridgeTool === 'codex' ? codexEnvGateGap(projectRoot, undefined, undefined, toolAccountId)
+      : bridgeTool === 'antigravity' && bridgeNodePath ? antigravityGateGap(projectRoot, { node: bridgeNodePath, cli: process.env.DREAMCONTEXT_CLI || process.argv[1] || '', accountId: toolAccountId }) : null;
   const noEnvGate = envGateGap !== null;
   // Said before anything starts: a chat on a Codex that cannot start would only end in silence.
-  // Antigravity has no write gate at all yet, so no child runs on it with nobody watching.
-  const codexMissing = bridgeTool === 'codex' ? codexStartProblem() : bridgeTool === 'antigravity' && opts.leanMcp ? 'Antigravity has no write gate yet, so it cannot run a Super Agent child.' : null;
+  const codexMissing = bridgeTool === 'codex' ? codexStartProblem() : null;
   const bridgeScript = bridgeTool && bridgeNodePath && !noEnvGate && !codexMissing
-    ? bridgeChatScript({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : opts.leanMcp ? HEADLESS_ENVELOPES['super-child'].codex ?? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(carryThread ? { carry: carryThread } : {}), ...(leanMcpPath ? { mcpConfig: leanMcpPath } : {}), ...(opts.leanMcp ? { strictMcp: true } : {}), ...(!assistantConfig && !opts.leanMcp && !scopedCard ? { storeMcp: true } : {}), ...(toolAccountId ? { account: toolAccountId } : {}) })
+    ? bridgeChatScript({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : opts.leanMcp ? HEADLESS_ENVELOPES['super-child'].codex ?? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(carryThread ? { carry: carryThread } : {}), ...(leanMcpPath ? { mcpConfig: leanMcpPath } : {}), ...(opts.leanMcp ? { strictMcp: true, unattended: true } : {}), ...(!assistantConfig && !opts.leanMcp && !scopedCard ? { storeMcp: true } : {}), ...(toolAccountId ? { account: toolAccountId } : {}) })
     : null;
   if (bridgeTool && !bridgeScript) {
-    const why = noEnvGate ? `${envGateGap} ${NO_ENV_GATE}` : bridgeNodePath && codexMissing ? codexMissing : bridgeNodePath ? `${bridgeTool} could not start: the dreamcontext install path is not shell-safe.` : nodeTooOldMessage(bridgeTool === 'codex' ? 'Codex' : bridgeTool === 'antigravity' ? 'Antigravity' : 'The T3 Claude engine');
+    const why = noEnvGate ? `${envGateGap} ${bridgeTool === 'antigravity' ? NO_ANTIGRAVITY_GATE : NO_ENV_GATE}` : bridgeNodePath && codexMissing ? codexMissing : bridgeNodePath ? `${bridgeTool} could not start: the dreamcontext install path is not shell-safe.` : nodeTooOldMessage(bridgeTool === 'codex' ? 'Codex' : bridgeTool === 'antigravity' ? 'Antigravity' : 'The T3 Claude engine');
     noteLeanChildFailed(why);
     // `_meta`, not `dc_meta`: the chat shows the parser's `lastError`, so the owner reads why.
     try { ws.send(JSON.stringify({ type: '_meta', subtype: 'error', code: 'tool_refused', message: why })); } catch { /* gone */ }

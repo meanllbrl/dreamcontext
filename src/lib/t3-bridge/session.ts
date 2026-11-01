@@ -6,7 +6,7 @@
  * new thread, mode, model) into adapter calls. Every adapter event goes through `ToWire` and out
  * as Claude stream-json frames through `emit`.
  */
-import { chmodSync, mkdirSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import * as NodeServices from '@effect/platform-node/NodeServices';
 import {
@@ -53,7 +53,7 @@ import { ANTIGRAVITY_DEFAULT_MODEL } from '@t3tools/contracts';
 import { antigravityInstanceId } from '../antigravity-accounts.js';
 import { isInstanceTool, type InstanceTool } from '../instance-accounts.js';
 import { ToWire, type WireFrame } from './to-wire.js';
-import { contextInWords } from './context.js';
+import { wordsWithContext } from './context.js';
 import type { AcpMcpServer } from './launch.js';
 import type { ClaudeKit } from './claude-kit.js';
 import type { ClaudeAgentSdkQueryRunner } from '@t3tools/server/orchestration-v2/Adapters/ClaudeAdapterV2';
@@ -84,6 +84,8 @@ export interface BridgeSessionOptions {
   readonly mcpServers?: readonly AcpMcpServer[];
   /** The bridge is being ended: a start under way stops here rather than at its limit. */
   readonly abortOpen?: AbortSignal;
+  /** Nobody is watching: the file the gate hook touches, read before anything is allowed. */
+  readonly gateBeat?: string;
   /** How long a start may take before it is refused. Default {@link OPEN_LIMIT_MS}. */
   readonly openLimitMs?: number;
   /** A live limit update from the account (T3 `onUsageLimits`): windows as T3 builds them. */
@@ -113,6 +115,9 @@ const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const TOOL_LABEL: Record<BridgeSessionOptions['tool'], string> = { codex: 'Codex', claude: 'Claude', antigravity: 'Antigravity' };
 export const toolLabel = (tool: BridgeSessionOptions['tool']): string => TOOL_LABEL[tool];
+
+/** The agent's own question before it loads a project's `.agents/hooks.json`. */
+const WORKSPACE_TRUST_QUESTION = /trust the authors of this workspace/i;
 
 /** A start the tool never finished: a dead sign-in or a stuck process answers nothing at all. */
 export const OPEN_LIMIT_MS = 120_000;
@@ -481,12 +486,38 @@ export class BridgeSession {
     if (!isInstanceTool(this.opts.tool)) return false;
     const id = typeof frame.request_id === 'string' ? frame.request_id : '';
     if (frame.type === 'control_cancel_request') return this.bypassAnswered.delete(id);
-    if (frame.type !== 'control_request' || this.mode !== 'bypassPermissions' || !id) return false;
+    if (frame.type !== 'control_request' || !id) return false;
     const req = frame.request as { subtype?: unknown; tool_name?: unknown; input?: unknown } | undefined;
+    if (this.opts.gateBeat !== undefined && req?.subtype === 'can_use_tool') return this.answeredUnattended(id, req);
+    if (this.mode !== 'bypassPermissions') return false;
     if (req?.subtype !== 'can_use_tool' || req.tool_name === 'AskUserQuestion') return false;
     if (bypassNeedsOwner(String(req.tool_name), req.input, this.opts.cwd)) return false;
     this.bypassAnswered.add(id);
     void this.answer(id, { behavior: 'allow' }).catch((err) => this.opts.log?.(`bypass answer failed: ${String(err).slice(0, 200)}`));
+    return true;
+  }
+
+  /**
+   * A Super child: no card waits for anybody. A real question goes to the Super Agent's queue like
+   * any child's. The agent's question about a project's own hooks is answered no: they stay off.
+   * Anything else needs proof the gate ran for this session, and what the gate leaves to the owner
+   * is refused here, since there is no owner.
+   */
+  private answeredUnattended(id: string, req: { tool_name?: unknown; input?: unknown }): boolean {
+    const deny = (message: string): boolean => {
+      this.bypassAnswered.add(id);
+      void this.answer(id, { behavior: 'deny', message }).catch((err) => this.opts.log?.(`child answer failed: ${String(err).slice(0, 200)}`));
+      return true;
+    };
+    if (req.tool_name === 'AskUserQuestion') return WORKSPACE_TRUST_QUESTION.test(JSON.stringify(req.input ?? {})) ? deny('Not in an unattended run.') : false;
+    if (!existsSync(this.opts.gateBeat!)) {
+      deny('The write gate did not run.');
+      this.fatal(`${toolLabel(this.opts.tool)} stopped: its write gate did not run, so this child must not go on.`);
+      return true;
+    }
+    if (bypassNeedsOwner(String(req.tool_name), req.input, this.opts.cwd)) return deny('This needs the owner, and this run has no owner watching. Leave it, and say so in your report.');
+    this.bypassAnswered.add(id);
+    void this.answer(id, { behavior: 'allow' }).catch((err) => this.opts.log?.(`child answer failed: ${String(err).slice(0, 200)}`));
     return true;
   }
 
@@ -550,9 +581,8 @@ export class BridgeSession {
       return;
     }
     // Only Codex's adapter reads `appContext`, as untrusted entries. Everywhere else it rides after
-    // the owner's words, in the user message (context.ts `contextInWords`).
-    const context = this.opts.tool !== 'codex' ? contextInWords(appContext) : '';
-    const message = this.turnMessage(text + context);
+    // the owner's words, in the user message (context.ts `wordsWithContext`).
+    const message = this.turnMessage(this.opts.tool !== 'codex' ? wordsWithContext(text, appContext) : text);
     // A message right after the turn started steers it once Codex reported it running.
     await this.awaitTurnId();
     if (this.activeRun?.providerTurnId) {
@@ -703,7 +733,7 @@ export class BridgeSession {
     }));
     this.wire.sessionId = this.providerThread.nativeThreadRef?.nativeId ?? '';
     this.nativeHasTurns = false;
-    this.wire.contextTokens = 0;
+    this.wire.resetContext();
     this.opts.emit(this.wire.init({ dc_rotated: true }));
     // `/clear` was written as a user turn (the server opened one for it), and Claude closes that
     // turn with a `result`; so does the bridge, or the pane would count a turn open forever.

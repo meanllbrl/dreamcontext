@@ -91,6 +91,10 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 /** One stateful translator per bridge session. */
+/** A context this small has nothing to compact. */
+const CONTEXT_FALL_FLOOR = 100_000;
+const CONTEXT_FALL_RATIO = 0.6;
+
 export class ToWire {
   private readonly opts: ToWireOptions;
   /** Text already sent per streaming item (turn item id → text). */
@@ -135,6 +139,8 @@ export class ToWire {
   contextTokens = 0;
   /** The tool compacted since {@link takeCompacted} last asked: what we sent may be gone. */
   private compacted = false;
+  /** The most context seen since the last compaction. */
+  private peakTokens = 0;
   /** The native thread id (`system/init` `session_id`). */
   sessionId = '';
   private turnStartedAt = 0;
@@ -167,6 +173,27 @@ export class ToWire {
     (this.opts as { permissionMode: string }).permissionMode = mode;
   }
 
+  /**
+   * Antigravity says nothing when it compacts by itself: its agent has no `/compact` and sends no
+   * compaction update, so T3's event never fires there, and only its context falling tells. Real
+   * turns only rose (26k to 824k over a thread), so a fall this deep is not noise, and a wrong call
+   * costs one repeated snapshot. `used` is the size of the last model call.
+   */
+  private noteUsed(used: number): void {
+    this.contextTokens = used;
+    if (this.opts.tool !== 'antigravity') return;
+    if (this.peakTokens >= CONTEXT_FALL_FLOOR && used < this.peakTokens * CONTEXT_FALL_RATIO) {
+      this.compacted = true;
+      this.peakTokens = used;
+    } else if (used > this.peakTokens) this.peakTokens = used;
+  }
+
+  /** A fresh thread: nothing measured yet. */
+  resetContext(): void {
+    this.contextTokens = 0;
+    this.peakTokens = 0;
+  }
+
   /** Did the tool compact since the last ask? Asking clears it. */
   takeCompacted(): boolean {
     const was = this.compacted;
@@ -190,7 +217,7 @@ export class ToWire {
     switch (event.type) {
       case 'provider_thread.updated': {
         const used = event.providerThread.contextUsage?.usedTokens;
-        if (typeof used === 'number' && used > 0) this.contextTokens = used;
+        if (typeof used === 'number' && used > 0) this.noteUsed(used);
         const native = event.providerThread.nativeThreadRef?.nativeId;
         if (native && !this.sessionId) this.sessionId = native;
         return [];
@@ -200,7 +227,7 @@ export class ToWire {
         // orchestrator copies it onto the thread's `contextUsage`, which we read above too.
         const usage = event.providerTurn.tokenUsage;
         const used = usage?.usedTokens;
-        if (typeof used === 'number' && used > 0) this.contextTokens = used;
+        if (typeof used === 'number' && used > 0) this.noteUsed(used);
         // What a headless run's cost estimate reads (run.ts). A chat never looks at it.
         if (usage && (usage.inputTokens !== undefined || usage.outputTokens !== undefined)) {
           this.turnUsage = { input: usage.inputTokens ?? 0, cached: usage.cachedInputTokens ?? 0, output: usage.outputTokens ?? 0 };

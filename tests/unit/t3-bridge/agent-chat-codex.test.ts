@@ -120,13 +120,17 @@ describe('an Antigravity pane at the socket', () => {
     return ws;
   };
 
-  it('refuses a lean child out loud: there is no write gate yet', () => {
+  it('refuses a lean child out loud when the gate hook does not refuse a test write', () => {
+    const home = process.env.HOME;
+    process.env.HOME = mkdtempSync(join(tmpdir(), 'dc-agy-socket-'));
     process.env.DREAMCONTEXT_NODE = process.execPath;
     const ws = start([]);
     expect(spawned).toHaveLength(0);
-    expect(String(ws.send.mock.calls[0]?.[0])).toContain('no write gate');
+    expect(String(ws.send.mock.calls[0]?.[0])).toContain('no child starts');
     expect(ws.close).toHaveBeenCalled();
     delete process.env.DREAMCONTEXT_NODE;
+    rmSync(process.env.HOME, { recursive: true, force: true });
+    process.env.HOME = home;
   });
 
   it('still opens an ordinary chat', () => {

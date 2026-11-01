@@ -143,4 +143,16 @@ describe('syncAntigravitySkills', () => {
     expect(syncAntigravitySkills('primary', { home, packageDir: repo })).toMatchObject({ ok: false });
     expect(readdirSync(elsewhere)).toEqual([]);
   });
+
+  it('takes the second folder off the real .gemini too, keeping what is there in reach', () => {
+    const profile = antigravityProfileDir('primary', home);
+    const real = join(home, '.gemini', 'antigravity-cli', 'skills');
+    mkdirSync(join(real, 'owners-skill'), { recursive: true });
+    mkdirSync(join(profile, 'antigravity-cli'), { recursive: true });
+    symlinkSync(real, join(profile, 'antigravity-cli', 'skills'));
+    expect(syncAntigravitySkills('primary', { home, packageDir: repo }).ok).toBe(true);
+    const second = join(profile, 'antigravity-cli', 'skills');
+    expect(lstatSync(second).isSymbolicLink()).toBe(false);
+    expect(lstatSync(join(second, 'owners-skill')).isSymbolicLink()).toBe(true);
+  });
 });

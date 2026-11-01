@@ -1047,7 +1047,7 @@ export function delegateExpired(args: Record<string, unknown>, now: number = Dat
 /** The `delegate` command's arguments, validated: the mode is one an agent may spawn, the
  *  prompt is present. */
 export function delegateArgs(args: Record<string, unknown>): {
-  ok: true; prompt: string; mode: AgentSpawnMode; model: string; effort: string; title: string; mcp: string[]; tool?: 'codex';
+  ok: true; prompt: string; mode: AgentSpawnMode; model: string; effort: string; title: string; mcp: string[]; tool?: 'codex' | 'antigravity';
 } | { ok: false; error: string } {
   const prompt = typeof args.prompt === 'string' ? args.prompt : '';
   if (!prompt.trim()) return { ok: false, error: 'no_prompt' };
@@ -1055,7 +1055,7 @@ export function delegateArgs(args: Record<string, unknown>): {
   // eslint-disable-next-line no-control-regex
   const str = (v: unknown, n: number) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, n) : '');
   const title = str(args.title, MAX_TITLE) || str(args.brief, MAX_TITLE);
-  return { ok: true, prompt, mode, model: str(args.model, 80), effort: str(args.effort, 20), title, mcp: mcpNames(args.mcp), ...(args.tool === 'codex' ? { tool: 'codex' as const } : {}) };
+  return { ok: true, prompt, mode, model: str(args.model, 80), effort: str(args.effort, 20), title, mcp: mcpNames(args.mcp), ...(args.tool === 'antigravity' ? { tool: 'antigravity' as const } : args.tool === 'codex' ? { tool: 'codex' as const } : {}) };
 }
 
 // ─── Lean children (orchestration plan r5 D14) ──────────────────────────────────

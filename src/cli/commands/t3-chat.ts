@@ -37,9 +37,10 @@ export function registerT3ChatCommand(program: Command): void {
     .option('--mcp-config <path>', 'a lean MCP subset ({ mcpServers }) a Super child may use')
     .option('--strict-mcp', 'nothing from the Codex config: no MCP servers, no web search')
     .option('--store-mcp', "the owner's MCP servers from the app's stores")
+    .option('--unattended', 'nobody is watching this run: no card, and no write gate means no run')
     .action(async (o: {
       tool: string; cwd?: string; model?: string; effort?: string; mode: string; pane?: string;
-      resume?: string; briefingFile?: string; extraRoot?: string[]; account?: string; carry?: string; mcpConfig?: string; strictMcp?: boolean; storeMcp?: boolean;
+      resume?: string; briefingFile?: string; extraRoot?: string[]; account?: string; carry?: string; mcpConfig?: string; strictMcp?: boolean; storeMcp?: boolean; unattended?: boolean;
     }) => {
       if (o.tool !== 'codex' && o.tool !== 'claude' && o.tool !== 'antigravity') {
         process.stderr.write(`t3-chat: unknown tool ${o.tool}\n`);

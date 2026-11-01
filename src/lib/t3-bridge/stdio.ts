@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { codexChildEnv, codexCommand } from '../codex-bin.js';
 import { BridgeOpenTimeout, BridgeSession, toolLabel, type BridgeSessionOptions } from './session.js';
 import { syncAntigravitySkills } from '../antigravity-skills.js';
+import { GATE_BEAT_ENV, syncAntigravityGate } from '../antigravity-gate.js';
 import { INSTANCE_PRIMARY_ID, isInstanceAccountId, isInstanceTool } from '../instance-accounts.js';
 import { carriedText, recordThreadTurn } from './instance-threads.js';
 import { antigravityFailureKind } from './to-wire.js';
@@ -50,6 +51,8 @@ export interface StdioArgs {
   readonly strictMcp?: boolean;
   /** The owner's MCP servers from the app's stores: a chat's, as Claude gets `--mcp-config`. */
   readonly storeMcp?: boolean;
+  /** Nobody is watching (a Super child on a tool with no sandbox): no card, and no gate no run. */
+  readonly unattended?: boolean;
 }
 
 export interface StdioDeps {
@@ -183,6 +186,21 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   // The skills go in the account's profile as a chat opens, so no project and no sign-in owes a step.
   const skills = isInstanceTool(args.tool) ? syncAntigravitySkills(instanceAccount ?? INSTANCE_PRIMARY_ID, { home }) : null;
   let skillsLoss = skills && !skills.ok ? `${toolLabel(args.tool)} is running without dreamcontext's skills: ${skills.reason}.` : null;
+  // The gate hook, the same way: per account profile, as a chat opens (antigravity-gate.ts).
+  const gate = isInstanceTool(args.tool) ? syncAntigravityGate(instanceAccount ?? INSTANCE_PRIMARY_ID, { node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', home }) : null;
+  if (gate && !gate.ok && args.unattended) {
+    emit({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `${toolLabel(args.tool)} did not start: its write gate could not be set up (${gate.reason}).`, num_turns: 0, total_cost_usd: 0, usage: {}, dc_tool: args.tool });
+    rmSync(privateTmp, { recursive: true, force: true });
+    return 1;
+  }
+  // No gate, no Bypass: the owner's card stands in, and the owner hears why.
+  const gateLoss = gate && !gate.ok ? `${toolLabel(args.tool)} is running without its write gate (${gate.reason}), so every action asks you, Bypass included.` : null;
+  const startMode = gateLoss ? 'default' : args.mode;
+  let gateNotice = gateLoss;
+  const gateBeat = args.unattended ? join(privateTmp, 'gate-beat') : '';
+  if (gateBeat) deps.env[GATE_BEAT_ENV] = gateBeat;
+  // The agent inherits this: the hook knows it is one of ours, and keeps the heavy-step limit.
+  if (isInstanceTool(args.tool)) deps.env.DREAMCONTEXT_CONTEXT_BY = 'bridge';
   const brainServer = isInstanceTool(args.tool) && deps.brain
     ? acpBrainMcpServer({ node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', root: args.cwd, tabSession: deps.env.DREAMCONTEXT_TAB_SESSION })
     : null;
@@ -217,7 +235,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       cwd: args.cwd,
       model: args.model,
       ...(args.effort ? { effort: args.effort } : {}),
-      mode: args.mode,
+      mode: startMode,
       paneId: args.paneId || randomUUID(),
       ...(args.resume ? { resumeNativeThreadId: args.resume } : {}),
       ...(binaryPath ? { binaryPath } : {}),
@@ -226,6 +244,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       ...(instanceAccount ? { accountId: instanceAccount } : {}),
       ...(brainServer ? { mcpServers: [brainServer] } : {}),
       ...(deps.openLimitMs ? { openLimitMs: deps.openLimitMs } : {}),
+      ...(gateBeat ? { gateBeat } : {}),
       // The account's live windows, for the server's switch and the Settings bars (never a secret).
       onUsageLimits: (u) => emit({ type: 'system', subtype: 'dc_usage', dc_tool: args.tool, windows: u.windows, checked_at: u.checkedAt }),
       // DREAMCONTEXT_CONTEXT_BY: the bridge injects the brain, so a project's opt-in `.codex/hooks.json`
@@ -358,14 +377,17 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
         brainSent = false;
         await deps.brain?.session('compact', session.nativeThreadId).catch(() => undefined);
       }
+      // The agent's own commands (`/plan`, `/usage`, `/logout`) must arrive alone to be commands.
+      const nativeCommand = isInstanceTool(args.tool) && /^\/[a-z]+$/.test(text.trim());
       // A steer joins the running turn as Claude's mid-turn message does: no hook, no context.
-      const brain = session.busy || !deps.brain ? [] : await deps.brain.prompt(text, session.nativeThreadId).catch(() => []);
+      const brain = session.busy || nativeCommand || !deps.brain ? [] : await deps.brain.prompt(text, session.nativeThreadId).catch(() => []);
       // Lost context is said, once, in the owner's own chat: `<synthetic>` keeps the pane's books as they are.
-      const notice = [deps.brain?.takeNotice?.(), skillsLoss].filter(Boolean).join('\n\n');
+      const notice = [deps.brain?.takeNotice?.(), skillsLoss, gateNotice].filter(Boolean).join('\n\n');
       skillsLoss = null;
+      gateNotice = null;
       if (notice) emit({ type: 'assistant', message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: notice }] }, parent_tool_use_id: null, session_id: session.nativeThreadId });
       if (keepsThread) recordThreadTurn(session.nativeThreadId, args.cwd, 'user', text, home, args.account);
-      const context = session.busy ? [] : [...titler.nudge(), ...pending.splice(0), ...onceAThread(brain)];
+      const context = session.busy || nativeCommand ? [] : [...titler.nudge(), ...pending.splice(0), ...onceAThread(brain)];
       await session.send(text, args.tool === 'codex' ? fitCodexContext(context) : context);
       return;
     }
@@ -392,7 +414,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
           ack(frame.request_id);
           return;
         case 'set_permission_mode':
-          if (typeof req.mode === 'string') session.setMode(req.mode);
+          // No gate: Bypass stays off, whatever the composer sends.
+          if (typeof req.mode === 'string' && !gateLoss) session.setMode(req.mode);
           ack(frame.request_id);
           return;
         default:

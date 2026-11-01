@@ -1,17 +1,81 @@
 {
   "features": [
-    { "name": "Chat", "claude": "works", "codex": "works", "note": "Checked live on the owner's account in W1." },
-    { "name": "Model picker, Sign in", "claude": "works", "codex": "works" },
-    { "name": "Switching tool inside a chat", "claude": "works", "codex": "experimental", "note": "Opens a new chat beside the old one after one confirm. The text goes to the other vendor." },
-    { "name": "Several accounts, limit switch", "claude": "works", "codex": "works", "note": "Automatic moves between tools stay off." },
-    { "name": "Brain, recall, task log", "claude": "works", "codex": "experimental", "note": "Runs the same hooks. In a chat the write gate on marketing tokens and agent files works only after `dreamcontext install --tool codex --global`, one approval for the whole Mac. It covers file edits, not a shell command that writes those files. The live check is the owner's." },
-    { "name": "Eco mode", "claude": "works", "codex": "experimental", "note": "Proved against a replayed Codex." },
-    { "name": "Automations", "claude": "works", "codex": "experimental", "note": "No home board, no task steps. Sandboxed with no network, so a job that needs the web stays on Claude. Runs only after `dreamcontext install --tool codex` and trusting the folder and its hooks in Codex, which is what keeps writes off `_dream_context/marketing/.env` and agent files. Reading a `.env` is open, as on Claude." },
-    { "name": "AI Team agents", "claude": "works", "codex": "experimental", "note": "Same limits as automations. Changing the tool asks for approval again." },
-    { "name": "Super Agent", "claude": "works", "codex": "Claude only", "note": "The lead stays on Claude: its verbs are off the brain MCP on purpose." },
-    { "name": "Super Agent's delegated child", "claude": "works", "codex": "experimental", "note": "`super delegate --tool codex`. stdio MCP servers only, and the same write gate as automations." },
-    { "name": "Terminal", "claude": "works", "codex": "experimental", "note": "`codex` on the chat's account, always workspace-write." },
-    { "name": "Sleep", "claude": "works", "codex": "experimental", "note": "`sleep auto-run --tool codex`. One turn with no sub-agents. No live run recorded yet." },
-    { "name": "Antigravity chat", "claude": "-", "codex": "-", "note": "Experimental. Checked live on one account: sign-in, memory, approval cards, resume, the Bypass write gate. Eco and account moves are proved against a fake agent only. It has no OS sandbox, so the agent always asks: Auto and Accept Edits show a card, and under Bypass the bridge answers except for marketing tokens and agent files, so a Bypass agent can write outside the project. Automations, Super Agent, AI Team, Terminal and Sleep stay off it. OpenCode was dropped by the owner. Core skills go in each account's profile and the brain MCP server rides the session, with no project step: both proved against a fake agent only. Context rides in the user's message, because ACP has no untrusted channel." }
+    {
+      "name": "Chat",
+      "claude": "works",
+      "codex": "works",
+      "note": "Checked live on the owner's account in W1."
+    },
+    {
+      "name": "Model picker, Sign in",
+      "claude": "works",
+      "codex": "works"
+    },
+    {
+      "name": "Switching tool inside a chat",
+      "claude": "works",
+      "codex": "experimental",
+      "note": "Opens a new chat beside the old one after one confirm. The text goes to the other vendor."
+    },
+    {
+      "name": "Several accounts, limit switch",
+      "claude": "works",
+      "codex": "works",
+      "note": "Automatic moves between tools stay off."
+    },
+    {
+      "name": "Brain, recall, task log",
+      "claude": "works",
+      "codex": "experimental",
+      "note": "Runs the same hooks. In a chat the write gate on marketing tokens and agent files works only after `dreamcontext install --tool codex --global`, one approval for the whole Mac. It covers file edits, not a shell command that writes those files. The live check is the owner's."
+    },
+    {
+      "name": "Eco mode",
+      "claude": "works",
+      "codex": "experimental",
+      "note": "Proved against a replayed Codex."
+    },
+    {
+      "name": "Automations",
+      "claude": "works",
+      "codex": "experimental",
+      "note": "No home board, no task steps. Sandboxed with no network, so a job that needs the web stays on Claude. Runs only after `dreamcontext install --tool codex` and trusting the folder and its hooks in Codex, which is what keeps writes off `_dream_context/marketing/.env` and agent files. Reading a `.env` is open, as on Claude."
+    },
+    {
+      "name": "AI Team agents",
+      "claude": "works",
+      "codex": "experimental",
+      "note": "Same limits as automations. Changing the tool asks for approval again."
+    },
+    {
+      "name": "Super Agent",
+      "claude": "works",
+      "codex": "Claude only",
+      "note": "The lead stays on Claude: its verbs are off the brain MCP on purpose."
+    },
+    {
+      "name": "Super Agent's delegated child",
+      "claude": "works",
+      "codex": "experimental",
+      "note": "`super delegate --tool codex`. stdio MCP servers only, and the same write gate as automations."
+    },
+    {
+      "name": "Terminal",
+      "claude": "works",
+      "codex": "experimental",
+      "note": "`codex` on the chat's account, always workspace-write."
+    },
+    {
+      "name": "Sleep",
+      "claude": "works",
+      "codex": "experimental",
+      "note": "`sleep auto-run --tool codex`. One turn with no sub-agents. No live run recorded yet."
+    },
+    {
+      "name": "Antigravity chat",
+      "claude": "-",
+      "codex": "-",
+      "note": "Experimental, proved with real turns on one account (agent 1.4.1): sign-in, memory, approval cards, resume, skills listed and read from the account's profile, the brain MCP server, its identity. The write gate is the agent's own PreToolUse hook in each account's profile: real turns refused shell and file-tool writes to marketing tokens, in every mode and inside the agent's own sub-agents, and a project's .agents/hooks.json cannot switch it off. A Super child runs with `super delegate --tool antigravity`: no card, no child without the gate, `super read` returns its words. It has no OS sandbox, so a child or a Bypass agent can write outside the project. Stop reads the agent's conversation file, so sleep sees the turns. Our sub-agent roles and .claude/agents do not exist there: it has its own sub-agents, `self` and `research`. Automations, AI Team, Terminal and running Sleep on it stay off. Eco and account moves are proved against a fake agent only, and compaction was never reached on a real turn: the server refused past about 1M tokens. Context rides in the user's message, because ACP has no untrusted channel. OpenCode was dropped by the owner."
+    }
   ]
 }
