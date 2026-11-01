@@ -65,6 +65,7 @@ function ToolMark({ tool }: { tool: PickerTool }) {
 function blockerLine(t: PickerToolState): string {
   if (t.blocker === 'not-installed') return `${t.label} is not installed`;
   if (t.blocker === 'wont-start') return `${t.label} is installed but does not start`;
+  if (t.blocker === 'outdated') return `${t.label} needs an update`;
   if (t.blocker === 'needs-node') return `${t.label} needs Node 22.16 or newer`;
   return `${t.label} is not signed in`;
 }

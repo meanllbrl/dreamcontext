@@ -505,6 +505,8 @@ export interface AgentToolInfo {
   nodeOk?: boolean;
   /** Codex's file is there and `--version` answered. */
   runs?: boolean;
+  /** Older than dreamcontext was run against. */
+  outdated?: boolean;
   defaultModel: string | null;
   models: { id: string; label: string; efforts: string[]; defaultEffort: string | null }[];
 }

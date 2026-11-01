@@ -76,6 +76,8 @@ const runs = new Map<string, InstallRun>();
 const controls = new Map<string, { controller: AbortController; kills: Array<() => void> }>();
 /** One active run per fix id. */
 const activeByFix = new Map<FixId, string>();
+/** Install and update are one recipe, so they are one run. */
+const runSlot = (id: FixId): FixId => (id === 'codex-update' ? 'codex-install' : id);
 
 /**
  * Drop ended runs past their TTL, then trim to the cap by evicting the oldest ENDED runs.
@@ -150,11 +152,11 @@ export function startTaskRun(
 
 /** The active run id for a fix, if one is going. */
 export function activeRunFor(id: FixId): string | null {
-  const runId = activeByFix.get(id);
+  const runId = activeByFix.get(runSlot(id));
   if (!runId) return null;
   const run = runs.get(runId);
   if (!run || run.state !== 'running') {
-    activeByFix.delete(id);
+    activeByFix.delete(runSlot(id));
     return null;
   }
   return runId;
@@ -211,7 +213,7 @@ export function startFixRun(
   const controller = new AbortController();
   const kills: Array<() => void> = [];
   controls.set(runId, { controller, kills });
-  activeByFix.set(id, runId);
+  activeByFix.set(runSlot(id), runId);
   markFixActive(id);
 
   const ceiling = setTimeout(() => controller.abort(), FIX_CEILING_MS);
@@ -234,7 +236,7 @@ export function startFixRun(
     }
     finishRun(run, outcome.ok);
     controls.delete(runId);
-    if (activeByFix.get(id) === runId) activeByFix.delete(id);
+    if (activeByFix.get(runSlot(id)) === runId) activeByFix.delete(runSlot(id));
     markFixDone(id);
     invalidateReadiness();
     if (id === 'git-install' && outcome.ok) {

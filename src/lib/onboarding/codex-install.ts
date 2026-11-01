@@ -8,9 +8,9 @@
  * Nothing lands until it passed: npm's own record of what it fetched must name the official
  * registry and the sha512 pinned in `codex-pin.ts`, and the program must answer `--version`.
  */
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { managedCodexBin, managedCodexBinDir, managedCodexRoot } from '../codex-bin.js';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { managedCodexBin, managedCodexBinDir, managedCodexRoot, managedCodexVersion } from '../codex-bin.js';
 import { CODEX_PIN, type CodexPlatform } from '../codex-pin.js';
 import { DownloadError, type downloadVerified } from './download.js';
 import { managedNodeRoot, managedNpmGlobal } from './platform.js';
@@ -34,6 +34,24 @@ export interface CodexInstallEnv {
 }
 
 const NPM_TIMEOUT_MS = 8 * 60_000;
+/** Longer than any install takes: what is older was left by a process that died. */
+const STALE_MS = 15 * 60_000;
+
+/** Whatever a killed install left behind. */
+function sweepStale(root: string): void {
+  for (const name of readdirSync(root)) {
+    if (!name.startsWith('.partial-')) continue;
+    const p = join(root, name);
+    try { if (Date.now() - statSync(p).mtimeMs > STALE_MS) rmSync(p, { recursive: true, force: true }); } catch { /* gone */ }
+  }
+}
+
+/** npm's env: no global prefix, and nothing that weakens TLS, the one way around the pin. */
+function npmEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out = { ...env };
+  for (const k of ['npm_config_prefix', 'npm_config_global', 'NODE_TLS_REJECT_UNAUTHORIZED', 'NODE_EXTRA_CA_CERTS', 'npm_config_strict_ssl', 'npm_config_cafile', 'npm_config_ca']) delete out[k];
+  return out;
+}
 const refuse = (detail: string): CodexInstallResult => ({ ok: false, reason: 'refused', detail });
 
 export function codexPlatformKey(platform: NodeJS.Platform, arch: string): CodexPlatform | null {
@@ -62,12 +80,10 @@ interface LockEntry { resolved?: string; integrity?: string }
 
 /** What npm says it fetched must be what the pin names. Empty = fine, else why not. */
 export function verifyFetched(lockText: string, key: CodexPlatform): string {
-  const packages: Record<string, LockEntry> = {};
-  try {
-    // npm keys this file relative to where it ran, so the prefix of a key means nothing.
-    const raw = (JSON.parse(lockText) as { packages?: Record<string, LockEntry> }).packages ?? {};
-    for (const [k, v] of Object.entries(raw)) if (k) packages[k.slice(Math.max(0, k.lastIndexOf('node_modules/')))] = v;
-  } catch { return 'npm left no readable record of the download.'; }
+  // Keys are taken exactly as npm wrote them (it runs inside the install folder). Never trimmed: a
+  // nested copy trimmed to a top-level key would stand in for the package that actually runs.
+  let packages: Record<string, LockEntry> = {};
+  try { packages = (JSON.parse(lockText) as { packages?: Record<string, LockEntry> }).packages ?? {}; } catch { return 'npm left no readable record of the download.'; }
   const want: Array<[string, string]> = [
     [`node_modules/${CODEX_PIN.package}`, CODEX_PIN.integrity],
     [`node_modules/${CODEX_PIN.package}-${key}`, CODEX_PIN.platforms[key].integrity],
@@ -106,7 +122,13 @@ export async function installManagedCodex(e: CodexInstallEnv): Promise<CodexInst
   }
   mkdirSync(join(root, 'versions'), { recursive: true });
   mkdirSync(managedCodexBinDir(e.home), { recursive: true });
-  const partial = mkdtempSync(join(root, '.partial-'));
+  sweepStale(root);
+  // The real path: npm keys its record relative to it, and a symlinked home would prefix the keys.
+  const partial = realpathSync(mkdtempSync(join(root, '.partial-')));
+  const previous = managedCodexVersion(e.home);
+  const staged = `${managedCodexBin(e.home)}.${process.pid}.new`;
+  let aside: string | null = null;
+  const version = join(root, 'versions', CODEX_PIN.version);
   try {
     e.say(`Downloading Codex ${CODEX_PIN.version} from npm`);
     const r = await e.run(e.npm, [
@@ -114,7 +136,8 @@ export async function installManagedCodex(e: CodexInstallEnv): Promise<CodexInst
       '--prefix', partial,
       `--registry=${CODEX_PIN.registry}`, `--@openai:registry=${CODEX_PIN.registry}`,
       '--ignore-scripts', '--no-audit', '--no-fund', '--no-update-notifier', '--no-save',
-    ], { cwd: e.home, env: { ...e.env, npm_config_prefix: undefined, npm_config_global: undefined }, timeoutMs: NPM_TIMEOUT_MS, stream: true });
+      '--include=optional', '--strict-ssl=true',
+    ], { cwd: partial, env: npmEnv(e.env), timeoutMs: NPM_TIMEOUT_MS, stream: true });
     if (!r.ok) return failed(r, 'The Codex download');
 
     e.say('Checking the download against the pinned hash');
@@ -124,21 +147,22 @@ export async function installManagedCodex(e: CodexInstallEnv): Promise<CodexInst
     const relNative = join('node_modules', '@openai', `codex-${key}`, 'vendor', CODEX_PIN.platforms[key].triple, 'bin', 'codex');
     if (!existsSync(join(partial, relNative)) || isLink(join(partial, relNative))) return { ok: false, reason: 'failed', detail: 'The Codex package did not contain the program.' };
 
-    const version = join(root, 'versions', CODEX_PIN.version);
-    rmSync(version, { recursive: true, force: true });
+    if (existsSync(version)) { aside = `${version}.old-${process.pid}`; renameSync(version, aside); }
     renameSync(partial, version);
     const bin = managedCodexBin(e.home);
-    const staged = `${bin}.new`;
     writeFileSync(staged, codexLauncher(join(version, relNative), join(version, 'node_modules', '@openai', 'codex'), CODEX_PIN.version), { mode: 0o755 });
     chmodSync(staged, 0o755);
     const v = await e.run(staged, ['--version'], { cwd: e.home, env: e.env, timeoutMs: 20_000 });
     if (!v.ok || !v.stdout.includes(CODEX_PIN.version)) {
-      rmSync(staged, { force: true });
+      rmSync(version, { recursive: true, force: true });
+      if (aside) { renameSync(aside, version); aside = null; }
       return { ok: false, reason: 'failed', detail: 'Codex was downloaded but does not start.' };
     }
     renameSync(staged, bin);
+    if (aside) { rmSync(aside, { recursive: true, force: true }); aside = null; }
+    // The one before stays: a live chat keeps links into it until the version after this one.
     for (const name of readdirSync(join(root, 'versions'))) {
-      if (name !== CODEX_PIN.version) rmSync(join(root, 'versions', name), { recursive: true, force: true });
+      if (name !== CODEX_PIN.version && name !== previous) rmSync(join(root, 'versions', name), { recursive: true, force: true });
     }
     e.say(`Codex ${CODEX_PIN.version} is installed`);
     return { ok: true };
@@ -146,6 +170,22 @@ export async function installManagedCodex(e: CodexInstallEnv): Promise<CodexInst
     return { ok: false, reason: 'failed', detail: (err as Error).message };
   } finally {
     rmSync(partial, { recursive: true, force: true });
+    rmSync(staged, { force: true });
+  }
+}
+
+/** One Codex install on this machine at a time, across processes. Null = another one is running. */
+export async function withCodexInstallLock<T>(home: string, fn: () => Promise<T>): Promise<T | null> {
+  const lock = join(dirname(managedCodexRoot(home)), '.codex-install.lock');
+  mkdirSync(dirname(lock), { recursive: true });
+  try {
+    if (Date.now() - statSync(lock).mtimeMs > STALE_MS) rmSync(lock, { recursive: true, force: true });
+  } catch { /* no lock */ }
+  try { mkdirSync(lock); } catch { return null; }
+  try {
+    return await fn();
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
   }
 }
 
@@ -175,7 +215,7 @@ export async function installPinnedNode(e: {
       const archive = join(partial, pin.file);
       await e.download(`${e.pins.base}${pin.file}`, { sha256: pin.sha256, maxBytes: pin.size, dest: archive, signal: e.signal, onProgress: (r, t) => e.progress(r, t ?? pin.size) });
       const un = await e.run('tar', ['-xzf', archive, '-C', partial, '--strip-components=1'], { timeoutMs: 120_000 });
-      if (!un.ok) return failed(un, 'Unpacking Node');
+      if (!un.ok) { rmSync(partial, { recursive: true, force: true }); return failed(un, 'Unpacking Node'); }
       rmSync(archive, { force: true });
       writeFileSync(join(partial, 'etc-npmrc'), `prefix=${managedNpmGlobal(e.home)}\n`);
       mkdirSync(join(partial, 'etc'), { recursive: true });

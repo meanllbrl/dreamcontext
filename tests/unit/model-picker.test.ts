@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  blockerOf, claudeState, codexState, favouriteKey, favouriteModels, searchModels, shortcutFor,
+  blockerFix, blockerOf, claudeState, codexState, favouriteKey, favouriteModels, searchModels, shortcutFor,
   splitByVersion, toggleFavourite, type ToolReadiness,
 } from '../../dashboard/src/components/sleepy/chat/model-picker/pickerModel';
 import type { ModelConfig } from '../../dashboard/src/lib/agentComposer';
@@ -62,5 +62,25 @@ describe('r29 model picker data', () => {
     expect(shortcutFor(0)).toBe('⌘1');
     expect(shortcutFor(8)).toBe('⌘9');
     expect(shortcutFor(9)).toBeNull();
+  });
+});
+
+describe('Codex blockers come in the order they can be fixed', () => {
+  const base = { installed: true, runs: true, signedIn: false, nodeOk: true, outdated: false };
+  it('an old install signed out gets Update, not a Sign in the server refuses', () => {
+    expect(blockerOf({ ...base, outdated: true })).toBe('outdated');
+    expect(blockerFix('outdated')).toBe('codex-update');
+  });
+  it('no bridge Node comes before the sign-in too', () => {
+    expect(blockerOf({ ...base, nodeOk: false })).toBe('needs-node');
+    expect(blockerFix('needs-node')).toBe('codex-update');
+  });
+  it('ready with no model list still offers a row', () => {
+    const t = codexState({ tool: 'codex', label: 'Codex', ready: true, installed: true, signedIn: true, models: [] });
+    expect(t.current.map((m) => m.label)).toEqual(['Codex default model']);
+  });
+  it('signed out alone gets Sign in, missing gets Install', () => {
+    expect(blockerFix(blockerOf(base))).toBe('codex-signin');
+    expect(blockerFix(blockerOf({ ...base, installed: false }))).toBe('codex-install');
   });
 });

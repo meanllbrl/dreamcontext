@@ -9,10 +9,10 @@ import {
   CLI_RC_MARKER, NODE_RC_MARKER, RC_MARKER, claudeAwarePath, ensureDirOnShellPath, findClaudeBin, fixClaudeShellPath,
   type ShellPathFix,
 } from '../claude-path.js';
-import { codexChildEnv, codexHealth, compareVersions, CODEX_MIN_VERSION, findCodexBin, forgetCodexHealth } from '../codex-bin.js';
+import { codexChildEnv, codexHealth, codexTooOld, findCodexBin, forgetCodexHealth, refreshCodexHealth } from '../codex-bin.js';
 import { ensureCliInstalled, type EnsureCliResult } from '../ensure-cli.js';
 import { findBridgeNode, resetBridgeNodeCache } from '../t3-bridge/node-floor.js';
-import { installManagedCodex, installPinnedNode, type NodePins } from './codex-install.js';
+import { installManagedCodex, installPinnedNode, withCodexInstallLock, type NodePins } from './codex-install.js';
 import { cliAwarePath } from '../automations/cli-path.js';
 import { killPortable } from '../proc.js';
 import { withNodeDirOnPath } from '../git-sync/credentials.js';
@@ -299,21 +299,26 @@ async function codexInstall(env: RecipeEnv): Promise<FixOutcome> {
   const { ctx, sink, signal, deps } = env;
   const run: Parameters<typeof installManagedCodex>[0]['run'] = (file, args, o) => deps.run(file, args, o, sink, signal);
   const say = (line: string) => sink.output(`${line}\n`);
-  if (findBridgeNode({ home: ctx.home }) === null) {
-    const node = await installPinnedNode({ home: ctx.home, platform: ctx.platform, arch: ctx.arch, pins: deps.pins.node, download: deps.download, signal, say, run, progress: (r, t) => sink.progress(r, t) });
-    if (!node.ok) return fail(node.reason ?? 'failed', node.detail ?? 'Node could not be installed.');
-    resetBridgeNodeCache();
-  }
-  forgetCodexHealth();
-  const h = codexHealth({ home: ctx.home });
-  if (h.runs && h.version && compareVersions(h.version, CODEX_MIN_VERSION) >= 0 && (!h.managed || h.version === CODEX_PIN.version)) {
-    say(`Codex ${h.version} is already installed`);
-    return { ok: true };
-  }
   const npm = resolveNpm(ctx, await shellFacts(ctx));
-  const r = await withNpmLock(() => installManagedCodex({ home: ctx.home, platform: ctx.platform, arch: ctx.arch, run, say, npm, env: stripSecretsEnv(npmEnv(ctx, deps)) }));
-  forgetCodexHealth();
-  return r.ok ? { ok: true } : fail(r.reason ?? 'failed', r.detail ?? 'Codex could not be installed.');
+  const landed = await withNpmLock(() => withCodexInstallLock(ctx.home, async (): Promise<FixOutcome> => {
+    if (findBridgeNode({ home: ctx.home }) === null) {
+      const node = await installPinnedNode({ home: ctx.home, platform: ctx.platform, arch: ctx.arch, pins: deps.pins.node, download: deps.download, signal, say, run, progress: (r, t) => sink.progress(r, t) });
+      if (!node.ok) return fail(node.reason ?? 'failed', node.detail ?? 'Node could not be installed.');
+      resetBridgeNodeCache();
+    }
+    // Read inside the lock: a run that waited here finds what the one before it landed.
+    forgetCodexHealth();
+    await refreshCodexHealth({ home: ctx.home });
+    const h = codexHealth({ home: ctx.home });
+    if (h.runs && h.version && !codexTooOld(h) && (!h.managed || h.version === CODEX_PIN.version)) {
+      say(`Codex ${h.version} is already installed`);
+      return { ok: true };
+    }
+    const r = await installManagedCodex({ home: ctx.home, platform: ctx.platform, arch: ctx.arch, run, say, npm, env: stripSecretsEnv(npmEnv(ctx, deps)) });
+    forgetCodexHealth();
+    return r.ok ? { ok: true } : fail(r.reason ?? 'failed', r.detail ?? 'Codex could not be installed.');
+  }));
+  return landed ?? fail('failed', 'Codex is already being installed on this computer. Try again in a minute.');
 }
 
 /**
@@ -340,7 +345,9 @@ async function codexSignin({ ctx, sink, signal, deps }: RecipeEnv): Promise<FixO
     if (r.canceled) return fail('canceled', 'Canceled.');
     if (r.timedOut) return fail('timeout', 'The sign-in timed out.');
     if (!r.ok) return fail('failed', r.code === null ? 'Codex did not start.' : 'The sign-in did not complete.');
-    return existsSync(join(ctx.home, '.codex', 'auth.json')) ? { ok: true } : fail('failed', 'The sign-in did not complete.');
+    // Codex says who is signed in: where it keeps the record is its own business.
+    const status = await deps.run(bin, ['login', 'status'], { cwd: ctx.home, env: codexChildEnv(deps.env), timeoutMs: VERSION_TIMEOUT_MS }, sink, signal);
+    return status.ok ? { ok: true } : fail('failed', 'The sign-in did not complete.');
   } finally {
     sink.awaiting(null);
   }

@@ -6,7 +6,7 @@
  * This is the one answer to "where is it": a readiness row, a spawn and an account job must ask
  * here, never `process.env.PATH`, or the screen and the spawn disagree.
  *
- * Order: the process's own PATH (a deliberate choice stays the winner), the login shell's PATH
+ * Order: a dreamcontext-managed install (see `findCodexBin`), the process's own PATH, the login shell's PATH
  * (the only source that knows which of several installs the user actually gets), then the known
  * install folders, newest version first. A found path is kept in memory and re-checked on every
  * read; one that vanished starts a new search.
@@ -14,7 +14,7 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { accessSync, constants, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
 
 const LOGIN_MARK = '__DC_LOGIN_PATH__';
 const LOGIN_TIMEOUT_MS = 5_000;
@@ -110,6 +110,8 @@ export function knownToolDirs(home: string, env: NodeJS.ProcessEnv = process.env
 
 let login: { key: string; value: string | null; at: number } | null = null;
 let warming: Promise<void> | null = null;
+/** A long-lived server asked in the background: from then on nothing here may block its loop. */
+let background = false;
 
 const shellOf = (env: NodeJS.ProcessEnv): string => env.SHELL || '/bin/zsh';
 const loginKey = (env: NodeJS.ProcessEnv): string => `${env.HOME ?? ''}\0${shellOf(env)}`;
@@ -131,6 +133,7 @@ function remember(env: NodeJS.ProcessEnv, value: string | null): void {
  */
 export function warmLoginPath(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   if (process.platform === 'win32') return Promise.resolve();
+  background = true;
   warming ??= new Promise<void>((resolve) => {
     execFile(shellOf(env), ['-ilc', LOGIN_SCRIPT], { env, timeout: LOGIN_TIMEOUT_MS * 2 }, (err, stdout) => {
       remember(env, err ? null : parseLoginPath(String(stdout ?? '')));
@@ -146,6 +149,7 @@ export function loginShellPath(env: NodeJS.ProcessEnv = process.env): string | n
   if (process.platform === 'win32') return null;
   const key = loginKey(env);
   if (login?.key === key && (login.value !== null || Date.now() - login.at < LOGIN_RETRY_MS)) return login.value;
+  if (background) { void warmLoginPath(env); return login?.key === key ? login.value : null; }
   const r = spawnSync(shellOf(env), ['-ilc', LOGIN_SCRIPT], { env, encoding: 'utf-8', timeout: LOGIN_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'] });
   remember(env, r.status === 0 ? parseLoginPath(r.stdout ?? '') : null);
   return login!.value;
@@ -154,6 +158,7 @@ export function loginShellPath(env: NodeJS.ProcessEnv = process.env): string | n
 export function resetToolFinderForTests(): void {
   login = null;
   warming = null;
+  background = false;
   found.clear();
 }
 
@@ -165,6 +170,8 @@ const pathDirs = (path: string): string[] => path.split(delimiter).filter(Boolea
 
 function firstIn(dirs: readonly string[], names: readonly string[]): string | null {
   for (const dir of dirs) {
+    // A relative entry would resolve against the working folder: a cloned repo could plant a tool.
+    if (!isAbsolute(dir)) continue;
     for (const name of names) {
       const p = join(dir, name);
       if (isExecutableFile(p)) return p;

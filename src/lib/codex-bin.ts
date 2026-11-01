@@ -8,8 +8,8 @@
  *  - our bridge child loads the vendored T3 layer, which needs 22.16 (`node-floor.ts`).
  * The install dreamcontext manages needs neither: its launcher execs the native program.
  */
-import { spawnSync } from 'node:child_process';
-import { lstatSync, readFileSync, statSync } from 'node:fs';
+import { execFile, spawnSync } from 'node:child_process';
+import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { cliAwarePath } from './automations/cli-path.js';
@@ -28,8 +28,18 @@ export const managedCodexRoot = (home: string = homedir()): string => join(home,
 export const managedCodexBinDir = (home: string = homedir()): string => join(managedCodexRoot(home), 'bin');
 export const managedCodexBin = (home: string = homedir()): string => join(managedCodexBinDir(home), 'codex');
 
+/** The launcher, when what it execs is still there: a dangling one must not hide a working Codex. */
+function managedDirs(home: string): string[] {
+  try {
+    const target = /^exec "([^"]+)"/m.exec(readFileSync(managedCodexBin(home), 'utf-8'))?.[1];
+    return target && existsSync(target) ? [managedCodexBinDir(home)] : [];
+  } catch {
+    return [];
+  }
+}
+
 export function findCodexBin(o: ToolSearch = {}): string | null {
-  return findTool(BIN_NAMES, { ...o, first: [managedCodexBinDir(o.home ?? homedir())] });
+  return findTool(BIN_NAMES, { ...o, first: managedDirs(o.home ?? homedir()) });
 }
 
 /** What a spawn runs: the found Codex. Not found keeps the bare name, so the failure is ENOENT. */
@@ -73,7 +83,9 @@ const runVersion: CodexRunner = (bin, env) => {
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', ...(r.error ? { error: r.error.message } : {}) };
 };
 
-const healthMemo = new Map<string, CodexHealth>();
+/** A failure is held briefly, never for good: one stall at boot must not retire Codex. */
+const FAILURE_MEMO_MS = 60_000;
+const healthMemo = new Map<string, { health: CodexHealth; at: number }>();
 
 export function forgetCodexHealth(): void {
   healthMemo.clear();
@@ -83,35 +95,65 @@ const stamp = (bin: string): string => {
   try { const s = statSync(bin); return `${bin}\0${s.mtimeMs}\0${s.ino}`; } catch { return ''; }
 };
 
-/**
- * Ask Codex itself, in the environment a child really gets: a file on disk says nothing about
- * whether `env node` resolves. Remembered per file, so a 30 s poll starts no process.
- */
-export function codexHealth(o: ToolSearch & { run?: CodexRunner; node?: string | null } = {}): CodexHealth {
+type HealthSearch = ToolSearch & { run?: CodexRunner; node?: string | null };
+
+function located(o: HealthSearch) {
   const home = o.home ?? homedir();
   const bin = findCodexBin(o);
-  const managed = !!bin && dirname(bin) === managedCodexBinDir(home);
-  if (!bin) return { bin: null, runs: false, version: null, error: null, managed: false };
   const base = o.path ?? (o.env ?? process.env).PATH ?? '';
-  const key = `${stamp(bin)}\0${base}`;
-  const memo = o.run ? undefined : healthMemo.get(key);
-  if (memo) return memo;
-  const env = { ...(o.env ?? process.env), PATH: codexAwarePath(base, o) };
-  const r = (o.run ?? runVersion)(bin, env);
-  const out = `${r.stdout}\n${r.stderr}`;
+  return { bin, managed: !!bin && dirname(bin) === managedCodexBinDir(home), key: bin ? `${stamp(bin)}\0${base}` : '', base };
+}
+
+function remembered(key: string): CodexHealth | null {
+  const m = healthMemo.get(key);
+  return m && (m.health.runs || Date.now() - m.at < FAILURE_MEMO_MS) ? m.health : null;
+}
+
+function judged(bin: string, managed: boolean, r: ReturnType<CodexRunner>): CodexHealth {
   const version = /(\d+\.\d+\.\d+)/.exec(r.stdout)?.[1] ?? null;
   const runs = r.status === 0 && version !== null;
-  const error = runs ? null : (r.error ?? out.trim().split('\n')[0] ?? '').slice(0, 200) || `exit ${r.status}`;
-  const health = { bin, runs, version, error, managed };
-  if (!o.run) healthMemo.set(key, health);
+  const error = runs ? null : (r.error ?? `${r.stdout}\n${r.stderr}`.trim().split('\n')[0] ?? '').slice(0, 200) || `exit ${r.status}`;
+  return { bin, runs, version, error, managed };
+}
+
+/**
+ * Ask Codex itself, in the environment a child really gets: a file on disk says nothing about
+ * whether `env node` resolves. Remembered per file, so a 30 s poll starts no process. Blocks on a
+ * miss: a server awaits {@link refreshCodexHealth} first.
+ */
+export function codexHealth(o: HealthSearch = {}): CodexHealth {
+  const { bin, managed, key, base } = located(o);
+  if (!bin) return { bin: null, runs: false, version: null, error: null, managed: false };
+  const memo = o.run ? null : remembered(key);
+  if (memo) return memo;
+  const health = judged(bin, managed, (o.run ?? runVersion)(bin, { ...(o.env ?? process.env), PATH: codexAwarePath(base, o) }));
+  if (!o.run) healthMemo.set(key, { health, at: Date.now() });
   return health;
 }
+
+/** {@link codexHealth}'s question without blocking the event loop: fills the same memory. */
+export async function refreshCodexHealth(o: ToolSearch = {}): Promise<void> {
+  const { bin, managed, key, base } = located(o);
+  if (!bin || remembered(key)) return;
+  const env = { ...(o.env ?? process.env), PATH: codexAwarePath(base, o) };
+  const r = await new Promise<ReturnType<CodexRunner>>((resolve) => {
+    execFile(bin, ['--version'], { env, timeout: 20_000, shell: process.platform === 'win32' }, (err, stdout, stderr) => {
+      const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
+      resolve({ status: code, stdout: String(stdout), stderr: String(stderr), ...(err && typeof err.code !== 'number' ? { error: err.message } : {}) });
+    });
+  });
+  healthMemo.set(key, { health: judged(bin, managed, r), at: Date.now() });
+}
+
+/** Below what dreamcontext was run against: offered the update before a chat runs on it. */
+export const codexTooOld = (h: Pick<CodexHealth, 'version'>): boolean => !!h.version && compareVersions(h.version, CODEX_MIN_VERSION) < 0;
 
 /** One line for a pane that cannot start Codex, or null when it can. */
 export function codexStartProblem(o: ToolSearch = {}): string | null {
   const h = codexHealth(o);
   if (!h.bin) return 'Codex is not installed. Open the model menu and press Install, or run dreamcontext setup.';
-  return h.runs ? null : `Codex is installed but does not start (${h.error}). Open the model menu and press Update.`;
+  if (!h.runs) return `Codex is installed but does not start (${h.error}). Open the model menu and press Update.`;
+  return codexTooOld(h) ? `Codex ${h.version} is too old for dreamcontext. Open the model menu and press Update.` : null;
 }
 
 /** The version the managed launcher points at, without starting it. Null when there is none. */

@@ -7,7 +7,7 @@ import {
   readGlobalGitHubLogin, readGlobalGitHubNeedsReconnect, readGlobalGitHubToken,
 } from '../git-sync/auth-store.js';
 import { evaluateChecks } from './checks.js';
-import { CODEX_MIN_VERSION, codexChildEnv, codexHealth, compareVersions, managedCodexVersion } from '../codex-bin.js';
+import { codexChildEnv, codexHealth, codexTooOld, compareVersions, managedCodexVersion, refreshCodexHealth } from '../codex-bin.js';
 import { CODEX_PIN } from '../codex-pin.js';
 import { bridgeNode } from '../t3-bridge/node-floor.js';
 import { nextNeedingUser, planFixes } from './plan.js';
@@ -58,14 +58,16 @@ export const defaultReadinessDeps: ReadinessDeps = {
 
 /** Ask Codex itself: whether it starts, its version, and who it thinks is signed in. */
 export async function probeCodex(ctx: ProbeContext): Promise<CodexFacts> {
+  await refreshCodexHealth({ home: ctx.home });
   const h = codexHealth({ home: ctx.home });
   const managed = h.managed ? managedCodexVersion(ctx.home) : null;
-  const outdated = !!h.version && compareVersions(h.version, CODEX_MIN_VERSION) < 0
+  const outdated = codexTooOld(h)
     || (!!managed && compareVersions(managed, CODEX_PIN.version) < 0);
   const base = { bin: h.bin, runs: h.runs, version: h.version, outdated, nodeOk: bridgeNode() !== null };
   if (!h.bin || !h.runs) return { ...base, signedIn: h.bin ? null : false };
   const r = await ctx.runner.exec(h.bin, ['login', 'status'], { timeoutMs: 10_000, env: codexChildEnv() });
-  return { ...base, signedIn: r.ok };
+  // No clear answer (a timeout, a crash) is not a sign-out.
+  return { ...base, signedIn: r.ok ? true : /not logged in/i.test(`${r.stdout}\n${r.stderr}`) ? false : null };
 }
 
 // ─── Active fixes (in-process registry) ─────────────────────────────────────────

@@ -11,7 +11,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { codexHealth, type CodexRunner } from '../codex-bin.js';
+import { codexHealth, codexTooOld, type CodexRunner } from '../codex-bin.js';
 import { bridgeNode } from './node-floor.js';
 
 export type ToolId = 'claude' | 'codex';
@@ -36,10 +36,9 @@ export interface ToolInfo {
   readonly nodeOk: boolean;
   /** Absent on Claude. `installed` but false: the file is there and `--version` failed. */
   readonly runs?: boolean;
-  /** Why it did not start, one line. */
-  readonly startError?: string;
+  /** Below the version dreamcontext was run against: the update comes first. */
+  readonly outdated?: boolean;
   readonly version?: string;
-  readonly bin?: string;
   readonly defaultModel: string | null;
   readonly models: readonly ToolModel[];
 }
@@ -109,11 +108,10 @@ export function codexInfo(o: ToolLookup = {}): ToolInfo {
   const defaultModel = codexDefaultModel(home) ?? models[0]?.id ?? null;
   const nodeOk = (o.node === undefined ? bridgeNode() : o.node) !== null;
   return {
-    tool: 'codex', label: 'Codex', installed, signedIn, nodeOk, ready: installed && h.runs && signedIn && nodeOk, defaultModel, models,
+    tool: 'codex', label: 'Codex', installed, signedIn, nodeOk, ready: installed && h.runs && !codexTooOld(h) && signedIn && nodeOk, defaultModel, models,
     runs: h.runs,
+    outdated: codexTooOld(h),
     ...(h.version ? { version: h.version } : {}),
-    ...(h.bin ? { bin: h.bin } : {}),
-    ...(h.error ? { startError: h.error } : {}),
   };
 }
 

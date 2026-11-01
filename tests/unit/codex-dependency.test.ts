@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { codexAwarePath, codexChildEnv, codexHealth, codexStartProblem, findCodexBin, forgetCodexHealth, managedCodexBin, managedCodexVersion } from '../../src/lib/codex-bin.js';
+import { codexEnsureSkipped } from '../../src/cli/ensure-codex.js';
 import { CODEX_PIN } from '../../src/lib/codex-pin.js';
-import { codexLauncher, installManagedCodex, installPinnedNode, verifyFetched, type CodexInstallEnv } from '../../src/lib/onboarding/codex-install.js';
+import { codexLauncher, installManagedCodex, installPinnedNode, verifyFetched, withCodexInstallLock, type CodexInstallEnv } from '../../src/lib/onboarding/codex-install.js';
 import { evaluateChecks } from '../../src/lib/onboarding/checks.js';
 import { defaultFixDeps, runFix, type RunSink } from '../../src/lib/onboarding/fixes.js';
 import { planFixes } from '../../src/lib/onboarding/plan.js';
@@ -46,7 +47,27 @@ describe('a Finder-started app on an nvm Codex', () => {
     signIn();
     const info = codexInfo(lookup());
     expect(info).toMatchObject({ installed: true, runs: false, ready: false });
-    expect(info.startError).toContain('node');
+    expect(codexStartProblem(lookup())).toContain('node');
+  });
+
+  it('one stall at boot does not retire Codex', () => {
+    tool('.volta/bin/codex', '#!/bin/sh\necho 0.164.0\n');
+    const dead = codexHealth(lookup({ run: () => ({ status: null, stdout: '', stderr: '', error: 'ETIMEDOUT' }) }));
+    expect(dead.runs).toBe(false);
+    expect(codexHealth(lookup()).runs).toBe(true);
+  });
+
+  it('too old is not ready and asks for the update', () => {
+    tool('.volta/bin/codex', '#!/bin/sh\necho "codex-cli 0.100.0"\n');
+    signIn();
+    expect(codexInfo(lookup())).toMatchObject({ installed: true, runs: true, outdated: true, ready: false });
+    expect(codexStartProblem(lookup())).toMatch(/too old/);
+  });
+
+  it('a person only: update never downloads inside an unattended run', () => {
+    expect(codexEnsureSkipped({}, undefined)).toBe(true);
+    expect(codexEnsureSkipped({}, false)).toBe(true);
+    expect(codexEnsureSkipped({ DREAMCONTEXT_SKIP_CODEX_ENSURE: '1' }, true)).toBe(true);
   });
 
   it('nodeOk is the bridge floor, separate from the install', () => {
@@ -81,9 +102,15 @@ describe('the managed install', () => {
   it('accepts exactly what the pin names', () => {
     expect(verifyFetched(lock(), 'darwin-arm64')).toBe('');
   });
-  it('reads the record however npm keyed it: real installs write a relative prefix', () => {
-    const relative = lock().replaceAll('"node_modules/', '"../../tmp/x/node_modules/');
-    expect(verifyFetched(relative, 'darwin-arm64')).toBe('');
+  it('REGRESSION: a nested copy cannot stand in for the package that runs', () => {
+    const nested = `node_modules/${CODEX_PIN.package}-darwin-arm64/node_modules/${CODEX_PIN.package}-darwin-arm64`;
+    const tampered = JSON.parse(lock());
+    tampered.packages[`node_modules/${CODEX_PIN.package}-darwin-arm64`].integrity = 'sha512-HOSTILE';
+    tampered.packages[nested] = { resolved: `${CODEX_PIN.registry}x.tgz`, integrity: CODEX_PIN.platforms['darwin-arm64'].integrity };
+    expect(verifyFetched(JSON.stringify(tampered), 'darwin-arm64')).not.toBe('');
+    const extra = JSON.parse(lock());
+    extra.packages[nested] = { resolved: `${CODEX_PIN.registry}x.tgz`, integrity: 'x' };
+    expect(verifyFetched(JSON.stringify(extra), 'darwin-arm64')).toMatch(/Unexpected/);
   });
   it('refuses a mirror', () => {
     expect(verifyFetched(lock({ [`node_modules/${CODEX_PIN.package}`]: { resolved: 'https://evil.example/codex.tgz', integrity: CODEX_PIN.integrity } }), 'darwin-arm64')).toMatch(/official/);
@@ -162,6 +189,29 @@ describe('the managed install', () => {
     expect(r.detail).not.toContain('log');
   });
 
+  it('a failed repair of the same version keeps the install that worked', async () => {
+    await installManagedCodex(env(fakeInstall()));
+    const landed = fakeInstall();
+    const r = await installManagedCodex(env(async (f, a, o) => (a[0] === '--version' ? { ok: false, stdout: '', stderr: 'boom' } : landed(f, a, o))));
+    expect(r.ok).toBe(false);
+    expect(existsSync(join(home, '.dreamcontext/tools/codex/versions', CODEX_PIN.version, 'node_modules'))).toBe(true);
+    expect(findCodexBin(lookup())).toBe(managedCodexBin(home));
+  });
+
+  it('a launcher whose program is gone does not hide a working Codex', async () => {
+    await installManagedCodex(env(fakeInstall()));
+    const mine = tool('.volta/bin/codex', '#!/bin/sh\n');
+    rmSync(join(home, '.dreamcontext/tools/codex/versions'), { recursive: true });
+    expect(findCodexBin(lookup())).toBe(mine);
+  });
+
+  it('one install at a time across processes', async () => {
+    let inner: unknown = 'not run';
+    const outer = await withCodexInstallLock(home, async () => { inner = await withCodexInstallLock(home, async () => 'second'); return 'first'; });
+    expect(outer).toBe('first');
+    expect(inner).toBeNull();
+  });
+
   it('refuses a dreamcontext folder that is a link', async () => {
     mkdirSync(join(home, 'other'));
     mkdirSync(join(home, '.dreamcontext'));
@@ -189,15 +239,15 @@ describe('the managed install', () => {
 
 describe('Sign in', () => {
   it('shows the sign-in page and nothing else of what codex login prints', async () => {
-    const bin = tool('.dreamcontext/tools/codex/bin/codex', '#!/bin/sh\n');
+    const bin = tool('.dreamcontext/tools/codex/bin/codex', '#!/bin/sh\nexec "/bin/sh" "$@"\n');
     mkdirSync(join(home, '.codex'), { recursive: true });
     const lines: string[] = [];
     const waits: Array<string | null> = [];
     const sink: RunSink = { output: (c) => lines.push(c), progress: () => undefined, awaiting: (k) => waits.push(k), deviceCode: () => undefined, onCancel: () => undefined };
     const deps = { ...defaultFixDeps, env: { PATH: NARROW }, run: vi.fn(async (_f: string, _a: string[], _o: unknown, s: RunSink) => {
+      if (_a[1] === 'status') return { ok: true, stdout: '', stderr: '', code: 0 };
       s.output('If your browser did not open, navigate to this URL to authenticate:\nhttps://auth.open');
       s.output('ai.com/oauth/authorize?state=x\nhttp://localhost:1455/auth/callback?code=SECRET\n');
-      writeFileSync(join(home, '.codex', 'auth.json'), '{}');
       return { ok: true, stdout: '', stderr: '', code: 0 };
     }) };
     const ctx = { home, surface: 'desktop', platform: 'darwin', arch: 'arm64', execPath: process.execPath, probeUrl: '', runner: {} } as unknown as ProbeContext;
@@ -210,9 +260,9 @@ describe('Sign in', () => {
   });
 
   it('a login that ended with no sign-in says so', async () => {
-    tool('.dreamcontext/tools/codex/bin/codex', '#!/bin/sh\n');
+    tool('.dreamcontext/tools/codex/bin/codex', '#!/bin/sh\nexec "/bin/sh" "$@"\n');
     const sink: RunSink = { output: () => undefined, progress: () => undefined, awaiting: () => undefined, deviceCode: () => undefined, onCancel: () => undefined };
-    const deps = { ...defaultFixDeps, env: {}, run: async () => ({ ok: true, stdout: '', stderr: '', code: 0 }) };
+    const deps = { ...defaultFixDeps, env: {}, run: async (_f: string, a: string[]) => ({ ok: a[1] !== 'status', stdout: '', stderr: '', code: 0 }) };
     const ctx = { home, execPath: process.execPath, platform: 'darwin', arch: 'arm64' } as unknown as ProbeContext;
     expect(await runFix('codex-signin', ctx, sink, new AbortController().signal, {}, deps)).toMatchObject({ ok: false, detail: expect.stringContaining('did not complete') });
   });

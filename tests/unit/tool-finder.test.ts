@@ -93,6 +93,13 @@ describe('findTool on a launchd-like PATH', () => {
     expect(findTool(['codex'], search())).toBeNull();
   });
 
+  it('a relative PATH entry is not searched: a cloned repo cannot plant a tool', () => {
+    const cwd = process.cwd();
+    tool('.bin');
+    process.chdir(home);
+    try { expect(findTool(['codex'], search({ path: `./.bin:${NARROW}` }))).toBeNull(); } finally { process.chdir(cwd); }
+  });
+
   it('a file that cannot run is not a tool', () => {
     const p = tool('.volta/bin');
     chmodSync(p, 0o644);

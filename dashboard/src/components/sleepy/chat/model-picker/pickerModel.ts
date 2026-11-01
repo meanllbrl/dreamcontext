@@ -19,7 +19,7 @@ export interface PickerToolState {
   /** Usable now. False draws the list greyed under a "Sign in" line. */
   ready: boolean;
   /** Why not, in one line; '' when ready. */
-  blocker: '' | 'not-installed' | 'wont-start' | 'signed-out' | 'needs-node';
+  blocker: '' | 'not-installed' | 'wont-start' | 'outdated' | 'signed-out' | 'needs-node';
   current: PickerModel[];
   legacy: PickerModel[];
   efforts: string[];
@@ -35,21 +35,25 @@ export interface ToolReadiness {
   nodeOk?: boolean;
   /** Absent on an older server: read as starting. */
   runs?: boolean;
+  outdated?: boolean;
+  defaultModel?: string | null;
   models: { id: string; label: string; efforts: string[] }[];
 }
 
-export function blockerOf(r: Pick<ToolReadiness, 'installed' | 'signedIn' | 'nodeOk' | 'runs'>): PickerToolState['blocker'] {
+/** In the order they can be fixed: a sign-in is refused while the install under it is not right. */
+export function blockerOf(r: Pick<ToolReadiness, 'installed' | 'signedIn' | 'nodeOk' | 'runs' | 'outdated'>): PickerToolState['blocker'] {
   if (!r.installed) return 'not-installed';
   if (r.runs === false) return 'wont-start';
-  if (!r.signedIn) return 'signed-out';
+  if (r.outdated) return 'outdated';
   if (r.nodeOk === false) return 'needs-node';
+  if (!r.signedIn) return 'signed-out';
   return '';
 }
 
 /** The fix that clears a Codex blocker, or null. A bad Node or a dead install: the same install. */
 export function blockerFix(b: PickerToolState['blocker']): 'codex-install' | 'codex-update' | 'codex-signin' | null {
   if (b === 'not-installed') return 'codex-install';
-  if (b === 'wont-start' || b === 'needs-node') return 'codex-update';
+  if (b === 'wont-start' || b === 'needs-node' || b === 'outdated') return 'codex-update';
   return b === 'signed-out' ? 'codex-signin' : null;
 }
 
@@ -92,6 +96,8 @@ export function claudeState(config: ModelConfig, model: string): PickerToolState
 
 export function codexState(r: ToolReadiness): PickerToolState {
   const { current, legacy } = splitByVersion(r.models, 'codex');
+  // A fresh sign-in has no model list until Codex first ran: its own default keeps the chat reachable.
+  if (r.ready && r.models.length === 0) current.push({ tool: 'codex', id: r.defaultModel ?? '', label: 'Codex default model' });
   return {
     tool: 'codex',
     label: r.label || 'Codex',

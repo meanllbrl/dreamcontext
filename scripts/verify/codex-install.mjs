@@ -149,7 +149,7 @@ async function main() {
     const landed = await menu.locator('[data-testid="model-picker-signin"]').filter({ hasText: 'not signed in' }).waitFor({ timeout: 300_000 }).then(() => true, () => false);
     ok('the row comes alive with no restart: not installed became not signed in', landed, await menu.innerText().catch(() => ''));
     const after = await toolsOf(base);
-    ok('the server sees the managed Codex at the pinned version', after.installed && after.runs && after.version === '0.164.0' && after.bin.endsWith('.dreamcontext/tools/codex/bin/codex'), JSON.stringify(after));
+    ok('the server sees the managed Codex at the pinned version', after.installed && after.runs && after.version === '0.164.0' && existsSync(join(HOME, '.dreamcontext/tools/codex/bin/codex')), JSON.stringify(after));
     await page.screenshot({ path: join(SHOTS, 'picker-signin-1440.png') });
     const launcher = readFileSync(join(HOME, '.dreamcontext/tools/codex/bin/codex'), 'utf-8');
     ok('the launcher names no Node', !/\bnode\b/.test(launcher.replace(/node_modules/g, '')), launcher);

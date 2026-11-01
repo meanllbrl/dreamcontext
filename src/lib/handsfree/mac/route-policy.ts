@@ -294,7 +294,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   // Agent surface (chat)
   'GET /api/agent/capabilities': agnostic(`${CHAT}: what this host offers; side-effect free`),
   'GET /api/agent/model-config': agnostic(`${CHAT}: models and efforts; side-effect free`),
-  'GET /api/agent/tools': agnostic(`${CHAT}: which tools a chat can run on, their readiness and models; read from disk, side-effect free`),
+  'GET /api/agent/tools': agnostic(`${CHAT}: which tools a chat can run on, their readiness and models; asks codex --version once per installed file, changes nothing`),
   'GET /api/agent/usage-limits': agnostic(`${CHAT}: the cached usage reading; side-effect free`),
   'GET /api/agent/stats': deny(OTHER_PROJECTS),
   'POST /api/agent/stats/price': deny(SETTINGS),
