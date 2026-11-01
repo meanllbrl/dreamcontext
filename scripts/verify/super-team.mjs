@@ -341,6 +341,14 @@ async function run(engineName, base) {
   // shows it side by side ON THE STAGE with the member's conversation in it, never AI Team.
   const frame = page.locator('[data-container-id][data-kind="team"]');
   const convo = frame.getByTestId('team-job-conversation');
+  // What the card asked the server, so a red here names its cause.
+  const wire = [];
+  page.on('response', async (r) => {
+    const u = r.url();
+    if (!/chat-history|thread\/reply|reply-job/.test(u)) return;
+    const body = await r.text().catch(() => '');
+    wire.push({ at: Date.now(), status: r.status(), url: u.replace(/^.*\/api/, '').slice(0, 90), items: (body.match(/"role"|"kind"/g) ?? []).length, body: r.status() >= 400 ? body.slice(0, 200) : undefined });
+  });
   const cb = await card.boundingBox();
   await page.mouse.click(cb.x + cb.width / 2, cb.y + cb.height / 2);
   ok(tag('T4 a click on the card opens the job on the stage'), await until(page, async () =>
@@ -355,11 +363,21 @@ async function run(engineName, base) {
   const memberInput = convo.getByTestId('team-job-reply');
   ok(tag('T4 …and it can be continued'), await until(page, async () => (await memberInput.count()) === 1 && await memberInput.isEnabled(), 20000));
   await memberInput.fill('which step?'); await convo.getByRole('button', { name: 'Send' }).click();
-  ok(tag('T4 …while the member answers the composer is honestly closed'), await until(page, async () => await convo.getByTestId('team-job-closed').isVisible().catch(() => false), 15000),
-    (await convo.innerText().catch(() => '')).slice(-300));
-  ok(tag('T4 …the Super hears what the owner wrote and the answer, once'), await until(page, async () => reports().filter((r) => r.kind === 'super-turn' && /followup=owner/.test(r.text) && /which step\?/.test(r.text)).length === 1, 30000),
+  const sentAt = Date.now();
+  const trace = [];
+  let closedShot = false;
+  for (let i = 0; i < 60; i++) {
+    const job = (record().team ?? []).find((j) => j.followUpOf);
+    const closed = await convo.getByTestId('team-job-closed').isVisible().catch(() => false);
+    trace.push({ ms: Date.now() - sentAt, card: await convo.getAttribute('data-team-status').catch(() => null), closed, followUp: job ? { open: job.open, told: job.told, outcome: job.outcome } : null });
+    if (closed && !closedShot) { closedShot = true; await page.screenshot({ path: join(OUT, `${engineName}-team-card-closed.png`) }); }
+    await page.waitForTimeout(250);
+  }
+  ok(tag('T4 …while the member answers the composer is honestly closed'), closedShot, (await convo.innerText().catch(() => '')).slice(-300));
+  ok(tag('T4 …the Super hears what the owner wrote and the answer, once'), await until(page, async () => reports().filter((r) => r.kind === 'super-turn' && /followup=owner/.test(r.text) && /which step\?/.test(r.text)).length === 1, 150000),
     JSON.stringify(reports().filter((r) => r.kind === 'super-turn').slice(-3)).slice(0, 900));
   ok(tag('T4 …and the composer opens again'), await until(page, async () => (await memberInput.count()) === 1, 15000));
+  writeFileSync(join(OUT, `${engineName}-card-trace.json`), JSON.stringify({ trace: trace.filter((x, i) => i === 0 || JSON.stringify({ ...x, ms: 0 }) !== JSON.stringify({ ...trace[i - 1], ms: 0 })), wire, heard: reports().filter((r) => r.kind === 'super-turn').map((r) => ({ t: r.t - sentAt, head: r.text.slice(0, 260) })), team: record().team, queue: (record().queue ?? []).slice(-4), members: reports().filter((r) => r.kind === 'member-run').map((r) => ({ t: r.t - sentAt, p: r.prompt.slice(0, 80) })) }, null, 1));
   // Its opening flight has landed (the frame's fade-in done) before the picture.
   await until(page, async () => frame.evaluate((f) => !f.getAnimations().length && getComputedStyle(f).opacity === '1'), 5000);
   await page.screenshot({ path: join(OUT, `${engineName}-team-card-opened.png`) });
@@ -373,6 +391,14 @@ async function run(engineName, base) {
   ok(tag('T4 Enter on the focused card opens it on the stage too'), await until(page, async () =>
     (await frame.getAttribute('data-where').catch(() => null)) !== 'float' && await convo.isVisible().catch(() => false)
     && await onSuper(), 15000));
+  // The new card at the owner's two widths, open.
+  for (const w of [[1440, 900], [390, 844]]) {
+    await page.setViewportSize({ width: w[0], height: w[1] });
+    await page.waitForTimeout(1500);
+    await page.screenshot({ path: join(OUT, `${engineName}-team-card-${w[0]}-open.png`) });
+    console.log(`  card at ${w[0]}: conversation visible ${await convo.isVisible().catch(() => false)}, overflow ${await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)}`);
+  }
+  await page.setViewportSize({ width: 1600, height: 1000 });
   ok(tag('no console errors'), errors.length === 0, errors.slice(0, 5).join('\n'));
   await browser.close();
 }
