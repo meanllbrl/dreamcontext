@@ -3,6 +3,14 @@
   max-width: 1200px;
 }
 
+/* New shell: the title bar's rule runs the frame's full width; only the content keeps the cap. */
+.apps-page--ns {
+  max-width: none;
+}
+.apps-page--ns > :not(.page-bar) {
+  max-width: 1200px;
+}
+
 .apps-page__lede,
 .apps-page__muted {
   color: var(--color-text-secondary);
