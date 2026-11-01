@@ -19,7 +19,7 @@
  * CHECKS (new shell, W2): no spawn while the phone opens; the Mac still runs exactly the one chat;
  * the drawer lists only it; both stopped chats are in History; a History pick still resumes one
  * (one spawn, then); the stored roster no longer holds the other stopped chat. Then the Mac does
- * not answer live-chats: nothing starts, no New chat is offered, the stored tabs are kept.
+ * not answer live-chats: nothing starts by itself, the stored tabs are kept.
  *
  * `DC_CLI=<dist/index.js>` runs another build (the pre-fix one must fail the spawn checks).
  * FAILURE POLICY: collect, don't fail fast; exit 0 iff every check passed.
@@ -308,8 +308,8 @@ try {
   await phone2.waitForTimeout(5000);
   for (let i = 0; i < 3; i++) { const x = phone2.locator('.announcements-modal-close'); if (!(await x.count())) break; await x.first().click().catch(() => {}); await phone2.waitForTimeout(300); }
   report.check('Mac unreachable: opening the phone started NO claude', spawns().length === before2, JSON.stringify(spawns().slice(before2)));
-  // Until the Mac answers, the phone cannot tell a handed-over project: it offers no New chat.
-  report.check('Mac unreachable: no New chat is offered (unanswered = unknown)', (await phone2.locator('[data-testid="drawer-new-chat"], [data-testid="chat-empty-new"]:visible').count()) === 0);
+  // New chat waits for nothing: every chosen project starts chats, Super or not.
+  report.check('Mac unreachable: New chat stays on offer', (await phone2.locator('[data-testid="drawer-new-window"]:visible').count()) === 1);
   let stored2 = null;
   try { stored2 = JSON.parse(readFileSync(rosterFile, 'utf-8')).sessions.map((m) => m.sessionId); } catch { stored2 = null; }
   report.check('Mac unreachable: the stored tabs it could not judge are kept', !!stored2 && stored2.includes(LIVE) && stored2.includes(OLD1), JSON.stringify(stored2));

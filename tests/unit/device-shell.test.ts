@@ -10,10 +10,10 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  buildDrawerRows, deviceChatsOf, deviceMayStartChat, deviceRefusesIntent, deviceWaitingCount, historyPickRefused, openChatPlan, NO_DEVICE_CHATS,
+  buildDrawerRows, deviceChatsOf, deviceRefusesIntent, deviceWaitingCount, historyPickRefused, openChatPlan, NO_DEVICE_CHATS,
   type DrawerChild, type DrawerFacts, type DrawerProjectInput,
 } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
-import { morePagesNarrow, DEVICE_HIDDEN_PAGES } from '../../dashboard/src/components/layout/newshell/railModel.js';
+import { morePagesNarrow, DEVICE_HIDDEN_PAGES, DEVICE_MORE_PAGES } from '../../dashboard/src/components/layout/newshell/railModel.js';
 import { tunnelProjects } from '../../dashboard/src/hooks/useShellProjects.js';
 import { keyboardShown } from '../../dashboard/src/hooks/useKeyboardUp.js';
 import type { DrawerChatFact } from '../../dashboard/src/lib/drawerIntents.js';
@@ -32,7 +32,7 @@ const tab = (id: string, kind: string, o: Partial<DrawerChatFact> = {}): DrawerC
 const live = (vault: string, id: string, state: LiveChatWire['state'] = 'idle'): LiveChatWire => ({
   conversationId: id, vault, title: `Live ${id}`, busy: state === 'working', state, lastLine: null, updatedAt: 1,
 });
-const sup = (vault: string, id: string, liveNow = true, state: LiveChatWire['state'] = 'idle'): SuperChatWire => ({
+const sup = (vault: string, id: string, liveNow = true, state: LiveChatWire['state'] = 'idle'): SuperChatWire => ({ jobs: [], runningIds: [], childIds: [],
   conversationId: id, vault, title: 'whatever the Mac calls it', busy: false, state, lastLine: null, updatedAt: 2, live: liveNow,
 });
 const facts = (o: Partial<DrawerFacts>): DrawerFacts => ({ superOn: false, superSelected: false, chatOpen: true, team: [{ slug: 'ada', title: 'Ada', hasPhoto: false, status: 'working' }], ...o });
@@ -41,9 +41,9 @@ const chats = (cs: DrawerChild[]) => cs.filter((c): c is Extract<DrawerChild, { 
 /** Two chosen projects (acme on screen, globex handed over) and the Mac's live answer. */
 function fixture(o: { answered?: boolean; wire?: LiveChatsWire } = {}) {
   const wire: LiveChatsWire = o.wire ?? {
-    chats: [live('acme', 'c-run', 'asking'), live('globex', 'c-child', 'working')],
+    chats: [live('acme', 'c-run', 'asking'), live('globex', 'c-mine', 'working')],
     draining: ['c-drain'],
-    supers: [sup('globex', 'c-super')],
+    supers: [{ ...sup('globex', 'c-super'), childIds: ['c-kid'] }],
   };
   const device = deviceChatsOf({
     activeVault: 'acme', projects: ['acme', 'globex'], tunnel: true, liveAnswered: o.answered ?? true,
@@ -69,14 +69,28 @@ describe('a device shell\'s drawer is chats only', () => {
     expect(chats(acme.children).find((c) => c.id === 'c-run')?.closable).toBe(false);
   });
 
-  it('a handed-over project is its one Super row: never a child of the Super, never New chat', () => {
+  it('a handed-over project lists its Super row first and the owner\'s chats beside it', () => {
     const { rows } = fixture();
     const globex = rows[1];
     const cs = chats(globex.children);
-    expect(cs).toHaveLength(1);
+    expect(cs.map((c) => c.id)).toEqual(['super:globex', 'c-mine']);
     expect(cs[0].row.kind).toBe('super');
     expect(cs[0].title).toBe('Super Agent');
     expect(globex.children.some((c) => c.kind === 'new-chat')).toBe(false);
+  });
+
+  it('a handed-over project with no chat of the owner\'s offers New chat under its Super row', () => {
+    const { rows } = fixture({ wire: { chats: [], draining: [], supers: [sup('globex', 'c-super')] } });
+    expect(rows[1].children.map((c) => c.kind)).toEqual(['chat', 'new-chat']);
+  });
+
+  it('a tab holding the Super\'s conversation or a child is never one of the owner\'s rows', () => {
+    const wire: LiveChatsWire = { chats: [], draining: [], supers: [{ ...sup('acme', 'c-super'), runningIds: ['c-kid'] }] };
+    const device = deviceChatsOf({
+      activeVault: 'acme', projects: ['acme'], tunnel: true, liveAnswered: true, live: wire,
+      tabsByVault: { acme: [{ ...tab('m', 'ready'), claudeId: 'c-super' }, { ...tab('k', 'ready'), claudeId: 'c-kid' }, tab('a', 'ready')] },
+    });
+    expect(device.rows.map((r) => r.kind === 'super' ? 'super' : r.row.id)).toEqual(['super', 'a']);
   });
 
   it('an offline Super row is drawn disabled', () => {
@@ -84,24 +98,17 @@ describe('a device shell\'s drawer is chats only', () => {
     expect(chats(rows[1].children)[0].offline).toBe(true);
   });
 
-  it('a quiet project offers New chat, but not before the tunnel\'s live read has answered', () => {
-    const quiet = { chats: [], draining: [], supers: [] } as LiveChatsWire;
-    const answered = buildDrawerRows({
-      projects: [project('globex')], activeVault: 'acme', expanded: ['globex'], facts: {}, fanout: {},
-      device: deviceChatsOf({ activeVault: 'acme', projects: ['globex'], tunnel: true, liveAnswered: true, tabsByVault: {}, live: quiet }),
-    });
-    expect(answered[0].children).toEqual([{ kind: 'new-chat' }]);
-    const waiting = buildDrawerRows({
+  it('a quiet project offers New chat at once: nothing waits for the live read', () => {
+    const rows = buildDrawerRows({
       projects: [project('globex')], activeVault: 'acme', expanded: ['globex'], facts: {}, fanout: {},
       device: deviceChatsOf({ activeVault: 'acme', projects: ['globex'], tunnel: true, liveAnswered: false, tabsByVault: {}, live: undefined }),
     });
-    expect(waiting[0].children).toEqual([]);
+    expect(rows[0].children).toEqual([{ kind: 'new-chat' }]);
   });
 
   it('a phone on the laptop listener reads no live chats and never waits for them', () => {
     const d = deviceChatsOf({ activeVault: 'acme', projects: ['acme'], tunnel: false, liveAnswered: false, tabsByVault: {}, live: undefined });
     expect(d.liveAnswered).toBe(true);
-    expect(deviceMayStartChat(d, 'acme')).toBe(true);
   });
 
   it('a project with a chat waiting opens by itself; folded, it sums its rows', () => {
@@ -109,7 +116,7 @@ describe('a device shell\'s drawer is chats only', () => {
     const rows = buildDrawerRows({ projects: [project('acme'), project('globex')], activeVault: 'acme', expanded: [], facts: {}, fanout: {}, device });
     expect(rows[0].expanded).toBe(true);
     expect(rows[1].expanded).toBe(false);
-    expect(rows[1].sum).toMatchObject({ live: 1 });
+    expect(rows[1].sum).toMatchObject({ live: 2 });
   });
 
   it('a Super row tap is the tunnel\'s superTap, never the hand-over', () => {
@@ -118,13 +125,12 @@ describe('a device shell\'s drawer is chats only', () => {
     const plan = openChatPlan(row, { vault: 'globex', hasTab: () => false, superOn: true, isSuperChild: () => false, tunnel: true });
     expect(plan.kind).toBe('super');
     const src = read('dashboard/src/components/sleepy/AgentSurface.tsx');
-    // The surface refuses a `super` intent (the hand-over) and New chat where it may not start one.
-    expect(src).toMatch(/if \(readDeviceShell\(\) && deviceRefusesIntent\(intent\.kind, deviceMayStartChat\(windowChrome\.deviceChats, vault \?\? ''\)\)\)/);
-    expect(deviceRefusesIntent('super', true)).toBe(true);
-    expect(deviceRefusesIntent('new-window', false)).toBe(true);
-    expect(deviceRefusesIntent('new-tab', false)).toBe(true);
-    expect(deviceRefusesIntent('new-window', true)).toBe(false);
-    expect(deviceRefusesIntent('open-chat', false)).toBe(false);
+    // The surface refuses a `super` intent (the hand-over), and only that.
+    expect(src).toMatch(/if \(readDeviceShell\(\) && deviceRefusesIntent\(intent\.kind\)\)/);
+    expect(deviceRefusesIntent('super')).toBe(true);
+    expect(deviceRefusesIntent('new-window')).toBe(false);
+    expect(deviceRefusesIntent('new-tab')).toBe(false);
+    expect(deviceRefusesIntent('open-chat')).toBe(false);
     expect(src).toMatch(/plan\.kind === 'super'[\s\S]{0,400}superTap\(plan\.row\.row, stackTabsRef\.current\)/);
   });
 
@@ -141,13 +147,11 @@ describe('a device shell\'s drawer is chats only', () => {
 });
 
 describe('History on a device shell', () => {
-  it('hides running, draining and Super conversations; a handed-over project is no History project', () => {
+  it('hides running, draining, Super and Super-child conversations; a handed-over project keeps its History', () => {
     const { device } = fixture();
-    expect([...device.hiddenIds].sort()).toEqual(['c-child', 'c-drain', 'c-run', 'c-super']);
-    expect([...device.handedOver]).toEqual(['globex']);
+    expect([...device.hiddenIds].sort()).toEqual(['c-drain', 'c-kid', 'c-mine', 'c-run', 'c-super']);
     const src = read('dashboard/src/components/layout/WindowChrome.tsx');
-    expect(src).toMatch(/!historyReady \? \[\] : projectOrder\.filter\(\(v\) => !deviceChats\.handedOver\.has\(v\)\)/);
-    expect(src).toMatch(/deviceShell && deviceChats\.handedOver\.has\(activeVault\) \? null : activeVault/);
+    expect(src).toMatch(/projects=\{projectOrder\}\s+currentVault=\{activeVault\}/);
     expect(src).toMatch(/hiddenIds: deviceChats\.hiddenIds, noSuper: true/);
   });
 
@@ -156,7 +160,7 @@ describe('History on a device shell', () => {
     expect(src).toMatch(/!hiddenIds\?\.has\(x\.id\)/);
     expect(src).toMatch(/const superRows = noSuper \? undefined : 'group' as const;/);
     expect(src).not.toMatch(/historyPath\(q, showAgentRuns, (PAGE_LIMIT|HISTORY_PER_VAULT), '(group|only)'\)/);
-    // A scope that left the projects (a hand-over while open) falls back to All.
+    // A scope that left the projects falls back to All.
     expect(src).toMatch(/!\(projects \?\? \[\]\)\.includes\(scope\)\) \{ setScope\(ALL\)/);
   });
 
@@ -167,15 +171,13 @@ describe('History on a device shell', () => {
     expect(src.match(/setHistoryOpen\(true\)/g)?.length).toBe(1);
   });
 
-  it('the pick chain: the bridge flags it, the window refuses a handed-over project, the surface asks the Mac fresh', () => {
+  it('the pick chain: the bridge flags it, the surface asks the Mac fresh', () => {
     expect(read('dashboard/src/components/layout/newshell/DrawerIntentBridge.tsx'))
       .toMatch(/OPEN_SESSION_EVENT, \{ claudeId: intent\.sessionId, pick: true \}/);
-    expect(read('dashboard/src/components/layout/WindowChrome.tsx'))
-      .toMatch(/if \(deviceShell && \(!historyReady \|\| deviceChats\.handedOver\.has\(vault\)\)\) return;/);
     const src = read('dashboard/src/components/sleepy/AgentSurface.tsx');
     expect(src).toMatch(/\.\.\.\(detail\.pick \? \{ pick: true \} : \{\}\)/);
     expect(src).toMatch(/isMacPhoneSurface\(\) && \(!existing \|\| \(pick && existing\.dormant\)\)/);
-    expect(src).toMatch(/if \(pick && historyPickRefused\(r, vault \?\? '', claudeId\)\) return;/);
+    expect(src).toMatch(/if \(pick && historyPickRefused\(r, claudeId\)\) return;/);
     // The fresh read names this project (review W2 C1): with 2+ chosen projects the phone listener
     // refuses a vault-less read with 400, and the guard would refuse every pick.
     const guard = src.slice(src.indexOf('isMacPhoneSurface() && (!existing || (pick && existing.dormant))'));
@@ -196,12 +198,15 @@ describe('History on a device shell', () => {
     expect(inst).toMatch(/\{!readDeviceShell\(\) && <button\s+type="button"\s+className="start-intent-notice-action"/);
   });
 
-  it('the surface\'s guard resumes nothing on a hand-over, a draining chat or a failed read', () => {
-    const wire = { supers: [sup('globex', 'c-super')], draining: ['c-drain'] };
-    expect(historyPickRefused(wire, 'globex', 'c-old')).toBe(true);
-    expect(historyPickRefused(wire, 'acme', 'c-drain')).toBe(true);
-    expect(historyPickRefused(null, 'acme', 'c-old')).toBe(true);
-    expect(historyPickRefused(wire, 'acme', 'c-old')).toBe(false);
+  it('the surface\'s guard resumes no Super chat, no child, no draining chat, nothing on a failed read', () => {
+    const wire = { supers: [{ ...sup('globex', 'c-super'), childIds: ['c-kid'] }], draining: ['c-drain'] };
+    expect(historyPickRefused(wire, 'c-super')).toBe(true);
+    expect(historyPickRefused(wire, 'c-kid')).toBe(true);
+    expect(historyPickRefused(wire, 'c-drain')).toBe(true);
+    expect(historyPickRefused({ ...wire, parked: ['c-parked'] }, 'c-parked')).toBe(true);
+    expect(historyPickRefused(null, 'c-old')).toBe(true);
+    // The owner's old chat of a handed-over project opens like any other.
+    expect(historyPickRefused(wire, 'c-old')).toBe(false);
   });
 });
 
@@ -209,6 +214,10 @@ describe('the device shell\'s chrome', () => {
   it('no Settings and no Project Relations anywhere', () => {
     expect(morePagesNarrow(true)).not.toContain('settings');
     expect(morePagesNarrow(false)).toContain('settings');
+    // A phone's More is the short list, from its one constant; the Mac's stays whole.
+    expect(DEVICE_MORE_PAGES).toEqual(['roadmap', 'whiteboards', 'knowledge']);
+    expect(morePagesNarrow(true)).toEqual(['roadmap', 'whiteboards', 'knowledge']);
+    expect(morePagesNarrow(false)).toEqual(expect.arrayContaining(['hypotheses', 'apps', 'brain', 'council', 'core', 'taxonomy', 'sleep', 'stats', 'packs', 'announcements']));
     expect([...DEVICE_HIDDEN_PAGES].sort()).toEqual(['relations', 'settings']);
     expect(read('dashboard/src/components/layout/newshell/Rail.tsx')).toMatch(/!\(device && DEVICE_HIDDEN_PAGES\.has\(RAIL_FOOT\)\) && pageRow\(RAIL_FOOT\)/);
     const shell = read('dashboard/src/components/layout/Shell.tsx');
@@ -331,10 +340,9 @@ describe('the phone layout in the new shell (part 2)', () => {
   it('a phone\'s Chat page with no chat is one line and one button, never the setup screen', () => {
     expect(surface).toMatch(/\} else if \(isMobile\) \{\s*body = <div className="agent-term">\{phoneEmpty\}<\/div>;/);
     expect(surface).toContain('{shownPanes.length === 0 && isMobile && phoneEmpty}');
-    // A handed-over project: the Super hint and its row, disabled while the Mac runs no chat for it.
-    expect(surface).toMatch(/phoneHandedHere \? t\('handsfree\.super\.hint'\)/);
-    expect(surface).toMatch(/disabled=\{!phoneSuperRow \|\| phoneSuperRow\.kind !== 'super' \|\| !phoneSuperRow\.row\.live\}/);
-    expect(surface).toMatch(/canSpawn && phoneMayStart \? \(/);
+    // A handed-over project: New chat too, and its Super row, disabled while the Mac runs no chat for it.
+    expect(surface).toMatch(/disabled=\{!phoneSuperRow\.row\.live\}/);
+    expect(surface).toMatch(/\{canSpawn && \(\s*<button type="button" className="chat-btn primary" data-testid="chat-empty-new"/);
   });
 
   it('the Super Agent button\'s chat half is keyed on the device shell', () => {

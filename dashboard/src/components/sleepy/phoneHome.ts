@@ -10,7 +10,9 @@ import type { StackTab } from './phoneStack';
  * - The project the phone is in contributes its open tabs and the Mac's running chats, each once.
  * - Every other chosen project contributes the Mac's running chats (from the one `live-chats`
  *   answer, which already spans the chosen projects) and the tabs this window has mounted there.
- * - A handed-over project contributes its ONE Super row and nothing else (`superRowFor`).
+ * - A handed-over project also contributes its ONE Super row (`superRowFor`): the Super Agent and
+ *   the owner's chats live side by side. A tab holding the Super's conversation or one of its
+ *   children's is the Super's, never one of the owner's rows.
  *
  * Past chats are not rows: History lists them.
  */
@@ -50,9 +52,10 @@ export function homeRows(i: HomeInput): HomeRow[] {
         key: `super:${vault}`, vault, kind: 'super', row: superRow, title: '', line: superRow.lastLine ?? '',
         section: superRow.live ? liveSection(superRow.state) : 'idle', updatedAt: superRow.updatedAt,
       });
-      continue;
     }
-    const tabs = vault === i.vault ? i.tabs : (i.otherTabs?.[vault] ?? []);
+    const theirs = new Set(superRow ? [superRow.conversationId, ...superRow.runningIds] : []);
+    const held = (t: StackTab) => theirs.has(t.claudeId ?? '') || (!!t.altClaudeId && theirs.has(t.altClaudeId));
+    const tabs = (vault === i.vault ? i.tabs : (i.otherTabs?.[vault] ?? [])).filter((t) => !held(t));
     for (const r of openRows({ tabs, live: chats, draining, vault })) {
       rows.push({
         key: `${vault}:${r.key}`, vault, kind: 'open', row: r, title: r.title ?? '',

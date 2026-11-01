@@ -47,7 +47,7 @@ import { chill, liveInstanceCount, oldestEvictable } from './instanceCeiling';
 import { ChatDrawer } from './newshell/ChatDrawer';
 import { NewProjectFlow } from './newshell/NewProjectFlow';
 import {
-  buildDrawerRows, deviceChatsOf, deviceMayStartChat, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, intentLands, moveInOrder, NO_DEVICE_CHATS,
+  buildDrawerRows, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, intentLands, moveInOrder, NO_DEVICE_CHATS,
   type DeviceChats, type DrawerFacts,
 } from './newshell/drawerModel';
 import { useDrawerProjects } from '../../hooks/useDrawerProjects';
@@ -119,7 +119,7 @@ export interface ChromeApi {
    *  forward and the chat opens in it (`open-chat`). */
   openChatRow(vault: string, row: HomeRow): void;
   /** A device shell's chat facts (`readDeviceShell`): the drawer rows, whether the live read has
-   *  answered, the handed-over projects and the conversations History hides. Everything on a
+   *  answered and the conversations History hides. Everything on a
    *  device shell reads this one object. {@link NO_DEVICE_CHATS} anywhere else. */
   deviceChats: DeviceChats;
   /** Open the window's History (across projects). The tunnel has no other: a surface's own
@@ -1182,14 +1182,10 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   }, [queueDrawerIntent]);
 
   const [historyOpen, setHistoryOpen] = useState(false);
-  // On the tunnel History waits for the live read: until it answers, an empty `supers` must not
-  // read as "no project is handed over". A phone on the laptop listener reads none, never waits.
-  const historyReady = !deviceShell || deviceChats.liveAnswered;
   const openHistory = useCallback(() => {
-    if (!historyReady) return;
     setHistoryOpen(true);
     setFloatingOpen(false);
-  }, [historyReady]);
+  }, []);
 
   // ── The phone's back gesture: from a chat back to the drawer, never out of the app ──
   // ONE history mark for the window (a swipe moves between project instances, and a mark per
@@ -1215,12 +1211,6 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
   const chrome = useMemo<ChromeApi>(
     () => ({ open, activeVault, addTab, activate, closeTab, detachToWindow, zoom, setZoom: setZoomLevel, openChatRow, deviceChats, openHistory, dismissDrawer: dismissFloating }),
     [open, activeVault, addTab, activate, closeTab, detachToWindow, zoom, setZoomLevel, openChatRow, deviceChats, openHistory, dismissFloating],
-  );
-  // History's projects: on a device shell never a handed-over one (its chats are the Super's),
-  // and none before the tunnel's live read has answered.
-  const historyProjects = useMemo(
-    () => (!deviceShell ? projectOrder : !historyReady ? [] : projectOrder.filter((v) => !deviceChats.handedOver.has(v))),
-    [deviceShell, historyReady, projectOrder, deviceChats],
   );
   const consumeDrawerIntent = useCallback((vault: string, nonce: number) => {
     setPendingDrawerIntents((prev) => {
@@ -1413,7 +1403,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                 }}
                 onCloseProject={(name) => closeTab(name)}
                 newWindowNonce={newWindowNonce}
-                {...(deviceShell ? { device: { canStartIn: (v: string) => deviceMayStartChat(deviceChats, v), historyReady } } : {})}
+                {...(deviceShell ? { device: true } : {})}
                 {...(tunnel ? { foot: <><PushOptIn /><PhoneLogSend /></> } : {})}
               />
             )}
@@ -1448,13 +1438,11 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             onClose={() => setHistoryOpen(false)}
             onPick={() => setHistoryOpen(false)}
             openIds={historyOpenIds}
-            projects={historyProjects}
-            currentVault={deviceShell && deviceChats.handedOver.has(activeVault) ? null : activeVault}
+            projects={projectOrder}
+            currentVault={activeVault}
             {...(deviceShell ? { hiddenIds: deviceChats.hiddenIds, noSuper: true } : {})}
             onPickIn={(vault, s) => {
               setHistoryOpen(false);
-              // The first guard of a pick: never into a project handed over (read now, not at open).
-              if (deviceShell && (!historyReady || deviceChats.handedOver.has(vault))) return;
               void queueDrawerIntent(vault, { kind: 'open-session', sessionId: s.id });
             }}
           />

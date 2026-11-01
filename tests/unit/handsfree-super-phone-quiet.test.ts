@@ -44,13 +44,15 @@ beforeEach(() => {
     deviceValid: () => true,
     showingDevice: (sid) => (showing === sid ? PHONE : null),
     superSession: (vault) => supers.get(vault) ?? null,
+    // Everything but the owner's chat (OTHER) is a child of the Super in this file.
+    superChild: (id) => supers.size > 0 && id !== OTHER && id !== SUPER,
     send: async (_sub, payload) => { sent.push(payload); return { ok: true, status: 201, gone: false }; },
   });
   stop = onChatChange((c) => { pending.push(n.onChange(c)); });
 });
 afterEach(() => { stop(); rmSync(dir, { recursive: true, force: true }); });
 
-describe('a handed-over project pushes only its Super Agent', () => {
+describe('a handed-over project keeps its children quiet', () => {
   it('a child\'s finished turn and question stay off the phone', async () => {
     const child = chat(`${CHILD}`, 'handed');
     turn(child);
@@ -79,11 +81,11 @@ describe('a handed-over project pushes only its Super Agent', () => {
     expect(sent.map((p) => p.kind)).toEqual(['permission']);
   });
 
-  it('another chat of the same project stays quiet too', async () => {
+  it('the owner\'s own chat of the same project pushes: it lives beside the Super', async () => {
     const other = chat(OTHER, 'handed');
     turn(other);
     await settle();
-    expect(sent).toEqual([]);
+    expect(sent.map((p) => p.kind)).toEqual(['turn']);
   });
 
   it('the Super Agent\'s own finished turn pushes', async () => {
@@ -117,10 +119,12 @@ describe('a handed-over project pushes only its Super Agent', () => {
     expect(sent.map((p) => p.kind)).toEqual(['turn']);
   });
 
-  it('superAllows: only the super\'s own chat, by registry id or conversation', () => {
-    expect(superAllows(null, { sessionId: CHILD, conversationId: CHILD })).toBe(true);
-    expect(superAllows(SUPER, { sessionId: SUPER, conversationId: null })).toBe(true);
-    expect(superAllows(SUPER, { sessionId: 'tab-1', conversationId: SUPER })).toBe(true);
-    expect(superAllows(SUPER, { sessionId: CHILD, conversationId: CHILD })).toBe(false);
+  it('superAllows: the super\'s own chat and the owner\'s; only a child stays quiet', () => {
+    const child = (id: string) => id === CHILD;
+    expect(superAllows(null, { sessionId: CHILD, conversationId: CHILD }, child)).toBe(true);
+    expect(superAllows(SUPER, { sessionId: SUPER, conversationId: null }, child)).toBe(true);
+    expect(superAllows(SUPER, { sessionId: 'tab-1', conversationId: SUPER }, child)).toBe(true);
+    expect(superAllows(SUPER, { sessionId: 'tab-2', conversationId: 'mine' }, child)).toBe(true);
+    expect(superAllows(SUPER, { sessionId: CHILD, conversationId: CHILD }, child)).toBe(false);
   });
 });

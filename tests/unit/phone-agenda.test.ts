@@ -158,7 +158,7 @@ describe('the wiring', () => {
     // On the Chat page, kept while the drawer covers it (the digest is not dropped on every peek).
     expect(surface).toMatch(/if \(!macPhone \|\| !expanded \|\| !mobileActive\) return undefined;/);
     expect(surface).toMatch(/\(s as ChatSession\)\.superMirror \? s as ChatSession : undefined/);
-    expect(surface).toMatch(/<\/div>\n\s*\{phoneSuperChat && <PhoneAgenda digest=\{phoneDigest\} onWriteAbout=\{writePhoneAboutRow\} \/>\}\n\s*(?:\{macPhone && [^\n]*\n\s*)?\{body\}/);
+    expect(surface).toMatch(/<\/div>\n\s*\{phoneSuperChat && <PhoneAgenda digest=\{phoneDigest\} onWriteAbout=\{writePhoneAboutRow\} \/>\}\n\s*\{phoneSuperChat && <PhoneSuperJobs jobs=\{phoneJobs\} \/>\}\n\s*(?:\{macPhone && [^\n]*\n\s*)?\{body\}/);
   });
 
   it('a ↩ on the phone writes the About chip into the phone\'s own composer, the desktop\'s into its Super chat', () => {

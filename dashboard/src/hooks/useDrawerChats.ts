@@ -33,7 +33,7 @@ export function useDrawerChats(o: { activeVault: string; drawerVisible: boolean;
     queryFn: async () => {
       const wire = await new ApiClient(o.activeVault).get<LiveChatsWire>('/agent/live-chats');
       // Every Super conversation the Mac names is shown as the Super's, however it is opened.
-      rememberSuperMirrorIds((wire.supers ?? []).map((x) => x.conversationId));
+      rememberSuperMirrorIds([...(wire.supers ?? []).map((x) => x.conversationId), ...(wire.parked ?? [])]);
       return wire;
     },
     enabled: ms !== false,

@@ -170,24 +170,19 @@ export interface DrawerModelInput {
 export interface DeviceDrawerInput {
   /** Every chat row over the chosen projects (`homeRows`), Super rows included. */
   rows: readonly HomeRow[];
-  /** Projects whose Super Agent is handed over: their Super row is all they show. */
-  handedOver: ReadonlySet<string>;
-  /** False on the tunnel until the live read has answered: no New chat is offered before it,
-   *  since an unanswered read cannot tell a quiet project from a handed-over one. */
-  liveAnswered: boolean;
 }
 
 /** The device shell's published chat facts. Off a device shell it is {@link NO_DEVICE_CHATS}. */
 export interface DeviceChats {
   rows: HomeRow[];
-  /** The live read has answered (always true where nothing is read). */
+  /** The live read has answered (always true where nothing is read): the waiting toast's
+   *  baseline. Nothing waits for it: every chosen project may start a chat at once. */
   liveAnswered: boolean;
-  handedOver: ReadonlySet<string>;
-  /** Conversations History must not list here: running, draining, or a Super's. */
+  /** Conversations History must not list here: running, draining, or a Super's or its child's. */
   hiddenIds: ReadonlySet<string>;
 }
 
-export const NO_DEVICE_CHATS: DeviceChats = { rows: [], liveAnswered: true, handedOver: new Set(), hiddenIds: new Set() };
+export const NO_DEVICE_CHATS: DeviceChats = { rows: [], liveAnswered: true, hiddenIds: new Set() };
 
 /** The device shell's published fact, from the live read and the mounted projects' tabs. Pure. */
 export function deviceChatsOf(o: {
@@ -208,25 +203,25 @@ export function deviceChatsOf(o: {
     vault: o.activeVault, tabs: o.tabsByVault[o.activeVault] ?? [], otherTabs,
     projects: o.projects.length ? o.projects : [o.activeVault], live,
   });
-  const handedOver = new Set((o.live?.supers ?? []).map((x) => x.vault));
   const hiddenIds = new Set<string>([
     ...(o.live?.chats ?? []).map((c) => c.conversationId),
     ...(o.live?.draining ?? []),
-    ...(o.live?.supers ?? []).map((x) => x.conversationId),
+    ...(o.live?.supers ?? []).flatMap((x) => [x.conversationId, ...x.childIds]),
+    ...(o.live?.parked ?? []),
     ...closed,
   ]);
-  return { rows, liveAnswered: o.tunnel ? o.liveAnswered : true, handedOver, hiddenIds };
+  return { rows, liveAnswered: o.tunnel ? o.liveAnswered : true, hiddenIds };
 }
 
-/** A device shell's chat rows of one project, from its published rows: waiting → working →
- *  idle. A handed-over project's is its one Super row. */
+/** A device shell's chat rows of one project, from its published rows: the Super Agent's row
+ *  when it is handed over, then the owner's chats, waiting → working → idle. */
 function deviceChildren(vault: string, d: DeviceDrawerInput, sel: { onChat: boolean; activeChatId?: string; tabs: readonly DrawerChatFact[] }): DrawerChild[] {
   const out: DrawerChild[] = [];
   for (const row of d.rows) {
     if (row.vault !== vault) continue;
     if (row.kind === 'super') {
       const sup = row.row;
-      out.push({
+      out.unshift({
         // The product's name, the same in every language (`handsfree.super.title`).
         kind: 'chat', id: `super:${vault}`, vault, title: 'Super Agent',
         state: sup.live ? (sup.state === 'asking' ? 'asking' : sup.state === 'working' ? 'working' : 'idle') : 'idle',
@@ -351,10 +346,10 @@ function sumOf(children: readonly DrawerChild[], source: DrawerProjectRow['sourc
 }
 
 /**
- * A device shell's project: its Super row (handed over) or its chats by name, and nothing else:
- * no Super Agent button (a phone never hands over), no AI Team members, no window rows. A quiet
- * project that is not handed over offers New chat, once the tunnel's live read has answered. A
- * project with a chat waiting on the owner opens by itself; folded, it sums its rows.
+ * A device shell's project: its Super row (handed over) and its chats by name, and nothing else:
+ * no Super Agent button (a phone never hands over), no AI Team members, no window rows. A project
+ * with no chat of the owner's offers New chat, handed over or not. A project with a chat waiting
+ * on the owner opens by itself; folded, it sums its rows.
  */
 function deviceProjectRow(p: DrawerProjectInput, o: { activeVault: string | null; open: ReadonlySet<string>; facts: Readonly<Record<string, DrawerFacts | undefined>>; device: DeviceDrawerInput }): DrawerProjectRow {
   const active = p.name === o.activeVault;
@@ -375,26 +370,28 @@ function deviceProjectRow(p: DrawerProjectInput, o: { activeVault: string | null
     const sum = chats.length ? { live: chats.length, asking, working, idle: chats.length - asking - working, flagged } : undefined;
     return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}) };
   }
-  if (!children.length && !o.device.handedOver.has(p.name) && o.device.liveAnswered) children.push({ kind: 'new-chat' });
+  if (!children.some((c) => c.kind === 'chat' && c.row.kind !== 'super')) children.push({ kind: 'new-chat' });
   return { ...base, source: p.mounted ? 'mounted' : 'none', children };
 }
 
 /**
- * A History pick on the tunnel resumes nothing when the Mac's fresh answer says the project is
- * handed over (its chats are the Super's), the chat is still draining, or there is no answer.
- * Pure: the second guard of a pick (the first is the window's `onPickIn`).
+ * A History pick on the tunnel resumes nothing when the chat is the Mac's fresh answer's Super or
+ * a child of it, when it is still draining, or when there is no answer (a running chat would be
+ * resumed beside itself). A project being handed over refuses nothing: the owner's chats live on
+ * beside its Super. Pure: the guard of a pick.
  */
-export function historyPickRefused(live: Pick<LiveChatsWire, 'supers' | 'draining'> | null | undefined, vault: string, conversationId: string): boolean {
+export function historyPickRefused(live: Pick<LiveChatsWire, 'supers' | 'draining' | 'parked'> | null | undefined, conversationId: string): boolean {
   if (!live) return true;
-  if ((live.supers ?? []).some((x) => x.vault === vault)) return true;
+  if ((live.parked ?? []).includes(conversationId)) return true;
+  if ((live.supers ?? []).some((x) => x.conversationId === conversationId || x.childIds.includes(conversationId))) return true;
   return (live.draining ?? []).includes(conversationId);
 }
 
-/** A drawer intent a device shell's surface refuses: the hand-over (the Super Agent button is the
- *  Mac's), and a new chat where it may not start one (`deviceMayStartChat`). */
-export function deviceRefusesIntent(kind: string, mayStart: boolean): boolean {
-  if (kind === 'super') return true;
-  return (kind === 'new-window' || kind === 'new-tab') && !mayStart;
+/** A drawer intent a device shell's surface refuses: only the hand-over (the Super Agent button
+ *  is the Mac's). A new chat is never refused here: the tunnel already serves only the chosen
+ *  projects. */
+export function deviceRefusesIntent(kind: string): boolean {
+  return kind === 'super';
 }
 
 /** The drawer toggle's count on a device shell: chats waiting on the owner, except the one on
@@ -402,12 +399,6 @@ export function deviceRefusesIntent(kind: string, mayStart: boolean): boolean {
 export function deviceWaitingCount(d: Pick<DeviceChats, 'rows'>, onScreen: { vault: string; chatId?: string } | null): number {
   return d.rows.filter((r) => r.section === 'waiting'
     && !(onScreen && r.vault === onScreen.vault && r.kind === 'open' && r.row.kind === 'tab' && r.row.id === onScreen.chatId)).length;
-}
-
-/** May a device shell start a chat in `vault`? Never in a handed-over project, and on the tunnel
- *  not before the live read has answered. */
-export function deviceMayStartChat(d: Pick<DeviceChats, 'handedOver' | 'liveAnswered'>, vault: string): boolean {
-  return d.liveAnswered && !d.handedOver.has(vault);
 }
 
 /**

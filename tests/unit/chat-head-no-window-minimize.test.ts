@@ -21,8 +21,8 @@ describe('the chat head has no window minimize', () => {
     const head = src.slice(src.indexOf('{/* The phone header:'), src.indexOf('{!isMobile && ('));
     expect(head).toContain('className="mchat-head-title"');
     expect(head).toContain('data-testid="chat-head-new"');
-    // The ＋ is held back where a phone may not start a chat (handed over, or before the live read).
-    expect(head).toMatch(/\{phoneMayStart && \(\s*<button/);
+    // The ＋ is always there: every project on a phone starts chats.
+    expect(head).toMatch(/<button\s+className="mchat-head-btn"/);
     expect(head).not.toContain('chat-back');
     expect(head).not.toContain('setDrawerOpen');
     expect(head).not.toContain('<PhoneChip');

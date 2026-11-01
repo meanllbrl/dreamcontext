@@ -83,8 +83,8 @@ export function highlight(text: string, tokens: readonly string[]): Array<{ text
 }
 
 /**
- * The handed-over Super Agent's row for THIS project, or null (the list is then exactly as
- * before). With it the row is the whole list: the Super Agent runs the project's chats.
+ * The handed-over Super Agent's row for THIS project, or null. It stands beside the project's own
+ * chats, never in their place.
  */
 export function superRowFor(live: Pick<LiveChatsWire, 'supers'> | undefined, vault: string): SuperChatWire | null {
   return live?.supers?.find((x) => x.vault === vault) ?? null;

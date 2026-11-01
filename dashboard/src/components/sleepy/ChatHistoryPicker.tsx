@@ -173,7 +173,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
   /** "All projects": the projects whose read failed, named under the list (never dropped). */
   const [failedVaults, setFailedVaults] = useState<string[]>([]);
   const projectsKey = projects?.join('\n') ?? '';
-  // A scope that left `projects` (a project handed over while this is open) falls back to All:
+  // A scope that left `projects` (the list of projects changed while this is open) falls back to All:
   // a removed project is never read again.
   useEffect(() => {
     if (cross && scope !== ALL && !(projects ?? []).includes(scope)) { setScope(ALL); setSuperOf(null); setData(null); }

@@ -35,12 +35,17 @@ export const MORE_PAGES: readonly Page[] = ['council', 'core', 'taxonomy', 'slee
  *  moves into More. */
 export const BOTTOM_BAR: readonly (Page | 'chat' | 'more')[] = ['chat', 'tasks', 'automations', 'lab', 'more'];
 
+/** The phone's More (a device shell's bottom bar): the pages worth opening on a phone, and only
+ *  these. The one line to change that list. */
+export const DEVICE_MORE_PAGES: readonly Page[] = ['roadmap', 'whiteboards', 'knowledge'];
+
 /** More's rows on the bottom bar: the rail pages the bar has no room for, then More's own, then
- *  Settings. */
+ *  Settings. A device shell has its own short list. */
 export function morePagesNarrow(device = false): Page[] {
+  if (device) return [...DEVICE_MORE_PAGES];
   const onBar = new Set<string>(BOTTOM_BAR);
   const railPages = RAIL_ENTRIES.flatMap((e) => (e.kind === 'page' && !onBar.has(e.page) ? [e.page] : []));
-  return [...railPages, ...MORE_PAGES, RAIL_FOOT].filter((p) => !device || !DEVICE_HIDDEN_PAGES.has(p));
+  return [...railPages, ...MORE_PAGES, RAIL_FOOT];
 }
 
 /** Pages a device shell (`readDeviceShell`) never offers: it drives another machine's project

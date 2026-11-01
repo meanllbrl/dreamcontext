@@ -105,7 +105,7 @@ import { SUPER_CREW_ENV } from '../../lib/automations/types.js';
 import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChild, peekSuperNote, readSuperState, setPhoneHoldsProbe, superIndex, superRootOfChild } from '../../lib/super/store.js';
 import { remoteViewOf } from './super-remote.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
-import { MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
+import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, type PhoneSuperRecord, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
   attachSuperInbox, markSuperEventTurn, noteChatStarted, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superOwnerSpoke, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
 } from '../../lib/super/inbox.js';
@@ -1056,16 +1056,32 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
   const draining = snapshot
     .filter((e) => e.draining && visible(byPath.get(e.projectRoot.replace(/\/+$/, '')) ?? null))
     .map((e) => e.conversationId);
-  // A phone talks to a handed-over project's Super Agent only: one row, none of its chats.
+  // A phone: a Super Agent and the owner's chats live side by side. Its row and its work come
+  // from the record; its session and its children are never listed as the owner's chats.
   if (!phone) { sendJson(res, 200, { chats, draining }); return; }
-  const handedOver = new Map<string, string>();
+  const records = new Map<string, PhoneSuperRecord>();
   for (const [path, name] of byPath) {
     if (!visible(name)) continue;
-    const idx = superIndex(join(path, '_dream_context'));
-    if (idx.enabled && idx.session) handedOver.set(name, idx.session);
+    const ctx = join(path, '_dream_context');
+    const idx = superIndex(ctx);
+    if (!idx.session) continue;
+    // The record is read only for a project handed over: a parked one is just its session id.
+    // A record that will not read costs its jobs, never the phone's whole list.
+    const state = idx.enabled
+      ? await readSuperState(ctx, superSanitizeOpts()).catch((err: unknown) => { console.warn(`[live-chats] the Super record of ${name} did not read:`, (err as Error)?.message ?? err); return null; })
+      : null;
+    // An adopted chat is the owner's once the record lets it go: History keeps listing it.
+    const formerAdopted = new Set(state?.formerAdopted ?? []);
+    records.set(name, {
+      session: idx.session, enabled: idx.enabled, former: (state?.formerChildren ?? []).filter((id) => !formerAdopted.has(id)),
+      children: Object.entries(state?.children ?? {}).map(([id, c]) => ({
+        id, title: childDigestName(state!, id), startedAt: c.startedAt,
+        ...(c.endedAt !== undefined ? { endedAt: c.endedAt } : {}), ...(c.adopted ? { adopted: true } : {}),
+      })),
+    });
   }
-  const view = phoneLiveChats(chats, handedOver);
-  sendJson(res, 200, view.supers.length ? { chats: view.chats, draining, supers: view.supers } : { chats, draining });
+  const view = phoneLiveChats(chats, records);
+  sendJson(res, 200, { chats: view.chats, draining, ...(view.supers.length ? { supers: view.supers } : {}), ...(view.parked.length ? { parked: view.parked } : {}) });
 }
 
 /** AC18: what the drawer says about a live chat. A question waiting wins; then a turn running

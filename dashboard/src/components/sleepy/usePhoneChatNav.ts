@@ -67,7 +67,7 @@ export function usePhoneChatNav(o: {
       const t = e.touches?.[0];
       if (!latest.current.active || e.touches.length !== 1 || !t) return;
       // A code block or a table scrolls sideways, and the composer is the owner's: never a swipe.
-      if ((e.target as HTMLElement | null)?.closest('pre, table, textarea, input, .chat-cmp, .mchat-toast')) return;
+      if ((e.target as HTMLElement | null)?.closest('pre, table, textarea, input, .chat-cmp, .mchat-toast, .phone-agenda-layer')) return;
       from.current = { x: t.clientX, y: t.clientY, at: Date.now() };
     };
     const end = (e: TouchEvent) => {

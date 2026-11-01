@@ -466,6 +466,7 @@ export interface SuperState {
   enabled: boolean;
   /** Children the record no longer holds, still the Super's: a chat window never shows them. */
   formerChildren?: string[];
+  formerAdopted?: string[];
   containers: SuperContainer[];
   groups: SuperGroup[];
   view: SuperView;

@@ -15,6 +15,9 @@ const ACTIONS: ChatSurfaceActions = {
   openAppPage: noop, signIn: async () => { /* nothing to sign in */ },
 };
 
+/** How often a running job's transcript is read again. */
+const LIVE_REFRESH_MS = 4_000;
+
 /**
  * A shown child with no live chat in this window (it finished and exited; a relaunch keeps it as
  * a dormant tab): its saved transcript, read only, in the same ChatPane a live child's card shows.
@@ -22,7 +25,11 @@ const ACTIONS: ChatSurfaceActions = {
  * folder); no `claude` is started for it. The live chat takes the slot back the moment the child
  * runs again (`super resume`), because the card then has a session and draws the slot instead.
  */
-export function ChildTranscript({ claudeId }: { claudeId: string }) {
+export function ChildTranscript({ claudeId, live = false }: {
+  claudeId: string;
+  /** The job still runs on the Mac (the phone reads it from here): the transcript keeps refreshing. */
+  live?: boolean;
+}) {
   const api = useApi();
   const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
   const [session] = useState(() => createTranscriptSession(claudeId));
@@ -33,7 +40,8 @@ export function ChildTranscript({ claudeId }: { claudeId: string }) {
       const r = await api.get<{ items: HistoryEntry[] }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}`);
       return Array.isArray(r?.items) ? r.items : [];
     },
-    staleTime: 15_000,
+    staleTime: live ? 0 : 15_000,
+    refetchInterval: live ? LIVE_REFRESH_MS : false,
   });
   useEffect(() => { if (history.data) session.load(history.data); }, [history.data, session]);
   useEffect(() => () => session.dispose(), [session]);
@@ -53,9 +61,9 @@ export function ChildTranscript({ claudeId }: { claudeId: string }) {
       permissionMode="auto"
       canSignInInApp={false}
       signInCommand="claude auth login"
-      readOnly="finished"
+      readOnly={live ? true : 'finished'}
     />
-  ), [session, modelConfig]);
+  ), [session, modelConfig, live]);
   return (
     <div className="super-slot" data-testid="super-child-transcript" ref={hostRef}>
       {createPortal(pane, session.container)}

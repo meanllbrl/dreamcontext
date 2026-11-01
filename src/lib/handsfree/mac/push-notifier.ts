@@ -53,6 +53,8 @@ export interface PushNotifierDeps {
   /** The handed-over Super Agent session (pin id) of a project, or null when it is not handed
    *  over. Absent = never handed over. */
   superSession?: (vault: string) => string | null;
+  /** Is this conversation a child of a handed-over Super Agent? Absent = none is. */
+  superChild?: (id: string) => boolean;
   now?: () => number;
 }
 
@@ -94,9 +96,11 @@ export function pushFor(change: ChatChange): { key: string; payload: Omit<PushPa
 }
 
 /** May this chat push while its project's Super Agent is `superSession` (null = not handed over)?
- *  Only the Super's own chat does. */
-export function superAllows(superSession: string | null, e: Pick<ChatEntry, 'sessionId' | 'conversationId'>): boolean {
-  return !superSession || e.sessionId === superSession || e.conversationId === superSession;
+ *  The Super's own chat and the owner's chats do; only the Super's children stay quiet
+ *  (`superChild`: the Super answers them). */
+export function superAllows(superSession: string | null, e: Pick<ChatEntry, 'sessionId' | 'conversationId'>, superChild: (id: string) => boolean): boolean {
+  if (!superSession || e.sessionId === superSession || e.conversationId === superSession) return true;
+  return !superChild(e.sessionId) && !(e.conversationId && superChild(e.conversationId));
 }
 
 /** One line per push that did not land: the push service's host and the device's hash prefix, never
@@ -124,12 +128,12 @@ export class PushNotifier {
     const p = pushFor(change);
     if (!p || !p.payload.vault || !exposed.includes(p.payload.vault)) return 0;
     const sup = this.d.superSession?.(p.payload.vault) ?? null;
-    if (!superAllows(sup, change.entry)) {
+    if (!superAllows(sup, change.entry, this.d.superChild ?? (() => false))) {
       // The one exception, as on the laptop (the queue head's permission rings): a permission is
       // the owner's alone (the Super is refused one) and the phone draws it nowhere (the mirror
       // strips prompts), so a child would wait on it unseen. It pushes even to a phone showing the
       // Super's chat (suppressed only by the CHILD's own screen, which the phone never shows),
-      // says where it is answered, and the tap opens the Super's chat, the only one listed then.
+      // says where it is answered, and the tap opens the Super's chat.
       if (!sup || p.payload.kind !== 'permission') return 0;
       return this.deliver(p.key, change.entry.sessionId, { ...p.payload, conversationId: sup, body: clip(`${p.payload.body} · answer it on the Mac`) }).done;
     }

@@ -81,3 +81,33 @@
 /* A thumb has no hover: the row's ↩ is always there, at the touch floor. */
 .phone-agenda-body .super-agenda-row[data-about='true'] { grid-template-columns: minmax(0, 1fr) 44px; }
 .phone-agenda-body .super-agenda-about { width: 44px; height: 44px; margin-top: 0; opacity: 1; }
+
+/* ── What the Super Agent gave out, on the phone (PhoneSuperJobs.tsx) ───────────────────── */
+.phone-jobs { flex: 0 0 auto; border-bottom: 1px solid var(--color-border); background: var(--color-bg-secondary); }
+.phone-jobs-list { max-height: calc(var(--touch-target, 44px) * 3); overflow-y: auto; }
+.phone-jobs-row {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--touch-target, 44px);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: none;
+  background: none;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.phone-jobs-row + .phone-jobs-row { border-top: 1px solid var(--color-border); }
+.phone-jobs-row:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.phone-jobs-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--color-text-tertiary); }
+.phone-jobs-row[data-state="working"] .phone-jobs-dot { background: var(--color-accent); }
+.phone-jobs-row[data-state="asking"] .phone-jobs-dot { background: var(--mood-waiting); }
+.phone-jobs-name { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.phone-jobs-state { flex: 0 0 auto; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.phone-job-sheet { height: 92vh; height: 92dvh; max-height: none; }
+.phone-job-head { flex: 0 0 auto; display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); border-bottom: 1px solid var(--color-border); }
+.phone-job-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.phone-job-body > .super-slot { flex: 1 1 auto; min-height: 0; }

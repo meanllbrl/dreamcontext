@@ -256,9 +256,9 @@ try {
   report.check('the hand-over records a super session', en.status === 200 && typeof SUPER === 'string', JSON.stringify(en.json).slice(0, 200));
   const win = await laptop(`mode=super&sessionId=${SUPER}`);
   report.check('the window\'s Super Agent socket is open', win.closed === null);
-  report.check('super on: ONE row, the Super Agent; no New chat, no other chat', await until(async () => {
+  report.check('super on: the Super Agent row, and New chat stays (its one chat is the Super\'s child now)', await until(async () => {
     shape = await listShape();
-    return shape.super && shape.rows.length === 1 && shape.rows[0].kind === 'super' && !shape.newChat && !shape.overflowX;
+    return shape.super && shape.rows.length === 1 && shape.rows[0].kind === 'super' && shape.newChat && !shape.overflowX;
   }, 20000), JSON.stringify(shape));
   const w1 = await wire();
   report.check('super on: the wire lists no chat of the project and one live super row', Array.isArray(w1.chats) && w1.chats.length === 0

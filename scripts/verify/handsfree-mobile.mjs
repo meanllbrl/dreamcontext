@@ -22,8 +22,8 @@
  * back gesture returns to the drawer and stays in the app; F5 the bottom bar, More without
  * Settings, no New project, no Hands-free button, the Mac chip, the Tasks/Chat round trips with the
  * drawer closed; F6 every target 44 px; F7 the quiet project's New chat row and one-line empty
- * state, the handed-over project's Super hint and Super row; 10 `__dcPhoneRefused` 0, no 4xx/5xx,
- * no console error; 11 no New chat and no hand-over for the handed-over project; 12 its past chat is
+ * state, the handed-over project's New chat beside its Super row; 10 `__dcPhoneRefused` 0, no 4xx/5xx,
+ * no console error; 11 no hand-over on the phone, New chat in every chosen project; 12 its past chat is
  * absent from History and History reads nothing of it; 17 screenshots light and dark, More's
  * pages, the close confirm. 375x667: the same first screen and a chat, no overflow.
  *
@@ -149,7 +149,7 @@ function setupScratch() {
     const r = cli(['vaults', 'add', name, path]);
     if (r.status !== 0) throw new Error(`vaults add ${name}: ${r.stderr || r.stdout}`);
   }
-  // One past chat in proj and in other (handed over: History must never show or read it).
+  // One past chat in proj and in other (handed over: its past chats are the owner's, History lists them).
   for (const [d, title] of [[PROJ, 'Proj past fixture'], [OTHER, 'Other past fixture'], [SECRET, 'Zanzibar past fixture']]) {
     const sid = crypto.randomUUID();
     const ts = new Date(Date.now() - 3600_000).toISOString();
@@ -607,28 +607,22 @@ try {
   await pick(ph, 'other');
   if (await drawerShown(ph)) await ph.getByTestId('ns-drawer-toggle').click();
   const oEmpty = ph.locator('.project-instance:not([hidden]) [data-testid="chat-empty"]');
-  report.check('F7 the handed-over project shows the Super hint and the Super row button, no New chat', await until(async () => (await oEmpty.isVisible()) && (await oEmpty.locator('[data-testid="chat-empty-super"]').isVisible()) && (await oEmpty.locator('[data-testid="chat-empty-new"]').count()) === 0, 10000));
+  report.check('F7 the handed-over project offers New chat beside its Super row', await until(async () => (await oEmpty.isVisible()) && (await oEmpty.locator('[data-testid="chat-empty-super"]').isVisible()) && (await oEmpty.locator('[data-testid="chat-empty-new"]').isVisible()), 10000));
   await ph.screenshot({ path: join(SHOTS, '390-handed-over-empty.png') });
   await openDrawer(ph);
   await expand(ph, 'other');
   const otherRows = await projRow(ph, 'other').locator('[data-testid="drawer-chat-row"] .ns-dr-t').allTextContents();
-  report.check('11 the handed-over project offers no New chat in the drawer, only its Super Agent row', (await projRow(ph, 'other').locator('[data-testid="drawer-new-chat"]').count()) === 0
-    && JSON.stringify(otherRows) === '["Super Agent"]', JSON.stringify(otherRows));
-  report.check('11 no New chat in the chat head, no hand-over anywhere on the phone', (await ph.locator('[data-testid="chat-head-new"]:visible, [data-testid="super-handover-btn"]:visible').count()) === 0);
-  // 12: History with the handed-over project ACTIVE: no read for it, its past chat absent.
-  const histReads = [];
-  const onReq = (r) => { const u = r.url(); if (/history|past|sessions|transcript/i.test(u) && (r.headers()['x-dreamcontext-vault'] === 'other' || /[?&]vault=other\b/.test(u))) histReads.push(u.replace(/^https?:\/\/[^/]+/, '')); };
-  ph.on('request', onReq);
+  report.check('11 the handed-over project lists its Super Agent row and offers New chat in the drawer', (await projRow(ph, 'other').locator('[data-testid="drawer-new-chat"]').count()) === 1
+    && otherRows[0] === 'Super Agent', JSON.stringify(otherRows));
+  report.check('11 no hand-over anywhere on the phone', (await ph.locator('[data-testid="super-handover-btn"]:visible').count()) === 0);
+  // 12: History with the handed-over project ACTIVE: its own past chats are listed like any.
   await ph.getByTestId('drawer-history').click();
   const histOpen = await until(async () => (await ph.locator('.chp-row', { hasText: 'Proj past fixture' }).count()) > 0, 20000);
   report.check('12 History opens (proj\'s past chat listed)', histOpen);
   const histProjects = await ph.getByTestId('chp-projects').innerText().catch(() => '');
-  report.check('12 …the handed-over project\'s past chat is absent, the project not offered, no surface picker of its own', (await ph.locator('.chp-row', { hasText: 'Other past fixture' }).count()) === 0 && !/\bother\b/.test(histProjects), histProjects);
+  report.check('12 …the handed-over project is offered and its past chat listed, no surface picker of its own', /\bother\b/.test(histProjects) && await until(async () => (await ph.locator('.chp-row', { hasText: 'Other past fixture' }).count()) > 0, 10000), histProjects);
   await ph.screenshot({ path: join(SHOTS, '390-history.png') });
-  await ph.waitForTimeout(1500);
-  ph.off('request', onReq);
-  report.check('12 History issued no read for the handed-over project', histReads.length === 0, JSON.stringify(histReads));
-  // A pick in a project that is NOT handed over opens that chat (review W2 C1: with 2+ chosen
+  // A pick opens that chat (review W2 C1: with 2+ chosen
   // projects the guard's read must name the project, or every pick is refused with a 400).
   const pickBad = phw.bad.length;
   await ph.locator('.chp-row', { hasText: 'Proj past fixture' }).first().click();
