@@ -15,10 +15,9 @@ import { transcriptCheckout } from '../../lib/session-transcript-cwd.js';
  * The two reads behind the chat's PINNED SHELF — the surface docked to the composer's top
  * edge that holds facts a transcript would scroll away.
  *
- *   • `/api/agent/task-progress` — how far a run has got, DERIVED FROM DISK. The whole
- *     point of the progress row is that the user can check the number, so it is counted
- *     from the task file's own acceptance-criteria checkboxes and an agent-supplied percent
- *     is rejected upstream (chatViewSpec.ts) rather than trusted here.
+ *   • `/api/agent/task-progress` — how far a run has got, DERIVED FROM DISK. The quest
+ *     map reads it for its criteria meter, so it is counted from the task file's own
+ *     acceptance-criteria checkboxes.
  *   • `/api/agent/session-facts` — which branch/worktree this session acts on.
  *
  * Both are VAULT-SCOPED (they read one project's brain), so neither belongs in

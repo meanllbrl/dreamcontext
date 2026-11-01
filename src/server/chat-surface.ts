@@ -51,7 +51,7 @@
  *                             `agent-thread` is DERIVED FROM DISK like `insight`: the agent
  *                             names its channel and `chat/AgentThreadCard.tsx` draws the
  *                             thread, so asserted contents are dropped with a notice.
- *                             `pin` and `progress` are hoisted OUT of the transcript onto the
+ *                             `pin` is hoisted OUT of the transcript onto the
  *                             composer's shelf — `lib/shelfModel.ts` + `chat/PinShelf.tsx`.
  *                             `title` renames the agent's own tab — applied by
  *                             `AgentSurface.tsx` (`armAgentTitle`), drawn nowhere.
@@ -206,7 +206,7 @@ const BRIEFING_REST = `## The rest of the surface
   the composer; \`url\` opens an https \`url\`; \`develop\` takes a task \`id\` and hands that task
   to a NEW session in Develop mode — the one button that opens a chat instead of a view.
 
-## \`dream-view\` — the ten things HTML must NOT be
+## \`dream-view\` — the nine things HTML must NOT be
 
 **A tracked metric.** If the number lives in a dreamcontext Lab insight, name the slug and we
 draw the real card — current cache, canonical render, honest "as of". Never retype tracked
@@ -281,13 +281,6 @@ Withdraw it when the work moves on.
 
 \`\`\`dream-view
 {"type":"checkout","reset":true}
-\`\`\`
-
-**A run's progress**, read live from a task's ticked criteria. Send the slug only — a percent
-you send is ignored and drawn as a notice.
-
-\`\`\`dream-view
-{"type":"progress","task":"my-task-slug"}
 \`\`\`
 
 **This tab's name.** Nothing drawn; your tab takes it. Send it once you understand the work,

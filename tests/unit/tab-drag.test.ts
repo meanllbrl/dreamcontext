@@ -232,6 +232,20 @@ describe('armTabDrag', () => {
     expect(esc.defaultPrevented).toBe(true);
   });
 
+  it('after Escape, the release of the held button is no click, and the click after that is', async () => {
+    const r = rig();
+    r.move(50, 30);
+    r.win.dispatchEvent(ev('keydown', { key: 'Escape' }));
+    r.win.dispatchEvent(ev('pointerup'));
+    const click = ev('click');
+    r.win.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    await new Promise((res) => setTimeout(res, 5));
+    const later = ev('click');
+    r.win.dispatchEvent(later);
+    expect(later.defaultPrevented).toBe(false);
+  });
+
   it('re-measures when the tab strip scrolls mid-drag', () => {
     const r = rig();
     r.move(50, 30);

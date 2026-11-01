@@ -21,9 +21,9 @@ const OBSERVED_CHECK = `- The observed check, when a criterion is about what the
   yourself. Log their paths and the console output, and tick those criteria here, with that
   evidence, never earlier. Errors, overflow or a broken layout = red. No script of your own and
   no build when the repo has the shared one (\`scripts/verify/lib/app.mjs\` for a longer flow):
-  \`dreamcontext builder heavy --max-wait 1200 -- node scripts/verify/look.mjs '<path>' --expect '<text>'\`.
-  It runs on the Vite dev server against a scratch vault. Every browser run goes through
-  \`builder heavy\`, never beside tests.`;
+  \`dreamcontext builder heavy -- node scripts/verify/look.mjs '<path>' --expect '<text>'\`.
+  It runs on the Vite dev server against a scratch vault, as a short check that does not wait
+  for a long run. Every browser run goes through \`builder heavy\`.`;
 
 /**
  * The repeat limit in the words a lead needs (2026-10-31): `builder heavy` counts browser runs,
@@ -33,7 +33,7 @@ const OBSERVED_CHECK = `- The observed check, when a criterion is about what the
 const REPEAT_LIMIT = `\`builder heavy\` counts browser runs, builds and full test suites per branch, phase and command,
 and a red earns one more. Exit 77 = past the limit, NOTHING ran, and running it again will not help: use
 the proof you have, or, when the run is truly needed, \`builder heavy --because "<why>" -- <cmd>\`,
-which is recorded in \`builder budget\`.`;
+recorded in \`builder budget\`. That works once per run and command; past it you stop and ask the owner.`;
 
 /**
  * Light work gets a light process (2026-10-31): under the threshold in lib/run-lane.ts and on no
@@ -45,7 +45,7 @@ const LANE_STEP = `Then read the lane off the diff:
   dreamcontext builder lane --from "$START" --to "$NOW"
 
 It prints \`light: <why>\` or \`full: <why>\`; log the line, you never override it. Light: ONE
-\`reviewer\`, no router and no \`review-pick\`, a browser only when it says something visible
+\`reviewer\`, who reads the security too, no router and no \`review-pick\`, a browser only when it says something visible
 changed or a criterion is about what the owner sees (\`--because\` names that criterion), and no
 verify script of your own. Full: the pick below.`;
 
@@ -88,8 +88,7 @@ const END_REVIEW_TEAM = `- For \`multi-review\`, instead of that one reviewer: e
   criteria; a \`reviewer\` on it gets the whole REVIEWER brief. Merge their reports into ONE
   verdict: dedupe,
   but never drop or downgrade a Critical or Major, since you are the author and their
-  severity is theirs. Any Critical or Major = FAIL. The map keeps one seat for the team:
-  \`goal-live actor end-reviewer=multi-review\`, with the merged verdict.`;
+  severity is theirs. Any Critical or Major = FAIL.`;
 
 /**
  * After a judge (2026-10-31): 13 minutes an hour went to re-running everything, more than the
@@ -167,7 +166,7 @@ but they keep "$S" from closing.`;
 /** Where a wave's progress goes when it is a sub-task. */
 const WAVE_ON_SUBTASK = `With wave sub-tasks: \`dreamcontext tasks status <wave-N> in_progress\` when the wave starts;
    the ticks and the \`wN green\` line go on the WAVE (\`dreamcontext tasks log <wave-N> "wN green: …"\`);
-   \`builder test\` and goal-live keep "$S" (\`--waves M\` = the W parts of the newest map). Green:
+   \`builder test\` (and goal-live, in a fan-out) keeps "$S" (\`--waves M\` = the W parts of the newest map). Green:
    \`dreamcontext tasks complete <wave-N> "<the check's summary line>"\`. A wave never closes
    without a green check.`;
 
@@ -191,9 +190,6 @@ Builders are opt-in, for work that cannot fit this session (section 5).
 ABOVE EVERY OTHER RULE: never end your turn while a judge you started is still running, and
 never stop between waves to ask whether to go on: the owner is not your scheduler.
 
-Every goal-live call is telemetry, never a gate: end each one with \`|| true\`, never chain
-work after it with \`&&\`, and put it on its own line.
-
 EACH BASH CALL IS A FRESH SHELL: only the working directory carries over, never a variable.
 Start every block below with its own \`S=<task-slug>; ROOT="$(git rev-parse --show-toplevel
 2>/dev/null || pwd)"\`, run each block as ONE call, and carry a value to a later block (the
@@ -206,12 +202,7 @@ blocks for up to 9 minutes. Never start anything with the Bash tool's run_in_bac
   S=<task-slug>
   ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
   mkdir -p "$ROOT/tmp/develop/$S"      # check logs and failure state live here, never in OS /tmp
-  dreamcontext goal-live start --goal "$S" --mode develop || true
   dreamcontext builder open "$S"
-
-\`start\` ADOPTS this task's unfinished Develop run (this pane's, or any pane's idle 10+ min),
-so a reopen or handoff keeps the map, the reviewed count and the receipt. "another chat is
-running this goal" = two Develop chats on one task: stop and tell the owner.
 
 Then the run's start snapshot, so the end reviewer reads exactly this run's changes even in a
 checkout other sessions share:
@@ -243,8 +234,6 @@ ${WAVE_SUBTASKS}
 
 ## 2. Each wave N
 
-  dreamcontext goal-live phase impl --wave N --waves M || true
-
 1. Build the wave yourself, its tests with it. Stay inside the task's criteria; a plan that
    turns out to be wrong = STOP and say so.
 2. Check it ONCE, through the heavy lock (it never fights another session's tests):
@@ -258,7 +247,8 @@ ${WAVE_SUBTASKS}
 
   dreamcontext builder test "$S" --wave N --failed --related <files the fix changed>
 
-   75 = a check did not run: run it again. A red that is a timeout under load is the machine:
+   75 = a check did not run, and your place in line is KEPT: read who is ahead, do other work,
+   then run the same command (\`builder queue\` shows the line). A red that is a timeout under load is the machine:
    record the load line and re-run it before you change code. A key marked \`FAILED 2x\` after
    a second fix = STOP and put it to the owner.
 3. Tick that wave's criteria (only what is demonstrably true) and log it:
@@ -286,8 +276,7 @@ ${OBSERVED_CHECK}
 
 Then the end review:
 
-  dreamcontext goal-live phase codereview || true
-  dreamcontext goal-live actor end-reviewer --kind fresh --role reviewer || true
+  dreamcontext builder mark review-start || true
 
 - ONE \`reviewer\` sub-agent (Agent tool, model opus, effort high, not in the background) with the reviewer
   brief (section 4): every path you changed, enumerated by name, with START and NOW, never a
@@ -297,15 +286,15 @@ ${END_FINAL_CHECK}
 
 ${REPEAT_LIMIT}
 
-Record the verdict BEFORE anything else: \`dreamcontext goal-live state end-reviewer=PASS || true\`
-(or FAIL). A reviewer FAIL or a red final check takes the same path: fix exactly the findings
+Record the verdict BEFORE anything else: \`dreamcontext builder mark review-end || true\`, then
+a task-log line with PASS or FAIL. A reviewer FAIL or a red final check takes the same path: fix exactly the findings
 or the failure and nothing else, and check the fix with \`builder test "$S" --wave final --related
 <files the fix changed>\`, naming a central file's tests with \`--also\` instead of the file.
 Only what the fix touched runs: no build, no browser and no Validation command here, those wait
 for the one final check. ${END_REVIEW_ROUND} After a red final check, re-run
 only what was red. Nothing closes on a fix no reviewer has read:
 
-  dreamcontext goal-live actor end-reviewer --kind fresh --role reviewer --round 2 || true
+  dreamcontext builder mark review-start || true   # and review-end with its verdict
 
 ${END_REVIEW_REROUND}
 
@@ -313,30 +302,22 @@ The SAME finding twice = STOP and put it to the owner. You never sign off on you
 
 ${WAVE_CLOSE_409}
 
+Stop the run's clock and carry its one line, from the records, into the status message and
+your last message: \`dreamcontext builder ledger "$S" --close\` (code / queue / checks / review).
+
 Close by the task's Validation method:
-- A command that passed: \`dreamcontext goal-live phase done || true\`, then \`dreamcontext
-  tasks status "$S" completed "<what shipped + the command and its result>"\`.
+- A command that passed: \`dreamcontext tasks status "$S" completed "<what shipped + the
+  command and its result>"\`.
 - A manual or browser check: \`dreamcontext tasks status "$S" in_review "<what to look at>"\`
   and offer the validator. It runs ONLY when the owner asks for it: a clean
   \`goal-validator\` that drives the real app and proves the result with screenshots and a video.
 
-When the owner asks:
+When the owner asks, dispatch ONE \`goal-validator\` (model opus, effort high) with the
+validator brief. Log every verdict: \`dreamcontext tasks log "$S" "validator PASS"\` or
+\`"validator FAIL: <what>"\`. FAIL: fix the failure, check it, then ONE fresh reviewer of the
+fix (log \`"final-fix-reviewer PASS"\`), then the validator again.
 
-  dreamcontext goal-live phase validate || true
-  dreamcontext goal-live actor validator --kind fresh --role validator || true
-
-Dispatch ONE \`goal-validator\` (model opus, effort high) with the validator brief. Log every verdict:
-\`dreamcontext tasks log "$S" "validator PASS"\` or \`"validator FAIL: <what>"\`, and record it
-with \`goal-live state validator=PASS|FAIL || true\`. FAIL: the phase STAYS validate. Never
-call \`phase impl\` or \`phase codereview\` after \`phase validate\`. Fix the failure, check it,
-then ONE fresh reviewer of the fix, then the validator again:
-
-  dreamcontext goal-live actor final-fix-reviewer --kind fresh --role reviewer || true
-  dreamcontext goal-live state final-fix-reviewer=PASS || true
-  dreamcontext goal-live actor validator --kind fresh --role validator --round 2 || true
-
-PASS: \`dreamcontext goal-live phase done || true\` and \`dreamcontext tasks status "$S"
-completed "<what shipped + the evidence>"\`.
+PASS: \`dreamcontext tasks status "$S" completed "<what shipped + the evidence>"\`.
 
 ## 4. Briefs
 
@@ -353,8 +334,8 @@ the exact commands and output. Flaky or skipped is FAIL."
 Builders cost more than you building and wrote no better code when measured. They run when
 the plan's map says \`EXECUTION: fan-out\` (work that cannot fit one session: many waves of
 large, independent lanes), or when the owner asks for builders. Then tell the owner once,
-run \`dreamcontext goal-live recipe fan-out\`, and follow it instead of sections 2 and 3. You
-do not switch on your own mid-run: a lead plan that turns out too big for this session is a
+run \`dreamcontext goal-live recipe fan-out\`, and follow it from its section 0, which opens
+the run builders hang off. You do not switch on your own mid-run: a lead plan that turns out too big for this session is a
 wrong plan, so STOP and say so.
 
 ## 6. Reopen or handoff
@@ -364,7 +345,7 @@ lists sessions, or the task log has \`wN start tree\` lines (a fan-out run, or a
 before builders became opt-in), follow section 6 of \`dreamcontext goal-live recipe fan-out\`
 instead, since a builder may still be writing its files.
 
-\`start\` adopted the run. The last \`run start tree\` line in the task log is START; ticked
+The last \`run start tree\` line in the task log is START; ticked
 criteria and \`wN green\` lines say which waves are done. A \`test-wN.json\` in tmp/develop/$S/
 holds the failures still open: \`builder test "$S" --wave N --failed\`. A validator FAIL newer
 than any final-fix-reviewer PASS = fix it, then final-fix-reviewer, then the validator: never
@@ -549,7 +530,7 @@ owner. Each result is printed once.
    It type-checks each touched package and runs the tests that import the changes, through
    the heavy lock; SHOW its output. Exit 0 = GREEN, except a "NOT GREEN: no test covers"
    line: add that test with --also, or record that it is untested. 1 = failures, each printed
-   as \`FAIL <owning lane>: <key>\`. 75 = a check did not run: run it again. A REVIEWED wave
+   as \`FAIL <owning lane>: <key>\`. 75 = a check did not run, its place in line is kept: run it again. A REVIEWED wave
    dispatches its reviewer (2f) in the SAME message as this call, so both run at once.
 4. Failures: per owning lane, write exactly its FAIL lines and the relevant log lines to
    $ROOT/tmp/develop/$S/wN-L-fix.md and resume it (a failure no lane owns goes to the lane
@@ -569,11 +550,13 @@ owner. Each result is printed once.
 
   dreamcontext goal-live phase codereview --wave N || true
   dreamcontext goal-live actor wN-reviewer --kind fresh --role reviewer --wave N || true
+  dreamcontext builder mark review-start || true
 
 Dispatch ONE \`reviewer\` sub-agent (Agent tool, model opus, effort high, not in the background; a later round: effort medium, only the fix) with the
 reviewer brief (section 5), in the same message as the wave's \`builder test\` call. It
 fetches its own changes; never paste a diff. Record the verdict BEFORE the next phase:
 
+  dreamcontext builder mark review-end || true
   dreamcontext goal-live state wN-reviewer=PASS --wave N || true
 
 FAIL: re-enter the build for this wave, resume the owning builder with EXACTLY the findings
@@ -583,6 +566,7 @@ only the previous findings and the fix. The phase calls make the retry a round o
   dreamcontext goal-live phase impl --wave N || true
   dreamcontext goal-live phase codereview --wave N || true
   dreamcontext goal-live actor wN-reviewer --kind fresh --role reviewer --wave N --round 2 || true
+  dreamcontext builder mark review-start || true   # and review-end with its verdict
 
 The SAME finding twice = STOP and put it to the owner.
 
@@ -620,26 +604,34 @@ Then the end review:
   dreamcontext goal-live phase codereview || true
   dreamcontext goal-live actor end-reviewer --kind fresh --role reviewer || true
 
+When it runs, \`dreamcontext builder mark review-start || true\` first; a skipped review writes no mark.
+
 - ONE \`reviewer\` (model opus, effort high, not in the background) over the union of every wave's scope
   no wave reviewer read, enumerated by name, with the wave-1 START tree: never a bare
   \`git diff\` against a ref. A run whose every wave was REVIEWED skips it, unless a criterion
   is about what the owner sees: then this reviewer still runs, over the task's ticks and their
   evidence alone, since no wave reviewer saw a tick.
 ${END_REVIEW_TEAM}
+  The map keeps one seat for the team: \`goal-live actor end-reviewer=multi-review\`, with the
+  merged verdict.
 ${END_FINAL_CHECK}
 
 ${REPEAT_LIMIT}
 
-Record \`dreamcontext goal-live state end-reviewer=PASS || true\`. A finding or a red resumes
+Record \`dreamcontext goal-live state end-reviewer=PASS || true\`, with \`dreamcontext builder mark review-end || true\` when a review ran. A finding or a red resumes
 the owning lane (2e step 4, re-checked with \`--wave final\` on the files the fix changed, a
 central file's tests named with \`--also\`, no build and no browser; an end-review round passes \`--force\` to \`builder resume\`, since rounds
 are not capped). ${END_REVIEW_ROUND}
 
   dreamcontext goal-live actor end-reviewer --kind fresh --role reviewer --round 2 || true
+  dreamcontext builder mark review-start || true   # and review-end with its verdict
 
 ${END_REVIEW_REROUND}
 
 ${WAVE_CLOSE_409}
+
+Stop the run's clock and carry its one line, from the records, into the status message and
+your last message: \`dreamcontext builder ledger "$S" --close\` (code / queue / checks / review).
 
 Close by the task's Validation method:
 - A command that passed: \`dreamcontext goal-live phase done || true\`, then \`dreamcontext
@@ -702,7 +694,11 @@ the exact commands and output. Flaky or skipped is FAIL."
 
 ## 6. Reopen or handoff
 
-\`start\` adopted the run. Then reconcile: \`dreamcontext builder status "$S"\` says where
+First adopt the run, which keeps its builders on this pane:
+
+  dreamcontext goal-live start --goal "$S" --mode develop || true
+
+Then reconcile: \`dreamcontext builder status "$S"\` says where
 every session is, and the last \`wN start tree\` line in the task log is the current wave's
 START. Running = wait; reported but not checked = 2e; unfinished or crashed = resume once. A
 \`test-wN.json\` in tmp/develop/$S/ holds the failures still open: \`builder test "$S" --wave N

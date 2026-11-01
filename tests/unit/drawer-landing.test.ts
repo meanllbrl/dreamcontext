@@ -81,6 +81,7 @@ describe('one step to what was clicked', () => {
     expect(landsOnChat({ kind: 'member', slug: 'a', title: 'A' })).toBe(true);
     expect(landsOnChat({ kind: 'page', page: 'relations' })).toBe(false);
     expect(landsOnChat({ kind: 'close-window', windowId: 'x' })).toBe(false);
+    expect(landsOnChat({ kind: 'move-window', windowId: 'x', before: null })).toBe(false);
   });
   it('the window queues before it brings the project forward', () => {
     const body = src('dashboard/src/components/layout/WindowChrome.tsx').split('const queueDrawerIntent =')[1];

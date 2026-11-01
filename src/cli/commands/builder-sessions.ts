@@ -45,6 +45,8 @@ import {
 } from '../../lib/builder-spawn.js';
 import { HEAVY_LOCK_BUSY_EXIT, heavyLockPath, heavySlotDir, listProcesses, repoToplevel } from '../../lib/builder-tools.js';
 import { acquireHeavyReporting } from '../../lib/heavy-acquire.js';
+import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-queue.js';
+import { recordCheck } from '../../lib/run-ledger.js';
 import {
   ownerOf,
   parseTestReport,
@@ -137,17 +139,35 @@ function launchDetached(argv: string[], o: { cwd: string; env: NodeJS.ProcessEnv
 async function runCheckLocked(argv: string[], cwd: string, logFile: string): Promise<number | null> {
   // The repo's heavy lock, then one of the machine's heavy slots (plan r5 D12; one while the
   // Mac is very hot, lib/heat.ts). Busy: the same message `builder heavy` prints.
-  const { held, busy } = await acquireHeavyReporting({ cwd, lockPath: heavyLockPath(cwd), slotDir: heavySlotDir(), ps: listProcesses });
-  if (!held) { process.stderr.write(`builder test: ${busy}\n`); return null; }
+  const command = argv.join(' ');
+  const pick = queueOf(command, {}, (files) => countRelatedTests(cwd, files));
+  const label = safeLabel(command);
+  const asked = Date.now();
+  const { held, busy, line } = await acquireHeavyReporting({
+    cwd, lockPath: heavyLockPath(cwd), slotDir: heavySlotDir(), ps: listProcesses,
+    // The report's path is not the job: a retry of the same check must find its place.
+    job: { key: jobKey(cwd, command.replace(/--outputFile=\S+/, '')), size: pick.size, label, line: pick.line },
+    note: (l) => { process.stderr.write(`builder test: ${l}\n`); },
+  });
+  if (!held) {
+    const gaveUp = Date.now();
+    recordCheck(cwd, { label, line: line ?? pick.line, asked, ran: gaveUp, ended: gaveUp, exit: null });
+    process.stderr.write(`builder test: ${busy}\n`);
+    return null;
+  }
+  const ran = Date.now();
   const fd = openSync(logFile, 'w');
+  let exit: number | null = null;
   try {
-    return await new Promise<number | null>((done) => {
+    exit = await new Promise<number | null>((done) => {
       const child = spawn('npx', argv, { cwd, stdio: ['ignore', fd, fd] });
       child.on('error', () => done(null));
       child.on('exit', (code, signal) => done(signal ? null : code ?? null));
     });
+    return exit;
   } finally {
     closeSync(fd);
+    recordCheck(cwd, { label, line: line ?? pick.line, asked, ran, ended: Date.now(), exit });
     held.release();
   }
 }
@@ -670,7 +690,7 @@ export async function builderTest(deps: SessionDeps, slug: string, opts: TestOpt
     deps.print(`FAIL ${owner ?? `? (no lane owns ${f.file})`}: ${f.key}${again}`);
   }
   if (failures.length > MAX_PRINTED_FAILURES) deps.print(`... and ${failures.length - MAX_PRINTED_FAILURES} more (see the logs above)`);
-  for (const n of notRun) deps.print(`NOT RUN: ${n} (heavy lock busy, could not start, or killed): run the same command again`);
+  for (const n of notRun) deps.print(`NOT RUN: ${n} (the wait ran out, could not start, or killed; the line above names who is ahead and your place is kept): do other work first, then run the same command`);
 
   const remaining = state.tscFailed.length > 0 || Object.keys(state.failedTests).length > 0;
   if (failures.length === 0 && notRun.length === 0 && !remaining) {

@@ -1,6 +1,6 @@
 /**
  * Unit tests for `parseViewBlock` — the validator for the `dream-view` fence
- * (insight / checklist / secret / run / pin / progress; `pin` has its own file).
+ * (insight / checklist / secret / run / pin; `pin` has its own file).
  *
  * Two things carry the real risk here and are pinned hardest:
  *   • NOTHING THROWS — invalid JSON, `null`, an array, an unknown `type`, any cap breach.
@@ -71,7 +71,7 @@ describe('parseViewBlock — the retired chart/page types', () => {
   it('is gone from VIEW_TYPES, so the briefing lockstep can never re-name it', () => {
     expect(VIEW_TYPES as readonly string[]).not.toContain('chart');
     expect(VIEW_TYPES as readonly string[]).not.toContain('page');
-    expect([...VIEW_TYPES]).toEqual(['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'progress', 'checkout', 'agent-thread', 'title']);
+    expect([...VIEW_TYPES]).toEqual(['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'checkout', 'agent-thread', 'title']);
   });
 });
 
@@ -84,6 +84,13 @@ describe('parseViewBlock — the retired chart/page types', () => {
  * here are the drops — every content key refused, loudly — and the slug gate, because that
  * string is a path segment on the server.
  */
+describe('a retired progress block', () => {
+  it('reads as nothing at all, so old transcripts grow no "unknown view" notice', () => {
+    expect(parseViewBlock('{"type":"progress","task":"some-task"}')).toEqual({ view: null, notices: [] });
+    expect(VIEW_TYPES as readonly string[]).not.toContain('progress');
+  });
+});
+
 describe('parseViewBlock — type: agent-thread', () => {
   it('validates the minimal form — naming the agent is the whole payload', () => {
     const r = parseViewBlock('{"type":"agent-thread","slug":"daily-digest"}');
@@ -113,8 +120,7 @@ describe('parseViewBlock — type: agent-thread', () => {
   });
 
   /**
-   * THE LOAD-BEARING ONE. Same contract `validateProgress` enforces for a supplied percent:
-   * the key is dropped AND the agent is told, because an agent that believes the card shows
+   * THE LOAD-BEARING ONE: the key is dropped AND the agent is told, because an agent that believes the card shows
    * what it typed will keep typing it.
    */
   it.each(['entries', 'text', 'messages'])('drops an asserted "%s" with a notice, and still renders', (key) => {

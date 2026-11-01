@@ -152,6 +152,32 @@ export function renameWindow(state: WindowsState, id: string, raw: string): Wind
   return { ...state, list: state.list.map((w) => (w.id === id ? { ...w, name } : w)) };
 }
 
+/** `id` moved right before `before` (null = the end); the rest keep their order. An unknown
+ *  `id` or `before` changes nothing. */
+export function moveBefore<T extends { id: string }>(list: readonly T[], id: string, before: string | null): T[] {
+  const moved = list.find((w) => w.id === id);
+  if (!moved || id === before) return [...list];
+  const rest = list.filter((w) => w.id !== id);
+  const at = before === null ? rest.length : rest.findIndex((w) => w.id === before);
+  if (at < 0) return [...list];
+  return [...rest.slice(0, at), moved, ...rest.slice(at)];
+}
+
+/** The drawer's drag: this order is the roster's `windows`, so a save keeps it. */
+export function moveWindow(state: WindowsState, id: string, before: string | null): WindowsState {
+  const list = moveBefore(state.list, id, before);
+  return list.every((w, i) => w === state.list[i]) ? state : { ...state, list };
+}
+
+/** The windows in the saved order (a re-hydrate): one the roster does not list yet stays, at
+ *  the end. Without this, a surface told to re-read would write its old order straight back. */
+export function adoptWindowOrder(state: WindowsState, saved: readonly { id: string }[]): WindowsState {
+  const at = new Map(saved.map((w, i) => [w.id, i] as const));
+  const named = state.list.filter((w) => at.has(w.id)).sort((a, b) => at.get(a.id)! - at.get(b.id)!);
+  const list = [...named, ...state.list.filter((w) => !at.has(w.id))];
+  return list.every((w, i) => w === state.list[i]) ? state : { ...state, list };
+}
+
 /** Drop a window from the list (its tabs are closed by the caller). The last one stays. */
 export function dropWindow(state: WindowsState, id: string): WindowsState {
   if (state.list.length <= 1 || state.activeId === id) return state;

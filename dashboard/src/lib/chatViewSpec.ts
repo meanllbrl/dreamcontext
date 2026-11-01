@@ -18,7 +18,7 @@
  *                   cannot have a privileged submit; markup the agent wrote could only ever
  *                   hand the value back to the agent, which is the whole thing this avoids.
  *   • `run`       — a real PTY the user types into. Not a picture of a terminal: a process.
- *   • `pin` / `progress` — the shelf docked to the composer, which never scrolls away.
+ *   • `pin` — the shelf docked to the composer, which never scrolls away.
  *
  * Pure and defensive by design: `parseViewBlock` runs on every streamed token via
  * `chatActions.ts`, so it NEVER throws, and it never lets a malformed payload blank a
@@ -33,12 +33,12 @@
 // Types
 // ---------------------------------------------------------------------------------------
 
-export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'progress', 'checkout', 'agent-thread', 'title'] as const;
+export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'checkout', 'agent-thread', 'title'] as const;
 export type ChatViewType = typeof VIEW_TYPES[number];
 
 export type ChatViewSpec =
   InsightViewSpec | ChecklistViewSpec | SecretViewSpec | RunViewSpec | McpViewSpec
-  | PinViewSpec | ProgressViewSpec | CheckoutViewSpec | AgentThreadViewSpec | TitleViewSpec;
+  | PinViewSpec | CheckoutViewSpec | AgentThreadViewSpec | TitleViewSpec;
 
 /**
  * `type: "insight"` — a Lab insight drawn BY SLUG, with no markup from the agent at all.
@@ -201,18 +201,6 @@ export interface PinViewSpec {
 }
 
 /**
- * `type: "progress"` — a run's progress, DERIVED FROM DISK. The payload carries only the
- * task slug: percent comes from that task file's ticked acceptance criteria (the same
- * counter `tasks doctor` uses), so it cannot be wrong in a way the user can't check. A
- * percent supplied by the agent is not a fallback, it is a bug — `validateProgress` drops it
- * and says so.
- */
-export interface ProgressViewSpec {
-  type: 'progress';
-  task: string;
-}
-
-/**
  * `type: "checkout"` — which checkout this session's WORK belongs to, when it is not the one
  * the session is standing in.
  *
@@ -237,7 +225,7 @@ export interface CheckoutViewSpec {
 /**
  * `type: "agent-thread"` — one agent's run thread, DERIVED FROM DISK.
  *
- * The same bargain `insight` and `progress` strike, for the third kind of thing this app
+ * The same bargain `insight` strikes, for the second kind of thing this app
  * already owns a canonical rendering of. A run's thread is a synced append-only file
  * (`automations/threads/<slug>/<date>.md`) with a per-machine read watermark on top of it;
  * an agent retyping its own posts into the transcript would fork that — two spellings of one
@@ -245,7 +233,7 @@ export interface CheckoutViewSpec {
  * So the agent NAMES the agent and the app draws the thread.
  *
  * Nothing about content may be asserted: `entries`, `text` and `messages` are dropped with a
- * notice, exactly as `validateProgress` refuses a supplied percent. `run` pins one run
+ * notice, `run` pins one run
  * (`RunEvent.firedAt`, an exact ISO string); omitted, the card shows that agent's newest.
  */
 export interface AgentThreadViewSpec {
@@ -700,17 +688,11 @@ const PIN_WEIGHTS = new Set(['tag', 'row']);
  * `chat/chatActions.ts` — both used to carry a GUESSED ceiling (120 here, 64 there). Task
  * names are sentence-style and `slugify` (src/lib/id.ts) truncates nothing, so both guesses
  * sat below the real distribution: 64 dropped 63% of the Plan → Develop hand-off buttons
- * the agent actually wrote, and 120 still drops the progress shelf of this project's 22
- * longest tasks. One constant, shared by both gates, so neither can drift below reality
+ * the agent actually wrote, and 120 still dropped this project's 22 longest task
+ * slugs. One constant, shared by both gates, so neither can drift below reality
  * again.
  */
 export const MAX_SLUG_CHARS = 252;
-
-/** A task slug as `dreamcontext` writes one. Longer than a pin id because a task slug is a
- *  whole sentence kebab-cased (`two-new-agent-actions-pinned-session-facts-…`). */
-const PROGRESS_SLUG_RE = new RegExp(`^[A-Za-z0-9._-]{1,${MAX_SLUG_CHARS}}$`);
-/** Keys that would mean the agent is ASSERTING progress instead of letting it be derived. */
-const ASSERTED_PROGRESS_KEYS = ['percent', 'pct', 'done', 'total'] as const;
 
 /** One fact, or null when it has no label to show. A rejected `url` costs the fact its LINK,
  *  never its label — a dropped link is a chip you can't click, a dropped fact is one you
@@ -812,27 +794,6 @@ function validatePin(obj: Record<string, unknown>, notices: string[]): { view: C
 }
 
 // ---------------------------------------------------------------------------------------
-// type: "progress"
-// ---------------------------------------------------------------------------------------
-
-function validateProgress(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
-  const task = typeof obj.task === 'string' ? obj.task.trim() : '';
-  if (!task || !PROGRESS_SLUG_RE.test(task)) {
-    notices.push('A progress block was skipped — its "task" is missing or is not a task slug.');
-    return { view: null, notices };
-  }
-
-  // Loud, not silent: the whole point of this block is that the user can TRUST the number,
-  // so an agent that supplied one is told its number was thrown away rather than left to
-  // believe the bar it drew is the bar the user sees.
-  if (ASSERTED_PROGRESS_KEYS.some((k) => obj[k] !== undefined)) {
-    notices.push("A progress block supplied its own percent — it was ignored. The number is read from the task file's acceptance criteria.");
-  }
-
-  return { view: { type: 'progress', task }, notices };
-}
-
-// ---------------------------------------------------------------------------------------
 // type: "agent-thread"
 // ---------------------------------------------------------------------------------------
 
@@ -859,7 +820,7 @@ function validateAgentThread(obj: Record<string, unknown>, notices: string[]): {
     return { view: null, notices };
   }
 
-  // Loud, not silent — the same reason `validateProgress` announces a dropped percent. The
+  // Loud, not silent. The
   // thread is read from disk, so an agent that wrote out the exchange would otherwise be
   // left believing the card shows what it typed.
   if (ASSERTED_THREAD_KEYS.some((k) => obj[k] !== undefined)) {
@@ -994,7 +955,9 @@ export function parseViewBlock(json: string): { view: ChatViewSpec | null; notic
       case 'run': return validateRun(parsed, notices);
       case 'mcp': return validateMcp(parsed, notices);
       case 'pin': return validatePin(parsed, notices);
-      case 'progress': return validateProgress(parsed, notices);
+      // Retired 2026-10-31. Old transcripts and sessions still on the old briefing carry these
+      // blocks: they read as nothing at all, never as the "unknown view" notice below.
+      case 'progress': return { view: null, notices };
       case 'checkout': return validateCheckout(parsed, notices);
       case 'agent-thread': return validateAgentThread(parsed, notices);
       case 'title': return validateTitle(parsed, notices);

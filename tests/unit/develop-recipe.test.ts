@@ -89,7 +89,6 @@ describe('develop: the lead builds, checks each wave, and ONE clean reviewer jud
     expect(end).toMatch(/never paste a diff/);
     expect(end).toMatch(/Record the verdict BEFORE anything else/);
     expect(end).toMatch(/fix exactly the findings\s+or the failure and nothing else/);
-    expect(end).toContain('dreamcontext goal-live actor end-reviewer --kind fresh --role reviewer --round 2 || true');
     expect(end).toMatch(/The SAME finding twice = STOP and put it to the owner/);
     expect(end).toMatch(/You never sign off on your own work/);
     expect(end).toMatch(/The\s+full suite runs only when the Validation method names it/);
@@ -97,12 +96,9 @@ describe('develop: the lead builds, checks each wave, and ONE clean reviewer jud
 
   it('closes by the Validation method; the validator only on the owner\'s request, never after an unreviewed fix', () => {
     const end = dSection('## 3.', '## 4.');
-    expect(end).toMatch(/A command that passed: .*phase done/);
+    expect(end).toMatch(/A command that passed: `dreamcontext tasks status "\$S" completed/);
     expect(end).toMatch(/A manual or browser check: `dreamcontext tasks status "\$S" in_review/);
     expect(end).toMatch(/It runs ONLY when the owner asks for it/);
-    const at = D.indexOf('goal-live phase validate');
-    expect(at).toBeGreaterThan(0);
-    expect(D.slice(at)).not.toMatch(/goal-live phase (?:impl|codereview)/);
     expect(D).toMatch(/VALIDATOR: "[^"]*screenshots and a video/);
     expect(D).toMatch(/never\s+re-validate an unreviewed fix/);
   });
@@ -122,16 +118,17 @@ describe('develop: the lead builds, checks each wave, and ONE clean reviewer jud
     expect(reopen).toContain('dreamcontext builder status "$S"');
     expect(reopen).toMatch(/`wN start tree` lines/);
     expect(reopen).toMatch(/section 6 of `dreamcontext goal-live recipe fan-out`/);
-    expect(reopen.indexOf('NOT reopened')).toBeLessThan(reopen.indexOf('`start` adopted the run'));
+    expect(reopen.indexOf('NOT reopened')).toBeLessThan(reopen.indexOf('The last `run start tree` line'));
   });
 
-  it('every goal-live command ends in || true, alone on its line', () => {
-    const commands = dLines.filter((l) => /^\s+dreamcontext goal-live /.test(l));
-    expect(commands.length).toBeGreaterThanOrEqual(8);
-    for (const l of commands) {
-      expect(l, l).toMatch(/\|\| true\s*$/);
-      expect(l.slice(l.indexOf('goal-live')), l).not.toContain('&&');
-    }
+  it('a lead run spends no turn on goal-live status: the chat map reads the transcript', () => {
+    expect(dLines.filter((l) => /goal-live (?:start|phase|actor|state|clear)/.test(l))).toEqual([]);
+  });
+
+  it('builders go through the fan-out recipe from its section 0, and a reopen adopts the run', () => {
+    expect(D).toMatch(/follow it from its section 0/);
+    const reopen = R.slice(R.indexOf('## 6.'));
+    expect(reopen).toContain('dreamcontext goal-live start --goal "$S" --mode develop || true');
   });
 });
 
@@ -233,7 +230,7 @@ describe('ONE check per wave, failures routed to the owning lane', () => {
     expect(check).toContain('dreamcontext builder test "$S" --wave N --related <every changed path> --also <also-run tests>');
     expect(check).toMatch(/SHOW its output/);
     expect(check).toMatch(/"NOT GREEN: no test covers"\s+line/);
-    expect(check).toMatch(/75 = a check did not run: run it again/);
+    expect(check).toMatch(/75 = a check did not run, its place in line is kept/);
   });
 
   it('a failure resumes the owning lane with exactly its output, then re-runs only what failed', () => {
@@ -500,7 +497,7 @@ describe('the end review the diff picks, in both recipes', () => {
       expect(end).toMatch(/Exit 2 = no plan in the reply:\s+run the router once more; exit 2 again = the team without a plan/);
       expect(end).toMatch(/No `review-\*` agents in this project\? Use\s+general-purpose agents/);
       expect(end).toMatch(/you never override it/);
-      expect(end.indexOf('builder review-pick')).toBeLessThan(end.indexOf('goal-live phase codereview'));
+      expect(end.indexOf('builder review-pick')).toBeLessThan(end.indexOf('builder mark review-start'));
     });
 
     it(`${name}: the team is the router's specialists, each on its own scope`, () => {

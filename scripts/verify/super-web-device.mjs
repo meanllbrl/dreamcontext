@@ -254,6 +254,7 @@ async function startSite(port) {
 <p>Laid out at <b id="vw"></b> px</p><button id="cta">Share</button>
 <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-top:16px">
 ${Array.from({ length: 12 }, (_, i) => `<div style="height:90px;border-radius:12px;background:hsl(${i * 30} 60% 70%)">Ledger ${i + 1}</div>`).join('')}</div>
+<button id="bottom-menu" style="position:fixed;left:0;right:0;bottom:0;height:44px;border:0;background:#223;color:#fff" onclick="this.textContent='Tapped'">Bottom menu</button>
 <script>function w(){document.getElementById('vw').textContent=String(innerWidth)}w();addEventListener('resize',w)</script></body></html>`);
   });
   await new Promise((r) => srv.listen(port, '127.0.0.1', r));
@@ -294,7 +295,7 @@ try {
   if (!(await page.locator('.chat-cmp-input:visible').count())) await page.getByRole('button', { name: /Start chat/ }).click().catch(() => {});
   ok('a chat opens', await until(page, async () => (await page.locator('.chat-cmp-input:visible').count()) > 0));
   await sleep(1500);
-  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+  await page.locator('[data-testid="drawer-super-row"]:visible, [data-testid="super-handover-btn"]:visible').first().click();
   ok('the surface shows', await until(page, async () => (await page.locator('[data-testid="super-surface"]:visible').count()) > 0));
   ok('the super agent opened its cards', await until(page, async () => record().containers.length >= 2, 60000));
   await settle(page);
@@ -312,6 +313,29 @@ try {
     ok(`${which}: the page draws in its frame`, await until(page, async () => (await frameOf(page, id).count()) > 0, 15000));
     await page.waitForTimeout(which === 'remote' ? 4000 : 1500);
     await hoverCard(page, id);
+
+    // The bar is a strip under the page (owner 2026-10-31): a phone page's bottom row takes a
+    // real click at its place on the screen, and nothing of the page sits behind the strip.
+    if (which === 'local') {
+      await card(page, id).locator('[data-testid="web-device-phone"]').first().click();
+      await page.waitForTimeout(500);
+      const geo = await frameOf(page, id).evaluate((f) => {
+        const bar = f.closest('.super-zoom').querySelector('.super-zoom-bar').getBoundingClientRect();
+        const r = f.getBoundingClientRect();
+        return { frameBottom: r.bottom, frameX: r.left + r.width / 2, barTop: bar.top };
+      });
+      ok('strip: the page ends where the strip starts', geo.frameBottom <= geo.barTop + 0.5, JSON.stringify(geo));
+      const menu = page.frameLocator(`[data-testid="super-container"][data-container-id="${id}"] iframe`).first().locator('#bottom-menu');
+      await page.mouse.click(geo.frameX, geo.frameBottom - 6);
+      ok('strip: the bottom row of a phone page takes the click', await until(page, async () => (await menu.textContent()) === 'Tapped', 3000), await menu.textContent());
+      await shot(page, 'strip-phone-bottom-click');
+      await card(page, id).locator('[data-testid="super-zoom-clear"]').first().click();
+      const ask = await until(page, async () => (await card(page, id).locator('[data-testid="super-zoom-clear-ask"]').count()) > 0, 3000);
+      ok('strip: the Clear question shows in the strip', ask && await card(page, id).locator('[data-testid="super-zoom-clear-ask"]').isVisible());
+      await shot(page, 'strip-clear-ask');
+      await card(page, id).locator('[data-testid="super-zoom-clear-no"]').first().click();
+      if (process.env.STRIP_ONLY) break;
+    }
 
     // The mode button: picks where the bridge is, is the shield (and says so) where it is not.
     const btn = card(page, id).locator('[data-testid="super-zoom-inspect"]').first();

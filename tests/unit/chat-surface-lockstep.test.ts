@@ -70,24 +70,6 @@ describe('CHAT_SURFACE_BRIEFING <-> dream-view parser lockstep', () => {
   });
 
   /**
-   * "Progress is DERIVED, never asserted" is the whole reason the user can trust that
-   * number, and the briefing is where an agent learns what to send. A `percent` shown in an
-   * example would teach exactly the habit `validateProgress` then has to punish — so the
-   * rule is pinned here rather than left to whoever next edits the prose.
-   */
-  it('no progress example ever shows a percent — it is derived, not asserted', () => {
-    const progress = examples
-      .map((json) => JSON.parse(json) as Record<string, unknown>)
-      .filter((v) => v.type === 'progress');
-    expect(progress.length, 'the briefing demonstrates no progress block at all').toBeGreaterThan(0);
-    for (const p of progress) {
-      for (const key of ['percent', 'pct', 'done', 'total']) {
-        expect(p[key], `a progress example carries "${key}"`).toBeUndefined();
-      }
-    }
-  });
-
-  /**
    * The drop is the shelf's only retirement path, and an agent that is never told about it
    * cannot use it — which is precisely the state the shelf was in when a session's tag line
    * filled up with conditions that had long since been resolved (owner, 2026-08-25). A
@@ -100,7 +82,7 @@ describe('CHAT_SURFACE_BRIEFING <-> dream-view parser lockstep', () => {
    * thread's contents would teach exactly the habit `validateAgentThread` then has to
    * punish — and, worse than a dropped percent, a retyped exchange would look right while
    * being a frozen copy of a synced file. So the example's SHAPE is pinned here, next to the
-   * progress rule it mirrors, rather than left to whoever next shortens this prose.
+   * percent rule it mirrored, rather than left to whoever next shortens this prose.
    */
   it('demonstrates agent-thread by NAME only — its contents are read from disk', () => {
     const threads = examples

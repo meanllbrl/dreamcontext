@@ -12,7 +12,7 @@
  *     on 2026-08-26, because a fixed widget vocabulary could only ever draw what we had
  *     already built;
  *   • a fenced ```dream-view block — a JSON object ({@link ChatViewSpec} from
- *     `lib/chatViewSpec.ts`, `type: 'insight' | 'checklist' | 'pin' | 'progress'`) for the
+ *     `lib/chatViewSpec.ts`, `type: 'insight' | 'checklist' | 'pin'`) for the
  *     four things HTML cannot be: a tracked metric's canonical rendering, an always-on-top
  *     OS window, and the two shelf rows docked to the composer;
  *   • a board reference — `![x](path.excalidraw.md)` / `[x](path.excalidraw)` — which
@@ -110,7 +110,7 @@ export interface ParsedAnswer {
   blocks: ChatBlock[];
   /** Validated `dream-view` payloads, in fence order — `blocks` without the html. Kept as
    *  its own field for the consumers that only ever want view specs (the composer shelf
-   *  reads pins and progress straight off it, and never renders anything inline). */
+   *  reads pins straight off it, and never renders anything inline). */
   views: ChatViewSpec[];
   /** Human-readable degradation notices — a dropped widget, an unknown view type, a
    *  block that didn't parse. Additive to `body`, never a replacement for it: prose

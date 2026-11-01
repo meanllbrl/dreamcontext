@@ -6,7 +6,8 @@ import { ProjectChipBubbles } from '../ProjectTabs';
 import { AgentAvatar } from '../../agents/AgentAvatar';
 import { DRAWER_WIDTH_MAX, DRAWER_WIDTH_MIN } from '../../../lib/launcherPrefs';
 import type { DrawerIntent } from '../../../lib/drawerIntents';
-import type { DrawerChild, DrawerProjectRow } from './drawerModel';
+import { armPointerDrag } from '../../sleepy/tabDrag';
+import { windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow } from './drawerModel';
 import './ChatDrawer.css';
 
 /** Pixels a press must travel before it is a drag, not a click (`tabDrag.ts`'s threshold). */
@@ -25,6 +26,8 @@ export interface ChatDrawerProps {
   onRelations(): void;
   onMove(name: string, delta: -1 | 1): void;
   onDrop(name: string, beforeIndex: number): void;
+  /** A chat row of `vault` dragged before the row `before` (null = the end). */
+  onMoveWindow(vault: string, windowId: string, before: string | null): void;
   onOpenInWindow(name: string): void;
   onCloseProject(name: string): void;
   /** "+" beside Projects: the app's Add Project flow. */
@@ -44,6 +47,8 @@ export function ChatDrawer(p: ChatDrawerProps) {
   const [menu, setMenu] = useState<Menu | null>(null);
   const [guide, setGuide] = useState<number | null>(null);
   const [drag, setDrag] = useState<{ name: string; over: number } | null>(null);
+  /** A chat row being dragged, and where it would land. */
+  const [winDrag, setWinDrag] = useState<{ vault: string; id: string; before: string | null } | null>(null);
   /** A window row being renamed in place (the desktop WebView has no `prompt`). */
   const [renaming, setRenaming] = useState<{ vault: string; id: string; value: string } | null>(null);
   const renameDone = useRef(false);
@@ -172,6 +177,38 @@ export function ChatDrawer(p: ChatDrawerProps) {
     window.addEventListener('pointercancel', onCancel);
   };
 
+  /* ── A chat row among its project's chat rows: the surface's own gesture (`tabDrag.ts`). Its
+     click is swallowed after a drop, so a drag never opens the row. Super Agent and team rows
+     have no handler and are no target; a project in another OS window saves its own order. ── */
+  const startWindowDrag = (e: ReactPointerEvent<HTMLElement>, row: DrawerProjectRow, id: string) => {
+    if (e.button !== 0 || e.ctrlKey || row.otherWindow) return;
+    const ids = windowIds(row);
+    if (ids.length < 2) return;
+    const el = e.currentTarget;
+    const measure = () => Array.from(el.parentElement?.querySelectorAll<HTMLElement>('[data-window-id]') ?? []).map((r) => {
+      const { top, height } = r.getBoundingClientRect();
+      return { id: r.dataset.windowId ?? '', top, height };
+    });
+    let before: string | null = id;
+    armPointerDrag({ pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY }, el, {
+      win: window,
+      onBegin: () => setWinDrag({ vault: row.name, id, before: id }),
+      onFrame: (_x, y) => {
+        const over = windowDropBefore(measure(), y);
+        if (over === before) return;
+        before = over;
+        setWinDrag({ vault: row.name, id, before: over });
+      },
+      onEnd: (drop, _x, y) => {
+        setWinDrag(null);
+        // A row that left the drawer while held (⌘B, its last tab closed) has nothing to measure.
+        if (!drop || !el.isConnected) return;
+        const at = windowDropBefore(measure(), y);
+        if (!windowDropIsNoop(ids, id, at)) p.onMoveWindow(row.name, id, at);
+      },
+    });
+  };
+
   const onRowKey = (e: ReactKeyboardEvent, name: string) => {
     if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
     e.preventDefault();
@@ -236,9 +273,16 @@ export function ChatDrawer(p: ChatDrawerProps) {
       );
     }
     const openWindowMenu = (x: number, y: number) => openMenu({ kind: 'window', name: row.name, windowId: c.id, x, y });
+    const dragHere = winDrag?.vault === row.name ? winDrag : null;
+    const order = windowIds(row);
+    const landing = dragHere && !windowDropIsNoop(order, dragHere.id, dragHere.before);
     return (
       <button key={`w-${c.id}`} type="button" className={`ns-dr-row ns-dr-child ns-dr-win${c.selected ? ' is-sel' : ''}`}
         data-testid="drawer-window-row" data-window-id={c.id} aria-haspopup="menu"
+        data-dragging={dragHere?.id === c.id ? 'true' : undefined}
+        data-drop-before={landing && dragHere.before === c.id ? 'true' : undefined}
+        data-drop-after={landing && dragHere.before === null && order[order.length - 1] === c.id ? 'true' : undefined}
+        onPointerDown={(e) => startWindowDrag(e, row, c.id)}
         onClick={() => pick(row.name, { kind: 'open-window', windowId: c.id })}
         onContextMenu={(e) => { e.preventDefault(); openWindowMenu(e.clientX, e.clientY); }}
         onKeyDown={(e) => {
@@ -383,6 +427,10 @@ export function ChatDrawer(p: ChatDrawerProps) {
       )}
     </aside>
   );
+}
+
+function windowIds(row: DrawerProjectRow): string[] {
+  return row.children.flatMap((c) => (c.kind === 'window' ? [c.id] : []));
 }
 
 /** The Super Agent row: its project's unread count rides beside the title (the pane publishes it). */

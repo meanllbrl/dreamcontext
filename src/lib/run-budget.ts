@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { heavyLockPath } from './builder-tools.js';
+import { heavyRepoDir } from './builder-tools.js';
 import type { LanePick } from './run-lane.js';
 
 /**
@@ -13,9 +13,10 @@ import type { LanePick } from './run-lane.js';
  * counts now: per branch, phase and command, a browser run, a full build or a full test suite
  * past its limit is REFUSED before anything starts. A red run earns one more, to see the fix go green.
  *
- * A valid check must never trap an agent: `--because "<reason>"` runs it anyway and leaves a
- * record in the budget file, shown by `dreamcontext builder budget`. Everything here fails open
- * (no git, a broken file): the limit saves minutes, and it is not worth a blocked check.
+ * A valid check must not trap an agent: `--because "<reason>"` runs it anyway, ONCE per run and
+ * command, and leaves a record in the budget file, shown by `dreamcontext builder budget`. A
+ * second one is refused like any other run: past that the owner decides. Everything here fails
+ * open (no git, a broken file): the limit saves minutes, and it is not worth a blocked check.
  *
  * Only a run is limited, and it says so itself, because a code worktree holds no brain and so
  * cannot read goal-live: `builder open <slug>` starts counting, `builder test --wave N` opens wave
@@ -31,8 +32,13 @@ export const BUDGET_LIMITS = { browser: 2, build: 1, suite: 1 } as const;
 export type BudgetKind = keyof typeof BUDGET_LIMITS;
 /** `check`: a type-check or a scoped test run, which takes the lock but no budget. */
 export type HeavyKind = BudgetKind | 'check';
-/** `target` is what repeats: two different builds or browser scripts are two limits. */
-export interface HeavyStep { kind: HeavyKind; target: string }
+/**
+ * `target` is what repeats: two different builds or browser scripts are two limits. `scoped` is
+ * how many things it provably touches: named test files, 0 for a related run (its `related` source
+ * files decide, heavy-queue.ts counts the tests that reach them),
+ * 1 for a `look.mjs` glance. Absent = unknown, and heavy-queue.ts reads unknown as long.
+ */
+export interface HeavyStep { kind: HeavyKind; target: string; scoped?: number; related?: string[] }
 
 /** `builder heavy`'s exit code for a refusal. Not 75: running it again will not help. */
 export const HEAVY_OVER_BUDGET_EXIT = 77;
@@ -61,6 +67,21 @@ function namesTests(args: string): boolean {
   });
 }
 
+/**
+ * The files a test run names; nothing when it names anything that is not a plain file: a
+ * directory, a filter, a substring all match an unknown number of tests.
+ */
+function namedFiles(args: string): { scoped?: number; related?: string[] } {
+  const words = args.trim().split(/\s+/).filter((w) => w && w !== '&');
+  if (words.some((w) => FILTER_FLAG.test(w))) return {};
+  const related = words.includes('related') || words.includes('--findRelatedTests');
+  const named = words.filter((w) => !w.startsWith('-') && w !== 'run' && w !== 'related');
+  const file = related ? /\.[cm]?[jt]sx?$/ : /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+  // An unexpanded glob reads as one file and can be the whole suite.
+  if (!named.every((w) => file.test(w) && !/[*?{}[\]]/.test(w))) return {};
+  return related ? { scoped: 0, related: named } : { scoped: named.length };
+}
+
 /** One shell command's kind and identity, or null when it is not a heavy step at all. */
 function stepOfSegment(raw: string, scripts: Record<string, string>): HeavyStep | null {
   const s = raw.trim().replace(ENV_PREFIX, '').replace(WRAPPER, '').replace(REDIRECT, ' ').trim();
@@ -70,11 +91,12 @@ function stepOfSegment(raw: string, scripts: Record<string, string>): HeavyStep 
     const inner = stepOfSegment(`${scripts[npm[1]]}${npm[2]}`, {});
     // What repeats is the thing run, however it was spelled; a build keeps its own name, so
     // build:cli and build:dashboard stay two limits.
-    if (inner) return { kind: inner.kind, target: inner.kind === 'build' ? npm[1] : inner.target };
+    if (inner) return { ...inner, target: inner.kind === 'build' ? npm[1] : inner.target };
   }
   if (npm && /^verify[:-]/.test(npm[1])) return { kind: 'browser', target: npm[1] };
   const verify = /^node\s+(?:\.\/)?(scripts\/verify\/\S+\.m?js)\b/.exec(s);
-  if (verify) return { kind: 'browser', target: verify[1] };
+  // `--build` is a whole dashboard build before the glance: that is no glance.
+  if (verify) return { kind: 'browser', target: verify[1], ...(verify[1] === 'scripts/verify/look.mjs' && !/\s--build\b/.test(s) ? { scoped: 1 } : {}) };
   if (/^(?:npx\s+)?playwright\s+test\b/.test(s)) return { kind: 'browser', target: 'playwright' };
   if (npm && /^build(?::\S+)?$/.test(npm[1])) return { kind: 'build', target: npm[1] };
   const bundler = /^(?:npx\s+)?(tsup|vite\s+build)\b/.exec(s);
@@ -83,7 +105,8 @@ function stepOfSegment(raw: string, scripts: Record<string, string>): HeavyStep 
   const runner = /^(?:npx\s+)?(?:vitest|jest)(\s.*)?$/.exec(s);
   if (testScript || runner) {
     const config = /--config[ =](\S+)/.exec(s)?.[1];
-    return namesTests((testScript ?? runner)![1] ?? '') ? { kind: 'check', target: 'tests' } : { kind: 'suite', target: config ? `suite ${config}` : 'suite' };
+    const args = (testScript ?? runner)![1] ?? '';
+    return namesTests(args) ? { kind: 'check', target: 'tests', ...namedFiles(args) } : { kind: 'suite', target: config ? `suite ${config}` : 'suite' };
   }
   if (/^(?:npx\s+)?tsc\b/.test(s) && !/\b--version\b/.test(s)) return { kind: 'check', target: 'tsc' };
   return null;
@@ -125,6 +148,8 @@ export function shellSegments(raw: string): string[] {
     if (c === '"' || c === "'") { quote = c; cur += c; continue; }
     const two = command.slice(i, i + 2);
     if (two === '&&' || two === '||') { out.push(cur); cur = ''; i += 1; continue; }
+    // A lone `&` backgrounds and moves on; `2>&1` and `&>` are redirects.
+    if (c === '&' && command[i - 1] !== '>' && command[i + 1] !== '>') { out.push(cur); cur = ''; continue; }
     if (c === ';' || c === '|' || c === '\n') { out.push(cur); cur = ''; continue; }
     cur += c;
   }
@@ -184,7 +209,7 @@ export interface BudgetFile {
 const empty = (): BudgetFile => ({ version: 1, buckets: {}, phases: {}, overruns: [] });
 
 export function budgetPath(cwd: string): string {
-  return join(dirname(heavyLockPath(cwd)), 'dc-run-budget.json');
+  return join(heavyRepoDir(cwd), 'dc-run-budget.json');
 }
 
 export function readBudget(path: string): BudgetFile {
@@ -237,6 +262,12 @@ export function refusal(file: BudgetFile, scope: BudgetScope, kind: BudgetKind, 
   const allowed = allowedRuns(kind, bucket);
   if ((bucket?.runs ?? 0) < allowed) return null;
   return `${bucket!.runs} run(s) of ${target} already in phase "${scope.phase}" of ${scope.branch} (limit ${allowed}${bucket!.reds > 0 ? ', the extra run after a red included' : ''})`;
+}
+
+/** Has this run already spent its one way out on this command? Any phase counts. */
+export function becauseSpent(file: BudgetFile, scope: BudgetScope, target: string): boolean {
+  const head = `${scope.branch} ${scope.run} `;
+  return file.overruns.some((o) => o.bucket.startsWith(head) && o.bucket.endsWith(` ${target}`));
 }
 
 /** Count a run as it starts: one killed half way still spent its minutes. Never throws. */

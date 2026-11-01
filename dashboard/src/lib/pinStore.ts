@@ -80,10 +80,7 @@ function coerceEntry(raw: unknown): ShelfEntry | null {
   if (typeof raw.id !== 'string' || !raw.id) return null;
   if (typeof raw.updatedAt !== 'number' || !Number.isFinite(raw.updatedAt)) return null;
 
-  if (raw.kind === 'progress') {
-    if (typeof raw.task !== 'string' || !raw.task) return null;
-    return { kind: 'progress', id: raw.id, task: raw.task, updatedAt: raw.updatedAt };
-  }
+  // Anything else is dropped, which includes the retired `progress` rows older sessions stored.
   if (raw.kind !== 'pin') return null;
   if (raw.weight !== 'tag' && raw.weight !== 'row') return null;
 
