@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   AGENDA_REF, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
-  CONTAINER_SIZES, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
+  CONTAINER_SIZES, MAX_START_ERROR, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
   ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, viewWithout,
   type AskShow, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
@@ -240,6 +240,7 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     if (c.settling === true) child.settling = true;
     if (typeof c.task === 'string' && TASK_SLUG_RE.test(c.task)) child.task = c.task;
     if (child.row === 'stuck' && oneOf(STUCK_REASONS, c.stuckReason)) child.stuckReason = c.stuckReason;
+    if (child.row === 'stuck' && typeof c.startError === 'string') child.startError = c.startError.slice(0, MAX_START_ERROR);
     if (c.awaited === true) child.awaited = true;
     if (typeof c.origin === 'string' && MSG_REF_RE.test(c.origin)) child.origin = c.origin;
     // The agenda's two stamps (epoch ms): a non-finite or negative value is dropped.

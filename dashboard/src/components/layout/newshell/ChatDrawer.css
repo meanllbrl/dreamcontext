@@ -652,3 +652,131 @@
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
+
+/* ─── A project's logo panel (right click → Edit) ─── */
+
+.ns-logo-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  background: color-mix(in oklch, var(--color-ink) 45%, transparent);
+}
+
+.ns-logo-panel {
+  width: min(calc(var(--space-24) * 4), 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-xl);
+}
+
+.ns-logo-title {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.ns-logo-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.ns-logo-face {
+  flex: none;
+  width: var(--space-12);
+  height: var(--space-12);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+
+.ns-logo-face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ns-logo-side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.ns-logo-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.ns-logo-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.ns-logo-error {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-error-subtle);
+  color: var(--color-error-ink);
+  font-size: var(--font-size-sm);
+}
+
+.ns-logo-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ns-logo-btn {
+  height: var(--space-8);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.ns-logo-btn:hover:not(:disabled) {
+  background: var(--color-bg-secondary);
+}
+
+.ns-logo-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ns-logo-btn:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+.ns-logo-btn--danger {
+  color: var(--color-error-ink);
+}
+
+.ns-logo-done {
+  margin-left: auto;
+}

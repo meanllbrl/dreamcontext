@@ -8,7 +8,8 @@ import { parseJob } from '../../src/lib/super/jobs.js';
 import { codexLeanMcpArgs, codexStrictArgs, parseCodexMcpList } from '../../src/lib/t3-bridge/launch.js';
 import { runT3Headless } from '../../src/lib/t3-bridge/run.js';
 import { leanServerCommand } from '../../src/lib/super/lean-exec.js';
-import { codexEnvGateReady } from '../../src/lib/t3-bridge/env-gate.js';
+import { serverBehindLine } from '../../src/cli/commands/super.js';
+import { codexEnvGateGap, codexEnvGateReady } from '../../src/lib/t3-bridge/env-gate.js';
 import { HEADLESS_ENVELOPES } from '../../src/lib/t3-bridge/headless-envelope.js';
 import { bridgeChatScript } from '../../src/lib/t3-bridge/spawn.js';
 import { codexExecLine } from '../../src/server/routes/agent-terminal.js';
@@ -89,19 +90,24 @@ describe('a narrow Codex surface', () => {
     mkdirSync(join(home, '.codex'));
     mkdirSync(join(cwd, '.codex'));
     expect(codexEnvGateReady(cwd, home)).toBe(false);
+    expect(codexEnvGateGap(cwd, home)).toMatch(/no \.codex\/hooks\.json/);
     writeFileSync(join(cwd, '.codex', 'hooks.json'), '{"hooks":{"PreToolUse":[{"command":"dreamcontext hook pre-tool-use --format codex"}]}}');
     expect(codexEnvGateReady(cwd, home)).toBe(false);
     writeFileSync(join(home, '.codex', 'config.toml'), `[projects."${cwd}"]\ntrust_level = "untrusted"\n`);
     expect(codexEnvGateReady(cwd, home)).toBe(false);
+    expect(codexEnvGateGap(cwd, home)).toMatch(/project folder yet/);
     const folder = `[projects."${cwd}"]\ntrust_level = "trusted"\n`;
     // The folder alone is not enough: Codex asks about the hooks separately.
     writeFileSync(join(home, '.codex', 'config.toml'), folder);
     expect(codexEnvGateReady(cwd, home)).toBe(false);
+    expect(codexEnvGateGap(cwd, home)).toMatch(/hooks yet/);
     const hook = `[hooks.state."${join(cwd, '.codex', 'hooks.json')}:pre_tool_use:0:0"]\ntrusted_hash = "sha256:abc"\n`;
     writeFileSync(join(home, '.codex', 'config.toml'), `${folder}\n${hook}`);
     expect(codexEnvGateReady(cwd, home, () => true)).toBe(true);
     // An older global CLI refuses `--format`: Codex would go on with no gate.
     expect(codexEnvGateReady(cwd, home, () => false)).toBe(false);
+    expect(codexEnvGateGap(cwd, home, () => false)).toMatch(/did not answer/);
+    expect(codexEnvGateGap(cwd, home, () => true)).toBeNull();
     writeFileSync(join(home, '.codex', 'config.toml'), `${folder}\n${hook}enabled = false\n`);
     expect(codexEnvGateReady(cwd, home, () => true)).toBe(false);
     rmSync(home, { recursive: true, force: true });
@@ -124,5 +130,14 @@ describe('the Codex terminal', () => {
     const acct = codexTerminalEnv('acct1', home);
     expect(acct.env.CODEX_HOME).toContain('codex-accounts/acct1');
     expect(acct.pre).toContain('cli_auth_credentials_store="file"');
+  });
+});
+
+describe('a delegate against an older server', () => {
+  it('says so only when the running server is behind this CLI', () => {
+    expect(serverBehindLine('0.36.11', '0.36.12')).toContain('runs 0.36.11, the installed dreamcontext is 0.36.12');
+    expect(serverBehindLine('0.36.12', '0.36.12')).toBeNull();
+    expect(serverBehindLine('0.36.13', '0.36.12')).toBeNull();
+    expect(serverBehindLine(null, '0.36.12')).toBeNull();
   });
 });

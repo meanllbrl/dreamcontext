@@ -30,7 +30,7 @@ import {
   OWNER_LEASE_MS, READOPT_GRACE_MS, emptySuperState, type SuperQueueItem, type SuperState,
 } from '../../src/lib/super/types.js';
 import {
-  SUPER_DELIVER_TIMEOUT_MS, _resetSuperInbox, _superInboxDrained, attachSuperInbox, deliveryBlocker, nextBatch, noteOwnerActivity,
+  SUPER_DELIVER_TIMEOUT_MS, _resetSuperInbox, _superInboxDrained, attachSuperInbox, deliveryBlocker, expectChild, nextBatch, noteChildStartFailed, noteOwnerActivity, setRow, startFailedDraft, takeStartError,
   pumpSuper, startSuperInbox, superAttentionRows, superEventText, superQueueHead, superTurnEnded, writeSuper, type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
@@ -530,5 +530,81 @@ describe('a delivered question never stalls (M1)', { timeout: 30_000 }, () => {
     // rejection would take the server down). A direct call and the ones already running alike.
     await expect(pumpSuper(root)).resolves.toBeUndefined();
     await expect(_superInboxDrained()).resolves.toBeUndefined();
+  });
+});
+
+describe('a child that never started', { timeout: 30_000 }, () => {
+  const WHY = 'Codex is not set up in this project: it has no .codex/hooks.json.';
+
+  it('puts the cause on the row and tells the super agent in one event', async () => {
+    makeVault({ children: { c1: { ...child('c1'), row: 'working', tool: 'codex' } } });
+    await startSuperInbox([root]);
+    settle(reg(SUPER, 'super'));
+    const { inbox, delivered } = fakeInbox();
+    attachSuperInbox(inbox);
+    await noteChildStartFailed(root, 'c1', WHY);
+    await vi.waitFor(() => expect(delivered.length).toBe(1), W);
+    expect(delivered[0].text).toContain('event=stuck reason=no_start');
+    expect(delivered[0].text).toContain(`It never started: ${WHY}`);
+    expect(delivered[0].text).toMatch(/<untrusted-project-output[^>]*>It never started/);
+    const s = await readSuperState(root);
+    expect(s.children.c1).toMatchObject({ row: 'stuck', stuckReason: 'no_start', startError: WHY });
+  });
+
+  it('keeps a refusal that beat the record for `delegate` to claim', async () => {
+    makeVault({ children: {} });
+    await noteChildStartFailed(root, 'c2', WHY);
+    expect((await readSuperState(root)).children.c2).toBeUndefined();
+    expect(takeStartError('c2')).toBe(WHY);
+    expect(takeStartError('c2')).toBeNull();
+  });
+
+  it('a stale refusal cannot mark a child that has ended', () => {
+    const s = { ...emptySuperState(), children: { c1: { ...child('c1'), endedAt: 5 } } };
+    expect(startFailedDraft(s, 'c1', WHY)).toBe(false);
+    expect(s.children.c1).not.toHaveProperty('startError');
+  });
+
+  it('a child that has plainly started is never called unstarted', () => {
+    for (const row of ['done', 'asking', 'waiting'] as const) {
+      const s = { ...emptySuperState(), children: { c1: { ...child('c1'), row } } };
+      expect(startFailedDraft(s, 'c1', WHY)).toBe(false);
+      expect(s.children.c1.row).toBe(row);
+    }
+  });
+
+  it('a refused resume waits for the verb, which still ends the child until it writes', async () => {
+    makeVault({ children: { c1: { ...child('c1'), row: 'done', endedAt: 5 } } });
+    await noteChildStartFailed(root, 'c1', WHY);
+    expect((await readSuperState(root)).children.c1.row).toBe('done');
+    expect(takeStartError('c1')).toBe(WHY);
+  });
+
+  it('drops the cause when the row moves on', () => {
+    const s = { ...emptySuperState(), children: { c1: { ...child('c1'), row: 'working' as const } } };
+    startFailedDraft(s, 'c1', WHY);
+    setRow(s.children.c1, 'working');
+    expect(s.children.c1).not.toHaveProperty('startError');
+  });
+
+  it('a delegated child that never opens a chat goes gone, with the event, not `working` for good', async () => {
+    makeVault({ children: { c1: { ...child('c1'), row: 'working' } } });
+    await startSuperInbox([root]);
+    settle(reg(SUPER, 'super'));
+    const { inbox, delivered } = fakeInbox();
+    attachSuperInbox(inbox);
+    expectChild(root, 'c1', 10);
+    await vi.waitFor(() => expect(delivered.some((d) => d.text.includes('event=gone'))).toBe(true), W);
+    expect((await readSuperState(root)).children.c1.row).toBe('gone');
+  });
+
+  it('that wait does not bury a cause already said', async () => {
+    makeVault({ children: { c1: { ...child('c1'), row: 'working' } } });
+    await startSuperInbox([root]);
+    await noteChildStartFailed(root, 'c1', WHY);
+    expectChild(root, 'c1', 10);
+    await new Promise((r) => setTimeout(r, 200));
+    await _superInboxDrained();
+    expect((await readSuperState(root)).children.c1).toMatchObject({ row: 'stuck', startError: WHY });
   });
 });

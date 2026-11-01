@@ -218,6 +218,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/launcher/status': deny(OTHER_PROJECTS),
   'GET /api/launcher/logo': deny(OTHER_PROJECTS),
   'POST /api/launcher/logo': deny(LAUNCHER),
+  'POST /api/launcher/logo/remove': deny(LAUNCHER),
   'POST /api/launcher/touch': deny(OTHER_PROJECTS),
   'POST /api/launcher/unregister': deny(OTHER_PROJECTS),
   'POST /api/launcher/update': deny(INSTALL),

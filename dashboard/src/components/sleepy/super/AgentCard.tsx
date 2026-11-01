@@ -47,7 +47,7 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
 
   const model = session?.getModel();
   const doing = session?.busy && model ? doingOf(model.items) : null;
-  const line = doing ? doingText(t, doing) : (model ? lastLineOf(model.items) : '');
+  const line = child?.startError ?? (doing ? doingText(t, doing) : (model ? lastLineOf(model.items) : ''));
   const bg = model ? backgroundOf(model.subAgents) : { shells: 0, agents: 0 };
   const lines = tall && model ? lastLinesOf(model.items, 4).filter((l) => l !== line) : [];
   const since = session?.busy && model?.turnStartedAt ? model.turnStartedAt : child?.startedAt;
@@ -110,7 +110,7 @@ export function ChatTile({ session, child, title, asksOwner, status }: {
   useLiveSession(session, () => cardKeyOf(session, false));
   const model = session?.getModel();
   const doing = session?.busy && model ? doingOf(model.items) : null;
-  const line = doing ? doingText(t, doing) : (model ? lastLineOf(model.items) : '');
+  const line = child?.startError ?? (doing ? doingText(t, doing) : (model ? lastLineOf(model.items) : ''));
   const bg = model ? backgroundOf(model.subAgents) : { shells: 0, agents: 0 };
   const since = session?.busy && model?.turnStartedAt ? model.turnStartedAt : child?.startedAt;
   const state = t(`super.card.state.${status.kind}`);
@@ -122,7 +122,7 @@ export function ChatTile({ session, child, title, asksOwner, status }: {
   const working = status.kind === 'working';
   const spin = useSpinSlot(child?.sessionId ?? session?.claudeId ?? '', working);
   return (
-    <div className="super-tile" data-tile="chat" data-kind={status.kind} data-super-tone={toneOfStatus(status.kind)} title={child?.branch ? `${title}\n${child.branch}` : title}>
+    <div className="super-tile" data-tile="chat" data-kind={status.kind} data-super-tone={toneOfStatus(status.kind)} title={[title, child?.branch, child?.startError].filter(Boolean).join('\n')}>
       <span className="super-tile-corners" aria-hidden />
       {working && <span className="super-tile-spin" data-spin={spin ? 'on' : 'closed'} data-testid="super-tile-spin" aria-hidden />}
       <div className="super-tile-top">

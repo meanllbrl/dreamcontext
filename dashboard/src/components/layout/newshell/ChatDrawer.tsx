@@ -2,6 +2,7 @@ import { useSuperUnreadCount } from '../../sleepy/super/superUnreadStore';
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { VaultLogo } from '../VaultLogo';
+import { ProjectLogoPanel } from './ProjectLogoPanel';
 import { ProjectChipBubbles } from '../ProjectTabs';
 import { AgentAvatar } from '../../agents/AgentAvatar';
 import { DRAWER_WIDTH_MAX, DRAWER_WIDTH_MIN } from '../../../lib/launcherPrefs';
@@ -60,6 +61,8 @@ export function ChatDrawer(p: ChatDrawerProps) {
   const [winDrag, setWinDrag] = useState<{ vault: string; id: string; before: string | null } | null>(null);
   /** A window row being renamed in place (the desktop WebView has no `prompt`). */
   const [renaming, setRenaming] = useState<{ vault: string; id: string; value: string } | null>(null);
+  /** The project whose logo panel is open. */
+  const [editing, setEditing] = useState<string | null>(null);
   const renameDone = useRef(false);
   const rootRef = useRef<HTMLElement | null>(null);
   const newRowRef = useRef<HTMLButtonElement | null>(null);
@@ -387,7 +390,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
                 onKeyDown={(e) => onRowKey(e, row.name)}>
                 <span className="ns-dr-pic">
                   {row.logo
-                    ? <VaultLogo name={row.name} hasLogo={row.logo} stamp={row.logoStamp} size={18} />
+                    ? <VaultLogo key={row.logoStamp} name={row.name} hasLogo={row.logo} stamp={row.logoStamp} size={18} />
                     : <span className="ns-dr-initial" aria-hidden="true">{row.name.slice(0, 1).toUpperCase()}</span>}
                 </span>
                 <span className="ns-dr-t">{row.name}</span>
@@ -454,6 +457,14 @@ export function ChatDrawer(p: ChatDrawerProps) {
               </button>
               {!p.device && (
               <>
+              <button type="button" role="menuitem" className="ns-drawer-menu-item" data-testid="drawer-project-edit"
+                onClick={() => {
+                  // The panel takes focus and hands it back to the row itself.
+                  setEditing(menu.name!);
+                  setMenu(null);
+                }}>
+                {t('shell.drawer.editProject')}
+              </button>
               <button type="button" role="menuitem" className="ns-drawer-menu-item" onClick={() => { closeMenu(); p.onOpenInWindow(menu.name!); }}>
                 {t('shell.drawer.openInWindow')}
               </button>
@@ -468,6 +479,10 @@ export function ChatDrawer(p: ChatDrawerProps) {
           )}
         </div>
       )}
+      {editing && !p.device && (() => {
+        const row = p.rows.find((r) => r.name === editing);
+        return row ? <ProjectLogoPanel name={row.name} logo={row.logo} stamp={row.logoStamp} onClose={() => setEditing(null)} /> : null;
+      })()}
     </aside>
   );
 }

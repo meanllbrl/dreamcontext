@@ -56,10 +56,18 @@ function globalHookAnswers(cwd: string): boolean {
   return r.status === 0;
 }
 
-export function codexEnvGateReady(cwd: string, home: string = homedir(), hookAnswers: (cwd: string) => boolean = globalHookAnswers): boolean {
-  if (!read(join(cwd, '.codex', 'hooks.json')).includes('pre-tool-use')) return false;
+/** What is missing for the gate here, in the owner's words; null when it is live. */
+export function codexEnvGateGap(cwd: string, home: string = homedir(), hookAnswers: (cwd: string) => boolean = globalHookAnswers): string | null {
+  if (!read(join(cwd, '.codex', 'hooks.json')).includes('pre-tool-use')) return 'Codex is not set up in this project: it has no .codex/hooks.json.';
   const config = read(join(home, '.codex', 'config.toml'));
   let real = cwd;
   try { real = realpathSync(cwd); } catch { /* the path as given */ }
-  return [cwd, real].some((p) => trusted(config, p) && hookTrusted(config, p)) && hookAnswers(cwd);
+  const paths = [cwd, real];
+  if (!paths.some((p) => trusted(config, p))) return 'Codex does not trust this project folder yet.';
+  if (!paths.some((p) => trusted(config, p) && hookTrusted(config, p))) return 'Codex does not trust this project\'s hooks yet.';
+  return hookAnswers(cwd) ? null : 'The global dreamcontext did not answer the Codex hook.';
+}
+
+export function codexEnvGateReady(cwd: string, home: string = homedir(), hookAnswers: (cwd: string) => boolean = globalHookAnswers): boolean {
+  return codexEnvGateGap(cwd, home, hookAnswers) === null;
 }

@@ -1579,7 +1579,7 @@ const MAX_LOGO_BYTES = 5 * 1024 * 1024;
  *
  * The image is identified by MAGIC BYTES, never the client's content-type: this route
  * writes into a vault the user will later commit, so only a verified raster
- * (png/jpeg/webp/gif) is accepted and it gets its canonical extension. An SVG can still be
+ * (png/jpeg/webp) is accepted and it gets its canonical extension. An SVG can still be
  * used by dropping the file in by hand; the upload path stays strict. Every other
  * `logo.*` candidate is deleted first — a stale `logo.png` would shadow a freshly
  * written `logo.webp` (candidate order is preference order).
@@ -1629,9 +1629,11 @@ export async function handleLauncherLogoSet(
     return;
   }
 
+  // `logo.gif` is no candidate (`vault-logo.ts`): written, it would delete the old logo and
+  // show nothing.
   const sniffed = sniffImageType(buf);
-  if (!sniffed) {
-    sendError(res, 400, 'not_an_image', 'The file is not a PNG, JPEG, WebP or GIF image.');
+  if (!sniffed || sniffed === 'image/gif') {
+    sendError(res, 400, 'not_an_image', 'The file is not a PNG, JPEG or WebP image.');
     return;
   }
 
@@ -1653,6 +1655,35 @@ export async function handleLauncherLogoSet(
 
   const logo = findVaultLogo(contextRoot);
   sendJson(res, 200, { ok: true, logo: logo !== null, logoStamp: logo ? Math.round(logo.mtimeMs) : null });
+}
+
+/**
+ * POST /api/launcher/logo/remove?vault=<name> — REMOVE a registered vault's logo: every
+ * `logo.*` candidate goes, so no shadowed file surfaces in its place. Only those fixed names
+ * under a registered vault, never a path from the request.
+ */
+export async function handleLauncherLogoRemove(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const url = new URL(req.url ?? '', 'http://localhost');
+  const name = (url.searchParams.get('vault') ?? '').trim();
+  const vault = listVaults().find((v) => v.name === name);
+  if (!vault) {
+    sendError(res, 404, 'unknown_vault', `No registered vault "${name}".`);
+    return;
+  }
+  const contextRoot = join(resolve(vault.path), '_dream_context');
+  try {
+    for (const candidate of vaultLogoCandidates(contextRoot)) rmSync(candidate, { force: true });
+  } catch (err) {
+    console.error('[launcher] logo remove failed:', err);
+    sendError(res, 500, 'remove_failed', 'Could not remove the logo from the vault.');
+    return;
+  }
+  sendJson(res, 200, { ok: true, logo: false, logoStamp: null });
 }
 
 /**

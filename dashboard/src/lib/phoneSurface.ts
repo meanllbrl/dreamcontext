@@ -92,6 +92,7 @@ export const MAC_DENIED_API_ROUTES: readonly string[] = [
   'GET /api/launcher/status',
   'GET /api/launcher/logo',
   'POST /api/launcher/logo',
+  'POST /api/launcher/logo/remove',
   'POST /api/launcher/touch',
   'POST /api/launcher/unregister',
   'POST /api/launcher/update',

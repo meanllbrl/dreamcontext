@@ -66,6 +66,7 @@ import {
   handleLauncherStatus,
   handleLauncherLogo,
   handleLauncherLogoSet,
+  handleLauncherLogoRemove,
   handleLauncherTouch,
   handleLauncherUnregister,
   handleLauncherUpdate,
@@ -602,6 +603,7 @@ export function buildRouter(): Router {
   // SET a vault's logo from the launcher (magic-byte-verified raster → assets/logo.<ext>).
   // Mutation; behind the CSRF guard like every launcher POST.
   router.post('/api/launcher/logo', handleLauncherLogoSet);
+  router.post('/api/launcher/logo/remove', handleLauncherLogoRemove);
   router.post('/api/launcher/touch', handleLauncherTouch);
   router.post('/api/launcher/unregister', handleLauncherUnregister);
   router.post('/api/launcher/update', handleLauncherUpdate);
