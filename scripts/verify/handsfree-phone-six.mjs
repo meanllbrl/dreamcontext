@@ -269,19 +269,21 @@ try {
   child.ws.send(JSON.stringify({ type: 'user', text: 'slow job' }));
   await sleep(600);
   await openSuper(p);
-  report.check('5 the jobs list sits in the Super chat', await until(() => p.locator('[data-testid="phone-job-row"]:visible').count(), 15000));
+  await p.getByTestId('phone-agents-chip').click();
+  report.check('5 the jobs list opens from the chip in the Super chat', await until(() => p.locator('[data-testid="phone-job-row"]:visible').count(), 15000));
   report.check('5 a job at work says Working', await until(async () => (await p.locator('[data-testid="phone-job-row"][data-state="working"]').count()) === 1, 8000));
   const jobs = await p.locator('[data-testid="phone-job-row"]').allInnerTexts();
   report.check('5 each row has a name and a state; ended means Finished', jobs.some((j) => /Release notes[\s\S]*Working/.test(j)) && jobs.some((j) => /Old cleanup[\s\S]*Finished/.test(j)), JSON.stringify(jobs));
   await ph.shot('6-super-jobs-working');
   await p.locator('[data-testid="phone-job-row"]', { hasText: 'Release notes' }).click();
-  report.check('5 a tap reads that job\'s chat', await until(async () => (await p.getByTestId('phone-job-sheet').innerText().catch(() => '')).includes('ECHO child work'), 10000));
-  report.check('5 it is read only: no composer in the sheet', await p.locator('[data-testid="phone-job-sheet"] .chat-cmp-input').count() === 0);
+  await p.getByTestId('phone-job-open-chat').click();
+  report.check('5 a tap reads that job\'s chat', await until(async () => (await p.getByTestId('phone-agents-sheet').innerText().catch(() => '')).includes('ECHO child work'), 10000));
+  report.check('5 it is read only: no composer in the sheet', await p.locator('[data-testid="phone-agents-sheet"] .chat-cmp-input').count() === 0);
   await sleep(400);
   report.check('5 the sheet takes the focus', await p.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'phone-job-close'));
   await ph.shot('7-job-transcript');
   await p.getByTestId('phone-job-close').click(); await sleep(400);
-  report.check('5 closing gives the focus back to the row', await p.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'phone-job-row'));
+  report.check('5 closing gives the focus back to the chip', await p.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'phone-agents-chip'));
   await p.locator('.chat-cmp-input:visible').first().fill('half a thought').catch(() => {});
   await sleep(300);
   // A phone held sideways is still a phone.

@@ -18,6 +18,20 @@ const ACTIONS: ChatSurfaceActions = {
 /** How often a running job's transcript is read again. */
 const LIVE_REFRESH_MS = 4_000;
 
+/** A child's saved transcript, re-read while it runs. One query, whoever reads it. */
+export function useChildHistory(claudeId: string, live: boolean) {
+  const api = useApi();
+  return useQuery({
+    queryKey: ['super-child-transcript', claudeId],
+    queryFn: async () => {
+      const r = await api.get<{ items: HistoryEntry[] }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}`);
+      return Array.isArray(r?.items) ? r.items : [];
+    },
+    staleTime: live ? 0 : 15_000,
+    refetchInterval: live ? LIVE_REFRESH_MS : false,
+  });
+}
+
 /**
  * A shown child with no live chat in this window (it finished and exited; a relaunch keeps it as
  * a dormant tab): its saved transcript, read only, in the same ChatPane a live child's card shows.
@@ -30,19 +44,10 @@ export function ChildTranscript({ claudeId, live = false }: {
   /** The job still runs on the Mac (the phone reads it from here): the transcript keeps refreshing. */
   live?: boolean;
 }) {
-  const api = useApi();
   const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
   const [session] = useState(() => createTranscriptSession(claudeId));
   const hostRef = useRef<HTMLDivElement>(null);
-  const history = useQuery({
-    queryKey: ['super-child-transcript', claudeId],
-    queryFn: async () => {
-      const r = await api.get<{ items: HistoryEntry[] }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}`);
-      return Array.isArray(r?.items) ? r.items : [];
-    },
-    staleTime: live ? 0 : 15_000,
-    refetchInterval: live ? LIVE_REFRESH_MS : false,
-  });
+  const history = useChildHistory(claudeId, live);
   useEffect(() => { if (history.data) session.load(history.data); }, [history.data, session]);
   useEffect(() => () => session.dispose(), [session]);
   useLayoutEffect(() => {

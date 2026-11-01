@@ -1,40 +1,33 @@
 /* ── The agenda on the hands-free phone (PhoneAgenda.tsx, owner's pick A) ─────────────────
-   One strip under the chat's header with the counts, and a sheet from the bottom holding the
-   desktop's notepad. Tokens only; the sheet's entrance is one-shot and rests under reduced
+   Chips in the chat's header and sheets from the bottom, one of them holding the desktop's
+   notepad. Tokens only; the sheet's entrance is one-shot and rests under reduced
    motion. */
-.phone-agenda-strip {
+.phone-chip {
+  position: relative;
   flex: 0 0 auto;
   box-sizing: border-box;
-  width: 100%;
-  min-height: 40px;
-  display: flex;
+  height: 32px;
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-3);
-  border: none;
-  border-bottom: 1px solid var(--color-border);
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
   background: var(--color-bg-secondary);
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  text-align: left;
-  cursor: pointer;
-  overflow: hidden;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
+  cursor: pointer;
 }
-.phone-agenda-strip:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
-.phone-agenda-strip-h {
-  flex: 0 0 auto;
-  font-size: var(--font-size-2xs);
-  font-weight: var(--font-weight-bold);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
-}
-.phone-agenda-strip-part { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.phone-agenda-strip-part + .phone-agenda-strip-part::before { content: '·'; margin-right: var(--space-2); color: var(--color-text-tertiary); }
-.phone-agenda-strip-waiting { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--color-text); font-weight: var(--font-weight-semibold); }
-.phone-agenda-strip-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--mood-waiting); }
-.phone-agenda-strip-chev { flex: 0 0 auto; margin-left: auto; color: var(--color-text-tertiary); }
+/* The touch floor, without making the bar taller. */
+.phone-chip::after { content: ''; position: absolute; inset: -6px -2px; }
+.phone-chip:active { background: var(--color-bg-tertiary); }
+.phone-chip:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+.phone-chip-count { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--color-text); }
+.phone-chip-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--mood-waiting); }
+/* Too narrow for both words: Agenda keeps its word, agents collapse to the count. */
+@media (max-width: 379px) { .phone-chip--agents .phone-chip-label { display: none; } }
 
 .phone-agenda-layer { position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column; justify-content: flex-end; }
 .phone-agenda-backdrop { position: absolute; inset: 0; /* Dims in both themes: the palette's charcoal, never the (light in dark) text colour. */
@@ -83,8 +76,6 @@
 .phone-agenda-body .super-agenda-about { width: 44px; height: 44px; margin-top: 0; opacity: 1; }
 
 /* ── What the Super Agent gave out, on the phone (PhoneSuperJobs.tsx) ───────────────────── */
-.phone-jobs { flex: 0 0 auto; border-bottom: 1px solid var(--color-border); background: var(--color-bg-secondary); }
-.phone-jobs-list { max-height: calc(var(--touch-target, 44px) * 3); overflow-y: auto; }
 .phone-jobs-row {
   box-sizing: border-box;
   width: 100%;
@@ -108,6 +99,24 @@
 .phone-jobs-name { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .phone-jobs-state { flex: 0 0 auto; font-size: var(--font-size-xs); color: var(--color-text-secondary); }
 .phone-job-sheet { height: 92vh; height: 92dvh; max-height: none; }
-.phone-job-head { flex: 0 0 auto; display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); border-bottom: 1px solid var(--color-border); }
+.phone-job-head { display: flex; align-items: center; gap: var(--space-2); }
+.phone-job-back { margin-left: calc(var(--space-2) * -1); }
+.phone-job-card { padding: var(--space-2) var(--space-2) var(--space-3); }
+.phone-job-label { margin: 0 0 var(--space-1); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); color: var(--color-text-tertiary); }
+.phone-job-last { margin: 0 0 var(--space-3); font-size: var(--font-size-sm); line-height: 1.5; color: var(--color-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.phone-job-last[data-empty] { color: var(--color-text-tertiary); }
+.phone-job-open {
+  width: 100%;
+  min-height: var(--touch-target, 44px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+.phone-job-open:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
 .phone-job-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.phone-job-body > .super-slot { flex: 1 1 auto; min-height: 0; }
+.agent-surface.phone-job-scope[data-mobile] { position: absolute; inset: 0; display: flex; flex-direction: column; z-index: auto; }
+.phone-job-scope > .super-slot { flex: 1 1 auto; min-height: 0; }

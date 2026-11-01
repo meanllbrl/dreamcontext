@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useI18n } from '../../../context/I18nContext';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { registerServiceWorker } from './phoneState';
 
@@ -132,8 +131,8 @@ export async function resyncPush(): Promise<boolean> {
   } catch { return false; }
 }
 
-export function PushOptIn() {
-  const { t } = useI18n();
+/** What the drawer's foot draws: the step, and the one action behind it. */
+export function usePushOptIn() {
   const [subscribed, setSubscribed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -168,20 +167,5 @@ export function PushOptIn() {
     setTick((n) => n + 1);
   }, []);
 
-  if (state === 'hidden') return null;
-  return (
-    <div className="mchat-push" data-testid="push-optin" data-state={state}>
-      {state === 'quick' && <p className="mchat-push-note">{t('handsfree.push.needsFixed')}</p>}
-      {state === 'install' && <p className="mchat-push-note">{t('handsfree.push.install')}</p>}
-      {state === 'blocked' && <p className="mchat-push-note">{t('handsfree.push.blocked')}</p>}
-      {state === 'on' && <p className="mchat-push-note">{t('handsfree.push.on')}</p>}
-      {(state === 'on' || state === 'off') && isQuickAddress(hostname) && <p className="mchat-push-note" data-testid="push-quick-note">{t('handsfree.push.quickNote')}</p>}
-      {state === 'off' && (
-        <button type="button" className="mchat-push-btn" onClick={() => void turnOn()} disabled={busy} data-testid="push-enable">
-          {busy ? t('handsfree.push.enabling') : t('handsfree.push.enable')}
-        </button>
-      )}
-      {failed && <p className="mchat-push-note" role="alert">{t('handsfree.push.failed')}</p>}
-    </div>
-  );
+  return { state, quick: isQuickAddress(hostname), busy, failed, turnOn };
 }

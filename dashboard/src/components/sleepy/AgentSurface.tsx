@@ -5171,8 +5171,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       if (document.querySelector('.super-surface[data-dragging]')) return;
       // A card's corner held for a resize owns Esc the same way (useStageDrag marks the stage).
       if (document.querySelector('[data-resizing]')) return;
-      // The phone's agenda sheet owns Esc: it closes the sheet (PhoneAgenda), not the chat.
-      if (document.querySelector('[data-testid="phone-agenda-sheet"]')) return;
+      // A phone sheet owns Esc: it closes the sheet (PhoneSheet), not the chat.
+      if (document.querySelector('.phone-agenda-layer')) return;
       // The new shell's project picker and More menu own Esc: it closes the menu, not the chat.
       if (document.querySelector('.ns-menu')) return;
       // A web card in Inspect, or asking whether to clear its page, owns Esc: it leaves Inspect
@@ -5890,6 +5890,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // Whether this phone's chat is the thing on screen (chatOnScreen.ts): the Chat page up in the
   // project in front, the window shown, no drawer over it.
   const phoneChatShown = macPhone && chatOnScreen({ expanded, active: isActive, drawerVisible: stageBesideDrawer, visible: !windowActivity.hidden });
+  // A sheet over the chat stays while the phone is locked or in another app; only the chat leaving
+  // this window's screen takes it down.
+  const phoneSheetsOn = macPhone && chatOnScreen({ expanded, active: isActive, drawerVisible: stageBesideDrawer, visible: true });
   // The phone's Super chat on the Chat page: its agenda strip reads the digest the Mac pushes to
   // it. Kept while the drawer covers it, so the digest is not dropped and re-read on every peek.
   const phoneSuperChat = (() => {
@@ -6601,6 +6604,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
                 {mobileActive && <span className="mchat-dot" data-kind={mobileActive.info.kind} aria-hidden />}
                 {mobileActive?.title ?? t('nav.chat')}
               </span>
+              {/* The phone's Super chat: the bar stays one line and the chat keeps the screen. */}
+              {phoneSuperChat && <PhoneAgenda digest={phoneDigest} onWriteAbout={writePhoneAboutRow} onScreen={phoneSheetsOn} />}
+              {phoneSuperChat && <PhoneSuperJobs jobs={phoneJobs} onScreen={phoneSheetsOn} />}
               <button
                 className="mchat-head-btn"
                 onClick={() => addSession(claudeKind)}
@@ -6729,8 +6735,6 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             </>
           )}
         </div>
-        {phoneSuperChat && <PhoneAgenda digest={phoneDigest} onWriteAbout={writePhoneAboutRow} />}
-        {phoneSuperChat && <PhoneSuperJobs jobs={phoneJobs} />}
         {macPhone && expanded && <PhoneBagNote />}
         {body}
         {/* Each pane renders its OWN composer strip (files + skills + that agent's live

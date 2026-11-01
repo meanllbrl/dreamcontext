@@ -109,15 +109,7 @@
   .mchat-dot { animation: none !important; }
 }
 
-/* The notification opt-in (Mac mode): one quiet row above the foot. */
-.mchat-push {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  border-top: 1px solid var(--color-border);
-}
+/* The notification opt-in (Mac mode), in the drawer's foot. */
 .mchat-push-note {
   margin: 0;
   font-size: var(--font-size-xs);
@@ -308,30 +300,63 @@
 body[data-phone] .agent-dock { display: none; }
 
 /* "Send the connection log to the Mac" — a quiet row in the tunnel drawer's foot, its result under it. */
-.mlist-log {
-  flex: 0 0 auto;
-  padding: var(--space-1) var(--space-3) 0;
-  border-top: 1px solid var(--color-border);
-}
-.mlist-log-btn {
-  display: flex;
+/* The foot of the phone's drawer: one short row (PhoneDrawerFoot.tsx). */
+.mfoot { position: relative; border-top: 1px solid var(--color-border); }
+.mfoot-open { padding: var(--space-2) var(--space-3) 0; margin: 0; }
+.mfoot-row { min-height: var(--touch-target, 44px); display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3); }
+.mfoot-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--touch-target, 44px);
+  display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  width: 100%;
-  min-height: var(--touch-target);
-  padding: var(--space-1) 0;
-  border: 0;
+  padding: 0;
+  border: none;
   background: none;
-  color: var(--color-accent);
-  font: inherit;
-  text-align: left;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
   cursor: pointer;
 }
-.mlist-log-btn:disabled { opacity: 0.6; cursor: default; }
-.mlist-log-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); border-radius: var(--radius-sm); }
-.mlist-log-text { display: flex; flex-direction: column; min-width: 0; }
-.mlist-log-title { font-size: var(--font-size-sm); font-weight: 500; }
-.mlist-log-sub { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+.mfoot-status-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mfoot-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--color-text-tertiary); }
+.mfoot[data-state="on"] .mfoot-dot { background: var(--color-success); }
+.mfoot-enable { flex: 0 1 auto; min-width: 0; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mfoot-more {
+  flex: 0 0 auto;
+  width: var(--touch-target, 44px);
+  height: var(--touch-target, 44px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+.mfoot-log {
+  flex: 0 0 auto;
+  min-height: var(--touch-target, 44px);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-accent-strong, var(--color-accent));
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.mfoot-log:disabled { opacity: 0.6; cursor: default; }
+.mfoot-status:focus-visible, .mfoot-more:focus-visible, .mfoot-log:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); border-radius: var(--radius-sm); }
+.phone-agenda-body.mfoot-sheet { padding: var(--space-2) var(--space-4) var(--space-4); }
+.mfoot-long { margin: 0 0 var(--space-3); font-size: var(--font-size-sm); line-height: 1.5; color: var(--color-text-secondary); }
+.mfoot-long strong { color: var(--color-text); font-weight: var(--font-weight-semibold); }
+.mfoot .mlist-foot-note { position: absolute; left: var(--space-3); right: var(--space-3); bottom: 100%; z-index: 1; box-shadow: var(--shadow-lg); }
 .mlist-foot-note {
   margin: 0 0 var(--space-2);
   padding: var(--space-2) var(--space-3);
