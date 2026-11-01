@@ -46,15 +46,24 @@ const ENGINES = (process.env.ENGINES || 'chromium,webkit').split(',').map((s) =>
 
 const STANDIN = `#!${process.execPath}
 import { spawnSync } from 'node:child_process';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+const at0 = (flag) => { const i = process.argv.indexOf(flag); return i >= 0 ? process.argv[i + 1] : ''; };
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 const argv = process.argv.slice(2);
 const report = (o) => appendFileSync(${JSON.stringify(REPORTS)}, JSON.stringify({ pid: process.pid, t: Date.now(), ...o }) + '\\n');
 if (!argv.includes('stream-json')) {
   // The member's run: \`claude -p <prompt> --output-format json\`.
   if (argv.includes('-p')) {
-    report({ kind: 'member-run', prompt: (argv[argv.indexOf('-p') + 1] || '').slice(0, 4000) });
-    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: ${JSON.stringify(MEMBER_ANSWER)}, session_id: 'member-' + process.pid, num_turns: 1, total_cost_usd: 0, duration_ms: 5 }) + '\\n');
+    const prompt = argv[argv.indexOf('-p') + 1] || '';
+    report({ kind: 'member-run', prompt: prompt.slice(0, 4000) });
+    const memberSession = at0('--resume') || randomUUID();
+    if (prompt.includes('which step?')) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 4000);
+    const projDir = join(process.env.HOME, '.claude', 'projects', process.cwd().replace(/[^a-zA-Z0-9]/g, '-'));
+    mkdirSync(projDir, { recursive: true });
+    appendFileSync(join(projDir, memberSession + '.jsonl'), JSON.stringify({ type: 'user', uuid: randomUUID(), sessionId: memberSession, timestamp: new Date().toISOString(), message: { role: 'user', content: 'MEMBER SESSION LINE' } }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: ${JSON.stringify(MEMBER_ANSWER)}, session_id: memberSession, num_turns: 1, total_cost_usd: 0, duration_ms: 5 }) + '\\n');
   } else process.stdout.write('{}\\n');
   process.exit(0);
 }
@@ -70,7 +79,7 @@ const cli = (...args) => {
 };
 async function superTurn(text) {
   if (text.startsWith('[super handover]')) { report({ kind: 'handover' }); return 'arranged'; }
-  if (text.startsWith('[super')) return 'noted';
+  if (text.startsWith('[super')) { report({ kind: 'super-turn', text: text.slice(0, 2000) }); return 'noted'; }
   if (text.includes('GO-TEAM')) {
     const steps = [cli('super', 'team', 'ask', ${JSON.stringify(MEMBER)}, 'Look at this week\\'s signup funnel and name the step that dropped.', '--brief', 'Funnel check')];
     report({ kind: 'team', steps });
@@ -220,8 +229,9 @@ async function run(engineName, base) {
   const input = page.locator('.chat-cmp-input:visible').first();
   await input.click(); await input.fill('hello'); await page.keyboard.press('Enter');
   await until(page, async () => reports().some((r) => r.kind === 'spawn' && r.role === 'child'), 20000);
-  await until(page, async () => (await page.getByTestId('super-handover-btn').count()) > 0);
-  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+  await page.locator('aside, nav').getByText('Super Agent', { exact: true }).first().click();
+  await page.waitForTimeout(800);
+  if (await page.locator('[data-testid="super-handover-btn"]:visible').count()) await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
   ok(tag('handed over'), await until(page, async () => reports().some((r) => r.kind === 'handover'), 90000));
 
   console.log(`── ${engineName}: T1 a member not approved here`);
@@ -240,7 +250,8 @@ async function run(engineName, base) {
   }, 10000), headText);
   ok(tag('T1 with Open in AI Team and Reply'), (await head.getByTestId('super-queue-open-team').count()) === 1
     && (await head.locator('.super-queue-btn--reply').count()) === 1);
-  for (const w of [1280, 1920]) {
+  // Under about 1600 px the stage folds its cards into Others: wide enough to keep this one out.
+  for (const w of [1920]) {
     await page.setViewportSize({ width: w, height: w === 1280 ? 800 : 1080 });
     await page.waitForTimeout(800);
     await page.screenshot({ path: join(OUT, `${engineName}-approval-${w}.png`) });
@@ -318,34 +329,55 @@ async function run(engineName, base) {
     return { tile: el.getAttribute('data-super-tone'), frame: frame?.getAttribute('data-super-tone'), word: getComputedStyle(el.querySelector('.super-tile-state')).color, accent };
   });
   ok(tag('T4 its tone is the shared map\'s (idle for done), on the tile and the frame'), tones.tile === 'idle' && tones.frame === 'idle' && tones.word === tones.accent, JSON.stringify(tones));
-  for (const w of [1280, 1920]) {
+  // Under about 1600 px the stage folds its cards into Others: wide enough to keep this one out.
+  for (const w of [1920]) {
     await page.setViewportSize({ width: w, height: w === 1280 ? 800 : 1080 });
     await page.waitForTimeout(800);
     await page.screenshot({ path: join(OUT, `${engineName}-team-card-${w}.png`) });
     const box = await card.boundingBox();
     ok(tag(`T4 the card is on screen and drawn at ${w} px`), !!box && box.width > 100 && box.x >= 0 && box.x + box.width <= w && await shown(), JSON.stringify(box));
   }
-  await page.setViewportSize({ width: 1600, height: 1000 });
-  await page.waitForTimeout(500);
   // A real mouse click on the card (the card frame takes it: a floating card is one grab handle)
   // shows it side by side ON THE STAGE with the member's conversation in it, never AI Team.
   const frame = page.locator('[data-container-id][data-kind="team"]');
-  const convo = frame.getByTestId('agent-conversation');
+  const convo = frame.getByTestId('team-job-conversation');
+  // What the card asked the server, so a red here names its cause.
+  const wire = [];
+  page.on('response', async (r) => {
+    const u = r.url();
+    if (!/chat-history|thread\/reply|reply-job/.test(u)) return;
+    const body = await r.text().catch(() => '');
+    wire.push({ at: Date.now(), status: r.status(), url: u.replace(/^.*\/api/, '').slice(0, 90), items: (body.match(/"role"|"kind"/g) ?? []).length, body: r.status() >= 400 ? body.slice(0, 200) : undefined });
+  });
   const cb = await card.boundingBox();
   await page.mouse.click(cb.x + cb.width / 2, cb.y + cb.height / 2);
-  ok(tag('T4 a click on the card opens the member\'s conversation on the stage'), await until(page, async () =>
+  ok(tag('T4 a click on the card opens the job on the stage'), await until(page, async () =>
     (await frame.getAttribute('data-where').catch(() => null)) !== 'float' && await convo.isVisible().catch(() => false), 15000),
     await frame.getAttribute('data-where').catch(() => ''));
   // (The AI Team page stays mounted behind the surface since T2, so what is ON TOP decides.)
-  const onSuper = () => frame.evaluate((f) => { const b = f.getBoundingClientRect(); return !!document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2)?.closest('.super-surface [data-kind="team"]'); });
+  const onSuper = () => frame.evaluate((f) => { const b = f.getBoundingClientRect(); return !!document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2)?.closest('.agent-surface'); });
   ok(tag('T4 …without leaving the Super screen'), await onSuper());
-  ok(tag('T4 …its history holds the job\'s run'), await until(page, async () => /Scout ran/.test(await convo.innerText().catch(() => '')), 20000),
+  ok(tag('T4 …it shows the run\'s real session, its transcript'), await until(page, async () => /MEMBER SESSION LINE/.test(await convo.innerText().catch(() => '')), 20000),
     (await convo.innerText().catch(() => '')).slice(0, 400));
-  const memberInput = convo.locator('.chat-cmp-input:visible');
-  ok(tag('T4 …drawn once, though the AI Team page kept Scout open behind it'), (await page.locator('.chat-cmp-input[placeholder*="Scout"]').count()) === 1);
-  ok(tag('T4 …and it can be written to (the Chat composer)'), await until(page, async () => (await memberInput.count()) === 1 && await memberInput.isEnabled(), 20000));
-  await memberInput.click(); await memberInput.fill('which step?'); await page.keyboard.press('Enter');
-  ok(tag('T4 …the member answers there'), await until(page, async () => /CHILD ok/.test(await convo.innerText().catch(() => '')), 20000));
+  ok(tag('T4 …never the composer of a new conversation'), !/Start a new conversation/.test(await frame.innerHTML()));
+  const memberInput = convo.getByTestId('team-job-reply');
+  ok(tag('T4 …and it can be continued'), await until(page, async () => (await memberInput.count()) === 1 && await memberInput.isEnabled(), 20000));
+  await memberInput.fill('which step?'); await convo.getByRole('button', { name: 'Send' }).click();
+  const sentAt = Date.now();
+  const trace = [];
+  let closedShot = false;
+  for (let i = 0; i < 60; i++) {
+    const job = (record().team ?? []).find((j) => j.followUpOf);
+    const closed = await convo.getByTestId('team-job-closed').isVisible().catch(() => false);
+    trace.push({ ms: Date.now() - sentAt, card: await convo.getAttribute('data-team-status').catch(() => null), closed, followUp: job ? { open: job.open, told: job.told, outcome: job.outcome } : null });
+    if (closed && !closedShot) { closedShot = true; await page.screenshot({ path: join(OUT, `${engineName}-team-card-closed.png`) }); }
+    await page.waitForTimeout(250);
+  }
+  ok(tag('T4 …while the member answers the composer is honestly closed'), closedShot, (await convo.innerText().catch(() => '')).slice(-300));
+  ok(tag('T4 …the Super hears what the owner wrote and the answer, once'), await until(page, async () => reports().filter((r) => r.kind === 'super-turn' && /followup=owner/.test(r.text) && /which step\?/.test(r.text)).length === 1, 150000),
+    JSON.stringify(reports().filter((r) => r.kind === 'super-turn').slice(-3)).slice(0, 900));
+  ok(tag('T4 …and the composer opens again'), await until(page, async () => (await memberInput.count()) === 1, 15000));
+  writeFileSync(join(OUT, `${engineName}-card-trace.json`), JSON.stringify({ trace: trace.filter((x, i) => i === 0 || JSON.stringify({ ...x, ms: 0 }) !== JSON.stringify({ ...trace[i - 1], ms: 0 })), wire, heard: reports().filter((r) => r.kind === 'super-turn').map((r) => ({ t: r.t - sentAt, head: r.text.slice(0, 260) })), team: record().team, queue: (record().queue ?? []).slice(-4), members: reports().filter((r) => r.kind === 'member-run').map((r) => ({ t: r.t - sentAt, p: r.prompt.slice(0, 80) })) }, null, 1));
   // Its opening flight has landed (the frame's fade-in done) before the picture.
   await until(page, async () => frame.evaluate((f) => !f.getAnimations().length && getComputedStyle(f).opacity === '1'), 5000);
   await page.screenshot({ path: join(OUT, `${engineName}-team-card-opened.png`) });
@@ -359,20 +391,14 @@ async function run(engineName, base) {
   ok(tag('T4 Enter on the focused card opens it on the stage too'), await until(page, async () =>
     (await frame.getAttribute('data-where').catch(() => null)) !== 'float' && await convo.isVisible().catch(() => false)
     && await onSuper(), 15000));
-  // Leaving the Super screen hands the conversation back: the AI Team page (Scout still open
-  // there) draws the SAME session, the talk had on the stage in it, with its one composer.
-  await page.locator('aside a, aside button, nav a, nav button').filter({ hasText: /^\s*AI Team\s*\d*\s*$/ }).first().click();
-  // The surface has shrunk into the dock (280 ms): nothing of the stage is drawn over the page.
-  const folded = () => page.evaluate(() => !document.querySelector('.agent-surface.expanded, .agent-surface.closing'));
-  ok(tag('T4 the Super stage folded away, nothing of it over the AI Team page'), await until(page, folded, 10000));
-  const teamStage = page.locator('.aiteam .aiteam-stage[data-stage="scout"]');
-  ok(tag('T4 back on AI Team, Scout\'s pane holds the talk from the stage, drawn once'), await until(page, async () =>
-    (await page.locator('.aiteam:visible').count()) === 1 && /which step\?/.test(await teamStage.innerText().catch(() => ''))
-    && (await teamStage.locator('.chat-cmp-input:visible').count()) === 1, 15000),
-    (await teamStage.innerText().catch(() => '')).slice(-300));
-  ok(tag('T4 …the page is on top where Scout talks'), await page.evaluate(() => { const el = document.querySelector('.aiteam .aiteam-stage[data-stage="scout"]'); const b = el.getBoundingClientRect(); return !!document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2)?.closest('.aiteam'); }));
-  await page.screenshot({ path: join(OUT, `${engineName}-team-back-on-ai-team.png`) });
-
+  // The new card at the owner's two widths, open.
+  for (const w of [[1440, 900], [390, 844]]) {
+    await page.setViewportSize({ width: w[0], height: w[1] });
+    await page.waitForTimeout(1500);
+    await page.screenshot({ path: join(OUT, `${engineName}-team-card-${w[0]}-open.png`) });
+    console.log(`  card at ${w[0]}: conversation visible ${await convo.isVisible().catch(() => false)}, overflow ${await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)}`);
+  }
+  await page.setViewportSize({ width: 1600, height: 1000 });
   ok(tag('no console errors'), errors.length === 0, errors.slice(0, 5).join('\n'));
   await browser.close();
 }

@@ -6,6 +6,8 @@ import { plainPostText, readThread } from '../automations/threads.js';
 import type { AutomationQuestion, ThreadEntry } from '../automations/types.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { MAX_CONTAINERS, MAX_FLOAT, MAX_READ_BYTES, MAX_TEAM_JOBS, floatCount, type SuperQueueItem, type SuperState, type SuperTeamJob, type TeamJobConclusion, type TeamJobEvent, type TeamJobStatus } from './types.js';
+import { sessionForRun } from '../automations/session-registry.js';
+import { runningSessionFor } from '../automations/run-session.js';
 import { containerIdFor, countEvent, newQueueId } from './inbox.js';
 import { makeRoom } from './room.js';
 
@@ -52,6 +54,13 @@ export function ensureTeamContainer(s: SuperState, jobId: string): string | null
 let liveSource: ((contextRoot: string, job: SuperTeamJob) => LiveSayJob | null) | null = null;
 export function setTeamLiveSource(fn: typeof liveSource): void { liveSource = fn; }
 
+/** Where the owner's reply on a run is told to the Super's side: the server injects it (the say
+ *  route imports nothing of the super's routes). */
+export type TeamFollowUpNote = (contextRoot: string, reply: { member: string; runId: string; entryId: string; jobId: string; text: string }) => void;
+let followUpNote: TeamFollowUpNote | null = null;
+export function setTeamFollowUpNote(fn: TeamFollowUpNote | null): void { followUpNote = fn; }
+export function noteTeamFollowUp(...args: Parameters<TeamFollowUpNote>): void { followUpNote?.(...args); }
+
 /** Where a team job whose ending is still owed to the super is watched: the server injects it
  *  (this module imports no server code). */
 let jobWatcher: ((contextRoot: string, jobId: string) => void) | null = null;
@@ -67,31 +76,64 @@ export function teamJobOwed(j: SuperTeamJob): boolean {
  *  memory, the record survives a restart and an answer days later. */
 export function armTeamJobWatches(contextRoot: string, s: Pick<SuperState, 'team' | 'enabled' | 'session'>): void {
   if (!jobWatcher || !s.enabled || !s.session) return;
-  for (const j of s.team) if (teamJobOwed(j)) jobWatcher(contextRoot, j.id);
+  for (const j of s.team) if (teamJobOwed(j) || teamJobTrailing(j)) jobWatcher(contextRoot, j.id);
+}
+
+/** How long a job whose ending was told is still read for a late post (a background wait that
+ *  outlived its turn). A resumed turn is a follow-up with its own record, so this has one job. */
+export const TEAM_TRAIL_MS = 24 * 60 * 60_000;
+
+export function teamJobTrailing(j: SuperTeamJob, now = Date.now()): boolean {
+  return j.toldEndAt !== undefined && !j.concluded && now - j.toldEndAt < TEAM_TRAIL_MS;
 }
 
 /** A finished job's row never changes: read once per process, not on every push. Keyed by
  *  vault and job; pruned to the jobs still shown on each read. */
-const finished = new Map<string, { status: TeamJobStatus; lastLine: string }>();
+const finished = new Map<string, TeamLiveRow>();
+
+/** A team card's row: what it does now, and the real session behind it (`sessionId`: the run's
+ *  own Claude session, bound when the run began; absent while unknown or for a job that keeps none). */
+export interface TeamLiveRow {
+  status: TeamJobStatus; lastLine: string; sessionId?: string;
+  /** This machine bound the session to the run, so a reply can resume it. A session only noted
+   *  while it ran (a one-off job, a killed run) shows but cannot be continued. */
+  resumable?: true;
+}
+
+/** The session a job's run lives in: the machine's binding, else what its running session said. */
+function jobSession(contextRoot: string, j: SuperTeamJob): { sessionId?: string; resumable?: true } {
+  try {
+    const bound = sessionForRun(contextRoot, j.member, j.runId, undefined, false);
+    if (bound) return { sessionId: bound, resumable: true };
+    const noted = runningSessionFor(contextRoot, j.member, j.runId);
+    return noted ? { sessionId: noted } : {};
+  } catch { return {}; }
+}
 
 /** Status and last line of every team job that has a card on the stage (the window's view). */
-export function teamLiveRows(contextRoot: string, s: Pick<SuperState, 'team' | 'containers'>): Record<string, { status: TeamJobStatus; lastLine: string }> | undefined {
+export function teamLiveRows(contextRoot: string, s: Pick<SuperState, 'team' | 'containers'>): Record<string, TeamLiveRow> | undefined {
   const shown = new Set(s.containers.filter((c) => c.kind === 'team').map((c) => c.ref));
   const keyOf = (id: string) => `${contextRoot}\u0000${id}`;
   const live = new Set([...shown].map(keyOf));
   for (const k of finished.keys()) if (k.startsWith(`${contextRoot}\u0000`) && !live.has(k)) finished.delete(k);
   if (!shown.size) return undefined;
-  const out: Record<string, { status: TeamJobStatus; lastLine: string }> = {};
+  const out: Record<string, TeamLiveRow> = {};
   for (const j of s.team) {
     if (!shown.has(j.id)) continue;
+    // The owner's follow-up on this conversation is this card's work now, however old the job.
+    const next = s.team.find((x) => x.followUpOf === j.id && x.open === true);
+    if (next) finished.delete(keyOf(j.id));
     const hit = finished.get(keyOf(j.id));
     if (hit) { out[j.id] = hit; continue; }
     try {
-      const row = teamJobStatus(contextRoot, j, liveSource ? liveSource(contextRoot, j) : null);
+      const own = teamJobStatus(contextRoot, j, liveSource ? liveSource(contextRoot, j) : null);
+      const status = next ? teamJobStatus(contextRoot, next, liveSource ? liveSource(contextRoot, next) : null).status : own.status;
+      const row: TeamLiveRow = { status, lastLine: own.lastLine, ...jobSession(contextRoot, j) };
       out[j.id] = row;
       // A reply is final only once its outcome is recorded (its zero-post mirror lands just after it
-      // settles); a job whose ending is still owed to the super is never final (an answer resumes it).
-      if ((row.status === 'done' || row.status === 'failed') && !teamJobOwed(j) && (j.jobKind === 'run' || j.outcome)) finished.set(keyOf(j.id), row);
+      // settles); a job whose ending is still owed to the super is never final (an answer resumes it),
+      // nor one the owner can still continue.
+      if ((status === 'done' || status === 'failed') && !next && !teamJobOwed(j) && !teamJobTrailing(j) && (j.jobKind === 'run' || j.outcome)) finished.set(keyOf(j.id), row);
     } catch { /* a card with no status reads as its job only */ }
   }
   return out;
@@ -215,13 +257,27 @@ export function teamJobAnswer(contextRoot: string, job: SuperTeamJob, live: Live
   // asked while the member still runs lands in the same run: task super-takip-sorusu-cevap-penceresi.
   const window = job.jobKind === 'reply' ? replyWindow(job, live?.kind === 'reply' ? live : null, after) : after;
   const posts = window.filter((e) => e.kind === 'agent' && e.text.trim()).map((e) => e.text.trim());
-  let text = '';
-  if (posts.length) text = [posts[posts.length - 1], ...posts.slice(0, -1)].join('\n\n');
-  else if (job.jobKind === 'run') {
-    try { text = readRunAnswer(contextRoot, job.member, job.runId)?.text.trim() ?? ''; } catch { text = ''; }
+  let text = posts.length ? [posts[posts.length - 1], ...posts.slice(0, -1)].join('\n\n') : '';
+  if (job.jobKind === 'run') {
+    // The final message: every `super read` of a long report ends up here.
+    text = withDocument(contextRoot, job, live, text);
   }
   const buf = Buffer.from(text, 'utf-8');
   return buf.length > MAX_READ_BYTES ? buf.subarray(0, MAX_READ_BYTES).toString('utf-8').replace(/\uFFFD+$/, '') : text;
+}
+
+/** A run's document: its final message, which the thread never holds. */
+function runDocument(contextRoot: string, job: SuperTeamJob): string {
+  try { return readRunAnswer(contextRoot, job.member, job.runId)?.text.trim() ?? ''; } catch { return ''; }
+}
+
+/** The document joined to a run's posts. It leads, unless the owner answered a question of the
+ *  run: a resume never rewrites the document, so it is the first turn's, and the posts are newer. */
+function withDocument(contextRoot: string, job: SuperTeamJob, live: LiveSayJob | null, posts: string): string {
+  const doc = runDocument(contextRoot, job);
+  if (!doc || posts.includes(doc)) return posts;
+  if (!posts) return doc;
+  return jobQuestions(contextRoot, job, live).some((q) => q.state === 'answered') ? `${posts}\n\n${doc}` : `${doc}\n\n${posts}`;
 }
 
 /** The share of a done job's answer its `[super events]` item carries; `super read` has the rest. */
@@ -351,17 +407,103 @@ export function noteTeamJobEnd(
   if (!end.kind || (end.kind === job.told && qid === job.toldQuestion)) return false;
   job.told = end.kind;
   if (qid) job.toldQuestion = qid; else delete job.toldQuestion;
-  if (end.kind !== 'question') delete job.open;
-  for (const q of s.queue) if (q.team === jobId && q.state === 'pending') q.state = 'done';
-  s.queue.push({ id: newQueueId(), sessionId: s.session, kind: end.kind, state: 'pending', createdAt: now, team: jobId });
+  if (end.kind !== 'question') { delete job.open; job.toldEndAt = now; }
+  // An answer already queued stays: it says something the ending does not repeat.
+  for (const q of s.queue) if (q.team === jobId && q.state === 'pending' && !q.partial) q.state = 'done';
+  s.queue.push({
+    id: newQueueId(), sessionId: s.session, kind: end.kind, state: 'pending', createdAt: now, team: jobId,
+    ...(end.kind === 'question' ? {} : { posts: claimPosts(contextRoot, s, job) }),
+  });
   countEvent(s);
   return true;
+}
+
+/** A post stands this long before it is an event of its own: a member's last post is followed by
+ *  its run's end within seconds, and that ending carries it. */
+export const TEAM_POST_SETTLE_MS = 45_000;
+
+/** The first job of a job's chain (the owner's follow-ups continue it): it holds `toldPost`. */
+function chainRoot(s: Pick<SuperState, 'team'>, job: SuperTeamJob): SuperTeamJob {
+  return (job.followUpOf ? s.team.find((j) => j.id === job.followUpOf) : undefined) ?? job;
+}
+
+/** Every post of a chain, in id order: its run after its first ask. */
+function chainPosts(contextRoot: string, root: SuperTeamJob): ThreadEntry[] {
+  const { after } = jobThread(contextRoot, root);
+  // A record from when a busy member queued a reply shares that member's run: only its own window.
+  return (root.queued ? replyWindow(root, null, after) : after).filter((e) => e.kind === 'agent' && e.text.trim());
+}
+
+function untoldPosts(contextRoot: string, s: Pick<SuperState, 'team'>, job: SuperTeamJob): ThreadEntry[] {
+  const root = chainRoot(s, job);
+  return chainPosts(contextRoot, root).filter((e) => root.toldPost === undefined || e.id > root.toldPost);
+}
+
+/** What is new for the super, marked as told: the one place a post moves to "told". */
+function claimPosts(contextRoot: string, s: Pick<SuperState, 'team'>, job: SuperTeamJob): NonNullable<SuperQueueItem['posts']> {
+  const root = chainRoot(s, job);
+  const fresh = untoldPosts(contextRoot, s, job);
+  const range = { ...(root.toldPost ? { after: root.toldPost } : {}) };
+  if (!fresh.length) return range;
+  root.toldPost = fresh[fresh.length - 1].id;
+  return { ...range, upto: root.toldPost };
+}
+
+/** A post waits for the super: read outside the record's write first, so a quiet tick writes nothing. */
+export function teamPostsDue(contextRoot: string, s: Pick<SuperState, 'team'>, job: SuperTeamJob, now = Date.now()): boolean {
+  const fresh = untoldPosts(contextRoot, s, job);
+  return fresh.length > 0 && now - entryMs(fresh[fresh.length - 1].id) >= TEAM_POST_SETTLE_MS;
+}
+
+/**
+ * An answer that no ending carries becomes ONE event: a post of a job still going (the member said
+ * its result and went on waiting), or a late one. Named by the newest job of its chain.
+ */
+export function noteTeamJobPosts(contextRoot: string, s: SuperState, jobId: string, now = Date.now()): boolean {
+  const job = s.team.find((j) => j.id === jobId);
+  if (!job || !s.session || !s.enabled || !teamPostsDue(contextRoot, s, job, now)) return false;
+  const root = chainRoot(s, job);
+  const newest = s.team.find((j) => j.followUpOf === root.id) ?? root;
+  s.queue.push({
+    id: newQueueId(), sessionId: s.session, kind: 'done', state: 'pending', createdAt: now, team: newest.id,
+    partial: true, posts: claimPosts(contextRoot, s, newest),
+  });
+  countEvent(s);
+  return true;
+}
+
+/**
+ * The owner wrote on a team job's own conversation: the reply is a job like any reply job, so its
+ * ending and answers reach the super through the same events, with what he wrote. No card (it
+ * continues the job's own). Returns the new job, null when the run is no team job's.
+ */
+export function recordTeamFollowUp(
+  contextRoot: string, s: SuperState,
+  reply: { member: string; runId: string; entryId: string; jobId: string; text: string },
+  now = Date.now(),
+): SuperTeamJob | null {
+  if (!s.enabled || !s.session) return null;
+  const root = s.team.find((j) => j.member === reply.member && j.runId === reply.runId && !j.followUpOf);
+  if (!root) return null;
+  // A job told before posts were counted: what it already said is not new.
+  if (root.toldPost === undefined && root.told && root.told !== 'question') {
+    const before = chainPosts(contextRoot, root).filter((e) => e.id < reply.entryId);
+    if (before.length) root.toldPost = before[before.length - 1].id;
+  }
+  const job: SuperTeamJob = {
+    id: newTeamJobId(), member: reply.member, runId: reply.runId, entryId: reply.entryId,
+    jobKind: 'reply', jobId: reply.jobId, queued: false,
+    brief: firstLine(reply.text, 200), startedAt: now, open: true, followUpOf: root.id,
+  };
+  s.team = [job, ...s.team].slice(0, MAX_TEAM_JOBS);
+  return job;
 }
 
 /** A team item is no longer true: its job left the record, a later ending replaced it, or (read
  *  from `contextRoot` when given) its question is no longer the one waiting on the owner. */
 export function staleTeamItem(s: Pick<SuperState, 'team'>, q: SuperQueueItem, contextRoot?: string): boolean {
   const job = s.team.find((j) => j.id === q.team);
+  if (q.partial) return !job;
   if (!job || job.told !== q.kind) return true;
   if (q.kind !== 'question' || contextRoot === undefined) return false;
   const end = teamJobEnding(contextRoot, job, null);
@@ -381,26 +523,49 @@ export function teamItemLines(contextRoot: string, vault: string, s: Pick<SuperS
   const row = teamJobStatus(contextRoot, job, live);
   const end = teamJobEnding(contextRoot, job, live);
   const status = q.kind === 'question' ? 'asking' : row.status;
-  const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${q.kind}${awaitedTeamItem(s, q) ? ` awaited=owner${job.origin ? ` origin=${job.origin}` : ''}` : ''} status=${status}`];
-  if (job.brief) lines.push(wrapUntrusted(vault, `Brief: ${job.brief}`));
+  const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${q.partial ? 'answer' : q.kind}${job.followUpOf ? ' followup=owner' : ''}${awaitedTeamItem(s, q) ? ` awaited=owner${job.origin ? ` origin=${job.origin}` : ''}` : ''} status=${status}`];
+  if (job.followUpOf) {
+    const asked = jobThread(contextRoot, job).ordered.find((e) => e.id === job.entryId)?.text ?? job.brief;
+    lines.push(wrapUntrusted(vault, `The owner wrote to the member: ${asked.slice(0, TEAM_ANSWER_EXCERPT)}`));
+  } else if (job.brief) lines.push(wrapUntrusted(vault, `Brief: ${job.brief}`));
   const asked = q.kind === 'question' && end.question?.id === job.toldQuestion ? end.question : undefined;
   if (asked) lines.push(wrapUntrusted(vault, `Question: ${firstLine(asked.question, 300)}`));
   const lastLine = q.kind === 'question' ? teamJobLive(contextRoot, job, live).lastLine : row.lastLine;
   if (q.kind === 'done') {
     // The answer itself, so the super can relay it without a second call: the member's final post
     // first (an answered question's resolution line leads when that is how it ended).
-    let answer = teamJobAnswer(contextRoot, job, live);
+    let answer = q.posts?.upto ? itemPosts(contextRoot, s, job, q.posts) : q.posts?.after ? '' : teamJobAnswer(contextRoot, job, live);
+    if (q.partial) { if (answer) lines.push(...answerLines(vault, job, answer)); return lines; }
+    // A run's final message is in its document, never a post: it leads, so no post cuts it out.
+    // The resumed turn said its all in earlier events: the first turn's document is not news.
+    const staleDoc = q.posts?.after !== undefined && !answer && jobQuestions(contextRoot, job, live).some((x) => x.state === 'answered');
+    if (job.jobKind === 'run' && !staleDoc) answer = withDocument(contextRoot, job, live, answer);
+    if (q.posts?.after && !answer && !end.lastLine) { lines.push('  (No new answer: what it said reached you in an earlier event.)'); return lines; }
     if (end.lastLine && !answer.includes(end.lastLine)) answer = answer ? `${end.lastLine}\n\n${answer}` : end.lastLine;
     if (!answer) answer = lastLine;
-    if (answer) {
-      const cut = answer.length > TEAM_ANSWER_EXCERPT;
-      lines.push(wrapUntrusted(vault, `Answer: ${cut ? `${answer.slice(0, TEAM_ANSWER_EXCERPT).trimEnd()}…` : answer}`));
-      if (cut) lines.push(`  (cut: the whole answer: \`dreamcontext super read ${job.id}\`)`);
-    }
+    if (answer) lines.push(...answerLines(vault, job, answer));
     return lines;
   }
   if (lastLine) lines.push(wrapUntrusted(vault, `Last line: ${lastLine}`));
+  // A stuck claimed the posts it ended on: they are delivered here or never.
+  if (q.kind === 'stuck' && q.posts?.upto) lines.push(...answerLines(vault, job, itemPosts(contextRoot, s, job, q.posts)));
   return lines;
+}
+
+/** The posts one item delivers: its last first, as `teamJobAnswer` reads a whole answer. */
+function itemPosts(contextRoot: string, s: Pick<SuperState, 'team'>, job: SuperTeamJob, range: NonNullable<SuperQueueItem['posts']>): string {
+  const posts = chainPosts(contextRoot, chainRoot(s, job))
+    .filter((e) => (range.after === undefined || e.id > range.after) && e.id <= (range.upto as string))
+    .map((e) => e.text.trim());
+  return posts.length ? [posts[posts.length - 1], ...posts.slice(0, -1)].join('\n\n') : '';
+}
+
+function answerLines(vault: string, job: SuperTeamJob, answer: string): string[] {
+  const cut = answer.length > TEAM_ANSWER_EXCERPT;
+  return [
+    wrapUntrusted(vault, `Answer: ${cut ? `${answer.slice(0, TEAM_ANSWER_EXCERPT).trimEnd()}…` : answer}`),
+    ...(cut ? [`  (cut: the whole answer: \`dreamcontext super read ${job.id}\`)`] : []),
+  ];
 }
 
 /** Record a reply job's own ending once the say path's job settled. */

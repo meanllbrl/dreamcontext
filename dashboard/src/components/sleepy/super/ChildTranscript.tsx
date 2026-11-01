@@ -25,10 +25,12 @@ const LIVE_REFRESH_MS = 4_000;
  * folder); no `claude` is started for it. The live chat takes the slot back the moment the child
  * runs again (`super resume`), because the card then has a session and draws the slot instead.
  */
-export function ChildTranscript({ claudeId, live = false }: {
+export function ChildTranscript({ claudeId, live = false, foot }: {
   claudeId: string;
   /** The job still runs on the Mac (the phone reads it from here): the transcript keeps refreshing. */
   live?: boolean;
+  /** What stands under the transcript instead of "finished" (a team job's own composer). */
+  foot?: 'own';
 }) {
   const api = useApi();
   const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
@@ -44,6 +46,13 @@ export function ChildTranscript({ claudeId, live = false }: {
     refetchInterval: live ? LIVE_REFRESH_MS : false,
   });
   useEffect(() => { if (history.data) session.load(history.data); }, [history.data, session]);
+  // The job just ended: its last lines landed after the last refresh.
+  const wasLive = useRef(live);
+  const refetch = history.refetch;
+  useEffect(() => {
+    if (wasLive.current && !live) void refetch();
+    wasLive.current = live;
+  }, [live, refetch]);
   useEffect(() => () => session.dispose(), [session]);
   useLayoutEffect(() => {
     const el = hostRef.current;
@@ -61,9 +70,9 @@ export function ChildTranscript({ claudeId, live = false }: {
       permissionMode="auto"
       canSignInInApp={false}
       signInCommand="claude auth login"
-      readOnly={live ? true : 'finished'}
+      readOnly={live || foot === 'own' ? true : 'finished'}
     />
-  ), [session, modelConfig, live]);
+  ), [session, modelConfig, live, foot]);
   return (
     <div className="super-slot" data-testid="super-child-transcript" ref={hostRef}>
       {createPortal(pane, session.container)}

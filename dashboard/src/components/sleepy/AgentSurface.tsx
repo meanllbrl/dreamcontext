@@ -19,6 +19,8 @@ import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
 import { openOwnerQuestions, trimOwnerAnswers } from './super/superQuestions';
 import { ChatPaneHost, type ChatSurfaceActions } from './ChatPaneHost';
 import { ChildTranscript } from './super/ChildTranscript';
+import { TeamJobConversation } from './super/TeamJobConversation';
+import type { TeamCard } from './super/TeamTile';
 import { AgentConversation } from '../aiteam/AgentStage';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
@@ -3771,6 +3773,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const renderChildTranscript = useCallback((claudeId: string) => <ChildTranscript key={claudeId} claudeId={claudeId} />, []);
   // A team card shown large is its member's conversation, the AI Team page's own pane.
   const renderTeamConversation = useCallback((member: string) => <AgentConversation key={member} slug={member} />, []);
+  const renderTeamJob = useCallback((card: TeamCard) => <TeamJobConversation key={card.job.id} card={card} />, []);
   // The super chat draws the Super Agent's questions to the owner as cards (superQuestions.ts,
   // owner 2026-10-21 "soruyu hep chatta sorsun"). They read the record's open questions from
   // here, where the record lives whether or not the stage is up; no live record = static cards.
@@ -6391,7 +6394,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             sessionFor={chatByClaudeId}
             childTranscript={renderChildTranscript}
             // Kept through the shrink to the dock (its card keeps the talk), handed back once folded.
-            teamConversation={(expanded || closing) && !windowActivity.hidden ? renderTeamConversation : undefined}
+            teamConversation={(expanded || closing) && !windowActivity.hidden ? renderTeamJob : undefined}
             titleFor={superTitleFor}
             nameFor={superNameFor}
             terminals={remoteDesktop ? [] : superTerminals}

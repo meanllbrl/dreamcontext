@@ -1,3 +1,4 @@
+import { noteRunSession } from '../../lib/automations/run-session.js';
 import { logHandoff } from '../../lib/usage-records.js';
 import { directHeavy, shellQuote } from '../../lib/run-budget.js';
 import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
@@ -2595,6 +2596,14 @@ export function registerHookCommand(program: Command): void {
           if (process.env.DREAMCONTEXT_DEBUG) console.error('[initializer] error:', (initErr as Error).message ?? initErr);
         }
         process.exit(0);
+      }
+
+      // A run's session, the moment it exists: the runner only learns it when the run ends, and a
+      // team card shows the real session from the start (run-session.ts).
+      {
+        const runSlug = process.env.DREAMCONTEXT_AUTOMATION_SLUG;
+        const runFired = process.env.DREAMCONTEXT_AUTOMATION_RUN;
+        if (root && runSlug && runFired && typeof input?.session_id === 'string') noteRunSession(root, runSlug, runFired, input.session_id);
       }
 
       // ── Embedded-tab session tracking ────────────────────────────────────

@@ -67,7 +67,7 @@ import {
 } from '../../lib/automations/notifier.js';
 import { formatSchedule, nextFire } from '../../lib/automations/schedule.js';
 import { sniffImageType, EXT_BY_IMAGE_TYPE } from '../../lib/image-sniff.js';
-import { allPendingQuestions, claimQuestion, pendingQuestion, settleApprovalQuestions } from '../../lib/automations/hitl.js';
+import { allPendingQuestions, claimQuestion, pendingQuestion, pendingQuestionOfRun, settleApprovalQuestions } from '../../lib/automations/hitl.js';
 import { approvalQuestionTarget, resumeWithAnswer } from '../../lib/automations/verdict.js';
 import { queuedFire, type QueuedFire } from '../../lib/automations/queue.js';
 import { ackAttention, attentionRuns, attentionWatermark } from '../../lib/automations/attention.js';
@@ -77,6 +77,7 @@ import {
 } from '../../lib/automations/threads.js';
 import { latestBoundSession, readAutomationSession, sessionForRun } from '../../lib/automations/session-registry.js';
 import { MAX_LIVE_CHILDREN } from '../../lib/super/types.js';
+import { noteTeamFollowUp } from '../../lib/super/team.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../lib/automations/telegram.js';
 import { resolveWhiteboardPath } from '../../lib/whiteboards/store.js';
@@ -2493,6 +2494,8 @@ export async function handleAutomationsThreadReply(
     // delivers the reply the moment the turn ahead of it ends. Refusing here only moved
     // the failure from the channel to a toast; the message never needed to fail.
 
+    // An answer to a question its run waits on is that job's own turn, already watched.
+    const answers = pendingQuestionOfRun(contextRoot, slug, runId) !== null;
     // The thread stores what a human reads; the resume re-expands the raw text fresh.
     const entry = appendThreadEntry(contextRoot, slug, {
       runId, kind: 'user', text: displayText(contextRoot, text), via: 'dashboard',
@@ -2501,6 +2504,7 @@ export async function handleAutomationsThreadReply(
       runId, text, entryId: entry.id, ...(board ? { board } : {}),
       ...(picked.override ? { override: picked.override } : {}),
     });
+    if (!answers) noteTeamFollowUp(contextRoot, { member: slug, runId, entryId: entry.id, jobId: job.id, text: entry.text });
     sendJson(res, 202, { entry, job: { id: job.id, status: job.status } });
   } catch (err) {
     if (err instanceof AutomationError) {

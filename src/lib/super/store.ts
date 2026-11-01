@@ -318,6 +318,11 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(count(q.exits) ? { exits: count(q.exits) } : {}),
       ...(batch ? { batch } : {}),
       ...(team ? { team } : {}),
+      ...(team && isRecord(q.posts) ? { posts: {
+        ...(typeof q.posts.after === 'string' && ENTRY_ID_RE.test(q.posts.after) ? { after: q.posts.after } : {}),
+        ...(typeof q.posts.upto === 'string' && ENTRY_ID_RE.test(q.posts.upto) ? { upto: q.posts.upto } : {}),
+      } } : {}),
+      ...(team && q.partial === true ? { partial: true as const } : {}),
       ...(q.kind === 'question' && !team && q.direct === true ? { direct: true as const } : {}),
       ...(options.length ? { options } : {}),
       ...(askSpec && askSpec.ok ? { ask: askSpec.spec } : {}),
@@ -380,6 +385,9 @@ function sanitizeTeam(raw: unknown): SuperTeamJob[] {
       ...(j.told === 'question' && typeof j.toldQuestion === 'string' && ENTRY_ID_RE.test(j.toldQuestion) ? { toldQuestion: j.toldQuestion } : {}),
       ...(j.open === true ? { open: true as const } : {}),
       ...(j.concluded === 'gone' || j.concluded === 'lost' ? { concluded: j.concluded } : {}),
+      ...(typeof j.toldPost === 'string' && ENTRY_ID_RE.test(j.toldPost) ? { toldPost: j.toldPost } : {}),
+      ...(finite(j.toldEndAt) !== undefined ? { toldEndAt: finite(j.toldEndAt) } : {}),
+      ...(typeof j.followUpOf === 'string' && TEAM_JOB_ID_RE.test(j.followUpOf) ? { followUpOf: j.followUpOf } : {}),
     });
   }
   return out.sort((a, b) => b.startedAt - a.startedAt).slice(0, MAX_TEAM_JOBS);

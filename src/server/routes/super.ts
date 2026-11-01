@@ -16,7 +16,7 @@ import {
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
-import { askOwnerToApprove, closeSettledApprovals, newTeamJobId, noteTeamJobEnd, recordTeamJob, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, type LiveSayJob } from '../../lib/super/team.js';
+import { armTeamJobWatches, askOwnerToApprove, closeSettledApprovals, newTeamJobId, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
 import { collectTeam, memberCallState, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
 import { agentModelChoices, parseModelOverride } from '../../lib/agents/model-choices.js';
 import { LIGHT_DEFAULT_EFFORT, LIGHT_DEFAULT_MODEL } from '../../lib/automations/light-run.js';
@@ -2319,7 +2319,8 @@ function watchTeamJob(root: string, teamJobId: string): void {
   if (jobWatches.has(key)) return;
   const t = setInterval(() => {
     void checkTeamJob(root, teamJobId)
-      .then((keep) => { if (!keep) stop(); }, (err) => {
+      // An ending told stops this watch; the record may still want the late-post one.
+      .then((keep) => { if (!keep) { stop(); void readSuperState(root, superSanitizeOpts()).then((s) => armTeamJobWatches(root, s)); } }, (err) => {
         console.warn(`[super] team job ${teamJobId}: its ending could not be checked: ${(err as Error).message}`);
       });
   }, TEAM_JOB_WATCH_MS);
@@ -2334,7 +2335,13 @@ function watchTeamJob(root: string, teamJobId: string): void {
 export async function checkTeamJob(root: string, teamJobId: string): Promise<boolean> {
   const s = await readSuperState(root, superSanitizeOpts());
   const j = s.team.find((x) => x.id === teamJobId);
-  if (!j || !teamJobOwed(j) || !s.enabled || !s.session) return false;
+  if (!j || !s.enabled || !s.session) return false;
+  // Its ending was told: only a late post can still come.
+  if (!teamJobOwed(j)) {
+    if (!teamJobTrailing(j)) return false;
+    if (teamPostsDue(root, s, j)) await teamJobPosted(root, teamJobId);
+    return true;
+  }
   const key = `${root}\u0000${teamJobId}`;
   const live = liveSayJob(root, j);
   const end = teamJobEnding(root, j, live);
@@ -2357,10 +2364,30 @@ export async function checkTeamJob(root: string, teamJobId: string): Promise<boo
   const moved = end.kind === null ? standing
     : end.kind === 'question' ? j.told !== 'question' || j.toldQuestion !== end.question?.id
     : true;
-  if (!moved) return true;
+  if (!moved) {
+    // It said something and goes on: that answer is the super's now, not at the run's end.
+    if (teamPostsDue(root, s, j)) await teamJobPosted(root, teamJobId);
+    return true;
+  }
   await teamJobSettled(root, teamJobId);
   return end.kind === null || end.kind === 'question';
 }
+
+/** A post no ending carries becomes its own event. */
+async function teamJobPosted(root: string, teamJobId: string): Promise<void> {
+  let added = false;
+  await writeSuper(root, (s) => { added = noteTeamJobPosts(root, s, teamJobId); });
+  if (added) void pumpSuper(root);
+}
+
+/** The owner's reply on a job's own run: a job of its own, so it ends like one (`recordReplyEnding`). */
+const noteFollowUp: TeamFollowUpNote = (root, reply) => {
+  void (async () => {
+    let made: SuperTeamJob | null = null;
+    await writeSuper(root, (s) => { made = recordTeamFollowUp(root, s, reply); });
+    if (made) recordReplyEnding(root, (made as SuperTeamJob).id, reply.jobId);
+  })().catch((err) => console.warn(`[super] the owner's reply to ${reply.member} was not recorded: ${(err as Error).message}`));
+};
 
 /** Close the open approval questions about one member (it is gone or turned off). */
 async function closeApprovalsFor(root: string, member: string): Promise<void> {
@@ -2396,6 +2423,7 @@ async function settleApprovals(root: string, state: SuperState): Promise<SuperSt
 // server code).
 setTeamLiveSource(liveSayJob);
 setTeamJobWatcher(watchTeamJob);
+setTeamFollowUpNote(noteFollowUp);
 
 /** The say path's own job for a team job, while it is in memory. */
 function liveSayJob(root: string, j: SuperTeamJob): LiveSayJob | null {

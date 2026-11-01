@@ -185,7 +185,7 @@ export interface SuperContainerProps extends SuperCardActions {
   childTranscript?: (claudeId: string) => ReactNode;
   /** `team`, shown large: its member's conversation (AgentStage's AgentConversation), a render
    *  prop for the same reason. */
-  teamConversation?: (member: string) => ReactNode;
+  teamConversation?: (card: TeamCard) => ReactNode;
   /** A press on a FLOATING card arms its drag (the card is one grab handle; F6, FE1). */
   onPress: (e: PointerEvent<HTMLDivElement>, id: string) => void;
   /** A card held over this one: releasing groups them (2026-10-20). */
@@ -639,8 +639,8 @@ function LargeBody(p: BodyProps): ReactNode {
         {c.kind === 'chat'
           ? <AgentCard session={p.session} child={p.child} title={p.title} asksOwner={p.asksOwner} status={p.status!} tall />
           : c.kind === 'team' && p.team
-            // The member's conversation, the AI Team page's own pane: read and written to here.
-            ? (p.viewReady && !p.parked ? p.teamConversation?.(p.team.job.member) ?? viewFor(p) : null)
+            // The job's own session, the way a child's card shows one.
+            ? (p.viewReady && !p.parked ? p.teamConversation?.(p.team) ?? viewFor(p) : null)
           : zoomsInPlace(c)
             // A picture or a live browser zooms where it is (owner 2026-10-22); a page does in WebCardBody.
             ? <ZoomPane key={c.id}>{viewFor(p)}</ZoomPane>
