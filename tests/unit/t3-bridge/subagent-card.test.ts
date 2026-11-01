@@ -90,6 +90,20 @@ describe('a sub-agent card on a bridge tool', () => {
     expect(late.some((f) => f.subtype === 'task_notification')).toBe(true);
   });
 
+  it('holds a step that comes before its card, and Antigravity\'s idle closes the card', () => {
+    const w = wire();
+    ev(w, running());
+    // ACP sends the sub-agent's prompt on its own thread before the card exists.
+    expect(ev(w, turnItem({ id: 'u-1', threadId: CHILD, type: 'user_message', status: 'completed', text: 'List the folders.' }))).toEqual([]);
+    ev(w, { type: 'subagent.updated', subagent: { id: 'node-1', prompt: 'Run invoke_subagent?', title: null, childThreadId: CHILD, result: null } });
+    const first = ev(w, sub('pending', { prompt: 'Run invoke_subagent?', childThreadId: CHILD }));
+    const started = first.filter((f) => f.subtype === 'task_started');
+    expect(started[started.length - 1]).toMatchObject({ prompt: 'List the folders.' });
+    ev(w, sub('running', { childThreadId: CHILD }));
+    const done = ev(w, sub('idle', { childThreadId: CHILD, result: 'Folders: .claude' }));
+    expect(done.find((f) => f.subtype === 'task_notification')).toMatchObject({ status: 'completed', summary: 'Folders: .claude' });
+  });
+
   it("a sub-agent's question still reaches the owner", () => {
     const w = wire();
     ev(w, running());

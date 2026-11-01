@@ -6,7 +6,7 @@
  * new thread, mode, model) into adapter calls. Every adapter event goes through `ToWire` and out
  * as Claude stream-json frames through `emit`.
  */
-import { chmodSync, existsSync, mkdirSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import * as NodeServices from '@effect/platform-node/NodeServices';
 import {
@@ -477,6 +477,28 @@ export class BridgeSession {
     this.opts.onFatal?.(message);
   }
 
+  /**
+   * Opt-in event trace (`DREAMCONTEXT_T3_EVENTS=<file>`): which thread each event is on and what
+   * kind it is, never its text. How a tool's sub-agent steps are told apart was read off this.
+   */
+  private traceEvent(event: ProviderAdapter.ProviderAdapterV2Event): void {
+    const file = this.opts.env?.DREAMCONTEXT_T3_EVENTS;
+    if (!file) return;
+    const e = event as unknown as Record<string, any>;
+    const item = e.turnItem;
+    const row = {
+      t: e.type,
+      ...(item ? { thread: item.threadId, item: item.type, id: String(item.id).slice(-40), status: item.status, parent: item.parentItemId ?? undefined, child: item.childThreadId ?? undefined, ptid: item.providerThreadId } : {}),
+      ...(e.threadId ? { thread: e.threadId } : {}),
+      ...(e.providerThread ? { app: e.providerThread.appThreadId, pt: e.providerThread.id } : {}),
+      ...(e.providerThreadId ? { pt: e.providerThreadId } : {}),
+      ...(e.subagent ? { sub: e.subagent.id, child: e.subagent.childThreadId, status: e.subagent.status, prompt: (e.subagent.prompt ?? '').length } : {}),
+      ...(e.providerTurn ? { turn: e.providerTurn.status } : {}),
+      ...(e.status && !item ? { status: e.status } : {}),
+    };
+    try { appendFileSync(file, JSON.stringify(row) + '\n'); } catch { /* best effort */ }
+  }
+
   /** Wait (bounded) until the active run has its provider turn id. */
   private async awaitTurnId(ms = 15_000): Promise<void> {
     if (!this.activeRun || this.activeRun.providerTurnId || !this.turnKnown) return;
@@ -484,6 +506,7 @@ export class BridgeSession {
   }
 
   private onEvent(event: ProviderAdapter.ProviderAdapterV2Event): void {
+    this.traceEvent(event);
     // A sub-agent's turn (its own thread) is never the run a Stop or a steer is for.
     const childTurn = event.type === 'provider_turn.updated' && !!event.threadId && event.threadId !== this.threadId;
     if (event.type === 'provider_turn.updated' && !childTurn && this.activeRun && event.providerTurn.status === 'running') {
@@ -653,6 +676,7 @@ export class BridgeSession {
   private async startRun(
     message: ProviderAdapter.ProviderAdapterV2TurnMessage,
     appContext: ReadonlyArray<{ key: string; text: string }>,
+    op: 'startTurn' | 'compactThread' = 'startTurn',
   ): Promise<string | null> {
     const session = this.session!;
     const providerThread = this.providerThread!;
@@ -678,13 +702,42 @@ export class BridgeSession {
       nativeThreadHasTurns: this.nativeHasTurns,
       ...(appContext.length ? { appContext } : {}),
     };
-    const exit = await this.runtime!.runPromiseExit(session.startTurn(input));
+    const run = op === 'compactThread' && session.compactThread ? session.compactThread(input) : session.startTurn(input);
+    const exit = await this.runtime!.runPromiseExit(run);
     if (Exit.isFailure(exit)) {
       this.activeRun = null;
       this.turnKnown?.resolve();
       return String(exit.cause).slice(0, 400);
     }
     return null;
+  }
+
+  /** Can this tool compact a thread when asked (`/compact`)? Codex can; ACP has no such verb. */
+  get canCompact(): boolean {
+    return !!this.session?.compactThread && !isInstanceTool(this.opts.tool);
+  }
+
+  /** `/compact`: the tool's own compaction, as a turn the pane sees start and end. */
+  async compact(): Promise<void> {
+    if (!this.session || !this.providerThread || this.closed || this.activeRun) return;
+    for (const frame of this.wire.beginTurn()) this.opts.emit(frame);
+    const failure = await this.startRun(this.turnMessage('/compact'), [], 'compactThread');
+    if (failure) {
+      this.opts.emit({
+        type: 'result', subtype: 'error_during_execution', is_error: true,
+        result: `${toolLabel(this.opts.tool)} could not compact: ${failure}`,
+        num_turns: 0, total_cost_usd: 0, usage: {}, session_id: this.wire.sessionId, dc_tool: this.opts.tool,
+      });
+    }
+  }
+
+  /** Stop one sub-agent (the card's `stop_task`). False = the tool cannot, or no such card. */
+  async stopSubagent(taskId: string): Promise<boolean> {
+    const session = this.session;
+    const native = this.wire.nativeTaskIdFor(taskId);
+    if (!session?.stopSubagent || !this.providerThread || !native) return false;
+    await this.run(session.stopSubagent({ providerThread: this.providerThread, nativeTaskId: native }));
+    return true;
   }
 
   /**

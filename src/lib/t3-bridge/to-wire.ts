@@ -187,8 +187,22 @@ export class ToWire {
   /** Sub-agents by their turn item id, by the thread they run on, and by T3's node id. */
   private readonly subRuns = new Map<string, SubRun>();
   private readonly runByChild = new Map<string, SubRun>();
+  /** A sub-agent's steps that came before its card (ACP sends the prompt first), by thread. */
+  private readonly earlySteps = new Map<string, TurnItem[]>();
+  /** Statuses a sub-agent reached: Antigravity ends one as `idle` once it ran. */
+  private readonly ranSubs = new Set<string>();
   /** What `subagent.updated` said about a sub-agent before (or after) its turn item. */
-  private readonly subNotes = new Map<string, { prompt: string; title: string | null; childThreadId: string | null; result: string | null }>();
+  private readonly subNotes = new Map<string, { prompt: string; title: string | null; childThreadId: string | null; result: string | null; nativeTaskId: string | null }>();
+  /** The card id → the sub-agent's T3 node id, so a Stop on the card finds the tool's own task. */
+  private readonly nodeByTask = new Map<string, string>();
+  /** What this tool's `/` menu offers (slash.ts), on every `system/init`. */
+  slashCommands: string[] = [];
+
+  /** The tool's own id for the sub-agent behind a card, or null. */
+  nativeTaskIdFor(taskId: string): string | null {
+    const node = this.nodeByTask.get(taskId);
+    return node ? this.subNotes.get(node)?.nativeTaskId ?? null : null;
+  }
   private turnStartedAt = 0;
 
   constructor(opts: ToWireOptions) {
@@ -205,7 +219,8 @@ export class ToWire {
       cwd: this.opts.cwd,
       permissionMode: this.opts.permissionMode,
       tools: [],
-      slash_commands: [],
+      // Never an empty list the tool did not mean: the client takes a list as the whole menu.
+      ...(this.slashCommands.length ? { slash_commands: this.slashCommands } : {}),
       dc_tool: this.opts.tool,
       ...extra,
     };
@@ -292,6 +307,7 @@ export class ToWire {
           title: t.title ?? prior?.title ?? null,
           childThreadId: t.childThreadId ?? prior?.childThreadId ?? null,
           result: t.result ?? prior?.result ?? null,
+          nativeTaskId: t.nativeTaskRef?.nativeId ?? prior?.nativeTaskId ?? null,
         });
         return [];
       }
@@ -334,6 +350,8 @@ export class ToWire {
   private runFor(threadId: string): SubRun | null {
     const known = this.runByChild.get(threadId);
     if (known) return known;
+    // A thread a sub-agent was announced on whose card is not drawn yet: its card claims it.
+    if ([...this.subNotes.values()].some((n) => n.childThreadId === threadId)) return null;
     const open = [...this.subRuns.values()].filter((r) => !r.ended && !r.childThreadId);
     const run = open[open.length - 1] ?? null;
     if (run) {
@@ -402,6 +420,7 @@ export class ToWire {
         ended: false,
       };
       this.subRuns.set(item.id, run);
+      this.nodeByTask.set(run.taskId, String(item.subagentId));
       out.push(...this.announce(run));
       const call = this.toolCalls.get(item.id);
       if (call && item.nativeItemRef?.nativeId) this.toolByNative.set(item.nativeItemRef.nativeId, call);
@@ -417,13 +436,21 @@ export class ToWire {
       run.childThreadId = child;
       this.runByChild.set(child, run);
     }
-    const terminal = TERMINAL_ITEM.has(item.status);
+    // Its steps that came first, now under its card.
+    if (child && this.earlySteps.has(child)) {
+      const held = this.earlySteps.get(child)!;
+      this.earlySteps.delete(child);
+      for (const step of held) out.push(...this.childItem(step));
+    }
+    if (item.status === 'running') this.ranSubs.add(item.id);
+    // Antigravity leaves a sub-agent that finished `idle` (it could be woken again): it ran, so it ended.
+    const terminal = TERMINAL_ITEM.has(item.status) || (item.status === 'idle' && this.ranSubs.has(item.id));
     if (item.progress && !terminal && !run.ended) out.push(this.progress(run, { activity: item.progress }));
     if (terminal && !run.ended) {
       run.ended = true;
       this.closedItems.add(item.id);
       const result = item.result ?? note?.result ?? item.progress ?? '';
-      const status = item.status === 'completed' ? 'completed' : item.status === 'failed' ? 'failed' : 'stopped';
+      const status = item.status === 'completed' || item.status === 'idle' ? 'completed' : item.status === 'failed' ? 'failed' : 'stopped';
       const summary = result.trim().split('\n')[0]?.slice(0, 200) ?? '';
       out.push({
         type: 'system',
@@ -454,7 +481,13 @@ export class ToWire {
     if (item.type === 'approval_request') return this.approval(item);
     if (item.type === 'user_input_request') return this.question(item);
     const run = this.runFor(String(item.threadId));
-    if (!run) return [];
+    if (!run) {
+      // Before its card: kept (bounded) until the card names this thread.
+      const held = this.earlySteps.get(String(item.threadId)) ?? [];
+      if (held.length < 50) held.push(item);
+      this.earlySteps.set(String(item.threadId), held);
+      return [];
+    }
     const side = (frame: WireFrame): void => { this.opts.onSidechain?.(run.taskId, frame); };
     if (item.type === 'user_message') {
       const text = item.text ?? '';
