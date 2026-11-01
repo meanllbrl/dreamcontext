@@ -205,9 +205,6 @@ function Chevron() {
   );
 }
 
-/** Set once the mode menu has been opened; the trigger's first-run ring reads it. */
-const MODE_MENU_SEEN_KEY = 'dreamcontext.chat.modeMenuSeen';
-
 // ── Memoized pieces: a keystroke re-renders the field row, not the whole card ─────────
 //
 // Every key is a `setDraft`, and the composer is ~2k lines of render: the toolbar, the
@@ -258,13 +255,12 @@ function PageChipName({ name }: { name: string }) {
 }
 
 /** The leading mode + permission trigger (the mascot is the costly part of it). */
-const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto, permissionMode, seen, open, onToggle }: {
+const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto, permissionMode, open, onToggle }: {
   mode: ChatMode;
   agent: string;
   agentName: string;
   hasPhoto: boolean;
   permissionMode: 'auto' | 'bypass';
-  seen: boolean;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -274,7 +270,7 @@ const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto
       <button
         type="button"
         {...{ [MENU_TRIGGER_ATTR]: '' }}
-        className={`chat-cmp-modeltrigger chat-cmp-modetrigger${seen ? '' : ' is-unseen'}`}
+        className="chat-cmp-modeltrigger chat-cmp-modetrigger"
         onClick={onToggle}
         title={`${agent ? `Agent: ${agentName} · ` : ''}Mode: ${modeRow.name} ${modeRow.version} · Permission: ${permissionMode}`}
         aria-haspopup="menu"
@@ -2162,17 +2158,6 @@ export function Composer({
   // useAnchoredMenu.ts for why these are not `Popover`s (the Attach menu still is: it clamps
   // to its trigger rather than spanning the card).
   const menu = useAnchoredMenu();
-  // The mode trigger asks to be opened ONCE (owner, 2026-10-12): it carries a soft ring until
-  // the menu has been opened on this machine, then never again. Remembered globally, not per
-  // chat or per vault: "you have seen what this button holds" is a fact about the person.
-  const [modeMenuSeen, setModeMenuSeen] = useState(() => {
-    try { return localStorage.getItem(MODE_MENU_SEEN_KEY) === '1'; } catch { return true; }
-  });
-  useEffect(() => {
-    if (menu.open !== 'mode' || modeMenuSeen) return;
-    setModeMenuSeen(true);
-    try { localStorage.setItem(MODE_MENU_SEEN_KEY, '1'); } catch { /* no storage: seen for this session only */ }
-  }, [menu.open, modeMenuSeen]);
   // "Saved as default" is a receipt, so it is only ever shown for a write that HAPPENED. Any
   // subsequent model/effort change clears it: a receipt next to a value you have since
   // changed is a false one.
@@ -2654,7 +2639,6 @@ export function Composer({
             agentName={agentName}
             hasPhoto={!!agentSummary?.hasPhoto}
             permissionMode={permissionMode}
-            seen={modeMenuSeen}
             open={menu.open === 'mode'}
             onToggle={toggleMode}
           />
