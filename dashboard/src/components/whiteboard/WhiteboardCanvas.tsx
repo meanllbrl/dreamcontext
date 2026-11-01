@@ -4,10 +4,10 @@ import {
   reconcileElements, restoreElements,
 } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
-import type { AppState, BinaryFileData, DataURL, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
+import type { AppState, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import type { RemoteExcalidrawElement } from '@excalidraw/excalidraw/data/reconcile';
 import type {
-  ExcalidrawElement, ExcalidrawEmbeddableElement, FileId, NonDeleted, OrderedExcalidrawElement,
+  ExcalidrawElement, ExcalidrawEmbeddableElement, NonDeleted, OrderedExcalidrawElement,
 } from '@excalidraw/excalidraw/element/types';
 import { emitInstance, useVault } from '../../context/VaultContext';
 import { useAgents } from '../../hooks/useAgents';
@@ -18,6 +18,8 @@ import { handleLinkOpen, installHyperlinkGuard } from './linkRouting';
 import { usePagePopup } from './PagePopup';
 import { reconcileRemoteScene, sceneSignature } from './sceneSync';
 import { isPictureOf, type BoardPictures } from './boardPictures';
+import { installPictureLod } from './pictureLod';
+import { useBoardPictureLoader } from './useBoardPictureLoader';
 import { WidgetPalette } from './WidgetPalette';
 import {
   WIDGET_STROKE, hasWidgetStroke, isWidgetLink, newElementId, readWidgetPayload, selectionIsOnlyWidgets,
@@ -42,6 +44,8 @@ import './WhiteboardCanvas.css';
 
 // A picture keeps its own pixels in dark mode, WebKit included — see excalidrawImageTheme.ts.
 installImageThemeShim();
+// After the shim, so it wraps it: a preview gets the same dark-mode treatment as the picture.
+installPictureLod();
 
 /** The scene the page hands in once, at mount. The page remounts (via `key`) for another board. */
 export interface WhiteboardScene {
@@ -132,22 +136,7 @@ export default function WhiteboardCanvas({ boardSlug, initialScene, onApi, pictu
   txRef.current = tx;
   const picturesRef = useRef(pictures);
   picturesRef.current = pictures;
-  /** Fetch the pictures in `elements` this canvas does not hold yet, and show them as they land. */
-  const loadPictures = useCallback((elements: readonly unknown[]) => {
-    const api = apiRef.current;
-    const store = picturesRef.current;
-    if (!api || !store) return;
-    const held = api.getFiles();
-    store.load(elements, (id) => !!held[id], (file) => {
-      const data: BinaryFileData = {
-        id: file.id as FileId,
-        mimeType: file.mimeType as BinaryFileData['mimeType'],
-        dataURL: file.dataURL as DataURL,
-        created: Date.now(),
-      };
-      apiRef.current?.addFiles([data]);
-    });
-  }, []);
+  const loadPictures = useBoardPictureLoader(apiRef, picturesRef);
 
   // The panel keeps the card that opened it in view (PagePopup.tsx): it reads and pans this
   // board's viewport, never its zoom.

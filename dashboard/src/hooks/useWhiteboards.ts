@@ -82,7 +82,7 @@ export function boardPictures(slug: string, vault: string | null): BoardPictures
         reader.onerror = () => reject(reader.error);
         reader.readAsDataURL(blob);
       });
-      return { id, mimeType: blob.type, dataURL };
+      return { id, mimeType: blob.type, dataURL, blob };
     },
   });
 }
