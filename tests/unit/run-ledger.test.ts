@@ -8,7 +8,7 @@ import { heavyLockPath } from '../../src/lib/builder-tools.js';
 import { builderHeavy, builderLedger, builderMark, type BuilderDeps } from '../../src/cli/commands/builder.js';
 import { markPhase } from '../../src/lib/run-budget.js';
 import { appendLedger, ledgerPath, readLedger } from '../../src/lib/run-ledger.js';
-import { NO_RUN, ledgerLine, recordCheck, recordStart, summarize, waitWhy, type LedgerRow } from '../../src/lib/run-ledger.js';
+import { NO_RUN, ledgerLine, recordCheck, recordStart, summarize, waitRows, waitWhy, type LedgerRow } from '../../src/lib/run-ledger.js';
 
 const MIN = 60_000;
 const mark = (what: 'open' | 'review-start' | 'review-end' | 'close', m: number): LedgerRow => ({ type: 'mark', run: 'r', what, at: m * MIN });
@@ -84,6 +84,17 @@ describe('every check is in the ledger, and every wait says why', () => {
 
   it('a row from before the reasons says so, and a check that ran does not read as given up', () => {
     expect(waitWhy({ ...base, ended: 400_000, exit: 0 })).toMatch(/no reason kept \(an older row\)$/);
+  });
+
+  it('a killed check shows up with its wait; a finished one leaves no second line', () => {
+    const start = { type: 'start' as const, run: 'r', label: 'tests', line: 'heavy', asked: 0, ran: 60_000, pid: 7, lockMs: 60_000, slotFullMs: 0, slotLineMs: 0, limit: 4 };
+    const done = { ...start, label: 'tsc', asked: 1, type: 'check' as const, ended: 70_000, exit: 0 };
+    const doneStart = { ...start, label: 'tsc', asked: 1 };
+    const rows = waitRows([start, doneStart, done]);
+    expect(rows.map((r) => r.type)).toEqual(['start', 'check']);
+    expect(waitWhy(start, () => false)).toMatch(/waited 1m00s: 1m00s behind this checkout's lock, killed before it ended$/);
+    expect(waitWhy(start, () => true)).toMatch(/still running$/);
+    expect(waitWhy({ ...base, ended: 400_000, exit: 0, lockMs: 0, slotFullMs: 0, slotLineMs: 0, limit: 2, fastMs: 300_000 })).toContain('5m00s for a fast slot');
   });
 
   it('a branch with no open run is written too, and a killed check leaves its start', () => {
