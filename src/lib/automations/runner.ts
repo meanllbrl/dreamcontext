@@ -1879,6 +1879,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
   // One slot per parallel turn, the one per-slug lock for an exclusive run.
   const slot = opts.parallel ? runSlotKey(`run:${fireIso}`) : undefined;
   const lockPath = slot ? slotLockPath(contextRoot, slug, slot) : lockPathFor(contextRoot, slug);
+  // A light read or a person's question stands in for no scheduled fire: the fire stays owed.
+  const consumesFire = !opts.override?.light && !opts.parallel;
 
   /** Set the moment any claude child exists for this fire (the task host's "a child ran"). */
   let spawnedAny = false;
@@ -2508,7 +2510,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         durationMs: 0,
         // Consumed, not owed: the cause (a deleted board, a symlink) outlives the next tick,
         // so leaving the fire owed would raise this same banner every five minutes.
-        advanceWatermark: !opts.override?.light,
+        advanceWatermark: consumesFire,
         notify: true,
       });
     }
@@ -2531,7 +2533,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
             : 'Codex needs Node 22.16 or newer on this Mac.',
         outputPath: null, exitCode: null, sessionId: null, costUsd: null, numTurns: null, permissionDenials: 0,
         startedAt: n, finishedAt: n, durationMs: 0,
-        advanceWatermark: !opts.override?.light,
+        advanceWatermark: consumesFire,
         notify: true,
       });
     }
@@ -3054,7 +3056,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       finishedAt,
       durationMs,
       // A light read stands in for no scheduled fire.
-      advanceWatermark: !opts.override?.light,
+      advanceWatermark: consumesFire,
       notify: true,
     });
   } finally {

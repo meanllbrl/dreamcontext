@@ -2232,7 +2232,7 @@ const sayRefusal = (status: 400 | 403 | 404 | 409 | 429, code: string, message: 
  *  reaches a thread. Null while there is room. */
 function atLiveLimit(): SayResult | null {
   return liveTurnCount() >= MAX_LIVE_CHILDREN
-    ? sayRefusal(429, 'say_at_limit', `${MAX_LIVE_CHILDREN} jobs are running on this Mac. Try again when one finishes.`)
+    ? sayRefusal(429, 'say_at_limit', `${MAX_LIVE_CHILDREN} jobs are already running. Try again when one finishes.`)
     : null;
 }
 

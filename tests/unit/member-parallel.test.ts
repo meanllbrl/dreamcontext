@@ -129,6 +129,16 @@ describe('three asks of one member at once', () => {
     expect(pendingQuestionOfRun(contextRoot, SLUG, iso(1))).toBeNull();
   });
 
+  it('an ask moves no schedule: the fire it ran beside stays owed', async () => {
+    const before = readAutomationCache(contextRoot, SLUG)?.lastFireAt ?? null;
+    const { impl, children } = liveSpawn();
+    const run = ask(impl, 'a quick one', new Date(iso(1)));
+    await until(() => children.length === 1);
+    children[0].finish('sess-1', 'done');
+    await run;
+    expect(readAutomationCache(contextRoot, SLUG)?.lastFireAt ?? null).toBe(before);
+  });
+
   it('a scheduled fire still does not overlap itself, and an ask runs beside it', async () => {
     const { impl, children } = liveSpawn();
     const fire = runAutomation(contextRoot, SLUG, { fireAt: new Date(iso(0)), spawnImpl: impl, home, notify: () => {}, sendTelegram: async () => {}, killImpl: () => {} });
