@@ -110,6 +110,32 @@ describe('a Codex chat pane', () => {
   });
 });
 
+describe('an Antigravity pane at the socket', () => {
+  const start = (leanMcp?: string[]) => {
+    const ws = new FakeWs();
+    startChatSession(ws as unknown as import('ws').WebSocket, project, {
+      bypass: false, sessionId: PANE, resumeId: '', model: '', effort: '', mode: 'basic' as never,
+      account: '', initialPrompt: '', deferPrompt: false, tool: 'antigravity', ...(leanMcp ? { leanMcp } : {}),
+    });
+    return ws;
+  };
+
+  it('refuses a lean child out loud: there is no write gate yet', () => {
+    process.env.DREAMCONTEXT_NODE = process.execPath;
+    const ws = start([]);
+    expect(spawned).toHaveLength(0);
+    expect(String(ws.send.mock.calls[0]?.[0])).toContain('no write gate');
+    expect(ws.close).toHaveBeenCalled();
+    delete process.env.DREAMCONTEXT_NODE;
+  });
+
+  it('still opens an ordinary chat', () => {
+    start();
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]!.args.join(' ')).toContain('t3-chat');
+  });
+});
+
 describe('a Codex pane on the server\'s real turn counter', () => {
   const T1 = '01a0d5eb-f0c0-7481-a417-5e8871805cbc';
   const T2 = '01a0d5eb-aaaa-7481-a417-5e8871805cbd';

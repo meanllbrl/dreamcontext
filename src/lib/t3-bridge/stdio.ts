@@ -73,7 +73,7 @@ export interface StdioDeps {
   readonly onResult?: (session: BridgeSession, frame: WireFrame) => AppContext[] | void;
   /** The brain (context.ts): the snapshot at session start and after `/clear`, the prompt hook on
    *  every owner turn. Absent = no brain (tests, the T3 Claude engine). */
-  readonly brain?: Pick<BrainContext, 'session' | 'prompt' | 'drain'>;
+  readonly brain?: Pick<BrainContext, 'session' | 'prompt' | 'drain'> & Partial<Pick<BrainContext, 'takeNotice'>>;
 }
 
 const userText = (frame: Record<string, unknown>): string => {
@@ -151,6 +151,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   const heldAnswers: WireFrame[] = [];
   /** Codex died: stop reading stdin so the bridge exits (non-zero) and the pane shows it ended. */
   let endInput: (() => void) | null = null;
+  /** A tool without Codex's app context: has this thread really had the snapshot? */
+  let brainSent = false;
   let fatal = false;
   let session: BridgeSession;
   // The account this pane runs on: its private home and its file credential store.
@@ -215,6 +217,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
           const said = Array.isArray(content) ? content.map((b) => (b && typeof b === 'object' && typeof (b as { text?: unknown }).text === 'string' ? (b as { text: string }).text : '')).join('') : '';
           recordThreadTurn(session?.nativeThreadId ?? '', args.cwd, 'assistant', said, home, args.account);
         }
+        // A refused or failed turn may never have put the snapshot in the thread: the next one carries it.
+        if (frame.type === 'result' && frame.is_error) brainSent = false;
         // A synthetic result (the /clear or /effort answer) is not a turn Codex ran: it records nothing.
         if (frame.type === 'result' && !frame.dc_synthetic) owe(deps.onResult?.(session, frame));
         // A local answer held behind a running turn goes out after that turn's own result.
@@ -267,16 +271,11 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   };
   owe(briefingOwed());
   // Only Codex drops a repeated snapshot itself. Here it rides the words, so it goes once a thread,
-  // and again when the context shrank (the tool compacted, and the snapshot went with it).
-  let brainSent = false;
-  let lastTokens = 0;
+  // and again after the tool compacted (the snapshot went with its context).
   const onceAThread = (ctx: AppContext[]): AppContext[] => {
     if (!isInstanceTool(args.tool)) return ctx;
-    const now = session.wire.contextTokens;
-    if (now < lastTokens * 0.6) brainSent = false;
-    lastTokens = now;
     const out = brainSent ? ctx.filter((c) => c.key !== 'dreamcontext-brain') : ctx;
-    brainSent = true;
+    if (out.some((c) => c.key === 'dreamcontext-brain')) brainSent = true;
     return out;
   };
   let chain: Promise<void> = deps.brain
@@ -305,14 +304,24 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       if (text.trim() === '/clear') {
         const id = await session.newThread();
         brainSent = false;
+        session.wire.takeCompacted();
         owe(briefingOwed());
         owe(deps.onRotated?.(id));
         // A fresh thread starts with a fresh snapshot, as SessionStart(source=clear) gives Claude.
         await deps.brain?.session('clear', id).catch(() => undefined);
         return;
       }
+      // The tool compacted: a fresh snapshot, as SessionStart(source=compact) gives Claude. Before a
+      // steer it waits: that message carries no context.
+      if (!session.busy && session.wire.takeCompacted()) {
+        brainSent = false;
+        await deps.brain?.session('compact', session.nativeThreadId).catch(() => undefined);
+      }
       // A steer joins the running turn as Claude's mid-turn message does: no hook, no context.
       const brain = session.busy || !deps.brain ? [] : await deps.brain.prompt(text, session.nativeThreadId).catch(() => []);
+      // Lost context is said, once, in the owner's own chat: `<synthetic>` keeps the pane's books as they are.
+      const notice = deps.brain?.takeNotice?.();
+      if (notice) emit({ type: 'assistant', message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: notice }] }, parent_tool_use_id: null, session_id: session.nativeThreadId });
       if (keepsThread) recordThreadTurn(session.nativeThreadId, args.cwd, 'user', text, home, args.account);
       await session.send(text, session.busy ? [] : [...titler.nudge(), ...pending.splice(0), ...onceAThread(brain)]);
       return;

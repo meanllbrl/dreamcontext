@@ -11,7 +11,7 @@ import {
 } from '../claude-path.js';
 import { clearToolSignedOut } from '../account-switch.js';
 import { INSTANCE_PRIMARY_ID } from '../instance-accounts.js';
-import { bridgeNode } from '../t3-bridge/node-floor.js';
+import { bridgeNode, nodeTooOldMessage } from '../t3-bridge/node-floor.js';
 import { codexChildEnv, codexHealth, codexTooOld, findCodexBin, forgetCodexHealth, refreshCodexHealth } from '../codex-bin.js';
 import { ensureCliInstalled, type EnsureCliResult } from '../ensure-cli.js';
 import { findBridgeNode, resetBridgeNodeCache } from '../t3-bridge/node-floor.js';
@@ -365,7 +365,7 @@ export const ANTIGRAVITY_INSTALL_TIMEOUT_MS = 50 * 60_000;
 async function antigravityAccountJob(action: 'install' | 'signin', { ctx, sink, signal, deps }: RecipeEnv): Promise<FixOutcome> {
   const node = bridgeNode();
   const cli = deps.env.DREAMCONTEXT_CLI || process.argv[1] || '';
-  if (!node) return fail('failed', 'Antigravity needs a newer Node. Update Codex in the picker first: it brings one.');
+  if (!node) return fail('failed', nodeTooOldMessage('Antigravity'));
   if (!cli) return fail('failed', 'dreamcontext could not find itself.');
   if (action === 'signin') sink.awaiting('browser');
   try {

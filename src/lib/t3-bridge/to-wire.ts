@@ -133,6 +133,8 @@ export class ToWire {
   private turnUsage: { input: number; cached: number; output: number } | null = null;
   /** The model context in use, from `provider_thread.updated` (`contextUsage.usedTokens`). */
   contextTokens = 0;
+  /** The tool compacted since {@link takeCompacted} last asked: what we sent may be gone. */
+  private compacted = false;
   /** The native thread id (`system/init` `session_id`). */
   sessionId = '';
   private turnStartedAt = 0;
@@ -163,6 +165,13 @@ export class ToWire {
 
   setPermissionMode(mode: string): void {
     (this.opts as { permissionMode: string }).permissionMode = mode;
+  }
+
+  /** Did the tool compact since the last ask? Asking clears it. */
+  takeCompacted(): boolean {
+    const was = this.compacted;
+    this.compacted = false;
+    return was;
   }
 
   /** A turn is starting: open it with `system/init` (once). */
@@ -199,6 +208,7 @@ export class ToWire {
         return event.providerTurn.status === 'running' ? this.beginTurn(now) : [];
       }
       case 'turn_item.updated':
+        if (event.turnItem.type === 'compaction' && event.turnItem.status === 'completed') this.compacted = true;
         return [...this.beginTurn(now), ...this.item(event.turnItem)];
       case 'runtime_request.updated': {
         const req = event.runtimeRequest;

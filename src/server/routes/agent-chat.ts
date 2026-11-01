@@ -2329,7 +2329,8 @@ export function startChatSession(
   // A Super child runs with nobody watching it: no live write gate, no child on Codex.
   const noEnvGate = bridgeTool === 'codex' && !!opts.leanMcp && !codexEnvGateReady(projectRoot);
   // Said before anything starts: a chat on a Codex that cannot start would only end in silence.
-  const codexMissing = bridgeTool === 'codex' ? codexStartProblem() : null;
+  // Antigravity has no write gate at all yet, so no child runs on it with nobody watching.
+  const codexMissing = bridgeTool === 'codex' ? codexStartProblem() : bridgeTool === 'antigravity' && opts.leanMcp ? 'Antigravity has no write gate yet, so it cannot run a Super Agent child.' : null;
   const bridgeScript = bridgeTool && bridgeNodePath && !noEnvGate && !codexMissing
     ? bridgeChatScript({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : opts.leanMcp ? HEADLESS_ENVELOPES['super-child'].codex ?? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(carryThread ? { carry: carryThread } : {}), ...(leanMcpPath ? { mcpConfig: leanMcpPath } : {}), ...(opts.leanMcp ? { strictMcp: true } : {}), ...(toolAccountId ? { account: toolAccountId } : {}) })
     : null;
