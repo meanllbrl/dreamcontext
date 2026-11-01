@@ -404,6 +404,9 @@ export interface AgentHistorySession {
   newestId: string | null;
   unread: boolean;
   hasDocument?: boolean;
+  claudeId?: string;
+  resumable?: true;
+  elsewhere?: true;
   truncated?: true;
   missing?: true;
   rows: Array<{ id: string; kind: 'user' | 'agent'; text: string; at: string; files?: string[]; origin?: 'answer' | 'failure' | 'note' }>;

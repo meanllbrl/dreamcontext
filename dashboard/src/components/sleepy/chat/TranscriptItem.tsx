@@ -198,7 +198,7 @@ function UserMessage({
       {!readOnly && (
         <HoverActions>
           <IconButton label="Copy" onClick={() => copyText(item.text)}>⧉</IconButton>
-          {session && (
+          {session && !session.savedOnly && (
             <IconButton label="Edit — rewind to before this message" onClick={() => setConfirming(true)}>✎</IconButton>
           )}
           {onQuote && <IconButton label="Quote-reply" onClick={() => onQuote(item)}>↩</IconButton>}
@@ -583,7 +583,7 @@ function AssistantMessage({
         <HoverActions>
           <IconButton label="Copy" onClick={() => copyText(item.text)}>⧉</IconButton>
           {onQuote && <IconButton label="Quote-reply" onClick={() => onQuote(item)}>↩</IconButton>}
-          {session && (
+          {session && !session.savedOnly && (
             <IconButton label="Retry — resend the preceding message" onClick={() => setConfirming(true)}>⟳</IconButton>
           )}
         </HoverActions>

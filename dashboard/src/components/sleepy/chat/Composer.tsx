@@ -461,7 +461,7 @@ export function Composer({
   onPermissionModeChange, onSignIn, mcpPicker, onPeerMessage,
   mode = DEFAULT_CHAT_MODE, onModeChange, agent = '', onAgentPick, toolPick, onSetModelDefault, shelved = false,
   mentions, renderMentionFace, mentionsLabel = 'Connected projects',
-  idlePlaceholder, unavailable,
+  idlePlaceholder, unavailable, sendVia,
   showModel = true,
   modelMenu,
   activeAccountId = '', onAccountChange, superView = false, onRefJump,
@@ -613,6 +613,8 @@ export function Composer({
    * menu that never opens.
    */
   idlePlaceholder?: string;
+  /** A host's own delivery: nothing reaches the session. False = refused, the box keeps it all. */
+  sendVia?: (message: string) => boolean;
   /**
    * The field is DOWN for a reason of the surface's own, and this is the sentence that says
    * which. Present ⇒ the field and Send are disabled and the placeholder is `reason`.
@@ -2111,6 +2113,7 @@ export function Composer({
       dropSentAttachments(convId, { keepAbout: slash, keepInline: slash });
       onClearQuote();
     };
+    if (sendVia) { if (sendVia(message)) sent(); return; }
     // A remote screen's tab whose chat the Mac's window holds (hands-free sekmeler W2, D3): the
     // first send takes the chat, then sends, once. A take that fails leaves the text here.
     if (session.takenOver && session.takeBack) {

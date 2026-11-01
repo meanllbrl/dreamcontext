@@ -335,15 +335,11 @@ async function deepLeg(page, pane, tag, wait, until, shot) {
   check(`${tag}: after new posts in already-read runs, the badge clears once they are on screen`, clearedAgain, clearedAgain ? '' : await badgeAgain.innerText().catch(() => ''));
   await shot('6-live-merge');
 
-  // AC18: a run boundary lands the activity view on that run; back keeps the same session.
+  // A run opens in place (W2): a boundary click leaves the stage where it is, same session.
   await page.locator(`.aiteam-stage [data-feed-boundary="${todayKey}"]`).click();
-  const landed = await until(async () => (await page.locator(`[data-item-key^="${todayKey}:"]`).count()) > 0, 10000);
-  check(`${tag}: a run boundary click opens the activity at that run`, landed);
-  await shot('7-run-boundary-activity');
-  await page.locator('[data-team-stage]').click();
-  const back = await until(async () => (await pane.innerText()).includes('I approve the draft, post the summary to Slack.'), 10000);
-  check(`${tag}: stage → activity → back keeps the same session (its turn still live, no new boundary)`,
-    back && (await page.locator('.aiteam-stage [data-feed-live]').innerText()).includes('New conversation · now'));
+  const kept = await until(async () => (await pane.innerText()).includes('I approve the draft, post the summary to Slack.'), 10000);
+  check(`${tag}: a run boundary stays on the stage, the same session (its turn still live, no new boundary)`,
+    kept && (await page.locator('.aiteam-stage [data-feed-live]').innerText()).includes('New conversation · now'));
 
   // AC11: a level respawn keeps the loaded pages without refetch and reopens pinned.
   const rowsBefore = await page.locator('.aiteam-stage [data-feed-boundary]').count();

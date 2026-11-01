@@ -28,7 +28,7 @@ import { isQuestOnlyCommand, stepStretches, type StretchProbe } from './chat/too
 import { chatLineage, deriveChatQuest, questTaskSlug, partyBatches, type Party } from './chat/questModel';
 import { ChatQuestBar } from './chat/ChatQuestBar';
 import { ItemView } from './chat/TranscriptItem';
-import { feedMarks, feedReportShown, feedRunWorking, feedShift, liveDividerShown, type ChatFeed, type FeedItem } from './chat/chatFeed';
+import { feedMarks, feedRunWorking, feedShift, liveDividerShown, type ChatFeed, type FeedItem } from './chat/chatFeed';
 import { ToolRunCard } from './chat/ToolRunCard';
 import { SurveyCard } from './chat/SurveyCard';
 import { PermissionCard } from './chat/PermissionCard';
@@ -651,7 +651,7 @@ export function ChatPane({
   taskSlug, onContinueInTerminal,
   permissionMode, onPermissionModeChange, mode, onModeChange, onAgentPick, toolPick, onHandoffToDevelop,
   onResume, automation, onOpenAppPage, onSignIn,
-  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, readOnly = false, aboveComposer, feed,
+  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, readOnly = false, aboveComposer, feed, sendVia,
 }: {
   session: ChatSession;
   modelConfig: ModelConfig;
@@ -736,9 +736,11 @@ export function ChatPane({
   /** A child of the handed-over Super Agent (plan-r7 D10, owner decision 3): the owner looks,
    *  and writes only to the Super Agent, so the composer is replaced by one line saying so.
    *  'finished': a child with no process left, drawn from its transcript (transcriptSession.ts). */
-  readOnly?: boolean | 'finished';
+  readOnly?: boolean | 'finished' | 'silent';
   /** One line right above the composer, never over it (the phone's waiting toast, W3). */
   aboveComposer?: React.ReactNode;
+  /** The message goes here instead of this session: a run the owner continues. */
+  sendVia?: (message: string) => boolean;
   /** An agent's PAST sessions drawn above this conversation (the AI Team stage, chatFeed.ts):
    *  read-only rows at the head of the window. Absent (every Chat tab): exactly as before. */
   feed?: ChatFeed;
@@ -2463,12 +2465,8 @@ export function ChatPane({
         const row = <ItemView key={it.id} item={said !== null ? { ...it, text: said } : it} onOpenFile={handleOpenFile} onOpenBoard={handleOpenBoard} report={runReportFor(meta)} actor="lead" readOnly />;
         feedNodes.push(meta.origin === 'failure' ? <div key={it.id} className="chat-feed-failure" data-feed-failure>{row}</div> : row);
       }
-      if (feedReportShown(meta, marks)) {
-        feedNodes.push(
-          <button key={`freport-${meta.sessionKey}`} type="button" className="chat-feed-note chat-feed-link chat-feed-report" data-feed-report={meta.sessionKey} onClick={() => feed.onBoundary(meta)}>
-            {feed.labels.report}
-          </button>,
-        );
+      if (marks.last && meta.sessionKind === 'run' && feed.runFoot) {
+        feedNodes.push(<Fragment key={`frun-${meta.sessionKey}`}>{feed.runFoot(meta)}</Fragment>);
       }
       if (feedRunWorking(meta, marks)) {
         feedNodes.push(
@@ -2933,7 +2931,7 @@ export function ChatPane({
         // there is no bypass to close and "Resume" is still the right offer. This branch
         // only fires while the resumed run is actually live.
         <AutomationQuestionComposerLock />
-      ) : readOnly ? (
+      ) : readOnly === 'silent' ? null : readOnly ? (
         <SuperReadOnlyLine finished={readOnly === 'finished'} />
       ) : (
         <>
@@ -2989,6 +2987,7 @@ export function ChatPane({
           toolPick={bare ? undefined : toolPick}
           showModel={!bare}
           idlePlaceholder={idlePlaceholder}
+          sendVia={sendVia}
           // One object, not two cards: whenever the shelf grows a bordered shell above the
           // composer, the composer squares the corners it would otherwise round against it.
           shelved={shelf.hasRows}

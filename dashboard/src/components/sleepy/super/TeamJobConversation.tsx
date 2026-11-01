@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { useAgent } from '../../../hooks/useAgents';
 import { useReplyDelivery, useReplyToAgentThread } from '../../../hooks/useAutomations';
-import { ChildTranscript } from './ChildTranscript';
+import { RunReport, RunView } from '../../aiteam/RunView';
 import { teamStatusOf, type TeamCard } from './TeamTile';
 
 /**
@@ -18,6 +18,7 @@ export function TeamJobConversation({ card }: { card: TeamCard }) {
   const running = status === 'running' || status === 'queued';
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [report, setReport] = useState(false);
   const { mutate, isPending } = useReplyToAgentThread();
   // A reply the server took can still be refused at the resume: said here, never silent.
   const delivery = useReplyDelivery(card.job.member, card.job.runId).data;
@@ -38,9 +39,15 @@ export function TeamJobConversation({ card }: { card: TeamCard }) {
     <section className="super-team-job" data-testid="team-job-conversation" data-team-status={status}>
       <div className="super-team-job-body">
         {card.sessionId
-          ? <ChildTranscript key={card.sessionId} claudeId={card.sessionId} live={running} foot="own" />
+          ? <RunView key={card.sessionId} claudeId={card.sessionId} live={running} />
           : <p className="aiteam-stage-note">{running ? t('super.team.reply.starting') : card.lastLine}</p>}
       </div>
+      {report && <div className="super-team-job-report"><RunReport slug={card.job.member} runId={card.job.runId} /></div>}
+      {!running && (
+        <button type="button" className="chat-feed-link super-team-job-reportbtn" aria-expanded={report} data-testid="team-job-report" onClick={() => setReport((v) => !v)}>
+          {t(report ? 'aiteam.run.hideReport' : 'aiteam.history.fullReport')}
+        </button>
+      )}
       {closed
         ? <p role="status" className="super-team-job-closed" data-testid="team-job-closed">{closed}</p>
         : (

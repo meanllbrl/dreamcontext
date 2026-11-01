@@ -797,6 +797,8 @@ export interface ChatSession {
    *  (contract C7); a no-op if no preceding user item exists (e.g. the very first turn,
    *  or the assistant item id is unknown). */
   retry: (assistantItemId: string) => Promise<void>;
+  /** A saved transcript with no process behind it: nothing here can be rewound or resent. */
+  savedOnly?: true;
   /** Session-scoped "Always allow this session" (state 6's permission card checkbox):
    *  every future permission request for this EXACT tool name auto-allows without ever
    *  pushing a card. Client-side only — no protocol change. Never applies to an

@@ -253,12 +253,16 @@ function useHostClaim(session: ChatSession): boolean {
  * portaled into it (the notch's own mount). `bare`: the agent's envelope is the server's to
  * decide, so the composer offers no mode, permission or model switch.
  */
-export function CardChat({ session, reopen, placeholder, pane = false, feed }: {
+export function CardChat({ session, reopen, placeholder, pane = false, feed, aboveComposer, sendVia }: {
   session: ChatSession;
   reopen: () => void;
   placeholder: string;
   /** The agent's past sessions above the conversation (the AI Team stage). */
   feed?: ChatFeed;
+  /** Drawn over the box (the AI Team stage: open questions, the run it continues). */
+  aboveComposer?: ReactNode;
+  /** The stage's box writes into a pinned run instead of this session. */
+  sendVia?: (message: string) => boolean;
   /** The full Chat pane (the AI Team page's conversation), not a board card's slim one: only the
    *  controls that cannot reach an agent-bound session stay out (ChatPane `agentBound`). */
   pane?: boolean;
@@ -306,6 +310,8 @@ export function CardChat({ session, reopen, placeholder, pane = false, feed }: {
           agentBound={pane}
           idlePlaceholder={placeholder}
           feed={feed}
+          aboveComposer={aboveComposer}
+          sendVia={sendVia}
         />,
         session.container,
       )}

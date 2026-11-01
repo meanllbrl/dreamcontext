@@ -121,10 +121,19 @@ function metaOf(s: FeedSession): FeedMeta {
     durationMs: s.durationMs,
     unread: s.unread,
     ...(s.hasDocument ? { hasDocument: true } : {}),
+    ...(s.claudeId ? { claudeId: s.claudeId } : {}),
+    ...(s.resumable ? { resumable: true } : {}),
+    ...(s.elsewhere ? { elsewhere: true } : {}),
     ...(s.missing ? { missing: true } : {}),
     ...(s.truncated ? { truncated: true } : {}),
     readOnly: true,
   };
+}
+
+/** A run's transcript as its steps: the first row is the prompt the runner composed, not the owner's
+ *  words. Only when it is the first: a capped transcript starts somewhere later. */
+export function runViewItems<T extends { kind: string }>(items: readonly T[]): T[] {
+  return items[0]?.kind === 'user' ? items.slice(1) : [...items];
 }
 
 /** Rows the pane draws. Item ids are derived from entry ids (`f:<id>`), so merges keep rows. */

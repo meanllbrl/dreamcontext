@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import { emitInstance, useVault } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 import { useAgent, useAgentStage, useBringAgentHere, type AgentSummary } from '../../hooks/useAgents';
-import { useAgentFeed, useAutomations, useReplyToAgentThread } from '../../hooks/useAutomations';
+import { useAgentFeed, useAutomationDispatcher, useAutomations, useInstallDispatcher, useReplyToAgentThread } from '../../hooks/useAutomations';
 import { THREAD_REPLY_MAX_CHARS } from '../agents/AgentMessage';
 import { fitRunReport } from '../sleepy/chat/runReport';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
@@ -16,16 +16,14 @@ import {
   beginStageOpen, deselectStage, loadOlderStageFeed, markStageDividerScrolled, markStageSeen, openStageSession, peekStageSession, refreshStageFeed,
   remountStageFeed, retryStageFeed, setStageFeedPinned, stageFeed, stageSessionLevel, stageWatched, subscribeStageSession,
 } from './stageSession';
-import { dayRuleLabel, messagesOf, pendingApprovals, routineCountLabel, type TeamRow } from './teamModel';
-import { feedHasRunning, type ChatFeed, type FeedLabels, type FeedMeta } from '../sleepy/chat/chatFeed';
+import { dayRuleLabel, messagesOf, pendingApprovals, routineCountLabel, talkBlocked, type TeamRow } from './teamModel';
+import { feedHasRunning, runFootOf, stepsOpen, type ChatFeed, type FeedLabels, type FeedMeta } from '../sleepy/chat/chatFeed';
 import { TeamAmendments } from './TeamAmendments';
 import { TeamApproval } from './TeamApproval';
 import type { PanelTab } from './TeamPanel';
 import { TeamIcon } from './TeamIcons';
 import { isPhoneSurface } from '../../lib/phoneSurface';
-import { ApiClient } from '../../api/client';
-import type { AutomationDetail, AutomationSession } from '../../hooks/useAutomations';
-import { openAutomationRunChat, runChatUnavailableReason } from '../../lib/automationRunChat';
+import { RunFoot, RunPinLine, StageQuestions, type RunPin } from './RunFoot';
 import '../sleepy/ChatPane.css';
 import '../sleepy/chat/composer.css';
 import '../sleepy/chat/cards.css';
@@ -45,8 +43,9 @@ import './AgentStage.css';
  * Every OPEN of the agent is a NEW Claude session (or the held one, continued); the server
  * decides its permission mode from the autonomy level at every spawn. Above it, the agent's whole
  * history as ONE flow: its routines' runs and its earlier talks, paged as the owner scrolls up
- * (`stageSession.ts`'s feed, drawn by the Chat pane's own rows). The routines' full runs stay one
- * click away (a run's boundary, or Activity).
+ * (`stageSession.ts`'s feed, drawn by the Chat pane's own rows). A run opens HERE: its steps and
+ * its full report under its own bubble (`RunFoot`). The box stays a new conversation; "Continue" on
+ * a run pins that run above the box, and only the owner's press moves it (owner decision K1).
  */
 export function AgentStage({
   row,
@@ -56,10 +55,10 @@ export function AgentStage({
   onPanel,
   onTogglePanel,
   onEdit,
-  onActivity,
   onToast,
+  onOpenFile,
   feedNewestId = null,
-  inActivity,
+  noRuns = false,
 }: {
   row: TeamRow;
   agent: AgentSummary;
@@ -68,14 +67,13 @@ export function AgentStage({
   onPanel: (tab: PanelTab) => void;
   onTogglePanel: () => void;
   onEdit: (slug: string) => void;
-  /** Open the agent's activity (its routines' runs and posts), at one run when given. */
-  onActivity: (at?: { slug: string; runId: string | null }) => void;
   onToast: (msg: string) => void;
+  /** A path in a run's full report. */
+  onOpenFile?: (path: string) => void;
   /** The roster feed's newest entry id for this agent: a change re-reads the history's page 1. */
   feedNewestId?: string | null;
-  /** Is this run (`<slug>::<runId>`) in the activity view's window? Outside it, a boundary click
-   *  opens the run's own session instead. */
-  inActivity?: (key: string) => boolean;
+  /** It has run nothing yet: where the scheduler being off is worth saying. */
+  noRuns?: boolean;
 }) {
   const { t } = useI18n();
   const { vault, bus } = useVault();
@@ -88,6 +86,8 @@ export function AgentStage({
   const readOnly = agent.readOnly === true;
   const elsewhere = readOnly ? null : agent.runsElsewhere ?? null;
   const bring = useBringAgentHere();
+  const { data: dispatcher } = useAutomationDispatcher();
+  const install = useInstallDispatcher();
 
   return (
     <section className="aiteam-convo aiteam-stage" data-stage={agent.slug}>
@@ -114,10 +114,6 @@ export function AgentStage({
         </div>
         <span className="aiteam-spacer" />
         <AutonomyChip level={autonomy} onEdit={readOnly ? undefined : () => onEdit(agent.slug)} />
-        <button type="button" className="aiteam-pill" onClick={() => onActivity()} data-team-activity title={t('aiteam.stage.seeActivity')} aria-label={t('aiteam.stage.seeActivity')}>
-          <TeamIcon name="list" size={14} />
-          <span className="aiteam-pill-text">{t('aiteam.stage.seeActivity')}</span>
-        </button>
         <button
           type="button"
           className={`aiteam-pill${panelOpen ? ' aiteam-pill--on' : ''}`}
@@ -166,6 +162,19 @@ export function AgentStage({
         <TeamApproval agentTitle={agent.title} pending={pending} onToast={onToast} />
       )}
       {!readOnly && <TeamAmendments slug={agent.slug} onToast={onToast} />}
+      {!readOnly && !elsewhere && !talkBlocked(pending) && noRuns && dispatcher && !dispatcher.installed && (
+        <div className="aiteam-banner" data-stage-scheduler>
+          <span className="auto-dispatch-pill"><span className="auto-dispatch-dot" aria-hidden="true" /><span className="auto-dispatch-pill-label">{t('aiteam.scheduler.off')}</span></span>
+          <span><b>{t('aiteam.scheduler.lede')}</b> {t('aiteam.scheduler.sub')}</span>
+          <span className="aiteam-spacer" />
+          {/* What runs on the Mac is turned on at the Mac. */}
+          {!isPhoneSurface() && (
+            <button type="button" className="agent-btn" disabled={install.isPending} onClick={() => install.mutate({}, { onError: (err) => onToast((err as Error).message) })}>
+              {t('aiteam.scheduler.turnOn')}
+            </button>
+          )}
+        </div>
+      )}
 
       {readOnly || elsewhere ? (
         <div className="aiteam-stage-note" data-stage-closed>
@@ -174,7 +183,7 @@ export function AgentStage({
             : t('aiteam.elsewhere.chat').replace('{machine}', elsewhere?.name ?? '').replace('{name}', agent.title)}</p>
         </div>
       ) : (
-        <StageChat agent={agent} level={autonomy} ready={!!stage} stageFailed={stageQ.isError && !stage} onRetryStage={() => { void stageQ.refetch(); }} vault={vault ?? ''} bus={bus} feedNewestId={feedNewestId} onActivity={onActivity} inActivity={inActivity} onToast={onToast} />
+        <StageChat agent={agent} level={autonomy} ready={!!stage} stageFailed={stageQ.isError && !stage} onRetryStage={() => { void stageQ.refetch(); }} vault={vault ?? ''} bus={bus} feedNewestId={feedNewestId} onToast={onToast} onOpenFile={onOpenFile} />
       )}
     </section>
   );
@@ -208,38 +217,7 @@ function hhmm(iso: string | number): string {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-/**
- * A run older than the activity view's window: open its own recorded session in a Chat tab, as
- * the activity's "Open session" does. False when the run has no session to open.
- */
-async function openRunSession(vault: string, bus: EventTarget, meta: FeedMeta): Promise<boolean> {
-  if (!meta.runId) return false;
-  try {
-    const api = new ApiClient(vault || null);
-    const slug = encodeURIComponent(meta.source);
-    const detail = await api.get<AutomationDetail>(`/automations/${slug}`);
-    const idx = (detail.cache?.history ?? []).findIndex((e) => e.firedAt === meta.runId);
-    if (idx < 0) return false;
-    const { session } = await api.get<{ session: AutomationSession | null }>(`/automations/${slug}/session?run=${idx + 1}`);
-    if (!session || runChatUnavailableReason(session)) return false;
-    return openAutomationRunChat(bus, {
-      slug: meta.source,
-      automationTitle: meta.title,
-      runNumber: session.runNumber,
-      sessionId: session.sessionId as string,
-      firedAt: session.firedAt,
-      status: session.status,
-      costUsd: session.costUsd,
-      numTurns: session.numTurns,
-      durationMs: meta.durationMs,
-      outputPath: session.outputPath,
-    });
-  } catch {
-    return false;
-  }
-}
-
-function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus, feedNewestId, onActivity, inActivity, onToast }: {
+function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus, feedNewestId, onToast, onOpenFile }: {
   agent: AgentSummary;
   level: string;
   ready: boolean;
@@ -249,9 +227,8 @@ function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus,
   vault: string;
   bus: EventTarget;
   feedNewestId: string | null;
-  onActivity: (at?: { slug: string; runId: string | null }) => void;
-  inActivity?: (key: string) => boolean;
   onToast: (msg: string) => void;
+  onOpenFile?: (path: string) => void;
 }) {
   const { t } = useI18n();
   const { session, open } = useStageSession(vault, agent, level);
@@ -345,7 +322,6 @@ function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus,
         : t('aiteam.history.new'),
       working: t('aiteam.working.label'),
       note,
-      report: t('aiteam.history.fullReport'),
       end: t('aiteam.history.start').replace('{name}', agent.title),
       loading: t('aiteam.history.loading'),
       error: t('aiteam.history.failedRead'),
@@ -356,8 +332,43 @@ function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t, agent.title, liveKind, liveStarted, dayTick]);
-  const onActivityRef = useLatest(onActivity);
-  const inActivityRef = useLatest(inActivity);
+  // What is open under each run. Steps the owner closed stay closed while the run works on.
+  const [stepsShown, setStepsShown] = useState<ReadonlySet<string>>(() => new Set());
+  const [stepsHidden, setStepsHidden] = useState<ReadonlySet<string>>(() => new Set());
+  const [reports, setReports] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleSteps = useCallback((meta: FeedMeta) => {
+    const open = stepsOpen(meta, stepsShown, stepsHidden);
+    setStepsShown((s) => flip(s, meta.sessionKey, !open));
+    setStepsHidden((s) => flip(s, meta.sessionKey, open));
+  }, [stepsShown, stepsHidden]);
+  const toggleReport = useCallback((key: string) => setReports((s) => flip(s, key, !s.has(key))), []);
+  // The run the box writes to. Only the owner's press sets it: a routine firing moves nothing, and
+  // the send carries this captured run through the reply route and its gates.
+  const [pin, setPin] = useState<RunPin | null>(null);
+  const [pinNote, setPinNote] = useState<string | null>(null);
+  const pinRef = useLatest(pin);
+  const sessionRef = useLatest(session);
+  const sendVia = useCallback((message: string): boolean => {
+    const target = pinRef.current;
+    if (!target) return false;
+    setPinNote(null);
+    replyToRun(
+      { slug: target.slug, runId: target.runId, text: message },
+      {
+        onSuccess: ({ entry }) => {
+          setAwaiting({ key: `${target.slug}::${target.runId}`, afterId: entry.id, until: Date.now() + 120_000 });
+          void refreshStageFeed(vault, agent.slug, null);
+        },
+        // The server's own sentence, and the words go back in the box.
+        onError: (err) => {
+          setPinNote((err as Error).message);
+          sessionRef.current?.sendText(message);
+        },
+      },
+    );
+    return true;
+  }, [pinRef, sessionRef, replyToRun, vault, agent.slug]);
+  const closePin = useCallback(() => { setPin(null); setPinNote(null); }, []);
   const feed = useMemo<ChatFeed | undefined>(() => {
     if (!snap) return undefined;
     return {
@@ -379,11 +390,26 @@ function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus,
           emitInstance(bus, OPEN_SESSION_EVENT, detail);
           return;
         }
-        const at = { slug: meta.source, runId: meta.runId };
-        if (!inActivityRef.current || inActivityRef.current(meta.sessionKey)) { onActivityRef.current(at); return; }
-        // Outside the activity's window: the run's own session, else the routine's newest message.
-        void openRunSession(vault, bus, meta).then((opened) => { if (!opened) onActivityRef.current(at); });
+        // A run opens where it stands: its steps, else its document.
+        const foot = runFootOf(meta);
+        if (foot.steps) toggleSteps(meta);
+        else if (foot.report) toggleReport(meta.sessionKey);
       },
+      runFoot: (meta) => (
+        <RunFoot
+          meta={meta}
+          steps={stepsOpen(meta, stepsShown, stepsHidden)}
+          report={reports.has(meta.sessionKey)}
+          onSteps={() => toggleSteps(meta)}
+          onReport={() => toggleReport(meta.sessionKey)}
+          onContinue={() => {
+            if (!meta.runId) return;
+            setPinNote(null);
+            setPin({ slug: meta.source, runId: meta.runId, title: meta.title, startedAt: meta.startedAt, running: meta.status === 'running' });
+          }}
+          onOpenFile={onOpenFile}
+        />
+      ),
       onRunReport: (meta, text) => {
         if (!meta.runId) return;
         replyToRun(
@@ -400,7 +426,13 @@ function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus,
       onDividerScrolled: () => markStageDividerScrolled(vault, agent.slug),
       onPinned: (pinned) => setStageFeedPinned(vault, agent.slug, pinned),
     };
-  }, [snap, labels, vault, agent.slug, bus, onActivityRef, inActivityRef, replyToRun, onToastRef]);
+  }, [snap, labels, vault, agent.slug, bus, replyToRun, onToastRef, stepsShown, stepsHidden, reports, toggleSteps, toggleReport, onOpenFile]);
+  const above = useMemo(() => (
+    <>
+      <StageQuestions agent={agent.slug} onToast={onToast} />
+      {pin && <RunPinLine pin={pin} note={pinNote} onClose={closePin} />}
+    </>
+  ), [agent.slug, onToast, pin, pinNote, closePin]);
 
   if (!agent.approvedForChat) {
     return (
@@ -428,9 +460,11 @@ function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus,
     <CardChat
       session={session}
       reopen={() => open('resume')}
-      placeholder={(fresh ? t('aiteam.stage.placeholderNew') : t('aiteam.stage.placeholder')).replace('{name}', agent.title)}
+      placeholder={(pin ? t('aiteam.run.placeholder') : fresh ? t('aiteam.stage.placeholderNew') : t('aiteam.stage.placeholder')).replace('{name}', agent.title)}
       pane
       feed={feed}
+      aboveComposer={above}
+      sendVia={pin ? sendVia : undefined}
     />
   );
 }
@@ -439,7 +473,7 @@ function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus,
  * An agent's conversation OUTSIDE the AI Team page (the Super stage's team card, owner
  * 2026-10-30: "it should open like a normal session on the Super screen, not send me to AI
  * Team"): the same pane as the page's middle, opened and closed the way the page opens and
- * deselects a teammate. A run boundary opens that run's own session; the page stays one link away.
+ * deselects a teammate. A run opens under its own bubble, as on the page.
  */
 export function AgentConversation({ slug }: { slug: string }) {
   const { vault, bus } = useVault();
@@ -467,7 +501,7 @@ export function AgentConversation({ slug }: { slug: string }) {
     reopen();
     return () => { off(); queueMicrotask(() => { if (!stageWatched(v, slug)) deselectStage(v, slug); }); };
   }, [v, slug, newestRef]);
-  const onActivity = useCallback(() => requestOpenAgents({ slug }), [slug]);
+  const onReview = useCallback(() => requestOpenAgents({ slug }), [slug]);
   // No page toast out here: a failed reply shows as a line under the conversation.
   const [note, setNote] = useState<string | null>(null);
   // Never a blank: it is coming, or it is gone and the way to the team is said.
@@ -475,7 +509,7 @@ export function AgentConversation({ slug }: { slug: string }) {
     return (
       <section className="aiteam-convo aiteam-stage" data-stage={slug} data-testid="agent-conversation">
         {agentQ.isError
-          ? <div className="aiteam-stage-note"><p>{t('aiteam.stage.unavailable')}</p><button type="button" className="aiteam-pill" onClick={onActivity}>{t('aiteam.stage.review')}</button></div>
+          ? <div className="aiteam-stage-note"><p>{t('aiteam.stage.unavailable')}</p><button type="button" className="aiteam-pill" onClick={onReview}>{t('aiteam.stage.review')}</button></div>
           : <div className="aiteam-stage-note"><p>{t('common.loading')}</p></div>}
       </section>
     );
@@ -483,10 +517,18 @@ export function AgentConversation({ slug }: { slug: string }) {
   return (
     <section className="aiteam-convo aiteam-stage" data-stage={slug} data-testid="agent-conversation">
       <StageChat agent={agent} level={stage?.autonomy ?? agent.autonomy ?? 'balanced'} ready={!!stage} stageFailed={stageQ.isError && !stage} onRetryStage={() => { void stageQ.refetch(); }} vault={v} bus={bus}
-        feedNewestId={feedNewestId} onActivity={onActivity} inActivity={() => false} onToast={setNote} />
+        feedNewestId={feedNewestId} onToast={setNote} />
       {note && <p role="status" className="aiteam-stage-note">{note}</p>}
     </section>
   );
+}
+
+/** `set` with `key` in it, or out of it. */
+function flip(set: ReadonlySet<string>, key: string, on: boolean): ReadonlySet<string> {
+  if (set.has(key) === on) return set;
+  const next = new Set(set);
+  if (on) next.add(key); else next.delete(key);
+  return next;
 }
 
 /** A ref that always holds the latest value (stable identity, for effects and callbacks). */

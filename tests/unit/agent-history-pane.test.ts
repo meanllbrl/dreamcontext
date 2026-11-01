@@ -30,9 +30,9 @@ vi.mock('../../dashboard/src/components/sleepy/chatSession', () => ({
 }));
 
 import { splitWindow, shouldAutoReveal, nextFirstShown, WINDOW_MAX_ENTRIES } from '../../dashboard/src/components/sleepy/chat/chatEntities';
-import { feedHasRunning, feedMarks, feedReportShown, feedRunWorking, feedShift, liveDividerShown, stripActionFences } from '../../dashboard/src/components/sleepy/chat/chatFeed';
+import { feedHasRunning, feedMarks, feedReportShown, feedRunWorking, feedShift, liveDividerShown, runFootOf, stepsOpen, stripActionFences } from '../../dashboard/src/components/sleepy/chat/chatFeed';
 import {
-  applyDeferred, dividerFor, mergeFresh, overlaps, prependOlder, readingOrder, toFeedItems, type FeedSession,
+  applyDeferred, dividerFor, mergeFresh, overlaps, prependOlder, readingOrder, runViewItems, toFeedItems, type FeedSession,
 } from '../../dashboard/src/components/aiteam/agentHistory';
 import {
   __resetStageSessionsForTests, __setStageHistoryIo, beginStageOpen, deselectStage, loadOlderStageFeed,
@@ -449,6 +449,58 @@ describe('a silent run in the pane', () => {
     expect(items).toHaveLength(1);
     expect(items[0].feed).toMatchObject({ empty: true, status: 'running' });
     expect(feedRunWorking(items[0].feed, { last: true })).toBe(true);
+  });
+});
+
+describe('what opens under a run (W2)', () => {
+  const run = (over: Partial<FeedSession>): FeedSession => ({
+    key: 'watch::2026-10-30T09:00:00.000Z', kind: 'run', source: 'watch', title: 'Watch',
+    startedAt: '2026-10-30T09:00:00.000Z', lastAt: '2026-10-30T09:01:00.000Z', status: 'ok', durationMs: 60_000,
+    newestId: 'n', unread: false, rows: [{ id: 'body:answer', kind: 'agent', text: 'Acme is healthy.', at: '2026-10-30T09:01:00.000Z', origin: 'answer' }], ...over,
+  });
+  const meta = (over: Partial<FeedSession>) => toFeedItems([run(over)])[0].feed;
+
+  it('a resumable run has steps and Continue; its session reaches the row', () => {
+    const m = meta({ claudeId: 'c', resumable: true, hasDocument: true });
+    expect(m).toMatchObject({ claudeId: 'c', resumable: true, hasDocument: true });
+    expect(runFootOf(m)).toEqual({ steps: true, report: true, noReport: false, canContinue: true, line: null });
+  });
+
+  it('a run with no session has no Continue and says so; a document needs no session', () => {
+    expect(runFootOf(meta({ hasDocument: true }))).toEqual({ steps: false, report: true, noReport: false, canContinue: false, line: 'noSession' });
+  });
+
+  it('a result with no document here says so instead of a link that opens nothing', () => {
+    expect(runFootOf(meta({}))).toMatchObject({ report: false, noReport: true });
+  });
+
+  it('another machine\'s run is named, and nothing here continues it, running or not', () => {
+    expect(runFootOf(meta({ elsewhere: true, resumable: true }))).toMatchObject({ canContinue: false, line: 'otherMac' });
+    expect(runFootOf(meta({ elsewhere: true, status: 'running' }))).toMatchObject({ canContinue: false, line: 'otherMac' });
+  });
+
+  it('a running run is continued by queueing, and a skipped one has nothing to say', () => {
+    expect(runFootOf(meta({ status: 'running', claudeId: 'c' }))).toMatchObject({ canContinue: true, steps: true, line: null });
+    expect(runFootOf(meta({ status: 'skipped' }))).toMatchObject({ canContinue: false, line: null });
+  });
+
+  it('a running run opens by itself until the owner closes it; a finished one on his press', () => {
+    const k = 'watch::2026-10-30T09:00:00.000Z';
+    const none = new Set<string>();
+    expect(stepsOpen(meta({ status: 'running', claudeId: 'c' }), none, none)).toBe(true);
+    expect(stepsOpen(meta({ status: 'running', claudeId: 'c' }), none, new Set([k]))).toBe(false);
+    expect(stepsOpen(meta({ claudeId: 'c' }), none, none)).toBe(false);
+    expect(stepsOpen(meta({ claudeId: 'c' }), new Set([k]), none)).toBe(true);
+    expect(stepsOpen(meta({ status: 'running' }), none, none)).toBe(false);
+  });
+
+  it('the steps leave out the prompt the runner composed, only when it opens the transcript', () => {
+    const prompt = { kind: 'user', text: 'composed' };
+    const said = { kind: 'text', text: 'done' };
+    const reply = { kind: 'user', text: 'and this?' };
+    expect(runViewItems([prompt, said, reply])).toEqual([said, reply]);
+    expect(runViewItems([said, reply])).toEqual([said, reply]);
+    expect(runViewItems([])).toEqual([]);
   });
 });
 

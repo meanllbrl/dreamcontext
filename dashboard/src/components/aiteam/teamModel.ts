@@ -203,15 +203,6 @@ export function buildRoster(
 }
 
 /**
- * WHERE A PICKED TEAMMATE OPENS: its conversation (the stage), where its whole history — every
- * routine run and every talk — is one flow above the composer (AI Team history, 2026-10-27).
- * Only an open routine QUESTION opens the activity, where its answer block lives.
- */
-export function openingView(row: Pick<TeamRow, 'status'>): 'stage' | 'activity' {
-  return row.status === 'needs' ? 'activity' : 'stage';
-}
-
-/**
  * ONE THING WAITING FOR THE OWNER'S APPROVAL ON THIS MAC.
  *
  * Every automation needs a machine-local approval of exactly what it is (its hash): that rule

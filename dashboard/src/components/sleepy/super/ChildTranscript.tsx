@@ -39,18 +39,20 @@ export function useChildHistory(claudeId: string, live: boolean) {
  * folder); no `claude` is started for it. The live chat takes the slot back the moment the child
  * runs again (`super resume`), because the card then has a session and draws the slot instead.
  */
-export function ChildTranscript({ claudeId, live = false, foot }: {
+export function ChildTranscript({ claudeId, live = false, foot, prepare }: {
   claudeId: string;
   /** The job still runs on the Mac (the phone reads it from here): the transcript keeps refreshing. */
   live?: boolean;
   /** What stands under the transcript instead of "finished" (a team job's own composer). */
   foot?: 'own';
+  /** What of the saved transcript is drawn (a run's steps leave out the composed prompt). */
+  prepare?: (items: HistoryEntry[]) => HistoryEntry[];
 }) {
   const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
   const [session] = useState(() => createTranscriptSession(claudeId));
   const hostRef = useRef<HTMLDivElement>(null);
   const history = useChildHistory(claudeId, live);
-  useEffect(() => { if (history.data) session.load(history.data); }, [history.data, session]);
+  useEffect(() => { if (history.data) session.load(prepare ? prepare(history.data) : history.data); }, [history.data, session, prepare]);
   // The job just ended: its last lines landed after the last refresh.
   const wasLive = useRef(live);
   const refetch = history.refetch;
@@ -75,7 +77,8 @@ export function ChildTranscript({ claudeId, live = false, foot }: {
       permissionMode="auto"
       canSignInInApp={false}
       signInCommand="claude auth login"
-      readOnly={live || foot === 'own' ? true : 'finished'}
+      // A run's steps are nobody's chat to write in, and whatever stands under them is the host's.
+      readOnly={foot === 'own' ? 'silent' : live ? true : 'finished'}
     />
   ), [session, modelConfig, live, foot]);
   return (
