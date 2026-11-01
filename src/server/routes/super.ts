@@ -59,6 +59,7 @@ import {
 import { DEFAULT_READ_BYTES, readLastReply, readTail, renderTail } from '../../lib/super/transcript-tail.js';
 import { expandChildRefs } from '../../lib/super/child-ref.js';
 import { validateSuperWebUrl } from '../../lib/super/web-url.js';
+import { IMAGE_EXT_RE, PDF_EXT_RE, VIDEO_EXT_RE, ownerFileTarget } from '../../lib/super/owner-file.js';
 import { ownedLoopbackPorts } from '../owned-ports.js';
 import { existsSync, statSync } from 'node:fs';
 import { BOARD_EXT_RE, boardRerouteNote, whiteboardSlugOfBoardRef } from '../../lib/super/board-ref.js';
@@ -95,7 +96,7 @@ import { titleFromBrief } from '../../lib/super/remote-view.js';
  *    super token, a child's token: all refused. Vault-agnostic like `/api/window`: the token
  *    names the vault.
  *
- *  - `GET /api/super/state`, `POST /api/super/enable|disable|layout|activity|recap` — the
+ *  - `GET /api/super/state`, `POST /api/super/enable|disable|layout|activity|recap|open` — the
  *    OWNER's window. Desktop app + loopback + loopback Host (`requireLocalDesktop`), refused
  *    as a cross-site request (a foreign `Origin` or `Sec-Fetch-Site: cross-site`), and denied
  *    on the phone/tunnel surface by the route policy. Vault-bound: the window names its vault.
@@ -111,10 +112,6 @@ type Params = Record<string, string>;
 
 const MAX_TEXT = 100_000;
 const SLUG_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
-const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg)$/i;
-const PDF_EXT_RE = /\.pdf$/i;
-/** The clips the window's player takes (`MEDIA_KIND_BY_EXT` video in chatEntities.ts). */
-const VIDEO_EXT_RE = /\.(mp4|m4v|mov|webm)$/i;
 const DELEGATE_TIMEOUT_MS = 30_000;
 /** `super open <kind> <ref…>` takes at most this many refs at once. */
 const MAX_OPEN_REFS = 12;
@@ -206,6 +203,15 @@ export interface SuperCaller {
   token: string;
   who: WindowIdentity;
   state: SuperState;
+}
+
+/** What `openCards` reads of its caller: the agent's token and session play no part in a card. */
+export type OpenCaller = Pick<SuperCaller, 'state'> & { who: Pick<WindowIdentity, 'contextRoot'> };
+
+/** How `openCards` speaks: the one thing that differs between the agent's door and the owner's. */
+export interface OpenDoor {
+  full(res: ServerResponse, s: Pick<SuperState, 'containers' | 'groups'>, limit: 'stage' | 'record'): void;
+  done(res: ServerResponse, result: unknown, state: SuperState): void;
 }
 
 export type SuperVerbHandler = (caller: SuperCaller, body: Record<string, unknown>, res: ServerResponse) => Promise<void>;
@@ -376,6 +382,25 @@ function tooMany(res: ServerResponse, s: Pick<SuperState, 'containers' | 'groups
         + '`super stack` finished or idle ones into Others first (never close a card to make room)',
     { limit, ...counts, freeFloat, freeTotal });
 }
+
+/** The agent's door: `too_many_containers` spells out the limit, a success is the plain result. */
+const AGENT_DOOR: OpenDoor = { full: tooMany, done: (res, result) => ok(res, result) };
+
+/**
+ * The owner's 409 for a card that does not fit: one code per limit, because `RequestError` carries
+ * no `limit` to the window, and the window words the reason itself (in his language).
+ */
+function ownerTooMany(res: ServerResponse, s: Pick<SuperState, 'containers' | 'groups'>, limit: 'stage' | 'record'): void {
+  const counts = cardCounts(s);
+  if (limit === 'record') { refuse(res, 409, 'record_full', RECORD_FULL_MESSAGE, { limit, ...counts }); return; }
+  refuse(res, 409, 'stage_full', `the stage is full: ${counts.floating} of ${MAX_FLOAT} floating cards or groups`, { limit, ...counts });
+}
+
+/** The owner's window applies the state in the answer: his request may have no socket to push on. */
+const ownerDoor = (contextRoot: string): OpenDoor => ({
+  full: ownerTooMany,
+  done: (res, result, state) => sendJson(res, 200, { ok: true, result, state: superStateView(contextRoot, state) }),
+});
 
 /** An insight the vault really has (a card naming none would draw an empty tile). */
 function insightExists(contextRoot: string, slug: string): boolean {
@@ -854,6 +879,230 @@ async function addPadNote(root: string, section: PadSection, text: string, forCh
   return out;
 }
 
+/**
+ * What opens a card, whoever asks (`SUPER_VERB_HANDLERS.open`, `SUPER_OWNER_HANDLERS.open`): one
+ * body, so the same ask makes the same record from either door. The door decides only how the
+ * answer is spoken.
+ */
+async function openCards(c: OpenCaller, b: Record<string, unknown>, res: ServerResponse, door: OpenDoor = AGENT_DOOR): Promise<void> {
+  // One ref (`ref`) or several of one kind (`refs`, at most MAX_OPEN_REFS), optionally put in
+  // ONE named group (`group`): the owner asked to see a set of things (S8, AC11b). All or
+  // nothing, in one locked write. Only NEW refs need room: a ref already on the record is
+  // the same card (brought back from Others), and a group is one floating item.
+  let kind = str(b.kind);
+  if (!kind || !(CONTAINER_KINDS as readonly string[]).includes(kind)) { refuse(res, 400, 'invalid_args', `kind must be one of ${CONTAINER_KINDS.join(' | ')}`); return; }
+  const look = shapeOrSize(b);
+  if ('error' in look) { refuse(res, 400, 'invalid_args', look.error); return; }
+  const { shape: shapeArg, size: sizeArg } = look;
+  let rawRefs: unknown[] = Array.isArray(b.refs) ? b.refs : [b.ref];
+  if (!rawRefs.length || rawRefs.length > MAX_OPEN_REFS) { refuse(res, 400, 'invalid_args', `name 1 to ${MAX_OPEN_REFS} refs of one kind`); return; }
+  // A whiteboard named through `board` (its slug, folder or file) opens as the whiteboard it
+  // is (board-ref.ts, 2026-10-29: a `board <slug>` card read "not in this project yet" forever).
+  let note: string | undefined;
+  if (kind === 'board') {
+    const slugs = rawRefs.map((r) => (typeof r === 'string' ? whiteboardSlugOfBoardRef(r, basename(c.who.contextRoot)) : null));
+    if (slugs.every((x): x is string => !!x)) {
+      kind = 'whiteboard';
+      rawRefs = slugs;
+      note = boardRerouteNote(slugs);
+    } else if (slugs.some(Boolean)) {
+      refuse(res, 400, 'invalid_ref', 'whiteboards and board files mixed in one open: open the whiteboards with `super open whiteboard <slug>` and the files with `super open board <path>`');
+      return;
+    }
+  }
+  // `--titles "a|b|c"`: one label per ref, in order (an empty one leaves that card's label).
+  const rawTitles: unknown[] = Array.isArray(b.titles) ? b.titles : [];
+  if (rawTitles.length > rawRefs.length || rawTitles.some((t) => typeof t !== 'string')) { refuse(res, 400, 'invalid_args', 'titles: at most one label per ref, in the refs\' order'); return; }
+  const refs: string[] = [];
+  const titles = new Map<string, string>();
+  for (const [i, raw] of rawRefs.entries()) {
+    const r = refFor(c, kind as ContainerKind, raw);
+    if ('error' in r) { refuse(res, 400, 'invalid_ref', r.error); return; }
+    if (kind === 'insight' && !insightExists(c.who.contextRoot, r.ref)) { refuse(res, 404, 'unknown_insight', `no insight named ${r.ref} (\`dreamcontext insight list\`)`); return; }
+    // The default board is made on first ask, as the whiteboards page makes it.
+    if (kind === 'whiteboard' && r.ref === DEFAULT_WHITEBOARD.slug) await ensureDefaultWhiteboard(c.who.contextRoot).catch(() => {});
+    if (kind === 'whiteboard' && !whiteboardExists(c.who.contextRoot, r.ref)) { refuse(res, 404, 'unknown_whiteboard', (note ? 'read as a whiteboard: ' : '') + unknownWhiteboardMessage(c.who.contextRoot, r.ref)); return; }
+    // A board file that is not there would draw a card retrying "not in this project yet" forever.
+    if (kind === 'board' && !projectFileExists(dirname(c.who.contextRoot), r.ref)) {
+      refuse(res, 404, 'unknown_board', `no file ${r.ref} in this project: a board card draws an existing .excalidraw.md file, project-relative (a dreamcontext whiteboard opens with \`super open whiteboard <slug>\`)`);
+      return;
+    }
+    if (!refs.includes(r.ref)) refs.push(r.ref);
+    const t = oneLine(String(rawTitles[i] ?? '')).slice(0, MAX_TITLE).trim();
+    if (t && !titles.has(r.ref)) titles.set(r.ref, t);
+  }
+  const title = refs.length === 1 && str(b.title) ? oneLine(str(b.title) as string).slice(0, MAX_TITLE) : undefined;
+  const titleOf = (ref: string): string | undefined => title ?? titles.get(ref);
+  const groupName = str(b.group) ? cleanGroupName(b.group) : '';
+  if (str(b.group) && !groupName) { refuse(res, 400, 'invalid_args', 'a group needs a name'); return; }
+  // `--no-group`: the cards stand alone and the picture chain ends here.
+  const noGroup = b.group === false;
+  // `--for <child>`: pictures, PDFs or clips shown for that child's job, which go to Others once
+  // the job moves on (tidy.ts). Media cards only, and only one of the super's children.
+  const forChild = str(b.for);
+  if (b.for !== undefined && !isMediaKind(kind as ContainerKind)) { refuse(res, 400, 'invalid_args', '--for links media only (kind image, pdf or video)'); return; }
+  if (b.for !== undefined && (!forChild || !SESSION_ID_RE.test(forChild) || !hasChild(c.state, forChild))) {
+    refuse(res, 404, 'unknown_child', '--for names none of your children (`dreamcontext super state` lists them)');
+    return;
+  }
+  // `--present` (owner 2026-10-29: "why do you create the group but not present it"): media
+  // shown as a result open AND present in the same write, laid out as `present` lays them.
+  if (b.present !== undefined && typeof b.present !== 'boolean') { refuse(res, 400, 'invalid_args', 'present is true or false'); return; }
+  const presentNow = b.present === true;
+  if (presentNow && !isMediaKind(kind as ContainerKind)) { refuse(res, 400, 'invalid_args', '--present opens media only (kind image, pdf or video); other cards: `super present <card…>`'); return; }
+  const ids = refs.map((ref) => containerIdFor(kind, ref));
+  // A live job is never opened into a group: its card floats on its own (live.ts).
+  if (groupName && kind === 'chat') {
+    const live = refs.filter((ref) => childIsLive(c.state, ref)).map((ref) => containerIdFor('chat', ref));
+    if (live.length) { refuseLive(res, live, 'in a group'); return; }
+  }
+  const root = c.who.contextRoot;
+  const now = Date.now();
+  // One chain per vault and media kind: a PDF opened between two pictures leaves their chain be.
+  const chainKey = kind === 'image' ? imageChainKey(root) : `${root}\0${kind}`;
+  // Pictures opened together are one group (image-group.ts): 2+ in one call, or one call after
+  // another within IMAGE_CHAIN_MS. Decided against the record inside the locked write.
+  const auto = (s: SuperState): ImageGroupPlan =>
+    isMediaKind(kind as ContainerKind) && !groupName && !noGroup ? planImageGroup(s, ids, refs, imageChains.get(chainKey), now, forChild, kind as ContainerKind) : null;
+  // `before`: the record as it stood before a pull (below): what floated, and on its own, then.
+  const plan = (s: SuperState, before: SuperState = s): { fits: boolean; limit: 'stage' | 'record'; fresh: number; groupId: string | null; name: string; cards: string[] } => {
+    const fresh = ids.filter((id) => !s.containers.some((k) => k.id === id)).length;
+    const a = auto(s);
+    const target = groupName ? s.groups.find((g) => g.name === groupName) : a && 'join' in a ? s.groups.find((g) => g.id === a.join) : undefined;
+    // A named group resting in Others comes back to the stage: one more floating item.
+    let addFloat = groupName ? (target && target.place === 'float' ? 0 : 1) : fresh;
+    if (a) {
+      // A picture group counts net: the group (unless it already floats) minus each picked card
+      // that floated on its own until now (the lone previous picture, a re-opened one).
+      // A pulled picture was no item of its own: its group still stands where it was.
+      const grouped = new Set(before.groups.flatMap((g) => g.cards));
+      const loose = ('join' in a ? a.cards : a.make.cards)
+        .filter((id) => !grouped.has(id) && before.containers.some((k) => k.id === id && k.place === 'float')).length;
+      addFloat = ('join' in a && target?.place === 'float' ? 0 : 1) - loose;
+    }
+    // The record counts what is left once its oldest finished cards retire (room.ts).
+    const record = roomPossible(s, fresh, ids);
+    const stage = addFloat <= 0 || floatCount(before) + addFloat <= MAX_FLOAT;
+    const r = { fits: record && stage, limit: (record ? 'stage' : 'record') as 'stage' | 'record', fresh };
+    if (groupName) return { ...r, groupId: target?.id ?? newGroupId(), name: groupName, cards: ids };
+    if (a && 'join' in a) return { ...r, groupId: a.join, name: '', cards: a.cards };
+    if (a) return { ...r, groupId: newGroupId(), name: a.make.name, cards: a.make.cards };
+    return { ...r, groupId: null, name: '', cards: ids };
+  };
+  // A picture shown again for a job leaves a group of another job's (or turned-down) pictures
+  // first, to go with this job's new set (image-group.ts `picturesToPull`).
+  const pull = (s: SuperState): SuperState => {
+    if (isMediaKind(kind as ContainerKind) && !groupName) { const out = picturesToPull(s, ids, forChild); if (out.length) leaveGroups(s, out); }
+    return s;
+  };
+  const first = plan(pull(structuredClone(c.state)), c.state);
+  if (!first.fits) { door.full(res, c.state, first.limit); return; }
+  let refusedBy: 'stage' | 'record' = 'record';
+  let refused = false;
+  let groupId: string | null = null;
+  let autoGrouped = false;
+  // Cards whose size the owner chose: the agent's size is not written (decided inside the
+  // locked write, so an owner resize landing meanwhile still wins).
+  let kept: string[] = [];
+  // `--present`: whether the owner's own layout for these same cards was kept (presentCards).
+  let layoutKept = false;
+  // Touched before the write too, so a tidy pass racing it never moves what is being opened.
+  touchCards(root, ids.filter((id) => c.state.containers.some((k) => k.id === id)));
+  // A picture's shape, read from its header before the write (image-aspect.ts): re-read every
+  // time, so a mockup overwritten at the same path gets its new shape.
+  const aspects = kind === 'image' ? await imageAspects(dirname(root), refs) : new Map<string, number | undefined>();
+  // The child `--for` named left the record meanwhile (an ended one past the history cap):
+  // refused, never opened unlinked as if for its job.
+  let childGone = false;
+  const state = await writeSuper(c.who.contextRoot, (s) => {
+    if (forChild && !hasChild(s, forChild)) { childGone = true; return; }
+    const check = plan(pull(structuredClone(s)), s);
+    if (!check.fits) { refused = true; refusedBy = check.limit; return; }
+    const p = plan(pull(s));
+    makeRoom(s, p.fresh, ids);
+    groupId = p.groupId;
+    autoGrouped = !!p.groupId && !groupName;
+    kept = [];
+    refs.forEach((ref, i) => {
+      const have = s.containers.find((k) => k.id === ids[i]);
+      if (have) {
+        // Re-opening brings it back from Others and keeps the owner's drop position.
+        if (shapeArg) have.shape = shapeArg;
+        if (have.sizeBy === 'owner') { if (sizeArg) kept.push(have.id); }
+        else {
+          // A page is never sized under large by an agent (owner 2026-10-22).
+          const next = atLeastSize(sizeArg ?? have.size ?? 'small', minSizeFor(have.kind));
+          if (next === 'small') delete have.size; else have.size = next;
+        }
+        have.place = 'float';
+        // A minimised agenda the agent opens is shown, not left in its pill (end review r1).
+        delete have.min;
+        if (titleOf(ref)) have.title = titleOf(ref);
+        // Shown again: for the job named now, else still for the one it was shown for.
+        if (forChild && s.children[forChild]) { have.forChild = forChild; have.forAt = now; }
+        else if (have.forChild) have.forAt = now;
+        setAspect(have, aspects);
+        return;
+      }
+      // Its kind's opening size (the agenda, a clip, a PDF: defaultSizeFor), unless a size is named.
+      const size = atLeastSize(sizeArg ?? defaultSizeFor(kind as ContainerKind), minSizeFor(kind as ContainerKind));
+      s.containers.push({
+        id: ids[i], kind: kind as ContainerKind, ref,
+        shape: shapeArg ?? defaultShape(kind as ContainerKind),
+        ...(size !== 'small' ? { size } : {}),
+        place: 'float', ...(titleOf(ref) ? { title: titleOf(ref) } : {}),
+        ...(forChild && s.children[forChild] ? { forChild, forAt: now } : {}),
+        ...(kind === 'image' && aspects.get(ref) !== undefined ? { aspect: aspects.get(ref) } : {}),
+      });
+    });
+    // A page the agent opens is shown side by side at once (owner 2026-10-22: "if it adds a
+    // web page as a card it should show it side by side, directly"): the first one named,
+    // never inside a group, never over a presentation, and over a half page only when that
+    // shows another page (a chat or a picture he looks at stays).
+    const shownNow = s.view.mode === 'half' ? s.containers.find((k) => k.id === s.view.card) : undefined;
+    if (!groupId && isPageKind(kind as ContainerKind)
+      && (s.view.mode === 'float' || (s.view.mode === 'half' && (!shownNow || isPageKind(shownNow.kind))))) {
+      s.view = { mode: 'half', card: ids[0] };
+    }
+    // The cards design's own group mutation: a card leaves any other group (a group left
+    // with one card dissolves when the record is settled).
+    if (groupId) {
+      applyGroupOp(s, { id: groupId, cards: p.cards, name: p.name });
+      // The group is what the stage draws: it floats, wherever it rested.
+      const g = s.groups.find((x) => x.id === groupId);
+      if (g) g.place = 'float';
+    }
+    // `--present`: the group they went into is shown whole (as `super present <group>`), else
+    // the cards opened; no layout named, so the cards pick it.
+    if (presentNow) {
+      const g = groupId ? s.groups.find((x) => x.id === groupId) : undefined;
+      const shown = g ? groupPresentCards(g, s.containers) : ids.slice(0, MAX_FILMSTRIP);
+      layoutKept = presentCards(s, shown).kept;
+    }
+    // The picture chain: the next image open within the window joins where this one went.
+    if (isMediaKind(kind as ContainerKind)) {
+      if (noGroup) imageChains.delete(chainKey);
+      else imageChains.set(chainKey, { at: now, card: ids[0], group: s.groups.find((g) => g.cards.includes(ids[0]))?.id ?? null });
+    }
+  });
+  if (childGone) { refuse(res, 404, 'unknown_child', '--for names none of your children (`dreamcontext super state` lists them)'); return; }
+  if (refused) { door.full(res, state, refusedBy); return; }
+  const made = ids.map((id) => state.containers.find((k) => k.id === id)).filter((k): k is NonNullable<typeof k> => !!k);
+  if (made.length !== ids.length) { door.full(res, state, 'record'); return; }
+  // Opened by the super: touched now (tidy.ts), the group it went into too.
+  touchCards(root, groupId ? [...ids, groupId] : ids);
+  const group = groupId ? state.groups.find((g) => g.id === groupId) : undefined;
+  // The phone has no stage: a picture opened here reaches a phone watching this Super Agent as
+  // a strip in its chat (lib/super/phone-mirror.ts stageMediaFrame). Never the holder.
+  if (kind === 'image' && state.session) {
+    const frame = stageMediaFrame(made.map((k) => ({ ref: k.ref, ...(k.title ? { title: k.title } : {}) })));
+    if (frame) findLiveChat(state.session)?.mirrorFrame?.(frame);
+  }
+  door.done(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(group && autoGrouped ? { autoGroup: true } : {}), ...(kept.length ? { kept } : {}), view: state.view,
+    ...(presentNow && state.view.mode === 'present' ? { presented: { cards: state.view.cards, ...(state.view.layout ? { layout: state.view.layout } : {}), ...(layoutKept ? { kept: 'owner_layout' } : {}) } } : {}),
+    ...(note ? { kind, note } : {}) }, state);
+}
+
 /** Each verb's work. */
 export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   state: async (c, _b, res) => {
@@ -976,224 +1225,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
   },
 
-  open: async (c, b, res) => {
-    // One ref (`ref`) or several of one kind (`refs`, at most MAX_OPEN_REFS), optionally put in
-    // ONE named group (`group`): the owner asked to see a set of things (S8, AC11b). All or
-    // nothing, in one locked write. Only NEW refs need room: a ref already on the record is
-    // the same card (brought back from Others), and a group is one floating item.
-    let kind = str(b.kind);
-    if (!kind || !(CONTAINER_KINDS as readonly string[]).includes(kind)) { refuse(res, 400, 'invalid_args', `kind must be one of ${CONTAINER_KINDS.join(' | ')}`); return; }
-    const look = shapeOrSize(b);
-    if ('error' in look) { refuse(res, 400, 'invalid_args', look.error); return; }
-    const { shape: shapeArg, size: sizeArg } = look;
-    let rawRefs: unknown[] = Array.isArray(b.refs) ? b.refs : [b.ref];
-    if (!rawRefs.length || rawRefs.length > MAX_OPEN_REFS) { refuse(res, 400, 'invalid_args', `name 1 to ${MAX_OPEN_REFS} refs of one kind`); return; }
-    // A whiteboard named through `board` (its slug, folder or file) opens as the whiteboard it
-    // is (board-ref.ts, 2026-10-29: a `board <slug>` card read "not in this project yet" forever).
-    let note: string | undefined;
-    if (kind === 'board') {
-      const slugs = rawRefs.map((r) => (typeof r === 'string' ? whiteboardSlugOfBoardRef(r, basename(c.who.contextRoot)) : null));
-      if (slugs.every((x): x is string => !!x)) {
-        kind = 'whiteboard';
-        rawRefs = slugs;
-        note = boardRerouteNote(slugs);
-      } else if (slugs.some(Boolean)) {
-        refuse(res, 400, 'invalid_ref', 'whiteboards and board files mixed in one open: open the whiteboards with `super open whiteboard <slug>` and the files with `super open board <path>`');
-        return;
-      }
-    }
-    // `--titles "a|b|c"`: one label per ref, in order (an empty one leaves that card's label).
-    const rawTitles: unknown[] = Array.isArray(b.titles) ? b.titles : [];
-    if (rawTitles.length > rawRefs.length || rawTitles.some((t) => typeof t !== 'string')) { refuse(res, 400, 'invalid_args', 'titles: at most one label per ref, in the refs\' order'); return; }
-    const refs: string[] = [];
-    const titles = new Map<string, string>();
-    for (const [i, raw] of rawRefs.entries()) {
-      const r = refFor(c, kind as ContainerKind, raw);
-      if ('error' in r) { refuse(res, 400, 'invalid_ref', r.error); return; }
-      if (kind === 'insight' && !insightExists(c.who.contextRoot, r.ref)) { refuse(res, 404, 'unknown_insight', `no insight named ${r.ref} (\`dreamcontext insight list\`)`); return; }
-      // The default board is made on first ask, as the whiteboards page makes it.
-      if (kind === 'whiteboard' && r.ref === DEFAULT_WHITEBOARD.slug) await ensureDefaultWhiteboard(c.who.contextRoot).catch(() => {});
-      if (kind === 'whiteboard' && !whiteboardExists(c.who.contextRoot, r.ref)) { refuse(res, 404, 'unknown_whiteboard', (note ? 'read as a whiteboard: ' : '') + unknownWhiteboardMessage(c.who.contextRoot, r.ref)); return; }
-      // A board file that is not there would draw a card retrying "not in this project yet" forever.
-      if (kind === 'board' && !projectFileExists(dirname(c.who.contextRoot), r.ref)) {
-        refuse(res, 404, 'unknown_board', `no file ${r.ref} in this project: a board card draws an existing .excalidraw.md file, project-relative (a dreamcontext whiteboard opens with \`super open whiteboard <slug>\`)`);
-        return;
-      }
-      if (!refs.includes(r.ref)) refs.push(r.ref);
-      const t = oneLine(String(rawTitles[i] ?? '')).slice(0, MAX_TITLE).trim();
-      if (t && !titles.has(r.ref)) titles.set(r.ref, t);
-    }
-    const title = refs.length === 1 && str(b.title) ? oneLine(str(b.title) as string).slice(0, MAX_TITLE) : undefined;
-    const titleOf = (ref: string): string | undefined => title ?? titles.get(ref);
-    const groupName = str(b.group) ? cleanGroupName(b.group) : '';
-    if (str(b.group) && !groupName) { refuse(res, 400, 'invalid_args', 'a group needs a name'); return; }
-    // `--no-group`: the cards stand alone and the picture chain ends here.
-    const noGroup = b.group === false;
-    // `--for <child>`: pictures, PDFs or clips shown for that child's job, which go to Others once
-    // the job moves on (tidy.ts). Media cards only, and only one of the super's children.
-    const forChild = str(b.for);
-    if (b.for !== undefined && !isMediaKind(kind as ContainerKind)) { refuse(res, 400, 'invalid_args', '--for links media only (kind image, pdf or video)'); return; }
-    if (b.for !== undefined && (!forChild || !SESSION_ID_RE.test(forChild) || !hasChild(c.state, forChild))) {
-      refuse(res, 404, 'unknown_child', '--for names none of your children (`dreamcontext super state` lists them)');
-      return;
-    }
-    // `--present` (owner 2026-10-29: "why do you create the group but not present it"): media
-    // shown as a result open AND present in the same write, laid out as `present` lays them.
-    if (b.present !== undefined && typeof b.present !== 'boolean') { refuse(res, 400, 'invalid_args', 'present is true or false'); return; }
-    const presentNow = b.present === true;
-    if (presentNow && !isMediaKind(kind as ContainerKind)) { refuse(res, 400, 'invalid_args', '--present opens media only (kind image, pdf or video); other cards: `super present <card…>`'); return; }
-    const ids = refs.map((ref) => containerIdFor(kind, ref));
-    // A live job is never opened into a group: its card floats on its own (live.ts).
-    if (groupName && kind === 'chat') {
-      const live = refs.filter((ref) => childIsLive(c.state, ref)).map((ref) => containerIdFor('chat', ref));
-      if (live.length) { refuseLive(res, live, 'in a group'); return; }
-    }
-    const root = c.who.contextRoot;
-    const now = Date.now();
-    // One chain per vault and media kind: a PDF opened between two pictures leaves their chain be.
-    const chainKey = kind === 'image' ? imageChainKey(root) : `${root}\0${kind}`;
-    // Pictures opened together are one group (image-group.ts): 2+ in one call, or one call after
-    // another within IMAGE_CHAIN_MS. Decided against the record inside the locked write.
-    const auto = (s: SuperState): ImageGroupPlan =>
-      isMediaKind(kind as ContainerKind) && !groupName && !noGroup ? planImageGroup(s, ids, refs, imageChains.get(chainKey), now, forChild, kind as ContainerKind) : null;
-    // `before`: the record as it stood before a pull (below): what floated, and on its own, then.
-    const plan = (s: SuperState, before: SuperState = s): { fits: boolean; limit: 'stage' | 'record'; fresh: number; groupId: string | null; name: string; cards: string[] } => {
-      const fresh = ids.filter((id) => !s.containers.some((k) => k.id === id)).length;
-      const a = auto(s);
-      const target = groupName ? s.groups.find((g) => g.name === groupName) : a && 'join' in a ? s.groups.find((g) => g.id === a.join) : undefined;
-      // A named group resting in Others comes back to the stage: one more floating item.
-      let addFloat = groupName ? (target && target.place === 'float' ? 0 : 1) : fresh;
-      if (a) {
-        // A picture group counts net: the group (unless it already floats) minus each picked card
-        // that floated on its own until now (the lone previous picture, a re-opened one).
-        // A pulled picture was no item of its own: its group still stands where it was.
-        const grouped = new Set(before.groups.flatMap((g) => g.cards));
-        const loose = ('join' in a ? a.cards : a.make.cards)
-          .filter((id) => !grouped.has(id) && before.containers.some((k) => k.id === id && k.place === 'float')).length;
-        addFloat = ('join' in a && target?.place === 'float' ? 0 : 1) - loose;
-      }
-      // The record counts what is left once its oldest finished cards retire (room.ts).
-      const record = roomPossible(s, fresh, ids);
-      const stage = addFloat <= 0 || floatCount(before) + addFloat <= MAX_FLOAT;
-      const r = { fits: record && stage, limit: (record ? 'stage' : 'record') as 'stage' | 'record', fresh };
-      if (groupName) return { ...r, groupId: target?.id ?? newGroupId(), name: groupName, cards: ids };
-      if (a && 'join' in a) return { ...r, groupId: a.join, name: '', cards: a.cards };
-      if (a) return { ...r, groupId: newGroupId(), name: a.make.name, cards: a.make.cards };
-      return { ...r, groupId: null, name: '', cards: ids };
-    };
-    // A picture shown again for a job leaves a group of another job's (or turned-down) pictures
-    // first, to go with this job's new set (image-group.ts `picturesToPull`).
-    const pull = (s: SuperState): SuperState => {
-      if (isMediaKind(kind as ContainerKind) && !groupName) { const out = picturesToPull(s, ids, forChild); if (out.length) leaveGroups(s, out); }
-      return s;
-    };
-    const first = plan(pull(structuredClone(c.state)), c.state);
-    if (!first.fits) { tooMany(res, c.state, first.limit); return; }
-    let refusedBy: 'stage' | 'record' = 'record';
-    let refused = false;
-    let groupId: string | null = null;
-    let autoGrouped = false;
-    // Cards whose size the owner chose: the agent's size is not written (decided inside the
-    // locked write, so an owner resize landing meanwhile still wins).
-    let kept: string[] = [];
-    // `--present`: whether the owner's own layout for these same cards was kept (presentCards).
-    let layoutKept = false;
-    // Touched before the write too, so a tidy pass racing it never moves what is being opened.
-    touchCards(root, ids.filter((id) => c.state.containers.some((k) => k.id === id)));
-    // A picture's shape, read from its header before the write (image-aspect.ts): re-read every
-    // time, so a mockup overwritten at the same path gets its new shape.
-    const aspects = kind === 'image' ? await imageAspects(dirname(root), refs) : new Map<string, number | undefined>();
-    // The child `--for` named left the record meanwhile (an ended one past the history cap):
-    // refused, never opened unlinked as if for its job.
-    let childGone = false;
-    const state = await writeSuper(c.who.contextRoot, (s) => {
-      if (forChild && !hasChild(s, forChild)) { childGone = true; return; }
-      const check = plan(pull(structuredClone(s)), s);
-      if (!check.fits) { refused = true; refusedBy = check.limit; return; }
-      const p = plan(pull(s));
-      makeRoom(s, p.fresh, ids);
-      groupId = p.groupId;
-      autoGrouped = !!p.groupId && !groupName;
-      kept = [];
-      refs.forEach((ref, i) => {
-        const have = s.containers.find((k) => k.id === ids[i]);
-        if (have) {
-          // Re-opening brings it back from Others and keeps the owner's drop position.
-          if (shapeArg) have.shape = shapeArg;
-          if (have.sizeBy === 'owner') { if (sizeArg) kept.push(have.id); }
-          else {
-            // A page is never sized under large by an agent (owner 2026-10-22).
-            const next = atLeastSize(sizeArg ?? have.size ?? 'small', minSizeFor(have.kind));
-            if (next === 'small') delete have.size; else have.size = next;
-          }
-          have.place = 'float';
-          // A minimised agenda the agent opens is shown, not left in its pill (end review r1).
-          delete have.min;
-          if (titleOf(ref)) have.title = titleOf(ref);
-          // Shown again: for the job named now, else still for the one it was shown for.
-          if (forChild && s.children[forChild]) { have.forChild = forChild; have.forAt = now; }
-          else if (have.forChild) have.forAt = now;
-          setAspect(have, aspects);
-          return;
-        }
-        // Its kind's opening size (the agenda, a clip, a PDF: defaultSizeFor), unless a size is named.
-        const size = atLeastSize(sizeArg ?? defaultSizeFor(kind as ContainerKind), minSizeFor(kind as ContainerKind));
-        s.containers.push({
-          id: ids[i], kind: kind as ContainerKind, ref,
-          shape: shapeArg ?? defaultShape(kind as ContainerKind),
-          ...(size !== 'small' ? { size } : {}),
-          place: 'float', ...(titleOf(ref) ? { title: titleOf(ref) } : {}),
-          ...(forChild && s.children[forChild] ? { forChild, forAt: now } : {}),
-          ...(kind === 'image' && aspects.get(ref) !== undefined ? { aspect: aspects.get(ref) } : {}),
-        });
-      });
-      // A page the agent opens is shown side by side at once (owner 2026-10-22: "if it adds a
-      // web page as a card it should show it side by side, directly"): the first one named,
-      // never inside a group, never over a presentation, and over a half page only when that
-      // shows another page (a chat or a picture he looks at stays).
-      const shownNow = s.view.mode === 'half' ? s.containers.find((k) => k.id === s.view.card) : undefined;
-      if (!groupId && isPageKind(kind as ContainerKind)
-        && (s.view.mode === 'float' || (s.view.mode === 'half' && (!shownNow || isPageKind(shownNow.kind))))) {
-        s.view = { mode: 'half', card: ids[0] };
-      }
-      // The cards design's own group mutation: a card leaves any other group (a group left
-      // with one card dissolves when the record is settled).
-      if (groupId) {
-        applyGroupOp(s, { id: groupId, cards: p.cards, name: p.name });
-        // The group is what the stage draws: it floats, wherever it rested.
-        const g = s.groups.find((x) => x.id === groupId);
-        if (g) g.place = 'float';
-      }
-      // `--present`: the group they went into is shown whole (as `super present <group>`), else
-      // the cards opened; no layout named, so the cards pick it.
-      if (presentNow) {
-        const g = groupId ? s.groups.find((x) => x.id === groupId) : undefined;
-        const shown = g ? groupPresentCards(g, s.containers) : ids.slice(0, MAX_FILMSTRIP);
-        layoutKept = presentCards(s, shown).kept;
-      }
-      // The picture chain: the next image open within the window joins where this one went.
-      if (isMediaKind(kind as ContainerKind)) {
-        if (noGroup) imageChains.delete(chainKey);
-        else imageChains.set(chainKey, { at: now, card: ids[0], group: s.groups.find((g) => g.cards.includes(ids[0]))?.id ?? null });
-      }
-    });
-    if (childGone) { refuse(res, 404, 'unknown_child', '--for names none of your children (`dreamcontext super state` lists them)'); return; }
-    if (refused) { tooMany(res, state, refusedBy); return; }
-    const made = ids.map((id) => state.containers.find((k) => k.id === id)).filter((k): k is NonNullable<typeof k> => !!k);
-    if (made.length !== ids.length) { tooMany(res, state, 'record'); return; }
-    // Opened by the super: touched now (tidy.ts), the group it went into too.
-    touchCards(root, groupId ? [...ids, groupId] : ids);
-    const group = groupId ? state.groups.find((g) => g.id === groupId) : undefined;
-    // The phone has no stage: a picture opened here reaches a phone watching this Super Agent as
-    // a strip in its chat (lib/super/phone-mirror.ts stageMediaFrame). Never the holder.
-    if (kind === 'image' && state.session) {
-      const frame = stageMediaFrame(made.map((k) => ({ ref: k.ref, ...(k.title ? { title: k.title } : {}) })));
-      if (frame) findLiveChat(state.session)?.mirrorFrame?.(frame);
-    }
-    ok(res, { container: made[0], containers: made, ...(group ? { group } : {}), ...(group && autoGrouped ? { autoGroup: true } : {}), ...(kept.length ? { kept } : {}), view: state.view,
-      ...(presentNow && state.view.mode === 'present' ? { presented: { cards: state.view.cards, ...(state.view.layout ? { layout: state.view.layout } : {}), ...(layoutKept ? { kept: 'owner_layout' } : {}) } } : {}),
-      ...(note ? { kind, note } : {}) });
-  },
+  open: (c, b, res) => openCards(c, b, res),
 
   shape: async (c, b, res) => {
     const id = containerArg(c, b, res);
@@ -2817,8 +2849,11 @@ export async function handleSuperStateGet(req: IncomingMessage, res: ServerRespo
   } catch (err) { storeRefusal(res, err); }
 }
 
-export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh' | 'seen' | 'pad';
+export type SuperOwnerVerb = 'enable' | 'disable' | 'layout' | 'activity' | 'recap' | 'end' | 'fresh' | 'seen' | 'pad' | 'open';
 export type SuperOwnerHandler = (req: IncomingMessage, res: ServerResponse, contextRoot: string, body: Record<string, unknown>) => Promise<void>;
+
+/** The kinds the owner names himself; a file comes as `{ path }`, a chat or a job is the agent's. */
+const OWNER_OPEN_KINDS: readonly string[] = ['web', 'knowledge', 'task', 'insight', 'whiteboard'] satisfies ContainerKind[];
 
 /** The owner's verbs (D17 hand-over/take-back, D9 layout, D7 lease, D13 recap). */
 export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
@@ -2837,6 +2872,29 @@ export const SUPER_OWNER_HANDLERS: Record<SuperOwnerVerb, SuperOwnerHandler> = {
     if (state.session) findLiveChat(state.session)?.closeMirrors?.();
     for (const sid of Object.keys(state.children)) findLiveChat(sid)?.closeMirrors?.();
     sendJson(res, 200, { state: superStateView(contextRoot, state) });
+  },
+  open: async (_req, res, contextRoot, body) => {
+    // The owner opens a card himself: exactly `{ kind, ref }` or `{ path }` goes on to the agent's
+    // `open`, so where it lands, its size and its group are the agent's rules, not his gesture.
+    // No `group`, `for`, `present`, `shape`, `size`, `refs` or titles, and no owner stamp.
+    const state = await readSuperState(contextRoot, superSanitizeOpts());
+    if (!state.enabled) { refuse(res, 409, 'not_handed_over', 'the Super Agent is not handed over'); return; }
+    const c: OpenCaller = { who: { contextRoot }, state };
+    if (body.path !== undefined) {
+      if (body.kind !== undefined || typeof body.path !== 'string' || !body.path.trim()) {
+        refuse(res, 400, 'invalid_args', 'give { kind, ref } or { path: <text> }, not both');
+        return;
+      }
+      const target = ownerFileTarget(dirname(contextRoot), body.path);
+      if ('error' in target) { refuse(res, target.error === 'unknown_file' ? 404 : 400, target.error, 'this file does not open as a card'); return; }
+      await openCards(c, { kind: target.kind, ref: target.ref }, res, ownerDoor(contextRoot));
+      return;
+    }
+    if (typeof body.kind !== 'string' || !OWNER_OPEN_KINDS.includes(body.kind)) {
+      refuse(res, 400, 'invalid_args', `kind must be one of ${OWNER_OPEN_KINDS.join(' | ')}`);
+      return;
+    }
+    await openCards(c, { kind: body.kind, ref: body.ref }, res, ownerDoor(contextRoot));
   },
   layout: async (_req, res, contextRoot, body) => {
     // The owner's gestures as a PATCH, applied inside the locked write (plan-r8 F3): a drop
@@ -2982,3 +3040,4 @@ export const handleSuperEnd = ownerRoute('end');
 export const handleSuperFresh = ownerRoute('fresh');
 export const handleSuperSeen = ownerRoute('seen');
 export const handleSuperPad = ownerRoute('pad');
+export const handleSuperOpen = ownerRoute('open');

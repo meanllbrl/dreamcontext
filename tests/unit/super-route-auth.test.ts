@@ -18,7 +18,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { resetSuperIndex, SUPER_STATE_REL } from '../../src/lib/super/store.js';
 import { emptySuperState } from '../../src/lib/super/types.js';
-import { handleSuperEnable, handleSuperFresh, handleSuperSeen, handleSuperPad, handleSuperStateGet, handleSuperVerb } from '../../src/server/routes/super.js';
+import { handleSuperEnable, handleSuperFresh, handleSuperOpen, handleSuperSeen, handleSuperPad, handleSuperStateGet, handleSuperVerb } from '../../src/server/routes/super.js';
 import { handleWindowCommand } from '../../src/server/routes/window-control.js';
 import { markPhoneSocket } from '../../src/server/phone-origin.js';
 import { ROUTE_POLICY } from '../../src/lib/handsfree/mac/route-policy.js';
@@ -184,13 +184,19 @@ describe('the owner\'s routes: this machine\'s desktop window only', () => {
     expect((await owner(handleSuperPad, { headers: { origin: 'https://evil.example' } })).status).toBe(403);
     expect((await owner(handleSuperPad, { remote: '192.168.1.9' })).status).toBe(403);
     expect((await owner(handleSuperPad, { phone: true })).status).toBe(403);
+    // The owner opening a card himself: cross-site, remote and the phone never reach it.
+    expect((await owner(handleSuperOpen, { headers: { origin: 'https://evil.example' } })).status).toBe(403);
+    expect((await owner(handleSuperOpen, { remote: '192.168.1.9' })).status).toBe(403);
+    expect((await owner(handleSuperOpen, { phone: true })).status).toBe(403);
+    // ...and this very window gets through.
+    expect((await owner(handleSuperOpen, { body: { kind: 'task', ref: 'pocket-ledger' } })).status).toBe(200);
   });
 
   it('every super route is denied on the phone/tunnel surface, on the server and in the page', () => {
     const rows = Object.entries(ROUTE_POLICY).filter(([k]) => k.includes('/api/super/'));
     expect(rows.map(([k]) => k).sort()).toEqual([
       'GET /api/super/state', 'POST /api/super/activity', 'POST /api/super/disable', 'POST /api/super/enable',
-      'POST /api/super/end', 'POST /api/super/fresh', 'POST /api/super/layout', 'POST /api/super/pad', 'POST /api/super/recap', 'POST /api/super/seen', 'POST /api/super/v/:verb',
+      'POST /api/super/end', 'POST /api/super/fresh', 'POST /api/super/layout', 'POST /api/super/open', 'POST /api/super/pad', 'POST /api/super/recap', 'POST /api/super/seen', 'POST /api/super/v/:verb',
     ]);
     for (const [k, row] of rows) expect(row.allow, k).toBe(false);
     setPhoneSurfaceForTests('mac');
@@ -198,6 +204,7 @@ describe('the owner\'s routes: this machine\'s desktop window only', () => {
       expect(phoneAllows('POST', '/api/super/enable')).toBe(false);
       expect(phoneAllows('GET', '/api/super/state')).toBe(false);
       expect(phoneAllows('POST', '/api/super/fresh')).toBe(false);
+      expect(phoneAllows('POST', '/api/super/open')).toBe(false);
       expect(phoneAllows('POST', '/api/super/seen')).toBe(false);
       expect(phoneAllows('POST', '/api/super/v/state')).toBe(false);
     } finally { setPhoneSurfaceForTests(null); }

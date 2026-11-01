@@ -98,8 +98,9 @@ describe('super-orchestration guide: shape', () => {
   // +150 (2026-10-31): a report on a plan or on options is drawn, never written (measured 22,314).
   // +150 (2026-10-31, 0.36.6): secim-yorum's [About card] lines, already in the 0.36.5 guide (measured 22,490); nothing dropped.
   // +100 (2026-11-01, Track T W4): `--tool codex` on a delegated child.
-  it('is at most 22,600 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(22_600);
+  // +100 (2026-11-01): the owner opens cards himself too (measured 22,655).
+  it('is at most 22,700 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(22_700);
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {

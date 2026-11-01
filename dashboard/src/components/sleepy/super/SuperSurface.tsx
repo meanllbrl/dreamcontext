@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type MutableRefObject, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type MutableRefObject, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useI18n } from '../../../context/I18nContext';
 import { MAX_CONTAINERS, PRESENT_LAYOUTS, groupPresentCards, presentedGroup, resolveLayout, type PresentLayout, type SuperContainer as Container, type SuperGroup, type SuperStateView, type SuperView } from '../../../lib/superTypes';
@@ -33,6 +33,9 @@ import type { CardFullscreen } from './SuperContainer';
 import type { WebPick } from '../../../lib/webPick';
 import { freshPending, hasOwnKey, needsOwner, ownerQueueCount, queueHead, shownChild, toneOfStatus, type AgendaRow, type JobLook } from './superHandover';
 import { NewSessionButton } from './NewSessionButton';
+import { SuperAddMenu } from './SuperAddMenu';
+import { pickerOpen } from '../../../lib/desktop';
+import type { SuperOpenBody } from './superApi';
 import { MAX_KEPT_FRAMES, MAX_LIVE_BROWSERS, MAX_LIVE_IFRAMES, autoFrames, keptWebIds, liveWebIds, touchLru, dropFromLru } from './webBudget';
 import { LIGHT_POLL_FACTOR, pollMs, useWindowActivity } from '../../../lib/windowActivity';
 import { useStageCues, withGhosts } from './useStageCues';
@@ -102,6 +105,9 @@ export interface SuperSurfaceProps {
   onKeepChild: (child: string) => void;
   /** The owner moved an agenda note by hand (Done / Put back). */
   onMoveNote?: (id: string, section: 'now' | 'done') => void;
+  /** The owner opens a card himself (POST /api/super/open): the state is applied before it
+   *  resolves, a refusal throws. Absent where no window of his can open one (a remote screen). */
+  onOpenCard?: (body: SuperOpenBody) => Promise<{ id: string; groupId: string | null }>;
   /** Children waiting to be ended when their turn ends. */
   endPending: ReadonlySet<string>;
   /** Children whose end the server did not record (still running; the card says so). */
@@ -164,6 +170,9 @@ export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSess
     </div>
   );
 }
+
+/** How long "Added to Others" stays up. */
+const ADD_NOTE_MS = 4000;
 
 /** Leaving a group's presentation reopens its panel only if the stage answers within this long. */
 const BACK_TO_GROUP_MS = 3000;
@@ -631,7 +640,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       if (presentKeysRef.current.full) return;
       // A full-window viewer owns Esc; a PDF card's own embedded viewer is no such window.
       if (document.querySelector(PRESENT_KEY_OWNERS)) return;
-      if (document.querySelector('.super-group-panel, .super-size-menu, .super-close-choice, .super-zoom[data-inspect], [data-testid="super-zoom-clear-ask"], [data-resizing], .super-surface[data-dragging]')) return;
+      if (document.querySelector('.super-add-menu, .super-group-panel, .super-size-menu, .super-close-choice, .super-zoom[data-inspect], [data-testid="super-zoom-clear-ask"], [data-resizing], .super-surface[data-dragging]')) return;
       const p = presentKeysRef.current.plan;
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); presentKeysRef.current.exit(); return; }
       // ←/→: the next big card of a filmstrip, the next tab of a narrow sheet.
@@ -645,6 +654,58 @@ export function SuperSurface(props: SuperSurfaceProps) {
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [presenting, view.cards]);
+
+  // ── The add menu: the owner's own way to open a card ──
+  // `plan.phone` is a width, a window beside an open sidebar reaches it too; a real phone has no prop.
+  const canAdd = !!props.onOpenCard && !remote;
+  const [addMenu, setAddMenu] = useState<{ x: number; y: number; byButton: boolean } | null>(null);
+  const addBtnRef = useRef<HTMLButtonElement>(null);
+  const addBusy = useRef(false);
+  const addByButton = useRef(false);
+  addByButton.current = addMenu?.byButton ?? false;
+  const closeAddMenu = useCallback(() => {
+    if (addByButton.current) addBtnRef.current?.focus();
+    setAddMenu(null);
+  }, []);
+  useEffect(() => { if (!props.visible || !canAdd) setAddMenu(null); }, [props.visible, canAdd]);
+  const toggleAddMenu = () => {
+    if (addMenu) {
+      // Same hold as the menu's own: an open picker or a request still has its answer to write there.
+      if (!pickerOpen() && !addBusy.current) closeAddMenu();
+      return;
+    }
+    const b = addBtnRef.current?.getBoundingClientRect();
+    const r = rootRef.current?.getBoundingClientRect();
+    if (!b || !r) return;
+    setAddMenu({ x: b.left - r.left, y: b.bottom - r.top + 4, byButton: true });
+  };
+  // Only the stage's own empty floor: a card, the chat, the agenda, Others and a page keep theirs.
+  const onStageContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget || !canAdd || drag || full || motion !== 'idle') return;
+    e.preventDefault();
+    const r = e.currentTarget.getBoundingClientRect();
+    setAddMenu({ x: e.clientX - r.left, y: e.clientY - r.top, byButton: false });
+  };
+  // A card that landed in Others opens nothing the owner can see: one line says where it went.
+  // Asked of the plan that draws the answer, once the card has come out of the stage's hold.
+  const [opened, setOpened] = useState<{ id: string; groupId: string | null } | null>(null);
+  const [inOthersNote, setInOthersNote] = useState(0);
+  useEffect(() => {
+    if (!opened || !byId.has(opened.id) || stageCues.held.has(opened.id)) return;
+    setOpened(null);
+    // A card in a group is drawn by its group, whether or not this open put it there.
+    const group = opened.groupId ?? state.groups.find((g) => g.cards.includes(opened.id))?.id;
+    if (plan.cards[group ?? opened.id]?.where === 'others') setInOthersNote((n) => n + 1);
+  }, [opened, plan, byId, stageCues.held, state.groups]);
+  useEffect(() => {
+    if (!inOthersNote) return undefined;
+    const timer = setTimeout(() => setInOthersNote(0), ADD_NOTE_MS);
+    return () => clearTimeout(timer);
+  }, [inOthersNote]);
+  const openCard = useCallback(async (body: SuperOpenBody) => {
+    if (!props.onOpenCard) return;
+    setOpened(await props.onOpenCard(body));
+  }, [props.onOpenCard]);
 
   const onUngroup = (id: string) => { setOpenGroup(null); onLayout({ ungroup: [id] }); };
   /** Every card of a group at once, in the layout its cards pick (2 compare, 3-4 grid, 5-8
@@ -881,6 +942,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       data-dragging={drag ? 'true' : undefined}
       data-presenting={plan.mode === 'present' ? 'true' : undefined}
       data-layout={plan.layout ?? undefined}
+      onContextMenu={onStageContextMenu}
     >
       <div ref={underRef} className="super-stage-under" aria-hidden />
       {plan.mode === 'float' && !plan.narrow && plan.orbit.length > 0 && <OrbitPath plan={plan} />}
@@ -909,9 +971,17 @@ export function SuperSurface(props: SuperSurfaceProps) {
               pending={freshPending(state)}
               onNewSession={props.onNewSession}
               noNewSession={!!remote}
-              actions={plan.chat === 'mini' && view.mode === 'present' && view.chat !== 'bar' ? (
-                <button type="button" className="super-chat-fold" data-testid="super-chat-fold" aria-pressed={false} onClick={toggleBar}>{t('super.chat.toBar')}</button>
-              ) : undefined}
+              actions={(
+                <>
+                  {/* A narrow stage's page or presentation covers the centre: there the side bands' right click opens it. */}
+                  {canAdd && !(plan.narrow && view.mode !== 'float') && (
+                    <button ref={addBtnRef} type="button" className="super-add-btn" data-testid="super-add-btn" aria-haspopup="menu" aria-expanded={!!addMenu} onClick={toggleAddMenu}>{t('super.add.button')}</button>
+                  )}
+                  {plan.chat === 'mini' && view.mode === 'present' && view.chat !== 'bar' && (
+                    <button type="button" className="super-chat-fold" data-testid="super-chat-fold" aria-pressed={false} onClick={toggleBar}>{t('super.chat.toBar')}</button>
+                  )}
+                </>
+              )}
             />
             <div className="super-slot" data-super-slot="centre" />
           </div>
@@ -1100,6 +1170,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
         );
       })()}
       <div ref={layerRef} className="super-stage-layer" aria-hidden />
+      {inOthersNote > 0 && <div className="super-add-note" role="status" data-testid="super-add-note" data-note={inOthersNote}>{t('super.add.inOthers')}</div>}
+      {addMenu && <SuperAddMenu at={addMenu} stage={{ width: plan.width, height: plan.height }} toggleRef={addBtnRef} busy={addBusy} onOpen={openCard} onClose={closeAddMenu} />}
       {full && (
         <CardSelectionScope id={full.id} onComment={props.onCommentCardText} onCommented={() => setFull(null)}>
           <CardFullscreenView subject={full.subject} cardId={full.id} onClose={() => setFull(null)} />

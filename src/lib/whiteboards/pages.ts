@@ -138,20 +138,23 @@ export function clearPageIndexCache(): void {
 /**
  * Search pages: every whitespace-separated term of `q` must appear (case-insensitive) in the
  * hit's title or ref. Ranked: title/basename starts with the query, then title contains it,
- * then the rest; knowledge before files; then by ref.
+ * then the rest; knowledge before files; then by ref. `kind` and `source` filter here, before the
+ * limit, so a project with more knowledge pages than the limit still lists its files.
  */
 export function searchPages(
   contextRoot: string,
   q: string,
-  opts: { limit?: number; now?: number; kind?: PageKind } = {},
+  opts: { limit?: number; now?: number; kind?: PageKind | readonly PageKind[]; source?: PageHit['source'] } = {},
 ): PageSearchResult {
   const limit = Math.max(1, Math.min(PAGE_SEARCH_MAX_LIMIT, Math.floor(opts.limit ?? PAGE_SEARCH_DEFAULT_LIMIT)));
   const index = cachedIndex(contextRoot, opts.now ?? Date.now());
   const query = q.trim().toLowerCase().slice(0, 200);
   const terms = query.split(/\s+/).filter(Boolean);
+  const kinds = opts.kind === undefined ? null : ([] as PageKind[]).concat(opts.kind);
   const scored: { hit: PageHit; score: number }[] = [];
   for (const hit of index.hits) {
-    if (opts.kind && hit.kind !== opts.kind) continue;
+    if (kinds && !kinds.includes(hit.kind)) continue;
+    if (opts.source && hit.source !== opts.source) continue;
     const title = hit.title.toLowerCase();
     const hay = `${title} ${hit.ref.toLowerCase()}`;
     if (!terms.every((t) => hay.includes(t))) continue;

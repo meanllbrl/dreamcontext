@@ -24,6 +24,7 @@ import { mergeElements } from '../../lib/whiteboards/merge.js';
 import { boardFileRelPath, readBoardFile, WHITEBOARD_MAX_FILE_BYTES, writeBoardFile } from '../../lib/whiteboards/files.js';
 import { assertPicturesHeld } from '../../lib/whiteboards/ops.js';
 import { searchPages } from '../../lib/whiteboards/pages.js';
+import type { PageKind } from '../../lib/whiteboards/widgets.js';
 import { parseGroupInput, readGroup } from '../../lib/whiteboards/validate.js';
 import {
   WHITEBOARD_MAX_BODY_BYTES,
@@ -198,9 +199,10 @@ export async function handleWhiteboardGet(
 }
 
 /**
- * GET /api/whiteboards/pages?q=&limit=&kind=md|pdf|html → `{pages: [{ref, kind, source, title, path}], truncated}`:
- * knowledge entries and project .md/.pdf/.html files a page widget or a wiki card's page can
- * point at. Registered before `:slug` (`pages` is a reserved board slug).
+ * GET /api/whiteboards/pages?q=&limit=&kind=md|pdf|html[,…]&source=knowledge|file →
+ * `{pages: [{ref, kind, source, title, path}], truncated}`: knowledge entries and project
+ * .md/.pdf/.html files a page widget or a wiki card's page can point at. Registered before
+ * `:slug` (`pages` is a reserved board slug).
  */
 export async function handleWhiteboardPages(
   req: IncomingMessage,
@@ -212,12 +214,22 @@ export async function handleWhiteboardPages(
   const q = (url.searchParams.get('q') || '').slice(0, 200);
   const rawLimit = Number.parseInt(url.searchParams.get('limit') || '', 10);
   const rawKind = url.searchParams.get('kind');
-  const kind = rawKind === 'md' || rawKind === 'pdf' || rawKind === 'html' ? rawKind : undefined;
-  if (rawKind && !kind) {
+  const kinds = rawKind ? rawKind.split(',') : [];
+  if (!kinds.every((k): k is PageKind => k === 'md' || k === 'pdf' || k === 'html')) {
     sendError(res, 400, 'invalid', 'kind must be one of md, pdf, html.');
     return;
   }
-  sendJson(res, 200, searchPages(contextRoot, q, { limit: Number.isFinite(rawLimit) ? rawLimit : undefined, kind }));
+  const rawSource = url.searchParams.get('source');
+  const source = rawSource === 'knowledge' || rawSource === 'file' ? rawSource : undefined;
+  if (rawSource && !source) {
+    sendError(res, 400, 'invalid', 'source must be knowledge or file.');
+    return;
+  }
+  sendJson(res, 200, searchPages(contextRoot, q, {
+    limit: Number.isFinite(rawLimit) ? rawLimit : undefined,
+    ...(kinds.length ? { kind: kinds } : {}),
+    source,
+  }));
 }
 
 /**
