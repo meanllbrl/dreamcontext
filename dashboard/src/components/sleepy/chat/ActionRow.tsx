@@ -1,4 +1,6 @@
 import type { ChatAction, ChatActionKind } from './chatActions';
+import { OpenInMainApp, useEmbed } from '../../embed/embedMode';
+import type { AppLinkPage } from '../../../lib/appLink';
 
 /**
  * MOLECULE — the row of buttons an answer asked for (`dream-actions`), rendered under the
@@ -26,16 +28,22 @@ const ACTION_GLYPH: Record<ChatActionKind, string> = {
   develop: '⇥',
 };
 
+/** These open a page of the main app, or hand a task to a new session: links, in an app's frame. */
+const LEAVES_THE_FRAME: Partial<Record<ChatActionKind, AppLinkPage>> = { develop: 'tasks', task: 'tasks', knowledge: 'knowledge', core: 'core' };
+
 export function ActionRow({
   actions, onAction,
 }: {
   actions: ChatAction[];
   onAction: (action: ChatAction) => void;
 }) {
+  const embed = useEmbed();
   if (!actions.length) return null;
   return (
     <div className="chat-action-row">
-      {actions.map((a, i) => (
+      {actions.map((a, i) => (embed && LEAVES_THE_FRAME[a.action] ? (
+        <OpenInMainApp key={`${a.action}-${a.id ?? i}`} grant={embed} page={LEAVES_THE_FRAME[a.action] as AppLinkPage} id={a.action === 'develop' ? a.id ?? null : a.id ?? null}>{a.label}</OpenInMainApp>
+      ) : (
         <button
           key={`${a.action}-${a.id ?? a.path ?? i}`}
           type="button"
@@ -49,7 +57,7 @@ export function ActionRow({
           <span className="chat-action-glyph" aria-hidden>{ACTION_GLYPH[a.action]}</span>
           <span className="chat-action-label">{a.label}</span>
         </button>
-      ))}
+      )))}
     </div>
   );
 }

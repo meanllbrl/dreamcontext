@@ -6,8 +6,9 @@ import type { EmbedGrant } from '../../lib/frameGuard';
 /**
  * A dreamcontext screen drawn inside an app's window (dreamcontext-apps plan r19, W4). The screen
  * is the real one. What leaves is everything that decides for the owner: approving an agent,
- * answering a question, running, assigning, enabling, deleting, editing. Each of those becomes a
- * link to the main app, so an app's window can show the work and never act as the owner.
+ * running, assigning, enabling, deleting, editing. Each of those becomes a link to the main app,
+ * so an app's window can show the work and never act as the owner. The chat is the exception on
+ * purpose: its questions answer in the frame, and its Allow is a native alert (D10).
  */
 const EmbedContext = createContext<EmbedGrant | null>(null);
 

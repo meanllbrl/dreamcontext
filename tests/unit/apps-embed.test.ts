@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { dropEmbedToken, embedFrameGrant, mintEmbedToken, resolveEmbedToken } from '../../src/server/apps/embed-token.js';
 import { refuseForeignFrame } from '../../src/server/middleware.js';
-import { checkEmbedFrame, embedGrant, embedWriteAllowed, lockEmbedWrites } from '../../dashboard/src/lib/frameGuard';
+import { checkEmbedFrame, embedGrant, embedSocketAllowed, embedWriteAllowed, lockEmbedWrites } from '../../dashboard/src/lib/frameGuard';
 import { PAGE_ROUTES, deniedForEveryone } from '../../src/lib/apps/page-routes.js';
 import { ROUTE_POLICY } from '../../src/lib/handsfree/mac/route-policy.js';
 
@@ -137,5 +137,32 @@ describe('what a page can reach', () => {
     expect(deniedForEveryone('/api/apps/meta/say')).toBe(true);
     expect(ROUTE_POLICY['POST /api/apps/embed-check'].allow).toBe(false);
     expect(ROUTE_POLICY['POST /api/apps/:slug/say'].allow).toBe(false);
+  });
+});
+
+describe('the frame locks what leaves it (plan r9, D12)', () => {
+  const base = 'http://127.0.0.1:9/';
+  it('allows its list and nothing else', () => {
+    for (const p of ['/api/apps/yuk/say', '/api/apps/yuk/chats/close', '/api/apps/yuk/chats/title', '/api/apps/embed-check', '/api/agent/drop']) {
+      expect(embedWriteAllowed('POST', p, base, 'yuk'), p).toBe(true);
+    }
+    for (const p of ['/api/apps/other/chats/close', '/api/agent/grant', '/api/tasks', '/api/agent/accounts/relogin', '/api/agent/secret']) {
+      expect(embedWriteAllowed('POST', p, base, 'yuk'), p).toBe(false);
+    }
+    expect(embedWriteAllowed('DELETE', '/api/apps/yuk/chats/close', base, 'yuk')).toBe(false);
+  });
+  it('a socket only through its own app gate', () => {
+    expect(embedSocketAllowed('ws://127.0.0.1:9/api/agent/chat?app=yuk&tk=T&vault=v', base, 'yuk', 'T')).toBe(true);
+    expect(embedSocketAllowed('ws://127.0.0.1:9/api/agent/chat?vault=v', base, 'yuk', 'T')).toBe(false);
+    expect(embedSocketAllowed('ws://127.0.0.1:9/api/agent/chat?app=other&tk=T', base, 'yuk', 'T')).toBe(false);
+    expect(embedSocketAllowed('ws://127.0.0.1:9/api/agent/terminal?app=yuk&tk=T', base, 'yuk', 'T')).toBe(false);
+  });
+  it('a non-app WebSocket throws', () => {
+    class FakeWS { constructor(public url: string) {} }
+    const win = { location: { href: base }, fetch: async () => new Response(''), WebSocket: FakeWS } as unknown as Window;
+    lockEmbedWrites(win, 'yuk', 'T');
+    const W = (win as unknown as { WebSocket: new (u: string) => unknown }).WebSocket;
+    expect(() => new W('ws://127.0.0.1:9/api/agent/terminal')).toThrow();
+    expect(() => new W('ws://127.0.0.1:9/api/agent/chat?app=yuk&tk=T')).not.toThrow();
   });
 });

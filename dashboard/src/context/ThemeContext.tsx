@@ -21,8 +21,9 @@ function resolveTheme(theme: Theme): ResolvedTheme {
   return theme === 'system' ? getSystemTheme() : theme;
 }
 
-export function ThemeProvider({ children }: { children: ReactNode }) {
+export function ThemeProvider({ children, forced }: { children: ReactNode; /** An app's frame: its own theme, never the app-global file's, never written to it. */ forced?: Theme }) {
   const [theme, setThemeState] = useState<Theme>(() => {
+    if (forced) return forced;
     const stored = localStorage.getItem('dreamcontext-theme') as Theme | null;
     return stored || 'system';
   });
@@ -30,6 +31,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [resolved, setResolved] = useState<ResolvedTheme>(() => resolveTheme(theme));
 
   const setTheme = (newTheme: Theme) => {
+    if (forced) return;
     setThemeState(newTheme);
     localStorage.setItem('dreamcontext-theme', newTheme);
     // App-global too: the desktop app opens on a fresh port (an empty localStorage) every launch,
@@ -39,6 +41,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   // Hydrate from the app-global file, only when it holds a theme (a fresh origin has none).
   useEffect(() => {
+    if (forced) return undefined;
     let live = true;
     api.get<{ theme?: unknown }>('/launcher/ui-settings').then((raw) => {
       const t = raw?.theme;
@@ -48,7 +51,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       }
     }).catch(() => { /* offline or an older server */ });
     return () => { live = false; };
-  }, []);
+  }, [forced]);
 
   useEffect(() => {
     const r = resolveTheme(theme);

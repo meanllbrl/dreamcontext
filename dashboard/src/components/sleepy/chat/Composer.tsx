@@ -1,3 +1,4 @@
+import { useEmbed } from '../../embed/embedMode';
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, type ReactNode } from 'react';
 import { McpPicker } from './McpPicker';
 import { asMcpHost } from './useMcpLive';
@@ -300,6 +301,8 @@ const ModeTrigger = memo(function ModeTrigger({ mode, agent, agentName, hasPhoto
 const AttachButton = memo(function AttachButton({ onPick }: {
   onPick: (kind: 'files' | 'folders', close: () => void) => void;
 }) {
+  // An app's frame has no native picker: a dropped file still lands.
+  if (useEmbed()) return null;
   return (
     <Popover
       align="left"
@@ -1641,7 +1644,8 @@ export function Composer({
   // routes), so the few lines below that differ ask `phoneVoice`. Read aloud stays the Assistant's.
   const dictationReady = useDictationReady(isDesktop() && mode !== 'assistant');
   const phoneVoice = usePhoneDictation();
-  const voiceEnabled = (isDesktop() && (mode === 'assistant' || dictationReady)) || phoneVoice;
+  const inAppFrame = !!useEmbed();
+  const voiceEnabled = !inAppFrame && ((isDesktop() && (mode === 'assistant' || dictationReady)) || phoneVoice);
   /** The draft as it stood when the take began, so a transcript can tell "the owner typed
    *  while I was transcribing" from "nothing changed". */
   const draftAtTakeRef = useRef('');

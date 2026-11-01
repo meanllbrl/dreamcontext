@@ -6,6 +6,9 @@ import { InlineTerminal } from './InlineTerminal';
 import { buildRunReport } from './runReport';
 import { useVaultId } from '../../../context/VaultContext';
 import { isDesktop } from '../../../lib/desktop';
+import { useEmbed } from '../../embed/embedMode';
+import { useI18n } from '../../../context/I18nContext';
+import { allowAlertText, ALLOW_TEXT_MAX, cleanAlertText } from './permissionAlert';
 import type { ChatSession, PendingPermission } from '../chatSession';
 
 /**
@@ -55,14 +58,21 @@ export function PermissionCard({
   const [running, setRunning] = useState(false);
   const [startedAt, setStartedAt] = useState(0);
   const { vault } = useVaultId();
+  const embed = useEmbed();
+  const { t } = useI18n();
   const command = commandPreview(item.toolName, item.input);
   const diff = !command ? parseEditDiff(item.input) : null;
   const toolLabel = item.displayName ?? item.toolName;
   // Same gate the RUN card carries, for the same reason: the PTY bridge is desktop-only.
-  const canRunHere = !!command && isDesktop() && !!vault;
+  const canRunHere = !!command && isDesktop() && !!vault && !embed;
+  // An app's frame: the page around it can dress up the card, and it cannot cover a native alert,
+  // so the alert is where the yes happens. A text too long to read there is not offered at all.
+  const alertText = embed ? allowAlertText(item.toolName, item.input) : '';
+  const tooLong = !!embed && cleanAlertText(alertText).length > ALLOW_TEXT_MAX;
 
   const allow = () => {
-    if (alwaysAllow) session.alwaysAllow(item.toolName);
+    if (embed && !window.confirm(cleanAlertText(alertText))) return;
+    if (alwaysAllow && !embed) session.alwaysAllow(item.toolName);
     session.answer(item.requestId, { behavior: 'allow', updatedInput: item.input });
   };
   const deny = () => session.answer(item.requestId, { behavior: 'deny', message: 'Denied by user.' });
@@ -115,10 +125,12 @@ export function PermissionCard({
         )}
 
         <div className="chat-permcard-decide">
-          <label className="chat-permcard-always">
-            <input type="checkbox" checked={alwaysAllow} onChange={(e) => setAlwaysAllow(e.target.checked)} />
-            Always allow this session
-          </label>
+          {!embed && (
+            <label className="chat-permcard-always">
+              <input type="checkbox" checked={alwaysAllow} onChange={(e) => setAlwaysAllow(e.target.checked)} />
+              Always allow this session
+            </label>
+          )}
           <div className="chat-permcard-actions">
             <button type="button" className="chat-btn pill" onClick={deny}>Deny</button>
             {canRunHere && (
@@ -131,12 +143,13 @@ export function PermissionCard({
                 <span aria-hidden>▶</span> Run here
               </button>
             )}
-            <button type="button" className="chat-btn pill primary" onClick={allow}>Allow</button>
+            {!tooLong && <button type="button" className="chat-btn pill primary" onClick={allow}>Allow</button>}
           </div>
         </div>
 
+        {tooLong && <p className="chat-permcard-explainer">{t('embed.commandTooLong')}</p>}
         <p className="chat-permcard-explainer">
-          {permissionMode === 'bypass'
+          {embed ? t('embed.permissionHere') : permissionMode === 'bypass'
             ? <><span aria-hidden>⚡</span> Bypass mode — this session auto-approves most actions; this one still needs you.</>
             : <><span aria-hidden>🛡</span> Auto mode — edits auto-approved, risky commands still ask (like this one).</>}
         </p>

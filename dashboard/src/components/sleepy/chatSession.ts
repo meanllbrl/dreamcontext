@@ -8,6 +8,7 @@ import { splitReplyMark, type ReplySection } from '../../lib/replyMark';
 import { contextLimitFor } from '../../lib/agentComposer';
 import { DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { chatAgentFor, isStageChat } from '../../lib/chatAgentBinding';
+import { appChatParam } from '../../lib/chatAppBinding';
 import { chatToolFor, chatToolParam, type ChatTool } from '../../lib/chatToolBinding';
 import { raiseAskAttention } from '../../lib/attention';
 import {
@@ -1088,6 +1089,8 @@ export function createChatSession(
   // The tool this conversation runs on (Track T), on BOTH URLs: a reconnect that respawns a Codex
   // pane must respawn it on Codex. '' for Claude, so a Claude URL is unchanged byte-for-byte.
   const toolParam = chatToolParam(claudeId);
+  // An app's conversation, on BOTH URLs: a reconnect goes through the app gate again.
+  const appParam = appChatParam(claudeId);
   const bypassParam = bypass ? '1' : '0';
   const serverSubmitsPrompt = !!initialPrompt || !!promptToken;
   const promptParam = !serverSubmitsPrompt
@@ -1097,7 +1100,7 @@ export function createChatSession(
       : `&prompt=${encodeURIComponent(initialPrompt)}`;
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
-    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}${stageParam}${leanParam}${toolParam}`;
+    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}${stageParam}${leanParam}${toolParam}${appParam}`;
   /** The reconnect after a DROPPED socket: the same conversation, `reattach` so the server
    *  adopts the live child instead of spawning a twin — PASSIVE, because it is automatic: a
    *  live screen holding the chat is never evicted by it (the server answers 4409 instead).
@@ -1106,7 +1109,7 @@ export function createChatSession(
    *  a live permission switch may have moved it. */
   const reconnectUrl = (how: typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = REATTACH_PASSIVE): string => `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
     + `&bypass=${session.bypass ? '1' : '0'}&resume=${encodeURIComponent(claudeId)}&reattach=${how}`
-    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}${stageParam}${leanParam}${toolParam}`;
+    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}${stageParam}${leanParam}${toolParam}${appParam}`;
   // Reassigned by every reconnect attempt; handlers check they belong to the CURRENT socket.
   let ws = new WebSocket(url);
 
