@@ -15,6 +15,7 @@
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { memberFileWriteTarget } from '../agents/member-file-guard.js';
+import { movesGuardedPlace } from '../antigravity-gate.js';
 import { isMarketingEnvPath } from '../marketing/path-guards.js';
 
 export type ChatPermissionMode = 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions';
@@ -78,6 +79,7 @@ export function bypassNeedsOwner(tool: string, input: unknown, cwd: string): boo
   return /marketing[\\/]+\.env/i.test(JSON.stringify(record))
     || /config[\\/]+hooks\.json/i.test(JSON.stringify(record))
     || (!!path && isMarketingEnvPath(isAbsolute(path) ? path : join(cwd, path)))
+    || movesGuardedPlace(tool, record, cwd)
     || !!memberFileWriteTarget(tool, record, cwd);
 }
 

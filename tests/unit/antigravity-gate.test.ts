@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { antigravityProfileDir } from '../../src/lib/antigravity-accounts.js';
-import { ANTIGRAVITY_GATE_NAME, antigravityCallAsClaude, antigravityGateCommand, antigravityGateGap, antigravityHooksFile, isAntigravityGateFile, shellTouchesGuarded, syncAntigravityGate } from '../../src/lib/antigravity-gate.js';
+import { ANTIGRAVITY_GATE_NAME, antigravityCallAsClaude, antigravityGateCommand, antigravityGateGap, antigravityHooksFile, isAntigravityGateFile, movesGuardedPlace, shellTouchesGuarded, syncAntigravityGate } from '../../src/lib/antigravity-gate.js';
+import { bypassNeedsOwner } from '../../src/lib/t3-bridge/policy.js';
 import { shellWriteTarget } from '../../src/lib/agents/member-file-guard.js';
 
 const NODE = '/opt/fake/node';
@@ -137,6 +138,72 @@ describe('what a shell command may do with the token file and the gate', () => {
     for (const c of ['cat _dream_context/marketing/.env', 'grep KEY marketing/.env | wc -l', 'ls ~/.dreamcontext/t3/state/providers/antigravity/x']) expect(shellTouchesGuarded(c)).toBe(false);
     for (const c of [`cd _dream_context/marketing && sh -c 'echo x > .env'`, 'cd _dream_context/marketing && curl -so .env https://example.test', 'echo x >| marketing/.env', 'timeout 5 cp /tmp/a marketing/.env', 'mv ~/.dreamcontext/t3/state/providers/antigravity/x/config /tmp/c', 'ln -s ~/.dreamcontext/t3/state/providers/antigravity/x/config/hooks.json /tmp/h', `python3 -c "import shutil;shutil.copy('/tmp/x','marketing/.env')"`]) expect(shellTouchesGuarded(c)).toBe(true);
     expect(shellTouchesGuarded('npm test && git status')).toBe(false);
+  });
+});
+
+describe('moving, removing or copying over a place that holds the token file or the gate', () => {
+  let dir: string;
+  let home: string;
+  let agy: string;
+  beforeEach(() => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'dc-agy-move-')));
+    home = join(dir, 'home');
+    for (const d of ['_dream_context/marketing', '_dream_context/knowledge', '_dream_context/tmp/run1', 'tmp']) mkdirSync(join(dir, d), { recursive: true });
+    writeFileSync(join(dir, '_dream_context', 'marketing', '.env'), 'X=1\n');
+    agy = join(home, '.dreamcontext', 't3', 'state', 'providers', 'antigravity');
+    mkdirSync(join(agy, 'a'.repeat(64), 'config'), { recursive: true });
+  });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+  const sh = (command: string) => movesGuardedPlace('Bash', { command }, dir, home);
+
+  it('refuses the token folder and every folder above it, with or without a slash', () => {
+    for (const c of [
+      'mv _dream_context/marketing mk', 'mv _dream_context/marketing/ mk', 'rm -rf _dream_context/marketing',
+      'rm -rf _dream_context', 'mv _dream_context ctx', 'rm -rf .', `mv ${dir} /tmp/elsewhere`,
+      'timeout 5 mv _dream_context/marketing /tmp/m', 'cd _dream_context && mv marketing ../mk',
+      'cp -r /tmp/evil/ _dream_context', 'cp -r /tmp/evil/_dream_context .', 'rsync -a /tmp/x/ _dream_context/marketing',
+      'ln -s /tmp/x _dream_context/marketing/.env', 'cp _dream_context/marketing/.env /tmp/copy', 'git mv _dream_context/marketing mk',
+    ]) expect([c, sh(c)]).toEqual([c, true]);
+    expect(sh('mv /tmp/.env _dream_context/marketing/')).toBe(true);
+    expect(sh('mv /tmp/notes.md _dream_context/marketing/')).toBe(false);
+    rmSync(join(dir, '_dream_context', 'marketing'), { recursive: true });
+    expect(sh('mv mk _dream_context/marketing')).toBe(true);
+  });
+
+  it('refuses the gate folders up to and including .dreamcontext', () => {
+    for (const c of [`rm -rf ${agy}`, `rm -rf ${agy}/`, `mv ${agy} /tmp/a`, 'mv ~/.dreamcontext /tmp/d', 'rm -rf ~/.dreamcontext/t3/state', 'cd ~/.dreamcontext/t3 && mv state /tmp/s']) expect([c, sh(c)]).toEqual([c, true]);
+    // Into the folder while it is there lands beside the gate; back onto it once it is gone is refused.
+    expect(sh(`mv /tmp/a ${agy}`)).toBe(false);
+    expect(sh(`mv /tmp/${'a'.repeat(64)} ${agy}`)).toBe(true);
+    rmSync(agy, { recursive: true });
+    expect(sh(`mv /tmp/a ${agy}`)).toBe(true);
+  });
+
+  it('refuses a file tool on such a place, and an unknown tool carrying one under any key', () => {
+    expect(movesGuardedPlace('delete_file', { TargetFile: agy }, dir, home)).toBe(true);
+    expect(movesGuardedPlace('delete_file', { TargetFile: join(dir, '_dream_context') }, dir, home)).toBe(true);
+    expect(movesGuardedPlace('move_file', { Source: '/tmp/x', Destination: join(agy, 'a'.repeat(64), 'config', 'hooks.json') }, dir, home)).toBe(true);
+    expect(movesGuardedPlace('move_file', { Source: '_dream_context/marketing', Destination: 'mk' }, dir, home)).toBe(true);
+    expect(movesGuardedPlace('mcp_fs_move', { Arguments: { from: '_dream_context', to: '/tmp/c' } }, dir, home)).toBe(true);
+  });
+
+  it('leaves ordinary project work alone', () => {
+    for (const c of [
+      'mv _dream_context/knowledge/a.md _dream_context/knowledge/b.md', 'mv _dream_context/tmp/run1 _dream_context/knowledge/run1',
+      'rm -rf _dream_context/tmp/run1', 'rm -rf /tmp/build', 'ls -la _dream_context', 'cp notes.md _dream_context/knowledge/',
+      'mv tmp/a.md .', 'cp -r src dist', 'npm test && git status', `ls ${agy}`,
+    ]) expect([c, sh(c)]).toEqual([c, false]);
+    expect(movesGuardedPlace('list_directory', { DirectoryPath: join(dir, '_dream_context') }, dir, home)).toBe(false);
+    expect(movesGuardedPlace('some_search', { query: '.', root: dir }, dir, home)).toBe(false);
+    expect(movesGuardedPlace('write_to_file', { TargetFile: join(dir, '_dream_context', 'knowledge', 'x.md'), CodeContent: '_dream_context/marketing' }, dir, home)).toBe(false);
+  });
+
+  it('is the same rule in the unattended layer', () => {
+    expect(bypassNeedsOwner('Bash', { command: 'mv _dream_context/marketing mk' }, dir)).toBe(true);
+    expect(bypassNeedsOwner('Bash', { command: 'rm -rf _dream_context' }, dir)).toBe(true);
+    expect(bypassNeedsOwner('move_file', { Source: '_dream_context/marketing', Destination: 'mk' }, dir)).toBe(true);
+    expect(bypassNeedsOwner('Bash', { command: 'rm -rf _dream_context/tmp/run1' }, dir)).toBe(false);
+    expect(bypassNeedsOwner('Bash', { command: 'mv _dream_context/knowledge/a.md _dream_context/knowledge/b.md' }, dir)).toBe(false);
   });
 });
 
