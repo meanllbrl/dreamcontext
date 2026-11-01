@@ -1,3 +1,4 @@
+import { AppIcon } from './AppIcon';
 import { forwardRef, useState } from 'react';
 import { answerPermission, dismissHandoff, type AnswerFailure } from './GlanceList';
 import { AgentAvatar, dismissNotice, markPostSeen, muteAutomation, openAutomation, openChat } from './InboxList';
@@ -128,7 +129,10 @@ export const NotchPeek = forwardRef<HTMLDivElement, {
       )}
       {item.kind === 'notice' && item.notice.kind === 'app' && (
         <>
-          <p className="dc-peek__line"><strong>{item.notice.name}</strong><span className="dc-peek__brief"> · {item.notice.vault}</span></p>
+          <p className="dc-peek__line">
+            <AppIcon key={item.notice.id} vault={item.notice.vault} slug={item.notice.slug} name={item.notice.name} className="dc-peek__app-icon" />
+            <strong>{item.notice.name}</strong><span className="dc-peek__brief"> · {item.notice.vault}</span>
+          </p>
           {item.notice.body && <p className="dc-peek__text">{item.notice.body}</p>}
           <div className="dc-glance__actions">
             <button type="button" className="dc-glance__btn dc-glance__btn--primary" onClick={() => {

@@ -29,6 +29,8 @@ export interface NotificationEntry {
   link: string | null;
   /** The absolute file the click falls back to when no app claims the link, or null. */
   file: string | null;
+  /** The dreamcontext App that posted it, or absent: the row draws that app's icon. */
+  app?: { vault: string; slug: string } | null;
 }
 
 export function notificationsLogPath(home: string = homedir()): string {
@@ -44,7 +46,7 @@ function newNotificationId(now: Date): string {
  * itself, so a failure is reported through the return value (null) and not thrown.
  */
 export function recordNotification(
-  entry: { title: string; body: string; link?: string | null; file?: string | null },
+  entry: { title: string; body: string; link?: string | null; file?: string | null; app?: { vault: string; slug: string } | null },
   home: string = homedir(),
   now: Date = new Date(),
 ): NotificationEntry | null {
@@ -55,6 +57,7 @@ export function recordNotification(
     body: entry.body,
     link: entry.link ?? null,
     file: entry.file ?? null,
+    ...(entry.app ? { app: entry.app } : {}),
   };
   const path = notificationsLogPath(home);
   try {

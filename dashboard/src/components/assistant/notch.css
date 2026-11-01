@@ -501,6 +501,7 @@ html:has(.dc-notch) #root {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
 }
+.dc-inbox__icon--app { object-fit: cover; border-radius: var(--radius-sm); }
 .dc-inbox__icon--done { color: var(--color-success); }
 .dc-inbox__icon--task { color: var(--color-warning); }
 .dc-inbox__icon--account { color: var(--color-warning); }
@@ -768,6 +769,18 @@ html:has(.dc-notch) #root {
 .dc-peek__line { margin: 0 var(--space-6) var(--space-2) 0; color: var(--color-text-secondary); }
 .dc-peek__line strong { color: var(--color-text); font-weight: var(--font-weight-semibold); }
 .dc-peek__brief { color: var(--color-text-tertiary); }
+.dc-peek__app-icon {
+  display: inline-grid;
+  place-items: center;
+  width: var(--space-5);
+  height: var(--space-5);
+  margin-right: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  font-size: var(--font-size-xs);
+  vertical-align: text-bottom;
+  object-fit: cover;
+}
 .dc-peek__text {
   margin: 0 0 var(--space-3);
   color: var(--color-text);

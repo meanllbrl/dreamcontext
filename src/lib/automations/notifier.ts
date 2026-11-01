@@ -344,6 +344,8 @@ export interface NotifyViaBundleOptions {
   link?: string | null;
   /** Written to the Notifications history only, for a banner whose own click opens `openTarget`. */
   historyLink?: string | null;
+  /** The dreamcontext App this post speaks for: its history row wears that app's icon. */
+  historyApp?: { vault: string; slug: string } | null;
 }
 
 /** Newline is the record separator, so every single-line field is flattened. */
@@ -396,7 +398,7 @@ export function notifyViaBundle(
     // History AFTER the post is committed: the Notifications window lists what was
     // announced, and a history write can never cost the banner (it does not throw).
     recordNotification(
-      { title: oneLine(title), body, link: opts.link ?? opts.historyLink ?? null, file: opts.openTarget ?? null },
+      { title: oneLine(title), body, link: opts.link ?? opts.historyLink ?? null, file: opts.openTarget ?? null, app: opts.historyApp ?? null },
       home,
     );
     return true;
