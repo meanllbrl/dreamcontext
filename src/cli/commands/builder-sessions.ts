@@ -156,12 +156,20 @@ async function runCheckLocked(argv: string[], cwd: string, logFile: string): Pro
     return null;
   }
   const ran = Date.now();
-  recordStart(cwd, { label, line: line ?? pick.line, asked, ran });
+  recordStart(cwd, { label, line: line ?? pick.line, asked, ran, waits });
   const fd = openSync(logFile, 'w');
   let exit: number | null = null;
+  // Killed mid-run: end the check, write its row and give the lock back, then die of the signal.
+  let killedBy: NodeJS.Signals | null = null;
+  const off: Array<() => void> = [];
   try {
     exit = await new Promise<number | null>((done) => {
       const child = spawn('npx', argv, { cwd, stdio: ['ignore', fd, fd] });
+      for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+        const onSig = () => { killedBy = sig; child.kill(sig); };
+        process.on(sig, onSig);
+        off.push(() => { process.off(sig, onSig); });
+      }
       child.on('error', () => done(null));
       child.on('exit', (code, signal) => done(signal ? null : code ?? null));
     });
@@ -170,6 +178,8 @@ async function runCheckLocked(argv: string[], cwd: string, logFile: string): Pro
     closeSync(fd);
     recordCheck(cwd, { label, line: line ?? pick.line, asked, ran, ended: Date.now(), exit, waits });
     held.release();
+    for (const f of off) f();
+    if (killedBy) process.kill(process.pid, killedBy);
   }
 }
 

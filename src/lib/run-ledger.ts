@@ -21,13 +21,13 @@ import { currentScope } from './run-budget.js';
 export const NO_RUN = '-';
 
 /** Where a wait's time went. `lockMs` and `slotLineMs` passed with a machine slot possibly free. */
-export interface WaitParts { lockMs: number; slotFullMs: number; slotLineMs: number; limit: number }
+export interface WaitParts { lockMs: number; slotFullMs: number; slotLineMs: number; limit: number; fastMs?: number }
 
 export type LedgerMark = 'open' | 'review-start' | 'review-end' | 'close';
 
 export type LedgerRow =
   | { type: 'mark'; run: string; what: LedgerMark; at: number }
-  | { type: 'start'; run: string; label: string; line: string; asked: number; ran: number; pid: number }
+  | ({ type: 'start'; run: string; label: string; line: string; asked: number; ran: number; pid: number } & Partial<WaitParts>)
   | ({ type: 'check'; run: string; label: string; line: string; asked: number; ran: number; ended: number; exit: number | null } & Partial<WaitParts>);
 
 export const ledgerPath = (cwd: string): string => join(heavyRepoDir(cwd), 'dc-run-ledger.jsonl');
@@ -44,9 +44,10 @@ const runOf = (cwd: string, at: number): string => {
 };
 
 /** A check got its slot. It stays in the record if it is killed before it ends. */
-export function recordStart(cwd: string, c: { label: string; line: string; asked: number; ran: number }): void {
+export function recordStart(cwd: string, c: { label: string; line: string; asked: number; ran: number; waits?: WaitParts }): void {
   try {
-    appendLedger(ledgerPath(cwd), { type: 'start', run: runOf(cwd, c.ran), ...c, label: c.label.slice(0, 120), pid: process.pid });
+    const { waits, ...row } = c;
+    appendLedger(ledgerPath(cwd), { type: 'start', run: runOf(cwd, c.ran), ...row, ...waits, label: c.label.slice(0, 120), pid: process.pid });
   } catch { /* the ledger never fails a check */ }
 }
 
@@ -136,13 +137,35 @@ const span = (ms: number): string => {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
 };
 
+type WaitRow = Extract<LedgerRow, { type: 'check' | 'start' }>;
+
+function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (err) { return (err as NodeJS.ErrnoException)?.code !== 'ESRCH'; }
+}
+
+/**
+ * The rows `builder why` shows, oldest first: every check that waited, and every start with no end
+ * row, whose check was killed or still runs. Pairs a start with its end by its own times.
+ */
+export function waitRows(rows: readonly LedgerRow[]): WaitRow[] {
+  const key = (r: WaitRow) => `${r.label}\0${r.asked}\0${r.ran}`;
+  const ended = new Set(rows.flatMap((r) => (r.type === 'check' ? [key(r)] : [])));
+  return rows
+    .flatMap((r) => (r.type === 'mark' ? [] : [r]))
+    .filter((r) => (r.type === 'check' ? r.ran - r.asked >= 1000 : !ended.has(key(r))))
+    .sort((a, b) => a.asked - b.asked);
+}
+
 /** Why one check waited, in one line. */
-export function waitWhy(r: Extract<LedgerRow, { type: 'check' }>): string {
+export function waitWhy(r: WaitRow, alive: (pid: number) => boolean = pidAlive): string {
   const at = new Date(r.asked).toTimeString().slice(0, 5);
   const head = `${at} ${r.label} (${r.line}): waited ${span(r.ran - r.asked)}`;
-  const tail = r.exit === null && r.ended === r.ran ? ', gave up, nothing ran' : '';
+  const tail = r.type === 'start'
+    ? (alive(r.pid) ? ', still running' : ', killed before it ended')
+    : r.exit === null && r.ended === r.ran ? ', gave up, nothing ran' : '';
   if (r.lockMs === undefined) return `${head}, no reason kept (an older row)${tail}`;
   const parts = [
+    (r.fastMs ?? 0) >= 1000 ? `${span(r.fastMs!)} for a fast slot` : '',
     r.lockMs >= 1000 ? `${span(r.lockMs)} behind this checkout's lock` : '',
     (r.slotFullMs ?? 0) >= 1000 ? `${span(r.slotFullMs!)} all ${r.limit ?? '?'} slots full` : '',
     (r.slotLineMs ?? 0) >= 1000 ? `${span(r.slotLineMs!)} behind others in the slot line` : '',

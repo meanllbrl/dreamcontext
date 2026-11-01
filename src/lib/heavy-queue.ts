@@ -51,8 +51,13 @@ const SIZE = { check: 1, look: 2, unknown: 3, build: 3, browser: 4, suite: 5 } a
 /** Shell glue that runs nothing long around a real step. */
 const GLUE = /^(?:cd\s|export\s|true$|echo\s|tail\b|head\b|grep\b|tee\b|wc\b|cat$)/;
 
+/** A test run that names no plain files (`vitest run tests/unit`) can be the whole suite. */
+const unbounded = (step: HeavyStep): boolean =>
+  step.kind === 'check' && step.target !== 'tsc' && step.scoped === undefined && !step.related;
+
 function stepSize(step: HeavyStep): number {
   if (step.kind === 'browser') return step.scoped ? SIZE.look : SIZE.browser;
+  if (unbounded(step)) return SIZE.suite;
   return SIZE[step.kind];
 }
 
@@ -62,7 +67,7 @@ export type RelatedCount = (sources: string[]) => number | null;
 function isFast(step: HeavyStep, countRelated?: RelatedCount): boolean {
   if (step.kind === 'browser') return step.scoped === 1;
   if (step.kind !== 'check') return false;
-  if (step.target === 'tsc') return true;
+  if (step.target === 'tsc') return !step.emits;
   if (step.related) {
     // Three source files can be a central module's whole import graph (648 tests, measured here).
     const n = step.related.length > 0 ? countRelated?.(step.related) ?? null : null;
@@ -143,9 +148,12 @@ export function queueOf(command: string, scripts: Record<string, string> = {}, c
   }
   const size = Math.max(steps.length === 0 || unknown ? SIZE.unknown : 0, ...steps.map(stepSize));
   if (unknown || steps.length === 0) return { line: 'heavy', size, why: 'not a known short check', shared: false };
-  const shared = steps.every((s) => s.kind === 'check');
+  // What cannot touch a build's output: a type-check that writes nothing, or tests named by file.
+  // A related run or a folder can reach the whole suite, so it keeps its turn on the checkout.
+  const shared = steps.every((s) => s.kind === 'check' && (s.target === 'tsc' ? !s.emits : (s.scoped ?? 0) > 0));
   const long = steps.find((s) => !isFast(s, countRelated));
-  if (long) return { line: 'heavy', size, why: long.kind === 'check' ? `${long.target}: too many tests, or unnamed` : `${long.kind} ${long.target}`, shared };
+  // A check too big for the fast line is no small job: it does not pass a build in the slot line.
+  if (long) return { line: 'heavy', size: long.kind === 'check' ? Math.max(size, SIZE.build) : size, why: long.kind === 'check' ? `${long.target}: too many tests, or unnamed` : `${long.kind} ${long.target}`, shared };
   return { line: 'fast', size, why: steps.map((s) => s.target).join(' + '), shared };
 }
 

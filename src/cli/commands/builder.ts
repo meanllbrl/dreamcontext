@@ -25,7 +25,7 @@ import {
   recordRed, recordStart, refusal, shellQuote, validReason, type BudgetKind, type BudgetScope,
 } from '../../lib/run-budget.js';
 import { LIGHT_LANE_MAX_LINES, laneFromGit } from '../../lib/run-lane.js';
-import { appendLedger, ledgerLine, ledgerPath, readLedger, recordCheck, recordStart as recordLedgerStart, summarize, waitWhy, type LedgerMark } from '../../lib/run-ledger.js';
+import { appendLedger, ledgerLine, ledgerPath, readLedger, recordCheck, recordStart as recordLedgerStart, summarize, waitRows, waitWhy, type LedgerMark } from '../../lib/run-ledger.js';
 import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps } from './builder-sessions.js';
 
 /**
@@ -155,7 +155,7 @@ export function builderWhy(deps: BuilderDeps, opts: { last?: string }): number {
     deps.printErr(`builder why: --last must be a whole number, got "${opts.last}"`);
     return 2;
   }
-  const waits = readLedger(ledgerPath(deps.cwd())).flatMap((r) => (r.type === 'check' && r.ran - r.asked >= 1000 ? [r] : []));
+  const waits = waitRows(readLedger(ledgerPath(deps.cwd())));
   if (waits.length === 0) deps.print('builder why: no wait on record in this repo');
   for (const r of waits.slice(-n)) deps.print(waitWhy(r));
   return 0;
@@ -257,7 +257,7 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { ma
     return HEAVY_LOCK_BUSY_EXIT;
   }
   const ran = Date.now();
-  recordLedgerStart(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran });
+  recordLedgerStart(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran, waits });
   deps.printErr(`builder heavy: ${line} line (${pick.why}), waited ${Math.round((ran - started) / 1000)}s`);
   if (kind && scope) {
     if (over) deps.printErr(`builder heavy: over the limit (${over}), run on purpose: ${opts.because}`);

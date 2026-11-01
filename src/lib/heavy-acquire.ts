@@ -74,10 +74,13 @@ export async function acquireHeavyReporting(o: HeavyAcquireOpts): Promise<HeavyA
   const first = await safeRead();
   const waitS = o.maxWaitS ?? (first === 1 ? HEAVY_HOT_WAIT_S : HEAVY_DEFAULT_WAIT_S);
   const started = Date.now();
+  let fastMs = 0;
   if (o.job?.line === 'fast' && first > 1) {
     const r = await tryFast(o, o.job, first, waitS);
-    if (!r.hot) return { held: r.held, line: 'fast', waitS, busy: r.busy, waits: { lockMs: 0, slotFullMs: Date.now() - started, slotLineMs: 0, limit: first } };
+    fastMs = Date.now() - started;
+    if (!r.hot) return { held: r.held, line: 'fast', waitS, busy: r.busy, waits: { lockMs: 0, slotFullMs: 0, slotLineMs: 0, limit: first, fastMs } };
   }
+  const queued = Date.now();
   const shared = o.job?.shared === true;
   const place = o.job && !shared ? QueuePlace.enter(heavyQueueDir(o.lockPath), o.job, Date.now()) : null;
   const tell = waitNotes(o, place, o.lockPath, 'heavy');
@@ -86,8 +89,8 @@ export async function acquireHeavyReporting(o: HeavyAcquireOpts): Promise<HeavyA
   let repoLocked = false;
   let slotPlace: QueuePlace | null = null;
   let slotNotes: (now: number) => void = () => {};
-  const waits: WaitParts = { lockMs: 0, slotFullMs: 0, slotLineMs: 0, limit: first };
-  let tick = started;
+  const waits: WaitParts = { lockMs: 0, slotFullMs: 0, slotLineMs: 0, limit: first, fastMs };
+  let tick = queued;
   const held = await acquireHeavy(o.cwd, {
     waitMs: Math.max(0, waitS * 1000 - (Date.now() - started)),
     slotDir: o.slotDir,
@@ -99,7 +102,7 @@ export async function acquireHeavyReporting(o: HeavyAcquireOpts): Promise<HeavyA
     onRepoLock: () => {
       repoLocked = true;
       tick = Date.now();
-      waits.lockMs = tick - started;
+      waits.lockMs = tick - queued;
       if (o.job) {
         slotPlace = QueuePlace.enter(heavySlotQueueDir(o.slotDir), o.job, Date.now());
         slotNotes = waitNotes(o, slotPlace, null, 'heavy slot');
@@ -120,6 +123,8 @@ export async function acquireHeavyReporting(o: HeavyAcquireOpts): Promise<HeavyA
     place?.leave();
     return { held, line: 'heavy', waitS, busy: null, waits };
   }
+  // The wait ran out before the lock came: all of it was the lock's.
+  if (!repoLocked) waits.lockMs = Date.now() - queued;
   place?.park(Date.now());
   (slotPlace as QueuePlace | null)?.park(Date.now());
   const why = busyMessage(o, { waitS, lastLimit, repoLocked });
