@@ -420,7 +420,8 @@ describe('automations CLI (integration)', () => {
     // 12 → 13 with `autonomy` (AI Team v2): Free runs bypassPermissions, so a synced move to it
     // must block; omitted when `balanced`, so every existing hash is unchanged.
     // 13 → 14 with `readTools`: the MCP tools a light job may call; omitted when none.
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(14);
+    // 14 → 15 with `app` (dreamcontext Apps): the app a schedule runs for; omitted when none.
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(15);
     for (const field of APPROVAL_DIFF_FIELDS) {
       expect(yesOut.stdout).toContain(field);
     }

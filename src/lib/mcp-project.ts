@@ -79,7 +79,8 @@ const HAS_OPAQUE_SEGMENT = /\/[A-Za-z0-9_-]{24,}(?=\/|$)/;
 
 /** Mask what must never be displayed or written, while keeping the value recognisable. */
 export function maskTarget(target: string): string {
-  return target.replace(OPAQUE_SEGMENT, '/••••');
+  // The query string too: `?access_token=…` / `?key=…` is a credential as often as a path segment.
+  return target.replace(OPAQUE_SEGMENT, '/••••').replace(/\?[^\s]+/, '?••••');
 }
 
 /**

@@ -77,21 +77,22 @@ Each session you wake up fresh; you do not remember previous sessions. The `_dre
 
 ## Capabilities at a Glance (read this before saying "we don't support X")
 
-dreamcontext is **more than memory files**. Every capability below is real and shipping. When a task touches one, open the linked reference for the full surface.
+dreamcontext is **more than memory files**. Every capability below is real and shipping; its reference has the full surface.
 
 | Capability | What it is | Reference |
 |---|---|---|
 | **Structured memory** | soul + the active person's constitution + memory + knowledge + tasks, auto-loaded each session | this file |
-| **Tasks** | Working documents: changelog, RICE, status lifecycle, dates, assignees, project-declared custom fields | [tasks-and-features.md](references/tasks-and-features.md) |
-| **Roadmap / Objectives** | PO-authored OKR board in `core/objectives/`: many-to-many task links, dependency DAG, forecast and slip detection (`dreamcontext roadmap`) | [tasks-and-features.md](references/tasks-and-features.md) |
+| **Tasks** | Working documents: changelog, RICE, statuses, dates, assignees, custom fields | [tasks-and-features.md](references/tasks-and-features.md) |
+| **Roadmap / Objectives** | PO-authored OKR board in `core/objectives/`: task links, dependency DAG, forecast, slip detection (`dreamcontext roadmap`) | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Lab / Insights** | Curated **metrics** synced from APIs or scripts into `lab/insights/`, cached, KR-bindable; Funnel analytics and app renders; **funnel explorer** (`lab create --preset funnel-explorer`). **Boards (Beta)** compose them: `lab/boards/<slug>.md`, cards of catalog blocks (`lab block list`) plus saved HTML blocks (`lab/blocks/`). Never `knowledge create` | [tasks-and-features.md](references/tasks-and-features.md) |
-| **Features (PRDs)** | Retrospective product docs, updated only during sleep | [tasks-and-features.md](references/tasks-and-features.md) |
+| **Features (PRDs)** | Retrospective product docs, updated in sleep only | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Knowledge** | Tagged deep docs, pinning, staleness, Excalidraw diagrams | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Memory recall** | Hybrid (BM25 + embeddings), 3 tiers: local default; cloud-index/cloud via `recall cloud enable` (user only, agents never); auto-injected | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Bookmarks** | Tag important moments for the sleep agent; link sessions to tasks | this file |
-| **Triggers** | Prospective memory — fire reminders when context matches | this file |
+| **Triggers** | Prospective memory: reminders that fire when context matches | this file |
 | **Whiteboard** | drawings, live widgets, agent cards. Explain = draw (`draw --spec`). Verify with `whiteboard render`, never a browser | [whiteboards.md](references/whiteboards.md) |
 | **Automations** | Scheduled headless `claude` jobs: dated output, learned pattern, a `## Flow` graph. A run that must ask hands over a **question** (chat, CLI or a **per-automation** Telegram bot); replying in a thread or `@`-mentioning an agent resumes its bound session (`agent-thread` card). A usage-limited run publishes **nothing**. Disabled until approved here; private until `automations share <slug>` | [automations.md](references/automations.md) |
+| **Apps** | Web apps in own Mac windows (`/apps`, `apps do`) | [apps.md](references/apps.md) |
 | **Agents** | Who does the work (`agents/<slug>.md`), **AI Team**: automations pick one, tasks go to one, Chat and boards talk to one. Routines: `propose --routine` then `create --answer <qid>`. A mistake: `super team amend` | [automations.md](references/automations.md#ai-team-the-dashboard-page) |
 | **Sleep / consolidation** | Multi-agent RemSleep cycle that folds changes back into the brain | [sleep.md](references/sleep.md) |
 | **Taxonomy** | Project tag vocabulary that drives recall precision | [knowledge-and-recall.md](references/knowledge-and-recall.md) |

@@ -258,7 +258,37 @@ export interface AccountNotice {
   sessionId: string | null;
 }
 
-export type InboxNotice = FinishedNotice | AccountNotice;
+/** A dreamcontext App's notification: one row per app (src/lib/assistant/notch-inbox.ts). */
+export interface AppNotice {
+  id: string;
+  kind: 'app';
+  at: number;
+  vault: string;
+  slug: string;
+  name: string;
+  body: string;
+}
+
+export type InboxNotice = FinishedNotice | AccountNotice | AppNotice;
+
+/** The app's raster icon (never SVG: on this origin it would run script). */
+export function appIconUrl(vault: string, slug: string): string {
+  return `/api/apps/${encodeURIComponent(slug)}/icon?vault=${encodeURIComponent(vault)}`;
+}
+
+/** Bring the app's window forward (or open it): the same Launch the Apps card uses. */
+export async function openAppWindow(vault: string, slug: string): Promise<boolean> {
+  try {
+    const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-dreamcontext-vault': vault },
+      body: JSON.stringify({ owner: true }),
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
 
 /** One unread thing an automation said: a post, a failed run's reason, a question for the owner. */
 export interface AutomationPost {
@@ -346,6 +376,8 @@ export function readInbox(raw: unknown): Inbox {
         id: e.id, kind: 'finished', at: num(e.at)!, sessionId: e.sessionId, vault: e.vault, mode: str(e.mode),
         title: unwrapUntrusted(e.title), lastText: unwrapUntrusted(e.lastText),
       });
+    } else if (e.kind === 'app' && typeof e.vault === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(str(e.slug))) {
+      notices.push({ id: e.id, kind: 'app', at: num(e.at)!, vault: e.vault, slug: str(e.slug), name: unwrapUntrusted(e.name) || str(e.slug), body: unwrapUntrusted(e.body) });
     } else if (e.kind === 'account' && typeof e.account === 'string') {
       const w = e.window === 'session' || e.window === 'weekly' || e.window === 'unknown' ? e.window : null;
       notices.push({

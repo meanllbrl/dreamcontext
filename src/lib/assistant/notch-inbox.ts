@@ -86,7 +86,20 @@ export interface AccountEvent {
   sessionId: string | null;
 }
 
-export type NotchEvent = FinishedEvent | AccountEvent;
+/** A dreamcontext App's notification (`dc.notify`, a schedule's failure). ONE row per app: the
+ *  id is fixed (`app:<vault>:<slug>`), a new one replaces it, so an app can never crowd the
+ *  finishes out of the capped list. `name`/`body` are PROJECT text: wrapped before they leave. */
+export interface AppEvent {
+  id: string;
+  kind: 'app';
+  at: number;
+  vault: string;
+  slug: string;
+  name: string;
+  body: string;
+}
+
+export type NotchEvent = FinishedEvent | AccountEvent | AppEvent;
 
 /** An account event as the notch draws it: ids resolved to the names the owner knows. */
 export type AccountEventView = AccountEvent & { account: string; toAccount: string | null };
@@ -312,7 +325,7 @@ function accountName(id: string, accounts: ReturnType<typeof listClaudeAccounts>
 }
 
 /** Every live event, newest first, account ids resolved to names. */
-export function listNotchEvents(home: string = homedir(), now = Date.now()): Array<FinishedEvent | AccountEventView> {
+export function listNotchEvents(home: string = homedir(), now = Date.now()): Array<FinishedEvent | AccountEventView | AppEvent> {
   prune(now);
   let accounts: ReturnType<typeof listClaudeAccounts> = [];
   try { accounts = listClaudeAccounts(home); } catch { accounts = []; }
@@ -326,6 +339,51 @@ export function dismissNotchEvent(id: string): boolean {
   const before = events.length;
   events = events.filter((e) => e.id !== id);
   return events.length < before;
+}
+
+// ─── App notifications ──────────────────────────────────────────────────────────────
+
+/** Record (or replace) an app's notch row. Muted apps record nothing. */
+export function recordAppEvent(
+  input: { vault: string; projectRoot: string; slug: string; name: string; body: string },
+  home: string = homedir(),
+  now = Date.now(),
+): AppEvent | null {
+  if (isAppMuted(input.projectRoot, input.slug, readMutedApps(home))) return null;
+  const e: AppEvent = { id: `app:${input.vault}:${input.slug}`, kind: 'app', at: now, vault: input.vault, slug: input.slug, name: input.name.slice(0, 60), body: input.body.slice(0, 500) };
+  push(e);
+  return e;
+}
+
+/** `~/.dreamcontext/notch-muted-apps.json` — `{ "<project root>": ["<app slug>", …] }`. Apps are
+ *  not automations (`app:<slug>` would not pass the automation slug check), so their own file. */
+export function notchMutedAppsPath(home: string = homedir()): string {
+  return join(home, '.dreamcontext', 'notch-muted-apps.json');
+}
+
+export function readMutedApps(home: string = homedir()): Record<string, string[]> {
+  try {
+    const v = JSON.parse(readFileSync(notchMutedAppsPath(home), 'utf-8')) as Record<string, unknown>;
+    const out: Record<string, string[]> = {};
+    for (const [k, list] of Object.entries(v ?? {})) if (Array.isArray(list)) out[k] = list.filter((x): x is string => typeof x === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(x));
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function isAppMuted(projectRoot: string, slug: string, muted = readMutedApps()): boolean {
+  return (muted[projectRoot] ?? []).includes(slug);
+}
+
+export function setAppMuted(projectRoot: string, slug: string, mute: boolean, home: string = homedir()): void {
+  const all = readMutedApps(home);
+  const list = new Set(all[projectRoot] ?? []);
+  if (mute) list.add(slug); else list.delete(slug);
+  if (list.size) all[projectRoot] = [...list]; else delete all[projectRoot];
+  mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+  writeFileSync(notchMutedAppsPath(home), JSON.stringify(all, null, 2) + '\n');
+  if (mute) events = events.filter((e) => !(e.kind === 'app' && e.slug === slug));
 }
 
 // ─── Muted automations ──────────────────────────────────────────────────────────────

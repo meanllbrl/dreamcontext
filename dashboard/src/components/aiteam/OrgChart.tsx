@@ -36,7 +36,8 @@ export function OrgView({
   onSelect: (slug: string) => void;
   onTalk: (slug: string) => void;
   onConversations: () => void;
-  onNew: () => void;
+  /** Absent in an embedded screen: a new member is made in the main app. */
+  onNew?: () => void;
   onToast: (msg: string) => void;
   nextRun: string;
 }) {
@@ -73,7 +74,7 @@ export function OrgView({
             aria-label={t('aiteam.org.find')}
           />
         </label>
-        {!headless && (
+        {!headless && onNew && (
           <button type="button" className="aiteam-newbtn" onClick={onNew}>
             <TeamIcon name="plus" size={12} /> {t('aiteam.new')}
           </button>

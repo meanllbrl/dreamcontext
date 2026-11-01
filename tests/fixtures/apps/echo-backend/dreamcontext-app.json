@@ -1,0 +1,2 @@
+{ "slug": "echo", "name": "Echo App", "backend": { "command": "node server.mjs", "health": "/health" },
+  "actions": [ { "id": "leak", "title": "Return the leak body", "method": "GET", "path": "/leak" } ] }

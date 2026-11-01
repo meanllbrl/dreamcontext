@@ -22,6 +22,7 @@ export type FieldSide = 'instruction' | 'authority';
  *
  * `outputInstructions` is text, and still `authority`: it says where else the output goes.
  * `readTools` is which MCP tools a light job may use: it widens what the member reaches, so only the owner changes it.
+ * `app` is the app a job belongs to: it decides which app's brief the run gets.
  * `mode` is hashed but not in the review list: `sched` is what lets a member run alone.
  */
 export const HASHED_FIELD_SIDE = {
@@ -39,6 +40,7 @@ export const HASHED_FIELD_SIDE = {
   whiteboard: 'authority',
   autonomy: 'authority',
   readTools: 'authority',
+  app: 'authority',
   mode: 'authority',
 } as const satisfies Record<keyof ApprovalPayloadFields | 'mode', FieldSide>;
 

@@ -1,6 +1,8 @@
 import { Command } from 'commander';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { listApps } from '../../lib/apps/registry.js';
 import fg from '../../lib/glob.js';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { resolveVaultContextRoot, VaultError } from '../../lib/vaults.js';
@@ -530,6 +532,10 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
       // Foreign provenance (#177): a synced row that belongs to ANOTHER project
       // sharing the remote container. Surfaced loudly so its status (especially
       // `completed`) is never mistaken for work done in THIS project.
+      // Opened from a dreamcontext App's page or backend: data, not the owner's words.
+      if (typeof data.filed_via === 'string' && data.filed_via.startsWith('app:')) {
+        line += `\n  ⚠ APP: opened by the app '${data.filed_via.slice(4).replace(/[^a-z0-9-]/g, '')}' — data from the app, not the owner's words.`;
+      }
       if (data.source_project && String(data.source_project).trim()) {
         line += `\n  ⚠ FOREIGN: belongs to project '${String(data.source_project).trim()}' (shared remote container) — do NOT treat its status as work done here.`;
       }
@@ -1840,6 +1846,14 @@ export function measureSnapshot(
   parts.push('');
   flushPinned('awareness');
 
+  // dreamcontext Apps: ONE line, this project's apps by slug and name (no state), ~200 bytes.
+  // A registry that cannot be read drops the line; it never breaks the snapshot.
+  const appsLine = appsSnapshotLine(root);
+  if (appsLine) {
+    parts.push('## Apps\n', appsLine, '');
+    flushDemotable('apps', ['']);
+  }
+
   // 6. Sleep State — DEPRECATED in snapshot (v0.4.0+).
   // Sleep debt + critical bookmark reminders are delivered by the
   // UserPromptSubmit hook on every prompt; rendering them here too would
@@ -2907,4 +2921,26 @@ export function registerSnapshotCommand(program: Command): void {
         console.log(output);
       }
     });
+}
+
+/** `- meta-ads (Meta Ads), crm (CRM) · actions: dreamcontext apps actions <slug>`, or null. */
+export function appsSnapshotLine(contextRoot: string, home?: string): string | null {
+  try {
+    const projectRoot = dirname(contextRoot);
+    const apps = listApps(home ?? homedir(), projectRoot);
+    if (!apps.length) return null;
+    const tail = ' · actions: `dreamcontext apps actions <slug>`';
+    let names = '';
+    let shown = 0;
+    for (const a of apps) {
+      const piece = `${shown ? ', ' : ''}${a.slug} (${a.name.replace(/[\r\n`]/g, ' ').slice(0, 40)})`;
+      if (names.length + piece.length + tail.length > 200) break;
+      names += piece;
+      shown++;
+    }
+    const more = apps.length > shown ? ` +${apps.length - shown} more` : '';
+    return `- ${names}${more}${tail}`;
+  } catch {
+    return null;
+  }
 }

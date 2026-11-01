@@ -13,6 +13,7 @@ import { useRoadmapPrefs } from '../../hooks/useRoadmapPrefs';
 import { useRoadmapItems } from '../../hooks/useRoadmapItems';
 import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
 import type { Page } from '../layout/Sidebar';
+import { useEmbed } from '../embed/embedMode';
 import '../tasks/Board.css';
 import './RoadmapBoard.css';
 
@@ -43,6 +44,8 @@ interface RoadmapBoardProps {
 }
 
 export function RoadmapBoard({ onNavigate, focus }: RoadmapBoardProps = {}) {
+  // An app's window shows the roadmap; objectives are made and changed in the main app.
+  const embedded = !!useEmbed();
   const { prefs, setSearch, setSort, toggleSortDir, setLayout, toggleCardProp, cycleFilter, clearAllFilters } = useRoadmapPrefs();
   const { search, sortBy, sortDir, layout, cardProps, filters } = prefs;
   const [openMenu, setOpenMenu] = useState<RoadmapMenuKey>(null);
@@ -113,7 +116,7 @@ export function RoadmapBoard({ onNavigate, focus }: RoadmapBoardProps = {}) {
         cardProps={cardProps} toggleCardProp={toggleCardProp}
         filters={filters} cycleFilter={cycleFilter} clearAllFilters={clearAllFilters}
         openMenu={openMenu} setOpenMenu={setOpenMenu}
-        onNewObjective={() => setShowCreate(true)}
+        onNewObjective={embedded ? undefined : () => setShowCreate(true)}
       />
 
       {showWarn && (
@@ -130,7 +133,7 @@ export function RoadmapBoard({ onNavigate, focus }: RoadmapBoardProps = {}) {
         {isLoading ? (
           <Centered>Loading objectives…</Centered>
         ) : items.length === 0 ? (
-          <EmptyState onCreate={() => setShowCreate(true)} />
+          <EmptyState onCreate={embedded ? undefined : () => setShowCreate(true)} />
         ) : visible.length === 0 ? (
           <NoMatch onClear={clearAllFilters} />
         ) : layout === 'board' ? (
@@ -159,7 +162,7 @@ export function RoadmapBoard({ onNavigate, focus }: RoadmapBoardProps = {}) {
         />
       )}
 
-      {showCreate && (
+      {showCreate && !embedded && (
         <ObjectiveCreateModal
           onClose={() => setShowCreate(false)}
           onCreated={(o) => flash(`Objective “${o.title}” created`)}
@@ -179,7 +182,7 @@ function Centered({ children }: { children: React.ReactNode }) {
   return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-tertiary)', fontSize: 13 }}>{children}</div>;
 }
 
-function EmptyState({ onCreate }: { onCreate: () => void }) {
+function EmptyState({ onCreate }: { onCreate?: () => void }) {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, textAlign: 'center', padding: 40 }}>
       <div style={{ width: 70, height: 70, borderRadius: 18, background: 'linear-gradient(160deg, rgba(123,104,238,0.16), rgba(123,104,238,0.05))', border: '1px solid rgba(157,140,255,0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
@@ -187,7 +190,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
       </div>
       <div style={{ fontFamily: 'var(--font-family-display)', fontWeight: 700, fontSize: 22, color: 'var(--color-text)', letterSpacing: '-0.02em' }}>No objectives yet</div>
       <div style={{ fontSize: 14, color: 'var(--color-text-tertiary)', maxWidth: 440, lineHeight: 1.55 }}>A roadmap is a board of outcomes you're driving toward. Author your first objective — the system computes progress, forecasts and slip for you.</div>
-      <button onClick={onCreate} className="bd-chip" style={{ marginTop: 14, padding: '10px 18px', borderRadius: 11, cursor: 'pointer', background: 'var(--gradient-brand-strong)', color: 'var(--color-accent-text)', fontSize: 13.5, fontWeight: 600, border: 'none', boxShadow: '0 8px 20px -6px rgba(123,104,238,0.8)' }}>+ Create your first objective</button>
+      {onCreate && <button onClick={onCreate} className="bd-chip" style={{ marginTop: 14, padding: '10px 18px', borderRadius: 11, cursor: 'pointer', background: 'var(--gradient-brand-strong)', color: 'var(--color-accent-text)', fontSize: 13.5, fontWeight: 600, border: 'none', boxShadow: '0 8px 20px -6px rgba(123,104,238,0.8)' }}>+ Create your first objective</button>}
     </div>
   );
 }

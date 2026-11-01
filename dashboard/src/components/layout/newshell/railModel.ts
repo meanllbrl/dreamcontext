@@ -2,7 +2,7 @@ import type { Page } from '../Sidebar';
 
 /**
  * The new shell's navigation, as data (owner-approved prototype r27, D3/W1):
- * the rail is Chat, Tasks, AI Team, Insights, Roadmap, Hypotheses, Whiteboards | Knowledge, Map |
+ * the rail is Chat, Tasks, AI Team, Insights, Roadmap, Hypotheses, Whiteboards, Apps | Knowledge, Map |
  * More, with Settings at the bottom. More holds the rest. Every page the classic sidebar reaches
  * is reachable exactly once, on the rail or in More (new-rail.test.ts).
  */
@@ -16,6 +16,8 @@ export const RAIL_ENTRIES: readonly RailEntry[] = [
   { kind: 'page', page: 'roadmap' },
   { kind: 'page', page: 'hypotheses' },
   { kind: 'page', page: 'whiteboards' },
+  // Apps on the rail, not in More: the first 30 seconds need it in sight (dreamcontext-apps r19).
+  { kind: 'page', page: 'apps' },
   { kind: 'sep' },
   { kind: 'page', page: 'knowledge' },
   { kind: 'page', page: 'brain' },

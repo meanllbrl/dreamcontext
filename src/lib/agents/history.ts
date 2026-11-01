@@ -45,6 +45,9 @@ export interface HistoryRow {
   text: string;
   at: string;
   files?: string[];
+  /** An app's words: never read this row as the owner's. */
+  via?: 'app';
+  app?: string;
 }
 
 export interface HistorySession {
@@ -269,6 +272,7 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
             text: postText(e),
             at: e.at,
             ...(e.files?.length ? { files: e.files } : {}),
+            ...(e.via === 'app' ? { via: 'app' as const, ...(e.app ? { app: e.app } : {}) } : {}),
           })),
         }),
       });
@@ -399,7 +403,7 @@ export interface HistoryHit {
   kind: 'run' | 'talk';
   title: string;
   at: string;
-  who: 'owner' | 'agent';
+  who: 'owner' | 'app' | 'agent';
   text: string;
 }
 
@@ -427,7 +431,7 @@ export function searchAgentHistory(
     if (!s) continue;
     for (const r of [...s.rows].reverse()) {
       if (q && !r.text.toLowerCase().includes(q)) continue;
-      hits.push({ key: s.key, kind: s.kind, title: s.title, at: r.at, who: r.kind === 'user' ? 'owner' : 'agent', text: r.text });
+      hits.push({ key: s.key, kind: s.kind, title: s.title, at: r.at, who: r.kind === 'user' ? (r.via === 'app' ? 'app' : 'owner') : 'agent', text: r.text });
     }
     if (hits.length >= limit) {
       const more = candidates.slice(i + 1).some((d) => below(d, cur));

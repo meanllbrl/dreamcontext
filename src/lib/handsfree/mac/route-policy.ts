@@ -270,6 +270,10 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/assistant/broadcast': deny(ASSISTANT),
   'POST /api/assistant/ui/:verb': deny(ASSISTANT),
   'POST /api/assistant/look': deny(ASSISTANT),
+  'POST /api/assistant/apps': deny(ASSISTANT),
+  'POST /api/assistant/app-open': deny(ASSISTANT),
+  'POST /api/assistant/app-do': deny(ASSISTANT),
+  'POST /api/assistant/app-shot': deny(ASSISTANT),
   'POST /api/window/:verb': deny(WINDOW),
   'POST /api/super/v/:verb': deny(SUPER),
   'GET /api/super/state': deny(SUPER),
@@ -556,6 +560,24 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   // desktop Tasks-screen surface.
   'GET /api/sleep-eval/labels': deny('laptop-only: the sleep-eval test set is local copies of past sleep rounds'),
   'POST /api/sleep-eval/labels': deny('laptop-only: labels the local sleep-eval test set'),
+  // dreamcontext Apps (src/server/routes/apps.ts): app windows are Mac windows. The phone sees
+  // the project's list (no paths); everything that opens, stops, reads logs or calls a backend
+  // stays on the laptop.
+  'GET /api/apps': allow('this project\'s app list without paths or logs (the phone shows "opens in the Mac app"); side-effect free'),
+  'POST /api/apps/launch-window': deny(WINDOW, 'cross:deny'),
+  'GET /api/apps/running': deny(WINDOW),
+  'POST /api/apps/embed-check': deny(WINDOW),
+  'POST /api/apps/:slug/say': deny(WINDOW),
+  'POST /api/apps/:slug/launch': deny(WINDOW),
+  'POST /api/apps/:slug/stop': deny(WINDOW),
+  'GET /api/apps/:slug/status': deny(WINDOW),
+  'GET /api/apps/:slug/logs': deny(SECRET),
+  'GET /api/apps/:slug/icon': deny(WINDOW),
+  'POST /api/apps/:slug/snapshot': deny(DESKTOP),
+  'POST /api/apps/:slug/call': deny(WINDOW),
+  'POST /api/apps/:slug/mcp-request': deny(SECRET),
+  'POST /api/apps/:slug/schedules/:id': deny(WINDOW),
+  'DELETE /api/apps/:slug': deny(WINDOW),
 };
 
 /** The row for a matched route (`method` as registered, `path` the registered pattern), or

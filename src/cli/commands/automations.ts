@@ -1,7 +1,9 @@
 import { isTaskStepRunOf } from '../../lib/agents/task-delivery.js';
 import { Command } from 'commander';
 import { dirname } from 'node:path';
+import { homedir } from 'node:os';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { getApp } from '../../lib/apps/registry.js';
 import chalk from 'chalk';
 import { confirm } from '@inquirer/prompts';
 import { ensureContextRoot } from '../../lib/context-path.js';
@@ -232,7 +234,7 @@ function createBoundFromFlags(
   /** The owner consented to this write: his terminal, or his yes on a `propose --routine`. */
   stamp: boolean,
   opts: { title: string; slot: string[]; days?: string; at?: string; mode?: string; timeout?: string; catchup?: string;
-    disabled?: boolean; shared?: boolean; notify?: boolean; review?: string; agent?: string; job?: string },
+    disabled?: boolean; shared?: boolean; notify?: boolean; review?: string; agent?: string; job?: string; app?: string },
 ): AutomationManifest | null {
   try {
     const agentSlug = (opts.agent ?? '').trim();
@@ -268,6 +270,7 @@ function createBoundFromFlags(
       shared: !!opts.shared,
       notify: opts.notify,
       review: opts.review as ReviewMode | undefined,
+      ...appOption(root, opts.app),
     }, stamp ? { approve: { now: new Date() } } : {});
     success(`Automation created: automations/${manifest.slug}.md, running as the agent "${agentSlug}"${stamp ? ' (approved on this machine)' : '. It waits for the owner\'s approval on the AI Team page'}.`);
     if (opts.shared) printPublishedPaths(manifest.slug, shareWithAgent(root, manifest.slug, agentSlug));
@@ -276,6 +279,16 @@ function createBoundFromFlags(
     handleAutomationsError(err);
     return null;
   }
+}
+
+/** `--app`: only an app registered to THIS project, so a job cannot name a brief that is not there. */
+function appOption(root: string, slug: string | undefined): { app?: string } {
+  if (slug === undefined) return {};
+  const app = slug.trim();
+  if (!getApp(homedir(), projectRootFor(root), app)) {
+    throw new AutomationError(`There is no app "${app}" in this project. See \`dreamcontext apps list\`.`);
+  }
+  return { app };
 }
 
 /**
@@ -842,6 +855,7 @@ export function registerAutomationsCommand(program: Command): void {
       `Stop and ask a human before the work takes effect: ${REVIEW_MODES.join('|')} (default off)`,
     )
     .option('--whiteboard <board>', 'Home this agent on a whiteboard (its slug): every run is scoped to that board')
+    .option('--app <slug>', 'This job belongs to an app of this project: its run carries the app\'s brief')
     .option('--agent <slug>', 'Run as this existing agent (see `dreamcontext agents list`): the file holds only the job')
     .option('--job <text>', 'With --agent: what this automation asks of the agent, on top of its prompt')
     .option(
@@ -852,7 +866,7 @@ export function registerAutomationsCommand(program: Command): void {
       title: string; slot: string[]; days?: string; at?: string; mode?: string; photo?: string; model?: string;
       effort?: string; timeout?: string;
       catchup?: string; promptFile?: string; disabled?: boolean; shared?: boolean; notify?: boolean;
-      learning?: boolean; review?: string; whiteboard?: string; agent?: string; job?: string; answer?: string;
+      learning?: boolean; review?: string; whiteboard?: string; agent?: string; job?: string; answer?: string; app?: string;
     }) => {
       const root = ensureContextRoot();
       // A run sets up a routine only on the owner's yes (see routine-gate.ts). Checked before
@@ -935,6 +949,7 @@ export function registerAutomationsCommand(program: Command): void {
           // refusal here rather than a gate the owner believes they installed.
           review: opts.review as ReviewMode | undefined,
           whiteboard,
+          ...appOption(root, opts.app),
         });
 
         // Every fresh automation gets a `## Flow` block that actually
@@ -1530,7 +1545,7 @@ export function registerAutomationsCommand(program: Command): void {
             lastRun = e.runId;
           }
           const when = e.at.slice(11, 16);
-          const who = e.kind === 'agent' ? chalk.bold(manifest.title) : e.kind === 'user' ? chalk.bold('you') : chalk.dim('·');
+          const who = e.kind === 'agent' ? chalk.bold(manifest.title) : e.kind === 'user' ? chalk.bold(e.via === 'app' ? `the app ${e.app ?? ''}` : 'you') : chalk.dim('·');
           const body = e.kind === 'system' ? chalk.dim(e.text) : e.text;
           console.log(`  ${chalk.dim(when)} ${who} ${body}`);
           if (e.files?.length) console.log(chalk.dim(`         ${e.files.join(', ')}`));

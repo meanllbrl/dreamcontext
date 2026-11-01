@@ -104,6 +104,9 @@ export interface SecretViewSpec {
   file: string;
   fields: SecretFieldSpec[];
   submitLabel?: string;
+  /** A dreamcontext App of this project (its slug): the `.env` is the app's, at its own root.
+   *  The server checks the slug against this project's app registry. */
+  app?: string;
 }
 
 export interface SecretFieldSpec {
@@ -579,6 +582,7 @@ function validateSecret(obj: Record<string, unknown>, notices: string[]): { view
   }
 
   const view: SecretViewSpec = { type: 'secret', id: idRaw, title, file, fields };
+  if (typeof obj.app === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(obj.app)) view.app = obj.app;
   const intro = optStr(obj.intro, 2000);
   if (intro) view.intro = intro;
   const submitLabel = optStr(obj.submitLabel, 40);

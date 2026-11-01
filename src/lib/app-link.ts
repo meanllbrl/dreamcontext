@@ -21,6 +21,7 @@ import { listVaults, RESERVED_ASSISTANT_NAME, type Vault } from './vaults.js';
  *   dreamcontext://project/<vault>/automation/<slug>[?file=<brain-relative path>]
  *   dreamcontext://project/<vault>/page/<page>[/<id>]
  *   dreamcontext://project/<vault>/view?path=<project-relative path>
+ *   dreamcontext://project/<vault>/app/<slug>[?n=<nonce>]
  *   dreamcontext://inbox
  *
  * `page/agents/<slug>` opens that agent's profile on the AI Team page; its id is an agent SLUG
@@ -43,6 +44,9 @@ const PAGES_WITH_ID: ReadonlySet<string> = new Set(['tasks', 'knowledge', 'core'
 const CLAUDE_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const PAGE_ID_RE = /^[A-Za-z0-9._-]{1,160}$/;
+/** An app slug (`APP_SLUG_RE`) and the opaque one-time nonce a link may carry. */
+const APP_SLUG_RE = /^[a-z][a-z0-9-]{0,63}$/;
+const APP_NONCE_RE = /^[A-Za-z0-9_-]{32,64}$/;
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u001f\u007f]/;
 
@@ -57,6 +61,7 @@ export type AppLinkTarget =
   | { kind: 'automation'; vault: string; slug: string; file?: string | null }
   | { kind: 'page'; vault: string; page: AppLinkPage; id?: string | null }
   | { kind: 'view'; vault: string; path: string }
+  | { kind: 'app'; vault: string; slug: string; nonce?: string | null }
   | { kind: 'inbox' };
 
 /** What a link names, minus the vault: the shape a caller that only knows a contextRoot passes. */
@@ -65,7 +70,8 @@ export type AppLinkPlace =
   | { kind: 'session'; claudeId: string }
   | { kind: 'automation'; slug: string; file?: string | null }
   | { kind: 'page'; page: AppLinkPage; id?: string | null }
-  | { kind: 'view'; path: string };
+  | { kind: 'view'; path: string }
+  | { kind: 'app'; slug: string; nonce?: string | null };
 
 /** A target the grammar refuses. The message names the part that failed, for a CLI to print. */
 export class AppLinkError extends Error {
@@ -143,6 +149,13 @@ function composeTail(base: string, target: Exclude<AppLinkTarget, { kind: 'inbox
     case 'view':
       if (!isValidLinkPath(target.path)) throw new AppLinkError(`"${target.path}" is not a project-relative file path.`);
       return `${base}/view?path=${encodeURIComponent(target.path)}`;
+    case 'app': {
+      if (!APP_SLUG_RE.test(target.slug)) throw new AppLinkError(`"${target.slug}" is not an app slug.`);
+      const nonce = target.nonce ?? null;
+      if (nonce === null) return `${base}/app/${target.slug}`;
+      if (!APP_NONCE_RE.test(nonce)) throw new AppLinkError('That is not an app link nonce.');
+      return `${base}/app/${target.slug}?n=${nonce}`;
+    }
   }
 }
 
@@ -201,6 +214,12 @@ function parseProjectTail(vault: string, tail: string[], query: string | null): 
     if (tail.length !== 1 || query === null) return null;
     const path = singleQueryValue(query, 'path');
     return path !== null && isValidLinkPath(path) ? { kind: 'view', vault, path } : null;
+  }
+  if (kind === 'app') {
+    if (tail.length !== 2 || !APP_SLUG_RE.test(value)) return null;
+    if (query === null) return { kind: 'app', vault, slug: value };
+    const nonce = singleQueryValue(query, 'n');
+    return nonce !== null && APP_NONCE_RE.test(nonce) ? { kind: 'app', vault, slug: value, nonce } : null;
   }
   return null;
 }

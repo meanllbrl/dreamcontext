@@ -16,6 +16,7 @@
     "skill-sync",
     "skill-patterns",
     "skill-agent-core",
+    "skill-apps",
     "skill-packs",
     "agents",
     "README.md",
@@ -140,6 +141,7 @@
   },
   "dependencies": {
     "@inquirer/prompts": "^7.10.1",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "boxen": "^8.0.1",
     "chalk": "^5.4.1",
     "commander": "^13.1.0",

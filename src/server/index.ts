@@ -17,7 +17,7 @@ import {
   handleAssistantStatus, handleAssistantRollup, handleAssistantGlance, handleAssistantOwnerAnswer, handleAssistantDelegationDismiss, handleAssistantCreate, handleAssistantProfileGet, handleAssistantProfileSet,
   handleAssistantAvatarGet, handleAssistantAvatarSet, handleAssistantProposalsList, handleAssistantProposalDecide,
   handleAssistantWindowRegister, handleAssistantWindowRelease, handleAssistantWindowLookup, handleAssistantOpen, handleAssistantCommandBind, handleAssistantCommandClaim, handleAssistantCommandResult,
-  handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi, handleAssistantLook,
+  handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi, handleAssistantLook, handleAssistantApps, handleAssistantAppOpen, handleAssistantAppDo, handleAssistantAppShot,
   handleAssistantRecall, handleAssistantIndex, handleAssistantRead,
   handleAssistantInbox, handleAssistantInboxDismiss, handleAssistantInboxSeen, handleAssistantInboxMute, handleAssistantPresence,
 } from './routes/assistant.js';
@@ -286,7 +286,17 @@ import {
 } from './routes/linked-repos.js';
 import { listVaults } from '../lib/vaults.js';
 import { receiveOwnerKey } from './owner-key.js';
-import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, registerShutdownHandler, killTrackedChildren } from './lifecycle.js';
+import {
+  handleAppsList, handleAppsLaunchWindow, handleAppsRunning, handleAppsEmbedCheck, handleAppSay, handleAppLaunch, handleAppStop, handleAppStatus,
+  handleAppLogs, handleAppSnapshot, handleAppCall, handleAppDelete, handleAppIcon, startAppsSweeper,
+  handleAppMcpRequest, handleAppScheduleToggle,
+} from './routes/apps.js';
+import { closeAllGateways, configureGateways } from './apps/gateway.js';
+import './apps/gateway-w3.js';
+import { stopAllRuntimes } from '../lib/apps/supervisor.js';
+import { closeMcpClients } from '../lib/apps/mcp-bridge.js';
+import { readLauncherTheme } from './routes/launcher.js';
+import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, registerShutdownHandler, killTrackedChildren, publishDesktopServer } from './lifecycle.js';
 import { startOrphanSweep } from './orphan-sweep.js';
 import { startTaskJobLoop } from './task-job-loop.js';
 import { startClaudeUpdateJob } from './claude-update-job.js';
@@ -477,6 +487,24 @@ export function buildRouter(): Router {
 
   // Launcher (vault-agnostic): discover candidate vaults, register one, detect
   // tech stack for the quiz, and scaffold a new/existing project (onboarding).
+  // dreamcontext Apps (src/server/routes/apps.ts). launch-window and running are vault-agnostic
+  // (the app runner calls them, VAULT_AGNOSTIC_PREFIXES); the rest act on the request's project.
+  router.get('/api/apps', handleAppsList);
+  router.post('/api/apps/launch-window', handleAppsLaunchWindow);
+  router.get('/api/apps/running', handleAppsRunning);
+  router.post('/api/apps/embed-check', handleAppsEmbedCheck);
+  router.post('/api/apps/:slug/launch', handleAppLaunch);
+  router.post('/api/apps/:slug/say', handleAppSay);
+  router.post('/api/apps/:slug/stop', handleAppStop);
+  router.get('/api/apps/:slug/status', handleAppStatus);
+  router.get('/api/apps/:slug/logs', handleAppLogs);
+  router.get('/api/apps/:slug/icon', handleAppIcon);
+  router.post('/api/apps/:slug/snapshot', handleAppSnapshot);
+  router.post('/api/apps/:slug/call', handleAppCall);
+  router.post('/api/apps/:slug/mcp-request', handleAppMcpRequest);
+  router.post('/api/apps/:slug/schedules/:id', handleAppScheduleToggle);
+  router.delete('/api/apps/:slug', handleAppDelete);
+
   router.get('/api/launcher/discover', handleLauncherDiscover);
   router.get('/api/launcher/detect', handleLauncherDetect);
   router.get('/api/launcher/defaults', handleLauncherDefaults);
@@ -544,6 +572,10 @@ export function buildRouter(): Router {
   router.post('/api/super/seen', handleSuperSeen);
   router.post('/api/super/pad', handleSuperPad);
   router.post('/api/assistant/look', handleAssistantLook);
+  router.post('/api/assistant/apps', handleAssistantApps);
+  router.post('/api/assistant/app-open', handleAssistantAppOpen);
+  router.post('/api/assistant/app-do', handleAssistantAppDo);
+  router.post('/api/assistant/app-shot', handleAssistantAppShot);
   router.post('/api/launcher/scaffold', handleLauncherScaffold);
   router.get('/api/launcher/agent-settings', handleAgentSettingsGet);
   router.post('/api/launcher/agent-settings', handleAgentSettingsSet);
@@ -1006,7 +1038,7 @@ export function buildRouter(): Router {
  * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
  * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine', '/api/apps/launch-window', '/api/apps/running', '/api/apps/embed-check'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
@@ -1440,10 +1472,28 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       let stopClaudeUpdate: (() => void) | undefined;
       let stopSelfUpdate: (() => void) | undefined;
       let stopProjectCatchUp: (() => void) | undefined;
+      // dreamcontext App windows find this server through ~/.dreamcontext/desktop-server.json
+      // (desktop/app-runner). Self-gates to the app-owned desktop server on macOS.
+      let unpublishDesktopServer: () => void = () => {};
+      let stopAppsSweeper: () => void = () => {};
+      {
+        const a = server.address();
+        if (a && typeof a === 'object') {
+          unpublishDesktopServer = publishDesktopServer(a.port);
+          // dreamcontext Apps: each app's gateway proxies /__dc/api to THIS server and router.
+          configureGateways({ dashboardPort: a.port, router, theme: readLauncherTheme });
+          stopAppsSweeper = startAppsSweeper();
+        }
+      }
       const shutdown = () => {
         if (shuttingDown) return; // SIGTERM + watchdog can both fire; reap once
         shuttingDown = true;
         console.log('\n  Shutting down...');
+        unpublishDesktopServer();
+        stopAppsSweeper();
+        stopAllRuntimes();
+        void closeMcpClients().catch(() => {});
+        void closeAllGateways();
         stopClaudeUpdate?.();
         stopSelfUpdate?.();
         stopProjectCatchUp?.();

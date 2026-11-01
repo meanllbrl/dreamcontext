@@ -246,6 +246,8 @@ html:has(.dc-notch) #root {
 .dc-proposal__text {
   margin: var(--space-2) 0;
   white-space: pre-wrap;
+  /* An app's .mcp.json row shows long values unmasked: they wrap, never run off the row. */
+  overflow-wrap: anywhere;
   font-size: var(--font-size-sm);
 }
 .dc-proposal__edit {

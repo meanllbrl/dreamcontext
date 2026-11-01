@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { buildAppLink, routeAppLink } from '../../lib/appLink';
 import {
-  accountLine, ago, automationPhotoUrl,
-  type AutomationPost, type FinishedNotice, type InboxNotice, type OwnerTaskRow, type RunningAutomation,
+  accountLine, ago, appIconUrl, automationPhotoUrl, openAppWindow,
+  type AppNotice, type AutomationPost, type FinishedNotice, type InboxNotice, type OwnerTaskRow, type RunningAutomation,
 } from './notchModel';
 
 /**
@@ -88,8 +88,27 @@ function FinishedRow({ n, onGone, now }: { n: FinishedNotice; onGone: (id: strin
   );
 }
 
+function AppRow({ n, onGone, now }: { n: AppNotice; onGone: (id: string) => void; now: number }) {
+  const [broken, setBroken] = useState(false);
+  return (
+    <li className="dc-inbox__row" data-kind="app">
+      <button type="button" className="dc-inbox__main" onClick={() => { void openAppWindow(n.vault, n.slug); void dismissNotice(n.id); onGone(n.id); }} title={`Open ${n.name}`}>
+        {broken
+          ? <span className="dc-inbox__icon" aria-hidden>{n.name.slice(0, 1).toUpperCase()}</span>
+          : <img className="dc-inbox__icon dc-inbox__icon--app" src={appIconUrl(n.vault, n.slug)} alt="" onError={() => setBroken(true)} />}
+        <span className="dc-inbox__body">
+          <span className="dc-inbox__head"><strong>{n.name}</strong><span className="dc-inbox__where"> · {n.vault}</span><span className="dc-inbox__ago">{ago(n.at, now)}</span></span>
+          {n.body && <span className="dc-inbox__text">{n.body}</span>}
+        </span>
+      </button>
+      <button type="button" className="dc-inbox__icon-btn" aria-label="Dismiss" title="Dismiss" onClick={() => { void dismissNotice(n.id); onGone(n.id); }}>×</button>
+    </li>
+  );
+}
+
 function NoticeRow({ n, onGone, now }: { n: InboxNotice; onGone: (id: string) => void; now: number }) {
   if (n.kind === 'finished') return <FinishedRow n={n} onGone={onGone} now={now} />;
+  if (n.kind === 'app') return <AppRow n={n} onGone={onGone} now={now} />;
   const canOpen = !!(n.vault && n.sessionId);
   return (
     <li className="dc-inbox__row" data-kind="account">

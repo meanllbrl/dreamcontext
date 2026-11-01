@@ -56,7 +56,7 @@ function hhmm(iso: string): string {
 /** One row. A system entry keeps the runner's own words — re-phrasing them here would put
  *  the same event in two vocabularies, one of which goes stale. */
 function EntryRow({ entry, title }: { entry: ThreadEntry; title: string }) {
-  const who = entry.kind === 'system' ? null : entry.kind === 'user' ? 'You' : title;
+  const who = entry.kind === 'system' ? null : entry.kind === 'user' ? (entry.via === 'app' ? `${entry.app ?? 'An'} app` : 'You') : title;
   return (
     <li className="chat-agentthread-entry" data-kind={entry.kind}>
       <span className="chat-agentthread-entry-time">{hhmm(entry.at)}</span>

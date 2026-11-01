@@ -226,6 +226,7 @@
 .aiteam-temp-dot { width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--color-accent); }
 .aiteam-linkbtn { border: 0; background: transparent; padding: 0; color: var(--color-text); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); text-decoration: underline; text-underline-offset: 2px; }
 .aiteam-you { white-space: pre-wrap; overflow-wrap: anywhere; }
+.aiteam-you-app { display: block; margin-bottom: var(--space-1); font-size: var(--font-xs, 12px); opacity: 0.75; }
 
 /* ── Chat's typography: the conversation reads at Chat's own size and leading ──
    The posts reuse the channel's atoms, which set a smaller channel size; here the reader is in a

@@ -33,7 +33,8 @@ interface BoardToolbarProps {
   releasedVersions: string[];
   openMenu: MenuKey;
   setOpenMenu: (m: MenuKey) => void;
-  onNewTask: () => void;
+  /** Absent in an embedded screen: a task is made in the main app. */
+  onNewTask?: () => void;
   /** Open the "Author with agent" composer. Offered only when {@link agentReady}. */
   onAuthorWithAgent: () => void;
   /** Desktop + Agents-enabled: reveals the "Author with agent" path in the New-task split
@@ -451,7 +452,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
       {/* new task — plain button on web; a split button on desktop where an agent can author.
           The primary click always opens the manual form (least surprise, A1); the caret reveals
           the "Author with agent" power path alongside it. */}
-      {agentReady ? (
+      {!onNewTask ? null : agentReady ? (
         <div style={{ position: 'relative', flex: '0 0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'stretch', height: 34, borderRadius: 9, overflow: 'hidden', boxShadow: '0 4px 12px -4px var(--color-accent)' }}>
             <button type="button" onClick={onNewTask} className="bd-btnreset bd-chip" data-testid="new-task" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 13px', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600 }}>+ New Task</button>
@@ -461,7 +462,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
           </div>
           {openMenu === 'newtask' && (
             <div className="bd-pop" role="menu" style={{ ...popBase, right: 0, width: 246 }}>
-              <button type="button" className="bd-btnreset bd-row" onClick={() => { setOpenMenu(null); onNewTask(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, width: '100%', fontSize: 13, color: 'var(--color-text-secondary)' }}>
+              <button type="button" className="bd-btnreset bd-row" onClick={() => { setOpenMenu(null); onNewTask?.(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, width: '100%', fontSize: 13, color: 'var(--color-text-secondary)' }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M14 3v4a1 1 0 0 0 1 1h4M5 3h9l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" /></svg>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                   <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>Blank form</span>

@@ -27,12 +27,15 @@ const targets: AppLinkTarget[] = [
   { kind: 'page', vault: TR, page: 'tasks', id: 'fix-the-login' },
   { kind: 'page', vault: TR, page: 'core', id: '0.soul.md' },
   { kind: 'view', vault: TR, path: '_dream_context/knowledge/grafik ö?x.md' },
+  { kind: 'app', vault: TR, slug: 'meta-ads' },
+  { kind: 'app', vault: TR, slug: 'meta-ads', nonce: 'a'.repeat(43) },
 ];
 
 /** The Node target as the dashboard reader returns it (optional fields made explicit). */
 function expected(t: AppLinkTarget): unknown {
   if (t.kind === 'automation') return { ...t, file: t.file ?? null };
   if (t.kind === 'page') return { ...t, id: t.id ?? null };
+  if (t.kind === 'app') return { ...t, nonce: t.nonce ?? null };
   return t;
 }
 

@@ -273,7 +273,8 @@ export type DemotableSectionId =
   | 'people-roster'
   | 'objectives'
   | 'theses'
-  | 'lab';
+  | 'lab'
+  | 'apps';
 
 /**
  * Sections that are never demoted. Small, behaviour-binding, or positional
@@ -358,6 +359,9 @@ export const DEMOTION_RANKS: Record<DemotableSectionId, number> = {
   objectives: 120,
   theses: 130,
   lab: 140,
+  // dreamcontext Apps: one line naming this project's apps (and the verb that lists their
+  // actions). Cut right after warm knowledge: an agent asked about an app runs `apps list`.
+  apps: 15,
   // 150 and 160 intentionally free — they were the user file's and the soul's
   // ranks before both became never-evict. Nothing should reclaim them without a
   // reason to demote AFTER Lab.

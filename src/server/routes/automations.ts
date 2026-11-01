@@ -28,6 +28,8 @@ import {
   isSafeAutomationSlug,
   automationPath,
   getRunTarget,
+  pathOccupied,
+  readManifestParts,
 } from '../../lib/automations/store.js';
 import { getAgent, removeAgent, withRestamp } from '../../lib/agents/store.js';
 import { agentKeyOf, readManifestFrontmatter } from '../../lib/agents/slot.js';
@@ -36,6 +38,7 @@ import type { AgentIdentityPatch } from '../../lib/agents/types.js';
 import { agentModelChoices, parseModelOverride } from '../../lib/agents/model-choices.js';
 import { runLeavesNoSession, wouldStickToSession } from '../../lib/automations/light-run.js';
 import { readRunSidecar } from '../../lib/automations/store.js';
+import type { AppRunBrief } from '../../lib/apps/brief.js';
 import { resolveRunSession, readSessionDigest } from '../../lib/automations/session.js';
 import { foreignRunEvidence } from '../../lib/automations/session-registry.js';
 import {
@@ -477,6 +480,8 @@ export async function handleAutomationsShow(
         autonomy: manifest.autonomy ?? DEFAULT_AGENT_AUTONOMY,
         // Hashed when named: the review shows what a light job of it may call.
         readTools: manifest.readTools ?? [],
+        // Hashed when set: which app's brief the run gets.
+        app: manifest.app ?? '',
         prompt: manifest.prompt,
         outputInstructions: manifest.outputInstructions,
         // NOT hashed and deliberately so (it changes every run), but shown:
@@ -1156,11 +1161,26 @@ export async function handleAutomationsCreate(
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');
     return;
   }
+  await createFromBody(res, contextRoot, body);
+}
+
+/**
+ * The create behind `POST /api/automations` and the app gateway's `/__dc/automations`. `app` is
+ * a PARAMETER and never read from the body: the gateway stamps its own slug, and the dashboard
+ * route has no way to name one.
+ */
+export async function createFromBody(
+  res: ServerResponse,
+  contextRoot: string,
+  body: Record<string, unknown>,
+  app?: string,
+): Promise<void> {
+  const appField = app ? { app } : {};
   try {
     const title = (str(body.title) ?? '').trim();
     if (!title) throw new AutomationError('Give the agent a name.');
     if (body.agent !== undefined) {
-      await createBoundFromBody(res, contextRoot, body, title);
+      await createBoundFromBody(res, contextRoot, body, title, appField);
       return;
     }
     const prompt = (str(body.prompt) ?? '').trim();
@@ -1204,6 +1224,7 @@ export async function handleAutomationsCreate(
       timeoutMinutes: readTimeout(body.timeoutMinutes),
       prompt,
       whiteboard,
+      ...appField,
     });
     // Same ordering as the CLI's create: the flow is derived and written
     // BEFORE approval, so the hash granted covers the exact manifest on disk.
@@ -1236,6 +1257,7 @@ async function createBoundFromBody(
   contextRoot: string,
   body: Record<string, unknown>,
   title: string,
+  appField: { app?: string } = {},
 ): Promise<void> {
   const agentSlug = typeof body.agent === 'string' ? body.agent.trim() : '';
   if (!isSafeAutomationSlug(agentSlug)) throw new AutomationError('Pick the agent this automation runs as.');
@@ -1270,6 +1292,7 @@ async function createBoundFromBody(
     at: str(body.at) ?? '09:00',
     slots: readSlots(body.slots),
     timeoutMinutes: readTimeout(body.timeoutMinutes),
+    ...appField,
   }, { approve: { now: new Date() } });
   sendJson(res, 200, { automation: summarize(projectRoot, contextRoot, manifest) });
 }
@@ -2099,6 +2122,63 @@ function onOneOffJob(contextRoot: string, manifest: AutomationManifest, busy: Re
 /** Who is calling an agent by name: a person typing right now, or the Super Agent handing a
  *  member a job while the owner has handed the Chat screen over (`super team ask`). */
 export type SayVia = 'dashboard' | 'assistant' | 'super';
+
+/**
+ * An app asking one of its project's agents to do something. Reaches `sayFromApp` only from the
+ * server's own paths (`/__dc/team/say`, `POST /api/apps/:slug/say`), never from a say body.
+ */
+export function sayFromApp(
+  contextRoot: string,
+  input: { slug: string; text: string; app: AppRunBrief },
+): SayResult {
+  const slug = input.slug.trim();
+  const text = input.text.trim();
+  if (!slug || !text) return sayRefusal(400, 'bad_say', 'Body must be { member, text }.');
+  if (text.length > SAY_MAX_CHARS) return sayRefusal(400, 'say_too_long', `Keep it under ${SAY_MAX_CHARS} characters.`);
+  try {
+    // The agent's CALL target, never `memberCallState`: that reads the slot, where a same-named
+    // automation stands in front of the agent, and an app must not fire a scheduled job.
+    const manifest = getRunTarget(contextRoot, slug, 'agent');
+    if (!manifest) return sayRefusal(404, 'not_found', `There is no agent "${slug}" in this project.`);
+    if (isUnsplitScheduled(contextRoot, slug)) {
+      return sayRefusal(409, 'say_unsplit', `${manifest.title} is one scheduled job, not a member an app can call. Make it a team member first.`);
+    }
+    if (!manifest.enabled) return sayRefusal(409, 'say_disabled', `${manifest.title} is turned off. Turn it on to call it.`);
+    const verdict = checkApproval(dirname(contextRoot), manifest, undefined, 'run');
+    if (!verdict.approved && verdict.reason === 'not_owner') {
+      return sayRefusal(403, 'not_owner', `${manifest.agentTitle || manifest.title} belongs to ${ownerLabel(verdict.owner)}, so it is read-only here.`);
+    }
+    if (!verdict.approved) {
+      return sayRefusal(409, 'say_unapproved', `${manifest.title} is not approved to run on this machine yet. Approve it on the AI Team page, then ask again.`);
+    }
+    // ── synchronous from here to the job start, as in `sayToAgent` ──
+    // An app never writes into a run in flight and never queues behind it: it asks again.
+    if (currentAutomationJob(contextRoot, slug)?.status === 'running' || agentActivity(contextRoot, slug)) {
+      return sayRefusal(409, 'say_busy', `${manifest.title} is working on something else. Try again when it finishes.`);
+    }
+    // Always a fresh run: a bound session is the owner's conversation, not the app's.
+    const fireAt = new Date();
+    const runId = fireAt.toISOString();
+    const ask = appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text: displayText(contextRoot, text), via: 'app', app: input.app.slug, now: fireAt });
+    const { job, started } = startAutomationJob(contextRoot, slug, { text, fireAt, target: 'agent', app: input.app });
+    return { ok: true, status: 200, body: { job: { ...job, kind: 'run' }, started, runId, entryId: ask.id, slug } };
+  } catch (err) {
+    if (err instanceof AutomationError) return sayRefusal(400, 'say_refused', err.message);
+    throw err;
+  }
+}
+
+/** A legacy file that is its own scheduled job: its agent has no call target of its own. */
+function isUnsplitScheduled(contextRoot: string, slug: string): boolean {
+  const path = automationPath(contextRoot, slug);
+  if (!pathOccupied(path)) return false;
+  try {
+    const parts = readManifestParts(path);
+    return parts.kind === 'legacy' && parts.legacy.mode !== 'call';
+  } catch {
+    return false;
+  }
+}
 
 export type SayResult =
   | { ok: true; status: 200; body: Record<string, unknown> }

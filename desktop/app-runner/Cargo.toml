@@ -1,0 +1,43 @@
+[package]
+name = "dreamcontext-app-runner"
+version = "0.36.4"
+edition = "2021"
+description = "The window a dreamcontext App opens in: its own Dock identity, a WKWebView on the app's gateway, and the runner side of the apps contract."
+publish = false
+
+[[bin]]
+name = "app-runner"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+dispatch2 = "0.3"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std", "block2", "NSArray", "NSData", "NSDictionary", "NSError", "NSNotification", "NSObject",
+    "NSProcessInfo", "NSString", "NSURL", "NSEnumerator", "NSURLRequest", "NSURLResponse", "NSGeometry", "NSValue",
+] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std", "block2", "NSAlert", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton",
+    "NSControl", "NSGraphics", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenPanel",
+    "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSTextField",
+    "NSView", "NSWindow", "NSWorkspace",
+] }
+objc2-web-kit = { version = "0.3", default-features = false, features = [
+    "std", "objc2-app-kit", "objc2-core-foundation", "block2", "WKWebView", "WKWebViewConfiguration", "WKDownload",
+    "WKDownloadDelegate", "WKNavigation", "WKNavigationDelegate", "WKUserContentController",
+    "WKScriptMessageHandler", "WKUIDelegate", "WKOpenPanelParameters", "WKFrameInfo",
+    "WKSecurityOrigin", "WKScriptMessage", "WKNavigationAction", "WKNavigationResponse",
+    "WKUserScript", "WKWindowFeatures", "WKSnapshotConfiguration",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

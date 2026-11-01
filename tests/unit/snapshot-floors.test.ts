@@ -1371,7 +1371,7 @@ describe('demotion ranks', () => {
   const EXPECTED_DEMOTABLE_IDS = [
     'bookmarks', 'changelog', 'connected-projects', 'extended-core', 'features',
     'knowledge-index', 'lab', 'memory', 'objectives', 'people-roster', 'releases',
-    'tasks', 'theses', 'warm-knowledge',
+    'tasks', 'theses', 'warm-knowledge', 'apps',
   ];
 
   it('covers exactly the demotable sections, with unique ranks above any array index', () => {

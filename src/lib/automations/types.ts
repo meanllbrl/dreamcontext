@@ -493,6 +493,12 @@ export interface AutomationManifest {
    * through `composeRun`; absent on an agent that names none. Hashed when present: it opens tools.
    */
   readTools?: string[];
+  /**
+   * The app this automation belongs to (`app:`, dreamcontext-apps). Its run carries that app's
+   * brief. Absent on every automation that is not an app's, so those keep their exact hash:
+   * IS approval-hashed, OMITTED when absent and LAST. Only a scheduled job carries it.
+   */
+  app?: string;
   /** Its agent's owner (`owner:`), unhashed; absent on an unstamped file. `checkApproval` returns
    *  `not_owner` FIRST when it is not this machine's login (`agents/owner.ts`). */
   owner?: string;
@@ -542,6 +548,8 @@ export interface AutomationJob {
   /** The `## Job` section, `''` when absent. */
   job: string;
   flow: FlowGraph | null;
+  /** The app it belongs to (`app:`), absent otherwise. Hashed, see `AutomationManifest.app`. */
+  app?: string;
   /** Its creator's login (`owner:`), unhashed; null before the migration stamps it. */
   owner: string | null;
   /** When its owner last wrote it (`updated:`), unhashed. */
@@ -583,7 +591,7 @@ export type ThreadSystemEvent = 'started' | 'ok' | 'failed' | 'timeout' | 'asked
 /** Where an entry came from. Provenance, for the same reason `ReviewChannel`
  *  exists: "the agent said this" and "the runner said this on the agent's
  *  behalf" are different claims and a reader is entitled to tell them apart. */
-export type ThreadVia = 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant' | 'super';
+export type ThreadVia = 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant' | 'super' | 'app';
 
 /** One row of a posted summary — a FIGURE that moved, never prose. Deliberately
  *  not a free-form block: a summary the agent can write at any length is a
@@ -616,6 +624,9 @@ export interface ThreadEntry {
    *  summary is a summary that was not posted, and rendering an empty block
    *  would put a heading over nothing. */
   summary?: ThreadSummaryRow[];
+  /** `via: 'app'` only: the app the words came from. A `kind: 'user'` entry with this is NEVER
+   *  the owner's sentence, on any surface, even when he typed it in the app's own chat. */
+  app?: string;
   via: ThreadVia;
 }
 
@@ -1060,6 +1071,8 @@ export interface ApprovalPayloadFields {
   autonomy: AgentAutonomy;
   /** Hashed because it opens tools in a light job. '' when absent. */
   readTools: string;
+  /** Hashed because it decides which app's brief the run is given. '' when it has none. */
+  app: string;
 }
 
 /** Env var naming a home-board agent's board for its spawned child; the CLI's
@@ -1161,6 +1174,7 @@ export const APPROVAL_DIFF_FIELDS = [
   'soul',
   'autonomy',
   'readTools',
+  'app',
 ] as const;
 
 // ─── Pattern caps ────────────────────────────────────────────────────────────

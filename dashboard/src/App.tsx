@@ -1,3 +1,5 @@
+import { embedGrant } from './lib/frameGuard';
+import { EmbedRoot } from './components/embed/EmbedRoot';
 import { ShellModeProvider } from './lib/uxMode';
 import { markOpenedForLink } from './lib/windowLaunch';
 import { LauncherRoot } from './pages/LauncherRoot';
@@ -132,6 +134,10 @@ const viewerBus = new EventTarget();
 const assistantBus = new EventTarget();
 
 export function App() {
+  // An app's window, embedding one dreamcontext screen (`?embed=`, plan r19 W4).
+  const embed = embedGrant();
+  if (embed) return <ErrorBoundary><EmbedRoot grant={embed} /></ErrorBoundary>;
+
   // The pinned checklist window (`?checklist=<id>`) — a separate, narrow-capability OS
   // window (plan §1.9). `ThemeProvider` is mandatory here, not decorative: it is what writes
   // `data-theme` onto <html>, which the whole dark palette (and `MarkdownPreview`, which

@@ -933,7 +933,7 @@ export interface FeedMessage {
   /** What the owner typed to call this agent, for a run that is an ASK rather
    *  than a scheduled fire. Renders ABOVE the agent's reply — one exchange,
    *  one message — and is never counted as a reply. */
-  ask: { text: string; at: string } | null;
+  ask: { text: string; at: string; app?: string } | null;
   text: string;
   /** `post` — the agent chose to say this. `result` — it said nothing and this
    *  is its document's opening line. `error` — it failed, and this is why. The
@@ -1025,7 +1025,9 @@ export interface ThreadEntry {
   files?: string[];
   /** Figures posted with `--kv`. Absent, never empty. */
   summary?: ThreadSummaryRow[];
-  via: 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant' | 'super';
+  via: 'runner' | 'cli' | 'dashboard' | 'chat' | 'assistant' | 'super' | 'app';
+  /** `via: 'app'`: the app the words came from. Never shown as "You". */
+  app?: string;
 }
 
 /**

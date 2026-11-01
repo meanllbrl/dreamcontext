@@ -37,7 +37,8 @@ interface RoadmapToolbarProps {
   clearAllFilters: () => void;
   openMenu: RoadmapMenuKey;
   setOpenMenu: (m: RoadmapMenuKey) => void;
-  onNewObjective: () => void;
+  /** Absent in an embedded screen: an objective is made in the main app. */
+  onNewObjective?: () => void;
 }
 
 const VIEW_TYPES: { v: RoadmapLayout; label: string; icon: string }[] = [
@@ -186,7 +187,7 @@ export function RoadmapToolbar({
       </div>
 
       {/* new objective */}
-      <div onClick={onNewObjective} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>+ New Objective</div>
+      {onNewObjective && <div onClick={onNewObjective} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-strong)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>+ New Objective</div>}
     </div>
   );
 }

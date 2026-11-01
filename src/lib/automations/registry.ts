@@ -433,6 +433,10 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // OMITTED when empty, and LAST, for the same append-only reason: no agent names any today, so
     // nobody re-blocks. Present, it opens tools in a light job, so a synced edit must block.
     ...(m.readTools?.length ? { readTools: [...m.readTools].sort() } : {}),
+    // OMITTED when absent, and LAST, for the same append-only reason: no automation belongs to an
+    // app today, so nobody re-blocks. Present, it decides which app's brief the run is given, so a
+    // synced edit that adds, moves or removes it must block.
+    ...(m.app ? { app: m.app } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }
@@ -495,6 +499,8 @@ export function approvalFields(m: AutomationManifest): ApprovalPayloadFields {
     autonomy: m.autonomy ?? DEFAULT_AGENT_AUTONOMY,
     // Always present (as '' when absent): the reviewer reads which tools a light job may call.
     readTools: (m.readTools ?? []).join(', '),
+    // Always present (as '' when absent): the reviewer sees which app's brief the run gets.
+    app: m.app ?? '',
   };
 }
 

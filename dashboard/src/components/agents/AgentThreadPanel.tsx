@@ -105,7 +105,7 @@ function AuthoredRow({
       <RowFace who={entry.kind === 'user' ? 'user' : 'agent'} message={message} />
       <div className="agent-thread-post-main">
       <div className="agent-thread-post-head">
-        <span className="agent-thread-post-who">{entry.kind === 'user' ? 'You' : agentFaceOf(message).title}</span>
+        <span className="agent-thread-post-who">{entry.kind === 'user' ? (entry.via === 'app' ? `${entry.app ?? 'An'} app` : 'You') : agentFaceOf(message).title}</span>
         <span className="agent-thread-post-time">{hhmm(entry.at)}</span>
         {queued && <span className="agent-thread-post-queued">{t('agents.thread.queued')}</span>}
       </div>

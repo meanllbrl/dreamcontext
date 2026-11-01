@@ -316,8 +316,8 @@ describe('agents/sleep-product.md — automation-output consumption contract', (
   });
 });
 
-describe('approval surface — fourteen hashed fields, everywhere it is claimed', () => {
-  it('APPROVAL_DIFF_FIELDS is the fourteen-tuple including effort, learning, review, flow, whiteboard, job, soul, autonomy and readTools', () => {
+describe('approval surface — fifteen hashed fields, everywhere it is claimed', () => {
+  it('APPROVAL_DIFF_FIELDS is the fifteen-tuple including effort, learning, review, flow, whiteboard, job, soul, autonomy, readTools and app', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt',
       'outputInstructions',
@@ -346,8 +346,10 @@ describe('approval surface — fourteen hashed fields, everywhere it is claimed'
       // The agent's autonomy level: the permission mode of its sessions. Appended after `soul`
       // and omitted at the default `balanced`, so every agent that exists keeps its hash.
       'autonomy',
-      // The MCP tools a light job of the agent may call. LAST, omitted when none.
+      // The MCP tools a light job of the agent may call. Omitted when none.
       'readTools',
+      // The app a job belongs to: which app's brief the run gets. LAST, omitted when none.
+      'app',
     ]);
   });
 

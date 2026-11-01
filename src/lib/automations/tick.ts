@@ -47,6 +47,7 @@
  */
 
 import { existsSync } from 'node:fs';
+import { tickApps } from '../apps/schedule.js';
 import { join } from 'node:path';
 import { isDue, type DueVerdict } from './schedule.js';
 import { getAutomation, listAutomations, readAutomationCache } from './store.js';
@@ -377,6 +378,14 @@ export async function tickAll(opts: TickOptions = {}): Promise<TickAllResult> {
 
   recordTickStarted(now, home);
   rotateLogIfLarge(home);
+
+  // dreamcontext Apps' own schedules go FIRST and never wait (src/lib/apps/schedule.ts): the
+  // agent runs below are sequential and slow, and an app's schedule spawns no Claude.
+  try {
+    for (const r of tickApps({ home, now })) logFn(`[apps] ${r.slug}/${r.id}: ${r.action}`);
+  } catch (err) {
+    logFn(`[apps] schedule tick failed: ${(err as Error).message}`);
+  }
 
   const projectRoots = listRegisteredProjects(home);
   const missing: string[] = [];

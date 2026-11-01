@@ -1,0 +1,11 @@
+{
+  "slug": "meta-ads",
+  "name": "Meta Ads",
+  "backend": { "command": "node server.mjs", "health": "/health" },
+  "agent": { "member": "ua-manager", "brief": "Owns the fictional Acme ad account." },
+  "actions": [
+    { "id": "list-campaigns", "title": "List every campaign with status and spend", "method": "GET", "path": "/api/campaigns" },
+    { "id": "pause-campaign", "title": "Pause one campaign", "method": "POST", "path": "/api/campaigns/pause", "input": "{\"id\": \"<campaign id>\"}", "danger": true },
+    { "id": "resume-campaign", "title": "Resume one campaign", "method": "POST", "path": "/api/campaigns/resume", "input": "{\"id\": \"<campaign id>\"}" }
+  ]
+}

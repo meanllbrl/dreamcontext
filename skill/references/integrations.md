@@ -613,6 +613,10 @@ dreamcontext assistant sessions [--vault v] [--status working|asking|idle]
 dreamcontext assistant watch <sessionId> [--until idle|asking|any] [--timeout 590]
 dreamcontext assistant broadcast "<rule>" [--to a,b]  # each project's OWN agent writes it
 dreamcontext assistant open <vault> [--page tasks|knowledge|core/<slug>] [--new-window]
+dreamcontext assistant apps [<vault>]                 # each project's apps and their actions, as data
+dreamcontext assistant app-open <vault> <slug>        # open an app or bring it forward
+dreamcontext assistant app-do <vault> <slug> <action> [--input '<json>']   # always the autonomy gate
+dreamcontext assistant app-shot <vault> <slug>        # a window already open; takes no path
 dreamcontext assistant chat <vault> --prompt "…" [--mode basic|plan|develop]
 dreamcontext assistant send <sessionId> "<text>"
 dreamcontext assistant agent <vault> "<text>" (--board <b> | --slug <s>)  # a board's home agent, or any agent by slug; gated like send

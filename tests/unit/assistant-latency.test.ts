@@ -217,7 +217,7 @@ afterEach(() => {
 // ─── --allowedTools ─────────────────────────────────────────────────────────────────
 
 describe('assistantAllowedTools', () => {
-  const READS = 'Bash(dreamcontext assistant recall:*),Bash(dreamcontext assistant index:*),Bash(dreamcontext assistant read:*)';
+  const READS = 'Bash(dreamcontext assistant recall:*),Bash(dreamcontext assistant index:*),Bash(dreamcontext assistant read:*),Bash(dreamcontext assistant apps:*)';
   const expected = { auto: 'Bash(dreamcontext assistant:*)', ask: READS, bypass: null } as const;
 
   it('pre-approves every assistant verb under auto, only the three reads under ask, nothing under bypass', () => {
@@ -228,7 +228,7 @@ describe('assistantAllowedTools', () => {
 
   it('under ask, no verb that writes, sends or drives a window is pre-approved', () => {
     const ask = assistantAllowedTools('ask')[1];
-    for (const verb of ['send', 'answer', 'broadcast', 'chat', 'close', 'open', 'agent', 'look', 'notify', 'focus', 'tile']) {
+    for (const verb of ['app-open', 'app-do', 'app-shot', 'send', 'answer', 'broadcast', 'chat', 'close', 'open', 'agent', 'look', 'notify', 'focus', 'tile']) {
       expect(ask).not.toContain(`assistant ${verb}`);
     }
     expect(ask).not.toContain('assistant:*');

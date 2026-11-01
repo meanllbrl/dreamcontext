@@ -13,7 +13,7 @@ import { NewShellControls } from './newshell/NewShellControls';
 import './Shell.css';
 
 const ACTIVE_PAGE_STORAGE_KEY = 'dreamcontext.dashboard.activePage';
-const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'hypotheses', 'lab', 'automations', 'agents', 'core', 'knowledge', 'sleep', 'brain', 'council', 'taxonomy', 'settings', 'packs', 'about', 'announcements', 'whiteboards', 'relations'];
+const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'hypotheses', 'lab', 'automations', 'agents', 'core', 'knowledge', 'sleep', 'brain', 'council', 'taxonomy', 'settings', 'packs', 'about', 'announcements', 'whiteboards', 'relations', 'apps'];
 /** Pages only the new shell offers: classic never lands on one, even from a stored value. */
 const NEW_SHELL_ONLY_PAGES: readonly Page[] = ['relations'];
 
