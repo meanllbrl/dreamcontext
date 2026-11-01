@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
-  HEAVY_LOCK_BUSY_EXIT, HEAVY_MACHINE_SLOTS, acquireHeavy, heavyLockPath, heavySlotPaths, heavySlotsHeld,
+  HEAVY_LOCK_BUSY_EXIT, HEAVY_SLOT_CAP, acquireHeavy, machineHeavySlots, heavyLockPath, heavySlotPaths, heavySlotsHeld,
 } from '../../src/lib/builder-tools.js';
 import { acquireFileLock, releaseFileLock } from '../../src/lib/file-lock.js';
 import { builderHeavy, type BuilderDeps } from '../../src/cli/commands/builder.js';
@@ -27,7 +27,7 @@ describe('machine heavy slots', () => {
   let err: string[];
   const deps = (cwd: string): BuilderDeps => ({
     cwd: () => cwd, print: () => {}, printErr: (l) => err.push(l), ps: () => '', kill: () => {}, heavySlotDir: () => slots,
-    heavyLimit: async () => HEAVY_MACHINE_SLOTS,
+    heavyLimit: async () => 2,
   });
 
   beforeEach(() => {
@@ -46,16 +46,23 @@ describe('machine heavy slots', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  const holdBoth = () => { for (const p of heavySlotPaths(slots)) expect(acquireFileLock(p, Date.now(), 5_000)).toBe(true); };
+  const holdBoth = () => { for (const p of heavySlotPaths(slots).slice(0, 2)) expect(acquireFileLock(p, Date.now(), 5_000)).toBe(true); };
 
-  it('is four slots', () => {
-    expect(HEAVY_MACHINE_SLOTS).toBe(4);
-    expect(heavySlotPaths(slots).map((p) => p.slice(slots.length + 1))).toEqual(['slot-0.lock', 'slot-1.lock', 'slot-2.lock', 'slot-3.lock']);
+  it('the slot files are a cap: the limit comes from the machine', () => {
+    expect(heavySlotPaths(slots)).toHaveLength(HEAVY_SLOT_CAP);
+    expect(machineHeavySlots({ cores: 8, totalGb: 16 })).toBe(4);
+    expect(machineHeavySlots({ cores: 16, totalGb: 64 })).toBe(8);
+    expect(machineHeavySlots({ cores: 128, totalGb: 1024 })).toBe(HEAVY_SLOT_CAP);
+    expect(machineHeavySlots({ cores: 2, totalGb: 8 })).toBe(2);
+    // Free memory bounds it live, running checks counted back in; no reading never slows a check.
+    expect(machineHeavySlots({ cores: 16, totalGb: 64, availGb: 2, held: 0 })).toBe(2);
+    expect(machineHeavySlots({ cores: 16, totalGb: 64, availGb: 6, held: 3 })).toBe(6);
+    expect(machineHeavySlots({ cores: 16, totalGb: 64, availGb: null })).toBe(8);
   });
 
   it('with every slot held by live checks, a third from another repo runs NOTHING and exits 75', async () => {
     holdBoth();
-    expect(heavySlotsHeld(slots)).toBe(HEAVY_MACHINE_SLOTS);
+    expect(heavySlotsHeld(slots)).toBe(2);
     const marker = join(root, 'ran.txt');
     const code = await builderHeavy(deps(repoB), [process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(marker)},'x')`], { maxWait: '0' });
     expect(code).toBe(HEAVY_LOCK_BUSY_EXIT);
@@ -181,12 +188,26 @@ describe('machine heavy slots under heat', () => {
     first!.release();
   });
 
+  it('a raised or lowered limit strands nobody: a holder past the new limit keeps its slot, and the next one fits', async () => {
+    mkdirSync(slots, { recursive: true });
+    const paths = heavySlotPaths(slots);
+    expect(acquireFileLock(paths[3], Date.now(), 5_000)).toBe(true);
+    expect(await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('low'), limit: async () => 1 })).toBeNull();
+    const two = await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('two'), limit: async () => 2 });
+    expect(two!.slot).toBe(paths[0]);
+    expect(await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('full'), limit: async () => 2 })).toBeNull();
+    const five = await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('five'), limit: async () => 5 });
+    expect(five!.slot).toBe(paths[1]);
+    two!.release(); five!.release();
+    releaseFileLock(paths[3]);
+  });
+
   it('a limit that throws, is NaN or 0 reads as the default', async () => {
     for (const limit of [async () => { throw new Error('x'); }, async () => Number.NaN, async () => 0]) {
       const seen: number[] = [];
       const a = await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('a'), limit, onLimit: (n) => seen.push(n) });
       const b = await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('b'), limit, onLimit: (n) => seen.push(n) });
-      expect(seen).toEqual([HEAVY_MACHINE_SLOTS, HEAVY_MACHINE_SLOTS]);
+      expect(seen).toEqual([machineHeavySlots(), machineHeavySlots()]);
       expect(a && b).toBeTruthy();
       a!.release(); b!.release();
     }
@@ -199,7 +220,7 @@ describe('machine heavy slots under heat', () => {
     const code = await builderHeavy(deps(join(root, 'x'), async () => 1), [process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(marker)},'x')`], { maxWait: '0' });
     expect(code).toBe(HEAVY_LOCK_BUSY_EXIT);
     expect(existsSync(marker)).toBe(false);
-    expect(err.join('\n')).toMatch(/macOS reports critical heat or memory pressure, so this machine runs one heavy step at a time; slot held by pid \d+/);
+    expect(err.join('\n')).toMatch(/critical heat or memory pressure, so this machine runs one heavy step at a time; slot held by pid \d+/);
   });
 
   it('a repo-lock timeout keeps the repo-lock text, never the heat text', async () => {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { machineHeavySlots } from '../../src/lib/builder-tools.js';
 import { HEAT_HOT, clampLimit, heavyLimitFor, readBagMode, readHeatLevel, readMemoryCritical } from '../../src/lib/heat.js';
 
 // Heat and the machine's heavy steps (AC1): very hot = one step machine-wide, else two.
@@ -22,18 +23,20 @@ describe('heavyLimitFor / clampLimit', () => {
     expect(HEAT_HOT).toEqual(['serious', 'critical']);
     expect(heavyLimitFor('serious')).toBe(2);
     expect(heavyLimitFor('critical')).toBe(1);
-    expect(heavyLimitFor('fair')).toBe(4);
-    expect(heavyLimitFor('nominal')).toBe(4);
-    expect(heavyLimitFor('nominal', true)).toBe(1);
-    expect(heavyLimitFor(null)).toBe(4);
+    expect(heavyLimitFor('fair', false, 6)).toBe(6);
+    expect(heavyLimitFor('nominal', false, 6)).toBe(6);
+    expect(heavyLimitFor('nominal', true, 6)).toBe(1);
+    expect(heavyLimitFor('serious', false, 6)).toBe(2);
+    expect(heavyLimitFor(null, false, 6)).toBe(6);
   });
 
   it('clamps into [1, 2]; NaN, 0, negatives and non-numbers read as 2', () => {
     expect(clampLimit(1)).toBe(1);
     expect(clampLimit(2)).toBe(2);
-    expect(clampLimit(5)).toBe(4);
+    expect(clampLimit(5)).toBe(5);
+    expect(clampLimit(99)).toBe(16);
     expect(clampLimit(1.7)).toBe(1);
-    for (const junk of [Number.NaN, 0, -1, Infinity, '1', null, undefined]) expect(clampLimit(junk)).toBe(4);
+    for (const junk of [Number.NaN, 0, -1, Infinity, '1', null, undefined]) expect(clampLimit(junk)).toBe(machineHeavySlots());
   });
 });
 

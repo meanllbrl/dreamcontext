@@ -6,7 +6,9 @@ import { promisify } from 'node:util';
 import { activityOf, getChat } from '../assistant/chat-registry.js';
 import { heavySlotDir, heavySlotsHeld } from '../builder-tools.js';
 import type { MacThermalState } from '../handsfree/mac/contract.js';
-import { heavyLimitFor, readBagMode, readHeatLevel } from '../heat.js';
+import { heavyLimitFor, parseVmStat, readBagMode, readHeatLevel } from '../heat.js';
+
+export { parseVmStat };
 import { MAX_LIVE_CHILDREN, type SuperState } from './types.js';
 import { superWorktreeRoot } from './store.js';
 
@@ -91,21 +93,6 @@ const defaultDeps = (): CapacityDeps => ({
 export const CAPACITY_TTL_MS = 60_000;
 const GB = 1024 ** 3;
 const round1 = (n: number) => Math.round(n * 10) / 10;
-
-/**
- * Available memory from a `vm_stat` sample: free + inactive + purgeable + speculative pages
- * times the page size the header names. Null when the sample is not one.
- */
-export function parseVmStat(text: string): number | null {
-  const size = /page size of (\d+) bytes/.exec(text);
-  if (!size) return null;
-  const pages = (label: string): number => {
-    const m = new RegExp(`^Pages ${label}:\\s+(\\d+)\\.?\\s*$`, 'm').exec(text);
-    return m ? Number(m[1]) : 0;
-  };
-  const total = pages('free') + pages('inactive') + pages('purgeable') + pages('speculative');
-  return total * Number(size[1]);
-}
 
 /** `sysctl vm.swapusage` → used and total GB: `total = 20480.00M  used = 19316.50M  free = …`. */
 export function parseSwapUsage(text: string): { usedGb: number; totalGb: number } | null {
