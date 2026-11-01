@@ -3243,7 +3243,8 @@ export function killRunGroup(
     numTurns: null,
     permissionDenials: 0, // "not collected", never "none occurred" on this path
   };
-  recordRun(contextRoot, slug, event, { advanceWatermark: !sidecar.light });
+  // A parallel turn (an ask, a reply) stands in for no scheduled fire, killed or not.
+  recordRun(contextRoot, slug, event, { advanceWatermark: !sidecar.light && !sidecar.slot });
   logFn(`automation "${slug}": operator killed process group ${sidecar.childPgid}`);
 
   // Guard 7 — clear.

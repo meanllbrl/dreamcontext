@@ -287,6 +287,14 @@ describe('shared files and dead keys', () => {
     expect(readRunSidecar(contextRoot, SLUG, '')?.slot).toBeUndefined();
   });
 
+  it('killing a parallel turn leaves the schedule\'s fire owed', () => {
+    const slot = runSlotKey('run:killed');
+    writeRunSidecar(contextRoot, SLUG, { slug: SLUG, runnerPid: 4242, childPid: 4243, childPgid: 4243, fireAt: new Date().toISOString(), startedAt: new Date().toISOString(), timeoutAt: iso(9), slot });
+    const r = killRunGroup(contextRoot, SLUG, { slot, killImpl: () => {}, isOurs: () => true });
+    expect(r.killed).toBe(true);
+    expect(readAutomationCache(contextRoot, SLUG)?.lastFireAt ?? null).toBeNull();
+  });
+
   it('kill reads the turn fresh: one that ended while the operator was asked is not found', () => {
     expect(killRunGroup(contextRoot, SLUG, { slot: runSlotKey('run:gone') }).found).toBe(false);
   });
