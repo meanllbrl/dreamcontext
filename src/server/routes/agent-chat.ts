@@ -1078,7 +1078,7 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
     const formerAdopted = new Set(state?.formerAdopted ?? []);
     records.set(name, {
       session: idx.session, enabled: idx.enabled, former: (state?.formerChildren ?? []).filter((id) => !formerAdopted.has(id)),
-      children: Object.entries(state?.children ?? {}).map(([id, c]) => ({
+      children: Object.entries(state?.children ?? {}).filter(([id]) => !phoneReadsAsRun(ctx, [id])).map(([id, c]) => ({
         id, title: childDigestName(state!, id), startedAt: c.startedAt,
         ...(c.endedAt !== undefined ? { endedAt: c.endedAt } : {}), ...(c.adopted ? { adopted: true } : {}),
       })),
@@ -1354,6 +1354,13 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       })();
       return;
     }
+    // K4: a phone never holds, adopts or watches a run. What a child streams and replays is a run's
+    // tool input and output, so the gate stands before every way to a child, not on each frame. A
+    // phone reads a run through its steps and continues it through the reply route.
+    if (phone) {
+      const ctx = join(projectRoot, '_dream_context');
+      if (phoneReadsAsRun(ctx, [resumeId, sessionId, ...[resumeId, sessionId].map((cid) => (cid ? resolveAgentSession(ctx, cid) : ''))])) { rejectUpgrade(socket, 403); return; }
+    }
     // A Super Agent child while its project is handed over (hands-free sekmeler D6): a remote
     // screen WATCHES it, beside the Mac window that holds it, and never adopts, supersedes,
     // evicts or respawns it — whatever the mode, reattach value or id case. Not live: refused.
@@ -1459,12 +1466,6 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       // the conversation up, exactly as a closed socket made it do before detaching existed.
       const live = findLiveChat(resumeId);
       const ctx = join(projectRoot, '_dream_context');
-      // K4: a phone never holds or adopts a run. What a child streams and replays is a run's tool
-      // input and output, so the gate stands before any frame, not on each one. A phone reads a
-      // run through its steps and continues it through the reply route.
-      if (phone && phoneReadsAsRun(ctx, [resumeId, sessionId, ...[resumeId, sessionId].map((cid) => (cid ? resolveAgentSession(ctx, cid) : ''))])) {
-        releaseOpening(); rejectUpgrade(socket, 403); return;
-      }
       const open = chatOpenDecision({
         phone, live, projectRoot, reattach,
         foreignTranscript: phone && [resumeId, sessionId].some((cid) => !!cid && phoneTranscriptRefused(req, ctx, liveTranscriptPath(ctx, cid))),

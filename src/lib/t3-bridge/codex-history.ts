@@ -29,7 +29,22 @@ function textOf(content: unknown, kind: 'input_text' | 'output_text'): string {
 /** A user message a harness injected rather than the owner typed. */
 export function isInjectedUserText(text: string): boolean {
   const t = text.trimStart();
-  return /^<[a-z_][a-z0-9_-]*[\s>]/i.test(t);
+  // Codex hands a project's AGENTS.md over as a user message.
+  return /^<[a-z_][a-z0-9_-]*[\s>]/i.test(t) || t.startsWith('# AGENTS.md instructions for ');
+}
+
+/** The first thing a person or a runner said in a rollout, from its top: the history keeps only the
+ *  newest items, and a long run's first prompt falls off that. */
+export function firstCodexUserText(raw: string): string {
+  for (const line of raw.split('\n')) {
+    let rec: { type?: unknown; payload?: { type?: unknown; role?: unknown; content?: unknown } };
+    try { rec = JSON.parse(line) as typeof rec; } catch { continue; }
+    const p = rec.payload;
+    if (rec.type !== 'response_item' || p?.type !== 'message' || p.role !== 'user') continue;
+    const text = textOf(p.content, 'input_text');
+    if (text.trim() && !isInjectedUserText(text)) return text;
+  }
+  return '';
 }
 
 export function parseCodexRolloutHistory(raw: string): ChatHistoryItem[] {

@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { isRunSession, offerableSession, phoneReadsAsRun, phoneRunItems, runChatSession } from '../../src/lib/automations/run-chat.js';
 import { recordThreadTurn } from '../../src/lib/t3-bridge/instance-threads.js';
+import { clearCodexSessionCache, listCodexSessions } from '../../src/lib/t3-bridge/codex-sessions.js';
 import { isNotedRunSession, noteRunSession, replaceRunSession, runningSessionFor } from '../../src/lib/automations/run-session.js';
 import { recordAutomationSession } from '../../src/lib/automations/session-registry.js';
 import { listAgentHistory } from '../../src/lib/agents/history.js';
@@ -39,6 +40,7 @@ const plantCache = (slug: string, sessionId: string): void => {
 };
 
 beforeEach(() => {
+  clearCodexSessionCache();
   home = realpathSync(mkdtempSync(join(tmpdir(), 'run-trust-home-')));
   root = join(realpathSync(mkdtempSync(join(tmpdir(), 'run-trust-'))), '_dream_context');
   mkdirSync(join(root, 'state'), { recursive: true });
@@ -203,6 +205,25 @@ describe('the phone gate on a tool with no hook note', () => {
     expect(phoneReadsAsRun(root, [A], home)).toBe(true);
     expect(phoneReadsAsRun(root, [A.toUpperCase()], home)).toBe(true);
     expect(phoneReadsAsRun(root, [B], home)).toBe(false);
+  });
+
+  it('a project\'s AGENTS.md is not the first prompt, and a long run keeps its first prompt', () => {
+    const dir = join(home, '.codex', 'sessions', '2026', '10', '30');
+    mkdirSync(dir, { recursive: true });
+    const said = (text: string) => ({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } });
+    writeFileSync(join(dir, `rollout-2026-10-30T10-00-00-${A}.jsonl`), `${[
+      { type: 'session_meta', payload: { id: A, cwd: root } },
+      said('# AGENTS.md instructions for /x\n\n<INSTRUCTIONS>rules</INSTRUCTIONS>'),
+      said('You are scheduled dreamcontext automation "watch".'),
+    ].map((r) => JSON.stringify(r)).join('\n')}\n`);
+    writeFileSync(join(dir, `rollout-2026-10-30T11-00-00-${B}.jsonl`), `${[
+      { type: 'session_meta', payload: { id: B, cwd: root } },
+      said('You are scheduled dreamcontext automation "watch".'),
+      ...Array.from({ length: 2100 }, (_, i) => ({ type: 'response_item', payload: { type: 'function_call', name: 'shell', call_id: `c${i}`, arguments: '{}' } })),
+    ].map((r) => JSON.stringify(r)).join('\n')}\n`);
+    expect(phoneReadsAsRun(root, [A], home)).toBe(true);
+    expect(phoneReadsAsRun(root, [B], home)).toBe(true);
+    expect(listCodexSessions(dirname(root), { home }).length).toBe(0);
   });
 
   it('an Antigravity run the same way', () => {

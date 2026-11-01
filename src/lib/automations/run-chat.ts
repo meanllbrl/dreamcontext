@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { findTranscriptBySessionId } from '../transcript-locate.js';
 import { transcriptIsUnattendedRun } from '../transcript-sessions.js';
 import { codexThreadUnattended } from '../t3-bridge/codex-sessions.js';
+import { delegatedChildMcp } from '../super/store.js';
 import { instanceThreadUnattended } from '../t3-bridge/instance-threads.js';
 import type { ChatHistoryItem } from '../transcript-history.js';
 import { isAutomationBoundSession, readAutomationSession, sessionForRun } from './session-registry.js';
@@ -45,7 +46,7 @@ export function runChatSession(contextRoot: string, slug: string, runId: string,
  * Is this conversation a run's, on this machine? Answers for a run in flight and a killed one (the
  * note), a finished one (the binding), and one whose binding was retired or aged out (its project's
  * run cache). The cache is synced, and a planted id is safe here for the reason it is safe in a
- * warning: all a yes can do is show the phone less. Case folds first: a transcript's file name
+ * warning: all a yes can do is show the phone less, or refuse it that one chat. Case folds first: a transcript's file name
  * matches either case on this Mac, so an uppercased id must not read as someone else's.
  */
 export function runSessionCheck(contextRoot: string | null, home: string = homedir()): (id: string) => boolean {
@@ -98,6 +99,8 @@ export function phoneReadsAsRun(contextRoot: string | null, ids: readonly string
   return ids.some((raw) => {
     if (!raw) return false;
     const id = raw.toLowerCase();
+    // A child the Super delegated is its own, whatever its brief opens with; an adopted one is not.
+    if (delegatedChildMcp(id) !== null) return false;
     const path = findTranscriptBySessionId([id], home);
     return (!!path && transcriptIsUnattendedRun(path)) || codexThreadUnattended(id, home) || instanceThreadUnattended(id, home);
   });

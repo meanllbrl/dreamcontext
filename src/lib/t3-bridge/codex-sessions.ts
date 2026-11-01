@@ -7,12 +7,12 @@
  * A thread a tab ran under keeps the tab's id as its row id, so the list knows it is open and a
  * pick lands on that tab; its name is the tab's remembered name.
  */
-import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { UUID_RE } from '../agent-session-map.js';
 import { foldCase, isUnattendedRun, matchSnippet, oneLine, promptLabel, type PastSession } from '../transcript-sessions.js';
-import { parseCodexRolloutHistory } from './codex-history.js';
+import { firstCodexUserText, parseCodexRolloutHistory } from './codex-history.js';
 import { CODEX_THREAD_RE, codexRolloutCwd, findCodexRollout } from './codex-threads.js';
 
 export type CodexPastSession = PastSession & { tool: 'codex'; unattended: boolean };
@@ -86,17 +86,34 @@ function read(r: Rollout, cwdOnly: boolean): { cwd: string | null; summary: Summ
  *  turn on: no hook notes a Codex run, and its binding lands only when it ends. */
 export function codexThreadUnattended(thread: string, home: string = homedir()): boolean {
   const path = findCodexRollout(thread, join(home, '.codex'));
-  if (!path) return false;
+  return !!path && rolloutUnattended(path);
+}
+
+/** How much of a rollout the first prompt is looked for in. */
+const FIRST_PROMPT_BYTES = 1024 * 1024;
+const unattendedRollouts = new Map<string, boolean>();
+
+/** By the rollout's top, never the capped history. A first prompt does not change: kept once seen. */
+function rolloutUnattended(path: string): boolean {
+  const known = unattendedRollouts.get(path);
+  if (known !== undefined) return known;
+  let fd: number | null = null;
   try {
-    const st = statSync(path);
-    const { summary } = read({ path, id: thread.toLowerCase(), mtimeMs: st.mtimeMs, size: st.size }, false);
-    return !!summary && isUnattendedRun(promptLabel(summary.prompts[0]!));
-  } catch { return false; }
+    fd = openSync(path, 'r');
+    const buf = Buffer.alloc(FIRST_PROMPT_BYTES);
+    const first = firstCodexUserText(buf.toString('utf-8', 0, readSync(fd, buf, 0, FIRST_PROMPT_BYTES, 0)));
+    if (!first) return false;
+    const yes = isUnattendedRun(promptLabel(first));
+    if (unattendedRollouts.size >= MAX_CACHED) unattendedRollouts.clear();
+    unattendedRollouts.set(path, yes);
+    return yes;
+  } catch { return false; } finally { if (fd !== null) closeSync(fd); }
 }
 
 /** Tests: forget what was read. */
 export function clearCodexSessionCache(): void {
   cache.clear();
+  unattendedRollouts.clear();
 }
 
 const real = (p: string): string | null => {
@@ -159,7 +176,7 @@ export function listCodexSessions(
     rows.push({
       id, title, named: !!remembered, preview, updatedAt: r.mtimeMs, startedAt: summary.startedAt,
       sizeBytes: r.size, gitBranch: summary.gitBranch, agentRun: false, tool: 'codex',
-      unattended: isUnattendedRun(promptLabel(summary.prompts[0]!)), ...hit,
+      unattended: rolloutUnattended(r.path), ...hit,
     });
   }
   return rows;

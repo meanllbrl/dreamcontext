@@ -359,6 +359,33 @@ describe('phone listener: the route policy over the FULL route table (AC4/AC5)',
       expect(chats).not.toContain(RUN_ID);
     } finally { held.forEach(unregisterLiveChat); }
 
+    // A run the Super adopted stays out of a phone's reach: no watch, no job row. A child it
+    // delegated is its own, however its brief opens: that one a phone still watches.
+    let watched = 0;
+    const watchable = (conversationId: string) => ({ conversationId, projectRoot: join(dir, PROJECT), busy: true, watch: () => false, watchRoom: () => { watched++; return true; } }) as never;
+    const children = [watchable(RUN_ID), watchable(OLD_ID)];
+    await updateSuperState(context0(), (st) => {
+      st.enabled = true;
+      st.session = 'abababab-0000-4000-8000-00000000000a';
+      st.children = {
+        [RUN_ID]: { sessionId: RUN_ID, brief: 'BRIEF-OF-A-RUN', adopted: true, startedAt: 1 },
+        [OLD_ID]: { sessionId: OLD_ID, brief: 'a delegated job', adopted: false, startedAt: 1 },
+      } as never;
+    });
+    children.forEach(registerLiveChat);
+    try {
+      expect(await upgrade(phonePort, `/api/agent/chat?vault=${PROJECT}&resume=${RUN_ID}`, { cookie, origin: ORIGIN })).toBe(403);
+      expect(watched).toBe(0);
+      const rows = (await request(phonePort, 'GET', '/api/agent/live-chats', H())).body;
+      expect(rows).not.toContain(RUN_ID);
+      expect(rows).not.toContain('BRIEF-OF-A-RUN');
+      await upgrade(phonePort, `/api/agent/chat?vault=${PROJECT}&resume=${OLD_ID}`, { cookie, origin: ORIGIN });
+      expect(watched).toBe(1);
+    } finally {
+      children.forEach(unregisterLiveChat);
+      await updateSuperState(context0(), (st) => { st.enabled = false; st.session = null; st.children = {}; });
+    }
+
     // A delegated task is a person's chat: listed, and read whole on the phone.
     expect(listed.sessions.map((s: { id: string }) => s.id)).toContain(TASK_ID);
     expect((await request(phonePort, 'GET', `/api/agent/chat-history?claudeId=${TASK_ID}`, H())).body).toContain('TASK-COMMAND-MARKER');
