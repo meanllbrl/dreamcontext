@@ -72,18 +72,20 @@ export function readImageMessage(data: unknown): ImageMessage | null {
 
 /** Ms after the viewer closes in which the same page cannot open it again. */
 export const REOPEN_COOLDOWN_MS = 500;
+/** How long a click into the card's frame keeps the gate armed. */
+export const ARM_TTL_MS = 1500;
 
 /**
  * May a page's picture message open the viewer now? Only as the answer to a click INSIDE that card:
- * - `armed`: the focus moved into the card's frame since the last open (the window blurred or got
- *   focus with the frame as its active element). Typing in the chat or clicking a button does not
- *   arm it, and an open uses it up, so closing the viewer cannot re-arm a page that posts on a timer.
+ * - `armedAt`: when the window last blurred INTO the card's frame while the pointer was over it (a
+ *   real click does both; a page focusing itself under the chat or the viewer does not). It lives
+ *   ARM_TTL_MS and an open uses it up, so closing the viewer cannot re-arm a page that posts on a timer;
  * - the top window holds a live user activation, where the browser reports one;
  * - the viewer did not just close.
- * No engine answer to `userActivation` is not a pass: `armed` alone gates it then.
+ * A browser with no `userActivation` is not a pass: the arm alone gates it then.
  */
-export function mayOpenFromFrame(o: { now: number; closedAt: number; active: boolean | undefined; armed: boolean }): boolean {
-  if (!o.armed) return false;
+export function mayOpenFromFrame(o: { now: number; closedAt: number; active: boolean | undefined; armedAt: number | null }): boolean {
+  if (o.armedAt === null || o.now - o.armedAt > ARM_TTL_MS) return false;
   if (o.now - o.closedAt < REOPEN_COOLDOWN_MS) return false;
   return o.active !== false;
 }

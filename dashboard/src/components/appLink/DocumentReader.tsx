@@ -493,7 +493,7 @@ function HtmlPage({
   // A picture the owner clicked in the page: the app's own viewer, over the whole window.
   const [shot, setShot] = useState<ImageMessage | null>(null);
   const shotClosedAt = useRef(0);
-  const frameArmed = useRef(false);
+  const frameArmedAt = useRef<number | null>(null);
   const html = state.html;
   // Filling at the desktop width: the scale its box's width asks for (a 0-wide box keeps the last).
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -531,21 +531,24 @@ function HtmlPage({
       const w = readPageFit(event.data);
       if (w !== undefined) pageFit.current?.(w);
       const img = readImageMessage(event.data);
-      if (img && mayOpenFromFrame({ now: Date.now(), closedAt: shotClosedAt.current, active: (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation?.isActive, armed: frameArmed.current })) {
-        frameArmed.current = false; // one open per click into the frame
+      if (img && mayOpenFromFrame({ now: Date.now(), closedAt: shotClosedAt.current, active: (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation?.isActive, armedAt: frameArmedAt.current })) {
+        frameArmedAt.current = null; // one open per click into the frame
         frameRef.current?.blur(); // the next click into it moves focus again, and arms again
         setShot(img);
       }
     }
     // A click into the card moves the window's focus to its frame: that, and only that, arms one open.
-    const arm = () => { if (frameRef.current && document.activeElement === frameRef.current) frameArmed.current = true; };
+    // Only a blur into the frame with the pointer over it: a page focusing itself (`focus()`, a hash)
+    // while the user types in the chat or sits on the viewer is not a click.
+    const arm = () => {
+      const f = frameRef.current;
+      if (f && document.activeElement === f && f.matches(':hover')) frameArmedAt.current = Date.now();
+    };
     window.addEventListener('message', onMessage);
     window.addEventListener('blur', arm);
-    window.addEventListener('focus', arm);
     return () => {
       window.removeEventListener('message', onMessage);
       window.removeEventListener('blur', arm);
-      window.removeEventListener('focus', arm);
     };
   }, []);
 

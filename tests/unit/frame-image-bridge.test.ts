@@ -45,14 +45,15 @@ describe('IMAGE_BRIDGE', () => {
 });
 
 describe('mayOpenFromFrame: a page opens the viewer only as the answer to a click into its frame', () => {
-  it('needs the frame armed, a live activation where reported, and a quiet moment after a close', async () => {
-    const { mayOpenFromFrame, REOPEN_COOLDOWN_MS } = await import('../../dashboard/src/components/layout/frameImageBridge');
-    const base = { now: 10_000, closedAt: 0, active: true as boolean | undefined, armed: true };
+  it('needs a fresh arm, a live activation where reported, and a quiet moment after a close', async () => {
+    const { mayOpenFromFrame, REOPEN_COOLDOWN_MS, ARM_TTL_MS } = await import('../../dashboard/src/components/layout/frameImageBridge');
+    const base = { now: 10_000, closedAt: 0, active: true as boolean | undefined, armedAt: 9_800 as number | null };
     expect(mayOpenFromFrame(base)).toBe(true);
-    expect(mayOpenFromFrame({ ...base, armed: false })).toBe(false); // a timer in the page, activation from typing elsewhere
+    expect(mayOpenFromFrame({ ...base, armedAt: null })).toBe(false); // a timer in the page, activation from typing elsewhere
+    expect(mayOpenFromFrame({ ...base, armedAt: 10_000 - ARM_TTL_MS - 1 })).toBe(false); // a stale click cannot wait for a timer
     expect(mayOpenFromFrame({ ...base, active: false })).toBe(false);
-    expect(mayOpenFromFrame({ ...base, active: undefined })).toBe(true); // no userActivation API: armed alone
-    expect(mayOpenFromFrame({ ...base, active: undefined, armed: false })).toBe(false); // …and never open by default
+    expect(mayOpenFromFrame({ ...base, active: undefined })).toBe(true); // no userActivation API: the arm alone
+    expect(mayOpenFromFrame({ ...base, active: undefined, armedAt: null })).toBe(false); // …and never open by default
     expect(mayOpenFromFrame({ ...base, closedAt: 10_000 - REOPEN_COOLDOWN_MS + 1 })).toBe(false);
     expect(mayOpenFromFrame({ ...base, closedAt: 10_000 - REOPEN_COOLDOWN_MS })).toBe(true);
   });
