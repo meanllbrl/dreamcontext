@@ -126,7 +126,8 @@ export function MarkdownPreview({ content, frontmatter, onWikilink }: Props) {
   // Both passes stay keyed to the message text: they are marker-guarded (`data-highlighted`,
   // `.mermaid-rendered`), so re-running them over an unchanged subtree is a walk and nothing
   // more, and keying them narrower risks a re-rendered block being left undecorated.
-  useMermaidRender(bodyRef, content, resolved, 'md-mmd');
+  // Mermaid draws its labels itself, past every filter: in an app's chat a fence stays code.
+  useMermaidRender(bodyRef, stripRemote ? null : content, resolved, 'md-mmd');
   useCodeHighlight(bodyRef, content);
 
   const fmEntries = frontmatter
