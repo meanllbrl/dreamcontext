@@ -593,6 +593,12 @@ export interface SuperQueueItem {
   /** A team job's `done`/`stuck`/`question` item: the job's id (`SuperTeamJob.id`). Its
    *  `sessionId` is the super's own: a team member is not a child. */
   team?: string;
+  /** A team item: what it delivers of the job's posts, fixed when it was queued, so the same post
+   *  never rides two events. `upto` absent: nothing new. Absent on a record from before this. */
+  posts?: { after?: string; upto?: string };
+  /** A team `done` item that is an answer of a job still going, or a late one (`event=answer`):
+   *  it ends nothing, and no ending replaces it. */
+  partial?: true;
   /** A child's `question` shown to the OWNER from birth (owner 2026-10-27): its card is on his
    *  bar at once, with a button that opens the child's chat, while the Super hears it in its next
    *  event turn and may answer it first. Whoever answers, the child leaves `asking` and the item
@@ -664,6 +670,14 @@ export interface SuperTeamJob {
   /** A stuck its watch concluded itself: the member left the AI Team, or its turn was lost with
    *  the server (no record of an ending, nothing running it). */
   concluded?: TeamJobConclusion;
+  /** The newest post of this job's run the super was given (on the chain's first job): every post
+   *  reaches it once, whichever event carries it. */
+  toldPost?: string;
+  /** When its done or stuck was told: a late post is still watched for `TEAM_TRAIL_MS`. */
+  toldEndAt?: number;
+  /** The owner wrote to the member on this job's own conversation: the job it continues. It has
+   *  no card of its own. */
+  followUpOf?: string;
 }
 
 /** What a team job's ending tells the super: it finished, failed, or its run stopped to ask the owner. */

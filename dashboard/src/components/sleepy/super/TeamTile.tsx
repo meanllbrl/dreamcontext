@@ -9,7 +9,7 @@ import { useSpinSlot } from './spinSlots';
 
 /** A team card's job and what the server read from the member's thread for it (the view's
  *  `teamLive`; null before the first read). */
-export interface TeamCard { job: SuperTeamJob; status: TeamJobStatus | null; lastLine: string }
+export interface TeamCard { job: SuperTeamJob; status: TeamJobStatus | null; lastLine: string; sessionId?: string; resumable?: boolean }
 
 /** A team job's status in the ONE status language every card speaks (superTone.css): waiting in
  *  the member's queue reads as starting, running as working, a question to the owner as asking,

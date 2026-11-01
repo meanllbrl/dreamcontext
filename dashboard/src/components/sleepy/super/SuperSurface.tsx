@@ -71,7 +71,7 @@ export interface SuperSurfaceProps {
   miniRail?: boolean;
   /** A team card shown large: its member's conversation (SuperContainer's `teamConversation`).
    *  Absent while the surface is folded away: it hands the session back to the AI Team page. */
-  teamConversation?: (member: string) => ReactNode;
+  teamConversation?: (card: TeamCard) => ReactNode;
   titleFor: (claudeId: string) => string;
   /** A child's job NAME for the agenda: its tab title (the brief is its second line). */
   nameFor?: (claudeId: string) => string;
@@ -399,7 +399,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     const job = state.team.find((j) => j.id === c.ref);
     if (!job) return undefined;
     const live = state.teamLive?.[job.id];
-    return { job, status: live?.status ?? null, lastLine: live?.lastLine ?? '' };
+    return { job, status: live?.status ?? null, lastLine: live?.lastLine ?? '', ...(live?.sessionId ? { sessionId: live.sessionId } : {}), ...(live?.resumable ? { resumable: true } : {}) };
   }, [state.team, state.teamLive]);
   /** A remote stage's child (no live session here): the row its status is read from. Null on the Mac. */
   const remoteRowOf = (sid: string): RemoteRow | null => (remote && hasOwnKey(state.children, sid) ? state.children[sid] : null);

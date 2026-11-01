@@ -628,7 +628,7 @@ export interface SuperStateView extends SuperState {
   vault: string;
   /** Each AI Team job on the stage (a `team` card): its status and last line, read now from the
    *  member's thread. Absent when no team card is open. */
-  teamLive?: Record<string, { status: TeamJobStatus; lastLine: string }>;
+  teamLive?: Record<string, { status: TeamJobStatus; lastLine: string; sessionId?: string; resumable?: boolean }>;
   /** Queue items whose banner the server posted (lib/super/owner-question.ts): the job bar posts
    *  no second one. Absent: none. */
   bannered?: string[];
@@ -797,7 +797,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     teamLive = {};
     for (const j of team) {
       const row = (v.teamLive as Record<string, unknown>)[j.id];
-      if (isRecord(row) && oneOf(TEAM_JOB_STATUSES, row.status) && typeof row.lastLine === 'string') teamLive[j.id] = { status: row.status, lastLine: row.lastLine };
+      if (isRecord(row) && oneOf(TEAM_JOB_STATUSES, row.status) && typeof row.lastLine === 'string') teamLive[j.id] = { status: row.status, lastLine: row.lastLine, ...(typeof row.sessionId === 'string' ? { sessionId: row.sessionId } : {}), ...(row.resumable === true ? { resumable: true } : {}) };
     }
   }
   const children: Record<string, SuperChild> = {};
