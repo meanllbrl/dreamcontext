@@ -1,3 +1,4 @@
+import { refreshCodexHealth } from '../lib/codex-bin.js';
 import { codexEnsuredFor, codexEnsureNeeded, markCodexEnsured } from '../lib/codex-ensure.js';
 import { readDreamcontextVersionFromDisk } from '../lib/manifest.js';
 import { selfUpdateJobDisabledReason } from './self-update-job.js';
@@ -15,7 +16,8 @@ export function startCodexEnsureJob(env: NodeJS.ProcessEnv = process.env): (() =
   const version = readDreamcontextVersionFromDisk();
   if (!version || codexEnsuredFor() === version) return undefined;
   const t = setTimeout(() => {
-    try {
+    void (async () => {
+      await refreshCodexHealth();
       if (!codexEnsureNeeded()) { markCodexEnsured(version); return; }
       startFixRun('codex-update', serverProbeContext('desktop'), {
         onDone: (outcome) => {
@@ -23,9 +25,7 @@ export function startCodexEnsureJob(env: NodeJS.ProcessEnv = process.env): (() =
           else console.error(`[codex-ensure] ${outcome.reason ?? 'failed'}: ${outcome.detail ?? ''}`);
         },
       });
-    } catch (err) {
-      console.error('[codex-ensure]', err);
-    }
+    })().catch((err: unknown) => { console.error('[codex-ensure]', err); });
   }, FIRST_TICK_MS);
   t.unref?.();
   return () => clearTimeout(t);

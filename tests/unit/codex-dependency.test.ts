@@ -112,6 +112,11 @@ describe('the managed install', () => {
     extra.packages[nested] = { resolved: `${CODEX_PIN.registry}x.tgz`, integrity: 'x' };
     expect(verifyFetched(JSON.stringify(extra), 'darwin-arm64')).toMatch(/Unexpected/);
   });
+  it('npm 11 lists other platforms as inert: fine while nothing landed there, refused if it did', () => {
+    const text = lock({ [`node_modules/${CODEX_PIN.package}-darwin-x64`]: { ideallyInert: true } });
+    expect(verifyFetched(text, 'darwin-arm64', () => false)).toBe('');
+    expect(verifyFetched(text, 'darwin-arm64', () => true)).toMatch(/Unexpected/);
+  });
   it('refuses a mirror', () => {
     expect(verifyFetched(lock({ [`node_modules/${CODEX_PIN.package}`]: { resolved: 'https://evil.example/codex.tgz', integrity: CODEX_PIN.integrity } }), 'darwin-arm64')).toMatch(/official/);
   });
@@ -210,6 +215,20 @@ describe('the managed install', () => {
     const outer = await withCodexInstallLock(home, async () => { inner = await withCodexInstallLock(home, async () => 'second'); return 'first'; });
     expect(outer).toBe('first');
     expect(inner).toBeNull();
+  });
+
+  it('a lock left by a killed process frees at once', async () => {
+    const lock = join(home, '.dreamcontext/tools/.codex-install.lock');
+    mkdirSync(lock, { recursive: true });
+    writeFileSync(join(lock, 'pid'), '999999');
+    expect(await withCodexInstallLock(home, async () => 'ran')).toBe('ran');
+  });
+
+  it('a lock held by a live process stays', async () => {
+    const lock = join(home, '.dreamcontext/tools/.codex-install.lock');
+    mkdirSync(lock, { recursive: true });
+    writeFileSync(join(lock, 'pid'), String(process.ppid));
+    expect(await withCodexInstallLock(home, async () => 'ran')).toBeNull();
   });
 
   it('refuses a dreamcontext folder that is a link', async () => {

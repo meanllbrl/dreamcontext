@@ -8,7 +8,7 @@
  * Nothing lands until it passed: npm's own record of what it fetched must name the official
  * registry and the sha512 pinned in `codex-pin.ts`, and the program must answer `--version`.
  */
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { managedCodexBin, managedCodexBinDir, managedCodexRoot, managedCodexVersion } from '../codex-bin.js';
 import { CODEX_PIN, type CodexPlatform } from '../codex-pin.js';
@@ -76,10 +76,10 @@ export function codexLauncher(native: string, packageRoot: string, version: stri
   ].join('\n');
 }
 
-interface LockEntry { resolved?: string; integrity?: string }
+interface LockEntry { resolved?: string; integrity?: string; ideallyInert?: boolean }
 
 /** What npm says it fetched must be what the pin names. Empty = fine, else why not. */
-export function verifyFetched(lockText: string, key: CodexPlatform): string {
+export function verifyFetched(lockText: string, key: CodexPlatform, onDisk: (path: string) => boolean = () => true): string {
   // Keys are taken exactly as npm wrote them (it runs inside the install folder). Never trimmed: a
   // nested copy trimmed to a top-level key would stand in for the package that actually runs.
   let packages: Record<string, LockEntry> = {};
@@ -95,7 +95,9 @@ export function verifyFetched(lockText: string, key: CodexPlatform): string {
     if (e.integrity !== integrity) return `${path} does not match the pinned hash.`;
   }
   // Nothing else may have arrived with it: Codex has no other dependency.
-  const extra = Object.keys(packages).filter((p) => p && !want.some(([w]) => w === p));
+  // npm 11 also lists the other platforms' packages as inert. Only the flag AND an empty path
+  // pass: what landed on disk is always accounted for.
+  const extra = Object.keys(packages).filter((p) => p && !want.some(([w]) => w === p) && !(packages[p]?.ideallyInert === true && !onDisk(p)));
   return extra.length ? `Unexpected package: ${extra[0]}` : '';
 }
 
@@ -142,7 +144,7 @@ export async function installManagedCodex(e: CodexInstallEnv): Promise<CodexInst
 
     e.say('Checking the download against the pinned hash');
     const lock = join(partial, 'node_modules', '.package-lock.json');
-    const bad = verifyFetched(existsSync(lock) ? readFileSync(lock, 'utf-8') : '', key);
+    const bad = verifyFetched(existsSync(lock) ? readFileSync(lock, 'utf-8') : '', key, (p) => existsSync(join(partial, p)));
     if (bad) return { ok: false, reason: 'checksum', detail: bad };
     const relNative = join('node_modules', '@openai', `codex-${key}`, 'vendor', CODEX_PIN.platforms[key].triple, 'bin', 'codex');
     if (!existsSync(join(partial, relNative)) || isLink(join(partial, relNative))) return { ok: false, reason: 'failed', detail: 'The Codex package did not contain the program.' };
@@ -174,17 +176,40 @@ export async function installManagedCodex(e: CodexInstallEnv): Promise<CodexInst
   }
 }
 
-/** One Codex install on this machine at a time, across processes. Null = another one is running. */
+const lockAlive = (lock: string): boolean => {
+  try {
+    if (Date.now() - statSync(lock).mtimeMs > STALE_MS) return false;
+    const pid = Number(readFileSync(join(lock, 'pid'), 'utf-8'));
+    if (!pid) return true; // just taken: the pid lands a moment later
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM' || (err as NodeJS.ErrnoException).code === 'ENOENT' && existsSync(lock);
+  }
+};
+
+/**
+ * One Codex install on this machine at a time, across processes. Null = another one is running.
+ * The holder writes its pid and keeps the folder fresh, so a killed install frees it at once and
+ * a slow one is never taken for dead.
+ */
 export async function withCodexInstallLock<T>(home: string, fn: () => Promise<T>): Promise<T | null> {
   const lock = join(dirname(managedCodexRoot(home)), '.codex-install.lock');
   mkdirSync(dirname(lock), { recursive: true });
+  if (existsSync(lock) && !lockAlive(lock)) rmSync(lock, { recursive: true, force: true });
   try {
-    if (Date.now() - statSync(lock).mtimeMs > STALE_MS) rmSync(lock, { recursive: true, force: true });
-  } catch { /* no lock */ }
-  try { mkdirSync(lock); } catch { return null; }
+    mkdirSync(lock);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return null;
+    throw err;
+  }
+  writeFileSync(join(lock, 'pid'), String(process.pid));
+  const beat = setInterval(() => { try { utimesSync(lock, new Date(), new Date()); } catch { /* gone */ } }, 60_000);
+  beat.unref?.();
   try {
     return await fn();
   } finally {
+    clearInterval(beat);
     rmSync(lock, { recursive: true, force: true });
   }
 }
