@@ -292,7 +292,7 @@ export class BrainContext {
    * A turn ended: the Stop hook records the session for sleep, with the rollout as its transcript.
    * In the background, one at a time; {@link drain} waits for the last before the bridge exits.
    */
-  turnEnded(threadId: string, rolloutPath: string | null, lastMessage: string): void {
+  turnEnded(threadId: string, rolloutPath: string | null, lastMessage: string, opts: { canContinue?: boolean } = {}): void {
     if (!this.run || !threadId) return;
     const input = {
       hook_event_name: 'Stop',
@@ -306,6 +306,9 @@ export class BrainContext {
     const run = this.run;
     // After this turn's edit checks: the Stop check reads what they recorded.
     const continuation = input.stop_hook_active;
+    // A turn the owner stopped, or one that failed or hit a limit, is never sent on: Claude runs
+    // no Stop hook after an interrupt, and a refused account would only refuse again.
+    const canContinue = opts.canContinue !== false;
     const seen = this.checksSeen;
     this.stops = this.stops.then(() => this.edits).then(async () => {
       const reason = stopBlockReason(await run('stop', input, { cwd: this.o.cwd, env: this.env, timeoutMs: STOP_HOOK_TIMEOUT_MS }));
@@ -313,11 +316,11 @@ export class BrainContext {
       // a check that found an error sends the turn on with it, once (a continuation does not).
       // Only what this turn's own edits said: an older note already had its turn.
       const fresh = this.checks.slice(seen);
-      const errors = this.onStopBlock && !continuation && fresh.some((c) => /\berror\b/i.test(c)) ? fresh.join('\n\n') : '';
+      const errors = this.onStopBlock && canContinue && !continuation && fresh.some((c) => /\berror\b/i.test(c)) ? fresh.join('\n\n') : '';
       if (errors) this.checks.splice(seen);
       this.checksSeen = this.checks.length;
       const why = [errors ? `The edit checks found problems in what you changed:\n${errors}` : '', reason ?? ''].filter(Boolean).join('\n\n');
-      if (why && this.onStopBlock) {
+      if (why && this.onStopBlock && canContinue) {
         this.continuing = true;
         this.onStopBlock(why);
       }

@@ -61,6 +61,21 @@ describe('edit checks on the bridge', () => {
     expect(blocks).toHaveLength(1);
   });
 
+  it('a turn the owner stopped (or that failed) is never sent on, whatever the checks say', async () => {
+    const run: HookRunner = async (name) => (name === 'post-tool-use'
+      ? JSON.stringify({ hookSpecificOutput: { additionalContext: 'error TS2322' } })
+      : name === 'stop' ? JSON.stringify({ decision: 'block', reason: 'Type errors remain' }) : '');
+    const brain = new BrainContext({ cwd: '/tmp/x-no-brain', env: {}, run });
+    const blocks: string[] = [];
+    brain.onStopBlock = (r) => { blocks.push(r); };
+    brain.edited('t', 'src/a.ts');
+    brain.turnEnded('t', null, '', { canContinue: false });
+    await brain.drain();
+    expect(blocks).toEqual([]);
+    // What the checks said still rides the owner's next turn.
+    expect((await brain.prompt('next', 't')).find((c) => c.key === 'dreamcontext-checks')?.text).toContain('TS2322');
+  });
+
   it('reads only a real block answer', () => {
     expect(stopBlockReason('{"decision":"block","reason":"x"}\n')).toBe('x');
     expect(stopBlockReason('{"hookSpecificOutput":{}}')).toBeNull();

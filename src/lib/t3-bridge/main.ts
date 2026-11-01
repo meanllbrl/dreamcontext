@@ -73,7 +73,9 @@ export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Pr
       onResult: (session, frame) => {
         // Sleep sees the turn: the Stop hook records it, the rollout as its transcript.
         const transcript = o.tool === 'codex' ? findCodexRollout(session.nativeThreadId) : o.tool === 'antigravity' ? writeAntigravityTranscript(session.nativeThreadId, o.account || 'primary') : null;
-        brain?.turnEnded(session.nativeThreadId, transcript, typeof frame.result === 'string' ? frame.result : '');
+        // Only a turn that finished may be sent on by its checks: never one the owner stopped.
+        const canContinue = frame.is_error !== true && !frame.dc_limit && frame.terminal_reason !== 'aborted';
+        brain?.turnEnded(session.nativeThreadId, transcript, typeof frame.result === 'string' ? frame.result : '', { canContinue });
         return eco.onResult(session.nativeThreadId, session.wire.contextTokens);
       },
       ...(brain ? { brain } : {}),

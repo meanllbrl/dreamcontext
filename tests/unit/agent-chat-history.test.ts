@@ -276,6 +276,35 @@ describe('handleAgentChatHistory — subagent param (sidechain transcript)', () 
     expect(body().items).toEqual([]);
   });
 
+  // A Codex/Antigravity chat's sub-agent (TABLO row 41): the bridge's own step log, by thread.
+  const BRIDGE_THREAD = '0b1c2d3e-4f50-4617-8899-aabbccddeeff';
+  function bridgeRollout(): void {
+    const dir = join(tmpHome, '.codex', 'sessions', '2026', '11', '02');
+    mkdirSync(dir, { recursive: true });
+    const meta = { type: 'session_meta', payload: { id: BRIDGE_THREAD, cwd: join(tmpHome, 'vault') } };
+    const said = { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'the parent chat' }] } };
+    writeFileSync(join(dir, `rollout-2026-11-02T01-00-00-${BRIDGE_THREAD}.jsonl`), `${JSON.stringify(meta)}\n${JSON.stringify(said)}\n`);
+  }
+
+  it("serves a bridge sub-agent's own steps, for its own project only", async () => {
+    const { appendSubagentStep } = await import('../../src/lib/t3-bridge/subagent-log.js');
+    mkdirSync(join(tmpHome, 'vault'), { recursive: true });
+    appendSubagentStep(tmpHome, BRIDGE_THREAD, join(tmpHome, 'vault'), 't3-abc', { type: 'assistant', message: { content: [{ type: 'text', text: 'the sub-agent said' }] } });
+    const { res, body } = makeRes();
+    await handleAgentChatHistory(makeReq(`/api/agent/chat-history?claudeId=${BRIDGE_THREAD}&subagent=t3-abc`), res, {}, contextRoot);
+    expect(body().items).toEqual([expect.objectContaining({ kind: 'text', text: 'the sub-agent said' })]);
+    const other = makeRes();
+    await handleAgentChatHistory(makeReq(`/api/agent/chat-history?claudeId=${BRIDGE_THREAD}&subagent=t3-abc`), other.res, {}, join(tmpHome, 'elsewhere', '_dream_context'));
+    expect(other.body().items).toEqual([]);
+  });
+
+  it('a bridge sub-agent with no steps logged shows nothing, never the parent chat', async () => {
+    bridgeRollout();
+    const { res, body } = makeRes();
+    await handleAgentChatHistory(makeReq(`/api/agent/chat-history?claudeId=${BRIDGE_THREAD}&subagent=t3-none`), res, {}, contextRoot);
+    expect(body().items).toEqual([]);
+  });
+
   it('returns the PARENT transcript (unaffected) when no subagent param is given', async () => {
     const { res, status, body } = makeRes();
     await handleAgentChatHistory(makeReq(`/api/agent/chat-history?claudeId=${CONVERSATION}`), res, {}, contextRoot);

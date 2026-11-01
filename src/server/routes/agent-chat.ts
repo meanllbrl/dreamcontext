@@ -5002,6 +5002,8 @@ export async function handleAgentChatHistory(
     return;
   }
   const path = tool === 'codex' ? null : findFirstTranscriptPath([liveId, id]);
+  // A bridge sub-agent with no step log yet: nothing to show, never the parent thread's history.
+  if (!path && bridgeSub) { sendJson(res, 200, { items: [] }); return; }
   if (!path) {
     const codex = await codexHistoryFor({ tool, id, liveId, contextRoot });
     if (codex === 'refuse') { sendError(res, 403, 'thread_not_in_project', 'That Codex thread does not belong to this project.'); return; }

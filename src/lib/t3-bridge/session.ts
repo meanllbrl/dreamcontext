@@ -644,7 +644,8 @@ export class BridgeSession {
     }
     // Only Codex's adapter reads `appContext`, as untrusted entries. Everywhere else it rides after
     // the owner's words, in the user message (context.ts `wordsWithContext`).
-    const message = this.turnMessage(this.opts.tool !== 'codex' ? wordsWithContext(text, appContext) : text);
+    // Pictures are read from the owner's own words, never from context merged in after them.
+    const message = this.turnMessage(this.opts.tool !== 'codex' ? wordsWithContext(text, appContext) : text, text);
     // A message right after the turn started steers it once Codex reported it running.
     await this.awaitTurnId();
     if (this.activeRun?.providerTurnId) {
@@ -668,12 +669,12 @@ export class BridgeSession {
     }
   }
 
-  private turnMessage(text: string): ProviderAdapter.ProviderAdapterV2TurnMessage {
+  private turnMessage(text: string, ownerWords: string = text): ProviderAdapter.ProviderAdapterV2TurnMessage {
     return {
       messageId: MessageId.make(`msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`),
       text,
       // The owner's pictures (`[Picture N: path]` lines) as images the tool sees (TABLO row 12).
-      attachments: this.attachmentsDir ? pictureAttachments(text, this.opts.cwd, this.attachmentsDir) : [],
+      attachments: this.attachmentsDir ? pictureAttachments(ownerWords, this.opts.cwd, this.attachmentsDir) : [],
       createdBy: 'user' as const,
       creationSource: 'web' as const,
     } as ProviderAdapter.ProviderAdapterV2TurnMessage;
