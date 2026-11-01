@@ -13,8 +13,8 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getRunTarget } from '../../lib/automations/store.js';
-import { appChatHasRoom, reserveAppChat, resolveAppAgent } from '../../lib/apps/assistant.js';
-import { createAppChat, lookupAppChatOf, reopenAppChat, type AppChatRecord } from '../../lib/apps/chat-store.js';
+import { APP_CHAT_MAX_LIVE, appChatHasRoom, reserveAppChat, resolveAppAgent } from '../../lib/apps/assistant.js';
+import { appChatRoot, createAppChat, lookupAppChatOf, newestAppChat, reopenAppChat, type AppChatRecord } from '../../lib/apps/chat-store.js';
 import { readManifest, roleFileProblem } from '../../lib/apps/manifest.js';
 import { getApp, real } from '../../lib/apps/registry.js';
 import { UUID_RE } from '../../lib/agent-session-map.js';
@@ -24,7 +24,7 @@ export const APP_SOCKET_PARAMS = ['vault', 'sessionId', 'resume', 'reattach', 'm
 
 /** `hold`: the seat of a new conversation, taken here so two opens in one tick cannot both pass.
  *  The handler lets it go once the spawn has its own, or the socket dies first. */
-export type AppUpgrade = null | { refuse: number } | { full: true } | { url: URL; hold?: () => void };
+export type AppUpgrade = null | { refuse: number } | { say: string } | { url: URL; hold?: () => void };
 
 export interface AppUpgradeInput {
   url: URL;
@@ -39,12 +39,15 @@ export interface AppUpgradeInput {
   home?: string;
 }
 
-function rebuilt(url: URL): URL {
+function rebuilt(url: URL, resume = ''): URL {
   const next = new URL(url.pathname, url.origin);
   for (const key of APP_SOCKET_PARAMS) {
     const value = url.searchParams.get(key);
     if (value !== null) next.searchParams.set(key, value);
   }
+  // A rotated conversation opens by its pin: its live child is keyed there, so this adopts it
+  // rather than starting a second writer on one transcript.
+  if (resume) next.searchParams.set('resume', resume);
   return next;
 }
 
@@ -61,7 +64,7 @@ export function appChatUpgrade(i: AppUpgradeInput): AppUpgrade {
   if (i.phone || i.assistant || hit.kind === 'damaged') return { refuse: 403 };
   const projectRoot = real(i.projectRoot);
   if (hit.kind === 'record' && hit.record.projectRoot !== projectRoot) return { refuse: 403 };
-  if (!asked) return { url: rebuilt(i.url) };
+  if (!asked) return { url: rebuilt(i.url, resume ? appChatRoot(resume, home) : '') };
 
   const slug = i.url.searchParams.get('app') ?? '';
   const grant = resolveEmbedToken(i.url.searchParams.get('tk'));
@@ -72,8 +75,8 @@ export function appChatUpgrade(i: AppUpgradeInput): AppUpgrade {
   const ownRecord = (r: AppChatRecord): boolean => r.hash === rec.hash;
   if (resume) {
     if (hit.kind !== 'record' || !ownRecord(hit.record) || sessionId) return { refuse: 403 };
-    if (hit.record.closedAt) reopenAppChat(hit.record.id, home);
-    return { url: rebuilt(i.url) };
+    reopenAppChat(newestAppChat(hit.record.id, home), home);
+    return { url: rebuilt(i.url, appChatRoot(resume, home)) };
   }
   // A new conversation: never one that exists anywhere, so an owner's cannot be pulled in.
   if (!sessionId || hit.kind === 'record' || i.isLive(sessionId) || i.hasTranscript(sessionId)) return { refuse: 403 };
@@ -82,8 +85,8 @@ export function appChatUpgrade(i: AppUpgradeInput): AppUpgrade {
   const contextRoot = join(projectRoot, '_dream_context');
   const choice = resolveAppAgent(m.manifest, i.url.searchParams.get('member'), (s) => !!getRunTarget(contextRoot, s, 'agent')?.whiteboard);
   if (choice.kind === 'none') return { refuse: 409 };
-  if (choice.kind === 'own' && roleFileProblem(rec.root)) return { refuse: 409 };
-  if (!appChatHasRoom(rec.hash, sessionId)) return { full: true };
+  if (choice.kind === 'own' && roleFileProblem(rec.root)) return { say: 'This app has no assistant role yet: ASSISTANT.md is missing or is not a plain file.' };
+  if (!appChatHasRoom(rec.hash, sessionId)) return { say: `This app already has ${APP_CHAT_MAX_LIVE} chats running. Close one to start another.` };
   createAppChat({ id: sessionId, hash: rec.hash, slug: rec.slug, projectRoot, member: choice.kind === 'member' ? choice.member : null }, home);
   const release = reserveAppChat(rec.hash, sessionId);
   let held = true;

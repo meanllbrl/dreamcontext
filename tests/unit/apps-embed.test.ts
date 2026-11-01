@@ -49,7 +49,8 @@ describe('the frame gate', () => {
     const tk = mintEmbedToken(grant);
     const r = res();
     expect(refuseForeignFrame(frameReq(tk) as never, r as never)).toBe(false);
-    expect(r.headers['Content-Security-Policy']).toBe('frame-ancestors http://127.0.0.1:5100');
+    expect(r.headers['Content-Security-Policy']).toContain('frame-ancestors http://127.0.0.1:5100;');
+    expect(r.headers['Content-Security-Policy']).toContain("img-src 'self' data: blob:");
   });
 
   // Each of these holds a valid token and still gets 403.

@@ -4,6 +4,8 @@ import { AiTeamPage } from '../../pages/AiTeamPage';
 import { ChatHistoryPicker } from '../sleepy/ChatHistoryPicker';
 import { CardChat } from '../whiteboard/widgets/AgentWidget';
 import type { EmbedGrant } from '../../lib/frameGuard';
+import { APP_LINK_PAGES, type AppLinkPage } from '../../lib/appLink';
+import { openInMainHref } from './embedMode';
 import { createAppChatStore } from './appChatStore';
 import './AppChat.css';
 
@@ -12,6 +14,11 @@ import './AppChat.css';
  * not rewrite: `CardChat pane` is the AI Team's own mount, and the history is Chat's picker with the
  * app's filter. AgentSurface is not mounted, so nothing of the main app's tabs comes along.
  */
+/** Pages have no home in the frame: the main app opens them. */
+function leaveFrame(grant: EmbedGrant, page: string): void {
+  if ((APP_LINK_PAGES as readonly string[]).includes(page)) window.open(openInMainHref(grant.vault, page as AppLinkPage), '_blank');
+}
+
 export function AppChat({ grant }: { grant: EmbedGrant }) {
   const { t } = useI18n();
   const store = useMemo(() => createAppChatStore(grant), [grant]);
@@ -30,6 +37,9 @@ export function AppChat({ grant }: { grant: EmbedGrant }) {
         <div className="app-chat-strip" role="tablist" aria-label={title}>
           {state.rows.map((row, i) => (
             <span key={row.id} className="app-chat-tab" data-active={row.id === state.active || undefined}>
+              {row.state !== 'idle' && row.id !== state.active && (
+                <span className="app-chat-tab-dot" data-state={row.state} role="img" aria-label={t(row.state === 'asking' ? 'embed.chatAsking' : 'embed.chatWorking')} />
+              )}
               <button type="button" role="tab" aria-selected={row.id === state.active} className="app-chat-tab-name" onClick={() => store.show(row.id)}>
                 {row.title || t('embed.chatN').replace('{n}', String(i + 1))}
               </button>
@@ -50,6 +60,7 @@ export function AppChat({ grant }: { grant: EmbedGrant }) {
             pane
             placeholder={t('embed.askPlaceholder').replace('{name}', state.name)}
             reopen={() => store.respawn(active.id)}
+            openPage={(page) => leaveFrame(grant, page)}
           />
         )}
       </div>

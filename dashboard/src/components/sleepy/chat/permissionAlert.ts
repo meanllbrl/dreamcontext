@@ -12,6 +12,12 @@ export function cleanAlertText(text: string): string {
   return text.replace(BAD_CHARS, ' ').replace(/\s+/g, ' ').trim();
 }
 
+/** May the frame offer Allow for this? A line break would read as a comment in a one-line alert. */
+export function allowOffered(toolName: string, input: unknown): boolean {
+  const text = allowAlertText(toolName, input);
+  return cleanAlertText(text).length <= ALLOW_TEXT_MAX && !(toolName === 'Bash' && /[\r\n]|\u2028|\u2029/.test(text));
+}
+
 /** Per tool: Bash the command, Edit and Write the path and size, MCP server and tool and args. */
 export function allowAlertText(toolName: string, input: unknown): string {
   const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;

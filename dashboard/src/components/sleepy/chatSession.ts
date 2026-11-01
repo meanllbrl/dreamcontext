@@ -511,6 +511,8 @@ export interface ChatSession {
   minimized: boolean;
   /** The owner sees it right now (ownerSees.ts): nothing it does is news. */
   seen: boolean;
+  /** An app's conversation, in whichever pane: its text draws no remote media. */
+  appChat?: boolean;
   capabilities: string[];
   model: string;
   effort: string;
@@ -1584,6 +1586,10 @@ export function createChatSession(
       }
       case 'account-active': {
         conv = { ...conv, activeAccountId: ev.accountId };
+        return;
+      }
+      case 'app-chat': {
+        session.appChat = true;
         return;
       }
       case 'slash-commands': {

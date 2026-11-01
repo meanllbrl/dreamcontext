@@ -19,6 +19,18 @@ export function unbindAppChat(claudeId: string): void {
   bindings.delete(claudeId);
 }
 
+let fileSession = '';
+
+/** The conversation on screen in an app's frame: its own folders open files with no grant. */
+export function setFileSession(claudeId: string): void {
+  fileSession = claudeId;
+}
+
+/** `&session=<id>` in an app's frame, '' everywhere else, so the main app's file URLs stay as they are. */
+export function fileSessionParam(): string {
+  return fileSession ? `&session=${encodeURIComponent(fileSession)}` : '';
+}
+
 /** The URL fragment of an app's socket, '' for every other chat, whose URL stays byte-for-byte. */
 export function appChatParam(claudeId: string): string {
   const b = bindings.get(claudeId);

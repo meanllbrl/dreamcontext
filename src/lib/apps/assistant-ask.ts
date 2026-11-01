@@ -20,7 +20,7 @@ import { chatSpawnAccount } from '../automations/account.js';
 import { CREDENTIAL_ANYWHERE, credentialReadDenies } from '../automations/board-scope.js';
 import { LIGHT_DEFAULT_MODEL, LIGHT_DISALLOWED_TOOLS } from '../automations/light-run.js';
 import { buildAppAskBlock, executeClaudeDetached, newTurnNonce, sanitizeAutomationPrompt, type ClaudeExecution } from '../automations/runner.js';
-import { ROLE_MAX_CHARS } from './assistant.js';
+import { APP_CREDENTIAL_FILES, ROLE_MAX_CHARS } from './assistant.js';
 import { appRunBrief } from './brief.js';
 import { ROLE_FILE, roleFileProblem } from './manifest.js';
 import type { AppRecord } from './registry.js';
@@ -56,8 +56,8 @@ function runningOf(hash?: string): number {
 export type AskRefusal = { code: string; message: string; status: 400 | 409 | 429 };
 
 /** The rate and concurrency gate, shared by both kinds. Null while there is room. */
-export function askRoom(hash: string, now = Date.now()): AskRefusal | null {
-  if (runningOf(hash) >= ASK_MAX_PER_APP) return { status: 429, code: 'ask_busy', message: `At most ${ASK_MAX_PER_APP} questions at once per app.` };
+export function askRoom(hash: string, now = Date.now(), memberRunning = 0): AskRefusal | null {
+  if (runningOf(hash) + memberRunning >= ASK_MAX_PER_APP) return { status: 429, code: 'ask_busy', message: `At most ${ASK_MAX_PER_APP} questions at once per app.` };
   if (runningOf() >= ASK_MAX_MACHINE) return { status: 429, code: 'ask_busy', message: `At most ${ASK_MAX_MACHINE} questions at once on this Mac.` };
   const window = (recent.get(hash) ?? []).filter((t) => now - t < 60_000);
   if (window.length >= ASK_MAX_PER_MINUTE) return { status: 429, code: 'ask_rate', message: `At most ${ASK_MAX_PER_MINUTE} questions a minute.` };
@@ -91,7 +91,7 @@ export function appAskArgs(prompt: string, appRoot: string, home?: string): stri
     '--allowedTools', `Read(${scope})`, `Grep(${scope})`, `Glob(${scope})`,
     '--disallowedTools', ...LIGHT_DISALLOWED_TOOLS,
     ...credentialReadDenies(home),
-    ...CREDENTIAL_ANYWHERE.map((g) => `Read(//${g})`),
+    ...[...CREDENTIAL_ANYWHERE, ...APP_CREDENTIAL_FILES].map((g) => `Read(//${g})`),
   ];
 }
 

@@ -2,16 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /** The frame's open conversations (plan r9, D15): a load restores, never creates. */
 
-const made = vi.hoisted(() => [] as Array<{ id: string; resume: boolean; reattach: string; disposed: boolean; emit: () => void }>);
+const made = vi.hoisted(() => [] as Array<{ id: string; s: { status: string; busy: boolean; asking: boolean }; resume: boolean; reattach: string; disposed: boolean; emit: () => void }>);
 vi.mock('../../dashboard/src/components/sleepy/chatSession', () => ({
   createChatSession: (_v: string, _b: boolean, _n: () => void, id: string, resume: boolean, ..._rest: unknown[]) => {
     const subs = new Set<() => void>();
     const items: unknown[] = [];
     const s = {
       claudeId: id, subscribe: (f: () => void) => { subs.add(f); return () => subs.delete(f); },
-      getModel: () => ({ items }), dispose: () => { rec.disposed = true; },
+      getModel: () => ({ items }), dispose: () => { rec.disposed = true; }, status: 'open', busy: false, asking: false,
     };
-    const rec = { id, resume, reattach: String(_rest[_rest.length - 1]), disposed: false, emit: () => { items.push({ id: 'x', kind: 'user' }); for (const f of subs) f(); } };
+    const rec = { id, s, resume, reattach: String(_rest[_rest.length - 1]), disposed: false, emit: () => { items.push({ id: 'x', kind: 'user' }); for (const f of subs) f(); } };
     made.push(rec);
     return s;
   },
@@ -74,6 +74,38 @@ describe('a new chat', () => {
     made[0].emit();
     store.newChat();
     expect(store.snapshot().rows).toHaveLength(2);
+  });
+});
+
+describe('a refused row', () => {
+  it('a new chat replaces it, and Resume starts over under a new id', async () => {
+    const store = createAppChatStore(grant, server([]).f);
+    await store.load();
+    const first = store.snapshot().rows[0].id;
+    made[0].s.status = 'closed';
+    store.newChat();
+    expect(store.snapshot().rows.map((r) => r.id)).not.toContain(first);
+    expect(store.snapshot().rows).toHaveLength(1);
+    const second = store.snapshot().rows[0].id;
+    store.respawn(second);
+    expect(store.snapshot().rows[0].id).not.toBe(second);
+    expect(made[made.length - 1]).toMatchObject({ resume: false });
+  });
+});
+
+describe('a row off screen', () => {
+  it('shows it is working or waiting', async () => {
+    const store = createAppChatStore(grant, server([]).f);
+    await store.load();
+    made[0].s.asking = true;
+    made[0].emit();
+    expect(store.snapshot().rows[0].state).toBe('asking');
+  });
+  it('an empty row from the server is reused after a reload', async () => {
+    const store = createAppChatStore(grant, server([{ id: 'a', title: '', closedAt: null, empty: true } as never]).f);
+    await store.load();
+    store.newChat();
+    expect(store.snapshot().rows).toHaveLength(1);
   });
 });
 

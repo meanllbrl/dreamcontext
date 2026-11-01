@@ -1,6 +1,6 @@
 import { createChatSession, type ChatSession } from '../sleepy/chatSession';
 import { DEFAULT_CHAT_MODE } from '../../lib/chatModes';
-import { bindAppChat, unbindAppChat } from '../../lib/chatAppBinding';
+import { bindAppChat, setFileSession, unbindAppChat } from '../../lib/chatAppBinding';
 import { parseChatActions } from '../sleepy/chat/chatActions';
 import type { EmbedGrant } from '../../lib/frameGuard';
 
@@ -19,6 +19,8 @@ export interface AppChatRow {
   session: ChatSession | null;
   /** Nothing was said here yet: the row a new chat reuses. */
   fresh: boolean;
+  /** What a row that is not on screen shows on the strip. */
+  state: 'idle' | 'working' | 'asking';
 }
 
 export interface AppChatState {
@@ -44,7 +46,7 @@ export interface AppChatStore {
   respawn: (id: string) => void;
 }
 
-interface ListedChat { id: string; title: string; closedAt: string | null }
+interface ListedChat { id: string; title: string; closedAt: string | null; empty?: boolean }
 
 export function createAppChatStore(grant: EmbedGrant, fetchImpl: typeof fetch = (...a) => window.fetch(...a)): AppChatStore {
   let state: AppChatState = { ready: false, assistant: null, name: '', rows: [], active: null, error: null };
@@ -69,6 +71,8 @@ export function createAppChatStore(grant: EmbedGrant, fetchImpl: typeof fetch = 
       if (!row || row.session !== s) { off(); return; }
       const items = s.getModel().items;
       if (row.fresh && items.length) patchRow(id, { fresh: false });
+      const next = s.asking ? 'asking' : s.busy ? 'working' : 'idle';
+      if (next !== row.state) patchRow(id, { state: next });
       const read = readTitles.get(id) ?? new Set<string>();
       readTitles.set(id, read);
       let title: string | null = null;
@@ -89,15 +93,24 @@ export function createAppChatStore(grant: EmbedGrant, fetchImpl: typeof fetch = 
   };
   const connect = (id: string, resume: boolean): ChatSession => {
     bindAppChat(id, { slug: grant.slug, tk: grant.tk, member: grant.member });
+    setFileSession(id);
     const s = createChatSession(grant.vault, false, () => { /* the store subscribes itself */ }, id, resume, '', '', '', '', false, DEFAULT_CHAT_MODE, '', '', null, resume ? 'passive' : '');
     watch(id, s);
     return s;
   };
+  const dead = (r: AppChatRow): boolean => r.fresh && r.session?.status === 'closed';
   const showRow = (id: string, resume: boolean): void => {
     const row = state.rows.find((r) => r.id === id);
     if (!row) return;
     if (!row.session) patchRow(id, { session: connect(id, resume) });
+    setFileSession(id);
     set({ active: id });
+  };
+
+  const addFresh = (): void => {
+    const id = crypto.randomUUID();
+    set({ rows: [...state.rows, { id, title: '', session: null, fresh: true, state: 'idle' }] });
+    showRow(id, false);
   };
 
   return {
@@ -109,31 +122,27 @@ export function createAppChatStore(grant: EmbedGrant, fetchImpl: typeof fetch = 
         const r = await fetchImpl(`/api/apps/${encodeURIComponent(grant.slug)}/chats`, { headers });
         if (!r.ok) throw new Error(String(r.status));
         const body = await r.json() as { assistant: AppChatState['assistant']; name: string; chats: ListedChat[] };
-        const rows = body.chats.filter((c) => !c.closedAt).map((c) => ({ id: c.id, title: c.title, session: null, fresh: false }));
+        const rows: AppChatRow[] = body.chats.filter((c) => !c.closedAt).map((c) => ({ id: c.id, title: c.title, session: null, fresh: !!c.empty, state: 'idle' }));
         // An app with no agent of its own, opened by an old embed URL naming a member, chats too.
         const assistant = body.assistant === 'none' && grant.member ? 'member' : body.assistant;
         set({ ready: true, assistant, name: body.name, rows });
         if (assistant === 'none') return;
         if (rows.length) showRow(rows[0].id, true);
-        else {
-          const id = crypto.randomUUID();
-          set({ rows: [{ id, title: '', session: null, fresh: true }] });
-          showRow(id, false);
-        }
+        else addFresh();
       } catch {
         set({ ready: true, error: 'load' });
       }
     },
     newChat: () => {
+      // A refused row holds no conversation: a new chat starts over instead of selecting it.
+      set({ rows: state.rows.filter((r) => !dead(r)) });
       const empty = state.rows.find((r) => r.fresh);
-      if (empty) { set({ active: empty.id }); return; }
-      const id = crypto.randomUUID();
-      set({ rows: [...state.rows, { id, title: '', session: null, fresh: true }] });
-      showRow(id, false);
+      if (empty) { showRow(empty.id, true); return; }
+      addFresh();
     },
     show: (id) => showRow(id, true),
     reopen: (id, title) => {
-      if (!state.rows.some((r) => r.id === id)) set({ rows: [...state.rows, { id, title, session: null, fresh: false }] });
+      if (!state.rows.some((r) => r.id === id)) set({ rows: [...state.rows, { id, title, session: null, fresh: false, state: 'idle' }] });
       showRow(id, true);
     },
     close: (id) => {
@@ -145,16 +154,19 @@ export function createAppChatStore(grant: EmbedGrant, fetchImpl: typeof fetch = 
       const rows = state.rows.filter((r) => r.id !== id);
       set({ rows, active: state.active === id ? rows[rows.length - 1]?.id ?? null : state.active });
       if (state.active) showRow(state.active, true);
-      if (!rows.length) {
-        const fresh = crypto.randomUUID();
-        set({ rows: [{ id: fresh, title: '', session: null, fresh: true }] });
-        showRow(fresh, false);
-      }
+      if (!rows.length) addFresh();
     },
     respawn: (id) => {
       const row = state.rows.find((r) => r.id === id);
       if (!row) return;
       row.session?.dispose();
+      // Refused before it had a record: there is nothing to resume, it starts over under a new id.
+      if (row.fresh) {
+        unbindAppChat(id);
+        set({ rows: state.rows.filter((r) => r.id !== id) });
+        addFresh();
+        return;
+      }
       patchRow(id, { session: connect(id, true) });
     },
   };

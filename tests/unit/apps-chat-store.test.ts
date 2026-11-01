@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  APP_CHAT_LIST_MAX, appChatIds, appChatRefusal, assertNotAppChat, closeAppChat, createAppChat, listAppChats, lookupAppChat,
+  APP_CHAT_LIST_MAX, appChatIds, appChatRoot, newestAppChat, appChatRefusal, assertNotAppChat, closeAppChat, createAppChat, listAppChats, lookupAppChat,
   lookupAppChatOf, reopenAppChat, rotateAppChat, stampAppRemoved, titleAppChat,
 } from '../../src/lib/apps/chat-store.js';
 import { appChatsDir } from '../../src/lib/apps/registry.js';
@@ -73,10 +73,21 @@ describe('rotation', () => {
     const next = rotateAppChat(a, b, home);
     expect(next).toMatchObject({ id: b, via: a.id, hash: a.hash, slug: a.slug, projectRoot: a.projectRoot, member: null });
     expect(lookupAppChat(a.id, home)).toMatchObject({ record: { closedAt: expect.any(String) } });
-    expect(listAppChats('h1', '/p', home).map((r) => r.id)).toEqual([b]);
+    // One row, under the pin its live child is keyed by.
+    expect(listAppChats('h1', '/p', home).map((r) => r.id)).toEqual([a.id]);
+    expect(listAppChats('h1', '/p', home)[0].closedAt).toBeNull();
+    expect(appChatRoot(b, home)).toBe(a.id);
+    expect(newestAppChat(a.id, home)).toBe(b);
     expect(appChatIds('h1', '/p', home)).toEqual(new Set([a.id, b]));
     expect(rotateAppChat(a, b, home)).toBeNull();
     expect(appChatRefusal(b, home)).toBeTruthy();
+  });
+  it('carries a title set since the spawn, and a removal', () => {
+    const a = make();
+    titleAppChat(a.id, 'Later', home);
+    stampAppRemoved('h1', home);
+    const next = rotateAppChat(a, randomUUID(), home);
+    expect(next).toMatchObject({ title: 'Later', removedAt: expect.any(String) });
   });
   it('lookupAppChatOf finds the first of several ids, and a damaged one', () => {
     const a = make();

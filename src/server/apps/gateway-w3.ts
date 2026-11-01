@@ -252,7 +252,7 @@ registerGatewayRoute('/__dc/ask', { cookie: false, bearer: true }, async (gw, re
   }
   const app = appRunBrief(rec.projectRoot, rec.slug, homeDir);
   if (!app) { send(res, 409, { error: 'not_ready' }); return; }
-  const room = askRoom(rec.hash);
+  const room = askRoom(rec.hash, Date.now(), [...memberAsks.values()].filter((a) => a.hash === rec.hash).length);
   if (room) { send(res, room.status, { error: room.code, message: room.message }); return; }
   const out = sayFromApp(join(rec.projectRoot, '_dream_context'), { slug: choice.member, text, app });
   if (!out.ok) { send(res, out.status, { error: out.code, message: out.message }); return; }

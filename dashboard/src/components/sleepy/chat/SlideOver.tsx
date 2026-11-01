@@ -1,3 +1,4 @@
+import { fileSessionParam } from '../../../lib/chatAppBinding';
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { agentFileUrl, peerLogoUrl } from '../../../api/client';
 import { useApi, useVaultId } from '../../../context/VaultContext';
@@ -181,7 +182,7 @@ function FileSlideOver({ path, reference, onClose, onNavApp, onOpenPath }: Slide
     if (mediaKind) return;
     let cancelled = false;
     setState({ loading: true, data: null, error: null });
-    api.get<FileContent>(`/agent/file?path=${encodeURIComponent(path)}`)
+    api.get<FileContent>(`/agent/file?path=${encodeURIComponent(path)}${fileSessionParam()}`)
       .then((data) => { if (!cancelled) setState({ loading: false, data, error: null }); })
       .catch((err: Error) => { if (!cancelled) setState({ loading: false, data: null, error: err.message || 'Failed to load file.' }); });
     return () => { cancelled = true; };

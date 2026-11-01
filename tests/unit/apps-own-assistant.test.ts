@@ -13,6 +13,7 @@ import { ROLE_FILE, parseManifest, roleFileProblem } from '../../src/lib/apps/ma
 import { registerApp } from '../../src/lib/apps/registry.js';
 import { LIGHT_DISALLOWED_TOOLS } from '../../src/lib/automations/light-run.js';
 import { addVault } from '../../src/lib/vaults.js';
+import { computeChatSessions } from '../../src/server/routes/agent-chat-sessions.js';
 
 let home: string; let project: string; let root: string; let hash: string;
 beforeEach(() => {
@@ -133,6 +134,8 @@ describe('the envelope of the own assistant', () => {
     expect(rules).not.toContain(`Read(/${dc}/**)`);
     expect(rules).toContain(`Read(/${join(home, '.ssh')}/**)`);
     expect(rules).toContain('Read(//**/.env*)');
+    expect(rules).toContain('Read(//**/.secrets.json)');
+    expect(rules).toContain('Read(//**/lab/credentials.json)');
   });
   it('writes a gate file naming only non-danger actions', () => {
     const r = rec();
@@ -209,5 +212,41 @@ describe('the scaffold', () => {
     expect(run(['apps', 'assign', 'x', '--own'], project).status).toBe(0);
     expect(JSON.parse(readFileSync(join(appRoot, 'dreamcontext-app.json'), 'utf-8')).agent).toEqual({ own: true });
     expect(readFileSync(join(appRoot, 'ASSISTANT.md'), 'utf-8')).toContain('Reads the load.');
+  });
+});
+
+describe('a bound member', () => {
+  const clean = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(?:CLAUDE|DREAMCONTEXT_)/.test(k)));
+  const dc = (...args: string[]) => spawnSync(process.execPath, [resolve('dist/index.js'), ...args], { cwd: project, encoding: 'utf-8', env: { ...clean(), HOME: home } });
+  it.skipIf(!existsSync(resolve('dist/index.js')))('runs free at auto, with danger actions and apps call denied, no gate, no strict settings', () => {
+    addVault('acme', project, home);
+    expect(dc('agents', 'create', 'ua', '--title', 'UA', '--prompt', 'Run the ads.').status).toBe(0);
+    expect(dc('agents', 'edit', 'ua', '--autonomy', 'free').status).toBe(0);
+    const p = prep(rec({ member: 'ua' }));
+    expect(p).toMatchObject({ ok: true });
+    if (!p.ok) return;
+    expect(p.app).toMatchObject({ own: false, member: 'ua', permissionMode: 'auto', settingSources: null, hooks: null, allowed: [] });
+    expect(p.app.denied).toContain('Bash(dreamcontext apps call:*)');
+    expect(p.app.denied).toContain('Bash(dreamcontext apps do yuk wipe:*)');
+    expect(p.app.denied).not.toContain('Bash(dreamcontext apps do yuk read:*)');
+    expect(p.app.denied).toContain('CronCreate');
+    expect(p.app.env.DREAMCONTEXT_AGENT_CHAT).toBe('app-yuk');
+    expect(p.app.briefing).toContain('Run the ads.');
+    p.app.dispose();
+  });
+});
+
+describe('the history of an app', () => {
+  it('lists its own conversations before the limit, and nothing else', async () => {
+    const dir = join(home, '.claude', 'projects', project.replace(/[^a-zA-Z0-9]/g, '-'));
+    mkdirSync(dir, { recursive: true });
+    const line = (id: string, text: string) => `${JSON.stringify({ type: 'user', sessionId: id, cwd: project, uuid: id, timestamp: new Date().toISOString(), message: { role: 'user', content: text } })}\n`;
+    const own = rec();
+    writeFileSync(join(dir, `${own.id}.jsonl`), line(own.id, 'the app chat'));
+    for (let i = 0; i < 5; i++) { const id = randomUUID(); writeFileSync(join(dir, `${id}.jsonl`), line(id, `owner chat ${i}`)); }
+    const r = await computeChatSessions(join(project, '_dream_context'), { app: 'yuk', limit: '1' }, { home, waitMs: 0 }) as { sessions: Array<{ id: string }> };
+    expect(r.sessions.map((s) => s.id)).toEqual([own.id]);
+    const other = await computeChatSessions(join(project, '_dream_context'), { app: 'nope' }, { home, waitMs: 0 }) as { sessions: unknown[] };
+    expect(other.sessions).toEqual([]);
   });
 });

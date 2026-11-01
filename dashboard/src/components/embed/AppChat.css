@@ -27,7 +27,7 @@
 
 .app-chat-strip {
   display: flex;
-  flex: 1 1 0;
+  flex: 1 1 240px;
   align-items: center;
   gap: var(--space-1);
   min-width: 0;
@@ -42,6 +42,19 @@
   max-width: 180px;
   border-radius: var(--radius-sm);
   color: var(--color-text-secondary);
+}
+
+.app-chat-tab-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin-inline-start: var(--space-2);
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+}
+
+.app-chat-tab-dot[data-state='asking'] {
+  background: var(--color-warning);
 }
 
 .app-chat-tab[data-active] {

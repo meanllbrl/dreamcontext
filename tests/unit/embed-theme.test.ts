@@ -25,6 +25,10 @@ describe('the frame in the app\'s colours', () => {
     expect(t['--color-text']).toBe('#e8e8e8');
     expect(t['--color-accent']).toBe('#7ad7a8');
   });
+  it('a mid grey still reads', () => {
+    const t = embedTokens({ bg: '#777777' });
+    expect(contrast(t['--color-text'], '#777777')).toBeGreaterThanOrEqual(4.5);
+  });
   it('names no usable background, sets nothing', () => {
     expect(embedTokens({})).toEqual({});
     expect(embedTokens({ bg: 'red' })).toEqual({});

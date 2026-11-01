@@ -151,9 +151,37 @@ export function titleAppChat(id: string, title: string, home: string = homedir()
  */
 export function rotateAppChat(from: AppChatRecord, to: string, home: string = homedir()): AppChatRecord | null {
   if (to === from.id || !UUID_RE.test(to) || lookupAppChat(to, home).kind !== 'none') return null;
-  const next = createAppChat({ ...from, id: to, title: from.title, via: from.id }, home);
-  patch(from.id, { closedAt: new Date().toISOString() }, home);
-  return next;
+  // Read now, not at the spawn: a title set since, or a removal, must come along.
+  const hit = lookupAppChat(from.id, home);
+  const now = hit.kind === 'record' ? hit.record : from;
+  const next = createAppChat({ ...now, id: to, via: now.id }, home);
+  if (now.removedAt) patch(to, { removedAt: now.removedAt }, home);
+  patch(now.id, { closedAt: new Date().toISOString() }, home);
+  return lookupAppChat(to, home).kind === 'record' ? { ...next, removedAt: now.removedAt } : next;
+}
+
+/** The pin of a conversation: where its chain began. A live child and its seat stay keyed there
+ *  across rotations, so everything that opens it must name this id, or it starts a twin. */
+export function appChatRoot(id: string, home: string = homedir()): string {
+  let at = id;
+  for (let i = 0; i < 1000; i++) {
+    const hit = lookupAppChat(at, home);
+    if (hit.kind !== 'record' || !hit.record.via) return at;
+    at = hit.record.via;
+  }
+  return at;
+}
+
+/** The record that is current for this id: the end of its chain. */
+export function newestAppChat(id: string, home: string = homedir()): string {
+  const all = allRecords(home);
+  let at = id;
+  for (let i = 0; i < 1000; i++) {
+    const next = all.find((r) => r.via === at);
+    if (!next) return at;
+    at = next.id;
+  }
+  return at;
 }
 
 function allRecords(home: string): AppChatRecord[] {
@@ -170,14 +198,16 @@ function allRecords(home: string): AppChatRecord[] {
   return out;
 }
 
-/** An app's conversations, newest first, a rotated one collapsed into its successor. */
+/** An app's conversations, newest first. A rotated chain is one row: its current state, under
+ *  the id it is pinned to. */
 export function listAppChats(hash: string, projectRoot: string, home: string = homedir()): AppChatRecord[] {
   const own = allRecords(home).filter((r) => r.hash === hash && r.projectRoot === projectRoot);
   const rotated = new Set(own.map((r) => r.via).filter(Boolean));
   return own
     .filter((r) => !rotated.has(r.id))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .slice(0, APP_CHAT_LIST_MAX);
+    .slice(0, APP_CHAT_LIST_MAX)
+    .map((r) => ({ ...r, id: appChatRoot(r.id, home) }));
 }
 
 /** Every id of this app, rotated ones included: what the history and the file route filter on. */

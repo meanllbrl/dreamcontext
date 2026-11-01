@@ -45,6 +45,15 @@ function EmbedView({ grant }: { grant: EmbedGrant }) {
 /** The window root of an embedded screen (`?embed=`), after the frame check let it draw. */
 export function EmbedRoot({ grant }: { grant: EmbedGrant }) {
   const client = useMemo(() => createInstanceQueryClient(), []);
+  // The model picker's Settings links and a sign-in have no surface in a frame: the main app opens them.
+  useLayoutEffect(() => {
+    const open = (e: Event) => {
+      const page = (e as CustomEvent<{ page?: string }>).detail?.page;
+      if (page && (APP_LINK_PAGES as readonly string[]).includes(page)) window.open(openInMainHref(grant.vault, page as AppLinkPage), '_blank');
+    };
+    embedBus.addEventListener('dreamcontext-agent-open-page', open);
+    return () => embedBus.removeEventListener('dreamcontext-agent-open-page', open);
+  }, [grant.vault]);
   // On the document element, not the wrapper: the selection bar and the popovers portal to `body`.
   useLayoutEffect(() => {
     const root = document.documentElement;

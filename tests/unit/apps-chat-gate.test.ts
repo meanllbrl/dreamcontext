@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { APP_SOCKET_PARAMS, appChatUpgrade, type AppUpgradeInput } from '../../src/server/apps/app-chat-gate.js';
 import { dropEmbedToken, mintEmbedToken } from '../../src/server/apps/embed-token.js';
-import { createAppChat, lookupAppChat } from '../../src/lib/apps/chat-store.js';
+import { createAppChat, lookupAppChat, rotateAppChat } from '../../src/lib/apps/chat-store.js';
 import { APP_CHAT_MAX_LIVE, appChatHasRoom, reserveAppChat } from '../../src/lib/apps/assistant.js';
 import { registerApp } from '../../src/lib/apps/registry.js';
 
@@ -80,9 +80,17 @@ describe('the app gate', () => {
     expect(run(`app=yuk&tk=${tk}&vault=acme&sessionId=${fresh()}`, { isLive: () => true })).toEqual({ refuse: 403 });
     expect(run(`app=yuk&tk=${tk}&vault=acme&sessionId=${record().id}`)).toEqual({ refuse: 403 });
   });
-  it('a missing role opens nothing', () => {
+  it('a missing role opens nothing, and says why', () => {
     rmSync(join(root, 'ASSISTANT.md'));
-    expect(run(`app=yuk&tk=${tk}&vault=acme&sessionId=${fresh()}`)).toEqual({ refuse: 409 });
+    expect(run(`app=yuk&tk=${tk}&vault=acme&sessionId=${fresh()}`)).toEqual({ say: expect.stringContaining('ASSISTANT.md') });
+  });
+  it('a rotated conversation opens by its pin, from the frame and from History', () => {
+    const a = record();
+    const b = rotateAppChat(a, randomUUID(), home);
+    const framed = run(`app=yuk&tk=${tk}&vault=acme&resume=${b?.id}`);
+    expect(framed && 'url' in framed && framed.url.searchParams.get('resume')).toBe(a.id);
+    const main = run(`vault=acme&resume=${b?.id}`);
+    expect(main && 'url' in main && main.url.searchParams.get('resume')).toBe(a.id);
   });
   it('an app with no agent and no member has no chat here; an old URL member still does', () => {
     writeFileSync(join(root, 'dreamcontext-app.json'), JSON.stringify({ slug: 'yuk', name: 'Yuk' }));
@@ -97,7 +105,7 @@ describe('the seventh chat', () => {
   it('is refused with no record left, and a seat taken at the gate lets go', () => {
     const held = Array.from({ length: APP_CHAT_MAX_LIVE }, () => reserveAppChat(hash, randomUUID()));
     const id = fresh();
-    expect(run(`app=yuk&tk=${tk}&vault=acme&sessionId=${id}`)).toEqual({ full: true });
+    expect(run(`app=yuk&tk=${tk}&vault=acme&sessionId=${id}`)).toEqual({ say: expect.stringContaining('6 chats') });
     expect(lookupAppChat(id, home)).toEqual({ kind: 'none' });
     held.pop()?.();
     const out = run(`app=yuk&tk=${tk}&vault=acme&sessionId=${id}`);

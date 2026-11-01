@@ -50,8 +50,9 @@ function readable(text: string, bg: string, fade: number): string {
 export function embedTokens(c: EmbedColors): Record<string, string> {
   const bg = c.bg && HEX.test(c.bg) ? c.bg : null;
   if (!bg) return {};
-  const dark = luminance(bg) < 0.18;
-  const fallback = dark ? '#f2f3f5' : '#14161a';
+  // The better of the two, measured: a mid grey fails with the one its lightness suggests.
+  const soft = contrast('#f2f3f5', bg) >= contrast('#14161a', bg) ? '#f2f3f5' : '#14161a';
+  const fallback = contrast(soft, bg) >= MIN ? soft : contrast('#ffffff', bg) >= contrast('#000000', bg) ? '#ffffff' : '#000000';
   const text = c.text && HEX.test(c.text) && contrast(c.text, bg) >= MIN ? c.text : fallback;
   const surface = c.surface && HEX.test(c.surface) && contrast(text, c.surface) >= MIN ? c.surface : mix(bg, text, 0.05);
   const tokens: Record<string, string> = {

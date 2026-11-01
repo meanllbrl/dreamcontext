@@ -100,7 +100,9 @@ export function refuseForeignFrame(req: IncomingMessage, res: ServerResponse): b
   // `frame-ancestors` then names that app's gateway, so the document holds nowhere else.
   const grant = embedFrameGrant(req);
   if (grant) {
-    res.setHeader('Content-Security-Policy', `frame-ancestors http://127.0.0.1:${grant.gwPort}`);
+    // Elements fetch without asking `lockEmbedWrites`: a remote image in model text would carry
+    // what the model read off this machine, with no card and no click.
+    res.setHeader('Content-Security-Policy', `frame-ancestors http://127.0.0.1:${grant.gwPort}; img-src 'self' data: blob:; media-src 'self' blob:`);
     return false;
   }
   sendError(res, 403, 'forbidden', 'This page cannot be shown inside another site.');

@@ -284,6 +284,7 @@ export type ChatEvent =
   /** Which account the server ACTUALLY spawned this process on. Differs from the session's
    *  requested `accountId` when none was requested and the default skipped a full one. */
   | { kind: 'account-active'; accountId: string }
+  | { kind: 'app-chat' }
   | {
       kind: 'account-switch';
       switched: boolean;
@@ -1089,6 +1090,7 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       : [];
     return commands.length ? { kind: 'slash-commands', commands } : ignored('_meta:slash_commands');
   }
+  if (subtype === 'app_chat') return { kind: 'app-chat' };
   if (subtype === 'account_active') {
     const accountId = str(obj.accountId);
     return accountId ? { kind: 'account-active', accountId } : ignored('_meta:account_active');

@@ -54,9 +54,9 @@ import { getRunTarget } from '../../lib/automations/store.js';
 import { checkApproval } from '../../lib/automations/registry.js';
 import { resolveEmbedToken, type EmbedGrant } from '../apps/embed-token.js';
 import { resolveAppAgent } from '../../lib/apps/assistant.js';
-import { closeAppChat, listAppChats, lookupAppChat, stampAppRemoved, titleAppChat } from '../../lib/apps/chat-store.js';
+import { appChatRoot, closeAppChat, listAppChats, lookupAppChat, newestAppChat, stampAppRemoved, titleAppChat } from '../../lib/apps/chat-store.js';
 import { stopLiveChat } from './agent-chat-live.js';
-import { isSameOriginStrict } from './agent-spawn-shared.js';
+import { claudeConversationExists, isSameOriginStrict } from './agent-spawn-shared.js';
 import { appRunBrief } from '../../lib/apps/brief.js';
 import { sayFromApp } from './automations.js';
 import { inspectDispatcher } from '../../lib/automations/launchd.js';
@@ -452,7 +452,11 @@ export async function handleAppChats(req: IncomingMessage, res: ServerResponse, 
   sendJson(res, 200, {
     assistant: assistantOf(rec),
     name: m.ok ? m.manifest.name : rec.name,
-    chats: listAppChats(rec.hash, rec.projectRoot, home).map((c) => ({ id: c.id, title: c.title, createdAt: c.createdAt, closedAt: c.closedAt, member: c.member })),
+    chats: listAppChats(rec.hash, rec.projectRoot, home).filter((c) => !c.removedAt).map((c) => ({
+      id: c.id, title: c.title, createdAt: c.createdAt, closedAt: c.closedAt, member: c.member,
+      // Nothing was said in it: the row a new chat reuses, after a reload too.
+      empty: !claudeConversationExists(newestAppChat(c.id, home)),
+    })),
   });
 }
 
@@ -464,13 +468,18 @@ async function chatPatch(req: IncomingMessage, res: ServerResponse, params: Para
   const hit = lookupAppChat(id, home);
   const rec = getApp(home, grant.projectRoot, grant.slug);
   if (hit.kind !== 'record' || !rec || hit.record.hash !== rec.hash) { sendError(res, 404, 'not_found', 'No such conversation in this app.'); return; }
-  change(id, body);
+  // A rotated chat: the state lives at the end of its chain.
+  change(newestAppChat(id, home), body);
   sendJson(res, 200, { ok: true });
 }
 
-/** POST /api/apps/:slug/chats/close {id}: off the open row. The child goes when its socket does. */
+/** POST /api/apps/:slug/chats/close {id}: off the open row, and its child ends now: a row never
+ *  shown since a reload has no socket to take it down, and it would keep its seat. */
 export async function handleAppChatClose(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
-  await chatPatch(req, res, params, contextRoot, (id) => { closeAppChat(id, home); });
+  await chatPatch(req, res, params, contextRoot, (id) => {
+    closeAppChat(id, home);
+    void stopLiveChat(appChatRoot(id, home)).catch(() => { /* already gone */ });
+  });
 }
 
 /** POST /api/apps/:slug/chats/title {id, title}. */

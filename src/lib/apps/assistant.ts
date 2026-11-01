@@ -74,6 +74,9 @@ export function appDeniedTools(): string[] {
   return LIGHT_DISALLOWED_TOOLS.filter((t) => !keep.has(t));
 }
 
+/** This product's own secrets, in any project on the machine: `Read` is not limited to this one. */
+export const APP_CREDENTIAL_FILES = ['**/.secrets.json', '**/lab/credentials.json', '**/.mcp.json'] as const;
+
 function childRules(dir: string, skip: ReadonlySet<string>): string[] {
   let names: string[];
   try { names = readdirSync(dir); } catch { return []; }
@@ -102,7 +105,7 @@ export function appCredentialDenies(home: string, hash: string): string[] {
     ...childRules(dc, new Set(['apps', 'assistant'])),
     ...childRules(apps, new Set(['data'])),
     ...childRules(join(apps, 'data'), new Set([hash])),
-    ...CREDENTIAL_ANYWHERE.map((g) => `Read(//${g})`),
+    ...[...CREDENTIAL_ANYWHERE, ...APP_CREDENTIAL_FILES].map((g) => `Read(//${g})`),
   ];
 }
 

@@ -26,7 +26,7 @@ import { listVaults } from '../../lib/vaults.js';
 import { HOLDER_PROBE_MS, MAC_CLOSE_HANDED_OVER, MAC_CLOSE_TAKEN_OVER, REATTACH_EVICT, REATTACH_PASSIVE, SUPER_STAGE_FRAME, type LiveChatWire } from '../../lib/handsfree/mac/contract.js';
 import { cutProcessGroups } from '../../lib/automations/runner.js';
 import { trackChild } from '../lifecycle.js';
-import { resolveAgentSession, resolveAgentSessionAccount } from '../../lib/agent-session-map.js';
+import { recordAgentSession as recordTabSession, resolveAgentSession, resolveAgentSessionAccount } from '../../lib/agent-session-map.js';
 import { writeTabHandoff, readTabHandoff, resolveTabSeed, resolveHandoffFor, contextTokensFromUsage } from '../../lib/context-watch.js';
 import { handleRotationAtResult, rotationFinished } from './handoff-rotation.js';
 import { clearFresh, isRotating, markFreshDelivered, stopRotating } from '../../lib/super/fresh-session.js';
@@ -1316,8 +1316,8 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       isLive: (id) => !!findLiveChat(id), hasTranscript: claudeConversationExists,
     });
     if (appUpgrade && 'refuse' in appUpgrade) { rejectUpgrade(socket, appUpgrade.refuse); return; }
-    // The seventh chat of an app: refused with words the pane shows, and no record left behind.
-    if (appUpgrade && 'full' in appUpgrade) { refuseAppSocket(req, socket, head); return; }
+    // Refused with words the pane shows, and no record left behind.
+    if (appUpgrade && 'say' in appUpgrade) { refuseAppSocket(req, socket, head, appUpgrade.say); return; }
     const url = appUpgrade?.url ?? parsedUrl;
     socket.once('close', () => appUpgrade?.hold?.());
 
@@ -1593,14 +1593,14 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
 }
 
 /** A socket opened only to say why: an upgrade refusal has no text the pane could show. */
-function refuseAppSocket(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+function refuseAppSocket(req: IncomingMessage, socket: Duplex, head: Buffer, message: string): void {
   void (async () => {
     let WebSocketServer: typeof import('ws').WebSocketServer;
     try { ({ WebSocketServer } = await import('ws')); }
     catch { rejectUpgrade(socket, 501); return; }
     new WebSocketServer({ noServer: true }).handleUpgrade(req, socket, head, (ws) => {
       ws.on('error', () => { /* the close that follows is what counts */ });
-      try { ws.send(JSON.stringify({ type: '_meta', subtype: 'error', code: 'app_refused', message: `This app already has ${APP_CHAT_MAX_LIVE} chats running. Close one to start another.` })); } catch { /* gone */ }
+      try { ws.send(JSON.stringify({ type: '_meta', subtype: 'error', code: 'app_refused', message })); } catch { /* gone */ }
       try { ws.close(); } catch { /* already closed */ }
     });
   })();
@@ -3281,6 +3281,7 @@ export function startChatSession(
   // and the default may have skipped a full account — so the composer's account chip reads
   // this, not its own request. Said again on every reattach for a client that just arrived.
   // A Codex pane names its CODEX account (and the tool), so the chip lists Codex accounts.
+  if (app) sendMeta({ subtype: 'app_chat' });
   if (isAccountTool(bridgeTool)) { if (toolAccountId) sendMeta({ subtype: 'account_active', accountId: toolAccountId, tool: bridgeTool }); }
   else if (activeAccountId) sendMeta({ subtype: 'account_active', accountId: activeAccountId });
 
@@ -3682,13 +3683,14 @@ export function startChatSession(
       }
       // An app conversation that rotated (`/clear`, a compaction, a handoff): its successor gets
       // its record from the stream itself, so the envelope holds with hooks off too.
-      if (appRecord && typeof obj.session_id === 'string' && obj.session_id !== appRecord.id) {
+      // Its pin keeps pointing at the live conversation, as a hook would write it. Only the main
+      // thread's frames: a sub-agent's id is no rotation.
+      if (appRecord && typeof obj.session_id === 'string' && obj.session_id !== appRecord.id && !obj.parent_tool_use_id
+        && ((obj.type === 'system' && obj.subtype === 'init') || obj.type === 'result')) {
         const next = rotateAppChat(appRecord, obj.session_id);
-        if (next) appRecord = next;
-        else {
-          const known = lookupAppChat(obj.session_id);
-          if (known.kind === 'record') appRecord = known.record;
-        }
+        const known = next ? null : lookupAppChat(obj.session_id);
+        appRecord = next ?? (known?.kind === 'record' ? known.record : appRecord);
+        recordTabSession(contextRoot, pinId, obj.session_id);
       }
 
       // A rotation in progress moves through its stages on these same frames. Read BEFORE the

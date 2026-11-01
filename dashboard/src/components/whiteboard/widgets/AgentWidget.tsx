@@ -253,7 +253,9 @@ function useHostClaim(session: ChatSession): boolean {
  * portaled into it (the notch's own mount). `bare`: the agent's envelope is the server's to
  * decide, so the composer offers no mode, permission or model switch.
  */
-export function CardChat({ session, reopen, placeholder, pane = false, feed }: {
+export function CardChat({ session, reopen, placeholder, pane = false, feed, openPage }: {
+  /** Where a page link goes when there is no surface around this chat (an app's frame). */
+  openPage?: (page: string) => void;
   session: ChatSession;
   reopen: () => void;
   placeholder: string;
@@ -276,6 +278,8 @@ export function CardChat({ session, reopen, placeholder, pane = false, feed }: {
 
   const reopenRef = useRef(reopen);
   reopenRef.current = reopen;
+  const openPageRef = useRef(openPage);
+  openPageRef.current = openPage;
   const actions = useMemo<ChatSurfaceActions>(() => ({
     changeModel: (_sid, id) => session.setModel(id),
     changeEffort: (_sid, level) => session.setEffort(level),
@@ -285,7 +289,7 @@ export function CardChat({ session, reopen, placeholder, pane = false, feed }: {
     changeMode: () => { /* a card speaks as its agent */ },
     changeAccount: () => { /* follows the default account */ },
     handoffToDevelop: () => { /* a card does not hand off */ },
-    openAppPage: () => { /* opened from the AI Team or the tab */ },
+    openAppPage: (page: string) => { openPageRef.current?.(page); },
     signIn: async () => { /* sign in from a project chat */ },
   }), [session]);
 

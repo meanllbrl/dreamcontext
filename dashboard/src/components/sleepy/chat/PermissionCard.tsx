@@ -8,7 +8,7 @@ import { useVaultId } from '../../../context/VaultContext';
 import { isDesktop } from '../../../lib/desktop';
 import { useEmbed } from '../../embed/embedMode';
 import { useI18n } from '../../../context/I18nContext';
-import { allowAlertText, ALLOW_TEXT_MAX, cleanAlertText } from './permissionAlert';
+import { allowAlertText, allowOffered, cleanAlertText } from './permissionAlert';
 import type { ChatSession, PendingPermission } from '../chatSession';
 
 /**
@@ -68,7 +68,7 @@ export function PermissionCard({
   // An app's frame: the page around it can dress up the card, and it cannot cover a native alert,
   // so the alert is where the yes happens. A text too long to read there is not offered at all.
   const alertText = embed ? allowAlertText(item.toolName, item.input) : '';
-  const tooLong = !!embed && cleanAlertText(alertText).length > ALLOW_TEXT_MAX;
+  const tooLong = !!embed && !allowOffered(item.toolName, item.input);
 
   const allow = () => {
     if (embed && !window.confirm(cleanAlertText(alertText))) return;
