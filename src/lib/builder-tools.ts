@@ -130,8 +130,12 @@ export function heavyRepoDir(cwd: string, gitCommonDir: () => string | null = ()
 
 // ─── machine-wide heavy slots (orchestration plan r5 D12) ─────────────────────────────────
 
-/** At most this many heavy checks run at once on the WHOLE machine, every repo together (O5). */
-export const HEAVY_MACHINE_SLOTS = 2;
+/**
+ * At most this many heavy checks run at once on the WHOLE machine, every repo together. Owner,
+ * 2026-11-01: speed wins, so it comes down only on a real signal (`./heat.ts`): macOS memory
+ * pressure critical or the Mac truly hot. High swap or a busy load average never lowers it.
+ */
+export const HEAVY_MACHINE_SLOTS = 4;
 /** A slot (or repo lock) past this age whose pid is gone is reclaimed; a live holder never is. */
 export const HEAVY_LOCK_STALE_MS = 5_000;
 
@@ -184,8 +188,8 @@ export const HEAT_RECHECK_MS = 20_000;
  * deadlock). Slots are tried in a loop, each once per poll, with pid liveness (that is what makes
  * the short stale age safe). Null = nothing is held and nothing may run (the caller's exit 75).
  *
- * How many slots may be busy at once is `limit()` (default: the heat limit, `./heat.ts`: 1 while
- * macOS says very hot, else {@link HEAVY_MACHINE_SLOTS}), read at entry and at most every
+ * How many slots may be busy at once is `limit()` (default: `./heat.ts`, 2 at thermal state serious,
+ * 1 at critical or at critical memory pressure, else {@link HEAVY_MACHINE_SLOTS}), read at entry and at most every
  * {@link HEAT_RECHECK_MS} while waiting. A slot is taken only while fewer than L are held, and
  * only among slots [0, L). A held slot is never revoked. Accepted race: a caller that read L=2 up
  * to 20 s earlier can take slot-1 while another runs on slot-0 under L=1; the next read converges.

@@ -289,7 +289,7 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .argument('<command...>', 'The check to run, after --')
     .option('--max-wait <seconds>', `How long to stand in line (default ${HEAVY_DEFAULT_WAIT_S}, ${HEAVY_HOT_WAIT_S} while the Mac is very hot)`)
     .option('--because <reason>', 'Run past the repeat limit, once per run and command; the reason stays in `builder budget`')
-    .description(`Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's ${HEAVY_MACHINE_SLOTS} heavy slots (every repo together; 1 while macOS says the Mac is very hot), smaller first (exit: the command's, ${HEAVY_LOCK_BUSY_EXIT} = the wait ran out, nothing ran, the place is kept, or ${HEAVY_OVER_BUDGET_EXIT} = past the repeat limit, nothing ran)`)
+    .description(`Run a type-check, build, test run or browser verify script in its line: a short check through a fast slot, anything else holding this checkout's heavy lock (each worktree has its own) and one of the machine's ${HEAVY_MACHINE_SLOTS} heavy slots (every repo together; 2 at thermal state serious, 1 at critical heat or memory pressure), smaller first (exit: the command's, ${HEAVY_LOCK_BUSY_EXIT} = the wait ran out, nothing ran, the place is kept, or ${HEAVY_OVER_BUDGET_EXIT} = past the repeat limit, nothing ran)`)
     .action(async (command: string[], opts: { maxWait?: string; because?: string }) => {
       process.exitCode = await builderHeavy(deps, command, opts);
     });

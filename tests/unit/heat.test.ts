@@ -2,26 +2,38 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { HEAT_HOT, clampLimit, heavyLimitFor, readBagMode, readHeatLevel } from '../../src/lib/heat.js';
+import { HEAT_HOT, clampLimit, heavyLimitFor, readBagMode, readHeatLevel, readMemoryCritical } from '../../src/lib/heat.js';
 
 // Heat and the machine's heavy steps (AC1): very hot = one step machine-wide, else two.
+
+describe('readMemoryCritical', () => {
+  it('only the kernel\'s critical level counts; warn, junk and a failed probe do not', async () => {
+    const at = (s: string) => readMemoryCritical({ platform: 'darwin', read: async () => s });
+    expect(await at('4\n')).toBe(true);
+    expect(await at('2\n')).toBe(false);
+    expect(await at('junk')).toBe(false);
+    expect(await readMemoryCritical({ platform: 'darwin', read: async () => { throw new Error('no'); } })).toBe(false);
+    expect(await readMemoryCritical({ platform: 'linux', read: async () => '4' })).toBe(false);
+  });
+});
 
 describe('heavyLimitFor / clampLimit', () => {
   it('serious and critical are very hot (1); nominal, fair and unread are 2', () => {
     expect(HEAT_HOT).toEqual(['serious', 'critical']);
-    expect(heavyLimitFor('serious')).toBe(1);
+    expect(heavyLimitFor('serious')).toBe(2);
     expect(heavyLimitFor('critical')).toBe(1);
-    expect(heavyLimitFor('fair')).toBe(2);
-    expect(heavyLimitFor('nominal')).toBe(2);
-    expect(heavyLimitFor(null)).toBe(2);
+    expect(heavyLimitFor('fair')).toBe(4);
+    expect(heavyLimitFor('nominal')).toBe(4);
+    expect(heavyLimitFor('nominal', true)).toBe(1);
+    expect(heavyLimitFor(null)).toBe(4);
   });
 
   it('clamps into [1, 2]; NaN, 0, negatives and non-numbers read as 2', () => {
     expect(clampLimit(1)).toBe(1);
     expect(clampLimit(2)).toBe(2);
-    expect(clampLimit(5)).toBe(2);
+    expect(clampLimit(5)).toBe(4);
     expect(clampLimit(1.7)).toBe(1);
-    for (const junk of [Number.NaN, 0, -1, Infinity, '1', null, undefined]) expect(clampLimit(junk)).toBe(2);
+    for (const junk of [Number.NaN, 0, -1, Infinity, '1', null, undefined]) expect(clampLimit(junk)).toBe(4);
   });
 });
 

@@ -27,7 +27,7 @@ describe('machine heavy slots', () => {
   let err: string[];
   const deps = (cwd: string): BuilderDeps => ({
     cwd: () => cwd, print: () => {}, printErr: (l) => err.push(l), ps: () => '', kill: () => {}, heavySlotDir: () => slots,
-    heavyLimit: async () => 2,
+    heavyLimit: async () => HEAVY_MACHINE_SLOTS,
   });
 
   beforeEach(() => {
@@ -48,14 +48,14 @@ describe('machine heavy slots', () => {
 
   const holdBoth = () => { for (const p of heavySlotPaths(slots)) expect(acquireFileLock(p, Date.now(), 5_000)).toBe(true); };
 
-  it('is two slots', () => {
-    expect(HEAVY_MACHINE_SLOTS).toBe(2);
-    expect(heavySlotPaths(slots).map((p) => p.slice(slots.length + 1))).toEqual(['slot-0.lock', 'slot-1.lock']);
+  it('is four slots', () => {
+    expect(HEAVY_MACHINE_SLOTS).toBe(4);
+    expect(heavySlotPaths(slots).map((p) => p.slice(slots.length + 1))).toEqual(['slot-0.lock', 'slot-1.lock', 'slot-2.lock', 'slot-3.lock']);
   });
 
-  it('with both slots held by live checks, a third from another repo runs NOTHING and exits 75', async () => {
+  it('with every slot held by live checks, a third from another repo runs NOTHING and exits 75', async () => {
     holdBoth();
-    expect(heavySlotsHeld(slots)).toBe(2);
+    expect(heavySlotsHeld(slots)).toBe(HEAVY_MACHINE_SLOTS);
     const marker = join(root, 'ran.txt');
     const code = await builderHeavy(deps(repoB), [process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(marker)},'x')`], { maxWait: '0' });
     expect(code).toBe(HEAVY_LOCK_BUSY_EXIT);
@@ -181,12 +181,12 @@ describe('machine heavy slots under heat', () => {
     first!.release();
   });
 
-  it('a limit that throws, is NaN or 0 reads as 2', async () => {
+  it('a limit that throws, is NaN or 0 reads as the default', async () => {
     for (const limit of [async () => { throw new Error('x'); }, async () => Number.NaN, async () => 0]) {
       const seen: number[] = [];
       const a = await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('a'), limit, onLimit: (n) => seen.push(n) });
       const b = await acquireHeavy(root, { waitMs: 0, slotDir: slots, repoLock: lock('b'), limit, onLimit: (n) => seen.push(n) });
-      expect(seen).toEqual([2, 2]);
+      expect(seen).toEqual([HEAVY_MACHINE_SLOTS, HEAVY_MACHINE_SLOTS]);
       expect(a && b).toBeTruthy();
       a!.release(); b!.release();
     }
@@ -199,7 +199,7 @@ describe('machine heavy slots under heat', () => {
     const code = await builderHeavy(deps(join(root, 'x'), async () => 1), [process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(marker)},'x')`], { maxWait: '0' });
     expect(code).toBe(HEAVY_LOCK_BUSY_EXIT);
     expect(existsSync(marker)).toBe(false);
-    expect(err.join('\n')).toMatch(/the Mac is very hot .*one heavy step at a time; slot held by pid \d+/);
+    expect(err.join('\n')).toMatch(/macOS reports critical heat or memory pressure, so this machine runs one heavy step at a time; slot held by pid \d+/);
   });
 
   it('a repo-lock timeout keeps the repo-lock text, never the heat text', async () => {
