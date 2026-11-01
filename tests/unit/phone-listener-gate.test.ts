@@ -26,6 +26,7 @@ import { claudeProjectDirName } from '../../src/lib/transcript-sessions.js';
 import { recordAutomationSession } from '../../src/lib/automations/session-registry.js';
 import { noteRunSession } from '../../src/lib/automations/run-session.js';
 import { updateSuperState } from '../../src/lib/super/store.js';
+import { registerLiveChat, unregisterLiveChat } from '../../src/server/routes/agent-chat-live.js';
 import type { Router } from '../../src/server/router.js';
 
 const ORIGIN = 'https://quiet-lake-1234.trycloudflare.com';
@@ -53,6 +54,8 @@ const RUN_TOKEN = 'FIXTURE-TOKEN-5f3a';
 const OLD_ID = '77777777-7777-4777-8777-777777777777';
 /** A task handed to a chat tab: a machine wrote its first prompt, a person sits at it. */
 const TASK_ID = '88888888-8888-4888-8888-888888888888';
+/** A Codex run in flight or killed: no note, no binding, only its rollout. */
+const CODEX_ID = '99999999-9999-4999-8999-999999999999';
 const RUN_AT = '2026-10-30T10:00:00.000Z';
 
 interface Reply { status: number; headers: http.IncomingHttpHeaders; body: string }
@@ -154,6 +157,14 @@ beforeAll(async () => {
   writeFileSync(join(runFolder, `${TASK_ID}.jsonl`), jsonl([
     { type: 'user', cwd: join(dir, PROJECT), sessionId: TASK_ID, uuid: `${TASK_ID}-u`, message: { role: 'user', content: 'Work on this dreamcontext task and drive it to completion: fix the login.' } },
     { type: 'assistant', cwd: join(dir, PROJECT), sessionId: TASK_ID, uuid: `${TASK_ID}-a`, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_task', name: 'Bash', input: { command: 'TASK-COMMAND-MARKER' } }] } },
+  ]));
+  const rollouts = join(dir, '.codex', 'sessions', '2026', '10', '30');
+  mkdirSync(rollouts, { recursive: true });
+  writeFileSync(join(rollouts, `rollout-2026-10-30T10-00-00-${CODEX_ID}.jsonl`), jsonl([
+    { type: 'session_meta', payload: { id: CODEX_ID, cwd: join(dir, PROJECT) } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `You are scheduled dreamcontext automation. ${RUN_TOKEN}` }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'CODEX-WORDS done.' }] } },
+    { type: 'response_item', payload: { type: 'function_call', name: 'shell', call_id: 'c1', arguments: JSON.stringify({ command: `curl ${RUN_TOKEN}` }) } },
   ]));
   mkdirSync(join(runFolder, RUN_ID, 'subagents'), { recursive: true });
   writeFileSync(join(runFolder, RUN_ID, 'subagents', 'agent-abc123.jsonl'), jsonl(runRows(RUN_ID).map((r) => ({ ...r, isSidechain: true }))));
@@ -321,6 +332,32 @@ describe('phone listener: the route policy over the FULL route table (AC4/AC5)',
       expect(r.body, q).not.toContain('composed prompt');
     }
     await updateSuperState(context0(), (s) => { s.formerChildren = []; });
+
+    // A Codex run with no binding yet, or ever: not listed, words only, by every id spelling.
+    for (const p of [`/api/agent/chat-history?claudeId=${CODEX_ID}&tool=codex`, `/api/agent/chat-history?claudeId=${CODEX_ID}`, `/api/agent/chat-history?claudeId=${CODEX_ID.toUpperCase()}&tool=codex`]) {
+      const r = await request(phonePort, 'GET', p, H());
+      expect(r.status, p).toBe(200);
+      expect(r.body, p).toContain('CODEX-WORDS');
+      expect(r.body, p).not.toContain(RUN_TOKEN);
+    }
+    expect((await request(mainPort, 'GET', `/api/agent/chat-history?claudeId=${CODEX_ID}&tool=codex`, { 'x-dreamcontext-vault': PROJECT })).body).toContain(RUN_TOKEN);
+    expect(JSON.parse((await request(phonePort, 'GET', '/api/agent/chat-sessions?agentRuns=1', H())).body).sessions.map((s: { id: string }) => s.id)).not.toContain(CODEX_ID);
+    expect(JSON.parse((await request(mainPort, 'GET', '/api/agent/chat-sessions?agentRuns=1', { 'x-dreamcontext-vault': PROJECT })).body).sessions.map((s: { id: string }) => s.id)).toContain(CODEX_ID);
+    expect(JSON.parse((await request(phonePort, 'GET', '/api/agent/chat-sessions?q=scheduled', H())).body)).toMatchObject({ total: 0, sessions: [] });
+
+    // A phone never opens or adopts a run: no child's frames reach it, by any id it can name.
+    for (const q of [`resume=${RUN_ID}`, `resume=${RUN_ID}&reattach=1`, `resume=${KILLED_ID}&reattach=passive`, `resume=${OLD_ID}`, `resume=${CODEX_ID}&tool=codex`, `sessionId=${CODEX_ID}`, `resume=${RUN_ID.toUpperCase()}`]) {
+      expect(await upgrade(phonePort, `/api/agent/chat?vault=${PROJECT}&${q}`, { cookie, origin: ORIGIN }), q).toBe(403);
+    }
+
+    // A run a tab holds on the Mac is no chat of the phone's; the owner's own stays listed.
+    const held = [RUN_ID, MINE_ID].map((conversationId) => ({ conversationId, projectRoot: join(dir, PROJECT), busy: true }) as never);
+    held.forEach(registerLiveChat);
+    try {
+      const chats = JSON.parse((await request(phonePort, 'GET', '/api/agent/live-chats', H())).body).chats.map((c: { conversationId: string }) => c.conversationId);
+      expect(chats).toContain(MINE_ID);
+      expect(chats).not.toContain(RUN_ID);
+    } finally { held.forEach(unregisterLiveChat); }
 
     // A delegated task is a person's chat: listed, and read whole on the phone.
     expect(listed.sessions.map((s: { id: string }) => s.id)).toContain(TASK_ID);

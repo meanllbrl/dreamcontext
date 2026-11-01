@@ -11,11 +11,11 @@ import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { UUID_RE } from '../agent-session-map.js';
-import { foldCase, matchSnippet, oneLine, promptLabel, type PastSession } from '../transcript-sessions.js';
+import { foldCase, isUnattendedRun, matchSnippet, oneLine, promptLabel, type PastSession } from '../transcript-sessions.js';
 import { parseCodexRolloutHistory } from './codex-history.js';
-import { CODEX_THREAD_RE, codexRolloutCwd } from './codex-threads.js';
+import { CODEX_THREAD_RE, codexRolloutCwd, findCodexRollout } from './codex-threads.js';
 
-export type CodexPastSession = PastSession & { tool: 'codex' };
+export type CodexPastSession = PastSession & { tool: 'codex'; unattended: boolean };
 
 /** Rollouts looked at per listing, newest day first: bounds a machine with years of threads. */
 const MAX_ROLLOUTS = 2000;
@@ -82,6 +82,18 @@ function read(r: Rollout, cwdOnly: boolean): { cwd: string | null; summary: Summ
   return { cwd, summary };
 }
 
+/** Did this Codex thread run with nobody at it? Its rollout's first prompt says, from its first
+ *  turn on: no hook notes a Codex run, and its binding lands only when it ends. */
+export function codexThreadUnattended(thread: string, home: string = homedir()): boolean {
+  const path = findCodexRollout(thread, join(home, '.codex'));
+  if (!path) return false;
+  try {
+    const st = statSync(path);
+    const { summary } = read({ path, id: thread.toLowerCase(), mtimeMs: st.mtimeMs, size: st.size }, false);
+    return !!summary && isUnattendedRun(promptLabel(summary.prompts[0]!));
+  } catch { return false; }
+}
+
 /** Tests: forget what was read. */
 export function clearCodexSessionCache(): void {
   cache.clear();
@@ -146,7 +158,8 @@ export function listCodexSessions(
     const preview = summary.prompts.length > 1 ? oneLine(last, 120) : '';
     rows.push({
       id, title, named: !!remembered, preview, updatedAt: r.mtimeMs, startedAt: summary.startedAt,
-      sizeBytes: r.size, gitBranch: summary.gitBranch, agentRun: false, tool: 'codex', ...hit,
+      sizeBytes: r.size, gitBranch: summary.gitBranch, agentRun: false, tool: 'codex',
+      unattended: isUnattendedRun(promptLabel(summary.prompts[0]!)), ...hit,
     });
   }
   return rows;

@@ -78,7 +78,9 @@ export async function computeChatSessions(
   const includeAgentRuns = q.agentRuns === '1';
   // K4: a run's title, snippet and search hits are its prompt and its steps. A phone reads runs on
   // the AI Team page; here it is told nothing of them, not even by a count.
+  // Whoever owns it: a tab the Super adopted is still that run, and a phone asks with `super=`.
   const isRun = opts.phone ? runSessionCheck(contextRoot, opts.home) : null;
+  const hidden = isRun ? (s: { id: string; unattended: boolean }): boolean => s.unattended || isRun(s.id) : null;
 
   const projectRoot = projectRootOf(contextRoot);
   const files = listTranscriptFiles(projectRoot, opts.home);
@@ -97,14 +99,13 @@ export async function computeChatSessions(
   const superRows = q.super === 'group' || q.super === 'only' ? { owned: await superOwned(contextRoot), mode: q.super as 'group' | 'only' } : undefined;
   const result = listPastSessions(projectRoot, {
     home: opts.home, query, limit, includeAgentRuns, files,
-    // Whoever owns it: a tab the Super adopted is still that run, and a phone asks with `super=`.
-    ...(isRun ? { hide: (s: { id: string; unattended: boolean }) => s.unattended || isRun(s.id) } : {}),
+    ...(hidden ? { hide: hidden } : {}),
     content: contentOf,
     // A closed tab's name, so the list says what the tab said (see `session-titles.ts`).
     titles: readSessionTitles(contextRoot),
     ...(superRows ? { superRows } : {}),
   });
-  const merged = withCodexRows(result, contextRoot, projectRoot, { query, limit, superOnly: superRows?.mode === 'only', home: opts.home, isRun });
+  const merged = withCodexRows(result, contextRoot, projectRoot, { query, limit, superOnly: superRows?.mode === 'only', home: opts.home, hidden });
   return query.trim() && !indexed
     ? { ...merged, indexing: { done: build.progress.done, total: build.progress.total } }
     : merged;
@@ -114,7 +115,7 @@ export async function computeChatSessions(
  *  has none: a Super Agent runs on Claude. A failed read is simply no Codex rows. */
 function withCodexRows<R extends { sessions: Array<{ updatedAt: number; matchIn?: string }>; total: number }>(
   result: R, contextRoot: string, projectRoot: string,
-  o: { query: string; limit: number; superOnly: boolean; home?: string; isRun?: ((id: string) => boolean) | null },
+  o: { query: string; limit: number; superOnly: boolean; home?: string; hidden?: ((s: { id: string; unattended: boolean }) => boolean) | null },
 ): R {
   if (o.superOnly) return result;
   try {
@@ -122,7 +123,7 @@ function withCodexRows<R extends { sessions: Array<{ updatedAt: number; matchIn?
     const rows = [
       ...listCodexSessions(projectRoot, { home: o.home, query: o.query, limit: o.limit, contextRoot, titles }),
       ...listInstanceSessions(projectRoot, { home: o.home, query: o.query, limit: o.limit, contextRoot, titles }),
-    ].filter((r) => !o.isRun?.(r.id)) as ReturnType<typeof listCodexSessions>;
+    ].filter((r) => !o.hidden?.(r)) as ReturnType<typeof listCodexSessions>;
     if (!rows.length) return result;
     return { ...result, sessions: mergeSessionRows(result.sessions, rows, o.limit, !!o.query.trim()), total: result.total + rows.length };
   } catch {

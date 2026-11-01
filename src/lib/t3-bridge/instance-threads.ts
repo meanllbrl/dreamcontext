@@ -4,6 +4,7 @@
  * words and the final answers, one JSON line each, with the project on the first line. 0600 under
  * the T3 state root. Tool cards are not kept.
  */
+import { isUnattendedRun } from '../transcript-sessions.js';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -94,7 +95,13 @@ export function carriedText(thread: string, project: string, home: string = home
 
 export interface InstancePastSession {
   id: string; title: string; named: boolean; preview: string; updatedAt: number; startedAt: number | null;
-  sizeBytes: number; gitBranch: string; agentRun: boolean; tool: 'antigravity'; match?: string; matchIn?: string;
+  sizeBytes: number; gitBranch: string; agentRun: boolean; tool: 'antigravity'; unattended: boolean; match?: string; matchIn?: string;
+}
+
+/** Did this thread run with nobody at it? Its first turn says, as a Claude transcript's does. */
+export function instanceThreadUnattended(thread: string, home: string = homedir()): boolean {
+  const first = readThread(thread, home)?.turns.find((t) => t.role === 'user')?.text;
+  return !!first && isUnattendedRun(first.replace(/\s+/g, ' ').trim());
 }
 
 /** This project's Antigravity threads for History, newest first. */
@@ -120,7 +127,7 @@ export function listInstanceSessions(projectRoot: string, o: { home?: string; qu
     rows.push({
       id, title, named: !!remembered, preview: prompts.length > 1 ? prompts[prompts.length - 1]!.slice(0, 120) : '',
       updatedAt: stat.mtimeMs, startedAt: found.turns[0]?.at ?? null, sizeBytes: stat.size, gitBranch: '', agentRun: false,
-      tool: 'antigravity', ...(q ? { match: title, matchIn: title.toLowerCase().includes(q) ? 'title' : 'prompt' } : {}),
+      tool: 'antigravity', unattended: isUnattendedRun(prompts[0]!), ...(q ? { match: title, matchIn: title.toLowerCase().includes(q) ? 'title' : 'prompt' } : {}),
     });
   }
   // A pane opened from History keeps its id across a move: the newest thread is its row, and it

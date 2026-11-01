@@ -6,8 +6,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { isRunSession, offerableSession, phoneRunItems, runChatSession } from '../../src/lib/automations/run-chat.js';
+import { dirname, join } from 'node:path';
+import { isRunSession, offerableSession, phoneReadsAsRun, phoneRunItems, runChatSession } from '../../src/lib/automations/run-chat.js';
+import { recordThreadTurn } from '../../src/lib/t3-bridge/instance-threads.js';
 import { isNotedRunSession, noteRunSession, replaceRunSession, runningSessionFor } from '../../src/lib/automations/run-session.js';
 import { recordAutomationSession } from '../../src/lib/automations/session-registry.js';
 import { listAgentHistory } from '../../src/lib/agents/history.js';
@@ -182,6 +183,35 @@ describe('isUnattendedRun: who was at it', () => {
     expect(isUnattendedRun('Work on this dreamcontext task and drive it to completion: x')).toBe(false);
     expect(isUnattendedRun('Summarize this dreamcontext task for me: x')).toBe(false);
     expect(isUnattendedRun('fix the login page')).toBe(false);
+  });
+});
+
+describe('the phone gate on a tool with no hook note', () => {
+  const rollout = (id: string, prompt: string): void => {
+    const dir = join(home, '.codex', 'sessions', '2026', '10', '30');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `rollout-2026-10-30T10-00-00-${id}.jsonl`), `${[
+      { type: 'session_meta', payload: { id, cwd: root } },
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: prompt }] } },
+    ].map((r) => JSON.stringify(r)).join('\n')}\n`);
+  };
+
+  it('a running or killed Codex run reads as a run by its rollout, a person\'s thread does not', () => {
+    rollout(A, 'You are scheduled dreamcontext automation "watch".');
+    rollout(B, 'Work on this dreamcontext task and drive it to completion: x');
+    expect(isRunSession(root, [A], home)).toBe(false);
+    expect(phoneReadsAsRun(root, [A], home)).toBe(true);
+    expect(phoneReadsAsRun(root, [A.toUpperCase()], home)).toBe(true);
+    expect(phoneReadsAsRun(root, [B], home)).toBe(false);
+  });
+
+  it('an Antigravity run the same way', () => {
+    const run = 'cccccccc-0000-4000-8000-00000000000c';
+    const chat = 'dddddddd-0000-4000-8000-00000000000d';
+    recordThreadTurn(run, dirname(root), 'user', 'You are scheduled dreamcontext automation "watch".', home);
+    recordThreadTurn(chat, dirname(root), 'user', 'fix the login page', home);
+    expect(phoneReadsAsRun(root, [run], home)).toBe(true);
+    expect(phoneReadsAsRun(root, [chat], home)).toBe(false);
   });
 });
 

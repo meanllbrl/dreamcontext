@@ -3,6 +3,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { findTranscriptBySessionId } from '../transcript-locate.js';
 import { transcriptIsUnattendedRun } from '../transcript-sessions.js';
+import { codexThreadUnattended } from '../t3-bridge/codex-sessions.js';
+import { instanceThreadUnattended } from '../t3-bridge/instance-threads.js';
 import type { ChatHistoryItem } from '../transcript-history.js';
 import { isAutomationBoundSession, readAutomationSession, sessionForRun } from './session-registry.js';
 import { isNotedRunSession, runningSessionFor } from './run-session.js';
@@ -85,16 +87,19 @@ function cachedRunSessions(contextRoot: string): Set<string> {
 }
 
 /**
- * The phone's question: does this conversation read as a run? A session from before run notes has
- * no marker and, if it was a nested or failed-over one, no binding either, so its transcript's
- * first prompt speaks for it.
+ * THE PHONE'S ONE GATE: does this conversation read as a run? Every way a phone reaches a
+ * conversation asks here. A session from before run notes has no marker and, if it was a nested or
+ * failed-over one, no binding either, and a Codex or Antigravity run has neither until it ends, or
+ * ever if it was killed: its first prompt, wherever that tool keeps it, speaks for it.
  */
 export function phoneReadsAsRun(contextRoot: string | null, ids: readonly string[], home: string = homedir()): boolean {
   if (isRunSession(contextRoot, ids, home)) return true;
   // One at a time: a pane and its teammate are two conversations, and only one may be a run's.
-  return ids.some((id) => {
-    const path = id ? findTranscriptBySessionId([id], home) : null;
-    return !!path && transcriptIsUnattendedRun(path);
+  return ids.some((raw) => {
+    if (!raw) return false;
+    const id = raw.toLowerCase();
+    const path = findTranscriptBySessionId([id], home);
+    return (!!path && transcriptIsUnattendedRun(path)) || codexThreadUnattended(id, home) || instanceThreadUnattended(id, home);
   });
 }
 

@@ -1040,7 +1040,8 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
   const phone = isPhoneSocket(req);
   const visible = (vault: string | null): boolean => !phone || (vault !== null && isMacExposed(vault));
   const registry = listChats();
-  const snapshot = liveChatsSnapshot();
+  // K4: a run a tab holds on the Mac is no chat of the phone's.
+  const snapshot = liveChatsSnapshot().filter((e) => !phone || !phoneReadsAsRun(join(e.projectRoot, '_dream_context'), [e.conversationId]));
   const chats: LiveChatWire[] = snapshot
     .filter((e) => !e.draining)
     .map((e) => {
@@ -1458,6 +1459,12 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       // the conversation up, exactly as a closed socket made it do before detaching existed.
       const live = findLiveChat(resumeId);
       const ctx = join(projectRoot, '_dream_context');
+      // K4: a phone never holds or adopts a run. What a child streams and replays is a run's tool
+      // input and output, so the gate stands before any frame, not on each one. A phone reads a
+      // run through its steps and continues it through the reply route.
+      if (phone && phoneReadsAsRun(ctx, [resumeId, sessionId, ...[resumeId, sessionId].map((cid) => (cid ? resolveAgentSession(ctx, cid) : ''))])) {
+        releaseOpening(); rejectUpgrade(socket, 403); return;
+      }
       const open = chatOpenDecision({
         phone, live, projectRoot, reattach,
         foreignTranscript: phone && [resumeId, sessionId].some((cid) => !!cid && phoneTranscriptRefused(req, ctx, liveTranscriptPath(ctx, cid))),
