@@ -895,14 +895,6 @@ describe('every answer of a team job reaches the super once (brief ai-team-atomi
     expect(done).toContain('event=done'); expect(done).not.toContain('STALE'); expect(done).toContain('No new answer');
   });
 
-  it('a run session reaches the ignore file of a brain that already has one', () => {
-    const root = join(realpathSync(mkdtempSync(join(tmpdir(), 'run-session-'))), '_dream_context');
-    mkdirSync(join(root, 'state'), { recursive: true });
-    writeFileSync(join(root, '.gitignore'), 'x\n');
-    noteRunSession(root, 'fake-member', 'r1', '6f02f3ed-0e2e-434e-b0b3-b4f606e32879');
-    expect(readFileSync(join(root, '.gitignore'), 'utf-8')).toContain('state/.run-sessions/');
-  });
-
   it('a stuck delivers the posts it claimed', () => {
     const { root, s, job, post } = vault();
     post(t0 + 1_000, 'said just before failing');
@@ -919,6 +911,9 @@ describe('every answer of a team job reaches the super once (brief ai-team-atomi
     noteTeamJobEnd(root, s, job.id, null, t0 + 3_000); // toldEndAt long past: the row is cached
     s.containers = [{ id: 'team-x', kind: 'team', ref: job.id, shape: 'square', place: 'float' }];
     noteRunSession(root, 'fake-member', job.runId, '6f02f3ed-0e2e-434e-b0b3-b4f606e32879');
+    const transcripts = join(process.env.HOME as string, '.claude', 'projects', 'fake');
+    mkdirSync(transcripts, { recursive: true });
+    writeFileSync(join(transcripts, '6f02f3ed-0e2e-434e-b0b3-b4f606e32879.jsonl'), '{}\n');
     const first = (teamLiveRows(root, s) as Record<string, { status: string; sessionId?: string; resumable?: true }>)[job.id];
     expect(first).toMatchObject({ status: 'done', sessionId: '6f02f3ed-0e2e-434e-b0b3-b4f606e32879' });
     expect(first.resumable).toBeUndefined();

@@ -62,7 +62,8 @@ if (!argv.includes('stream-json')) {
     if (prompt.includes('which step?')) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 4000);
     const projDir = join(process.env.HOME, '.claude', 'projects', process.cwd().replace(/[^a-zA-Z0-9]/g, '-'));
     mkdirSync(projDir, { recursive: true });
-    appendFileSync(join(projDir, memberSession + '.jsonl'), JSON.stringify({ type: 'user', uuid: randomUUID(), sessionId: memberSession, timestamp: new Date().toISOString(), message: { role: 'user', content: 'MEMBER SESSION LINE' } }) + '\\n');
+    appendFileSync(join(projDir, memberSession + '.jsonl'), JSON.stringify({ type: 'user', uuid: randomUUID(), sessionId: memberSession, timestamp: new Date().toISOString(), message: { role: 'user', content: 'COMPOSED PROMPT LINE' } }) + '\\n');
+    appendFileSync(join(projDir, memberSession + '.jsonl'), JSON.stringify({ type: 'assistant', uuid: randomUUID(), sessionId: memberSession, timestamp: new Date().toISOString(), message: { role: 'assistant', content: [{ type: 'text', text: 'MEMBER SESSION LINE' }] } }) + '\\n');
     process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: ${JSON.stringify(MEMBER_ANSWER)}, session_id: memberSession, num_turns: 1, total_cost_usd: 0, duration_ms: 5 }) + '\\n');
   } else process.stdout.write('{}\\n');
   process.exit(0);
@@ -359,6 +360,8 @@ async function run(engineName, base) {
   ok(tag('T4 …without leaving the Super screen'), await onSuper());
   ok(tag('T4 …it shows the run\'s real session, its transcript'), await until(page, async () => /MEMBER SESSION LINE/.test(await convo.innerText().catch(() => '')), 20000),
     (await convo.innerText().catch(() => '')).slice(0, 400));
+  ok(tag('T4 …without the prompt the runner composed'), !/COMPOSED PROMPT LINE/.test(await convo.innerText().catch(() => '')));
+  ok(tag('T4 …and no read-only line under a run\'s steps'), (await convo.getByTestId('super-readonly').count()) === 0);
   ok(tag('T4 …never the composer of a new conversation'), !/Start a new conversation/.test(await frame.innerHTML()));
   const memberInput = convo.getByTestId('team-job-reply');
   ok(tag('T4 …and it can be continued'), await until(page, async () => (await memberInput.count()) === 1 && await memberInput.isEnabled(), 20000));

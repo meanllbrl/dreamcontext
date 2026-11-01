@@ -120,10 +120,20 @@ function metaOf(s: FeedSession): FeedMeta {
     lastAt: s.lastAt,
     durationMs: s.durationMs,
     unread: s.unread,
+    ...(s.hasDocument ? { hasDocument: true } : {}),
+    ...(s.claudeId ? { claudeId: s.claudeId } : {}),
+    ...(s.resumable ? { resumable: true } : {}),
+    ...(s.elsewhere ? { elsewhere: true } : {}),
     ...(s.missing ? { missing: true } : {}),
     ...(s.truncated ? { truncated: true } : {}),
     readOnly: true,
   };
+}
+
+/** A run's transcript as its steps: the first row is the prompt the runner composed, not the owner's
+ *  words. Only when it is the first: a capped transcript starts somewhere later. */
+export function runViewItems<T extends { kind: string }>(items: readonly T[]): T[] {
+  return items[0]?.kind === 'user' ? items.slice(1) : [...items];
 }
 
 /** Rows the pane draws. Item ids are derived from entry ids (`f:<id>`), so merges keep rows. */
@@ -131,15 +141,17 @@ export function toFeedItems(sessions: readonly FeedSession[]): FeedItem[] {
   const out: FeedItem[] = [];
   for (const s of sessions) {
     const meta = metaOf(s);
-    if (s.rows.length === 0) {
+    // "Working" is the indicator's job: a run in flight says it once, under its last row.
+    const rows = s.status === 'running' ? s.rows.filter((r) => r.origin !== 'note') : s.rows;
+    if (rows.length === 0) {
       out.push({ kind: 'text', id: `f:${s.key}#none`, index: 0, text: '', done: true, ts: Date.parse(s.lastAt) || 0, feed: { ...meta, empty: true } });
       continue;
     }
-    for (const r of s.rows) {
+    for (const r of rows) {
       const ts = Date.parse(r.at) || 0;
       const id = `f:${s.key}:${r.id}`;
       if (r.kind === 'user') out.push({ kind: 'user', id, text: r.text, ts, feed: meta });
-      else out.push({ kind: 'text', id, index: 0, text: withFiles(stripActionFences(r.text), r.files), done: true, ts, feed: meta });
+      else out.push({ kind: 'text', id, index: 0, text: withFiles(stripActionFences(r.text), r.files), done: true, ts, feed: r.origin ? { ...meta, origin: r.origin } : meta });
     }
   }
   return out;

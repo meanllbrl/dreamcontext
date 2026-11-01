@@ -30,9 +30,9 @@ vi.mock('../../dashboard/src/components/sleepy/chatSession', () => ({
 }));
 
 import { splitWindow, shouldAutoReveal, nextFirstShown, WINDOW_MAX_ENTRIES } from '../../dashboard/src/components/sleepy/chat/chatEntities';
-import { feedHasRunning, feedMarks, feedRunWorking, feedShift, liveDividerShown, stripActionFences } from '../../dashboard/src/components/sleepy/chat/chatFeed';
+import { feedHasRunning, feedMarks, feedReportShown, feedRunWorking, feedShift, liveDividerShown, runFootOf, stepsOpen, stripActionFences } from '../../dashboard/src/components/sleepy/chat/chatFeed';
 import {
-  applyDeferred, dividerFor, mergeFresh, overlaps, prependOlder, readingOrder, toFeedItems, type FeedSession,
+  applyDeferred, dividerFor, mergeFresh, overlaps, prependOlder, readingOrder, runViewItems, toFeedItems, type FeedSession,
 } from '../../dashboard/src/components/aiteam/agentHistory';
 import {
   __resetStageSessionsForTests, __setStageHistoryIo, beginStageOpen, deselectStage, loadOlderStageFeed,
@@ -66,7 +66,7 @@ function talk(id: string, min: number, rows = 2): FeedSession {
 function page(sessions: FeedSession[], nextBefore: string | null = null, unreadCount = 0): AgentHistoryPage {
   return { sessions: [...sessions].sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt) || (a.key < b.key ? 1 : -1)), nextBefore, unreadCount };
 }
-const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+const flush = async () => { for (let i = 0; i < 24; i++) await Promise.resolve(); };
 
 // ─── the window ─────────────────────────────────────────────────────────────────────
 
@@ -419,5 +419,105 @@ describe('the stage entry (AC11, AC14, AC16)', () => {
     stale(page([run('daily', 1)]));
     await flush();
     expect(stageFeed(V, A)!.sessions.map((s) => s.key)).toEqual([run('daily', 7).key]);
+  });
+});
+
+describe('a silent run in the pane', () => {
+  const run = (over: Partial<FeedSession>): FeedSession => ({
+    key: 'watch::2026-10-30T09:00:00.000Z', kind: 'run', source: 'watch', title: 'Watch',
+    startedAt: '2026-10-30T09:00:00.000Z', lastAt: '2026-10-30T09:01:00.000Z', status: 'ok', durationMs: 60_000,
+    newestId: 'n', unread: false, rows: [], ...over,
+  });
+  const body = (origin: 'answer' | 'failure' | 'note', text: string) => ({ id: `body:${origin}`, kind: 'agent' as const, text, at: '2026-10-30T09:01:00.000Z', origin });
+
+  it('a body row is a normal text row that knows what it is; the report link follows it', () => {
+    const [item] = toFeedItems([run({ rows: [body('answer', 'Acme is healthy.')] })]);
+    expect(item).toMatchObject({ kind: 'text', text: 'Acme is healthy.', feed: { origin: 'answer' } });
+    expect(feedReportShown(item.feed, { last: true })).toBe(true);
+    expect(feedReportShown(item.feed, { last: false })).toBe(false);
+  });
+
+  it('a run with a document has the link whatever its rows are; one with neither does not', () => {
+    const [posted] = toFeedItems([run({ hasDocument: true, rows: [{ id: 'p', kind: 'agent', text: 'A post.', at: '2026-10-30T09:01:00.000Z' }] })]);
+    expect(feedReportShown(posted.feed, { last: true })).toBe(true);
+    const [note] = toFeedItems([run({ rows: [body('note', 'Finished.')] })]);
+    expect(feedReportShown(note.feed, { last: true })).toBe(false);
+  });
+
+  it('a run in flight says Working once: the indicator, not a row as well', () => {
+    const items = toFeedItems([run({ status: 'running', rows: [body('note', 'Working')] })]);
+    expect(items).toHaveLength(1);
+    expect(items[0].feed).toMatchObject({ empty: true, status: 'running' });
+    expect(feedRunWorking(items[0].feed, { last: true })).toBe(true);
+  });
+});
+
+describe('what opens under a run (W2)', () => {
+  const run = (over: Partial<FeedSession>): FeedSession => ({
+    key: 'watch::2026-10-30T09:00:00.000Z', kind: 'run', source: 'watch', title: 'Watch',
+    startedAt: '2026-10-30T09:00:00.000Z', lastAt: '2026-10-30T09:01:00.000Z', status: 'ok', durationMs: 60_000,
+    newestId: 'n', unread: false, rows: [{ id: 'body:answer', kind: 'agent', text: 'Acme is healthy.', at: '2026-10-30T09:01:00.000Z', origin: 'answer' }], ...over,
+  });
+  const meta = (over: Partial<FeedSession>) => toFeedItems([run(over)])[0].feed;
+
+  it('a resumable run has steps and Continue; its session reaches the row', () => {
+    const m = meta({ claudeId: 'c', resumable: true, hasDocument: true });
+    expect(m).toMatchObject({ claudeId: 'c', resumable: true, hasDocument: true });
+    expect(runFootOf(m)).toEqual({ steps: true, report: true, noReport: false, canContinue: true, line: null });
+  });
+
+  it('a run with no session has no Continue and says so; a document needs no session', () => {
+    expect(runFootOf(meta({ hasDocument: true }))).toEqual({ steps: false, report: true, noReport: false, canContinue: false, line: 'noSession' });
+  });
+
+  it('a result with no document here says so instead of a link that opens nothing', () => {
+    expect(runFootOf(meta({}))).toMatchObject({ report: false, noReport: true });
+  });
+
+  it('another machine\'s run is named, and nothing here continues it, running or not', () => {
+    expect(runFootOf(meta({ elsewhere: true, resumable: true }))).toMatchObject({ canContinue: false, line: 'otherMac' });
+    expect(runFootOf(meta({ elsewhere: true, status: 'running' }))).toMatchObject({ canContinue: false, line: 'otherMac' });
+  });
+
+  it('a running run is continued by queueing, and a skipped one has nothing to say', () => {
+    expect(runFootOf(meta({ status: 'running', claudeId: 'c' }))).toMatchObject({ canContinue: true, steps: true, line: null });
+    expect(runFootOf(meta({ status: 'skipped' }))).toMatchObject({ canContinue: false, line: null });
+  });
+
+  it('a running run opens by itself until the owner closes it; a finished one on his press', () => {
+    const k = 'watch::2026-10-30T09:00:00.000Z';
+    const none = new Set<string>();
+    expect(stepsOpen(meta({ status: 'running', claudeId: 'c' }), none, none)).toBe(true);
+    expect(stepsOpen(meta({ status: 'running', claudeId: 'c' }), none, new Set([k]))).toBe(false);
+    expect(stepsOpen(meta({ claudeId: 'c' }), none, none)).toBe(false);
+    expect(stepsOpen(meta({ claudeId: 'c' }), new Set([k]), none)).toBe(true);
+    expect(stepsOpen(meta({ status: 'running' }), none, none)).toBe(false);
+  });
+
+  it('the steps leave out the prompt the runner composed, only when it opens the transcript', () => {
+    const prompt = { kind: 'user', text: 'composed' };
+    const said = { kind: 'text', text: 'done' };
+    const reply = { kind: 'user', text: 'and this?' };
+    expect(runViewItems([prompt, said, reply])).toEqual([said, reply]);
+    expect(runViewItems([said, reply])).toEqual([said, reply]);
+    expect(runViewItems([])).toEqual([]);
+  });
+});
+
+describe('an open whose history never answers', () => {
+  it('fails after 15 s with its retries, and shows the Retry row instead of Loading', async () => {
+    vi.useFakeTimers();
+    try {
+      __resetStageSessionsForTests();
+      __setStageHistoryIo({ read: () => new Promise(() => {}) });
+      beginStageOpen('v', 'scout', null);
+      expect(stageFeed('v', 'scout')?.loading).toBe(true);
+      await vi.advanceTimersByTimeAsync(15_000 + 2_000 + 15_000 + 5_000 + 15_000 + 10);
+      expect(stageFeed('v', 'scout')).toMatchObject({ loading: false, failed: true });
+    } finally {
+      __setStageHistoryIo(null);
+      __resetStageSessionsForTests();
+      vi.useRealTimers();
+    }
   });
 });

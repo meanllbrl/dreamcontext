@@ -20,6 +20,16 @@ import type { TermStatus, SessionKind } from './agentSession';
  */
 export type SessionStatusKind = 'saved' | 'starting' | 'working' | 'asking' | 'ready' | 'ended';
 
+/** A team job's status in the same language: waiting in the member's queue reads as starting,
+ *  running as working, a question to the owner as asking, done as idle, failed as ended. */
+export function teamStatusKind(status: 'queued' | 'running' | 'asking' | 'done' | 'failed'): SessionStatusKind {
+  if (status === 'running') return 'working';
+  if (status === 'asking') return 'asking';
+  if (status === 'queued') return 'starting';
+  if (status === 'failed') return 'ended';
+  return 'ready';
+}
+
 /**
  * Urgency order — drives the worst-of rollup on the collapsed anchor chip AND the
  * "questions jump the queue" sort in the dock. A blocked question outranks everything:

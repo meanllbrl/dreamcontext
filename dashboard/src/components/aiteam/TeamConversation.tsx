@@ -59,7 +59,8 @@ function effortName(level: string): string {
 type ThreadRead = { entries: ThreadEntry[]; answer?: RunAnswer | null; rootId?: string | null; working?: AgentActivity | null };
 
 /**
- * ONE TEAMMATE, ONE CONVERSATION — the middle of the AI Team.
+ * ONE TEAMMATE, ONE CONVERSATION — an old-form app's embedded chat. On the AI Team page a teammate
+ * is its stage (`AgentStage`); this stays until no app of the old form is left.
  *
  * Every run this agent made, scheduled or asked for, in one stream oldest to newest (see
  * `buildConversation`). The composer at the bottom is Chat's own: by default it talks to the
@@ -84,7 +85,6 @@ export function TeamConversation({
   onFocusDone,
   managers = [],
   onSelectAgent,
-  onStage,
   sendMessage,
   runFilter,
 }: {
@@ -107,8 +107,6 @@ export function TeamConversation({
   managers?: { slug: string; title: string }[];
   /** Open another teammate (a manager on the path). */
   onSelectAgent?: (slug: string) => void;
-  /** Back to the agent's stage (this view is its activity: its routines' runs and posts). */
-  onStage?: () => void;
   /** Replaces the send: an app's embedded chat speaks as the app, never as `say`. */
   sendMessage?: (text: string) => Promise<void>;
   /** Which runs this conversation shows: an embedded chat shows its own app's runs. */
@@ -348,9 +346,6 @@ export function TeamConversation({
         </div>
         <span className="aiteam-spacer" />
         {embed && <OpenInMainApp grant={embed} page="agents" id={agent.slug} />}
-        {onStage && (
-          <button type="button" className="aiteam-pill" onClick={onStage} data-team-stage>{t('aiteam.stage.backToStage')}</button>
-        )}
         {!embed && (
           <button
             type="button"

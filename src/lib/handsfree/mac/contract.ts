@@ -295,6 +295,19 @@ export interface RemoteChild { sessionId: string; row?: string; startedAt: numbe
 export interface RemoteWaiting { id: string; kind: string; state: string; createdAt: number; sessionId: string; text: string }
 
 /** GET /api/agent/super-stage, the `super_stage` frame, and the body of every remote stage write. */
+/** A team job with a card on the stage, as a remote screen may see it. */
+export interface RemoteTeamJob {
+  id: string;
+  member: string;
+  runId: string;
+  startedAt: number;
+  status: 'queued' | 'running' | 'asking' | 'done' | 'failed';
+  /** The member's last line for this job, cut to 160 characters. */
+  lastLine: string;
+  sessionId?: string;
+  resumable?: true;
+}
+
 export interface SuperRemoteView {
   vault: string;
   session: string | null;
@@ -308,6 +321,8 @@ export interface SuperRemoteView {
   ownerBatches: string[];
   /** Child names for the agenda (the Mac's card titles). */
   names: Record<string, string>;
+  /** The team cards' jobs. */
+  team?: RemoteTeamJob[];
   /** The queue head the job bar shows, or null. */
   head: { item: string; kind: string; text: string } | null;
   rotating?: true;

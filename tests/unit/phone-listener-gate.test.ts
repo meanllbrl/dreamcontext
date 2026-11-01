@@ -20,7 +20,13 @@ import { setMacProbeNonce, setMacExposedVaults, setMacPublicOrigin } from '../..
 import { MAC_PROBE_HEADER } from '../../src/lib/handsfree/mac/contract.js';
 import { ROUTE_POLICY } from '../../src/lib/handsfree/mac/route-policy.js';
 import { addVault } from '../../src/lib/vaults.js';
+import { createAgent } from '../../src/lib/agents/store.js';
+import { appendThreadEntry } from '../../src/lib/automations/threads.js';
 import { claudeProjectDirName } from '../../src/lib/transcript-sessions.js';
+import { recordAutomationSession } from '../../src/lib/automations/session-registry.js';
+import { noteRunSession } from '../../src/lib/automations/run-session.js';
+import { updateSuperState } from '../../src/lib/super/store.js';
+import { registerLiveChat, unregisterLiveChat } from '../../src/server/routes/agent-chat-live.js';
 import type { Router } from '../../src/server/router.js';
 
 const ORIGIN = 'https://quiet-lake-1234.trycloudflare.com';
@@ -40,6 +46,17 @@ const MINE_ID = '11111111-1111-4111-8111-111111111111';
 const OTHER_ID = '22222222-2222-4222-8222-222222222222';
 const NOCWD_ID = '33333333-3333-4333-8333-333333333333';
 const TEAMMATE_ID = '44444444-4444-4444-8444-444444444444';
+/** A finished, bound run, and a killed one known only from its note. */
+const RUN_ID = '55555555-5555-4555-8555-555555555555';
+const KILLED_ID = '66666666-6666-4666-8666-666666666666';
+const RUN_TOKEN = 'FIXTURE-TOKEN-5f3a';
+/** A builder from before run notes: no marker, no binding, only its first prompt says what it is. */
+const OLD_ID = '77777777-7777-4777-8777-777777777777';
+/** A task handed to a chat tab: a machine wrote its first prompt, a person sits at it. */
+const TASK_ID = '88888888-8888-4888-8888-888888888888';
+/** A Codex run in flight or killed: no note, no binding, only its rollout. */
+const CODEX_ID = '99999999-9999-4999-8999-999999999999';
+const RUN_AT = '2026-10-30T10:00:00.000Z';
 
 interface Reply { status: number; headers: http.IncomingHttpHeaders; body: string }
 
@@ -79,6 +96,8 @@ function upgrade(port: number, path: string, headers: Record<string, string> = {
   });
 }
 
+const context0 = (): string => join(dir, PROJECT, '_dream_context');
+
 /** A concrete path for a registered pattern. */
 function concrete(path: string): string {
   return path.replace(/\*[a-zA-Z_]+/g, 'a/b').replace(/:[a-zA-Z_]+/g, 'x');
@@ -115,9 +134,46 @@ beforeAll(async () => {
   const jsonl = (rows: unknown[]) => rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
   // Each in its project's own folder, as Claude files them; the cwd-less one in an unrelated one.
   const folder = (root: string) => { const f = join(dir, '.claude', 'projects', claudeProjectDirName(root)); mkdirSync(f, { recursive: true }); return f; };
-  writeFileSync(join(folder(join(dir, PROJECT)), `${MINE_ID}.jsonl`), jsonl([...head, ...turn(join(dir, PROJECT), 'MINE-MARKER', MINE_ID)]));
+  // The owner's chat launched two headless builders: the teammate routes authorize them from this.
+  writeFileSync(join(folder(join(dir, PROJECT)), `${MINE_ID}.jsonl`), jsonl([...head, ...turn(join(dir, PROJECT), `MINE-MARKER claude -p --session-id ${KILLED_ID} and --session-id ${OLD_ID}`, MINE_ID)]));
   writeFileSync(join(folder(join(dir, OTHER)), `${OTHER_ID}.jsonl`), jsonl([...head, ...turn(join(dir, OTHER), 'OTHER-SECRET-MARKER', OTHER_ID)]));
   writeFileSync(join(tdir, `${NOCWD_ID}.jsonl`), jsonl([...head, ...turn(null, 'NOCWD-SECRET-MARKER', NOCWD_ID)]));
+  // A run: its composed prompt, a Bash command and its output carry a token, and so does a sub-agent.
+  const runRows = (id: string) => [
+    { type: 'user', cwd: join(dir, PROJECT), sessionId: id, uuid: `${id}-u`, message: { role: 'user', content: `composed prompt ${RUN_TOKEN}` } },
+    { type: 'assistant', cwd: join(dir, PROJECT), sessionId: id, uuid: `${id}-a`, message: { role: 'assistant', content: [
+      { type: 'text', text: 'RUN-WORDS Acme is healthy.' },
+      { type: 'tool_use', id: 'toolu_run', name: 'Bash', input: { command: `curl -H "Authorization: ${RUN_TOKEN}" https://acme.example` } },
+    ] } },
+    { type: 'user', cwd: join(dir, PROJECT), sessionId: id, uuid: `${id}-r`, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_run', content: `out ${RUN_TOKEN}` }] } },
+  ];
+  const runFolder = folder(join(dir, PROJECT));
+  writeFileSync(join(runFolder, `${RUN_ID}.jsonl`), jsonl([...head, ...runRows(RUN_ID)]));
+  writeFileSync(join(runFolder, `${KILLED_ID}.jsonl`), jsonl([...head, ...runRows(KILLED_ID)]));
+  writeFileSync(join(runFolder, `${OLD_ID}.jsonl`), jsonl([
+    { type: 'user', cwd: join(dir, PROJECT), sessionId: OLD_ID, uuid: `${OLD_ID}-u`, message: { role: 'user', content: `You are the goal-planner. Use ${RUN_TOKEN}` } },
+    { type: 'assistant', cwd: join(dir, PROJECT), sessionId: OLD_ID, uuid: `${OLD_ID}-a`, message: { role: 'assistant', content: [{ type: 'text', text: 'OLD-WORDS planned.' }, { type: 'tool_use', id: 'toolu_old', name: 'Bash', input: { command: `curl ${RUN_TOKEN}` } }] } },
+  ]));
+  writeFileSync(join(runFolder, `${TASK_ID}.jsonl`), jsonl([
+    { type: 'user', cwd: join(dir, PROJECT), sessionId: TASK_ID, uuid: `${TASK_ID}-u`, message: { role: 'user', content: 'Work on this dreamcontext task and drive it to completion: fix the login.' } },
+    { type: 'assistant', cwd: join(dir, PROJECT), sessionId: TASK_ID, uuid: `${TASK_ID}-a`, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_task', name: 'Bash', input: { command: 'TASK-COMMAND-MARKER' } }] } },
+  ]));
+  const rollouts = join(dir, '.codex', 'sessions', '2026', '10', '30');
+  mkdirSync(rollouts, { recursive: true });
+  writeFileSync(join(rollouts, `rollout-2026-10-30T10-00-00-${CODEX_ID}.jsonl`), jsonl([
+    { type: 'session_meta', payload: { id: CODEX_ID, cwd: join(dir, PROJECT) } },
+    { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `You are scheduled dreamcontext automation. ${RUN_TOKEN}` }] } },
+    { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'CODEX-WORDS done.' }] } },
+    { type: 'response_item', payload: { type: 'function_call', name: 'shell', call_id: 'c1', arguments: JSON.stringify({ command: `curl ${RUN_TOKEN}` }) } },
+  ]));
+  mkdirSync(join(runFolder, RUN_ID, 'subagents'), { recursive: true });
+  writeFileSync(join(runFolder, RUN_ID, 'subagents', 'agent-abc123.jsonl'), jsonl(runRows(RUN_ID).map((r) => ({ ...r, isSidechain: true }))));
+  const context = join(dir, PROJECT, '_dream_context');
+  createAgent(context, { slug: 'run-watcher', title: 'Run watcher', prompt: 'run-watcher minds the fictional Acme line.', learning: false }, { approve: { now: new Date(RUN_AT), home: dir } });
+  recordAutomationSession('run-watcher', RUN_ID, dir, Date.now(), undefined, RUN_AT);
+  noteRunSession(context, 'run-watcher', '2026-10-30T11:00:00.000Z', KILLED_ID, Date.now(), dir);
+  mkdirSync(join(context, 'automations', 'cache'), { recursive: true });
+  writeFileSync(join(context, 'automations', 'cache', 'run-watcher.json'), JSON.stringify({ slug: 'run-watcher', outputPath: join(context, 'automations', 'output', 'r.md'), lastRunAt: RUN_AT, history: [{ firedAt: RUN_AT, startedAt: RUN_AT, status: 'ok', sessionId: RUN_ID, costUsd: 0, numTurns: 1, permissionDenials: 0, outputPath: join(context, 'automations', 'output', 'r.md'), error: null }] }));
   writeFileSync(join(dir, PROJECT, '_dream_context', 'state', 'phone-task.md'), '---\nid: task_x\nname: Phone task\nstatus: todo\npriority: medium\n---\n\n## Why\n\nA task.\n');
   macAuth = new HandsfreeAuth({ dir: join(dir, 'mac') });
   for (const d of ['mac']) { try { (await import('node:fs')).mkdirSync(join(dir, d), { recursive: true }); } catch { /* exists */ } }
@@ -212,6 +268,160 @@ describe('phone listener: the route policy over the FULL route table (AC4/AC5)',
       expect(r.status, `${m} ${p}`).toBe(403);
       expect(JSON.parse(r.body).error, `${m} ${p}`).toBe('phone_unavailable');
     }
+  });
+
+  it('an agent\'s history reads through the phone listener: a silent run has its body', async () => {
+    const context = join(dir, PROJECT, '_dream_context');
+    const at = '2026-10-30T09:00:00.000Z';
+    createAgent(context, { slug: 'lookout', title: 'Lookout', prompt: 'lookout watches the fictional Acme line.', learning: false }, { approve: { now: new Date(at), home: dir } });
+    appendThreadEntry(context, 'lookout', { runId: at, kind: 'system', event: 'started', text: 'Run started.', via: 'runner' });
+    appendThreadEntry(context, 'lookout', { runId: at, kind: 'system', event: 'ok', text: 'Finished in 1s.', via: 'runner', result: 'Acme is healthy.' });
+    const r = await request(phonePort, 'GET', '/api/agents/lookout/history', H());
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.body).sessions[0]).toMatchObject({ status: 'ok', rows: [{ origin: 'answer', text: 'Acme is healthy.' }] });
+  });
+
+  it('K4: a run reads as words and tool names on the phone, by main, sub-agent and /session; the Mac keeps it all', async () => {
+    const paths = [
+      `/api/agent/chat-history?claudeId=${RUN_ID}`,
+      `/api/agent/chat-history?claudeId=${KILLED_ID}`,
+      `/api/agent/chat-history?claudeId=${RUN_ID}&subagent=abc123`,
+      `/api/agent/chat-history?claudeId=${RUN_ID.toUpperCase()}`,
+      `/api/agent/teammate-history?claudeId=${MINE_ID}&session=${KILLED_ID}&launched=1`,
+      `/api/agent/teammate-history?claudeId=${MINE_ID}&session=%20${KILLED_ID}&launched=1`,
+      `/api/agent/teammate-history?claudeId=${MINE_ID}&session=${KILLED_ID.toUpperCase()}&launched=1`,
+      '/api/automations/run-watcher/session?run=1',
+    ];
+    for (const p of paths) {
+      const r = await request(phonePort, 'GET', p, H());
+      expect(r.status, p).toBe(200);
+      expect(r.body, p).toContain('RUN-WORDS');
+      expect(r.body, p).not.toContain(RUN_TOKEN);
+      expect(r.body, p).not.toContain('curl -H');
+    }
+    const main = JSON.parse((await request(phonePort, 'GET', `/api/agent/chat-history?claudeId=${RUN_ID}`, H())).body).items;
+    expect(main).toEqual([{ kind: 'text', text: 'RUN-WORDS Acme is healthy.' }, { kind: 'tool', toolUseId: 'toolu_run', name: 'Bash', status: 'done' }]);
+    const session = JSON.parse((await request(phonePort, 'GET', '/api/automations/run-watcher/session?run=1', H())).body).session;
+    expect(session.sessionId).toBe(RUN_ID);
+    expect(session.transcriptPath).toBeNull();
+    expect(session.outputPath).toBeNull();
+    const shown = JSON.parse((await request(phonePort, 'GET', '/api/automations/run-watcher', H())).body);
+    expect(shown.cache.history[0].outputPath).toBeNull();
+    expect(shown.cache.history[0].sessionId).toBe(RUN_ID);
+    const listRoute = await request(phonePort, 'GET', '/api/automations', H());
+    expect(listRoute.status).toBe(200);
+    expect(listRoute.body).toContain('run-watcher');
+    expect(listRoute.body).not.toContain(join('automations', 'output'));
+
+    // The session list tells a phone nothing of a run: no row, no count, however it searches.
+    const listed = JSON.parse((await request(phonePort, 'GET', '/api/agent/chat-sessions?agentRuns=1', H())).body);
+    expect(listed.sessions.map((s: { id: string }) => s.id)).toContain(MINE_ID);
+    for (const id of [RUN_ID, KILLED_ID, OLD_ID]) expect(listed.sessions.map((s: { id: string }) => s.id)).not.toContain(id);
+    for (const q of ['composed', RUN_TOKEN, 'curl']) {
+      const found = JSON.parse((await request(phonePort, 'GET', `/api/agent/chat-sessions?q=${q}`, H())).body);
+      expect(found, q).toMatchObject({ total: 0, agentRuns: 0, sessions: [] });
+    }
+
+    // A run the Super adopted stays a run: `super=` shows no more of it.
+    await updateSuperState(context0(), (s) => { s.formerChildren = [RUN_ID, OLD_ID]; });
+    for (const q of ['super=only', 'super=group&q=composed', `super=only&q=${RUN_TOKEN}`]) {
+      const r = await request(phonePort, 'GET', `/api/agent/chat-sessions?${q}`, H());
+      expect(r.status, q).toBe(200);
+      expect(r.body, q).not.toContain(RUN_ID);
+      expect(r.body, q).not.toContain(OLD_ID);
+      expect(r.body, q).not.toContain('composed prompt');
+    }
+    await updateSuperState(context0(), (s) => { s.formerChildren = []; });
+
+    // A Codex run with no binding yet, or ever: not listed, words only, by every id spelling.
+    for (const p of [`/api/agent/chat-history?claudeId=${CODEX_ID}&tool=codex`, `/api/agent/chat-history?claudeId=${CODEX_ID}`, `/api/agent/chat-history?claudeId=${CODEX_ID.toUpperCase()}&tool=codex`]) {
+      const r = await request(phonePort, 'GET', p, H());
+      expect(r.status, p).toBe(200);
+      expect(r.body, p).toContain('CODEX-WORDS');
+      expect(r.body, p).not.toContain(RUN_TOKEN);
+    }
+    expect((await request(mainPort, 'GET', `/api/agent/chat-history?claudeId=${CODEX_ID}&tool=codex`, { 'x-dreamcontext-vault': PROJECT })).body).toContain(RUN_TOKEN);
+    expect(JSON.parse((await request(phonePort, 'GET', '/api/agent/chat-sessions?agentRuns=1', H())).body).sessions.map((s: { id: string }) => s.id)).not.toContain(CODEX_ID);
+    expect(JSON.parse((await request(mainPort, 'GET', '/api/agent/chat-sessions?agentRuns=1', { 'x-dreamcontext-vault': PROJECT })).body).sessions.map((s: { id: string }) => s.id)).toContain(CODEX_ID);
+    expect(JSON.parse((await request(phonePort, 'GET', '/api/agent/chat-sessions?q=scheduled', H())).body)).toMatchObject({ total: 0, sessions: [] });
+
+    // A phone never opens or adopts a run: no child's frames reach it, by any id it can name.
+    for (const q of [`resume=${RUN_ID}`, `resume=${RUN_ID}&reattach=1`, `resume=${KILLED_ID}&reattach=passive`, `resume=${OLD_ID}`, `resume=${CODEX_ID}&tool=codex`, `sessionId=${CODEX_ID}`, `resume=${RUN_ID.toUpperCase()}`]) {
+      expect(await upgrade(phonePort, `/api/agent/chat?vault=${PROJECT}&${q}`, { cookie, origin: ORIGIN }), q).toBe(403);
+    }
+
+    // A run a tab holds on the Mac is no chat of the phone's; the owner's own stays listed.
+    const held = [RUN_ID, MINE_ID].map((conversationId) => ({ conversationId, projectRoot: join(dir, PROJECT), busy: true }) as never);
+    held.forEach(registerLiveChat);
+    try {
+      const chats = JSON.parse((await request(phonePort, 'GET', '/api/agent/live-chats', H())).body).chats.map((c: { conversationId: string }) => c.conversationId);
+      expect(chats).toContain(MINE_ID);
+      expect(chats).not.toContain(RUN_ID);
+    } finally { held.forEach(unregisterLiveChat); }
+
+    // A run the Super adopted stays out of a phone's reach: no watch, no job row. A child it
+    // delegated is its own, however its brief opens: that one a phone still watches.
+    let watched = 0;
+    const watchable = (conversationId: string) => ({ conversationId, projectRoot: join(dir, PROJECT), busy: true, watch: () => false, watchRoom: () => { watched++; return true; } }) as never;
+    const children = [watchable(RUN_ID), watchable(OLD_ID)];
+    await updateSuperState(context0(), (st) => {
+      st.enabled = true;
+      st.session = 'abababab-0000-4000-8000-00000000000a';
+      st.children = {
+        [RUN_ID]: { sessionId: RUN_ID, brief: 'BRIEF-OF-A-RUN', adopted: true, startedAt: 1 },
+        [OLD_ID]: { sessionId: OLD_ID, brief: 'a delegated job', adopted: false, startedAt: 1 },
+      } as never;
+    });
+    children.forEach(registerLiveChat);
+    try {
+      expect(await upgrade(phonePort, `/api/agent/chat?vault=${PROJECT}&resume=${RUN_ID}`, { cookie, origin: ORIGIN })).toBe(403);
+      expect(watched).toBe(0);
+      const rows = (await request(phonePort, 'GET', '/api/agent/live-chats', H())).body;
+      expect(rows).not.toContain(RUN_ID);
+      expect(rows).not.toContain('BRIEF-OF-A-RUN');
+      await upgrade(phonePort, `/api/agent/chat?vault=${PROJECT}&resume=${OLD_ID}`, { cookie, origin: ORIGIN });
+      expect(watched).toBe(1);
+    } finally {
+      children.forEach(unregisterLiveChat);
+      await updateSuperState(context0(), (st) => { st.enabled = false; st.session = null; st.children = {}; });
+    }
+
+    // A delegated task is a person's chat: listed, and read whole on the phone.
+    expect(listed.sessions.map((s: { id: string }) => s.id)).toContain(TASK_ID);
+    expect((await request(phonePort, 'GET', `/api/agent/chat-history?claudeId=${TASK_ID}`, H())).body).toContain('TASK-COMMAND-MARKER');
+    expect((await request(phonePort, 'GET', `/api/agent/teammates?claudeId=${TASK_ID}`, H())).status).toBe(200);
+    expect((await request(phonePort, 'GET', `/api/agent/bg-output?claudeId=${TASK_ID}&taskId=abc`, H())).status).toBe(200);
+
+    // A run's nested session: gone from a pane's list, words only by id.
+    const steps = await request(phonePort, 'GET', `/api/agent/teammates?claudeId=${MINE_ID}&launched=${KILLED_ID}`, H());
+    expect(steps.status).toBe(200);
+    expect(JSON.parse(steps.body).teammates).toEqual([]);
+    expect(JSON.parse((await request(phonePort, 'GET', `/api/agent/teammates?claudeId=${RUN_ID}&launched=${KILLED_ID}`, H())).body).teammates).toEqual([]);
+    // One from before run notes: its first prompt speaks for it, on the list and by id.
+    const old = JSON.parse((await request(phonePort, 'GET', `/api/agent/teammates?claudeId=${MINE_ID}&launched=${OLD_ID}`, H())).body).teammates;
+    expect(JSON.stringify(old)).not.toContain(RUN_TOKEN);
+    expect(old[0].steps[0]).toEqual({ toolUseId: 'toolu_old', name: 'Bash', status: expect.any(String) });
+    for (const p of [`/api/agent/chat-history?claudeId=${OLD_ID}`, `/api/agent/teammate-history?claudeId=${MINE_ID}&session=${OLD_ID}&launched=1`]) {
+      const r = await request(phonePort, 'GET', p, H());
+      expect(r.body, p).toContain('OLD-WORDS');
+      expect(r.body, p).not.toContain(RUN_TOKEN);
+    }
+    expect((await request(phonePort, 'GET', `/api/agent/bg-output?claudeId=${RUN_ID}&taskId=abc`, H())).status).toBe(403);
+    // An ordinary chat on the phone keeps everything, and the laptop reads the run whole.
+    expect((await request(phonePort, 'GET', `/api/agent/chat-history?claudeId=${MINE_ID}`, H())).body).toContain('MINE-MARKER');
+    const mac = await request(mainPort, 'GET', `/api/agent/chat-history?claudeId=${RUN_ID}`, { 'x-dreamcontext-vault': PROJECT });
+    expect(mac.body).toContain(RUN_TOKEN);
+    const macSession = await request(mainPort, 'GET', '/api/automations/run-watcher/session?run=1', { 'x-dreamcontext-vault': PROJECT });
+    expect(JSON.parse(macSession.body).session.transcriptPath).toContain(RUN_ID);
+  });
+
+  it('a planted cache id opens no transcript on /session', async () => {
+    const context = join(dir, PROJECT, '_dream_context');
+    createAgent(context, { slug: 'planted', title: 'Planted', prompt: 'planted reads the fictional Acme line.', learning: false }, { approve: { now: new Date(RUN_AT), home: dir } });
+    writeFileSync(join(context, 'automations', 'cache', 'planted.json'), JSON.stringify({ slug: 'planted', history: [{ firedAt: RUN_AT, startedAt: RUN_AT, status: 'ok', sessionId: MINE_ID }] }));
+    const r = JSON.parse((await request(mainPort, 'GET', '/api/automations/planted/session?run=1', { 'x-dreamcontext-vault': PROJECT })).body).session;
+    expect(r.sessionId).toBeNull();
+    expect(r.items).toEqual([]);
   });
 
   it('a write with a foreign Origin is refused; without a cookie only the public routes answer', async () => {

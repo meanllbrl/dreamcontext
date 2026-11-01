@@ -298,7 +298,11 @@
   margin: var(--space-3, 12px) 0 var(--space-2, 8px);
 }
 .chat-feed-boundary:hover,
-.chat-feed-boundary:focus-visible { color: var(--color-text-secondary); }
+.chat-feed-boundary:focus-visible { color: var(--color-text-secondary); text-decoration: underline; }
+/* It opens something: the mark says so, after the words and before the rule. */
+.chat-feed-boundary-go { margin-left: var(--space-1, 4px); }
+.chat-feed-report { display: block; text-align: left; }
+.chat-feed-failure { color: var(--color-error); }
 .chat-feed-boundary--failed { color: var(--color-error); }
 /* The day rule and the unread divider sit in the transcript's own column. */
 .chat-scroll-inner > .chat-feed-day { margin: var(--space-4, 16px) 0 var(--space-1, 4px); }

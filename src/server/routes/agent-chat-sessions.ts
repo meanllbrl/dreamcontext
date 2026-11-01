@@ -12,6 +12,8 @@ import { getApp, real } from '../../lib/apps/registry.js';
 import { superSanitizeOpts } from '../../lib/super/inbox.js';
 import { listCodexSessions, mergeSessionRows } from '../../lib/t3-bridge/codex-sessions.js';
 import { listInstanceSessions } from '../../lib/t3-bridge/instance-threads.js';
+import { runSessionCheck } from '../../lib/automations/run-chat.js';
+import { isPhoneSocket } from '../phone-origin.js';
 
 /**
  * `GET /api/agent/chat-sessions` — the project's PAST Claude conversations, newest first,
@@ -53,7 +55,7 @@ export async function handleAgentChatSessions(
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const query = Object.fromEntries(url.searchParams);
   try {
-    sendJson(res, 200, await computeChatSessions(contextRoot, query));
+    sendJson(res, 200, await computeChatSessions(contextRoot, query, { phone: isPhoneSocket(req) }));
   } catch {
     // A history list is a convenience surface: an unreadable projects dir degrades to
     // "no past chats", never to a broken popup.
@@ -65,7 +67,7 @@ export async function handleAgentChatSessions(
 export async function computeChatSessions(
   contextRoot: string,
   q: Record<string, string>,
-  opts: { home?: string; waitMs?: number } = {},
+  opts: { home?: string; waitMs?: number; phone?: boolean } = {},
 ): Promise<unknown> {
   const query = (q.q || '').slice(0, MAX_QUERY_CHARS);
   const rawLimit = Number.parseInt(q.limit || '', 10);
@@ -77,6 +79,11 @@ export async function computeChatSessions(
   // council personas) are withheld by default — they outnumber real conversations several to
   // one. `agentRuns=1` is the picker's "show them anyway".
   const includeAgentRuns = q.agentRuns === '1';
+  // K4: a run's title, snippet and search hits are its prompt and its steps. A phone reads runs on
+  // the AI Team page; here it is told nothing of them, not even by a count.
+  // Whoever owns it: a tab the Super adopted is still that run, and a phone asks with `super=`.
+  const isRun = opts.phone ? runSessionCheck(contextRoot, opts.home) : null;
+  const hidden = isRun ? (s: { id: string; unattended: boolean }): boolean => s.unattended || isRun(s.id) : null;
 
   const projectRoot = projectRootOf(contextRoot);
   const files = listTranscriptFiles(projectRoot, opts.home);
@@ -99,6 +106,7 @@ export async function computeChatSessions(
   const result = listPastSessions(projectRoot, {
     home: opts.home, query, limit, includeAgentRuns, files,
     ...(onlyIds ? { onlyIds } : {}),
+    ...(hidden ? { hide: hidden } : {}),
     content: contentOf,
     // A closed tab's name, so the list says what the tab said (see `session-titles.ts`).
     titles: readSessionTitles(contextRoot),
@@ -116,7 +124,7 @@ export async function computeChatSessions(
     });
     return { ...result, sessions, total: sessions.length };
   }
-  const merged = withCodexRows(result, contextRoot, projectRoot, { query, limit, superOnly: superRows?.mode === 'only', home: opts.home });
+  const merged = withCodexRows(result, contextRoot, projectRoot, { query, limit, superOnly: superRows?.mode === 'only', home: opts.home, hidden });
   return query.trim() && !indexed
     ? { ...merged, indexing: { done: build.progress.done, total: build.progress.total } }
     : merged;
@@ -126,7 +134,7 @@ export async function computeChatSessions(
  *  has none: a Super Agent runs on Claude. A failed read is simply no Codex rows. */
 function withCodexRows<R extends { sessions: Array<{ updatedAt: number; matchIn?: string }>; total: number }>(
   result: R, contextRoot: string, projectRoot: string,
-  o: { query: string; limit: number; superOnly: boolean; home?: string },
+  o: { query: string; limit: number; superOnly: boolean; home?: string; hidden?: ((s: { id: string; unattended: boolean }) => boolean) | null },
 ): R {
   if (o.superOnly) return result;
   try {
@@ -134,7 +142,7 @@ function withCodexRows<R extends { sessions: Array<{ updatedAt: number; matchIn?
     const rows = [
       ...listCodexSessions(projectRoot, { home: o.home, query: o.query, limit: o.limit, contextRoot, titles }),
       ...listInstanceSessions(projectRoot, { home: o.home, query: o.query, limit: o.limit, contextRoot, titles }),
-    ] as ReturnType<typeof listCodexSessions>;
+    ].filter((r) => !o.hidden?.(r)) as ReturnType<typeof listCodexSessions>;
     if (!rows.length) return result;
     return { ...result, sessions: mergeSessionRows(result.sessions, rows, o.limit, !!o.query.trim()), total: result.total + rows.length };
   } catch {

@@ -122,6 +122,7 @@ export function createTranscriptSession(
     stopTask: noop,
     rewind: async () => { /* nothing to rewind */ },
     retry: async () => { /* nothing to retry */ },
+    savedOnly: true,
     alwaysAllow: noop,
     clearAttention: noop,
     setAgentsWorking: noop,

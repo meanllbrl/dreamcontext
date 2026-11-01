@@ -1059,7 +1059,8 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
   const phone = isPhoneSocket(req);
   const visible = (vault: string | null): boolean => !phone || (vault !== null && isMacExposed(vault));
   const registry = listChats();
-  const snapshot = liveChatsSnapshot();
+  // K4: a run a tab holds on the Mac is no chat of the phone's.
+  const snapshot = liveChatsSnapshot().filter((e) => !phone || !phoneReadsAsRun(join(e.projectRoot, '_dream_context'), [e.conversationId]));
   const chats: LiveChatWire[] = snapshot
     .filter((e) => !e.draining)
     .map((e) => {
@@ -1096,7 +1097,7 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
     const formerAdopted = new Set(state?.formerAdopted ?? []);
     records.set(name, {
       session: idx.session, enabled: idx.enabled, former: (state?.formerChildren ?? []).filter((id) => !formerAdopted.has(id)),
-      children: Object.entries(state?.children ?? {}).map(([id, c]) => ({
+      children: Object.entries(state?.children ?? {}).filter(([id]) => !phoneReadsAsRun(ctx, [id])).map(([id, c]) => ({
         id, title: childDigestName(state!, id), startedAt: c.startedAt,
         ...(c.endedAt !== undefined ? { endedAt: c.endedAt } : {}), ...(c.adopted ? { adopted: true } : {}),
       })),
@@ -1384,6 +1385,13 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         });
       })();
       return;
+    }
+    // K4: a phone never holds, adopts or watches a run. What a child streams and replays is a run's
+    // tool input and output, so the gate stands before every way to a child, not on each frame. A
+    // phone reads a run through its steps and continues it through the reply route.
+    if (phone) {
+      const ctx = join(projectRoot, '_dream_context');
+      if (phoneReadsAsRun(ctx, [resumeId, sessionId, ...[resumeId, sessionId].map((cid) => (cid ? resolveAgentSession(ctx, cid) : ''))])) { rejectUpgrade(socket, 403); return; }
     }
     // A Super Agent child while its project is handed over (hands-free sekmeler D6): a remote
     // screen WATCHES it, beside the Mac window that holds it, and never adopts, supersedes,
@@ -5046,8 +5054,9 @@ export function startChatSession(
 // CLI too and so cannot import a server route). Re-exported here so every
 // existing importer — including this file's own handlers and
 // `tests/unit/agent-chat-history.test.ts` — keeps its import path.
-import { parseTranscriptHistory } from '../../lib/transcript-history.js';
+import { parseTranscriptHistory, type ChatHistoryItem } from '../../lib/transcript-history.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
+import { phoneReadsAsRun, phoneRunItems } from '../../lib/automations/run-chat.js';
 
 export {
   parseTranscriptHistory,
@@ -5097,6 +5106,10 @@ export async function handleAgentChatHistory(
   const id = sanitizeUuid(url.searchParams.get('claudeId'));
   if (!id) { sendJson(res, 200, { items: [] }); return; }
   const liveId = contextRoot ? resolveAgentSession(contextRoot, id) : '';
+  // K4: a phone reads a member's or routine's run as its words and tool names, on every way out
+  // of this route. A run's prompt, commands and results stay on the Mac.
+  const phoneRun = isPhoneSocket(req) && phoneReadsAsRun(contextRoot, [id, liveId]);
+  const shown = (items: ChatHistoryItem[]): ChatHistoryItem[] => (phoneRun ? phoneRunItems(items) : items);
   // A Codex pane (Track T): its history is the Codex rollout, served only when that thread is
   // THIS project's. A foreign or unresolvable thread is refused (403), on every socket, phone too.
   // A Claude pane never pays for this: Codex is looked at only when asked for, or when no Claude
@@ -5105,14 +5118,14 @@ export async function handleAgentChatHistory(
   if (tool === 'antigravity') {
     const history = instanceHistory({ thread: liveId || id, contextRoot });
     if (history === 'refuse') { sendError(res, 403, 'thread_not_in_project', 'That thread does not belong to this project.'); return; }
-    sendJson(res, 200, history);
+    sendJson(res, 200, { ...history, items: shown(history.items) });
     return;
   }
   const path = tool === 'codex' ? null : findFirstTranscriptPath([liveId, id]);
   if (!path) {
     const codex = await codexHistoryFor({ tool, id, liveId, contextRoot });
     if (codex === 'refuse') { sendError(res, 403, 'thread_not_in_project', 'That Codex thread does not belong to this project.'); return; }
-    sendJson(res, 200, { items: codex?.items ?? [] });
+    sendJson(res, 200, { items: shown((codex?.items ?? []) as ChatHistoryItem[]) });
     return;
   }
   // AC16: a phone reads only the chosen projects' conversations (a sub-agent's by its parent's).
@@ -5127,7 +5140,7 @@ export async function handleAgentChatHistory(
     try { subRaw = await readTranscript(subPath); } catch { sendJson(res, 200, { items: [] }); return; }
     // `sidechain: true` — this file IS the sub-agent's own transcript, so its universal
     // `isSidechain` marker is what we came for, not a foreign turn to filter out.
-    sendJson(res, 200, { items: parseTranscriptHistory(subRaw, { sidechain: true }) });
+    sendJson(res, 200, { items: shown(parseTranscriptHistory(subRaw, { sidechain: true })) });
     return;
   }
 
@@ -5135,7 +5148,7 @@ export async function handleAgentChatHistory(
   try { raw = await readTranscript(path); } catch { sendJson(res, 200, { items: [] }); return; }
   // An app's conversation says so with its history: an image in it must not paint before the
   // socket's `app_chat` arrives, or when no socket ever opens.
-  sendJson(res, 200, { items: parseTranscriptHistory(raw), ...(lookupAppChat(id).kind === 'none' ? {} : { appChat: true }) });
+  sendJson(res, 200, { items: shown(parseTranscriptHistory(raw)), ...(lookupAppChat(id).kind === 'none' ? {} : { appChat: true }) });
 }
 
 /** A transcript's text. */
@@ -5180,6 +5193,11 @@ export async function handleAgentBackgroundOutput(
   if (!taskId) { sendError(res, 400, 'invalid_task_id', 'Query parameter "taskId" is required.'); return; }
   const claudeId = sanitizeUuid(url.searchParams.get('claudeId'));
   if (!claudeId) { sendError(res, 400, 'invalid_claude_id', 'Query parameter "claudeId" is required.'); return; }
+  // K4: a background shell's output is what a tool returned.
+  if (isPhoneSocket(req) && phoneReadsAsRun(contextRoot, [claudeId, resolveAgentSession(contextRoot, claudeId)])) {
+    sendError(res, 403, 'phone_unavailable', 'A run\'s tool output stays on the Mac.');
+    return;
+  }
 
   sendJson(res, 200, computeBackgroundOutput(contextRoot, taskId, claudeId));
 }

@@ -78,7 +78,7 @@ export interface ChatSurfaceActions {
 
 function ChatPaneHostInner({
   session, actions, modelConfig, model, effort, mode, automation, permissionMode, canSignInInApp,
-  signInCommand, bare, agentBound, idlePlaceholder, readOnly, aboveComposer, feed,
+  signInCommand, bare, agentBound, idlePlaceholder, readOnly, aboveComposer, feed, sendVia,
 }: {
   session: ChatSession;
   actions: ChatSurfaceActions;
@@ -104,9 +104,10 @@ function ChatPaneHostInner({
   idlePlaceholder?: string;
   /** A handed-over Super Agent's child: the owner looks, never types (ChatPane's `readOnly`).
    *  A primitive, so the memo boundary holds. 'finished': no process left (transcriptSession.ts). */
-  readOnly?: boolean | 'finished';
+  readOnly?: boolean | 'finished' | 'silent';
   /** One line drawn right above the composer (the phone's waiting toast, hands-free W3). */
   aboveComposer?: ReactNode;
+  sendVia?: (message: string) => boolean;
   /** An agent's past sessions above the conversation (the AI Team stage). Its identity changes
    *  only when the feed does (the stage entry's snapshot), so the memo boundary holds. */
   feed?: ChatFeed;
@@ -177,6 +178,7 @@ function ChatPaneHostInner({
       idlePlaceholder={idlePlaceholder}
       readOnly={readOnly}
       aboveComposer={aboveComposer}
+      sendVia={sendVia}
       feed={feed}
     />
   );

@@ -7,7 +7,7 @@ import { dirname, join, normalize, resolve, sep } from 'node:path';
 import { nanoid } from 'nanoid';
 import { automationsDir, getAutomation, isSafeAutomationSlug, listAutomations } from './store.js';
 import { notifyViaBundle, NOTIFY_SOUND_OK } from './notifier.js';
-import { superQuietReader, superRunQuiet } from './super-quiet.js';
+import { ownerQuietReader, superRunQuiet } from './super-quiet.js';
 import { appLinkForContextRoot } from '../app-link.js';
 import { readMachineIdentity } from '../machine-id.js';
 import { memberSidePath, safeMemberWrite } from '../agents/scope.js';
@@ -19,6 +19,7 @@ import {
   THREAD_ENTRY_MARKER,
   THREAD_ENTRY_MAX_BYTES,
   THREAD_FILES_MAX,
+  THREAD_RESULT_MAX_CHARS,
   THREAD_RETENTION_DAYS,
   THREAD_SUMMARY_KEY_MAX_CHARS,
   THREAD_SUMMARY_MAX_ROWS,
@@ -204,6 +205,8 @@ function parseEntry(json: string): ThreadEntry | null {
         .filter((row) => row.key.length > 0 && row.value.length > 0)
         .slice(0, THREAD_SUMMARY_MAX_ROWS)
       : undefined;
+    // The same cap on the way in: a synced entry never passed through the writer here.
+    const result = r.kind === 'system' && typeof r.result === 'string' ? r.result.replace(/\0/g, '').trim().slice(0, THREAD_RESULT_MAX_CHARS) : '';
     return {
       id: r.id,
       runId: r.runId,
@@ -213,6 +216,7 @@ function parseEntry(json: string): ThreadEntry | null {
       text: typeof r.text === 'string' ? r.text : '',
       ...(files && files.length > 0 ? { files } : {}),
       ...(summary && summary.length > 0 ? { summary } : {}),
+      ...(result ? { result } : {}),
       ...(r.via === 'app' && typeof r.app === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(r.app) ? { app: r.app } : {}),
       via: (r.via === 'runner' || r.via === 'cli' || r.via === 'dashboard' || r.via === 'chat' || r.via === 'assistant' || r.via === 'super' || r.via === 'app')
         ? (r.via as ThreadVia)
@@ -379,6 +383,8 @@ export interface AppendThreadEntryInput {
   /** A bounded key/value block. Capped and trimmed here, refused (never
    *  silently truncated) when the caller sends too many rows. */
   summary?: ThreadSummaryRow[];
+  /** A system entry only: the published document's opening line. Refused over the cap. */
+  result?: string;
   via: ThreadVia;
   /** `via: 'app'`: the app's slug. */
   app?: string;
@@ -518,6 +524,14 @@ export function appendThreadEntry(contextRoot: string, slug: string, input: Appe
     }
   }
 
+  const result = (input.result ?? '').replace(/\0/g, '').trim();
+  if (result && input.kind !== 'system') {
+    throw new AutomationError('Only a system entry carries a result.');
+  }
+  if (result.length > THREAD_RESULT_MAX_CHARS) {
+    throw new AutomationError(`A result is at most ${THREAD_RESULT_MAX_CHARS} characters.`);
+  }
+
   if (input.id !== undefined && !RECONCILE_ID_PATTERN.test(input.id)) {
     throw new AutomationError(`Refusing a caller-supplied entry id: "${input.id}"`);
   }
@@ -550,6 +564,7 @@ export function appendThreadEntry(contextRoot: string, slug: string, input: Appe
     text,
     ...(files.length > 0 ? { files } : {}),
     ...(summary.length > 0 ? { summary } : {}),
+    ...(result ? { result } : {}),
     ...(input.app ? { app: input.app } : {}),
     via: input.via,
   };
@@ -694,8 +709,8 @@ export function threadUnread(
   const entries = readThread(contextRoot, slug, days === undefined ? {} : { days });
   const last = entries[entries.length - 1] ?? null;
   const watermark = readAll(home)[dirname(contextRoot)]?.[slug] ?? null;
-  // One rule with the feed: what a Super Agent's job said counts for nobody (super-quiet.ts).
-  const quietOf = superQuietReader(contextRoot);
+  // One rule with the feed: what counts for nobody (super-quiet.ts).
+  const quietOf = ownerQuietReader(contextRoot);
   const byRun = new Map<string, ThreadEntry[]>();
   for (const e of entries) byRun.set(e.runId, [...(byRun.get(e.runId) ?? []), e]);
   const quiet = new Set<string>();

@@ -39,6 +39,7 @@ import { effectivePattern } from '../agents/agent-sync.js';
 import { placement } from '../agents/active.js';
 import { backfillQuestionSession, createQuestion, pendingQuestionFor, pendingQuestionOfRun } from './hitl.js';
 import { foreignRunEvidence, recordAutomationSession } from './session-registry.js';
+import { replaceRunSession } from './run-session.js';
 import { enqueueFire } from './queue.js';
 import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner.js';
 import { appendThreadEntry, plainPostText, readThreadRun } from './threads.js';
@@ -544,9 +545,10 @@ function postSystemEntry(
   event: ThreadSystemEvent,
   text: string,
   logFn: (msg: string) => void,
+  result?: string | null,
 ): void {
   try {
-    appendThreadEntry(contextRoot, slug, { runId, kind: 'system', event, text, via: 'runner' });
+    appendThreadEntry(contextRoot, slug, { runId, kind: 'system', event, text, via: 'runner', ...(result ? { result } : {}) });
   } catch (err) {
     logFn(`automation "${slug}": thread ${event} entry not written — ${(err as Error).message}`);
   }
@@ -1994,6 +1996,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
           ? `Finished in ${formatRunDuration(params.durationMs)}.`
           : `${params.status === 'timeout' ? 'Timed out' : 'Failed'} after ${formatRunDuration(params.durationMs)}${params.error ? `: ${params.error}` : ''}`,
         logFn,
+        // Only what PUBLISHED: `document` is null past a review gate, and this file syncs.
+        params.status === 'ok' && params.document ? params.summary : null,
       );
     }
     // Notify on COMPLETION, success included. A silent success defeats the point
@@ -2861,6 +2865,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
         if (!runLeavesNoSession(manifest, opts.override) || pendingQuestionOfRun(contextRoot, slug, fireIso)) {
           bindSession(claudeResult.sessionId);
         }
+        // What the run's hook noted gives way to the session the runner saw finish (a failover).
+        if (claudeResult.sessionId) replaceRunSession(contextRoot, slug, fireIso, claudeResult.sessionId, home);
 
         // Did this fire end with a human owing a verdict? Either the run asked
         // for one itself (`review: agent` → `automations propose`), or the

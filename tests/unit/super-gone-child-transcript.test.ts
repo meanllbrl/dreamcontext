@@ -26,6 +26,10 @@ const TRANSCRIPT: HistoryEntry[] = [
 ];
 
 describe('a transcript-only session: a finished child read from disk', () => {
+  it('says it is saved only: nothing in it can be rewound or resent', () => {
+    expect(createTranscriptSession(CHILD, fakeContainer).savedOnly).toBe(true);
+  });
+
   it('starts empty and shows the transcript once loaded, as items (no resumed divider)', () => {
     const s = createTranscriptSession(CHILD, fakeContainer);
     expect(s.getModel().items).toEqual([]);
@@ -89,7 +93,7 @@ describe('the shown card: the slot for a live child, the transcript for a finish
 
   it('reads the transcript from chat-history into the existing ChatPane, read only as finished', () => {
     expect(pane).toMatch(/\/agent\/chat-history\?claudeId=/);
-    expect(pane).toMatch(/<ChatPaneHost[\s\S]*readOnly="finished"/);
+    expect(pane).toMatch(/<ChatPaneHost[\s\S]*readOnly=\{foot === 'own' \? 'silent' : live \? true : 'finished'\}/);
     expect(pane).not.toMatch(/createChatSession/);
   });
 });

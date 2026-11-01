@@ -2,7 +2,7 @@ import { useI18n } from '../../../context/I18nContext';
 import { useAgent } from '../../../hooks/useAgents';
 import type { SuperTeamJob, TeamJobStatus } from '../../../lib/superTypes';
 import { AgentAvatar } from '../../agents/AgentAvatar';
-import type { SessionStatusKind } from '../agentStatus';
+import { teamStatusKind } from '../agentStatus';
 import { StatusRing } from './AgentCard';
 import { elapsedLabel, toneOfStatus } from './superHandover';
 import { useSpinSlot } from './spinSlots';
@@ -11,16 +11,8 @@ import { useSpinSlot } from './spinSlots';
  *  `teamLive`; null before the first read). */
 export interface TeamCard { job: SuperTeamJob; status: TeamJobStatus | null; lastLine: string; sessionId?: string; resumable?: boolean }
 
-/** A team job's status in the ONE status language every card speaks (superTone.css): waiting in
- *  the member's queue reads as starting, running as working, a question to the owner as asking,
- *  done as idle, failed as ended. */
-export function teamRingKind(status: TeamJobStatus): SessionStatusKind {
-  if (status === 'running') return 'working';
-  if (status === 'asking') return 'asking';
-  if (status === 'queued') return 'starting';
-  if (status === 'failed') return 'ended';
-  return 'ready';
-}
+/** A team job's status in the ONE status language every card speaks (superTone.css). */
+export const teamRingKind = teamStatusKind;
 
 /** The status the card shows: the server's read, else what the job was when it was given. */
 export function teamStatusOf(card: TeamCard): TeamJobStatus {

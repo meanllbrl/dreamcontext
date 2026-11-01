@@ -6,6 +6,7 @@ import { readSuperState } from '../../lib/super/store.js';
 import { superSanitizeOpts, superVaultName, writeSuper } from '../../lib/super/inbox.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { superRemoteView } from '../../lib/super/remote-view.js';
+import { teamLiveRows } from '../../lib/super/team.js';
 import { CONTAINER_SIZES, MAX_CONTAINERS, MAX_PRESENT, PRESENT_LAYOUTS, type SuperState } from '../../lib/super/types.js';
 import type { SuperRemoteView } from '../../lib/handsfree/mac/contract.js';
 import { applyOwnerLayout, applyOwnerSeen, ownerSeenMarks } from './super.js';
@@ -141,7 +142,7 @@ function tunnelHost(): string | null {
 
 /** The allowlisted view of `state` for this project. */
 export function remoteViewOf(contextRoot: string, state: SuperState): SuperRemoteView {
-  return superRemoteView(state, superVaultName(contextRoot), tunnelHost(), isRotating(state.session));
+  return superRemoteView(state, superVaultName(contextRoot), tunnelHost(), isRotating(state.session), teamLiveRows(contextRoot, state));
 }
 
 const NOT_HANDED_OVER = { status: 409, code: 'not_handed_over', message: 'This project\'s Super Agent is not handed over right now.' };
