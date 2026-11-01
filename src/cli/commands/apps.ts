@@ -2,13 +2,14 @@ import { getRunTarget } from '../../lib/automations/store.js';
 import { Command } from 'commander';
 import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { findPackageDir } from '../../lib/catalog.js';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { error, info, success } from '../../lib/format.js';
 import { AppsClientError, appsApi, bundleRunning, resolveProject, type ProjectRef } from '../../lib/apps/client.js';
 import { appHash, runnerBundleId, APP_SLUG_RE } from '../../lib/apps/bundle.js';
+import { iconIssue, isDefaultIcon, writeDefaultIcon } from '../../lib/apps/icon.js';
 import { MANIFEST_FILE, readManifest, type AppManifest } from '../../lib/apps/manifest.js';
 import { appRootFor, getApp, listApps, registerApp } from '../../lib/apps/registry.js';
 import { copyShotTo, copyShotToProject } from '../../lib/apps/shots.js';
@@ -63,7 +64,7 @@ function manifestOf(p: ProjectRef, slug: string): { rec: NonNullable<ReturnType<
 }
 
 function starterManifest(slug: string, name: string): string {
-  return JSON.stringify({ slug, name, icon: 'icon.icns' }, null, 2) + '\n';
+  return JSON.stringify({ slug, name, icon: 'icon.png' }, null, 2) + '\n';
 }
 
 function starterPage(name: string): string {
@@ -139,12 +140,16 @@ export function registerAppsCommand(program: Command): void {
         }
         // The SDK for the backend, byte for byte the page's /__dc/sdk.js (drift-tested).
         try { mkdirSync(join(root, 'lib'), { recursive: true }); writeFileSync(join(root, 'lib', 'dc.mjs'), sdkSource()); } catch { /* the page SDK still works */ }
-        const icon = notifierIconPath();
-        if (icon) copyFileSync(icon, join(root, 'icon.icns'));
+        writeDefaultIcon(root, slug, name);
         try { execFileSync('git', ['init', '-q'], { cwd: root, stdio: 'ignore' }); } catch { /* git missing: still an app */ }
         const rec = registerApp(homedir(), { projectRoot: p.projectRoot, vault: p.vault, slug, name, root });
         try { allowAppDir(p.projectRoot, rec.root); } catch { /* the agent asks for the folder instead */ }
         success(`App "${name}" created at ${rec.root}`);
+        // Whatever a template carried, the owner hears about an icon that cannot do its job now.
+        const created = readManifest(root);
+        const issue = created.ok ? iconIssue(created.manifest.icon, notifierIconPath()) : null;
+        if (issue) error(`icon: ${issue.problem}. Fix: ${issue.fix}`);
+        else info("icon.png is a placeholder letter: replace it with this app's own icon (/apps).");
         info(`Open it: dreamcontext apps open ${slug}`);
       } catch (e) { fail(e); }
     });
@@ -235,6 +240,15 @@ export function registerAppsCommand(program: Command): void {
         if (!m.ok) {
           for (const e of m.errors) console.log(`error ${e.field}: ${e.problem}. Fix: ${e.fix}`);
           process.exit(1);
+        }
+        const issue = iconIssue(m.manifest.icon, notifierIconPath());
+        if (issue) {
+          // The app keeps opening; only this check is red, so "done" cannot be said past it.
+          console.log(`error icon: ${issue.problem}. Fix: ${issue.fix}`);
+          process.exit(1);
+        }
+        if (isDefaultIcon(m.manifest.icon, m.manifest.slug, m.manifest.name)) {
+          console.log(`warning icon: still the placeholder letter from \`apps new\`. Draw this app's own icon (/apps).`);
         }
         success(`${m.manifest.slug}: valid (${m.manifest.actions.length} actions, ${m.manifest.schedules.length} schedules${m.manifest.backend ? ', backend' : ', static'})`);
       } catch (e) { fail(e); }

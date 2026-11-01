@@ -10,6 +10,7 @@ export interface AppRow {
   stoppedByOwner?: boolean;
   lastError?: string | null;
   warnings?: string[];
+  iconIssue?: { code: 'dreamcontext_logo' | 'not_servable' } | null;
   windows?: number;
   hasBackend?: boolean;
   unguarded?: boolean;
@@ -43,6 +44,7 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
   const [busy, setBusy] = useState<'launch' | 'stop' | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [notes, setNotes] = useState<string[]>([]);
+  const [iconFailed, setIconFailed] = useState(false);
   const live = (app.windows ?? 0) > 0;
   const state = app.stoppedByOwner ? 'stopped' : app.state;
   const tone = STATE_TONE[state] ?? 'idle';
@@ -75,8 +77,8 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
   return (
     <article className="app-card" data-state={state}>
       <div className="app-card__head">
-        {app.hasIcon && canLaunch ? (
-          <img className="app-card__logo" src={`/api/apps/${encodeURIComponent(app.slug)}/icon?vault=${encodeURIComponent(vault)}`} alt="" />
+        {app.hasIcon && canLaunch && !iconFailed ? (
+          <img className="app-card__logo" src={`/api/apps/${encodeURIComponent(app.slug)}/icon?vault=${encodeURIComponent(vault)}`} alt="" onError={() => setIconFailed(true)} />
         ) : (
           <div className="app-card__logo app-card__logo--blank" aria-hidden>{app.name.slice(0, 1).toUpperCase()}</div>
         )}
@@ -130,6 +132,7 @@ export function AppCard({ app, vault, canLaunch, setup, onChanged }: { app: AppR
       {notes.map((n) => <p key={n} className="app-card__note app-card__note--warn">{n}</p>)}
       {app.agentState === 'needs_approval' && <p className="app-card__note app-card__note--warn">{t('apps.agentNeedsApproval')}</p>}
       {app.agentState === 'missing' && <p className="app-card__note app-card__note--warn">{t('apps.agentMissing')}</p>}
+      {app.iconIssue && <p className="app-card__note app-card__note--warn">{t(`apps.icon.${app.iconIssue.code}`)}</p>}
       {app.unguarded && <p className="app-card__note app-card__note--warn">{t('apps.unguarded')}</p>}
       {app.portFallback && <p className="app-card__note app-card__note--warn">{t('apps.portFallback')}</p>}
       {state === 'error' && app.lastError && <p className="app-card__note app-card__note--bad">{app.lastError}</p>}

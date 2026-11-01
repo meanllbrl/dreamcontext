@@ -72,6 +72,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-app-link-proj-',
   'dc-app-win-',
   'dc-apps-auto-',
+  'dc-apps-icon-',
   'dc-apps-meta-home-',
   'dc-apps-meta-proj-',
   'dc-apps-routes-home-',

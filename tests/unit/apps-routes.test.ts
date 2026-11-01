@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'node:http';
 import { execFile } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { appHash } from '../../src/lib/apps/bundle.js';
+import { registerApp } from '../../src/lib/apps/registry.js';
 
 /**
  * `/api/apps/*` through the REAL router and request handler, and the REAL `dreamcontext apps`
@@ -63,7 +65,6 @@ beforeAll(async () => {
   symlinkSync(project, join(parent, 'acme-link'));
   writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: 'acme', path: project }, { name: 'acme-link', path: join(parent, 'acme-link') }] }));
 
-  const { registerApp } = await import('../../src/lib/apps/registry.js');
   const root = join(`${project}-apps`, 'echo');
   mkdirSync(dirname(root), { recursive: true });
   cpSync(FIXTURE, root, { recursive: true });
@@ -219,5 +220,82 @@ describe('the embedded chat', () => {
     expect(r.json?.error).not.toBe('forbidden');
     const other = await req({ method: 'POST', path: '/api/apps/echo/say', headers: { ...headers, 'x-dc-embed': 'x'.repeat(43) }, body: { member: 'nobody', text: 'hi' } });
     expect(other.status).toBe(403);
+  });
+});
+
+describe('app icons', () => {
+  const LOGO = resolve('assets/notify-icon.icns');
+  const appRow = async (slug: string) => (await req({ path: '/api/apps' })).json.apps.find((a: { slug: string }) => a.slug === slug);
+
+  function appWith(slug: string, iconFile: string | null, bytes: Buffer | string = 'x'): void {
+    const dir = join(`${project}-apps`, slug);
+    mkdirSync(dir, { recursive: true });
+    if (iconFile) writeFileSync(join(dir, iconFile), bytes);
+    writeFileSync(join(dir, 'dreamcontext-app.json'), JSON.stringify({ slug, name: slug, ...(iconFile ? { icon: iconFile } : {}) }));
+    registerApp(home, { projectRoot: project, vault: 'acme', slug, name: slug, root: dir });
+  }
+
+  it('hasIcon is true only for an icon the card can be served', async () => {
+    appWith('with-png', 'icon.png', Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'));
+    appWith('with-icns', 'icon.icns', 'own-icns');
+    appWith('with-jpeg', 'icon.jpeg', Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]));
+    appWith('with-none', null);
+    expect(await appRow('with-png')).toMatchObject({ hasIcon: true, iconIssue: null });
+    expect(await appRow('with-icns')).toMatchObject({ hasIcon: false, iconIssue: { code: 'not_servable' } });
+    expect(await appRow('with-none')).toMatchObject({ hasIcon: false, iconIssue: null });
+    expect(await appRow('with-jpeg')).toMatchObject({ hasIcon: true, iconIssue: null });
+    expect((await req({ path: '/api/apps/with-jpeg/icon' })).status).toBe(200);
+    expect((await req({ path: '/api/apps/with-png/icon' })).status).toBe(200);
+    expect((await req({ path: '/api/apps/with-icns/icon' })).status).toBe(404);
+  });
+
+  it('`apps new` never leaves the dreamcontext logo anywhere in the app', async () => {
+    const r = await cli(['apps', 'new', 'sube-raporu', '--name', 'Şube Raporu'], project);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain('placeholder');
+    const root = join(`${project}-apps`, 'sube-raporu');
+    expect(JSON.parse(readFileSync(join(root, 'dreamcontext-app.json'), 'utf-8')).icon).toBe('icon.png');
+    expect(readFileSync(join(root, 'icon.png')).subarray(1, 4).toString()).toBe('PNG');
+    const logo = readFileSync(LOGO);
+    const files = readdirSync(root, { recursive: true, encoding: 'utf-8' }).filter((f) => !f.startsWith('.git/') && statSync(join(root, f)).isFile());
+    expect(files.length).toBeGreaterThan(3);
+    for (const f of files) expect(readFileSync(join(root, f)).equals(logo), f).toBe(false);
+    const row = await appRow('sube-raporu');
+    expect(row).toMatchObject({ hasIcon: true, iconIssue: null });
+
+    const placeholder = await cli(['apps', 'validate', 'sube-raporu'], project);
+    expect(placeholder.code, placeholder.out).toBe(0);
+    expect(placeholder.out).toContain('placeholder letter');
+  }, 60_000);
+
+  it('`apps validate` is red on the logo and on an icon the card cannot show; the app still lists', async () => {
+    appWith('born-with-logo', 'icon.icns', readFileSync(LOGO));
+    const logo = await cli(['apps', 'validate', 'born-with-logo'], project);
+    expect(logo.code).not.toBe(0);
+    expect(logo.out).toContain('error icon: the icon is the dreamcontext logo');
+    expect(await appRow('born-with-logo')).toMatchObject({ hasIcon: false, iconIssue: { code: 'dreamcontext_logo' } });
+
+    const icns = await cli(['apps', 'validate', 'with-icns'], project);
+    expect(icns.code).not.toBe(0);
+    expect(icns.out).toContain('error icon: the Apps card cannot show this icon');
+  }, 60_000);
+
+  it('windows counts the one runner: a reconnect replaces its token, and a dead process counts none', async () => {
+    const { existingRuntime } = await import('../../src/lib/apps/supervisor.js');
+    const { setBundleProbeForTests } = await import('../../src/server/routes/apps.js');
+    await req({ method: 'POST', path: '/api/apps/launch-window', headers: { authorization: `Bearer ${'L'.repeat(43)}` }, body: { projectRoot: project, slug: 'with-png' } });
+    const rt = existingRuntime(appHash(project, 'with-png'));
+    if (!rt) throw new Error('no runtime');
+    rt.heartbeat('first-run');
+    rt.heartbeat('second-run');
+    expect((await appRow('with-png')).windows).toBe(1);
+    try {
+      setBundleProbeForTests(() => true);
+      expect((await appRow('with-png')).windows).toBe(1);
+      setBundleProbeForTests(() => false);
+      expect((await appRow('with-png')).windows).toBe(0);
+    } finally {
+      setBundleProbeForTests(() => null);
+    }
   });
 });

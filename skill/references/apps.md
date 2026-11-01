@@ -7,6 +7,10 @@ asking an agent (`/apps`), and it belongs to one project. Its code lives beside 
 Everything about building one is in the `/apps` skill. This page is what any agent needs to
 know about an app that already exists.
 
+Every app has its own icon, never the dreamcontext logo: `apps validate` is red on the logo and on
+an `.icns` the card cannot show. You cannot see the Dock, and `lsappinfo` only proves a process:
+read the icon itself, then ask the owner to look.
+
 | You want to | Do |
 |---|---|
 | See this project's apps | `dreamcontext apps list` |

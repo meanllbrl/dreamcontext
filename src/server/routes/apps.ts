@@ -39,9 +39,10 @@ import { getApp, listApps, real, unregisterApp, updateApp, type AppRecord } from
 import { existingRuntime, forgetRuntime, runtimeFor, type AppRuntime, GATEWAY_SECRET_HEADER } from '../../lib/apps/supervisor.js';
 import { readManifest, ACTION_METHODS } from '../../lib/apps/manifest.js';
 import { safeAppPath } from '../../lib/apps/safe-path.js';
-import { appBundlePath, ensureAppBundle, removeAppBundle, shellRunnerPath } from '../../lib/apps/bundle.js';
+import { appBundlePath, bundleIsStale, bundlePid, bundleRunState, ensureAppBundle, mayBuildBundle, mayRetireRunner, removeAppBundle, runnerBundleId, shellRunnerPath, shouldRefreshIdleBundle, type BundleInput } from '../../lib/apps/bundle.js';
 import { removeShots, pruneShots } from '../../lib/apps/shots.js';
 import { notifierIconPath } from '../../lib/automations/notifier.js';
+import { iconIssue, servableIcon } from '../../lib/apps/icon.js';
 import { sendPhotoFile } from './automations.js';
 import { configureGatewayW3 } from '../apps/gateway-w3.js';
 import { spendLinkNonce } from '../apps/link-nonces.js';
@@ -63,9 +64,16 @@ const CALL_TIMEOUT_MS = 5 * 60_000;
 const LAUNCH_WAIT_MS = 20_000;
 
 let home = homedir();
+/** Is this bundle's process running? The OS's answer; null = could not ask (the lease decides). */
+let probeBundle: (bundleId: string) => boolean | null = bundleRunState;
+/** Tests stand in for the OS. */
+export function setBundleProbeForTests(p: (bundleId: string) => boolean | null): void {
+  probeBundle = p;
+}
 /** Tests point the apps store at a scratch home. */
 export function setAppsHomeForTests(h: string): void {
   home = h;
+  probeBundle = () => null; // a scratch home has no real bundles to ask the OS about
   configureGatewayW3({ home: h, loginPath });
 }
 
@@ -117,6 +125,18 @@ async function settle(rt: AppRuntime, ms: number): Promise<void> {
   await Promise.race([rt.ensureRunning(), new Promise((r) => setTimeout(r, ms))]);
 }
 
+/** A closed app whose icon or name changed: rebuilt now, so a Dock click starts the new bundle. */
+function refreshIdleBundles(): void {
+  const runner = shellRunnerPath();
+  if (!runner) return;
+  for (const rec of listApps(home)) {
+    const input = bundleInput(rec, runner);
+    const bundleExists = existsSync(appBundlePath(home, rec.slug, rec.hash));
+    if (!bundleExists || !bundleIsStale(input)) continue;
+    if (shouldRefreshIdleBundle({ bundleExists, stale: true, processRunning: probeBundle(runnerBundleId(rec.hash)) })) ensureAppBundle(input);
+  }
+}
+
 let sweeper: NodeJS.Timeout | null = null;
 /** Lease sweeping + shot pruning, every 5 s while the server runs. */
 export function startAppsSweeper(): () => void {
@@ -132,10 +152,45 @@ export function startAppsSweeper(): () => void {
         void closeMcpClients(rt.hash);
       }
     }
-    if (++ticks % 60 === 0) pruneShots(home);
+    if (++ticks % 3 === 0) { try { refreshIdleBundles(); } catch { /* the next open builds it */ } }
+    if (ticks % 60 === 0) pruneShots(home);
   }, 5000);
   sweeper.unref();
   return () => { if (sweeper) clearInterval(sweeper); sweeper = null; };
+}
+
+/** What this app's bundle is built from right now. */
+function bundleInput(rec: AppRecord, runnerPath: string): BundleInput {
+  const m = readManifest(rec.root);
+  const icon = m.ok ? m.manifest.icon : null;
+  return {
+    home, projectRoot: rec.projectRoot, vault: rec.vault, slug: rec.slug, name: m.ok ? m.manifest.name : rec.name,
+    // An app born with the logo as its icon gets its own letter in the Dock; its manifest stays.
+    iconPath: iconIssue(icon, notifierIconPath())?.code === 'dreamcontext_logo' ? null : icon,
+    runnerPath, appBundleId: shellBundleId(),
+  };
+}
+
+/** Windows open now: the leases, corrected by the OS when it says the runner process is gone. */
+function liveWindowsOf(rec: AppRecord, rt: AppRuntime): number {
+  if (rt.liveWindows() > 0 && probeBundle(runnerBundleId(rec.hash)) === false) rt.clearWindows();
+  return rt.liveWindows();
+}
+
+/**
+ * The owner stopped the app and opens it again, and the bundle changed meanwhile (a new icon):
+ * the runner sits on its Stopped screen with nothing to lose, so it ends here and the next
+ * open starts the new bundle. A window that is working is never ended for this.
+ */
+async function retireStoppedWindow(rec: AppRecord, rt: AppRuntime): Promise<void> {
+  const runner = shellRunnerPath();
+  const id = runnerBundleId(rec.hash);
+  if (!runner || !mayRetireRunner({ stoppedByOwner: true, processRunning: probeBundle(id), stale: bundleIsStale(bundleInput(rec, runner)) })) return;
+  const pid = bundlePid(id);
+  if (!pid) return;
+  try { process.kill(pid); } catch { return; }
+  for (let i = 0; i < 30 && probeBundle(id) !== false; i++) await new Promise((r) => setTimeout(r, 100));
+  rt.clearWindows();
 }
 
 /** Open the app's bundle (or bring its window forward). The single focus path. */
@@ -143,13 +198,9 @@ export function focusApp(rec: AppRecord, opts: { runnerAlive: boolean }): { ok: 
   const runner = shellRunnerPath();
   const path = appBundlePath(home, rec.slug, rec.hash);
   // A live window: never rebuild the bundle under it, only bring it forward.
-  if (!opts.runnerAlive || !existsSync(path)) {
+  if (mayBuildBundle({ processRunning: probeBundle(runnerBundleId(rec.hash)), leaseAlive: opts.runnerAlive, bundleExists: existsSync(path) })) {
     if (!runner) return { ok: false, code: 'runner_missing', message: 'This dreamcontext app has no app runner: update the desktop app.' };
-    const m = readManifest(rec.root);
-    const built = ensureAppBundle({
-      home, projectRoot: rec.projectRoot, vault: rec.vault, slug: rec.slug, name: m.ok ? m.manifest.name : rec.name,
-      iconPath: m.ok ? m.manifest.icon : null, runnerPath: runner, appBundleId: shellBundleId(),
-    }, { defaultIcon: notifierIconPath() });
+    const built = ensureAppBundle(bundleInput(rec, runner));
     if (!built.ok) return { ok: false, code: 'bundle_failed', message: built.reason };
   }
   execFile('/usr/bin/open', [path], { timeout: 10_000 }, () => { /* the window reports itself through its heartbeat */ });
@@ -169,6 +220,7 @@ function memberState(rec: AppRecord, member: string): 'ready' | 'needs_approval'
 
 function publicStatus(rec: AppRecord): Record<string, unknown> {
   const rt = existingRuntime(rec.hash);
+  if (rt) liveWindowsOf(rec, rt);
   const m = readManifest(rec.root);
   const st = rt?.status();
   return {
@@ -186,7 +238,9 @@ function publicStatus(rec: AppRecord): Record<string, unknown> {
     portFallback: st?.portFallback ?? false,
     agent: m.ok ? m.manifest.agent?.member ?? null : null,
     agentState: m.ok && m.manifest.agent ? memberState(rec, m.manifest.agent.member) : null,
-    hasIcon: m.ok ? !!m.manifest.icon : false,
+    // Only what /icon can serve: a true on an .icns draws a broken image on the card.
+    hasIcon: m.ok ? servableIcon(m.manifest.icon) !== null : false,
+    iconIssue: m.ok ? iconIssue(m.manifest.icon, notifierIconPath()) : null,
     actions: m.ok ? m.manifest.actions.map((a) => ({ id: a.id, title: a.title, method: a.method, path: a.path, ...(a.input ? { input: a.input } : {}), ...(a.output ? { output: a.output } : {}), ...(a.danger ? { danger: true } : {}) })) : [],
     schedules: m.ok ? scheduleViews(home, rec) : [],
     mcp: m.ok ? mcpStates(rec, m.manifest.mcp) : [],
@@ -232,7 +286,8 @@ export async function openAppForAssistant(projectRoot: string, slug: string): Pr
   const rec = rec0.stoppedByOwner ? updateApp(home, rec0.projectRoot, rec0.slug, { stoppedByOwner: false }) ?? rec0 : rec0;
   const rt = runtime(rec);
   await gatewayFor(rt);
-  const f = focusApp(rec, { runnerAlive: rt.liveWindows() > 0 });
+  if (rec0.stoppedByOwner) await retireStoppedWindow(rec, rt);
+  const f = focusApp(rec, { runnerAlive: liveWindowsOf(rec, rt) > 0 });
   if (!f.ok) return { ok: false, state: rt.status().state, code: f.code };
   return { ok: true, state: rt.status().state };
 }
@@ -376,7 +431,8 @@ export async function handleAppLaunch(req: IncomingMessage, res: ServerResponse,
   if (body.owner === true && rec.stoppedByOwner) rec = updateApp(home, rec.projectRoot, rec.slug, { stoppedByOwner: false }) ?? rec;
   const rt = runtime(rec);
   const launchGw = await gatewayFor(rt);
-  const alive = rt.liveWindows() > 0;
+  if (body.owner === true && rec0.stoppedByOwner) await retireStoppedWindow(rec, rt);
+  const alive = liveWindowsOf(rec, rt) > 0;
   // A window already open keeps its page: a link only brings it forward.
   if (linkPath !== null && !alive) launchGw.pendingPath = linkPath;
   const f = focusApp(rec, { runnerAlive: alive });
@@ -513,7 +569,7 @@ export function appIconPath(contextRoot: string, slug: string): string | null {
   const rec = getApp(home, projectRootOf(contextRoot), slug);
   if (!rec) return null;
   const m = readManifest(rec.root);
-  return m.ok && m.manifest.icon && /\.(png|jpe?g)$/i.test(m.manifest.icon) ? m.manifest.icon : null;
+  return m.ok ? servableIcon(m.manifest.icon) : null;
 }
 
 
