@@ -41,6 +41,28 @@ describe('SDK', () => {
       expect(f).toThrowError(expect.objectContaining({ code: 'backend_only' }));
     }
   });
+  it('mountEmbed keeps a screen from being drawn shorter than it needs', async () => {
+    const made: Array<Record<string, unknown> & { style: Record<string, string> }> = [];
+    vi.stubGlobal('window', {});
+    vi.stubGlobal('document', { createElement: () => { const f = { style: {} }; made.push(f); return f; } });
+    vi.resetModules();
+    const { dc } = await import('../../src/lib/apps/sdk/dc.mjs?mount');
+    const placed: unknown[] = [];
+    const host = { style: {} as Record<string, string>, replaceChildren: (c: unknown) => placed.push(c) };
+    const chat = dc.mountEmbed(host, 'chat', { member: 'ua' });
+    expect(placed).toEqual([chat]);
+    expect(made[0].src).toBe('/__dc/embed/chat?member=ua');
+    expect(made[0].style).toMatchObject({ height: '100%', minHeight: '560px', width: '100%' });
+    expect(host.style.minHeight).toBe('560px');
+    dc.mountEmbed(host, 'insight', { insight: 'spend' });
+    expect(made[1].style.minHeight).toBe('360px');
+  });
+  it('mountEmbed refuses to run in a backend', async () => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+    const { dc } = await import('../../src/lib/apps/sdk/dc.mjs?mountbackend');
+    expect(() => dc.mountEmbed({}, 'chat')).toThrowError(expect.objectContaining({ code: 'page_only' }));
+  });
   it('reaches a dashboard route once under /__dc/api, never /__dc/api/api', async () => {
     const seen: string[] = [];
     vi.stubGlobal('window', {});

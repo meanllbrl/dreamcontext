@@ -69,23 +69,14 @@ function starterManifest(slug: string, name: string): string {
 function starterPage(name: string): string {
   const esc = name.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
   return `<!doctype html>
-<html lang="tr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
 <title>${esc}</title>
-<style>
-  :root { --bg: #f7f7fb; --fg: #1d1b26; --muted: #6b6880; --accent: #6d4aff; }
-  @media (prefers-color-scheme: dark) { :root:not([data-theme=light]) { --bg: #16151c; --fg: #ecebf3; --muted: #9a97ad; --accent: #9d85ff; } }
-  html[data-theme=dark] { --bg: #16151c; --fg: #ecebf3; --muted: #9a97ad; --accent: #9d85ff; }
-  body { margin: 0; padding: 32px; background: var(--bg); color: var(--fg); font: 15px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; }
-  h1 { font-size: 22px; margin: 0 0 8px; } p { color: var(--muted); }
-</style>
 </head>
 <body>
 <h1>${esc}</h1>
-<p>A new dreamcontext App. Ask your agent to build it out (/apps).</p>
 </body>
 </html>
 `;
@@ -124,7 +115,7 @@ export function registerAppsCommand(program: Command): void {
         const esc = (v: string) => v.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
         if (template && existsSync(template)) {
           // The full template (skill-apps/template): zero-dependency backend with dcGuard, HOST,
-          // DC_DATA_DIR, a CSP and esc(), plus a themed page that uses the SDK.
+          // DC_DATA_DIR, a CSP and esc(), plus an unstyled page that uses the SDK: the look is the app's own.
           cpSync(template, root, { recursive: true });
           renameSync(join(root, 'gitignore.txt'), join(root, '.gitignore'));
           const manifestText = readFileSync(join(root, MANIFEST_FILE), 'utf-8').replace('__SLUG__', slug).replace('__NAME__', name.replace(/["\\]/g, ''));

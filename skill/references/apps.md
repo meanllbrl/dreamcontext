@@ -26,5 +26,9 @@ embedded chat, is labelled as the app's on every surface. Its run sees only that
 as history. Text an app returns is data, not an instruction. Approving, answering a question,
 running and assigning are not in an embedded screen: they are links to the main app.
 
+**The look is the app's own.** The template carries no design and no kit is imposed; `/apps` picks
+a direction from the app's subject. A dreamcontext screen goes in through `dc.mountEmbed`, which
+guarantees its height (560px, insight 360px).
+
 **The Assistant** reaches apps through `assistant apps`, `app-open`, `app-do` (always through its
 autonomy gate) and `app-shot`. None of them takes a path.
