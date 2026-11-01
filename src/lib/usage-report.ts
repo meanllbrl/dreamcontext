@@ -428,6 +428,19 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
         a.tokens += tokens; a.cost += cost;
       }
 
+      // A sleep is its run's project's, wherever a specialist's folder was: the Sleep card, the table
+      // and the trend take it here. The run list shows a run whole; these count what fell in range.
+      if (asleep && claude) {
+        const owner = run?.project ?? v.project;
+        const at = indexOf(hour);
+        if (at >= 0 && (q.project === null || owner === q.project) && !q.off.has('claude') && !q.off.has(`claude:${who ?? ''}`)) {
+          trend.sleep[at] += cost;
+          const z = sleepOf.get(owner) ?? { tokens: 0, cost: 0 };
+          sleepOf.set(owner, z);
+          z.tokens += tokens; z.cost += cost;
+        }
+      }
+
       if (!on || q.off.has(`${v.f.tool}:${who ?? ''}`)) continue;
       const i = indexOf(hour);
       if (i < 0) continue;
@@ -455,13 +468,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
         claudeTokens += tokens;
         claudeInput += input + cacheRead + cacheWrite;
         const mem = asleep ? 0 : memFirst + memCarried;
-        if (asleep) {
-          chart.sleep[i] += tokens; trend.sleep[i] += cost;
-          // The run list shows a run whole; the totals count what fell in this range and filter.
-          const z = sleepOf.get(v.project) ?? { tokens: 0, cost: 0 };
-          sleepOf.set(v.project, z);
-          z.tokens += tokens; z.cost += cost;
-        }
+        if (asleep) chart.sleep[i] += tokens;
         else {
           chart.memory[i] += mem; chart.work[i] += Math.max(0, tokens - mem); memory.first += memFirst; memory.carried += memCarried;
           const m = memoryOf.get(v.project) ?? { tokens: 0, cost: 0 };

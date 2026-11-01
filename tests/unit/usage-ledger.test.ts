@@ -471,6 +471,23 @@ describe('usage ledger', () => {
       expect(day.dc.sleep.cost).toBeGreaterThan(0);
     });
 
+    it('a sleep is its run\'s project\'s, even with a specialist in another folder, and the filter finds it', async () => {
+      const bash = (ts: string, id: string, command: string) => assistant(id, `r${id}`, ts, U(1000), {}, [{ type: 'tool_use', id: `t${id}`, name: 'Bash', input: { command } }]);
+      write('s1.jsonl', [bash(at(60), 'm1', 'dreamcontext sleep start'), bash(at(30), 'm2', 'dreamcontext sleep done')]);
+      const sub = join(proj, 's1', 'subagents');
+      mkdirSync(sub, { recursive: true });
+      writeFileSync(join(sub, 'agent-1.jsonl'), `${assistant('m3', 'r3', at(50), U(9000)).replace('/work/alpha', '/work/beta')}\n`);
+      writeFileSync(join(sub, 'agent-1.meta.json'), JSON.stringify({ agentType: 'sleep-tasks' }));
+      await scan();
+      const all = stats();
+      const alpha = all.dc.projects.find((p) => p.sleep.cost > 0);
+      expect(all.dc.projects.filter((p) => p.sleep.cost > 0)).toHaveLength(1);
+      expect(alpha?.key).toBe(all.dc.sleep.runs[0].project);
+      const one = buildStats({ range: '7d', project: alpha?.key as string, off: new Set(), now: NOW }, home);
+      expect(one.dc.sleep.cost).toBeCloseTo(all.dc.sleep.cost, 10);
+      expect(one.dc.trend.sleep.reduce((a, b) => a + b, 0)).toBeCloseTo(all.dc.sleep.cost, 10);
+    });
+
     it('an old cache is read again, so no count stays empty', () => {
       writeFileSync(join(home, '.dreamcontext', 'usage-scan-cache.json'), JSON.stringify({ version: 2, models: [], files: { x: { rows: [] } } }));
       expect(Object.keys(loadLedger(home).files)).toEqual([]);
