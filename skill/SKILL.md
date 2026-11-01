@@ -32,7 +32,7 @@ hooks:
     - hooks:
         - type: command
           command: "command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook subagent-start || exec npx dreamcontext hook subagent-start"
-          timeout: 5
+          timeout: 10
   PreToolUse:
     - matcher: "Agent"
       hooks:
@@ -182,7 +182,7 @@ The SessionStart hook injects this automatically every session — answer from i
 - **Features**: name, status and path
 - **Knowledge index**: pinned files (📌, with path) and every pattern by name; other knowledge is counted, not listed (`dreamcontext knowledge index` or `memory recall`). Pinned bodies are NOT inlined: Read the file when the pin applies
 
-**On a mature brain this shrinks, never blindly.** Past the harness's 20,000-char limit, sections demote cheapest-loss first; every file path stays and `Read` or `memory recall` recovers the full text. `core/0.soul.md` and the active `people/<slug>.md` always render verbatim. If it still cannot fit, a **`⚠️ CONTEXT IS INCOMPLETE`** banner under the H1 names the fix: act on it before assuming an empty brain. Full ladder → [cli-reference.md](references/cli-reference.md).
+**On a mature brain this shrinks, never blindly.** One hook can carry 10,000 chars, so three hooks carry the snapshot (`session-start` and two `session-start-part` hooks, up to 28,500 chars). Past its budget, sections demote cheapest-loss first; every file path stays and `Read` or `memory recall` recovers the full text. `core/0.soul.md` and the active `people/<slug>.md` always render verbatim. If it still cannot fit, a **`⚠️ CONTEXT IS INCOMPLETE`** banner under the H1 names the fix: act on it before assuming an empty brain. Full ladder → [cli-reference.md](references/cli-reference.md).
 
 **Do not re-read auto-loaded files.** For more, load on demand:
 
@@ -383,7 +383,7 @@ It refuses while a part is missing. Details → [tasks-and-features.md](referenc
 
 **First-run self-recognition (do not skip):** a missing or sparse brain → **offer, unasked,** to ingest the user's material (docs, a Notion export, a wiki) or bootstrap from the codebase with the `initializer` skill. A hook's `🧠 dreamcontext:` offer means the same: relay it, invoke on consent (→ [cli-reference.md](references/cli-reference.md) § Setup & maintenance).
 
-Sub-agents get a budgeted briefing from the SubagentStart hook (≤12,000 chars → [cli-reference.md](references/cli-reference.md) § Sub-agent briefing budget). Delegating to a Plan agent? Name the relevant `_dream_context/` paths in its prompt.
+Sub-agents get a budgeted briefing from the SubagentStart hook (≤9,500 chars → [cli-reference.md](references/cli-reference.md) § Sub-agent briefing budget). Delegating to a Plan agent? Name the relevant `_dream_context/` paths in its prompt.
 
 ---
 
