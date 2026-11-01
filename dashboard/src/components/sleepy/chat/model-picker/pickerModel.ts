@@ -1,9 +1,8 @@
 /**
  * The r29 model picker's data, without React (Track T W4): which tools the rail shows, each
- * tool's models split into current and legacy, the search across tools, favourites and the
- * ⌘1-9 shortcuts. Tested on its own (tests/unit/model-picker.test.tsx).
+ * tool's models split into current and legacy, the search across tools and the ⌘1-9 shortcuts. Tested on its own (tests/unit/model-picker.test.tsx).
  */
-import { splitModels, type ModelConfig } from '../../../../lib/agentComposer';
+import { canonicalModelId, currentFamilyRow, modelFamily, type ModelConfig } from '../../../../lib/agentComposer';
 
 export type PickerTool = 'claude' | 'codex';
 
@@ -11,6 +10,8 @@ export interface PickerModel {
   tool: PickerTool;
   id: string;
   label: string;
+  /** Its own effort levels when they differ from the tool's; empty = it has none. */
+  efforts?: string[];
 }
 
 export interface PickerToolState {
@@ -63,21 +64,38 @@ export function splitByVersion(models: { id: string; label: string }[], tool: Pi
   return current.length ? { current, legacy } : { current: rows, legacy: [] };
 }
 
-/**
- * Claude's list: the composer's own model config, split the way the old menu split it
- * (`primary` = the first `primaryCount` or the ones not flagged other).
- */
-export function claudeState(config: ModelConfig, model: string): PickerToolState {
-  const { primary, other } = splitModels(config, model);
+/** Claude's families, most capable first: the order of the list. */
+const CLAUDE_ORDER = ['fable', 'opus', 'sonnet', 'haiku'];
+
+/** Claude's list: every current family, most capable first, over the older versions the server
+ *  names (`legacyModels`). Legacy means one thing: a version a newer one replaced. */
+export function claudeState(config: ModelConfig): PickerToolState {
+  const rank = (id: string): number => {
+    const at = CLAUDE_ORDER.indexOf(modelFamily(id) ?? '');
+    return at < 0 ? CLAUDE_ORDER.length : at;
+  };
   return {
     tool: 'claude',
     label: 'Claude',
     ready: true,
     blocker: '',
-    current: primary.map((m) => ({ tool: 'claude' as const, id: m.id, label: m.label })),
-    legacy: other.map((m) => ({ tool: 'claude' as const, id: m.id, label: m.label })),
+    current: [...config.models].sort((a, b) => rank(a.id) - rank(b.id)).map((m) => ({ tool: 'claude' as const, id: m.id, label: m.label })),
+    legacy: (config.legacyModels ?? []).map((m) => ({ tool: 'claude' as const, id: m.id, label: m.label, efforts: m.efforts })),
     efforts: config.efforts,
   };
+}
+
+/** The row this chat's model is: by id, by the id without the CLI's tags, else its family's row
+ *  when it IS that version (a chat on `opus` reports `claude-opus-5-5`). */
+export function activeRow(t: PickerToolState, model: string): PickerModel | null {
+  const rows = [...t.current, ...t.legacy];
+  const bare = canonicalModelId(model);
+  return rows.find((m) => m.id === model) ?? rows.find((m) => m.id === bare) ?? rows.find((m) => m.id === currentFamilyRow(rows, model)?.id) ?? null;
+}
+
+/** The effort levels of that row. */
+export function effortsFor(t: PickerToolState, model: string): string[] {
+  return activeRow(t, model)?.efforts ?? t.efforts;
 }
 
 export function codexState(r: ToolReadiness): PickerToolState {
@@ -98,19 +116,6 @@ export function searchModels(tools: PickerToolState[], query: string): PickerMod
   const q = query.trim().toLowerCase();
   if (!q) return [];
   return tools.flatMap((t) => [...t.current, ...t.legacy]).filter((m) => m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
-}
-
-export const favouriteKey = (m: Pick<PickerModel, 'tool' | 'id'>): string => `${m.tool}:${m.id}`;
-
-/** The favourites, as models that still exist (a favourite of a model that left the list is dropped). */
-export function favouriteModels(tools: PickerToolState[], keys: readonly string[]): PickerModel[] {
-  const all = tools.flatMap((t) => [...t.current, ...t.legacy]);
-  return keys.map((k) => all.find((m) => favouriteKey(m) === k)).filter((m): m is PickerModel => !!m);
-}
-
-export function toggleFavourite(keys: readonly string[], m: Pick<PickerModel, 'tool' | 'id'>): string[] {
-  const k = favouriteKey(m);
-  return keys.includes(k) ? keys.filter((x) => x !== k) : [...keys, k];
 }
 
 /** ⌘1-9: the n-th row of what is on screen, first nine only. */

@@ -9,7 +9,7 @@
  * A LEAF module: no disk, no process. The caller reads `~/.claude.json` and passes it in.
  */
 
-import { MODEL_FACTS } from './model-facts.js';
+import { LEGACY_MODEL_FACTS, MODEL_FACTS } from './model-facts.js';
 
 export interface ModelOption {
   id: string;
@@ -18,8 +18,20 @@ export interface ModelOption {
 
 /** The aliases every Claude Code install understands. */
 export const BASE_MODEL_OPTIONS: readonly ModelOption[] = Object.freeze(
-  MODEL_FACTS.map((m) => ({ id: m.alias, label: m.alias.charAt(0).toUpperCase() + m.alias.slice(1) })),
+  MODEL_FACTS.map((m) => ({ id: m.alias, label: m.label })),
 );
+
+/** Older versions, by exact id: the picker's Legacy group. Never part of the alias list. */
+export const LEGACY_MODEL_OPTIONS: readonly (ModelOption & { efforts: string[] })[] = Object.freeze(
+  LEGACY_MODEL_FACTS.map((m) => ({ id: m.id, label: m.label, efforts: [...m.efforts] })),
+);
+
+/** The picker id of whatever a transcript or setting reports: a legacy version keeps its own id
+ *  (the `[1m]` tag and date stamp the CLI adds are dropped), anything else its family alias. */
+export function modelPickerId(full: string): string {
+  const bare = (full || '').toLowerCase().replace(/\[[^\]]*\]$/, '').replace(/-\d{8}$/, '');
+  return LEGACY_MODEL_FACTS.some((m) => m.id === bare) ? bare : modelAlias(full);
+}
 
 /** Map any full model id / alias to our short alias bucket (opus/sonnet/haiku/fable). */
 export function modelAlias(full: string): string {

@@ -62,7 +62,7 @@ import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { CHAT_MODE_ROWS, DEFAULT_CHAT_MODE, type ChatMode } from '../../lib/chatModes';
 import { bindChatAgent } from '../../lib/chatAgentBinding';
-import { bindChatTool, chatToolFor, type ChatTool } from '../../lib/chatToolBinding';
+import { bindChatTool, chatToolFor, OPEN_TOOL_CHAT_EVENT, type ChatTool, type OpenToolChatDetail } from '../../lib/chatToolBinding';
 import { TALK_TO_AGENT_EVENT, type TalkToAgentDetail } from '../../lib/talkToAgent';
 import { useAgents, findAgent } from '../../hooks/useAgents';
 import { preparePrompt, promptFitsInline, developKickoffPrompt, trainKickoffPrompt, initializerKickoffPrompt } from '../../lib/agentPrompt';
@@ -1829,7 +1829,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     return home ? showWindow(home) : null;
   }, [showWindow]);
 
-  const spawnAndRegister = useCallback((kind: SessionKind, launch?: { bypass: boolean; explicitBypass: true }) => {
+  const spawnAndRegister = useCallback((kind: SessionKind, launch?: { bypass: boolean; explicitBypass: true }, forceCodex = false) => {
     // A new agent inherits the user's CLI defaults (model/effort from ~/.claude/settings.json);
     // the picker then reflects and can change them per agent. Nothing is forced at launch.
     // A new CHAT starts in Basic — there is deliberately no remembered mode default (the mode
@@ -1841,7 +1841,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     // list not read yet) trusts the setting: the server says why, should it refuse.
     const defaults = agentSettingsRef.current;
     const codexInfo = agentToolsRef.current?.find((t) => t.tool === 'codex');
-    const onCodex = !launch && kind === 'chat' && defaults.chatDefaultTool === 'codex' && (codexInfo?.ready ?? true);
+    const onCodex = forceCodex || (!launch && kind === 'chat' && defaults.chatDefaultTool === 'codex' && (codexInfo?.ready ?? true));
     const codexId = onCodex ? newClaudeId() : undefined;
     if (codexId) bindChatTool(codexId, 'codex');
     const s = launch
@@ -1859,9 +1859,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
 
   // Add a session as a TAB of the action-focused pane (⌘T / ＋ for an agent, ⌃` / menu for
   // a shell), or as the first pane.
-  const addSession = useCallback((kind: SessionKind = 'agent', launch?: { bypass: boolean; explicitBypass: true }): string => {
+  const addSession = useCallback((kind: SessionKind = 'agent', launch?: { bypass: boolean; explicitBypass: true }, forceCodex = false): string => {
     if (!admitTab()) return '';
-    const s = spawnAndRegister(kind, launch);
+    const s = spawnAndRegister(kind, launch, forceCodex);
     if (panes.length === 0) {
       const pid = nextPaneId();
       setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
@@ -3146,6 +3146,18 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // that flips without a render, so only the tick re-runs the wait. Without it the first
   // "not ready yet" leaves the intent parked forever: no chat and no refusal notice.
   const [startWaitTick, bumpStartWait] = useReducer((x: number) => x + 1, 0);
+  // The locked picker's way out: a NEW Codex chat. The Super Agent stays handed over behind it,
+  // as for the drawer's New tab; only the view moves (`new-tab` in the shell-intent handler).
+  useInstanceEvent<OpenToolChatDetail>(OPEN_TOOL_CHAT_EVENT, (detail) => {
+    if (detail?.tool !== 'codex') return;
+    // Expanded first: the refusal (40 tabs, Claude off) is drawn inside this surface.
+    setExpanded(true);
+    if (!canSpawn || !addSession('chat', undefined, true)) return;
+    setSuperPeek(null);
+    setSuperDockOpen(false);
+    setSuperView('panes');
+    setPhoneView('chat');
+  });
   useInstanceEvent<StartChatIntentDetail>(START_CHAT_INTENT_EVENT, (detail) => {
     if (detail?.intent !== 'initializer') return;
     setStartIntentAt(Date.now());
@@ -4701,7 +4713,18 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     let cancelled = false;
     const readModel = (sid: string, claudeId: string) => {
       void api.get<{ model: string | null }>(`/agent/session-model?claudeId=${encodeURIComponent(claudeId)}`)
-        .then((r) => { if (!cancelled && r?.model) setSessionModel((prev) => ({ ...prev, [sid]: r.model as string })); })
+        .then((r) => {
+          if (cancelled || !r?.model) return;
+          const reported = r.model;
+          setSessionModel((prev) => {
+            // A chat's own pick is the truth for an older version: the transcript's last turn may
+            // predate it, and an old turn must not pin a chat that follows its family.
+            const live = sessions.current.get(sid);
+            const saved = prev[sid] || (live?.kind === 'chat' ? (live as ChatSession).model : '');
+            if (live?.kind === 'chat' && (reported.startsWith('claude-') || saved.startsWith('claude-'))) return prev;
+            return { ...prev, [sid]: reported };
+          });
+        })
         .catch(() => { /* best-effort: keep the fallback */ });
     };
     const activeSids = Array.from(new Set(shownPanes.map((p) => p.active)));

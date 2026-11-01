@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  blockerOf, claudeState, codexState, favouriteKey, favouriteModels, searchModels, shortcutFor,
-  splitByVersion, toggleFavourite, type ToolReadiness,
+  activeRow, blockerOf, claudeState, codexState, effortsFor, searchModels, shortcutFor,
+  splitByVersion, type ToolReadiness,
 } from '../../dashboard/src/components/sleepy/chat/model-picker/pickerModel';
 import type { ModelConfig } from '../../dashboard/src/lib/agentComposer';
+import { LEGACY_MODEL_OPTIONS, modelOptionsFrom, modelPickerId } from '../../src/lib/model-list';
+import { spawnModelFor } from '../../src/server/routes/agent-chat';
+import { modelLabelFor } from '../../dashboard/src/lib/agentComposer';
 
 const CONFIG = {
   models: [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }],
@@ -43,19 +46,51 @@ describe('r29 model picker data', () => {
   });
 
   it('searches across tools, by label and by id, in rail order', () => {
-    const tools = [claudeState(CONFIG, 'opus'), codexState(codex())];
+    const tools = [claudeState(CONFIG), codexState(codex())];
     expect(searchModels(tools, 'LUNA').map((m) => m.id)).toEqual(['gpt-6.1-luna']);
     expect(searchModels(tools, 'o').map((m) => m.tool)[0]).toBe('claude');
     expect(searchModels(tools, '   ')).toEqual([]);
   });
 
-  it('favourites are tool:model, survive a toggle, and drop a model that left the list', () => {
-    const tools = [claudeState(CONFIG, 'opus'), codexState(codex())];
-    const opus = tools[0]!.current[0]!;
-    const on = toggleFavourite([], opus);
-    expect(on).toEqual([favouriteKey(opus)]);
-    expect(toggleFavourite(on, opus)).toEqual([]);
-    expect(favouriteModels(tools, ['codex:gone', 'codex:gpt-5.5']).map((m) => m.id)).toEqual(['gpt-5.5']);
+  const real = { ...CONFIG, models: modelOptionsFrom(null), legacyModels: LEGACY_MODEL_OPTIONS.map((m) => ({ ...m })) } as ModelConfig;
+
+  it('Fable and Haiku are not legacy: current families carry their version, most capable first', () => {
+    const s = claudeState(real);
+    expect(s.current.map((m) => m.label)).toEqual(['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']);
+    expect(s.legacy.map((m) => m.id)).not.toContain('fable');
+    expect(s.legacy.map((m) => m.id)).not.toContain('haiku');
+    expect(shortcutFor(s.current.findIndex((m) => m.id === 'fable'))).toBe('⌘1');
+  });
+
+  it('legacy lists real older versions by exact id; none named, no group', () => {
+    expect(claudeState(real).legacy.map((m) => m.id)).toEqual([
+      'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-4-5',
+      'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5',
+    ]);
+    expect(claudeState(CONFIG).legacy).toEqual([]);
+  });
+
+  it('a chat on an older version finds its own row, its label and its efforts', () => {
+    const s = claudeState(real);
+    expect(activeRow(s, 'claude-opus-4-8')?.label).toBe('Opus 4.8');
+    expect(activeRow(s, 'claude-opus-4-8[1m]')?.label).toBe('Opus 4.8');
+    expect(activeRow(s, 'claude-opus-5-5')?.id).toBe('opus');
+    expect(activeRow(s, 'claude-opus-4-1')).toBeNull();
+    expect(modelLabelFor(real, 'claude-opus-4-8-20260101')).toBe('Opus 4.8');
+    expect(modelLabelFor(real, 'claude-opus-5-5')).toBe('Opus 5.5');
+    expect(effortsFor(s, 'claude-opus-4-6')).toEqual(['low', 'medium', 'high', 'max']);
+    expect(effortsFor(s, 'claude-haiku-4-5')).toEqual([]);
+    expect(effortsFor(s, 'opus')).toEqual(CONFIG.efforts);
+  });
+
+  it('a transcript keeps a legacy id; the current generation folds to its alias', () => {
+    expect(modelPickerId('claude-opus-4-7[1m]')).toBe('claude-opus-4-7');
+    expect(modelPickerId('claude-haiku-4-5-20251001')).toBe('claude-haiku-4-5');
+    expect(modelPickerId('claude-opus-5-5')).toBe('opus');
+  });
+
+  it('the picked id goes to the spawn as it is', () => {
+    expect(spawnModelFor({ isAssistant: false, urlModel: 'claude-opus-4-8' })).toBe('claude-opus-4-8');
   });
 
   it('numbers the first nine rows only', () => {

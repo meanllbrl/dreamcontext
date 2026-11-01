@@ -25,3 +25,8 @@ export function chatToolParam(claudeId: string): string {
   const tool = chatToolFor(claudeId);
   return tool ? `&tool=${tool}` : '';
 }
+
+/** Instance-bus event: open a NEW chat on `tool`, from a surface that cannot switch its own
+ *  (the Super Agent, an agent-bound chat). AgentSurface owns the tabs, so it answers. */
+export const OPEN_TOOL_CHAT_EVENT = 'dreamcontext-open-tool-chat';
+export interface OpenToolChatDetail { tool: 'codex' }

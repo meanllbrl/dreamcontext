@@ -76,6 +76,29 @@ export const MODEL_FACTS: readonly ModelFact[] = Object.freeze([
   },
 ]);
 
+/** An older version the Claude CLI still serves: its exact id runs that version. */
+export interface LegacyModelFact { family: ModelFamilyKey; id: string; label: string; efforts: readonly ModelEffort[] }
+
+const ALL_EFFORTS: readonly ModelEffort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+const NO_XHIGH: readonly ModelEffort[] = ['low', 'medium', 'high', 'max'];
+
+/**
+ * The picker's Legacy group, newest first in each family. Every id was run on Claude CLI 2.1.316
+ * on 2026-11-01 and answered as itself (an invented id is refused). Efforts follow the provider
+ * manifest in src/vendor/t3/apps/server/src/provider/model-manifest.json: Haiku 4.5 has none.
+ */
+export const LEGACY_MODEL_FACTS: readonly LegacyModelFact[] = Object.freeze([
+  { family: 'opus', id: 'claude-opus-5', label: 'Opus 5', efforts: ALL_EFFORTS },
+  { family: 'opus', id: 'claude-opus-4-8', label: 'Opus 4.8', efforts: ALL_EFFORTS },
+  { family: 'opus', id: 'claude-opus-4-7', label: 'Opus 4.7', efforts: ALL_EFFORTS },
+  { family: 'opus', id: 'claude-opus-4-6', label: 'Opus 4.6', efforts: NO_XHIGH },
+  { family: 'opus', id: 'claude-opus-4-5', label: 'Opus 4.5', efforts: NO_XHIGH },
+  { family: 'sonnet', id: 'claude-sonnet-5', label: 'Sonnet 5', efforts: ALL_EFFORTS },
+  { family: 'sonnet', id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', efforts: NO_XHIGH },
+  { family: 'sonnet', id: 'claude-sonnet-4-5', label: 'Sonnet 4.5', efforts: NO_XHIGH },
+  { family: 'haiku', id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: [] },
+]);
+
 export const MODEL_ALIASES: readonly ModelFamilyKey[] = MODEL_FACTS.map((m) => m.alias);
 
 /**

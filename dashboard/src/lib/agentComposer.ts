@@ -169,11 +169,15 @@ export interface ModelOption {
    *  Optional because a server that predates the field simply omits it; the row then prints
    *  its name and insight without a price rather than "$undefined/M". */
   priceIn?: number | null;
+  /** This model's own effort levels; absent = the config's list. Empty = it has none. */
+  efforts?: string[];
 }
 
 export interface ModelConfig {
   /** Models the CLI offers (aliases + its own cached extras). */
   models: ModelOption[];
+  /** Older versions, by exact id, for the picker's Legacy group. */
+  legacyModels?: ModelOption[];
   /** Effort levels from `claude --help` (e.g. low, medium, high, xhigh, max). */
   efforts: string[];
   /** The user's default model alias + effort level from `~/.claude/settings.json`. */
@@ -187,10 +191,10 @@ export interface ModelConfig {
  *  minimal, and carries NO synthetic "default" model entry. */
 export const FALLBACK_MODEL_CONFIG: ModelConfig = {
   models: [
-    { id: 'opus', label: 'Opus' },
-    { id: 'sonnet', label: 'Sonnet' },
-    { id: 'haiku', label: 'Haiku' },
-    { id: 'fable', label: 'Fable' },
+    { id: 'opus', label: 'Opus 5.5' },
+    { id: 'sonnet', label: 'Sonnet 5.5' },
+    { id: 'haiku', label: 'Haiku 5.5' },
+    { id: 'fable', label: 'Fable 5.1' },
   ],
   efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
   defaultModel: 'opus',
@@ -215,6 +219,30 @@ export function modelFamily(id: string): ModelFamily | null {
   return MODEL_FAMILIES.find((f) => s.includes(f)) ?? null;
 }
 
+/** A full id without the `[1m]` tag and date stamp the CLI adds: `claude-opus-4-8[1m]` → `claude-opus-4-8`. */
+export function canonicalModelId(id: string): string {
+  return (id ?? '').toLowerCase().replace(/\[[^\]]*\]$/, '').replace(/-\d{8}$/, '');
+}
+
+/**
+ * The alias row a reported id runs on: `claude-opus-5-5` is `opus` when the row reads "Opus 5.5".
+ * Null for an older version of the family, which is not that row.
+ */
+export function currentFamilyRow(models: ModelOption[], id: string): ModelOption | null {
+  const family = modelFamily(id);
+  const row = family ? models.find((m) => m.id === family) : undefined;
+  if (!row || !family) return null;
+  const bare = canonicalModelId(id);
+  const version = /\d+(?:\.\d+)?/.exec(row.label)?.[0];
+  return bare === family || !version || bare === `claude-${family}-${version.replace('.', '-')}` ? row : null;
+}
+
+/** The effort levels `model` has: its own list when it carries one, else the config's. */
+export function effortsForModel(config: ModelConfig, model: string): string[] {
+  const bare = canonicalModelId(model);
+  return config.legacyModels?.find((m) => m.id === bare)?.efforts ?? config.efforts;
+}
+
 /**
  * What to print on a model picker for `model`, which reaches us in three different shapes
  * and must never degrade to a bare "—":
@@ -228,10 +256,14 @@ export function modelFamily(id: string): ModelFamily | null {
 export function modelLabelFor(config: ModelConfig, model: string): string {
   const resolve = (id: string): string | undefined => {
     if (!id) return undefined;
-    const exact = config.models.find((m) => m.id === id);
+    const bare = canonicalModelId(id);
+    const exact = [...config.models, ...(config.legacyModels ?? [])].find((m) => m.id === id || m.id === bare);
     if (exact) return exact.label;
     const family = modelFamily(id);
-    return family ? config.models.find((m) => m.id === family)?.label ?? family : undefined;
+    if (!family) return undefined;
+    // A version the list does not know keeps its family's name: never the current version's.
+    if (!config.models.some((m) => m.id === family)) return family;
+    return currentFamilyRow(config.models, id)?.label ?? family.charAt(0).toUpperCase() + family.slice(1);
   };
   // The default stands in ONLY for "not reported yet". An id we simply don't recognize must
   // print as itself: relabelling it as the default would claim a model is running that

@@ -17,7 +17,7 @@ import { sendJson, sendError } from '../middleware.js';
 import { isAgentHost, isAgentRequest, isDesktop } from '../desktop.js';
 import { cutProcessGroups, pathUnderAny } from '../../lib/automations/runner.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
-import { modelAlias, modelOptionsFrom } from '../../lib/model-list.js';
+import { LEGACY_MODEL_OPTIONS, modelOptionsFrom, modelPickerId } from '../../lib/model-list.js';
 import { priceForModelId, SMALL_WINDOW_MODEL, type TokenPrice } from '../../lib/model-facts.js';
 import { foldJsonl } from '../../lib/jsonl-fold.js';
 import { tabSessionEnv } from '../../lib/session-origin.js';
@@ -808,7 +808,7 @@ interface ModelOpt { id: string; label: string; }
  *  Widened here rather than on `ModelOpt` so `buildStaticModelConfig` — which knows nothing
  *  about pricing and is cached for the server's lifetime — stays untouched. */
 interface PricedModelOpt extends ModelOpt { priceIn: number }
-interface ModelConfig { models: PricedModelOpt[]; efforts: string[]; defaultModel: string; defaultEffort: string; }
+interface ModelConfig { models: PricedModelOpt[]; legacyModels: PricedModelOpt[]; efforts: string[]; defaultModel: string; defaultEffort: string; }
 
 // Only the STATIC parts are cached for the server's lifetime: the model list (from the CLI's
 // `.claude.json` cache) and the effort levels (parsed from `claude --help`, an expensive spawn).
@@ -841,12 +841,13 @@ async function buildModelConfig(): Promise<ModelConfig> {
   const defaultEffort = typeof settings.effortLevel === 'string' && efforts.includes(settings.effortLevel)
     ? settings.effortLevel
     : (efforts.includes('high') ? 'high' : efforts[0] ?? 'high');
-  const defaultModel = modelAlias(String(settings.model ?? 'opus')) || 'opus';
+  const defaultModel = modelPickerId(String(settings.model ?? 'opus')) || 'opus';
   // Priced HERE, not in the cached static build: `priceForModel` is the same function the
   // per-session cost estimate runs on, so the menu's "$5/M in" and the toolbar's "$12.12"
   // can never disagree about what a model costs.
   const priced: PricedModelOpt[] = models.map((m) => ({ ...m, priceIn: priceForModel(m.id).in }));
-  return { models: priced, efforts, defaultModel, defaultEffort };
+  const legacyModels = LEGACY_MODEL_OPTIONS.map((m) => ({ ...m, priceIn: priceForModel(m.id).in }));
+  return { models: priced, legacyModels, efforts, defaultModel, defaultEffort };
 }
 
 /** GET /api/agent/model-config — the model/effort options + the user's CLI defaults. */
@@ -882,7 +883,7 @@ export function latestTranscriptModel(raw: string): string | null {
     // `<synthetic>` marks a locally-generated reply (a `/effort` echo, a "Please run /login"
     // notice) — no model ran it, and reporting it made the composer's picker read
     // "<synthetic>" instead of the model the session is actually on.
-    if (typeof model === 'string' && model && model !== '<synthetic>') return modelAlias(model);
+    if (typeof model === 'string' && model && model !== '<synthetic>') return modelPickerId(model);
   }
   return null;
 }
@@ -909,7 +910,7 @@ export async function handleAgentSessionModel(
   // immediately instead of reading as the CLI default until the first flush.
   const folded = await transcriptFoldFor(contextRoot, id, req);
   if (folded === REFUSED) { sendJson(res, 200, { model: null }); return; }
-  const fromTranscript = folded !== null && folded.latestModel !== null ? modelAlias(folded.latestModel) : null;
+  const fromTranscript = folded !== null && folded.latestModel !== null ? modelPickerId(folded.latestModel) : null;
   sendJson(res, 200, { model: fromTranscript ?? liveSpawnModels.get(id) ?? null });
 }
 
@@ -1086,7 +1087,7 @@ export async function foldedSessionStats(path: string): Promise<SessionStats> {
 export async function foldedTranscriptModel(path: string): Promise<string | null> {
   try {
     const s = await foldJsonl(path, 'transcript', newTranscriptFold, foldTranscriptRow);
-    return s.latestModel !== null ? modelAlias(s.latestModel) : null;
+    return s.latestModel !== null ? modelPickerId(s.latestModel) : null;
   } catch { return null; }
 }
 

@@ -7,6 +7,7 @@ import type { ChatSession } from './chatSession';
 import type { ChatAgentPick, ToolPick } from './chat/ComposerMenus';
 import { claudeState, codexState } from './chat/model-picker/pickerModel';
 import type { ChatTool } from '../../lib/chatToolBinding';
+import { useI18n } from '../../context/I18nContext';
 import { codexModelConfig, useAgentTools } from '../../hooks/useAgentCapabilities';
 import type { ChatFeed } from './chat/chatFeed';
 
@@ -110,6 +111,7 @@ function ChatPaneHostInner({
    *  only when the feed does (the stage entry's snapshot), so the memo boundary holds. */
   feed?: ChatFeed;
 }) {
+  const { t } = useI18n();
   const onModelChange = useCallback((id: string) => actions.changeModel(session.id, id), [actions, session]);
   const onEffortChange = useCallback((level: string) => actions.changeEffort(session.id, level), [actions, session]);
   const onAccountChange = useCallback((accountId: string) => actions.changeAccount(session.id, accountId), [actions, session]);
@@ -135,11 +137,16 @@ function ChatPaneHostInner({
   const paneModel = codexConfig && !codexConfig.models.some((m) => m.id === model) ? codexConfig.defaultModel : model;
   const paneEffort = codexConfig && !codexConfig.efforts.includes(effort) ? codexConfig.defaultEffort : effort;
   const pickTool = actions.pickTool;
-  const toolPick = useMemo<ToolPick | undefined>(() => (pickTool ? {
+  // The Super Agent is always Claude in the cape, and an agent's chat has no surface that could
+  // move it: both draw the same picker, with the other tools locked.
+  const lockNote = mode === 'super' ? t('chat.modelPicker.lock.super') : agentBound ? t('chat.modelPicker.lock.agent') : '';
+  const lockOpen = t('chat.modelPicker.lock.open');
+  const toolPick = useMemo<ToolPick | undefined>(() => (pickTool || lockNote ? {
     current: session.tool,
-    tools: [claudeState(modelConfig, session.tool ? '' : model), ...(codexInfo ? [codexState(codexInfo)] : [])],
-    onPick: (tool, picked) => pickTool(session.id, tool, picked),
-  } : undefined), [pickTool, codexInfo, session, modelConfig, model]);
+    tools: [claudeState(modelConfig), ...(codexInfo ? [codexState(codexInfo)] : [])],
+    onPick: (tool, picked) => pickTool?.(session.id, tool, picked),
+    ...(lockNote ? { lock: { note: lockNote, openLabel: lockOpen } } : {}),
+  } : undefined), [pickTool, codexInfo, session, modelConfig, lockNote, lockOpen]);
 
   return (
     <ChatPane
