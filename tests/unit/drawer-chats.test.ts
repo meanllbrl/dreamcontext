@@ -1,8 +1,7 @@
 /**
- * The new shell's drawer lists chats by name (hands-free phone in the new shell, W1): a mounted
- * project's published tabs, grouped by window, waiting first; a project this window has not
- * mounted lists the chats the Mac runs there only when its read says plainly it is not handed
- * over; a tap selects a tab, adopts a running chat, or lands on the stage for a Super child; a
+ * The Mac drawer is flat window rows again (no chat rows, nested or not; owner's call, 1 Kasım);
+ * chats by name live only in the device shell's drawer (`device-shell.test.ts`). The row-open
+ * plan stays for that shell: a tap selects a tab, adopts a running chat, or lands on the stage for a Super child; a
  * close never brings the project forward and the closed chat never comes back as a live row; the
  * live read polls only while the drawer is on screen and the window focused (the tunnel: while
  * the page is visible).
@@ -15,7 +14,6 @@ import {
   type DrawerChild, type DrawerFacts, type DrawerProjectInput, type FanoutFacts,
 } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
 import { landsOnChat, sameSurfaceState, type DrawerChatFact } from '../../dashboard/src/lib/drawerIntents.js';
-import { markClosed, recentlyClosed } from '../../dashboard/src/components/sleepy/phoneClosed.js';
 import type { LiveChatWire, LiveChatsWire } from '../../dashboard/src/components/handsfree/macContract.js';
 import type { HomeRow } from '../../dashboard/src/components/sleepy/phoneHome.js';
 
@@ -38,33 +36,10 @@ const live = (vault: string | null, id: string, state: LiveChatWire['state'] = '
 });
 const chatRows = (cs: DrawerChild[]) => cs.filter((c): c is Extract<DrawerChild, { kind: 'chat' }> => c.kind === 'chat');
 
-describe('a mounted project: its published tabs by name', () => {
-  it('one window: chats by name with their state, waiting first, each once, and no window row', () => {
-    const rows = buildDrawerRows({
-      projects: [project('acme', { mounted: true })],
-      activeVault: 'acme', expanded: ['acme'], fanout: {},
-      facts: {
-        acme: facts({
-          windows: [win('main', 'Chat', 3)], activeWindowId: 'main', activeChatId: 'b',
-          chats: [tab('a', 'ready'), tab('b', 'working'), tab('c', 'asking')],
-        }),
-      },
-      // The Mac's live list also names acme's chats: a mounted project never repeats them.
-      live: { chats: [live('acme', 'c-a'), live('acme', 'c-x', 'working')], draining: [] },
-    });
-    const kids = rows[0].children;
-    expect(kids.some((c) => c.kind === 'window')).toBe(false);
-    const chats = chatRows(kids);
-    expect(chats.map((c) => [c.title, c.state])).toEqual([['T c', 'asking'], ['T b', 'working'], ['T a', 'idle']]);
-    expect(new Set(chats.map((c) => c.id)).size).toBe(chats.length);
-    expect(chats.every((c) => c.closable && c.vault === 'acme' && !c.windowId)).toBe(true);
-    expect(chats.find((c) => c.id === 'b')?.selected).toBe(true);
-    // The row a tap opens is the phone list's own tab row.
-    const r = chats[0].row;
-    expect(r.kind === 'open' && r.row.kind === 'tab' && r.row.id).toBe('c');
-  });
+describe('the Mac drawer: flat window rows, never a chat row (1 Kasım: back to 0.36.10)', () => {
+  const far = (o: Partial<FanoutFacts>): FanoutFacts => ({ tabs: 1, superOn: false, team: [], windows: [{ id: 'main', name: 'Chat', tabs: 1 }], ...o });
 
-  it('two or more windows: each window row stays and its chats nest under it', () => {
+  it('a mounted project with published tabs: its window rows only, however many windows', () => {
     const rows = buildDrawerRows({
       projects: [project('acme', { mounted: true })],
       activeVault: 'acme', expanded: ['acme'], fanout: {},
@@ -75,8 +50,19 @@ describe('a mounted project: its published tabs by name', () => {
         }),
       },
     });
-    const shape = rows[0].children.slice(1).map((c) => (c.kind === 'window' ? `win:${c.id}` : c.kind === 'chat' ? `chat:${c.id}@${c.windowId}` : c.kind));
-    expect(shape).toEqual(['win:main', 'chat:a@main', 'win:w2', 'chat:c@w2', 'chat:b@w2']);
+    const kids = rows[0].children;
+    expect(chatRows(kids)).toEqual([]);
+    // The empty window draws no row; the two with tabs do, flat.
+    expect(kids.map((c) => (c.kind === 'window' ? `win:${c.id}` : c.kind))).toEqual(['super', 'win:main', 'win:w2']);
+  });
+
+  it('one window holding chats keeps its window row (it is not replaced by its chats)', () => {
+    const rows = buildDrawerRows({
+      projects: [project('acme', { mounted: true })],
+      activeVault: 'acme', expanded: ['acme'], fanout: {},
+      facts: { acme: facts({ windows: [win('main', 'Chat', 3)], activeWindowId: 'main', chats: [tab('a', 'ready'), tab('b', 'working')] }) },
+    });
+    expect(rows[0].children.map((c) => c.kind)).toEqual(['super', 'window']);
   });
 
   it('no chats at all: the New Chat row, as before', () => {
@@ -88,79 +74,29 @@ describe('a mounted project: its published tabs by name', () => {
     expect(rows[0].children.map((c) => c.kind)).toEqual(['super', 'new-chat']);
   });
 
-  it('a surface that publishes no chats keeps today\'s window rows', () => {
+  it('folded: the sum counts the window rows, not the tabs by name', () => {
     const rows = buildDrawerRows({
       projects: [project('acme', { mounted: true })],
-      activeVault: 'acme', expanded: ['acme'], fanout: {},
-      facts: { acme: facts({ windows: [win('main', 'Chat', 2)] }) },
+      activeVault: 'acme', expanded: [], fanout: {},
+      facts: {
+        acme: facts({
+          windows: [{ id: 'main', name: 'Chat', working: 1, asking: 0, flagged: 0, other: 1, tabs: 2 }], activeWindowId: 'main',
+          chats: [tab('a', 'ready'), tab('b', 'working'), tab('c', 'asking')],
+        }),
+      },
     });
-    expect(rows[0].children.map((c) => c.kind)).toEqual(['super', 'window']);
+    expect(rows[0].sum).toMatchObject({ working: 1, idle: 1, asking: 0 });
   });
 
-  it('handed over: the owner\'s chats show, the Super\'s running children (in the live list) never do', () => {
-    const rows = buildDrawerRows({
-      projects: [project('acme', { mounted: true })],
-      activeVault: 'acme', expanded: ['acme'], fanout: {},
-      facts: { acme: facts({ superOn: true, windows: [win('main', 'Chat', 1)], chats: [tab('mine', 'ready')] }) },
-      live: { chats: [live('acme', 'child-1', 'working'), live('acme', 'child-2')], draining: [] },
-    });
-    expect(chatRows(rows[0].children).map((c) => c.id)).toEqual(['mine']);
-  });
-});
-
-describe('a project this window has not mounted', () => {
-  const liveWire: LiveChatsWire = {
-    chats: [live('globex', 'g1'), live('globex', 'g2', 'asking'), live('globex', 'gone'), live('initech', 'i1'), live(null, 'nameless')],
-    draining: ['gone'],
-  };
-  const far = (o: Partial<FanoutFacts>): FanoutFacts => ({ tabs: 1, superOn: false, team: [], windows: [{ id: 'main', name: 'Chat', tabs: 1 }], ...o });
-
-  it('read as not handed over: its window row, then the Mac\'s running chats by name, waiting first, never a draining one', () => {
+  it('an unmounted project: its window row, never the Mac\'s running chats', () => {
+    const liveWire: LiveChatsWire = { chats: [live('globex', 'g1'), live('globex', 'g2', 'asking')], draining: [] };
     const rows = buildDrawerRows({
       projects: [project('acme', { mounted: true }), project('globex')],
-      activeVault: 'acme', expanded: ['globex'], facts: {}, fanout: { globex: far({}) }, live: liveWire,
-    });
-    const kids = rows[1].children;
-    expect(kids.map((c) => c.kind)).toEqual(['super', 'window', 'chat', 'chat']);
-    const chats = chatRows(kids);
-    expect(chats.map((c) => [c.id, c.state])).toEqual([['g2', 'asking'], ['g1', 'idle']]);
-    expect(chats.every((c) => !c.closable && !c.selected)).toBe(true);
-    const r = chats[0].row;
-    expect(r.kind === 'open' && r.row.kind === 'mac' && r.row.chat.conversationId).toBe('g2');
-  });
-
-  it('handed over: its window row and no live rows (they are the Super\'s children)', () => {
-    const rows = buildDrawerRows({
-      projects: [project('acme', { mounted: true }), project('globex')],
-      activeVault: 'acme', expanded: ['globex'], facts: {}, fanout: { globex: far({ superOn: true }) }, live: liveWire,
+      activeVault: 'acme', expanded: ['globex'], facts: {}, fanout: { globex: far({}) },
+      // A stray `live` is ignored by the Mac path.
+      ...({ live: liveWire } as object),
     });
     expect(rows[1].children.map((c) => c.kind)).toEqual(['super', 'window']);
-  });
-
-  it('held by another window: no live rows (a tap there would only bring that window forward)', () => {
-    const rows = buildDrawerRows({
-      projects: [project('acme', { mounted: true }), project('globex', { otherWindow: true })],
-      activeVault: 'acme', expanded: ['globex'], facts: {}, fanout: { globex: far({}) }, live: liveWire,
-    });
-    expect(chatRows(rows[1].children)).toEqual([]);
-  });
-
-  it('not read yet: no live rows at all', () => {
-    const rows = buildDrawerRows({
-      projects: [project('acme', { mounted: true }), project('globex')],
-      activeVault: 'acme', expanded: ['globex'], facts: {}, fanout: {}, live: liveWire,
-    });
-    expect(rows[1].children.map((c) => c.kind)).toEqual(['super']);
-  });
-
-  it('a chat closed here does not come back as a live row while its process exits', () => {
-    markClosed(['g1']);
-    expect(recentlyClosed()).toContain('g1');
-    const rows = buildDrawerRows({
-      projects: [project('acme', { mounted: true }), project('globex')],
-      activeVault: 'acme', expanded: ['globex'], facts: {}, fanout: { globex: far({}) }, live: liveWire, closed: recentlyClosed(),
-    });
-    expect(chatRows(rows[1].children).map((c) => c.id)).toEqual(['g2']);
   });
 });
 

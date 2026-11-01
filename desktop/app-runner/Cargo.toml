@@ -1,6 +1,6 @@
 [package]
 name = "dreamcontext-app-runner"
-version = "0.36.11"
+version = "0.36.12"
 edition = "2021"
 description = "The window a dreamcontext App opens in: its own Dock identity, a WKWebView on the app's gateway, and the runner side of the apps contract."
 publish = false

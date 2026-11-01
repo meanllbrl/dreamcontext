@@ -14,7 +14,7 @@ import type { TeamRow, TeamStatus } from '../../aiteam/teamModel';
 import type { AddTabResult } from '../WindowChrome';
 import type { DrawerChatFact, DrawerWindowFact } from '../../../lib/drawerIntents';
 import type { LiveChatWire, LiveChatsWire } from '../../handsfree/macContract';
-import { openRows, type OpenRow } from '../../sleepy/phoneList';
+import { type OpenRow } from '../../sleepy/phoneList';
 import { homeRows, type HomeRow } from '../../sleepy/phoneHome';
 
 /** Team members the drawer lists by name: the ones with work. Everyone else is on AI Team. */
@@ -161,10 +161,6 @@ export interface DrawerModelInput {
   expanded: readonly string[];
   facts: Readonly<Record<string, DrawerFacts | undefined>>;
   fanout: Readonly<Record<string, FanoutFacts | undefined>>;
-  /** The Mac's running chats (`GET /agent/live-chats`); absent where it is not read. */
-  live?: LiveChatsWire;
-  /** Conversations just closed here (`phoneClosed.ts`): never a live row while they exit. */
-  closed?: readonly string[];
   /** A device shell (the tunnel, a phone on the laptop listener; `readDeviceShell`): its rows. */
   device?: DeviceDrawerInput;
 }
@@ -260,44 +256,7 @@ function chatChild(vault: string, r: OpenRow, o: { selected: boolean; windowId?:
   };
 }
 
-/**
- * A mounted project's chat rows from the tabs it published, grouped by window and ordered
- * waiting → working → idle inside each. One window holding chats: its chats stand in for its
- * row. Two or more: each window's row stays and its chats nest under it.
- */
-function mountedChatChildren(vault: string, mine: DrawerFacts, windowsOn: boolean): DrawerChild[] | null {
-  if (!mine.chats || !mine.windows) return null;
-  const chats = mine.chats;
-  const byWindow = mine.windows.filter((w) => chats.some((c) => c.windowId === w.id));
-  const nest = byWindow.length > 1;
-  const out: DrawerChild[] = [];
-  for (const w of byWindow) {
-    const tabs = chats.filter((c) => c.windowId === w.id);
-    if (nest) {
-      const { tabs: _count, ...fact } = w;
-      out.push({ kind: 'window', ...fact, selected: windowsOn && w.id === mine.activeWindowId });
-    }
-    for (const r of openRows({ tabs, live: [], vault })) {
-      const tab = tabs.find((c) => c.id === r.id);
-      out.push(chatChild(vault, r, {
-        selected: windowsOn && r.id === mine.activeChatId && w.id === mine.activeWindowId,
-        flagged: !!tab?.attention,
-        ...(nest ? { windowId: w.id } : {}),
-      }));
-    }
-  }
-  return out;
-}
-
-/** The Mac's running chats of a project this window has not mounted, waiting first; one row per
- *  conversation, never one that is draining or was just closed here. */
-function liveChatChildren(vault: string, live: LiveChatsWire, closed: readonly string[]): DrawerChild[] {
-  const chats: LiveChatWire[] = live.chats.filter((c) => c.vault === vault);
-  return openRows({ tabs: [], live: chats, draining: [...live.draining, ...closed], vault })
-    .map((r) => chatChild(vault, r, { selected: false, flagged: false }));
-}
-
-export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout, live, closed = [], device }: DrawerModelInput): DrawerProjectRow[] {
+export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout, device }: DrawerModelInput): DrawerProjectRow[] {
   const open = new Set(expanded);
   if (device) return projects.map((p) => deviceProjectRow(p, { activeVault, open, facts, device }));
   return projects.map((p): DrawerProjectRow => {
@@ -307,7 +266,7 @@ export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout
       name: p.name, logo: p.logo, logoStamp: p.logoStamp, active, held: p.mounted || p.asleep,
       asleep: p.asleep, otherWindow: p.otherWindow, expanded: isOpen,
     };
-    const { source, children } = childrenOf(p, active, facts, fanout, live, closed);
+    const { source, children } = childrenOf(p, active, facts, fanout);
     if (isOpen) return { ...base, source, children };
     // Folded, the project row carries what its rows would say: no second count.
     const sum = sumOf(children, source);
@@ -323,8 +282,6 @@ function childrenOf(
   active: boolean,
   facts: DrawerModelInput['facts'],
   fanout: DrawerModelInput['fanout'],
-  live?: LiveChatsWire,
-  closed: readonly string[] = [],
 ): { source: DrawerProjectRow['source']; children: DrawerChild[] } {
   const mine = p.mounted ? facts[p.name] : undefined;
   const far = p.mounted ? undefined : fanout[p.name];
@@ -343,12 +300,7 @@ function childrenOf(
   const r = p.mounted ? (mine?.shown ?? p.rollup) : null;
   const windowsOn = onChat && !superSelected && !mine?.member;
   const before = children.length;
-  const mountedChats = p.mounted && mine ? mountedChatChildren(p.name, mine, windowsOn) : null;
-  if (mountedChats) {
-    // The owner's chats by name (a handed-over project's too; the Super's children are not
-    // published, they live on its stage).
-    children.push(...mountedChats);
-  } else if (mine?.windows) {
+  if (mine?.windows) {
     // `tabs` counts saved chats too: a window of sleeping tabs is not empty.
     for (const { tabs, ...w } of mine.windows) {
       if (tabs === 0) continue;
@@ -371,11 +323,6 @@ function childrenOf(
       selected: windowsOn,
     });
   }
-  // A project this window has not mounted: the chats the Mac runs there, by name, beside its
-  // window rows, only when its read says plainly it is NOT handed over (a handed-over project's
-  // running chats are the Super's children; an unknown answer shows none).
-  // Never for a project another window holds: a tap there only brings that window forward.
-  if (!p.mounted && !p.otherWindow && far?.superOn === false && live) children.push(...liveChatChildren(p.name, live, closed));
   // Only on a known answer: before the roster is restored, or after a failed read, no row is
   // better than offering a chat over chats that are there.
   if (children.length === before && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
@@ -390,16 +337,9 @@ function childrenOf(
  */
 function sumOf(children: readonly DrawerChild[], source: DrawerProjectRow['source']): DrawerProjectRow['sum'] {
   const sum = { live: 0, asking: 0, working: 0, idle: 0, flagged: 0 };
-  // A mounted project's chats by name stand in for its window rows: count them, not both.
-  const byName = source === 'mounted' && children.some((c) => c.kind === 'chat');
   for (const c of children) {
     if (c.kind === 'super') sum.working += c.working;
-    else if (c.kind === 'chat' && byName) {
-      if (c.state === 'working') sum.working++;
-      else if (c.state === 'asking') sum.asking++;
-      else sum.idle++;
-      if (c.flagged) sum.flagged++;
-    } else if (c.kind === 'window' && source === 'mounted' && !byName) {
+    else if (c.kind === 'window' && source === 'mounted') {
       sum.working += c.working;
       sum.asking += c.asking;
       sum.idle += c.other;

@@ -1137,11 +1137,9 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       expanded: drawerExpanded,
       facts: drawerFacts,
       fanout,
-      live: liveChats,
-      closed: recentlyClosed(),
       ...(deviceShell ? { device: deviceChats } : {}),
     });
-  }, [newShell, launcherStatus, projectOrder, open, activeVault, drawerExpanded, drawerFacts, fanout, liveChats, deviceShell, deviceChats]);
+  }, [newShell, launcherStatus, projectOrder, open, activeVault, drawerExpanded, drawerFacts, fanout, deviceShell, deviceChats]);
 
   // The queue (D5): a row's click brings its project forward FIRST, and the intent travels
   // only when that project is now on screen and mounted (the `landLink` rule).
