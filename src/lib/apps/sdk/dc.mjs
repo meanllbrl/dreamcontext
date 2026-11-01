@@ -11,6 +11,9 @@
 
 const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
 const env = !isBrowser && typeof process !== 'undefined' ? process.env : {};
+// The height each embedded screen needs, measured: at 560 the chat keeps about 330px of messages
+// above its box, and still about 120px while a long draft holds the box at its tallest.
+const EMBED_MIN_HEIGHT = { chat: 560, team: 560, tasks: 560, roadmap: 560, insight: 360 };
 const BASE = isBrowser ? '' : (env.DC_URL || '');
 const TOKEN = isBrowser ? null : (env.DC_TOKEN || null);
 
@@ -116,6 +119,24 @@ export const dc = {
   embed: (view, params = {}) => {
     const q = new URLSearchParams(params).toString();
     return `/__dc/embed/${enc(view)}${q ? `?${q}` : ''}`;
+  },
+  /** Draw an embeddable screen into `host`: fills it, and neither is ever shorter than that screen
+   *  needs, so a fixed or clipping `host` grows rather than hiding the chat's box. Unstyled
+   *  otherwise. Page only. Returns the iframe. */
+  mountEmbed: (host, view, params = {}) => {
+    if (!isBrowser) throw new DcError('page_only', 'dc.mountEmbed works in the page.', 0);
+    const frame = document.createElement('iframe');
+    frame.title = view;
+    frame.src = dc.embed(view, params);
+    frame.style.display = 'block';
+    frame.style.width = '100%';
+    frame.style.height = '100%';
+    const min = `${EMBED_MIN_HEIGHT[view] ?? 560}px`;
+    frame.style.minHeight = min;
+    frame.style.border = '0';
+    host.style.minHeight = min;
+    host.replaceChildren(frame);
+    return frame;
   },
 };
 

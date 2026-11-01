@@ -25,7 +25,16 @@ import { dc } from './lib/dc.mjs';
 | `dc.theme()` | ✓ | ✓ | `light` / `dark` / `system`; the page also gets `<html data-theme>` and a `dc-theme` event |
 | `dc.copy(text)` | ✓ | ✗ | the Mac pasteboard, Turkish intact |
 | `dc.embed(view, params)` | ✓ | ✓ | URL of an embeddable screen: chat, insight, tasks, roadmap, team |
+| `dc.mountEmbed(host, view, params)` | ✓ | ✗ | draws that screen into `host`, with the height it needs |
 | `dc.api(method, path, body)` | subset | ✓ | any dashboard API route |
+
+**Embedding takes height.** Use `dc.mountEmbed`, not your own `<iframe>`: it fills `host` and keeps
+both at the minimum or above (560px; insight 360px), so a shorter `host` grows. Give `host` a height
+to fill it with `height`, e.g. the app's full height: the helper sets `min-height` on `host` itself,
+replacing yours. An ancestor that clips `host` is still yours to fix.
+
+Under the minimum the chat still works, but at 360px only about 155px of messages remain, and a long
+draft leaves about 45px (about 120px at 560). An iframe you write yourself needs `min-height: 560px`.
 
 Errors are `DcError` with a `code` (`backend_only`, `mcp_needs_key`, `mcp_needs_owner_ok`,
 `mcp_definition_changed`, `rate_limited`, …) and a message that says how to fix it.

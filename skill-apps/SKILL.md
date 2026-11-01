@@ -24,6 +24,24 @@ key-based MCP servers directly.
 3. Ask the owner only what you cannot decide: what the app is for, which account/API, which agent
    should own it. Everything else has a default below.
 
+## The look is the app's own
+
+The template carries no design on purpose: no colors, no fonts, no cards. Design is entirely this
+app's. It need not resemble dreamcontext, there is no kit to use, and what the owner asks for wins.
+
+1. Before any UI, load `frontend-design` and `design`.
+2. Pick one visual direction that comes from THIS app's subject (a freight tracker and a poetry
+   journal should not look related). State it in a sentence. Never fall back on a default dashboard:
+   a purple accent, a card grid, rounded buttons on a gray page.
+3. Stay inside what the owner said. A stated color, layout or mood is not yours to improve on.
+4. Set `<html lang>` to the app's own language.
+5. Not done until you have taken `dreamcontext apps screenshot <slug>` and READ it.
+
+dreamcontext's theme is an option, not a duty: `<html data-theme>`, `dc.theme()` and the `dc-theme`
+event let the app follow light/dark if that suits it. Embedding a dreamcontext screen (chat,
+tasks…) brings that screen's own look inside its frame; use `dc.mountEmbed` (references/sdk.md),
+which guarantees the height the screen needs.
+
 ## Making one
 
 ```bash

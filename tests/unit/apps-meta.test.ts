@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'node:http';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { writeDefaultIcon } from '../../src/lib/apps/icon.js';
@@ -135,6 +135,17 @@ describe('the /apps template', () => {
     expect(rt.state).toBe('running');
     expect(rt.status().warnings).toEqual([]);
   }, 30_000);
+
+  it('carries no look of its own: no stylesheet, no style, no color, a page that still runs', () => {
+    expect(existsSync(resolve('skill-apps/template/public/style.css'))).toBe(false);
+    const html = readFileSync(resolve('skill-apps/template/public/index.html'), 'utf-8');
+    expect(html).not.toMatch(/<style|<link|\bstyle=|class=/);
+    const js = readFileSync(resolve('skill-apps/template/public/app.js'), 'utf-8');
+    expect(js).toContain("from '/__dc/sdk.js'");
+    expect(js).toContain('/api/hello');
+    // The fallback page for an install with no template says the same.
+    expect(readFileSync(resolve('src/cli/commands/apps.ts'), 'utf-8')).not.toMatch(/#6d4aff|<style>/);
+  });
 
   it("keeps every page script in a file: the template's own CSP refuses inline script", () => {
     const csp = /const CSP = "([^"]+)"/.exec(readFileSync(resolve('skill-apps/template/server.mjs'), 'utf-8'))![1];
