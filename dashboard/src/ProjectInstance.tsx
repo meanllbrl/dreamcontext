@@ -26,6 +26,7 @@ import { AboutPage } from './pages/AboutPage';
 import { TaxonomyPage } from './pages/TaxonomyPage';
 import { AnnouncementsPage } from './pages/AnnouncementsPage';
 import { WhiteboardsPage } from './pages/WhiteboardsPage';
+import { AppsPage } from './pages/AppsPage';
 import { dropBoardAgentScratch } from './components/whiteboard/boardAgentScratch';
 import type { Page } from './components/layout/Sidebar';
 import { parseAppLink } from './lib/appLink';
@@ -235,6 +236,21 @@ function TalkToAgentBridge() {
   return null;
 }
 
+/** True when the link did not open a window and belongs on the Apps page. */
+async function followAppLink(vault: string, slug: string, nonce: string | null): Promise<boolean> {
+  try {
+    const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-dreamcontext-vault': vault },
+      body: JSON.stringify({ link: true, ...(nonce ? { nonce } : {}) }),
+    });
+    if (!r.ok) return true;
+    return (await r.json() as { landed?: string }).landed === 'card';
+  } catch {
+    return true;
+  }
+}
+
 /** A `dreamcontext://` link waiting to land in this project; `nonce` tells two clicks apart. */
 export interface PendingAppLink {
   raw: string;
@@ -369,6 +385,12 @@ function AppLinkBridge({
     } else if (parsed.kind === 'automation') {
       nav.navigate('automations', null);
       onAutomationFocus(parsed.slug);
+    } else if (parsed.kind === 'app') {
+      // A running app comes forward. A stopped one opens only on a live nonce; otherwise the
+      // link lands on the Apps card and the owner presses Launch.
+      void followAppLink(vault, parsed.slug, parsed.nonce).then((onCard) => {
+        if (onCard) nav.navigate('apps', null);
+      });
     } else if (parsed.kind === 'session') {
       // ACKed like every bus bridge into the surface: on a window built for this link the surface
       // subscribes a beat after this effect runs, so ask again until someone says it took it.
@@ -484,6 +506,8 @@ const PageRouter = memo(function PageRouter({
       return <AnnouncementsPage focus={focus} />;
     case 'whiteboards':
       return <WhiteboardsPage focus={focus} />;
+    case 'apps':
+      return <AppsPage />;
     case 'relations':
       // New shell only: `Shell` never lands a classic window here.
       return <RelationsPage />;

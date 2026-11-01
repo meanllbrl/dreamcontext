@@ -444,6 +444,10 @@ export function canonicalApprovalPayload(m: AutomationManifest): string {
     // OMITTED on Claude, and LAST (Track T W4): every automation that exists runs on Claude, so
     // every hash stays what it was. Present, it decides which vendor reads the prompt.
     ...(m.tool ? { tool: m.tool } : {}),
+    // OMITTED when absent, and LAST, for the same append-only reason: no automation belongs to an
+    // app today, so nobody re-blocks. Present, it decides which app's brief the run is given, so a
+    // synced edit that adds, moves or removes it must block.
+    ...(m.app ? { app: m.app } : {}),
   };
   return `${APPROVAL_PAYLOAD_VERSION}\n${JSON.stringify(fields)}`;
 }
@@ -508,6 +512,8 @@ export function approvalFields(m: AutomationManifest): ApprovalPayloadFields {
     readTools: (m.readTools ?? []).join(', '),
     // Null on Claude, so an approval stored before this field reads the same and shows no change.
     tool: m.tool ?? null,
+    // Always present (as '' when absent): the reviewer sees which app's brief the run gets.
+    app: m.app ?? '',
   };
 }
 

@@ -1,3 +1,4 @@
+import { embedFrameGrant } from './apps/embed-token.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { isSameOriginAsHost, remoteAccessEnabled } from './remote-access.js';
 import { isMacOriginAllowed, macProbeNonce } from './phone-origin.js';
@@ -95,6 +96,13 @@ export function isForeignFrameNavigation(req: Pick<IncomingMessage, 'headers'>):
 /** {@link isForeignFrameNavigation} as a gate: sends the 403, true when refused. */
 export function refuseForeignFrame(req: IncomingMessage, res: ServerResponse): boolean {
   if (!isForeignFrameNavigation(req)) return false;
+  // The one exception: an app's own window embedding a dreamcontext screen, on a live token.
+  // `frame-ancestors` then names that app's gateway, so the document holds nowhere else.
+  const grant = embedFrameGrant(req);
+  if (grant) {
+    res.setHeader('Content-Security-Policy', `frame-ancestors http://127.0.0.1:${grant.gwPort}`);
+    return false;
+  }
   sendError(res, 403, 'forbidden', 'This page cannot be shown inside another site.');
   return true;
 }

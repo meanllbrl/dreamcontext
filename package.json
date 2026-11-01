@@ -1,6 +1,6 @@
 {
   "name": "dreamcontext",
-  "version": "0.36.9",
+  "version": "0.36.10",
   "description": "dreamcontext — the persistent brain for your AI agents. Remembers what you built, knows how your project works.",
   "type": "module",
   "bin": {
@@ -16,6 +16,7 @@
     "skill-sync",
     "skill-patterns",
     "skill-agent-core",
+    "skill-apps",
     "skill-packs",
     "agents",
     "README.md",

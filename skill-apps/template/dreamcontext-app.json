@@ -1,0 +1,9 @@
+{
+  "slug": "__SLUG__",
+  "name": "__NAME__",
+  "icon": "icon.icns",
+  "backend": { "command": "node server.mjs", "health": "/health" },
+  "actions": [
+    { "id": "hello", "title": "Say hello and count visits", "method": "GET", "path": "/api/hello" }
+  ]
+}

@@ -306,7 +306,7 @@ export type ConversationItem =
   | { kind: 'ran'; key: string; title: string; at: string; durationMs: number | null; failed: boolean }
   /** Something the system recorded in the thread, said as an event ("Routine created · …"). */
   | { kind: 'event'; key: string; text: string; at: string; tone: 'good' | 'neutral' }
-  | { kind: 'you'; key: string; text: string; at: string }
+  | { kind: 'you'; key: string; text: string; at: string; app?: string }
   | {
     kind: 'agent';
     key: string;
@@ -360,7 +360,7 @@ export function buildConversation(
     const thread = threads[m.key];
     const startAt = m.ask?.at ?? m.at;
     day(startAt);
-    if (m.ask) out.push({ kind: 'you', key: `${m.key}:ask`, text: m.ask.text, at: m.ask.at });
+    if (m.ask) out.push({ kind: 'you', key: `${m.key}:ask`, text: m.ask.text, at: m.ask.at, ...(m.ask.app ? { app: m.ask.app } : {}) });
     else if (m.status !== 'skipped') {
       out.push({
         kind: 'ran',
@@ -412,7 +412,7 @@ export function buildConversation(
       for (const e of rest) {
         if (e.kind === 'user') {
           day(e.at);
-          out.push({ kind: 'you', key: `${m.key}:${e.id}`, text: e.text, at: e.at });
+          out.push({ kind: 'you', key: `${m.key}:${e.id}`, text: e.text, at: e.at, ...(e.via === 'app' && e.app ? { app: e.app } : {}) });
         } else if (e.kind === 'agent') {
           day(e.at);
           out.push({

@@ -16,6 +16,7 @@
 
 import type { ChildProcess } from 'node:child_process';
 import { compareVersions } from '../lib/version-check.js';
+import { removeDesktopServerFile, writeDesktopServerFile } from './desktop-server-file.js';
 
 /** Kill callbacks for live children (PTYs, capture spawns) we want reaped on exit. */
 const liveChildren = new Set<() => void>();
@@ -228,4 +229,28 @@ export function startParentDeathWatch(onParentGone: () => void): (() => void) | 
   timer.unref?.();
 
   return () => clearInterval(timer);
+}
+
+/**
+ * Publish `~/.dreamcontext/desktop-server.json` for dreamcontext App windows (the app
+ * runner finds the server through it when it is opened from the Dock). Self-gates to the
+ * app-owned desktop server. The record is removed on shutdown and on any process exit,
+ * and only when it still names this process. Returns the remover (idempotent).
+ */
+export function publishDesktopServer(
+  port: number,
+  deps: { write?: typeof writeDesktopServerFile; remove?: typeof removeDesktopServerFile } = {},
+): () => void {
+  const write = deps.write ?? writeDesktopServerFile;
+  const remove = deps.remove ?? removeDesktopServerFile;
+  const res = write({ port });
+  if (!res.written) return () => {};
+  let removed = false;
+  const removeOnce = (): void => {
+    if (removed) return;
+    removed = true;
+    try { remove(); } catch { /* best effort on the way out */ }
+  };
+  process.once('exit', removeOnce);
+  return removeOnce;
 }

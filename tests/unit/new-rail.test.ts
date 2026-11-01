@@ -12,9 +12,9 @@ const { NAV_GROUPS } = await import('../../dashboard/src/components/layout/Sideb
 const railPages = RAIL_ENTRIES.flatMap((e: any) => (e.kind === 'page' ? [e.page] : []));
 
 describe('new rail', () => {
-  it('is Chat, Tasks, AI Team, Insights, Roadmap, Hypotheses, Whiteboards | Knowledge, Map | More, Settings at the foot', () => {
+  it('is Chat, Tasks, AI Team, Insights, Roadmap, Hypotheses, Whiteboards, Apps | Knowledge, Map | More, Settings at the foot', () => {
     expect(RAIL_ENTRIES.map((e: any) => (e.kind === 'page' ? e.page : e.kind))).toEqual([
-      'chat', 'tasks', 'automations', 'lab', 'roadmap', 'hypotheses', 'whiteboards', 'sep', 'knowledge', 'brain', 'sep', 'more',
+      'chat', 'tasks', 'automations', 'lab', 'roadmap', 'hypotheses', 'whiteboards', 'apps', 'sep', 'knowledge', 'brain', 'sep', 'more',
     ]);
     expect(RAIL_FOOT).toBe('settings');
   });

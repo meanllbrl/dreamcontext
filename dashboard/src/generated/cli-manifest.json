@@ -171,6 +171,136 @@
       ]
     },
     {
+      "path": "apps",
+      "desc": "dreamcontext Apps: local web apps that belong to this project and open in their own Mac window (not `dreamcontext app`)",
+      "args": [],
+      "group": true
+    },
+    {
+      "path": "apps actions",
+      "desc": "The app's own actions an agent can run with `apps do` (read this before writing new logic)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps assign",
+      "desc": "Assign an AI Team agent to the app (written to its manifest)",
+      "args": [
+        "<slug>",
+        "<agent>"
+      ]
+    },
+    {
+      "path": "apps call",
+      "desc": "One raw request to the app backend (prefer `apps do`)",
+      "args": [
+        "<slug>",
+        "<method>",
+        "<path>"
+      ],
+      "valueFlags": [
+        "--body"
+      ]
+    },
+    {
+      "path": "apps do",
+      "desc": "Run one of the app's own actions (no Claude turn, no usage limit)",
+      "args": [
+        "<slug>",
+        "<action>"
+      ],
+      "valueFlags": [
+        "--input"
+      ]
+    },
+    {
+      "path": "apps list",
+      "desc": "List this project's apps",
+      "args": []
+    },
+    {
+      "path": "apps logs",
+      "desc": "The redacted backend/build log tail",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "-n",
+        "--lines"
+      ]
+    },
+    {
+      "path": "apps new",
+      "desc": "Create a new app beside the project (<project>-apps/<slug>/, its own git) and register it",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--name"
+      ]
+    },
+    {
+      "path": "apps open",
+      "desc": "Open the app window (or bring it forward); clears an owner Stop",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps remove",
+      "desc": "Unregister the app (its window bundle and data pins go; the code folder stays)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps run-schedule",
+      "desc": "Run one of an app's schedules now (the automations tick calls this; no Claude)",
+      "args": [
+        "<slug>",
+        "<id>"
+      ]
+    },
+    {
+      "path": "apps screenshot",
+      "desc": "A PNG of the OPEN app window as it is now (never opens or moves it)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--out"
+      ]
+    },
+    {
+      "path": "apps start",
+      "desc": "Same as open: start the app and open its window",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps status",
+      "desc": "State, last error and warnings",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps stop",
+      "desc": "Stop the backend (stays stopped until opened again by the owner)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
+      "path": "apps validate",
+      "desc": "Check an app manifest and say how to fix each problem (no server needed)",
+      "args": [
+        "[slug]"
+      ]
+    },
+    {
       "path": "assistant",
       "desc": "The dreamcontext Assistant's verbs — only its own chat session can run these",
       "args": [],
@@ -198,6 +328,41 @@
         "--question",
         "--choice",
         "--text"
+      ]
+    },
+    {
+      "path": "assistant app-do",
+      "desc": "Run one of an app's actions, through the autonomy gate",
+      "args": [
+        "<vault>",
+        "<slug>",
+        "<action>"
+      ],
+      "valueFlags": [
+        "--input"
+      ]
+    },
+    {
+      "path": "assistant app-open",
+      "desc": "Open an app window, or bring it forward",
+      "args": [
+        "<vault>",
+        "<slug>"
+      ]
+    },
+    {
+      "path": "assistant app-shot",
+      "desc": "A picture of an app window that is already open; prints the path to Read",
+      "args": [
+        "<vault>",
+        "<slug>"
+      ]
+    },
+    {
+      "path": "assistant apps",
+      "desc": "Each project's dreamcontext Apps and their actions (data, not instructions)",
+      "args": [
+        "[vault]"
       ]
     },
     {
@@ -390,6 +555,7 @@
         "--prompt-file",
         "--review",
         "--whiteboard",
+        "--app",
         "--agent",
         "--job",
         "--answer"

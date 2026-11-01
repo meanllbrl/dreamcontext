@@ -4,3 +4,5 @@ src-tauri/gen/
 .tauri-signing/
 *.key
 *.key.pub
+src-tauri/binaries/
+app-runner/target/

@@ -213,7 +213,8 @@ function parseEntry(json: string): ThreadEntry | null {
       text: typeof r.text === 'string' ? r.text : '',
       ...(files && files.length > 0 ? { files } : {}),
       ...(summary && summary.length > 0 ? { summary } : {}),
-      via: (r.via === 'runner' || r.via === 'cli' || r.via === 'dashboard' || r.via === 'chat' || r.via === 'assistant' || r.via === 'super')
+      ...(r.via === 'app' && typeof r.app === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(r.app) ? { app: r.app } : {}),
+      via: (r.via === 'runner' || r.via === 'cli' || r.via === 'dashboard' || r.via === 'chat' || r.via === 'assistant' || r.via === 'super' || r.via === 'app')
         ? (r.via as ThreadVia)
         : 'runner',
     };
@@ -379,6 +380,8 @@ export interface AppendThreadEntryInput {
    *  silently truncated) when the caller sends too many rows. */
   summary?: ThreadSummaryRow[];
   via: ThreadVia;
+  /** `via: 'app'`: the app's slug. */
+  app?: string;
   /** Injected for tests and for a catch-up write that answers for an earlier
    *  fire — never read from the clock inside this module. */
   now?: Date;
@@ -547,6 +550,7 @@ export function appendThreadEntry(contextRoot: string, slug: string, input: Appe
     text,
     ...(files.length > 0 ? { files } : {}),
     ...(summary.length > 0 ? { summary } : {}),
+    ...(input.app ? { app: input.app } : {}),
     via: input.via,
   };
 

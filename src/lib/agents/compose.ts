@@ -115,6 +115,7 @@ export function legacyPair(m: AutomationManifest): { agent: AgentManifest; job: 
     outputInstructions: m.outputInstructions,
     job: '',
     flow: m.flow ?? null,
+    ...(m.app ? { app: m.app } : {}),
     owner: m.owner ?? null,
     updated: null,
     path: m.path,
@@ -180,6 +181,7 @@ export function composeRun(
       outputInstructions: job.outputInstructions,
       flow: job.flow ?? null,
       job: job.job,
+      ...(job.app ? { app: job.app } : {}),
       ...identity,
       // A routine answers to its own owner too, when that is someone else (`foreignOwner`).
       ...(job.owner && job.owner !== agent.owner ? { jobOwner: job.owner } : {}),

@@ -68,7 +68,7 @@ export interface FeedMessage {
    *  the channel two rows to sort, two to mark read and two to filter, for a
    *  pair that is always adjacent and always one-to-one. Later `user` entries
    *  are replies and stay in the thread. */
-  ask: { text: string; at: string } | null;
+  ask: { text: string; at: string; app?: string } | null;
   /** The body. Empty only when a run neither posted nor published. */
   text: string;
   /** Where `text` came from. `post` — the agent chose to say it. `result` —
@@ -475,7 +475,7 @@ export function buildFeedMessage(
     status,
     durationMs: run?.durationMs ?? null,
     costUsd: run?.costUsd ?? null,
-    ask: ask ? { text: ask.text, at: ask.at } : null,
+    ask: ask ? { text: ask.text, at: ask.at, ...(ask.via === 'app' && ask.app ? { app: ask.app } : {}) } : null,
     text: body?.text ?? fallback ?? '',
     textFrom: body ? 'post' : failure ? 'error' : skipped ? 'skipped' : fallback ? 'result' : 'none',
     files: files.slice(0, FILES_PER_MESSAGE),

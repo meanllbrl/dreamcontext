@@ -15,7 +15,7 @@ import { useSuperUnreadCount } from '../sleepy/super/superUnreadStore';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import './Sidebar.css';
 
-export type Page = 'relations' | 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements' | 'whiteboards' | 'stats';
+export type Page = 'relations' | 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'agents' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements' | 'whiteboards' | 'stats' | 'apps';
 
 interface SidebarProps {
   activePage: Page;
@@ -100,6 +100,8 @@ export const NAV_GROUPS: NavGroup[] = [
       // "Whiteboard" opens the default board, "Control Panel", directly (A15). The page id
       // stays 'whiteboards': persisted nav state and the chat's appNav deep links carry it.
       { page: 'whiteboards', labelKey: 'nav.whiteboard', maturity: 'alpha' },
+      // dreamcontext Apps: this project's own local web apps, each in its own Mac window.
+      { page: 'apps', labelKey: 'nav.apps', maturity: 'beta' },
       { page: 'council', labelKey: 'nav.council', maturity: 'alpha' },
     ],
   },

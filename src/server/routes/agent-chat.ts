@@ -356,7 +356,7 @@ export function assistantPermissionMode(autonomy: Autonomy): 'default' | 'auto' 
  * index or a file read writes nothing, and asking the owner before each one is the slowness
  * they asked to remove (owner, 2026-10-17). `bypass` needs nothing. Never on any other spawn.
  */
-export const ASSISTANT_READ_TOOLS = ['recall', 'index', 'read'].map((v) => `Bash(dreamcontext assistant ${v}:*)`);
+export const ASSISTANT_READ_TOOLS = ['recall', 'index', 'read', 'apps'].map((v) => `Bash(dreamcontext assistant ${v}:*)`);
 
 export function assistantAllowedTools(autonomy: Autonomy): string[] {
   if (autonomy === 'auto') return ['--allowedTools', 'Bash(dreamcontext assistant:*)'];

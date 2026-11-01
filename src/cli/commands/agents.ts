@@ -663,7 +663,7 @@ export function registerAgentsCommand(program: Command): void {
         if (opts.json) { console.log(JSON.stringify(found, null, 2)); return; }
         if (found.hits.length === 0) { console.log(chalk.dim('Nothing found.')); return; }
         for (const h of found.hits) {
-          const who = h.who === 'owner' ? 'the owner' : 'you';
+          const who = h.who === 'owner' ? 'the owner' : h.who === 'app' ? 'an app, not the owner' : 'you';
           const where = h.kind === 'talk' ? 'a conversation' : h.title;
           console.log(`${chalk.dim(h.at)}  ${chalk.bold(who)} ${chalk.dim(`(${where})`)}: ${oneLine(h.text, 400)}`);
         }
@@ -677,7 +677,7 @@ export function registerAgentsCommand(program: Command): void {
         const head = s.kind === 'talk' ? `Conversation with the owner · ${s.startedAt}` : `${s.title} ran · ${s.startedAt}${s.status ? ` · ${s.status}` : ''}`;
         console.log(header(head));
         if (s.missing) console.log(chalk.dim('  (no longer on this machine)'));
-        for (const r of s.rows) console.log(`  ${chalk.bold(r.kind === 'user' ? 'owner' : 'you')}: ${oneLine(r.text, 400)}`);
+        for (const r of s.rows) console.log(`  ${chalk.bold(r.kind === 'user' ? (r.via === 'app' ? 'an app, not the owner' : 'owner') : 'you')}: ${oneLine(r.text, 400)}`);
       }
       if (page.nextBefore) console.log(chalk.dim(`  older: --before '${page.nextBefore}'`));
     });

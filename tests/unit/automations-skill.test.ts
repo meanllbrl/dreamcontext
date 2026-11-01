@@ -70,7 +70,7 @@ const REGISTRY_TS = readFileSync(join(ROOT, 'src', 'lib', 'automations', 'regist
 
 const NUMBER_WORDS: Record<string, number> = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
-  nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
+  nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, sixteen: 16,
 };
 
 /** The Entity Router table's body rows, extracted between the section heading and
@@ -316,8 +316,8 @@ describe('agents/sleep-product.md — automation-output consumption contract', (
   });
 });
 
-describe('approval surface — fifteen hashed fields, everywhere it is claimed', () => {
-  it('APPROVAL_DIFF_FIELDS is the fifteen-tuple including effort, learning, review, flow, whiteboard, job, soul, autonomy, readTools and tool', () => {
+describe('approval surface — sixteen hashed fields, everywhere it is claimed', () => {
+  it('APPROVAL_DIFF_FIELDS is the sixteen-tuple including effort, learning, review, flow, whiteboard, job, soul, autonomy, readTools, tool and app', () => {
     expect(APPROVAL_DIFF_FIELDS).toEqual([
       'prompt',
       'outputInstructions',
@@ -346,10 +346,12 @@ describe('approval surface — fifteen hashed fields, everywhere it is claimed',
       // The agent's autonomy level: the permission mode of its sessions. Appended after `soul`
       // and omitted at the default `balanced`, so every agent that exists keeps its hash.
       'autonomy',
-      // The MCP tools a light job of the agent may call. LAST, omitted when none.
+      // The MCP tools a light job of the agent may call. Omitted when none.
       'readTools',
       // Which vendor reads the prompt and under which envelope it runs (Track T W4).
       'tool',
+      // The app a job belongs to: which app's brief the run gets. LAST, omitted when none.
+      'app',
     ]);
   });
 

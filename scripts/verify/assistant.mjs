@@ -303,7 +303,7 @@ try {
   ok('mode=basic in the URL is FORCED to the assistant briefing', (a.briefing ?? '').includes('# Mode: dreamcontext Assistant') && a.briefing.includes('**Nova**'));
   ok('autonomy ask → claude permission mode "default"', a.permissionMode === 'default', a.permissionMode);
   ok('the __assistant__ spawn runs --effort medium (its config default)', a.effort === 'medium', String(a.effort));
-  ok('under ask the __assistant__ argv pre-approves ONLY the three reads', a.allowedTools === 'Bash(dreamcontext assistant recall:*),Bash(dreamcontext assistant index:*),Bash(dreamcontext assistant read:*)', String(a.allowedTools));
+  ok('under ask the __assistant__ argv pre-approves ONLY the four reads (recall, index, read, apps)', a.allowedTools === 'Bash(dreamcontext assistant recall:*),Bash(dreamcontext assistant index:*),Bash(dreamcontext assistant read:*),Bash(dreamcontext assistant apps:*)', String(a.allowedTools));
   ok('the briefing answers from the brains and delegates the work', a.briefing.includes('## You KNOW it yourself; you DELEGATE the work') && a.briefing.includes("dreamcontext assistant recall '<2-4 keywords>'"));
   ok('its hooks recall raw (no embedding model on disk) — never haiku', a.recallMode === 'raw', String(a.recallMode));
   ok('an ordinary project chat carries no --allowedTools and no forced recall mode', alphaReport.allowedTools === null && alphaReport.recallMode === null, JSON.stringify({ allowedTools: alphaReport.allowedTools, recallMode: alphaReport.recallMode }));
@@ -573,7 +573,7 @@ try {
       await sleep(300);
     }
     ok('__assistant__ argv: --allowedTools "Bash(dreamcontext assistant:*)" under auto', allowed.auto === 'Bash(dreamcontext assistant:*)', JSON.stringify(allowed));
-    ok('__assistant__ argv: no --allowedTools under bypass; under ask only recall, index and read', allowed.bypass === null && allowed.ask === 'Bash(dreamcontext assistant recall:*),Bash(dreamcontext assistant index:*),Bash(dreamcontext assistant read:*)', JSON.stringify(allowed));
+    ok('__assistant__ argv: no --allowedTools under bypass; under ask only recall, index, read and apps', allowed.bypass === null && allowed.ask === 'Bash(dreamcontext assistant recall:*),Bash(dreamcontext assistant index:*),Bash(dreamcontext assistant read:*),Bash(dreamcontext assistant apps:*)', JSON.stringify(allowed));
     await post('/api/assistant/profile', { autonomy: 'ask' });
   }
 

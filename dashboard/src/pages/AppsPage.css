@@ -1,0 +1,188 @@
+/* Apps page + app card (dreamcontext-apps plan r19, W2). Tokens only. */
+.apps-page {
+  max-width: 1200px;
+}
+
+.apps-page__lede,
+.apps-page__muted {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  margin-top: calc(-1 * var(--space-3));
+  margin-bottom: var(--space-6);
+}
+
+.apps-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-4);
+}
+
+.apps-empty {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-10) var(--space-6);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.apps-empty h2 {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.apps-empty p {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  max-width: 440px;
+}
+
+.apps-empty__cta,
+.app-card__launch {
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.apps-empty__cta:hover,
+.app-card__launch:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.app-card {
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.app-card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.app-card__logo {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md);
+  object-fit: cover;
+  flex: none;
+}
+
+.app-card__logo--blank {
+  display: grid;
+  place-items: center;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-lg);
+}
+
+.app-card__title {
+  min-width: 0;
+}
+
+.app-card__title h3 {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-card__state {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.app-card__state--good { color: var(--color-success-ink); }
+.app-card__state--bad { color: var(--color-error-ink); }
+.app-card__state--busy { color: var(--color-accent-ink); }
+
+.app-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  font-size: var(--font-size-xs);
+}
+
+.app-card__meta dt { color: var(--color-text-secondary); }
+.app-card__meta dd { color: var(--color-text); font-weight: var(--font-weight-medium); }
+
+.app-card__note {
+  font-size: var(--font-size-xs);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  overflow-wrap: anywhere;
+}
+
+.app-card__note--warn { background: var(--color-bg-tertiary); color: var(--color-text); }
+.app-card__note--bad { background: var(--color-error-subtle); color: var(--color-error-ink); }
+
+.app-card__foot {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin-top: auto;
+}
+
+.app-card__stop {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.app-card__launch:disabled,
+.app-card__stop:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.app-card__mac-only {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.app-card__list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+}
+
+.app-card__list li {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.app-card__list-name { color: var(--color-text); font-weight: var(--font-weight-medium); }
+.app-card__list-meta { color: var(--color-text-secondary); overflow-wrap: anywhere; }
+
+.app-card__mcp {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}

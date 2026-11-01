@@ -421,7 +421,8 @@ describe('automations CLI (integration)', () => {
     // must block; omitted when `balanced`, so every existing hash is unchanged.
     // 13 → 14 with `readTools`: the MCP tools a light job may call; omitted when none.
     // 14 → 15 with `tool`: which vendor reads the prompt; omitted on Claude (Track T W4).
-    expect(APPROVAL_DIFF_FIELDS.length).toBe(15);
+    // 15 → 16 with `app` (dreamcontext Apps): the app a schedule runs for; omitted when none.
+    expect(APPROVAL_DIFF_FIELDS.length).toBe(16);
     for (const field of APPROVAL_DIFF_FIELDS) {
       expect(yesOut.stdout).toContain(field);
     }

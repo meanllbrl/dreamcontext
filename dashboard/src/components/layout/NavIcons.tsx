@@ -256,6 +256,18 @@ function WhiteboardsIcon() {
   );
 }
 
+/** Apps: a window with its own title bar and a tile grid inside, an app of this project. */
+function AppsIcon() {
+  return (
+    <Svg>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <line x1="3" y1="8" x2="21" y2="8" />
+      <rect x="6.5" y="11" width="4" height="3.5" rx="0.8" />
+      <rect x="13.5" y="11" width="4" height="3.5" rx="0.8" />
+    </Svg>
+  );
+}
+
 /** Chat — a speech bubble with a line of text in it: you, talking to the agent now.
  *  Not in {@link ICONS}: Chat is a launcher row, not a `Page`. */
 export function ChatIcon() {
@@ -301,6 +313,7 @@ export const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   lab: LabIcon,
   automations: AiTeamIcon,
   whiteboards: WhiteboardsIcon,
+  apps: AppsIcon,
   council: CouncilIcon,
   core: CoreIcon,
   knowledge: KnowledgeIcon,

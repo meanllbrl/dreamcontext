@@ -9,7 +9,7 @@ import { isDesktop, pickerOpen } from '../../lib/desktop';
 import { frameMotionMs, setFrames, type FrameItem, type MinPreset } from '../../lib/windowFrames';
 import { claimSeat, flying, guardHeal, isCurrentSeat, setSeatWindow, wantSeat, withFlight, type SeatFrame } from './seatGuard';
 import { executeAssistantCommand, onAssistantNotify } from './commandExecutor';
-import { ProposalList, decide, type DecideOutcome, type Proposal } from './ProposalList';
+import { CLICK_ONLY_VERBS, ProposalList, decide, type DecideOutcome, type Proposal } from './ProposalList';
 import { GlanceList, HandoffList, answerPermission, dismissHandoff, type AnswerFailure } from './GlanceList';
 import { ConversationMenu } from './ConversationMenu';
 import { NotchPeek, peekItem, type PeekItem } from './NotchPeek';
@@ -957,7 +957,8 @@ export function Notch() {
         return;
       }
       const p = proposals[0];
-      if (p) {
+      // An app's .mcp.json approval is a click, never a key press (dreamcontext-apps plan r19).
+      if (p && !(key === 'y' && CLICK_ONLY_VERBS.has(p.verb))) {
         e.preventDefault();
         void decide(p.id, key === 'y' ? 'approve' : 'reject').then((outcome) => {
           if (outcome === 'ok' || outcome === 'gone') { rawGate.forget('proposals'); setProposals((ps) => ps.filter((x) => x.id !== p.id)); return; }

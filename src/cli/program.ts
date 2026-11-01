@@ -51,6 +51,7 @@ import { registerLinkCommand } from './commands/link.js';
 import { registerPatternsCommand } from './commands/patterns.js';
 import { registerWhiteboardCommand } from './commands/whiteboard.js';
 import { registerNotifyCommand } from './commands/notify.js';
+import { registerAppsCommand } from './commands/apps.js';
 import { registerHandsfreeCommand } from './commands/handsfree.js';
 import { registerT3ChatCommand } from './commands/t3-chat.js';
 import { registerMcpServeCommand } from './commands/mcp-serve.js';
@@ -194,6 +195,7 @@ export function createProgram(): Command {
   registerBrainCommand(program);
   registerLinkCommand(program);
   registerNotifyCommand(program);
+  registerAppsCommand(program);
   registerHandsfreeCommand(program);
   registerT3ChatCommand(program);
   registerMcpServeCommand(program);

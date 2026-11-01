@@ -49,7 +49,8 @@ export function TeamRoster({
   /** The new teammate being written, or null. */
   draft: { title: string } | null;
   onSelect: (slug: string) => void;
-  onNew: () => void;
+  /** Absent in an embedded screen: a new member is made in the main app. */
+  onNew?: () => void;
   onToast: (msg: string) => void;
   /** The scheduler's next fire, said under the list. */
   nextRun: string;
@@ -158,9 +159,11 @@ export function TeamRoster({
               <TeamIcon name="tree" size={16} />
             </button>
           )}
-          <button type="button" className="aiteam-newbtn" onClick={onNew}>
-            <TeamIcon name="plus" size={12} /> {t('aiteam.new')}
-          </button>
+          {onNew && (
+            <button type="button" className="aiteam-newbtn" onClick={onNew}>
+              <TeamIcon name="plus" size={12} /> {t('aiteam.new')}
+            </button>
+          )}
         </div>
       )}
       {top}

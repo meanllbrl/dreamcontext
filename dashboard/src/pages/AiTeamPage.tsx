@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { TeamRoster } from '../components/aiteam/TeamRoster';
 import { TeamSyncStrip } from '../components/aiteam/TeamSyncStrip';
 import { TeamConversation } from '../components/aiteam/TeamConversation';
+import { OpenInMainApp, sayFromApp, useEmbed } from '../components/embed/embedMode';
 import { AgentStage } from '../components/aiteam/AgentStage';
 import { beginStageOpen, deselectStage, dropStageSessions, forgetStage } from '../components/aiteam/stageSession';
 import { TeamPanel, type PanelTab } from '../components/aiteam/TeamPanel';
@@ -64,6 +65,9 @@ export function AiTeamPage({
   const { t } = useI18n();
   const { vault } = useVault();
   const newShell = useIsNewShell();
+  const embed = useEmbed();
+  const embedChat = embed?.view === 'chat';
+  const selectedRef = useRef<string | null>(null);
   const agentsQ = useAgents();
   const automationsQ = useAutomations();
   const { data: feed } = useAgentFeed();
@@ -72,6 +76,9 @@ export function AiTeamPage({
   const agents: TeamAgent[] = useMemo(() => agentsQ.data ?? [], [agentsQ.data]);
   const automations = useMemo(() => automationsQ.data ?? [], [automationsQ.data]);
   const rows = useMemo(() => buildRoster(agents, automations, feed), [agents, automations, feed]);
+  // An embedded screen speaks as its app, and its chat shows that app's own runs.
+  const embedSend = useCallback((text: string) => sayFromApp(embed!, selectedRef.current ?? '', text), [embed]);
+  const embedRuns = useCallback((m: { ask: { app?: string } | null }) => m.ask?.app === embed?.slug, [embed?.slug]);
   const tree = useMemo(() => teamTreeOf(rows, agentsQ.data ?? []), [rows, agentsQ.data]);
   // The list: this project first; members of all projects join it once they have talked here.
   const listRows = useMemo(() => listedRows(rows), [rows]);
@@ -91,13 +98,14 @@ export function AiTeamPage({
     writeRosterView(pageStorage(), v);
   }, []);
   /** Conversations (list, conversation, panel) or the Org chart (chart, panel). */
-  const [pageView, setPageView] = useState<PageView>(() => readPageView(pageStorage()));
+  const [pageView, setPageView] = useState<PageView>(() => (embed ? 'conversations' : readPageView(pageStorage())));
   const pickPageView = useCallback((v: PageView) => {
     setPageView(v);
     writePageView(pageStorage(), v);
   }, []);
 
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(embed?.member ?? null);
+  selectedRef.current = selected;
   const [panel, setPanel] = useState<PanelTab | null>(null);
   const [creating, setCreating] = useState<{ start: TeamStarter; whiteboard?: string; title: string } | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -109,7 +117,8 @@ export function AiTeamPage({
    *  or on its activity when a routine question waits there (`openingView`). */
   const [teamView, setTeamView] = useState<'stage' | 'activity'>('stage');
   /** Phone width: which of the two halves is on screen. */
-  const [mobileShow, setMobileShow] = useState<'list' | 'convo'>('list');
+  // An embedded chat names its member: on a phone it opens on that conversation, not the list.
+  const [mobileShow, setMobileShow] = useState<'list' | 'convo'>(embed?.member ? 'convo' : 'list');
 
   // The whole page's width decides the layout (the rail beside it already took its share).
   const [pageEl, setPageEl] = useState<HTMLDivElement | null>(null);
@@ -282,9 +291,9 @@ export function AiTeamPage({
   }, [current, tree, rows]);
 
   const org = pageView === 'org' && rows.length > 0 && !creating;
-  const showList = !org && (!narrow || mobileShow === 'list');
-  const showMain = !org && (!narrow || mobileShow === 'convo');
-  const panelShown = !!(panel && current && agent && !creating && (showMain || org));
+  const showList = !org && !embedChat && (!narrow || mobileShow === 'list');
+  const showMain = !org && (!narrow || mobileShow === 'convo' || embedChat);
+  const panelShown = !embed && !!(panel && current && agent && !creating && (showMain || org));
 
   const panelEl = panelShown && current && agent ? (
     <TeamPanel
@@ -321,7 +330,7 @@ export function AiTeamPage({
           onSelect={selectInOrg}
           onTalk={talkTo}
           onConversations={() => pickPageView('conversations')}
-          onNew={() => startNew()}
+          onNew={embed ? undefined : () => startNew()}
           onToast={setToast}
           nextRun={nextRun}
         />
@@ -333,7 +342,7 @@ export function AiTeamPage({
           selected={current?.slug ?? null}
           draft={creating ? { title: creating.title } : null}
           onSelect={select}
-          onNew={() => startNew()}
+          onNew={embed ? undefined : () => startNew()}
           onToast={setToast}
           nextRun={nextRun}
           tree={listTree}
@@ -345,7 +354,7 @@ export function AiTeamPage({
           onWidth={setRosterWidth}
           onWidthCommit={commitRosterWidth}
           headless={newShell}
-          top={<TeamSyncStrip onToast={setToast} />}
+          top={embed ? undefined : <TeamSyncStrip onToast={setToast} />}
         />
       )}
 
@@ -364,6 +373,8 @@ export function AiTeamPage({
               setToast(message);
             }}
           />
+        ) : zero && embed ? (
+          <section className="aiteam-convo"><OpenInMainApp grant={embed} page="agents" /></section>
         ) : zero ? (
           <section className="aiteam-convo">
             <div className="aiteam-zero">
@@ -385,7 +396,7 @@ export function AiTeamPage({
               </div>
             </div>
           </section>
-        ) : current && agent && teamView === 'stage' && agentsQ.data?.find((a) => a.slug === current.slug) ? (
+        ) : !embed && current && agent && teamView === 'stage' && agentsQ.data?.find((a) => a.slug === current.slug) ? (
           <AgentStage
             key={current.slug}
             row={current}
@@ -416,7 +427,9 @@ export function AiTeamPage({
             onBack={narrow ? () => setMobileShow('list') : undefined}
             managers={managers}
             onSelectAgent={select}
-            onStage={() => { setTeamView('stage'); setLanding(null); }}
+            onStage={embed ? undefined : () => { setTeamView('stage'); setLanding(null); }}
+            sendMessage={embed ? embedSend : undefined}
+            runFilter={embedChat ? embedRuns : undefined}
           />
         ) : (
           <section className="aiteam-convo">

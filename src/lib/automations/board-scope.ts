@@ -92,6 +92,10 @@ export const BOARD_AGENT_READ_VERBS = [
   // An agent card's read hint (`board-refs.ts`) names `agents show`.
   'agents list',
   'agents show',
+  // An app's board agent reads the app. `apps do|call` never join this list: reading only.
+  'apps list',
+  'apps actions',
+  'apps status',
 ] as const;
 
 /** Verbs that act on the home board; the board slug is part of each rule. */

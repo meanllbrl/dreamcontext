@@ -47,6 +47,8 @@ const MAX_REL_PATH = 512;
 const CLAUDE_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const PAGE_ID_RE = /^[A-Za-z0-9._-]{1,160}$/;
+const APP_SLUG_RE = /^[a-z][a-z0-9-]{0,63}$/;
+const APP_NONCE_RE = /^[A-Za-z0-9_-]{32,64}$/;
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/;
 
@@ -68,10 +70,11 @@ export type AppLink =
   | { kind: 'session'; vault: string; claudeId: string }
   | { kind: 'automation'; vault: string; slug: string; file: string | null }
   | { kind: 'page'; vault: string; page: AppLinkPage; id: string | null }
-  | { kind: 'view'; vault: string; path: string };
+  | { kind: 'view'; vault: string; path: string }
+  | { kind: 'app'; vault: string; slug: string; nonce: string | null };
 
 /** A link that lands inside one project's window (everything but `inbox` and `view`). */
-export type ProjectAppLink = Extract<AppLink, { kind: 'project' | 'session' | 'automation' | 'page' }>;
+export type ProjectAppLink = Extract<AppLink, { kind: 'project' | 'session' | 'automation' | 'page' | 'app' }>;
 
 /** A registered vault name as a link may carry it: 1..128 characters, no path separator, not a
  *  dot segment, no control characters. Counted in code points so a Turkish or emoji name is
@@ -168,6 +171,12 @@ export function parseAppLink(raw: unknown): AppLink | null {
     if (typeof path !== 'string' || !isValidAppLinkPath(path)) return null;
     return { kind: 'view', vault, path };
   }
+  if (kind === 'app') {
+    if (args.length !== 1 || !APP_SLUG_RE.test(args[0])) return null;
+    const nonce = onlyParam(query, 'n');
+    if (nonce === undefined) return { kind: 'app', vault, slug: args[0], nonce: null };
+    return typeof nonce === 'string' && APP_NONCE_RE.test(nonce) ? { kind: 'app', vault, slug: args[0], nonce } : null;
+  }
   return null;
 }
 
@@ -187,12 +196,13 @@ export function buildAppLink(link: AppLink): string {
       return `${base}/page/${link.page}${id}`;
     }
     case 'view': return `${base}/view?path=${encodeURIComponent(link.path)}`;
+    case 'app': return `${base}/app/${link.slug}${link.nonce ? `?n=${link.nonce}` : ''}`;
   }
 }
 
 /** True for the shapes that land inside one project's window. */
 export function isProjectAppLink(link: AppLink): link is ProjectAppLink {
-  return link.kind === 'project' || link.kind === 'session' || link.kind === 'automation' || link.kind === 'page';
+  return link.kind === 'project' || link.kind === 'session' || link.kind === 'automation' || link.kind === 'page' || link.kind === 'app';
 }
 
 /* ─────────────────────────────────────── routing ─────────────────────────────────────── */

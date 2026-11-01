@@ -22,7 +22,7 @@ import { registerPushToTalk, ownsPushToTalk } from '../../../lib/voice/pushToTal
 import { onExternalPushToTalk, pushToTalkAction } from '../../../lib/voice/externalPushToTalk';
 import { DEFAULT_PUSH_TO_TALK } from '../../../lib/voice/hotkeyDefaults';
 
-import { useVault } from '../../../context/VaultContext';
+import { useVault, useInstanceEvent } from '../../../context/VaultContext';
 import { useI18n } from '../../../context/I18nContext';
 import { copyPickedPicture, uploadAgentFile } from '../../../lib/agentDrop';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
@@ -456,6 +456,9 @@ const UsageRingButton = memo(function UsageRingButton({ ctx, nudgeAt, hardAt, op
   );
 });
 
+/** Instance-bus event: `{text}` seeds an empty, visible composer (see the listener below). */
+export const COMPOSER_PREFILL_EVENT = 'dc-composer-prefill';
+
 export function Composer({
   session, model, effort, modelConfig, onModelChange, onEffortChange, busy, connected,
   quote, onClearQuote, permissionMode = 'auto', projectPermissionMode,
@@ -687,6 +690,15 @@ export function Composer({
     if (isMcpCommand(draft)) { setDraft(''); session.syncDraft(''); }
   }, [draft, session]);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // A page asked this project's Chat to start with a ready message (the Apps page's empty state
+  // seeds `/apps `). Only an EMPTY, visible composer takes it: never over a half-typed draft.
+  useInstanceEvent<{ text?: unknown; accepted?: boolean }>(COMPOSER_PREFILL_EVENT, (detail) => {
+    if (shelved || !detail || typeof detail.text !== 'string' || detail.accepted || draft.trim()) return;
+    detail.accepted = true;
+    setDraft(detail.text);
+    session.syncDraft(detail.text);
+  });
 
   // ── Caret after a PROGRAMMATIC draft replacement ─────────────────────────────────
   //

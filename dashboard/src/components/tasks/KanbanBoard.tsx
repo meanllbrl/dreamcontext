@@ -25,6 +25,7 @@ import { TaskCreateModal } from './TaskCreateModal';
 import { AuthorTaskComposer } from './AuthorTaskComposer';
 import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCapabilities';
 import { readAgentSettings, AGENT_SETTINGS_EVENT } from '../../lib/agentSettings';
+import { useEmbed } from '../embed/embedMode';
 import './Board.css';
 
 const AVATAR_PALETTE = ['#9d8cff', '#4aa8ff', '#4ade80', '#f0abfc', '#fbbf24', '#5eead4', '#f9a8d4'];
@@ -180,7 +181,9 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   }, [updateTask, flash, sm, t, tasks]);
 
   // ── drag + drop (patch the status) ─────────────────────────────────────────────
-  const draggable = true;
+  // An app's window shows the board; moving, creating and deleting are the main app's.
+  const embedded = !!useEmbed();
+  const draggable = !embedded;
   const onCardDragStart = useCallback((e: React.DragEvent, id: string) => { setDragId(id); try { e.dataTransfer.effectAllowed = 'move'; } catch { /* noop */ } }, []);
   const endDrag = useCallback(() => { setDragId(null); setDragOverKey(null); }, []);
   // The column key the dragged card currently lives in — used to suppress the
@@ -203,8 +206,9 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const openCtxMenu = useCallback((e: React.MouseEvent, task: Task) => {
     e.preventDefault();
     e.stopPropagation();
+    if (embedded) return;
     setCtxMenu({ x: e.clientX, y: e.clientY, task });
-  }, []);
+  }, [embedded]);
   const ctxSetStatus = useCallback((task: Task, status: string) => {
     if (task.status !== status) moveStatus(task, status);
     setCtxMenu(null);
@@ -295,7 +299,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
         releasedVersions={releasedVersions}
         openMenu={openMenu}
         setOpenMenu={setOpenMenu}
-        onNewTask={() => setShowCreate(true)}
+        onNewTask={embedded ? undefined : () => setShowCreate(true)}
         onAuthorWithAgent={() => setShowAuthor(true)}
         agentReady={agentReady}
         flash={flash}

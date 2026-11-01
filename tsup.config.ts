@@ -67,6 +67,8 @@ export default defineConfig({
   // (e.g. nanoid) would fail with ERR_MODULE_NOT_FOUND at runtime. All 7 deps
   // are pure JS and bundle cleanly.
   noExternal: [
+    // The dreamcontext Apps MCP bridge (src/lib/apps/mcp-bridge.ts): pure JS, bundled.
+    '@modelcontextprotocol/sdk',
     'commander',
     'chalk',
     'gray-matter',
@@ -108,6 +110,9 @@ export default defineConfig({
     // to dist/git-sync/ so credentials.ts's runtime path resolution (relative to
     // its own bundled import.meta.url, i.e. dist/) finds it — see credentials.ts.
     cpSync('src/lib/git-sync/askpass.cjs', 'dist/git-sync/askpass.cjs');
+    // The dreamcontext App SDK is served as a file (`/__dc/sdk.js`) and copied into new apps
+    // (`lib/dc.mjs`), never bundled: src/server/apps/gateway-w3.ts resolves dist/apps/dc.mjs.
+    cpSync('src/lib/apps/sdk/dc.mjs', 'dist/apps/dc.mjs');
     // cpSync preserves the SOURCE mode — enforce the executable bit instead of
     // inheriting it. git execs GIT_ASKPASS directly; a non-executable helper
     // fails every authenticated fetch/push with a bare "Permission denied".

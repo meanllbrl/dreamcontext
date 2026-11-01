@@ -342,6 +342,8 @@ export interface NotifyViaBundleOptions {
   openTarget?: string | null;
   /** The `dreamcontext://` link the click opens first. See `lib/app-link.ts`. */
   link?: string | null;
+  /** Written to the Notifications history only, for a banner whose own click opens `openTarget`. */
+  historyLink?: string | null;
 }
 
 /** Newline is the record separator, so every single-line field is flattened. */
@@ -394,7 +396,7 @@ export function notifyViaBundle(
     // History AFTER the post is committed: the Notifications window lists what was
     // announced, and a history write can never cost the banner (it does not throw).
     recordNotification(
-      { title: oneLine(title), body, link: opts.link ?? null, file: opts.openTarget ?? null },
+      { title: oneLine(title), body, link: opts.link ?? opts.historyLink ?? null, file: opts.openTarget ?? null },
       home,
     );
     return true;

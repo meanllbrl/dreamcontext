@@ -13,6 +13,7 @@ import {
 } from '../lib/automations/verdict.js';
 import type { BoardTurnInput, RunKind, RunStatus, SpawnModelOverride } from '../lib/automations/types.js';
 import type { TaskRef } from '../lib/automations/runner.js';
+import type { AppRunBrief } from '../lib/apps/brief.js';
 import { getAgent } from '../lib/agents/store.js';
 import { logAssignmentResult } from '../lib/agents/task-assignment.js';
 import { pendingQuestion } from '../lib/automations/hitl.js';
@@ -55,6 +56,8 @@ export interface AutomationAsk extends BoardTurnInput {
   target?: RunKind;
   /** The owner's temporary model for this ask (AI Team), already validated. */
   override?: SpawnModelOverride | null;
+  /** The app this message came from: the run gets its fenced `'app'` brief. */
+  app?: AppRunBrief | null;
 }
 
 /**
@@ -253,6 +256,7 @@ async function runJob(contextRoot: string, job: AutomationJobState, ask?: Automa
       ...(ask?.target ? { target: ask.target } : {}),
       ...(ask?.task ? { task: ask.task } : {}),
       ...(ask?.override ? { override: ask.override } : {}),
+      ...(ask?.app ? { app: ask.app } : {}),
       // CALLBACK form — NEVER trackChild(child). trackChild's ChildProcess
       // branch does `child.kill()`, which signals the PID only; the automation
       // child is `detached: true`, so a PID-only kill leaves its process group

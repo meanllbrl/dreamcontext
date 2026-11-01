@@ -1010,6 +1010,27 @@ export async function installCoreForPlatform(
     }
   }
 
+  // Copy the `apps` core skill (dreamcontext Apps: `/apps` builds and drives project-owned local
+  // web apps, dreamcontext-apps plan r19). Shipped at repo root in `skill-apps/` (package.json
+  // `files`); the app template stays in the package (`apps new` reads it from there), only the
+  // skill and its references are installed. Recorded 'core' so `update` refreshes it.
+  const appsSkillSource = findPackageFile('skill-apps', 'SKILL.md');
+  if (appsSkillSource) {
+    const appsDestDir = join(skillRoot, 'apps');
+    mkdirSync(appsDestDir, { recursive: true });
+    writeFileSync(join(appsDestDir, 'SKILL.md'), readFileSync(appsSkillSource, 'utf-8'), 'utf-8');
+    const appsSkillRel = `${skillRootRel}/apps/SKILL.md`;
+    recordIfManifest(manifest, appsSkillRel, 'core');
+    installed.push(platformPrefixed(platform, appsSkillRel));
+    const appsRefsSourceDir = join(dirname(appsSkillSource), 'references');
+    if (existsSync(appsRefsSourceDir)) {
+      cpSync(appsRefsSourceDir, join(appsDestDir, 'references'), { recursive: true });
+      for (const rf of readdirSync(appsRefsSourceDir).filter((f) => f.endsWith('.md'))) {
+        recordIfManifest(manifest, `${skillRootRel}/apps/references/${rf}`, 'core');
+      }
+    }
+  }
+
   // Copy the `dreamcontext-deep-research` core skill (the iterative, sub-agent-driven
   // corpus-synthesis orchestrator — the heavy counterpart to dreamcontext-explore).
   // Like the initializer and curator it is foundational, not an optional pack: any

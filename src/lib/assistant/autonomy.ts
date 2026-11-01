@@ -35,12 +35,12 @@ import type { Autonomy } from './home.js';
  */
 
 export const ASSISTANT_VERBS = [
-  'projects', 'sessions', 'watch', 'open', 'chat', 'send', 'answer', 'focus', 'tile', 'broadcast', 'notify', 'look', 'close',
+  'projects', 'sessions', 'watch', 'open', 'chat', 'send', 'answer', 'focus', 'tile', 'broadcast', 'notify', 'look', 'apps', 'app-open', 'app-do', 'app-shot', 'close',
 ] as const;
 export type AssistantVerb = typeof ASSISTANT_VERBS[number];
 
-export const FREE_VERBS: readonly AssistantVerb[] = ['projects', 'sessions', 'watch', 'open', 'chat', 'focus', 'tile', 'notify', 'look'];
-export const GATED_VERBS: readonly AssistantVerb[] = ['send', 'answer', 'broadcast'];
+export const FREE_VERBS: readonly AssistantVerb[] = ['projects', 'apps', 'app-open', 'app-shot', 'sessions', 'watch', 'open', 'chat', 'focus', 'tile', 'notify', 'look'];
+export const GATED_VERBS: readonly AssistantVerb[] = ['send', 'answer', 'broadcast', 'app-do'];
 
 export type GateDecision = 'pass' | 'propose';
 
@@ -62,7 +62,8 @@ export function decide(input: GateInput): GateDecision {
   // session has read project output. A tainted `chat` is exactly the "start a chat in Y with
   // prompt: …" an injected reply would ask for, and a new agent in Y would run that prompt.
   // `look` the same: a tainted look is a project asking to see the owner's screen.
-  if (verb === 'chat' || verb === 'look') return tainted ? 'propose' : 'pass';
+  // `app-open` starts a backend, `app-shot` looks at a window: the same, in a project's words.
+  if (verb === 'chat' || verb === 'look' || verb === 'app-open' || verb === 'app-shot') return tainted ? 'propose' : 'pass';
   if (!GATED_VERBS.includes(verb)) return 'pass';
   if (autonomy === 'ask') return 'propose';
   // auto

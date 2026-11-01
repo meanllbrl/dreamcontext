@@ -1173,6 +1173,9 @@ interface LauncherUiSettings {
   drawerExpanded?: string[];
   drawerWidth?: number;
   drawerOpen?: boolean;
+  /** The dashboard theme, kept app-global so dreamcontext App windows (their own processes and
+   *  origins) follow it, also when no dashboard window is open (dreamcontext-apps plan r19). */
+  theme?: 'light' | 'dark' | 'system';
 }
 
 /** List leads until Space has been CHOSEN — mirrors dashboard/src/lib/launcherPrefs.ts. */
@@ -1225,7 +1228,13 @@ export function coerceLauncherUiPartial(raw: Record<string, unknown>): Partial<L
     out.drawerWidth = Math.min(DRAWER_WIDTH_MAX, Math.max(DRAWER_WIDTH_MIN, Math.round(raw.drawerWidth)));
   }
   if (typeof raw.drawerOpen === 'boolean') out.drawerOpen = raw.drawerOpen;
+  if (raw.theme === 'light' || raw.theme === 'dark' || raw.theme === 'system') out.theme = raw.theme;
   return out;
+}
+
+/** The dashboard theme as stored (dreamcontext App windows read it); `system` when unset. */
+export function readLauncherTheme(): 'light' | 'dark' | 'system' {
+  return readLauncherUiStored().theme ?? 'system';
 }
 
 /** The stored file, coerced; a missing file is `{}`. A corrupt one is copied to `.bad` (only the
@@ -1264,7 +1273,7 @@ export async function handleLauncherUiGet(
 ): Promise<void> {
   const settings: LauncherUiSettings = { ...LAUNCHER_UI_DEFAULTS, ...readLauncherUiStored() };
   if (isPhoneSocket(req)) {
-    sendJson(res, 200, { view: settings.view, ...(settings.shell ? { shell: settings.shell } : {}) });
+    sendJson(res, 200, { view: settings.view, ...(settings.shell ? { shell: settings.shell } : {}), ...(settings.theme ? { theme: settings.theme } : {}) });
     return;
   }
   sendJson(res, 200, settings);

@@ -672,6 +672,7 @@ export function readManifestParts(filePath: string): ManifestParts {
       outputInstructions: legacy.outputInstructions,
       job: extractSection(content, JOB_HEADING),
       flow: legacy.flow,
+      ...(legacy.app ? { app: legacy.app } : {}),
       owner: parseOwner(data.owner),
       updated: typeof data.updated === 'string' && data.updated.trim() ? data.updated.trim() : null,
       path: legacy.path,
@@ -775,6 +776,8 @@ function legacyManifestFrom(filePath: string, data: Record<string, unknown>, con
     // slug: dropping a bad value would silently unscope the agent, keeping it
     // means the spawn path refuses it (no such board) and fails closed.
     whiteboard: typeof data.whiteboard === 'string' && data.whiteboard.trim() ? data.whiteboard.trim() : null,
+    // Only when set, so a file that is no app's reads field for field as before and keeps its hash.
+    ...(typeof data.app === 'string' && data.app.trim() ? { app: data.app.trim() } : {}),
     // Every file read here is an AUTOMATION run target, exactly as before the
     // agent split; a legacy manifest is its own agent and has no `## Job`. Only
     // the store composes an agent's call target (with real bindings and a
@@ -1332,6 +1335,9 @@ export interface CreateAutomationInput {
    *  on-disk state. Cannot be combined with `outputDir`: a home-board agent's
    *  writable output folder is always `automations/output/<slug>/`. */
   whiteboard?: string | null;
+  /** The app this scheduled job belongs to (dreamcontext-apps). Set by the gateway or the
+   *  owner's `--app`, never by a page. */
+  app?: string;
 }
 
 /**
@@ -1356,6 +1362,11 @@ export function validateAutomationForWrite(i: CreateAutomationInput): void {
   const mode = i.mode ?? 'sched';
   if (!(AUTOMATION_MODES as readonly string[]).includes(mode)) {
     throw new AutomationError(`Invalid mode "${mode}" — must be one of: ${AUTOMATION_MODES.join(', ')}.`);
+  }
+  if (i.app !== undefined) {
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(i.app)) throw new AutomationError(`Invalid app "${i.app}": it must be an app slug.`);
+    // A call target has no job half to keep it on (`legacyPair`).
+    if (mode !== 'sched') throw new AutomationError('An app automation runs on a schedule. To call a member from an app, use dc.team.ask.');
   }
   // An on-call agent HAS no schedule, so there is nothing to validate — and
   // demanding a placeholder one would put a lie in the manifest that `list`,
@@ -1576,6 +1587,7 @@ function createBoundAutomation(contextRoot: string, slug: string, path: string, 
     shared: i.shared ?? false,
     notify: i.notify ?? true,
     review: i.review ?? 'off',
+    ...(i.app ? { app: i.app } : {}),
   };
   const job = i.job?.trim();
   const body = [
@@ -1639,6 +1651,7 @@ function createLegacyManifest(contextRoot: string, slug: string, path: string, i
     // Written ONLY when set, so an ordinary agent's manifest carries no
     // `whiteboard` key at all, exactly as before this field existed.
     ...(i.whiteboard ? { whiteboard: i.whiteboard } : {}),
+    ...(i.app ? { app: i.app } : {}),
   };
 
   const body = [

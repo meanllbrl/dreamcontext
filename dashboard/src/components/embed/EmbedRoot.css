@@ -1,0 +1,31 @@
+.embed-root {
+  height: 100vh;
+  min-height: 0;
+  overflow: auto;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.embed-root[data-embed='chat'],
+.embed-root[data-embed='team'] {
+  overflow: hidden;
+}
+
+/* The chat embed draws no roster and no side panel: its conversation takes the whole frame. */
+.embed-root[data-embed='chat'] .aiteam {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.embed-empty {
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--color-text-secondary);
+}
+
+.embed-open-main {
+  display: inline-block;
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
