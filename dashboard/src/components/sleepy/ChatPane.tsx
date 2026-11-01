@@ -4,7 +4,7 @@ import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { useRemoteDesktop } from '../../hooks/useIsMobile';
 import { CouncilLivePanel } from './CouncilLivePanel';
 import { agentFileUrl } from '../../api/client';
-import { useApi, useVault } from '../../context/VaultContext';
+import { useApi, useVaultId } from '../../context/VaultContext';
 import { useAgentGoalLive, useHeadlessTeammates, useTaskProgress } from '../../hooks/useAgentCapabilities';
 import { normalizeGoalLive } from '../../lib/goalLive';
 import { ClaudeUpdateChatNotice } from '../settings/SystemDependencies';
@@ -753,7 +753,7 @@ export function ChatPane({
     const off = session.subscribe(gate.notify);
     return () => { off(); gate.dispose(); };
   }, [session]);
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const api = useApi();
 
   const conv = session.getModel();

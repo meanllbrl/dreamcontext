@@ -1,6 +1,6 @@
 import { runHistoryPath } from './teammates';
 import { useCallback, useState } from 'react';
-import { useApi, useVault } from '../../../context/VaultContext';
+import { useApi, useVaultId } from '../../../context/VaultContext';
 import { peerLogoUrl } from '../../../api/client';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { peerForAgent, type PeerMention } from '../../../lib/agentComposer';
@@ -80,7 +80,7 @@ export function SubAgentReport({ run, conversationId, peers = [], onOpenFull, in
   inRow?: boolean;
 }) {
   const api = useApi();
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
   // The report that came free with the run, if its dispatch mode carried one. Read on every

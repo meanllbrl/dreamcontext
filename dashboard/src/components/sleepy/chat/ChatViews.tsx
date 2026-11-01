@@ -1,4 +1,4 @@
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import { isDesktop, openChecklistWindow } from '../../../lib/desktop';
 import { writeEnvelope } from '../../../lib/checklistStore';
 import type { ChatViewSpec, ChecklistViewSpec } from '../../../lib/chatViewSpec';
@@ -177,7 +177,7 @@ function PendingViewPill() {
  */
 function ChecklistCard({ spec, conversationId }: { spec: ChecklistViewSpec; conversationId: string }) {
   const desktop = isDesktop();
-  const { vault: activeVault } = useVault();
+  const { vault: activeVault } = useVaultId();
   const vault = desktop ? activeVault : null;
   const itemCount = spec.items.length;
 

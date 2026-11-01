@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 
 const translations: Record<string, Record<string, string>> = {
   en: {
@@ -6028,15 +6028,21 @@ interface I18nContextValue {
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
+function translatorFor(locale: string): (key: string) => string {
+  return (key) => translations[locale]?.[key] ?? PARTIALS[locale]?.[key] ?? translations.en[key] ?? key;
+}
+
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocale] = useState('en');
 
-  const t = (key: string): string => {
-    return translations[locale]?.[key] ?? PARTIALS[locale]?.[key] ?? translations.en[key] ?? key;
-  };
+  // One value per locale. This provider sits inside every project instance, so a value rebuilt on
+  // each render re-rendered every `useI18n` consumer on any window render: every memo boundary
+  // below (ChatPaneHost above all) was void, and each click on a chat row redrew every open
+  // transcript of every project, three times.
+  const value = useMemo<I18nContextValue>(() => ({ locale, setLocale, t: translatorFor(locale) }), [locale]);
 
   return (
-    <I18nContext.Provider value={{ locale, setLocale, t }}>
+    <I18nContext.Provider value={value}>
       {children}
     </I18nContext.Provider>
   );
@@ -6054,10 +6060,13 @@ export type ScopedLocaleId = 'en' | 'tr';
  */
 export function ScopedLocale({ locale, children }: { locale: ScopedLocaleId; children: ReactNode }) {
   const outer = useContext(I18nContext);
-  const t = (key: string): string => translations[locale]?.[key] ?? PARTIALS[locale]?.[key] ?? translations.en[key] ?? key;
-  const setLocale = outer?.setLocale ?? (() => {});
+  const outerSetLocale = outer?.setLocale;
+  const value = useMemo<I18nContextValue>(
+    () => ({ locale, setLocale: outerSetLocale ?? (() => {}), t: translatorFor(locale) }),
+    [locale, outerSetLocale],
+  );
   return (
-    <I18nContext.Provider value={{ locale, setLocale, t }}>
+    <I18nContext.Provider value={value}>
       {children}
     </I18nContext.Provider>
   );

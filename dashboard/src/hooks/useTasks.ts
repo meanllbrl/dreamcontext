@@ -1,7 +1,7 @@
 import type { OwnerInboxRow } from './useAgents';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { useApi, useVault } from '../context/VaultContext';
+import { useApi, useVaultId } from '../context/VaultContext';
 import { pollMs } from '../lib/windowActivity';
 import { buildStatusModel, DEFAULT_STATUSES, type StatusDef, type StatusModel } from '../lib/statusModel';
 
@@ -465,7 +465,7 @@ export interface TaskAssetUploadProgress { name: string; loaded: number; total: 
  */
 export function useUploadTaskAsset(slug: string, onProgress?: (p: TaskAssetUploadProgress) => void) {
   const queryClient = useQueryClient();
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   // The target task rides in the VARIABLES, fixed when the upload starts: a batch keeps going to
   // the task it was dropped on even if the drawer moves to another task meanwhile.
   return useMutation<{ name: string; size: number }, Error, { file: Blob; name: string; target?: string }>({

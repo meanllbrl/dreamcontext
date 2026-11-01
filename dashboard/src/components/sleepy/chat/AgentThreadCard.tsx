@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useI18n } from '../../../context/I18nContext';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import {
   useAgentFeed,
   useAgentThread,
@@ -68,7 +68,7 @@ function EntryRow({ entry, title }: { entry: ThreadEntry; title: string }) {
 
 export function AgentThreadCard({ spec }: { spec: AgentThreadViewSpec }) {
   const { t } = useI18n();
-  const { bus } = useVault();
+  const { bus } = useVaultId();
   const { data: feed, isLoading: feedLoading } = useAgentFeed();
 
   /** The run this card is about, and whether it is the agent's newest. */

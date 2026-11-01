@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useVault } from '../context/VaultContext';
+import { useVaultId } from '../context/VaultContext';
 import { readScoped, writeScoped } from './scopedStorage';
 
 /**
@@ -100,7 +100,7 @@ const listeners = new Set<() => void>();
 /** Every remembered card's device, by card id (the stage plans side by side by them); follows
  *  every set. A stable string key, so a re-render that changed nothing changes nothing. */
 export function useWebDevices(): string {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const read = useCallback(() => readStore(vault).map(([k, d]) => `${k}=${d}`).sort().join(','), [vault]);
   const [key, setKey] = useState(read);
   useEffect(() => {
@@ -115,7 +115,7 @@ export function useWebDevices(): string {
 /** A card's device width, read and set; every view of the same card follows. `id` null: kept in
  *  memory only (nothing to remember it by). */
 export function useWebDevice(id: string | null): [WebDevice | null, (d: WebDevice | null) => void] {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const read = useCallback(() => (id ? readStore(vault).find(([k]) => k === id)?.[1] ?? null : null), [vault, id]);
   const [device, setLocal] = useState<WebDevice | null>(read);
   useEffect(() => {

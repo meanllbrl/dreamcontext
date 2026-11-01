@@ -4,7 +4,7 @@ import { ToolBadge, DiffStat, CodeSentence } from './atoms';
 import { CardHeader, TerminalBlock, DiffView } from './molecules';
 import { InlineTerminal } from './InlineTerminal';
 import { buildRunReport } from './runReport';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import { isDesktop } from '../../../lib/desktop';
 import type { ChatSession, PendingPermission } from '../chatSession';
 
@@ -54,7 +54,7 @@ export function PermissionCard({
   const [alwaysAllow, setAlwaysAllow] = useState(false);
   const [running, setRunning] = useState(false);
   const [startedAt, setStartedAt] = useState(0);
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const command = commandPreview(item.toolName, item.input);
   const diff = !command ? parseEditDiff(item.input) : null;
   const toolLabel = item.displayName ?? item.toolName;

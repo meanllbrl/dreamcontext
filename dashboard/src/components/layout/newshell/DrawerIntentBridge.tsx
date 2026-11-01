@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { emitInstance, useVault } from '../../../context/VaultContext';
 import { OPEN_SESSION_EVENT, type OpenSessionDetail } from '../../../lib/openSession';
 import { DRAWER_INTENT_EVENT, DRAWER_PAGE_EVENT, type PendingDrawerIntent } from '../../../lib/drawerIntents';
@@ -9,6 +9,12 @@ import { DRAWER_INTENT_TTL_MS } from './drawerModel';
  * instance's bus, once per nonce, and tell the window it was taken. A History pick rides the
  * existing `OPEN_SESSION` path, so it reopens the chat exactly as a `dreamcontext://` link does,
  * in this project and never in the one that happened to be on screen. Renders nothing.
+ *
+ * Rung from a layout effect once the project is mounted: what the surface sets from a passive
+ * effect is scheduled as a task, so the click would paint first with the old chat on screen. NEVER
+ * in the project's first commit: the surface's listeners (`useInstanceEvent`) subscribe in passive
+ * effects, every layout effect of a commit runs before them, and an intent rung there is consumed
+ * with nobody listening. The passive effect takes that first one.
  */
 export function DrawerIntentBridge({ pending, onConsumed }: {
   pending: PendingDrawerIntent | null;
@@ -16,7 +22,8 @@ export function DrawerIntentBridge({ pending, onConsumed }: {
 }) {
   const { vault, bus } = useVault();
   const landed = useRef(-1);
-  useEffect(() => {
+  const mounted = useRef(false);
+  const ring = () => {
     if (!pending || !vault || pending.nonce === landed.current) return;
     landed.current = pending.nonce;
     onConsumed?.(vault, pending.nonce);
@@ -30,6 +37,15 @@ export function DrawerIntentBridge({ pending, onConsumed }: {
     } else {
       emitInstance(bus, DRAWER_INTENT_EVENT, intent);
     }
+  };
+  useLayoutEffect(() => {
+    if (mounted.current) ring();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, vault, bus, onConsumed]);
+  useEffect(() => {
+    mounted.current = true;
+    ring();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending, vault, bus, onConsumed]);
   return null;
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { TeamTile, teamRingKind, teamStatusOf, type TeamCard } from './TeamTile';
 import { useI18n } from '../../../context/I18nContext';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import { pageFitKey, setPageFit } from '../../../lib/pageFit';
 import { CONTAINER_SIZES, SIZE_UNITS, type ContainerSize, type SuperChild, type SuperContainer as Container } from '../../../lib/superTypes';
 import type { WidgetSize } from '../../../lib/whiteboardWidgets';
@@ -700,7 +700,7 @@ function WebCardBody(p: BodyProps & { large: boolean }): ReactNode {
   const desktop = desktopRef.current;
   const frame = p.webLive && p.viewReady;
   const oneLine = frame && (p.plan.where === 'present' || p.plan.where === 'half' || p.plan.where === 'float');
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const onPageFit = useCallback((width: number) => setPageFit(pageFitKey(vault, c.ref), width), [vault, c.ref]);
   return (
     <div className={p.large ? 'super-card-large' : tile ? 'super-card-body' : 'super-card-body super-card-large'}

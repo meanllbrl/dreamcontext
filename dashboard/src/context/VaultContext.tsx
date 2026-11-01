@@ -25,6 +25,8 @@ export interface VaultContextValue {
   bus: EventTarget;
 }
 
+export type VaultIdentity = Omit<VaultContextValue, 'isActive'>;
+
 /**
  * The bus handed to consumers rendered outside any provider. A module singleton rather than
  * a fresh EventTarget per call so that an emit and a listen from two such consumers still
@@ -58,12 +60,28 @@ export function VaultProvider({ vault, instanceId, isActive, bus, children }: Va
     () => ({ vault, instanceId, isActive, bus }),
     [vault, instanceId, isActive, bus],
   );
-  return <VaultContext.Provider value={value}>{children}</VaultContext.Provider>;
+  const identity = useMemo<VaultIdentity>(() => ({ vault, instanceId, bus }), [vault, instanceId, bus]);
+  return (
+    <VaultIdentityContext.Provider value={identity}>
+      <VaultContext.Provider value={value}>{children}</VaultContext.Provider>
+    </VaultIdentityContext.Provider>
+  );
 }
+
+const VaultIdentityContext = createContext<VaultIdentity>(DEFAULT_VAULT_CONTEXT);
 
 /** This subtree's project identity, or {@link DEFAULT_VAULT_CONTEXT} outside a provider. */
 export function useVault(): VaultContextValue {
   return useContext(VaultContext);
+}
+
+/**
+ * `useVault()` without `isActive`, for a consumer that only needs to know WHICH project it is.
+ * `isActive` flips on every project switch, and a consumer of the whole value redraws on the flip,
+ * in the project left and the one arrived at: every open chat transcript of both, on one click.
+ */
+export function useVaultId(): VaultIdentity {
+  return useContext(VaultIdentityContext);
 }
 
 /**
@@ -72,7 +90,7 @@ export function useVault(): VaultContextValue {
  * re-running on every render.
  */
 export function useApi(): ApiClient {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   return useMemo(() => new ApiClient(vault), [vault]);
 }
 
@@ -89,7 +107,7 @@ export function emitInstance<T>(bus: EventTarget, type: string, detail?: T): voi
  * type actually changes.
  */
 export function useInstanceEvent<T>(type: string, handler: (detail: T) => void): void {
-  const { bus } = useVault();
+  const { bus } = useVaultId();
   const handlerRef = useRef(handler);
 
   useEffect(() => {

@@ -8,7 +8,7 @@ import { MediaEmbed } from './MediaEmbed';
 import { Lightbox } from './Lightbox';
 import { FullscreenOverlay } from '../../layout/FullscreenOverlay';
 import { agentFileUrl } from '../../../api/client';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import {
   allValues, answeredCount, choose, firstUnansweredIndex, isAnswered, isBoard, isComplete, soloPreviewIndex,
   isSwipeDeck, numberValue, optionLetter, pickFor, resolveAnswers, resolveNotes, setText,
@@ -603,7 +603,7 @@ function OptionRows({ q, indexes, lettered, chosen, onToggle }: {
  */
 function SoloPreview({ letter, label, preview }: { letter: string; label: string; preview: string }) {
   const { t } = useI18n();
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const media = loneMedia(preview);
   const html = usePreviewHtml(preview);
   const [full, setFull] = useState(false);
@@ -728,7 +728,7 @@ function FreeField({ q, value, role, other, pickedLabel, onChange, onCommit, com
  * project pictures inlined.
  */
 function PreviewSurface({ preview }: { preview: string | undefined }) {
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   const media = loneMedia(preview);
   const html = usePreviewHtml(preview);
   if (media) return <MediaPreview kind={media.kind} path={media.src} src={agentFileUrl(vault, media.src, { raw: true })} />;

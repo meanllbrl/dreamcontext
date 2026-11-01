@@ -1,4 +1,4 @@
-import { useVault } from '../context/VaultContext';
+import { useVaultId } from '../context/VaultContext';
 
 /**
  * A per-instance overlay id — `${instanceId}::${local}` — so two project instances open in
@@ -14,6 +14,6 @@ import { useVault } from '../context/VaultContext';
  * off-instance surface ever exists at a time.
  */
 export function useOverlayId(local: string): string {
-  const { instanceId } = useVault();
+  const { instanceId } = useVaultId();
   return `${instanceId}::${local}`;
 }

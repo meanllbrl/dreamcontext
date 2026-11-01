@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { agentFileUrl } from '../../../api/client';
-import { useVault } from '../../../context/VaultContext';
+import { useVaultId } from '../../../context/VaultContext';
 import { useOptionalI18n } from '../../../context/I18nContext';
 import { isMacPhoneSurface } from '../../../lib/phoneSurface';
 import { readScopedRaw, writeScopedRaw } from '../../../lib/scopedStorage';
@@ -2711,7 +2711,7 @@ export function useInlineMedia(
   // Which project's files these references name. Read here, in the hook, and threaded into the
   // module-level `rawUrl` below — the effect it feeds runs on every render, so it always builds
   // its `src` against the project whose transcript is on screen.
-  const { vault } = useVault();
+  const { vault } = useVaultId();
   // The hands-free phone (task hands-free-phone-shows-every-picture…): its outside pictures
   // follow its own rules (`needs_phone_grant` → "Show", `other_project` → no button), and it
   // never offers "Open ↗" — handing a file to the Mac's OS is laptop-only.
