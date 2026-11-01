@@ -663,7 +663,7 @@ const KEEP_DEFAULT = { w: 960, h: 640 };
  * A live page (a site, a dev server) gets the bar (Reload, Clear cache, Inspect) and its picks go
  * to the composer. A project page is read by the board's reader with its zoom bridge in EVERY
  * state (the pane reads it only while interactive), so its srcdoc never changes and the frame
- * never reloads; it is never parked (webBudget: a project file holds a frame only on screen).
+ * never reloads, and it is parked like a live page.
  */
 function WebCardBody(p: BodyProps & { large: boolean }): ReactNode {
   const c = p.container;

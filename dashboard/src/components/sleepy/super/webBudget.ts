@@ -2,7 +2,7 @@
  * The web containers' iframe budget (plan-r7 D10): at most TWO live iframes on the hand-over
  * screen. The least recently focused web container beyond that drops to its title and a Load
  * placeholder; one that is collapsed or not on screen (the overlay folded, the window hidden)
- * holds none at all. Loading an unapproved host stays the owner's click inside the widget.
+ * keeps its frame while {@link keptWebIds} has room. Loading an unapproved host stays the owner's click inside the widget.
  *
  * Pure: the surface keeps the recency list in state and asks which ids may hold a frame.
  */

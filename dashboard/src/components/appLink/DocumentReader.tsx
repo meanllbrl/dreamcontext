@@ -9,7 +9,8 @@ import { revealPath } from '../../lib/reveal';
 import { isValidAppLinkPath } from '../../lib/appLink';
 import { agentFileKind } from '../../lib/agentFileKind';
 import { resolveWikilinkTarget, type WikilinkCandidate } from '../../lib/wikilinks';
-import { buildSandboxSrcdoc, SANDBOX_ALLOW } from '../../lib/sandboxHtml';
+import { buildSandboxSrcdoc, SANDBOX_ALLOW, SCROLL_KEEP_BRIDGE, THEME_BRIDGE, themeMessage } from '../../lib/sandboxHtml';
+import { pollMs } from '../../lib/windowActivity';
 import { SELECTION_BRIDGE } from '../../lib/textSelection';
 import { useFrameSelection } from '../sleepy/chat/SelectionBar';
 import { pageDefaultCss } from '../../lib/pageDefaultCss';
@@ -262,11 +263,16 @@ type VaultContent =
   | { path: string; type: 'text' | 'markdown'; content: string }
   | { path: string; type: 'json'; data?: unknown; raw?: string };
 
+/** How often an open web card asks whether its file changed (one `stat`, no bytes). */
+export const FILE_WATCH_MS = 3000;
+
 /** The file's text (or folder listing) from `/agent/file`, or from the vault route under
- *  `vaultReads`, refetched when the path changes. `tooLarge`: the server refused it as over its
+ *  `vaultReads`, refetched when the path changes. `watch` (a web card): also when the file changes
+ *  on disk, read quietly behind what is shown, and nothing happens unless the text differs.
+ *  `tooLarge`: the server refused it as over its
  *  cap (413), which a reader says in its own words rather than as "could not be read". Shared
  *  with the full-screen page viewer (layout/FrameViewer.tsx). */
-export function useFileContent(path: string, vaultReads = false) {
+export function useFileContent(path: string, vaultReads = false, watch = false) {
   const api = useApi();
   // Read through a ref: the provider hands out a new `t` on every render of its own, and a
   // refetch blanks the reader (an HTML page's frame unmounts and loads again).
@@ -294,6 +300,31 @@ export function useFileContent(path: string, vaultReads = false) {
       });
     return () => { cancelled = true; };
   }, [api, path, vaultReads]);
+  useEffect(() => {
+    if (!watch || vaultPath(path, vaultReads)) return undefined;
+    const url = `/agent/file?path=${encodeURIComponent(path)}`;
+    let stopped = false;
+    let timer = 0;
+    let stamp: number | undefined;
+    const tick = async () => {
+      if (!document.hidden) {
+        const seen = await api.get<{ mtimeMs?: number }>(`${url}&probe=1`).then((r) => r.mtimeMs, () => undefined);
+        if (stopped) return;
+        if (seen !== undefined && stamp !== undefined && seen !== stamp) {
+          const data = await api.get<FileContent>(url).catch(() => null);
+          if (stopped) return;
+          if (data) {
+            stamp = seen;
+            setState((prev) => (prev.data?.type === data.type && 'content' in data && 'content' in prev.data && prev.data.content === data.content
+              ? prev : { loading: false, data, error: null }));
+          }
+        } else if (seen !== undefined) stamp = seen;
+      }
+      if (!stopped) timer = window.setTimeout(() => { void tick(); }, pollMs(FILE_WATCH_MS));
+    };
+    void tick();
+    return () => { stopped = true; window.clearTimeout(timer); };
+  }, [api, path, vaultReads, watch]);
   return state;
 }
 
@@ -344,13 +375,40 @@ async function inTurn<T>(jobs: (() => Promise<T>)[], limit: number): Promise<T[]
  * so the project boundary and the one-file consent rules are the server's, unchanged. Shared
  * with the full-screen page viewer (layout/FrameViewer.tsx).
  */
-export function useProjectHtml(path: string, vaultReads = false) {
+export function useProjectHtml(path: string, vaultReads = false, watch = false) {
   const api = useApi();
   const { vault } = useVault();
-  const state = useFileContent(path, vaultReads);
+  const state = useFileContent(path, vaultReads, watch);
   const raw = state.data && state.data.type !== 'dir' && typeof state.data.content === 'string'
     ? state.data.content : null;
   const [html, setHtml] = useState<{ raw: string; html: string } | null>(null);
+  // Watching, a picture or stylesheet the page names counts as the page: its change re-reads them.
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    if (!watch || raw === null) return undefined;
+    const { images, styles } = findLocalAssets(raw, path);
+    const files = [...images.map((p) => ({ p, q: '&raw=1&probe=1' })), ...styles.map((p) => ({ p, q: '&probe=1' }))];
+    if (!files.length) return undefined;
+    const stamps = new Map<string, number>();
+    let stopped = false;
+    let timer = 0;
+    const tick = async () => {
+      if (!document.hidden) {
+        const seen = await inTurn(files.map(({ p, q }) => () => api.get<{ mtimeMs?: number }>(`/agent/file?path=${encodeURIComponent(p)}${q}`).then((r) => [p, r.mtimeMs] as const, () => [p, undefined] as const)), 4);
+        if (stopped) return;
+        let changed = false;
+        for (const [p, at] of seen) {
+          if (at === undefined) continue;
+          if (stamps.has(p) && stamps.get(p) !== at) changed = true;
+          stamps.set(p, at);
+        }
+        if (changed) setRevision((n) => n + 1);
+      }
+      if (!stopped) timer = window.setTimeout(() => { void tick(); }, pollMs(FILE_WATCH_MS));
+    };
+    void tick();
+    return () => { stopped = true; window.clearTimeout(timer); };
+  }, [api, raw, path, watch]);
   useEffect(() => {
     if (raw === null) return;
     const abort = new AbortController();
@@ -392,8 +450,9 @@ export function useProjectHtml(path: string, vaultReads = false) {
       setHtml({ raw, html: inlineLocalAssets(raw, path, loaded) });
     });
     return () => { abort.abort(); };
-  }, [api, vault, raw, path, vaultReads]);
-  const ready = raw !== null && html?.raw === raw ? html.html : null;
+  }, [api, vault, raw, path, vaultReads, revision]);
+  // Watching, the page on screen stays until the new one is ready: its frame is never blanked.
+  const ready = raw !== null && (html?.raw === raw || watch) ? html?.html ?? null : null;
   return { ...state, loading: state.loading || (raw !== null && ready === null), html: ready };
 }
 
@@ -484,7 +543,7 @@ function HtmlPage({
   const tx = useText();
   const { t } = useI18n();
   const { resolved: theme } = useTheme();
-  const state = useProjectHtml(path, vaultReads);
+  const state = useProjectHtml(path, vaultReads, fill);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   useFrameSelection(frameRef);
   const loads = useRef(0);
@@ -514,13 +573,21 @@ function HtmlPage({
   const pageFit = useRef(onPageFit);
   pageFit.current = onPageFit;
 
+  // Built with the theme of that moment, never for a new one: the frame is told (below), since a
+  // rebuilt srcdoc reloads the page and drops its scroll.
+  const themeNow = useRef(theme);
+  themeNow.current = theme;
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
-      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, overrideCss: pageDefaultCss(fill),
-      headScript: [HEIGHT_BRIDGE, SELECTION_BRIDGE, LINK_GUARD, ...(zoomBridge ? [ZOOM_BRIDGE, IMAGE_BRIDGE] : []), ...(reportsFit ? [PAGE_FIT_BRIDGE] : [])].join('\n'),
+      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: themeNow.current, overrideCss: pageDefaultCss(fill),
+      headScript: [HEIGHT_BRIDGE, SELECTION_BRIDGE, LINK_GUARD, THEME_BRIDGE, SCROLL_KEEP_BRIDGE, ...(zoomBridge ? [ZOOM_BRIDGE, IMAGE_BRIDGE] : []), ...(reportsFit ? [PAGE_FIT_BRIDGE] : [])].join('\n'),
     })),
-    [html, theme, zoomBridge, fill, reportsFit],
+    [html, zoomBridge, fill, reportsFit],
   );
+  const sendTheme = useCallback(() => {
+    frameRef.current?.contentWindow?.postMessage(themeMessage(resolveChatKitTokens(), themeNow.current), '*');
+  }, []);
+  useEffect(sendTheme, [theme, sendTheme]);
 
   // The only message accepted: a height, from THIS frame's window (identity is the gate).
   useLayoutEffect(() => {
@@ -552,14 +619,15 @@ function HtmlPage({
     };
   }, []);
 
-  useLayoutEffect(() => { loads.current = 0; }, [srcDoc]);
+  useLayoutEffect(() => { loads.current = 0; setTorn(false); }, [srcDoc]);
 
   const onLoad = useCallback(() => {
     loads.current += 1;
     // A second load of the same srcdoc is the page navigating itself away.
     if (loads.current >= 2) { setTorn(true); return; }
     frameRef.current?.contentWindow?.postMessage({ [HEIGHT_REQUEST_KEY]: true }, '*');
-  }, []);
+    sendTheme(); // a flip while the page was still parsing
+  }, [sendTheme]);
 
   const frame = srcDoc !== null && !torn && (
     <iframe

@@ -5024,9 +5024,10 @@ function sendTooLarge(res: ServerResponse, size: number, limit: number, message:
 }
 
 /** `?probe=1`: everything a read would check has passed and the file fits its branch's cap,
- *  answered without reading a byte (a card asking "will this load?" before it mounts a reader). */
-function sendProbe(res: ServerResponse, size: number, limit: number): void {
-  sendJson(res, 200, { probe: true, size, limit });
+ *  answered without reading a byte (a card asking "will this load?" before it mounts a reader).
+ *  A text file also says when it last changed, so an open card can follow it for one `stat`. */
+function sendProbe(res: ServerResponse, size: number, limit: number, mtimeMs?: number): void {
+  sendJson(res, 200, { probe: true, size, limit, ...(mtimeMs === undefined ? {} : { mtimeMs }) });
 }
 
 /** Extensions servable as raw image bytes via `?raw=1`. SVG is NOT in this map: it can embed
@@ -5289,7 +5290,7 @@ export async function handleAgentFile(
   // markup, and a huge one is a generated artifact, not a picture.
   if (wantsRaw && ext === '.svg') {
     if (st.size > AGENT_FILE_MAX_BYTES) { sendTooLarge(res, st.size, AGENT_FILE_MAX_BYTES, 'File exceeds the preview size cap.'); return; }
-    if (probe) { sendProbe(res, st.size, AGENT_FILE_MAX_BYTES); return; }
+    if (probe) { sendProbe(res, st.size, AGENT_FILE_MAX_BYTES, st.mtimeMs); return; }
     res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
     res.setHeader('Content-Disposition', 'inline');
     serveMedia(req, res, abs, st.size, 'image/svg+xml');
@@ -5298,7 +5299,7 @@ export async function handleAgentFile(
 
   if (wantsRaw && rawType) {
     if (st.size > AGENT_MEDIA_MAX_BYTES) { sendTooLarge(res, st.size, AGENT_MEDIA_MAX_BYTES, 'File is too large to stream.'); return; }
-    if (probe) { sendProbe(res, st.size, AGENT_MEDIA_MAX_BYTES); return; }
+    if (probe) { sendProbe(res, st.size, AGENT_MEDIA_MAX_BYTES, st.mtimeMs); return; }
     // A document is DISPLAYED, never downloaded: without this an engine that has no built-in
     // viewer for the type falls back to saving it, which from the user's side reads as "the
     // viewer opened and nothing happened, and now there's a file in Downloads". `nosniff` is
@@ -5312,7 +5313,7 @@ export async function handleAgentFile(
   // page (its pictures ride inline) and an Excalidraw board (its scene JSON) get the larger one.
   const textCap = agentFileTextCap(abs);
   if (st.size > textCap) { sendTooLarge(res, st.size, textCap, 'File exceeds the preview size cap.'); return; }
-  if (probe) { sendProbe(res, st.size, textCap); return; }
+  if (probe) { sendProbe(res, st.size, textCap, st.mtimeMs); return; }
   let content: string;
   try { content = readFileSync(abs, 'utf-8'); } catch { sendError(res, 500, 'read_failed', 'Failed to read file.'); return; }
   sendJson(res, 200, { path: rawPath, type: ext === '.md' ? 'markdown' : 'text', content });

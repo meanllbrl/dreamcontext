@@ -27,7 +27,7 @@
  * holds both cards and the view, and after the presentation for RECORD_WATCH_MS. Over the whole
  * run: the page on screen from the open to the end made ONE frame and loaded once (the old card
  * rebuilt it on its way to side by side, and again on every move between floating and shown);
- * the other made a frame only each time it came back on screen, and loaded each once.
+ * the other loaded once per frame it made.
  * Screenshots: tmp/super-web-file-steady/. Exit 0 iff all pass.
  */
 
@@ -405,6 +405,88 @@ async function steadyIn(page, label, ids, expectView, where) {
   ok(`${label}: the view is still ${expectView(null)}`, expectView(rec.view), JSON.stringify(rec.view));
 }
 
+/**
+ * VERIFY_RELOAD=1 (owner 2026-11-01: "isn't it cached, it keeps reloading"): the page stays open,
+ * its file unchanged, and each thing that happens around it is counted: how many times the card's
+ * page loaded, whether it is the same frame, and where it was scrolled. Only a real edit of the
+ * file may load it again.
+ */
+async function reloadMatrix(page, a, b) {
+  const frameOf = async () => {
+    const el = await card(page, a).locator('iframe').first().elementHandle({ timeout: 8000 }).catch(() => null);
+    return el ? el.contentFrame() : null;
+  };
+  const scrollTo = async (y) => { const f = await frameOf(); return f ? f.evaluate((v) => { window.scrollTo(0, v); return window.scrollY; }, y) : -1; };
+  const scrollY = async () => { const f = await frameOf(); return f ? f.evaluate(() => window.scrollY).catch(() => -1) : -1; };
+  const text = async () => { const f = await frameOf(); return f ? f.evaluate(() => document.body.innerText).catch(() => '') : ''; };
+  const steady = () => page.evaluate((id) => ({ made: window.__steady.made[id] || 0, loads: window.__steady.loads[id] || 0 }), a);
+  const hide = (hidden) => page.evaluate((v) => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => v });
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (v ? 'hidden' : 'visible') });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, hidden);
+  await settle(page);
+  await until(page, async () => (await card(page, a).locator('iframe').count()) > 0, 15000);
+  await page.waitForTimeout(1500);
+  let moved = await scrollTo(300);
+  ok('the page can be scrolled (the watch below would prove nothing otherwise)', moved > 0, String(moved));
+  const rows = [];
+  const step = async (label, act, { expect = 0, reflows = false } = {}) => {
+    const before = await steady();
+    await act();
+    await settle(page);
+    const after = await steady();
+    const y = await scrollY();
+    const row = { label, loads: after.loads - before.loads, frames: after.made - before.made, scrollY: y };
+    rows.push(row);
+    console.log(`  · ${JSON.stringify(row)}`);
+    ok(`${label}: ${expect} more loads`, row.loads === expect, JSON.stringify(row));
+    // A new width can shorten the page, and the engine then clamps its scroll: no reload, and
+    // the next steps watch the new position.
+    if (reflows) moved = y;
+    else if (!expect) ok(`${label}: the scroll stays`, y === moved, JSON.stringify(row));
+  };
+  await step('idle for the watch (state polls)', () => page.waitForTimeout(SAMPLE_MS));
+  await step('the super streams a turn', async () => { await busyTurn(page); await page.waitForTimeout(SAMPLE_MS); });
+  await page.waitForTimeout(5000);
+  const scheme = async () => { const f = await frameOf(); return f ? f.evaluate(() => getComputedStyle(document.documentElement).colorScheme) : ''; };
+  await step('the theme flips', async () => {
+    await page.emulateMedia({ colorScheme: 'light' }); await page.waitForTimeout(1200);
+    ok('the page takes the new theme', (await scheme()) === 'light', await scheme());
+    await page.emulateMedia({ colorScheme: 'dark' }); await page.waitForTimeout(1200);
+  });
+  await step('the window narrows and comes back', async () => {
+    await page.setViewportSize({ width: VIEWPORT.width - 200, height: VIEWPORT.height }); await page.waitForTimeout(1500);
+    await page.setViewportSize(VIEWPORT); await page.waitForTimeout(1500);
+  }, { reflows: true });
+  await step('the window is hidden and comes back', async () => { await hide(true); await page.waitForTimeout(2500); await hide(false); await page.waitForTimeout(2500); });
+  moved = await scrollTo(100000); // the page's very end: a clamp shows here first
+  await step('the overlay folds and opens (the hotkey)', async () => {
+    await page.keyboard.press('Control+a'); await page.waitForTimeout(2000);
+    console.log(`  · folded: ${(await page.locator('[data-testid="super-surface"]:visible').count()) === 0}`);
+    await page.keyboard.press('Control+a'); await page.waitForTimeout(2500);
+  });
+  await step('another page takes the half, then this one comes back', async () => {
+    await agent(page, `super open web ${PAGE_B} --titles Backup`); await page.waitForTimeout(2500);
+    console.log(`  · this card holds a frame while the other is shown: ${(await card(page, a).locator('iframe').count()) > 0}`);
+    await agent(page, `super half ${a}`); await page.waitForTimeout(2500);
+  });
+  await step('a picture the page names really changes', async () => {
+    copyFileSync(join(REPO, 'public', 'image', process.env.VERIFY_OTHER_PNG || 'diagram-recall.png'), join(PROJ, DIR, 'shots', '1.png'));
+    writeFileSync(join(PROJ, DIR, 'shots', '1.png'), Buffer.concat([readFileSync(join(PROJ, DIR, 'shots', '1.png')), Buffer.from('changed')]));
+    await page.waitForTimeout(Number(process.env.VERIFY_EDIT_MS || 6000));
+  }, { expect: 1 });
+  const edited = `Edited ${Date.now()}`;
+  await step('the file really changes', async () => {
+    writeFileSync(join(PROJ, PAGE_A), readFileSync(join(PROJ, PAGE_A), 'utf-8').replace('<h1>', `<h1>${edited} `));
+    await page.waitForTimeout(Number(process.env.VERIFY_EDIT_MS || 6000));
+  }, { expect: 1 });
+  ok('the edit is on the card', (await text()).includes(edited));
+  console.log(`\n  RELOAD TABLE ${JSON.stringify(rows)}`);
+  await shot(page, 'reload-end');
+  void b;
+}
+
 let server = null;
 let browser = null;
 let lastPage = null;
@@ -465,7 +547,10 @@ try {
   if (!(await page.locator('.chat-cmp-input:visible').count())) await page.getByRole('button', { name: /Start chat/ }).click().catch(() => {});
   ok('a chat opens', await until(page, async () => (await page.locator('.chat-cmp-input:visible').count()) > 0));
   await sleep(1500);
-  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+  // The drawer's Super Agent row hands over since the tab's button left the chat bar.
+  const handover = page.locator('[data-testid="super-handover-btn"]:visible').first();
+  if (await handover.count()) await handover.click().catch(() => {});
+  else await page.getByText('Super Agent', { exact: true }).first().click();
   ok('the surface shows', await until(page, async () => (await page.locator('[data-testid="super-surface"]:visible').count()) > 0));
   ok('the super agent took the hand-over', await until(page, async () => readNd(REPORTS).some((r) => r.kind === 'handover'), 60000));
   await until(page, async () => (await superComposer(page).count()) > 0, 20000);
@@ -475,6 +560,7 @@ try {
   const a = idOf(PAGE_A);
   const b = idOf(PAGE_B);
   ok('both cards are in the record', !!a && !!b, JSON.stringify(record().containers.map((c) => [c.id, c.ref])));
+  if (process.env.VERIFY_RELOAD) { await reloadMatrix(page, a, b); throw Object.assign(new Error('reload: done'), { done: true, errors }); }
   if (NARROW) {
     // A phone-width window: the page opens as a sheet over the super's chat (its composer under
     // it), so only this state is driven here.
@@ -549,15 +635,17 @@ try {
   // The first page is on screen from the open to the end: one frame, one load.
   ok(`${a}: ONE frame from the open on, through side by side, presented and floating`, whole?.made?.[a] === 1, JSON.stringify(whole));
   ok(`${a}: its page loaded once`, whole?.loads?.[a] === 1, JSON.stringify(whole));
-  // The second leaves the screen (side by side and "presented alone" show only the first): a
-  // project page holds a frame only on screen (webBudget), so it loads again when it is back,
-  // and never twice in one frame.
+  // The second leaves the screen (side by side and "presented alone" show only the first): it
+  // keeps its frame while parked, and never loads twice in one.
   ok(`${b}: every frame it made loaded its page once (never reloaded in place)`, whole?.made?.[b] >= 1 && whole?.loads?.[b] === whole?.made?.[b], JSON.stringify(whole));
 
   ok('no console errors', errors.length === 0, errors.slice(0, 5).join('\n'));
   await context.close();
 } catch (e) {
-  if (e?.done) { /* the narrow run ends after its one state */ } else {
+  if (e?.done) {
+    // The narrow and reload runs end early.
+    if (e.errors) ok('no console errors', e.errors.length === 0, e.errors.slice(0, 5).join('\n'));
+  } else {
   fails.push(`crashed: ${e?.stack || e}`);
   if (lastPage) await lastPage.screenshot({ path: join(OUT, 'crash.png') }).catch(() => {});
   console.log(`  ✗ crashed: ${e?.stack || e}`);
