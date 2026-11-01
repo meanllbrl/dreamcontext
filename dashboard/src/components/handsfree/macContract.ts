@@ -82,12 +82,20 @@ export interface LiveChatWire { conversationId: string; vault: string | null; ti
 export interface LiveChatsWire {
   chats: LiveChatWire[];
   draining: string[];
-  /** A project whose Super Agent is handed over: ONE row here, none of its chats under `chats`. */
+  /** One row per project handed over to its Super Agent, beside that project's own chats under
+   *  `chats`: the two live together. Absent when no project is handed over. */
   supers?: SuperChatWire[];
 }
 
 /** The Super Agent row of a handed-over project; `live` false = the Mac runs no super chat now. */
-export interface SuperChatWire extends LiveChatWire { vault: string; live: boolean }
+/** The work a Super Agent gave out, as the phone is told it: a name (the Mac's job card title, never
+ *  the prompt), a state, no prompt or path. `done`: no process left, its transcript reads. */
+export interface SuperJobWire { conversationId: string; title: string; state: 'working' | 'asking' | 'idle' | 'done'; startedAt: number }
+
+/** The Super Agent row of a handed-over project. `live` false: the Mac's window is not running
+ *  it right now, so the phone cannot open it. `jobs`: what it runs and what it just finished.
+ *  `childIds`: every child of its record, for keeping them out of the owner's lists. */
+export interface SuperChatWire extends LiveChatWire { vault: string; live: boolean; jobs: SuperJobWire[]; childIds: string[] }
 
 export const MAC_ROUTES = {
   status: 'GET /api/handsfree/mac/status',

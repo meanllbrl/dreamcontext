@@ -40,13 +40,15 @@ describe('homeRows', () => {
     expect(rows.some((r) => r.key.includes('c-gone'))).toBe(false);
   });
 
-  it('a handed-over project contributes its one Super row and nothing else', () => {
+  it('a handed-over project contributes its one Super row beside its own chats', () => {
     const r = homeRows({
       vault: 'acme', tabs: [], projects: ['acme', 'beta'],
-      live: { ...LIVE, supers: [{ ...live('sup', 'beta', 'asking'), vault: 'beta', live: true }] },
+      live: { ...LIVE, supers: [{ ...live('sup', 'beta', 'asking'), vault: 'beta', live: true, jobs: [], childIds: [] }] },
     });
     const beta = r.filter((x) => x.vault === 'beta');
-    expect(beta.map((x) => [x.kind, x.section])).toEqual([['super', 'waiting']]);
+    expect(beta[0].kind).toBe('super');
+    expect(beta[0].section).toBe('waiting');
+    expect(beta.length).toBe(1 + LIVE.chats.filter((c) => c.vault === 'beta').length);
   });
 
   it('a mounted project\'s tabs come from otherTabs; an unmounted one shows only the Mac\'s chats', () => {
@@ -68,7 +70,7 @@ describe('the chat screen across projects', () => {
   });
 
   it('an offline Super row is never a swipe target', () => {
-    const r = homeRows({ vault: 'acme', tabs: [tab('t1', 'a-tab', 'asking')], projects: ['acme', 'beta'], live: { chats: [], draining: [], supers: [{ ...live('sup', 'beta', 'idle'), live: false }] } });
+    const r = homeRows({ vault: 'acme', tabs: [tab('t1', 'a-tab', 'asking')], projects: ['acme', 'beta'], live: { chats: [], draining: [], supers: [{ ...live('sup', 'beta', 'idle'), live: false, jobs: [], childIds: [] }] } });
     expect(swipeTarget(r, r[0].key, 1)).toBeNull();
   });
 

@@ -648,8 +648,8 @@ try {
     let sh = null;
     report.check('B waits on you and leads its project in the drawer', await until(async () => { sh = await shapes(); return sh.proj.rows[0]?.id === B && sh.proj.rows[0]?.state === 'asking'; }, 30000), JSON.stringify({ proj: sh?.proj?.rows, mac: await macLive() }));
     report.check('the chats of every chosen project are in the drawer, under their project', sh.proj.rows.length >= 2 && sh.other.rows.length >= 1 && sh.third.rows.length >= 1, JSON.stringify(sh));
-    report.check('a project handed over at the Mac (third) is its one Super row', sh.third.rows.length === 1 && sh.third.rows[0].kind === 'super', JSON.stringify(sh.third.rows));
-    report.check('the handed-over project (other) is its one Super row, no New chat', sh.other.rows.length === 1 && sh.other.rows[0].kind === 'super' && !sh.other.newChat, JSON.stringify(sh.other));
+    report.check('a project handed over at the Mac (third) lists its Super row first', sh.third.rows[0].kind === 'super', JSON.stringify(sh.third.rows));
+    report.check('the handed-over project (other) lists its Super row first; no chat of a child', sh.other.rows[0].kind === 'super' && !sh.other.rows.some((r) => /child/i.test(r.text)), JSON.stringify(sh.other));
     await ph.screenshot({ path: join(SHOTS, 'phone-390-drawer.png') });
     // A tap on a chat of another project opens it there.
     await chatRow(ph, 'proj', TITLES[A]).first().click();

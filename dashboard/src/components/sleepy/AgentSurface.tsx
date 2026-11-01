@@ -91,7 +91,7 @@ import { useChrome } from '../layout/WindowChrome';
 import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
 import { carriedUnrestored, generationOf, mergeStoredRoster, phoneRestorable, putOutcome, seededRoster, withBaseGeneration, type DesktopSeedTab } from '../handsfree/rosterRehydrate';
 import { PhoneBagNote } from '../handsfree/phone/PhoneBagNote';
-import { MAC_MODE_ENDED_EVENT, type LiveChatWire, type LiveChatsWire, type SuperChatWire } from '../handsfree/macContract';
+import { MAC_MODE_ENDED_EVENT, type LiveChatWire, type LiveChatsWire, type SuperChatWire, type SuperJobWire } from '../handsfree/macContract';
 import { isSuperMirrorId, rememberSuperMirrorIds } from './superMirrorIds';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { recordPhoneEvent } from '../../lib/phoneConnLog';
@@ -102,6 +102,7 @@ import { readSuperStateView, type SuperDigestWire, type SuperQueueItem, type Sup
 import { cardTitle } from './super/superTitles';
 import type { SurveyRead } from './chat/SurveyCard';
 import { PhoneAgenda, phoneEventContext } from './super/PhoneAgenda';
+import { PhoneSuperJobs } from './super/PhoneSuperJobs';
 import { holdSidebarCollapsed as holdClassicSidebar } from '../../hooks/useSidebarCollapse';
 import { readDeviceShell, readShellModeFrozen, useIsNewShell } from '../../lib/uxMode';
 import { superTap } from './phoneList';
@@ -113,10 +114,12 @@ import {
 } from './chatWindows';
 import { wasOpenedForLink } from '../../lib/windowLaunch';
 import { chatOnScreen } from './chatOnScreen';
-import { deviceMayStartChat, deviceRefusesIntent, historyPickRefused, openChatPlan } from '../layout/newshell/drawerModel';
+import { deviceRefusesIntent, historyPickRefused, openChatPlan } from '../layout/newshell/drawerModel';
 import { markClosed } from './phoneClosed';
+import type { HomeRow } from './phoneHome';
 import { DRAWER_INTENT_EVENT, DRAWER_SURFACE_EVENT, type DrawerChatFact, type DrawerIntent, type DrawerSurfaceState, type PendingDrawerIntent } from '../../lib/drawerIntents';
 import { planSuperRow, runSuperRow, SUPER_ROW_SPAWN } from './super/superRow';
+const NO_JOBS: readonly SuperJobWire[] = [];
 /** The new shell opens its first project on Chat once per window (6b), not on every switch. */
 let openedOnRestoreThisWindow = false;
 /** The window was opened to land a link (`&open=`, `openVaultWindow`): its page wins over Chat.
@@ -3053,8 +3056,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     const past = { id: claudeId, title: '', preview: '', updatedAt: 0, startedAt: null, sizeBytes: 0, gitBranch: '' };
     // A hands-free phone (a notification tap): a chat still running on the Mac is ADOPTED, as
     // the drawer's "Open on Mac" does; a plain resume would displace the running process.
-    // A History pick (`pick`) asks the Mac fresh even for a dormant tab, and resumes NOTHING in a
-    // project handed over meanwhile, for a chat still draining, or when the read fails
+    // A History pick (`pick`) asks the Mac fresh even for a dormant tab, and resumes NOTHING for a
+    // Super's chat or a child of it, a chat still draining, or when the read fails
     // (`historyPickRefused`). A notification tap keeps its path to the mirror and watch.
     if (isMacPhoneSurface() && (!existing || (pick && existing.dormant))) {
       // This project's client: with 2+ chosen projects the phone listener refuses a read that
@@ -3062,7 +3065,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       void scopedApi.get<LiveChatsWire>('/agent/live-chats')
         .then((r): LiveChatsWire | null => r, () => null)
         .then((r) => {
-          if (pick && historyPickRefused(r, vault ?? '', claudeId)) return;
+          if (pick && historyPickRefused(r, claudeId)) return;
           const live = r?.chats.find((c) => c.conversationId === claudeId);
           if (live) adoptLiveChat(live); else resumePastSession(past);
         });
@@ -5479,10 +5482,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       return;
     }
     if (!caps?.desktop || !agentSettings.enabled) { setExpanded(true); return; }
-    // A device shell never hands over (the Super Agent button is the Mac's) and starts no chat in
-    // a handed-over project, nor before the tunnel's live read has answered. The drawer offers
-    // neither; this holds whatever queued the intent.
-    if (readDeviceShell() && deviceRefusesIntent(intent.kind, deviceMayStartChat(windowChrome.deviceChats, vault ?? ''))) {
+    // A device shell never hands over (the Super Agent button is the Mac's). The drawer does not
+    // offer it; this holds whatever queued the intent.
+    if (readDeviceShell() && deviceRefusesIntent(intent.kind)) {
       setExpanded(true);
       return;
     }
@@ -5915,6 +5917,22 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     activeClaude: mobileActive ? (sessions.current.get(mobileActive.id)?.claudeId || claudeIdOf.get(mobileActive.id)) : undefined,
     hostRef, openChatRow: windowChrome.openChatRow,
   });
+  // What this project's Super Agent gave out, from the Mac's record (`live-chats`).
+  const phoneJobs = windowChrome.deviceChats.rows.find((r): r is Extract<HomeRow, { kind: 'super' }> => r.kind === 'super' && r.vault === vault)?.row.jobs ?? NO_JOBS;
+  // A Super taken back ended this phone's mirror for good: the Mac refuses that conversation here,
+  // so its tab would say "Connecting…" forever with the composer shut. The tab goes (the Super
+  // chat is not the phone's to close, only its own view of it) and the project starts chats as any.
+  const deviceRows = windowChrome.deviceChats.rows;
+  const deviceAnswered = windowChrome.deviceChats.liveAnswered;
+  useEffect(() => {
+    if (!isMacPhoneSurface() || !deviceAnswered) return;
+    const named = new Set(deviceRows.flatMap((r) => (r.kind === 'super' ? [r.row.conversationId] : [])));
+    for (const m of sessionList) {
+      const live = sessions.current.get(m.id);
+      const cid = live?.claudeId ?? m.claudeId;
+      if (cid && isSuperMirrorId(cid) && !named.has(cid) && live?.status !== 'open') closeSessionById(m.id);
+    }
+  }, [deviceRows, deviceAnswered, sessionList, closeSessionById]);
   const phoneToastEl = phoneChatOn ? <PhoneWaitingToast row={phoneChatNav.toast} onOpen={phoneChatNav.openToast} /> : null;
   // Collapsed dock rows — one chip per session, in roster order. Never the Super Agent (it is
   // not a tab; its queue speaks through the hand-over button's dot and the queue head).
@@ -6183,33 +6201,29 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     />
   ) : null;
   // ── The phone's Chat page with no chat on it ──
-  // One line and one button, never the desktop setup screen. On the tunnel a project handed over
-  // to the Super Agent offers no New chat (its chats are the Super's): the hint and the Super row
-  // instead, disabled while the Mac runs no chat for it. Until the live read answers no project
-  // offers New chat (deviceMayStartChat), as the drawer holds it back.
-  const phoneMayStart = deviceMayStartChat(windowChrome.deviceChats, vault ?? '');
-  const phoneHandedHere = !!vault && windowChrome.deviceChats.handedOver.has(vault);
-  const phoneSuperRow = phoneHandedHere ? windowChrome.deviceChats.rows.find((r) => r.kind === 'super' && r.vault === vault) : undefined;
+  // One line and one button, never the desktop setup screen. A project handed over to its Super
+  // Agent starts chats like any other; its Super chat sits beside the button, disabled while the
+  // Mac runs no chat for it.
+  const phoneSuperRow = windowChrome.deviceChats.rows.find((r): r is Extract<HomeRow, { kind: 'super' }> => r.kind === 'super' && r.vault === vault);
   const phoneEmpty = (
     <div className="mchat-empty" data-testid="chat-empty">
-      <p className="mchat-empty-line">
-        {phoneHandedHere ? t('handsfree.super.hint') : canSpawn ? t('shell.windows.empty') : t('shell.windows.emptyBlocked')}
-      </p>
-      {phoneHandedHere ? (
-        <button
-          type="button"
-          className="chat-btn primary"
-          data-testid="chat-empty-super"
-          disabled={!phoneSuperRow || phoneSuperRow.kind !== 'super' || !phoneSuperRow.row.live}
-          onClick={() => { if (vault && phoneSuperRow) windowChrome.openChatRow(vault, phoneSuperRow); }}
-        >
-          {t('handsfree.super.title')}
-        </button>
-      ) : canSpawn && phoneMayStart ? (
+      <p className="mchat-empty-line">{canSpawn ? t('shell.windows.empty') : t('shell.windows.emptyBlocked')}</p>
+      {canSpawn && (
         <button type="button" className="chat-btn primary" data-testid="chat-empty-new" onClick={() => addSession(claudeKind)}>
           {t('shell.drawer.newChat')}
         </button>
-      ) : null}
+      )}
+      {phoneSuperRow && (
+        <button
+          type="button"
+          className="chat-btn"
+          data-testid="chat-empty-super"
+          disabled={!phoneSuperRow.row.live}
+          onClick={() => { if (vault) windowChrome.openChatRow(vault, phoneSuperRow); }}
+        >
+          {t('handsfree.super.title')}
+        </button>
+      )}
     </div>
   );
   let body: React.ReactNode;
@@ -6528,18 +6542,16 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
                 {mobileActive && <span className="mchat-dot" data-kind={mobileActive.info.kind} aria-hidden />}
                 {mobileActive?.title ?? t('nav.chat')}
               </span>
-              {phoneMayStart && (
-                <button
-                  className="mchat-head-btn"
-                  onClick={() => addSession(claudeKind)}
-                  aria-label={chatMode ? t('shell.drawer.newChat') : 'New agent'}
-                  data-testid="chat-head-new"
-                >
-                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>
-                    <path d="M10 4v12M4 10h12" />
-                  </svg>
-                </button>
-              )}
+              <button
+                className="mchat-head-btn"
+                onClick={() => addSession(claudeKind)}
+                aria-label={chatMode ? t('shell.drawer.newChat') : 'New agent'}
+                data-testid="chat-head-new"
+              >
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>
+                  <path d="M10 4v12M4 10h12" />
+                </svg>
+              </button>
             </>
           )}
           {!isMobile && (
@@ -6659,6 +6671,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
           )}
         </div>
         {phoneSuperChat && <PhoneAgenda digest={phoneDigest} onWriteAbout={writePhoneAboutRow} />}
+        {phoneSuperChat && <PhoneSuperJobs jobs={phoneJobs} />}
         {macPhone && expanded && <PhoneBagNote />}
         {body}
         {/* Each pane renders its OWN composer strip (files + skills + that agent's live

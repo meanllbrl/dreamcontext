@@ -38,8 +38,8 @@ export interface ChatDrawerProps {
   /** Bumped by ⌘N: open the New chat window picker at its row. */
   newWindowNonce: number;
   /** A device shell (`readDeviceShell`): chats only. No New project, Project Relations, Open in
-   *  new window, Close project or drag; a New chat only where `canStartIn` allows it. */
-  device?: { canStartIn(vault: string): boolean; historyReady: boolean };
+   *  new window, Close project or drag. New chat is offered in every project it lists. */
+  device?: boolean;
   /** Under the rows, outside the scroll: Mac mode's tunnel puts the notification opt-in and the
    *  connection-log button here (the Sohbetler list's foot before the phone joined the shell). */
   foot?: ReactNode;
@@ -339,22 +339,19 @@ export function ChatDrawer(p: ChatDrawerProps) {
     <aside className="ns-drawer" data-floating={p.floating ? 'true' : undefined} data-home={p.floating && p.home ? 'true' : undefined} style={{ width: p.floating ? undefined : p.width }}
       ref={rootRef} aria-label={t('shell.drawer.projects')} data-testid="chat-drawer">
       <div className="ns-dr-scroll">
-        {(!p.device || p.rows.some((r) => p.device!.canStartIn(r.name))) && (
         <button ref={newRowRef} type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-new-window"
           onClick={(e) => openMenu({ kind: 'new', x: e.clientX, y: e.clientY })}>
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h3l7-7-3-3-7 7v3zM9 4l3 3" /></svg>
           <span className="ns-dr-t">{t('shell.drawer.newWindow')}</span>
           {!p.device && <kbd className="ns-dr-kbd">⌘N</kbd>}
         </button>
-        )}
         {!p.device && (
         <button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-new-project-row" onClick={p.onNewProject}>
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h4l1.5 1.5h5.5v6.5h-11zM8 7.8v3M6.5 9.3h3" /></svg>
           <span className="ns-dr-t">{t('shell.drawer.newProject')}</span>
         </button>
         )}
-        <button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-history" onClick={p.onHistory}
-          disabled={p.device ? !p.device.historyReady : undefined}>
+        <button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-history" onClick={p.onHistory}>
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.5H5M8 5v3l2 1.5" /></svg>
           <span className="ns-dr-t">{t('shell.drawer.history')}</span>
         </button>
@@ -399,11 +396,9 @@ export function ChatDrawer(p: ChatDrawerProps) {
                 {row.sum && <ProjectChipBubbles chip={row.sum} />}
                 {row.superAsking && <span className="ns-dr-ask" data-testid="drawer-project-asking" aria-label={t('shell.drawer.superAsking')} />}
               </button>
-              {(!p.device || p.device.canStartIn(row.name)) && (
               <button type="button" className="ns-dr-act ns-dr-add" aria-label={`${t('shell.drawer.newWindow')}: ${row.name}`}
                 data-testid="drawer-project-add"
                 onClick={(e) => { e.stopPropagation(); pick(row.name, { kind: 'new-window' }); }}>+</button>
-              )}
               <svg className={`ns-dr-chev${row.expanded ? ' is-open' : ''}`} viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>
             </div>
             {row.expanded && <div className="ns-dr-children">{row.children.map((c) => child(row, c))}</div>}
@@ -422,7 +417,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
           {menu.kind === 'new' ? (
             <>
               <div className="ns-drawer-menu-head">{t('shell.drawer.pickProject')}</div>
-              {p.rows.filter((row) => !p.device || p.device.canStartIn(row.name)).map((row) => (
+              {p.rows.map((row) => (
                 <button key={row.name} type="button" role="menuitem" className="ns-drawer-menu-item"
                   onClick={() => { closeMenu(); pick(row.name, { kind: 'new-window' }); }}>
                   {row.name}

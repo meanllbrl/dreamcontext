@@ -39,18 +39,17 @@ describe('the Super Agent row (AC6)', () => {
     expect(superTap(row({ live: false }), [])).toBeNull();
   });
 
-  it('on a device shell a handed-over project is its one Super row: no chat of it, no new chat there', async () => {
+  it('on a device shell a handed-over project lists its Super row beside its own chats', async () => {
     const { homeRows } = await import('../../dashboard/src/components/sleepy/phoneHome.js');
     const rows = homeRows({
       vault: 'acme', tabs: [], projects: ['acme'],
-      live: { chats: [{ conversationId: 'c1', vault: 'acme', title: 'x', busy: false, state: 'idle', lastLine: null, updatedAt: 1 }], draining: [], supers: [{ conversationId: 's', vault: 'acme', title: null, busy: false, state: 'idle', lastLine: null, updatedAt: 1, live: true }] },
+      live: { chats: [{ conversationId: 'c1', vault: 'acme', title: 'x', busy: false, state: 'idle', lastLine: null, updatedAt: 1 }], draining: [], supers: [{ conversationId: 's', vault: 'acme', title: null, busy: false, state: 'idle', lastLine: null, updatedAt: 1, live: true, jobs: [], childIds: [] }] },
     });
-    expect(rows.map((r) => r.kind)).toEqual(['super']);
-    // The phone's empty chat screen there: the Super hint and a button that runs the Super row
-    // (disabled offline), never New chat.
+    expect(rows.map((r) => r.kind)).toEqual(['super', 'open']);
+    // The phone's empty chat screen there: New chat, and the Super's button beside it (disabled offline).
     const surface = code('dashboard/src/components/sleepy/AgentSurface.tsx');
-    expect(surface).toMatch(/\{phoneHandedHere \? t\('handsfree\.super\.hint'\)/);
-    expect(surface).toMatch(/disabled=\{!phoneSuperRow \|\| phoneSuperRow\.kind !== 'super' \|\| !phoneSuperRow\.row\.live\}/);
+    expect(surface).not.toContain('handsfree.super.hint');
+    expect(surface).toMatch(/disabled=\{!phoneSuperRow\.row\.live\}/);
     expect(surface).toMatch(/windowChrome\.openChatRow\(vault, phoneSuperRow\)/);
   });
 
@@ -63,7 +62,7 @@ describe('the Super Agent row (AC6)', () => {
 
   it('both languages carry the row\'s words', () => {
     const i18n = readFileSync(join(ROOT, 'dashboard/src/context/I18nContext.tsx'), 'utf-8');
-    for (const k of ['handsfree.super.title', 'handsfree.super.hint', 'handsfree.super.offline']) {
+    for (const k of ['handsfree.super.title', 'handsfree.super.offline', 'super.phoneJobs.title', 'super.phoneJobs.done']) {
       expect(i18n.split(`'${k}':`).length - 1).toBe(2);
     }
   });

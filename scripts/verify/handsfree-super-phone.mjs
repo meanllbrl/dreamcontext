@@ -14,8 +14,8 @@
  * the Super Agent's chat (`mode=super`, pin = the recorded session).
  *
  *   1. Super OFF: the drawer (new shell, W2) lists the Mac's running chat as a row.
- *   2. Super ON (POST /api/super/enable, the window's super socket live): ONE Super Agent row,
- *      no other chat of the project and no New chat in the drawer; the wire says the same.
+ *   2. Super ON (POST /api/super/enable, the window's super socket live): a Super Agent row, the
+ *      adopted chat gone from the owner's rows (it is the Super's child), New chat on offer.
  *   3. A tap opens it as a MIRROR: the window's socket is not closed, the phone's message reaches
  *      the Super Agent and its answer comes back; the owner's words show on the other surface.
  *   4. Super OFF again (take-back): the Super row goes.
@@ -205,9 +205,9 @@ try {
   const win = await laptop(`mode=super&sessionId=${SUPER}`);
   report.check('the window\'s Super Agent socket is open', win.closed === null);
   // The handed-over project contributes its one Super row to the drawer and nothing else.
-  report.check('super on: ONE row, the Super Agent; no New chat, no other chat', await until(async () => {
+  report.check('super on: the Super Agent row, and New chat stays (its one chat is the Super\'s child now)', await until(async () => {
     shape = await listShape();
-    return shape.super && shape.rows.length === 1 && shape.rows[0].kind === 'super' && !shape.newChat && !shape.overflowX;
+    return shape.super && shape.rows.length === 1 && shape.rows[0].kind === 'super' && shape.newChat && !shape.overflowX;
   }, 20000), JSON.stringify(shape));
   const w1 = await wire();
   report.check('super on: the wire lists no chat of the project and one live super row', Array.isArray(w1.chats) && w1.chats.length === 0
@@ -248,9 +248,8 @@ try {
   report.check('take-back', dis.status === 200, JSON.stringify(dis.json).slice(0, 160));
   await back(phone);
   report.check('back on the drawer', await until(() => drawerShown(phone), 10000));
-  // The phone's own tab on the old Super conversation stays a row (its title is still "Super
-  // Agent"); what changes is that the project is no longer handed over: the wire lists no Super,
-  // and a chat of the project offers New chat again.
+  // The phone's tab on the old Super conversation goes (the Mac refuses it there); the project is
+  // no longer handed over: the wire lists no Super, and the adopted chat is the owner's again.
   report.check('super off: the wire lists no Super any more', await until(async () => !((await wire()).supers?.length), 20000), JSON.stringify(await wire()).slice(0, 200));
   await expand(phone, 'proj');
   await phone.locator('[data-drawer-project="proj"] [data-testid="drawer-chat-row"]').first().click();
@@ -258,7 +257,10 @@ try {
   await back(phone);
   await phone.screenshot({ path: join(SHOTS, '390x844-super-off-again.png') });
 
-  report.check('no console error on the phone', errors.length === 0, errors.slice(0, 5).join(' | '));
+  // The take-back's last gasp: the mirror's reconnect is refused until the next read drops its
+  // tab. Bounded (3 s of polling), where it used to retry for ever with the composer shut.
+  const real = errors.filter((e) => !e.includes(SUPER));
+  report.check('no console error on the phone, past the take-back\'s bounded refusal', real.length === 0 && errors.length <= 3, errors.slice(0, 5).join(' | '));
   report.check('no 403 on any request the phone made', forbidden.length === 0, forbidden.slice(0, 8).join(' | '));
 } catch (err) {
   report.check('the run completed', false, String(err?.stack ?? err).slice(0, 600));
