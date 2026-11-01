@@ -32,7 +32,7 @@ import {
   type AgentPlacementPatch,
 } from '../../lib/agents/types.js';
 import { isSafeAutomationSlug, readManifestFrontmatter } from '../../lib/agents/slot.js';
-import { cadenceLabel, getRunTarget, listAutomations, parsePattern, resolveAutomationPhoto } from '../../lib/automations/store.js';
+import { cadenceLabel, getRunTarget, listAutomations, parsePattern, resolveAutomationPhoto, runChildAlive } from '../../lib/automations/store.js';
 import { readThread } from '../../lib/automations/threads.js';
 import { listInboxRows, type InboxRow } from '../../lib/owner-inbox.js';
 import { findTaskHead, readTaskJobs } from '../../lib/agents/task-jobs.js';
@@ -41,7 +41,7 @@ import { lastTalkAt } from '../../lib/agents/history.js';
 import { listAgentHistory } from '../../lib/agents/history.js';
 import { sanitizeUuid } from './agent-spawn-shared.js';
 import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
-import { agentActivity } from '../automation-job.js';
+import { agentActivity, runIsActive, type AgentActivity } from '../automation-job.js';
 import { isAgentRequest } from '../desktop.js';
 import { isPhoneSocket } from '../phone-origin.js';
 import { findLiveChat } from './agent-chat-live.js';
@@ -915,6 +915,12 @@ export async function handleAgentsHistory(
     const url = new URL(req.url || '/', 'http://localhost');
     const before = url.searchParams.get('before');
     const exclude = sanitizeUuid(url.searchParams.get('exclude')) || null;
+    // One look per source: a page asks about several of its runs.
+    const activity = new Map<string, AgentActivity | null>();
+    const activityOf = (source: string): AgentActivity | null => {
+      if (!activity.has(source)) activity.set(source, agentActivity(contextRoot, source));
+      return activity.get(source) ?? null;
+    };
     const page = listAgentHistory(contextRoot, params.slug, {
       audience: 'owner',
       before: before && before.length <= 512 ? before : null,
@@ -922,6 +928,8 @@ export async function handleAgentsHistory(
       markTurns: true,
       isLive: (id) => findLiveChat(id) !== null,
       isHeld: (id) => !!findLiveChat(id)?.holder?.(),
+      isRunActive: (source, runId) => runIsActive(activityOf(source), runId) || runChildAlive(contextRoot, source, runId),
+      isRunHeld: (source, runId) => !!activityOf(source)?.runs?.some((r) => r.runId === runId),
     });
     sendJson(res, 200, page);
   } catch (err) {

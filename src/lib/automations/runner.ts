@@ -543,9 +543,10 @@ function postSystemEntry(
   event: ThreadSystemEvent,
   text: string,
   logFn: (msg: string) => void,
+  result?: string | null,
 ): void {
   try {
-    appendThreadEntry(contextRoot, slug, { runId, kind: 'system', event, text, via: 'runner' });
+    appendThreadEntry(contextRoot, slug, { runId, kind: 'system', event, text, via: 'runner', ...(result ? { result } : {}) });
   } catch (err) {
     logFn(`automation "${slug}": thread ${event} entry not written — ${(err as Error).message}`);
   }
@@ -1973,6 +1974,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
           ? `Finished in ${formatRunDuration(params.durationMs)}.`
           : `${params.status === 'timeout' ? 'Timed out' : 'Failed'} after ${formatRunDuration(params.durationMs)}${params.error ? `: ${params.error}` : ''}`,
         logFn,
+        // Only what PUBLISHED: `document` is null past a review gate, and this file syncs.
+        params.status === 'ok' && params.document ? params.summary : null,
       );
     }
     // Notify on COMPLETION, success included. A silent success defeats the point

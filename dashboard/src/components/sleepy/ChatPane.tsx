@@ -28,7 +28,7 @@ import { isQuestOnlyCommand, stepStretches, type StretchProbe } from './chat/too
 import { chatLineage, deriveChatQuest, questTaskSlug, partyBatches, type Party } from './chat/questModel';
 import { ChatQuestBar } from './chat/ChatQuestBar';
 import { ItemView } from './chat/TranscriptItem';
-import { feedMarks, feedRunWorking, feedShift, liveDividerShown, type ChatFeed, type FeedItem } from './chat/chatFeed';
+import { feedMarks, feedReportShown, feedRunWorking, feedShift, liveDividerShown, type ChatFeed, type FeedItem } from './chat/chatFeed';
 import { ToolRunCard } from './chat/ToolRunCard';
 import { SurveyCard } from './chat/SurveyCard';
 import { PermissionCard } from './chat/PermissionCard';
@@ -2441,6 +2441,7 @@ export function ChatPane({
             onClick={() => feed.onBoundary(meta)}
           >
             {feed.labels.boundary(meta)}
+            <span className="chat-feed-boundary-go" aria-hidden>›</span>
           </button>,
         );
         if (meta.missing) feedNodes.push(<div key={`fmiss-${meta.sessionKey}`} className="chat-feed-note" data-feed-missing>{feed.labels.missing}</div>);
@@ -2453,8 +2454,15 @@ export function ChatPane({
         }
       }
       if (!meta.empty) {
+        const said = it.kind === 'text' ? feed.labels.note(meta) : null;
+        const row = <ItemView key={it.id} item={said !== null ? { ...it, text: said } : it} onOpenFile={handleOpenFile} onOpenBoard={handleOpenBoard} report={runReportFor(meta)} actor="lead" readOnly />;
+        feedNodes.push(meta.origin === 'failure' ? <div key={it.id} className="chat-feed-failure" data-feed-failure>{row}</div> : row);
+      }
+      if (feedReportShown(meta, marks)) {
         feedNodes.push(
-          <ItemView key={it.id} item={it} onOpenFile={handleOpenFile} onOpenBoard={handleOpenBoard} report={runReportFor(meta)} actor="lead" readOnly />,
+          <button key={`freport-${meta.sessionKey}`} type="button" className="chat-feed-note chat-feed-link chat-feed-report" data-feed-report={meta.sessionKey} onClick={() => feed.onBoundary(meta)}>
+            {feed.labels.report}
+          </button>,
         );
       }
       if (feedRunWorking(meta, marks)) {

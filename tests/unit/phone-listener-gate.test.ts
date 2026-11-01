@@ -20,6 +20,8 @@ import { setMacProbeNonce, setMacExposedVaults, setMacPublicOrigin } from '../..
 import { MAC_PROBE_HEADER } from '../../src/lib/handsfree/mac/contract.js';
 import { ROUTE_POLICY } from '../../src/lib/handsfree/mac/route-policy.js';
 import { addVault } from '../../src/lib/vaults.js';
+import { createAgent } from '../../src/lib/agents/store.js';
+import { appendThreadEntry } from '../../src/lib/automations/threads.js';
 import { claudeProjectDirName } from '../../src/lib/transcript-sessions.js';
 import type { Router } from '../../src/server/router.js';
 
@@ -212,6 +214,17 @@ describe('phone listener: the route policy over the FULL route table (AC4/AC5)',
       expect(r.status, `${m} ${p}`).toBe(403);
       expect(JSON.parse(r.body).error, `${m} ${p}`).toBe('phone_unavailable');
     }
+  });
+
+  it('an agent\'s history reads through the phone listener: a silent run has its body', async () => {
+    const context = join(dir, PROJECT, '_dream_context');
+    const at = '2026-10-30T09:00:00.000Z';
+    createAgent(context, { slug: 'lookout', title: 'Lookout', prompt: 'lookout watches the fictional Acme line.', learning: false }, { approve: { now: new Date(at), home: dir } });
+    appendThreadEntry(context, 'lookout', { runId: at, kind: 'system', event: 'started', text: 'Run started.', via: 'runner' });
+    appendThreadEntry(context, 'lookout', { runId: at, kind: 'system', event: 'ok', text: 'Finished in 1s.', via: 'runner', result: 'Acme is healthy.' });
+    const r = await request(phonePort, 'GET', '/api/agents/lookout/history', H());
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.body).sessions[0]).toMatchObject({ status: 'ok', rows: [{ origin: 'answer', text: 'Acme is healthy.' }] });
   });
 
   it('a write with a foreign Origin is refused; without a cookie only the public routes answer', async () => {

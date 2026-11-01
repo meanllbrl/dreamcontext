@@ -638,6 +638,11 @@ export interface ThreadEntry {
    *  summary is a summary that was not posted, and rendering an empty block
    *  would put a heading over nothing. */
   summary?: ThreadSummaryRow[];
+  /** A terminal `ok` entry only: the opening line of the document the run PUBLISHED, plain text,
+   *  at most {@link THREAD_RESULT_MAX_CHARS}. The one synced fact that gives a silent run a body
+   *  on another machine or after its cache row was evicted. ABSENT on old entries and on a run
+   *  that published nothing (a gated document stays behind its gate). */
+  result?: string;
   /** `via: 'app'` only: the app the words came from. A `kind: 'user'` entry with this is NEVER
    *  the owner's sentence, on any surface, even when he typed it in the app's own chat. */
   app?: string;
@@ -1225,6 +1230,8 @@ export const PATTERN_LESSONS_HEADING = '### Lessons';
  *  it does so mid-word with no ellipsis — capping here means the user sees a
  *  deliberate end rather than a sentence cut in half. */
 export const NOTIFY_BODY_MAX_CHARS = 240;
+/** A terminal entry's `result` is the banner's line, so it has the banner's cap. */
+export const THREAD_RESULT_MAX_CHARS = NOTIFY_BODY_MAX_CHARS;
 /** Beyond this age a sidecar's recorded PGID may have been recycled by the OS —
  *  `automations kill` requires --force past this window rather than trusting
  *  process-group identity blindly. */

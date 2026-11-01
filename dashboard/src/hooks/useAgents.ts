@@ -399,13 +399,14 @@ export interface AgentHistorySession {
   title: string;
   startedAt: string;
   lastAt: string;
-  status: 'ok' | 'failed' | 'skipped' | 'running' | null;
+  status: 'ok' | 'failed' | 'skipped' | 'running' | 'waiting' | 'stopped' | null;
   durationMs: number | null;
   newestId: string | null;
   unread: boolean;
+  hasDocument?: boolean;
   truncated?: true;
   missing?: true;
-  rows: Array<{ id: string; kind: 'user' | 'agent'; text: string; at: string; files?: string[] }>;
+  rows: Array<{ id: string; kind: 'user' | 'agent'; text: string; at: string; files?: string[]; origin?: 'answer' | 'failure' | 'note' }>;
 }
 
 /** One page of an agent's history, newest activity first. */
