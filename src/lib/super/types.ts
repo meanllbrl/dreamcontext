@@ -723,6 +723,8 @@ export interface SuperState {
   enabled: boolean;
   /** Children the record no longer holds, still the Super's: a chat window never shows them. */
   formerChildren?: string[];
+  /** The `formerChildren` that were the owner's adopted chats: a phone's History still lists them. */
+  formerAdopted?: string[];
   containers: SuperContainer[];
   /** Cards drawn together as one tile (2026-10-20). Absent in an older record = none. */
   groups: SuperGroup[];

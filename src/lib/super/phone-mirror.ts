@@ -334,8 +334,8 @@ export function phoneLiveChats<R extends LiveRow>(chats: readonly R[], records: 
   return { chats: chats.filter((c) => !c.vault || !hidden.has(`${c.vault}\u0000${c.conversationId.toLowerCase()}`)), supers, parked };
 }
 
-/** The record's children with their state now: the ones still the Super's first, newest first in
- *  each part; ended ones only while recent. Ended is the record's word, never the absence of a
+/** The record's children with their state now: running ones first, then stopped, then ended,
+ *  newest first in each part; ended ones only while recent. Ended is the record's word, never the absence of a
  *  process: a child with none that nobody ended is `stopped`. No name reads as the short id. */
 function phoneJobs(children: PhoneSuperRecord['children'], live: readonly LiveRow[], now: number): PhoneJob[] {
   const stateOf = (c: PhoneSuperRecord['children'][number]): PhoneJob['state'] => {
@@ -345,8 +345,8 @@ function phoneJobs(children: PhoneSuperRecord['children'], live: readonly LiveRo
   const rows = children
     .filter((c) => c.endedAt === undefined || now - c.endedAt < PHONE_JOB_DONE_MS)
     .map((c): PhoneJob => ({ conversationId: c.id, title: c.title || c.id.slice(0, 8), state: stateOf(c), startedAt: c.startedAt }));
-  const ended = (j: PhoneJob) => (j.state === 'done' ? 1 : 0);
-  return rows.sort((a, b) => ended(a) - ended(b) || b.startedAt - a.startedAt).slice(0, PHONE_JOBS_MAX);
+  const rank = (j: PhoneJob) => (j.state === 'done' ? 2 : j.state === 'stopped' ? 1 : 0);
+  return rows.sort((a, b) => rank(a) - rank(b) || b.startedAt - a.startedAt).slice(0, PHONE_JOBS_MAX);
 }
 
 // ─── The agenda's digest (task hands-free-telefonda-super-agent-sohbeti-ajandayi…) ──────────

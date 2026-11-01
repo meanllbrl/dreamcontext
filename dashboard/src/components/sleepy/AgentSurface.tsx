@@ -5935,11 +5935,13 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       const draft = live?.kind === 'chat' ? (live as ChatSession).getModel().draft : '';
       closeSessionById(m.id);
       if (draft.trim()) {
+        // Its kept copy under the old id would be orphaned.
+        if (vault) clearDraft(vault, cid);
         const id = addSession(claudeKind);
         if (id) sessions.current.get(id)?.sendText(draft);
       }
     }
-  }, [deviceRows, deviceAnswered, sessionList, closeSessionById, addSession, claudeKind]);
+  }, [deviceRows, deviceAnswered, sessionList, closeSessionById, addSession, claudeKind, vault]);
   const phoneToastEl = phoneChatOn ? <PhoneWaitingToast row={phoneChatNav.toast} onOpen={phoneChatNav.openToast} /> : null;
   // Collapsed dock rows — one chip per session, in roster order. Never the Super Agent (it is
   // not a tab; its queue speaks through the hand-over button's dot and the queue head).

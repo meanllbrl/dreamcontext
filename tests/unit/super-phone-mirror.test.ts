@@ -224,9 +224,21 @@ describe('the phone\'s live list (AC1)', () => {
       { id: 'noname-child', title: '', startedAt: 3 },
     ];
     const [sup] = phoneLiveChats([live], new Map([['acme', record({ children })]]), now).supers;
-    expect(sup.jobs.map((j) => [j.title, j.state])).toEqual([['noname-c', 'stopped'], ['Running', 'working'], ['Finished', 'done']]);
+    expect(sup.jobs.map((j) => [j.title, j.state])).toEqual([['Running', 'working'], ['noname-c', 'stopped'], ['Finished', 'done']]);
     // Every child of the record stays named, so History never lists an old one.
     expect(sup.childIds).toEqual(['old', 'fin', 'run', 'noname-child']);
+  });
+
+  it('a chat the record let go keeps its adopted mark, so History can still list it', async () => {
+    const { sanitizeSuperState } = await import('../../src/lib/super/store.js');
+    const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    const children = Object.fromEntries(Array.from({ length: 33 }, (_, i) => [id(i), {
+      sessionId: id(i), brief: 'b', startedAt: 1, endedAt: 100 + i, ...(i === 0 ? { adopted: true } : {}),
+    }]));
+    const state = sanitizeSuperState({ ...emptySuperState(), session: SUPER, children });
+    expect(state.formerChildren).toContain(id(0));
+    expect(state.formerChildren).toContain(id(1));
+    expect(state.formerAdopted).toEqual([id(0)]);
   });
 
   it('never more jobs than the cap', () => {

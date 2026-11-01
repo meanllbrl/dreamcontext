@@ -107,6 +107,8 @@ export async function enableSuper(
     // never deletes), so its tab does not come back as the owner's.
     const pruned = Object.keys(s.children).filter((sid) => !Object.prototype.hasOwnProperty.call(kept, sid));
     if (pruned.length) s.formerChildren = [...new Set([...(s.formerChildren ?? []), ...pruned])].slice(-MAX_FORMER_CHILDREN);
+    const prunedAdopted = pruned.filter((sid) => s.children[sid].adopted);
+    if (prunedAdopted.length) s.formerAdopted = [...new Set([...(s.formerAdopted ?? []), ...prunedAdopted])].slice(-MAX_FORMER_CHILDREN);
     s.children = kept;
     // Items about a child that is not kept, or that a remote screen holds, are old news.
     for (const q of s.queue) if (q.sessionId !== session && (!Object.prototype.hasOwnProperty.call(kept, q.sessionId) || phoneEnded.has(q.sessionId))) q.state = 'done';

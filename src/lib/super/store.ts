@@ -512,6 +512,9 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
   const held = sanitizeHeld(raw.held, queue);
   const pad = sanitizePad(raw.pad);
   const formerChildren = sanitizeFormerChildren([...(Array.isArray(raw.formerChildren) ? raw.formerChildren : []), ...trimmedChildren]);
+  const rawChildren = isRecord(raw.children) ? raw.children : {};
+  const trimmedAdopted = trimmedChildren.filter((id) => { const c = rawChildren[id]; return isRecord(c) && c.adopted === true; });
+  const formerAdopted = sanitizeFormerChildren([...(Array.isArray(raw.formerAdopted) ? raw.formerAdopted : []), ...trimmedAdopted]);
   const askShows = sanitizeAskShows(raw.askShows, containers);
   const rawSeq = finite(raw.padSeq);
   const padSeq = rawSeq !== undefined && rawSeq > 0 && rawSeq < 1e6 ? Math.floor(rawSeq) : 0;
@@ -531,6 +534,7 @@ export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): Super
     dismissed: sanitizeDismissed(raw.dismissed, opts.now ?? Date.now()),
     pool: sanitizePool(raw.pool, opts),
     ...(formerChildren.length ? { formerChildren } : {}),
+    ...(formerAdopted.length ? { formerAdopted } : {}),
     ownerBatches: sanitizeOwnerBatches(raw.ownerBatches),
     team,
     ...(held.length ? { held } : {}),

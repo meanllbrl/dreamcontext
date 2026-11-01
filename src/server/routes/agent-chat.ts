@@ -1067,9 +1067,13 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
     if (!idx.session) continue;
     // The record is read only for a project handed over: a parked one is just its session id.
     // A record that will not read costs its jobs, never the phone's whole list.
-    const state = idx.enabled ? await readSuperState(ctx, superSanitizeOpts()).catch(() => null) : null;
+    const state = idx.enabled
+      ? await readSuperState(ctx, superSanitizeOpts()).catch((err: unknown) => { console.warn(`[live-chats] the Super record of ${name} did not read:`, (err as Error)?.message ?? err); return null; })
+      : null;
+    // An adopted chat is the owner's once the record lets it go: History keeps listing it.
+    const formerAdopted = new Set(state?.formerAdopted ?? []);
     records.set(name, {
-      session: idx.session, enabled: idx.enabled, former: state?.formerChildren ?? [],
+      session: idx.session, enabled: idx.enabled, former: (state?.formerChildren ?? []).filter((id) => !formerAdopted.has(id)),
       children: Object.entries(state?.children ?? {}).map(([id, c]) => ({
         id, title: childDigestName(state!, id), startedAt: c.startedAt,
         ...(c.endedAt !== undefined ? { endedAt: c.endedAt } : {}), ...(c.adopted ? { adopted: true } : {}),
