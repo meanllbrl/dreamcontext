@@ -486,6 +486,13 @@ describe('usage ledger', () => {
       const one = buildStats({ range: '7d', project: alpha?.key as string, off: new Set(), now: NOW }, home);
       expect(one.dc.sleep.cost).toBeCloseTo(all.dc.sleep.cost, 10);
       expect(one.dc.trend.sleep.reduce((a, b) => a + b, 0)).toBeCloseTo(all.dc.sleep.cost, 10);
+      // One base for the whole page: the chart, the share's denominator and the spend total.
+      expect(one.dc.chart.sleep.reduce((a, b) => a + b, 0)).toBe(one.dc.sleep.tokens);
+      expect(one.dc.claudeTokens).toBeGreaterThanOrEqual(one.dc.sleep.tokens);
+      expect(one.totals.cost).toBeCloseTo(one.dc.sleep.cost, 10);
+      expect(all.breakdown.project.map((p) => p.key)).toEqual([alpha?.key]);
+      const away = buildStats({ range: '7d', project: 'beta', off: new Set(), now: NOW }, home);
+      expect(away.dc.chart.sleep.reduce((a, b) => a + b, 0)).toBe(0);
     });
 
     it('an old cache is read again, so no count stays empty', () => {
