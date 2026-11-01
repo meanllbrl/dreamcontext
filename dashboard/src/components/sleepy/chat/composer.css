@@ -921,9 +921,18 @@
 
 /* The MODE trigger: its name and the version of its brief, as plain text (owner 2026-10-30: no
    face on a calm text button). It is the control that decides how the agent works (owner,
-   2026-10-12: "I want people to click it once"); the first-run ring below still says so. */
+   2026-10-12: "I want people to click it once"). It carries no border or ring in any state;
+   keyboard focus is a background tint, never an outline. */
 .chat-cmp-modetrigger { position: relative; gap: 6px; }
 .chat-cmp-modetrigger .chat-cmp-modeltrigger-model { color: var(--color-text); }
+/* Mouse focus (after a click) draws nothing; keyboard focus is a light background change, not a
+   border or the global outline. Scoped to this trigger: the model pill keeps the global ring. */
+.chat-cmp-modetrigger:focus { outline: none; }
+.chat-cmp-modetrigger:focus-visible {
+  outline: none;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
 .chat-cmp-modetrigger-version {
   font-family: var(--font-mono);
   font-size: 11.5px;
@@ -936,26 +945,6 @@
   content: '·';
   margin-right: 5px;
   color: var(--color-text-tertiary);
-}
-/* First run only: a soft accent ring that breathes until the menu has been opened once on
-   this machine (Composer's MODE_MENU_SEEN_KEY), then is gone for good. */
-.chat-cmp-modetrigger.is-unseen::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  box-shadow: 0 0 0 1.5px var(--color-accent), 0 0 0 5px color-mix(in srgb, var(--color-accent) 18%, transparent);
-  pointer-events: none;
-  opacity: 0.8;
-  animation: var(--dc-motion-ambient-name, chat-cmp-modetrigger-breathe) 2.4s ease-in-out infinite;
-  animation-play-state: var(--dc-motion-play, running);
-}
-@keyframes chat-cmp-modetrigger-breathe {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .chat-cmp-modetrigger.is-unseen::after { animation: none; opacity: 0.8; }
 }
 
 /* Attach — the row's only icon-only control, so it needs no label to avoid reading as a
