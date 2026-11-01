@@ -32,6 +32,8 @@ import { BoardEmbed, BoardFullscreen } from '../sleepy/chat/BoardEmbed';
 import { CloseIcon } from '../whiteboard/PanelIcons';
 import { fileNameOf, resolveDocumentRef, stripFrontmatter } from './viewerPaths';
 import { ZOOM_BRIDGE } from '../layout/frameZoomBridge';
+import { IMAGE_BRIDGE, readImageMessage, type ImageMessage } from '../layout/frameImageBridge';
+import { ImageViewer } from '../layout/ImageViewer';
 import '../sleepy/chat/cards.css';
 import '../sleepy/chat/overlays.css';
 import './ViewerWindow.css';
@@ -488,6 +490,8 @@ function HtmlPage({
   const loads = useRef(0);
   const [height, setHeight] = useState<number | null>(null);
   const [torn, setTorn] = useState(false);
+  // A picture the owner clicked in the page: the app's own viewer, over the whole window.
+  const [shot, setShot] = useState<ImageMessage | null>(null);
   const html = state.html;
   // Filling at the desktop width: the scale its box's width asks for (a 0-wide box keeps the last).
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -511,7 +515,7 @@ function HtmlPage({
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
       html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, overrideCss: pageDefaultCss(fill),
-      headScript: [HEIGHT_BRIDGE, SELECTION_BRIDGE, LINK_GUARD, ...(zoomBridge ? [ZOOM_BRIDGE] : []), ...(reportsFit ? [PAGE_FIT_BRIDGE] : [])].join('\n'),
+      headScript: [HEIGHT_BRIDGE, SELECTION_BRIDGE, LINK_GUARD, ...(zoomBridge ? [ZOOM_BRIDGE, IMAGE_BRIDGE] : []), ...(reportsFit ? [PAGE_FIT_BRIDGE] : [])].join('\n'),
     })),
     [html, theme, zoomBridge, fill, reportsFit],
   );
@@ -524,6 +528,8 @@ function HtmlPage({
       if (h !== null) setHeight(Math.min(MAX_HTML_HEIGHT, h));
       const w = readPageFit(event.data);
       if (w !== undefined) pageFit.current?.(w);
+      const img = readImageMessage(event.data);
+      if (img) setShot(img);
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -564,6 +570,18 @@ function HtmlPage({
         <p className="viewer-status viewer-status--error" role="alert">
           {tx('reader.htmlNavigated', 'This page tried to open another web page, so it was stopped.')}
         </p>
+      )}
+      {shot && (
+        <ImageViewer
+          src={shot.images[shot.index].src}
+          alt={shot.images[shot.index].alt}
+          caption={shot.images[shot.index].alt || undefined}
+          step={shot.images.length > 1 ? {
+            pos: `${shot.index + 1} / ${shot.images.length}`,
+            onStep: (d) => setShot((s) => (s ? { ...s, index: (s.index + d + s.images.length) % s.images.length } : s)),
+          } : undefined}
+          onClose={() => setShot(null)}
+        />
       )}
       {frame && (fill ? <div ref={boxRef} className="doc-reader-html-box">{frame}</div> : frame)}
       {srcDoc !== null && (
