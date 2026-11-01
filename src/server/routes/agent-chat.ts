@@ -1316,7 +1316,10 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       isLive: (id) => !!findLiveChat(id), hasTranscript: claudeConversationExists,
     });
     if (appUpgrade && 'refuse' in appUpgrade) { rejectUpgrade(socket, appUpgrade.refuse); return; }
+    // The seventh chat of an app: refused with words the pane shows, and no record left behind.
+    if (appUpgrade && 'full' in appUpgrade) { refuseAppSocket(req, socket, head); return; }
     const url = appUpgrade?.url ?? parsedUrl;
+    socket.once('close', () => appUpgrade?.hold?.());
 
     const bypass = url.searchParams.get('bypass') === '1';
     const sessionId = sanitizeUuid(url.searchParams.get('sessionId'));
@@ -1581,11 +1584,26 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           try { recordStageHomeSession(projectRoot, stageAgent, conversation); } catch { /* the stage opens a fresh one next time */ }
         };
         startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...toolOpt });
+        appUpgrade?.hold?.();
         settleSupersede(accepted);
         releaseOpening();
       });
     })();
   });
+}
+
+/** A socket opened only to say why: an upgrade refusal has no text the pane could show. */
+function refuseAppSocket(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+  void (async () => {
+    let WebSocketServer: typeof import('ws').WebSocketServer;
+    try { ({ WebSocketServer } = await import('ws')); }
+    catch { rejectUpgrade(socket, 501); return; }
+    new WebSocketServer({ noServer: true }).handleUpgrade(req, socket, head, (ws) => {
+      ws.on('error', () => { /* the close that follows is what counts */ });
+      try { ws.send(JSON.stringify({ type: '_meta', subtype: 'error', code: 'app_refused', message: `This app already has ${APP_CHAT_MAX_LIVE} chats running. Close one to start another.` })); } catch { /* gone */ }
+      try { ws.close(); } catch { /* already closed */ }
+    });
+  })();
 }
 
 /**
@@ -4270,6 +4288,8 @@ export function startChatSession(
   const onAuthFailed = (): void => {
     authFailedTurn = true;
     if (activeAccountId) recordSignedOut(activeAccountId);
+    // An app chat moves no account and holds no turn: the banner says it, the next open has room.
+    if (app) return;
     if (switchPending || switchAbandoned) return;
     if (listClaudeAccounts().length < 2) return;   // nowhere to go: the banner says sign in
     const text = isAssistant

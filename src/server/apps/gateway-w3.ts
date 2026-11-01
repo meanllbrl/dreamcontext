@@ -28,7 +28,8 @@ import { scheduleViews } from '../../lib/apps/schedule.js';
 import { callMcpTool, McpBridgeError } from '../../lib/apps/mcp-bridge.js';
 import { createFromBody, sayFromApp } from '../routes/automations.js';
 import { appRunBrief } from '../../lib/apps/brief.js';
-import { askRoom, readOwnAsk, startOwnAsk } from '../../lib/apps/assistant-ask.js';
+import { askRoom, readOwnAsk, startOwnAsk, type AskState } from '../../lib/apps/assistant-ask.js';
+import type { ThreadEntry } from '../../lib/automations/types.js';
 import { resolveAppAgent } from '../../lib/apps/assistant.js';
 import { readManifest } from '../../lib/apps/manifest.js';
 import { readThread } from '../../lib/automations/threads.js';
@@ -206,6 +207,17 @@ registerGatewayRoute('/__dc/team/say', { cookie: false, bearer: true }, async (g
 /** A bound member's answers, by the ask's id: `<member>|<runId>`. A map, so the id names no path. */
 const memberAsks = new Map<string, { hash: string; member: string; runId: string }>();
 
+/** A member's run, as a poll reads it: answered once the run ended well and it said something. */
+export function memberAskState(entries: readonly ThreadEntry[]): AskState {
+  const ended = entries.filter((e) => e.kind === 'system').map((e) => e.event);
+  if (ended.some((e) => e === 'failed' || e === 'timeout' || e === 'skipped')) {
+    return { state: 'failed', code: 'ask_failed', message: 'The assistant did not answer.' };
+  }
+  const said = entries.filter((e) => e.kind === 'agent' && e.text).pop();
+  if (!said || !ended.includes('ok')) return { state: 'running' };
+  return { state: 'done', answer: said.text ?? '' };
+}
+
 registerGatewayRoute('/__dc/ask', { cookie: false, bearer: true }, async (gw, req, res, _ident, url) => {
   const rec = gw.runtime.rec;
   const poll = /^\/__dc\/ask\/([0-9a-fA-F-]{36})$/.exec(url.pathname);
@@ -214,10 +226,10 @@ registerGatewayRoute('/__dc/ask', { cookie: false, bearer: true }, async (gw, re
     const member = memberAsks.get(id);
     if (member) {
       if (member.hash !== rec.hash) { send(res, 404, { error: 'not_found' }); return; }
-      const done = readThread(join(rec.projectRoot, '_dream_context'), member.member, { runId: member.runId }).filter((e) => e.kind !== 'user' && e.text).pop();
-      if (!done) { send(res, 200, { state: 'running' }); return; }
+      const state = memberAskState(readThread(join(rec.projectRoot, '_dream_context'), member.member, { runId: member.runId }));
+      if (state.state === 'running') { send(res, 200, state); return; }
       memberAsks.delete(id);
-      send(res, 200, { state: 'done', answer: gw.runtime.scrub(done.text ?? '') });
+      send(res, 200, state.state === 'done' ? { ...state, answer: gw.runtime.scrub(state.answer) } : state);
       return;
     }
     const state = readOwnAsk(rec.hash, id);

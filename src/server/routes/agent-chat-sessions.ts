@@ -93,20 +93,18 @@ export async function computeChatSessions(
   }
 
   const superRows = q.super === 'group' || q.super === 'only' ? { owned: await superOwned(contextRoot), mode: q.super as 'group' | 'only' } : undefined;
+  // An app's window lists its own conversations and nothing else (`?app=<slug>`).
+  const appRec = q.app ? getApp(opts.home ?? homedir(), real(projectRoot), q.app) : null;
+  const onlyIds = q.app ? (appRec ? appChatIds(appRec.hash, appRec.projectRoot, opts.home ?? homedir()) : new Set<string>()) : null;
   const result = listPastSessions(projectRoot, {
     home: opts.home, query, limit, includeAgentRuns, files,
+    ...(onlyIds ? { onlyIds } : {}),
     content: contentOf,
     // A closed tab's name, so the list says what the tab said (see `session-titles.ts`).
     titles: readSessionTitles(contextRoot),
     ...(superRows ? { superRows } : {}),
   });
-  // An app's window lists its own conversations and nothing else (`?app=<slug>`).
-  if (q.app) {
-    const rec = getApp(opts.home ?? homedir(), real(projectRoot), q.app);
-    const ids = rec ? appChatIds(rec.hash, rec.projectRoot, opts.home ?? homedir()) : new Set<string>();
-    const sessions = result.sessions.filter((s) => ids.has(s.id));
-    return { ...result, sessions, total: sessions.length, agentRuns: 0, truncated: false };
-  }
+  if (onlyIds) return result;
   const merged = withCodexRows(result, contextRoot, projectRoot, { query, limit, superOnly: superRows?.mode === 'only', home: opts.home });
   return query.trim() && !indexed
     ? { ...merged, indexing: { done: build.progress.done, total: build.progress.total } }

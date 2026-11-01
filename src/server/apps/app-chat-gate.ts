@@ -13,7 +13,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getRunTarget } from '../../lib/automations/store.js';
-import { resolveAppAgent } from '../../lib/apps/assistant.js';
+import { appChatHasRoom, reserveAppChat, resolveAppAgent } from '../../lib/apps/assistant.js';
 import { createAppChat, lookupAppChatOf, reopenAppChat, type AppChatRecord } from '../../lib/apps/chat-store.js';
 import { readManifest, roleFileProblem } from '../../lib/apps/manifest.js';
 import { getApp, real } from '../../lib/apps/registry.js';
@@ -22,7 +22,9 @@ import { resolveEmbedToken } from './embed-token.js';
 
 export const APP_SOCKET_PARAMS = ['vault', 'sessionId', 'resume', 'reattach', 'model', 'effort'] as const;
 
-export type AppUpgrade = null | { refuse: number } | { url: URL };
+/** `hold`: the seat of a new conversation, taken here so two opens in one tick cannot both pass.
+ *  The handler lets it go once the spawn has its own, or the socket dies first. */
+export type AppUpgrade = null | { refuse: number } | { full: true } | { url: URL; hold?: () => void };
 
 export interface AppUpgradeInput {
   url: URL;
@@ -81,6 +83,9 @@ export function appChatUpgrade(i: AppUpgradeInput): AppUpgrade {
   const choice = resolveAppAgent(m.manifest, i.url.searchParams.get('member'), (s) => !!getRunTarget(contextRoot, s, 'agent')?.whiteboard);
   if (choice.kind === 'none') return { refuse: 409 };
   if (choice.kind === 'own' && roleFileProblem(rec.root)) return { refuse: 409 };
+  if (!appChatHasRoom(rec.hash, sessionId)) return { full: true };
   createAppChat({ id: sessionId, hash: rec.hash, slug: rec.slug, projectRoot, member: choice.kind === 'member' ? choice.member : null }, home);
-  return { url: rebuilt(i.url) };
+  const release = reserveAppChat(rec.hash, sessionId);
+  let held = true;
+  return { url: rebuilt(i.url), hold: () => { if (held) { held = false; release(); } } };
 }

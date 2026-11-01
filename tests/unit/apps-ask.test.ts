@@ -6,6 +6,7 @@ import { ASK_MAX_PER_APP, ASK_MAX_PER_MINUTE, appAskArgs, askRoom, readOwnAsk, r
 import { registerApp, type AppRecord } from '../../src/lib/apps/registry.js';
 import { LIGHT_DISALLOWED_TOOLS } from '../../src/lib/automations/light-run.js';
 import type { ClaudeExecution } from '../../src/lib/automations/runner.js';
+import { memberAskState } from '../../src/server/apps/gateway-w3.js';
 
 let home: string; let rec: AppRecord;
 beforeEach(() => {
@@ -81,5 +82,20 @@ describe('a question', () => {
     expect(startOwnAsk(rec, '  ', { home })).toMatchObject({ ok: false, status: 400 });
     rmSync(join(rec.root, 'ASSISTANT.md'));
     expect(startOwnAsk(rec, 'q', { home })).toMatchObject({ ok: false, code: 'no_role' });
+  });
+});
+
+describe('a bound member, through its thread', () => {
+  const sys = (event: string) => ({ kind: 'system', event, text: 'Run started.' }) as never;
+  const said = { kind: 'agent', text: 'the load is low' } as never;
+  it('is running until the run ended, whatever the runner posted first', () => {
+    expect(memberAskState([sys('started')])).toEqual({ state: 'running' });
+    expect(memberAskState([sys('started'), said])).toEqual({ state: 'running' });
+  });
+  it('answers with the agent\'s words, never a system line', () => {
+    expect(memberAskState([sys('started'), said, sys('ok')])).toEqual({ state: 'done', answer: 'the load is low' });
+  });
+  it.each(['failed', 'timeout', 'skipped'])('%s comes back as a failure', (e) => {
+    expect(memberAskState([sys('started'), sys(e)])).toMatchObject({ state: 'failed' });
   });
 });

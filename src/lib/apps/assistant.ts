@@ -256,15 +256,20 @@ export function prepareAppChat(record: AppChatRecord, opts: { projectRoot: strin
   };
 }
 
-/** The owner's own model and effort: `--setting-sources project` drops them, so they ride argv. */
+/**
+ * The owner's own model and effort: `--setting-sources project` drops them, so they ride argv.
+ * `configDir` is an account's: a sandbox holds `settings.json` itself, account #0 is the real HOME
+ * with its `.claude/`. No file names no model, and the CLI's default stands.
+ */
 export function userChatDefaults(configDir: string): { model: string; effort: string } {
-  try {
-    const raw = JSON.parse(readFileSync(join(configDir, '.claude', 'settings.json'), 'utf-8')) as Record<string, unknown>;
-    const word = (v: unknown): string => (typeof v === 'string' && /^[A-Za-z0-9._[\]-]{1,60}$/.test(v) ? v : '');
-    return { model: word(raw.model), effort: word(raw.effortLevel) };
-  } catch {
-    return { model: '', effort: '' };
+  const word = (v: unknown): string => (typeof v === 'string' && /^[A-Za-z0-9._[\]-]{1,60}$/.test(v) ? v : '');
+  for (const file of [join(configDir, 'settings.json'), join(configDir, '.claude', 'settings.json')]) {
+    try {
+      const raw = JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>;
+      return { model: word(raw.model), effort: word(raw.effortLevel) };
+    } catch { /* the other home */ }
   }
+  return { model: '', effort: '' };
 }
 
 // ─── how many chats an app runs at once ─────────────────────────────────────────────

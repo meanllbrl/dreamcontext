@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   APP_CHAT_MAX_LIVE, appBashGateHook, appChatHasRoom, appCredentialDenies, appDeniedTools, appWriteDenies, prepareAppChat,
-  reserveAppChat, resolveAppAgent,
+  reserveAppChat, resolveAppAgent, userChatDefaults,
 } from '../../src/lib/apps/assistant.js';
 import { createAppChat, gateFilePath } from '../../src/lib/apps/chat-store.js';
 import { ROLE_FILE, parseManifest, roleFileProblem } from '../../src/lib/apps/manifest.js';
@@ -158,6 +158,18 @@ describe('the envelope of the own assistant', () => {
   });
   it('a board-less unknown member refuses', () => {
     expect(prep(rec({ member: 'ghost' }))).toMatchObject({ ok: false, reason: expect.stringContaining('ghost') });
+  });
+});
+
+describe("the owner's defaults", () => {
+  it('reads a sandbox account and account #0, and names nothing with no file', () => {
+    const sandbox = join(home, 'sandbox'); mkdirSync(sandbox);
+    writeFileSync(join(sandbox, 'settings.json'), JSON.stringify({ model: 'sonnet', effortLevel: 'high' }));
+    expect(userChatDefaults(sandbox)).toEqual({ model: 'sonnet', effort: 'high' });
+    const real = join(home, 'realhome'); mkdirSync(join(real, '.claude'), { recursive: true });
+    writeFileSync(join(real, '.claude', 'settings.json'), JSON.stringify({ model: 'opus' }));
+    expect(userChatDefaults(real)).toEqual({ model: 'opus', effort: '' });
+    expect(userChatDefaults(join(home, 'none'))).toEqual({ model: '', effort: '' });
   });
 });
 

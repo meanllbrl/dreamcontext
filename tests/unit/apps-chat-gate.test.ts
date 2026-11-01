@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { APP_SOCKET_PARAMS, appChatUpgrade, type AppUpgradeInput } from '../../src/server/apps/app-chat-gate.js';
 import { dropEmbedToken, mintEmbedToken } from '../../src/server/apps/embed-token.js';
 import { createAppChat, lookupAppChat } from '../../src/lib/apps/chat-store.js';
+import { APP_CHAT_MAX_LIVE, appChatHasRoom, reserveAppChat } from '../../src/lib/apps/assistant.js';
 import { registerApp } from '../../src/lib/apps/registry.js';
 
 /** The app socket's gate (plan r9, D8): a row per parameter, through the app gate and the generic one. */
@@ -89,6 +90,22 @@ describe('the app gate', () => {
     const id = fresh();
     expect(run(`app=yuk&tk=${tk}&vault=acme&sessionId=${id}&member=ua-manager`)).toMatchObject({ url: expect.any(URL) });
     expect(lookupAppChat(id, home)).toMatchObject({ record: { member: 'ua-manager' } });
+  });
+});
+
+describe('the seventh chat', () => {
+  it('is refused with no record left, and a seat taken at the gate lets go', () => {
+    const held = Array.from({ length: APP_CHAT_MAX_LIVE }, () => reserveAppChat(hash, randomUUID()));
+    const id = fresh();
+    expect(run(`app=yuk&tk=${tk}&vault=acme&sessionId=${id}`)).toEqual({ full: true });
+    expect(lookupAppChat(id, home)).toEqual({ kind: 'none' });
+    held.pop()?.();
+    const out = run(`app=yuk&tk=${tk}&vault=acme&sessionId=${id}`);
+    expect(out && 'hold' in out).toBe(true);
+    expect(appChatHasRoom(hash, fresh())).toBe(false);
+    if (out && 'hold' in out) { out.hold?.(); out.hold?.(); }
+    expect(appChatHasRoom(hash, fresh())).toBe(true);
+    for (const r of held) r();
   });
 });
 
