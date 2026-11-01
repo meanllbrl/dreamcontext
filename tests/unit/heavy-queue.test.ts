@@ -54,7 +54,7 @@ describe('queueOf: which command goes in which line', () => {
   });
 
   it('sizes the heavy line: a check, then a glance, then a build, a script, a suite', () => {
-    const sizes = ['npx tsc', 'node scripts/verify/look.mjs /', 'npm run build', 'node scripts/verify/x.mjs', 'npx vitest run'].map((c) => queueOf(c).size);
+    const sizes = ['npx tsc --noEmit', 'node scripts/verify/look.mjs /', 'npm run build', 'node scripts/verify/x.mjs', 'npx vitest run'].map((c) => queueOf(c).size);
     expect(sizes).toEqual([...sizes].sort((a, b) => a - b));
     expect(new Set(sizes).size).toBe(5);
   });
