@@ -74,10 +74,12 @@ export function MarkdownPreview({ content, frontmatter, onWikilink }: Props) {
   }, [stripRemote]);
   // What was cached under the other setting is not this text's HTML.
   const cachedFor = useRef(stripRemote);
-  if (cachedFor.current !== stripRemote) { cachedFor.current = stripRemote; htmlCache.current.clear(); }
+  const flippedStrip = cachedFor.current !== stripRemote;
+  if (flippedStrip) { cachedFor.current = stripRemote; htmlCache.current.clear(); }
 
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const blockState = useRef<MarkdownBlockState>(emptyBlockState());
+  if (flippedStrip) blockState.current = emptyBlockState();
 
   // A LAYOUT effect, not a passive one: the content must be in the DOM before the browser
   // paints (no flash of empty message), and before the decorating passes that run in the
