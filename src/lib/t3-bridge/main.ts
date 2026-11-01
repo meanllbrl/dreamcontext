@@ -10,10 +10,11 @@ import { BrainContext } from './context.js';
 import { findCodexRollout } from './codex-threads.js';
 import { codexCachedModels, codexDefaultModel } from './registry.js';
 import { runBridgeStdio } from './stdio.js';
+import type { BridgeSessionOptions } from './session.js';
 import type { ClaudeKit } from './claude-kit.js';
 
 export interface T3ChatOptions {
-  tool: 'codex' | 'claude';
+  tool: BridgeSessionOptions['tool'];
   cwd: string;
   model?: string;
   effort?: string;
@@ -23,6 +24,7 @@ export interface T3ChatOptions {
   briefingFile?: string;
   extraRoot?: string[];
   account?: string;
+  carry?: string;
   mcpConfig?: string;
   strictMcp?: boolean;
 }
@@ -32,16 +34,16 @@ export { runT3Account } from './account-cli.js';
 export { runT3Headless } from './run.js';
 
 export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Promise<number> {
-  const eco = ecoJoins(o.cwd, process.env, { tool: o.tool });
+  const eco = ecoJoins(o.cwd, process.env, { tool: o.tool, ...(o.account ? { accountId: o.account } : {}) });
   // The brain reaches Codex through our own hooks (context.ts). The T3 Claude engine (closed,
   // T3_CLAUDE_ENGINE_OPEN) would get it from Claude's own settings, so it gets none here.
-  const brain = o.tool === 'codex' ? new BrainContext({ cwd: o.cwd, env: process.env }) : null;
+  const brain = o.tool !== 'claude' ? new BrainContext({ cwd: o.cwd, env: process.env }) : null;
   return runBridgeStdio(
     {
       tool: o.tool,
       cwd: o.cwd,
       // No model asked for: the account's own default, else the first model Codex cached for it.
-      model: o.model || (o.tool === 'claude' ? 'sonnet' : codexDefaultModel() || codexCachedModels()[0]?.id || 'gpt-5.5'),
+      model: o.model || (o.tool === 'antigravity' ? '' : o.tool === 'claude' ? 'sonnet' : codexDefaultModel() || codexCachedModels()[0]?.id || 'gpt-5.5'),
       ...(o.effort ? { effort: o.effort } : {}),
       mode: o.mode,
       paneId: o.pane ?? '',
@@ -49,6 +51,7 @@ export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Pr
       ...(o.briefingFile ? { briefingFile: o.briefingFile } : {}),
       extraRoots: o.extraRoot ?? [],
       ...(o.account ? { account: o.account } : {}),
+      ...(o.carry ? { carry: o.carry } : {}),
       ...(o.mcpConfig ? { mcpConfig: o.mcpConfig } : {}),
       ...(o.strictMcp ? { strictMcp: true } : {}),
     },
@@ -63,7 +66,7 @@ export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Pr
       onRotated: (id) => eco.onRotated(id),
       onResult: (session, frame) => {
         // Sleep sees the turn: the Stop hook records it, the rollout as its transcript.
-        brain?.turnEnded(session.nativeThreadId, findCodexRollout(session.nativeThreadId), typeof frame.result === 'string' ? frame.result : '');
+        brain?.turnEnded(session.nativeThreadId, o.tool === 'codex' ? findCodexRollout(session.nativeThreadId) : null, typeof frame.result === 'string' ? frame.result : '');
         return eco.onResult(session.nativeThreadId, session.wire.contextTokens);
       },
       ...(brain ? { brain } : {}),

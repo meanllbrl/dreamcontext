@@ -12,6 +12,6 @@
     { "name": "Super Agent's delegated child", "claude": "works", "codex": "experimental", "note": "`super delegate --tool codex`. stdio MCP servers only, and the same write gate as automations." },
     { "name": "Terminal", "claude": "works", "codex": "experimental", "note": "`codex` on the chat's account, always workspace-write." },
     { "name": "Sleep", "claude": "works", "codex": "experimental", "note": "`sleep auto-run --tool codex`. One turn with no sub-agents. No live run recorded yet." },
-    { "name": "Antigravity, OpenCode", "claude": "-", "codex": "-", "note": "Wave 5." }
+    { "name": "Antigravity chat", "claude": "-", "codex": "-", "note": "Experimental. Checked live on one account: sign-in, memory, approval cards, resume, the Bypass write gate. Eco and account moves are proved against a fake agent only. It has no OS sandbox, so the agent always asks: Auto and Accept Edits show a card, and under Bypass the bridge answers except for marketing tokens and agent files, so a Bypass agent can write outside the project. Automations, Super Agent, AI Team, Terminal and Sleep stay off it. OpenCode was dropped by the owner." }
   ]
 }

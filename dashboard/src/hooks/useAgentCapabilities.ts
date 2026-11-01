@@ -251,7 +251,7 @@ export interface ToolUsageWindow {
 
 export interface ToolAccountWire {
   id: string;
-  tool: 'codex';
+  tool: 'codex' | 'antigravity';
   email: string;
   planType: string;
   isPrimary: boolean;
@@ -265,7 +265,7 @@ export interface ToolAccountWire {
 }
 
 export interface ToolAccountsResponse {
-  tool: 'codex';
+  tool: 'codex' | 'antigravity';
   accounts: ToolAccountWire[];
   nextSessionAccountId?: string | null;
   autoSwitch?: boolean;
@@ -275,14 +275,25 @@ export interface ToolAccountsResponse {
   orphans?: number;
 }
 
+/** A Google account's name here: the sign-in stays unread, so a stable part of its id tells them
+ *  apart. Never its position: the owner reorders these, and a number would then point elsewhere. */
+export function googleAccountLabel(a: Pick<ToolAccountWire, 'id' | 'isPrimary'>, t: (key: string) => string): string {
+  return a.isPrimary ? t('settings.antigravityAccounts.thisMachine') : t('settings.antigravityAccounts.named').replace('{id}', a.id.slice(-4));
+}
+
 const NO_TOOL_ACCOUNTS: ToolAccountsResponse = { tool: 'codex', accounts: [] };
 
 /** Every Codex account with its cached windows. The route never probes; Refresh does. */
 export function useCodexAccounts(enabled: boolean) {
+  return useToolAccounts('codex', enabled);
+}
+
+/** The same, for any tool with accounts of its own. */
+export function useToolAccounts(tool: 'codex' | 'antigravity', enabled: boolean) {
   const api = useApi();
   return useQuery({
-    queryKey: ['agent-codex-accounts'],
-    queryFn: () => api.get<ToolAccountsResponse>('/agent/accounts/codex'),
+    queryKey: [`agent-${tool}-accounts`],
+    queryFn: () => api.get<ToolAccountsResponse>(`/agent/accounts/${tool}`),
     enabled,
     refetchInterval: enabled ? () => pollMs(30_000) : false,
     staleTime: 20_000,
@@ -496,7 +507,7 @@ export function useAgentCouncilLive(claudeId: string | undefined, enabled: boole
 
 /** One tool a chat can run on (`GET /api/agent/tools`, src/lib/t3-bridge/registry.ts). */
 export interface AgentToolInfo {
-  tool: 'claude' | 'codex';
+  tool: 'claude' | 'codex' | 'antigravity';
   label: string;
   ready: boolean;
   installed: boolean;
@@ -530,7 +541,7 @@ export function useAgentTools() {
 
 /** Codex's models as the composer's model menu reads them (its efforts are its own). */
 export function codexModelConfig(info: AgentToolInfo | undefined): ModelConfig | null {
-  if (!info || info.tool !== 'codex' || info.models.length === 0) return null;
+  if (!info || info.tool === 'claude' || info.models.length === 0) return null;
   const efforts = [...new Set(info.models.flatMap((m) => m.efforts))];
   const def = info.models.find((m) => m.id === info.defaultModel) ?? info.models[0]!;
   return {

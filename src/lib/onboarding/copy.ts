@@ -75,6 +75,8 @@ export const FIX_COPY: Readonly<Record<FixId, FixCopy>> = {
   },
   'codex-install': { action: 'Install Codex', working: 'Installing Codex', done: 'Codex is installed' },
   'codex-update': { action: 'Update Codex', working: 'Updating Codex', done: 'Codex is up to date' },
+  'antigravity-install': { action: 'Install Antigravity', working: 'Installing Antigravity', done: 'Antigravity is installed' },
+  'antigravity-signin': { action: 'Sign in', working: 'Opening your browser', done: 'Signed in', waiting: 'Finish signing in in your browser.' },
   'codex-signin': {
     action: 'Sign in',
     working: 'Opening your browser',

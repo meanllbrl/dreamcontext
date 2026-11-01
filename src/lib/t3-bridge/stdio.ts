@@ -11,12 +11,15 @@
  */
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { codexChildEnv, codexCommand } from '../codex-bin.js';
-import { BridgeSession, type BridgeSessionOptions } from './session.js';
-import { claudeLaunchArgs, codexBrainMcpArgs, codexLaunchArgs, codexLeanMcpArgs, codexStrictArgs, leanMcpNames, parseCodexMcpList, scrubbedCodexEnv } from './launch.js';
+import { BridgeSession, toolLabel, type BridgeSessionOptions } from './session.js';
+import { isInstanceAccountId, isInstanceTool } from '../instance-accounts.js';
+import { carriedText, recordThreadTurn } from './instance-threads.js';
+import { antigravityFailureKind } from './to-wire.js';
+import { MAX_DEVELOPER_INSTRUCTIONS, claudeLaunchArgs, codexBrainMcpArgs, codexLaunchArgs, codexLeanMcpArgs, codexStrictArgs, leanMcpNames, parseCodexMcpList, scrubbedCodexEnv } from './launch.js';
 import { codexInstanceSettings, isCodexAccountId } from './accounts.js';
 import { HIDDEN_TITLE_PROMPT, TabTitler, titleBlock, titleIn } from './tab-title.js';
 import type { WireFrame } from './to-wire.js';
@@ -25,7 +28,7 @@ import { fitCodexContext, type BrainContext } from './context.js';
 export type AppContext = { key: string; text: string };
 
 export interface StdioArgs {
-  readonly tool: 'codex' | 'claude';
+  readonly tool: BridgeSessionOptions['tool'];
   readonly cwd: string;
   readonly model: string;
   readonly effort?: string;
@@ -37,6 +40,8 @@ export interface StdioArgs {
   readonly binaryPath?: string;
   /** A non-#0 Codex account id (plan r5 §4b). Absent = account #0, `~/.codex`. */
   readonly account?: string;
+  /** An earlier thread whose end this fresh thread carries (a move to another account). */
+  readonly carry?: string;
   /** A Super child's lean MCP subset (launch.ts `codexLeanMcpArgs`). */
   readonly mcpConfig?: string;
   /** Nothing from the owner's Codex config: no MCP servers, no web search (`codexStrictArgs`). */
@@ -82,6 +87,27 @@ const userText = (frame: Record<string, unknown>): string => {
     .join('');
 };
 
+/** Every message down an error's causes: T3 wraps the one that says why. */
+function causeChain(err: unknown): string[] {
+  const out: string[] = [];
+  let at: unknown = err;
+  for (let i = 0; i < 8 && at; i++) {
+    out.push(String((at as { detail?: unknown }).detail ?? (at as { message?: unknown }).message ?? at));
+    at = (at as { cause?: unknown }).cause;
+  }
+  return out;
+}
+
+/** T3's own typed answer, anywhere down the causes. */
+function requiresSignIn(err: unknown): boolean {
+  let at: unknown = err;
+  for (let i = 0; i < 8 && at; i++) {
+    if ((at as { requiresSignIn?: unknown }).requiresSignIn === true) return true;
+    at = (at as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 const CLOSE_LIMIT_MS = 5_000;
 const MCP_LIST_LIMIT_MS = 15_000;
 
@@ -101,6 +127,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     const req = (f.request ?? f.response) as { subtype?: unknown; request_id?: unknown } | undefined;
     try { appendFileSync(debugFile, `${new Date().toISOString()} ${dir} ${String(f.type)}${f.subtype ? `/${String(f.subtype)}` : ''}${req?.subtype ? ` ${String(req.subtype)}` : ''}${req?.request_id ? ` ${String(req.request_id).slice(-12)}` : ''}\n`); } catch { /* best effort */ }
   };
+  const keepsThread = isInstanceTool(args.tool);
   const titler = new TabTitler(deps.tabWantsTitle ?? (() => false));
   /** A turn just ended with the tab unnamed: ask once, out of sight, then send only the name. */
   const nameTab = async (): Promise<void> => {
@@ -143,7 +170,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     rmSync(privateTmp, { recursive: true, force: true });
     return 1;
   }
-  const launchArgs = args.tool === 'claude'
+  const launchArgs = isInstanceTool(args.tool) ? '' : args.tool === 'claude'
     ? claudeLaunchArgs({ briefingFile: args.briefingFile })
     : [
       account?.launchArgs ?? '',
@@ -165,6 +192,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       ...(binaryPath ? { binaryPath } : {}),
       launchArgs,
       ...(account ? { codexHome: { homePath: account.homePath, shadowHomePath: account.shadowHomePath } } : {}),
+      ...(isInstanceTool(args.tool) && args.account && isInstanceAccountId(args.account) ? { accountId: args.account } : {}),
       // The account's live windows, for the server's switch and the Settings bars (never a secret).
       onUsageLimits: (u) => emit({ type: 'system', subtype: 'dc_usage', dc_tool: args.tool, windows: u.windows, checked_at: u.checkedAt }),
       // DREAMCONTEXT_CONTEXT_BY: the bridge injects the brain, so a project's opt-in `.codex/hooks.json`
@@ -182,6 +210,11 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       },
       emit: (frame) => {
         emit(frame);
+        if (keepsThread && frame.type === 'assistant' && (frame.message as { model?: unknown } | undefined)?.model !== '<synthetic>') {
+          const content = (frame.message as { content?: unknown } | undefined)?.content;
+          const said = Array.isArray(content) ? content.map((b) => (b && typeof b === 'object' && typeof (b as { text?: unknown }).text === 'string' ? (b as { text: string }).text : '')).join('') : '';
+          recordThreadTurn(session?.nativeThreadId ?? '', args.cwd, 'assistant', said, home, args.account);
+        }
         // A synthetic result (the /clear or /effort answer) is not a turn Codex ran: it records nothing.
         if (frame.type === 'result' && !frame.dc_synthetic) owe(deps.onResult?.(session, frame));
         // A local answer held behind a running turn goes out after that turn's own result.
@@ -189,7 +222,12 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       },
     });
   } catch (err) {
-    emit({ type: 'result', subtype: 'error_during_execution', is_error: true, result: `${args.tool === 'claude' ? 'Claude' : 'Codex'} did not start: ${String(err).slice(0, 400)}`, num_turns: 0, total_cost_usd: 0, usage: {}, dc_tool: args.tool });
+    const signedOut = isInstanceTool(args.tool) && (requiresSignIn(err) || causeChain(err).some((m) => antigravityFailureKind(m) === 'signed-out'));
+    emit({
+      type: 'result', subtype: 'error_during_execution', is_error: true,
+      result: signedOut ? `${toolLabel(args.tool)} is signed out. Sign in from the model picker, then open this chat again.` : `${toolLabel(args.tool)} did not start: ${String(err).slice(0, 400)}`,
+      num_turns: 0, total_cost_usd: 0, usage: {}, dc_tool: args.tool, ...(signedOut ? { dc_signed_out: true } : {}),
+    });
     rmSync(privateTmp, { recursive: true, force: true });
     return 1;
   }
@@ -198,6 +236,15 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   // emits no init"), so the thread is announced on its own frame the client ignores.
   emit({ type: 'system', subtype: 'dc_thread', session_id: session.nativeThreadId, dc_tool: args.tool, dc_ready: true });
   deps.onReady?.(session.nativeThreadId);
+  // A pane that moved to an account which cannot hold its thread opens fresh, with the old end.
+  if (isInstanceTool(args.tool) && args.carry) {
+    const text = carriedText(args.carry, args.cwd, home);
+    if (text) {
+      owe([{ key: 'dreamcontext-previous-thread', text }]);
+      // Kept with the new thread, so a second move still carries it.
+      recordThreadTurn(session.nativeThreadId, args.cwd, 'carried', text, home, args.account, args.carry);
+    }
+  }
 
   const ack = (requestId: unknown, error?: string): void => {
     if (typeof requestId !== 'string') return;
@@ -208,6 +255,30 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
 
   // One frame at a time: a steer must not race the turn it steers. The snapshot is read first,
   // so the first turn already carries it.
+  // A tool with no launch argument for it gets the chat-surface briefing with a thread's first turn.
+  const briefingOwed = (): AppContext[] => {
+    if (!isInstanceTool(args.tool) || !args.briefingFile) return [];
+    try {
+      const text = readFileSync(args.briefingFile, 'utf-8').slice(0, MAX_DEVELOPER_INSTRUCTIONS);
+      return text.trim() ? [{ key: 'dreamcontext-briefing', text }] : [];
+    } catch {
+      return [];
+    }
+  };
+  owe(briefingOwed());
+  // Only Codex drops a repeated snapshot itself. Here it rides the words, so it goes once a thread,
+  // and again when the context shrank (the tool compacted, and the snapshot went with it).
+  let brainSent = false;
+  let lastTokens = 0;
+  const onceAThread = (ctx: AppContext[]): AppContext[] => {
+    if (!isInstanceTool(args.tool)) return ctx;
+    const now = session.wire.contextTokens;
+    if (now < lastTokens * 0.6) brainSent = false;
+    lastTokens = now;
+    const out = brainSent ? ctx.filter((c) => c.key !== 'dreamcontext-brain') : ctx;
+    brainSent = true;
+    return out;
+  };
   let chain: Promise<void> = deps.brain
     ? deps.brain.session(args.resume ? 'resume' : 'startup', session.nativeThreadId).catch(() => undefined)
     : Promise.resolve();
@@ -233,6 +304,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       }
       if (text.trim() === '/clear') {
         const id = await session.newThread();
+        brainSent = false;
+        owe(briefingOwed());
         owe(deps.onRotated?.(id));
         // A fresh thread starts with a fresh snapshot, as SessionStart(source=clear) gives Claude.
         await deps.brain?.session('clear', id).catch(() => undefined);
@@ -240,7 +313,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       }
       // A steer joins the running turn as Claude's mid-turn message does: no hook, no context.
       const brain = session.busy || !deps.brain ? [] : await deps.brain.prompt(text, session.nativeThreadId).catch(() => []);
-      const context = session.busy ? [] : [...titler.nudge(), ...pending.splice(0), ...brain];
+      if (keepsThread) recordThreadTurn(session.nativeThreadId, args.cwd, 'user', text, home, args.account);
+      const context = session.busy ? [] : [...titler.nudge(), ...pending.splice(0), ...onceAThread(brain)];
       await session.send(text, args.tool === 'codex' ? fitCodexContext(context) : context);
       return;
     }

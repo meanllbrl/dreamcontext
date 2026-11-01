@@ -14,6 +14,8 @@
  */
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
+import { memberFileWriteTarget } from '../agents/member-file-guard.js';
+import { isMarketingEnvPath } from '../marketing/path-guards.js';
 
 export type ChatPermissionMode = 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions';
 export type T3RuntimeMode = 'approval-required' | 'auto-accept-edits' | 'auto' | 'full-access';
@@ -51,6 +53,31 @@ export function claudeRuntimePolicy(input: { mode: string; cwd: string }): Codex
     case 'plan': return { runtimeMode: 'approval-required', interactionMode: 'plan', cwd };
     default: return { runtimeMode: 'approval-required', interactionMode: 'default', cwd };
   }
+}
+
+/**
+ * Antigravity has no OS sandbox, so the roots, network and deny rules of Codex's
+ * `auto` cannot hold on it. Every mode but Bypass therefore asks: edits and commands each come to
+ * the owner as an approval card, and nothing runs wider than it does today.
+ */
+export function instanceRuntimePolicy(input: { mode: string; cwd: string }): CodexRuntimePolicy {
+  // Bypass too: T3 fixes the agent's mode once, at session start, so a `yolo` agent would stay so
+  // after the owner turned Bypass off. The agent always asks, and the bridge answers for Bypass.
+  return { runtimeMode: 'approval-required', interactionMode: normalizeMode(input.mode) === 'plan' ? 'plan' : 'default', cwd: input.cwd || null };
+}
+
+/**
+ * What Bypass still brings to the owner: the writes Claude's PreToolUse hook refuses even in bypass
+ * (marketing tokens, AI Team member files). This tool has no hooks, so the card is the gate.
+ */
+export function bypassNeedsOwner(tool: string, input: unknown, cwd: string): boolean {
+  const record = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const path = typeof record.file_path === 'string' ? record.file_path : '';
+  // An edit that names no real path cannot be judged, so the owner judges it.
+  if (tool === 'Edit' && !/[\\/]/.test(path)) return true;
+  return /marketing[\\/]+\.env/.test(JSON.stringify(record))
+    || (!!path && isMarketingEnvPath(isAbsolute(path) ? path : join(cwd, path)))
+    || !!memberFileWriteTarget(tool, record, cwd);
 }
 
 /** Normalize anything the client may send to one of our five modes (unknown → `default`). */

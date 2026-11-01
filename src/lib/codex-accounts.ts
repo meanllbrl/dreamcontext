@@ -205,7 +205,7 @@ export function codexUsageFile(id: string, home: string = homedir()): string {
   return join(home, '.dreamcontext', 'codex-usage', `${id}.json`);
 }
 
-function cleanWindow(w: unknown): CodexUsageWindow | null {
+export function cleanUsageWindow(w: unknown): CodexUsageWindow | null {
   if (!w || typeof w !== 'object') return null;
   const o = w as Record<string, unknown>;
   if (typeof o.id !== 'string' || typeof o.kind !== 'string' || typeof o.usedPercent !== 'number' || !Number.isFinite(o.usedPercent)) return null;
@@ -225,7 +225,7 @@ export function readCodexUsage(id: string, home: string = homedir()): CodexUsage
     if (typeof raw.checkedAt !== 'string' || !Array.isArray(raw.windows)) return null;
     return {
       checkedAt: raw.checkedAt,
-      windows: raw.windows.map(cleanWindow).filter((w): w is CodexUsageWindow => w !== null),
+      windows: raw.windows.map(cleanUsageWindow).filter((w): w is CodexUsageWindow => w !== null),
       source: raw.source === 'session' ? 'session' : 'probe',
     };
   } catch {
@@ -240,7 +240,7 @@ export function readCodexUsage(id: string, home: string = homedir()): CodexUsage
 export function recordCodexUsage(
   id: string, windows: unknown[], checkedAt: string, source: 'probe' | 'session', home: string = homedir(),
 ): CodexUsageReading {
-  const fresh = windows.map(cleanWindow).filter((w): w is CodexUsageWindow => w !== null);
+  const fresh = windows.map(cleanUsageWindow).filter((w): w is CodexUsageWindow => w !== null);
   const before = readCodexUsage(id, home);
   const prev = source === 'session' ? before : null;
   const merged = prev ? [...prev.windows.filter((w) => !fresh.some((f) => f.id === w.id)), ...fresh] : fresh;

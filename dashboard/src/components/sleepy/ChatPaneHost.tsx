@@ -132,7 +132,8 @@ function ChatPaneHostInner({
   // A Codex chat reads Codex's own models and efforts; a Claude chat is unchanged.
   const tools = useAgentTools().data;
   const codexInfo = tools?.find((t) => t.tool === 'codex');
-  const codexConfig = session.tool === 'codex' ? codexModelConfig(codexInfo) : null;
+  const antigravityInfo = tools?.find((t) => t.tool === 'antigravity');
+  const codexConfig = session.tool === 'codex' ? codexModelConfig(codexInfo) : session.tool === 'antigravity' ? codexModelConfig(antigravityInfo) : null;
   const paneConfig = codexConfig ?? modelConfig;
   const paneModel = codexConfig && !codexConfig.models.some((m) => m.id === model) ? codexConfig.defaultModel : model;
   const paneEffort = codexConfig && !codexConfig.efforts.includes(effort) ? codexConfig.defaultEffort : effort;
@@ -143,10 +144,10 @@ function ChatPaneHostInner({
   const lockOpen = t('chat.modelPicker.lock.open');
   const toolPick = useMemo<ToolPick | undefined>(() => (pickTool || lockNote ? {
     current: session.tool,
-    tools: [claudeState(modelConfig), ...(codexInfo ? [codexState(codexInfo)] : [])],
+    tools: [claudeState(modelConfig), ...(codexInfo ? [codexState(codexInfo)] : []), ...(antigravityInfo ? [codexState(antigravityInfo)] : [])],
     onPick: (tool, picked) => pickTool?.(session.id, tool, picked),
     ...(lockNote ? { lock: { note: lockNote, openLabel: lockOpen } } : {}),
-  } : undefined), [pickTool, codexInfo, session, modelConfig, lockNote, lockOpen]);
+  } : undefined), [pickTool, codexInfo, antigravityInfo, session, modelConfig, lockNote, lockOpen]);
 
   return (
     <ChatPane

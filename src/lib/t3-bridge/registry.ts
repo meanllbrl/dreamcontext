@@ -12,11 +12,14 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { codexHealth, codexTooOld, type CodexRunner } from '../codex-bin.js';
+import { antigravityInstalled } from '../antigravity-accounts.js';
+import { listInstanceAccounts } from '../instance-accounts.js';
 import { bridgeNode } from './node-floor.js';
+import manifest from '../../vendor/t3/apps/server/src/provider/model-manifest.json' with { type: 'json' };
 
-export type ToolId = 'claude' | 'codex';
-export const BRIDGE_TOOLS: readonly ToolId[] = ['codex'];
-export const KNOWN_TOOLS: readonly ToolId[] = ['claude', 'codex'];
+export type ToolId = 'claude' | 'codex' | 'antigravity';
+export const BRIDGE_TOOLS: readonly ToolId[] = ['codex', 'antigravity'];
+export const KNOWN_TOOLS: readonly ToolId[] = ['claude', 'codex', 'antigravity'];
 
 export interface ToolModel {
   readonly id: string;
@@ -45,7 +48,7 @@ export interface ToolInfo {
 
 /** `?tool=` from a socket URL: a known tool, or null (absent = today's Claude path). */
 export function sanitizeTool(v: string | null | undefined): ToolId | null {
-  return v === 'claude' || v === 'codex' ? v : null;
+  return (KNOWN_TOOLS as readonly (string | null | undefined)[]).includes(v) ? v as ToolId : null;
 }
 
 /** The default model in `~/.codex/config.toml` (a top-level `model = "…"` line). */
@@ -115,9 +118,28 @@ export function codexInfo(o: ToolLookup = {}): ToolInfo {
   };
 }
 
+/** The models T3 ships for a driver, current ones first (`model-manifest.json`). */
+export function manifestModels(driver: 'antigravity'): ToolModel[] {
+  const rows = (manifest as { providers: Record<string, { models: { slug: string; name: string; status: string }[] }> }).providers[driver]?.models ?? [];
+  return [...rows]
+    .sort((a, b) => Number(b.status === 'current') - Number(a.status === 'current'))
+    .map((m) => ({ id: m.slug, label: m.name, efforts: [], defaultEffort: null }));
+}
+
+/** Antigravity's readiness, from disk: T3 manages its install, the token file says signed in. */
+export function antigravityInfo(o: ToolLookup = {}): ToolInfo {
+  const home = o.home ?? homedir();
+  const installed = antigravityInstalled({ home, ...(o.path === undefined ? {} : { path: o.path }) });
+  const signedIn = listInstanceAccounts('antigravity', home).some((a) => a.signedIn);
+  const nodeOk = (o.node === undefined ? bridgeNode() : o.node) !== null;
+  const models = manifestModels('antigravity');
+  return { tool: 'antigravity', label: 'Antigravity', installed, signedIn, nodeOk, ready: installed && signedIn && nodeOk, defaultModel: models[0]?.id ?? null, models };
+}
+
 export function listTools(o: ToolLookup = {}): ToolInfo[] {
   return [
     { tool: 'claude', label: 'Claude', installed: true, signedIn: true, nodeOk: true, ready: true, defaultModel: null, models: [] },
     codexInfo(o),
+    antigravityInfo(o),
   ];
 }

@@ -27,10 +27,13 @@ import { codexChildEnv, codexCommand } from '../codex-bin.js';
 import { codexInstanceSettings } from './accounts.js';
 import { scrubbedCodexEnv } from './launch.js';
 import { fenceSeed, type RawHandoff } from './tool-handoff.js';
+import { isInstanceTool } from '../instance-accounts.js';
 
 export interface T3AccountOptions {
-  action: 'prepare' | 'probe' | 'seed';
+  action: 'prepare' | 'probe' | 'seed' | 'install' | 'signin';
   account?: string;
+  /** Absent = Codex. A tool whose accounts are T3 instances runs instance-account-cli.ts. */
+  tool?: string;
   home?: string;
   in?: string;
   out?: string;
@@ -127,6 +130,7 @@ function runSeed(i: string, o: string): number {
 export async function runT3Account(o: T3AccountOptions): Promise<number> {
   if (o.action === 'seed') return runSeed(o.in ?? '', o.out ?? '');
   const home = o.home ?? homedir();
+  if (isInstanceTool(o.tool)) return (await import('./instance-account-cli.js')).runInstanceAccount(o.action, o.tool, o.account ?? '', home);
   const program: Effect.Effect<unknown, unknown, never> = o.action === 'prepare'
     ? prepareProgram(home, o.account).pipe(Effect.provide(NodeServices.layer))
     : probeProgram(home, o.account, process.env).pipe(Effect.timeout(PROBE_TIMEOUT_MS), Effect.provide(NodeServices.layer)) as Effect.Effect<unknown, unknown, never>;

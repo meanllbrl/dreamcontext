@@ -13,6 +13,7 @@ import {
   handleCodexAccountsAdopt, handleCodexAccountsList, handleCodexAccountsLogin, handleCodexAccountsRefresh,
   handleCodexAccountsRemove, handleCodexAccountsReorder,
 } from '../../src/server/routes/agent-tool-accounts.js';
+import { instanceAccountsLogin, setInstanceSignInForTests } from '../../src/server/routes/agent-tool-accounts.js';
 import { markPhoneSocket } from '../../src/server/phone-origin.js';
 import { ROUTE_POLICY } from '../../src/lib/handsfree/mac/route-policy.js';
 import { CODEX_PRIMARY_ID, recordCodexUsage, setCodexAccountDepsForTests } from '../../src/lib/codex-accounts.js';
@@ -36,7 +37,7 @@ async function call(h: Handler, body: unknown, o: { phone?: boolean; remote?: st
     end(payload?: string) { captured.body = payload ? JSON.parse(payload) : null; },
   } as unknown as ServerResponse;
   const req = Readable.from([Buffer.from(JSON.stringify(body ?? {}), 'utf-8')]) as unknown as IncomingMessage;
-  const socket = { remoteAddress: o.remote ?? '127.0.0.1' };
+  const socket = { remoteAddress: o.remote ?? '127.0.0.1', setTimeout() { /* holdOpen */ } };
   if (o.phone) markPhoneSocket(socket);
   Object.assign(req, { method: 'POST', url: '/api/agent/accounts/codex', headers: { host: '127.0.0.1:1234', 'content-type': 'application/json' }, socket });
   await h(req, res);
@@ -118,5 +119,41 @@ describe('per-tool account routes keep their Claude twin\'s guard and policy cla
     const r = await call(handleCodexAccountsLogin, {});
     expect(r.status).toBe(409);
     expect(r.body.error ?? r.body.code ?? JSON.stringify(r.body)).toMatch(/node_missing|Node/);
+  });
+});
+
+describe('Antigravity sign-in from Settings', () => {
+  const home = mkdtempSync(join(tmpdir(), 'dc-agy-route-'));
+  const install = (): void => {
+    const dir = join(home, '.dreamcontext', 't3', 'tools', 'antigravity-acp', `${process.platform}-${process.arch}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'active.json'), '{}');
+  };
+  beforeEach(() => {
+    process.env.HOME = home;
+    process.env.DREAMCONTEXT_DESKTOP = '1';
+    process.env.PATH = process.env.PATH ?? '';
+  });
+  afterAll(() => { setInstanceSignInForTests(null); rmSync(home, { recursive: true, force: true }); });
+
+  it('sends a first install to the picker, and never starts a sign-in', async () => {
+    let started = 0;
+    setInstanceSignInForTests(async () => { started += 1; return true; });
+    const out = await call(instanceAccountsLogin('antigravity'), {});
+    expect(out.status).toBe(409);
+    expect(JSON.stringify(out.body)).toContain('Install Antigravity from the model picker');
+    expect(started).toBe(0);
+  });
+
+  it('runs one sign-in at a time', async () => {
+    install();
+    let finish: (ok: boolean) => void = () => undefined;
+    setInstanceSignInForTests(() => new Promise((r) => { finish = r; }));
+    const first = call(instanceAccountsLogin('antigravity'), {});
+    await new Promise((r) => setTimeout(r, 30));
+    const second = await call(instanceAccountsLogin('antigravity'), {});
+    expect(second.status).toBe(409);
+    finish(true);
+    expect((await first).status).toBe(200);
   });
 });

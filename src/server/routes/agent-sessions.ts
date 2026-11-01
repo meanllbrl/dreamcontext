@@ -103,7 +103,7 @@ export interface SavedMeta {
    * Claude (Track T: `codex`), so the tab reopens on the same tool and resumes its own thread.
    * Absent = Claude, which every roster written before this field already means.
    */
-  tool?: 'codex';
+  tool?: 'codex' | 'antigravity';
   /**
    * Which PANE this tab sat in, as a 0-based index into the surface's left-to-right pane row.
    *
@@ -330,7 +330,7 @@ function coerceMeta(raw: unknown): SavedMeta {
     ? (o.mode as ChatMode)
     : undefined;
   const agent = kind === 'chat' && typeof o.agent === 'string' && isSafeAutomationSlug(o.agent) ? o.agent : undefined;
-  const tool = kind === 'chat' && o.tool === 'codex' ? 'codex' as const : undefined;
+  const tool = kind === 'chat' && (o.tool === 'codex' || o.tool === 'antigravity') ? o.tool : undefined;
   // What the chat was running on: chat only, like `mode`, and each through its spawn gate.
   const model = kind === 'chat' && typeof o.model === 'string' ? sanitizeModel(o.model) : '';
   const effort = kind === 'chat' && typeof o.effort === 'string' && EFFORT_LEVELS.includes(o.effort) ? o.effort : '';
@@ -782,7 +782,7 @@ export async function handleAgentSessionsGet(
 
 /** One Mac window tab as a remote screen seeds it: never a path, a mode, an agent or an
  *  automation. */
-export interface DesktopSeedTab { title: string; sessionId: string; pane: number; kind: 'agent' | 'chat'; bypass: boolean; active?: true; tool?: 'codex' }
+export interface DesktopSeedTab { title: string; sessionId: string; pane: number; kind: 'agent' | 'chat'; bypass: boolean; active?: true; tool?: 'codex' | 'antigravity' }
 
 /**
  * The Mac window's tabs a remote screen may seed from (`GET /api/agent/sessions?of=desktop` on a

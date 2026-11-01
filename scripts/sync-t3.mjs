@@ -46,6 +46,9 @@ const ENTRIES = [
   'apps/server/src/orchestration-v2/Adapters/claudeWorkflowProgress.ts',
   'apps/server/src/textGeneration/ClaudeTextGeneration.ts',
   'apps/server/src/textGeneration/CodexTextGeneration.ts',
+  // W5 lane A: Antigravity over ACP.
+  'apps/server/src/provider/Drivers/AntigravityDriver.ts',
+  'apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts',
 ];
 
 // T3's own tests we run in our suite (plan §1 tests row).
@@ -55,6 +58,23 @@ const TESTS = [
   'apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts',
   'apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts',
   'apps/server/src/provider/Drivers/CodexHomeLayout.test.ts',
+  // W5 lane A: Antigravity over ACP.
+  'apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.test.ts',
+  'apps/server/src/provider/AntigravityAuth.test.ts',
+  'apps/server/src/provider/AntigravityInstallation.test.ts',
+  'apps/server/src/provider/Drivers/AntigravitySkills.test.ts',
+  'apps/server/src/provider/Drivers/antigravityUsageReader.test.ts',
+  'apps/server/src/provider/acp/AcpJsonRpcConnection.test.ts',
+  'apps/server/src/provider/acp/AntigravityAcpSupport.test.ts',
+  'apps/server/src/provider/acp/AntigravityProtocol.test.ts',
+  'apps/server/src/provider/antigravityAuthSupport.test.ts',
+  'apps/server/src/provider/antigravityCallback.test.ts',
+  'apps/server/src/provider/antigravityUsageLimits.test.ts',
+  // The fake ACP agent AntigravityAdapterV2.test.ts spawns; our bridge tests reuse it.
+  'apps/server/scripts/acp-mock-agent.ts',
+  // Not AcpAdapterV2.test.ts (it drives Grok and the ACP registry drivers) nor
+  // AntigravityDriver.test.ts / AntigravityProvider.test.ts (T3's desktop power monitor and credential store).
+  // tests/unit/t3-bridge covers the Antigravity driver as we build it.
   // Not ProviderInstanceRegistry.test.ts: it builds T3's full adapter
   // infrastructure (Cursor SDK, native keyring). tests/unit/t3-bridge/registry.test.ts covers ours.
 ];
@@ -77,6 +97,7 @@ export const STUBBED = [
   'apps/server/src/serverSettings.ts',
   'apps/server/src/usage/CodexUsageHistory.ts',
   'apps/server/src/preview/PortScanner.ts',
+  'apps/server/src/provider/ProviderAuthService.ts',
   // Test-only seams: T3's orchestrator replay harness pulls T3's whole server
   // (every driver, git, terminal, SQLite, native modules). The few T3 adapter
   // tests that drive the orchestrator are excluded by name (T3_ORCHESTRATOR_TESTS).
@@ -91,7 +112,10 @@ export const STUBBED = [
 
 // Imports of these resolve to an npm dependency (recorded, not copied).
 const isExternal = (spec) =>
-  !spec.startsWith('.') && !spec.startsWith('@t3tools/') && !spec.startsWith('effect-codex-app-server');
+  !spec.startsWith('.') &&
+  !spec.startsWith('@t3tools/') &&
+  !spec.startsWith('effect-codex-app-server') &&
+  !/^effect-acp(?:\/|$)/.test(spec);
 
 const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' });
 
@@ -244,7 +268,7 @@ function main() {
     fs.writeFileSync(out, text);
     manifest.files[rel] = sha256(text);
   }
-  for (const pkg of ['contracts', 'provider-core', 'shared', 'effect-codex-app-server', 'provider-testing']) {
+  for (const pkg of ['contracts', 'provider-core', 'shared', 'effect-codex-app-server', 'provider-testing', 'effect-acp', 'provider-acp']) {
     const pj = path.join(src, 'packages', pkg, 'package.json');
     const { name, exports } = readExportsMap(src, `packages/${pkg}`);
     fs.writeFileSync(path.join(DEST, 'packages', pkg, 'package.json'), JSON.stringify({ name, exports }, null, 2) + '\n');

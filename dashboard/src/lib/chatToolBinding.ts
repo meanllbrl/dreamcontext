@@ -5,7 +5,7 @@
  * keeps the conversation, so `createChatSession` reads the tool here and each path carries it.
  * A relaunch rebuilds it from the saved roster's `tool` before the first spawn.
  */
-export type ChatTool = '' | 'codex';
+export type ChatTool = '' | 'codex' | 'antigravity';
 
 const bindings = new Map<string, Exclude<ChatTool, ''>>();
 
@@ -29,4 +29,4 @@ export function chatToolParam(claudeId: string): string {
 /** Instance-bus event: open a NEW chat on `tool`, from a surface that cannot switch its own
  *  (the Super Agent, an agent-bound chat). AgentSurface owns the tabs, so it answers. */
 export const OPEN_TOOL_CHAT_EVENT = 'dreamcontext-open-tool-chat';
-export interface OpenToolChatDetail { tool: 'codex' }
+export interface OpenToolChatDetail { tool: Exclude<ChatTool, ''> }

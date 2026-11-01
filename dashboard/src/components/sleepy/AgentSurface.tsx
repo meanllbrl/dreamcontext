@@ -342,7 +342,7 @@ interface SavedMeta {
   /** The agent this chat tab speaks as. Mirrors the server's `SavedMeta.agent`. */
   agent?: string;
   /** The tool this chat runs on when it is not Claude. Mirrors the server's `SavedMeta.tool`. */
-  tool?: 'codex';
+  tool?: 'codex' | 'antigravity';
   /** 0-based index of the pane this tab sat in, left to right. Absent on legacy rosters →
    *  pane 0, which is exactly the single-pane restore this surface used to do unconditionally. */
   pane?: number;
@@ -1319,7 +1319,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
           // and only on the non-cancelled invocation, so StrictMode can't double-spawn.
           const restored: SessionMeta[] = fresh.map((m, i) => {
             // Bound before any spawn or Resume below: `createChatSession` reads the tool from it.
-            if (m.sessionId) bindChatTool(m.sessionId, m.kind === 'chat' && m.tool === 'codex' ? 'codex' : '');
+            if (m.sessionId) bindChatTool(m.sessionId, m.kind === 'chat' && m.tool ? m.tool : '');
             // Shells restore as shells; an 'automation' entry KEEPS that display kind (see
             // the branch below — C11/C12); every other Claude-backed tab (saved as agent OR
             // chat) reopens as the CURRENTLY chosen Agent screen — the preference is a swap,
@@ -1330,7 +1330,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             // necessary but not sufficient without this read-side counterpart.
             // A Codex chat has no terminal surface: it restores as a chat whatever the Agent screen
             // says, or the next save would drop its `tool` and resume its thread on Claude.
-            const codexChat = m.kind === 'chat' && m.tool === 'codex';
+            const codexChat = m.kind === 'chat' && !!m.tool;
             const kind: SessionKind = codexChat ? 'chat' : m.kind === 'shell' ? 'shell' : m.kind === 'automation' ? 'automation' : claudeKind;
             if (kind === 'automation' && m.sessionId) {
               // X2 (blocking): an automation session this MACHINE never bound must not
@@ -1797,7 +1797,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     return home ? showWindow(home) : null;
   }, [showWindow]);
 
-  const spawnAndRegister = useCallback((kind: SessionKind, launch?: { bypass: boolean; explicitBypass: true }, forceCodex = false) => {
+  const spawnAndRegister = useCallback((kind: SessionKind, launch?: { bypass: boolean; explicitBypass: true }, forceTool: '' | 'codex' | 'antigravity' = '') => {
     // A new agent inherits the user's CLI defaults (model/effort from ~/.claude/settings.json);
     // the picker then reflects and can change them per agent. Nothing is forced at launch.
     // A new CHAT starts in Basic — there is deliberately no remembered mode default (the mode
@@ -1809,13 +1809,14 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     // list not read yet) trusts the setting: the server says why, should it refuse.
     const defaults = agentSettingsRef.current;
     const codexInfo = agentToolsRef.current?.find((t) => t.tool === 'codex');
-    const onCodex = forceCodex || (!launch && kind === 'chat' && defaults.chatDefaultTool === 'codex' && (codexInfo?.ready ?? true));
-    const codexId = onCodex ? newClaudeId() : undefined;
-    if (codexId) bindChatTool(codexId, 'codex');
+    const onCodex = forceTool === 'codex' || (!launch && kind === 'chat' && defaults.chatDefaultTool === 'codex' && (codexInfo?.ready ?? true));
+    const onAntigravity = forceTool === 'antigravity';
+    const codexId = onCodex || onAntigravity ? newClaudeId() : undefined;
+    if (codexId) bindChatTool(codexId, onAntigravity ? 'antigravity' : 'codex');
     const s = launch
       ? spawn(launch.bypass, undefined, false, kind, '', '', true, '', false, '', true)
       : codexId
-        ? spawn(bypass, codexId, false, 'chat', '', defaults.codexDefaultModel, true, '', false, defaults.codexDefaultEffort)
+        ? spawn(bypass, codexId, false, 'chat', '', onAntigravity ? '' : defaults.codexDefaultModel, true, '', false, onAntigravity ? '' : defaults.codexDefaultEffort)
         : spawn(bypass, undefined, false, kind);
     // Gated by its only callers: `addSession` and `addSplitSession` pass admitTab() first.
     setSessionList((prev) => [...prev, {
@@ -1827,9 +1828,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
 
   // Add a session as a TAB of the action-focused pane (⌘T / ＋ for an agent, ⌃` / menu for
   // a shell), or as the first pane.
-  const addSession = useCallback((kind: SessionKind = 'agent', launch?: { bypass: boolean; explicitBypass: true }, forceCodex = false): string => {
+  const addSession = useCallback((kind: SessionKind = 'agent', launch?: { bypass: boolean; explicitBypass: true }, forceTool: '' | 'codex' | 'antigravity' = ''): string => {
     if (!admitTab()) return '';
-    const s = spawnAndRegister(kind, launch, forceCodex);
+    const s = spawnAndRegister(kind, launch, forceTool);
     if (panes.length === 0) {
       const pid = nextPaneId();
       setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
@@ -2334,10 +2335,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     const carried = fresh ? chat.getModel().draft : '';
     const claudeId = newClaudeId();
     if (!fresh) {
-      const name = tool === 'codex' ? 'Codex' : 'Claude';
+      const name = tool === 'codex' ? 'Codex' : tool === 'antigravity' ? 'Antigravity' : 'Claude';
       const ok = await confirmAction({
         title: tRef.current('chat.toolHandoff.title').replace('{tool}', name),
-        body: tRef.current('chat.toolHandoff.body').replace('{tool}', name).replace('{vendor}', tool === 'codex' ? 'OpenAI' : 'Anthropic'),
+        body: tRef.current('chat.toolHandoff.body').replace('{tool}', name).replace('{vendor}', tool === 'codex' ? 'OpenAI' : tool === 'antigravity' ? 'Google' : 'Anthropic'),
         confirmLabel: tRef.current('chat.toolHandoff.confirm'),
         cancelLabel: tRef.current('chat.toolHandoff.cancel'),
       });
@@ -3098,10 +3099,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // The locked picker's way out: a NEW Codex chat. The Super Agent stays handed over behind it,
   // as for the drawer's New tab; only the view moves (`new-tab` in the shell-intent handler).
   useInstanceEvent<OpenToolChatDetail>(OPEN_TOOL_CHAT_EVENT, (detail) => {
-    if (detail?.tool !== 'codex') return;
+    if (!detail?.tool) return;
     // Expanded first: the refusal (40 tabs, Claude off) is drawn inside this surface.
     setExpanded(true);
-    if (!canSpawn || !addSession('chat', undefined, true)) return;
+    if (!canSpawn || !addSession('chat', undefined, detail.tool)) return;
     setSuperPeek(null);
     setSuperDockOpen(false);
     setSuperView('panes');

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApi } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
-import { useCodexAccounts, type ToolAccountWire } from '../../hooks/useAgentCapabilities';
+import { googleAccountLabel, useToolAccounts, type ToolAccountWire } from '../../hooks/useAgentCapabilities';
 import { Bar, ageLabel, fmtLeft, resetLabel } from './ClaudeAccounts';
 import './ClaudeAccounts.css';
 
@@ -22,6 +22,11 @@ import './ClaudeAccounts.css';
 
 const STALE_AFTER_MS = 10 * 60 * 1000;
 
+const ANTIGRAVITY_WORDS = new Set(['none', 'note', 'thisMachine', 'addHint', 'addingHint', 'signedOut'].map((k) => `settings.codexAccounts.${k}`));
+
+/** Antigravity's Google accounts: each is a private T3 profile, so the panel is Codex's. */
+export const AntigravityAccounts = () => <CodexAccounts tool="antigravity" />;
+
 /** "plus" → "Plus". ChatGPT's plan names. */
 function planLabel(plan: string): string {
   const p = plan.trim();
@@ -29,11 +34,14 @@ function planLabel(plan: string): string {
   return p.charAt(0).toUpperCase() + p.slice(1);
 }
 
-export function CodexAccounts() {
+export function CodexAccounts({ tool = 'codex' }: { tool?: 'codex' | 'antigravity' } = {}) {
   const api = useApi();
   const qc = useQueryClient();
-  const { t } = useI18n();
-  const { data, isLoading, dataUpdatedAt } = useCodexAccounts(true);
+  const { t: translate } = useI18n();
+  // The panel's words are Codex's; the few that name ChatGPT have a twin for the other tools.
+  const twins = tool === 'antigravity' ? ANTIGRAVITY_WORDS : null;
+  const t = (key: string): string => (twins && twins.has(key) ? translate(key.replace('settings.codexAccounts.', 'settings.antigravityAccounts.')) : translate(key));
+  const { data, isLoading, dataUpdatedAt } = useToolAccounts(tool, true);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -43,7 +51,7 @@ export function CodexAccounts() {
   const accounts: ToolAccountWire[] = data?.accounts ?? [];
   const startsHereId = data?.nextSessionAccountId ?? accounts[0]?.id ?? null;
 
-  const refetch = useCallback(() => { void qc.invalidateQueries({ queryKey: ['agent-codex-accounts'] }); }, [qc]);
+  const refetch = useCallback(() => { void qc.invalidateQueries({ queryKey: [`agent-${tool}-accounts`] }); }, [qc, tool]);
 
   const run = useCallback(async (tag: string, fn: () => Promise<unknown>): Promise<boolean> => {
     setBusy(tag);
@@ -64,7 +72,7 @@ export function CodexAccounts() {
     setRefreshing(true);
     setNote('');
     try {
-      const res = await api.post<{ refreshed: string[]; failed: { id: string; why: string }[] }>('/agent/accounts/codex/refresh', {});
+      const res = await api.post<{ refreshed: string[]; failed: { id: string; why: string }[] }>(`/agent/accounts/${tool}/refresh`, {});
       setNote(res.refreshed.length > 0 ? t('settings.codexAccounts.updated').replace('{n}', String(res.refreshed.length)) : t('settings.codexAccounts.notReread'));
     } catch (e) {
       setError((e as Error)?.message || t('settings.codexAccounts.failed'));
@@ -77,15 +85,15 @@ export function CodexAccounts() {
   // Read once on open when the oldest reading is stale (the list route never probes).
   const autoProbed = useRef(false);
   useEffect(() => {
-    if (autoProbed.current || refreshing || accounts.length === 0) return;
+    if (autoProbed.current || refreshing || !accounts.some((a) => a.state === 'ok')) return;
     const oldest = Math.min(...accounts.map((a) => a.fetchedAtMs ?? 0));
     if (Date.now() - oldest <= STALE_AFTER_MS) return;
     autoProbed.current = true;
     void refreshUsage();
   }, [accounts, refreshing, refreshUsage]);
 
-  const add = () => run('add', () => api.post('/agent/accounts/codex/login', {}));
-  const remove = (id: string) => run(`remove-${id}`, () => api.post('/agent/accounts/codex/remove', { id })).then(() => setConfirmRemove(''));
+  const add = () => run('add', () => api.post(`/agent/accounts/${tool}/login`, {}));
+  const remove = (id: string) => run(`remove-${id}`, () => api.post(`/agent/accounts/${tool}/remove`, { id })).then(() => setConfirmRemove(''));
   const nudge = (id: string, delta: -1 | 1) => {
     const ids = accounts.map((a) => a.id);
     const from = ids.indexOf(id);
@@ -93,14 +101,14 @@ export function CodexAccounts() {
     if (from < 0 || to < 0 || to >= ids.length) return;
     const next = ids.slice();
     next.splice(to, 0, next.splice(from, 1)[0]!);
-    void run('order', () => api.post('/agent/accounts/codex/reorder', { ids: next }));
+    void run('order', () => api.post(`/agent/accounts/${tool}/reorder`, { ids: next }));
   };
 
   if (isLoading) return <p className="settings-field-hint">{t('common.loading')}</p>;
   const now = Math.max(Date.now(), dataUpdatedAt);
 
   return (
-    <div className="dc-accts" data-testid="codex-accounts">
+    <div className="dc-accts" data-testid={`${tool}-accounts`}>
       {accounts.length === 0 ? (
         <p className="settings-field-hint">{t('settings.codexAccounts.none')}</p>
       ) : (
@@ -123,12 +131,12 @@ export function CodexAccounts() {
               const monthly = a.windows.find((w) => w.kind === 'monthly' && w.resetsAt);
               const age = ageLabel(a.fetchedAtMs);
               return (
-                <li key={a.id} className={`dc-acct${signedOut ? ' is-stale' : ''}${a.id === startsHereId ? ' is-top' : ''}`} data-testid={`codex-account-${a.id}`}>
+                <li key={a.id} className={`dc-acct${signedOut ? ' is-stale' : ''}${a.id === startsHereId ? ' is-top' : ''}`} data-testid={`${tool}-account-${a.id}`}>
                   <span className="dc-acct-grip" aria-hidden="true">⠿</span>
                   <div className="dc-acct-main">
                     <div className="dc-acct-head">
                       <span className="dc-acct-rank" aria-hidden="true">{i + 1}</span>
-                      <span className="dc-acct-who">{a.email || (a.isPrimary ? t('settings.codexAccounts.thisMachine') : a.id)}</span>
+                      <span className="dc-acct-who">{a.email || (tool === 'antigravity' ? googleAccountLabel(a, translate) : a.isPrimary ? t('settings.codexAccounts.thisMachine') : a.id)}</span>
                       {a.planType && <span className="dc-acct-plan">ChatGPT {planLabel(a.planType)}</span>}
                       {a.id === startsHereId && <span className="dc-acct-tag dc-acct-tag--top">{t('settings.codexAccounts.startsHere')}</span>}
                       {a.refusedUntil && a.refusedUntil > now && (
@@ -136,9 +144,14 @@ export function CodexAccounts() {
                           {t('settings.codexAccounts.limitHit').replace('{left}', fmtLeft(a.refusedUntil - now))}
                         </span>
                       )}
-                      {a.isPrimary && <span className="dc-acct-tag">~/.codex</span>}
+                      {a.isPrimary && tool === 'codex' && <span className="dc-acct-tag">~/.codex</span>}
                     </div>
                     {signedOut && <p className="dc-acct-warn">{t('settings.codexAccounts.signedOut')}</p>}
+                    {signedOut && tool === 'antigravity' && (
+                      <button type="button" className="btn btn--secondary" disabled={busy !== ''} data-testid={`antigravity-signin-${a.id}`} onClick={() => void run('add', () => api.post(`/agent/accounts/${tool}/login`, { id: a.id }))}>
+                        {busy === 'add' ? t('settings.codexAccounts.adding') : translate('settings.antigravityAccounts.signIn')}
+                      </button>
+                    )}
                     <div className={`dc-acct-bars${refreshing ? ' is-refreshing' : ''}`}>
                       <Bar label={t('settings.codexAccounts.session')} percent={signedOut || !session ? null : session.percent} resetsAt={session?.resetsAt ?? 0} now={now} />
                       <Bar label={t('settings.codexAccounts.weekly')} percent={signedOut || !weekly ? null : weekly.percent} resetsAt={weekly?.resetsAt ?? 0} now={now} />
@@ -153,7 +166,7 @@ export function CodexAccounts() {
                       <button type="button" className="dc-acct-move-btn" disabled={i === 0 || busy !== ''} aria-label={t('settings.codexAccounts.up')} onClick={() => nudge(a.id, -1)}>↑</button>
                       <button type="button" className="dc-acct-move-btn" disabled={i === accounts.length - 1 || busy !== ''} aria-label={t('settings.codexAccounts.down')} onClick={() => nudge(a.id, 1)}>↓</button>
                     </div>
-                    {confirmRemove === a.id ? (
+                    {tool === 'antigravity' && a.isPrimary ? null : confirmRemove === a.id ? (
                       <button type="button" className="btn btn--danger-ghost btn--sm" disabled={busy !== ''} onClick={() => void remove(a.id)}>
                         {a.isPrimary ? t('settings.codexAccounts.confirmHide') : t('settings.codexAccounts.confirmRemove')}
                       </button>
@@ -171,7 +184,7 @@ export function CodexAccounts() {
       )}
       <div className="dc-acct-foot">
         <div className="dc-acct-add-row">
-          <button type="button" className="btn btn--secondary" disabled={busy !== ''} onClick={() => void add()} data-testid="codex-add-account">
+          <button type="button" className="btn btn--secondary" disabled={busy !== ''} onClick={() => void add()} data-testid={`${tool}-add-account`}>
             {busy === 'add' ? t('settings.codexAccounts.adding') : t('settings.codexAccounts.add')}
           </button>
           {/* `~/.codex` hidden from the list comes back here: hiding was never a delete. */}

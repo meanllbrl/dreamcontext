@@ -43,8 +43,11 @@ export interface ReplacementPlan {
  * Which conversations an engine can resume. Two engines with the same key read the same store.
  *  - Claude: every account's sandbox links the real `~/.claude/projects` (claude-account-sandbox.ts).
  *  - Codex: T3's `CodexHomeLayout` key for authOverlay homes, `codex:home:<~/.codex>`.
+ *  - Antigravity: per instance (`defaultProviderContinuationIdentity`), so a move is the Eco path.
  */
-export function continuationKey(tool: SwitchTool, _accountId: string, home: string = homedir()): string {
+export function continuationKey(tool: SwitchTool, accountId: string, home: string = homedir()): string {
+  // T3's default for a driver with private instances: every account holds its own threads.
+  if (tool !== 'codex' && tool !== 'claude') return `${tool}:instance:${accountId}`;
   return tool === 'codex' ? `codex:home:${join(home, '.codex')}` : `claude:projects:${join(home, '.claude', 'projects')}`;
 }
 

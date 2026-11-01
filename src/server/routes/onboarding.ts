@@ -33,6 +33,9 @@ const FIX_CHECK: Readonly<Record<FixId, CheckId>> = {
   'github-signin': 'github',
   'gh-signin': 'gh',
   'pty-install': 'terminal',
+  // No row of its own: what can block these is the Node they run on.
+  'antigravity-install': 'node',
+  'antigravity-signin': 'node',
 };
 
 function isFixId(v: unknown): v is FixId {

@@ -169,3 +169,27 @@ describe('settings mode (the Settings window chip)', () => {
     expect(html({ target: { efforts: ['low', 'medium', 'high'] } })).toContain('Effort</span>');
   });
 });
+
+describe('Antigravity in the picker (Track T W5)', () => {
+  const base = { tool: 'antigravity' as const, label: 'Antigravity', ready: false, installed: false, signedIn: false, nodeOk: true, models: [{ id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)', efforts: [] }, { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)', efforts: [] }] };
+
+  it('walks install, sign in and ready', () => {
+    expect(codexState(base)).toMatchObject({ tool: 'antigravity', ready: false, blocker: 'not-installed' });
+    expect(blockerFix('not-installed', 'antigravity')).toBe('antigravity-install');
+    expect(codexState({ ...base, installed: true })).toMatchObject({ blocker: 'signed-out' });
+    expect(blockerFix('signed-out', 'antigravity')).toBe('antigravity-signin');
+    expect(codexState({ ...base, installed: true, signedIn: true, ready: true })).toMatchObject({ ready: true, blocker: '' });
+  });
+
+  it('shows the newest Gemini family as current and the rest as legacy, under the tool\'s own name', () => {
+    const s = codexState({ ...base, installed: true, signedIn: true, ready: true });
+    expect(s.current.map((m) => m.id)).toEqual(['gemini-3.8-flash-high']);
+    expect(s.legacy.map((m) => m.id)).toEqual(['gemini-3.7-flash-high']);
+    expect(s.current[0]!.tool).toBe('antigravity');
+  });
+
+  it('offers no Codex fix on this row: a Node too old is not Antigravity\'s to fix', () => {
+    expect(blockerFix('needs-node', 'antigravity')).toBeNull();
+    expect(blockerFix('needs-node')).toBe('codex-update');
+  });
+});

@@ -43,6 +43,15 @@
       ],
       "effect-codex-app-server/*": [
         "./src/vendor/t3/packages/effect-codex-app-server/src/*.ts"
+      ],
+      "@t3tools/provider-acp/*": [
+        "./src/vendor/t3/packages/provider-acp/src/*.ts"
+      ],
+      "effect-acp/schema-v1": [
+        "./src/vendor/t3/packages/effect-acp/src/_generated/schema-v1.gen.ts"
+      ],
+      "effect-acp/*": [
+        "./src/vendor/t3/packages/effect-acp/src/*.ts"
       ]
     }
   },

@@ -8,6 +8,7 @@ import { readSessionTitles } from '../../lib/session-titles.js';
 import { readSuperState } from '../../lib/super/store.js';
 import { superSanitizeOpts } from '../../lib/super/inbox.js';
 import { listCodexSessions, mergeSessionRows } from '../../lib/t3-bridge/codex-sessions.js';
+import { listInstanceSessions } from '../../lib/t3-bridge/instance-threads.js';
 
 /**
  * `GET /api/agent/chat-sessions` — the project's PAST Claude conversations, newest first,
@@ -110,7 +111,11 @@ function withCodexRows<R extends { sessions: Array<{ updatedAt: number; matchIn?
 ): R {
   if (o.superOnly) return result;
   try {
-    const rows = listCodexSessions(projectRoot, { home: o.home, query: o.query, limit: o.limit, contextRoot, titles: readSessionTitles(contextRoot) });
+    const titles = readSessionTitles(contextRoot);
+    const rows = [
+      ...listCodexSessions(projectRoot, { home: o.home, query: o.query, limit: o.limit, contextRoot, titles }),
+      ...listInstanceSessions(projectRoot, { home: o.home, query: o.query, limit: o.limit, contextRoot, titles }),
+    ] as ReturnType<typeof listCodexSessions>;
     if (!rows.length) return result;
     return { ...result, sessions: mergeSessionRows(result.sessions, rows, o.limit, !!o.query.trim()), total: result.total + rows.length };
   } catch {

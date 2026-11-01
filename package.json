@@ -164,6 +164,7 @@
     "unified": "11.0.5",
     "ws": "^8.21.0",
     "yaml": "^2.9.0",
+    "yauzl": "3.4.0",
     "zod": "4.6.5"
   },
   "devDependencies": {
@@ -173,6 +174,7 @@
     "@types/mdast": "^4.0.4",
     "@types/node": "^22.13.4",
     "@types/ws": "^8.18.1",
+    "@types/yauzl": "^3.4.0",
     "mdast-util-to-hast": "^13.2.1",
     "postcss": "^8.5.26",
     "sharp": "^0.34.5",

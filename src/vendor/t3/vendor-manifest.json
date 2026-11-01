@@ -2,6 +2,8 @@
   "commit": "36dac688a17c6de1c6398e62d01546fb787c185b",
   "files": {
     "apps/server/package.json": "eb8daffba9cbd1e15af93077a084c36ca7be1ad46d6438b47104b04859384898",
+    "apps/server/scripts/acp-mock-agent.ts": "d8567a70029f10d87d03ad8f53a72c08875bf8b5dfb434995cd442bda6d8719f",
+    "apps/server/scripts/acpMockCancellationState.ts": "767aac14d3d36ba6177b3cf2c7d089b834f24a9da5fb6e3ab159c62d4c003380",
     "apps/server/src/attachmentPaths.ts": "f8411c77b031c0e010230375cd5299dc14e6a6c9508b0990cb9bc5e6ec158313",
     "apps/server/src/attachmentStore.ts": "2ace781da3fdb556172cc1a3560ce7004899542b303a83666cc4705733a37678",
     "apps/server/src/auth/ServerSecretStore.ts": "9750394ecc5b7bb012d65c30fd7ba4726388df39d44ed342d6cd529053193db2",
@@ -10,6 +12,8 @@
     "apps/server/src/config.ts": "1aa87966873125d7db8815d04feee5bdf3c345ddadcb9a9c56ec349be2ff122c",
     "apps/server/src/imageMime.ts": "8da05c05d61afb67cec9eaacf6e9521119258eea25478071fdb1ea587ba11ccd",
     "apps/server/src/mcpApps/McpAppSnapshot.ts": "68f228cec3e5bc8994811ca2a14f434ff235f11bfd440e576815efc337393dc9",
+    "apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.test.ts": "099c7d81959573116d42ce32b04abce329ef9957d6a1af4c9ac58b0cdad7b9ef",
+    "apps/server/src/orchestration-v2/Adapters/AntigravityAdapterV2.ts": "287b0299bb3ade7c9dc782cd9548af49a0f7c63d2ec4270dfc9bcc9b188ab662",
     "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts": "9e0e8ce18d61b77d183cdcff8e04e2e863dd0f4871d5a5724708ef537eae2a1a",
     "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts": "50e0b02cb9f5b514e47ee9202f3add40409ff3b029ebfc13b53c552502094d8a",
     "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts": "26956b237e2f0b77d91662f4a4ca30982c358bc3dd26777b183f16148a2a7fb7",
@@ -28,6 +32,11 @@
     "apps/server/src/orchestration-v2/workflowAgentAnswers.ts": "ec7bd1910b0e503bc77ae34878c71824fe96874e4a8c9b7993c771e52389589b",
     "apps/server/src/orchestration-v2/workflowAgentTranscript.ts": "91f5d9f41ffda1df1c82b93acc96dce03e728068ec262c32391d5b86ad8220c0",
     "apps/server/src/orchestration-v2/workflowFileRead.ts": "8bbe6aedd48cea7e06ec414f543a3d791499efd03147f30f1a2d8738f7e77ab8",
+    "apps/server/src/provider/AntigravityAuth.test.ts": "8b10deca658378082c5fd7a66cd6205ce74ad239bba7bb0c531d2607df3ee018",
+    "apps/server/src/provider/AntigravityAuth.ts": "3aba84aeef7e309c9fb40a59582b49d05e008f106ce64846b040ef28338b007d",
+    "apps/server/src/provider/AntigravityInstallation.test.ts": "d0d22342ba6b59c6568d57b67e077a468e27a7e879d5ee383cda563c0590735d",
+    "apps/server/src/provider/AntigravityInstallation.ts": "d9a2348495c5adcddbeddf7786514a7e839a1ae6ae1f9133e94dd20bffa1f60f",
+    "apps/server/src/provider/AntigravityProvider.ts": "68dd2024555bd1bde55bd0e2e6140cf376609cf44b20777744fce11de3791fec",
     "apps/server/src/provider/ClaudeModelCatalog.ts": "c86cd7e7597c4fd345b31d079b67291a99d3117df0b44a0a6c03a8e445ac3413",
     "apps/server/src/provider/ClaudeModelManifest.ts": "d2a389c7dbf72eba0905165d6e378021dca3b9124fb4dc3309711589a43c729b",
     "apps/server/src/provider/ClaudeProvider.ts": "6cb5eb178ed42a2e6f6467c6e38e9624563975262689894c9be90ca47a8f5174",
@@ -41,6 +50,10 @@
     "apps/server/src/provider/CodexToolPresentation.ts": "350ef99630131f7999cc59bee197e728194e63aafe26fef256ec1b0b08db1313",
     "apps/server/src/provider/CodexTurnTokenUsage.ts": "0575aad51b9d3fbd5fda93d1ca5cc5a3f010de00f03357ec1961a82db62769e4",
     "apps/server/src/provider/DocumentText.ts": "a5d89e6cf51d087d8eafa9feb3743518b9d9d0e031e3d2ae106a4cc50cce2361",
+    "apps/server/src/provider/Drivers/AntigravityDriver.ts": "6a640d10b4539579f5384e3f0564293bc7a1e9645a15759e0623f14020f4c85c",
+    "apps/server/src/provider/Drivers/AntigravitySkills.test.ts": "4e0a183ea8dd00e0f3d9464bc916100bbd87ca18a34a40e52de698d99734edb3",
+    "apps/server/src/provider/Drivers/AntigravitySkills.ts": "c0011a825e9e310020f2c9a85ace09a685eb968afbbf8270705b87b5df79b752",
+    "apps/server/src/provider/Drivers/AntigravityUsage.ts": "9f77863f8a698054f0f4164bb9652c336f13fa442f3356973e8368ea328b3b4d",
     "apps/server/src/provider/Drivers/ClaudeDriver.ts": "21f691e5fb2533b499552e3c1fa5f28527a360fa06d7133febcd5f96e2d46067",
     "apps/server/src/provider/Drivers/ClaudeExecutable.ts": "69d87b39e2a0a3dc39871b14ea72b6809f4ebef8650d8ea419f4028ac61640d0",
     "apps/server/src/provider/Drivers/ClaudeHome.ts": "3a747f668bd1a76bf49b26dd07a3e70a717998c3f6234c048c9969570f489431",
@@ -49,6 +62,8 @@
     "apps/server/src/provider/Drivers/CodexDriver.ts": "cc632655b9fd72d00b4769e85d4c8fd0b0104ea66d497fd78dfd9e10609b058e",
     "apps/server/src/provider/Drivers/CodexHomeLayout.test.ts": "f51120d04d0915027cb24afd401790fd99b4facf8ad1918d0a8d13c212e307d6",
     "apps/server/src/provider/Drivers/CodexHomeLayout.ts": "f6fae934d05d57afa456cd881e92e7b36f02e143c0bc934529d8cadde18b9d83",
+    "apps/server/src/provider/Drivers/antigravityUsageReader.test.ts": "e05b4f26a48972508b7faa885dbcddb293ebc312d54e7a42854c108474fb20a1",
+    "apps/server/src/provider/Drivers/antigravityUsageReader.ts": "6758111f0e24fb6a9331cd40fdbd170acb6fa61171d01f2366b07a30326ee3d9",
     "apps/server/src/provider/Drivers/claudeUsage.ts": "17ac25d6025488e58f39f2414aaeecb22d7fe5be32221832e772e5d3c45bd7cd",
     "apps/server/src/provider/Drivers/codexUsage.ts": "18e4e568c159e46d5067e9b8f946f086dea2cf1c4b2c59ca53ace134d2e73d90",
     "apps/server/src/provider/Errors.ts": "5b44ab1fa43d293bccd032e68cea31fb216c7e6ab53d563c926a2e3df542e954",
@@ -57,6 +72,20 @@
     "apps/server/src/provider/ProviderInstanceRegistry.ts": "fc57324f3a2278e75d2bf1c27ea755e6d243aef46496d5f8b531c9eb67745572",
     "apps/server/src/provider/ProviderInstanceRegistryMutator.ts": "2a66e7bc81b3753cb600d3f766b6c71820acf02eeff75d8bea06b947c5e2ab90",
     "apps/server/src/provider/ProviderRegistry.ts": "f9e529abb939d017e4df8031b90fca4d73012cecd4cb627f03c67fe5a2180cc6",
+    "apps/server/src/provider/acp/AcpJsonRpcConnection.test.ts": "2d64df629fc925cba121af16ed2fbcd75ae7db7589b6a90c3b3454c36d21aa16",
+    "apps/server/src/provider/acp/AntigravityAcpSupport.test.ts": "30c9d2009a93250920260ba6d62bcf75e3a43b6be2cf1fec6795258cc66988ab",
+    "apps/server/src/provider/acp/AntigravityAcpSupport.ts": "682d072fafcbe9ca64f737cd4e074f9fa38bcbe04b9bcbb4e76c96aa21ae4167",
+    "apps/server/src/provider/acp/AntigravityClientFiles.ts": "3e6e4bb21549e946f286c9f451bb90e733788c3f473ac18aa18b3d48456f4c94",
+    "apps/server/src/provider/acp/AntigravityProtocol.test.ts": "5d469ec5cc0a48f2dab4b5904ff770812a6ab9d4d95bee75378c7152e3b47bb9",
+    "apps/server/src/provider/acp/AntigravityProtocol.ts": "bc5de2329fb28aa28d0de054b3754a961196624b1a613a3ecaaf622233a502eb",
+    "apps/server/src/provider/acp/AntigravitySessionFiles.ts": "be3466f93dbbdd8b9307838c89c0ac3d3985a72c2953d8709f27605f68bd7a9a",
+    "apps/server/src/provider/antigravityAuthSupport.test.ts": "a51828053800a9b29fdab49acf3d8f3ab4e9fa7482501af3ec261ef5de8b08fe",
+    "apps/server/src/provider/antigravityAuthSupport.ts": "6b22e30be51d5a20d2cb14b8a905b4db5f398a868884ceda239ebd094624d494",
+    "apps/server/src/provider/antigravityCallback.test.ts": "9a1444bd5d65db14a53d5765a73da70cfb01aa74981ab2f8acd3ec3f4043ec9b",
+    "apps/server/src/provider/antigravityCallback.ts": "d4b7bcb00957dc20ff247ed0cee0aaef9cb15256b2b1d2ecacd3556e142c555f",
+    "apps/server/src/provider/antigravityRelease.ts": "9f84f4b1e50934696ee1f24be1829811938447df5d1c27a8b399181715bcdeb0",
+    "apps/server/src/provider/antigravityUsageLimits.test.ts": "14c11031266c886962a11083ff70003b41b7b0ac6817f24064a6d5817bd224e3",
+    "apps/server/src/provider/antigravityUsageLimits.ts": "02f65a59d484183eeef0138e3d5ab27870b83e1dd7cfe5ffac7a79c9271e998a",
     "apps/server/src/provider/builtInProviderCatalog.ts": "8f62745b54ad819f63838e5c6f76d28d9dbad6872e29919d5d254b4dd104db80",
     "apps/server/src/provider/claudeResetCredits.ts": "046e0824ab7b822cd206944a1065d769474261dd025c1c4651e05cf6e2d36567",
     "apps/server/src/provider/claudeUsageLimits.ts": "1bcfa54e90b897513b646c9d104c3eb022ebc46d49d15c6a8224c98478f034bf",
@@ -69,8 +98,10 @@
     "apps/server/src/provider/resetCreditCoordinator.ts": "90563209e5217461be44d66478849f721ac4b427b1a719dd077addf06a735379",
     "apps/server/src/provider/unavailableProviderSnapshot.ts": "0bc91ab1881bd7ec50d95c19b8b162273d0ef69d0432afd71569d509753f5286",
     "apps/server/src/resourceTelemetry/ResourceAttribution.ts": "c0e3a42d94a0b12961e857f37b6068d27d2e82ba0b1c3ebe0a13b7ef9fd47c92",
+    "apps/server/src/textGeneration/AntigravityTextGeneration.ts": "f6babd7627a1a157c78f3e299feb5b145961b007c732999b525dc853cea30dfe",
     "apps/server/src/textGeneration/ClaudeTextGeneration.ts": "a5bc39d9b7dc95c7189c15a682f0d2028dd120cfd6ec3aa086553ca5b100afd7",
     "apps/server/src/textGeneration/CodexTextGeneration.ts": "60719ff067d600deb27dde52d129952743c1ff560479f5354f06239650b3a27f",
+    "apps/server/src/zipArchive.ts": "612bca88dfdff1a153f72ed0cdf0ac81b9ea2ee86b8d283bd65fb3c646e2b2eb",
     "packages/contracts/src/acpRegistry.ts": "4637f7a205917bb358f923ab35e54799061d9499bb36639199cdeeecefdadc6e",
     "packages/contracts/src/agentSessions.ts": "b85a0abbc3b8379fed33fd151832724d389261145348dd0446cc897516b022a5",
     "packages/contracts/src/applicationEvent.ts": "fc5ae0a946744b216e06cab745aa2a74ee4a0d85802f828d323ab0d116101791",
@@ -144,6 +175,18 @@
     "packages/contracts/src/vcs.ts": "8869187246a6286a11fb955a932de3a35906424543ddf16c0a24ce9bea042af7",
     "packages/contracts/src/worktreeMcp.ts": "0aa7f938839a7d02c457a4ed73755254db9eb9dbef92685612d31c007ff1d5f2",
     "packages/contracts/src/worktreeSetup.ts": "259480aad59139199b5d91abd333adeec9089c0a77575c019a89b0a184f8873c",
+    "packages/effect-acp/src/_generated/meta.gen.ts": "3b1e30e306dca6ce4ed44b71304d8985e3f4c8b3cc65bc0ad6949a2302e6cdf0",
+    "packages/effect-acp/src/_generated/schema-v1.gen.ts": "49c717b5e0ddc43c4f9f98079e4a947827dbc80a7c1fb5ccf7734f8fe78eb646",
+    "packages/effect-acp/src/_generated/schema.gen.ts": "05c1b04d9dd39c79a0a8424d36cb6d8bfb9f1bda9e74a03cef2936bbbcf72233",
+    "packages/effect-acp/src/_internal/shared.ts": "6e1cd9cd330b55429c995518fccc0e2ae067338f93ecde84244e56c19f889cc8",
+    "packages/effect-acp/src/_internal/stdio.ts": "3fa99d6b890b56c3d571c026a40cc13e25ef740640bdf74d93c1c831039a1801",
+    "packages/effect-acp/src/agent.ts": "c429dc63bcae3b942264389815c83fd917e402b4c98520ed4acd8083f12baee3",
+    "packages/effect-acp/src/client.ts": "fd0ba539a708aab15f3d089aacaa99563034d41fda5339090e5fbcd634e036dd",
+    "packages/effect-acp/src/compat.ts": "78fef56f94c89b51e2cb91f5f88f224e048c05fe8227a452e1291b3095300ecf",
+    "packages/effect-acp/src/errors.ts": "81a095ee2e2ecaec853b57408602fc0bc8a138266e6a52496d047293d4f3fddf",
+    "packages/effect-acp/src/protocol.ts": "933f2b092e40fafb416698d85085ae0e1ad3ea1235e1b1861133a6f41578c681",
+    "packages/effect-acp/src/rpc.ts": "dae2194052bf0d8167e9b7b7fdef40df8855a65f4f5860cd3f25f007f4e73031",
+    "packages/effect-acp/src/schema.ts": "36dd56a62e43d4652320305d227c0784c100d18532d9d09909088ae6267e220b",
     "packages/effect-codex-app-server/scripts/generate.ts": "be068607df0c18f31b5dbe3f01fe7c931efd7eb9d5058b788ac9b078a65a3120",
     "packages/effect-codex-app-server/src/_generated/meta.gen.ts": "5b54fe4ddec7c38d8f647b61a55bc24d651be1f4c10e55c061a91958ee0d291b",
     "packages/effect-codex-app-server/src/_generated/namespaces.gen.ts": "54852164658fc36fd08e5cafc9af63061f350489dd8025d1344ec330395cdee1",
@@ -156,6 +199,15 @@
     "packages/effect-codex-app-server/src/replay.ts": "b84ec6e0ba0e0ed38c192ac427f48d0babd744785f851e5363dd809d40753d74",
     "packages/effect-codex-app-server/src/rpc.ts": "124b29b8b22f32d09df3a35ef775d44994712cb1e0282f9d90eda1cb9f245b9e",
     "packages/effect-codex-app-server/src/schema.ts": "67b555b2e1b5efaa38aa8a56ab00cbda154f53bfd89b9a2134fa02f52eb7bb19",
+    "packages/provider-acp/src/server/AcpSessionRuntime.ts": "dd782221efd1c8bfe700f7b286a5a3b914e52502fdc5b3b958771e39d4be0557",
+    "packages/provider-acp/src/server/adapter.ts": "ee1fbf7bfae26fef1eb326c5f59db9b15ab2586d25e938161f4e9783910a957b",
+    "packages/provider-acp/src/server/clientPolicy.ts": "42a3234b348459d3ad8c061fc87e4dd6f5af05de10ad207d6713541689012524",
+    "packages/provider-acp/src/server/clientTerminals.ts": "f79e6e310117de909ffca95d356fdd39ee0f99f28a1cee6aa26852c6e3826cfe",
+    "packages/provider-acp/src/server/mcpOverAcpBridge.ts": "1f114d86e848c552db40bf87b861a62bd1d106abba2637604f6313efbde84607",
+    "packages/provider-acp/src/server/nativeLogging.ts": "630d401fc824feb4bebd291536175f1766de1decd22e6ae579fb793ff8d65997",
+    "packages/provider-acp/src/server/runtimeModel.ts": "d213a21374fb9482a864d3a62fc3f0e29ccfd186f13d5457d6449e54cff7caa9",
+    "packages/provider-acp/src/server/sessionConfig.ts": "732977aeccb1f061667d1d5cad5bd431017f01d55fa553d6421ab5808b624884",
+    "packages/provider-acp/src/server/stderr.ts": "b0601cc6f322e1db3a8a92eecb88bc2b16d91bb5379068f0d35df93508113ece",
     "packages/provider-core/src/client.ts": "bf31b8618390984201e0833fc3bb93d4a4cc73741c33897b21076c56ed3d1f18",
     "packages/provider-core/src/modelShortName.ts": "ed0fa2ab53436015ec62f31499ce3c1502d1bbe523d906df197b9cab56a77e4b",
     "packages/provider-core/src/server/IdAllocator.ts": "5be539e222f56dba18edcf5864a308c1582a89d817307b7b5d85e7aaa782065a",
@@ -226,8 +278,10 @@
     "packages/shared/src/logging.ts": "6515cf21917a0d533a383ae82900acd68748743a34ba9a907420bd9797ce1e98",
     "packages/shared/src/markdownMath.ts": "4c9859505730f5a41cf34e134bdc6b86c4353a99cc6c2576270bec0f4576e902",
     "packages/shared/src/mcpApp.ts": "cb8ba34c6c9d26484ff6f92de49bde8d3f6c5df40b8e6592555d41be007e703d",
+    "packages/shared/src/mcpResponsePayloads.ts": "5e0f9ab55b3793fafea84262f99dcf62766816263778798f998d88c917b5196c",
     "packages/shared/src/mediaPreview.ts": "8b4fcbcbc056c59c862dd3c1e541893a33e19334f99a063b81ae6c638b496495",
     "packages/shared/src/model.ts": "e38582af824b114163f5f43d137fe243a9802d6997e24057a1181af01dfd277d",
+    "packages/shared/src/nodeRuntime.ts": "2762a0f427cd68e40f298b6e3670e8ea6103bfcfeb10310b975012682a516ba9",
     "packages/shared/src/nodeSqliteClient.ts": "1e706632a4a3c7545ff81c67b4e0ed24262f2cececf915e5b68689d5e811b0b9",
     "packages/shared/src/observability.ts": "2b0813ee2a264a5f8a11f961893f744cc5984756a93e705644b1c72b058a8e13",
     "packages/shared/src/orchestrationV2ThreadError.ts": "dcdcdcc6e9e15753fc02565fb6e47de984630b6ba16f98df16401443afe3ebf0",
@@ -316,6 +370,10 @@
       "reason": "T3's \"managed Codex\" signs in through T3's hosted ChatGPT token sharing; dreamcontext accounts use their own `codex login`, so a managed instance is refused.",
       "sha256": "1ce734525b48259eca47a5b668ea02b61eb2f6fa1e254212e933eb918fab572d"
     },
+    "apps/server/src/provider/ProviderAuthService.ts": {
+      "reason": "T3's server-wide auth service drives sign-in through its own orchestrator and projection store; dreamcontext's bridge calls each instance's auth controller directly, so only the controller type is kept.",
+      "sha256": "34d3c24ccaa23b565e100d9db1bbd9f43954e8bee06261343e9519c91f666f47"
+    },
     "apps/server/src/serverSettings.ts": {
       "reason": "T3's settings service persists to SQLite and pulls the source-control registry; dreamcontext keeps its settings in agent-ui.json, so the bridge hands T3 a fixed, read-only snapshot.",
       "sha256": "86776bada6acc371c40bc076ab66e378a588ff8e1a1ca59f99ca65c2e1e84e86"
@@ -325,20 +383,43 @@
       "sha256": "6a0259f2be1513cb3c59502cb99367508609884a8147c043e2baa670a61340c2"
     }
   },
-  "patches": [],
+  "patches": [
+    {
+      "file": "01-antigravity-auth-logout-ts59.patch",
+      "reason": "TypeScript 5.9 cannot yield* a Schema.is-narrowed ProviderSetupError in a ternary (T3 checks with tsc-rs); Effect.fail on the same value, behaviour unchanged.",
+      "touches": [
+        "apps/server/src/provider/AntigravityAuth.ts"
+      ]
+    },
+    {
+      "file": "02-antigravity-usage-fetchwindows-ts59.patch",
+      "reason": "TypeScript 5.9 infers the generic error of an Effect.fn generator as any, which leaks into probeUsage; the error is swallowed by orElseSucceed, so unknown is exact.",
+      "touches": [
+        "apps/server/src/provider/antigravityUsageLimits.ts"
+      ]
+    },
+    {
+      "file": "03-antigravity-runtime-temp-per-pane.patch",
+      "reason": "T3 runs one instance per server and clears the whole runtime temp at create; each dreamcontext pane is its own process on one account's profile, so a second pane deleted the first pane's unpacked runtime. Only run folders a week old go.",
+      "touches": [
+        "apps/server/src/provider/acp/AntigravitySessionFiles.ts"
+      ]
+    }
+  ],
   "externals": {
     "@anthropic-ai/claude-agent-sdk": 8,
     "@effect/openapi-generator": 1,
-    "@effect/platform-node": 8,
-    "@effect/vitest": 4,
-    "diff": 1,
-    "effect": 797,
+    "@effect/platform-node": 22,
+    "@effect/vitest": 14,
+    "diff": 2,
+    "effect": 1127,
     "mdast": 1,
     "remark-gfm": 1,
     "remark-math": 1,
     "remark-parse": 1,
     "unified": 1,
-    "vite-plus": 1,
-    "yaml": 1
+    "vite-plus": 3,
+    "yaml": 2,
+    "yauzl": 1
   }
 }

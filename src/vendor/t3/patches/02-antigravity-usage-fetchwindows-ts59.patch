@@ -1,0 +1,15 @@
+# reason: TypeScript 5.9 infers the generic error of an Effect.fn generator as any, which leaks into probeUsage; the error is swallowed by orElseSucceed, so unknown is exact.
+--- a/apps/server/src/provider/antigravityUsageLimits.ts
++++ b/apps/server/src/provider/antigravityUsageLimits.ts
+@@ -247,9 +247,9 @@
+       account = cached.account;
+     }
+     // Merge endpoints because quota groups differ; keep each bucket's most-used reading.
+-    const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
++    const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* (
+       operation: string,
+-      parse: (response: unknown) => Effect.Effect<ServerProviderUsageWindow[], E>,
++      parse: (response: unknown) => Effect.Effect<ServerProviderUsageWindow[], unknown>,
+     ) {
+       const responses = yield* Effect.forEach(
+         ENDPOINTS,
