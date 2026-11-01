@@ -43,7 +43,6 @@ const result = mod.ensureAppBundle(
     runnerPath: resolve(runner),
     appBundleId: opt('app-bundle-id', 'com.dreamcontext.fakeshell'),
   },
-  { defaultIcon: join(root, 'assets/notify-icon.icns') },
 );
 console.log(JSON.stringify(result));
 process.exit(result.ok ? 0 : 1);

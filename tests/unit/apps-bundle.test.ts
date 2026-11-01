@@ -6,11 +6,15 @@ import {
   appBundlePath,
   appHash,
   appsBundleDir,
+  bundleIsStale,
   cleanDisplayName,
   ensureAppBundle,
+  mayBuildBundle,
+  mayRetireRunner,
   removeAppBundle,
   renderInfoPlist,
   runnerBundleId,
+  shouldRefreshIdleBundle,
 } from '../../src/lib/apps/bundle.js';
 
 /**
@@ -69,10 +73,10 @@ describe('ensureAppBundle', () => {
     expect(info).toEqual({ schema: 1, projectRoot: project, vault: 'acme', slug: 'meta-ads', name: 'Meta Ads', appBundleId: 'com.dreamcontext.beta' });
 
     // Quarantine cleared and ad-hoc signed before the rename, registered after it.
-    const cmds = calls.map(([c]) => c.split('/').pop());
-    expect(cmds).toEqual(['xattr', 'codesign', 'lsregister']);
-    expect(calls[1][1]).toEqual(['--force', '--deep', '-s', '-', expect.stringMatching(/\.tmp\.app$/)]);
-    expect(calls[2][1]).toEqual(['-f', r.path]);
+    const sealing = calls.filter(([c]) => !/sips|iconutil/.test(c));
+    expect(sealing.map(([c]) => c.split('/').pop())).toEqual(['xattr', 'codesign', 'lsregister']);
+    expect(sealing[1][1]).toEqual(['--force', '--deep', '-s', '-', expect.stringMatching(/\.tmp\.app$/)]);
+    expect(sealing[2][1]).toEqual(['-f', r.path]);
     // No temp or old bundles left behind.
     expect(readdirSync(appsBundleDir(home))).toEqual([`meta-ads-${hash.slice(0, 6)}.app`]);
   });
@@ -168,5 +172,62 @@ describe('helpers', () => {
 
   it('the short CFBundleName stays within 15 characters', () => {
     expect(renderInfoPlist({ bundleId: 'a.b', name: 'Çok Uzun Bir Reklam Yöneticisi', version: '1' })).toContain('<key>CFBundleName</key><string>Çok Uzun Bir Re</string>');
+  });
+});
+
+describe('the default icon in the bundle', () => {
+  it('builds an app with no icon from its own letter, never from a copied logo', () => {
+    const { input, exec, calls } = setup();
+    const r = ensureAppBundle({ ...input, iconPath: null }, { exec, platform: 'darwin' });
+    expect(r.ok).toBe(true);
+    expect(calls.some(([c]) => c.endsWith('iconutil'))).toBe(true);
+    if (r.ok) expect(readFileSync(join(r.path, 'Contents', 'Resources', 'AppIcon.icns'), 'utf-8')).toBe('icns');
+  });
+
+  it('falls back to the letter when the icon cannot be converted', () => {
+    const { input, project, exec, calls } = setup();
+    const bad = join(project, 'icon.gif');
+    writeFileSync(bad, 'gif');
+    const r = ensureAppBundle({ ...input, iconPath: bad }, { exec, platform: 'darwin' });
+    expect(r.ok).toBe(true);
+    expect(calls.some(([c]) => c.endsWith('iconutil'))).toBe(true);
+  });
+});
+
+describe('when a new icon reaches the Dock', () => {
+  it('sees the bundle go stale when the icon changes, and fresh once it is rebuilt', () => {
+    const { input, project, exec } = setup();
+    const icon = join(project, 'icon.png');
+    writeFileSync(icon, 'one');
+    const withIcon = { ...input, iconPath: icon };
+    expect(bundleIsStale(withIcon)).toBe(true);
+    ensureAppBundle(withIcon, { exec, platform: 'darwin' });
+    expect(bundleIsStale(withIcon)).toBe(false);
+    writeFileSync(icon, 'two');
+    expect(bundleIsStale(withIcon)).toBe(true);
+  });
+
+  it('ends a runner for a new bundle only when the owner stopped it', () => {
+    expect(mayRetireRunner({ stoppedByOwner: true, processRunning: true, stale: true })).toBe(true);
+    expect(mayRetireRunner({ stoppedByOwner: false, processRunning: true, stale: true })).toBe(false);
+    expect(mayRetireRunner({ stoppedByOwner: true, processRunning: true, stale: false })).toBe(false);
+    expect(mayRetireRunner({ stoppedByOwner: true, processRunning: false, stale: true })).toBe(false);
+    expect(mayRetireRunner({ stoppedByOwner: true, processRunning: null, stale: true })).toBe(false);
+  });
+
+  it('refreshes a closed bundle for a Dock click, only when nothing can be running it', () => {
+    expect(shouldRefreshIdleBundle({ bundleExists: true, stale: true, processRunning: false })).toBe(true);
+    expect(shouldRefreshIdleBundle({ bundleExists: true, stale: true, processRunning: true })).toBe(false);
+    expect(shouldRefreshIdleBundle({ bundleExists: true, stale: true, processRunning: null })).toBe(false);
+    expect(shouldRefreshIdleBundle({ bundleExists: true, stale: false, processRunning: false })).toBe(false);
+    expect(shouldRefreshIdleBundle({ bundleExists: false, stale: true, processRunning: false })).toBe(false);
+  });
+
+  it('believes the OS over a lease: a killed runner does not block the rebuild', () => {
+    expect(mayBuildBundle({ processRunning: false, leaseAlive: true, bundleExists: true })).toBe(true);
+    expect(mayBuildBundle({ processRunning: true, leaseAlive: false, bundleExists: true })).toBe(false);
+    expect(mayBuildBundle({ processRunning: null, leaseAlive: true, bundleExists: true })).toBe(false);
+    expect(mayBuildBundle({ processRunning: null, leaseAlive: false, bundleExists: true })).toBe(true);
+    expect(mayBuildBundle({ processRunning: true, leaseAlive: true, bundleExists: false })).toBe(true);
   });
 });

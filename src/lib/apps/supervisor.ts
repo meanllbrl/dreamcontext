@@ -497,7 +497,15 @@ export class AppRuntime {
   // ─── leases ───────────────────────────────────────────────────────────────
 
   heartbeat(token: string): void {
+    // One bundle id is one runner process with one connection: a token not seen before means
+    // that runner reconnected or was replaced, and every older token is dead, whatever its TTL.
+    if (!this.windows.has(token)) this.windows.clear();
     this.windows.set(token, this.now());
+  }
+
+  /** The OS says the runner process is gone: no window, whatever the leases still claim. */
+  clearWindows(): void {
+    this.windows.clear();
   }
 
   /** launch-window: keep the backend up until the new window's first heartbeat (one lease TTL). */

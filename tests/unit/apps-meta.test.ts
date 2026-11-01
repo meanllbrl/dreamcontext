@@ -3,6 +3,7 @@ import http from 'node:http';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { writeDefaultIcon } from '../../src/lib/apps/icon.js';
 
 /**
  * W4: the first real app, the Meta Ads example, against a FICTIONAL Graph API
@@ -63,7 +64,7 @@ beforeAll(async () => {
   cpSync(resolve('skill-apps/template'), tpl, { recursive: true });
   renameSync(join(tpl, 'gitignore.txt'), join(tpl, '.gitignore'));
   writeFileSync(join(tpl, 'dreamcontext-app.json'), readFileSync(join(tpl, 'dreamcontext-app.json'), 'utf-8').replace('__SLUG__', 'starter').replace('__NAME__', 'Starter'));
-  cpSync(resolve('assets/notify-icon.icns'), join(tpl, 'icon.icns'));
+  writeDefaultIcon(tpl, 'starter', 'Starter');
   mkdirSync(join(tpl, 'lib'), { recursive: true });
   writeFileSync(join(tpl, 'lib', 'dc.mjs'), sdkSource());
   registerApp(home, { projectRoot: project, vault: 'acme', slug: 'starter', name: 'Starter', root: tpl });

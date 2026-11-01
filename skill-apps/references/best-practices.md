@@ -19,3 +19,11 @@
   `danger: true` on irreversible ones. Agents call actions; they never re-implement them.
 - **Ask before the irreversible:** `confirm()` works in the window. Recommended, not enforced.
 - **Escape HTML** you build from data (`esc()` in the template) and keep the template's CSP: it refuses inline `<script>`, so page code lives in files like `public/app.js`.
+
+## Icon
+
+Every app draws its own icon because the Dock is how the owner tells windows apart: the first real
+app shipped with the dreamcontext logo and could not be told from dreamcontext, and an `.icns` drew a
+broken image on the card (the card shows PNG and JPEG only). So: a PNG of the app's subject, checked
+by its content. A system record proves a process, never what the eye can tell apart; only reading
+the picture and the owner's look at the Dock do.

@@ -35,6 +35,7 @@ import {
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
+import { writeDefaultIcon } from './icon.js';
 
 export const APP_SLUG_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const BUNDLE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,254}$/;
@@ -82,7 +83,7 @@ export interface BundleInput {
   vault: string;
   slug: string;
   name: string;
-  /** PNG/JPEG/ICNS inside the app root (the caller realpath-checks it). Absent = default icon. */
+  /** PNG/JPEG/ICNS inside the app root (the caller realpath-checks it). Absent = the default letter. */
   iconPath?: string | null;
   /** The runner binary to copy in: the shell's `Contents/MacOS/app-runner` (DREAMCONTEXT_APP_RUNNER). */
   runnerPath: string;
@@ -93,8 +94,6 @@ export interface BundleInput {
 
 export interface BundleDeps {
   exec?: (cmd: string, args: string[]) => void;
-  /** The fallback icon when the app has none (assets/notify-icon.icns). */
-  defaultIcon?: string | null;
   platform?: NodeJS.Platform;
 }
 
@@ -173,9 +172,100 @@ function makeIcns(src: string, dest: string, exec: (cmd: string, args: string[])
   }
 }
 
+/** The app's own letter, never dreamcontext's logo: no icon must not mean the same Dock tile. */
+function makeDefaultIcns(slug: string, name: string, dest: string, exec: (cmd: string, args: string[]) => void): void {
+  const work = mkdtempSync(join(tmpdir(), 'dc-default-icon-'));
+  try {
+    makeIcns(writeDefaultIcon(work, slug, name), dest, exec);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
 /**
  * Build (or keep) the app's bundle. Fresh when the stamp matches: no work, `built:false`.
  */
+/** The stamp's icon part when the app has none: bump it when the default letter's drawing changes. */
+const DEFAULT_ICON_STAMP = 'default-letter-1';
+
+function bundleParts(input: BundleInput): { name: string; plist: string; infoJson: string; iconSrc: string | null; stamp: string } {
+  const name = cleanDisplayName(input.name);
+  const bundleId = runnerBundleId(appHash(input.projectRoot, input.slug));
+  const iconSrc = input.iconPath && existsSync(input.iconPath) ? input.iconPath : null;
+  const infoJson = renderBundleInfo({ projectRoot: input.projectRoot, vault: input.vault, slug: input.slug, name, appBundleId: input.appBundleId });
+  const plist = renderInfoPlist({ bundleId, name, version: input.version ?? '1.0' });
+  const stamp = createHash('sha256')
+    .update(sha256File(input.runnerPath))
+    .update('\0')
+    .update(plist)
+    .update('\0')
+    .update(infoJson)
+    .update('\0')
+    .update(iconSrc ? sha256File(iconSrc) : DEFAULT_ICON_STAMP)
+    .digest('hex');
+  return { name, plist, infoJson, iconSrc, stamp };
+}
+
+/**
+ * May the bundle be (re)built on this open? Never under a running window, but "running" is the
+ * OS's word: only when it cannot be asked does the heartbeat lease decide, because a killed
+ * runner's lease outlives it by a whole TTL and a rebuild skipped on it keeps the old icon.
+ */
+export function mayBuildBundle(s: { processRunning: boolean | null; leaseAlive: boolean; bundleExists: boolean }): boolean {
+  return !(s.processRunning ?? s.leaseAlive) || !s.bundleExists;
+}
+
+/**
+ * May a runner be ended to take a new bundle? Only one the owner stopped, on its Stopped screen
+ * with nothing to lose, whose bundle really changed. A working window is never ended for this.
+ */
+export function mayRetireRunner(s: { stoppedByOwner: boolean; processRunning: boolean | null; stale: boolean }): boolean {
+  return s.stoppedByOwner && s.processRunning === true && s.stale;
+}
+
+/**
+ * Refresh a closed app's bundle between launches? A Dock tile, Finder or a notification starts
+ * the bundle directly, past every server path, so the new icon has to be in place before them.
+ * Only an existing bundle, and only when the OS says with certainty that nothing runs it.
+ */
+export function shouldRefreshIdleBundle(s: { bundleExists: boolean; stale: boolean; processRunning: boolean | null }): boolean {
+  return s.bundleExists && s.stale && s.processRunning === false;
+}
+
+/** Would `ensureAppBundle` rebuild? True when the bundle is missing or anything in it changed. */
+export function bundleIsStale(input: BundleInput): boolean {
+  try {
+    const path = appBundlePath(input.home ?? homedir(), input.slug, appHash(input.projectRoot, input.slug));
+    return readFileSync(join(path, 'Contents', 'Resources', STAMP_FILE), 'utf-8').trim() !== bundleParts(input).stamp;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Is a process of this bundle running, by the OS's own table? null = could not ask. A heartbeat
+ * lease outlives a killed process by its TTL; this does not.
+ */
+export function bundleRunState(bundleId: string): boolean | null {
+  if (process.platform !== 'darwin' || !/^[A-Za-z0-9.-]+$/.test(bundleId)) return null;
+  try {
+    return execFileSync('/usr/bin/lsappinfo', ['find', `bundleid=${bundleId}`], { encoding: 'utf-8', timeout: 3000 }).trim() !== '';
+  } catch {
+    return null;
+  }
+}
+
+/** The running process's pid, or null. */
+export function bundlePid(bundleId: string): number | null {
+  if (process.platform !== 'darwin' || !/^[A-Za-z0-9.-]+$/.test(bundleId)) return null;
+  try {
+    const m = /"pid"=(\d+)/.exec(execFileSync('/usr/bin/lsappinfo', ['info', '-only', 'pid', '-app', bundleId], { encoding: 'utf-8', timeout: 3000 }));
+    return m ? Number(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function ensureAppBundle(input: BundleInput, deps: BundleDeps = {}): BundleResult {
   const platform = deps.platform ?? process.platform;
   if (platform !== 'darwin') return { ok: false, reason: 'app windows are macOS-only' };
@@ -190,23 +280,10 @@ export function ensureAppBundle(input: BundleInput, deps: BundleDeps = {}): Bund
   }
   const hash = appHash(input.projectRoot, input.slug);
   const bundleId = runnerBundleId(hash);
-  const name = cleanDisplayName(input.name);
-  const version = input.version ?? '1.0';
   const dir = appsBundleDir(home);
   const finalPath = appBundlePath(home, input.slug, hash);
 
-  const iconSrc = input.iconPath && existsSync(input.iconPath) ? input.iconPath : (deps.defaultIcon ?? null);
-  const infoJson = renderBundleInfo({ projectRoot: input.projectRoot, vault: input.vault, slug: input.slug, name, appBundleId: input.appBundleId });
-  const plist = renderInfoPlist({ bundleId, name, version });
-  const stamp = createHash('sha256')
-    .update(sha256File(input.runnerPath))
-    .update('\0')
-    .update(plist)
-    .update('\0')
-    .update(infoJson)
-    .update('\0')
-    .update(iconSrc && existsSync(iconSrc) ? sha256File(iconSrc) : 'no-icon')
-    .digest('hex');
+  const { name, plist, infoJson, iconSrc, stamp } = bundleParts(input);
 
   try {
     const stampPath = join(finalPath, 'Contents', 'Resources', STAMP_FILE);
@@ -228,12 +305,8 @@ export function ensureAppBundle(input: BundleInput, deps: BundleDeps = {}): Bund
     copyFileSync(input.runnerPath, exe);
     chmodSync(exe, 0o755);
     writeFileSync(join(contents, 'Resources', 'dreamcontext-app.json'), infoJson, { mode: 0o644 });
-    if (iconSrc) {
-      const ok = makeIcns(iconSrc, join(contents, 'Resources', 'AppIcon.icns'), exec);
-      if (!ok && deps.defaultIcon && iconSrc !== deps.defaultIcon && existsSync(deps.defaultIcon)) {
-        copyFileSync(deps.defaultIcon, join(contents, 'Resources', 'AppIcon.icns'));
-      }
-    }
+    const icns = join(contents, 'Resources', 'AppIcon.icns');
+    if (!iconSrc || !makeIcns(iconSrc, icns, exec)) makeDefaultIcns(input.slug, name, icns, exec);
     // The stamp is sealed with everything else: nothing is written after signing.
     writeFileSync(join(contents, 'Resources', STAMP_FILE), stamp + '\n');
     try { exec('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', tmp]); } catch { /* nothing to clear */ }

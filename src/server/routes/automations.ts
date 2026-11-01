@@ -1709,9 +1709,10 @@ export function sendPhotoFile(res: ServerResponse, abs: string | null): void {
 /** The extensions this route will hand back, and as what. Derived from the
  *  same magic-byte allow-list the upload uses, so the two can never disagree
  *  about which types exist. */
-const PHOTO_CONTENT_TYPE: Record<string, string> = Object.fromEntries(
-  Object.entries(EXT_BY_IMAGE_TYPE).map(([mime, ext]) => [ext, mime]),
-);
+const PHOTO_CONTENT_TYPE: Record<string, string> = {
+  ...Object.fromEntries(Object.entries(EXT_BY_IMAGE_TYPE).map(([mime, ext]) => [ext, mime])),
+  '.jpeg': 'image/jpeg',
+};
 
 /**
  * Stream a request body with a PER-CHUNK cap — the same shape as

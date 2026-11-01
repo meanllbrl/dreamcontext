@@ -17,6 +17,7 @@ import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { basename, dirname } from 'node:path';
+import { bundleRunState } from './bundle.js';
 import { resolveContextRoot } from '../context-path.js';
 import { vaultNameForContextRoot } from '../app-link.js';
 import { readDesktopServerFile, shellBundleId } from '../../server/desktop-server-file.js';
@@ -52,12 +53,7 @@ export function resolveProject(cwd: string = process.cwd(), home: string = homed
 
 /** Is an app with this bundle id running? (`lsappinfo` exits 0 either way; empty = no.) */
 export function bundleRunning(bundleId: string): boolean {
-  if (process.platform !== 'darwin' || !/^[A-Za-z0-9.-]+$/.test(bundleId)) return false;
-  try {
-    return execFileSync('/usr/bin/lsappinfo', ['find', `bundleid=${bundleId}`], { encoding: 'utf-8', timeout: 3000 }).trim() !== '';
-  } catch {
-    return false;
-  }
+  return bundleRunState(bundleId) === true;
 }
 
 export interface Answer {
