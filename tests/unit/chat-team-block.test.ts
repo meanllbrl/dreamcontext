@@ -272,6 +272,10 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
     // branches merged on top (plan summary, global members, `origin=<ref>`), each pinned by its own test.
     expect(gone).toEqual([
       expect.stringContaining('unseen): the text says in one line that a question waits.'),
+      // rev 25 (2026-11-01): the line before `super ask`, which runs last in the turn.
+      expect.stringContaining('Write nothing between tool calls, and nothing'),
+      expect.stringContaining('Never AskUserQuestion: it locks your turn. Say'),
+      expect.stringContaining("in that turn's text, in one line, that a question waits, and end it;"),
       '  `super resume <child>` reopens it); `--idle` lists idle ones; `--force` only if the owner asked.',
       '- The AI Team (`dreamcontext agents list`): `super team ask <member> "<job>"` hands an approved',
       '  member recurring or field work in its own thread; `super state` shows how it goes.',
@@ -294,7 +298,11 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       'his decisions, cost or risk in money, never time) and your text gives the same summary, as long as',
       'it needs (the exception to 2-4). A report on a plan or on options is DRAWN, never written: screen',
       expect.stringContaining('mockups, options side by side, short headings; text at the minimum.'),
+      expect.stringContaining('Write nothing between tool calls (but the line before `super ask`), and nothing'),
       '- His note on a running job: before its first reviewer, into that child; after, a new small job.',
+      expect.stringContaining('Never AskUserQuestion: it locks your turn. Write'),
+      '  your one line FIRST (a question waits), then run `super ask` as the LAST act of the turn, with no text after it',
+      expect.stringContaining('(a late line lands above the card);'),
       '  `super resume <child>` reopens it); `--force` only if the owner asked.',
       '- Your AI Team, when the project has one, is listed under `## Your AI Team` (and in `super state`',
       '  members): check it first for every job. A diagnosis, draft, send, a change or several sources in',
@@ -313,8 +321,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '- New work: `super note clear`. Write a day or date, never "today"/"tomorrow".',
       expect.stringContaining('with `origin=<ref>`'),
       '  result with `<!-- re:<ref> -->`.',
-      expect.stringContaining('<super-brief rev=24>'),
+      expect.stringContaining('<super-brief rev=25>'),
     ]);
-    expect(after.length).toBe(before.length + 17);
+    expect(after.length).toBe(before.length + 18);
   });
 });

@@ -171,4 +171,13 @@ describe('superBriefState', () => {
       expect(t).toContain('a group card alone is not showing.');
     }
   });
+
+  it('rev 25 (2026-11-01): the one line comes FIRST, `super ask` is the last act of the turn', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(25);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('your one line FIRST');
+      expect(t).toContain('as the LAST act of the turn, with no text after it');
+      expect(t).toContain('(but the line before');
+    }
+  });
 });
