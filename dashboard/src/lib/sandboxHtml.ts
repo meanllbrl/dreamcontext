@@ -153,11 +153,33 @@ export interface SandboxSrcdocInput {
  * kit without forking it. And the surface's own script must precede the body, or the author's
  * markup can swallow it (see {@link SandboxSrcdocInput.headScript}).
  */
+/** The document's theme rule, which {@link THEME_BRIDGE} finds by how it starts. */
+function hostRootRule(tokens: Record<string, string>, scheme: 'light' | 'dark'): string {
+  const rootVars = Object.entries(tokens).map(([token, value]) => `${token}: ${value};`).join(' ');
+  return `:root { color-scheme: ${scheme}; ${rootVars} }`;
+}
+
+const THEME_KEY = '__dcFrameTheme';
+
+/** Takes a new theme in place: a srcdoc rebuilt for it would reload the page and lose its scroll. */
+export const THEME_BRIDGE = `(function () {
+  window.addEventListener('message', function (e) {
+    var rule = e.source === parent && e.data ? e.data['${THEME_KEY}'] : null;
+    if (typeof rule !== 'string') return;
+    var host = document.querySelectorAll('style[${HOST_STYLE_ATTR}]');
+    for (var i = 0; i < host.length; i++) {
+      if (host[i].textContent.indexOf(':root { color-scheme:') === 0) { host[i].textContent = rule; return; }
+    }
+  });
+})();`;
+
+/** The message {@link THEME_BRIDGE} answers. */
+export function themeMessage(tokens: Record<string, string>, scheme: 'light' | 'dark'): Record<string, string> {
+  return { [THEME_KEY]: hostRootRule(tokens, scheme) };
+}
+
 export function buildSandboxSrcdoc(input: SandboxSrcdocInput): string {
   const { html, css, tokens, scheme = 'light', overrideCss, headScript } = input;
-  const rootVars = Object.entries(tokens)
-    .map(([token, value]) => `${token}: ${value};`)
-    .join(' ');
 
   const parts = [
     '<!doctype html><html><head>',
@@ -167,7 +189,7 @@ export function buildSandboxSrcdoc(input: SandboxSrcdocInput): string {
     // with 'Inter', and inside this frame that name means nothing unless the @font-face is
     // already declared. See lib/sandboxFont.ts for why it has to travel in the document.
     `<style ${HOST_STYLE_ATTR}>${SANDBOX_FONT_CSS}</style>`,
-    `<style ${HOST_STYLE_ATTR}>:root { color-scheme: ${scheme}; ${rootVars} }</style>`,
+    `<style ${HOST_STYLE_ATTR}>${hostRootRule(tokens, scheme)}</style>`,
     `<style ${HOST_STYLE_ATTR}>${css}</style>`,
   ];
   if (overrideCss) parts.push(`<style ${HOST_STYLE_ATTR}>${overrideCss}</style>`);

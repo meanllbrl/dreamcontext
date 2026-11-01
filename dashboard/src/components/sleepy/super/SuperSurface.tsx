@@ -17,7 +17,7 @@ import { SuperAgenda } from './SuperAgenda';
 import { onOpenJobRow, publishSuperEventContext } from './superJobsStore';
 import { AgendaButton, AgendaPill, OthersButton } from './AgendaButton';
 import { childModelChip, type AsksOwner } from './AgentCard';
-import { SuperContainer, chatStatus, childBusyOf, isLivePage, superCentreStatus, type RemoteRow } from './SuperContainer';
+import { SuperContainer, chatStatus, childBusyOf, superCentreStatus, type RemoteRow } from './SuperContainer';
 import { useLiveSession } from './liveSession';
 import { TerminalsRow, type TerminalRowItem } from './TerminalsRow';
 import { LOOK_RENEW_MS, anchoredPos, childIsLive, contains, fitsNow, isGroupId, planStage, sizeOf, stageItems, type CardPlan, type LayoutPatch, type Rect, type StagePlan, TOUCH_REMOTE_CENTRE_MIN, TOUCH_REMOTE_NARROW_STAGE_PX } from './superLayout';
@@ -474,13 +474,13 @@ export function SuperSurface(props: SuperSurfaceProps) {
       return cp.where !== 'float' || cp.size === 'large' || cp.size === 'wide';
     }).map((c) => c.id)
     : [];
-  // Every live page card, and the ones keeping their page now (on screen or parked off the stage).
-  const livePages = state.containers.filter(isLivePage).map((c) => c.id);
-  // A project file's frame is never parked: it counts only while on screen.
+  // Every page card, and the ones keeping their page now (on screen or parked off the stage). A
+  // project file is parked too: rebuilt, it reloads and loses its scroll (owner 2026-11-01).
+  const webCards = state.containers.filter((c) => c.kind === 'web').map((c) => c.id);
   // A group shown whole (owner 2026-10-28: "open all" means all): every page it presents loads,
   // and the extra frames come on top of the kept ones, so no parked page reloads for it.
   const auto = autoFrames(!!shownGroup, webOnScreen.length);
-  const liveWeb = keptWebIds(lru, webOnScreen, [...livePages, ...webOnScreen.filter((id) => !livePages.includes(id))], auto, MAX_KEPT_FRAMES + auto - MAX_LIVE_IFRAMES);
+  const liveWeb = keptWebIds(lru, webOnScreen, webCards, auto, MAX_KEPT_FRAMES + auto - MAX_LIVE_IFRAMES);
   cuesLiveWebRef.current = liveWeb;
   // A page that loaded on its own joins the recency list, so it stays alive when moved away.
   const liveKey = [...liveWeb].join(',');
@@ -489,7 +489,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   }, [liveKey]); // eslint-disable-line react-hooks/exhaustive-deps
   // Where each page card was last drawn: a parked one stays there, hidden, at its size.
   const lastRectRef = useRef(new Map<string, CardPlan>());
-  for (const id of livePages) { const cp = plan.cards[id]; if (cp && cp.where !== 'others' && cp.where !== 'tab') lastRectRef.current.set(id, cp); }
+  for (const id of webCards) { const cp = plan.cards[id]; if (cp && cp.where !== 'others' && cp.where !== 'tab') lastRectRef.current.set(id, cp); }
   for (const id of [...lastRectRef.current.keys()]) if (!byId.has(id)) lastRectRef.current.delete(id);
 
   // ── The live browser budget: at most two cards re-render on frames, only while this window is
@@ -995,7 +995,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
           // Off the stage (Others, a group): a page card that keeps its page is parked, hidden,
           // under the SAME key, so its frame is never rebuilt (owner 2026-10-22).
           const off = !placed || placed.where === 'others' || placed.where === 'tab';
-          const parkedAt = !ghost && off && liveWeb.has(c.id) && isLivePage(c)
+          const parkedAt = !ghost && off && liveWeb.has(c.id)
             ? lastRectRef.current.get(c.id) : undefined;
           const parked = !!parkedAt;
           const cp = parked ? { ...parkedAt!, where: 'float' as const, z: -1, owner: false } : placed;
