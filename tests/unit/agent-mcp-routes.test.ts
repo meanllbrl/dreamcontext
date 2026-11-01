@@ -205,33 +205,58 @@ describe('GET /api/agent/mcp/codex (read only)', () => {
 
   it('whitelists name, enabled, auth status and transport type; no env, header, url or argument leaves', async () => {
     let seen: { cmd: string; args: string[] } | null = null;
-    setCodexMcpRunnerForTests(async (cmd, args) => { seen = { cmd, args }; return { spawned: true, timedOut: false, code: 0, stdout: CODEX_OUT }; });
+    setCodexMcpRunnerForTests(
+      async (cmd, args) => { seen = { cmd, args }; return { spawned: true, timedOut: false, code: 0, stdout: CODEX_OUT }; },
+      async () => [
+        { name: 'node_repl', status: 'connected', authStatus: 'unsupported', toolCount: 4 },
+        { name: 'linear', status: 'connected', authStatus: 'oauth', toolCount: 9 },
+      ],
+    );
     const r = await call(handleMcpCodex, { method: 'GET' });
     expect(r.status).toBe(200);
-    expect(seen).toEqual({ cmd: 'codex', args: ['mcp', 'list', '--json'] });
+    expect(seen).toMatchObject({ args: ['mcp', 'list', '--json'] });
     expect(r.json).toEqual({
       state: 'ok',
+      left: [],
       servers: [
-        { name: 'node_repl', enabled: true, authStatus: 'unsupported', transport: 'stdio' },
-        { name: 'linear', enabled: false, authStatus: 'not_logged_in', transport: 'http' },
-        { name: 'odd', enabled: true, authStatus: 'unknown', transport: 'other' },
+        { name: 'node_repl', enabled: true, authStatus: 'unsupported', transport: 'stdio', status: 'connected', toolCount: 4 },
+        // A server Codex's own config switched off stays off, whatever a session says.
+        { name: 'linear', enabled: false, authStatus: 'not_logged_in', transport: 'http', status: 'disabled' },
+        // The session gave no row: not a guess, `unknown`.
+        { name: 'odd', enabled: true, authStatus: 'unknown', transport: 'other', status: 'unknown' },
       ],
     });
     for (const secret of SECRETS) expect(r.raw).not.toContain(secret);
     for (const word of ['/opt/x/node', '/Users/someone', 'mcp.example.test', 'env', 'command']) expect(r.raw).not.toContain(word);
   });
 
+  it('finds Codex the way a chat does, and a stored server reaches the session', async () => {
+    let seen: { env?: NodeJS.ProcessEnv; argv: string[] } | null = null;
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+    writeFileSync(join(home, '.dreamcontext', 'mcp.json'), JSON.stringify({ version: 1, ledger: {}, mcpServers: { teapot: { type: 'http', url: 'https://mcp.teapot.example/mcp', headers: { 'X-Key': SECRETS[0] } } } }), { mode: 0o600 });
+    setCodexMcpRunnerForTests(
+      async () => ({ spawned: true, timedOut: false, code: 0, stdout: '[]' }),
+      async (o) => { seen = { env: o.env, argv: o.argv }; return [{ name: 'teapot', status: 'needs-auth', authStatus: 'not_logged_in', toolCount: 0 }]; },
+    );
+    const r = await call(handleMcpCodex, { method: 'GET' });
+    expect((r.json as { servers: unknown[] }).servers).toEqual([{ name: 'teapot', enabled: true, authStatus: 'not_logged_in', transport: 'http', status: 'needs-auth', toolCount: 0, fromStore: true }]);
+    expect(seen!.argv.join(' ')).toContain('mcp_servers.teapot.args');
+    expect(seen!.argv.join(' ')).not.toContain(SECRETS[0]);
+    expect(Object.values(seen!.env!)).not.toContain(SECRETS[0]);
+    expect(r.raw).not.toContain(SECRETS[0]);
+  });
+
   it('no codex CLI = not_installed; a failed run or bad output = failed', async () => {
     setCodexMcpRunnerForTests(async () => ({ spawned: false, timedOut: false, code: null, stdout: '' }));
-    expect((await call(handleMcpCodex, { method: 'GET' })).json).toEqual({ state: 'not_installed', servers: [] });
+    expect((await call(handleMcpCodex, { method: 'GET' })).json).toEqual({ state: 'not_installed', servers: [], left: [] });
     setCodexMcpRunnerForTests(async () => ({ spawned: true, timedOut: false, code: 1, stdout: '' }));
-    expect((await call(handleMcpCodex, { method: 'GET' })).json).toEqual({ state: 'failed', servers: [] });
+    expect((await call(handleMcpCodex, { method: 'GET' })).json).toEqual({ state: 'failed', servers: [], left: [] });
     setCodexMcpRunnerForTests(async () => ({ spawned: true, timedOut: false, code: 0, stdout: '{"not":"a list"}' }));
-    expect((await call(handleMcpCodex, { method: 'GET' })).json).toEqual({ state: 'failed', servers: [] });
+    expect((await call(handleMcpCodex, { method: 'GET' })).json).toEqual({ state: 'failed', servers: [], left: [] });
   });
 
   it('parseCodexMcpList drops duplicates and non-objects', () => {
-    expect(parseCodexMcpList('[1, null, {"name":"a","enabled":true}, {"name":"a"}]')).toEqual([{ name: 'a', enabled: true, authStatus: 'unknown', transport: 'other' }]);
+    expect(parseCodexMcpList('[1, null, {"name":"a","enabled":true}, {"name":"a"}]')).toEqual([{ name: 'a', enabled: true, authStatus: 'unknown', transport: 'other', status: 'unknown' }]);
     expect(parseCodexMcpList('not json')).toBeNull();
   });
 });

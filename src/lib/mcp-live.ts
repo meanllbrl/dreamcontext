@@ -544,6 +544,31 @@ export function startConnect(o: LiveChildOptions & {
   return t;
 }
 
+/** A sign-in another tool runs (Codex), on the one ticket and the one-at-a-time rule above. */
+export interface AdoptedConnect {
+  view: () => ConnectTicket;
+  /** The sign-in URL: kept only when it is https. */
+  setUrl: (url: unknown) => void;
+  setState: (state: ConnectTicket['state']) => void;
+}
+
+export function adoptConnect(accountId: string, name: string, stop: () => void): AdoptedConnect | 'busy' {
+  if (activeTicket && (activeTicket.state === 'opening' || activeTicket.state === 'waiting')) return 'busy';
+  const ticket: ConnectTicket & { stop: () => void } = {
+    id: randomUUID(), accountId, name, state: 'opening', startedAt: Date.now(),
+    stop: () => { stop(); if (ticket.state === 'opening' || ticket.state === 'waiting') ticket.state = 'failed'; },
+  };
+  activeTicket = ticket;
+  return {
+    view: () => { const { stop: _stop, ...t } = ticket; return t; },
+    setUrl: (url) => {
+      const host = isSafeAuthUrl(url);
+      if (host) { ticket.url = String(url); ticket.host = host; }
+    },
+    setState: (state) => { ticket.state = state; },
+  };
+}
+
 /** Tests only. */
 export function resetMcpLiveForTests(): void {
   activeTicket = null;

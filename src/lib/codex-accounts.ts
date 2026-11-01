@@ -351,7 +351,7 @@ async function t3Account(action: 'prepare' | 'probe', id: string, deps: CodexAcc
 }
 
 /** `codex` with this account's home and its credential store. */
-function codexArgsEnv(id: string, deps: CodexAccountDeps): { env: NodeJS.ProcessEnv; pre: string[] } {
+export function codexArgsEnv(id: string, deps: CodexAccountDeps): { env: NodeJS.ProcessEnv; pre: string[] } {
   const home = deps.home ?? homedir();
   const s = codexInstanceSettings(home, id === CODEX_PRIMARY_ID ? null : id);
   const env = { ...(deps.env ?? process.env) };

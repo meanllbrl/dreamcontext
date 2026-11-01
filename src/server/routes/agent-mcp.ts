@@ -19,7 +19,9 @@ import {
   isUsableServerName, type CodexMcpAuth, type CodexMcpList, type CodexMcpRow, type McpHome, type McpOverview,
   type McpOverviewAccount, type McpOverviewCell, type McpOverviewServer,
 } from '../../lib/mcp-wire.js';
-import { defaultCodexRunner, type CodexRunner } from '../../lib/codex-accounts.js';
+import { codexArgsEnv, codexAccountDeps, defaultCodexRunner, listCodexAccounts, type CodexRunner } from '../../lib/codex-accounts.js';
+import { codexChildEnv, codexCommand } from '../../lib/codex-bin.js';
+import { codexStorePlan, planArgv, probeCodexMcp, startCodexConnect, type AppServerOptions, type CodexLiveServer } from '../../lib/codex-mcp.js';
 
 /**
  * Settings → MCP (task mcp-management W2): one overview of every server × every Claude account,
@@ -176,33 +178,81 @@ export function parseCodexMcpList(stdout: string): CodexMcpRow[] | null {
       enabled: o.enabled === true,
       authStatus: codexAuth(o.auth_status),
       transport: t === 'stdio' ? 'stdio' : t === 'streamable_http' || t === 'http' ? 'http' : 'other',
+      status: 'unknown',
     });
   }
   return rows;
 }
 
 let codexMcpRunner: CodexRunner = defaultCodexRunner;
-/** Tests: replace how `codex` is run. */
-export function setCodexMcpRunnerForTests(run: CodexRunner | null): void {
+let codexMcpProbe: (o: AppServerOptions) => Promise<CodexLiveServer[] | null> = probeCodexMcp;
+/** Tests: replace how `codex` is run, and the live session it is asked through. */
+export function setCodexMcpRunnerForTests(run: CodexRunner | null, probe?: (o: AppServerOptions) => Promise<CodexLiveServer[] | null>): void {
   codexMcpRunner = run ?? defaultCodexRunner;
+  codexMcpProbe = probe ?? probeCodexMcp;
 }
 
-/** Ask Codex for its configured servers. Account #0's home: every account shares this config. */
-export async function readCodexMcp(env: NodeJS.ProcessEnv = process.env): Promise<CodexMcpList> {
-  const childEnv = { ...env };
-  delete childEnv.CODEX_HOME;
-  delete childEnv.T3CODE_CODEX_LAUNCH_ARGS;
-  const r = await codexMcpRunner('codex', ['mcp', 'list', '--json'], { env: childEnv, timeoutMs: CODEX_MCP_TIMEOUT_MS, keepStdout: true });
-  if (!r.spawned) return { state: 'not_installed', servers: [] };
-  if (r.timedOut || r.code !== 0) return { state: 'failed', servers: [] };
+/**
+ * How this Mac starts the Codex that answers for the column: the found binary (a window opened
+ * from Finder has no nvm on its PATH, so a bare `codex` was never found there) and the account a
+ * new chat starts on. Every account reads one config and one MCP sign-in.
+ */
+function codexLaunch(env: NodeJS.ProcessEnv, home: string): { bin: string; pre: string[]; env: NodeJS.ProcessEnv } {
+  const first = listCodexAccounts(home)[0]?.id ?? 'primary';
+  const { env: accountEnv, pre } = codexArgsEnv(first, { home, env });
+  return { bin: codexCommand({ home }), pre, env: codexChildEnv(accountEnv) };
+}
+
+/**
+ * Ask Codex for its servers: its config for what exists, then a live `codex app-server` carrying
+ * the app's stores exactly as a chat does, for how each one really is.
+ */
+export async function readCodexMcp(projectRoot: string, env: NodeJS.ProcessEnv = process.env, home: string = homedir()): Promise<CodexMcpList> {
+  const launch = codexLaunch(env, home);
+  const r = await codexMcpRunner(launch.bin, [...launch.pre, 'mcp', 'list', '--json'], { env: launch.env, timeoutMs: CODEX_MCP_TIMEOUT_MS, keepStdout: true });
+  if (!r.spawned) return { state: 'not_installed', servers: [], left: [] };
+  if (r.timedOut || r.code !== 0) return { state: 'failed', servers: [], left: [] };
   const rows = parseCodexMcpList(r.stdout);
-  return rows ? { state: 'ok', servers: rows } : { state: 'failed', servers: [] };
+  if (!rows) return { state: 'failed', servers: [], left: [] };
+  const plan = codexStorePlan({ home, projectRoot, node: codexAccountDeps().node ?? process.execPath, cli: process.env.DREAMCONTEXT_CLI || process.argv[1] || '', listed: rows.map((x) => x.name), sync: false });
+  for (const s of plan.reached) rows.push({ name: s.name, enabled: true, authStatus: 'unknown', transport: s.transport, status: 'unknown', fromStore: true });
+  const live = await codexMcpProbe({ bin: launch.bin, argv: [...launch.pre, ...planArgv(plan)], env: launch.env, cwd: projectRoot });
+  const byName = new Map((live ?? []).map((s) => [s.name, s]));
+  return {
+    state: 'ok',
+    left: plan.left,
+    servers: rows.map((row) => {
+      const said = byName.get(row.name);
+      if (!row.enabled) return { ...row, status: 'disabled' as const };
+      return said ? { ...row, status: said.status, authStatus: said.authStatus, toolCount: said.toolCount } : row;
+    }),
+  };
 }
 
-/** GET /api/agent/mcp/codex: the servers Codex has, read only. No sign-in, no writes. */
+/** GET /api/agent/mcp/codex: what a live Codex says about every server it has. No writes. */
 export async function handleMcpCodex(req: IncomingMessage, res: ServerResponse, _p: Record<string, string>, contextRoot: string | null): Promise<void> {
   if (!guard(req, res, contextRoot)) return;
-  sendJson(res, 200, await readCodexMcp());
+  sendJson(res, 200, await readCodexMcp(projectRootOf(contextRoot)));
+}
+
+/** POST /api/agent/mcp/codex/connect `{name}`: Codex's own sign-in for one server. */
+export async function handleMcpCodexConnect(req: IncomingMessage, res: ServerResponse, _p: Record<string, string>, contextRoot: string | null): Promise<void> {
+  if (!guard(req, res, contextRoot)) return;
+  const body = (await parseJsonBody(req)) as { name?: unknown } | null;
+  const name = body?.name;
+  if (!isUsableServerName(name)) { sendError(res, 400, 'bad_name', 'That is not a server.'); return; }
+  const projectRoot = projectRootOf(contextRoot);
+  const home = homedir();
+  const launch = codexLaunch(process.env, home);
+  const listed = await codexMcpRunner(launch.bin, [...launch.pre, 'mcp', 'list', '--json'], { env: launch.env, timeoutMs: CODEX_MCP_TIMEOUT_MS, keepStdout: true });
+  const rows = listed.code === 0 ? parseCodexMcpList(listed.stdout) : null;
+  if (!rows) { sendError(res, 503, 'codex_unavailable', 'Codex did not answer.'); return; }
+  const plan = codexStorePlan({ home, projectRoot, node: codexAccountDeps().node ?? process.execPath, cli: process.env.DREAMCONTEXT_CLI || process.argv[1] || '', listed: rows.map((x) => x.name), sync: false });
+  if (!rows.some((x) => x.name === name) && !plan.reached.some((x) => x.name === name)) { sendError(res, 404, 'not_found', 'Codex has no server by that name.'); return; }
+  const ticket = startCodexConnect({ name, bin: launch.bin, argv: [...launch.pre, ...planArgv(plan)], env: launch.env, cwd: projectRoot });
+  if (ticket === 'busy') { sendError(res, 409, 'busy', 'Another sign-in is running. Finish it first.'); return; }
+  if (!ticket) { sendError(res, 500, 'spawn_failed', 'Codex did not start.'); return; }
+  sendJson(res, 200, ticket);
 }
 
 /** POST /api/agent/mcp/check `{account?}`: probe one account, or every account. */

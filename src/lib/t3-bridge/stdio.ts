@@ -25,6 +25,7 @@ import { codexInstanceSettings, isCodexAccountId } from './accounts.js';
 import { HIDDEN_TITLE_PROMPT, TabTitler, titleBlock, titleIn } from './tab-title.js';
 import type { WireFrame } from './to-wire.js';
 import { fitCodexContext, type BrainContext } from './context.js';
+import { codexStorePlan, planLaunchArgs } from '../codex-mcp.js';
 
 export type AppContext = { key: string; text: string };
 
@@ -47,6 +48,8 @@ export interface StdioArgs {
   readonly mcpConfig?: string;
   /** Nothing from the owner's Codex config: no MCP servers, no web search (`codexStrictArgs`). */
   readonly strictMcp?: boolean;
+  /** The owner's MCP servers from the app's stores: a chat's, as Claude gets `--mcp-config`. */
+  readonly storeMcp?: boolean;
 }
 
 export interface StdioDeps {
@@ -161,12 +164,13 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   // The account this pane runs on: its private home and its file credential store.
   const account = args.tool === 'codex' && args.account && isCodexAccountId(args.account) ? codexInstanceSettings(home, args.account) : null;
   // A narrow surface hears from Codex which servers exist, and starts with none but its own.
+  const listMcp = deps.listMcp ?? (() => {
+    const r = spawnSync(binaryPath ?? (process.platform === 'win32' ? 'codex.cmd' : 'codex'), ['mcp', 'list', '--json'], { cwd: args.cwd, env: scrubbedCodexEnv(childEnv), encoding: 'utf-8', timeout: MCP_LIST_LIMIT_MS, shell: process.platform === 'win32' });
+    return r.status === 0 ? parseCodexMcpList(r.stdout) : null;
+  });
   const strictArgs = args.strictMcp && args.tool === 'codex'
     ? codexStrictArgs(
-      (deps.listMcp ?? (() => {
-        const r = spawnSync(binaryPath ?? (process.platform === 'win32' ? 'codex.cmd' : 'codex'), ['mcp', 'list', '--json'], { cwd: args.cwd, env: scrubbedCodexEnv(childEnv), encoding: 'utf-8', timeout: MCP_LIST_LIMIT_MS, shell: process.platform === 'win32' });
-        return r.status === 0 ? parseCodexMcpList(r.stdout) : null;
-      }))(),
+      listMcp(),
       [...(deps.brain ? ['dreamcontext'] : []), ...leanMcpNames(args.mcpConfig)],
     )
     : '';
@@ -182,6 +186,9 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   const brainServer = isInstanceTool(args.tool) && deps.brain
     ? acpBrainMcpServer({ node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', root: args.cwd, tabSession: deps.env.DREAMCONTEXT_TAB_SESSION })
     : null;
+  const storePlan = args.storeMcp && args.tool === 'codex' && !args.strictMcp
+    ? codexStorePlan({ home, projectRoot: args.cwd, node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', listed: listMcp() })
+    : null;
   const launchArgs = isInstanceTool(args.tool) ? '' : args.tool === 'claude'
     ? claudeLaunchArgs({ briefingFile: args.briefingFile })
     : [
@@ -191,6 +198,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       // The brain's write path (§4a): only with a brain, i.e. when the chat gets its context.
       deps.brain ? codexBrainMcpArgs({ node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '', root: args.cwd, tabSession: deps.env.DREAMCONTEXT_TAB_SESSION }) : '',
       args.mcpConfig ? codexLeanMcpArgs(args.mcpConfig, { node: process.execPath, cli: deps.env.DREAMCONTEXT_CLI || process.argv[1] || '' }) : '',
+      storePlan ? planLaunchArgs(storePlan) : '',
     ].filter(Boolean).join(' ');
   // Before the open: a pane closed during a stuck start must still end the agent T3 started.
   const opening = new AbortController();

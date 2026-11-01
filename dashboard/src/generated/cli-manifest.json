@@ -2719,6 +2719,14 @@
       "group": true
     },
     {
+      "path": "mcp http-relay",
+      "desc": "Serve one HTTP server of an MCP store file over stdio",
+      "args": [
+        "<file>",
+        "<name>"
+      ]
+    },
+    {
       "path": "mcp lean-exec",
       "desc": "Start one server of a lean MCP subset file, with stdio passed through",
       "args": [

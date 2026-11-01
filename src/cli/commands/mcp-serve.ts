@@ -29,4 +29,14 @@ export function registerMcpServeCommand(program: Command): void {
       const { startLeanServer } = await import('../../lib/super/lean-exec.js');
       process.exit(await startLeanServer(file, name));
     });
+
+  // An HTTP server holding a key, on Codex (codex-http-relay.ts): Codex gets a stdio server, and
+  // the address and headers stay in the 0600 store.
+  mcp
+    .command('http-relay <file> <name>')
+    .description('Serve one HTTP server of an MCP store file over stdio')
+    .action(async (file: string, name: string) => {
+      const { startHttpRelay } = await import('../../lib/codex-http-relay.js');
+      process.exit(await startHttpRelay(file, name));
+    });
 }

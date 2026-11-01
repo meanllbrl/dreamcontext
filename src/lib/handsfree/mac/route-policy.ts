@@ -336,6 +336,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/agent/mcp/overview': deny(SETTINGS),
   'GET /api/agent/mcp/codex': deny(SETTINGS),
   'POST /api/agent/mcp/check': deny(SETTINGS),
+  'POST /api/agent/mcp/codex/connect': deny(SIGN_IN),
   'POST /api/agent/mcp/connect': deny(SIGN_IN),
   'GET /api/agent/mcp/connect/:ticket': deny(SIGN_IN),
   'DELETE /api/agent/mcp/connect/:ticket': deny(SIGN_IN),

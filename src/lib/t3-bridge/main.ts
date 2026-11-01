@@ -27,6 +27,7 @@ export interface T3ChatOptions {
   carry?: string;
   mcpConfig?: string;
   strictMcp?: boolean;
+  storeMcp?: boolean;
 }
 
 export const runT3Chat = (o: T3ChatOptions): Promise<number> => runBridgeChat(o);
@@ -54,6 +55,7 @@ export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Pr
       ...(o.carry ? { carry: o.carry } : {}),
       ...(o.mcpConfig ? { mcpConfig: o.mcpConfig } : {}),
       ...(o.strictMcp ? { strictMcp: true } : {}),
+      ...(o.storeMcp ? { storeMcp: true } : {}),
     },
     {
       ...(claudeKit ? { claudeKit } : {}),
