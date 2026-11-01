@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "dreamcontext-app-runner"
-version = "0.36.13"
+version = "0.36.14"
 dependencies = [
  "block2",
  "dispatch2",
