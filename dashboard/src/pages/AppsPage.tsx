@@ -5,6 +5,8 @@ import { isDesktop } from '../lib/desktop';
 import { isPhoneSurface } from '../lib/phoneSurface';
 import { openAgentSurface } from '../lib/agentSettings';
 import { COMPOSER_PREFILL_EVENT } from '../components/sleepy/chat/Composer';
+import { useIsNewShell } from '../lib/uxMode';
+import { PageBar } from '../components/layout/PageBar';
 import { AppCard, type AppRow } from '../components/apps/AppCard';
 import './AppsPage.css';
 
@@ -17,6 +19,7 @@ export function AppsPage() {
   const api = useApi();
   const { vault, bus } = useVault();
   const { t } = useI18n();
+  const newShell = useIsNewShell();
   const qc = useQueryClient();
   const key = ['apps', vault];
   const { data, isLoading, error } = useQuery({
@@ -40,11 +43,15 @@ export function AppsPage() {
   };
 
   return (
-    <div className="apps-page">
-      <header className="apps-page__head">
-        <h1 className="page-title">{t('nav.apps')}</h1>
-        <p className="apps-page__lede">{t('apps.lede')}</p>
-      </header>
+    <div className={`apps-page${newShell ? ' apps-page--ns' : ''}`}>
+      {newShell ? (
+        <PageBar flush title={t('nav.apps')} />
+      ) : (
+        <header className="apps-page__head">
+          <h1 className="page-title">{t('nav.apps')}</h1>
+          <p className="apps-page__lede">{t('apps.lede')}</p>
+        </header>
+      )}
       {isLoading && <p className="apps-page__muted">{t('apps.loading')}</p>}
       {error && <p className="error-state">{(error as Error).message}</p>}
       {!isLoading && !error && apps.length === 0 && (
