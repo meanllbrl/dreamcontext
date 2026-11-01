@@ -12,7 +12,7 @@ import { TaskWidget } from '../../whiteboard/widgets/TaskWidget';
 import { WebWidget } from '../../whiteboard/widgets/WebWidget';
 import { BrowserCard } from './BrowserCard';
 import type { StageCue } from './useStageCues';
-import { targetPath } from '../../whiteboard/pagePopupModel';
+import { targetPath, knowledgePath } from '../../whiteboard/pagePopupModel';
 import '../../whiteboard/widgets/widgets.css';
 import { deriveSessionStatus, type SessionStatusInfo } from '../agentStatus';
 import type { ChatSession } from '../chatSession';
@@ -759,7 +759,9 @@ function viewFor(p: BodyProps): ReactNode {
       // Large (side by side, presented, a sheet): the page itself, read the way a whiteboard's
       // page popup reads it, so a task shows its criteria and to-dos and a note its body
       // (owner 2026-10-20: the widget showed a title and two chips over an empty card).
-      const path = targetPath({ kind: c.kind, ref: c.ref });
+      // A knowledge slug the server took may hold a dot (`archive/2.memory-2026-08`): no page ref,
+      // but its file is still known.
+      const path = targetPath({ kind: c.kind, ref: c.ref }) ?? (c.kind === 'knowledge' ? knowledgePath(c.ref) : null);
       if (path) {
         return (
           <div className="super-card-view super-card-view--page">

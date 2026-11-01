@@ -441,6 +441,13 @@ export async function pickFiles(): Promise<string[]> {
   return pickSafely(false, true);
 }
 
+/** Pick ONE file (the panel refuses a second, so none is silently dropped). Null: cancelled, or
+ *  the picker could not open; {@link pickerError} tells which. */
+export async function pickFile(): Promise<string | null> {
+  const [picked] = await pickSafely(false, false);
+  return picked ?? null;
+}
+
 /**
  * Pick one or more FOLDERS (multi-select), returning their absolute paths. A separate call from
  * {@link pickFiles} because NSOpenPanel exposes "choose directories" as a flag — one native panel

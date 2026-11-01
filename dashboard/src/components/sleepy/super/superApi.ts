@@ -74,6 +74,23 @@ export async function postSuperPad(api: ApiClient, id: string, section: 'now' | 
   return readSuperStateView(r?.state);
 }
 
+/** What the owner may open himself: a kind and a ref, or a project file by its path. */
+export type SuperOpenBody = { kind: 'web' | 'knowledge' | 'task' | 'insight' | 'whiteboard'; ref: string } | { path: string };
+
+/** The card a `POST /api/super/open` opened, and the group it went into. */
+export interface SuperOpened { id: string; groupId: string | null; state: SuperStateView | null }
+
+/** `POST /api/super/open` — the owner opens a card himself. Throws the server's refusal as a
+ *  RequestError (`code`: stage_full, record_full, a file's reason); its `message` is the server's
+ *  English and is never shown. */
+export async function postSuperOpen(api: ApiClient, body: SuperOpenBody): Promise<SuperOpened> {
+  const r = await api.post<{ result?: { container?: { id?: unknown }; group?: { id?: unknown } }; state?: unknown }>('/super/open', body);
+  const id = r?.result?.container?.id;
+  if (typeof id !== 'string') throw new Error('the server named no card');
+  const groupId = r?.result?.group?.id;
+  return { id, groupId: typeof groupId === 'string' ? groupId : null, state: readSuperStateView(r?.state) };
+}
+
 /** `POST /api/super/recap` — the window came back after a long absence. */
 export async function postSuperRecap(api: ApiClient): Promise<boolean> {
   const r = await api.post<{ queued?: unknown }>('/super/recap', {});

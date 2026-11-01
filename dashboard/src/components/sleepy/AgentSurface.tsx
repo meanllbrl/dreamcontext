@@ -150,7 +150,7 @@ import {
 import { StageCardsContext, type StageCardInfo, type StageCards } from './super/stageCards';
 import { cardMentionText, cleanCardTitle } from '../../lib/cardMention';
 import { isVisibleRect, planFlights, relativeTo, type FlightInput, type FlightRole, type FlightStep, type Rect } from './super/handoverMotion';
-import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperPad, postSuperRecap, remoteSkippedTitles } from './super/superApi';
+import { createActivityLease, disableSuper, enableSuper, fetchSuperState, postSuperActivity, postSuperEnd, postSuperFresh, postSuperLayout, postSuperOpen, postSuperPad, postSuperRecap, remoteSkippedTitles, type SuperOpenBody } from './super/superApi';
 import { fetchRemoteStage, postRemoteLayout, remoteLayoutPatch, remoteStageState } from './super/remoteStage';
 import { useRemoteStage } from './super/useRemoteStage';
 import { usePhoneChatNav } from './usePhoneChatNav';
@@ -4205,6 +4205,15 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   }, [scopedApi, dropRemoteStage]);
   editLayoutRef.current = editSuperLayout;
 
+  // The owner opens a card himself: the answer's state is applied here, because a push goes down
+  // the Super chat's socket and this request may have none (super.ts `ownerDoor`).
+  const openCardOnStage = useCallback(async (body: SuperOpenBody) => {
+    const { id, groupId, state } = await postSuperOpen(scopedApi, body);
+    const st = state ?? await fetchSuperState(scopedApi);
+    if (st) setSuperState(withPendingEdits(st));
+    return { id, groupId };
+  }, [scopedApi]);
+
   // O11: a card dropped on the centre (or its "Ask about this") becomes the subject of the
   // owner's next message: a reference appended to the Super Agent's draft once, focused.
   // Nothing is written to the record; nothing happens while the Super Agent is dormant.
@@ -5172,6 +5181,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       if (document.querySelector('.super-group-panel')) return;
       // A card's size menu owns Esc the same way: it closes the menu (SuperContainer), never the stage.
       if (document.querySelector('.super-size-menu')) return;
+      // The stage's add menu owns Esc too: it closes the menu, never the stage or a presentation.
+      if (document.querySelector('.super-add-menu')) return;
       // A presentation on that stage owns Esc: it goes back to the floating stage (SuperSurface),
       // never folds the whole Agents view.
       if (document.querySelector('.super-surface[data-presenting]')) return;
@@ -6277,6 +6288,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             onEndChild={endChildFromCard}
             onKeepChild={keepChildRunning}
             onMoveNote={isMacPhoneSurface() ? undefined : moveAgendaNote}
+            onOpenCard={isMacPhoneSurface() ? undefined : openCardOnStage}
             endPending={endPending}
             endFailed={endFailed}
             queueElsewhere={dockOpen}

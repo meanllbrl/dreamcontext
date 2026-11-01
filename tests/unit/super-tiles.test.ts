@@ -188,7 +188,7 @@ describe('the surface wiring (source rules)', () => {
 
   it('side by side, a task or a note shows its page body, read like a whiteboard\'s page popup', () => {
     expect(frame).toMatch(/case 'task':\n\s*case 'knowledge': \{/);
-    expect(frame).toMatch(/const path = targetPath\(\{ kind: c\.kind, ref: c\.ref \}\);/);
+    expect(frame).toMatch(/const path = targetPath\(\{ kind: c\.kind, ref: c\.ref \}\) \?\? \(c\.kind === 'knowledge' \? knowledgePath\(c\.ref\) : null\);/);
     expect(frame).toMatch(/<DocumentReader key=\{path\} path=\{path\} .* embedded vaultReads variant="page" \/>/);
   });
 

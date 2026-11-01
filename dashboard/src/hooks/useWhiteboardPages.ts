@@ -26,19 +26,21 @@ const DEBOUNCE_MS = 150;
  * picker. The query is debounced, and the previous results stay up while the next ones load,
  * so the list does not flash empty on every keystroke.
  */
-export function useWhiteboardPages(query: string, opts: { limit?: number; kind?: PageKind } = {}) {
+export function useWhiteboardPages(query: string, opts: { limit?: number; kind?: PageKind | readonly PageKind[]; source?: WhiteboardPageHit['source'] } = {}) {
   const api = useApi();
   const [q, setQ] = useState(query.trim());
   useEffect(() => {
     const t = setTimeout(() => setQ(query.trim()), DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [query]);
-  const { limit = 60, kind } = opts;
+  const { limit = 60, source } = opts;
+  const kind = opts.kind === undefined ? '' : ([] as PageKind[]).concat(opts.kind).join(',');
   return useQuery({
-    queryKey: ['whiteboard-pages', q, limit, kind ?? ''],
+    queryKey: ['whiteboard-pages', q, limit, kind, source ?? ''],
     queryFn: () => {
       const params = new URLSearchParams({ q, limit: String(limit) });
       if (kind) params.set('kind', kind);
+      if (source) params.set('source', source);
       return api.get<WhiteboardPagesResponse>(`/whiteboards/pages?${params.toString()}`);
     },
     placeholderData: keepPreviousData,

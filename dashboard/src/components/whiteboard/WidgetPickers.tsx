@@ -5,15 +5,18 @@ import { useBoards } from '../../hooks/useBoards';
 import { useKnowledgeList } from '../../hooks/useKnowledge';
 import { useTasks } from '../../hooks/useTasks';
 import { useWhiteboardPages, type WhiteboardPageHit } from '../../hooks/useWhiteboardPages';
-import { isAgentSlugShape, isLabCardRef, type WidgetPayload } from '../../lib/whiteboardWidgets';
+import { useWhiteboardList } from '../../hooks/useWhiteboards';
+import { isAgentSlugShape, isLabCardRef, type PageKind, type WidgetPayload } from '../../lib/whiteboardWidgets';
 import { isDesktop, pickFiles } from '../../lib/desktop';
 import { requestOpenAgents } from '../../lib/openAgents';
+import { DEFAULT_BOARD_SLUG } from '../../pages/whiteboards/boardSwitcherLogic';
 import { AgentAvatar } from '../agents/AgentAvatar';
 import { WEB_URL_REASON_TEXT, validateWebUrl } from './webUrl';
 import {
   humanizeFileName, isValidRefFor, isValidWidgetRef, knowledgeTitle, pageKindLabel, pageTypeLabel, taskTitle,
 } from './widgetModel';
 import { useWbText } from './whiteboardHost';
+import './WidgetPalette.css';
 
 /** One pickable row: a slug and what to show for it; `face` leads the row (an agent's avatar). */
 interface PickRow { slug: string; title: string; meta?: string; face?: ReactNode }
@@ -136,14 +139,17 @@ export interface PickedPage { ref: string; title: string }
  * rule so a pick never makes a widget or a wiki row the save refuses. The palette's "Knowledge
  * or file…" and the wiki card's "Add page" both use it.
  */
-export function PagePicker({ onPick, isDisabled }: {
+export function PagePicker({ onPick, isDisabled, filter }: {
   onPick: (page: PickedPage) => void;
   /** A ref that may not be picked here (the wiki section already lists it): drawn, but inert. */
   isDisabled?: (ref: string) => boolean;
+  /** Only these pages, filtered on the server: a client filter over the first rows would miss
+   *  every file of a project with more knowledge pages than a page of results. */
+  filter?: { source?: WhiteboardPageHit['source']; kind?: readonly PageKind[] };
 }) {
   const tx = useWbText();
   const [q, setQ] = useState('');
-  const { data, isLoading, isError } = useWhiteboardPages(q, { limit: MAX_ROWS });
+  const { data, isLoading, isError } = useWhiteboardPages(q, { limit: MAX_ROWS, ...filter });
   const knowledge = useKnowledgeList();
   const titles = useMemo(
     () => new Map((knowledge.data ?? []).map((k) => [k.slug, knowledgeTitle(k)])),
@@ -268,7 +274,33 @@ export function AgentPicker({ onPick, onNew }: { onPick: Pick; onNew: () => void
   );
 }
 
-export function WebPicker({ onPick }: { onPick: Pick }) {
+/** Every readable whiteboard of the project, by slug (not Lab boards: `useBoards` reads those). */
+export function WhiteboardPicker({ onPick }: { onPick: (slug: string) => void }) {
+  const tx = useWbText();
+  const { data, isLoading, isError } = useWhiteboardList();
+  const rows = useMemo(() => {
+    if (!data) return undefined;
+    const boards = data.filter((b) => !b.corrupt && /^[a-z0-9][a-z0-9-]{0,80}$/.test(b.slug)).map((b) => ({ slug: b.slug, title: b.name || b.slug }));
+    // The server makes the default board on first ask, so it is offered before it exists.
+    return data.some((b) => b.slug === DEFAULT_BOARD_SLUG) ? boards : [...boards, { slug: DEFAULT_BOARD_SLUG, title: tx('whiteboard.defaultName', 'Control Panel') }];
+  }, [data, tx]);
+  return (
+    <PickList
+      rows={rows}
+      loading={isLoading}
+      failed={isError}
+      emptyText={tx('whiteboard.palette.noWhiteboards', 'No whiteboards.')}
+      onPick={(r) => onPick(r.slug)}
+    />
+  );
+}
+
+export function WebPicker({ onPick, noFile, submitLabel }: {
+  onPick: Pick;
+  /** No "Choose a file…": the caller has its own way to a file. */
+  noFile?: boolean;
+  submitLabel?: string;
+}) {
   const tx = useWbText();
   const [url, setUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -294,7 +326,7 @@ export function WebPicker({ onPick }: { onPick: Pick }) {
       />
       {error && <p className="wb-picker-error" role="alert">{error}</p>}
       <div className="wb-picker-actions">
-        {isDesktop() && (
+        {isDesktop() && !noFile && (
           <button
             type="button"
             className="wb-palette-btn"
@@ -303,7 +335,7 @@ export function WebPicker({ onPick }: { onPick: Pick }) {
             {tx('whiteboard.web.chooseFile', 'Choose a file…')}
           </button>
         )}
-        <button type="button" className="wb-palette-btn" onClick={submit}>{tx('whiteboard.palette.addWeb', 'Add embed')}</button>
+        <button type="button" className="wb-palette-btn" onClick={submit}>{submitLabel ?? tx('whiteboard.palette.addWeb', 'Add embed')}</button>
       </div>
     </div>
   );
