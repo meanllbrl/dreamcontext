@@ -552,7 +552,7 @@
  * carries news. It is compliant because it (a) never touches accent or warning,
  * (b) always LOSES to active/unread (see the override below, which is unchanged),
  * and (c) is spent as a TINTED SURFACE, not a fill — the 10/22/55 mix is the
- * `chat-msg-user-bubble` recipe pulled down for chrome.
+ * tinted-surface recipe pulled down for chrome.
  *
  * The default is a var() FALLBACK, never a declaration on this element — declaring
  * `--nav-hue` here would win over the group's inherited value and every badge would

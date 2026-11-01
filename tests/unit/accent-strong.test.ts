@@ -39,6 +39,16 @@ function walk(dir: string, exts: string[], out: string[] = []): string[] {
 /** Fills that carry no text — a dot, a bar, a track, a rule, a check mark — keep the plain
  *  accent. Keyed `file::selector` (file relative to dashboard/src). Each needs a reason. */
 const NON_TEXT_FILLS: Record<string, string> = {
+  'components/layout/newshell/ChatDrawer.css::.ns-dr-win[data-drop-before="true"]::after, .ns-dr-win[data-drop-after="true"]::after': 'drop line',
+  'components/roadmap/Priority.css::.pc-bar > span': 'bar',
+  'components/roadmap/Priority.css::.pc-dot': 'dot',
+  'components/roadmap/Priority.css::.pv-map-dot.is-suggested': 'dot',
+  'components/sleepy/chat/model-picker/model-picker.css::.mp-tool.is-on::after': 'rail marker',
+  'components/sleepy/super/PhoneAgenda.css::.phone-jobs-row[data-state="working"] .phone-jobs-dot': 'dot',
+  'pages/AiTeamPage.css::.aiteam-row-dot--working': 'dot',
+  'pages/StatsPage.css::.st-tr .shr i[data-sleep]': 'bar',
+  'pages/StatsPage.css::.st-slp': 'hatched bar',
+  'pages/StatsPage.css::.st-spark i': 'sparkline bar',
   'components/agents/AgentMemberCard.css::.agent-switch--on': 'switch track',
   'components/agents/AgentsFeed.css::.agent-msg--unread::before': 'unread bar',
   'components/automations/AutomationCard.css::.auto-card-status-dot--awaiting-review': 'status dot',
@@ -71,7 +81,6 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/settings/ClaudeAccounts.css::.dc-acct-bar-fill': 'bar',
   'pages/SettingsPage.css::.embed-model-bar-fill': 'bar',
   'components/settings/RecallModeCards.css::.recall-bar-fill': 'bar',
-  'components/sleepy/chat/pinShelf.css::.pin-track-fill': 'bar',
   'components/sleepy/chat/atoms.css::.chat-a-progress[data-status=\'running\'] .chat-a-progress-fill': 'progress bar',
   'components/sleepy/chat/composer.css::.chat-cmp-usagebar-fill': 'usage bar',
   'components/sleepy/AgentTerminal.css::.agent-composer-gauge-fill': 'gauge bar',

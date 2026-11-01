@@ -50,7 +50,7 @@
 
 .apps-empty__cta,
 .app-card__launch {
-  background: var(--color-accent);
+  background: var(--color-accent-strong);
   color: var(--color-accent-text);
   border: 0;
   border-radius: var(--radius-md);

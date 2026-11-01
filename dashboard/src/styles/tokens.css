@@ -88,6 +88,7 @@
   --radius-lg: 12px;       /* cards */
   --radius-xl: 16px;       /* large cards */
   --radius-2xl: 24px;      /* feature cards */
+  --radius-bubble: 20px;   /* a sent message: three of its corners */
   --radius-full: 999px;    /* pills (54px+ rounds to fully pill) */
   --radius-nav: 9px;       /* nav items match buttons */
 
@@ -177,6 +178,10 @@
   --color-accent: var(--color-deep-violet);    /* #7b68ee — interactive */
   --color-accent-text: var(--color-snow);
   --color-accent-soft: rgba(123, 104, 238, 0.12);
+  /* A sent message's fill (tinted-surface-not-filled-swatch). Mixed into the canvas, not into
+     --color-bg-tertiary: that grey turned the violet into mud. Dark re-declares it, stronger and
+     into the card surface, because a tint needs more mix to separate from a dark canvas. */
+  --color-bubble-own: color-mix(in srgb, var(--color-accent) 9%, var(--color-bg));
   /* The accent as INK on paper: a count, a link word. #7b68ee is validated on fills and
      reads 4.15:1 as small text on white; the brand gradient's own first stop reads 5.64:1
      (tinted-surface-not-filled-swatch: a swatch colour is not thereby a text colour). */
@@ -444,6 +449,7 @@
   --color-accent-text: var(--color-snow);
   --color-accent-soft: rgba(157, 140, 255, 0.18);
   --color-accent-ink: var(--color-accent);      /* 6.5:1 on the dark canvas already */
+  --color-bubble-own: color-mix(in srgb, var(--color-accent) 16%, var(--color-bg-secondary));
 
   --gradient-brand: linear-gradient(135deg, #6647f0, #9d8cff);
   --gradient-brand-subtle: linear-gradient(135deg, rgba(157, 140, 255, 0.16), rgba(0, 145, 255, 0.16));

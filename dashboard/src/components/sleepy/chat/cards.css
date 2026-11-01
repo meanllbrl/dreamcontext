@@ -152,16 +152,18 @@
    which is the one text pairing in the app that fails to read at long-message length — the
    user's own words end up the HARDEST thing in the transcript to re-read. So the bubble
    borrows the sleep tracker's pill recipe (SleepDebtTracker.css): accent mixed a little
-   way into a surface for the fill, accent mixed further into the border for the edge, and
-   the ordinary primary text colour on top. Still unmistakably "mine, and violet" against
-   the ungutter'd assistant blocks, but now at full body-text contrast in both themes. */
+   way into a surface for the fill and the ordinary primary text colour on top. Still
+   unmistakably "mine, and violet" against the ungutter'd assistant blocks, but at full
+   body-text contrast in both themes. No visible edge (owner 2026-11-01): the 45% accent border
+   plus a fill mixed into grey read heavy and muddy; the transparent border stays so a forced-colors
+   display still draws the bubble. The small corner points at the sender. */
 .chat-msg-user-bubble {
   align-self: flex-end;
   max-width: 100%;
   padding: var(--space-3) var(--space-5);
-  border-radius: var(--radius-2xl);
-  background: color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-tertiary));
-  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+  border-radius: var(--radius-bubble) var(--radius-bubble) var(--radius-sm) var(--radius-bubble);
+  background: var(--color-bubble-own);
+  border: 1px solid transparent;
   color: var(--color-text);
   font-size: var(--chat-text, var(--font-size-base));
   /* The user's own words are prose in the same column as the answer — a pasted three-paragraph
@@ -2407,10 +2409,13 @@ video.chat-msg-user-media-el { cursor: default; }
   color: inherit;
   white-space: nowrap;
   cursor: pointer;
+  /* Quieter than in the composer: on the bubble's own violet the composer's ring boxes the chip in. */
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 24%, transparent);
 }
 .chat-cmp-hl-img.is-sent:hover { background: color-mix(in srgb, var(--color-accent) 24%, transparent); }
 .chat-cmp-hl-img.is-sent:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
 /* A stage card he named that is no longer on the stage (owner 2026-10-31): its title stays, quieter,
    and nothing to press. */
 .chat-cmp-hl-img.is-sent[data-state='gone'] { cursor: default; opacity: 0.62; }
-.chat-cmp-hl-img.is-sent[data-state='gone']:hover { background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
+.chat-cmp-hl-img.is-sent[data-state='gone']:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
