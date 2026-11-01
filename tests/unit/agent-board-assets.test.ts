@@ -386,6 +386,8 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * owner-asked (task composer-photos-are-inline-chips…): each picture goes out as
    * `[Picture N: <path>]` with his words after it, and the agent has to know those words are
    * about that picture. Both rules kept in one briefing.
+   * 2026-11-01: +231 for the `automation` approval card (owner: "onay sohbette kart olarak
+   * gelsin"), one worked example as the lockstep test requires; still under 14800.
    */
   it('stays small enough to ride in every chat turn', () => {
     expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(14800);
@@ -399,7 +401,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 14418)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 14649)).toBeLessThanOrEqual(20);
   });
 
   /**

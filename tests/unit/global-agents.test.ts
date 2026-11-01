@@ -83,7 +83,7 @@ function makeRes(): { res: ServerResponse; status: () => number; body: () => Rec
 
 function req(body?: unknown, socket: object = { remoteAddress: '127.0.0.1' }): IncomingMessage {
   const readable = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body), 'utf-8')]);
-  return Object.assign(readable, { method: 'POST', url: '/', headers: { host: 'localhost' }, socket }) as unknown as IncomingMessage;
+  return Object.assign(readable, { method: 'POST', url: '/', headers: { host: 'localhost', origin: 'http://localhost' }, socket }) as unknown as IncomingMessage;
 }
 
 const NOW = new Date('2026-10-25T09:00:00.000Z');

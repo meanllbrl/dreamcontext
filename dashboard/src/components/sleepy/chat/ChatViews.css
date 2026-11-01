@@ -341,3 +341,65 @@
   color: var(--color-error);
   font-size: var(--font-size-xs);
 }
+
+/* ── automation approval card ────────────────────────────────────────────────────────────
+   The owner's yes or no on an automation an agent set up. Facts as a two-column list, the
+   decision as the card's foot. Read from the manifest, never from the agent's block. */
+
+.chat-autocard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+}
+.chat-autocard > .chat-m-cardhead { margin-bottom: calc(var(--space-1) * -1); }
+.chat-autocard-state {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+}
+.chat-autocard-state[data-state='waiting'],
+.chat-autocard-state[data-state='changed'] { color: var(--color-warning-ink); }
+.chat-autocard-state[data-state='approved'] { color: var(--color-success-ink); }
+.chat-autocard-facts {
+  margin: 0;
+  padding: 0 var(--space-4);
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: var(--space-3);
+  row-gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+.chat-autocard-facts dt {
+  color: var(--color-text-tertiary);
+  font-weight: var(--font-weight-medium);
+}
+.chat-autocard-facts dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+.chat-autocard-sub {
+  display: block;
+  color: var(--color-text-tertiary);
+}
+.chat-autocard-next,
+.chat-autocard-note,
+.chat-autocard-error {
+  margin: 0;
+  padding: 0 var(--space-4);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+.chat-autocard-next { color: var(--color-text-secondary); }
+.chat-autocard-note { color: var(--color-text-tertiary); }
+.chat-autocard-error { color: var(--color-error); }
+.chat-autocard-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-4);
+}
+.chat-autocard-foot .chat-autocard-note { padding: 0; flex: 1; min-width: 0; }

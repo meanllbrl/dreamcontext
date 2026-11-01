@@ -2174,7 +2174,7 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
           `not approved (${approval.reason}) — ${manifest.agentTitle || manifest.title} needs approval on the AI Team page`
         : // The same page-not-command rule as the snapshot's blocked line: this
           // error reaches run history and threads an agent session reads.
-          `not approved (${approval.reason}) — needs approval on the AI Team page in the dashboard`,
+          `not approved (${approval.reason}) — the owner approves it on its card in the chat or on the AI Team page`,
     );
   }
   const needsApprovalQuestion = !approval.approved;

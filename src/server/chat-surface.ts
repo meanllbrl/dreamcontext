@@ -55,6 +55,9 @@
  *                             composer's shelf — `lib/shelfModel.ts` + `chat/PinShelf.tsx`.
  *                             `title` renames the agent's own tab — applied by
  *                             `AgentSurface.tsx` (`armAgentTitle`), drawn nowhere.
+ *                             `automation` is DERIVED like `agent-thread`: the owner's approval
+ *                             card (`chat/AutomationApprovalCard.tsx`, facts from
+ *                             `GET /api/automations/:slug/card`).
  * A capability named here that the view doesn't render is worse than one left unnamed: the
  * agent writes a promise the UI then breaks. Change one, change the other. Mechanically
  * pinned by `tests/unit/chat-surface-lockstep.test.ts` and `tests/unit/chat-html.test.ts`.
@@ -206,7 +209,7 @@ const BRIEFING_REST = `## The rest of the surface
   the composer; \`url\` opens an https \`url\`; \`develop\` takes a task \`id\` and hands that task
   to a NEW session in Develop mode — the one button that opens a chat instead of a view.
 
-## \`dream-view\` — the nine things HTML must NOT be
+## \`dream-view\` — the ten things HTML must NOT be
 
 **A tracked metric.** If the number lives in a dreamcontext Lab insight, name the slug and we
 draw the real card — current cache, canonical render, honest "as of". Never retype tracked
@@ -289,6 +292,13 @@ never a slug or hyphens. Re-send only when the subject truly moves. A name the u
 
 \`\`\`dream-view
 {"type":"title","text":"Checkout redesign"}
+\`\`\`
+
+**An automation you set up that waits for the owner's yes.** \`automations create\` prints it;
+paste it as is. Name the slug only: the card reads the rest from its file.
+
+\`\`\`dream-view
+{"type":"automation","slug":"daily-digest"}
 \`\`\`
 
 **An agent's thread**, drawn from disk. Name the agent; never write its entries yourself.

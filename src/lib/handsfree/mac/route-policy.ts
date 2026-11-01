@@ -525,6 +525,8 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/automations/:slug': allow(READ),
   'POST /api/automations/:slug/run': allow('runs this project\'s automation now, as on the laptop'),
   'POST /api/automations/:slug/approve': allow('the owner approves this project\'s automation, as on the laptop'),
+  'POST /api/automations/:slug/reject': allow('the owner turns down this project\'s automation from its chat card, as on the laptop'),
+  'GET /api/automations/:slug/card': allow(READ),
   'POST /api/automations/:slug/enable': allow(PROJECT_WRITE),
   'POST /api/automations/:slug/disable': allow(PROJECT_WRITE),
   'POST /api/automations/:slug/update': allow(PROJECT_WRITE),

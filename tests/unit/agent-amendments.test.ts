@@ -70,7 +70,7 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
 function req(body: unknown, headers: Record<string, string> = {}): IncomingMessage {
   const r = new PassThrough() as unknown as IncomingMessage & PassThrough;
-  Object.assign(r, { headers: { host: '127.0.0.1:4173', ...headers }, socket: { remoteAddress: '127.0.0.1' }, method: 'POST', url: '/' });
+  Object.assign(r, { headers: { host: '127.0.0.1:4173', origin: 'http://127.0.0.1:4173', ...headers }, socket: { remoteAddress: '127.0.0.1' }, method: 'POST', url: '/' });
   setImmediate(() => { (r as unknown as PassThrough).end(JSON.stringify(body)); });
   return r;
 }

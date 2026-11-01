@@ -189,8 +189,26 @@ describe('agents edit from a session', () => {
   it('the crew creates a routine unapproved too', async () => {
     vi.stubEnv('DREAMCONTEXT_SUPER_CREW', '1');
     const r = await run(['automations', 'create', 'scout-daily', '--title', 'Daily', '--agent', 'scout', '--job', 'Look.', '--days', 'daily', '--at', '09:00']);
-    expect(r.out).toContain('waits for the owner');
+    // It says it is NOT approved, and hands over the card the owner approves it on (2026-11-01).
+    expect(r.out).toContain('Not approved yet');
+    expect(r.out).toContain('{"type":"automation","slug":"scout-daily"}');
+    expect(r.out).not.toContain('(approved on this machine)');
     expect(checkApproval(projectRoot, getRunTarget(contextRoot, 'scout-daily', 'automation')!, undefined, 'run').approved).toBe(false);
+  });
+
+  it('the crew\'s single-file automation gets the same card, and no "test it live" it cannot run', async () => {
+    vi.stubEnv('DREAMCONTEXT_SUPER_CREW', '1');
+    const r = await run(['automations', 'create', 'nightly', '--title', 'Nightly', '--days', 'daily', '--at', '22:00']);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('{"type":"automation","slug":"nightly"}');
+    expect(r.out).not.toContain('to test it live');
+    expect(checkApproval(projectRoot, getRunTarget(contextRoot, 'nightly', 'automation')!, undefined, 'run').approved).toBe(false);
+  });
+
+  it('the help says what create really does: no "auto-approved" for a session that is not the owner', () => {
+    const src = readFileSync(join(cwd, 'src', 'cli', 'commands', 'automations.ts'), 'utf-8');
+    expect(src).not.toContain('auto-approved on this machine');
+    expect(src).toContain("one an agent run or the Super Agent creates waits for the owner\\'s yes");
   });
 
   it('works from the owner\'s terminal', async () => {

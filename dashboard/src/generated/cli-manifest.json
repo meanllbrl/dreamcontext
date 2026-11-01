@@ -537,7 +537,7 @@
     },
     {
       "path": "automations create",
-      "desc": "Scaffold a new automation manifest, auto-approved on this machine",
+      "desc": "Scaffold a new automation manifest. Approved on the spot when you create it yourself; one an agent run or the Super Agent creates waits for the owner's yes (a card in the chat, or the AI Team page)",
       "args": [
         "<slug>"
       ],

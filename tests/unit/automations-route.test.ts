@@ -63,6 +63,7 @@ import {
   currentAutomationJob,
   runningAutomationJobs,
 } from '../../src/server/automation-job.js';
+import { OWNER_PAGE_HEADERS } from '../helpers/owner-page.js';
 
 /**
  * `/api/automations*` — mirrors `tests/unit/tasks-token-route.test.ts`: call
@@ -88,7 +89,7 @@ function makeRes(): { res: ServerResponse; status: () => number; body: () => Rec
 function makePostReq(): IncomingMessage {
   // No body is ever sent — handleAutomationsRunNow must not require or read one.
   const readable = Readable.from([]);
-  return Object.assign(readable, { method: 'POST', headers: {} }) as unknown as IncomingMessage;
+  return Object.assign(readable, { method: 'POST', headers: { ...OWNER_PAGE_HEADERS } }) as unknown as IncomingMessage;
 }
 
 /** For the routes below that DO read a JSON body (questions answer, telegram
@@ -97,7 +98,7 @@ function makePostReq(): IncomingMessage {
  *  helper would make every "the body was honoured" assertion pass vacuously. */
 function makePostReqWithBody(body?: unknown): IncomingMessage {
   const readable = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body), 'utf-8')]);
-  return Object.assign(readable, { method: 'POST', headers: {} }) as unknown as IncomingMessage;
+  return Object.assign(readable, { method: 'POST', headers: { ...OWNER_PAGE_HEADERS } }) as unknown as IncomingMessage;
 }
 
 const getReq = { method: 'GET', headers: {} } as unknown as IncomingMessage;

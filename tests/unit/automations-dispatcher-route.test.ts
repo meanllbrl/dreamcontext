@@ -77,6 +77,7 @@ import {
   handleAutomationsDispatcherInstall,
   handleAutomationsDispatcherUninstall,
 } from '../../src/server/routes/automations.js';
+import { OWNER_PAGE_HEADERS } from '../helpers/owner-page.js';
 
 function makeRes(): { res: ServerResponse; status: () => number; body: () => Record<string, unknown> } {
   let statusCode = 0;
@@ -94,7 +95,7 @@ function makePostReq(body?: unknown): IncomingMessage {
   // throws on string chunks and degrades to a null body — a string-chunk helper
   // would make every "the body was honoured" assertion pass vacuously.
   const readable = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body), 'utf-8')]);
-  return Object.assign(readable, { method: 'POST', headers: {} }) as unknown as IncomingMessage;
+  return Object.assign(readable, { method: 'POST', headers: { ...OWNER_PAGE_HEADERS } }) as unknown as IncomingMessage;
 }
 
 const getReq = { method: 'GET', headers: {} } as unknown as IncomingMessage;

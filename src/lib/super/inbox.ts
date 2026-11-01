@@ -1,6 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { basename, dirname, join, resolve } from 'node:path';
 import { listVaults } from '../vaults.js';
+import { getAutomation } from '../automations/store.js';
+import { approvalCardFacts, schedulerInstalled } from '../automations/approval-card.js';
+import { formatLocalFire } from '../automations/schedule.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
@@ -866,6 +869,23 @@ export const TEAM_LINE = `An item whose own server line says team=<job> is a job
 /** Added to a batch that carries an `owner` item: a child stopped on something only he can do. */
 export const OWNER_WAIT_LINE = `An item whose own server line says event=owner is a child that stopped on something ONLY the owner can do (wait=run: a command he must run himself, such as a browser sign-in; wait=secret: a key he must type into its card; wait=checklist: steps in another app). It is NOT done and will not move until he acts; it is already first on his Waiting on you list, with a button that opens its card. Tell him now, in one or two sentences, which job needs him and what to do (${OWNER_VOICE}); this is an exception to the no-text rule. Never do it for him, and never steer the child to work around it: his answer reaches the child by itself and it goes on. Only when he tells you he did it another way: close it with \`dreamcontext super queue done <item>\`, then tell the child.`;
 
+/** Added to a batch that carries an `automation` item: the owner decided on its chat card. */
+export const AUTOMATION_LINE = `An item whose own server line says event=automation is the owner's decision on the approval card of an automation you set up: decision=approved means it is approved and runs by itself from now on (state= and next= are its live state and next run, local time; scheduler=missing means this Mac has no scheduler installed, so it will not fire until he installs it from the AI Team page); decision=rejected means he said no: it is off and stays off, never create it again unless he asks. Tell him in one sentence what now happens (${OWNER_VOICE}); this is an exception to the no-text rule. Never approve, enable or re-create it yourself.`;
+
+/** One `automation` item, its live state read at delivery (never what the queue stored). */
+function automationItemLines(root: string, item: SuperQueueItem): string[] {
+  const slug = item.automation ?? '';
+  let head = `- item=${item.id} event=automation automation=${slug} decision=${item.decision ?? 'approved'}`;
+  const m = slug ? getAutomation(root, slug) : null;
+  if (!m) return [`${head} state=gone`];
+  const f = approvalCardFacts(dirname(root), m, { mcp: () => [] });
+  const state = !f.approved ? 'not-approved' : f.enabled ? 'on' : 'off';
+  head += ` state=${state}`;
+  if (f.nextFireAt && f.approved) head += ` next=${formatLocalFire(new Date(f.nextFireAt))}`;
+  if (f.approved && f.enabled && f.mode === 'sched' && !schedulerInstalled()) head += ' scheduler=missing';
+  return [head, `  title: ${JSON.stringify(m.title)} · runs: ${f.cadence}`];
+}
+
 /** A done/stuck/gone item of a job the owner waits on: its result goes to him. */
 function awaitedItem(s: SuperState, item: SuperQueueItem): boolean {
   if (item.team) return awaitedTeamItem(s, item);
@@ -904,6 +924,7 @@ function childLine(vault: string, s: SuperState, sid: string, now: number): stri
 /** One event inside a batch: the server's line, then the child's text fenced. */
 function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueItem, now: number): string[] {
   if (item.team) return teamItemLines(root, vault, s, item);
+  if (item.kind === 'automation') return automationItemLines(root, item);
   const sid = item.sessionId;
   const e = getChat(sid);
   const status = e ? activityOf(e, now) : 'gone';
@@ -941,6 +962,7 @@ export function superBatchText(contextRoot: string, state: SuperState, items: re
     ...(items.some((it) => it.kind === 'done' && awaitedItem(state, it) && state.children[it.sessionId]?.mode === 'plan') ? [PLAN_DONE_LINE] : []),
     ...(items.some((it) => it.team) ? [TEAM_LINE] : []),
     ...(items.some((it) => it.kind === 'owner') ? [OWNER_WAIT_LINE] : []),
+    ...(items.some((it) => it.kind === 'automation') ? [AUTOMATION_LINE] : []),
     BATCH_LAST_LINE,
     // The agenda lines the server moved, or that went stale (pad.ts): keep or close each.
     ...padNotice(state, now).lines,
@@ -1002,7 +1024,7 @@ function scheduleRetry(key: string, at: number): void {
 }
 
 const SOLO: Partial<Record<QueueKind, number>> = { handover: 0, fresh: 1, recap: 2 };
-const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck', 'owner']);
+const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck', 'owner', 'automation']);
 
 /** An event no longer true: a question no longer asked, a `done`/`stuck` whose row moved on
  *  (the child started working again), a `gone` whose child is live. A team item reads its
@@ -1277,8 +1299,9 @@ async function pumpOnce(key: string): Promise<void> {
     // carried item the write did not mark `delivered` is skipped when settled.
     carried.set(key, [...(carried.get(key) ?? []), ...items.map((q) => ({ itemId: q.id, inboxId: inbox.id, seq, batch }))]);
     const ids = new Set(items.map((q) => q.id));
-    // A result he waits on, or a job waiting on HIM (`owner`): the super tells him, in full.
-    const tells = !solo && (!!held || items.some((q) => awaitedItem(state, q) || q.kind === 'owner' || (!!q.team && q.kind === 'question')));
+    // A result he waits on, a job waiting on HIM (`owner`), or his card decision on an automation
+    // (`automation`: what happens now, `scheduler=missing` included): the super tells him, in full.
+    const tells = !solo && (!!held || items.some((q) => awaitedItem(state, q) || q.kind === 'owner' || q.kind === 'automation' || (!!q.team && q.kind === 'question')));
     const fresh = solo && items[0].kind === 'fresh';
     // Every turn that carried the agenda lines marks them told: a batch, a recap, a handover.
     const toldPad = fresh ? [] : padNotice(state, now).ids;

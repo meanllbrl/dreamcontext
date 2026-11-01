@@ -284,6 +284,10 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     // An approval item exists only for its member; one naming none (or a hostile one) is dropped.
     const member = q.kind === 'approval' && typeof q.member === 'string' && okMember(q.member) ? q.member : undefined;
     if (q.kind === 'approval' && !member) continue;
+    // An automation item exists only for its automation and a decision the owner made.
+    const automation = q.kind === 'automation' && typeof q.automation === 'string' && okMember(q.automation) ? q.automation : undefined;
+    const decision = q.kind === 'automation' && (q.decision === 'approved' || q.decision === 'rejected') ? q.decision : undefined;
+    if (q.kind === 'automation' && (!automation || !decision)) continue;
     // An owner item exists only for its wait (which card of the child he must act on).
     const wait = q.kind === 'owner' ? cleanOwnerWait(q.wait) : undefined;
     if (q.kind === 'owner' && !wait) continue;
@@ -308,6 +312,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     out.push({
       id: q.id, sessionId: q.sessionId, kind: q.kind, state: q.state, createdAt,
       ...(member ? { member } : {}),
+      ...(automation && decision ? { automation, decision } : {}),
       ...(wait ? { wait } : {}),
       ...(requestId ? { requestId } : {}),
       ...(ownerText ? { ownerText } : {}),

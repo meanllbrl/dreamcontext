@@ -3,6 +3,7 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, join } from 'node:path';
 import { lstatSync } from 'node:fs';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
+import { refuseUnlessOwnerPage } from '../owner-page.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
 import { ownerLabel } from '../../lib/agents/owner.js';
 import { AmendmentRefused, listAmendments, revertAmendment } from '../../lib/agents/amendments.js';
@@ -390,6 +391,7 @@ export async function handleAgentsCreate(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'creates an agent approved on this machine')) return;
   const body = await parseJsonBody(req);
   if (!body) {
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');
@@ -481,6 +483,7 @@ export async function handleLauncherGlobalAgentsCreate(
   _params: Record<string, string>,
   contextRoot: string | null,
 ): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'creates a teammate approved on this machine')) return;
   const body = await parseJsonBody(req);
   if (!body) {
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');
@@ -523,6 +526,7 @@ export async function handleAgentsUpdate(
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'edits an agent and re-approves it')) return;
   if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
   const body = await parseJsonBody(req);
   if (!body) {
@@ -653,6 +657,7 @@ export async function handleAgentsApprove(
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'approves an agent')) return;
   if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
   const target = agentTarget(contextRoot, params.slug);
   if (!target) {
@@ -687,11 +692,12 @@ export async function handleAgentsAmendments(
 
 /** POST /api/agents/:slug/amendments/:id/revert — the owner takes a change back. */
 export async function handleAgentsAmendmentRevert(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'takes back a change')) return;
   if (!isSafeAutomationSlug(params.slug)) {
     sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
     return;

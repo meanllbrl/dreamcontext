@@ -67,6 +67,7 @@ import {
   threadUnread,
 } from '../../lib/automations/threads.js';
 import { approvalQuestionTarget, proposeFromRun, resumeWithAnswer } from '../../lib/automations/verdict.js';
+import { approvalCardBlock, staleApprovalBlock } from '../../lib/automations/approval-card.js';
 import { checkRoutineCreate, ownerInTurn, recordRoutineCreated } from '../../lib/automations/routine-gate.js';
 import { refuseSelfApproval } from './agents.js';
 import { logAssignmentResult } from '../../lib/agents/task-assignment.js';
@@ -224,6 +225,22 @@ function boardExists(contextRoot: string, slug: string): boolean {
 }
 
 /**
+ * What `create` says when the automation waits for the owner (an agent run or the Super Agent's
+ * crew created it, `createNeedsOwner`): it is NOT approved, nothing runs before his yes, and the
+ * card that gets it is the next thing to write. The card names only the slug: the app reads the
+ * rest from the manifest, so the owner approves what the file says, not a summary of it. Never a
+ * command: this output is read by the very session that may not approve.
+ */
+function printOwnerApprovalCard(slug: string): void {
+  warn('Not approved yet: nothing runs until the owner approves it. You cannot approve it yourself.');
+  console.log('  Put this card in your reply to the owner, as it is. He approves or rejects it there with one tap,');
+  console.log('  and you get an event with its state and next run time. (The AI Team page works too.)');
+  console.log('');
+  console.log(approvalCardBlock(slug));
+  console.log('');
+}
+
+/**
  * `automations create --agent`: a JOB bound to an existing agent. The agent must
  * already be approved here for conversation; identity flags do not apply (they
  * are the agent's). The store approves the new automation on this machine —
@@ -273,7 +290,8 @@ function createBoundFromFlags(
       review: opts.review as ReviewMode | undefined,
       ...appOption(root, opts.app),
     }, stamp ? { approve: { now: new Date() } } : {});
-    success(`Automation created: automations/${manifest.slug}.md, running as the agent "${agentSlug}"${stamp ? ' (approved on this machine)' : '. It waits for the owner\'s approval on the AI Team page'}.`);
+    success(`Automation created: automations/${manifest.slug}.md, running as the agent "${agentSlug}"${stamp ? ' (approved on this machine)' : ''}.`);
+    if (!stamp) printOwnerApprovalCard(manifest.slug);
     if (opts.shared) printPublishedPaths(manifest.slug, shareWithAgent(root, manifest.slug, agentSlug));
     return manifest;
   } catch (err) {
@@ -825,7 +843,7 @@ export function registerAutomationsCommand(program: Command): void {
   automations
     .command('create')
     .argument('<slug>', 'Kebab-case automation slug (e.g. eod-digest)')
-    .description('Scaffold a new automation manifest, auto-approved on this machine')
+    .description('Scaffold a new automation manifest. Approved on the spot when you create it yourself; one an agent run or the Super Agent creates waits for the owner\'s yes (a card in the chat, or the AI Team page)')
     .requiredOption('--title <title>', 'Automation title')
     // Deliberately NOT `requiredOption` any more: an on-call agent has no
     // schedule, and demanding a placeholder one would write a lie into the
@@ -969,7 +987,8 @@ export function registerAutomationsCommand(program: Command): void {
         registerProject(projectRoot);
         if (stamp) approveAutomation(projectRoot, manifest, new Date());
 
-        success(`Automation created: automations/${manifest.slug}.md (${stamp ? 'auto-approved on this machine' : 'it waits for the owner\'s approval on the AI Team page'}).`);
+        success(`Automation created: automations/${manifest.slug}.md${stamp ? ' (approved on this machine)' : ''}.`);
+        if (!stamp) printOwnerApprovalCard(manifest.slug);
         if (manifest.whiteboard) {
           console.log(chalk.dim(`  Home board: ${manifest.whiteboard}. Every run is scoped to that board.`));
         }
@@ -980,7 +999,10 @@ export function registerAutomationsCommand(program: Command): void {
         if (!existsSync(dispatcherPlistPath())) {
           warn('The launchd dispatcher is not installed — run `dreamcontext automations install` so this can fire on schedule.');
         }
-        console.log(chalk.dim(`  Edit its ## Prompt / ## Output instructions, then \`dreamcontext automations run ${manifest.slug} --force\` to test it live.`));
+        // `run --force` never bypasses approval: offered only when it would actually run.
+        console.log(chalk.dim(stamp
+          ? `  Edit its ## Prompt / ## Output instructions, then \`dreamcontext automations run ${manifest.slug} --force\` to test it live.`
+          : '  Once the owner approves it, `run --force` tests it live. An edit after his yes needs his yes again.'));
 
         if (opts.shared) {
           const result = shareWithAgent(root, manifest.slug, manifest.agent);
@@ -1082,6 +1104,8 @@ export function registerAutomationsCommand(program: Command): void {
           cache,
           approved: approval.approved,
           approvalReason: approval.approved ? null : approval.reason,
+          // The last run's error is a refusal for want of an approval it has now: history only.
+          lastErrorStale: staleApprovalBlock(cache, approval.approved),
           sidecar,
           shareState,
         }, null, 2));
@@ -1161,6 +1185,9 @@ export function registerAutomationsCommand(program: Command): void {
         }
       }
       console.log(`  approval: ${approval.approved ? chalk.green('approved') : chalk.red(`NOT approved (${approval.reason})`)}`);
+      if (!approval.approved && approval.reason === 'never-approved') {
+        console.log(chalk.dim('    the owner approves it in its chat card or on the AI Team page'));
+      }
       {
         const { badge, warning } = describeShareState(shareState, slug);
         console.log(`  sharing: ${badge}`);
@@ -1171,8 +1198,14 @@ export function registerAutomationsCommand(program: Command): void {
       }
 
       if (cache) {
-        console.log(`  last run: ${cache.lastRunAt ?? '(never)'} · status: ${cache.status ?? '—'}`);
-        if (cache.error) console.log(chalk.red(`  error: ${cache.error}`));
+        if (staleApprovalBlock(cache, approval.approved)) {
+          // The last attempt was refused for want of the approval it has now: history, not an
+          // error of this automation. Nothing has run since; the next fire is the first real run.
+          console.log(`  last run: ${chalk.dim(`none since approval (an attempt at ${cache.lastRunAt ?? '?'} was refused before it)`)}`);
+        } else {
+          console.log(`  last run: ${cache.lastRunAt ?? '(never)'} · status: ${cache.status ?? '—'}`);
+          if (cache.error) console.log(chalk.red(`  error: ${cache.error}`));
+        }
         const recent = cache.history.slice(0, historyLimit);
         if (recent.length > 0) {
           console.log('  history:');
