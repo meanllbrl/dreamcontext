@@ -5930,9 +5930,16 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     for (const m of sessionList) {
       const live = sessions.current.get(m.id);
       const cid = live?.claudeId ?? m.claudeId;
-      if (cid && isSuperMirrorId(cid) && !named.has(cid) && live?.status !== 'open') closeSessionById(m.id);
+      if (!cid || !isSuperMirrorId(cid) || named.has(cid) || live?.status === 'open') continue;
+      // The owner's unsent words go with the tab into a fresh chat: its own composer is shut.
+      const draft = live?.kind === 'chat' ? (live as ChatSession).getModel().draft : '';
+      closeSessionById(m.id);
+      if (draft.trim()) {
+        const id = addSession(claudeKind);
+        if (id) sessions.current.get(id)?.sendText(draft);
+      }
     }
-  }, [deviceRows, deviceAnswered, sessionList, closeSessionById]);
+  }, [deviceRows, deviceAnswered, sessionList, closeSessionById, addSession, claudeKind]);
   const phoneToastEl = phoneChatOn ? <PhoneWaitingToast row={phoneChatNav.toast} onOpen={phoneChatNav.openToast} /> : null;
   // Collapsed dock rows — one chip per session, in roster order. Never the Super Agent (it is
   // not a tab; its queue speaks through the hand-over button's dot and the queue head).

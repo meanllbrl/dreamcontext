@@ -4,6 +4,7 @@ import { useVault } from '../../../context/VaultContext';
 import { openAgentSurface } from '../../../lib/agentSettings';
 import { useSuperUnreadCount } from '../../sleepy/super/superUnreadStore';
 import { PAGE_LABEL_KEY } from '../../../lib/pageLabels';
+import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useIsNarrowWindow } from '../../../hooks/useIsNarrowWindow';
 import { CanvasIcon, ChatIcon, CheckedBoxIcon, MoreDotsIcon, NavIcon } from '../NavIcons';
 import { RailTip } from '../RailTip';
@@ -57,7 +58,9 @@ export function Rail({ activePage, onNavigate, badges }: RailProps) {
   };
   // A device shell offers no Settings (nor Project Relations) anywhere.
   const device = readDeviceShell();
-  const morePages = (narrow ? morePagesNarrow(device) : [...MORE_PAGES]).filter((p) => !device || !DEVICE_HIDDEN_PAGES.has(p));
+  // The phone's short More follows the phone LAYOUT, not the width: a phone held sideways is one.
+  const phoneLayout = useIsMobile();
+  const morePages = (narrow || (device && phoneLayout) ? morePagesNarrow(device) : [...MORE_PAGES]).filter((p) => !device || !DEVICE_HIDDEN_PAGES.has(p));
   const moreCurrent = current !== null && morePages.includes(current);
   const moreBadge = morePages.some((p) => badgeOf(p) !== null);
 

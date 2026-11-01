@@ -1066,14 +1066,18 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
     const idx = superIndex(ctx);
     if (!idx.session) continue;
     // The record is read only for a project handed over: a parked one is just its session id.
-    const state = idx.enabled ? await readSuperState(ctx) : null;
+    // A record that will not read costs its jobs, never the phone's whole list.
+    const state = idx.enabled ? await readSuperState(ctx, superSanitizeOpts()).catch(() => null) : null;
     records.set(name, {
-      session: idx.session, enabled: idx.enabled,
-      children: Object.entries(state?.children ?? {}).map(([id, c]) => ({ id, title: childDigestName(state!, id), startedAt: c.startedAt, ...(c.endedAt !== undefined ? { endedAt: c.endedAt } : {}) })),
+      session: idx.session, enabled: idx.enabled, former: state?.formerChildren ?? [],
+      children: Object.entries(state?.children ?? {}).map(([id, c]) => ({
+        id, title: childDigestName(state!, id), startedAt: c.startedAt,
+        ...(c.endedAt !== undefined ? { endedAt: c.endedAt } : {}), ...(c.adopted ? { adopted: true } : {}),
+      })),
     });
   }
   const view = phoneLiveChats(chats, records);
-  sendJson(res, 200, view.supers.length ? { chats: view.chats, draining, supers: view.supers } : { chats: view.chats, draining });
+  sendJson(res, 200, { chats: view.chats, draining, ...(view.supers.length ? { supers: view.supers } : {}), ...(view.parked.length ? { parked: view.parked } : {}) });
 }
 
 /** AC18: what the drawer says about a live chat. A question waiting wins; then a turn running

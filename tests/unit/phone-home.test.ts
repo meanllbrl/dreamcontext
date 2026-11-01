@@ -43,7 +43,7 @@ describe('homeRows', () => {
   it('a handed-over project contributes its one Super row beside its own chats', () => {
     const r = homeRows({
       vault: 'acme', tabs: [], projects: ['acme', 'beta'],
-      live: { ...LIVE, supers: [{ ...live('sup', 'beta', 'asking'), vault: 'beta', live: true, jobs: [], childIds: [] }] },
+      live: { ...LIVE, supers: [{ ...live('sup', 'beta', 'asking'), vault: 'beta', live: true, jobs: [], runningIds: [], childIds: [] }] },
     });
     const beta = r.filter((x) => x.vault === 'beta');
     expect(beta[0].kind).toBe('super');
@@ -70,7 +70,7 @@ describe('the chat screen across projects', () => {
   });
 
   it('an offline Super row is never a swipe target', () => {
-    const r = homeRows({ vault: 'acme', tabs: [tab('t1', 'a-tab', 'asking')], projects: ['acme', 'beta'], live: { chats: [], draining: [], supers: [{ ...live('sup', 'beta', 'idle'), live: false, jobs: [], childIds: [] }] } });
+    const r = homeRows({ vault: 'acme', tabs: [tab('t1', 'a-tab', 'asking')], projects: ['acme', 'beta'], live: { chats: [], draining: [], supers: [{ ...live('sup', 'beta', 'idle'), live: false, jobs: [], runningIds: [], childIds: [] }] } });
     expect(swipeTarget(r, r[0].key, 1)).toBeNull();
   });
 

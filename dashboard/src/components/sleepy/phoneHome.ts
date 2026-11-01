@@ -53,7 +53,7 @@ export function homeRows(i: HomeInput): HomeRow[] {
         section: superRow.live ? liveSection(superRow.state) : 'idle', updatedAt: superRow.updatedAt,
       });
     }
-    const theirs = new Set(superRow ? [superRow.conversationId, ...superRow.childIds] : []);
+    const theirs = new Set(superRow ? [superRow.conversationId, ...superRow.runningIds] : []);
     const held = (t: StackTab) => theirs.has(t.claudeId ?? '') || (!!t.altClaudeId && theirs.has(t.altClaudeId));
     const tabs = (vault === i.vault ? i.tabs : (i.otherTabs?.[vault] ?? [])).filter((t) => !held(t));
     for (const r of openRows({ tabs, live: chats, draining, vault })) {

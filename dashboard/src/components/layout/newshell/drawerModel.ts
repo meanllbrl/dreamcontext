@@ -207,6 +207,7 @@ export function deviceChatsOf(o: {
     ...(o.live?.chats ?? []).map((c) => c.conversationId),
     ...(o.live?.draining ?? []),
     ...(o.live?.supers ?? []).flatMap((x) => [x.conversationId, ...x.childIds]),
+    ...(o.live?.parked ?? []),
     ...closed,
   ]);
   return { rows, liveAnswered: o.tunnel ? o.liveAnswered : true, hiddenIds };
@@ -379,8 +380,9 @@ function deviceProjectRow(p: DrawerProjectInput, o: { activeVault: string | null
  * resumed beside itself). A project being handed over refuses nothing: the owner's chats live on
  * beside its Super. Pure: the guard of a pick.
  */
-export function historyPickRefused(live: Pick<LiveChatsWire, 'supers' | 'draining'> | null | undefined, conversationId: string): boolean {
+export function historyPickRefused(live: Pick<LiveChatsWire, 'supers' | 'draining' | 'parked'> | null | undefined, conversationId: string): boolean {
   if (!live) return true;
+  if ((live.parked ?? []).includes(conversationId)) return true;
   if ((live.supers ?? []).some((x) => x.conversationId === conversationId || x.childIds.includes(conversationId))) return true;
   return (live.draining ?? []).includes(conversationId);
 }

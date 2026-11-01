@@ -17,7 +17,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
-import { chmodSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,9 +57,13 @@ process.stdin.on('data', (c) => {
     if (!inited) { inited = true; out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: [] }); }
     row({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
     const said = text.startsWith('[super') ? 'Two chats are running; nothing needs you.' : 'ECHO ' + text;
-    const message = { role: 'assistant', content: [{ type: 'text', text: said }] };
-    row({ type: 'assistant', message }); out({ type: 'assistant', message });
-    out({ type: 'result', subtype: 'success', is_error: false, result: said, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 }, session_id: sid });
+    const answer = () => {
+      const message = { role: 'assistant', content: [{ type: 'text', text: said }] };
+      row({ type: 'assistant', message }); out({ type: 'assistant', message });
+      out({ type: 'result', subtype: 'success', is_error: false, result: said, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 }, session_id: sid });
+    };
+    // A slow turn stays Working long enough to be seen.
+    if (text.startsWith('slow')) setTimeout(answer, 12000); else answer();
   }
 });
 process.stdin.on('end', () => process.exit(0));
@@ -149,6 +153,13 @@ try {
   };
   const say = async (s, text) => { await sleep(800); s.ws.send(JSON.stringify({ type: 'user', text })); await sleep(600); };
 
+  // A past chat of the handed-over project: the owner's, History lists it.
+  const PAST = crypto.randomUUID();
+  const ts = new Date(Date.now() - 3600_000).toISOString();
+  writeFileSync(join(HOME, '.claude', 'projects', PROJ.replace(/[^a-zA-Z0-9]/g, '-'), `${PAST}.jsonl`), `${[
+    { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'Proj past fixture' }] } },
+    { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Done: Proj past fixture' }] } },
+  ].map((o) => JSON.stringify({ ...o, cwd: PROJ, uuid: crypto.randomUUID(), timestamp: ts, sessionId: PAST })).join('\n')}\n`);
   const CHILD = crypto.randomUUID(); const FINISHED = crypto.randomUUID(); const MINE = crypto.randomUUID();
   const child = await laptop(`sessionId=${CHILD}`); await say(child, 'child work');
   const finished = await laptop(`sessionId=${FINISHED}`); await say(finished, 'finished work');
@@ -183,7 +194,13 @@ try {
   const send = async (p, text) => {
     const box = composer(p);
     if (!(await until(async () => (await box.count()) > 0 && !(await box.isDisabled()), 15000))) return false;
-    await box.click(); await box.fill(text); await sleep(150); await submit(p);
+    await sleep(500);
+    await box.click({ timeout: 8000 }).catch(async (e) => {
+      await p.screenshot({ path: join(SHOTS, 'failed-send.png') });
+      console.log('      send: no click', JSON.stringify(await p.evaluate(() => ({ drawer: !!document.querySelector('[data-testid="chat-drawer"]'), active: document.querySelector('[data-testid="ns-picker-btn"]')?.textContent, boxes: [...document.querySelectorAll('.chat-cmp-input')].map((b) => { const r = b.getBoundingClientRect(); return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height), b.value.slice(0, 20), b.closest('.project-instance')?.hidden]; }) }))));
+      throw e;
+    });
+    await box.fill(text); await sleep(150); await submit(p);
     return until(async () => (await p.locator('body').innerText()).includes(`ECHO ${text}`), 20000);
   };
 
@@ -233,20 +250,46 @@ try {
   await projRow(p, 'proj').locator(`[data-chat-id="${MINE}"]`).click();
   report.check('6 the owner\'s chat in a handed-over project takes a message', await send(p, 'more from me'));
   await ph.shot('5-own-chat');
-  // 5
-  await sleep(1000);
+  // 6: History holds the owner's past chat of the handed-over project, and no child.
+  await openDrawer(p);
+  await p.getByTestId('drawer-history').click();
+  report.check('6 History lists the handed-over project\'s past chat', await until(() => p.locator('.chp-row', { hasText: 'Proj past fixture' }).count(), 15000));
+  const hist = await p.locator('.chp-row').allInnerTexts();
+  report.check('6 History lists no Super child', !hist.some((h) => /child work|finished work/.test(h)), JSON.stringify(hist));
+  await sleep(400); await ph.shot('5b-history');
+  await p.locator('.chp-row', { hasText: 'Proj past fixture' }).first().click();
+  report.check('6 a History pick there opens the chat', await until(async () => (await p.locator('.chat-pane:visible').first().innerText().catch(() => '')).includes('Done: Proj past fixture'), 20000));
+  await ph.shot('5c-history-pick');
+  // 5: one child working, one the record ended, one idle.
+  const rec = join(PROJ, '_dream_context', 'state', '.super-agent.json');
   finished.ws.close();
+  const state = JSON.parse(readFileSync(rec, 'utf-8'));
+  state.children[FINISHED].endedAt = Date.now();
+  writeFileSync(rec, JSON.stringify(state));
+  child.ws.send(JSON.stringify({ type: 'user', text: 'slow job' }));
+  await sleep(600);
   await openSuper(p);
   report.check('5 the jobs list sits in the Super chat', await until(() => p.locator('[data-testid="phone-job-row"]:visible').count(), 15000));
+  report.check('5 a job at work says Working', await until(async () => (await p.locator('[data-testid="phone-job-row"][data-state="working"]').count()) === 1, 8000));
   const jobs = await p.locator('[data-testid="phone-job-row"]').allInnerTexts();
-  report.check('5 each row has a name and a state', jobs.some((j) => /Release notes/.test(j)) && jobs.some((j) => /Old cleanup/.test(j)) && jobs.every((j) => /Working|Waiting|Finished/.test(j)), JSON.stringify(jobs));
-  await ph.shot('6-super-jobs');
+  report.check('5 each row has a name and a state; ended means Finished', jobs.some((j) => /Release notes[\s\S]*Working/.test(j)) && jobs.some((j) => /Old cleanup[\s\S]*Finished/.test(j)), JSON.stringify(jobs));
+  await ph.shot('6-super-jobs-working');
   await p.locator('[data-testid="phone-job-row"]', { hasText: 'Release notes' }).click();
   report.check('5 a tap reads that job\'s chat', await until(async () => (await p.getByTestId('phone-job-sheet').innerText().catch(() => '')).includes('ECHO child work'), 10000));
   report.check('5 it is read only: no composer in the sheet', await p.locator('[data-testid="phone-job-sheet"] .chat-cmp-input').count() === 0);
   await sleep(400);
+  report.check('5 the sheet takes the focus', await p.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'phone-job-close'));
   await ph.shot('7-job-transcript');
   await p.getByTestId('phone-job-close').click(); await sleep(400);
+  report.check('5 closing gives the focus back to the row', await p.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'phone-job-row'));
+  await p.locator('.chat-cmp-input:visible').first().fill('half a thought').catch(() => {});
+  await sleep(300);
+  // A phone held sideways is still a phone.
+  await p.setViewportSize({ width: 844, height: 390 }); await sleep(800);
+  await p.getByTestId('ns-rail-more').click(); await sleep(400);
+  const sideways = await p.locator('[data-testid="ns-more-menu"] [role="menuitem"]').allInnerTexts();
+  report.check('3 sideways More is the same three', sideways.length === 3, JSON.stringify(sideways));
+  await p.keyboard.press('Escape'); await p.setViewportSize({ width: 390, height: 844 }); await sleep(600);
 
   console.log('\n── Computer on the tunnel, 1440');
   const pc = await open('1440', { viewport: { width: 1440, height: 900 } }, await qr());
@@ -263,6 +306,7 @@ try {
   report.check('take-back', dis.status === 200, JSON.stringify(dis.json).slice(0, 160));
   report.check('1 no chat is left saying "Connecting…"', await until(async () => !(await p.locator('.chat-cmp-input:visible[placeholder="Connecting…"]').count()), 20000));
   await ph.shot('8-after-take-back');
+  report.check('1 the unsent words survive in a fresh chat', await until(async () => (await composer(p).inputValue().catch(() => '')).includes('half a thought'), 6000));
   const wire = await p.evaluate(async () => (await fetch('/api/agent/live-chats', { credentials: 'same-origin', headers: { 'X-Dreamcontext-Vault': 'proj' } })).json());
   report.check('1 the parked Super session is no chat on the wire', !wire.chats.some((c) => c.conversationId === SUPER) && !wire.supers, JSON.stringify(wire).slice(0, 240));
   await expand(p, 'proj');

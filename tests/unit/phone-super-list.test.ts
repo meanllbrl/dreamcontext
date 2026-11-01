@@ -43,7 +43,7 @@ describe('the Super Agent row (AC6)', () => {
     const { homeRows } = await import('../../dashboard/src/components/sleepy/phoneHome.js');
     const rows = homeRows({
       vault: 'acme', tabs: [], projects: ['acme'],
-      live: { chats: [{ conversationId: 'c1', vault: 'acme', title: 'x', busy: false, state: 'idle', lastLine: null, updatedAt: 1 }], draining: [], supers: [{ conversationId: 's', vault: 'acme', title: null, busy: false, state: 'idle', lastLine: null, updatedAt: 1, live: true, jobs: [], childIds: [] }] },
+      live: { chats: [{ conversationId: 'c1', vault: 'acme', title: 'x', busy: false, state: 'idle', lastLine: null, updatedAt: 1 }], draining: [], supers: [{ conversationId: 's', vault: 'acme', title: null, busy: false, state: 'idle', lastLine: null, updatedAt: 1, live: true, jobs: [], runningIds: [], childIds: [] }] },
     });
     expect(rows.map((r) => r.kind)).toEqual(['super', 'open']);
     // The phone's empty chat screen there: New chat, and the Super's button beside it (disabled offline).

@@ -321,11 +321,11 @@ describe('the projects chosen at start (AC16)', () => {
       for (const q of [`resume=${SUPER_ID}`, `resume=${SUPER_ID}&reattach=1`, `sessionId=${SUPER_ID}`, `mode=super&sessionId=${SUPER_ID}`]) {
         expect(await upgrade(phonePort, `/api/agent/chat?vault=${PROJECT}&${q}`, { cookie, origin: ORIGIN })).toBe(403);
       }
-      // Taken back: today's list, and the parked session still never opens from the phone (it
+      // Taken back: named as parked, listed as no chat, and it still never opens from the phone (it
       // would hold the session from the next hand-over).
       writeFileSync(join(ctx, SUPER_STATE_REL), JSON.stringify({ ...emptySuperState(), session: SUPER_ID, enabled: false }));
       await primeSuperIndex([ctx]);
-      expect(JSON.parse((await request(phonePort, 'GET', '/api/agent/live-chats', H(PROJECT))).body)).toEqual({ chats: [], draining: [] });
+      expect(JSON.parse((await request(phonePort, 'GET', '/api/agent/live-chats', H(PROJECT))).body)).toEqual({ chats: [], draining: [], parked: [SUPER_ID] });
       for (const q of [`resume=${SUPER_ID}&reattach=passive`, `resume=${SUPER_ID}`]) {
         expect(await upgrade(phonePort, `/api/agent/chat?vault=${PROJECT}&${q}`, { cookie, origin: ORIGIN })).toBe(403);
       }

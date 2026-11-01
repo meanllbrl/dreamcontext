@@ -291,8 +291,15 @@ export interface PhoneSuperRecord {
   session: string;
   enabled: boolean;
   /** Every child of the record, named as a remote screen is told it (`childDigestName`). */
-  children: ReadonlyArray<{ id: string; title: string; startedAt: number; endedAt?: number }>;
+  children: ReadonlyArray<{ id: string; title: string; startedAt: number; endedAt?: number; adopted?: boolean }>;
+  /** Children pruned from the record: still the Super's (`formerChildren`). */
+  former?: readonly string[];
 }
+
+/** One line of a Super's work on the phone (`SuperJobWire`). */
+export interface PhoneJob { conversationId: string; title: string; state: 'working' | 'asking' | 'idle' | 'stopped' | 'done'; startedAt: number }
+
+type PhoneSuperRow = LiveRow & { vault: string; live: boolean; jobs: PhoneJob[]; runningIds: string[]; childIds: string[] };
 
 /**
  * The phone's live list with the Super Agent applied. The Super Agent and the owner's chats live
@@ -300,41 +307,46 @@ export interface PhoneSuperRecord {
  * (`live` false when the Mac runs no super chat right now), with the work it gave out on that row.
  * Two things never list as a chat, because a phone may not take them over: a project's recorded
  * super session, handed over OR parked after a take-back (`phoneSuperOpen` refuses the open, and a
- * listed row would be a chat that never connects), and the children of a handed-over Super. Every
- * other row is returned untouched.
+ * listed row would be a chat that never connects; `parked` names those for History), and the
+ * running children of a handed-over Super. Every other row is returned untouched.
  */
 export function phoneLiveChats<R extends LiveRow>(chats: readonly R[], records: ReadonlyMap<string, PhoneSuperRecord>, now = Date.now()): {
-  chats: R[]; supers: Array<LiveRow & { vault: string; live: boolean; jobs: PhoneJob[]; childIds: string[] }>;
+  chats: R[]; supers: PhoneSuperRow[]; parked: string[];
 } {
-  if (!records.size) return { chats: [...chats], supers: [] };
+  if (!records.size) return { chats: [...chats], supers: [], parked: [] };
   const hidden = new Set<string>();
-  const supers: Array<LiveRow & { vault: string; live: boolean; jobs: PhoneJob[]; childIds: string[] }> = [];
+  const supers: PhoneSuperRow[] = [];
+  const parked: string[] = [];
   for (const [vault, record] of records) {
     hidden.add(`${vault}\u0000${record.session.toLowerCase()}`);
-    if (!record.enabled) continue;
-    const childIds = record.children.map((c) => c.id);
-    for (const c of record.children) if (c.endedAt === undefined) hidden.add(`${vault}\u0000${c.id.toLowerCase()}`);
+    if (!record.enabled) { parked.push(record.session); continue; }
+    const running = record.children.filter((c) => c.endedAt === undefined);
+    for (const c of running) hidden.add(`${vault}\u0000${c.id.toLowerCase()}`);
+    const runningIds = running.map((c) => c.id);
+    // An adopted chat the Super ended is the owner's again (`ownersChat`): History lists it.
+    const childIds = [...record.children.filter((c) => !(c.adopted && c.endedAt !== undefined)).map((c) => c.id), ...(record.former ?? [])];
     const row = chats.find((c) => c.vault === vault && c.conversationId === record.session);
     const jobs = phoneJobs(record.children, chats.filter((c) => c.vault === vault), now);
     supers.push(row
-      ? { conversationId: row.conversationId, vault, title: null, busy: row.busy, state: row.state, lastLine: row.lastLine, updatedAt: row.updatedAt, live: true, jobs, childIds }
-      : { conversationId: record.session, vault, title: null, busy: false, state: 'idle', lastLine: null, updatedAt: null, live: false, jobs, childIds });
+      ? { conversationId: row.conversationId, vault, title: null, busy: row.busy, state: row.state, lastLine: row.lastLine, updatedAt: row.updatedAt, live: true, jobs, runningIds, childIds }
+      : { conversationId: record.session, vault, title: null, busy: false, state: 'idle', lastLine: null, updatedAt: null, live: false, jobs, runningIds, childIds });
   }
-  return { chats: chats.filter((c) => !c.vault || !hidden.has(`${c.vault}\u0000${c.conversationId.toLowerCase()}`)), supers };
+  return { chats: chats.filter((c) => !c.vault || !hidden.has(`${c.vault}\u0000${c.conversationId.toLowerCase()}`)), supers, parked };
 }
 
-/** One line of a Super's work on the phone (`SuperJobWire`). */
-export interface PhoneJob { conversationId: string; title: string; state: 'working' | 'asking' | 'idle' | 'done'; startedAt: number }
-
-/** The record's children with their state now: the ones with a process first, newest first in
- *  each part, ended ones only while recent. A child that left no name reads by its short id. */
+/** The record's children with their state now: the ones still the Super's first, newest first in
+ *  each part; ended ones only while recent. Ended is the record's word, never the absence of a
+ *  process: a child with none that nobody ended is `stopped`. No name reads as the short id. */
 function phoneJobs(children: PhoneSuperRecord['children'], live: readonly LiveRow[], now: number): PhoneJob[] {
+  const stateOf = (c: PhoneSuperRecord['children'][number]): PhoneJob['state'] => {
+    if (c.endedAt !== undefined) return 'done';
+    return live.find((l) => l.conversationId === c.id)?.state ?? 'stopped';
+  };
   const rows = children
-    .map((c) => ({ c, row: live.find((l) => l.conversationId === c.id) }))
-    .filter(({ c, row }) => !!row || c.endedAt === undefined || now - c.endedAt < PHONE_JOB_DONE_MS)
-    .map(({ c, row }): PhoneJob => ({ conversationId: c.id, title: c.title || c.id.slice(0, 8), state: row ? row.state : 'done', startedAt: c.startedAt }));
-  const running = (j: PhoneJob) => (j.state === 'done' ? 1 : 0);
-  return rows.sort((a, b) => running(a) - running(b) || b.startedAt - a.startedAt).slice(0, PHONE_JOBS_MAX);
+    .filter((c) => c.endedAt === undefined || now - c.endedAt < PHONE_JOB_DONE_MS)
+    .map((c): PhoneJob => ({ conversationId: c.id, title: c.title || c.id.slice(0, 8), state: stateOf(c), startedAt: c.startedAt }));
+  const ended = (j: PhoneJob) => (j.state === 'done' ? 1 : 0);
+  return rows.sort((a, b) => ended(a) - ended(b) || b.startedAt - a.startedAt).slice(0, PHONE_JOBS_MAX);
 }
 
 // ─── The agenda's digest (task hands-free-telefonda-super-agent-sohbeti-ajandayi…) ──────────

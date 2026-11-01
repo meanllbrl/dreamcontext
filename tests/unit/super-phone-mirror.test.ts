@@ -158,7 +158,7 @@ describe('the phone\'s live list (AC1)', () => {
 
   it('nothing handed over: today\'s rows, untouched, and no super row', () => {
     const chats = [row(SUPER, 'acme'), row(OTHER, 'acme')];
-    expect(phoneLiveChats(chats, new Map())).toEqual({ chats, supers: [] });
+    expect(phoneLiveChats(chats, new Map())).toEqual({ chats, supers: [], parked: [] });
   });
 
   const record = (o: Partial<PhoneSuperRecord> = {}): PhoneSuperRecord => ({ session: SUPER, enabled: true, children: [], ...o });
@@ -167,7 +167,7 @@ describe('the phone\'s live list (AC1)', () => {
     const chats = [row(SUPER, 'acme'), row(OTHER, 'acme'), row('x', 'beta'), row('y', null)];
     const v = phoneLiveChats(chats, new Map([['acme', record()]]));
     expect(v.chats.map((c) => c.conversationId)).toEqual([OTHER, 'x', 'y']);
-    expect(v.supers).toEqual([{ conversationId: SUPER, vault: 'acme', title: null, busy: false, state: 'idle', lastLine: 'l', updatedAt: 5, live: true, jobs: [], childIds: [] }]);
+    expect(v.supers).toEqual([{ conversationId: SUPER, vault: 'acme', title: null, busy: false, state: 'idle', lastLine: 'l', updatedAt: 5, live: true, jobs: [], runningIds: [], childIds: [] }]);
   });
 
   it('a Super\'s running child is never one of the owner\'s chats, whatever the id\'s case', () => {
@@ -175,22 +175,46 @@ describe('the phone\'s live list (AC1)', () => {
     const chats = [row(kid.toUpperCase(), 'acme'), row(OTHER, 'acme')];
     const v = phoneLiveChats(chats, new Map([['acme', record({ children: [{ id: kid, title: 'Fix it', startedAt: 1 }] })]]));
     expect(v.chats.map((c) => c.conversationId)).toEqual([OTHER]);
+    expect(v.supers[0].runningIds).toEqual([kid]);
     expect(v.supers[0].childIds).toEqual([kid]);
   });
 
   it('handed over but no super child running: the row says so (live false)', () => {
     const v = phoneLiveChats([row(OTHER, 'acme')], new Map([['acme', record()]]));
     expect(v.chats.map((c) => c.conversationId)).toEqual([OTHER]);
-    expect(v.supers).toEqual([{ conversationId: SUPER, vault: 'acme', title: null, busy: false, state: 'idle', lastLine: null, updatedAt: null, live: false, jobs: [], childIds: [] }]);
+    expect(v.supers).toEqual([{ conversationId: SUPER, vault: 'acme', title: null, busy: false, state: 'idle', lastLine: null, updatedAt: null, live: false, jobs: [], runningIds: [], childIds: [] }]);
   });
 
   it('taken back: the parked Super session is no chat a phone could tap (it refuses that open), and no super row', () => {
     const v = phoneLiveChats([row(SUPER, 'acme'), row(OTHER, 'acme')], new Map([['acme', record({ enabled: false })]]));
     expect(v.chats.map((c) => c.conversationId)).toEqual([OTHER]);
     expect(v.supers).toEqual([]);
+    expect(v.parked).toEqual([SUPER]);
   });
 
-  it('the jobs: running ones first with their state, a recently ended one done, an old one gone', () => {
+  it('an ended child with a process is the owner\'s chat, not a job; a job is done only when the record says so', () => {
+    const now = 10 * PHONE_JOB_DONE_MS;
+    const children = [
+      { id: 'reopened', title: 'Reopened', startedAt: 1, endedAt: now - PHONE_JOB_DONE_MS - 1 },
+      { id: 'crashed', title: 'Crashed', startedAt: 2 },
+    ];
+    const v = phoneLiveChats([row('reopened', 'acme')], new Map([['acme', record({ children })]]), now);
+    expect(v.chats.map((c) => c.conversationId)).toEqual(['reopened']);
+    expect(v.supers[0].jobs.map((j) => [j.title, j.state])).toEqual([['Crashed', 'stopped']]);
+    expect(v.supers[0].runningIds).toEqual(['crashed']);
+  });
+
+  it('History: every conversation the Super owns, former ones too; an adopted chat it ended is the owner\'s', () => {
+    const children = [
+      { id: 'mine', title: 'Mine', startedAt: 1, endedAt: 2, adopted: true },
+      { id: 'kid', title: 'Kid', startedAt: 1, endedAt: 2 },
+      { id: 'run', title: 'Run', startedAt: 1 },
+    ];
+    const [sup] = phoneLiveChats([], new Map([['acme', record({ children, former: ['old'] })]])).supers;
+    expect(sup.childIds).toEqual(['kid', 'run', 'old']);
+  });
+
+  it('the jobs: the ones not ended first with their state, a recently ended one done, an old one gone', () => {
     const now = 10 * PHONE_JOB_DONE_MS;
     const live = { ...row('run', 'acme'), state: 'working' as const };
     const children = [
@@ -200,7 +224,7 @@ describe('the phone\'s live list (AC1)', () => {
       { id: 'noname-child', title: '', startedAt: 3 },
     ];
     const [sup] = phoneLiveChats([live], new Map([['acme', record({ children })]]), now).supers;
-    expect(sup.jobs.map((j) => [j.title, j.state])).toEqual([['Running', 'working'], ['Finished', 'done'], ['noname-c', 'done']]);
+    expect(sup.jobs.map((j) => [j.title, j.state])).toEqual([['noname-c', 'stopped'], ['Running', 'working'], ['Finished', 'done']]);
     // Every child of the record stays named, so History never lists an old one.
     expect(sup.childIds).toEqual(['old', 'fin', 'run', 'noname-child']);
   });

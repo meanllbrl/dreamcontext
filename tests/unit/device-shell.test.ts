@@ -32,7 +32,7 @@ const tab = (id: string, kind: string, o: Partial<DrawerChatFact> = {}): DrawerC
 const live = (vault: string, id: string, state: LiveChatWire['state'] = 'idle'): LiveChatWire => ({
   conversationId: id, vault, title: `Live ${id}`, busy: state === 'working', state, lastLine: null, updatedAt: 1,
 });
-const sup = (vault: string, id: string, liveNow = true, state: LiveChatWire['state'] = 'idle'): SuperChatWire => ({ jobs: [], childIds: [],
+const sup = (vault: string, id: string, liveNow = true, state: LiveChatWire['state'] = 'idle'): SuperChatWire => ({ jobs: [], runningIds: [], childIds: [],
   conversationId: id, vault, title: 'whatever the Mac calls it', busy: false, state, lastLine: null, updatedAt: 2, live: liveNow,
 });
 const facts = (o: Partial<DrawerFacts>): DrawerFacts => ({ superOn: false, superSelected: false, chatOpen: true, team: [{ slug: 'ada', title: 'Ada', hasPhoto: false, status: 'working' }], ...o });
@@ -85,7 +85,7 @@ describe('a device shell\'s drawer is chats only', () => {
   });
 
   it('a tab holding the Super\'s conversation or a child is never one of the owner\'s rows', () => {
-    const wire: LiveChatsWire = { chats: [], draining: [], supers: [{ ...sup('acme', 'c-super'), childIds: ['c-kid'] }] };
+    const wire: LiveChatsWire = { chats: [], draining: [], supers: [{ ...sup('acme', 'c-super'), runningIds: ['c-kid'] }] };
     const device = deviceChatsOf({
       activeVault: 'acme', projects: ['acme'], tunnel: true, liveAnswered: true, live: wire,
       tabsByVault: { acme: [{ ...tab('m', 'ready'), claudeId: 'c-super' }, { ...tab('k', 'ready'), claudeId: 'c-kid' }, tab('a', 'ready')] },
@@ -203,6 +203,7 @@ describe('History on a device shell', () => {
     expect(historyPickRefused(wire, 'c-super')).toBe(true);
     expect(historyPickRefused(wire, 'c-kid')).toBe(true);
     expect(historyPickRefused(wire, 'c-drain')).toBe(true);
+    expect(historyPickRefused({ ...wire, parked: ['c-parked'] }, 'c-parked')).toBe(true);
     expect(historyPickRefused(null, 'c-old')).toBe(true);
     // The owner's old chat of a handed-over project opens like any other.
     expect(historyPickRefused(wire, 'c-old')).toBe(false);
