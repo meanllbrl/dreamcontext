@@ -53,6 +53,7 @@ import { generateId } from '../../lib/id.js';
 import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
+import { codexProjectOptedIn } from '../../lib/t3-bridge/codex-user-gate.js';
 import { memberFileRefusal, memberFileWriteTarget } from '../../lib/agents/member-file-guard.js';
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
 import { bm25Search, loadSkillDocs, RECALL_STRONG_SCORE, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
@@ -2933,6 +2934,9 @@ export function registerHookCommand(program: Command): void {
         const command = typeof toolInput.command === 'string' ? toolInput.command : '';
         const kind = directHeavy(command);
         if (!kind) process.exit(0); // allow
+        // The Mac-wide Codex hook runs in every Codex session in every folder: the owner's own
+        // builds are not ours to hold. Our children and a project that opted in keep the limit.
+        if (hookTool() === 'codex' && !process.env.DREAMCONTEXT_CONTEXT_BY && !codexProjectOptedIn(typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd())) process.exit(0); // allow
         console.log(JSON.stringify({
           hookSpecificOutput: {
             hookEventName: 'PreToolUse',

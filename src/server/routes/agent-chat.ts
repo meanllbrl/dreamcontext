@@ -2351,7 +2351,7 @@ export function startChatSession(
   // changing it (`node-floor.ts`). No such Node: the pane says so instead of crashing in a chat.
   const bridgeNodePath = bridgeTool ? bridgeNode() : null;
   // A Super child runs with nobody watching it: no live write gate, no child on Codex.
-  const envGateGap = bridgeTool === 'codex' && opts.leanMcp ? codexEnvGateGap(projectRoot) : null;
+  const envGateGap = bridgeTool === 'codex' && opts.leanMcp ? codexEnvGateGap(projectRoot, undefined, undefined, codexAccountId) : null;
   const noEnvGate = envGateGap !== null;
   // Said before anything starts: a chat on a Codex that cannot start would only end in silence.
   // Antigravity has no write gate at all yet, so no child runs on it with nobody watching.

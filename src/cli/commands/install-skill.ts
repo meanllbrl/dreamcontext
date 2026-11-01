@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, readdirSync, cpSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { relPosix } from '../../lib/paths.js';
+import { CODEX_GATE_SPEC, codexHookCommand } from '../../lib/t3-bridge/codex-user-gate.js';
 import chalk from 'chalk';
 import { checkbox, confirm } from '@inquirer/prompts';
 import { error, info, warn, miniBox, header } from '../../lib/format.js';
@@ -300,9 +301,7 @@ function removeRetiredReadTaskGuard(projectRoot: string): void {
  * the new string alone would add a second handler beside the old one and run every event twice.
  */
 /** The command Codex runs for one hook event: the same CLI hook, printed in Codex's shape. */
-export function codexHookCommand(event: string): string {
-  return `command -v dreamcontext >/dev/null 2>&1 && exec dreamcontext hook ${event} --format codex || exec npx dreamcontext hook ${event} --format codex`;
-}
+export { codexHookCommand };
 
 /**
  * Codex's hook events → our handlers, for `.codex/hooks.json` (Claude-compatible shape). No
@@ -325,7 +324,15 @@ const isOurCodexHook = (cmd: unknown): boolean => typeof cmd === 'string' && /dr
  * not ours (another tool's, the owner's) is kept as it is; ours are recognised by their command.
  */
 export function ensureCodexHooks(projectRoot: string): { file: string; changed: boolean } {
-  const file = join(projectRoot, '.codex', 'hooks.json');
+  return writeCodexHooks(join(projectRoot, '.codex', 'hooks.json'), CODEX_HOOK_SPECS);
+}
+
+/** The one Mac-wide gate in `<codex home>/hooks.json`. Only the gate: the brain hooks stay opt-in. */
+export function ensureCodexUserGate(codexHome: string): { file: string; changed: boolean } {
+  return writeCodexHooks(join(codexHome, 'hooks.json'), [CODEX_GATE_SPEC]);
+}
+
+function writeCodexHooks(file: string, specs: readonly { event: string; name: string; timeout: number; matcher?: string; command?: string }[]): { file: string; changed: boolean } {
   let doc: { hooks?: Record<string, Array<{ matcher?: string; hooks?: Array<{ type?: string; command?: string; timeout?: number }> }>> } & Record<string, unknown> = {};
   const before = existsSync(file) ? readFileSync(file, 'utf-8') : '';
   if (before.trim()) {
@@ -341,8 +348,8 @@ export function ensureCodexHooks(projectRoot: string): { file: string; changed: 
       .filter((g) => (g.hooks ?? []).length > 0);
     if (hooks[event]!.length === 0) delete hooks[event];
   }
-  for (const spec of CODEX_HOOK_SPECS) {
-    const group = { ...(spec.matcher ? { matcher: spec.matcher } : {}), hooks: [{ type: 'command', command: codexHookCommand(spec.name), timeout: spec.timeout }] };
+  for (const spec of specs) {
+    const group = { ...(spec.matcher ? { matcher: spec.matcher } : {}), hooks: [{ type: 'command', command: spec.command ?? codexHookCommand(spec.name), timeout: spec.timeout }] };
     (hooks[spec.event] ??= []).push(group);
   }
   doc.hooks = hooks;
