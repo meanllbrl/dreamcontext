@@ -174,8 +174,8 @@ describe('a run\'s status is the truth', () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, '2026-10-30-abcdefabcdef.md'), `${THREAD_ENTRY_MARKER}\n\`\`\`json\n${JSON.stringify(entry)}\n\`\`\`\n`);
     const at = (min: number) => new Date(Date.parse(RUN) + min * 60_000);
-    expect(session({ isRunActive: idle, now: at(14) }).status).toBe('running');
-    expect(session({ isRunActive: idle, now: at(16) })).toMatchObject({ status: null, rows: [{ origin: 'note', text: 'Run started.' }] });
+    expect(session({ isRunActive: idle, now: at(14) })).toMatchObject({ status: 'running', elsewhere: true });
+    expect(session({ isRunActive: idle, now: at(16) })).toMatchObject({ status: null, elsewhere: true, rows: [{ origin: 'note', text: 'Run started.' }] });
   });
 
   it('a run that ended ok and still owes a verdict waits; a failed one stays failed', () => {
@@ -227,6 +227,14 @@ describe('a run\'s status is the truth', () => {
     expect(session({ isRunActive: () => true, isRunHeld: () => false }).status).toBe('ok');
     sys('replied', 'Question answered via chat. Session resumed.', '2026-10-30T09:05:00.000Z');
     expect(session({ isRunActive: () => true, isRunHeld: () => false }).status).toBe('ok');
+  });
+
+  it('a reply answered after the end leaves the run its own sentence, above the reply', () => {
+    appendThreadEntry(contextRoot, 'line-watch', { runId: RUN, kind: 'system', event: 'started', text: 'Run started.', via: 'runner' });
+    appendThreadEntry(contextRoot, 'line-watch', { runId: RUN, kind: 'system', event: 'ok', text: 'Finished.', via: 'runner', result: 'Acme is healthy.' });
+    appendThreadEntry(contextRoot, 'line-watch', { runId: RUN, kind: 'user', text: 'Look again.', via: 'dashboard' });
+    appendThreadEntry(contextRoot, 'line-watch', { runId: RUN, kind: 'agent', text: 'Still healthy.', via: 'runner' });
+    expect(session().rows.map((r) => r.text)).toEqual(['Acme is healthy.', 'Look again.', 'Still healthy.']);
   });
 
   it('a routine note after the end reopens nothing, even with a turn that names no run', () => {

@@ -11,6 +11,7 @@ import { feedCutoffDay, readRunHead, runDocumentPath, runUnread } from '../autom
 import { pendingQuestionOfRun } from '../automations/hitl.js';
 import { ownerQuietReader } from '../automations/super-quiet.js';
 import { privateSources } from '../automations/history.js';
+import { runChatSession } from '../automations/run-chat.js';
 import type { RunEvent, ThreadEntry } from '../automations/types.js';
 import {
   listAgentSessions, markSessionHadTurns, pruneAgentSessions, type AgentSessionEntry,
@@ -70,6 +71,13 @@ export interface HistorySession {
   unread: boolean;
   /** A run with a published document here (`runDocumentPath`), posted or not. */
   hasDocument?: boolean;
+  /** The run's Claude session, from this machine's own records (`runChatSession`), never the
+   *  synced cache. Owner audience only; absent when no steps can be opened here. */
+  claudeId?: string;
+  /** A reply can resume that session. */
+  resumable?: true;
+  /** The run started on another machine: nothing here can continue it. */
+  elsewhere?: true;
   truncated?: true;
   missing?: true;
   rows: HistoryRow[];
@@ -217,6 +225,13 @@ interface RunFacts {
 const terminalOf = (entries: readonly ThreadEntry[]): ThreadEntry | undefined =>
   entries.find((e) => e.kind === 'system' && e.event && TERMINAL[e.event]);
 
+/** The file's name, never the ledger: with agent sync off the ledger answers "every entry is
+ *  mine", and a shared routine's thread still arrives from the other machine mid-run. */
+function writtenElsewhere(entry: ThreadEntry, fileOf: ReadonlyMap<string, string>, home: string): boolean {
+  const file = fileOf.get(entry.id) ?? '';
+  return /-[0-9a-f]{12}\.md$/.test(file) && !file.endsWith(`-${readMachineIdentity(home).id}.md`);
+}
+
 function runStatus(entries: readonly ThreadEntry[], run: RunEvent | null, f: RunFacts): HistorySession['status'] {
   const end = terminalOf(entries);
   const ended = end ? TERMINAL[end.event!]
@@ -244,10 +259,7 @@ function runStatus(entries: readonly ThreadEntry[], run: RunEvent | null, f: Run
   if (!started) return null;
   // The record of a question is gone: we do not know how it ended, so we do not say.
   if (entries.some((e) => e.kind === 'system' && e.event === 'asked')) return null;
-  // The file's name, never the ledger: with agent sync off the ledger answers "every entry is
-  // mine", and a shared routine's thread still arrives from the other machine mid-run.
-  const file = f.fileOf.get(started.id) ?? '';
-  if (!/-[0-9a-f]{12}\.md$/.test(file) || file.endsWith(`-${readMachineIdentity(f.home).id}.md`)) return 'stopped';
+  if (!writtenElsewhere(started, f.fileOf, f.home)) return 'stopped';
   // Another machine's run: only its own timeout can end the wait from here.
   let timeoutMinutes = 30;
   try { timeoutMinutes = getAutomation(f.contextRoot, f.source)?.timeoutMinutes ?? 30; } catch { /* the default */ }
@@ -368,13 +380,17 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
             ...(e.files?.length ? { files: e.files } : {}),
             ...(e.via === 'app' ? { via: 'app' as const, ...(e.app ? { app: e.app } : {}) } : {}),
           }));
-          if (opts.audience === 'owner' && !posts.some((e) => e.kind === 'agent')) {
+          // Only what it said before it ended counts: an answer to a later reply is not the run's own
+          // result, and the run's sentence stays above that reply.
+          const end = terminalOf(runEntries);
+          if (opts.audience === 'owner' && !posts.some((e) => e.kind === 'agent' && (!end || e.id < end.id))) {
             const body = bodyRow(contextRoot, runEntries, run, status, lastAt);
             // In its place: the owner's later words are not answered by what the run said before.
-            const end = terminalOf(runEntries);
             const after = end ? posts.findIndex((e) => e.id > end.id) : -1;
             if (body) rows.splice(after < 0 ? rows.length : after, 0, body);
           }
+          const chat = opts.audience === 'owner' ? runChatSession(contextRoot, source, runId, home) : null;
+          const first = runEntries.find((e) => e.kind === 'system' && e.event === 'started') ?? runEntries[0];
           return {
             key, kind: 'run', source, title,
             startedAt: runEntries[0].at,
@@ -384,6 +400,8 @@ function collect(contextRoot: string, slug: string, opts: ListHistoryOptions): C
             newestId,
             unread,
             hasDocument: runDocumentPath(contextRoot, run) !== null,
+            ...(chat ? { claudeId: chat.claudeId, ...(chat.resumable ? { resumable: true as const } : {}) } : {}),
+            ...(opts.audience === 'owner' && writtenElsewhere(first, fileOf, home) ? { elsewhere: true as const } : {}),
             rows,
           };
         },

@@ -6,8 +6,7 @@ import { plainPostText, readThread } from '../automations/threads.js';
 import type { AutomationQuestion, ThreadEntry } from '../automations/types.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { MAX_CONTAINERS, MAX_FLOAT, MAX_READ_BYTES, MAX_TEAM_JOBS, floatCount, type SuperQueueItem, type SuperState, type SuperTeamJob, type TeamJobConclusion, type TeamJobEvent, type TeamJobStatus } from './types.js';
-import { sessionForRun } from '../automations/session-registry.js';
-import { runningSessionFor } from '../automations/run-session.js';
+import { runChatSession } from '../automations/run-chat.js';
 import { containerIdFor, countEvent, newQueueId } from './inbox.js';
 import { makeRoom } from './room.js';
 
@@ -100,13 +99,11 @@ export interface TeamLiveRow {
   resumable?: true;
 }
 
-/** The session a job's run lives in: the machine's binding, else what its running session said. */
+/** The session a job's run lives in, as every surface believes it (`runChatSession`). */
 function jobSession(contextRoot: string, j: SuperTeamJob): { sessionId?: string; resumable?: true } {
   try {
-    const bound = sessionForRun(contextRoot, j.member, j.runId, undefined, false);
-    if (bound) return { sessionId: bound, resumable: true };
-    const noted = runningSessionFor(contextRoot, j.member, j.runId);
-    return noted ? { sessionId: noted } : {};
+    const chat = runChatSession(contextRoot, j.member, j.runId);
+    return chat ? { sessionId: chat.claudeId, ...(chat.resumable ? { resumable: true as const } : {}) } : {};
   } catch { return {}; }
 }
 

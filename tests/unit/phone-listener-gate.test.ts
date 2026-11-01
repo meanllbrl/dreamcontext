@@ -23,6 +23,8 @@ import { addVault } from '../../src/lib/vaults.js';
 import { createAgent } from '../../src/lib/agents/store.js';
 import { appendThreadEntry } from '../../src/lib/automations/threads.js';
 import { claudeProjectDirName } from '../../src/lib/transcript-sessions.js';
+import { recordAutomationSession } from '../../src/lib/automations/session-registry.js';
+import { noteRunSession } from '../../src/lib/automations/run-session.js';
 import type { Router } from '../../src/server/router.js';
 
 const ORIGIN = 'https://quiet-lake-1234.trycloudflare.com';
@@ -42,6 +44,11 @@ const MINE_ID = '11111111-1111-4111-8111-111111111111';
 const OTHER_ID = '22222222-2222-4222-8222-222222222222';
 const NOCWD_ID = '33333333-3333-4333-8333-333333333333';
 const TEAMMATE_ID = '44444444-4444-4444-8444-444444444444';
+/** A finished, bound run, and a killed one known only from its note. */
+const RUN_ID = '55555555-5555-4555-8555-555555555555';
+const KILLED_ID = '66666666-6666-4666-8666-666666666666';
+const RUN_TOKEN = 'FIXTURE-TOKEN-5f3a';
+const RUN_AT = '2026-10-30T10:00:00.000Z';
 
 interface Reply { status: number; headers: http.IncomingHttpHeaders; body: string }
 
@@ -120,6 +127,26 @@ beforeAll(async () => {
   writeFileSync(join(folder(join(dir, PROJECT)), `${MINE_ID}.jsonl`), jsonl([...head, ...turn(join(dir, PROJECT), 'MINE-MARKER', MINE_ID)]));
   writeFileSync(join(folder(join(dir, OTHER)), `${OTHER_ID}.jsonl`), jsonl([...head, ...turn(join(dir, OTHER), 'OTHER-SECRET-MARKER', OTHER_ID)]));
   writeFileSync(join(tdir, `${NOCWD_ID}.jsonl`), jsonl([...head, ...turn(null, 'NOCWD-SECRET-MARKER', NOCWD_ID)]));
+  // A run: its composed prompt, a Bash command and its output carry a token, and so does a sub-agent.
+  const runRows = (id: string) => [
+    { type: 'user', cwd: join(dir, PROJECT), sessionId: id, uuid: `${id}-u`, message: { role: 'user', content: `composed prompt ${RUN_TOKEN}` } },
+    { type: 'assistant', cwd: join(dir, PROJECT), sessionId: id, uuid: `${id}-a`, message: { role: 'assistant', content: [
+      { type: 'text', text: 'RUN-WORDS Acme is healthy.' },
+      { type: 'tool_use', id: 'toolu_run', name: 'Bash', input: { command: `curl -H "Authorization: ${RUN_TOKEN}" https://acme.example` } },
+    ] } },
+    { type: 'user', cwd: join(dir, PROJECT), sessionId: id, uuid: `${id}-r`, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_run', content: `out ${RUN_TOKEN}` }] } },
+  ];
+  const runFolder = folder(join(dir, PROJECT));
+  writeFileSync(join(runFolder, `${RUN_ID}.jsonl`), jsonl([...head, ...runRows(RUN_ID)]));
+  writeFileSync(join(runFolder, `${KILLED_ID}.jsonl`), jsonl([...head, ...runRows(KILLED_ID)]));
+  mkdirSync(join(runFolder, RUN_ID, 'subagents'), { recursive: true });
+  writeFileSync(join(runFolder, RUN_ID, 'subagents', 'agent-abc123.jsonl'), jsonl(runRows(RUN_ID).map((r) => ({ ...r, isSidechain: true }))));
+  const context = join(dir, PROJECT, '_dream_context');
+  createAgent(context, { slug: 'run-watcher', title: 'Run watcher', prompt: 'run-watcher minds the fictional Acme line.', learning: false }, { approve: { now: new Date(RUN_AT), home: dir } });
+  recordAutomationSession('run-watcher', RUN_ID, dir, Date.now(), undefined, RUN_AT);
+  noteRunSession(context, 'run-watcher', '2026-10-30T11:00:00.000Z', KILLED_ID, Date.now(), dir);
+  mkdirSync(join(context, 'automations', 'cache'), { recursive: true });
+  writeFileSync(join(context, 'automations', 'cache', 'run-watcher.json'), JSON.stringify({ slug: 'run-watcher', history: [{ firedAt: RUN_AT, startedAt: RUN_AT, status: 'ok', sessionId: RUN_ID, costUsd: 0, numTurns: 1, permissionDenials: 0, outputPath: null, error: null }] }));
   writeFileSync(join(dir, PROJECT, '_dream_context', 'state', 'phone-task.md'), '---\nid: task_x\nname: Phone task\nstatus: todo\npriority: medium\n---\n\n## Why\n\nA task.\n');
   macAuth = new HandsfreeAuth({ dir: join(dir, 'mac') });
   for (const d of ['mac']) { try { (await import('node:fs')).mkdirSync(join(dir, d), { recursive: true }); } catch { /* exists */ } }
@@ -225,6 +252,43 @@ describe('phone listener: the route policy over the FULL route table (AC4/AC5)',
     const r = await request(phonePort, 'GET', '/api/agents/lookout/history', H());
     expect(r.status).toBe(200);
     expect(JSON.parse(r.body).sessions[0]).toMatchObject({ status: 'ok', rows: [{ origin: 'answer', text: 'Acme is healthy.' }] });
+  });
+
+  it('K4: a run reads as words and tool names on the phone, by main, sub-agent and /session; the Mac keeps it all', async () => {
+    const paths = [
+      `/api/agent/chat-history?claudeId=${RUN_ID}`,
+      `/api/agent/chat-history?claudeId=${KILLED_ID}`,
+      `/api/agent/chat-history?claudeId=${RUN_ID}&subagent=abc123`,
+      '/api/automations/run-watcher/session?run=1',
+    ];
+    for (const p of paths) {
+      const r = await request(phonePort, 'GET', p, H());
+      expect(r.status, p).toBe(200);
+      expect(r.body, p).toContain('RUN-WORDS');
+      expect(r.body, p).not.toContain(RUN_TOKEN);
+      expect(r.body, p).not.toContain('curl');
+    }
+    const main = JSON.parse((await request(phonePort, 'GET', `/api/agent/chat-history?claudeId=${RUN_ID}`, H())).body).items;
+    expect(main).toEqual([{ kind: 'text', text: 'RUN-WORDS Acme is healthy.' }, { kind: 'tool', toolUseId: 'toolu_run', name: 'Bash', status: 'done' }]);
+    const session = JSON.parse((await request(phonePort, 'GET', '/api/automations/run-watcher/session?run=1', H())).body).session;
+    expect(session.sessionId).toBe(RUN_ID);
+    expect(session.transcriptPath).toBeNull();
+    expect((await request(phonePort, 'GET', `/api/agent/bg-output?claudeId=${RUN_ID}&taskId=abc`, H())).status).toBe(403);
+    // An ordinary chat on the phone keeps everything, and the laptop reads the run whole.
+    expect((await request(phonePort, 'GET', `/api/agent/chat-history?claudeId=${MINE_ID}`, H())).body).toContain('MINE-MARKER');
+    const mac = await request(mainPort, 'GET', `/api/agent/chat-history?claudeId=${RUN_ID}`, { 'x-dreamcontext-vault': PROJECT });
+    expect(mac.body).toContain(RUN_TOKEN);
+    const macSession = await request(mainPort, 'GET', '/api/automations/run-watcher/session?run=1', { 'x-dreamcontext-vault': PROJECT });
+    expect(JSON.parse(macSession.body).session.transcriptPath).toContain(RUN_ID);
+  });
+
+  it('a planted cache id opens no transcript on /session', async () => {
+    const context = join(dir, PROJECT, '_dream_context');
+    createAgent(context, { slug: 'planted', title: 'Planted', prompt: 'planted reads the fictional Acme line.', learning: false }, { approve: { now: new Date(RUN_AT), home: dir } });
+    writeFileSync(join(context, 'automations', 'cache', 'planted.json'), JSON.stringify({ slug: 'planted', history: [{ firedAt: RUN_AT, startedAt: RUN_AT, status: 'ok', sessionId: MINE_ID }] }));
+    const r = JSON.parse((await request(mainPort, 'GET', '/api/automations/planted/session?run=1', { 'x-dreamcontext-vault': PROJECT })).body).session;
+    expect(r.sessionId).toBeNull();
+    expect(r.items).toEqual([]);
   });
 
   it('a write with a foreign Origin is refused; without a cookie only the public routes answer', async () => {

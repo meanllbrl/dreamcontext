@@ -33,8 +33,8 @@ const TUNNEL = 'quiet-lake-1234.trycloudflare.com';
 const ORIGIN = `https://${TUNNEL}`;
 const SECRETS = [
   '/Users/someone', 'BRIEF-MARKER', 'PROMPT-MARKER', 'super/secret-branch', 'OWNER-TEXT-MARKER', 'MCP-MARKER', 'BASE-MARKER',
-  'MEMBER-MARKER', 'DISMISSED-MARKER', 'localhost', '127.0.0.1', '10.0.0.7', '172.16.4.2', '192.168.1.20', '[::1]', 'printer.local',
-  TUNNEL, 'NEW-FIELD-MARKER', 'HELD-MARKER', 'POOL-TITLE-MARKER',
+  'DISMISSED-MARKER', 'localhost', '127.0.0.1', '10.0.0.7', '172.16.4.2', '192.168.1.20', '[::1]', 'printer.local',
+  TUNNEL, 'NEW-FIELD-MARKER', 'HELD-MARKER', 'POOL-TITLE-MARKER', 'QUEUE-MEMBER-MARKER', 'ORIGIN-MARKER', 'MODEL-MARKER',
 ];
 
 /** A record with every field filled, markers in every place that must not travel. */
@@ -67,13 +67,13 @@ function fullRecord(): SuperState & Record<string, unknown> {
       },
     },
     queue: [
-      { id: 'q-1', sessionId: 'kid', kind: 'done', state: 'done', createdAt: 1, ownerText: 'OWNER-TEXT-MARKER', brief: 'BRIEF-MARKER', member: 'MEMBER-MARKER' },
+      { id: 'q-1', sessionId: 'kid', kind: 'done', state: 'done', createdAt: 1, ownerText: 'OWNER-TEXT-MARKER', brief: 'BRIEF-MARKER', member: 'QUEUE-MEMBER-MARKER' },
       { id: 'q-2', sessionId: 'kid', kind: 'permission', requestId: 'r', state: 'pending', createdAt: 2, ownerText: 'OWNER-TEXT-MARKER' },
     ],
     notes: { kid: 'handover' },
     dismissed: [{ kind: 'web', ref: 'DISMISSED-MARKER', until: 9 }],
     pool: [{ id: 'p-1', title: 'POOL-TITLE-MARKER', prompt: 'PROMPT-MARKER', hash: 'h', base: 'BASE-MARKER', worktree: wt, createdAt: 1 }],
-    team: [{ id: 'team-1', member: 'MEMBER-MARKER', runId: 'r', jobKind: 'run', queued: false, brief: 'BRIEF-MARKER', startedAt: 1 }],
+    team: [{ id: 'team-1', member: 'QUEUE-MEMBER-MARKER', runId: 'r', jobKind: 'run', queued: false, brief: 'BRIEF-MARKER', startedAt: 1 }],
     held: [{ item: 'HELD-MARKER', child: 'kid', kind: 'question', at: 1 }],
     newFieldNobodyAllowlisted: 'NEW-FIELD-MARKER',
   } as unknown as SuperState & Record<string, unknown>;
@@ -86,6 +86,21 @@ describe('superRemoteView is an allowlist (AC14)', () => {
     (rec.children.kid as unknown as Record<string, unknown>).aNewChildField = 'NEW-FIELD-MARKER';
     const out = JSON.stringify(superRemoteView(rec, 'acme', TUNNEL));
     for (const m of SECRETS) expect(out, m).not.toContain(m);
+  });
+
+  it('a team card travels as who took it, its status, its line and its session; never its brief, origin or model', () => {
+    const rec = fullRecord();
+    rec.containers.push({ id: 'team-c', kind: 'team', ref: 'team-1', shape: 'square', place: 'float' } as SuperState['containers'][number]);
+    Object.assign(rec.team[0], { origin: 'ORIGIN-MARKER', model: 'MODEL-MARKER', effort: 'MODEL-MARKER', member: 'doctor' });
+    const line = 'x'.repeat(400);
+    const v = superRemoteView(rec, 'acme', TUNNEL, false, { 'team-1': { status: 'done', lastLine: line, sessionId: '6f02f3ed-0e2e-434e-b0b3-b4f606e32879', resumable: true } });
+    expect(v.team).toEqual([{ id: 'team-1', member: 'doctor', runId: 'r', startedAt: 1, status: 'done', lastLine: line.slice(0, 160), sessionId: '6f02f3ed-0e2e-434e-b0b3-b4f606e32879', resumable: true }]);
+    const out = JSON.stringify(v);
+    for (const m of SECRETS) expect(out, m).not.toContain(m);
+  });
+
+  it('a job with no card on the stage does not travel at all', () => {
+    expect(superRemoteView(fullRecord(), 'acme', TUNNEL).team).toBeUndefined();
   });
 
   it('keeps what the stage draws: an https page, project files, slugs, a child\'s row; blocks the rest by host only', () => {

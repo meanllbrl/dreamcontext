@@ -78,7 +78,9 @@ import { buildFeed, readRunAnswer, threadReplies, threadRootId } from '../../lib
 import {
   announceTurn, appendThreadEntry, listThreadRuns, markThreadRead, newThreadEntryId, readThread, threadUnread,
 } from '../../lib/automations/threads.js';
-import { latestBoundSession, readAutomationSession, sessionForRun } from '../../lib/automations/session-registry.js';
+import { latestBoundSession, sessionForRun } from '../../lib/automations/session-registry.js';
+import { offerableSession, phoneRunItems } from '../../lib/automations/run-chat.js';
+import { isPhoneSocket } from '../phone-origin.js';
 import { MAX_LIVE_CHILDREN } from '../../lib/super/types.js';
 import { noteTeamFollowUp } from '../../lib/super/team.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
@@ -360,33 +362,6 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
  * should see what a teammate's automation is asking; they just get no button
  * that resumes a conversation this machine never had.
  */
-/**
- * A question's session id, but only when opening it would actually reach that
- * conversation. Two independent gates, both of which must hold:
- *
- *  - MACHINE-LOCAL BINDING TO THIS SLUG — a question record lives inside the
- *    brain and is kept out of git only by a best-effort `.gitignore` line, so a
- *    pulled-in one must never hand this client a resumable `bypassPermissions`
- *    uuid. The WS resume gate does not cover this source (it scans
- *    `automations/cache/*.json` only), so the check happens before the field
- *    goes on the wire — and it is `readAutomationSession(slug, …)`, not the
- *    gate's slug-agnostic `isAutomationBoundSession`. See `attention.ts`'s
- *    `locallyBound` for why discarding the slug admits a confused-deputy.
- *  - A TRANSCRIPT ON DISK — `--resume` against a missing transcript does not
- *    fail; it fresh-pins an empty conversation under the same uuid, which would
- *    open a blank chat claiming to be the run. See `attention.ts`'s
- *    `hasTranscript`.
- *
- * Withholding is not the same as having no question: the words still render, so
- * the reader sees what is being asked. They just get no button that cannot work.
- */
-function offerableSession(slug: string, sessionId: string | null): string | null {
-  if (!sessionId) return null;
-  if (readAutomationSession(slug, sessionId) === null) return null;
-  if (findTranscriptBySessionId([sessionId]) === null) return null;
-  return sessionId;
-}
-
 function summarizeQuestion(q: AutomationQuestion | null): PendingQuestionSummary | null {
   if (!q) return null;
   return {
@@ -568,7 +543,11 @@ export async function handleAutomationsSession(
     // A missing transcript is a normal state, not an error: claude writes one
     // only once a session has produced a turn, and a run that never reached a
     // session has no id at all. The client renders the difference.
-    const digest = resolved.transcriptPath ? readSessionDigest(resolved.transcriptPath) : null;
+    // The cache is synced: its id opens a transcript only when this machine bound it to this slug.
+    const sessionId = offerableSession(manifest.slug, resolved.sessionId);
+    const transcriptPath = sessionId ? resolved.transcriptPath : null;
+    const digest = transcriptPath ? readSessionDigest(transcriptPath) : null;
+    const phone = isPhoneSocket(req);
     sendJson(res, 200, {
       session: {
         runNumber: resolved.runNumber,
@@ -579,9 +558,9 @@ export async function handleAutomationsSession(
         numTurns: resolved.event.numTurns,
         permissionDenials: resolved.event.permissionDenials,
         outputPath: resolved.event.outputPath,
-        sessionId: resolved.sessionId,
-        transcriptPath: resolved.transcriptPath,
-        items: digest?.items ?? [],
+        sessionId,
+        transcriptPath: phone ? null : transcriptPath,
+        items: phone ? phoneRunItems(digest?.items ?? []) : digest?.items ?? [],
         toolCounts: digest?.toolCounts ?? {},
         toolCalls: digest?.toolCalls ?? 0,
         toolErrors: digest?.toolErrors ?? 0,

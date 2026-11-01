@@ -136,6 +136,19 @@ export interface RemoteChild { sessionId: string; row?: string; startedAt: numbe
 
 export interface RemoteWaiting { id: string; kind: string; state: string; createdAt: number; sessionId: string; text: string }
 
+/** A team job with a card on the stage, as a remote screen may see it. */
+export interface RemoteTeamJob {
+  id: string;
+  member: string;
+  runId: string;
+  startedAt: number;
+  status: 'queued' | 'running' | 'asking' | 'done' | 'failed';
+  /** The member's last line for this job, cut to 160 characters. */
+  lastLine: string;
+  sessionId?: string;
+  resumable?: true;
+}
+
 export interface SuperRemoteView {
   vault: string;
   session: string | null;
@@ -148,6 +161,7 @@ export interface SuperRemoteView {
   waiting: RemoteWaiting[];
   ownerBatches: string[];
   names: Record<string, string>;
+  team?: RemoteTeamJob[];
   head: { item: string; kind: string; text: string } | null;
   rotating?: true;
 }
