@@ -43,6 +43,9 @@ function mirrorDrift(facts: readonly ModelFact[]): string[] {
   };
   eq('BASE_MODEL_OPTIONS', BASE_MODEL_OPTIONS.map((o) => o.id));
   eq('FALLBACK_MODEL_CONFIG', FALLBACK_MODEL_CONFIG.models.map((o) => o.id));
+  for (const m of FALLBACK_MODEL_CONFIG.models) {
+    if (facts.find((f) => f.alias === m.id)?.label !== m.label) out.push(`FALLBACK_MODEL_CONFIG label ${m.id}: ${m.label}`);
+  }
   eq('AutomationDialog MODELS', quotedList(read('dashboard/src/components/agents/AutomationDialog.tsx'), /const MODELS = /));
   eq('chatEntities MODEL_FAMILIES', quotedList(read('dashboard/src/components/sleepy/chat/chatEntities.ts'), /const MODEL_FAMILIES = /));
   eq('agentComposer MODEL_FAMILIES', quotedList(read('dashboard/src/lib/agentComposer.ts'), /const MODEL_FAMILIES = /));

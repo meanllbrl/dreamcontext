@@ -1,7 +1,7 @@
 {
   "features": [
     { "name": "Chat", "claude": "works", "codex": "works", "note": "Checked live on the owner's account in W1." },
-    { "name": "Model picker, Sign in, favourites", "claude": "works", "codex": "works" },
+    { "name": "Model picker, Sign in", "claude": "works", "codex": "works" },
     { "name": "Switching tool inside a chat", "claude": "works", "codex": "experimental", "note": "Opens a new chat beside the old one after one confirm. The text goes to the other vendor." },
     { "name": "Several accounts, limit switch", "claude": "works", "codex": "works", "note": "Automatic moves between tools stay off." },
     { "name": "Brain, recall, task log", "claude": "works", "codex": "experimental", "note": "Runs the same hooks. In a chat the write gate on marketing tokens and agent files works only after `dreamcontext install --tool codex` and trusting the folder and its hooks. The live check is the owner's." },

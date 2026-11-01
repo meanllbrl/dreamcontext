@@ -204,7 +204,6 @@ async function main() {
     ok('search crosses tools', found.includes('GPT-6 Luna') && !found.includes('Opus'), found);
     await shot(page, 'r29-search-1440-dark');
     await picker().getByLabel('Search models').fill('');
-    await picker().getByRole('button', { name: 'Add GPT-6 Luna to favourites' }).count();
 
     // Cancel keeps everything.
     await picker().getByLabel('Search models').fill('luna');

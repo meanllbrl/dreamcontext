@@ -31,7 +31,7 @@ import { PHONE_PHOTOS_PER_MESSAGE, jpegName, photoUploadSignal, preparePhonePhot
 import { PHONE_FILE_UPLOAD_TIMEOUT_MS, splitPhonePicks } from '../../../lib/phoneAttach';
 import { useAgentSessionStats, useClaudeAccounts, useCodexAccounts, useUsageLimits, usePhoneDictation } from '../../../hooks/useAgentCapabilities';
 import {
-  effortLabel, modelLabelFor, quotePath, isSignInCommand, isMcpCommand, contextLimitFor, usageLimits,
+  effortLabel, effortsForModel, modelLabelFor, quotePath, isSignInCommand, isMcpCommand, contextLimitFor, usageLimits,
   fmtTokens, CONTEXT_TIGHT_PCT, contextBands,
   slashQueryAt, filterSlashCommands, applySlashCommand, type ModelConfig,
   mentionQueryAt, filterPeerMentions, applyPeerMention, addressedPeer,
@@ -387,7 +387,7 @@ const ModelTrigger = memo(function ModelTrigger({ modelLabel, effortValue, disab
         aria-expanded={open}
       >
         <span className="chat-cmp-modeltrigger-model">{modelLabel}</span>
-        <span className="chat-cmp-modeltrigger-effort">{effortLabel(effortValue)}</span>
+        {effortValue && <span className="chat-cmp-modeltrigger-effort">{effortLabel(effortValue)}</span>}
         <Chevron />
       </button>
     </div>
@@ -2240,7 +2240,7 @@ export function Composer({
     const s = readAgentSettings();
     const codex = mode !== 'super' && s.chatDefaultTool === 'codex';
     const [m, e] = mode === 'super' ? [s.superModel, s.superEffort] : codex ? [s.codexDefaultModel, s.codexDefaultEffort] : [s.chatDefaultModel, s.chatDefaultEffort];
-    const value = [codex ? 'Codex' : '', m || t('shell.settings.models.inherit'), e].filter(Boolean).join(' · ');
+    const value = [codex ? 'Codex' : '', m ? (codex ? m : modelLabelFor(modelConfig, m)) : t('shell.settings.models.inherit'), e].filter(Boolean).join(' · ');
     return t('shell.composer.newChats').replace('{value}', value);
   };
   /** Who this box talks to: the agent, else the tool this chat runs on. */
@@ -2745,7 +2745,8 @@ export function Composer({
         {showModel && (
           <ModelTrigger
             modelLabel={modelLabel}
-            effortValue={effortValue}
+            // A model with no effort levels (Haiku 4.5) names none.
+            effortValue={effortsForModel(modelConfig, model).length ? effortValue : ''}
             disabled={!canCompose}
             open={menu.open === 'model'}
             onToggle={toggleModel}

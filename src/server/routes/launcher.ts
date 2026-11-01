@@ -958,7 +958,6 @@ interface AgentUiSettings {
   /** The Super Agent's tool (Track T W4). */
   superTool: '' | 'codex';
   /** The model picker's starred models, `<tool>:<model id>` (Track T W4), at most 24. */
-  modelFavourites: string[];
   /** Which engine runs a Claude chat: `dreamcontext` (today's, the default) or `t3`, T3's Claude
    *  driver through the bridge (plan r5 §5, experimental). */
   claudeEngine: 'dreamcontext' | 't3';
@@ -976,17 +975,6 @@ interface AgentUiSettings {
    *  changes every launch and a localStorage-only switch reset itself on every restart. */
   readAloud: boolean;
 }
-/** `<tool>:<model id>` keys, deduped, at most 24; anything else is dropped. */
-export function sanitizeFavourites(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
-  const out: string[] = [];
-  for (const x of v) {
-    if (typeof x === 'string' && /^(claude|codex):[A-Za-z0-9._\[\]-]{1,64}$/.test(x) && !out.includes(x)) out.push(x);
-    if (out.length >= 24) break;
-  }
-  return out;
-}
-
 const AGENT_UI_DEFAULTS: AgentUiSettings = {
   enabled: true,
   restoreTabs: true,
@@ -1004,7 +992,6 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   codexDefaultModel: '',
   codexDefaultEffort: '',
   superTool: '',
-  modelFavourites: [],
   claudeEngine: 'dreamcontext',
   lightMode: 'auto',
   parkIdleChats: true,
@@ -1064,7 +1051,6 @@ export function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettin
     codexDefaultModel: sanitizeModel(typeof raw.codexDefaultModel === 'string' ? raw.codexDefaultModel : null),
     codexDefaultEffort: sanitizeEffort(typeof raw.codexDefaultEffort === 'string' ? raw.codexDefaultEffort : null),
     superTool: raw.superTool === 'codex' ? 'codex' : '',
-    modelFavourites: sanitizeFavourites(raw.modelFavourites),
     // Only an explicit 't3' leaves today's engine.
     claudeEngine: raw.claudeEngine === 't3' ? 't3' : 'dreamcontext',
     // Only an explicit 'on' / 'off' pins Light mode; anything else is Auto.

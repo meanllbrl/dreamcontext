@@ -323,6 +323,9 @@ export interface ToolPick {
   current: '' | 'codex';
   tools: PickerToolState[];
   onPick: (tool: '' | 'codex', model: string) => void;
+  /** This chat cannot change tool (the Super Agent, an agent's chat): the other tools stay on
+   *  view, unpickable, with this line and a way to a new chat there. */
+  lock?: { note: string; openLabel: string };
 }
 
 export function ModelMenu({

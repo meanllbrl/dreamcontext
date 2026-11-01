@@ -2934,7 +2934,8 @@ export function ChatPane({
           onModelChange={onModelChange}
           onEffortChange={onEffortChange}
           activeAccountId={runningAccountId}
-          onAccountChange={onAccountChange}
+          // An agent's chat follows the default account: no row there could switch it.
+          onAccountChange={agentBound ? undefined : onAccountChange}
           contextHandoff={conv.contextHandoff}
           onContextHandoffChange={session.setContextHandoff}
           busy={session.busy}
@@ -2964,11 +2965,12 @@ export function ChatPane({
           onPermissionModeChange={bare || agentBound ? undefined : onPermissionModeChange}
           mode={mode}
           // The Super Agent's own chat has no mode menu and no agent picker: only the owner's
-          // Take it back leaves the mode (plan-r7 D4b), and it is always Claude in the cape.
+          // Take it back leaves the mode (plan-r7 D4b). It is always Claude in the cape: the
+          // model picker stays, with the other tools locked (ChatPaneHost's `toolPick`).
           onModeChange={bare || agentBound || mode === 'super' ? undefined : onModeChange}
           agent={session.agent}
           onAgentPick={bare || agentBound || mode === 'super' ? undefined : onAgentPick}
-          toolPick={bare || agentBound || mode === 'super' ? undefined : toolPick}
+          toolPick={bare ? undefined : toolPick}
           showModel={!bare}
           idlePlaceholder={idlePlaceholder}
           // One object, not two cards: whenever the shelf grows a bordered shell above the
