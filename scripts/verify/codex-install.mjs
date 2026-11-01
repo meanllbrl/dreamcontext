@@ -162,7 +162,7 @@ async function main() {
     // prints, and proves the route from the button to the page a person can open by hand.
     const managed = join(HOME, '.dreamcontext/tools/codex/bin/codex');
     const realLauncher = readFileSync(managed, 'utf-8');
-    writeFileSync(managed, `#!/bin/sh\nif [ "$1" = login ]; then echo "$1" >> '${OPENED}'; echo 'If your browser did not open, navigate to this URL to authenticate:'; echo 'https://auth.openai.com/oauth/authorize?state=verify'; echo 'http://localhost:1455/auth/callback?code=SECRET'; sleep 30; exit 0; fi\n${realLauncher.split('\n').slice(1).join('\n')}`);
+    writeFileSync(managed, `#!/bin/sh\nif [ "$2" = status ]; then echo 'Not logged in' >&2; exit 1; fi\nif [ "$1" = login ]; then echo "$1" >> '${OPENED}'; echo 'If your browser did not open, navigate to this URL to authenticate:'; echo 'https://auth.openai.com/oauth/authorize?state=verify'; echo 'http://localhost:1455/auth/callback?code=SECRET'; sleep 30; exit 0; fi\n${realLauncher.split('\n').slice(1).join('\n')}`);
     await menu.locator('[data-testid="codex-fix"]').click();
     const page2 = menu.locator('[data-testid="codex-signin-page"]');
     ok('Sign in starts codex login and offers the page by hand', await page2.waitFor({ timeout: 15_000 }).then(() => true, () => false), existsSync(OPENED) ? 'login ran, no link' : 'login never ran');
