@@ -267,7 +267,7 @@ describe('Resume on a dormant super child (AgentSurface.tsx, checked against the
   it('a dormant chat with a saved mode comes back as that chat, its agent bound, under its own bypass', () => {
     // The rule lives in resumePlan (chatLaunch.ts), shared with `super resume`'s report.
     const plan = require('node:fs').readFileSync(join(__dirname, '../../dashboard/src/components/sleepy/chatLaunch.ts'), 'utf-8') as string;
-    expect(plan).toContain("const asChat = meta.parked ? meta.parked.transport === 'chat' : meta.kind === 'chat' && !!meta.mode;");
+    expect(plan).toContain("const asChat = meta.parked ? meta.parked.transport === 'chat' : meta.kind === 'chat' && (!!meta.mode || !!meta.tool);");
     expect(src).toMatch(/if \(asChat\) bindChatAgent\(meta\.claudeId, meta\.agent \?\? ''\);/);
     // On the model, effort and account it ran on: parked first, else the roster's (resumePlan).
     expect(src).toContain('const plan = resumePlan(meta, claudeKind);');
