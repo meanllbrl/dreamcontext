@@ -2276,7 +2276,7 @@ export function registerAutomationsCommand(program: Command): void {
         }
       }
 
-      const result: KillRunResult = killRunGroup(root, slug, { force: opts.force, sidecar });
+      const result: KillRunResult = killRunGroup(root, slug, { force: opts.force, slot: sidecar.slot ?? '' });
       if (!result.found) {
         success(`"${slug}": the run finished or the record cleared on its own — nothing to kill.`);
         continue;

@@ -143,6 +143,7 @@ function LiveRow({
   waiting,
   elsewhere = false,
   onOpen,
+  runId,
 }: {
   activity: AgentActivity;
   waiting: number;
@@ -150,10 +151,14 @@ function LiveRow({
   elsewhere?: boolean;
   /** Open the thread the turn writes into. */
   onOpen?: () => void;
+  /** The run this line is about. */
+  runId: string | null;
 }) {
   const { t } = useI18n();
   const now = useNow(true);
-  const time = runDuration(now - activity.since) ?? '';
+  // This line's own run, never the oldest of the agent's: `since` is that one.
+  const start = activity.runs?.find((r) => r.runId === runId)?.since ?? activity.since;
+  const time = runDuration(now - start) ?? '';
   return (
     <div className="agent-thread-live" role="status" aria-live="polite">
       <span className="agent-msg-live-dot" aria-hidden="true" />
@@ -618,11 +623,12 @@ export function AgentThreadPanel({
         {answer && answerAt === entries.length && (
           <AnswerRow answer={answer} message={message} onOpenFile={onOpenFile} />
         )}
-        {liveHere && activity && <LiveRow activity={activity} waiting={queuedHere.size} />}
+        {liveHere && activity && <LiveRow activity={activity} waiting={queuedHere.size} runId={message.runId} />}
         {liveElsewhere && activity && (
           <LiveRow
             activity={activity}
             waiting={0}
+            runId={activity.runId}
             elsewhere={activity.runId !== null}
             onOpen={activity.runId && onOpenRun ? () => onOpenRun(activity.runId as string) : undefined}
           />

@@ -143,7 +143,8 @@ export function buildRoster(
     const paused = routines.length > 0 && routines.every((r) => !r.enabled);
     // A member whose routines are all off raises no alarm: nothing will run, so nothing waits
     // on the owner. Its pending approval/question stays visible on the AI Team page itself.
-    const status: TeamStatus = since !== null ? 'working'
+    // A question outranks the clock: a run stopped on the owner stays in view beside its siblings.
+    const status: TeamStatus = since !== null ? (needs ? 'needs' : 'working')
       : paused ? 'paused'
         : needs ? 'needs'
           : approval ? 'approval'

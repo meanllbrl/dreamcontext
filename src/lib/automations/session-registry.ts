@@ -280,18 +280,19 @@ function withBindings<T>(slug: string, home: string, fn: () => T): T {
  * The session that answers a follow-up in ONE thread run, or null when none does.
  *
  * Asked in order: a binding that names the run; the run's history row, believed only when THIS
- * machine bound that session (`readAutomationSession`); the newest binding when it comes from
- * before bindings named their runs. Never another named run's session: with parallel turns that
- * would put these words into a different conversation.
+ * machine bound that session and no other run owns it; and, for the member's NEWEST thread
+ * (`isNewest`), its latest binding when that comes from before bindings named their runs. Never
+ * another named run's session: that would put these words into a different conversation.
  */
-export function sessionForRun(contextRoot: string, slug: string, runId: string, home: string = homedir()): string | null {
+export function sessionForRun(contextRoot: string, slug: string, runId: string, home: string = homedir(), isNewest = false): string | null {
   if (!isSafeAutomationSlug(slug)) return null;
   const all = Object.values(readAll(slug, home, Date.now())).filter((b) => b.kind !== 'task');
   const named = all.filter((b) => b.runs?.includes(runId)).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).pop();
   if (named) return named.sessionId;
   let row: string | null = null;
   try { row = readAutomationCache(contextRoot, slug)?.history.find((e) => e.firedAt === runId)?.sessionId ?? null; } catch { row = null; }
-  if (row && all.some((b) => b.sessionId === row)) return row;
+  if (row && all.some((b) => b.sessionId === row && !b.runs)) return row;
+  if (!isNewest) return null;
   const latest = latestBoundSession(slug, home);
   return latest && !all.find((b) => b.sessionId === latest)?.runs ? latest : null;
 }
@@ -430,6 +431,12 @@ export function retireAutomationSession(
     delete all[sessionId];
     writeAll(slug, home, all, nowMs);
   });
+}
+
+/** Does this binding name a thread run? Follow-ups there still need it. */
+export function sessionNamesRun(slug: string, sessionId: string, home: string = homedir()): boolean {
+  if (!isSafeAutomationSlug(slug)) return false;
+  return !!readAll(slug, home, Date.now())[sessionId]?.runs?.length;
 }
 
 // ─── Foreign-run evidence (the approve-time duplicate warning) ───────────────

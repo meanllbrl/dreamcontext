@@ -21,10 +21,12 @@ const HOME = vi.hoisted(() => {
 
 const job = vi.hoisted(() => ({
   running: false,
+  live: 0,
   started: [] as Array<{ slug: string; ask: { text: string; target?: string; app?: { slug: string; ownerTyped?: boolean } } }>,
 }));
 vi.mock('../../src/server/automation-job.js', async (orig) => ({
   ...(await orig<typeof import('../../src/server/automation-job.js')>()),
+  liveTurnCount: () => job.live,
   currentAutomationJob: () => (job.running ? { status: 'running', runId: 'r' } : null),
   startAutomationJob: (_root: string, slug: string, ask: never) => {
     job.started.push({ slug, ask });
@@ -82,6 +84,14 @@ describe('sayFromApp', () => {
     expect(one.ok && two.ok).toBe(true);
     expect(job.started.map((j) => j.ask.text)).toEqual(['first', 'second']);
     expect(readThread(root, 'ua', {})).toHaveLength(2);
+  });
+
+  it('the machine-wide limit refuses before anything reaches a thread', () => {
+    member('ua');
+    job.live = 15;
+    expect(ask('ua')).toMatchObject({ ok: false, status: 429, code: 'say_at_limit' });
+    expect(readThread(root, 'ua', {})).toEqual([]);
+    job.live = 0;
   });
 
   it('refuses in order: missing, turned off, unapproved', () => {

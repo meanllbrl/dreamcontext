@@ -42,8 +42,8 @@ import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import { accountEnvFor } from '../claude-accounts.js';
 import { ensureSandbox } from '../claude-account-sandbox.js';
 import { automationAccountWithoutProbe, pickAutomationAccount, withoutOwnerOnly, type AutomationAccount } from './account.js';
-import { appendThreadEntry } from './threads.js';
-import { latestBoundSession, onlyTaskSessions, readAutomationSession, recordAutomationSession, retireAutomationSession, sessionForRun, taskBindingOf } from './session-registry.js';
+import { appendThreadEntry, listThreadRuns } from './threads.js';
+import { latestBoundSession, onlyTaskSessions, readAutomationSession, retireAutomationSession, sessionForRun, sessionNamesRun, taskBindingOf } from './session-registry.js';
 import { queueTaskAnswer, taskOfAnySession, taskSessionRefusal, waitingClaimFor } from '../agents/task-starter.js';
 import {
   backfillQuestionSession,
@@ -331,12 +331,32 @@ interface HeldTurn { lockPath: string; slot: string; sessionId: string }
  */
 function conversationBusy(contextRoot: string, m: AutomationManifest, nowMs: number, run?: string): boolean {
   if (run && listRunSlots(contextRoot, m.slug).some((s) => s.run === run)) return true;
-  const side = readRunSidecar(contextRoot, m.slug, '');
-  if (run && side && side.fireAt !== run) return false;
   const lock = lockPathFor(contextRoot, m.slug);
+  if (run) {
+    // The exclusive lock says which run holds it; only a lock from an older build leaves it to
+    // the sidecar. A dead holder holds nothing back from a conversation of its own.
+    const holder = exclusiveHolder(lock);
+    if (holder?.dead || (holder?.run && holder.run !== run)) return false;
+    const side = readRunSidecar(contextRoot, m.slug, '');
+    if (!holder?.run && side && side.fireAt !== run) return false;
+  }
   if (!acquireFileLock(lock, nowMs, m.timeoutMinutes * 60_000 + 300_000, { verifyPidLiveness: true })) return true;
   releaseFileLock(lock);
   return false;
+}
+
+/** Who holds the exclusive lock, as its file says. Null when free or unreadable. */
+function exclusiveHolder(lock: string): { run: string | null; dead: boolean } | null {
+  try {
+    const info = JSON.parse(readFileSync(lock, 'utf-8')) as { pid?: unknown; run?: unknown };
+    let dead = false;
+    if (typeof info.pid === 'number') {
+      try { process.kill(info.pid, 0); } catch (err) { dead = (err as NodeJS.ErrnoException)?.code === 'ESRCH'; }
+    }
+    return { run: typeof info.run === 'string' ? info.run : null, dead };
+  } catch {
+    return null;
+  }
 }
 
 /** Take one conversation's slot, once what it waits for ended and its session is known. Same
@@ -466,11 +486,9 @@ export interface VerdictOptions extends BoardTurnInput {
   /**
    * The thread run this message continues. It then reaches THAT run's session (`sessionForRun`),
    * waits only behind that run, and only that run's open question stands in its way. Absent: the
-   * member's latest session, the Telegram path and a scheduled member's talk.
+   * member's latest session, the Telegram path.
    */
   run?: string;
-  /** A talk's own thread run: the session it resumes answers follow-ups there too. */
-  aliasRun?: string;
   /** Called once, the moment this message stops WAITING and holds the run lock. A queued
    *  thread reply uses it to tell the reader "queued" from "being read". */
   onLockAcquired?: () => void;
@@ -662,6 +680,8 @@ function retireIfDone(contextRoot: string, q: AutomationQuestion, sessionId: str
   // this is the rule said out loud. Older sessions still retire, so the grant stays one
   // live conversation per agent, not one per run.
   if (latestBoundSession(q.slug, home) === sessionId) return;
+  // (d) its thread still takes follow-ups: each run keeps its conversation until the TTL.
+  if (sessionNamesRun(q.slug, sessionId, home)) return;
   retireAutomationSession(q.slug, sessionId, home);
 }
 
@@ -1160,7 +1180,9 @@ export async function resumeWithMessage(
     costUsd: null,
   };
   const waits = (opts.lockWaitMs ?? 0) > 0;
-  const boundSession = () => (opts.run ? sessionForRun(contextRoot, slug, opts.run, home) : latestBoundSession(slug, home));
+  const boundSession = () => (opts.run
+    ? sessionForRun(contextRoot, slug, opts.run, home, listThreadRuns(contextRoot, slug, 1)[0]?.runId === opts.run)
+    : latestBoundSession(slug, home));
   const sessionId = boundSession();
   // An agent that has only worked on tasks has no conversation of its own: its task sessions
   // resume through their tasks, never from a thread or Telegram message (C1-14).
@@ -1188,8 +1210,6 @@ export async function resumeWithMessage(
       };
     }
     const liveSessionId = held.sessionId;
-    // Follow-ups in the talk's own thread come back to the session it resumed.
-    if (opts.aliasRun) recordAutomationSession(slug, liveSessionId, home, nowFn().getTime(), undefined, opts.aliasRun);
     const taskOwner = taskOfAnySession(contextRoot, liveSessionId, opts.home);
     if (taskOwner) return { status: 'refused', error: taskSessionRefusal(contextRoot, taskOwner.taskId), result: null, costUsd: null };
     const envelope = resolveResumeScope(contextRoot, slug, opts);

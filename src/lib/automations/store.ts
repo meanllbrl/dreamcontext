@@ -1219,7 +1219,8 @@ function recordRunUnlocked(
   const cache: AutomationCache = {
     slug,
     lastRunAt: e.startedAt,
-    lastFireAt: advance ? e.firedAt : (existing?.lastFireAt ?? null),
+    // Never backwards: a parallel turn fired earlier can end after a later fire's record.
+    lastFireAt: advance && (!existing?.lastFireAt || e.firedAt >= existing.lastFireAt) ? e.firedAt : (existing?.lastFireAt ?? null),
     status: e.status,
     durationMs: e.durationMs,
     outputPath: e.outputPath,
@@ -1258,10 +1259,11 @@ export function writeRunSidecar(contextRoot: string, slug: string, s: RunSidecar
 export function readRunSidecar(contextRoot: string, slug: string, slot?: string): RunSidecar | null {
   // `slot` names one record exactly ('' the exclusive one); none reads what this member runs now.
   if (slot === undefined) return parseRunSidecar(sidecarPathFor(contextRoot, slug), slug) ?? listRunSidecars(contextRoot, slug)[0] ?? null;
-  return parseRunSidecar(sidecarPathFor(contextRoot, slug, slot), slug);
+  return parseRunSidecar(sidecarPathFor(contextRoot, slug, slot), slug, slot);
 }
 
-function parseRunSidecar(path: string, slug: string): RunSidecar | null {
+/** `slot` comes from the file's NAME, never its content: a kill's lock cross-check follows it. */
+function parseRunSidecar(path: string, slug: string, slot?: string): RunSidecar | null {
   if (!existsSync(path)) return null;
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf-8'));
@@ -1287,7 +1289,7 @@ function parseRunSidecar(path: string, slug: string): RunSidecar | null {
       ...(r.target === 'agent' ? { target: 'agent' as const } : {}),
       ...(r.light === true ? { light: true as const } : {}),
       ...(r.noSession === true ? { noSession: true as const } : {}),
-      ...(typeof r.slot === 'string' && /^[a-f0-9]{16}$/.test(r.slot) ? { slot: r.slot } : {}),
+      ...(slot ? { slot } : {}),
     };
   } catch {
     return null;
@@ -1327,7 +1329,7 @@ function slotFiles(contextRoot: string, slug: string): { locks: string[]; sideca
 /** Every in-flight child of this member, the exclusive one and each parallel turn's, newest first. */
 export function listRunSidecars(contextRoot: string, slug: string): RunSidecar[] {
   const all = ['', ...slotFiles(contextRoot, slug).sidecars]
-    .flatMap((slot) => parseRunSidecar(sidecarPathFor(contextRoot, slug, slot || undefined), slug) ?? []);
+    .flatMap((slot) => parseRunSidecar(sidecarPathFor(contextRoot, slug, slot || undefined), slug, slot || undefined) ?? []);
   return all.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
@@ -1351,7 +1353,7 @@ export function listRunSlots(contextRoot: string, slug: string): RunSlot[] {
       out.push({ slot, pid: info.pid, at: info.at, run: typeof info.run === 'string' ? info.run : null });
       continue;
     }
-    const side = parseRunSidecar(sidecarPathFor(contextRoot, slug, slot), slug);
+    const side = parseRunSidecar(sidecarPathFor(contextRoot, slug, slot), slug, slot);
     if (side && pidAlive(side.childPgid)) continue;
     try { unlinkSync(path); } catch { /* raced */ }
   }
@@ -1359,7 +1361,7 @@ export function listRunSlots(contextRoot: string, slug: string): RunSlot[] {
   const held = new Set(locks);
   for (const slot of sidecars) {
     if (held.has(slot)) continue;
-    const side = parseRunSidecar(sidecarPathFor(contextRoot, slug, slot), slug);
+    const side = parseRunSidecar(sidecarPathFor(contextRoot, slug, slot), slug, slot);
     if (!side || (!pidAlive(side.runnerPid) && !pidAlive(side.childPgid))) clearRunSidecar(contextRoot, slug, slot);
   }
   return out.sort((a, b) => a.at - b.at);

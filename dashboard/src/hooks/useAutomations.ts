@@ -1007,7 +1007,7 @@ export interface AgentFeed {
 /** What one agent is doing right now. Mirrors `AgentActivity` in
  *  `src/server/automation-job.ts`. */
 export interface AgentActivity {
-  /** When the turn holding the agent's run lock began, epoch ms. */
+  /** When the oldest turn in flight began, epoch ms. */
   since: number;
   /** The run whose thread that turn writes into, when the server knows it. */
   runId: string | null;

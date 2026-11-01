@@ -16,7 +16,7 @@ import type { TaskRef } from '../lib/automations/runner.js';
 import type { AppRunBrief } from '../lib/apps/brief.js';
 import { getAgent } from '../lib/agents/store.js';
 import { logAssignmentResult } from '../lib/agents/task-assignment.js';
-import { pendingQuestion, pendingQuestionOfRun } from '../lib/automations/hitl.js';
+import { pendingQuestionOfRun } from '../lib/automations/hitl.js';
 import { trackChild } from './lifecycle.js';
 
 /**
@@ -144,6 +144,15 @@ export function freshFireAt(contextRoot: string, slug: string, now: Date = new D
   let at = now.getTime();
   while (taken.has(new Date(at).toISOString())) at += 1;
   return new Date(at);
+}
+
+/** Turns this server has in flight, every project and member: what the general limit counts. */
+export function liveTurnCount(): number {
+  pruneSettledJobs();
+  let n = 0;
+  for (const bySlug of jobs.values()) for (const j of bySlug.values()) if (j.status === 'running') n += 1;
+  for (const j of replyJobs.values()) if (j.status === 'running') n += 1;
+  return n;
 }
 
 /** Every run in flight in this project, oldest first. */
@@ -630,9 +639,6 @@ export function startAutomationReplyJob(
   slug: string,
   opts: {
     runId: string; text: string; entryId: string; home?: string; lockPollMs?: number;
-    /** A scheduled agent's talk: this fresh thread resumes its latest session, and answers the
-     *  question open there. Absent: `runId` names the conversation. */
-    talk?: boolean;
     /** The owner's temporary model for this reply (AI Team), already validated. */
     override?: SpawnModelOverride | null;
   } & BoardTurnInput,
@@ -679,7 +685,7 @@ async function replyOrAnswer(
   // Never a light job: read-only, it would spend the answer on a turn that cannot act on it.
   // It goes to `resumeWithMessage`, whose refusal reaches the Super as this job's failure.
   const openQuestion = () => {
-    const q = verdictOpts.run ? pendingQuestionOfRun(contextRoot, slug, verdictOpts.run) : pendingQuestion(contextRoot, slug);
+    const q = pendingQuestionOfRun(contextRoot, slug, verdictOpts.run as string);
     return q && q.kind === 'flow-hitl' && !verdictOpts.override?.light ? q : null;
   };
   const answer = async (q: NonNullable<ReturnType<typeof openQuestion>>): Promise<TalkOutcome> => {
@@ -699,7 +705,7 @@ async function replyOrAnswer(
 async function runReplyJob(
   contextRoot: string,
   job: ReplyJobState,
-  opts: { text: string; home?: string; lockPollMs?: number; talk?: boolean; override?: SpawnModelOverride | null } & BoardTurnInput,
+  opts: { text: string; home?: string; lockPollMs?: number; override?: SpawnModelOverride | null } & BoardTurnInput,
 ): Promise<void> {
   let outcome: TalkOutcome | null = null;
   try {
@@ -712,7 +718,7 @@ async function runReplyJob(
       // these two keys, so nothing else can ride along into a bypassPermissions child.
       env: { DREAMCONTEXT_AUTOMATION_SLUG: job.slug, DREAMCONTEXT_AUTOMATION_RUN: job.runId },
       // Which conversation these words continue.
-      ...(opts.talk ? { aliasRun: job.runId } : { run: job.runId }),
+      run: job.runId,
       // QUEUED, never refused, behind the turn of this conversation: the run itself, or
       // the resume an answer started a moment ago. Bounded by the run's own envelope plus a
       // minute, which is the longest the turn ahead of it can legitimately take.

@@ -368,7 +368,7 @@ function Row({
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1" aria-hidden="true"><circle cx="6" cy="6" r="4.8" /><path d="M1.2 6h9.6M6 1.2c1.6 1.4 1.6 8.2 0 9.6M6 1.2c-1.6 1.4-1.6 8.2 0 9.6" /></svg>
           </span>
         )}
-        {dot === 'working' && row.workingCount > 1 && (
+        {row.workingCount > 1 && (
           <span className="aiteam-row-count" data-working-count={row.workingCount} title={workingLine(row, '', t).replace(/ · $/, '')}>{row.workingCount}</span>
         )}
         {dot && <span className={`aiteam-row-dot aiteam-row-dot--${dot}`} aria-label={t(dot === 'working' ? 'aiteam.time.now' : `aiteam.tag.${dot}`)} />}

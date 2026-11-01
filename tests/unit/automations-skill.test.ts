@@ -687,9 +687,9 @@ describe('skill/references/automations.md — the channel: posting, attachments,
     expect(content).toMatch(/writes \*\*nothing\*\*/i);
   });
 
-  it('distinguishes a call agent running once from a sched agent resuming its session', () => {
+  it('says a new message runs once and a thread follow-up resumes its own session', () => {
     expect(content).toMatch(/\*\*`call`\*\* agent.*\*\*runs once\*\*/is);
-    expect(content).toMatch(/\*\*`sched`\*\* agent with a bound session \*\*resumes that session\*\*/i);
+    expect(content).toMatch(/\*\*follow-up typed in a thread resumes that run's session\*\*/i);
   });
 
   it('states the open-question mention is refused ASYNCHRONOUSLY, not as a 409', () => {

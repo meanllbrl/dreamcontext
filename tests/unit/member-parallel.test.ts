@@ -10,11 +10,11 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { outputPathFor, runAutomation, type SpawnImpl } from '../../src/lib/automations/runner.js';
+import { killRunGroup, outputPathFor, runAutomation, type SpawnImpl } from '../../src/lib/automations/runner.js';
 import { proposeFromRun, resumeWithMessage } from '../../src/lib/automations/verdict.js';
 import {
   automationCachePath, createAutomation, getAutomation, listRunSidecars, listRunSlots, lockPathFor,
-  readAutomationCache, recordRun, recordLesson, readPattern, readRunSidecar, runSlotKey, slotLockPath, writeRunSidecar,
+  readAutomationCache, recordRun, recordLesson, readPattern, readRunSidecar, runSlotKey, sidecarPathFor, slotLockPath, writeRunSidecar,
 } from '../../src/lib/automations/store.js';
 import { approveAutomation } from '../../src/lib/automations/registry.js';
 import { createQuestion, listQuestions, pendingQuestionOfRun } from '../../src/lib/automations/hitl.js';
@@ -200,7 +200,20 @@ describe('a follow-up stays in its own conversation', () => {
 
   it('never borrows another named run\'s session', () => {
     recordAutomationSession(SLUG, 'sess-a', home, Date.now() - 2_000, undefined, iso(0));
-    expect(sessionForRun(contextRoot, SLUG, iso(5), home)).toBeNull();
+    expect(sessionForRun(contextRoot, SLUG, iso(5), home, true)).toBeNull();
+  });
+
+  it('an exclusive lock held for another run, or by a dead process, holds no follow-up back', async () => {
+    recordAutomationSession(SLUG, 'sess-a', home, Date.now(), undefined, iso(0));
+    mkdirSync(dirname(lockPathFor(contextRoot, SLUG)), { recursive: true });
+    for (const lock of [{ pid: process.pid, at: Date.now(), run: iso(7) }, { pid: 2 ** 22 + 99, at: Date.now() }]) {
+      writeFileSync(lockPathFor(contextRoot, SLUG), JSON.stringify(lock));
+      const { impl, children } = liveSpawn();
+      const turn = reply(impl, iso(0), 'go on');
+      await until(() => children.length === 1);
+      children[0].finish('sess-a', 'went on');
+      expect((await turn).status).toBe('ok');
+    }
   });
 
   it('a sibling\'s open question does not refuse this conversation', async () => {
@@ -217,7 +230,9 @@ describe('a follow-up stays in its own conversation', () => {
 describe('old records', () => {
   it('a binding and a history row from before parallel runs still resume', () => {
     recordAutomationSession(SLUG, 'sess-legacy', home, Date.now() - 2_000);
-    expect(sessionForRun(contextRoot, SLUG, iso(0), home)).toBe('sess-legacy');
+    // The latest binding only for the newest thread: an older one has no way to name it.
+    expect(sessionForRun(contextRoot, SLUG, iso(0), home, true)).toBe('sess-legacy');
+    expect(sessionForRun(contextRoot, SLUG, iso(0), home)).toBeNull();
     recordAutomationSession(SLUG, 'sess-history', home, Date.now() - 1_000, undefined, iso(3));
     recordRun(contextRoot, SLUG, {
       firedAt: iso(1), startedAt: iso(1), finishedAt: iso(1), status: 'ok', durationMs: 1, outputPath: null, error: null,
@@ -245,6 +260,27 @@ describe('old records', () => {
 });
 
 describe('shared files and dead keys', () => {
+  it('an older fire ending last never moves the watermark back', () => {
+    const row = (n: number) => ({
+      firedAt: iso(n), startedAt: iso(n), finishedAt: iso(n), status: 'ok' as const, durationMs: 1, outputPath: null, error: null,
+      exitCode: 0, sessionId: null, costUsd: null, numTurns: null, permissionDenials: 0,
+    });
+    recordRun(contextRoot, SLUG, row(5));
+    expect(recordRun(contextRoot, SLUG, row(1)).lastFireAt).toBe(iso(5));
+  });
+
+  it('a slot in a sidecar\'s JSON is not believed: the file\'s name is', () => {
+    const slot = runSlotKey('run:y');
+    writeRunSidecar(contextRoot, SLUG, { slug: SLUG, runnerPid: process.pid, childPid: 7, childPgid: 7, fireAt: iso(0), startedAt: iso(0), timeoutAt: iso(9), slot });
+    expect(readRunSidecar(contextRoot, SLUG, slot)?.slot).toBe(slot);
+    writeFileSync(sidecarPathFor(contextRoot, SLUG), JSON.stringify({ slug: SLUG, runnerPid: process.pid, childPid: 8, childPgid: 8, fireAt: iso(1), startedAt: iso(1), timeoutAt: iso(9), slot }));
+    expect(readRunSidecar(contextRoot, SLUG, '')?.slot).toBeUndefined();
+  });
+
+  it('kill reads the turn fresh: one that ended while the operator was asked is not found', () => {
+    expect(killRunGroup(contextRoot, SLUG, { slot: runSlotKey('run:gone') }).found).toBe(false);
+  });
+
   it('a slot whose holder died is removed on the next read', () => {
     const slot = runSlotKey('run:x');
     const path = slotLockPath(contextRoot, SLUG, slot);

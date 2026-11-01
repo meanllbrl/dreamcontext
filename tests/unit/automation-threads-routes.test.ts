@@ -523,17 +523,21 @@ describe('POST /api/automations/threads/say — one route, two things an @mentio
     return r;
   }
 
-  it('a SCHED agent with a bound session is TALKED TO — a reply job, not a run', async () => {
+  it('a SCHED agent with a bound session takes a new message as a new run in its own session', async () => {
     makeRepliable();   // mode defaults to 'sched' for a scheduled automation
+    const runner = await import('../../src/lib/automations/runner.js');
+    const spy = vi.spyOn(runner, 'runAutomation').mockImplementation(() => new Promise(() => {}));
     const { status, body } = await say({ slug: 'digest', text: 'how did it go?' });
     expect(status()).toBe(200);
     const payload = body() as unknown as { job: { kind: string }; mode: string; runId: string };
-    expect(payload.job.kind).toBe('reply');
+    expect(payload.job.kind).toBe('run');
     expect(payload.mode).toBe('sched');
     // THE INVARIANT the feed's ask/answer grouping rests on: the human's words open the run.
     const ordered = readThread(contextRoot, 'digest', { runId: payload.runId });
     expect(ordered[0].kind).toBe('user');
     expect(ordered[0].text).toBe('how did it go?');
+    expect(resumeWithMessage).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it('a sched agent with NOTHING bound here falls through to a run — there is no conversation to continue', async () => {
@@ -581,29 +585,15 @@ describe('POST /api/automations/threads/say — one route, two things an @mentio
     spy.mockRestore();
   });
 
-  it('A8 — an @mention to an agent with an open question is refused ASYNCHRONOUSLY, not as a 409', async () => {
+  it('A8 — an @mention beside an open question is a new run: that question stays its own run\'s', async () => {
     makeRepliable();
-    resumeWithMessage.mockResolvedValue({
-      status: 'refused',
-      error: 'this automation is waiting for your answer to its own question — answer that first',
-      result: null,
-    });
+    const runner = await import('../../src/lib/automations/runner.js');
+    const spy = vi.spyOn(runner, 'runAutomation').mockImplementation(() => new Promise(() => {}));
     const { status, body } = await say({ slug: 'digest', text: 'anything?' });
-    // The REQUEST succeeds — the say branch has no pendingQuestion pre-check on purpose.
     expect(status()).toBe(200);
-    const runId = (body() as unknown as { runId: string }).runId;
-
-    // …and the refusal arrives in the thread as the job's own terminal entry.
-    for (let i = 0; i < 50; i++) {
-      const sys = readThread(contextRoot, 'digest', { runId }).filter((e) => e.kind === 'system');
-      if (sys.length > 0) {
-        expect(sys[0].event).toBe('failed');
-        expect(sys[0].text).toContain('answer that first');
-        return;
-      }
-      await new Promise((r) => setTimeout(r, 5));
-    }
-    throw new Error('the refusal never reached the thread');
+    expect((body() as unknown as { job: { kind: string } }).job.kind).toBe('run');
+    expect(resumeWithMessage).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
 
@@ -662,25 +652,13 @@ describe('board on say and reply — display text in the thread, raw text and bo
     spy.mockRestore();
   });
 
-  it('say (talk path): the resume gets the raw text and the board', async () => {
-    makeRepliable();
-    const { board, token } = seedNoteBoard();
-    const { status, body } = await say({ slug: 'digest', text: `and ${token}`, board });
-    expect(status()).toBe(200);
-    const runId = (body() as unknown as { runId: string }).runId;
-    expect(readThread(contextRoot, 'digest', { runId })[0].text).toBe('and [Launch plan]');
-    await vi.waitFor(() => expect(resumeWithMessage).toHaveBeenCalled());
-    const [, , text, opts] = resumeWithMessage.mock.calls[0] as unknown as [string, string, string, Record<string, unknown>];
-    expect(text).toBe(`and ${token}`);
-    expect(opts.board).toBe(board);
-  });
-
   it('say with no board passes none on (an attached agent\'s scheduled shape)', async () => {
     makeRepliable();
+    const runner = await import('../../src/lib/automations/runner.js');
+    const spy = vi.spyOn(runner, 'runAutomation').mockImplementation(() => new Promise(() => {}));
     await say({ slug: 'digest', text: 'plain' });
-    await vi.waitFor(() => expect(resumeWithMessage).toHaveBeenCalled());
-    const opts = (resumeWithMessage.mock.calls[0] as unknown as unknown[])[3] as Record<string, unknown>;
-    expect(opts).not.toHaveProperty('board');
+    expect(spy.mock.calls[0][2]).not.toHaveProperty('board');
+    spy.mockRestore();
   });
 
   it('reply: 202 with the display text stored, raw text and board to the resume', async () => {

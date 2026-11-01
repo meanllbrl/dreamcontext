@@ -30,7 +30,7 @@
  * cannot see each other's message streams even if they wanted to — but
  * every LOOKUP this file performs must also stay scoped to the slugs a bot
  * was actually given, never a project-wide scan (S5). A per-slug bot resolves
- * a question ONLY through `pendingQuestion(contextRoot, slug)` for slugs it
+ * a question ONLY through `listQuestions(contextRoot, slug)` for slugs it
  * was explicitly handed; `allPendingQuestions` (project-wide) is reachable
  * ONLY from the two legacy, whole-project entry points this file keeps for
  * backward compatibility (`emitPendingCards`, `describeTelegram`) — never
@@ -46,7 +46,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { isSafeAutomationSlug, listAutomations, readAutomationCache } from './store.js';
 import { resumeWithAnswer, resumeWithMessage } from './verdict.js';
-import { allPendingQuestions, pendingQuestion, setChannelRef } from './hitl.js';
+import { allPendingQuestions, listQuestions, setChannelRef } from './hitl.js';
 import { AutomationError, type AutomationQuestion } from './types.js';
 
 // ─── Machine-local config ───────────────────────────────────────────────────
@@ -419,7 +419,7 @@ function chatIdOf(u: TelegramUpdate): string | null {
 
 /**
  * S5 — resolves a question id ONLY through the scoped slugs a bot was handed,
- * via `pendingQuestion`, never `allPendingQuestions` (project-wide). A
+ * via `listQuestions`, never `allPendingQuestions` (project-wide). A
  * callback naming a question that belongs to a DIFFERENT slug — or to no
  * slug this bot was ever given — resolves to `null` here, indistinguishable
  * from "no longer open". A leaked per-automation token therefore cannot even
@@ -427,22 +427,18 @@ function chatIdOf(u: TelegramUpdate): string | null {
  */
 function findQuestionForSlugs(contextRoot: string, slugs: string[], id: string): AutomationQuestion | null {
   for (const slug of slugs) {
-    const q = pendingQuestion(contextRoot, slug);
-    if (q && q.id === id) return q;
+    const q = listQuestions(contextRoot, slug).find((x) => x.state === 'pending' && x.id === id);
+    if (q) return q;
   }
   return null;
 }
 
 /** Every currently-pending question across a bot's scoped slugs, oldest slug
- *  first. At most one entry per slug — `pendingQuestion` is itself "the
- *  oldest pending", and a slug that owes a human an answer never has a
- *  second question open at the same time. */
+ *  first. One member's parallel runs can each have one open, so a bare reply
+ *  with two open is refused as a guess rather than given to the older. */
 function scopedPendingQuestions(contextRoot: string, slugs: string[]): AutomationQuestion[] {
   const out: AutomationQuestion[] = [];
-  for (const slug of slugs) {
-    const q = pendingQuestion(contextRoot, slug);
-    if (q) out.push(q);
-  }
+  for (const slug of slugs) out.push(...listQuestions(contextRoot, slug).filter((q) => q.state === 'pending'));
   return out;
 }
 

@@ -37,7 +37,6 @@ import { ownerLabel } from '../agents/owner.js';
 import { effectivePattern } from '../agents/agent-sync.js';
 import { placement } from '../agents/active.js';
 import { backfillQuestionSession, createQuestion, pendingQuestionFor, pendingQuestionOfRun } from './hitl.js';
-import type { RunSidecar } from './types.js';
 import { foreignRunEvidence, recordAutomationSession } from './session-registry.js';
 import { enqueueFire } from './queue.js';
 import { executeFlow, renderFlowBlock, type FlowExecResult } from './flow-runner.js';
@@ -3106,15 +3105,16 @@ export function killRunGroup(
     killImpl?: KillImpl; nowMs?: number; force?: boolean; log?: (l: string) => void;
     /** Test seam for the win32 pid-reuse guard ({@link recordedChildIsOurs}). */
     isOurs?: (childPid: number, runnerPid: number) => boolean;
-    /** Which of this member's in-flight children. Absent: what `readRunSidecar` reads first. */
-    sidecar?: RunSidecar;
+    /** Which in-flight child (`slot`, '' the exclusive one). Read fresh here: it may have ended
+     *  while the operator was asked. Absent: what `readRunSidecar` reads first. */
+    slot?: string;
   },
 ): KillRunResult {
   const killFn: KillImpl = opts?.killImpl ?? ((pid, signal) => { killPortable(pid, signal); });
   const nowMs = opts?.nowMs ?? Date.now();
   const logFn = opts?.log ?? (() => {});
 
-  const sidecar = opts?.sidecar ?? readRunSidecar(contextRoot, slug);
+  const sidecar = readRunSidecar(contextRoot, slug, opts?.slot);
   if (!sidecar) {
     return { found: false, killed: false, childPgid: null, ageMs: null, runnerAlive: false, groupAlive: false, refusedReason: null };
   }

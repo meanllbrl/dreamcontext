@@ -76,6 +76,7 @@ import {
   announceTurn, appendThreadEntry, listThreadRuns, markThreadRead, newThreadEntryId, readThread, threadUnread,
 } from '../../lib/automations/threads.js';
 import { latestBoundSession, readAutomationSession, sessionForRun } from '../../lib/automations/session-registry.js';
+import { MAX_LIVE_CHILDREN } from '../../lib/super/types.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../lib/automations/telegram.js';
 import { resolveWhiteboardPath } from '../../lib/whiteboards/store.js';
@@ -87,6 +88,7 @@ import {
   agentActivity,
   agentActivities,
   freshFireAt,
+  liveTurnCount,
   runIsActive,
 } from '../automation-job.js';
 
@@ -2194,6 +2196,8 @@ export function sayFromApp(
     // ── synchronous from here to the job start, as in `sayToAgent` ──
     // Always a fresh run in its own session, beside whatever the agent is doing: a bound session
     // is the owner's conversation, not the app's. Its `runId` is this request's alone.
+    const full = atLiveLimit();
+    if (full) return full;
     const fireAt = freshFireAt(contextRoot, slug);
     const runId = fireAt.toISOString();
     const ask = appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text: displayText(contextRoot, text), via: 'app', app: input.app.slug, now: fireAt });
@@ -2219,10 +2223,18 @@ function isUnsplitScheduled(contextRoot: string, slug: string): boolean {
 
 export type SayResult =
   | { ok: true; status: 200; body: Record<string, unknown> }
-  | { ok: false; status: 400 | 403 | 404 | 409; code: string; message: string };
+  | { ok: false; status: 400 | 403 | 404 | 409 | 429; code: string; message: string };
 
-const sayRefusal = (status: 400 | 403 | 404 | 409, code: string, message: string): SayResult =>
+const sayRefusal = (status: 400 | 403 | 404 | 409 | 429, code: string, message: string): SayResult =>
   ({ ok: false, status, code, message });
+
+/** The one bound on parallel work, machine-wide and never per member: refused before anything
+ *  reaches a thread. Null while there is room. */
+function atLiveLimit(): SayResult | null {
+  return liveTurnCount() >= MAX_LIVE_CHILDREN
+    ? sayRefusal(429, 'say_at_limit', `${MAX_LIVE_CHILDREN} jobs are running on this Mac. Try again when one finishes.`)
+    : null;
+}
 
 /**
  * Call ONE agent by name: the body of `POST /threads/say`, shared with the Assistant's
@@ -2283,41 +2295,13 @@ export function sayToAgent(
     const overrideOpt = input.override ? { override: input.override } : {};
     // ── synchronous from here to the job start ──
     // Every new message is its own job: its own run id, its own session, started now, however
-    // much this member is already doing. A follow-up in an existing conversation is a reply
-    // (`POST /:slug/thread/reply`), and only that queues, behind its own conversation.
+    // much this member is already doing, a scheduled member too (it reads its recent thread). A
+    // follow-up in an existing conversation is a reply (`POST /:slug/thread/reply`), and only
+    // that queues, behind its own conversation.
+    const full = atLiveLimit();
+    if (full) return full;
     const fireAt = freshFireAt(contextRoot, slug);
     const runId = fireAt.toISOString();
-
-    // A SCHEDULED agent that has already run on this machine is TALKED TO, not re-run:
-    // @mentioning it resumes the session its last run left behind, which is the whole
-    // promise of the channel. A `call` agent — and a `sched` one with nothing bound here
-    // yet — falls through to the run path below, because there is no conversation to
-    // continue.
-    //
-    // Only while nothing else runs: that session is taken, or about to be replaced, otherwise,
-    // and a new question must not wait for it.
-    //
-    // The ask is still written FIRST and is still `ordered[0]`, so the feed's own
-    // ask/answer grouping is untouched; only what the ask STARTS changes. The reply gets
-    // this FRESH runId rather than the run it resumes, so the exchange is its own message
-    // with the human's words at its head.
-    //
-    // No `pendingQuestion` pre-check here, deliberately: `resumeWithMessage` owns that
-    // guard, and its refusal reaches the channel within seconds as a `system:failed`
-    // entry carrying its own sentence. A second copy of the check here would drift from
-    // the one that actually decides.
-    if (manifest.mode === 'sched' && latestBoundSession(slug) && !wouldStickToSession(manifest, input.override) && !agentActivity(contextRoot, slug)) {
-      const entry = appendThreadEntry(contextRoot, slug, {
-        runId, kind: 'user', text: shown, via, now: fireAt,
-      });
-      const replyJob = startAutomationReplyJob(contextRoot, slug, {
-        runId, text, entryId: entry.id, talk: true, ...boardOpt, ...overrideOpt,
-      });
-      return {
-        ok: true, status: 200,
-        body: { job: { id: replyJob.id, status: replyJob.status, kind: 'reply' }, started: true, runId, entryId: entry.id, slug, mode: 'sched' },
-      };
-    }
 
     const ask = appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text: shown, via, now: fireAt });
     const { job, started } = startAutomationJob(contextRoot, slug, { text, fireAt, ...boardOpt, ...overrideOpt });
@@ -2474,7 +2458,7 @@ export async function handleAutomationsThreadReply(
     // thread while reaching another. An older run that names no session, and is not in flight,
     // has nothing to continue.
     const newest = listThreadRuns(contextRoot, slug, 1)[0]?.runId ?? null;
-    if (newest !== runId && !sessionForRun(contextRoot, slug, runId) && !runIsActive(agentActivity(contextRoot, slug), runId)) {
+    if (newest !== runId && !sessionForRun(contextRoot, slug, runId, undefined, false) && !runIsActive(agentActivity(contextRoot, slug), runId)) {
       sendError(res, 409, 'stale_run', 'This conversation moved on. Reply on the newest run.');
       return;
     }
