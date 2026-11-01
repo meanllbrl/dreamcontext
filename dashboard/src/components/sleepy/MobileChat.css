@@ -274,13 +274,15 @@
 }
 
 /* ── Height economy (hands-free W3): the transcript gets the screen ─────────────────────
-   At rest the composer is ONE row: the input beside Attach and Send, the mode and model
-   controls folded away; it opens to the full composer while the input has focus or holds a
-   draft (a draft keeps it open, so a tap on Send never lands on a button that just moved).
+   At the bottom of the chat the composer is whole. Scrolled up (`data-folded`, set from the
+   scroll position by `nextComposerFolded`) an empty one is ONE row: the input beside Attach and
+   Send, the mode and model controls folded away. Focus and the keyboard play no part: when they
+   did, tapping the model closed the keyboard, which folded the model away under the finger. A
+   tap on the field goes to the bottom, which opens it. A draft and an open menu keep it open.
    The drag handle is a mouse affordance; a phone resizes by typing. */
 .agent-surface[data-mobile] .chat-cmp { padding-top: var(--space-2); }
 .agent-surface[data-mobile] .chat-cmp-handle { display: none; }
-.agent-surface[data-mobile] .chat-cmp:not(:has(.chat-cmp-input:focus)):has(.chat-cmp-input:placeholder-shown) {
+.agent-surface[data-mobile] .chat-cmp[data-folded]:has(.chat-cmp-input:placeholder-shown) {
   & .chat-cmp-card { flex-direction: row; align-items: center; }
   & .chat-cmp-body { flex: 1 1 auto; height: var(--space-11); padding: 0 var(--space-1) 0 var(--space-3); justify-content: center; }
   & .chat-cmp-input { height: var(--space-11); padding-top: 11px; padding-bottom: 11px; line-height: 22px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
