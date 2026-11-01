@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { GoalLivePanel } from './GoalLivePanel';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
-import { useRemoteDesktop } from '../../hooks/useIsMobile';
+import { useIsMobile, useRemoteDesktop } from '../../hooks/useIsMobile';
 import { CouncilLivePanel } from './CouncilLivePanel';
 import { agentFileUrl } from '../../api/client';
 import { useApi, useVaultId } from '../../context/VaultContext';
@@ -16,7 +16,7 @@ import { isJudgeRole } from '../../lib/agentRoles';
 import type { QuestLineage, QuestView } from '../../lib/quest';
 import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
-  nextStickToBottom, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent, isStreamGrowth,
+  nextStickToBottom, nextComposerFolded, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent, isStreamGrowth,
   nextFirstShown, splitWindow, anchorHoldCorrection, WINDOW_REVEAL_PX, shouldAutoReveal, revealPath,
   remainingSettleMs, SCROLL_SETTLE_MS, segmentToolRuns, toolRunKeyItem, MIN_TOOL_RUN,
   countCards, headForCards, noticeCut, WINDOW_TAIL_CARDS, WINDOW_STEP_CARDS, WINDOW_MAX_ENTRIES,
@@ -745,6 +745,7 @@ export function ChatPane({
 }) {
   // A computer or landscape tablet on Mac mode's tunnel (hands-free sekmeler W2).
   const remoteDesktop = useRemoteDesktop();
+  const isPhone = useIsMobile();
   const [, force] = useReducer((n: number) => n + 1, 0);
   // A hidden pane (garaged, its overlay folded, a handed-over Super Agent's child) follows its
   // session at most once a second and catches up the moment it is shown (hiddenRenderGate.ts).
@@ -866,6 +867,8 @@ export function ChatPane({
   const restoreTopRef = useRef(0);
   /** Render mirror of `stickRef`, for the "jump to latest" affordance only. */
   const [pinned, setPinned] = useState(true);
+  /** The reader has scrolled up: the phone's composer folds (`nextComposerFolded`). */
+  const [composerFolded, setComposerFolded] = useState(false);
 
   /** In-flight re-assert frame, so a burst of pins during a stream schedules ONE. */
   const repinFrameRef = useRef(0);
@@ -917,6 +920,8 @@ export function ChatPane({
   const setStick = useCallback((next: boolean) => {
     stickRef.current = next;
     setPinned((prev) => (prev === next ? prev : next));
+    // Not every return to the bottom scrolls (a send at the bottom, a jump already there).
+    if (next) setComposerFolded(false);
   }, []);
 
   // A scroll event carries no hint of what caused it, and the transcript is a surface whose
@@ -2623,6 +2628,7 @@ export function ChatPane({
               userDriven: userDriving(),
             };
             if (!jumpHeldRef.current) setStick(nextStickToBottom(stickRef.current, metrics));
+            setComposerFolded((prev) => nextComposerFolded(prev, stickRef.current, metrics));
             restoreTopRef.current = nextRestoreTop(restoreTopRef.current, metrics);
             prevTopRef.current = el.scrollTop;
             syncRail();
@@ -2928,6 +2934,8 @@ export function ChatPane({
         {session.takenOver && <TakenOverBanner onPhone writeTakes onTakeBack={() => void session.takeBack()} />}
         <Composer
           session={session}
+          folded={isPhone && composerFolded}
+          onFieldTap={isPhone ? goToLatest : undefined}
           model={model}
           effort={effort}
           modelConfig={modelConfig}

@@ -465,9 +465,14 @@ export function Composer({
   showModel = true,
   modelMenu,
   activeAccountId = '', onAccountChange, superView = false, onRefJump,
-  contextHandoff, onContextHandoffChange,
+  contextHandoff, onContextHandoffChange, folded = false, onFieldTap,
 }: {
   session: ComposerHost;
+  /** Phone: the reader has scrolled up, so an empty composer folds to one row. */
+  folded?: boolean;
+  /** Phone: a tap on the text field, which takes the transcript to its end. A tap and not focus:
+   *  the app also focuses this field itself, and that must never move the reader. */
+  onFieldTap?: () => void;
   model: string;
   effort: string;
   modelConfig: ModelConfig;
@@ -2236,7 +2241,14 @@ export function Composer({
   const stablePhonePhotos = useStableHandler((files: File[]) => onPhonePhotos(files));
 
   return (
-    <div className="chat-cmp" ref={rootRef} data-chips={hlSegments.some((x) => x.kind === 'ref') ? '' : undefined}>
+    <div
+      className="chat-cmp"
+      ref={rootRef}
+      data-chips={hlSegments.some((x) => x.kind === 'ref') ? '' : undefined}
+      // An open menu hangs off this composer and something typed is about to be sent: neither
+      // folds out from under the finger, whatever the transcript behind them does.
+      data-folded={folded && menu.open === null && !hasSendableContent && !quote ? '' : undefined}
+    >
       {/* Anchored to `.chat-cmp`, NOT to the row it belongs to: the card clips its own
           overflow (safe for the toolbar's menus, which are portaled — this one is not), so
           a menu opening upward out of the textarea would be cut off at the card's edge. */}
@@ -2534,7 +2546,7 @@ export function Composer({
             }}
             onCompositionStart={() => { composingRef.current = true; }}
             onCompositionEnd={() => { composingRef.current = false; }}
-            onClick={(e) => openRefAt(e.clientX, e.clientY)}
+            onClick={(e) => { onFieldTap?.(); openRefAt(e.clientX, e.clientY); }}
             aria-describedby={srRefs.length ? srListId : undefined}
             onPaste={onPaste}
             onKeyDown={(e) => {

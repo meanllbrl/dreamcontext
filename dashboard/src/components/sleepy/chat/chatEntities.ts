@@ -1696,6 +1696,36 @@ export function isAtBottom(m: Pick<ScrollMetrics, 'scrollTop' | 'scrollHeight' |
 }
 
 /**
+ * How far above the bottom a phone's reader must be before the composer folds to one row.
+ *
+ * It has to clear what the fold itself gives back. Folding grows the scroller by the height the
+ * composer lost, `scrollTop` stays put, so the distance to the bottom DROPS by that much: fold any
+ * nearer than this and the view lands back inside {@link BOTTOM_SLACK}, the composer reopens, the
+ * scroller shrinks, and it flickers between the two for as long as the finger stays there.
+ */
+export const COMPOSER_FOLD_DISTANCE = 160;
+
+/**
+ * Should the phone's composer be folded? Scroll decides, and the keyboard is not an input: the
+ * old rule folded the moment the field lost focus, so tapping Opus (which closes the keyboard)
+ * folded away the very control under the finger.
+ *
+ * Pinned to the bottom is open, always. Far enough up is folded. In between keeps what it was,
+ * and that band is the hysteresis {@link COMPOSER_FOLD_DISTANCE} is sized for. A zero-height
+ * scroller is not measurable (see {@link nextStickToBottom}), so it keeps the previous state.
+ */
+export function nextComposerFolded(
+  prev: boolean,
+  pinned: boolean,
+  m: Pick<ScrollMetrics, 'scrollTop' | 'scrollHeight' | 'clientHeight'>,
+): boolean {
+  if (m.clientHeight === 0) return prev;
+  if (pinned) return false;
+  if (m.scrollHeight - m.scrollTop - m.clientHeight >= COMPOSER_FOLD_DISTANCE) return true;
+  return prev;
+}
+
+/**
  * Where the reader is, so a re-home can put them back — the counterpart to
  * {@link nextStickToBottom}, which only ever describes the PINNED case.
  *
