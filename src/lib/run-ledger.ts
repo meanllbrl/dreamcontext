@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { heavyLockPath } from './builder-tools.js';
+import { heavyRepoDir } from './builder-tools.js';
 import { currentScope } from './run-budget.js';
 
 /**
@@ -19,7 +19,7 @@ export type LedgerRow =
   | { type: 'mark'; run: string; what: LedgerMark; at: number }
   | { type: 'check'; run: string; label: string; line: string; asked: number; ran: number; ended: number; exit: number | null };
 
-export const ledgerPath = (cwd: string): string => join(dirname(heavyLockPath(cwd)), 'dc-run-ledger.jsonl');
+export const ledgerPath = (cwd: string): string => join(heavyRepoDir(cwd), 'dc-run-ledger.jsonl');
 
 export function appendLedger(path: string, row: LedgerRow): void {
   try {

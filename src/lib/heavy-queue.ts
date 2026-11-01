@@ -232,15 +232,16 @@ export class QueuePlace {
     return { position: i + 1, ahead: line.slice(0, i) };
   }
 
-  /** May this waiter try for the lock now? Also its heartbeat. */
-  myTurn(now: number): boolean {
+  /** May this waiter try now? Its turn is among the first `room` live places (1 for a lock, the
+   *  free slot count for slots). Also its heartbeat. */
+  myTurn(now: number, room: number = 1): boolean {
     try {
       if (now - this.lastBeat >= HEARTBEAT_MS) {
         const me = readTickets(this.dir, now).find((t) => t.key === this.key);
         if (me) write(this.dir, { ...me, pid: process.pid, seen: now });
         this.lastBeat = now;
       }
-      return this.spot(now).position === 1;
+      return this.spot(now).position <= Math.max(1, room);
     } catch {
       return true;
     }

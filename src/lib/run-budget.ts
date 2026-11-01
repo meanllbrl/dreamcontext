@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { heavyLockPath } from './builder-tools.js';
+import { heavyRepoDir } from './builder-tools.js';
 import type { LanePick } from './run-lane.js';
 
 /**
@@ -209,7 +209,7 @@ export interface BudgetFile {
 const empty = (): BudgetFile => ({ version: 1, buckets: {}, phases: {}, overruns: [] });
 
 export function budgetPath(cwd: string): string {
-  return join(dirname(heavyLockPath(cwd)), 'dc-run-budget.json');
+  return join(heavyRepoDir(cwd), 'dc-run-budget.json');
 }
 
 export function readBudget(path: string): BudgetFile {

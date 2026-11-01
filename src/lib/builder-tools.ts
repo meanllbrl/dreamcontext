@@ -102,15 +102,30 @@ export const HEAVY_LOCK_BUSY_EXIT = 75;
 export const HEAVY_DEFAULT_WAIT_S = 300;
 
 /**
- * One heavy check at a time per repo, shared by every builder and the orchestrator. Lives in
- * the git common dir, so linked worktrees of one repo share it; outside git, a per-path file
- * in the OS temp dir.
+ * One heavy check at a time per CHECKOUT, shared by every builder and the orchestrator working
+ * in it. Lives in this checkout's own git dir (`.git` for the main checkout, the same path the
+ * lock always had there; `.git/worktrees/<name>` for a linked worktree), so two worktrees of one
+ * repo no longer wait for each other: each has its own node_modules, and the machine's
+ * {@link HEAVY_MACHINE_SLOTS} are what bound the load (measured 2026-11-01: the repo-wide lock
+ * cut the machine's two slots to one for a whole day). Outside git, a per-path file in the OS
+ * temp dir. Its line (`<lock>.queue`) sits beside it.
  */
-export function heavyLockPath(cwd: string, gitCommonDir: () => string | null = () => gitCommonDirOf(cwd)): string {
-  const common = gitCommonDir();
-  if (common) return join(isAbsolute(common) ? common : resolve(cwd, common), 'dc-heavy.lock');
+export function heavyLockPath(cwd: string, gitDir: () => string | null = () => gitPathOf(cwd, '--git-dir')): string {
+  const own = gitDir();
+  if (own) return join(isAbsolute(own) ? own : resolve(cwd, own), 'dc-heavy.lock');
   const key = createHash('sha256').update(resolve(cwd)).digest('hex').slice(0, 16);
   return join(tmpdir(), `dc-heavy-${key}.lock`);
+}
+
+/**
+ * Where the repo-wide run records live (`dc-run-ledger.jsonl`, `dc-run-budget.json`): the git
+ * common dir, so every worktree of one repo writes ONE ledger and ONE repeat budget. Outside
+ * git, the OS temp dir.
+ */
+export function heavyRepoDir(cwd: string, gitCommonDir: () => string | null = () => gitPathOf(cwd, '--git-common-dir')): string {
+  const common = gitCommonDir();
+  if (common) return isAbsolute(common) ? common : resolve(cwd, common);
+  return tmpdir();
 }
 
 // ─── machine-wide heavy slots (orchestration plan r5 D12) ─────────────────────────────────
@@ -164,7 +179,7 @@ export interface HeavyHold {
 export const HEAT_RECHECK_MS = 20_000;
 
 /**
- * Take this repo's heavy lock, THEN one of the machine's slots, all within `waitMs` together.
+ * Take this checkout's heavy lock, THEN one of the machine's slots, all within `waitMs` together.
  * Always in that order and released in reverse, so two callers never hold each other's half (no
  * deadlock). Slots are tried in a loop, each once per poll, with pid liveness (that is what makes
  * the short stale age safe). Null = nothing is held and nothing may run (the caller's exit 75).
@@ -184,6 +199,12 @@ export async function acquireHeavy(cwd: string, opts: {
   onRepoLock?: () => void;
   /** The line's order: the repo lock is only tried on this caller's turn (lib/heavy-queue.ts). */
   turn?: (nowMs: number) => boolean;
+  /** The machine's slot line: once the checkout lock is held, a slot is only tried on this turn
+   *  (`free` slots open = the first `free` waiters in that line may go). */
+  slotTurn?: (nowMs: number, free: number) => boolean;
+  /** Called the moment a slot is taken, before anything else can poll: the holder leaves the
+   *  slot line at once, or a waiter polling in between reads it as still ahead. */
+  onSlot?: () => void;
 }): Promise<HeavyHold | null> {
   const now = opts.now ?? Date.now;
   const pollMs = opts.pollMs ?? 1000;
@@ -207,9 +228,13 @@ export async function acquireHeavy(cwd: string, opts: {
   for (;;) {
     if (now() - readAt >= HEAT_RECHECK_MS) { limit = await readLimit(); readAt = now(); }
     // Very hot means one step machine-wide, and a running short check is a step.
-    if (heavySlotsHeld(opts.slotDir) + (limit === 1 ? liveHolders(fastSlotPaths(opts.slotDir)) : 0) < limit) {
+    const free = limit - heavySlotsHeld(opts.slotDir) - (limit === 1 ? liveHolders(fastSlotPaths(opts.slotDir)) : 0);
+    // Asked on every poll, a full machine included: asking is the waiter's heartbeat in the line.
+    const mine = opts.slotTurn?.(now(), free) ?? true;
+    if (free > 0 && mine) {
       for (const slot of heavySlotPaths(opts.slotDir).slice(0, limit)) {
         if (acquireFileLock(slot, now(), HEAVY_LOCK_STALE_MS, { verifyPidLiveness: true })) {
+          try { opts.onSlot?.(); } catch { /* the line is a courtesy */ }
           return { slot, release: () => { releaseFileLock(slot); releaseFileLock(repoLock); } };
         }
       }
@@ -250,9 +275,9 @@ export function clampHeavyLimit(n: unknown): number {
   return Math.min(HEAVY_MACHINE_SLOTS, Math.max(1, Math.floor(n)));
 }
 
-function gitCommonDirOf(cwd: string): string | null {
+function gitPathOf(cwd: string, which: '--git-dir' | '--git-common-dir'): string | null {
   try {
-    return execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+    return execFileSync('git', ['rev-parse', which], { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
   } catch {
     return null;
   }
