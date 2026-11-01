@@ -2,6 +2,8 @@ import { bridgeResumeTarget } from '../../lib/t3-bridge/spawn.js';
 import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
 import { sanitizeTool } from '../../lib/t3-bridge/registry.js';
 import { codexTerminalEnv } from '../../lib/codex-accounts.js';
+import { codexAwarePath, codexCommand } from '../../lib/codex-bin.js';
+import { isScriptSafePath } from '../../lib/t3-bridge/spawn.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { mcpStoreFiles, storeFileRefs } from '../../lib/mcp-store.js';
 import { isAssistantVault } from '../../lib/assistant/home.js';
@@ -1144,7 +1146,7 @@ export function agentExecLine(flags: string, promptArg: string, mcpRefs: readonl
  * The sandbox is always workspace-write with approvals on request: `bypass` is a Claude setting
  * and never widens this. Tokens are gated by the caller; the thread id is `CODEX_THREAD_RE`'s.
  */
-export function codexExecLine(o: { model: string; effort: string; resume: string; signedInFile: boolean; promptArg: string }): string {
+export function codexExecLine(o: { model: string; effort: string; resume: string; signedInFile: boolean; promptArg: string; bin?: string }): string {
   const flags = [
     ...(o.signedInFile ? [`-c 'cli_auth_credentials_store="file"'`] : []),
     ...(o.model ? [`-m ${o.model}`] : []),
@@ -1152,7 +1154,9 @@ export function codexExecLine(o: { model: string; effort: string; resume: string
     '-s workspace-write',
     '-a on-request',
   ];
-  return `exec codex ${flags.join(' ')}${o.resume ? ` resume ${o.resume}` : ''}${o.promptArg}`;
+  // The found Codex; a path that cannot sit in the script stays the bare name the login shell resolves.
+  const bin = o.bin && isScriptSafePath(o.bin) ? `"${o.bin}"` : 'codex';
+  return `exec ${bin} ${flags.join(' ')}${o.resume ? ` resume ${o.resume}` : ''}${o.promptArg}`;
 }
 
 export function startPtySession(
@@ -1338,7 +1342,7 @@ export function startPtySession(
     : kind === 'exec'
       ? execShellArgs(shell, execCommand)
       : opts.codex
-        ? ['-ilc', codexExecLine({ model, effort, resume: codexResume, signedInFile: !!codexEnv?.pre.length, promptArg }), ...(promptArg ? [submitPrompt] : [])]
+        ? ['-ilc', codexExecLine({ model, effort, resume: codexResume, signedInFile: !!codexEnv?.pre.length, promptArg, bin: codexCommand() }), ...(promptArg ? [submitPrompt] : [])]
         : ['-ilc', agentExecLine(`${idArg}${modelFlag}${effortFlag}${flag}`, promptArg, storeMcp.refs), ...(promptArg ? [submitPrompt] : [])];
   // An agent PTY exports its tab's STABLE roster id so the SessionStart hook (which
   // inherits this env through `claude`) can record roster id → live conversation id
@@ -1362,7 +1366,7 @@ export function startPtySession(
       // actually installed into, so `exec claude` resolves even when the install's
       // `export PATH` echo never reached the user's rc. Appended, never prepended —
       // a `claude` the rc already resolves keeps winning.
-      env: { ...process.env, PATH: claudeAwarePath(), TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv, ...statusEnv, ...storeMcp.env, ...(codexEnv?.env ?? {}) } as Record<string, string>,
+      env: { ...process.env, PATH: opts.codex ? codexAwarePath(claudeAwarePath()) : claudeAwarePath(), TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv, ...statusEnv, ...storeMcp.env, ...(codexEnv?.env ?? {}) } as Record<string, string>,
     }) as unknown as PtyLike;
   } catch (err) {
     // pty.spawn can throw synchronously (documented posix_spawnp failure when the

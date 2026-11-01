@@ -11,6 +11,7 @@ const READY_EXTRA: ExtraFacts = {
   online: true, runningNodeVersion: '22.3.0', npmBesideExec: true, claudeBin: '/Users/u/.local/bin/claude',
   cliBinOffPath: null, claudeAuth: { loggedIn: true, email: 'ada@example.com' }, ghAuthed: true,
   github: { connected: true, needsReconnect: false, login: 'ada' }, ptyPresent: true,
+  codex: { bin: '/x/codex', runs: true, version: '0.164.0', outdated: false, nodeOk: true, signedIn: true },
 };
 const CTX = { surface: 'desktop' as const, platform: 'darwin' as const };
 

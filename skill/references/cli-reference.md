@@ -36,6 +36,8 @@ One readiness model (`src/lib/onboarding/`) answers "what is missing on this mac
 
 **Fix plan.** The report carries `plan`: required and recommended fixes in dependency order, with `git-install` FIRST (on macOS it opens Apple's developer-tools window and keeps installing in the background, so it never holds up the rest). Optional fixes are never in the plan. Fix kinds: `auto` (one step, unattended), `browser` (Claude sign-in opens the browser), `device-code` (GitHub), `system-dialog` (the macOS developer tools), `manual` (a command to run yourself).
 
+**Codex is a dependency.** Two recommended rows, `codex` (installed, version, starts, a Node at the bridge floor) and `codex-auth`. Recommended, not required: a failed install never blocks Claude. `setup`, the checklist, the model picker's Install button, `dreamcontext update` and an app update all run one recipe: a working Codex of the user's is left alone; anything else gets the pinned `@openai/codex` (`src/lib/codex-pin.ts`, official registry, sha512 checked) under `~/.dreamcontext/tools/codex`, beside theirs, with a launcher that needs no Node and no PATH. `src/lib/codex-bin.ts` is the one resolver for readiness, chats, headless runs, the terminal and account sign-in. `DREAMCONTEXT_SKIP_CODEX_ENSURE=1` keeps `update` from installing it.
+
 **`dreamcontext setup` machine phase** (before init/install):
 
 - Mode: `--yes` runs the `auto` fixes only, never a sign-in or a dialog; a terminal without `--defaults` asks before each fix; `--defaults` or a non-TTY run only REPORTS (`ℹ Next: run dreamcontext setup in a terminal to fix these.`) and never installs.

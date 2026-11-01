@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
+import { CODEX_PIN } from '../codex-pin.js';
 import type { FixId } from './types.js';
 
 /** A Linux package manager we can name a command for. */
@@ -78,6 +79,11 @@ export function manualCommand(
         : 'curl -fsSL https://claude.ai/install.sh | bash';
     case 'cli-install':
       return 'npm install -g dreamcontext@latest';
+    case 'codex-install':
+    case 'codex-update':
+      return `npm install -g ${CODEX_PIN.package}@${CODEX_PIN.version}`;
+    case 'codex-signin':
+      return 'codex login';
     case 'claude-signin':
       return 'claude auth login';
     case 'gh-signin':

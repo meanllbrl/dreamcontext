@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { codexChildEnv, codexCommand } from '../codex-bin.js';
 import { BridgeSession, type BridgeSessionOptions } from './session.js';
 import { claudeLaunchArgs, codexBrainMcpArgs, codexLaunchArgs, codexLeanMcpArgs, codexStrictArgs, leanMcpNames, parseCodexMcpList, scrubbedCodexEnv } from './launch.js';
 import { codexInstanceSettings, isCodexAccountId } from './accounts.js';
@@ -87,6 +88,11 @@ const MCP_LIST_LIMIT_MS = 15_000;
 /** Run until stdin ends. Resolves with the exit code. */
 export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<number> {
   const home = deps.home ?? homedir();
+  // Codex by absolute path, with a PATH its launcher's `env node` resolves on: what the readiness
+  // row promised is what starts. Test doubles (a replay client) start nothing, so resolve nothing.
+  const realCodex = args.tool === 'codex' && !deps.clientFactory;
+  const binaryPath = args.binaryPath ?? (realCodex ? codexCommand({ home }) : undefined);
+  const childEnv = realCodex ? codexChildEnv(deps.env) : deps.env;
   // Opt-in frame trace for debugging a bridge pane (`DREAMCONTEXT_T3_DEBUG=<file>`): frame types
   // and subtypes only, never their text.
   const debugFile = deps.env.DREAMCONTEXT_T3_DEBUG;
@@ -126,7 +132,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   const strictArgs = args.strictMcp && args.tool === 'codex'
     ? codexStrictArgs(
       (deps.listMcp ?? (() => {
-        const r = spawnSync(args.binaryPath ?? (process.platform === 'win32' ? 'codex.cmd' : 'codex'), ['mcp', 'list', '--json'], { cwd: args.cwd, env: scrubbedCodexEnv(deps.env), encoding: 'utf-8', timeout: MCP_LIST_LIMIT_MS, shell: process.platform === 'win32' });
+        const r = spawnSync(binaryPath ?? (process.platform === 'win32' ? 'codex.cmd' : 'codex'), ['mcp', 'list', '--json'], { cwd: args.cwd, env: scrubbedCodexEnv(childEnv), encoding: 'utf-8', timeout: MCP_LIST_LIMIT_MS, shell: process.platform === 'win32' });
         return r.status === 0 ? parseCodexMcpList(r.stdout) : null;
       }))(),
       [...(deps.brain ? ['dreamcontext'] : []), ...leanMcpNames(args.mcpConfig)],
@@ -156,14 +162,14 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       mode: args.mode,
       paneId: args.paneId || randomUUID(),
       ...(args.resume ? { resumeNativeThreadId: args.resume } : {}),
-      ...(args.binaryPath ? { binaryPath: args.binaryPath } : {}),
+      ...(binaryPath ? { binaryPath } : {}),
       launchArgs,
       ...(account ? { codexHome: { homePath: account.homePath, shadowHomePath: account.shadowHomePath } } : {}),
       // The account's live windows, for the server's switch and the Settings bars (never a secret).
       onUsageLimits: (u) => emit({ type: 'system', subtype: 'dc_usage', dc_tool: args.tool, windows: u.windows, checked_at: u.checkedAt }),
       // DREAMCONTEXT_CONTEXT_BY: the bridge injects the brain, so a project's opt-in `.codex/hooks.json`
       // stays quiet in this session (its `.env` gate still runs; hook.ts beginCodexHookFormat).
-      env: { ...scrubbedCodexEnv(deps.env), TMPDIR: privateTmp, ...(deps.brain ? { DREAMCONTEXT_CONTEXT_BY: 'bridge' } : {}) },
+      env: { ...scrubbedCodexEnv(childEnv), TMPDIR: privateTmp, ...(deps.brain ? { DREAMCONTEXT_CONTEXT_BY: 'bridge' } : {}) },
       stateRoot: join(home, '.dreamcontext', 't3'),
       extraRoots: args.extraRoots ?? [],
       privateTmp,

@@ -23,6 +23,7 @@ import * as Effect from 'effect/Effect';
 import * as Schema from 'effect/Schema';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { codexChildEnv, codexCommand } from '../codex-bin.js';
 import { codexInstanceSettings } from './accounts.js';
 import { scrubbedCodexEnv } from './launch.js';
 import { fenceSeed, type RawHandoff } from './tool-handoff.js';
@@ -70,11 +71,11 @@ export function probeProgram(home: string, account: string | undefined, env: Nod
     const layout = yield* resolveCodexHomeLayout(settings);
     yield* materializeCodexShadowHome(layout);
     const { client } = yield* withCodexAppServerClient({
-      binaryPath: 'codex',
+      binaryPath: codexCommand({ home }),
       ...(layout.effectiveHomePath ? { homePath: layout.effectiveHomePath } : {}),
       ...(s.launchArgs ? { launchArgs: s.launchArgs } : {}),
       cwd: home,
-      environment: scrubbedCodexEnv(env),
+      environment: scrubbedCodexEnv(codexChildEnv(env)),
     });
     const acc = yield* client.request('account/read', {});
     const a = acc.account as { type?: string; email?: string | null; planType?: string | null } | null | undefined;

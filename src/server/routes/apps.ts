@@ -42,11 +42,8 @@ import { safeAppPath } from '../../lib/apps/safe-path.js';
 import { appBundlePath, bundleIsStale, bundlePid, bundleRunState, ensureAppBundle, mayBuildBundle, mayRetireRunner, removeAppBundle, runnerBundleId, shellRunnerPath, shouldRefreshIdleBundle, type BundleInput } from '../../lib/apps/bundle.js';
 import { removeShots, pruneShots } from '../../lib/apps/shots.js';
 import { notifierIconPath } from '../../lib/automations/notifier.js';
-<<<<<<< HEAD
 import { iconIssue, servableIcon } from '../../lib/apps/icon.js';
-=======
 import { icnsToPng } from '../../lib/apps/icns-raster.js';
->>>>>>> super/app-bildirim
 import { sendPhotoFile } from './automations.js';
 import { configureGatewayW3 } from '../apps/gateway-w3.js';
 import { spendLinkNonce } from '../apps/link-nonces.js';

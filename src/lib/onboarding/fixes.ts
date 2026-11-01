@@ -9,12 +9,16 @@ import {
   CLI_RC_MARKER, NODE_RC_MARKER, RC_MARKER, claudeAwarePath, ensureDirOnShellPath, findClaudeBin, fixClaudeShellPath,
   type ShellPathFix,
 } from '../claude-path.js';
+import { codexChildEnv, codexHealth, codexTooOld, findCodexBin, forgetCodexHealth, refreshCodexHealth } from '../codex-bin.js';
 import { ensureCliInstalled, type EnsureCliResult } from '../ensure-cli.js';
+import { findBridgeNode, resetBridgeNodeCache } from '../t3-bridge/node-floor.js';
+import { installManagedCodex, installPinnedNode, withCodexInstallLock, type NodePins } from './codex-install.js';
 import { cliAwarePath } from '../automations/cli-path.js';
 import { killPortable } from '../proc.js';
 import { withNodeDirOnPath } from '../git-sync/credentials.js';
 import { commandLineToolsInstalled, gitAvailable } from '../git-sync/git.js';
 import { DownloadError, downloadVerified } from './download.js';
+import { CODEX_PIN } from '../codex-pin.js';
 import { defaultGithubDeps, runGhSignin, runGithubSignin, type GhExec, type GithubDeps } from './github.js';
 import { managedNodeRoot, managedNpmGlobal } from './platform.js';
 import { SHELL_FACTS_SCRIPT, parseShellFacts, resolveTestSeamUrl } from './runner.js';
@@ -45,6 +49,7 @@ export interface FixOptions {
 /** The argv a TTY runs with inherited stdio for a sign-in (the CLI surface). */
 export const CLI_INTERACTIVE: Partial<Record<FixId, string[]>> = {
   'claude-signin': ['claude', 'auth', 'login'],
+  'codex-signin': ['codex', 'login'],
   'github-signin': ['gh', 'auth', 'login', '--web', '--git-protocol', 'https'],
   'gh-signin': ['gh', 'auth', 'login', '--web', '--git-protocol', 'https'],
 };
@@ -65,7 +70,7 @@ const SHELL_LOOKUP_TIMEOUT_MS = 15_000;
 const VERSION_TIMEOUT_MS = 15_000;
 
 interface GhPin { file: string; sha256: string; size: number; format: 'zip' | 'tar.gz' }
-interface Pins { gh: { version: string; base: string; files: Record<string, GhPin> } }
+interface Pins { node: NodePins; gh: { version: string; base: string; files: Record<string, GhPin> } }
 
 // ─── Injectable effects ────────────────────────────────────────────────────────
 
@@ -285,6 +290,69 @@ function shellPathOutcome(fixes: ShellPathFix[]): FixOutcome {
 interface RecipeEnv { ctx: ProbeContext; sink: RunSink; signal: AbortSignal; o: FixOptions; deps: FixDeps }
 
 /** Put the running node (the private Node's stable folders) on the user's shell PATH. */
+/**
+ * Codex as a dependency: a working install of the user's is left alone, anything else gets the
+ * pinned one beside it (see codex-install.ts). A Node at the bridge floor comes first when this
+ * machine has none. Fails only its own row: nothing here is on Claude's path.
+ */
+async function codexInstall(env: RecipeEnv): Promise<FixOutcome> {
+  const { ctx, sink, signal, deps } = env;
+  const run: Parameters<typeof installManagedCodex>[0]['run'] = (file, args, o) => deps.run(file, args, o, sink, signal);
+  const say = (line: string) => sink.output(`${line}\n`);
+  const npm = resolveNpm(ctx, await shellFacts(ctx));
+  const landed = await withNpmLock(() => withCodexInstallLock(ctx.home, async (): Promise<FixOutcome> => {
+    if (findBridgeNode({ home: ctx.home }) === null) {
+      const node = await installPinnedNode({ home: ctx.home, platform: ctx.platform, arch: ctx.arch, pins: deps.pins.node, download: deps.download, signal, say, run, progress: (r, t) => sink.progress(r, t) });
+      if (!node.ok) return fail(node.reason ?? 'failed', node.detail ?? 'Node could not be installed.');
+      resetBridgeNodeCache();
+    }
+    // Read inside the lock: a run that waited here finds what the one before it landed.
+    forgetCodexHealth();
+    await refreshCodexHealth({ home: ctx.home });
+    const h = codexHealth({ home: ctx.home });
+    if (h.runs && h.version && !codexTooOld(h) && (!h.managed || h.version === CODEX_PIN.version)) {
+      say(`Codex ${h.version} is already installed`);
+      return { ok: true };
+    }
+    const r = await installManagedCodex({ home: ctx.home, platform: ctx.platform, arch: ctx.arch, run, say, npm, env: stripSecretsEnv(npmEnv(ctx, deps)) });
+    forgetCodexHealth();
+    return r.ok ? { ok: true } : fail(r.reason ?? 'failed', r.detail ?? 'Codex could not be installed.');
+  }));
+  return landed ?? fail('failed', 'Codex is already being installed on this computer. Try again in a minute.');
+}
+
+/**
+ * `codex login` into `~/.codex`. It opens the browser itself; when that fails its printed sign-in
+ * page is all a person has, so that one line reaches the screen and nothing else of its output
+ * does (a local callback URL can carry a code).
+ */
+async function codexSignin({ ctx, sink, signal, deps }: RecipeEnv): Promise<FixOutcome> {
+  const bin = findCodexBin({ home: ctx.home });
+  if (!bin) return fail('failed', 'Codex is not installed.');
+  sink.awaiting('browser');
+  try {
+    let seen = '';
+    let shown = false;
+    const onlyTheSignInPage: RunSink = {
+      ...sink,
+      output: (c) => {
+        seen = (seen + c).slice(-4_000);
+        const page = /https:\/\/auth\.openai\.com\/\S+(?=\s)/.exec(seen)?.[0];
+        if (page && !shown) { shown = true; sink.output(`${page}\n`); }
+      },
+    };
+    const r = await deps.run(bin, ['login'], { cwd: ctx.home, env: codexChildEnv(deps.env), timeoutMs: CLAUDE_LOGIN_TIMEOUT_MS, stream: true }, onlyTheSignInPage, signal);
+    if (r.canceled) return fail('canceled', 'Canceled.');
+    if (r.timedOut) return fail('timeout', 'The sign-in timed out.');
+    if (!r.ok) return fail('failed', r.code === null ? 'Codex did not start.' : 'The sign-in did not complete.');
+    // Codex says who is signed in: where it keeps the record is its own business.
+    const status = await deps.run(bin, ['login', 'status'], { cwd: ctx.home, env: codexChildEnv(deps.env), timeoutMs: VERSION_TIMEOUT_MS }, sink, signal);
+    return status.ok ? { ok: true } : fail('failed', 'The sign-in did not complete.');
+  } finally {
+    sink.awaiting(null);
+  }
+}
+
 function nodeShellPath({ ctx, deps }: RecipeEnv): FixOutcome {
   const dirs = isManagedNode(ctx)
     ? [join(managedNodeRoot(ctx.home), 'current', 'bin'), join(managedNpmGlobal(ctx.home), 'bin')]
@@ -540,6 +608,9 @@ const RECIPES: Readonly<Record<FixId, (env: RecipeEnv) => FixOutcome | Promise<F
   'claude-install': claudeInstall,
   'claude-path': claudePath,
   'claude-signin': claudeSignin,
+  'codex-install': codexInstall,
+  'codex-update': codexInstall,
+  'codex-signin': codexSignin,
   'git-install': gitInstall,
   'gh-install': ghInstall,
   'github-signin': githubSignin,

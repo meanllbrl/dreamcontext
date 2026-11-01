@@ -14,7 +14,11 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useI18n } from '../../../../context/I18nContext';
 import { effortLabel } from '../../../../lib/agentComposer';
 import type { AccountOption } from '../ComposerMenus';
-import { activeRow, effortsFor, searchModels, shortcutFor, type PickerModel, type PickerTool, type PickerToolState } from './pickerModel';
+import {
+  activeRow, blockerFix, effortsFor, searchModels, shortcutFor,
+  type PickerModel, type PickerTool, type PickerToolState,
+} from './pickerModel';
+import { CodexFix } from './CodexFix';
 import './model-picker.css';
 
 export type SettingsTarget = 'models' | 'accounts' | 'accounts-codex';
@@ -69,6 +73,8 @@ function blockerWord(t: PickerToolState): string {
 
 function blockerLine(t: PickerToolState): string {
   if (t.blocker === 'not-installed') return `${t.label} is not installed`;
+  if (t.blocker === 'wont-start') return `${t.label} is installed but does not start`;
+  if (t.blocker === 'outdated') return `${t.label} needs an update`;
   if (t.blocker === 'needs-node') return `${t.label} needs Node 22.16 or newer`;
   return `${t.label} is not signed in`;
 }
@@ -179,8 +185,9 @@ export function ModelPicker(p: ModelPickerProps) {
             {!searching && tool && !tool.ready && (
               <p className="mp-note mp-note--warn" data-testid="model-picker-signin">
                 {blockerLine(tool)}
-                {tool.blocker === 'signed-out' && (
-                  <> · <button type="button" className="mp-link" onClick={() => { p.onOpenSettings(tool.tool === 'codex' ? 'accounts-codex' : 'accounts'); p.close(); }}>Sign in</button></>
+                {tool.tool === 'codex' && blockerFix(tool.blocker) && <CodexFix fix={blockerFix(tool.blocker)!} />}
+                {tool.tool !== 'codex' && tool.blocker === 'signed-out' && (
+                  <> · <button type="button" className="mp-link" onClick={() => { p.onOpenSettings('accounts'); p.close(); }}>Sign in</button></>
                 )}
               </p>
             )}
