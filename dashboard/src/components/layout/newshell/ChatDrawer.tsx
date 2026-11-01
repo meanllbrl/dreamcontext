@@ -1,5 +1,5 @@
 import { useSuperUnreadCount } from '../../sleepy/super/superUnreadStore';
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { VaultLogo } from '../VaultLogo';
 import { ProjectChipBubbles } from '../ProjectTabs';
@@ -18,6 +18,9 @@ export interface ChatDrawerProps {
   width: number;
   /** Floats over the page with a scrim (≤900) or slides from the top (≤600). */
   floating: boolean;
+  /** A phone's first screen (≤600 on a phone): the floating drawer takes the full height above
+   *  the bottom bar, whether it opened at launch, by the toggle or by back. */
+  home?: boolean;
   onClose(): void;
   onResize(width: number): void;
   onToggleExpanded(name: string): void;
@@ -34,6 +37,12 @@ export interface ChatDrawerProps {
   onNewProject(): void;
   /** Bumped by ⌘N: open the New chat window picker at its row. */
   newWindowNonce: number;
+  /** A device shell (`readDeviceShell`): chats only. No New project, Project Relations, Open in
+   *  new window, Close project or drag; a New chat only where `canStartIn` allows it. */
+  device?: { canStartIn(vault: string): boolean; historyReady: boolean };
+  /** Under the rows, outside the scroll: Mac mode's tunnel puts the notification opt-in and the
+   *  connection-log button here (the Sohbetler list's foot before the phone joined the shell). */
+  foot?: ReactNode;
 }
 
 interface Menu { kind: 'project' | 'new' | 'window'; name?: string; windowId?: string; x: number; y: number }
@@ -238,6 +247,29 @@ export function ChatDrawer(p: ChatDrawerProps) {
         </button>
       );
     }
+    if (c.kind === 'chat') {
+      const title = c.title || t('shell.drawer.untitled');
+      return (
+        <div key={`c-${c.id}`} className={`ns-dr-chat${c.windowId ? ' is-nested' : ''}${c.closable ? ' is-closable' : ''}`}>
+          <button type="button" className={`ns-dr-row ns-dr-child ns-dr-chatrow${c.selected ? ' is-sel' : ''}`}
+            data-testid="drawer-chat-row" data-chat-id={c.id} data-state={c.state} data-flagged={c.flagged ? 'true' : undefined}
+            disabled={c.offline} data-offline={c.offline ? 'true' : undefined}
+            onClick={() => pick(row.name, { kind: 'open-chat', row: c.row })}>
+            <span className="ns-dr-cdot" data-state={c.state} aria-hidden="true" />
+            <span className="ns-dr-t">{title}</span>
+            <span className="ns-dr-cstate">{t(c.state === 'asking' ? 'handsfree.mac.state.asking' : c.state === 'working' ? 'handsfree.mac.state.working' : 'handsfree.mac.state.idle')}</span>
+          </button>
+          {c.closable && (
+            // Closing ends the chat's process: the surface asks first for one mid-turn or asking.
+            <button type="button" className="ns-dr-cclose" data-testid="drawer-chat-close"
+              aria-label={t('shell.drawer.closeChat').replace('{title}', () => title)}
+              onClick={() => p.onIntent(row.name, { kind: 'close-chat', id: c.id })}>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" /></svg>
+            </button>
+          )}
+        </div>
+      );
+    }
     if (c.kind === 'new-chat') {
       return (
         <button key="new-chat" type="button" className="ns-dr-row ns-dr-child ns-dr-newchat" data-testid="drawer-new-chat"
@@ -304,32 +336,41 @@ export function ChatDrawer(p: ChatDrawerProps) {
   };
 
   return (
-    <aside className="ns-drawer" data-floating={p.floating ? 'true' : undefined} style={{ width: p.floating ? undefined : p.width }}
+    <aside className="ns-drawer" data-floating={p.floating ? 'true' : undefined} data-home={p.floating && p.home ? 'true' : undefined} style={{ width: p.floating ? undefined : p.width }}
       ref={rootRef} aria-label={t('shell.drawer.projects')} data-testid="chat-drawer">
       <div className="ns-dr-scroll">
+        {(!p.device || p.rows.some((r) => p.device!.canStartIn(r.name))) && (
         <button ref={newRowRef} type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-new-window"
           onClick={(e) => openMenu({ kind: 'new', x: e.clientX, y: e.clientY })}>
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h3l7-7-3-3-7 7v3zM9 4l3 3" /></svg>
           <span className="ns-dr-t">{t('shell.drawer.newWindow')}</span>
-          <kbd className="ns-dr-kbd">⌘N</kbd>
+          {!p.device && <kbd className="ns-dr-kbd">⌘N</kbd>}
         </button>
+        )}
+        {!p.device && (
         <button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-new-project-row" onClick={p.onNewProject}>
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h4l1.5 1.5h5.5v6.5h-11zM8 7.8v3M6.5 9.3h3" /></svg>
           <span className="ns-dr-t">{t('shell.drawer.newProject')}</span>
         </button>
-        <button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-history" onClick={p.onHistory}>
+        )}
+        <button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-history" onClick={p.onHistory}
+          disabled={p.device ? !p.device.historyReady : undefined}>
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.5H5M8 5v3l2 1.5" /></svg>
           <span className="ns-dr-t">{t('shell.drawer.history')}</span>
         </button>
+        {!p.device && (
         <button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-relations" onClick={p.onRelations}>
           <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="4" r="1.8" /><circle cx="12" cy="4" r="1.8" /><circle cx="8" cy="12" r="1.8" /><path d="M5.6 4h4.8M5 5.4l2.2 5M11 5.4l-2.2 5" /></svg>
           <span className="ns-dr-t">{t('shell.drawer.relations')}</span>
         </button>
+        )}
 
         <div className="ns-dr-sec">
           <span>{t('shell.drawer.projects')}</span>
+          {!p.device && (
           <button type="button" className="ns-dr-sec-add" aria-label={t('shell.drawer.newProject')} title={t('shell.drawer.newProject')}
             data-testid="drawer-new-project" onClick={p.onNewProject}>+</button>
+          )}
         </div>
         {p.rows.map((row, i) => (
           <div key={row.name} className="ns-dr-project" data-drawer-project={row.name}
@@ -338,7 +379,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
             {/* Two sibling buttons, never one inside the other: the row's own toggle (name, notes)
                 and "+". The rest of the row (the chevron, the gaps) toggles on a pointer click. */}
             <div className={`ns-dr-row ns-dr-proj${row.active ? ' is-cur' : ''}`}
-              onPointerDown={(e) => startDrag(e, row.name)}
+              onPointerDown={p.device ? undefined : (e) => startDrag(e, row.name)}
               onClick={(e) => {
                 if (justDragged.current || (e.target instanceof Element && e.target.closest('button'))) return;
                 p.onToggleExpanded(row.name);
@@ -358,9 +399,11 @@ export function ChatDrawer(p: ChatDrawerProps) {
                 {row.sum && <ProjectChipBubbles chip={row.sum} />}
                 {row.superAsking && <span className="ns-dr-ask" data-testid="drawer-project-asking" aria-label={t('shell.drawer.superAsking')} />}
               </button>
+              {(!p.device || p.device.canStartIn(row.name)) && (
               <button type="button" className="ns-dr-act ns-dr-add" aria-label={`${t('shell.drawer.newWindow')}: ${row.name}`}
                 data-testid="drawer-project-add"
                 onClick={(e) => { e.stopPropagation(); pick(row.name, { kind: 'new-window' }); }}>+</button>
+              )}
               <svg className={`ns-dr-chev${row.expanded ? ' is-open' : ''}`} viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>
             </div>
             {row.expanded && <div className="ns-dr-children">{row.children.map((c) => child(row, c))}</div>}
@@ -368,6 +411,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
         ))}
         {drag && drag.over >= p.rows.length && <div className="ns-dr-drop-end" aria-hidden="true" />}
       </div>
+      {p.foot && <div className="ns-dr-foot" data-testid="drawer-foot">{p.foot}</div>}
 
       {!p.floating && <div className="ns-dr-handle" onPointerDown={startResize} aria-hidden="true" />}
       {guide !== null && <div className="ns-dr-guide" style={{ left: guide }} aria-hidden="true" />}
@@ -378,7 +422,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
           {menu.kind === 'new' ? (
             <>
               <div className="ns-drawer-menu-head">{t('shell.drawer.pickProject')}</div>
-              {p.rows.map((row) => (
+              {p.rows.filter((row) => !p.device || p.device.canStartIn(row.name)).map((row) => (
                 <button key={row.name} type="button" role="menuitem" className="ns-drawer-menu-item"
                   onClick={() => { closeMenu(); pick(row.name, { kind: 'new-window' }); }}>
                   {row.name}
@@ -413,6 +457,8 @@ export function ChatDrawer(p: ChatDrawerProps) {
               <button type="button" role="menuitem" className="ns-drawer-menu-item" onClick={() => { closeMenu(); p.onMove(menu.name!, 1); }}>
                 {t('shell.drawer.moveDown')}<kbd>⌥↓</kbd>
               </button>
+              {!p.device && (
+              <>
               <button type="button" role="menuitem" className="ns-drawer-menu-item" onClick={() => { closeMenu(); p.onOpenInWindow(menu.name!); }}>
                 {t('shell.drawer.openInWindow')}
               </button>
@@ -421,6 +467,8 @@ export function ChatDrawer(p: ChatDrawerProps) {
                 onClick={() => { closeMenu(); p.onCloseProject(menu.name!); }}>
                 {t('shell.drawer.closeProject')}
               </button>
+              </>
+              )}
             </>
           )}
         </div>

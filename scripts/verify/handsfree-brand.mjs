@@ -15,10 +15,11 @@
  *              the gem part pixel-matches the REAL mark (main's icon-512.png) within antialiasing
  *   pairing    the phone's sign-in page (390, light + dark): the mark leads, the card, the corner
  *              outlines, no overflow, AA text and button
- *   list       the Sohbetler header (390, light + dark): the mark, the live badge (pulsing,
- *              AA), the corner outlines behind the rows; the badge's pulse is ONE endless
- *              animation, held by the motion clock (paused, stepped), gone under reduced motion;
- *              a dropped link turns the badge hollow and still ("Reaching your Mac…")
+ *   title bar  the new shell's Mac chip on the phone (390, light + dark; W2 removed the Sohbetler
+ *              header and its corner outlines): the live badge (pulsing, AA), a drawer row's AA
+ *              title; the pulse is ONE endless animation, held by the motion clock (paused,
+ *              stepped), gone under reduced motion; a dropped link turns the badge hollow and
+ *              still ("Reaching your Mac…")
  *   mac panel  the laptop's Hands-free sheet (1440, light + dark), off and on: the mark in the
  *              header and the hero card, the same live badge; its pulse rests in Light mode and
  *              in an unfocused window (ambient)
@@ -34,6 +35,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { contrast, fillContrast, markAnnouncementsSeen, setTheme } from './lib/measure.mjs';
+import { drawerShown } from './lib/phone-shell.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRATCH = join(realpathSync(tmpdir()), 'dreamcontext-verify-handsfree-brand');
@@ -359,55 +361,38 @@ try {
 
     const qr = (await mac(port, 'POST', 'qr')).json.url;
     await page.goto(qr, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-    report.check(`list ${theme}: signed in, the Sohbetler list is on screen`, await until(async () => (await page.locator('[data-testid="phone-list"]:visible').count()) === 1, 25000));
+    const B = '[data-testid="ns-phone-chip"] [data-testid="phone-live-badge"]';
+    report.check(`title bar ${theme}: signed in, the drawer is on screen (new shell, W2)`, await until(() => drawerShown(page), 25000));
     await page.waitForTimeout(1200);
     await dismiss(page);
-    report.check(`list ${theme}: the header carries the mark before the title`, await page.locator('.mlist-head:visible').evaluate((h) => {
-      const kids = [...h.children];
-      return kids[0]?.getAttribute('data-testid') === 'handsfree-mark' && kids[1]?.classList.contains('mlist-h');
-    }));
-    report.check(`list ${theme}: the live badge is up and pulsing`, await until(async () => (await page.locator('.mlist-head [data-testid="phone-live-badge"][data-live="true"]:visible').count()) === 1, 15000),
+    report.check(`title bar ${theme}: the live badge is up and pulsing in the Mac chip`, await until(async () => (await page.locator(`${B}[data-live="true"]:visible`).count()) === 1, 15000),
       await page.evaluate(() => [...document.querySelectorAll('[data-testid="phone-live-badge"]')].map((b) => {
         const chain = []; for (let n = b; n && chain.length < 8; n = n.parentElement) chain.push(`${n.tagName.toLowerCase()}.${[...n.classList].join('.')}`);
         return `${b.getClientRects().length ? 'shown' : 'hidden'}: ${chain.join(' < ')}`;
       }).join('\n      ')));
-    const badgeText = await page.locator('.mlist-head [data-testid="phone-live-badge"]:visible').innerText().catch(() => '');
-    const srText = await page.locator('.mlist-head [data-testid="phone-live-badge"]:visible >> .dc-hf-sr').textContent().catch(() => '');
-    report.check(`list ${theme}: the badge reads "${srText} ${badgeText}" to a screen reader`, /Connected to your Mac/.test(srText ?? '') && /Mac/.test(badgeText));
-    const bc = await contrast(page.locator('.mlist-head [data-testid="phone-live-badge"]:visible'));
-    report.check(`list ${theme}: badge text contrast ${bc} >= 4.5`, bc >= 4.5);
-    const hc = await contrast(page.locator('.mlist-h:visible'));
-    report.check(`list ${theme}: title contrast ${hc} >= 4.5`, hc >= 4.5);
-    const head = await page.locator('.mlist-head:visible').boundingBox();
-    report.check(`list ${theme}: the header stays 44 px`, Math.round(head?.height ?? 0) === 44, String(head?.height));
-    report.check(`list ${theme}: the corner outlines sit behind the list`, await page.locator('[data-testid="handsfree-backdrop"]:visible').evaluate((b) => getComputedStyle(b).zIndex === '-1' && getComputedStyle(b).pointerEvents === 'none'));
-    const rowC = await contrast(page.locator('.mlist-title-text:visible').first());
-    report.check(`list ${theme}: a row title over the outlines keeps contrast ${rowC} >= 4.5`, rowC >= 4.5);
-    report.check(`list ${theme}: no horizontal overflow`, (await overflow(page)) <= 0, String(await overflow(page)));
-    report.check(`list ${theme}: the open chat's header badge (under the list) is quiet`, (await page.locator('.agent-overlay-head [data-testid="phone-live-badge"][data-quiet="true"]').count()) >= 1);
+    const badgeText = await page.locator(`${B}:visible`).innerText().catch(() => '');
+    const srText = await page.locator(`${B}:visible >> .dc-hf-sr`).textContent().catch(() => '');
+    report.check(`title bar ${theme}: the badge reads "${srText} ${badgeText}" to a screen reader`, /Connected to your Mac/.test(srText ?? '') && /Mac/.test(badgeText));
+    const bc = await contrast(page.locator(`${B}:visible`));
+    report.check(`title bar ${theme}: badge text contrast ${bc} >= 4.5`, bc >= 4.5);
+    const rowC = await contrast(page.locator('[data-testid="drawer-chat-row"] .ns-dr-t:visible').first());
+    report.check(`drawer ${theme}: a chat row's title keeps contrast ${rowC} >= 4.5`, rowC >= 4.5);
+    report.check(`title bar ${theme}: no horizontal overflow`, (await overflow(page)) <= 0, String(await overflow(page)));
     const held = await until(async () => { const p = await pulses(page); return p.length === 1 && p[0].state === 'paused' && p[0].iterations === Infinity; }, 4000);
-    report.check(`list ${theme}: the pulse is ONE endless animation, held by the motion clock`, held, JSON.stringify(await pulses(page)));
-    await page.screenshot({ path: join(SHOTS, `phone-list-390-${theme}.png`) });
-    await page.screenshot({ path: join(SHOTS, `phone-list-header-390-${theme}.png`), clip: { x: 0, y: 0, width: 390, height: 120 } });
+    report.check(`title bar ${theme}: the pulse is ONE endless animation, held by the motion clock`, held, JSON.stringify(await pulses(page)));
+    await page.screenshot({ path: join(SHOTS, `phone-drawer-390-${theme}.png`) });
+    await page.screenshot({ path: join(SHOTS, `phone-titlebar-390-${theme}.png`), clip: { x: 0, y: 0, width: 390, height: 120 } });
 
     if (theme === 'light') {
       // A dropped link: the badge goes hollow and still, and says it is reaching the Mac.
       await page.route('**/api/handsfree/phone', (r) => r.abort('internetdisconnected'));
       await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-      report.check('list: a dropped link turns the badge to "Reaching your Mac…", no pulse', await until(async () => (await page.locator('.mlist-head [data-testid="phone-live-badge"][data-live="false"]:visible').count()) === 1, 8000));
-      report.check('list: nothing pulses on a dropped link', (await pulses(page)).length === 0, JSON.stringify(await pulses(page)));
+      report.check('title bar: a dropped link turns the badge to "Reaching your Mac…", no pulse', await until(async () => (await page.locator(`${B}[data-live="false"]:visible`).count()) === 1, 8000));
+      report.check('title bar: nothing pulses on a dropped link', (await pulses(page)).length === 0, JSON.stringify(await pulses(page)));
       await page.screenshot({ path: join(SHOTS, 'phone-badge-reaching-390-light.png'), clip: { x: 0, y: 0, width: 390, height: 120 } });
       await page.unroute('**/api/handsfree/phone');
       await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-      report.check('list: the badge comes back live once the Mac answers', await until(async () => (await page.locator('.mlist-head [data-testid="phone-live-badge"][data-live="true"]:visible').count()) === 1, 8000));
-
-      // The background shapes, clearest on a project with no chats yet.
-      await page.locator('[data-testid="list-projects"]:visible .mlist-project', { hasText: 'other' }).click();
-      await until(async () => page.url().includes('vault=other') || (await page.locator('[data-testid="list-empty"]').count()) > 0, 10000);
-      await page.waitForTimeout(1500);
-      await dismiss(page);
-      report.check('backdrop: the empty project\'s list shows both corner outlines', (await page.locator('[data-testid="handsfree-backdrop"]:visible .hfm-decor').count()) === 2);
-      await page.screenshot({ path: join(SHOTS, 'phone-backdrop-390-light.png') });
+      report.check('title bar: the badge comes back live once the Mac answers', await until(async () => (await page.locator(`${B}[data-live="true"]:visible`).count()) === 1, 8000));
     }
     await ctx.close();
   }
@@ -420,7 +405,7 @@ try {
     const page = await ctx.newPage();
     watch(page, 'phone-reduced');
     await page.goto((await mac(port, 'POST', 'qr')).json.url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-    await until(async () => (await page.locator('.mlist-head [data-testid="phone-live-badge"]:visible').count()) === 1, 20000);
+    await until(async () => (await page.locator('[data-testid="ns-phone-chip"] [data-testid="phone-live-badge"]:visible').count()) === 1, 20000);
     await page.waitForTimeout(800);
     const p = await pulses(page);
     report.check('reduced motion: the badge is up and nothing pulses', p.every((a) => a.iterations !== Infinity), JSON.stringify(p));

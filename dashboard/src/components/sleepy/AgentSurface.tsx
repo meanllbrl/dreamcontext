@@ -4,6 +4,8 @@ import {
 } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import './AgentTerminal.css';
+// The phone layer (`.agent-surface[data-mobile]`): the chat on a phone, in the new shell's frame.
+import './MobileChat.css';
 import { agentFileUrl, api, RequestError } from '../../api/client';
 import { useVault, useApi, useInstanceEvent, emitInstance } from '../../context/VaultContext';
 import { uploadAgentFile } from '../../lib/agentDrop';
@@ -32,9 +34,6 @@ import { superRestorePlan, type SuperHold } from './superRestore';
 import { chatLaunch, dormantLaunch, launchFromSaved, resumePlan, savedChatLaunch, type ChatLaunch } from './chatLaunch';
 import { AgentTabs, type PaneVM } from './AgentTabs';
 import { createTabDragStore, type TabDropTarget } from './tabDrag';
-import { MobileSessionDrawer } from './MobileSessionDrawer';
-import { PhoneChatStack } from './PhoneChatStack';
-import { PhoneChatList } from './PhoneChatList';
 import type { StackTab } from './phoneStack';
 import { readRemoteDesktop, useIsMobile } from '../../hooks/useIsMobile';
 import { AgentDock } from './AgentDock';
@@ -91,9 +90,7 @@ import { runWindowVerb, type WindowVerbDeps } from './windowVerbs';
 import { useChrome } from '../layout/WindowChrome';
 import { ChatHistoryPicker, type PastSession } from './ChatHistoryPicker';
 import { carriedUnrestored, generationOf, mergeStoredRoster, phoneRestorable, putOutcome, seededRoster, withBaseGeneration, type DesktopSeedTab } from '../handsfree/rosterRehydrate';
-import { PhoneChip } from '../handsfree/phone/PhoneChip';
 import { PhoneBagNote } from '../handsfree/phone/PhoneBagNote';
-import { takePendingMacAdopt, takePendingPhoneOpen } from '../handsfree/macAdopt';
 import { MAC_MODE_ENDED_EVENT, type LiveChatWire, type LiveChatsWire, type SuperChatWire } from '../handsfree/macContract';
 import { isSuperMirrorId, rememberSuperMirrorIds } from './superMirrorIds';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
@@ -106,7 +103,8 @@ import { cardTitle } from './super/superTitles';
 import type { SurveyRead } from './chat/SurveyCard';
 import { PhoneAgenda, phoneEventContext } from './super/PhoneAgenda';
 import { holdSidebarCollapsed as holdClassicSidebar } from '../../hooks/useSidebarCollapse';
-import { readShellModeFrozen, useIsNewShell } from '../../lib/uxMode';
+import { readDeviceShell, readShellModeFrozen, useIsNewShell } from '../../lib/uxMode';
+import { superTap } from './phoneList';
 import {
   addWindow, adoptWindowOrder, cleanWindowName, dropWindow, landsOnSuper, moveWindow, renameWindow, initialWindows, joinInto, neighbourOf, parkedHomes, placeTab, pruneParked,
   restoreWindows, rowsByWindow, savePlacement, splitOut, switchWindow, unparkPanes, updateParked, windowOfTab,
@@ -114,7 +112,10 @@ import {
   type RestoredTab, type SavedWindowMeta, type WindowFact, type WindowsState, type WinPane,
 } from './chatWindows';
 import { wasOpenedForLink } from '../../lib/windowLaunch';
-import { DRAWER_INTENT_EVENT, DRAWER_SURFACE_EVENT, type DrawerIntent, type DrawerSurfaceState, type PendingDrawerIntent } from '../../lib/drawerIntents';
+import { chatOnScreen } from './chatOnScreen';
+import { deviceMayStartChat, deviceRefusesIntent, historyPickRefused, openChatPlan } from '../layout/newshell/drawerModel';
+import { markClosed } from './phoneClosed';
+import { DRAWER_INTENT_EVENT, DRAWER_SURFACE_EVENT, type DrawerChatFact, type DrawerIntent, type DrawerSurfaceState, type PendingDrawerIntent } from '../../lib/drawerIntents';
 import { planSuperRow, runSuperRow, SUPER_ROW_SPAWN } from './super/superRow';
 /** The new shell opens its first project on Chat once per window (6b), not on every switch. */
 let openedOnRestoreThisWindow = false;
@@ -508,60 +509,20 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // a fullscreen overlay by this local flag. Sessions live in the detached-DOM garage
   // either way, so toggling `expanded` NEVER remounts xterm/WebSocket/PTY.
   const [expanded, setExpanded] = useState(false);
-  // ── The phone branch ───────────────────────────────────────────────────────────────
-  // On a phone the chat IS the app: there is no room for the dashboard shell, and the
-  // top tab strip is unusable with a thumb. `isMobile` is narrow-viewport AND coarse-
-  // pointer (see useIsMobile) so a narrowed desktop window keeps every desktop
-  // affordance.
-  const isMobile = useIsMobile();
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  // The phone stack's swap (AC20): two keyframes taken in turn, so every tap restarts the animation.
-  const [swapFlip, setSwapFlip] = useState<0 | 1 | 2>(0);
-  // Mac mode's phone opens on the Sohbetler list (AC21); a chat opens over it and ‹ comes back.
+  // ── The phone layout ───────────────────────────────────────────────────────────────
+  // A phone's chat is the new shell's Chat page, edge to edge between the title bar and the
+  // bottom bar: one chat, no tab strip, chats switched in the window's drawer. `isMobile` is the
+  // reading/touch switch only (narrow viewport AND a coarse pointer, see useIsMobile) and only in
+  // the new shell, so a classic-frozen tablet that rotates narrow keeps its desktop layout.
+  const narrowTouch = useIsMobile();
+  const newShell = useIsNewShell();
+  const isMobile = narrowTouch && newShell;
+  // Mac mode's phone: the tunnel's trust (`isMacPhoneSurface`) on the phone layout. Every branch
+  // keyed on `isMobile` is LAYOUT, every one keyed on `isMacPhoneSurface()` TRUST.
   const macPhone = isMobile && isMacPhoneSurface();
   // A computer or landscape tablet on the tunnel (hands-free sekmeler W2): the desktop layout with
-  // the tunnel's trust. Every branch below keyed on `isMobile` is LAYOUT, every one keyed on
-  // `isMacPhoneSurface()` TRUST; this names the new branch (the remote Super stage, seeding).
+  // the tunnel's trust; this names the branch (the remote Super stage, seeding).
   const remoteDesktop = !isMobile && isMacPhoneSurface();
-  const [phoneView, setPhoneView] = useState<'list' | 'chat'>('list');
-  // Two screens, so the move between them says which way it went: a chat comes in from the right,
-  // the list comes back from the left. Set in the render that changes the view (React's
-  // adjust-state-on-change pattern), so the first frame of the new screen already animates.
-  const [phoneNavFrom, setPhoneNavFrom] = useState(phoneView);
-  const [phoneNav, setPhoneNav] = useState<'push' | 'pop' | null>(null);
-  if (phoneNavFrom !== phoneView) {
-    setPhoneNavFrom(phoneView);
-    setPhoneNav(phoneView === 'chat' ? 'push' : 'pop');
-  }
-  // The phone's back gesture leaves a chat for the list, never the app: an entry is pushed while
-  // a chat is open and unwound when it closes by any other route (the drawer's rule). The entry
-  // carries a marker unique to this visit and only THAT entry is unwound: a reload keeps an old
-  // entry's state while the view resets to the list, and unwinding that one too stepped back out
-  // of the app. A leftover marker from before a reload is cleared on mount.
-  const phoneChatMark = useRef<string | null>(null);
-  useEffect(() => {
-    if (macPhone && window.history.state?.phoneChat) window.history.replaceState(null, '');
-  }, [macPhone]);
-  useEffect(() => {
-    if (!macPhone || phoneView !== 'chat') return undefined;
-    const mark = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    phoneChatMark.current = mark;
-    window.history.pushState({ phoneChat: mark }, '');
-    const onPop = () => setPhoneView('list');
-    window.addEventListener('popstate', onPop);
-    // The list that was tapped is gone: put focus on the chat's ‹, its first control.
-    document.querySelector<HTMLElement>('[data-testid="chat-back"]')?.focus({ preventScroll: true });
-    return () => {
-      window.removeEventListener('popstate', onPop);
-      phoneChatMark.current = null;
-      if (window.history.state?.phoneChat === mark) window.history.back();
-    };
-  }, [macPhone, phoneView]);
-  // The escape hatch, and the reason auto-expand cannot simply run on every render: once
-  // the user asks for the full dashboard, the surface must STAY collapsed. Without this the
-  // effect below would re-expand it on the next tick and the phone could never reach
-  // Settings — which is exactly where a missing prerequisite gets fixed.
-  const [mobileEscaped, setMobileEscaped] = useState(false);
   const autoExpanded = useRef(false);
   // macOS-style zoom: when `expanded` flips false the surface stays rendered with a
   // `closing` class so the shrink-to-dock animation can play; `onAnimationEnd` (plus a
@@ -597,8 +558,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // The selected window's panes ARE `panes`; the others are parked in `chatWindows` by
   // conversation id, their sessions still mounted and running. Classic draws every window's
   // tabs in its one surface and only remembers each tab's window, so a save hands it back
-  // unchanged. The phone and Mac mode's tunnel are classic (lib/uxMode.ts).
-  const windowed = useIsNewShell();
+  // unchanged. A device shell (the tunnel, a phone on the laptop listener; lib/uxMode.ts) draws
+  // the new shell but never the Mac's named windows: it keeps today's non-window path (the phone
+  // roster, `?of=desktop` seeding, passive adoption, Return landing, the remote Super tab).
+  const windowed = newShell && !readDeviceShell();
   const [chatWindows, setChatWindows] = useState<WindowsState>(initialWindows);
   const chatWindowsRef = useRef(chatWindows);
   chatWindowsRef.current = chatWindows;
@@ -2773,31 +2736,6 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     // The product's name, the same in every language (`handsfree.super.title`).
     resumePastSession({ id: row.conversationId, title: 'Super Agent', named: true, updatedAt: Date.now(), preview: '' } as unknown as PastSession, 'passive');
   }, [resumePastSession]);
-  // A tap in another project's drawer, or in the phone's one list / a swipe (hands-free sekmeler
-  // W3), parked what to open for THIS project (macAdopt.ts): taken once the roster has hydrated,
-  // so a restored tab of the same chat is reused, when the project mounts AND whenever it becomes
-  // the one on screen again (an already open chip is only switched to, never remounted).
-  useEffect(() => {
-    if (!vault || !isMacPhoneSurface() || !isActive) return;
-    let tries = 0;
-    const timer = setInterval(() => {
-      tries++;
-      if (!hydratedRef.current && tries < 25) return;
-      clearInterval(timer);
-      const pending = takePendingMacAdopt(vault);
-      if (pending) { adoptLiveChat(pending); setPhoneView('chat'); return; }
-      const open = takePendingPhoneOpen(vault);
-      if (!open) return;
-      if (open.kind === 'super') {
-        openSuperOnPhone({ conversationId: open.id, vault, title: null, busy: false, state: 'idle', lastLine: null, updatedAt: null, live: true });
-      } else {
-        resumePastSession({ id: open.id, title: open.title, preview: '', updatedAt: 0, startedAt: null, sizeBytes: 0, gitBranch: '', ...(open.tool ? { tool: open.tool } : {}) } as PastSession);
-      }
-      setPhoneView('chat');
-    }, 200);
-    return () => clearInterval(timer);
-  }, [vault, isActive, adoptLiveChat, openSuperOnPhone, resumePastSession]);
-
   // ── Run sleep agent (from the header's Sleep-debt tracker) ────────────────────────
   // Spawn a dedicated "Sleep" agent that auto-runs the project's consolidation flow, and
   // leave the overlay COLLAPSED so it surfaces as a running chip in the bottom-right dock —
@@ -3075,12 +3013,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // before the roster lands would open the conversation a second time beside the tab the
   // roster is about to restore, so a request that has no live tab yet waits (bounded) for all
   // three. The ACK is set on receipt so the sender stops asking.
-  const [linkedSession, setLinkedSession] = useState<{ claudeId: string; since: number } | null>(null);
+  const [linkedSession, setLinkedSession] = useState<{ claudeId: string; since: number; pick?: boolean } | null>(null);
   const [, bumpLinkWait] = useReducer((x: number) => x + 1, 0);
   useInstanceEvent<OpenSessionDetail>(OPEN_SESSION_EVENT, (detail) => {
     if (!detail?.claudeId) return;
-    // A notification tap opens THAT chat, past the phone's list (AC9 + AC21).
-    setPhoneView('chat');
     // The handed-over Super Agent on the Mac (its reply's banner, its queue's alarm, a notch
     // row): open its stage. It is never a tab there, so a resume would fork it. The phone has
     // no stage and keeps opening the chat.
@@ -3090,12 +3026,12 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       detail.accepted = true;
       return;
     }
-    setLinkedSession({ claudeId: detail.claudeId, since: Date.now() });
+    setLinkedSession({ claudeId: detail.claudeId, since: Date.now(), ...(detail.pick ? { pick: true } : {}) });
     detail.accepted = true;
   });
   useEffect(() => {
     if (!linkedSession) return undefined;
-    const { claudeId, since } = linkedSession;
+    const { claudeId, since, pick } = linkedSession;
     const existing = sessionList.find((m) => m.claudeId === claudeId);
     // The super record too: a link to the handed-over Super Agent opens its stage, and only the
     // record says which session that is (a resume would fork it as a plain tab).
@@ -3117,16 +3053,24 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     const past = { id: claudeId, title: '', preview: '', updatedAt: 0, startedAt: null, sizeBytes: 0, gitBranch: '' };
     // A hands-free phone (a notification tap): a chat still running on the Mac is ADOPTED, as
     // the drawer's "Open on Mac" does; a plain resume would displace the running process.
-    if (isMacPhoneSurface() && !existing) {
-      void api.get<LiveChatsWire>('/agent/live-chats')
-        .then((r) => r.chats.find((c) => c.conversationId === claudeId))
-        .catch(() => undefined)
-        .then((live) => { if (live) adoptLiveChat(live); else resumePastSession(past); });
+    // A History pick (`pick`) asks the Mac fresh even for a dormant tab, and resumes NOTHING in a
+    // project handed over meanwhile, for a chat still draining, or when the read fails
+    // (`historyPickRefused`). A notification tap keeps its path to the mirror and watch.
+    if (isMacPhoneSurface() && (!existing || (pick && existing.dormant))) {
+      // This project's client: with 2+ chosen projects the phone listener refuses a read that
+      // names none (400 phone_vault_required), and the guard would then refuse every pick.
+      void scopedApi.get<LiveChatsWire>('/agent/live-chats')
+        .then((r): LiveChatsWire | null => r, () => null)
+        .then((r) => {
+          if (pick && historyPickRefused(r, vault ?? '', claudeId)) return;
+          const live = r?.chats.find((c) => c.conversationId === claudeId);
+          if (live) adoptLiveChat(live); else resumePastSession(past);
+        });
       return undefined;
     }
     resumePastSession(past);
     return undefined;
-  }, [linkedSession, sessionList, caps, settingsReady, claudeReady, agentSettings.enabled, resumePastSession, adoptLiveChat, api]);
+  }, [linkedSession, sessionList, caps, settingsReady, claudeReady, agentSettings.enabled, resumePastSession, adoptLiveChat, scopedApi]);
 
   // ── Start the initializer chat from the onboarding hand-off ("Start with Claude") ──
   //
@@ -3351,6 +3295,13 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // what it owns: the live sessions, a spawn that lands revealed, and the reveal itself.
   // Sessions resolve by conversation id through `sessionList`, like the checklist bridge.
   const windowChrome = useChrome();
+  // Past chats. On the tunnel there is ONE picker, the window's (its guards: no handed-over
+  // project, no running or draining chat, no Super row): this surface never mounts its own there.
+  const historyViaWindow = isMacPhoneSurface();
+  const openPastChats = useCallback(() => {
+    if (historyViaWindow) windowChrome.openHistory();
+    else setHistoryOpen(true);
+  }, [historyViaWindow, windowChrome]);
   /** The Super Agent's own conversation, or (while handed over) one of its children. */
   const claudeIdIsSuperGuarded = (claudeId: string): boolean => {
     const st = superStateRef.current;
@@ -5169,10 +5120,6 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // two menus above use it: these portal to <body>. The quest receipt ("How this was
       // built") is one of them: it portals its own dialog and closes itself on Esc.
       if (document.querySelector('.image-viewer, .pdf-viewer, .fullscreen-overlay, .quest-receipt-scrim')) return;
-      // The phone's session drawer owns Esc while it is open — same presence test, same
-      // reason (it portals no focus of its own). Without this the one key closed the drawer
-      // AND collapsed the surface behind it, which on a phone means the chat vanishes.
-      if (document.querySelector('.mchat-drawer[data-open]')) return;
       // A composer chip's popover (owner 2026-10-24) owns Esc: it portals to <body>, and the
       // composer closes it on this same key.
       if (document.querySelector('.chat-cmp-ref-pop')) return;
@@ -5257,9 +5204,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     if (!agentSettings.enabled && expanded) setExpanded(false);
   }, [agentSettings.enabled, expanded]);
 
-  // A phone opens straight INTO chat. The dashboard shell still exists behind the surface
-  // (and `Show full dashboard` in the drawer reveals it) — it is just never the landing
-  // screen on a device where the only thing that fits is one conversation.
+  // A phone opens on Chat, with the window's drawer open over it (WindowChrome): the chats are
+  // why it came. Every other page is one tap away on the bottom bar.
   useEffect(() => {
     // A remote computer on the tunnel opens on the Chat too (hands-free sekmeler W2): the chats
     // are why it came, as on the phone.
@@ -5269,26 +5215,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     // one nobody has written yet — and the fight shows up as a surface that flickers
     // open/closed forever rather than as a clean bug. The ref resets when the layout leaves
     // mobile, so a rotation back into it opens chat again.
-    if (autoExpanded.current || mobileEscaped || !agentSettings.enabled) return;
+    if (autoExpanded.current || !agentSettings.enabled) return;
     autoExpanded.current = true;
     setExpanded(true);
-  }, [isMobile, remoteDesktop, mobileEscaped, agentSettings.enabled]);
-
-  // Leaving the phone layout (rotation to a wide landscape, or emulation off) must not
-  // strand the drawer open over a desktop surface that has a tab strip again.
-  useEffect(() => { if (!isMobile) setDrawerOpen(false); }, [isMobile]);
-
-  // The app's own title bar (`.window-chrome-bar`, z-index 40) sits ABOVE the agent overlay
-  // by design, so on a phone — where the surface covers the viewport from y=0 — it lands on
-  // top of the mobile header and eats every tap on the ☰ button. It is a window chrome for a
-  // window that does not exist here, so it goes while chat owns the screen. The flag rides on
-  // <body> because the bar is mounted in a different subtree (Shell) than this surface;
-  // clearing it on unmount and on collapse is what makes `Show full dashboard` bring it back.
-  useEffect(() => {
-    if (!isMobile || !expanded) return;
-    document.body.dataset.mobileChat = 'true';
-    return () => { delete document.body.dataset.mobileChat; };
-  }, [isMobile, expanded]);
+  }, [isMobile, remoteDesktop, agentSettings.enabled]);
 
   // ── The dragged tab vanished mid-drag ───────────────────────────────────────────
   // Its session closed or its pane went away while the pointer was still down: end the
@@ -5321,8 +5251,6 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // and expanding a surface that renders nothing would leave an invisible overlay eating clicks.
   useInstanceEvent(OPEN_AGENT_SURFACE_EVENT, () => {
     if (caps?.desktop && agentSettings.enabled) setExpanded(true);
-    // The phone's way back from "Show full dashboard": chat owns the screen again.
-    setMobileEscaped(false);
   });
   // …and tell the rail whether the overlay is up, so Chat reads as the current place (not the
   // page hidden underneath it).
@@ -5501,6 +5429,43 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     setChatWindows((prev) => dropWindow(prev, id));
   }, [closeSessionById, showWindow, inChatWindow]);
 
+  /** A drawer chat row's close: the one tab-close path. A chat mid-turn or asking asks first, in
+   *  the app's own dialog (the browser's is a silent no-op in the desktop WebView). Marked
+   *  closed first, so its exiting process never comes back as a live row (`phoneClosed.ts`). */
+  const closeChatRow = useCallback(async (id: string) => {
+    const meta = sessionListRef.current.find((m) => m.id === id);
+    if (!meta) return;
+    const live = meta.dormant ? undefined : sessions.current.get(id);
+    // The state the row shows (`deriveSessionStatus`, as the drawer reads it): a turn running, a
+    // question, sub-agents still at work, or a chat starting all ask first.
+    const shown = live ? deriveSessionStatus({ dormant: false, status: live.status, busy: live.busy, asking: live.asking, agentsWorking: agentsWorkingOf(live), takenOver: (live as { takenOver?: boolean }).takenOver }).kind : null;
+    if (shown === 'working' || shown === 'asking' || shown === 'starting') {
+      const title = meta.title || tRef.current('shell.drawer.untitled');
+      const ok = await confirmAction({
+        title: tRef.current('shell.drawer.closeChatRunning.title'),
+        body: tRef.current('shell.drawer.closeChatRunning.body').replace('{title}', () => title),
+        confirmLabel: tRef.current('shell.drawer.closeChatConfirm'),
+        cancelLabel: tRef.current('shell.windows.keep'),
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    const now = sessionListRef.current.find((m) => m.id === id);
+    if (!now) return;
+    markClosed([sessions.current.get(id)?.claudeId, now.claudeId]);
+    closeSessionById(id);
+  }, [closeSessionById]);
+  /** A tab this project holds, brought forward wherever it is: a parked window comes forward, a
+   *  minimized tab is restored, a dormant one resumes. */
+  const openChatTab = useCallback((id: string) => {
+    const meta = sessionListRef.current.find((m) => m.id === id);
+    if (!meta) return;
+    revealTab(id);
+    if (meta.dormant) resumeSession(id);
+    else if (minimizedIdsRef.current.includes(id)) restoreMinimized(id);
+    else focusSession(id);
+  }, [revealTab, resumeSession, restoreMinimized, focusSession]);
+
   const runDrawerIntentRef = useRef<(intent: DrawerIntent) => void>(() => {});
   runDrawerIntentRef.current = (intent) => {
     // A drag moves a row and nothing else: this may be a project that is not on screen.
@@ -5509,7 +5474,19 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       setChatWindows((prev) => moveWindow(prev, intent.windowId, intent.before));
       return;
     }
+    // A close moves nothing either: no project comes forward, nothing expands.
+    if (intent.kind === 'close-chat') {
+      void closeChatRow(intent.id);
+      return;
+    }
     if (!caps?.desktop || !agentSettings.enabled) { setExpanded(true); return; }
+    // A device shell never hands over (the Super Agent button is the Mac's) and starts no chat in
+    // a handed-over project, nor before the tunnel's live read has answered. The drawer offers
+    // neither; this holds whatever queued the intent.
+    if (readDeviceShell() && deviceRefusesIntent(intent.kind, deviceMayStartChat(windowChrome.deviceChats, vault ?? ''))) {
+      setExpanded(true);
+      return;
+    }
     if (intent.kind !== 'rename-window' && intent.kind !== 'close-window') setSuperPeek(null);
     if (intent.kind === 'member') {
       setExpanded(true);
@@ -5524,6 +5501,32 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     } else if (intent.kind === 'open-window') {
       if (intent.windowId) showWindow(intent.windowId);
       setSuperView('panes');
+      setExpanded(true);
+    } else if (intent.kind === 'open-chat') {
+      const st = superStateRef.current;
+      const plan = openChatPlan(intent.row, {
+        vault: vault ?? '',
+        hasTab: (id) => sessionListRef.current.some((m) => m.id === id),
+        superOn: !!st?.enabled,
+        isSuperChild: (cid) => sessionHome({ claudeId: cid }, superOwnedRef.current, st?.session) === 'super',
+        tunnel: isMacPhoneSurface(),
+      });
+      // The panes, not the stage: on a handed-over project the chats are hidden while it shows.
+      if (plan.kind === 'tab') { setSuperView('panes'); openChatTab(plan.id); }
+      else if (plan.kind === 'adopt') { setSuperView('panes'); adoptLiveChat(plan.chat); }
+      else if (plan.kind === 'stage') setSuperView('super');
+      else if (plan.kind === 'super') {
+        // A handed-over project's Super row (the tunnel only): the phone opens its mirror (a tab
+        // already holding it is selected), a tunnel computer shows the remote stage. An offline
+        // row stays disabled: nothing opens, nothing expands.
+        const tap = superTap(plan.row.row, stackTabsRef.current);
+        if (!tap && !remoteDesktop) return;
+        if (tap && !remoteDesktop) {
+          if ('select' in tap) selectTab(tap.select.paneId, tap.select.id);
+          else openSuperOnPhone(tap.open);
+        }
+        setSuperView('super');
+      }
       setExpanded(true);
     } else if (intent.kind === 'new-window') {
       setSuperView('panes');
@@ -5634,7 +5637,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // conversation mid-draft is exactly when you want it, and unlike ⌘W it destroys
       // nothing (the draft is still there when the picker closes).
       if (e.metaKey && !e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'o') {
-        e.preventDefault(); e.stopPropagation(); setHistoryOpen(true); return;
+        e.preventDefault(); e.stopPropagation(); openPastChats(); return;
       }
       // Typing in the composer field must never trigger the ⌘D/⌘⇧D/⌘T/⌘W/⌃` session chords
       // (⌘W would close the focused session mid-compose).
@@ -5660,7 +5663,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     };
     host.addEventListener('keydown', onKey, true);
     return () => host.removeEventListener('keydown', onKey, true);
-  }, [started, addSession, addSplitSession, closeSessionById, focusedSessionId, claudeKind]);
+  }, [started, addSession, addSplitSession, closeSessionById, focusedSessionId, claudeKind, openPastChats]);
 
   const openExternal = async () => {
     try { await scopedApi.post('/agent/open-terminal', { bypass }); }
@@ -5847,9 +5850,13 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // can activate that pane too.
   const mobileTabs = paneVMs.flatMap((pane) => pane.tabs.map((t) => ({ ...t, paneId: pane.id })));
   const mobileActive = mobileTabs.find((t) => t.id === activePane?.active) ?? mobileTabs[0];
-  // The phone's Super chat on screen: its agenda strip reads the digest the Mac pushes to it.
+  // Whether this phone's chat is the thing on screen (chatOnScreen.ts): the Chat page up in the
+  // project in front, the window shown, no drawer over it.
+  const phoneChatShown = macPhone && chatOnScreen({ expanded, active: isActive, drawerVisible: stageBesideDrawer, visible: !windowActivity.hidden });
+  // The phone's Super chat on the Chat page: its agenda strip reads the digest the Mac pushes to
+  // it. Kept while the drawer covers it, so the digest is not dropped and re-read on every peek.
   const phoneSuperChat = (() => {
-    if (!macPhone || !expanded || phoneView !== 'chat' || !mobileActive) return undefined;
+    if (!macPhone || !expanded || !mobileActive) return undefined;
     const s = sessions.current.get(mobileActive.id);
     return s && s.kind === 'chat' && (s as ChatSession).superMirror ? s as ChatSession : undefined;
   })();
@@ -5862,9 +5869,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // `writeAboutRow` writes into the Mac's Super chat, which the phone does not hold).
   const writePhoneAboutRow = useCallback((row: AgendaRow) => writeAboutInto(phoneSuperChat, row), [phoneSuperChat, writeAboutInto]);
   // Phone (Mac mode): tell each chat whether it is the one on screen, so the server does not
-  // push a question or a finished turn for the chat the owner is looking at (D2).
-  // On the list no chat is on screen, so every chat may push.
-  const onScreenChatId = isMobile && expanded && !mobileEscaped && isMacPhoneSurface() && phoneView === 'chat' ? (mobileActive?.id ?? '') : '';
+  // push a question or a finished turn for the chat the owner is looking at (D2). Behind the open
+  // drawer, on another page or in another project no chat is on screen, so every chat may push.
+  const onScreenChatId = phoneChatShown ? (mobileActive?.id ?? '') : '';
   useEffect(() => {
     if (!isMacPhoneSurface()) return;
     for (const [id, s] of sessions.current) {
@@ -5881,34 +5888,33 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
         ? homedSessions({ handedOver, superSid, shownSid: superShownSid, paneActives: shownPanes.map((p) => p.active) })
         : dockOpen && superSid ? [superSid] : []),
       panesCovered: windowed && !!superPeek && !handedOver,
-      // Only Mac mode's phone has a list screen; any other narrow layout always draws its active tab.
-      phoneChat: isMobile ? (expanded && !mobileEscaped && (!macPhone || phoneView === 'chat') ? (mobileActive?.id ?? '') : '') : null,
+      // A narrow layout draws one chat (no list screen any more): the active tab, while the Chat
+      // page is up and no drawer covers it.
+      phoneChat: isMobile ? (expanded && !stageBesideDrawer ? (mobileActive?.id ?? '') : '') : null,
     });
     if (applySeen(sessions.current.values(), inView, windowActivity.focused)) bumpStatus();
   });
-  // The phone stack (AC19) and list (AC21): the open tabs with the conversation each holds, the
-  // live session's AND the roster's (a dormant tab has only the latter, and the two can differ), so
-  // a Mac chat this phone holds is never listed twice.
+  // The open tabs with the conversation each holds, the live session's AND the roster's (a dormant
+  // tab has only the latter, and the two can differ): a Super row tap selects a tab already holding
+  // its conversation (`superTap`) instead of opening it twice.
   const claudeIdOf = new Map(sessionList.map((m) => [m.id, m.claudeId]));
   const stackTabs: StackTab[] = mobileTabs.map((t) => ({
     id: t.id, paneId: t.paneId, title: t.title, info: t.info, attention: t.attention,
     claudeId: sessions.current.get(t.id)?.claudeId || claudeIdOf.get(t.id),
     altClaudeId: claudeIdOf.get(t.id),
   }));
-  const stackSessionFor = useCallback((id: string): ChatSession | undefined => {
-    const s = sessions.current.get(id);
-    return s && s.kind === 'chat' ? (s as ChatSession) : undefined;
-  }, []);
+  const stackTabsRef = useRef(stackTabs);
+  stackTabsRef.current = stackTabs;
 
-  // ── The phone's chat screen across projects (hands-free sekmeler W3, owner D1): swipe, back
-  // badge, waiting toast (usePhoneChatNav.ts) ─────────────────────────────────────────────────
-  const phoneChatOn = macPhone && expanded && phoneView === 'chat' && !mobileEscaped && isActive;
+  // ── The phone's chat screen across projects (hands-free sekmeler W3, owner D1): swipe and
+  // waiting toast over the window's rows (usePhoneChatNav.ts) ─────────────────────────────────
+  const phoneChatOn = phoneChatShown;
   const phoneChatNav = usePhoneChatNav({
-    vault: vault ?? '', tabs: stackTabs, active: phoneChatOn, enabled: macPhone,
+    vault: vault ?? '', rows: windowChrome.deviceChats.rows, liveAnswered: windowChrome.deviceChats.liveAnswered,
+    active: phoneChatOn, enabled: macPhone,
     activeTabId: mobileActive?.id ?? null,
     activeClaude: mobileActive ? (sessions.current.get(mobileActive.id)?.claudeId || claudeIdOf.get(mobileActive.id)) : undefined,
-    hostRef, chrome: windowChrome,
-    open: { selectTab, openSuperOnPhone, resumePastSession, adoptLiveChat },
+    hostRef, openChatRow: windowChrome.openChatRow,
   });
   const phoneToastEl = phoneChatOn ? <PhoneWaitingToast row={phoneChatNav.toast} onOpen={phoneChatNav.openToast} /> : null;
   // Collapsed dock rows — one chip per session, in roster order. Never the Super Agent (it is
@@ -6001,12 +6007,26 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   });
   const peekMember = superPeek?.kind === 'member' ? superPeek.slug : null;
   const superMarks = superRowMarks(superState);
-  const windowFactsKey = JSON.stringify([chatWindows.activeId, windowFacts, shownFacts, peekMember, superMarks, arriving, rosterKnown]);
+  // …and each of the owner's chats by name, in its window, for the drawer's chat rows (W1). The
+  // phone stack's tab shape, so the tunnel reads the same rows.
+  const chatWindowOf = new Map<string, string>();
+  for (const [wid, rows] of windowRows) for (const r of rows) chatWindowOf.set(r.id, wid);
+  const chatFacts: DrawerChatFact[] = ownerRows.flatMap((r) => {
+    const windowId = chatWindowOf.get(r.id);
+    if (!windowId) return [];
+    return [{
+      id: r.id, paneId: panes.find((p) => p.tabs.includes(r.id))?.id ?? '', title: r.title, info: r.info, attention: r.attention,
+      claudeId: sessions.current.get(r.id)?.claudeId || claudeIdOf.get(r.id), altClaudeId: claudeIdOf.get(r.id), windowId,
+    }];
+  });
+  const activeChatId = activePane?.active;
+  const windowFactsKey = JSON.stringify([chatWindows.activeId, windowFacts, shownFacts, peekMember, superMarks, arriving, rosterKnown, chatFacts, activeChatId]);
   useEffect(() => {
     emitInstance<DrawerSurfaceState>(bus, DRAWER_SURFACE_EVENT, {
       superOn, superSelected: (superSelected || arriving === 'super') && !peekMember,
       // Before the roster is restored every window reads empty: the drawer must not believe it.
-      ...(rosterKnown ? { windows: windowFacts, activeWindowId: chatWindows.activeId } : {}),
+      ...(rosterKnown ? { windows: windowFacts, activeWindowId: chatWindows.activeId, chats: chatFacts } : {}),
+      ...(rosterKnown && activeChatId ? { activeChatId } : {}),
       shown: shownFacts, ...(peekMember ? { member: peekMember } : {}), superMarks,
     });
     // The facts are read through their key: a rebuilt array with the same rows sends nothing.
@@ -6154,7 +6174,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // agent is a chat), desktop only, on for everyone (no Settings switch). Take back never hides.
   // New shell: never in a chat window, and the stage has no take-back. The drawer's Super Agent
   // row is the one way in.
-  const superTab = !windowed && panesLive && (handedOver || (chatMode && !isMacPhoneSurface())) ? (
+  const superTab = !windowed && panesLive && (handedOver || (chatMode && !readDeviceShell())) ? (
     <HandoverButton
       handedOver={handedOver}
       busy={superBusy || superMotion === 'running'}
@@ -6163,6 +6183,36 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       remote={remoteDesktop}
     />
   ) : null;
+  // ── The phone's Chat page with no chat on it ──
+  // One line and one button, never the desktop setup screen. On the tunnel a project handed over
+  // to the Super Agent offers no New chat (its chats are the Super's): the hint and the Super row
+  // instead, disabled while the Mac runs no chat for it. Until the live read answers no project
+  // offers New chat (deviceMayStartChat), as the drawer holds it back.
+  const phoneMayStart = deviceMayStartChat(windowChrome.deviceChats, vault ?? '');
+  const phoneHandedHere = !!vault && windowChrome.deviceChats.handedOver.has(vault);
+  const phoneSuperRow = phoneHandedHere ? windowChrome.deviceChats.rows.find((r) => r.kind === 'super' && r.vault === vault) : undefined;
+  const phoneEmpty = (
+    <div className="mchat-empty" data-testid="chat-empty">
+      <p className="mchat-empty-line">
+        {phoneHandedHere ? t('handsfree.super.hint') : canSpawn ? t('shell.windows.empty') : t('shell.windows.emptyBlocked')}
+      </p>
+      {phoneHandedHere ? (
+        <button
+          type="button"
+          className="chat-btn primary"
+          data-testid="chat-empty-super"
+          disabled={!phoneSuperRow || phoneSuperRow.kind !== 'super' || !phoneSuperRow.row.live}
+          onClick={() => { if (vault && phoneSuperRow) windowChrome.openChatRow(vault, phoneSuperRow); }}
+        >
+          {t('handsfree.super.title')}
+        </button>
+      ) : canSpawn && phoneMayStart ? (
+        <button type="button" className="chat-btn primary" data-testid="chat-empty-new" onClick={() => addSession(claudeKind)}>
+          {t('shell.drawer.newChat')}
+        </button>
+      ) : null}
+    </div>
+  );
   let body: React.ReactNode;
   if (capsError) {
     body = <Centered>
@@ -6303,30 +6353,16 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             <Notice slim tone="warn" icon={<Glyph.moon />} testId="super-remote-no-window" title={t('super.remote.noWindow')} />
           </div>
         )}
-        {/* Mac mode's phone has two screens, the Sohbetler list and one chat (owner, 2026-10-17):
-            the other open chats live on the list, not in a band above the chat. */}
-        {isMobile && !macPhone && (
-          <PhoneChatStack
-            tabs={stackTabs}
-            activeId={mobileActive?.id ?? ''}
-            vault={vault ?? ''}
-            polling={onScreenChatId !== ''}
-            sessionFor={stackSessionFor}
-            onSelect={selectTab}
-            onAdopt={adoptLiveChat}
-            onSwap={() => setSwapFlip((f) => (f === 1 ? 2 : 1))}
-          />
-        )}
         <div
           ref={panesRowRef}
           className={'agent-panes' + (shownPanes.length > 1 ? ' split' : '')}
-          data-swap={isMobile && swapFlip ? String(swapFlip) : undefined}
           hidden={handedOver}
         >
           {/* The focused pane's top bar, ONE element that glides between panes on the
               compositor while the panes land in a single layout (usePaneFocusGlide.ts). */}
           <div ref={glideRef} className="agent-pane-glide" aria-hidden />
-          {shownPanes.length === 0 && (
+          {shownPanes.length === 0 && isMobile && phoneEmpty}
+          {shownPanes.length === 0 && !isMobile && (
             <div className="agent-allmin-hint">
               <p className="agent-allmin-title">{windowed ? t('shell.windows.empty') : 'All agents minimized'}</p>
               {!windowed && <p className="agent-allmin-sub">Click a chip in the bottom-right corner to bring one back, or start a new one with ＋ New agent.</p>}
@@ -6376,6 +6412,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
         <div ref={garageRef} className="agent-garage" aria-hidden />
       </div>
     );
+  } else if (isMobile) {
+    body = <div className="agent-term">{phoneEmpty}</div>;
   } else {
     body = (
       <Centered>
@@ -6431,7 +6469,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
                     the moment "reopen what I was working on" is the thing you want. Gated
                     on the CLI alone: resuming spawns `claude --resume`, no node-pty. */}
                 {caps.claudeCli && (
-                  <button onClick={() => setHistoryOpen(true)} style={secondaryBtn}>◷ Past chats</button>
+                  <button onClick={openPastChats} style={secondaryBtn}>◷ Past chats</button>
                 )}
               </div>
               {!terminalReady && (
@@ -6468,7 +6506,6 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
            attribute, so the desktop layout is untouched at any width. */
         data-mobile={isMobile ? 'true' : undefined}
         data-swipe={phoneChatNav.swipe ?? undefined}
-        data-phone-nav={macPhone && phoneNav ? phoneNav : undefined}
         /* The live pane count, for the focus-widening math in CSS — the focused pane's
            extra width is capped at what is left once every OTHER pane keeps `--pane-min`,
            and that cap cannot be computed without N. Read by BOTH the pane row and the tab
@@ -6481,61 +6518,29 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             second 38px bar), and the "New" split action. */}
         {/* New shell, the Super stage: no bar at all; the stage takes its height. */}
         <div className="agent-overlay-head" hidden={windowed && (handedOver || !!arriving)}>
-          {/* The phone header: [☰ sessions] [active session name] [＋ new chat]. It REPLACES
-              the desktop trio rather than restyling it — the tab strip's per-tab ✕/minimize
-              buttons are 20px affordances that no thumb can hit, and a hidden-but-mounted
-              strip would still run its drag handlers over the transcript. */}
+          {/* The phone header: [status dot + the chat's name] [＋ new chat]. It REPLACES the
+              desktop trio rather than restyling it — the tab strip's per-tab ✕/minimize buttons
+              are 20px affordances no thumb can hit, and a hidden-but-mounted strip would still
+              run its drag handlers over the transcript. Chats are switched in the window's
+              drawer; the title bar's toggle carries what waits elsewhere. */}
           {isMobile && (
             <>
-              {macPhone ? (
-                // Mac mode: ‹ back to the Sohbetler list, which holds what the drawer did (AC21).
+              <span className="mchat-head-title" data-testid="chat-head-title">
+                {mobileActive && <span className="mchat-dot" data-kind={mobileActive.info.kind} aria-hidden />}
+                {mobileActive?.title ?? t('nav.chat')}
+              </span>
+              {phoneMayStart && (
                 <button
                   className="mchat-head-btn"
-                  onClick={() => {
-                    if (phoneChatMark.current && window.history.state?.phoneChat === phoneChatMark.current) window.history.back();
-                    else setPhoneView('list');
-                  }}
-                  // The waiting count is part of the button's name (a span's own label is never read).
-                  aria-label={phoneChatNav.waitingElsewhere > 0
-                    ? `${t('handsfree.list.back')}, ${t('handsfree.chat.waitingBadge').replace('{n}', String(phoneChatNav.waitingElsewhere))}`
-                    : t('handsfree.list.back')}
-                  data-testid="chat-back"
+                  onClick={() => addSession(claudeKind)}
+                  aria-label={chatMode ? t('shell.drawer.newChat') : 'New agent'}
+                  data-testid="chat-head-new"
                 >
-                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                    <path d="M12.5 4.5 7 10l5.5 5.5" />
+                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>
+                    <path d="M10 4v12M4 10h12" />
                   </svg>
-                  {/* Chats waiting on the owner elsewhere, across projects (W3). */}
-                  {phoneChatNav.waitingElsewhere > 0 && (
-                    <span className="mchat-back-badge" data-testid="chat-back-badge" aria-hidden>{phoneChatNav.waitingElsewhere}</span>
-                  )}
                 </button>
-              ) : (
-              <button
-                className="mchat-head-btn"
-                onClick={() => setDrawerOpen(true)}
-                aria-label="Sessions"
-                aria-haspopup="dialog"
-                aria-expanded={drawerOpen}
-              >
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>
-                  <path d="M3 5.5h14M3 10h14M3 14.5h14" />
-                </svg>
-              </button>
               )}
-              <span className="mchat-head-title">
-                {mobileActive && <span className="mchat-dot" data-kind={mobileActive.info.kind} aria-hidden />}
-                {mobileActive?.title ?? 'Chat'}
-              </span>
-              <PhoneChip quiet />
-              <button
-                className="mchat-head-btn"
-                onClick={() => addSession(claudeKind)}
-                aria-label={chatMode ? 'New chat' : 'New agent'}
-              >
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>
-                  <path d="M10 4v12M4 10h12" />
-                </svg>
-              </button>
             </>
           )}
           {!isMobile && (
@@ -6639,7 +6644,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
                       <button
                         className="agent-new-menu-item"
                         role="menuitem"
-                        onClick={() => { setNewMenuOpen(false); setHistoryOpen(true); }}
+                        onClick={() => { setNewMenuOpen(false); openPastChats(); }}
                       >
                         <span className="agent-new-menu-glyph" aria-hidden>◷</span>
                         <span className="agent-new-menu-label">Past chats</span>
@@ -6655,54 +6660,18 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
           )}
         </div>
         {phoneSuperChat && <PhoneAgenda digest={phoneDigest} onWriteAbout={writePhoneAboutRow} />}
-        {macPhone && isMobile && expanded && phoneView !== 'list' && <PhoneBagNote />}
+        {macPhone && expanded && <PhoneBagNote />}
         {body}
-        {macPhone && expanded && phoneView === 'list' && (
-          <PhoneChatList
-            tabs={stackTabs}
-            vault={vault ?? ''}
-            active={!mobileEscaped}
-            sessionFor={stackSessionFor}
-            onSelect={(paneId, sid) => { selectTab(paneId, sid); setPhoneView('chat'); }}
-            onCloseSession={closeSessionById}
-            onAdopt={(chat) => { adoptLiveChat(chat); setPhoneView('chat'); }}
-            onResume={(past) => { resumePastSession(past); setPhoneView('chat'); }}
-            onNewChat={() => { addSession(claudeKind); setPhoneView('chat'); }}
-            onExitToDashboard={() => { setMobileEscaped(true); setExpanded(false); }}
-            onOpenSuper={(row) => { openSuperOnPhone(row); setPhoneView('chat'); }}
-          />
-        )}
         {/* Each pane renders its OWN composer strip (files + skills + that agent's live
             model & effort) pinned to its bottom — see the `composer` prop above. */}
         {/* The hand-over's stand-ins fly here (D18): above everything, never hit-testable. */}
         <div ref={flightLayerRef} className="super-flight-layer" aria-hidden />
       </div>
-      {/* The phone's session drawer. A SIBLING for the same reason the picker below is one:
-          `.agent-surface` declares `contain: layout paint`, which would make it the containing
-          block for the drawer's `position: fixed` scrim and trap it inside the pane area. */}
-      {isMobile && !macPhone && (
-        <MobileSessionDrawer
-          open={drawerOpen}
-          sessions={mobileTabs}
-          activeId={mobileActive?.id ?? ''}
-          onClose={() => setDrawerOpen(false)}
-          onSelect={(sid) => {
-            const row = mobileTabs.find((t) => t.id === sid);
-            if (row) selectTab(row.paneId, sid);
-          }}
-          onCloseSession={closeSessionById}
-          onNewChat={() => addSession(claudeKind)}
-          openClaudeIds={sessionList.map((m) => m.claudeId).filter(Boolean) as string[]}
-          onResumePast={resumePastSession}
-          onAdoptLive={adoptLiveChat}
-          onExitToDashboard={() => { setMobileEscaped(true); setExpanded(false); }}
-        />
-      )}
       {/* Past chats picker. A SIBLING of `.agent-surface`, never a child: the surface
           declares `contain: layout paint`, which would make it the containing block for the
           modal's `position: fixed` scrim and trap the popup inside the pane area (the same
           trap `AgentDock` documents). Mounted only while open — its fetch is scoped to that. */}
-      {historyOpen && (
+      {historyOpen && !historyViaWindow && (
         <ChatHistoryPicker
           open
           onClose={() => setHistoryOpen(false)}

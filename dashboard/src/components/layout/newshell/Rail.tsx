@@ -10,7 +10,9 @@ import { RailTip } from '../RailTip';
 import type { useNavBadges } from '../useNavBadges';
 import type { Page } from '../Sidebar';
 import { MoreMenu } from './MoreMenu';
-import { BOTTOM_BAR, MORE_PAGES, RAIL_ENTRIES, RAIL_FOOT, morePagesNarrow, railPageOf } from './railModel';
+import { BOTTOM_BAR, DEVICE_HIDDEN_PAGES, MORE_PAGES, RAIL_ENTRIES, RAIL_FOOT, morePagesNarrow, railPageOf } from './railModel';
+import { readDeviceShell } from '../../../lib/uxMode';
+import { useChrome } from '../WindowChrome';
 
 /** The new rail draws the prototype's glyph where it differs from the classic sidebar's. */
 function RailIcon({ page }: { page: Page }) {
@@ -42,6 +44,9 @@ export function Rail({ activePage, onNavigate, badges }: RailProps) {
   const railRef = useRef<HTMLElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  // Every tap here closes the window's floating drawer: on a phone's first screen it is open over
+  // the page already shown, so no page change would close it.
+  const { dismissDrawer } = useChrome();
   const current: Page | null = chatOpen && showChat ? null : railPageOf(activePage);
 
   const label = (page: Page) => t(PAGE_LABEL_KEY[page]);
@@ -50,7 +55,9 @@ export function Rail({ activePage, onNavigate, badges }: RailProps) {
     if (page === 'announcements' && unread.length > 0) return 'dot';
     return null;
   };
-  const morePages = narrow ? morePagesNarrow() : [...MORE_PAGES];
+  // A device shell offers no Settings (nor Project Relations) anywhere.
+  const device = readDeviceShell();
+  const morePages = (narrow ? morePagesNarrow(device) : [...MORE_PAGES]).filter((p) => !device || !DEVICE_HIDDEN_PAGES.has(p));
   const moreCurrent = current !== null && morePages.includes(current);
   const moreBadge = morePages.some((p) => badgeOf(p) !== null);
 
@@ -67,7 +74,7 @@ export function Rail({ activePage, onNavigate, badges }: RailProps) {
         aria-label={name}
         data-tip={name}
         data-testid={`ns-rail-${page}`}
-        onClick={() => onNavigate(page)}
+        onClick={() => { dismissDrawer(); onNavigate(page); }}
       >
         <RailIcon page={page} />
         {badgeOf(page) && <span className="ns-rail-badge" aria-hidden="true" />}
@@ -89,7 +96,7 @@ export function Rail({ activePage, onNavigate, badges }: RailProps) {
         aria-label={name}
         data-tip={name}
         data-testid="ns-rail-chat"
-        onClick={() => openAgentSurface(bus)}
+        onClick={() => { dismissDrawer(); openAgentSurface(bus); }}
       >
         <ChatIcon />
         {(chatRollup.waiting > 0 || superUnread > 0) && <span className="ns-rail-badge" aria-hidden="true" />}
@@ -130,7 +137,7 @@ export function Rail({ activePage, onNavigate, badges }: RailProps) {
                     : pageRow(e.page)
             ))}
             <div className="ns-rail-grow" />
-            {pageRow(RAIL_FOOT)}
+            {!(device && DEVICE_HIDDEN_PAGES.has(RAIL_FOOT)) && pageRow(RAIL_FOOT)}
           </>
         )}
       {moreOpen && (
@@ -141,7 +148,7 @@ export function Rail({ activePage, onNavigate, badges }: RailProps) {
           unread={unread.length}
           label={label}
           icon={(p) => <RailIcon page={p} />}
-          onPick={(p) => { setMoreOpen(false); onNavigate(p); }}
+          onPick={(p) => { setMoreOpen(false); dismissDrawer(); onNavigate(p); }}
           onClose={() => setMoreOpen(false)}
         />
       )}

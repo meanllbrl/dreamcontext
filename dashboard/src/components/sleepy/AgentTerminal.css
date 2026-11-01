@@ -62,10 +62,8 @@
    directly instead of the instance flipping `--app-content-left`, because a custom property
    is inherited — flipping it restyled the whole project, both transcripts included (see the
    note on the token in tokens.css). Named like this, a collapse restyles this one element.
-   Not on a phone: there the rail is force-collapsed and the surface is full-viewport
-   (`.agent-surface[data-mobile].expanded { left: 0 }`, MobileChat.css), which this selector
-   would otherwise outrank — the old variable flip never could, so neither may this. */
-.project-instance[data-sidebar="collapsed"] .agent-surface.expanded:not([data-mobile]),
+   A phone is always the new shell, whose rule below wins on specificity and order. */
+.project-instance[data-sidebar="collapsed"] .agent-surface.expanded,
 .project-instance[data-sidebar="collapsed"] .agent-surface.closing {
   left: var(--sidebar-width-collapsed);
 }
@@ -74,8 +72,8 @@
    covers the rail or the drawer and needs no width variable. 0,6,0 and after the rule above:
    it wins on specificity AND order even where `data-sidebar` is left over. Grows from the
    frame's centre, not from the corner button the new shell does not draw. */
-.project-instance[data-shell="new"][data-instance] .agent-surface.expanded:not([data-mobile]),
-.project-instance[data-shell="new"][data-instance] .agent-surface.closing:not([data-mobile]) {
+.project-instance[data-shell="new"][data-instance] .agent-surface.expanded,
+.project-instance[data-shell="new"][data-instance] .agent-surface.closing {
   position: absolute;
   inset: 14px var(--space-4) var(--space-4);
   border: 1px solid var(--color-border);
@@ -83,18 +81,27 @@
   transform-origin: 50% 50%;
 }
 @media (max-width: 600px) {
-  .project-instance[data-shell="new"][data-instance] .agent-surface.expanded:not([data-mobile]),
-  .project-instance[data-shell="new"][data-instance] .agent-surface.closing:not([data-mobile]) {
+  .project-instance[data-shell="new"][data-instance] .agent-surface.expanded,
+  .project-instance[data-shell="new"][data-instance] .agent-surface.closing {
     inset: var(--space-2);
     border-radius: 0;
   }
   /* The Super chat on a phone-width stage is the whole page, from the top bar to the tab bar
      (owner 2026-10-31). Only under this line: it always stays under PHONE_STAGE_PX, so taking
      the inset away can never widen the stage out of its phone layout. */
-  .project-instance[data-shell="new"][data-instance] .agent-surface.expanded:not([data-mobile]):has(.super-surface[data-phone]) {
+  .project-instance[data-shell="new"][data-instance] .agent-surface.expanded:has(.super-surface[data-phone]) {
     inset: 0;
     border: 0;
   }
+}
+/* A phone's chat (`data-mobile`) is the page itself, edge to edge between the title bar and the
+   bottom bar: no card gutter, no frame, and no zoom out of a corner it never opened from. */
+.project-instance[data-shell="new"][data-instance] .agent-surface[data-mobile].expanded,
+.project-instance[data-shell="new"][data-instance] .agent-surface[data-mobile].closing {
+  inset: 0;
+  border: 0;
+  border-radius: 0;
+  animation: none;
 }
 @keyframes agent-surface-zoom-in {
   from { transform: scale(0.28) translateY(24px); opacity: 0; border-radius: var(--radius-xl, 16px); }

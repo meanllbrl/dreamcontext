@@ -5,6 +5,8 @@
  * surface rings `DRAWER_SURFACE_EVENT`, the instance's `DrawerFactsBridge` adds the team rows
  * and hands the lot to the window. No instance ever portals into the drawer.
  */
+import type { HomeRow } from '../components/sleepy/phoneHome';
+import type { StackTab } from '../components/sleepy/phoneStack';
 
 /** Window → surface, on the instance bus. Detail: {@link DrawerIntent}. */
 export const DRAWER_INTENT_EVENT = 'dc-drawer-intent';
@@ -32,6 +34,12 @@ export type DrawerIntent =
   | { kind: 'move-window'; windowId: string; before: string | null }
   /** A History row: reopen THAT chat in this project (the `OPEN_SESSION` path). */
   | { kind: 'open-session'; sessionId: string }
+  /** A chat row: show that chat. A tab is selected, a running chat of the Mac is ADOPTED (never
+   *  resumed beside it), a Super row opens the Super (`openChatPlan`). */
+  | { kind: 'open-chat'; row: HomeRow }
+  /** A chat row's close: the tab closes, as the tab strip's close does. Nothing else moves, not
+   *  even which project is on screen. */
+  | { kind: 'close-chat'; id: string }
   /** An AI Team member's conversation: opens in the chat area, never on the AI Team page. */
   | { kind: 'member'; slug: string; title: string }
   /** Project Relations: a page of this project. */
@@ -59,7 +67,14 @@ export interface DrawerWindowFact {
 /** A click that opens something on the chat area: the project lands on it from its first frame
  *  (`AgentSurface`'s arrival), never on the page it would otherwise start on. */
 export function landsOnChat(intent: DrawerIntent): boolean {
-  return intent.kind !== 'rename-window' && intent.kind !== 'close-window' && intent.kind !== 'move-window' && intent.kind !== 'page';
+  return intent.kind !== 'rename-window' && intent.kind !== 'close-window' && intent.kind !== 'move-window'
+    && intent.kind !== 'close-chat' && intent.kind !== 'page';
+}
+
+/** One chat tab a mounted project publishes for the drawer's chat rows: the phone stack's tab
+ *  fields (so the tunnel's `homeRows` reads the same shape) and the window it sits in. */
+export interface DrawerChatFact extends StackTab {
+  windowId: string;
 }
 
 export interface DrawerSurfaceState {
@@ -75,10 +90,16 @@ export interface DrawerSurfaceState {
   member?: string;
   /** The Super Agent row's marks (`superRowMarks`). */
   superMarks?: { working: number; asking: boolean };
+  /** The owner's chat tabs, each in its window (never a child of the Super). Absent until the
+   *  roster is restored, like `windows`. */
+  chats?: DrawerChatFact[];
+  /** The tab on screen in the window on screen. */
+  activeChatId?: string;
 }
 
 export function sameSurfaceState(a: DrawerSurfaceState | null, b: DrawerSurfaceState): boolean {
   return !!a && a.superOn === b.superOn && a.superSelected === b.superSelected
     && a.activeWindowId === b.activeWindowId && a.member === b.member && JSON.stringify([a.shown, a.superMarks]) === JSON.stringify([b.shown, b.superMarks])
-    && JSON.stringify(a.windows ?? []) === JSON.stringify(b.windows ?? []);
+    && JSON.stringify(a.windows ?? []) === JSON.stringify(b.windows ?? [])
+    && a.activeChatId === b.activeChatId && JSON.stringify(a.chats ?? null) === JSON.stringify(b.chats ?? null);
 }

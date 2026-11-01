@@ -1,28 +1,17 @@
 import type { LiveChatWire, LiveChatsWire, SuperChatWire } from '../handsfree/macContract';
-import type { PastSession } from './ChatHistoryPicker';
-import type { ConversationModel } from './chatSession';
 import { activeStateKey, drawerRows, liveStateKey } from './drawerRows';
 import { heldIds, type StackTab } from './phoneStack';
 
 /**
- * The phone's home, the Sohbetler list (AC21-AC22): every chat of the project in two sections,
- * Açık (this phone's tabs and the Mac's running chats, each once) and Kapalı (past chats), with
- * a search and an Açık / Kapalı filter. Its rules are plain functions, tested without React:
- *
- * - one conversation is one row (the drawer's AC18 rule): a Mac chat held by a tab here is the
- *   tab's row, a running or draining conversation is never a closed row;
- * - Açık sorts by what it needs from you: waiting, then working, then the rest, each group in
- *   its own order;
- * - a tap opens a tab, ADOPTS a Mac chat (never a resume beside it), or resumes a closed one.
+ * The open chat rows of one project (a device shell's drawer, through `homeRows`): this phone's
+ * tabs and the Mac's running chats, each once (the drawer's AC18 rule: a Mac chat held by a tab here
+ * is the tab's row, a draining conversation is never a row), waiting first, then working, then the
+ * rest, each group in its own order. Plus the search folding History uses and the Super row.
  */
-
-export type ListFilter = 'all' | 'open' | 'closed';
 
 export type OpenRow =
   | { kind: 'tab'; key: string; id: string; paneId: string; title: string; dot: string; stateKey: string | null; label: string; waiting: boolean; rank: number }
   | { kind: 'mac'; key: string; id: string; chat: LiveChatWire; title: string | null; dot: string; stateKey: string; waiting: boolean; rank: number; lastLine: string };
-
-export interface ClosedRow { kind: 'past'; key: string; id: string; past: PastSession; title: string; line: string; updatedAt: number }
 
 /** 0 waiting, 1 working, 2 anything else. */
 function rankOf(kind: string): number {
@@ -60,15 +49,6 @@ export function openRows(i: { tabs: readonly StackTab[]; live: readonly LiveChat
   return [...tabRows, ...macRows].sort((a, b) => a.rank - b.rank);
 }
 
-export function closedRows(i: { past: readonly PastSession[]; live: readonly LiveChatWire[]; draining?: readonly string[]; openClaudeIds: readonly string[] }): ClosedRow[] {
-  const { pastRows } = drawerRows({ live: i.live, draining: i.draining ?? [], past: i.past, openClaudeIds: i.openClaudeIds });
-  return pastRows.map((p) => ({
-    kind: 'past', key: `past:${p.id}`, id: p.id, past: p, title: p.title,
-    // The hit's line, unless it only repeats the title (which is marked already): then the last message.
-    line: (p.match && p.match !== p.title ? p.match : '') || p.preview || '', updatedAt: p.updatedAt,
-  }));
-}
-
 /**
  * Case folding for search, Turkish-aware and LENGTH-PRESERVING: İ, I and ı all fold to i, so
  * "istanbul" finds "İstanbul" and "ışık" finds "IŞIK" (a default toLowerCase turns İ into i plus
@@ -82,28 +62,6 @@ export function foldCase(s: string): string {
 /** The query's words, folded; every one must appear (AND), as on the Mac. */
 export function queryTokens(q: string): string[] {
   return foldCase(q).split(/\s+/).filter(Boolean);
-}
-
-/** Does an open row match? Its title, its last line and (for a tab here) its loaded text. */
-export function openMatches(tokens: readonly string[], ...texts: string[]): boolean {
-  if (!tokens.length) return true;
-  const hay = foldCase(texts.join('\n'));
-  return tokens.every((t) => hay.includes(t));
-}
-
-/**
- * What the chips show and what the list holds. `closedTotal` is the Mac's count of matching
- * past chats; the ones open here or running there are not closed, so they come off it.
- */
-export function listView<O, C>(i: { open: readonly O[]; closed: readonly C[]; closedTotal: number; closedDropped: number; filter: ListFilter }): {
-  open: readonly O[]; closed: readonly C[]; counts: Record<ListFilter, number>;
-} {
-  const closedCount = Math.max(i.closed.length, i.closedTotal - i.closedDropped);
-  return {
-    open: i.filter === 'closed' ? [] : i.open,
-    closed: i.filter === 'open' ? [] : i.closed,
-    counts: { all: i.open.length + closedCount, open: i.open.length, closed: closedCount },
-  };
 }
 
 /** `text` cut into runs, the query's (folded) words marked wherever the folded text holds them. */
@@ -122,45 +80,6 @@ export function highlight(text: string, tokens: readonly string[]): Array<{ text
     if (k === text.length || hit[k] !== hit[from]) { runs.push({ text: text.slice(from, k), hit: hit[from] === 1 }); from = k; }
   }
   return runs;
-}
-
-/** What a tap on a row does. */
-export function listTap(row: OpenRow | ClosedRow):
-  | { select: { paneId: string; id: string } } | { adopt: LiveChatWire } | { resume: PastSession } {
-  if (row.kind === 'tab') return { select: { paneId: row.paneId, id: row.id } };
-  if (row.kind === 'mac') return { adopt: row.chat };
-  return { resume: row.past };
-}
-
-/** The time of a loaded conversation's newest item (epoch ms), or null. */
-export function chatLastTs(m: Pick<ConversationModel, 'items' | 'history'>): number | null {
-  const all = m.items.length ? m.items : m.history;
-  for (let k = all.length - 1; k >= 0; k--) {
-    const ts = (all[k] as { ts?: number }).ts;
-    if (typeof ts === 'number' && ts > 0) return ts;
-  }
-  return null;
-}
-
-/** A loaded conversation's searchable text: every message and answer, bounded. */
-export function chatSearchText(m: Pick<ConversationModel, 'items' | 'history'>, max = 60_000): string {
-  let out = '';
-  for (const it of [...m.history, ...m.items]) {
-    if (it.kind === 'user' || it.kind === 'text') out += `${it.text}\n`;
-    if (out.length > max) break;
-  }
-  return out.slice(0, max);
-}
-
-/** "now", "5m", "2h", "3d" — in the units the list reads at a glance. */
-export function ageLabel(ms: number, now = Date.now()): string {
-  const mins = Math.max(0, Math.round((now - ms) / 60_000));
-  if (mins < 1) return 'now';
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.round(hours / 24);
-  return days < 30 ? `${days}d` : `${Math.round(days / 30)}mo`;
 }
 
 /**

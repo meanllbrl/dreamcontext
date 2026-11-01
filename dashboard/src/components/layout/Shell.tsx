@@ -5,10 +5,9 @@ import { CommandPalette } from '../search/CommandPalette';
 import { useVault, emitInstance } from '../../context/VaultContext';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import { useRailGlide } from './useRailGlide';
-import { useIsMobile } from '../../hooks/useIsMobile';
-import { PhoneBar } from './PhoneBar';
 import { publishPage } from '../../lib/pageContext';
-import { useIsNewShell } from '../../lib/uxMode';
+import { readDeviceShell, useIsNewShell } from '../../lib/uxMode';
+import { DEVICE_HIDDEN_PAGES } from './newshell/railModel';
 import { NewShellControls } from './newshell/NewShellControls';
 import './Shell.css';
 
@@ -25,7 +24,9 @@ const NEW_SHELL_ONLY_PAGES: readonly Page[] = ['relations'];
  * "tasks", silently losing everyone else's remembered page).
  */
 function readStoredPage(vault: string | null, instanceId: string, newShell = false): Page {
-  const valid = (p: string) => (VALID_PAGES as readonly string[]).includes(p) && (newShell || !NEW_SHELL_ONLY_PAGES.includes(p as Page));
+  const valid = (p: string) => (VALID_PAGES as readonly string[]).includes(p) && (newShell || !NEW_SHELL_ONLY_PAGES.includes(p as Page))
+    // A device shell has no Settings or Project Relations: a stored or linked one lands on Tasks.
+    && !(newShell && readDeviceShell() && DEVICE_HIDDEN_PAGES.has(p as Page));
   if (typeof window === 'undefined') return 'tasks';
   // A `/lab/<slug>` deep link (multi-page insights — funnel overview/detail) must land on
   // the Lab page regardless of the remembered page. There is exactly one URL for the whole
@@ -93,22 +94,9 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   const [nonce, setNonce] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const shellRef = useRef<HTMLDivElement | null>(null);
-  // The phone (a narrow viewport AND a finger): one top bar, the rail as a drawer, no window
-  // chrome. `body[data-phone]` lets every page's CSS key off ONE attribute.
-  const phone = useIsMobile();
-  const [phoneNavOpen, setPhoneNavOpen] = useState(false);
-  useLayoutEffect(() => {
-    if (!phone) { setPhoneNavOpen(false); return undefined; }
-    document.body.dataset.phone = 'true';
-    return () => { delete document.body.dataset.phone; };
-  }, [phone]);
-  useEffect(() => {
-    if (!phoneNavOpen) return undefined;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPhoneNavOpen(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [phoneNavOpen]);
-  const closePhoneNav = useCallback(() => setPhoneNavOpen(false), []);
+  // A phone is always a device shell (lib/uxMode.ts), so it is never here in the classic shell:
+  // a classic-frozen tablet that rotates narrow keeps its Header and the desktop layout. The
+  // phone layer's `body[data-phone]` is the window's (WindowChrome).
 
   // ⌘K / Ctrl-K toggles the global command palette from anywhere (including over the
   // expanded agent overlay — the agent host only grabs ⌘D/⌘T/⌘W, never ⌘K). Gated on
@@ -163,6 +151,9 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   useRailGlide(shellRef, glideRef, sidebarCollapsed);
 
   const navigate = useCallback((page: Page, id: string | null, from: NavOrigin = 'other') => {
+    // A device shell never shows Settings or Project Relations, whoever asks (a chat's link, the
+    // setup notice): it drives another machine's project set.
+    if (newShell && readDeviceShell() && DEVICE_HIDDEN_PAGES.has(page)) return;
     setActivePage(page);
     setOrigin(from);
     const h = historyRef.current;
@@ -179,7 +170,7 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     // mounted project would hear another project's navigation and react to it.
     emitInstance(bus, 'dreamcontext-navigate', { page });
     writeScopedRaw(vault, ACTIVE_PAGE_STORAGE_KEY, page);
-  }, [bus, vault]);
+  }, [bus, vault, newShell]);
 
   // ⌘U opens Stats from anywhere, as in T3 Code.
   useEffect(() => {
@@ -261,16 +252,15 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   }
 
   return (
-    <div className="shell" ref={shellRef} data-phone={phone ? 'true' : undefined}>
-      {phone && isActive && <PhoneBar page={activePage} menuOpen={phoneNavOpen} onMenu={() => setPhoneNavOpen((o) => !o)} />}
-      {!phone && <Header
+    <div className="shell" ref={shellRef}>
+      <Header
         onNavigate={handleSidebarNavigate}
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={onToggleSidebar}
         onOpenSearch={() => setPaletteOpen(true)}
-      />}
+      />
       <div className="shell-body">
-        <Sidebar activePage={activePage} onNavigate={handleSidebarNavigate} collapsed={sidebarCollapsed} phone={phone ? { open: phoneNavOpen, onClose: closePhoneNav } : undefined} />
+        <Sidebar activePage={activePage} onNavigate={handleSidebarNavigate} collapsed={sidebarCollapsed} />
         <div className="sidebar-glide" ref={glideRef} aria-hidden="true"><div className="sidebar-glide-slab" /></div>
         <main className="shell-main">
           {children(nav)}

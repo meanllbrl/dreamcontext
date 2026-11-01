@@ -22,9 +22,6 @@ interface SidebarProps {
   onNavigate: (page: Page, id?: string) => void;
   /** Collapsed state, owned by the Shell and toggled from the title bar. */
   collapsed: boolean;
-  /** Phone: the rail is an off-canvas drawer (Shell owns open/close). Settings is laptop-only
-   *  there (hands-free denies its writes), sync controls stay home. */
-  phone?: { open: boolean; onClose: () => void };
 }
 
 export { PAGE_LABEL_KEY } from '../../lib/pageLabels';
@@ -140,13 +137,10 @@ export const NAV_GROUPS: NavGroup[] = [
 // dismissing it in a synced project must not hide it in one that is still unsynced.
 const GITHUB_SYNC_SEEN_STORAGE_KEY = 'dreamcontext.dashboard.githubSyncSeen';
 
-export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collapsedProp, phone }: SidebarProps) {
-  // On a phone every pick also closes the drawer, and the rail is never collapsed to icons.
-  const onNavigate = (page: Page, id?: string) => { navigateTo(page, id); phone?.onClose(); };
-  const collapsed = phone ? false : collapsedProp;
+export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
   // Mac mode's tunnel, phone OR remote computer (hands-free sekmeler W2): Settings and the brain's
   // GitHub sync are the laptop's administration, never drawn there.
-  const tunnel = !!phone || isMacPhoneSurface();
+  const tunnel = isMacPhoneSurface();
   const { t } = useI18n();
   // Which project this rail belongs to. Read from the instance, NOT from `?vault=`: the
   // window's URL names the first chip, and several projects render their own rail here.
@@ -200,14 +194,10 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
 
   return (
     <>
-    {phone && <div className="sidebar-scrim" data-open={phone.open ? 'true' : undefined} onClick={phone.onClose} aria-hidden="true" />}
     <nav
       ref={railRef}
-      className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}${phone ? ' sidebar--phone' : ''}`}
+      className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`}
       aria-label="Primary"
-      data-open={phone?.open ? 'true' : undefined}
-      aria-hidden={phone && !phone.open ? true : undefined}
-      inert={phone && !phone.open ? true : undefined}
     >
       <RailTip railRef={railRef} enabled={collapsed} />
       {/* Brand lockup — the dream gem + wordmark + active vault. */}
@@ -242,7 +232,7 @@ export function Sidebar({ activePage, onNavigate: navigateTo, collapsed: collaps
                     <button
                       className={`sidebar-item sidebar-item--launcher${chatOpen ? ' sidebar-item--active' : ''}`}
                       aria-current={chatOpen ? 'page' : undefined}
-                      onClick={() => { openAgentSurface(bus); phone?.onClose(); }}
+                      onClick={() => openAgentSurface(bus)}
                       {...named(showUnread ? `${label} (${t('super.unread.count').replace('{n}', String(superUnread))})` : live > 0 ? `${label} (${live} open)` : label)}
                     >
                       <span className="sidebar-icon"><ChatIcon /></span>

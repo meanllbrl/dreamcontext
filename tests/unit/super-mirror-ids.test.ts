@@ -44,9 +44,9 @@ describe('superMirrorIds', () => {
     expect((JSON.parse(store['dreamcontext-super-mirror-ids']) as string[]).length).toBe(40);
   });
 
-  it('the phone list feeds it from `live.supers`, the Super row\'s tap too, and every chat spawn reads it', () => {
-    // The one list's data (W3) reads live-chats for the list and the chat screen alike.
-    const list = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/usePhoneHome.ts'), 'utf-8');
+  it('the window\'s live read feeds it from `live.supers`, the Super row\'s tap too, and every chat spawn reads it', () => {
+    // The device shell's one live read (useDrawerChats, hands-free W2) serves the drawer and the chat screen alike.
+    const list = readFileSync(join(ROOT, 'dashboard/src/hooks/useDrawerChats.ts'), 'utf-8');
     expect(list).toMatch(/rememberSuperMirrorIds\(\(wire\.supers \?\? \[\]\)\.map\(\(x\) => x\.conversationId\)\);/);
     const surface = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/AgentSurface.tsx'), 'utf-8');
     expect(surface).toMatch(/const mirror = mode !== 'super' && isSuperMirrorId\(cid\);/);

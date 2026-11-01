@@ -28,6 +28,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { markAnnouncementsSeen } from './lib/measure.mjs';
+import { drawerShown, openSuper, submit, superRows } from './lib/phone-shell.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRATCH = join(realpathSync(tmpdir()), 'dreamcontext-verify-super-phone-agenda');
@@ -214,22 +215,22 @@ try {
   await phone.goto(qr, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   report.check('signed in through the phone listener', await until(async () => phone.url().includes('vault=proj'), 25000), phone.url());
   for (let i = 0; i < 3; i++) { const x = phone.locator('.announcements-modal-close'); if (!(await x.count())) break; await x.first().click().catch(() => {}); await phone.waitForTimeout(300); }
-  report.check('the phone lands on its list (Super off)', await until(async () => (await vis('[data-testid="phone-list"]').count()) === 1, 20000));
+  report.check('the phone lands on its drawer (Super off)', await until(() => drawerShown(phone), 20000));
   const en = await api(port, 'POST', '/api/super/enable', { adopt: [MAC_ID], titles: { [MAC_ID]: 'Sürüm notları' } });
   SUPER = en.json.session;
   report.check('the hand-over records a super session', en.status === 200 && typeof SUPER === 'string', JSON.stringify(en.json).slice(0, 200));
   win = await laptop(`mode=super&sessionId=${SUPER}`);
   report.check('the window\'s Super Agent socket is open', win.closed === null);
 
-  report.check('the Super row is listed', await until(async () => (await vis('[data-testid="super-row"]').count()) === 1, 20000));
-  await vis('[data-testid="super-row"]').click();
+  report.check('the Super row is listed', await until(async () => (await superRows(phone)) === 1, 20000));
+  await openSuper(phone);
   report.check('the Super chat opens', await until(async () => (await vis('.chat-cmp-input').count()) > 0, 15000),
     JSON.stringify(await phone.evaluate(() => ({ inputs: document.querySelectorAll('.chat-cmp-input').length, panes: [...document.querySelectorAll('.agent-panes, .agent-pane, .chat-pane')].map((e) => [e.className.slice(0, 40), JSON.stringify(e.getBoundingClientRect())]) }))) + ' errors: ' + errors.join(' | ') + ' 403: ' + forbidden.join(' | ') + ' html: ' + (await phone.evaluate(() => document.querySelector('.agent-pane')?.innerHTML.slice(0, 400))));
   const strip = vis('[data-testid="phone-agenda-strip"]');
   report.check('the agenda strip sits under the header, saying nothing is noted yet', await until(async () => (await strip.count()) === 1
     && (await vis('[data-testid="phone-agenda-empty"]').count()) === 1, 10000), await strip.innerText().catch(() => ''));
   const box = vis('.chat-cmp-input').first();
-  const sendText = async (t) => { await box.click(); await box.fill(t); await phone.waitForTimeout(150); await phone.keyboard.press('Enter'); };
+  const sendText = async (t) => { await box.click(); await box.fill(t); await phone.waitForTimeout(150); await submit(phone); };
   await sendText('NOTLAR: ajandanı yaz.');
   const counts = () => phone.evaluate(() => ({
     waiting: document.querySelector('[data-testid="phone-agenda-waiting"]')?.textContent ?? '',
@@ -332,7 +333,7 @@ try {
   const chip = vis('.chat-cmp-attachment-about');
   report.check('↩ closes the sheet and stages ONE About chip in the phone\'s composer', await until(async () => (await sheet.count()) === 0 && (await chip.count()) === 1, 5000), await chip.innerText().catch(() => ''));
   await shot('390x844-light-about-chip.png');
-  await box.click(); await box.fill('ikincisi olsun'); await phone.waitForTimeout(150); await phone.keyboard.press('Enter');
+  await box.click(); await box.fill('ikincisi olsun'); await phone.waitForTimeout(150); await submit(phone);
   const aboutRe = new RegExp(`^\\[About agenda line note=${wId} section=waiting\\]\\nline: "İki ödeme tasarımı arasında seçimin"\\n\\nikincisi olsun$`);
   report.check('the message reaches the Super with the agenda reference, as the desktop sends it', await until(async () => received().some((x) => x.sid === SUPER && aboutRe.test(x.blocks[0])), 15000), JSON.stringify(received().filter((x) => x.sid === SUPER).slice(-1)));
 

@@ -40,6 +40,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { markAnnouncementsSeen } from './lib/measure.mjs';
+import { drawerShown, newChat } from './lib/phone-shell.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRATCH = join(realpathSync(tmpdir()), 'dreamcontext-verify-handsfree-phone-voice');
@@ -225,10 +226,10 @@ try {
   console.log('\n── 1. dictation installed: the mic, a take, the text');
   await phone.goto(qr, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   report.check('signed in through the phone listener', await until(async () => phone.url().includes('vault=proj'), 25000), phone.url());
-  report.check('the phone opens on the Sohbetler list', await until(async () => (await vis('[data-testid="phone-list"]').count()) === 1, 20000));
+  report.check('the phone opens with the drawer open', await until(() => drawerShown(phone), 20000));
   const caps = await phone.evaluate(async () => (await fetch('/api/agent/capabilities', { credentials: 'same-origin' })).json());
   report.check('capabilities says dictation is installed (a boolean, no path)', caps.dictation === true && !JSON.stringify(caps).includes('whisper'), JSON.stringify({ dictation: caps.dictation }));
-  await vis('[data-testid="list-new"]').click();
+  await newChat(phone, 'proj');
   report.check('a new chat opens with its composer', await until(async () => (await vis('.chat-cmp-input').count()) > 0, 15000));
   const mic = vis('.chat-cmp-mic').first();
   report.check('the composer draws the hold-to-talk mic', await until(async () => (await mic.count()) === 1, 10000));
@@ -343,10 +344,10 @@ try {
   console.log('\n── 2. dictation gone: no mic');
   rmSync(MODEL, { force: true });
   await phone.reload({ waitUntil: 'domcontentloaded' });
-  await until(async () => (await vis('[data-testid="phone-list"]').count()) === 1 || (await vis('.chat-cmp-input').count()) > 0, 20000);
+  await until(async () => (await drawerShown(phone)) || (await vis('.chat-cmp-input').count()) > 0, 20000);
   const caps2 = await phone.evaluate(async () => (await fetch('/api/agent/capabilities', { credentials: 'same-origin' })).json());
   report.check('capabilities now says dictation is not installed', caps2.dictation === false, JSON.stringify({ dictation: caps2.dictation }));
-  if ((await vis('[data-testid="phone-list"]').count()) === 1) await vis('[data-testid="list-new"]').click();
+  if (await drawerShown(phone)) await newChat(phone, 'proj');
   await until(async () => (await vis('.chat-cmp-input').count()) > 0, 15000);
   await phone.waitForTimeout(1500);
   report.check('the composer draws no mic', (await vis('.chat-cmp-mic').count()) === 0);

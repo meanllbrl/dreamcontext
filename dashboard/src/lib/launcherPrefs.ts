@@ -169,6 +169,17 @@ export async function fetchShellMode(): Promise<ShellPref> {
   return raw.shell === 'new' || raw.shell === 'classic' ? raw.shell : DEFAULT_SHELL_PREF;
 }
 
+/** A device shell (the tunnel, a phone on the laptop listener) drives another machine's project
+ *  set: its layout lives in memory for this page only, never read from or written to the Mac's
+ *  file. Set by `uxMode.settleShellMode`, which owns the answer (one import direction). */
+let deviceShellPrefs = false;
+export function markDeviceShellPrefs(): void {
+  deviceShellPrefs = true;
+  pendingLayout = {};
+  if (layoutTimer) clearTimeout(layoutTimer);
+  layoutTimer = null;
+}
+
 let pendingLayout: Partial<LayoutPrefs> = {};
 let layoutTimer: ReturnType<typeof setTimeout> | null = null;
 export const LAYOUT_WRITE_DEBOUNCE_MS = 400;
@@ -177,6 +188,8 @@ export const LAYOUT_WRITE_DEBOUNCE_MS = 400;
  *  origin), debounced: a drawer drag or a run of project switches writes once. */
 export function writeLayoutPrefs(partial: Partial<LayoutPrefs>): void {
   layout = { ...layout, ...partial };
+  // A device shell keeps its layout in memory only: nothing reaches the Mac's file.
+  if (deviceShellPrefs) return;
   pendingLayout = { ...pendingLayout, ...partial };
   if (layoutTimer) clearTimeout(layoutTimer);
   layoutTimer = setTimeout(flushLayoutPrefs, LAYOUT_WRITE_DEBOUNCE_MS);
@@ -201,7 +214,7 @@ function armFlushOnHide(): void {
   if (flushArmed || typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
   flushArmed = true;
   window.addEventListener('pagehide', () => {
-    if (!Object.keys(pendingLayout).length) return;
+    if (deviceShellPrefs || !Object.keys(pendingLayout).length) return;
     const body = JSON.stringify(pendingLayout);
     pendingLayout = {};
     if (layoutTimer) clearTimeout(layoutTimer);
@@ -222,4 +235,5 @@ export function resetLauncherPrefsForTests(): void {
   if (layoutTimer) clearTimeout(layoutTimer);
   layoutTimer = null;
   flushArmed = false;
+  deviceShellPrefs = false;
 }

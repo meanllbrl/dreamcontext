@@ -37,11 +37,15 @@ export const BOTTOM_BAR: readonly (Page | 'chat' | 'more')[] = ['chat', 'tasks',
 
 /** More's rows on the bottom bar: the rail pages the bar has no room for, then More's own, then
  *  Settings. */
-export function morePagesNarrow(): Page[] {
+export function morePagesNarrow(device = false): Page[] {
   const onBar = new Set<string>(BOTTOM_BAR);
   const railPages = RAIL_ENTRIES.flatMap((e) => (e.kind === 'page' && !onBar.has(e.page) ? [e.page] : []));
-  return [...railPages, ...MORE_PAGES, RAIL_FOOT];
+  return [...railPages, ...MORE_PAGES, RAIL_FOOT].filter((p) => !device || !DEVICE_HIDDEN_PAGES.has(p));
 }
+
+/** Pages a device shell (`readDeviceShell`) never offers: it drives another machine's project
+ *  set, so it changes neither that machine's settings nor its projects' relations. */
+export const DEVICE_HIDDEN_PAGES: ReadonlySet<Page> = new Set<Page>(['settings', 'relations']);
 
 /** The page a rail row lights for: `agents` is the AI Team too. */
 export function railPageOf(page: Page): Page {

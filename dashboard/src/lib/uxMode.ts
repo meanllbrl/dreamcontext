@@ -10,14 +10,15 @@
  * This module is the only reader of `shell` (source guard: new-shell-gate.test.ts). Every
  * new-shell branch reads `useShellMode()` / `ShellModeContext`, never the pref.
  *
- * It is `classic` whatever the switch says on the phone (a narrow touch screen at mount), on
- * the Mac phone surface (Mac mode's tunnel), and in the notch, viewer, inbox and checklist
+ * It is `new` whatever the switch says on a DEVICE SHELL (`readDeviceShell`: Mac mode's tunnel on
+ * any device, and a narrow touch screen at mount, e.g. a phone on the laptop listener): there is
+ * no classic phone layout any more. It is `classic` in the notch, viewer, inbox and checklist
  * windows (their `App.tsx` branches never provide this context).
  */
 import { createContext, createElement, useContext, useEffect, useState, type ReactNode } from 'react';
 import { isMacPhoneSurface } from './phoneSurface';
 import { readIsMobile } from '../hooks/useIsMobile';
-import { DEFAULT_SHELL_PREF, initLauncherPrefsFromServer, readShellPrefAnswered, readShellPrefSettled } from './launcherPrefs';
+import { DEFAULT_SHELL_PREF, initLauncherPrefsFromServer, markDeviceShellPrefs, readShellPrefAnswered, readShellPrefSettled } from './launcherPrefs';
 
 export type ShellMode = 'pending' | 'new' | 'classic';
 
@@ -31,10 +32,20 @@ let frozen: 'new' | 'classic' | null = null;
 /** How long a window waits for the stored switch before it settles on the default. */
 export const SETTLE_CAP_MS = 3_000;
 
-/** Surfaces that keep today's UI whatever the switch says. Read at mount, then frozen. */
-export function shellForcedClassic(): boolean {
-  if (typeof window === 'undefined') return true;
-  return isMacPhoneSurface() || readIsMobile();
+let deviceShell: boolean | null = null;
+
+/**
+ * A DEVICE SHELL: this window drives another machine's project set. True on Mac mode's tunnel
+ * (any device) and on a touch phone at mount (the laptop listener over the tailnet). It opens
+ * the new shell with no server read, and there it has no named chat windows, no layout read or
+ * write and no project administration. Computed once, then frozen with the shell: a phone that
+ * rotates or a window that resizes keeps its answer.
+ */
+export function readDeviceShell(): boolean {
+  if (deviceShell === null) {
+    deviceShell = typeof window !== 'undefined' && (isMacPhoneSurface() || readIsMobile());
+  }
+  return deviceShell;
 }
 
 /** The frozen answer, or null while it is still settling. */
@@ -45,8 +56,10 @@ export function readShellModeFrozen(): 'new' | 'classic' | null {
 /** Settle the gate once (idempotent). */
 export async function settleShellMode(): Promise<'new' | 'classic'> {
   if (frozen) return frozen;
-  if (shellForcedClassic()) {
-    frozen = 'classic';
+  if (readDeviceShell()) {
+    // Its layout is memory-only (launcherPrefs owns that rule; it never imports this module).
+    markDeviceShellPrefs();
+    frozen = 'new';
     return frozen;
   }
   // A server that never answers must not leave a blank window: after the cap, today's shell.
@@ -61,6 +74,7 @@ export async function settleShellMode(): Promise<'new' | 'classic'> {
 /** Tests only. */
 export function resetShellModeForTests(): void {
   frozen = null;
+  deviceShell = null;
 }
 
 /** What a component under a window root sees. No provider (notch, viewer, inbox, checklist,

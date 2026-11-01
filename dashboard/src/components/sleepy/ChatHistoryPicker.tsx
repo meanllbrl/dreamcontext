@@ -105,6 +105,11 @@ interface ChatHistoryPickerProps {
   projects?: readonly string[];
   currentVault?: string | null;
   onPickIn?: (vault: string, session: PastSession) => void;
+  /** Conversations this list must not show at all (a device shell: running, draining, a Super's).
+   *  Unlike `openIds`, which only tags a row, these rows are removed. */
+  hiddenIds?: ReadonlySet<string>;
+  /** A device shell: no Super Agent entry and no `super=` read (a phone never opens one). */
+  noSuper?: boolean;
 }
 
 /** The new shell's list-plus-projects-column box. Classic renders no box at all, so its markup
@@ -158,7 +163,7 @@ function sizeLabel(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, currentVault = null, onPickIn }: ChatHistoryPickerProps) {
+export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, currentVault = null, onPickIn, hiddenIds, noSuper = false }: ChatHistoryPickerProps) {
   const api = useApi();
   const { t } = useI18n();
   const cross = !!projects;
@@ -168,6 +173,12 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
   /** "All projects": the projects whose read failed, named under the list (never dropped). */
   const [failedVaults, setFailedVaults] = useState<string[]>([]);
   const projectsKey = projects?.join('\n') ?? '';
+  // A scope that left `projects` (a project handed over while this is open) falls back to All:
+  // a removed project is never read again.
+  useEffect(() => {
+    if (cross && scope !== ALL && !(projects ?? []).includes(scope)) { setScope(ALL); setSuperOf(null); setData(null); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectsKey]);
   const overlayId = useOverlayId('chat-history');
   const [q, setQ] = useState('');
   const [data, setData] = useState<ChatHistoryResponse | null>(null);
@@ -203,6 +214,8 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
     setLoading(true);
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const fanned = cross && scope === ALL && !superOf;
+    /** A device shell asks for no Super Agent rows at all. */
+    const superRows = noSuper ? undefined : 'group' as const;
     if (!fanned) setFailedVaults([]);
     const superTitle = t('shell.history.superAgent');
     /** The project's entry, placed among its chats by its last activity. */
@@ -215,12 +228,12 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
       const read: Promise<ChatHistoryResponse> = !cross
         ? api.get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT))
         : superOf
-          ? new ApiClient(superOf).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT, 'only'))
+          ? new ApiClient(superOf).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT, superRows === 'group' ? 'only' : undefined))
             .then((r) => ({ ...r, sessions: r.sessions.map((x) => ({ ...x, vault: superOf })) }))
         : fanned
           ? fanOutHistory<PastSession>(
             projects ?? [],
-            (v) => new ApiClient(v).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, HISTORY_PER_VAULT, 'group'))
+            (v) => new ApiClient(v).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, HISTORY_PER_VAULT, superRows))
               .then((r) => ({ ...r, extra: r.superGroup ? [superGroupRow(v, r.superGroup, superTitle)] : [] })),
             () => reqRef.current === seq,
           ).then((r) => {
@@ -229,7 +242,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
             if (r.failed.length && r.failed.length === (projects ?? []).length) throw new Error('every project failed');
             return { sessions: r.sessions, total: r.total, agentRuns: r.agentRuns, truncated: false };
           })
-          : new ApiClient(scope).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT, 'group'))
+          : new ApiClient(scope).get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT, superRows))
             .then((r) => withEntry({ ...r, sessions: r.sessions.map((x) => ({ ...x, vault: scope })) }, scope));
       read
         .then((r) => {
@@ -258,7 +271,12 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
     else onPick(s);
   }, [onPick, onPickIn]);
 
-  const sessions = data?.sessions ?? [];
+  // Removed, not tagged: a device shell's running, draining and Super conversations are not
+  // History's to open.
+  const sessions = useMemo(
+    () => (data?.sessions ?? []).filter((x) => !hiddenIds?.has(x.id) && !(noSuper && x.superCount !== undefined)),
+    [data, hiddenIds, noSuper],
+  );
 
   const activate = useCallback((i: number) => {
     const s = sessions[i];
@@ -296,7 +314,7 @@ export function ChatHistoryPicker({ open, onClose, onPick, openIds, projects, cu
     setData(null);
     setFailed(false);
     setShowAgentRuns(false);
-    setScope(currentVault ?? ALL);
+    setScope(currentVault && (!projects || projects.includes(currentVault)) ? currentVault : ALL);
     setSuperOf(null);
     setNow(Date.now());
     const raf = requestAnimationFrame(() => { try { inputRef.current?.focus(); } catch { /* ignore */ } });

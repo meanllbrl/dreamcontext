@@ -49,7 +49,9 @@ describe('new shell overlay bounding', () => {
       expect(bi * 100 + bc).toBeGreaterThan(ci * 100 + cc);
       expect(b.at).toBeGreaterThan(c.at);
     }
-    expect(specificity(bounded[0].selector)).toEqual([0, 6, 0]);
+    // A phone is the new shell too (hands-free W2): the rule no longer carves it out with
+    // `:not([data-mobile])`, and its own `[data-mobile]` rule (inset 0) comes after it.
+    expect(specificity(bounded[0].selector)).toEqual([0, 5, 0]);
   });
   it('it is positioned inside the instance, not against the viewport', () => {
     const at = css.indexOf('[data-shell="new"][data-instance] .agent-surface.expanded');

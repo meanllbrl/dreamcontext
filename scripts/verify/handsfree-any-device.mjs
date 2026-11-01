@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 /**
- * Hands-free opens on ANY device, in the layout its screen calls for (updated for the layout rule
- * of task hands-free-bilgisayar-ve-tablette…, owner 2026-10-25): a phone and a PORTRAIT tablet get
- * the Sohbetler list, its chats and its projects; a computer (a mouse, any size) and a LANDSCAPE
- * tablet get the desktop Chat (project chips, chat tabs, panes) with the tunnel's trust: no
- * laptop-only route is called, no 403 lands. Neither ever opens empty.
+ * Hands-free opens on ANY device in the NEW SHELL (task hands-free-nin-ayri-telefon-arayuzu-kalkar…,
+ * W2, criterion 15): a phone with its drawer open, a tablet and a computer with the drawer beside
+ * the chat, all with the tunnel's trust: the chosen projects only, the Mac's running chat a drawer
+ * row, no laptop-only route called, no 4xx. A tablet that rotates keeps its shell and every socket.
  *
  *   npm run build && node scripts/verify/handsfree-any-device.mjs
  *
@@ -23,11 +22,11 @@
  * (touch), a desktop computer at 1440x900 and 1280x800 (mouse, no touch), and an iPhone as the
  * control. Last, the laptop's own window on the main listener at 1440 (must stay the desktop).
  *
- * CHECKS PER DEVICE: signed in and landed in the project; the Sohbetler list is on screen and the
- * desktop chrome is not; the chat the Mac runs is an Açık row; both chosen projects are listed;
- * a tap opens that chat as its own screen and ‹ comes back; "New chat" opens a chat; no
- * horizontal overflow; across the run no console error and no 403 from the page's own calls.
- *
+ * CHECKS PER DEVICE: signed in; the new shell with the Mac chip and no Hands-free button; a
+ * phone's drawer open on the first screen; the drawer lists both chosen projects and nothing else;
+ * the chat the Mac runs is a drawer row and a tap shows its conversation; the rail opens Tasks and
+ * Chat comes back; no horizontal overflow; the iPad portrait rotates to landscape with no socket
+ * closed. Last, the laptop's own window stays the Mac's (its Hands-free button, no Mac chip).
  * `DC_CLI=<dist/index.js>` runs another build (the pre-fix one must fail the tablet and computer
  * checks while the iPhone control passes).
  * FAILURE POLICY: collect, don't fail fast; exit 0 iff every check passed.
@@ -41,6 +40,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import { drawerShown, expand, openDrawer } from './lib/phone-shell.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 // The real path: macOS tmpdir is a /var -> /private/var symlink and the chat child files its
@@ -171,15 +171,14 @@ const dismiss = async (page) => {
   for (let i = 0; i < 3; i++) { const x = page.locator('.announcements-modal-close'); if (!(await x.count())) break; await x.first().click().catch(() => {}); await page.waitForTimeout(300); }
 };
 
-/** What is on screen: the hands-free list, the desktop chrome, overflow. */
+/** What is on screen: which shell, the device-shell marks, overflow. */
 const layout = (page) => page.evaluate(() => {
-  const visible = (sel) => [...document.querySelectorAll(sel)].some((el) => {
-    const r = el.getBoundingClientRect(); const cs = getComputedStyle(el);
-    return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none';
-  });
+  const chrome = document.querySelector('.window-chrome');
   return {
-    list: visible('[data-testid="phone-list"]'),
-    chrome: visible('.window-chrome-bar'),
+    shell: chrome?.getAttribute('data-shell') ?? null,
+    phone: document.body.dataset.phone ?? null,
+    hfButton: [...document.querySelectorAll('[data-testid="hf-button"]')].some((e) => e.getBoundingClientRect().width > 0),
+    macChip: !!document.querySelector('[data-testid="ns-phone-chip"]'),
     overflow: document.documentElement.scrollWidth - window.innerWidth,
   };
 });
@@ -216,86 +215,67 @@ try {
   report.check('Mac mode starts for both projects (loopback stand-in tunnel)', started.status === 200 && !!started.json.url, JSON.stringify(started.json).slice(0, 200));
 
   const DEVICES = [
-    { name: 'ipad-portrait', label: 'iPad portrait 834x1194 (touch)', ctx: { ...devices['iPad Pro 11'] }, desktop: false },
-    { name: 'ipad-landscape', label: 'iPad landscape 1194x834 (touch)', ctx: { ...devices['iPad Pro 11 landscape'] }, desktop: true },
-    { name: 'computer-1440', label: 'computer 1440x900 (mouse)', ctx: { viewport: { width: 1440, height: 900 } }, desktop: true },
-    { name: 'computer-1280', label: 'computer 1280x800 (mouse)', ctx: { viewport: { width: 1280, height: 800 } }, desktop: true },
-    { name: 'iphone', label: 'iPhone 390x844 (control)', ctx: { ...devices['iPhone 13'], viewport: { width: 390, height: 844 } }, desktop: false },
+    { name: 'ipad-portrait', label: 'iPad portrait 834x1194 (touch), then rotated', ctx: { ...devices['iPad Pro 11'] }, rotate: { width: 1194, height: 834 } },
+    { name: 'ipad-landscape', label: 'iPad landscape 1194x834 (touch)', ctx: { ...devices['iPad Pro 11 landscape'] } },
+    { name: 'computer-1440', label: 'computer 1440x900 (mouse)', ctx: { viewport: { width: 1440, height: 900 } } },
+    { name: 'computer-1280', label: 'computer 1280x800 (mouse)', ctx: { viewport: { width: 1280, height: 800 } } },
+    { name: 'iphone', label: 'iPhone 390x844 (touch)', ctx: { ...devices['iPhone 13'], viewport: { width: 390, height: 844 } }, phone: true },
   ];
 
   for (const d of DEVICES) {
-    if (d.desktop) {
-      // A computer or a landscape tablet: the desktop Chat, on the tunnel's trust.
-      console.log(`\n· ${d.label} (desktop layout)`);
-      const qr = (await mac(port, 'POST', 'qr')).json.url;
-      const ctx = await browser.newContext(d.ctx);
-      const page = await ctx.newPage();
-      page.on('console', (m) => { if (m.type() === 'error') errors.push(`${d.name}: ${m.text().slice(0, 200)}`); });
-      page.on('pageerror', (e) => errors.push(`${d.name} pageerror: ${String(e).slice(0, 200)}`));
-      page.on('response', (r) => { if (r.status() === 403) refused.push(`${d.name}: ${r.request().method()} ${new URL(r.url()).pathname}`); });
-      await page.goto(qr, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-      report.check(`${d.name}: signed in, landed in the project`, await until(async () => page.url().includes('vault=proj'), 25000), page.url());
-      report.check(`${d.name}: the desktop Chat, not the phone list`, await until(async () => { const x = await layout(page); return x.chrome && !x.list; }, 25000), JSON.stringify(await layout(page)));
-      await page.waitForTimeout(2000);
-      await dismiss(page);
-      report.check(`${d.name}: the chat surface is open (not an empty dashboard)`, await until(async () => (await page.locator('.agent-surface.expanded, .agent-surface[data-expanded="true"], .agent-pane-tabbar').count()) > 0, 15000));
-      await page.locator('.project-tabs-add').click();
-      await until(async () => (await page.locator('.psw-row').count()) > 0, 10000);
-      const rows = (await page.locator('.psw-row .psw-row-name').allTextContents()).map((x) => x.trim()).sort();
-      report.check(`${d.name}: + lists both chosen projects and nothing else`, JSON.stringify(rows) === JSON.stringify(['other', 'proj']), JSON.stringify(rows));
-      await page.keyboard.press('Escape');
-      const l = await layout(page);
-      report.check(`${d.name}: no horizontal overflow`, l.overflow <= 1, String(l.overflow));
-      await page.screenshot({ path: join(SHOTS, `${d.name}-desktop.png`) });
-      await ctx.close();
-      continue;
-    }
+    // Every device on the tunnel opens the NEW SHELL (W2): a phone with its drawer open, a tablet
+    // or a computer with the drawer beside the chat. None keeps a classic phone layout.
     console.log(`\n· ${d.label}`);
     const qr = (await mac(port, 'POST', 'qr')).json.url;
     const ctx = await browser.newContext(d.ctx);
     const page = await ctx.newPage();
+    const socks = [];
+    page.on('websocket', (w) => { const s = { url: w.url(), closed: false }; socks.push(s); w.on('close', () => { s.closed = true; }); });
     page.on('console', (m) => { if (m.type() === 'error') errors.push(`${d.name}: ${m.text().slice(0, 200)}`); });
     page.on('pageerror', (e) => errors.push(`${d.name} pageerror: ${String(e).slice(0, 200)}`));
-    page.on('response', (r) => { if (r.status() === 403) refused.push(`${d.name}: ${r.request().method()} ${new URL(r.url()).pathname}`); });
+    page.on('response', (r) => { if (r.status() >= 400 && r.status() !== 401) refused.push(`${d.name}: ${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`); });
     await page.goto(qr, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-    report.check(`${d.name}: signed in, landed in the project`, await until(async () => page.url().includes('vault=proj'), 25000), page.url());
-    report.check(`${d.name}: the hands-free Sohbetler list is on screen`, await until(async () => (await layout(page)).list, 25000), JSON.stringify(await layout(page)));
+    report.check(`${d.name}: signed in, landed in a project`, await until(async () => page.url().includes('vault='), 25000), page.url());
+    report.check(`${d.name}: the new shell (the Mac chip, no Hands-free button)`, await until(async () => { const x = await layout(page); return x.shell === 'new' && x.macChip && !x.hfButton; }, 25000), JSON.stringify(await layout(page)));
     await page.waitForTimeout(1500);
     await dismiss(page);
-    const l = await layout(page);
-    report.check(`${d.name}: no desktop window chrome`, !l.chrome, JSON.stringify(l));
-    report.check(`${d.name}: the chat the Mac runs is an Açık row`, await until(async () => (await page.locator('[data-testid="mac-live-row"]:visible, [data-testid="list-tab-row"]:visible').count()) >= 1, 15000));
-    const projects = await page.locator('[data-testid="list-projects"] .mlist-project').allTextContents().catch(() => []);
-    report.check(`${d.name}: both chosen projects are listed`, projects.includes('proj') && projects.includes('other'), JSON.stringify(projects));
-    report.check(`${d.name}: no horizontal overflow on the list`, l.overflow <= 1, String(l.overflow));
-    await page.screenshot({ path: join(SHOTS, `${d.name}-list.png`) });
+    if (d.phone) report.check(`${d.name}: a phone opens with the drawer open`, await drawerShown(page));
+    await openDrawer(page);
+    const names = (await page.locator('[data-drawer-project]').evaluateAll((els) => els.map((e) => e.getAttribute('data-drawer-project')))).sort();
+    report.check(`${d.name}: the drawer lists both chosen projects and nothing else`, JSON.stringify(names) === JSON.stringify(['other', 'proj']), JSON.stringify(names));
+    await expand(page, 'proj');
+    const live = page.locator(`[data-drawer-project="proj"] [data-testid="drawer-chat-row"][data-chat-id="${LIVE}"]`);
+    report.check(`${d.name}: the chat the Mac runs is a drawer row`, await until(async () => (await live.count()) === 1, 15000));
+    report.check(`${d.name}: no horizontal overflow (drawer)`, (await layout(page)).overflow <= 1, String((await layout(page)).overflow));
+    await page.screenshot({ path: join(SHOTS, `${d.name}-drawer.png`) });
 
-    // A tap opens the Mac's chat as its own screen; ‹ comes back to the list.
-    const row = page.locator('[data-testid="mac-live-row"]:visible, [data-testid="list-tab-row"]:visible').first();
-    if (await row.count()) {
-      await row.click();
-      report.check(`${d.name}: a tap opens the chat as its own screen`, await until(async () => (await page.locator('[data-testid="chat-back"]:visible').count()) === 1 && !(await layout(page)).list, 15000), JSON.stringify(await layout(page)));
-      report.check(`${d.name}: the chat shows the Mac's conversation`, await until(async () => (await page.locator('.chat-scroll').first().textContent().catch(() => '') ?? '').includes(LIVE_TITLE), 15000));
-      await page.waitForTimeout(600);
-      await page.screenshot({ path: join(SHOTS, `${d.name}-chat.png`) });
-      await page.locator('[data-testid="chat-back"]').click();
-      report.check(`${d.name}: ‹ returns to the list`, await until(async () => (await layout(page)).list, 10000));
-    }
+    // A tap opens the Mac's chat.
+    await live.click();
+    report.check(`${d.name}: a tap shows the Mac's conversation`, await until(async () => (await page.locator('.project-instance:not([hidden]) .chat-scroll').first().textContent().catch(() => '') ?? '').includes(LIVE_TITLE), 15000));
+    if (d.phone) report.check(`${d.name}: …the drawer closed`, !(await drawerShown(page)));
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: join(SHOTS, `${d.name}-chat.png`) });
 
-    // "Boards, tasks…" is the phone shell on this device too: one bar, a drawer, back to the list.
-    await page.locator('[data-testid="list-dashboard"]').click();
-    report.check(`${d.name}: "Boards, tasks…" shows the phone shell, not the desktop chrome`, await until(async () => (await page.locator('[data-testid="phone-bar"]:visible').count()) === 1 && !(await layout(page)).chrome, 10000), JSON.stringify(await layout(page)));
-    await page.locator('[data-testid="phone-menu"]').click();
-    await until(async () => (await page.locator('.sidebar--phone[data-open]').count()) === 1, 5000);
-    await page.locator('.sidebar--phone .sidebar-item').filter({ has: page.locator('.sidebar-label', { hasText: /^Tasks$/ }) }).first().click();
-    report.check(`${d.name}: the drawer opens Tasks`, await until(async () => (await page.locator('.phone-bar-title').innerText()).trim() === 'Tasks', 5000));
+    // Tasks from the rail (bottom bar on a phone), then Chat again.
+    await page.getByTestId('ns-rail-tasks').click();
+    report.check(`${d.name}: the rail opens Tasks`, await until(async () => (await page.locator('[data-testid="ns-rail-tasks"][data-on="true"]').count()) === 1, 5000));
     await page.waitForTimeout(1200);
     await dismiss(page);
     report.check(`${d.name}: no horizontal overflow on Tasks`, (await layout(page)).overflow <= 1, String((await layout(page)).overflow));
     await page.screenshot({ path: join(SHOTS, `${d.name}-tasks.png`) });
-    await page.locator('[data-testid="phone-menu"]').click();
-    await page.locator('.sidebar--phone .sidebar-item--launcher').click();
-    report.check(`${d.name}: the drawer's Chat brings the list back`, await until(async () => (await layout(page)).list, 8000));
+    await page.getByTestId('ns-rail-chat').click();
+    report.check(`${d.name}: Chat brings the chat back`, await until(async () => (await page.locator('.project-instance:not([hidden]) .chat-scroll').first().textContent().catch(() => '') ?? '').includes(LIVE_TITLE), 8000));
+
+    if (d.rotate) {
+      // 15: the tablet rotates: the shell stays as frozen at mount and no socket drops.
+      const open = socks.filter((x) => !x.closed).length;
+      await page.setViewportSize(d.rotate);
+      await page.waitForTimeout(3000);
+      const dropped = socks.filter((x) => x.closed).length;
+      const after = await layout(page);
+      report.check(`${d.name}: rotated to ${d.rotate.width}x${d.rotate.height}, every socket kept (${open} open, ${dropped} closed), the same shell`, open > 0 && dropped === 0 && after.shell === 'new' && after.overflow <= 1, JSON.stringify({ socks, after }));
+      await page.screenshot({ path: join(SHOTS, `${d.name}-rotated.png`) });
+    }
     await ctx.close();
   }
 
@@ -309,12 +289,12 @@ try {
   await desk.waitForTimeout(3000);
   await dismiss(desk);
   const dl = await layout(desk);
-  report.check('laptop window: the desktop chrome, not the hands-free list', dl.chrome && !dl.list, JSON.stringify(dl));
+  report.check('laptop window: the Mac\'s own window (its Hands-free button, no Mac chip, no phone layout)', dl.hfButton && !dl.macChip && dl.phone === null, JSON.stringify(dl));
   await desk.screenshot({ path: join(SHOTS, 'laptop-1440.png') });
 
   const errs = errors.filter((e) => !/__TAURI|status of 401/.test(e));
   report.check('no console errors on any device', errs.length === 0, errs.slice(0, 8).join('\n      '));
-  report.check('no 403 from the pages\' own calls', refused.length === 0, refused.slice(0, 8).join('\n      '));
+  report.check('no 4xx/5xx from the pages\' own calls', refused.length === 0, refused.slice(0, 8).join('\n      '));
   console.log(`\n  screenshots: ${SHOTS}`);
 } catch (err) {
   report.check('the run completed', false, String(err?.stack ?? err));
