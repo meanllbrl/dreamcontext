@@ -3169,7 +3169,9 @@ export function createChatSession(
 
   async function fetchTranscriptHistory(): Promise<HistoryEntry[]> {
     try {
-      const r = await api.get<{ items: HistoryEntry[] }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}${chatToolParam(claudeId)}`);
+      const r = await api.get<{ items: HistoryEntry[]; appChat?: boolean }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}${chatToolParam(claudeId)}`);
+      // Set before the items enter the model: an image must not paint ahead of the socket's word.
+      if (r?.appChat) session.appChat = true;
       return Array.isArray(r?.items) ? r.items : [];
     } catch { return []; }
   }
@@ -3216,9 +3218,10 @@ export function createChatSession(
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const r = await Promise.race([
-          api.get<{ items: HistoryEntry[] }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}${chatToolParam(claudeId)}`),
+          api.get<{ items: HistoryEntry[]; appChat?: boolean }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}${chatToolParam(claudeId)}`),
           new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), CONNECT_TIMEOUT_MS); }),
         ]);
+        if (r?.appChat) session.appChat = true;
         entries = Array.isArray(r?.items) ? r.items : [];
       } catch { entries = null; } finally { clearTimeout(timer); }
       if (disposed || gen !== replayGen) return;

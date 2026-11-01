@@ -1,3 +1,4 @@
+import { fileSessionParam } from '../../../lib/chatAppBinding';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApi, useVaultId } from '../../../context/VaultContext';
@@ -74,7 +75,7 @@ export function useBoardScene(path: string): BoardScene {
     let tries = 0;
     setScene({ content: null, assets: undefined, assetsLoading: false, failed: false, failure: null, whiteboard });
 
-    const load = () => api.get<{ content: string }>(`/agent/file?path=${encodeURIComponent(path)}`)
+    const load = () => api.get<{ content: string }>(`/agent/file?path=${encodeURIComponent(path)}${fileSessionParam()}`)
       .then((data) => {
         if (cancelled) return;
         const content = data?.content ?? '';

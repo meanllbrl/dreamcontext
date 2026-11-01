@@ -478,7 +478,7 @@ async function chatPatch(req: IncomingMessage, res: ServerResponse, params: Para
 export async function handleAppChatClose(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   await chatPatch(req, res, params, contextRoot, (id) => {
     closeAppChat(id, home);
-    void stopLiveChat(appChatRoot(id, home)).catch(() => { /* already gone */ });
+    void stopLiveChat(appChatRoot(id, home)).catch((err: unknown) => console.warn(`[apps] ${params.slug}: a closed chat did not stop: ${(err as Error).message}`));
   });
 }
 

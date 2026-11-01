@@ -15,8 +15,8 @@ import './AppChat.css';
  * app's filter. AgentSurface is not mounted, so nothing of the main app's tabs comes along.
  */
 /** Pages have no home in the frame: the main app opens them. */
-function leaveFrame(grant: EmbedGrant, page: string): void {
-  if ((APP_LINK_PAGES as readonly string[]).includes(page)) window.open(openInMainHref(grant.vault, page as AppLinkPage), '_blank');
+function leaveFrame(grant: EmbedGrant, page: string, id?: string | null): void {
+  if ((APP_LINK_PAGES as readonly string[]).includes(page)) window.open(openInMainHref(grant.vault, page as AppLinkPage, id ?? null), '_blank');
 }
 
 export function AppChat({ grant }: { grant: EmbedGrant }) {
@@ -60,7 +60,7 @@ export function AppChat({ grant }: { grant: EmbedGrant }) {
             pane
             placeholder={t('embed.askPlaceholder').replace('{name}', state.name)}
             reopen={() => store.respawn(active.id)}
-            openPage={(page) => leaveFrame(grant, page)}
+            openPage={(page, id) => leaveFrame(grant, page, id)}
           />
         )}
       </div>

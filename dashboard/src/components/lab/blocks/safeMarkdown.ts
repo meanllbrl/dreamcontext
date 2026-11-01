@@ -34,3 +34,25 @@ export function stripRemoteMedia(markdown: string): string {
   out = out.replace(/@import[^;]*;?/gi, '');
   return out;
 }
+
+const REMOTE = /^\s*(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
+const isRemote = (url: string | null): boolean => !!url && REMOTE.test(url) && !/^\s*(?:data|blob):/i.test(url);
+
+/**
+ * The same wall on sanitized HTML, for text that came from a model: judged on the DOM the browser
+ * would load, so no source spelling (a reference image, a nested bracket, an entity in a style)
+ * gets past it. Local paths stay: the chat's media hook rewrites them.
+ */
+export function dropRemoteMedia(html: string): string {
+  const box = document.createElement('template');
+  box.innerHTML = html;
+  for (const el of box.content.querySelectorAll('img, video, audio, source, track, picture, input[type="image"]')) {
+    const urls = [el.getAttribute('src'), el.getAttribute('poster'), ...(el.getAttribute('srcset') ?? '').split(',').map((p) => p.trim().split(/\s+/)[0])];
+    if (urls.some(isRemote)) el.remove();
+  }
+  for (const el of box.content.querySelectorAll('[style], [background]')) {
+    el.removeAttribute('style');
+    el.removeAttribute('background');
+  }
+  return box.innerHTML;
+}

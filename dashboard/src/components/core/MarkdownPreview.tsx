@@ -5,7 +5,7 @@ import { marked } from 'marked';
 // Arms `==highlight==` on the shared `marked` singleton (lib/markdownMark.ts) — registration is
 // global, but which modules a route loads is not, so every parse path imports it for itself.
 import '../../lib/markdownMark';
-import { stripRemoteMedia } from '../lab/blocks/safeMarkdown';
+import { dropRemoteMedia } from '../lab/blocks/safeMarkdown';
 import { StripRemoteMedia } from '../sleepy/chat/stripRemoteMediaContext';
 import DOMPurify from 'dompurify';
 import { useTheme } from '../../context/ThemeContext';
@@ -55,7 +55,7 @@ export function MarkdownPreview({ content, frontmatter, onWikilink }: Props) {
   // which lines are inside a code block (see lib/wikilinks.ts).
   // Every chat text passes here: an app's conversation draws no remote media, whatever the path.
   const stripRemote = useContext(StripRemoteMedia);
-  const blocks = useMemo(() => markdownBlocks(markdownWithWikilinks(stripRemote ? stripRemoteMedia(content) : content)), [content, stripRemote]);
+  const blocks = useMemo(() => markdownBlocks(markdownWithWikilinks(content)), [content]);
 
   // Sanitize before the HTML reaches the document. marked output for normal markdown
   // (headings, lists, code, tables, links) is preserved; scripts, event handlers, and
@@ -66,11 +66,15 @@ export function MarkdownPreview({ content, frontmatter, onWikilink }: Props) {
     const cache = htmlCache.current;
     const hit = cache.get(block);
     if (hit !== undefined) return hit;
-    const html = DOMPurify.sanitize(renderMarkdownBlock(block), SANITIZE_CONFIG);
+    const clean = DOMPurify.sanitize(renderMarkdownBlock(block), SANITIZE_CONFIG);
+    const html = stripRemote ? dropRemoteMedia(clean) : clean;
     if (cache.size >= HTML_CACHE_MAX) cache.delete(cache.keys().next().value as string);
     cache.set(block, html);
     return html;
-  }, []);
+  }, [stripRemote]);
+  // What was cached under the other setting is not this text's HTML.
+  const cachedFor = useRef(stripRemote);
+  if (cachedFor.current !== stripRemote) { cachedFor.current = stripRemote; htmlCache.current.clear(); }
 
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const blockState = useRef<MarkdownBlockState>(emptyBlockState());

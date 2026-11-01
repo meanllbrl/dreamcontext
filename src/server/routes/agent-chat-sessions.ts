@@ -7,7 +7,7 @@ import { listPastSessions, listTranscriptFiles, DEFAULT_LIMIT, MAX_LIMIT } from 
 import { contentOf, ensureContentIndex } from '../../lib/transcript-content-index.js';
 import { readSessionTitles } from '../../lib/session-titles.js';
 import { readSuperState } from '../../lib/super/store.js';
-import { appChatIds } from '../../lib/apps/chat-store.js';
+import { appChatIds, appChatRoot } from '../../lib/apps/chat-store.js';
 import { getApp, real } from '../../lib/apps/registry.js';
 import { superSanitizeOpts } from '../../lib/super/inbox.js';
 import { listCodexSessions, mergeSessionRows } from '../../lib/t3-bridge/codex-sessions.js';
@@ -104,7 +104,18 @@ export async function computeChatSessions(
     titles: readSessionTitles(contextRoot),
     ...(superRows ? { superRows } : {}),
   });
-  if (onlyIds) return result;
+  // A rotated chain is one row, under its pin, as the strip knows it: newest first, so its current
+  // name wins. A second row would be a second tab on one conversation.
+  if (onlyIds) {
+    const seen = new Set<string>();
+    const sessions = result.sessions.flatMap((s) => {
+      const id = appChatRoot(s.id, opts.home ?? homedir());
+      if (seen.has(id)) return [];
+      seen.add(id);
+      return [{ ...s, id }];
+    });
+    return { ...result, sessions, total: sessions.length };
+  }
   const merged = withCodexRows(result, contextRoot, projectRoot, { query, limit, superOnly: superRows?.mode === 'only', home: opts.home });
   return query.trim() && !indexed
     ? { ...merged, indexing: { done: build.progress.done, total: build.progress.total } }

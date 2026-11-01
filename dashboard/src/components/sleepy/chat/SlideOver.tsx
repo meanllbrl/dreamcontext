@@ -1,3 +1,4 @@
+import { useEmbed } from '../../embed/embedMode';
 import { fileSessionParam } from '../../../lib/chatAppBinding';
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { agentFileUrl, peerLogoUrl } from '../../../api/client';
@@ -168,6 +169,8 @@ function DirListing({
 }
 
 function FileSlideOver({ path, reference, onClose, onNavApp, onOpenPath }: SlideOverFileProps) {
+  // A board has no page in an app's frame, and no link to the main app.
+  const embedded = !!useEmbed();
   const api = useApi();
   const [state, setState] = useState<{ loading: boolean; data: FileContent | null; error: string | null }>(
     { loading: true, data: null, error: null },
@@ -205,7 +208,7 @@ function FileSlideOver({ path, reference, onClose, onNavApp, onOpenPath }: Slide
       <FileActions
         path={path}
         className="chat-slideover-actions"
-        extra={reference.appNav && (
+        extra={reference.appNav && (!embedded || reference.appNav.page !== 'whiteboards') && (
           <button
             type="button"
             className="chat-btn"

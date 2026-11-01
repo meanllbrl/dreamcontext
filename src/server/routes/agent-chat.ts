@@ -88,7 +88,7 @@ import { meterEndsRefusal, meterShowsRoomSince, readUsageMeter, readUsageMeterFr
 import { chatSpawnAccount } from '../../lib/automations/account.js';
 import { appChatUpgrade } from '../apps/app-chat-gate.js';
 import { APP_CHAT_MAX_LIVE, appChatHasRoom, prepareAppChat, reserveAppChat, userChatDefaults, type AppChatEnvelope } from '../../lib/apps/assistant.js';
-import { lookupAppChat, lookupAppChatOf, rotateAppChat, type AppChatRecord } from '../../lib/apps/chat-store.js';
+import { appChatRoot, lookupAppChat, lookupAppChatOf, newestAppChat, rotateAppChat, type AppChatRecord } from '../../lib/apps/chat-store.js';
 import { getApp, real, appDataDir } from '../../lib/apps/registry.js';
 import { cliAwarePath } from '../../lib/automations/cli-path.js';
 import { clearToolSignedOut, readToolRejections, recordToolRejection, recordToolSignedOut } from '../../lib/account-switch.js';
@@ -1908,10 +1908,13 @@ export function startChatSession(
   const appHit = lookupAppChatOf([requested.resumeId, requested.sessionId, requested.resumeId ? resolveAgentSession(join(projectRoot, '_dream_context'), requested.resumeId) : '']);
   if (appHit.kind === 'damaged') { refuseApp('This app conversation cannot be read, so it stays closed.'); return; }
   let app: AppChatEnvelope | null = null;
-  /** The record the live conversation answers to; moves on a rotation. */
-  let appRecord: AppChatRecord | null = appHit.kind === 'record' ? appHit.record : null;
+  /** The record the live conversation answers to, the tip of its chain; moves on a rotation. */
+  const appTip = appHit.kind === 'record' ? lookupAppChat(newestAppChat(appHit.record.id)) : null;
+  let appRecord: AppChatRecord | null = appHit.kind === 'record' ? (appTip?.kind === 'record' ? appTip.record : appHit.record) : null;
+  /** Its seat, by the pin: a respawn after a rotation is the same chat. */
+  const appSeat = appRecord ? appChatRoot(appRecord.id) : '';
   if (appRecord) {
-    if (!appChatHasRoom(appRecord.hash, appRecord.id)) {
+    if (!appChatHasRoom(appRecord.hash, appSeat)) {
       refuseApp(`This app already has ${APP_CHAT_MAX_LIVE} chats running. Close one to start another.`);
       return;
     }
@@ -2537,7 +2540,7 @@ export function startChatSession(
   // An app chat's hook and listed verbs call `dreamcontext` with no login-shell PATH behind them.
   if (app) childEnv.PATH = cliAwarePath(childEnv.PATH ?? '');
   // Held from the spawn to the child's exit; nothing async ran since `appChatHasRoom`.
-  const releaseAppSlot = app && appRecord ? reserveAppChat(app.hash, appRecord.id) : () => { /* not an app chat */ };
+  const releaseAppSlot = app ? reserveAppChat(app.hash, appSeat) : () => { /* not an app chat */ };
   // Its own process group on POSIX, so the whole tree can be ended at once (win32: see chatSpawnCommand).
   const spawnCmd = chatSpawnCommand({ argv, script });
   const child: ChildProcessWithoutNullStreams = spawn(spawnCmd.file, spawnCmd.args, {
@@ -3527,6 +3530,7 @@ export function startChatSession(
     // A spoken turn still being answered: the new socket reads the rest of it aloud.
     if (isSuper && voiceArmed) sendMeta({ subtype: 'voice_turn' });
     if (activeAccountId) sendMeta({ subtype: 'account_active', accountId: activeAccountId });
+    if (app) sendMeta({ subtype: 'app_chat' });
     for (const line of outstandingAsks.values()) {
       try { ws.send(line); } catch { /* closing */ }
     }
@@ -5124,7 +5128,9 @@ export async function handleAgentChatHistory(
 
   let raw = '';
   try { raw = await readTranscript(path); } catch { sendJson(res, 200, { items: [] }); return; }
-  sendJson(res, 200, { items: parseTranscriptHistory(raw) });
+  // An app's conversation says so with its history: an image in it must not paint before the
+  // socket's `app_chat` arrives, or when no socket ever opens.
+  sendJson(res, 200, { items: parseTranscriptHistory(raw), ...(lookupAppChat(id).kind === 'none' ? {} : { appChat: true }) });
 }
 
 /** A transcript's text. */

@@ -8,7 +8,7 @@ import {
   APP_CHAT_MAX_LIVE, appBashGateHook, appChatHasRoom, appCredentialDenies, appDeniedTools, appWriteDenies, prepareAppChat,
   reserveAppChat, resolveAppAgent, userChatDefaults,
 } from '../../src/lib/apps/assistant.js';
-import { createAppChat, gateFilePath } from '../../src/lib/apps/chat-store.js';
+import { createAppChat, gateFilePath, rotateAppChat } from '../../src/lib/apps/chat-store.js';
 import { ROLE_FILE, parseManifest, roleFileProblem } from '../../src/lib/apps/manifest.js';
 import { registerApp } from '../../src/lib/apps/registry.js';
 import { LIGHT_DISALLOWED_TOOLS } from '../../src/lib/automations/light-run.js';
@@ -251,6 +251,11 @@ describe('the history of an app', () => {
     for (let i = 0; i < 5; i++) { const id = randomUUID(); writeFileSync(join(dir, `${id}.jsonl`), line(id, `owner chat ${i}`)); }
     const r = await computeChatSessions(join(project, '_dream_context'), { app: 'yuk', limit: '1' }, { home, waitMs: 0 }) as { sessions: Array<{ id: string }> };
     expect(r.sessions.map((s) => s.id)).toEqual([own.id]);
+    // A rotated chain is one row, under its pin.
+    const next = rotateAppChat(own, randomUUID(), home);
+    writeFileSync(join(dir, `${next?.id}.jsonl`), line(String(next?.id), 'after clear'));
+    const rotated = await computeChatSessions(join(project, '_dream_context'), { app: 'yuk' }, { home, waitMs: 0 }) as { sessions: Array<{ id: string }> };
+    expect(rotated.sessions.map((s) => s.id)).toEqual([own.id]);
     const other = await computeChatSessions(join(project, '_dream_context'), { app: 'nope' }, { home, waitMs: 0 }) as { sessions: unknown[] };
     expect(other.sessions).toEqual([]);
   });

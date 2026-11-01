@@ -255,7 +255,7 @@ function useHostClaim(session: ChatSession): boolean {
  */
 export function CardChat({ session, reopen, placeholder, pane = false, feed, openPage }: {
   /** Where a page link goes when there is no surface around this chat (an app's frame). */
-  openPage?: (page: string) => void;
+  openPage?: (page: string, id?: string | null) => void;
   session: ChatSession;
   reopen: () => void;
   placeholder: string;
@@ -289,7 +289,7 @@ export function CardChat({ session, reopen, placeholder, pane = false, feed, ope
     changeMode: () => { /* a card speaks as its agent */ },
     changeAccount: () => { /* follows the default account */ },
     handoffToDevelop: () => { /* a card does not hand off */ },
-    openAppPage: (page: string) => { openPageRef.current?.(page); },
+    openAppPage: (page: string, id?: string | null) => { openPageRef.current?.(page, id); },
     signIn: async () => { /* sign in from a project chat */ },
   }), [session]);
 
