@@ -13,6 +13,7 @@ import {
 import { codexSpawnAccount } from '../../lib/codex-switch.js';
 import { spawn } from 'node:child_process';
 import { antigravityInstalled } from '../../lib/antigravity-accounts.js';
+import { nodeTooOldMessage } from '../../lib/t3-bridge/node-floor.js';
 import { holdOpen } from '../hold-open.js';
 import {
   INSTANCE_PRIMARY_ID, InstanceAccountError, getInstanceAccount, instanceLimitsFor, listInstanceAccounts, newInstanceAccountId,
@@ -238,7 +239,7 @@ export const instanceAccountsList = (tool: InstanceTool) => async (req: Incoming
 function signInChild(tool: InstanceTool, accountId: string, open: (url: string) => void): Promise<boolean> {
   const deps = codexAccountDeps();
   const cli = deps.cli ?? (process.env.DREAMCONTEXT_CLI || process.argv[1] || '');
-  if (!deps.node || !cli) return Promise.reject(new InstanceAccountError('needs_node', 'This tool needs a newer Node. Update Codex in the picker first: it brings one.'));
+  if (!deps.node || !cli) return Promise.reject(new InstanceAccountError('needs_node', nodeTooOldMessage('This tool')));
   return accountChild(deps.node, [cli, 't3-account', 'signin', '--tool', tool, ...(accountId === INSTANCE_PRIMARY_ID ? [] : ['--account', accountId])], deps.env ?? process.env, SIGNIN_TIMEOUT_MS, open);
 }
 

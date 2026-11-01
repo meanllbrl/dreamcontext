@@ -23,12 +23,14 @@
  * Claude path never changes, and the Codex path prints the very same text.
  */
 import { spawn } from 'node:child_process';
+import { dirname } from 'node:path';
+import { resolveContextRoot } from '../context-path.js';
 import type { AppContext } from './stdio.js';
 
 export type HookName = 'session-start' | 'user-prompt-submit' | 'stop';
 
-/** Runs one hook, returns its stdout ('' on any failure). Injectable for tests. */
-export type HookRunner = (name: HookName, input: Record<string, unknown>, o: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }) => Promise<string>;
+/** Runs one hook, returns its stdout; null = it did not finish (timed out, or failed printing nothing). Injectable for tests. */
+export type HookRunner = (name: HookName, input: Record<string, unknown>, o: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }) => Promise<string | null>;
 
 /** A hook that would block the owner's turn longer than this is skipped for that turn. */
 export const PROMPT_HOOK_TIMEOUT_MS = 15_000;
@@ -92,8 +94,8 @@ export function fitCodexContext(entries: readonly AppContext[]): AppContext[] {
 }
 
 /** The `additionalContext` a `--format codex` hook printed, or '' (nothing, or not that shape). */
-export function hookContext(stdout: string): string {
-  const text = stdout.trim();
+export function hookContext(stdout: string | null): string {
+  const text = (stdout ?? '').trim();
   if (!text) return '';
   try {
     const parsed = JSON.parse(text) as { hookSpecificOutput?: { additionalContext?: unknown } };
@@ -109,21 +111,38 @@ export function cliHookRunner(node: string, cli: string): HookRunner {
   return (name, input, o) => new Promise((resolve) => {
     let out = '';
     let done = false;
-    const finish = (v: string): void => { if (!done) { done = true; resolve(v); } };
+    const finish = (v: string | null): void => { if (!done) { done = true; resolve(v); } };
     let child;
     try {
       child = spawn(node, [cli, 'hook', name, '--format', 'codex'], { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', 'ignore'] });
     } catch {
-      finish('');
+      finish(null);
       return;
     }
-    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } finish(''); }, o.timeoutMs);
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } finish(null); }, o.timeoutMs);
     child.stdout.on('data', (c: Buffer) => { if (out.length < 400_000) out += c.toString('utf-8'); });
-    child.on('error', () => { clearTimeout(timer); finish(''); });
-    child.on('close', () => { clearTimeout(timer); finish(out); });
+    child.on('error', () => { clearTimeout(timer); finish(null); });
+    child.on('close', (code) => { clearTimeout(timer); finish(code === 0 || out ? out : null); });
     child.stdin.on('error', () => undefined);
     child.stdin.end(JSON.stringify(input));
   });
+}
+
+/**
+ * A hook here always runs in the project root, but the agent moves: its own `dreamcontext` commands
+ * in a linked repo or a worktree fail with "_dream_context/ not found". Rides at the snapshot's head.
+ */
+export const brainPathLine = (root: string): string =>
+  `This project's brain is at ${root}. From a folder with no brain (a linked repo, a worktree), run dreamcontext commands from there: \`cd ${root} && dreamcontext …\`.`;
+
+/** The folder holding this project's brain, or null: a project without one owes no snapshot. */
+function brainRoot(cwd: string): string | null {
+  try {
+    const root = resolveContextRoot(cwd);
+    return root ? dirname(root) : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface BrainContextOptions {
@@ -140,11 +159,27 @@ export class BrainContext {
   private readonly env: NodeJS.ProcessEnv;
   private brain = '';
   private stops: Promise<unknown> = Promise.resolve();
+  private readonly said = new Set<'snapshot' | 'prompt'>();
+  private owedNotice: string | null = null;
 
   constructor(private readonly o: BrainContextOptions) {
     this.env = hookEnv(o.env);
     const cli = o.cli ?? (o.env.DREAMCONTEXT_CLI || process.argv[1] || '');
     this.run = o.run ?? (cli ? cliHookRunner(o.node ?? process.execPath, cli) : null);
+  }
+
+  /** Each loss reaches the owner once in a chat's life, however many turns it repeats. */
+  private tell(what: 'snapshot' | 'prompt', text: string): void {
+    if (this.said.has(what)) return;
+    this.said.add(what);
+    this.owedNotice = this.owedNotice ? `${this.owedNotice}\n\n${text}` : text;
+  }
+
+  /** What the owner must hear about lost context, once: the bridge prints it before the turn. */
+  takeNotice(): string | null {
+    const notice = this.owedNotice;
+    this.owedNotice = null;
+    return notice;
   }
 
   /** The snapshot the next turns carry. */
@@ -153,13 +188,16 @@ export class BrainContext {
   /**
    * A thread opened (`startup`), was reopened (`resume`) or replaced by an Eco rotation (`clear`):
    * read the snapshot again. An empty answer keeps the previous one (a slow disk must not leave the
-   * chat brainless); an Eco handoff banner the hook prints arrives inside it.
+   * chat brainless); an Eco handoff banner the hook prints arrives inside it. A project with a brain
+   * and no snapshot at all is a chat without its brain, and the owner hears so ({@link takeNotice}).
    */
   async session(source: 'startup' | 'resume' | 'clear' | 'compact', threadId: string): Promise<void> {
     if (!this.run) return;
     const out = await this.run('session-start', { hook_event_name: 'SessionStart', source, cwd: this.o.cwd, dc_tool: 'codex', ...(threadId ? { codex_thread_id: threadId } : {}) }, { cwd: this.o.cwd, env: this.env, timeoutMs: SESSION_HOOK_TIMEOUT_MS });
     const ctx = hookContext(out);
-    if (ctx) this.brain = ctx;
+    const root = brainRoot(this.o.cwd);
+    if (ctx) this.brain = root ? `${brainPathLine(root)}\n\n${ctx}` : ctx;
+    else if (!this.brain && root) this.tell('snapshot', `This chat is running without the project's brain: the snapshot ${out === null ? 'did not finish' : 'came back empty'}. It is read again after /clear or in a new chat.`);
   }
 
   /** The app context one owner turn carries: the snapshot, plus what the prompt hook printed for it. */
@@ -168,6 +206,7 @@ export class BrainContext {
     if (this.brain) out.push({ key: 'dreamcontext-brain', text: this.brain });
     if (!this.run) return out;
     const printed = await this.run('user-prompt-submit', { hook_event_name: 'UserPromptSubmit', prompt: text, session_id: threadId, cwd: this.o.cwd }, { cwd: this.o.cwd, env: this.env, timeoutMs: PROMPT_HOOK_TIMEOUT_MS });
+    if (printed === null) this.tell('prompt', 'Memory recall did not run for this message: the prompt hook did not finish. This note is not repeated if it happens again in this chat.');
     const ctx = hookContext(printed);
     if (ctx) out.push({ key: 'dreamcontext-prompt', text: ctx });
     return out;

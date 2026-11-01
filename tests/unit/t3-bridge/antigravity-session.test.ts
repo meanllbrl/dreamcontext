@@ -131,6 +131,65 @@ describe.skipIf(nodeMajor < 22)('Antigravity on the bridge (fake ACP agent)', ()
     for (const marker of ['NUDGE-MARKER', 'HANDOFF-MARKER', 'BRIEFING-MARKER']) expect(prompts[1]).toContain(marker);
   }, 60_000);
 
+  /** A pane with a brain double: returns what each session/prompt carried and which reads ran. */
+  async function brainChat(turns: string[], prompt: (n: number) => Promise<Array<{ key: string; text: string }>>) {
+    const input = new PassThrough();
+    const frames: Record<string, unknown>[] = [];
+    const write = (line: string): void => { frames.push(JSON.parse(line) as Record<string, unknown>); };
+    const until = async (n: number): Promise<void> => {
+      for (let i = 0; i < 400 && frames.filter((f) => f.type === 'result').length < n; i++) await new Promise((r) => setTimeout(r, 50));
+    };
+    const cwd = join(dir, 'project');
+    mkdirSync(cwd, { recursive: true });
+    const reads: string[] = [];
+    let turn = 0;
+    const done = runBridgeStdio(
+      { tool: 'antigravity', cwd, model: '', mode: 'auto', paneId: 'pane-1', binaryPath: fakeAgent(dir) },
+      {
+        input, write, env: process.env, home: dir,
+        brain: { session: async (source) => { reads.push(source); }, prompt: () => prompt(++turn), drain: async () => undefined },
+      },
+    );
+    for (let i = 0; i < turns.length; i++) {
+      input.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: turns[i] } })}\n`);
+      await until(i + 1);
+    }
+    input.end();
+    expect(await done).toBe(0);
+    const prompts = readFileSync(log, 'utf-8').split('\n').filter((l) => l.includes('session/prompt') && l.includes('"prompt"'));
+    return { prompts, reads, frames };
+  }
+  const SNAPSHOT = [{ key: 'dreamcontext-brain', text: 'SNAPSHOT-MARKER' }];
+
+  it("re-sends the brain, freshly read, on the adapter's compaction event and not before", async () => {
+    process.env.T3_ACP_COMPACTION_PROMPT_ORDINALS = '2';
+    const { prompts, reads } = await brainChat(['one', 'two', 'three', 'four'], async () => SNAPSHOT);
+    expect(prompts).toHaveLength(4);
+    expect(prompts.map((p) => p.includes('SNAPSHOT-MARKER'))).toEqual([true, false, true, false]);
+    expect(reads).toEqual(['startup', 'compact']);
+  }, 60_000);
+
+  it('never sends it twice with no compaction, however the tokens move', async () => {
+    const { prompts, reads } = await brainChat(['one', 'two', 'three'], async () => SNAPSHOT);
+    expect(prompts.map((p) => p.includes('SNAPSHOT-MARKER'))).toEqual([true, false, false]);
+    expect(reads).toEqual(['startup']);
+  }, 60_000);
+
+  it('a turn that carried no brain does not count as sent', async () => {
+    const { prompts } = await brainChat(['one', 'two'], async (n) => {
+      if (n === 1) throw new Error('hook blew up');
+      return SNAPSHOT;
+    });
+    expect(prompts.map((p) => p.includes('SNAPSHOT-MARKER'))).toEqual([false, true]);
+  }, 60_000);
+
+  it('a turn the agent refused does not count as sent', async () => {
+    process.env.T3_ACP_FAIL_PROMPT_ORDINAL = '1';
+    const { prompts, frames } = await brainChat(['one', 'two', 'three'], async () => SNAPSHOT);
+    expect(frames.filter((f) => f.type === 'result').map((f) => f.is_error)).toEqual([true, false, false]);
+    expect(prompts.map((p) => p.includes('SNAPSHOT-MARKER'))).toEqual([true, true, false]);
+  }, 60_000);
+
   it('Bypass answers for the owner, never sends yolo, and turning it off holds from the next turn', async () => {
     process.env.T3_ACP_EMIT_TOOL_CALLS = '1';
     const input = new PassThrough();
