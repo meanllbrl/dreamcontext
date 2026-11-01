@@ -1,4 +1,5 @@
 import type { PickerToolState } from './model-picker/pickerModel';
+import { requestOpenStats } from '../../../lib/openStats';
 import { useState, type ReactNode } from 'react';
 import {
   CONTEXT_TIGHT_PCT,
@@ -622,6 +623,8 @@ export function UsageMenu({
             })}
           </div>
         )}
+
+        <button type="button" className="chat-cmp-usagedetails" onClick={requestOpenStats} data-testid="usage-details">Usage details ›</button>
 
         {accounts.length > 1 && (() => {
           const active = accounts.find((a) => a.id === activeAccountId) ?? accounts[0];

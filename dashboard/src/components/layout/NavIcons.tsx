@@ -141,6 +141,14 @@ function BrainIcon() {
 
 /** Sleep cycle — a crescent moon with two drifting z's. The moon alone was a filled
     silhouette that read as Insights' old bulb at 14px; the z's say SLEEP, not "night". */
+function StatsIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 20h16" /><path d="M7 16v-5M12 16V6M17 16v-8" />
+    </svg>
+  );
+}
+
 function SleepIcon() {
   return (
     <Svg>
@@ -299,6 +307,7 @@ export const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   taxonomy: TaxonomyIcon,
   brain: BrainIcon,
   sleep: SleepIcon,
+  stats: StatsIcon,
   announcements: AnnouncementsIcon,
   packs: PacksIcon,
   settings: SettingsIcon,

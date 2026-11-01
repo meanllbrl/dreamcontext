@@ -1,6 +1,7 @@
 import { codexRunArgs } from './t3-bridge/headless-envelope.js';
 import { bridgeNode } from './t3-bridge/node-floor.js';
 import { linkedWritableRoots } from './t3-bridge/roots.js';
+import { noteSleepRunCost } from './usage-records.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { killPortable, recordedChildIsOurs } from './proc.js';
@@ -249,6 +250,7 @@ export async function runAutoSleep(
       return { started: true, status: 'failed', detail: tail, sessionId: result?.sessionId ?? null };
     }
 
+    noteSleepRunCost(contextRoot, result.sessionId, result.costUsd);
     const summary = (result.result ?? '').trim();
     patchAutoSleepSidecar(contextRoot, {
       status: 'ok',

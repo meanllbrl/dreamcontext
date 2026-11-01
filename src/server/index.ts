@@ -216,6 +216,7 @@ import {
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
 import { handleOnboardingFix, handleOnboardingFixCancel, handleOnboardingReadiness } from './routes/onboarding.js';
+import { handleAgentStats, handleAgentStatsPrice } from './routes/agent-stats.js';
 import { handleAgentUsageLimits } from './routes/agent-usage.js';
 import { claimOwnedPort } from './owned-ports.js';
 import { closeAllWebSessions } from './web-session-proxy.js';
@@ -600,6 +601,8 @@ export function buildRouter(): Router {
   // The account's 5-hour + weekly caps, from Claude Code's own cache. Vault-agnostic for
   // the same reason model-config is: it reads the user's install, not a project.
   router.get('/api/agent/usage-limits', handleAgentUsageLimits);
+  router.get('/api/agent/stats', handleAgentStats);
+  router.post('/api/agent/stats/price', handleAgentStatsPrice);
   // Multi-account. Vault-agnostic for the same reason usage-limits is: these read and write
   // the user's Claude installs, not any project's brain.
   router.get('/api/agent/accounts', handleAgentAccountsList);
@@ -1023,7 +1026,7 @@ export function buildRouter(): Router {
  * `/api/super/v` (the Super Agent's verbs) is here for the same reason; the owner's
  * `/api/super/*` routes are not — the window names its vault.
  */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/window', '/api/super/v', '/api/handsfree', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/onboarding', '/api/agent/prompt', '/api/agent/download', '/api/agent/pick-paths', '/api/agent/model-config', '/api/agent/tools', '/api/agent/usage-limits', '/api/agent/stats', '/api/agent/accounts', '/api/agent/session-model', '/api/agent/session-stats', '/api/agent/voice/tts', '/api/agent/voice/status', '/api/agent/voice/config', '/api/agent/voice/warm', '/api/agent/voice/retranscribe', '/api/agent/voice/log', '/api/agent/voice/dictation', '/api/agent/voice/focus', '/api/brain/auth', '/api/brain/team', '/api/assistant', '/api/notifications', '/api/notify', '/api/app/machine'];
 
 export function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

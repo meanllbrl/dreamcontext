@@ -641,6 +641,9 @@ export interface HandoffRecord {
   kind?: 'super';
   actedAt?: string;
   consumedAt?: string;
+  /** The fresh session that took the handoff, stamped with `consumedAt`. Stats reads its context
+   *  size and later turns from the ledger, so the record never has to carry them. */
+  toSession?: string;
 }
 
 /** The record key: the PANE if there is one, else the conversation, else a manual stamp. */
@@ -687,6 +690,7 @@ export function readHandoffRecord(contextRoot: string, key: string): HandoffReco
     ...(parsed.kind === 'super' ? { kind: 'super' as const } : {}),
     ...(typeof parsed.actedAt === 'string' ? { actedAt: parsed.actedAt } : {}),
     ...(typeof parsed.consumedAt === 'string' ? { consumedAt: parsed.consumedAt } : {}),
+    ...(typeof parsed.toSession === 'string' ? { toSession: parsed.toSession } : {}),
   };
 }
 

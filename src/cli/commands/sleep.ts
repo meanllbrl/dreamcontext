@@ -1,3 +1,4 @@
+import { closeSleepRun, openSleepRun } from '../../lib/usage-records.js';
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -583,6 +584,7 @@ export function registerSleepCommand(program: Command): void {
           process.exitCode = 1;
           return;
         }
+        openSleepRun(root, state.debt);
         say.success(`Consolidation epoch set: ${state.sleep_started_at}`);
         say.info(`Consolidation depth: ${decision.depth} (source: ${decision.source}) — ${decision.reason}`);
         if (decision.cappedByCatchup) {
@@ -772,6 +774,7 @@ export function registerSleepCommand(program: Command): void {
         return;
       }
       const { previousDebt, epoch, today_, finalState } = doneLock.value;
+      closeSleepRun(root, finalState.debt);
 
       if (epoch && finalState.sessions.length > 0) {
         success(`Consolidation complete. Debt reduced from ${previousDebt} to ${finalState.debt}. ${finalState.sessions.length} post-epoch session(s) preserved.`);

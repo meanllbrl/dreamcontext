@@ -101,7 +101,7 @@ describe('sidebar rail — nav ↔ icons ↔ i18n (C8)', () => {
     // The reverse direction, minus the two pages that are deliberately NOT in a nav group:
     // `announcements` is pinned to the rail's footer and `about` is unlinked (page kept,
     // entry removed). Both still render a glyph, so both still need one.
-    const footerOnly = new Set(['announcements', 'about']);
+    const footerOnly = new Set(['announcements', 'about', 'stats']);
     const pages = new Set(items.map((i) => i.page));
     for (const page of icons) {
       if (footerOnly.has(page)) continue;

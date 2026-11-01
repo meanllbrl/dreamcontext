@@ -13,7 +13,7 @@ import { NewShellControls } from './newshell/NewShellControls';
 import './Shell.css';
 
 const ACTIVE_PAGE_STORAGE_KEY = 'dreamcontext.dashboard.activePage';
-const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'hypotheses', 'lab', 'automations', 'agents', 'core', 'knowledge', 'sleep', 'brain', 'council', 'taxonomy', 'settings', 'packs', 'about', 'announcements', 'whiteboards', 'relations'];
+const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'hypotheses', 'lab', 'automations', 'agents', 'core', 'knowledge', 'sleep', 'brain', 'council', 'taxonomy', 'settings', 'packs', 'about', 'announcements', 'whiteboards', 'relations', 'stats'];
 /** Pages only the new shell offers: classic never lands on one, even from a stored value. */
 const NEW_SHELL_ONLY_PAGES: readonly Page[] = ['relations'];
 
@@ -180,6 +180,17 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     emitInstance(bus, 'dreamcontext-navigate', { page });
     writeScopedRaw(vault, ACTIVE_PAGE_STORAGE_KEY, page);
   }, [bus, vault]);
+
+  // ⌘U opens Stats from anywhere, as in T3 Code.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isActive || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'u') return;
+      e.preventDefault();
+      navigate('stats', null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isActive, navigate]);
 
   const handleSidebarNavigate = useCallback(
     (page: Page, id?: string) => {

@@ -2109,3 +2109,7 @@
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
 }
+
+/* The usage panel's way to the Stats page. */
+.chat-cmp-usagedetails { display: block; width: 100%; padding: 6px 0 2px; font-size: calc(12px * var(--zoom)); font-weight: 600; color: var(--color-accent-ink); text-align: left; }
+.chat-cmp-usagedetails:hover { text-decoration: underline; }
