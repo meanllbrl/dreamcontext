@@ -35,7 +35,9 @@ function checkStdio(server: Extract<AcpMcpServer, { command: string }>, env: Nod
       if (done) return;
       done = true;
       clearTimeout(timer);
-      try { child.kill('SIGKILL'); } catch { /* gone */ }
+      // Gently first: the wrapper hands the signal on, and a SIGKILL would orphan the real server.
+      try { child.stdin.end(); child.kill('SIGTERM'); } catch { /* gone */ }
+      setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } }, 1_500).unref();
       resolve(v);
     };
     const timer = setTimeout(() => finish('failed'), ms);
@@ -63,9 +65,19 @@ async function checkHttp(server: Extract<AcpMcpServer, { url: string }>, ms: num
       body: JSON.stringify(INITIALIZE),
       signal: AbortSignal.timeout(ms),
     });
-    await r.body?.cancel().catch(() => undefined);
-    if (r.status === 401 || r.status === 403) return 'needs-auth';
-    return r.ok ? 'connected' : 'failed';
+    if (r.status === 401 || r.status === 403) { await r.body?.cancel().catch(() => undefined); return 'needs-auth'; }
+    if (!r.ok || !r.body) return 'failed';
+    // A login page answers 200 too: only a JSON-RPC result is a server, or it refuses the whole chat.
+    const reader = r.body.getReader();
+    let text = '';
+    while (text.length < 65_536) {
+      const { done, value } = await reader.read();
+      if (value) text += Buffer.from(value).toString('utf-8');
+      if (/"result"\s*:/.test(text)) { await reader.cancel().catch(() => undefined); return 'connected'; }
+      if (done) break;
+    }
+    await reader.cancel().catch(() => undefined);
+    return 'failed';
   } catch {
     return 'failed';
   }

@@ -3,7 +3,7 @@ import { logHandoff } from '../../lib/usage-records.js';
 import { directHeavy, shellQuote } from '../../lib/run-budget.js';
 import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
 import { hookTool, setHookTool } from '../../lib/hook-tool.js';
-import { GATE_BEAT_ENV, antigravityCallAsClaude, isAntigravityGateFile } from '../../lib/antigravity-gate.js';
+import { GATE_BEAT_ENV, antigravityCallAsClaude, isAntigravityGateFile, shellTouchesGuarded } from '../../lib/antigravity-gate.js';
 import { SESSION_START_PARTS } from '../../lib/snapshot-budget.js';
 import { Command } from 'commander';
 import {
@@ -2939,17 +2939,19 @@ export function registerHookCommand(program: Command): void {
         toolName = agy.toolName;
         toolInput = agy.toolInput;
         input.cwd = agy.cwd;
-        // Its own gate first: nothing below matters once the hook can be rewritten.
-        const path = typeof toolInput.file_path === 'string' ? toolInput.file_path : '';
+        const path = typeof toolInput.file_path === 'string' ? resolve(agy.cwd, toolInput.file_path) : '';
         const command = toolName === 'Bash' && typeof toolInput.command === 'string' ? toolInput.command : '';
-        if (isAntigravityGateFile(path) || (command && shellWriteTarget(command, agy.cwd, isAntigravityGateFile))) {
+        // Its own gate first: nothing below matters once the hook can be rewritten.
+        if ((path && isAntigravityGateFile(path)) || (command && shellWriteTarget(command, agy.cwd, isAntigravityGateFile))) {
           deny('Blocked: this is dreamcontext\'s write gate for Antigravity. Agents never change it.');
           return;
         }
-        // No sandbox here, so the shell is read for the token file too: Claude's rule names file tools.
-        if (command && shellWriteTarget(command, agy.cwd, (abs) => isMarketingEnvPath(abs, agy.cwd))) {
-          toolName = 'Write';
-          toolInput = { file_path: shellWriteTarget(command, agy.cwd, (abs) => isMarketingEnvPath(abs, agy.cwd)) };
+        // No sandbox here, so the shell is read for the token file too: Claude's rule names file
+        // tools. Any brain's token file counts: the hook may run in another project.
+        const tokenFile = (p: string): boolean => isMarketingEnvPath(p, agy.cwd) || /\/_dream_context\/marketing\/\.env$/i.test(p);
+        if ((path && tokenFile(path)) || (command && (shellWriteTarget(command, agy.cwd, tokenFile) || shellTouchesGuarded(command)))) {
+          deny('Blocked: this file holds Meta access tokens, or this command touches dreamcontext\'s gate. Agents never write them: setup is `mk init`, and rotation is the owner\'s. To verify config, run `dreamcontext mk config check`.');
+          return;
         }
       }
 

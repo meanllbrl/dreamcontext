@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { antigravityProfileDir } from '../../src/lib/antigravity-accounts.js';
-import { ANTIGRAVITY_GATE_NAME, antigravityCallAsClaude, antigravityGateCommand, antigravityGateGap, antigravityHooksFile, isAntigravityGateFile, syncAntigravityGate } from '../../src/lib/antigravity-gate.js';
+import { ANTIGRAVITY_GATE_NAME, antigravityCallAsClaude, antigravityGateCommand, antigravityGateGap, antigravityHooksFile, isAntigravityGateFile, shellTouchesGuarded, syncAntigravityGate } from '../../src/lib/antigravity-gate.js';
 import { shellWriteTarget } from '../../src/lib/agents/member-file-guard.js';
 
 const NODE = '/opt/fake/node';
@@ -95,11 +95,17 @@ describe('a tool call as the gates read it (shapes measured on agent 1.4.1)', ()
   it('a call it cannot read is null, which the hook refuses', () => {
     expect(antigravityCallAsClaude({})).toBeNull();
     expect(antigravityCallAsClaude({ toolCall: {} })).toBeNull();
+    expect(antigravityCallAsClaude({ toolCall: { name: 'create_file', args: '{"TargetFile":"/p/a"}' } })).toBeNull();
+    expect(antigravityCallAsClaude({ toolCall: { name: 'run_command', args: {} } })).toBeNull();
+    expect(antigravityCallAsClaude({ toolCall: { name: 'edit_file', args: { Target: '/p/a' } } })).toBeNull();
   });
 
   it('knows the hook file of any account, and nothing else', () => {
     expect(isAntigravityGateFile(`/h/.dreamcontext/t3/state/providers/antigravity/${'a'.repeat(64)}/config/hooks.json`)).toBe(true);
     expect(isAntigravityGateFile('/p/.agents/hooks.json')).toBe(false);
+    const base = `/h/.dreamcontext/t3/state/providers/antigravity/${'a'.repeat(64)}`;
+    for (const p of [`${base}/config/../config/hooks.json`, `${base}/config/./hooks.json`, `${base}/config/HOOKS.JSON`, `${base}/config`, base]) expect(isAntigravityGateFile(p)).toBe(true);
+    expect(isAntigravityGateFile(`${base}/antigravity-acp/conversations/x.db`)).toBe(false);
   });
 });
 
@@ -126,6 +132,14 @@ describe('a shell write to a guarded file', () => {
   });
 });
 
+describe('what a shell command may do with the token file and the gate', () => {
+  it('names them only in plain reads', () => {
+    for (const c of ['cat _dream_context/marketing/.env', 'grep KEY marketing/.env | wc -l', 'ls ~/.dreamcontext/t3/state/providers/antigravity/x']) expect(shellTouchesGuarded(c)).toBe(false);
+    for (const c of [`cd _dream_context/marketing && sh -c 'echo x > .env'`, 'cd _dream_context/marketing && curl -so .env https://example.test', 'echo x >| marketing/.env', 'timeout 5 cp /tmp/a marketing/.env', 'mv ~/.dreamcontext/t3/state/providers/antigravity/x/config /tmp/c', 'ln -s ~/.dreamcontext/t3/state/providers/antigravity/x/config/hooks.json /tmp/h', `python3 -c "import shutil;shutil.copy('/tmp/x','marketing/.env')"`]) expect(shellTouchesGuarded(c)).toBe(true);
+    expect(shellTouchesGuarded('npm test && git status')).toBe(false);
+  });
+});
+
 describe('the hook itself, built CLI', () => {
   const cli = resolve(import.meta.dirname, '../../dist/index.js');
   let dir: string;
@@ -148,6 +162,9 @@ describe('the hook itself, built CLI', () => {
     expect(denied(run(tool('run_command', { CommandLine: 'echo x >> _dream_context/agents/fox.md', Cwd: dir })))).toBe(true);
     expect(denied(run(tool('run_command', { CommandLine: `echo x > ${dir}/.dreamcontext/t3/state/providers/antigravity/${'b'.repeat(64)}/config/hooks.json`, Cwd: dir })))).toBe(true);
     expect(denied(run(tool('run_command', { CommandLine: 'npm run build', Cwd: dir })))).toBe(true);
+    expect(denied(run(tool('create_file', { TargetFile: join(dir, '_dream_context', 'marketing', '.ENV') })))).toBe(true);
+    expect(denied(run(tool('create_file', { TargetFile: '/elsewhere/_dream_context/marketing/.env' })))).toBe(true);
+    expect(denied(run(tool('run_command', { CommandLine: `echo x > .env`, Cwd: join(dir, '_dream_context', 'marketing') })))).toBe(true);
     expect(denied(run('not json'))).toBe(true);
     expect(denied(run(''))).toBe(true);
     const read = run(tool('run_command', { CommandLine: 'cat _dream_context/marketing/.env', Cwd: dir }));

@@ -14,9 +14,9 @@
  * answering, and a Super child also proves the gate ran before anything it does is allowed (the beat).
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { antigravityProfileDir } from './antigravity-accounts.js';
 
 export const ANTIGRAVITY_GATE_NAME = 'dreamcontext-gate';
@@ -34,9 +34,34 @@ export function antigravityGateCommand(node: string, cli: string): string {
 export const antigravityHooksFile = (accountId: string, home: string = homedir()): string =>
   join(antigravityProfileDir(accountId, home), 'config', 'hooks.json');
 
-/** The hook file of any account's profile: the agent must not edit its own gate. */
+const nearestReal = (abs: string): string => {
+  for (let at = abs, rest = ''; ; rest = `/${basename(at)}${rest}`, at = dirname(at)) {
+    try { return realpathSync.native(at) + rest; } catch { if (dirname(at) === at) return abs; }
+  }
+};
+
+/**
+ * The gate's hook file, or a folder that holds it, in any account's profile, however it is spelled:
+ * `..`, a link, another case. The agent must not change its own gate, or move it away.
+ */
 export function isAntigravityGateFile(path: string): boolean {
-  return /\/providers\/antigravity\/[0-9a-f]{64}\/config\/hooks\.json$/.test(path.replace(/\\/g, '/'));
+  const gate = /\/providers\/antigravity\/[0-9a-f]{64}(?:\/config(?:\/hooks\.json)?)?$/;
+  const abs = resolve(path.replace(/\\/g, '/'));
+  return gate.test(abs.toLowerCase()) || gate.test(nearestReal(abs).toLowerCase());
+}
+
+const READ_VERBS = new Set(['cat', 'head', 'tail', 'less', 'more', 'grep', 'rg', 'wc', 'ls', 'stat', 'file', 'diff', 'cd', 'echo', 'pwd', 'true']);
+const GUARDED_WORDS = /\/providers\/antigravity\/|\bconfig\/+hooks\.json\b|marketing\b[\s\S]*\.env\b/i;
+
+/**
+ * This agent has no sandbox, so for the token file and its own gate the shell is judged by what it
+ * names: a command that names either passes only as plain reads with no redirect. Stricter than the
+ * member-file reading, which must not refuse a sentence; a path in a variable still passes.
+ */
+export function shellTouchesGuarded(command: string): boolean {
+  if (!GUARDED_WORDS.test(command)) return false;
+  if (/>/.test(command)) return true;
+  return command.split(/&&|\|\||[;|\n]/).some((part) => !READ_VERBS.has((part.trim().split(/\s+/)[0] ?? '').split('/').pop() ?? ''));
 }
 
 const plainDir = (p: string): boolean => { try { return lstatSync(p).isDirectory(); } catch { return false; } };
@@ -109,6 +134,7 @@ export function antigravityGateGap(cwd: string, o: { node: string; cli: string; 
 export const NO_ANTIGRAVITY_GATE = 'Antigravity would run here without the gate on marketing tokens and agent files, so no child starts.';
 
 const READ_TOOLS: ReadonlySet<string> = new Set(['view_file', 'list_directory', 'search_directory', 'find_file', 'read_url_content', 'search_web', 'ask_question', 'finish']);
+const WRITE_TOOLS: ReadonlySet<string> = new Set(['create_file', 'edit_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content', 'delete_file', 'run_command']);
 const PATH_KEYS = ['TargetFile', 'FilePath', 'Path', 'path', 'file_path', 'AbsolutePath'];
 
 export interface GateCall { readonly toolName: string; readonly toolInput: Record<string, unknown>; readonly cwd: string }
@@ -121,14 +147,17 @@ export interface GateCall { readonly toolName: string; readonly toolInput: Recor
 export function antigravityCallAsClaude(input: Record<string, unknown>): GateCall | null {
   const call = input.toolCall as { name?: unknown; args?: unknown } | undefined;
   if (typeof call?.name !== 'string') return null;
+  // A write tool whose target we cannot read is refused, never waved through.
+  if (WRITE_TOOLS.has(call.name) && (!call.args || typeof call.args !== 'object')) return null;
   const args = (call.args && typeof call.args === 'object' ? call.args : {}) as Record<string, unknown>;
   const paths = Array.isArray(input.workspacePaths) ? input.workspacePaths : [];
   const root = typeof paths[0] === 'string' ? paths[0] : process.cwd();
   const cwd = typeof args.Cwd === 'string' && args.Cwd ? args.Cwd : root;
-  if (call.name === 'run_command') return { toolName: 'Bash', toolInput: { command: String(args.CommandLine ?? '') }, cwd };
+  if (call.name === 'run_command') return typeof args.CommandLine === 'string' ? { toolName: 'Bash', toolInput: { command: args.CommandLine }, cwd } : null;
   if (call.name === 'send_command_input') return { toolName: 'Bash', toolInput: { command: String(args.Input ?? '') }, cwd };
   if (READ_TOOLS.has(call.name)) return { toolName: call.name, toolInput: args, cwd };
   const key = PATH_KEYS.find((k) => typeof args[k] === 'string' && args[k]);
+  if (!key && WRITE_TOOLS.has(call.name)) return null;
   if (key) return { toolName: call.name === 'create_file' ? 'Write' : 'Edit', toolInput: { file_path: args[key] }, cwd };
   return { toolName: call.name, toolInput: args, cwd };
 }

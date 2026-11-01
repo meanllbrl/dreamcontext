@@ -54,12 +54,15 @@ describe('asking a server before a chat is given it', () => {
   }, 20_000);
 
   it('tells an HTTP server that wants a sign-in from one that answers or is gone', async () => {
-    const srv = createServer((q, s) => { s.writeHead(q.url === '/open' ? 200 : 401); s.end('{}'); });
+    const srv = createServer((q, s) => {
+      if (q.url === '/login') { s.writeHead(200, { 'content-type': 'text/html' }); s.end('<html>Sign in</html>'); return; }
+      s.writeHead(q.url === '/open' ? 200 : 401); s.end('{"jsonrpc":"2.0","id":1,"result":{}}');
+    });
     await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
     const port = (srv.address() as { port: number }).port;
     const url = (p: string): AcpMcpServer => ({ type: 'http', name: p, url: `http://127.0.0.1:${port}/${p}`, headers: [] });
-    const r = await checkAcpServers([url('open'), url('closed'), { type: 'http', name: 'gone', url: 'http://127.0.0.1:1/x', headers: [] }], { env: process.env, limitMs: 1500 });
-    expect(Object.fromEntries(r)).toEqual({ open: 'connected', closed: 'needs-auth', gone: 'failed' });
+    const r = await checkAcpServers([url('open'), url('closed'), url('login'), { type: 'http', name: 'gone', url: 'http://127.0.0.1:1/x', headers: [] }], { env: process.env, limitMs: 1500 });
+    expect(Object.fromEntries(r)).toEqual({ open: 'connected', closed: 'needs-auth', login: 'failed', gone: 'failed' });
     srv.close();
   }, 20_000);
 });

@@ -18,8 +18,10 @@ import { acpStoreServers, scrubbedCodexEnv, type AcpMcpServer } from './launch.j
 import { BridgeSession } from './session.js';
 import { syncAntigravityGate } from '../antigravity-gate.js';
 
-const MAX_ATTEMPTS = 4;
-const WAIT_MS = 30_000;
+/** The route stops a probe at 60 s: two passes of an open and a wait stay under that. */
+const MAX_ATTEMPTS = 2;
+const OPEN_LIMIT_MS = 15_000;
+const WAIT_MS = 12_000;
 const POLL_MS = 150;
 
 export interface ProbeSession {
@@ -72,6 +74,13 @@ export async function runAntigravityMcpProbe(o: { cwd: string; account?: string 
   // A turn must not run without the gate, even one told to do nothing.
   if (!syncAntigravityGate(account, { node, cli, home }).ok) return print({ state: 'failed', servers: rows });
   const privateTmp = mkdtempSync(join(tmpdir(), 'dc-agy-probe-'));
+  let current = '';
+  const cleanup = (): void => {
+    if (current) forgetProbe(current, account, home);
+    rmSync(privateTmp, { recursive: true, force: true });
+  };
+  const onStop = (): void => { cleanup(); process.exit(1); };
+  process.once('SIGTERM', onStop);
   try {
     const session: ProbeSession = {
       open: async (servers) => {
@@ -81,24 +90,28 @@ export async function runAntigravityMcpProbe(o: { cwd: string; account?: string 
           const s = await BridgeSession.open({
             tool: 'antigravity', cwd: o.cwd, model: '', mode: 'default', paneId: `mcp-probe-${randomUUID()}`, launchArgs: '',
             ...(account !== INSTANCE_PRIMARY_ID ? { accountId: account } : {}), mcpServers: servers, env: scrubbedCodexEnv(process.env),
-            stateRoot: join(home, '.dreamcontext', 't3'), extraRoots: [], privateTmp,
+            stateRoot: join(home, '.dreamcontext', 't3'), extraRoots: [], privateTmp, openLimitMs: OPEN_LIMIT_MS,
             emit: (f) => {
-              if (f.type === 'result') finished = true;
+              if (f.type === 'result') { finished = true; said += String(f.result ?? ''); }
               if (f.type !== 'assistant') return;
               const content = (f.message as { content?: unknown } | undefined)?.content;
               if (Array.isArray(content)) for (const b of content) said += String((b as { text?: unknown } | null)?.text ?? '');
             },
           });
-          await s.send('Reply with the single word OK. Run no tools.');
-          return { thread: s.nativeThreadId, said: () => said, done: () => finished, close: async () => { await s.interrupt().catch(() => undefined); await s.close(); } };
+          current = s.nativeThreadId;
+          const close = async (): Promise<void> => { await s.interrupt().catch(() => undefined); await s.close(); };
+          await s.send('Reply with the single word OK. Run no tools.').catch(async (err) => { await close(); throw err; });
+          return { thread: s.nativeThreadId, said: () => said, done: () => finished, close };
         } catch (err) {
           return /sign in|signed out/i.test(String(err)) ? 'signed_out' : null;
         }
       },
     };
     const report = await probeSession(healthy, session, (t) => sessionServers(t, account, home), (t) => forgetProbe(t, account, home));
+    current = '';
     return print({ state: report.state, servers: [...rows, ...report.servers] });
   } finally {
-    rmSync(privateTmp, { recursive: true, force: true });
+    process.off('SIGTERM', onStop);
+    cleanup();
   }
 }
