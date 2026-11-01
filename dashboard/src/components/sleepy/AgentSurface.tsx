@@ -3100,7 +3100,6 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     setSuperPeek(null);
     setSuperDockOpen(false);
     setSuperView('panes');
-    setPhoneView('chat');
   });
   useInstanceEvent<StartChatIntentDetail>(START_CHAT_INTENT_EVENT, (detail) => {
     if (detail?.intent !== 'initializer') return;
