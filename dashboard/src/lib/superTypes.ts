@@ -355,7 +355,7 @@ export type StuckReason = typeof STUCK_REASONS[number];
 /** `approval`: an AI Team member the Super Agent chose is not approved here (server-written). */
 /** `owner`: a child left something only the owner can do (a `run` card, a `secret`, a
  *  `checklist`): his from birth, closed when his answer reaches the child. */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -380,6 +380,10 @@ export interface SuperQueueItem {
   brief?: string;
   /** An `approval` item's AI Team member (agent slug). */
   member?: string;
+  /** An `automation` item's automation slug and the owner's card decision (MIRROR of
+   *  src/lib/super/types.ts). */
+  automation?: string;
+  decision?: 'approved' | 'rejected';
   /** An `owner` item's wait: the child's card he must act on. */
   wait?: { kind: OwnerWaitKind; id: string };
   /** A team job's ending item: the job's id (its `sessionId` is the super's own). */

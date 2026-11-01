@@ -6,8 +6,9 @@ import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
-import { isLoopback, isSameOriginStrict } from './agent-spawn-shared.js';
+import { isLoopback } from './agent-spawn-shared.js';
 import { hasOwnerKey } from '../owner-key.js';
+import { carriesOwnOrigin } from '../owner-page.js';
 import {
   ASSISTANT_VAULT, assistantContextRoot, assistantExists, assistantProjectRoot, isAssistantVault,
   readAssistantConfig, writeAssistantConfig, sanitizeConfigPatch, notchOnlyPatch,
@@ -87,9 +88,6 @@ export function fromOwnerPage(req: IncomingMessage): boolean {
     && hasOwnerKey(req);
 }
 
-function carriesOwnOrigin(req: IncomingMessage): boolean {
-  return typeof req.headers.origin === 'string' && isSameOriginStrict(req);
-}
 
 /** Named refusals, in the words the assistant will repeat to the owner. */
 export function assistantGate(req: IncomingMessage, res: ServerResponse): boolean {

@@ -43,6 +43,7 @@ import { handleAgentsApprove, handleAgentsDelete, handleAgentsPlace, handleAgent
 import { handleAgentsBringHere } from '../../src/server/routes/agent-sync.js';
 import { handleAutomationsSay, handleAutomationsThreadReply, handleAutomationsApprove } from '../../src/server/routes/automations.js';
 import { handleTasksAssignAgent } from '../../src/server/routes/tasks.js';
+import { OWNER_PAGE_HEADERS } from '../helpers/owner-page.js';
 
 function makeRes(): { res: ServerResponse; status: () => number; body: () => Record<string, unknown> } {
   let statusCode = 0;
@@ -57,7 +58,7 @@ function makeRes(): { res: ServerResponse; status: () => number; body: () => Rec
 
 function post(body?: unknown): IncomingMessage {
   const readable = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body), 'utf-8')]);
-  return Object.assign(readable, { method: 'POST', headers: {} }) as unknown as IncomingMessage;
+  return Object.assign(readable, { method: 'POST', headers: { ...OWNER_PAGE_HEADERS } }) as unknown as IncomingMessage;
 }
 
 const NOW = new Date('2026-10-25T09:00:00.000Z');

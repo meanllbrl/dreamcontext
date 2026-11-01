@@ -9,6 +9,7 @@ import { SecretCard } from './SecretCard';
 import { RunCard } from './RunCard';
 import { McpCard } from './McpCard';
 import { AgentThreadCard } from './AgentThreadCard';
+import { AutomationApprovalCard } from './AutomationApprovalCard';
 import { HtmlView, HtmlPending } from './HtmlView';
 import { InsightView } from './InsightView';
 import './ChatViews.css';
@@ -130,6 +131,11 @@ function ChatViewItem({ view, conversationId, report, session, placeKey }: {
     // into this conversation's turn, which is what the two cards above use theirs for.
     case 'agent-thread':
       return <AgentThreadCard spec={view} />;
+    // DERIVED too: the owner's yes or no on an automation the agent may not approve itself. It
+    // takes the session to name its chat (a Super Agent hears the decision as an event) and the
+    // report, so any other chat's agent reads the decision as the next message.
+    case 'automation':
+      return <AutomationApprovalCard spec={view} session={session} report={report} />;
     // Hoisted OUT of the transcript: a pin lives on the shelf docked to the composer, which is
     // the whole point of it — drawn here as well, it would scroll away exactly like the inline
     // card it exists to replace. `PinShelf` collects them. Their `notices` still render above,

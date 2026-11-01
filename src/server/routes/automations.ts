@@ -4,7 +4,10 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
-import { ownerLabel } from '../../lib/agents/owner.js';
+import { refuseUnlessOwnerPage } from '../owner-page.js';
+import { approvalCardFacts, staleApprovalBlock } from '../../lib/automations/approval-card.js';
+import { tellSuperAutomationDecision } from '../../lib/super/automation-event.js';
+import { foreignOwner, ownerLabel } from '../../lib/agents/owner.js';
 import { globalAgentExists } from '../../lib/agents/scope.js';
 import { memberCallState } from '../../lib/agents/team-roster.js';
 import {
@@ -271,14 +274,17 @@ interface AutomationCacheSummary {
   outputPath: string | null;
 }
 
-function cacheSummary(cache: AutomationCache | null): AutomationCacheSummary | null {
+function cacheSummary(cache: AutomationCache | null, approvedNow: boolean): AutomationCacheSummary | null {
   if (!cache) return null;
+  // A refusal for want of the approval it has now is history, not this automation's state: the
+  // card would read "blocked" and print the old error under an approved agent (owner 2026-11-01).
+  const stale = staleApprovalBlock(cache, approvedNow);
   return {
-    status: cache.status,
+    status: stale ? null : cache.status,
     lastRunAt: cache.lastRunAt,
     lastFireAt: cache.lastFireAt,
     durationMs: cache.durationMs,
-    error: cache.error,
+    error: stale ? null : cache.error,
     outputPath: cache.outputPath,
   };
 }
@@ -312,7 +318,7 @@ function summarize(projectRoot: string, contextRoot: string, m: AutomationManife
     catchupHours: m.catchupHours,
     approved: approval.approved,
     approvalReason: approval.approved ? null : approval.reason,
-    cache: cacheSummary(readAutomationCache(contextRoot, m.slug)),
+    cache: cacheSummary(readAutomationCache(contextRoot, m.slug), approval.approved),
     review: m.review,
     whiteboard: m.whiteboard ?? null,
     // Live-computed from the question store, NOT from `cache.status`, for the
@@ -600,8 +606,83 @@ export async function handleAutomationsRunNow(
  * stands right now (the same primitive the CLI's `approve -y` calls after the
  * human reviews every hashed field; rendering that diff is a dashboard-side
  * concern against the fields already exposed by `GET /api/automations/:slug`).
+ *
+ * The OWNER's page only (`refuseUnlessOwnerPage`): an agent that set an automation up
+ * must not grant it by calling this route the way the CLI's `approve` already refuses it.
+ *
+ * Body (all optional, sent by the chat card): `enable: true` turns a disabled automation on
+ * with the same yes (the card's "Approve and turn on"; `enabled` is not hashed, so the grant
+ * stands), and `sessionId` names the chat the card sits in, so a Super Agent hears the decision
+ * as an event. Answers the card's facts and `told: true` when a super event was queued.
  */
 export async function handleAutomationsApprove(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'approves an automation')) return;
+  try {
+    const manifest = getAutomation(contextRoot, params.slug);
+    if (!manifest) {
+      sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
+      return;
+    }
+    if (refuseNotOwner(res, manifest)) return;
+    const body = (await parseJsonBody(req)) ?? {};
+    const projectRoot = dirname(contextRoot);
+    registerProject(projectRoot);
+    const entry = approveAutomation(projectRoot, manifest, new Date());
+    settleApprovalQuestions(contextRoot, manifest.slug);
+    const after = body.enable === true && !manifest.enabled ? setAutomationEnabled(contextRoot, manifest.slug, true) : manifest;
+    const told = await tellSuper(contextRoot, body.sessionId, manifest.slug, 'approved');
+    sendJson(res, 200, { slug: manifest.slug, approval: entry, card: approvalCardFacts(projectRoot, after), told });
+  } catch (err) {
+    if (sendIfNotOwner(res, err)) return;
+    sendError(res, 500, 'approve_failed', 'Failed to approve the automation.');
+  }
+}
+
+/**
+ * POST /api/automations/:slug/reject — the owner's NO on an automation's approval card. Any
+ * approval it had here is withdrawn, and it is turned off (`enabled` is not hashed), so it neither runs nor asks again
+ * on every fire. The file stays: deleting is the AI Team page's explicit step, never a side
+ * effect of a tap. The owner's page only, like approving: the decision is reported to the Super
+ * Agent in his name.
+ */
+export async function handleAutomationsReject(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'rejects an automation')) return;
+  try {
+    const manifest = getAutomation(contextRoot, params.slug);
+    if (!manifest) {
+      sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
+      return;
+    }
+    if (refuseNotOwner(res, manifest)) return;
+    const body = (await parseJsonBody(req)) ?? {};
+    // A NO takes back a yes given earlier too: an approval left standing would let any session's
+    // `automations enable` run it on the grant he just withdrew.
+    revokeApproval(dirname(contextRoot), manifest.slug);
+    const after = manifest.enabled ? setAutomationEnabled(contextRoot, manifest.slug, false) : manifest;
+    const told = await tellSuper(contextRoot, body.sessionId, manifest.slug, 'rejected');
+    sendJson(res, 200, { slug: manifest.slug, card: approvalCardFacts(dirname(contextRoot), after), told });
+  } catch (err) {
+    if (sendIfNotOwner(res, err)) return;
+    sendError(res, 500, 'reject_failed', 'Failed to reject the automation.');
+  }
+}
+
+/**
+ * GET /api/automations/:slug/card — what the chat's approval card shows (`approvalCardFacts`):
+ * read from the manifest, never from the block the agent wrote. `owned: false` for a
+ * teammate's automation, which is read-only here (no buttons).
+ */
+export async function handleAutomationsCard(
   _req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
@@ -613,14 +694,20 @@ export async function handleAutomationsApprove(
       sendError(res, 404, 'not_found', `Automation not found: ${params.slug}`);
       return;
     }
-    if (refuseNotOwner(res, manifest)) return;
-    const projectRoot = dirname(contextRoot);
-    const entry = approveAutomation(projectRoot, manifest, new Date());
-    settleApprovalQuestions(contextRoot, manifest.slug);
-    sendJson(res, 200, { slug: manifest.slug, approval: entry });
-  } catch (err) {
-    if (sendIfNotOwner(res, err)) return;
-    sendError(res, 500, 'approve_failed', 'Failed to approve the automation.');
+    sendJson(res, 200, { card: approvalCardFacts(dirname(contextRoot), manifest), owned: foreignOwner(manifest) === null });
+  } catch {
+    sendError(res, 500, 'card_failed', 'Failed to read the automation.');
+  }
+}
+
+/** Queue the decision for the Super Agent when the card sits in its chat (or a child's). */
+async function tellSuper(contextRoot: string, sessionId: unknown, slug: string, decision: 'approved' | 'rejected'): Promise<boolean> {
+  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(sessionId)) return false;
+  try {
+    return await tellSuperAutomationDecision(contextRoot, sessionId, slug, decision);
+  } catch {
+    // The decision itself is written; a super that cannot hear it reads it from `show`.
+    return false;
   }
 }
 
@@ -793,6 +880,8 @@ export async function handleAutomationsQuestionAnswer(
         );
         return;
       }
+      // Approving is the owner's, from his page: the run that asked must not answer itself.
+      if (APPROVAL_DECISIONS[decision] && refuseUnlessOwnerPage(req, res, 'approves an automation')) return;
       // Only APPROVING needs the manifest. A reject must close the question even
       // when its agent or automation is gone, or nothing could ever clear it.
       if (APPROVAL_DECISIONS[decision] && !manifest) {
@@ -1151,6 +1240,7 @@ export async function handleAutomationsCreate(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'creates an automation approved on this machine')) return;
   const body = await parseJsonBody(req);
   if (!body) {
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');
@@ -1298,6 +1388,7 @@ export async function handleAutomationsUpdate(
   params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'edits an automation and re-approves it')) return;
   const body = await parseJsonBody(req);
   if (!body) {
     sendError(res, 400, 'bad_body', 'Expected a JSON body.');

@@ -124,6 +124,8 @@ import {
   handleAutomationsShow,
   handleAutomationsRunNow,
   handleAutomationsApprove,
+  handleAutomationsReject,
+  handleAutomationsCard,
   handleAutomationsSession,
   handleAutomationsEnable,
   handleAutomationsDisable,
@@ -906,6 +908,8 @@ export function buildRouter(): Router {
   router.get('/api/automations/:slug', handleAutomationsShow);
   router.post('/api/automations/:slug/run', handleAutomationsRunNow);
   router.post('/api/automations/:slug/approve', handleAutomationsApprove);
+  router.post('/api/automations/:slug/reject', handleAutomationsReject);
+  router.get('/api/automations/:slug/card', handleAutomationsCard);
   router.post('/api/automations/:slug/enable', handleAutomationsEnable);
   router.post('/api/automations/:slug/disable', handleAutomationsDisable);
   // Distinct segment-count SHAPES from the bare `/:slug` routes above (see the

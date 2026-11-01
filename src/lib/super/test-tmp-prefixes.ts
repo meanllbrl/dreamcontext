@@ -83,6 +83,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-auto-account-home-',
   'dc-auto-e2e-',
   'dc-auto-rt-',
+  'dc-autocard-',
+  'dc-autocard-home-',
   'dc-automations-cli-decoy-home-',
   'dc-automations-consumption-',
   'dc-automations-pgroup-',

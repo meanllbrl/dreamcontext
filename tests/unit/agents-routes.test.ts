@@ -29,6 +29,7 @@ import {
   handleAgentsUpdate,
   type AgentSummary,
 } from '../../src/server/routes/agents.js';
+import { OWNER_PAGE_HEADERS } from '../helpers/owner-page.js';
 
 function makeRes(): { res: ServerResponse; status: () => number; body: () => Record<string, unknown> } {
   let statusCode = 0;
@@ -43,7 +44,7 @@ function makeRes(): { res: ServerResponse; status: () => number; body: () => Rec
 
 function post(body?: unknown): IncomingMessage {
   const readable = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body), 'utf-8')]);
-  return Object.assign(readable, { method: 'POST', headers: {} }) as unknown as IncomingMessage;
+  return Object.assign(readable, { method: 'POST', headers: { ...OWNER_PAGE_HEADERS } }) as unknown as IncomingMessage;
 }
 
 const getReq = { method: 'GET', headers: {} } as unknown as IncomingMessage;

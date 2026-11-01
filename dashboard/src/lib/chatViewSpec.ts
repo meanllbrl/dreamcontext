@@ -33,12 +33,13 @@
 // Types
 // ---------------------------------------------------------------------------------------
 
-export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'checkout', 'agent-thread', 'title'] as const;
+export const VIEW_TYPES = ['insight', 'checklist', 'secret', 'run', 'mcp', 'pin', 'checkout', 'agent-thread', 'title', 'automation'] as const;
 export type ChatViewType = typeof VIEW_TYPES[number];
 
 export type ChatViewSpec =
   InsightViewSpec | ChecklistViewSpec | SecretViewSpec | RunViewSpec | McpViewSpec
-  | PinViewSpec | CheckoutViewSpec | AgentThreadViewSpec | TitleViewSpec;
+  | PinViewSpec | CheckoutViewSpec | AgentThreadViewSpec | TitleViewSpec
+  | AutomationViewSpec;
 
 /**
  * `type: "insight"` — a Lab insight drawn BY SLUG, with no markup from the agent at all.
@@ -268,6 +269,18 @@ export interface TitleViewSpec {
 // Caps (§1.3) — every breach here degrades loudly: the excess is dropped and a notice
 // names what happened. Never a silent truncation.
 // ---------------------------------------------------------------------------------------
+
+/**
+ * `type: "automation"` — the owner's APPROVAL card for an automation the agent set up and may
+ * not approve itself (`automations create` from an agent run or the Super Agent's crew). DERIVED,
+ * like `agent-thread`: the block names the slug and nothing else, the app reads what the
+ * automation does, how often, its reach and its state from the manifest
+ * (`GET /api/automations/:slug/card`), and the owner approves or turns it down there.
+ */
+export interface AutomationViewSpec {
+  type: 'automation';
+  slug: string;
+}
 
 export const MAX_VIEW_BYTES = 64 * 1024;
 export const MAX_VIEWS_PER_MESSAGE = 4;
@@ -854,6 +867,25 @@ function validateAgentThread(obj: Record<string, unknown>, notices: string[]): {
   return { view, notices };
 }
 
+// ---------------------------------------------------------------------------------------
+// type: "automation"
+// ---------------------------------------------------------------------------------------
+
+/** Keys that would mean the agent is DESCRIBING the automation instead of naming it. */
+const ASSERTED_AUTOMATION_KEYS = ['title', 'text', 'schedule', 'does', 'approved', 'access'] as const;
+
+function validateAutomation(obj: Record<string, unknown>, notices: string[]): { view: ChatViewSpec | null; notices: string[] } {
+  const slug = typeof obj.slug === 'string' ? obj.slug.trim() : '';
+  if (!slug || !AGENT_SLUG_RE.test(slug)) {
+    notices.push('An automation block was skipped — its "slug" is missing or is not an automation slug.');
+    return { view: null, notices };
+  }
+  if (ASSERTED_AUTOMATION_KEYS.some((k) => obj[k] !== undefined)) {
+    notices.push('An automation block described the automation itself — that was ignored. The card reads it from the automation\'s own file.');
+  }
+  return { view: { type: 'automation', slug }, notices };
+}
+
 /**
  * `type: "checkout"` — a path, or a withdrawal. Anything else is a notice, because a block
  * that says neither is an agent that meant to move the shelf and did not.
@@ -961,6 +993,7 @@ export function parseViewBlock(json: string): { view: ChatViewSpec | null; notic
       case 'checkout': return validateCheckout(parsed, notices);
       case 'agent-thread': return validateAgentThread(parsed, notices);
       case 'title': return validateTitle(parsed, notices);
+      case 'automation': return validateAutomation(parsed, notices);
       default:
         notices.push(`This answer asked for a view type this app doesn't have (${JSON.stringify(parsed.type ?? null)}).`);
         return { view: null, notices };

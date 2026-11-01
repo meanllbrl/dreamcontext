@@ -102,7 +102,7 @@ async function runCli(argv: string[]): Promise<{ code: number; out: string }> {
 
 function fakeReq(body: unknown = null, remote = '127.0.0.1'): IncomingMessage {
   const req = new EventEmitter() as unknown as IncomingMessage & EventEmitter;
-  (req as unknown as { headers: Record<string, string> }).headers = { 'content-type': 'application/json', host: '127.0.0.1' };
+  (req as unknown as { headers: Record<string, string> }).headers = { 'content-type': 'application/json', host: '127.0.0.1', origin: 'http://127.0.0.1' };
   (req as unknown as { method: string }).method = 'POST';
   (req as unknown as { socket: { remoteAddress: string } }).socket = { remoteAddress: remote };
   setImmediate(() => {

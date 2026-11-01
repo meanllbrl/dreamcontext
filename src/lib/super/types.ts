@@ -550,8 +550,12 @@ a fresh session (super/fresh-session.ts). Its `sessionId` is the super's own.
 the moment the card appears in the child's stream; it is the owner's (Waiting on you, the bar)
 from birth, reaches the super as an event that says the child waits on him, stays open
 (`escalated`) after that turn, and closes when his answer reaches the child.
+`automation`: the owner approved or rejected, on its chat card, an automation the Super Agent's
+crew set up (`automation` names it, `decision` says which). The server writes it, never the
+super's words; its `sessionId` is the super's own. Delivered in the next batch with the
+automation's live state and next run, then done.
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -585,6 +589,10 @@ export interface SuperQueueItem {
   brief?: string;
   /** An `approval` item's AI Team member (its agent slug). Its `sessionId` is the super's own. */
   member?: string;
+  /** An `automation` item's automation slug. */
+  automation?: string;
+  /** An `automation` item's owner decision on the card. */
+  decision?: 'approved' | 'rejected';
   /** An `owner` item's wait: which card of the child he must act on. Its `ownerText`
    *  is the server's plain line of what he is asked to do (from the child's card: untrusted). */
   wait?: { kind: OwnerWaitKind; id: string; key?: string };
