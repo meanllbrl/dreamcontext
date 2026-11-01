@@ -442,16 +442,17 @@ _dream_context/
 Open these with `Read` when the task needs depth:
 
 - **[cli-reference.md](references/cli-reference.md)**: every command, every flag, env vars, the snapshot ladder and the sub-agent briefing budget.
-- **[tasks-and-features.md](references/tasks-and-features.md)**: task protocol depth, RICE, due dates, people/assignees, Workflow flowchart, Lab insights, context handoff, features, versioning, multi-product.
+- **[tasks-and-features.md](references/tasks-and-features.md)**: task protocol depth, RICE, people/assignees, Workflow flowchart, Lab insights, features, versioning, multi-product.
 - **[knowledge-and-recall.md](references/knowledge-and-recall.md)**: knowledge files, pinning, recall modes, patterns, taxonomy, Excalidraw/diagrams, reading PDFs.
 - **[sleep.md](references/sleep.md)**: full consolidation flow, specialist contracts, deep sleep, epoch safety, reflect, marketing/council passes.
 - **[sleep-specialists.md](references/sleep-specialists.md)**: why each sleep specialist's rules exist, with worked examples (for a rule's edge case).
 - **[learning.md](references/learning.md)**: theses (hypotheses): the quality bar, evidence ledger, derived confidence, flips and promotion.
-- **[automations.md](references/automations.md)**: agents (who does the work) and scheduled headless runs: capture, the `## Flow` graph and its questions, per-automation Telegram, sharing, the channel, approval, stopping a run.
+- **[automations.md](references/automations.md)**: agents and scheduled headless runs: capture, the `## Flow` graph and questions, Telegram, sharing, the channel, approval, stopping a run.
 - **[whiteboards.md](references/whiteboards.md)**: widgets, board agents, format, recipes.
+- **[apps.md](references/apps.md)**: local web apps in their own Mac windows: manifest, run, `apps do`, schedules.
 - **[brain-sync.md](references/brain-sync.md)**: whole-project GitHub cloud sync, setup, per-machine auth, cross-OS setup, troubleshooting.
-- **[integrations.md](references/integrations.md)**: ClickUp/GitHub task sync (one cloud backend at a time), dashboard and Chat view, desktop app, federation/vaults, peer mail, council, marketing.
+- **[integrations.md](references/integrations.md)**: ClickUp/GitHub task sync, dashboard and Chat view, desktop app, federation/vaults, peer mail, council, marketing.
 - **[hands-free.md](references/hands-free.md)**: Mac mode.
 - **[super-orchestration.md](references/super-orchestration.md)**: how the Super Agent splits a job list.
-- **[troubleshooting.md](references/troubleshooting.md)**: symptom, cause and careful fix for broken-brain states: duplicate tasks, sync ledger refusals, a stuck brain sync, structure and version drift.
+- **[troubleshooting.md](references/troubleshooting.md)**: careful fixes for broken-brain states: duplicate tasks, ledger refusals, a stuck brain sync, version drift.
 - **[improving-dreamcontext.md](references/improving-dreamcontext.md)**: the feedback loop, when and how to file.

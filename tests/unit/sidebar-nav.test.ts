@@ -306,7 +306,7 @@ describe('sidebar rail — Workspace order (owner, 2026-10-02)', () => {
     const workspace = block.slice(0, block.indexOf("'nav.group.memory'"));
     const rows = [...workspace.matchAll(/\{\s*(?:page|launch):\s*'([^']+)'([^}]*)\}/g)].map((m) => ({ id: m[1], maturity: /maturity:\s*'([^']+)'/.exec(m[2])?.[1] }));
     // AI Team (page key `automations`) is Agents and Automations in one row (owner, 2026-10-20).
-    expect(rows.map((r) => r.id)).toEqual(['chat', 'tasks', 'automations', 'lab', 'roadmap', 'hypotheses', 'whiteboards', 'council']);
+    expect(rows.map((r) => r.id)).toEqual(['chat', 'tasks', 'automations', 'lab', 'roadmap', 'hypotheses', 'whiteboards', 'apps', 'council']);
     // No beta or stable row may sit below an alpha one.
     const firstAlpha = rows.findIndex((r) => r.maturity === 'alpha');
     expect(rows.slice(firstAlpha).every((r) => r.maturity === 'alpha')).toBe(true);
