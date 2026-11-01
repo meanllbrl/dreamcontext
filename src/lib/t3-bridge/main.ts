@@ -34,6 +34,7 @@ export interface T3ChatOptions {
 
 export const runT3Chat = (o: T3ChatOptions): Promise<number> => runBridgeChat(o);
 export { runT3Account } from './account-cli.js';
+export { runAntigravityMcpProbe } from './mcp-probe.js';
 export { runT3Headless } from './run.js';
 
 export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Promise<number> {

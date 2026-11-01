@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { useApi } from '../../context/VaultContext';
 import { openExternalUrl } from '../../lib/desktop';
 import type {
-  McpOverview, McpOverviewAccount, McpOverviewCell, McpOverviewServer, McpHome, CodexMcpList, CodexMcpRow, CodexMcpLeftReason,
+  McpOverview, McpOverviewAccount, McpOverviewCell, McpOverviewServer, McpHome, AntigravityMcpList, AntigravityMcpRow, CodexMcpList, CodexMcpRow, CodexMcpLeftReason,
 } from '../../lib/mcpWire';
 import { McpServerForm, type McpFormInitial } from './McpServerForm';
 import './McpServers.css';
@@ -93,6 +93,7 @@ export function McpServers({ codex = false }: { codex?: boolean } = {}) {
   const openedUrl = useRef<string | null>(null);
   const autoChecked = useRef(false);
   const [codexList, setCodexList] = useState<CodexMcpList | null>(null);
+  const [agyList, setAgyList] = useState<AntigravityMcpList | null>(null);
   const [filter, setFilter] = useState<'all' | 'claude' | 'codex'>('all');
   const loadCodex = useCallback(async () => {
     if (!codex) return;
@@ -100,6 +101,12 @@ export function McpServers({ codex = false }: { codex?: boolean } = {}) {
     catch { setCodexList({ state: 'failed', servers: [], left: [] }); }
   }, [api, codex]);
   useEffect(() => { void loadCodex(); }, [loadCodex]);
+  const loadAgy = useCallback(async (fresh = false) => {
+    if (!codex) return;
+    try { setAgyList(await api.get<AntigravityMcpList>(`/agent/mcp/antigravity${fresh ? '?fresh=1' : ''}`)); }
+    catch { setAgyList({ state: 'failed', servers: [], left: [] }); }
+  }, [api, codex]);
+  useEffect(() => { void loadAgy(); }, [loadAgy]);
 
   const load = useCallback(async () => {
     setError('');
@@ -180,7 +187,21 @@ export function McpServers({ codex = false }: { codex?: boolean } = {}) {
   const accounts = codex && filter === 'codex' ? [] : data.accounts;
   const codexServers = codexList?.state === 'ok' ? codexList.servers : [];
   const codexOnly = showCodex ? codexServers.filter((c) => !rows.some((r) => r.name === c.name)) : [];
-  const extraCols = showCodex ? 1 : 0;
+  const showAgy = codex && filter === 'all';
+  const extraCols = (showCodex ? 1 : 0) + (showAgy ? 1 : 0);
+  /** A live session's answer, or why there is none: never a dash standing for "nobody asked". */
+  const agyCell = (r: Row) => {
+    if (r.home === 'claudeai') return <span className="mcpm-muted" data-agy="claude-only" title="A claude.ai connector belongs to your claude.ai account.">Claude only</span>;
+    if (agyList === null) return <span className="mcpm-muted" data-agy="asking" title="A live session is being asked.">…</span>;
+    if (agyList.state !== 'ok') return <span className="mcpm-muted" data-agy={agyList.state}>{AGY_STATE[agyList.state]}</span>;
+    const hit = agyList.servers.find((c) => c.name === r.name);
+    if (hit) return hit.status === 'needs-auth'
+      ? <span className="mcpm-muted" data-agy="needs-auth" title="Antigravity has no sign-in for a tool server here, so this one stays out of its chats. A server that takes a key in its headers works.">Sign-in not available</span>
+      : <span className="mcpm-dot" data-agy={hit.status} data-status={hit.status === 'unknown' ? 'unchecked' : hit.status} title={`Antigravity: ${agyLabel(hit)}`} aria-label={`Antigravity: ${agyLabel(hit)}`} />;
+    const left = agyList.left.find((l) => l.name === r.name);
+    if (left) return <span className="mcpm-muted" data-agy="left" title={leftReason(left.why)}>Can&apos;t reach Antigravity</span>;
+    return <span className="mcpm-muted" data-agy="absent" title="Only this app's own servers reach Antigravity.">Not sent</span>;
+  };
   const codexDot = (c: CodexMcpRow) => (
     c.enabled
       ? <span className="mcpm-dot" data-codex={c.status} data-status={c.status === 'unknown' ? 'unchecked' : c.status} title={`Codex: ${codexLabel(c)}`} aria-label={`Codex: ${codexLabel(c)}`} />
@@ -217,7 +238,7 @@ export function McpServers({ codex = false }: { codex?: boolean } = {}) {
           </span>
         )}
         <button type="button" className="btn btn--secondary btn--sm" onClick={() => setForm({ mode: 'add', scope: 'computer' })}>+ Add server</button>
-        <button type="button" className="btn btn--secondary btn--sm" disabled={!!checking} onClick={() => { void check(); }}>
+        <button type="button" className="btn btn--secondary btn--sm" disabled={!!checking} onClick={() => { void check(); void loadAgy(true); }}>
           {checking === '*' ? 'Checking every account…' : 'Check all accounts'}
         </button>
         <span className="mcpm-muted mcpm-toolbar-when">{checking ? 'checking…' : ago(newest || undefined)}</span>
@@ -264,6 +285,7 @@ export function McpServers({ codex = false }: { codex?: boolean } = {}) {
               <th scope="col">Lives in</th>
               {accounts.map((a) => <th scope="col" key={a.id} className="mcpm-acc" title={ago(a.checkedAt)}>{a.label}</th>)}
               {showCodex && <th scope="col" className="mcpm-acc" title="Every Codex account shares one MCP config.">Codex</th>}
+              {showAgy && <th scope="col" className="mcpm-acc" title="Asked of a live session, at most once in five minutes.">Antigravity</th>}
               <th scope="col" aria-label="Actions" />
             </tr>
           </thead>
@@ -299,6 +321,7 @@ export function McpServers({ codex = false }: { codex?: boolean } = {}) {
                           );
                         })}
                         {showCodex && <td className="mcpm-cell mcpm-cell--codex">{codexCell(r)}</td>}
+                        {showAgy && <td className="mcpm-cell mcpm-cell--agy">{agyCell(r)}</td>}
                         <td className="mcpm-actions">
                           {r.home !== 'claudeai' && codexConnect(r.name)}
                           {needing.length > 0 && (
@@ -366,6 +389,7 @@ export function McpServers({ codex = false }: { codex?: boolean } = {}) {
                       <td><code className="mcpm-chip">outside</code></td>
                       {accounts.map((a) => <td key={a.id} className="mcpm-cell"><span className="mcpm-absent">—</span></td>)}
                       {showCodex && <td className="mcpm-cell"><span className="mcpm-absent">—</span></td>}
+                      {showAgy && <td className="mcpm-cell"><span className="mcpm-absent">—</span></td>}
                       <td className="mcpm-actions">
                         {o.reason === 'removed-in-app' && <button type="button" className="btn btn--secondary btn--sm" onClick={() => { void act('/agent/mcp/import', { name: o.name, source: o.source }, `${o.name} is back.`); }}>Import again</button>}
                         {o.reason === 'differs' && <button type="button" className="btn btn--secondary btn--sm" onClick={() => { void act('/agent/mcp/import', { name: o.name, source: o.source }, `${o.name} now follows Claude Code again.`); }}>Use Claude Code&apos;s</button>}
@@ -392,6 +416,7 @@ export function McpServers({ codex = false }: { codex?: boolean } = {}) {
                     <td><code className="mcpm-chip">codex</code></td>
                     {accounts.map((a) => <td key={a.id} className="mcpm-cell"><span className="mcpm-absent" title="not on this account">—</span></td>)}
                     <td className="mcpm-cell mcpm-cell--codex">{codexDot(c)}</td>
+                    {showAgy && <td className="mcpm-cell"><span className="mcpm-muted" data-agy="codex-own" title="This server is in Codex's own config, which Antigravity does not read.">Codex only</span></td>}
                     <td className="mcpm-actions">{codexConnect(c.name)}</td>
                   </tr>
                 ))}
@@ -420,6 +445,17 @@ function rowsOf(data: McpOverview | null): Row[] {
     rows.push({ key: `${l.name}|${l.home}`, name: l.name, home: l.home, transport: l.transport });
   }
   return rows;
+}
+
+const AGY_STATE: Record<Exclude<AntigravityMcpList['state'], 'ok'>, string> = {
+  not_installed: 'Antigravity not installed',
+  signed_out: 'Sign in to Antigravity',
+  failed: 'No answer',
+};
+
+function agyLabel(c: AntigravityMcpRow): string {
+  if (c.status === 'connected') return `connected, ${c.toolCount ?? 0} tool${c.toolCount === 1 ? '' : 's'}`;
+  return c.status === 'failed' ? 'did not start, so it stays out of chats' : c.status;
 }
 
 function codexLabel(c: CodexMcpRow): string {

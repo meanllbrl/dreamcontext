@@ -335,6 +335,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   // the owner window's alone (they spawn `claude` and save commands that run on every spawn).
   'GET /api/agent/mcp/overview': deny(SETTINGS),
   'GET /api/agent/mcp/codex': deny(SETTINGS),
+  'GET /api/agent/mcp/antigravity': deny(SETTINGS),
   'POST /api/agent/mcp/check': deny(SETTINGS),
   'POST /api/agent/mcp/codex/connect': deny(SIGN_IN),
   'POST /api/agent/mcp/connect': deny(SIGN_IN),

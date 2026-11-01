@@ -38,9 +38,10 @@ export function registerT3ChatCommand(program: Command): void {
     .option('--strict-mcp', 'nothing from the Codex config: no MCP servers, no web search')
     .option('--store-mcp', "the owner's MCP servers from the app's stores")
     .option('--unattended', 'nobody is watching this run: no card, and no write gate means no run')
+    .option('--mcp-probe', 'no chat: open a live session, print what it reports for each tool server, and leave')
     .action(async (o: {
       tool: string; cwd?: string; model?: string; effort?: string; mode: string; pane?: string;
-      resume?: string; briefingFile?: string; extraRoot?: string[]; account?: string; carry?: string; mcpConfig?: string; strictMcp?: boolean; storeMcp?: boolean; unattended?: boolean;
+      resume?: string; briefingFile?: string; extraRoot?: string[]; account?: string; carry?: string; mcpConfig?: string; strictMcp?: boolean; storeMcp?: boolean; unattended?: boolean; mcpProbe?: boolean;
     }) => {
       if (o.tool !== 'codex' && o.tool !== 'claude' && o.tool !== 'antigravity') {
         process.stderr.write(`t3-chat: unknown tool ${o.tool}\n`);
@@ -56,6 +57,7 @@ export function registerT3ChatCommand(program: Command): void {
         process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: why, num_turns: 0, total_cost_usd: 0, usage: {}, dc_tool: o.tool }) + '\n');
         process.exit(1);
       }
+      if (o.mcpProbe) process.exit(await bridge.runAntigravityMcpProbe({ cwd: o.cwd ?? process.cwd(), ...(o.account ? { account: o.account } : {}) }));
       process.exit(await bridge.runT3Chat({ ...o, tool: o.tool, cwd: o.cwd ?? process.cwd() }));
     });
 

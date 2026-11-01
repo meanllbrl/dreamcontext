@@ -403,6 +403,27 @@ describe.skipIf(nodeMajor < 22)('Antigravity on the bridge (fake ACP agent)', ()
     expect(String(frames.find((f) => f.type === 'result')!.result)).toContain('write gate could not be set up');
   }, 60_000);
 
+  it('a server that does not answer stays out of the session, and the owner hears which', async () => {
+    const input = new PassThrough();
+    const frames: Record<string, unknown>[] = [];
+    const cwd = join(dir, 'project');
+    mkdirSync(cwd, { recursive: true });
+    const lean = join(dir, 'lean.json');
+    writeFileSync(lean, JSON.stringify({ mcpServers: { 'fox-ok': { command: 'fox' }, 'owl-down': { command: 'owl' } } }));
+    const done = runBridgeStdio(
+      { tool: 'antigravity', cwd, model: '', mode: 'auto', paneId: 'pane-1', binaryPath: fakeAgent(dir), mcpConfig: lean },
+      { input, write: (l) => { frames.push(JSON.parse(l) as Record<string, unknown>); }, env: process.env, home: dir, checkServers: async (servers) => new Map(servers.map((s) => [s.name, s.name === 'fox-ok' ? 'connected' as const : 'needs-auth' as const])) },
+    );
+    input.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'one' } })}\n`);
+    for (let i = 0; i < 400 && !frames.some((f) => f.type === 'result'); i++) await new Promise((r) => setTimeout(r, 50));
+    input.end();
+    expect(await done).toBe(0);
+    const sent = readFileSync(log, 'utf-8').split('\n').find((l) => l.includes('session/new')) ?? '';
+    expect(sent).toContain('fox-ok');
+    expect(sent).not.toContain('owl-down');
+    expect(JSON.stringify(frames.filter((f) => f.type === 'assistant'))).toContain('without owl-down');
+  }, 60_000);
+
   it("the agent's own command arrives alone, and the brain waits for the next turn", async () => {
     const { prompts } = await brainChat(['/usage', 'two'], async () => SNAPSHOT);
     expect(prompts[0]).not.toContain('SNAPSHOT-MARKER');

@@ -153,6 +153,18 @@ export interface CodexMcpList {
   left: CodexMcpLeft[];
 }
 
+/** One server as a live Antigravity session reports it: a name, a status and a count. */
+export interface AntigravityMcpRow { name: string; status: McpLiveStatus; toolCount?: number }
+
+/** GET /api/agent/mcp/antigravity. A session is opened to ask, so the answer is kept a few minutes. */
+export interface AntigravityMcpList {
+  /** `ok` = a live session answered; `not_installed`; `signed_out`; `failed` = it did not answer. */
+  state: 'ok' | 'not_installed' | 'signed_out' | 'failed';
+  servers: AntigravityMcpRow[];
+  /** Stored servers that do not reach it, each with why. */
+  left: CodexMcpLeft[];
+}
+
 /** Control characters, by code point: a name carrying one is not a name. */
 const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
 
