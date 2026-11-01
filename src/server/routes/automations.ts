@@ -377,7 +377,7 @@ function summarizeQuestion(q: AutomationQuestion | null): PendingQuestionSummary
 
 /** GET /api/automations — list every automation with its approval + cache state. */
 export async function handleAutomationsList(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
   contextRoot: string,
@@ -385,7 +385,8 @@ export async function handleAutomationsList(
   try {
     const projectRoot = dirname(contextRoot);
     const automations = listAutomations(contextRoot).map((m) => summarize(projectRoot, contextRoot, m));
-    sendJson(res, 200, { automations });
+    // An absolute path of this Mac stays home.
+    sendJson(res, 200, { automations: isPhoneSocket(req) ? automations.map((a) => ({ ...a, outputPath: null })) : automations });
   } catch {
     sendError(res, 500, 'list_failed', 'Failed to read automations.');
   }
@@ -410,9 +411,16 @@ export async function handleAutomationsRunStatus(
   }
 }
 
+/** The run cache for a phone: its output paths are absolute paths of this Mac. */
+function phoneCache(cache: ReturnType<typeof readAutomationCache>): ReturnType<typeof readAutomationCache> {
+  if (!cache) return cache;
+  const history = Array.isArray(cache.history) ? cache.history.map((e) => ({ ...e, outputPath: null })) : cache.history;
+  return { ...cache, history, ...('outputPath' in cache ? { outputPath: null } : {}) } as typeof cache;
+}
+
 /** GET /api/automations/:slug — full manifest + approval state + cache (incl. run history). */
 export async function handleAutomationsShow(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
@@ -495,7 +503,7 @@ export async function handleAutomationsShow(
       // Every hashed field as the `field: value` lines the CLI's approve prints (the same
       // renderer the agent profile's review uses): what Approve grants, in one readable block.
       review: renderApprovalReview(approvalFields(manifest)),
-      cache: readAutomationCache(contextRoot, manifest.slug),
+      cache: isPhoneSocket(req) ? phoneCache(readAutomationCache(contextRoot, manifest.slug)) : readAutomationCache(contextRoot, manifest.slug),
     });
   } catch {
     sendError(res, 500, 'show_failed', 'Failed to read the automation.');
@@ -557,7 +565,8 @@ export async function handleAutomationsSession(
         costUsd: resolved.event.costUsd,
         numTurns: resolved.event.numTurns,
         permissionDenials: resolved.event.permissionDenials,
-        outputPath: resolved.event.outputPath,
+        // An absolute path of this Mac: a phone reads the document through the thread.
+        outputPath: phone ? null : resolved.event.outputPath,
         sessionId,
         transcriptPath: phone ? null : transcriptPath,
         items: phone ? phoneRunItems(digest?.items ?? []) : digest?.items ?? [],

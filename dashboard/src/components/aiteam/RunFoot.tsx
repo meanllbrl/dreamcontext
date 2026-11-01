@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { useAutomationQuestions, useAutomations, useReplyDelivery } from '../../hooks/useAutomations';
 import { AgentQuestionBlock } from '../agents/AgentQuestionBlock';
@@ -12,7 +13,8 @@ export function RunFoot({ meta, steps, report, onSteps, onReport, onContinue, on
   report: boolean;
   onSteps: () => void;
   onReport: () => void;
-  onContinue: () => void;
+  /** Absent on a member this machine cannot talk to. */
+  onContinue?: () => void;
   onOpenFile?: (path: string) => void;
 }) {
   const { t } = useI18n();
@@ -32,7 +34,7 @@ export function RunFoot({ meta, steps, report, onSteps, onReport, onContinue, on
             {t(report ? 'aiteam.run.hideReport' : 'aiteam.history.fullReport')}
           </button>
         )}
-        {foot.canContinue && (
+        {foot.canContinue && onContinue && (
           <button type="button" className="chat-feed-link" data-run-continue={meta.sessionKey} onClick={onContinue}>{t('aiteam.run.continue')}</button>
         )}
         {foot.noReport && <span data-run-no-report={meta.sessionKey}>{t('aiteam.run.noReport')}</span>}
@@ -69,8 +71,11 @@ export function RunPinLine({ pin, note, onClose }: { pin: RunPin; note: string |
 /** Every open question of this agent's routines, pinned above the box: an old run outside the
  *  loaded pages still shows, because this reads the questions, not the feed. */
 export function StageQuestions({ agent, onToast }: { agent: string; onToast: (msg: string) => void }) {
+  const { t } = useI18n();
   const questions = useAutomationQuestions().data;
   const automations = useAutomations().data;
+  // One line until the owner opens it: a question card would otherwise take the flow's room.
+  const [open, setOpen] = useState(false);
   const mine = (questions ?? []).filter((q) => {
     if (q.kind !== 'flow-hitl' || q.state !== 'pending') return false;
     if (q.slug === agent) return true;
@@ -79,7 +84,11 @@ export function StageQuestions({ agent, onToast }: { agent: string; onToast: (ms
   if (mine.length === 0) return null;
   return (
     <div className="stage-questions" data-stage-questions>
-      {mine.map((q) => (
+      <button type="button" className="stage-questions-bar" aria-expanded={open} data-stage-questions-toggle onClick={() => setOpen((v) => !v)}>
+        <span className="stage-questions-line">{mine[0].question.split('\n')[0]}{mine.length > 1 ? ` +${mine.length - 1}` : ''}</span>
+        <span className="stage-questions-go">{t(open ? 'aiteam.run.hideQuestion' : 'aiteam.run.answer')}</span>
+      </button>
+      {open && mine.map((q) => (
         <AgentQuestionBlock
           key={q.id}
           slug={q.slug}

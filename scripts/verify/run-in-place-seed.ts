@@ -7,7 +7,7 @@ import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createAgent } from '../../src/lib/agents/store.js';
-import { createQuestion } from '../../src/lib/automations/hitl.js';
+import { allPendingQuestions, createQuestion, resolveQuestion } from '../../src/lib/automations/hitl.js';
 import { recordAutomationSession } from '../../src/lib/automations/session-registry.js';
 import { noteRunSession } from '../../src/lib/automations/run-session.js';
 import { recordRun, writeRunSidecar } from '../../src/lib/automations/store.js';
@@ -83,6 +83,11 @@ async function seed(): Promise<void> {
   // Running now: a live child, the session known only from its hook's note.
   const live = ago(2);
   opened(ids.live); said(ids.live, 'RUN-WORDS started the sweep.'); bash(ids.live, 2);
+  const sub = join(transcriptOf(ids.live).replace(/\.jsonl$/, ''), 'subagents');
+  mkdirSync(sub, { recursive: true });
+  writeFileSync(join(sub, 'agent-abc123.jsonl'), `${[
+    { type: 'assistant', isSidechain: true, message: { role: 'assistant', content: [{ type: 'text', text: 'RUN-WORDS sub-agent.' }, { type: 'tool_use', id: 'toolu_sub', name: 'Bash', input: { command: `curl -H "Authorization: ${TOKEN}" https://acme.example/sub` } }] } },
+  ].map((o) => JSON.stringify({ ...o, cwd: proj, sessionId: ids.live, uuid: 'sub-1', timestamp: new Date().toISOString() })).join('\n')}\n`);
   appendThreadEntry(ctx, SLUG, { runId: live, kind: 'system', event: 'started', text: 'Run started.', via: 'runner' });
   noteRunSession(ctx, SLUG, live, ids.live, Date.now(), home);
   const child = spawn('sleep', ['900'], { detached: true, stdio: 'ignore' });
@@ -103,6 +108,8 @@ const verbs: Record<string, () => void | Promise<void>> = {
   },
   /** The manifest-diff ask: the reply route refuses while it is open. */
   approval: () => { createQuestion(ctx, { slug: SLUG, runFiredAt: new Date().toISOString(), sessionId: null, kind: 'approval', channel: 'chat', question: 'Approve the change?', choices: [] } as never); },
+  /** The owner dealt with it. */
+  approved: () => { for (const q of allPendingQuestions(ctx)) if (q.kind === 'approval') resolveQuestion(ctx, q, 'approve', 'chat'); },
   question: () => { createQuestion(ctx, { slug: SLUG, runFiredAt: arg, sessionId: ids.asked, kind: 'flow-hitl', channel: 'chat', question: 'Which line next?', choices: ['Line C', 'Line D'] } as never); },
   team: async () => {
     await updateSuperState(ctx, (s) => {

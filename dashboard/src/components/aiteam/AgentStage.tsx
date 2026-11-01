@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useState, type ReactNode } from 'react';
 import { emitInstance, useVault } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 import { useAgent, useAgentStage, useBringAgentHere, type AgentSummary } from '../../hooks/useAgents';
@@ -11,6 +11,7 @@ import { OPEN_SESSION_EVENT, type OpenSessionDetail } from '../../lib/openSessio
 import { requestOpenAgents } from '../../lib/openAgents';
 import { AgentAvatar } from '../agents/AgentAvatar';
 import { CardChat } from '../whiteboard/widgets/AgentWidget';
+import { createTranscriptSession } from '../sleepy/transcriptSession';
 import { AutonomyChip } from './AutonomyChip';
 import {
   beginStageOpen, deselectStage, loadOlderStageFeed, markStageDividerScrolled, markStageSeen, openStageSession, peekStageSession, refreshStageFeed,
@@ -176,15 +177,13 @@ export function AgentStage({
         </div>
       )}
 
-      {readOnly || elsewhere ? (
-        <div className="aiteam-stage-note" data-stage-closed>
-          <p>{readOnly
-            ? t('aiteam.readonly.chat').replace('{owner}', agent.ownerLabel ?? agent.owner ?? '').replace('{name}', agent.title)
-            : t('aiteam.elsewhere.chat').replace('{machine}', elsewhere?.name ?? '').replace('{name}', agent.title)}</p>
-        </div>
-      ) : (
-        <StageChat agent={agent} level={autonomy} ready={!!stage} stageFailed={stageQ.isError && !stage} onRetryStage={() => { void stageQ.refetch(); }} vault={vault ?? ''} bus={bus} feedNewestId={feedNewestId} onToast={onToast} onOpenFile={onOpenFile} />
-      )}
+      <StageChat
+        agent={agent} level={autonomy} ready={!!stage} stageFailed={stageQ.isError && !stage} onRetryStage={() => { void stageQ.refetch(); }}
+        vault={vault ?? ''} bus={bus} feedNewestId={feedNewestId} onToast={onToast} onOpenFile={onOpenFile} answers={!readOnly}
+        closedNote={readOnly
+          ? t('aiteam.readonly.chat').replace('{owner}', agent.ownerLabel ?? agent.owner ?? '').replace('{name}', agent.title)
+          : elsewhere ? t('aiteam.elsewhere.chat').replace('{machine}', elsewhere.name).replace('{name}', agent.title) : undefined}
+      />
     </section>
   );
 }
@@ -217,7 +216,17 @@ function hhmm(iso: string | number): string {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus, feedNewestId, onToast, onOpenFile }: {
+/**
+ * The flow of a member this machine reads and does not talk to (someone else's, running on another
+ * Mac, not approved here): the same rows and what opens under them, on a session with no process.
+ */
+function ReadFlow({ feed, above }: { feed?: ChatFeed; above: ReactNode }) {
+  const [session] = useState(() => createTranscriptSession(crypto.randomUUID()));
+  useEffect(() => () => session.dispose(), [session]);
+  return <CardChat session={session} reopen={() => { /* nothing to reopen */ }} placeholder="" pane feed={feed} aboveComposer={above} readOnly="silent" />;
+}
+
+function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus, feedNewestId, onToast, onOpenFile, closedNote, answers = true }: {
   agent: AgentSummary;
   level: string;
   ready: boolean;
@@ -229,6 +238,10 @@ function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus,
   feedNewestId: string | null;
   onToast: (msg: string) => void;
   onOpenFile?: (path: string) => void;
+  /** No conversation can start here, and this says why; the flow still reads. */
+  closedNote?: string;
+  /** Its open questions are this owner's to answer. */
+  answers?: boolean;
 }) {
   const { t } = useI18n();
   const { session, open } = useStageSession(vault, agent, level);
@@ -242,8 +255,8 @@ function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus,
   // exists (the page's open effect runs after this stage mounts).
   const opened = stageFeed(vault, agent.slug) !== null;
   useEffect(() => {
-    if (!session && ready && opened && agent.approvedForChat) open();
-  }, [session, ready, opened, agent.approvedForChat, open]);
+    if (!session && ready && opened && agent.approvedForChat && closedNote === undefined) open();
+  }, [session, ready, opened, agent.approvedForChat, closedNote, open]);
   // Back on a teammate whose open ended while it was off screen (a Super card closed over it): the
   // pick did not change, so the page opens nothing. Asked after every effect of this commit, so a
   // real open from the page still comes first and decides.
@@ -332,6 +345,7 @@ function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t, agent.title, liveKind, liveStarted, dayTick]);
+  const canTalk = agent.approvedForChat === true && closedNote === undefined;
   // What is open under each run. Steps the owner closed stay closed while the run works on.
   const [stepsShown, setStepsShown] = useState<ReadonlySet<string>>(() => new Set());
   const [stepsHidden, setStepsHidden] = useState<ReadonlySet<string>>(() => new Set());
@@ -402,11 +416,11 @@ function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus,
           report={reports.has(meta.sessionKey)}
           onSteps={() => toggleSteps(meta)}
           onReport={() => toggleReport(meta.sessionKey)}
-          onContinue={() => {
+          onContinue={canTalk ? () => {
             if (!meta.runId) return;
             setPinNote(null);
             setPin({ slug: meta.source, runId: meta.runId, title: meta.title, startedAt: meta.startedAt, running: meta.status === 'running' });
-          }}
+          } : undefined}
           onOpenFile={onOpenFile}
         />
       ),
@@ -426,20 +440,32 @@ function StageChat({ agent, level, ready, stageFailed, onRetryStage, vault, bus,
       onDividerScrolled: () => markStageDividerScrolled(vault, agent.slug),
       onPinned: (pinned) => setStageFeedPinned(vault, agent.slug, pinned),
     };
-  }, [snap, labels, vault, agent.slug, bus, replyToRun, onToastRef, stepsShown, stepsHidden, reports, toggleSteps, toggleReport, onOpenFile]);
+  }, [snap, labels, vault, agent.slug, bus, replyToRun, onToastRef, stepsShown, stepsHidden, reports, toggleSteps, toggleReport, onOpenFile, canTalk]);
   const above = useMemo(() => (
     <>
-      <StageQuestions agent={agent.slug} onToast={onToast} />
+      {answers && <StageQuestions agent={agent.slug} onToast={onToast} />}
       {pin && <RunPinLine pin={pin} note={pinNote} onClose={closePin} />}
     </>
-  ), [agent.slug, onToast, pin, pinNote, closePin]);
+  ), [agent.slug, onToast, pin, pinNote, closePin, answers]);
 
-  if (!agent.approvedForChat) {
+  if (!canTalk) {
     return (
-      <div className="aiteam-stage-note">
-        <p>{t('aiteam.stage.blocked').replace('{name}', agent.title)}</p>
-        <button type="button" className="aiteam-pill" onClick={() => requestOpenAgents({ slug: agent.slug })}>{t('aiteam.stage.review')}</button>
-      </div>
+      <ReadFlow
+        feed={feed}
+        above={(
+          <>
+            {above}
+            {closedNote !== undefined
+              ? <p className="stage-closed-line" data-stage-closed>{closedNote}</p>
+              : (
+                <div className="stage-closed-line">
+                  <span>{t('aiteam.stage.blocked').replace('{name}', agent.title)}</span>
+                  <button type="button" className="aiteam-pill" onClick={() => requestOpenAgents({ slug: agent.slug })}>{t('aiteam.stage.review')}</button>
+                </div>
+              )}
+          </>
+        )}
+      />
     );
   }
   if (!session) {

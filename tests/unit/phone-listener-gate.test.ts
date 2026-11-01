@@ -273,6 +273,23 @@ describe('phone listener: the route policy over the FULL route table (AC4/AC5)',
     const session = JSON.parse((await request(phonePort, 'GET', '/api/automations/run-watcher/session?run=1', H())).body).session;
     expect(session.sessionId).toBe(RUN_ID);
     expect(session.transcriptPath).toBeNull();
+    expect(session.outputPath).toBeNull();
+    const shown = JSON.parse((await request(phonePort, 'GET', '/api/automations/run-watcher', H())).body);
+    expect(shown.cache.history[0].outputPath).toBeNull();
+    expect(shown.cache.history[0].sessionId).toBe(RUN_ID);
+    const upper = await request(phonePort, 'GET', `/api/agent/chat-history?claudeId=${RUN_ID.toUpperCase()}`, H());
+    expect(upper.body).not.toContain(RUN_TOKEN);
+    const listed = await request(phonePort, 'GET', '/api/agent/chat-sessions?agentRuns=1', H());
+    expect(listed.body).not.toContain(RUN_TOKEN);
+    expect(listed.body).not.toContain('composed prompt');
+    const found = await request(phonePort, 'GET', '/api/agent/chat-sessions?agentRuns=1&q=composed', H());
+    expect(found.body).not.toContain(RUN_TOKEN);
+    expect(found.body).not.toContain('composed prompt');
+    const steps = await request(phonePort, 'GET', `/api/agent/teammates?claudeId=${RUN_ID}&launched=${KILLED_ID}`, H());
+    expect(steps.body).not.toContain(RUN_TOKEN);
+    expect(JSON.parse(steps.body).teammates).toEqual([]);
+    const child = await request(phonePort, 'GET', `/api/agent/teammate-history?claudeId=${MINE_ID}&session=${KILLED_ID}&launched=1`, H());
+    expect(child.body).not.toContain(RUN_TOKEN);
     expect((await request(phonePort, 'GET', `/api/agent/bg-output?claudeId=${RUN_ID}&taskId=abc`, H())).status).toBe(403);
     // An ordinary chat on the phone keeps everything, and the laptop reads the run whole.
     expect((await request(phonePort, 'GET', `/api/agent/chat-history?claudeId=${MINE_ID}`, H())).body).toContain('MINE-MARKER');

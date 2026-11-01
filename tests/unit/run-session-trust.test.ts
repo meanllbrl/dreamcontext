@@ -56,12 +56,13 @@ describe('a note lives at the home boundary, first write wins', () => {
     expect(runningSessionFor(other, 'watcher', RUN, home)).toBeNull();
   });
 
-  it('a nested claude cannot overwrite the run, and is not marked a run', () => {
+  it('a nested claude cannot point the run at itself, and is marked a run all the same', () => {
     noteRunSession(root, 'watcher', RUN, A, Date.now(), home);
     noteRunSession(root, 'watcher', RUN, B, Date.now(), home);
     expect(runningSessionFor(root, 'watcher', RUN, home)).toBe(A);
     expect(isNotedRunSession(A, home)).toBe(true);
-    expect(isNotedRunSession(B, home)).toBe(false);
+    expect(isNotedRunSession(B, home)).toBe(true);
+    expect(isRunSession(root, [B], home)).toBe(true);
   });
 
   it('the binding at exit replaces the note, and the first session stays marked', () => {
@@ -163,6 +164,13 @@ describe('isRunSession: the phone rule knows a run however it ended', () => {
     plantCache('old', C);
     expect(isRunSession(root, [C], home)).toBe(true);
     expect(isRunSession(null, [C], home)).toBe(false);
+  });
+
+  it('an uppercased id is the same run: a transcript opens under either case', () => {
+    noteRunSession(root, 'watcher', RUN, A, Date.now(), home);
+    recordAutomationSession('watcher', B, home, Date.now(), undefined, RUN);
+    plantCache('old', C);
+    for (const id of [A, B, C]) expect(isRunSession(root, [id.toUpperCase()], home)).toBe(true);
   });
 });
 

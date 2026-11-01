@@ -20,8 +20,10 @@ import { findTranscriptBySessionId } from '../transcript-locate.js';
  *
  * Beside each run's file sits a marker per SESSION (`isNotedRunSession`): the binding is written
  * only when a run ends, so a run in flight, or a killed one, is known as a run only from here.
- * What depends on that (the phone reads only an agent's words of a run) must outlive the run, so
- * an old note is swept only once its transcript is gone.
+ * Every session the run's hook reports is marked, the nested one and the failover too, and the
+ * marker goes first, so a crash between the writes leaves a run marked: a marker only ever shows
+ * the phone less. What depends on it must outlive the run, so an old note is swept only once its
+ * transcript is gone.
  */
 const KEEP_MS = 2 * 86_400_000;
 const SWEEP_EVERY_MS = 6 * 3_600_000;
@@ -82,11 +84,10 @@ export function noteRunSession(contextRoot: string, slug: string, runId: string,
   try {
     if (!SESSION_RE.test(sessionId)) return;
     mkdirSync(dir(home), { recursive: true, mode: 0o700 });
+    write(sessionFile(sessionId, home), '', false);
     const path = runFile(contextRoot, slug, runId, home);
-    // Taken before anything is marked: a nested session loses here and marks nothing.
     if (existsSync(path)) return;
     write(path, JSON.stringify({ sessionId }), true);
-    write(sessionFile(sessionId, home), '', false);
     sweep(home, now);
   } catch { /* the card reads as unknown until the run ends */ }
 }

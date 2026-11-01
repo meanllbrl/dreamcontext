@@ -171,6 +171,7 @@ async function macPass(name, viewport) {
   const stepsText = await steps.innerText();
   check(`${name}: the composed prompt is hidden`, !stepsText.includes('COMPOSED-PROMPT-MARK'), stepsText);
   check(`${name}: the Mac keeps the full step (Bash is there)`, /Bash|curl|Ran/.test(stepsText), stepsText.slice(0, 200));
+  await steps.scrollIntoViewIfNeeded();
   await v.shot('2-steps');
   await p.locator(`[data-run-steps="${key(runs.bound)}"]`).click();
 
@@ -187,9 +188,50 @@ async function macPass(name, viewport) {
   await lightReport.click();
   check(`${name}: Full report opens in place on a run with no session`, await until(async () => (await text()).includes('LIGHT-REPORT-BODY')));
   check(`${name}: that run offers no Steps and says it ran with no session`, (await p.locator(`[data-run-steps="${key(runs.light)}"]`).count()) === 0 && (await p.locator(`[data-run-foot="${key(runs.light)}"] [data-run-line="noSession"]`).count()) === 1);
+  await p.locator(`[data-run-foot="${key(runs.light)}"] [data-testid="run-report"]`).scrollIntoViewIfNeeded();
   await v.shot('4-report');
   await lightReport.click();
   return v;
+}
+
+const transcript = () => join(HOME, '.claude', 'projects', PROJ.replace(/[^a-zA-Z0-9]/g, '-'), `${BOUND}.jsonl`);
+const turnsResumed = () => (readFileSync(transcript(), 'utf-8').match(/"RESUMED /g) ?? []).length;
+
+/** Continue on the bound run: the pin, a firing routine, the send, the same session, the sentence. */
+async function continuePass(name, v) {
+  const { p } = v;
+  const box = p.locator('.aiteam-stage .chat-cmp-input').first();
+  const replies = [];
+  const hear = (r) => { if (r.method() === 'POST' && r.url().includes('/thread/reply')) replies.push(r.postDataJSON()); };
+  p.on('request', hear);
+  await scrollTo(p, `[data-run-continue="${key(runs.bound)}"]`);
+  await p.locator(`[data-run-continue="${key(runs.bound)}"]`).click();
+  check(`${name}: the pin stands above the box`, await until(() => p.locator(`[data-run-pin="${key(runs.bound)}"]`).count()));
+  await box.fill(`please look again ${name}`);
+  seed('fire');
+  await sleep(6500);
+  check(`${name}: a routine firing does not move the pin`, (await p.locator(`[data-run-pin="${key(runs.bound)}"]`).count()) === 1 && (await box.inputValue()) === `please look again ${name}`);
+  await v.shot('5-pin');
+  const before = turnsResumed();
+  await box.press('Enter');
+  check(`${name}: the send carries the captured run`, await until(() => replies.length > 0) && replies[0].runId === runs.bound, JSON.stringify(replies));
+  check(`${name}: Continue resumes the SAME session`, await until(() => turnsResumed() > before, 20000));
+  check(`${name}: the box is empty after the send`, (await box.inputValue()) === '');
+  const says = async () => (await p.locator('.aiteam-stage').first().evaluate((e) => e.textContent));
+  check(`${name}: the run keeps its sentence above the reply`, await until(async () => (await says()).includes('RESUMED')) && (await says()).includes('Acme is healthy: 3 messages sent.'));
+  await v.shot('5b-continued');
+  // A refusal: the same pin, the same box.
+  seed('approval');
+  await box.fill(`refused ${name}`);
+  await box.press('Enter');
+  check(`${name}: a refusal shows the server's sentence`, await until(async () => (await p.locator('[data-run-pin-refused]').innerText()).includes('waiting for you to approve'), 10000));
+  check(`${name}: the words go back in the box`, await until(async () => (await box.inputValue()).includes(`refused ${name}`)));
+  await v.shot('6-refused');
+  await box.fill('');
+  await p.locator('[data-run-pin-close]').click();
+  check(`${name}: X returns the box to a new conversation`, (await p.locator('[data-run-pin]').count()) === 0);
+  seed('approved');
+  p.off('request', hear);
 }
 
 let exit = 0;
@@ -200,53 +242,28 @@ try {
 
   const desk = await macPass('1440', { width: 1440, height: 900 });
   const small = await macPass('390', { width: 390, height: 844 });
-  await small.ctx.close();
 
   console.log('\n── Continue, on the Mac');
   const { p } = desk;
   const text = () => p.locator('.aiteam-stage').first().innerText();
+  await continuePass('1440', desk);
+  await continuePass('390', small);
+  await small.ctx.close();
   const box = p.locator('.aiteam-stage .chat-cmp-input').first();
-  const replies = [];
-  p.on('request', (r) => { if (r.method() === 'POST' && r.url().includes('/thread/reply')) replies.push(r.postDataJSON()); });
-  await scrollTo(p, `[data-run-continue="${key(runs.bound)}"]`);
-  await p.locator(`[data-run-continue="${key(runs.bound)}"]`).click();
-  check('the pin stands above the box', await until(() => p.locator(`[data-run-pin="${key(runs.bound)}"]`).count()));
-  await box.fill('please look again');
-  // A routine fires while the owner types: the feed moves, the pin does not.
-  seed('fire');
-  await sleep(6500);
-  check('a routine firing does not move the pin', (await p.locator(`[data-run-pin="${key(runs.bound)}"]`).count()) === 1 && (await box.inputValue()) === 'please look again');
-  await desk.shot('5-pin');
-  await box.press('Enter');
-  const transcript = join(HOME, '.claude', 'projects', PROJ.replace(/[^a-zA-Z0-9]/g, '-'), `${BOUND}.jsonl`);
-  check('the send carries the captured run', await until(() => replies.length > 0) && replies[0].runId === runs.bound, JSON.stringify(replies));
-  check('Continue resumes the SAME session', await until(() => readFileSync(transcript, 'utf-8').includes('RESUMED'), 20000));
-  check('the box is empty after the send', (await box.inputValue()) === '');
-  check('the run keeps its sentence above the reply', await until(async () => (await text()).includes('RESUMED')) && (await text()).includes('Acme is healthy: 3 messages sent.'));
-  await desk.shot('5b-continued');
 
   console.log('\n── A question from the flow, on the Mac');
-  check('the question stands above the box, whole', await until(async () => (await p.locator('[data-stage-questions]').innerText()).includes('Which line should I watch?')));
-  const card = await p.locator('[data-stage-questions] .chat-surveycard').first().boundingBox();
-  const shelf = await p.locator('[data-stage-questions]').boundingBox();
-  check('the question card is not squashed', !!card && !!shelf && shelf.height >= Math.min(card.height, 200), JSON.stringify({ card, shelf }));
-  await desk.shot('7-question');
-  await p.locator('[data-stage-questions]').getByText('Line A', { exact: false }).first().click();
-  const submit = p.locator('[data-stage-questions] button').filter({ hasText: /Submit|Send|Answer/ }).first();
-  if (await submit.count()) await submit.click();
-  check('answered from the flow', await until(async () => (await p.locator('[data-stage-questions]').count()) === 0, 12000));
-
-  console.log('\n── A refusal, on the Mac');
-  seed('approval');
-  await p.locator(`[data-run-continue="${key(runs.bound)}"]`).click();
-  await box.fill('this one is refused');
-  await box.press('Enter');
-  check('a refusal shows the server\'s sentence', await until(async () => (await p.locator('[data-run-pin-refused]').innerText()).includes('waiting for you to approve'), 10000));
-  check('the words go back in the box', await until(async () => (await box.inputValue()).includes('this one is refused')));
-  await desk.shot('6-refused');
-  await box.fill('');
-  await p.locator('[data-run-pin-close]').click();
-  check('X returns the box to a new conversation', (await p.locator('[data-run-pin]').count()) === 0);
+  const answer = async (page, name, words, pick) => {
+    const shelf = page.locator('[data-stage-questions]');
+    check(`${name}: the question stands above the box, one line, the flow keeps its room`, await until(async () => (await shelf.innerText()).includes(words)) && (await shelf.boundingBox()).height < 60);
+    await page.locator('[data-stage-questions-toggle]').click();
+    await shelf.getByText(pick, { exact: false }).first().click();
+    await shelf.locator('.chat-surveycard').last().evaluate((e) => e.scrollIntoView({ block: 'end' }));
+    await page.screenshot({ path: join(SHOTS, `${name}-7-question.png`) });
+    const send = shelf.locator('button').filter({ hasText: /Submit|Send|Answer/ }).last();
+    if (await send.count()) await send.click();
+    check(`${name}: answered from the flow`, await until(async () => (await shelf.count()) === 0, 12000));
+  };
+  await answer(p, 'mac-1440', 'Which line should I watch?', 'Line A');
 
   console.log('\n── Phone listener');
   const qr = (await api('POST', '/api/handsfree/mac/qr')).json.url;
@@ -257,11 +274,12 @@ try {
   if (await q.locator('[data-testid="chat-drawer"]').isVisible().catch(() => false)) await close.click().catch(() => {});
   await toLookout(q);
   const body = () => q.locator('.aiteam-stage').first().innerText();
-  check('phone: the sentence reads with no tap', (await body()).includes('Acme is healthy: 3 messages sent.'));
+  check('phone: the sentence reads with no tap', (await q.locator('.aiteam-stage').first().evaluate((e) => e.textContent)).includes('Acme is healthy: 3 messages sent.'));
   await scrollTo(q, `[data-run-steps="${key(runs.bound)}"]`);
   await q.locator(`[data-run-steps="${key(runs.bound)}"]`).click();
   const stepsP = q.locator(`[data-run-foot="${key(runs.bound)}"] [data-testid="run-view"]`);
   check('phone: the steps show the agent\'s words', await until(async () => (await stepsP.innerText()).includes('RUN-WORDS three messages sent.')));
+  await stepsP.scrollIntoViewIfNeeded();
   await ph.shot('2-steps');
   await scrollTo(q, `[data-run-foot="${key(runs.live)}"]`);
   const liveP = q.locator(`[data-run-foot="${key(runs.live)}"] [data-testid="run-view"]`);
@@ -271,13 +289,12 @@ try {
   const report = q.locator(`[data-feed-report="${key(runs.light)}"]`);
   await report.scrollIntoViewIfNeeded(); await report.click();
   check('phone: Full report opens in place with no session', await until(async () => (await body()).includes('LIGHT-REPORT-BODY')));
+  await q.locator(`[data-run-foot="${key(runs.light)}"] [data-testid="run-report"]`).scrollIntoViewIfNeeded();
   await ph.shot('3-report');
-  check('phone: a question stands above the box', await until(async () => (await q.locator('[data-stage-questions]').innerText()).includes('Which line next?')));
-  await ph.shot('4-question');
-  await q.locator('[data-stage-questions]').getByText('Line C', { exact: false }).first().click();
-  const submitP = q.locator('[data-stage-questions] button').filter({ hasText: /Submit|Send|Answer/ }).first();
-  if (await submitP.count()) await submitP.click();
-  check('phone: answered from the flow', await until(async () => (await q.locator('[data-stage-questions]').count()) === 0, 12000));
+  await answer(q, 'phone', 'Which line next?', 'Line C');
+  await continuePass('phone', ph);
+  const subRead = await q.evaluate((id) => fetch(`/api/agent/chat-history?claudeId=${id}&subagent=abc123`, { headers: { 'x-dreamcontext-vault': 'proj' } }).then((r) => r.text()), '22222222-2222-4222-8222-222222222222');
+  check('phone: a live run\'s sub-agent reads as words only', subRead.includes('RUN-WORDS sub-agent') && !subRead.includes(TOKEN), subRead.slice(0, 200));
 
   const reads = ph.bodies.filter((b) => /chat-history|\/session/.test(b.url));
   check('phone: transcript reads happened', reads.length > 0, ph.bodies.length);

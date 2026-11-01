@@ -42,15 +42,23 @@ export function runChatSession(contextRoot: string, slug: string, runId: string,
  * Is this conversation a run's, on this machine? Answers for a run in flight and a killed one (the
  * note), a finished one (the binding), and one whose binding was retired or aged out (its project's
  * run cache). The cache is synced, and a planted id is safe here for the reason it is safe in a
- * warning: all a yes can do is show the phone less.
+ * warning: all a yes can do is show the phone less. Case folds first: a transcript's file name
+ * matches either case on this Mac, so an uppercased id must not read as someone else's.
  */
-export function isRunSession(contextRoot: string | null, ids: readonly string[], home: string = homedir()): boolean {
-  for (const id of ids) {
-    if (!id) continue;
+export function runSessionCheck(contextRoot: string | null, home: string = homedir()): (id: string) => boolean {
+  let cached: Set<string> | null = null;
+  return (raw) => {
+    if (!raw) return false;
+    const id = raw.toLowerCase();
     if (isNotedRunSession(id, home) || isAutomationBoundSession(id, home)) return true;
-    if (contextRoot && cachedRunSessions(contextRoot).has(id)) return true;
-  }
-  return false;
+    if (!contextRoot) return false;
+    cached ??= cachedRunSessions(contextRoot);
+    return cached.has(id);
+  };
+}
+
+export function isRunSession(contextRoot: string | null, ids: readonly string[], home: string = homedir()): boolean {
+  return ids.some(runSessionCheck(contextRoot, home));
 }
 
 /** Read from the folder, not from the manifests: a cache can outlive its automation. */
@@ -69,7 +77,7 @@ function cachedRunSessions(contextRoot: string): Set<string> {
     try {
       const history = readAutomationCache(contextRoot, slug)?.history;
       if (!Array.isArray(history)) continue;
-      for (const e of history) if (typeof e?.sessionId === 'string') out.add(e.sessionId);
+      for (const e of history) if (typeof e?.sessionId === 'string') out.add(e.sessionId.toLowerCase());
     } catch { /* one bad cache never blinds the others */ }
   }
   return out;

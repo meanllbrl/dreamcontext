@@ -42,7 +42,9 @@ export function remoteStageState(view: unknown): SuperStateView | null {
     dismissed: [],
     pool: [],
     ownerBatches: v.ownerBatches ?? [],
-    team: [],
+    // Only what a team card draws: the view never carries a job's brief.
+    team: (v.team ?? []).map((j) => ({ id: j.id, member: j.member, runId: j.runId, jobKind: 'run', queued: false, brief: '', startedAt: j.startedAt })),
+    teamLive: Object.fromEntries((v.team ?? []).map((j) => [j.id, { status: j.status, lastLine: j.lastLine, ...(j.sessionId ? { sessionId: j.sessionId } : {}), ...(j.resumable ? { resumable: true } : {}) }])),
     pad: v.pad ?? [],
     ...(v.rotating ? { rotating: true } : {}),
   });

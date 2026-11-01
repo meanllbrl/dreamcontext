@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { superRemoteView, isMacOnlyHost, titleFromBrief } from '../../src/lib/super/remote-view.js';
 import { superDigest } from '../../src/lib/super/phone-mirror.js';
+import { remoteStageState } from '../../dashboard/src/components/sleepy/super/remoteStage.js';
 import { checkRemoteLayout } from '../../src/server/routes/super-remote.js';
 import { SUPER_VERB_HANDLERS, type SuperCaller } from '../../src/server/routes/super.js';
 import type { ServerResponse } from 'node:http';
@@ -97,6 +98,16 @@ describe('superRemoteView is an allowlist (AC14)', () => {
     expect(v.team).toEqual([{ id: 'team-1', member: 'doctor', runId: 'r', startedAt: 1, status: 'done', lastLine: line.slice(0, 160), sessionId: '6f02f3ed-0e2e-434e-b0b3-b4f606e32879', resumable: true }]);
     const out = JSON.stringify(v);
     for (const m of SECRETS) expect(out, m).not.toContain(m);
+  });
+
+  it('a remote screen builds a working team card from it, with no brief to show', () => {
+    const rec = fullRecord();
+    rec.containers.push({ id: 'team-c', kind: 'team', ref: 'team-1', shape: 'square', place: 'float' } as SuperState['containers'][number]);
+    Object.assign(rec.team[0], { member: 'doctor' });
+    const v = superRemoteView(rec, 'acme', TUNNEL, false, { 'team-1': { status: 'done', lastLine: 'All clear.', sessionId: '6f02f3ed-0e2e-434e-b0b3-b4f606e32879', resumable: true } });
+    const stage = remoteStageState(JSON.parse(JSON.stringify(v)));
+    expect(stage?.team).toEqual([{ id: 'team-1', member: 'doctor', runId: 'r', jobKind: 'run', queued: false, brief: '', startedAt: 1 }]);
+    expect(stage?.teamLive?.['team-1']).toEqual({ status: 'done', lastLine: 'All clear.', sessionId: '6f02f3ed-0e2e-434e-b0b3-b4f606e32879', resumable: true });
   });
 
   it('a job with no card on the stage does not travel at all', () => {

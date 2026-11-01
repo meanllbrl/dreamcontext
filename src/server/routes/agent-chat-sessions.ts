@@ -9,6 +9,8 @@ import { readSuperState } from '../../lib/super/store.js';
 import { superSanitizeOpts } from '../../lib/super/inbox.js';
 import { listCodexSessions, mergeSessionRows } from '../../lib/t3-bridge/codex-sessions.js';
 import { listInstanceSessions } from '../../lib/t3-bridge/instance-threads.js';
+import { runSessionCheck } from '../../lib/automations/run-chat.js';
+import { isPhoneSocket } from '../phone-origin.js';
 
 /**
  * `GET /api/agent/chat-sessions` — the project's PAST Claude conversations, newest first,
@@ -32,6 +34,8 @@ import { listInstanceSessions } from '../../lib/t3-bridge/instance-threads.js';
  * which the picker uses to ask again. The server is never blocked by it.
  */
 
+const PHONE_RUN_TITLE = 'Agent run';
+
 /** How long a search waits for a running content index before answering partially. */
 const CONTENT_WAIT_MS = 1500;
 
@@ -50,12 +54,29 @@ export async function handleAgentChatSessions(
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const query = Object.fromEntries(url.searchParams);
   try {
-    sendJson(res, 200, await computeChatSessions(contextRoot, query));
+    const list = await computeChatSessions(contextRoot, query);
+    sendJson(res, 200, isPhoneSocket(req) ? phoneChatSessions(contextRoot, list) : list);
   } catch {
     // A history list is a convenience surface: an unreadable projects dir degrades to
     // "no past chats", never to a broken popup.
     sendJson(res, 200, empty);
   }
+}
+
+/** K4: a run's title and search snippet are its composed prompt, which stays on the Mac. */
+function phoneChatSessions(contextRoot: string, list: unknown): unknown {
+  const o = list as { sessions?: Array<Record<string, unknown>> };
+  if (!Array.isArray(o.sessions)) return list;
+  const isRun = runSessionCheck(contextRoot);
+  return {
+    ...o,
+    sessions: o.sessions.flatMap((s) => {
+      if (!isRun(String(s.id ?? ''))) return [s];
+      // Found by what its prompt says: the row itself would confirm the words.
+      if (s.match !== undefined || s.matchIn !== undefined) return [];
+      return [{ ...s, title: PHONE_RUN_TITLE, preview: '' }];
+    }),
+  };
 }
 
 /** The list itself. Throws on an unreadable dir. */

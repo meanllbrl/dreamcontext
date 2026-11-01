@@ -5,7 +5,9 @@ import { isAgentHost } from '../desktop.js';
 import { sanitizeUuid } from './agent-spawn-shared.js';
 import { goalLiveRunFor } from './agent-terminal.js';
 import { liveTranscriptPath } from '../../lib/transcript-locate.js';
-import { phoneTranscriptRefused } from '../phone-origin.js';
+import { isPhoneSocket, phoneTranscriptRefused } from '../phone-origin.js';
+import { isRunSession, phoneRunItems, runSessionCheck } from '../../lib/automations/run-chat.js';
+import type { ChatHistoryItem } from '../../lib/transcript-history.js';
 
 /** AC16: a phone sees a pane's teammates only when the PANE's conversation is a chosen
  *  project's (teammate ids are already pane-bound by `authorized()`). */
@@ -166,6 +168,14 @@ export async function handleAgentTeammates(
   const query = Object.fromEntries(new URL(req.url || '/', `http://${req.headers.host}`).searchParams);
   if (phonePaneRefused(req, contextRoot, query.claudeId)) { sendJson(res, 200, { teammates: [] }); return; }
   try {
+    // K4: what a run's nested sessions were given stays on the Mac.
+    if (isPhoneSocket(req)) {
+      const isRun = runSessionCheck(contextRoot);
+      if (isRun(query.claudeId ?? '')) { sendJson(res, 200, { teammates: [] }); return; }
+      const { teammates } = await computeTeammates(contextRoot, query);
+      sendJson(res, 200, { teammates: teammates.filter((t) => !isRun(t.session)) });
+      return;
+    }
     sendJson(res, 200, await computeTeammates(contextRoot, query));
   } catch {
     sendJson(res, 200, { teammates: [] });
@@ -212,7 +222,9 @@ export async function handleAgentTeammateHistory(
   const query = Object.fromEntries(new URL(req.url || '/', `http://${req.headers.host}`).searchParams);
   if (phonePaneRefused(req, contextRoot, query.claudeId)) { sendJson(res, 200, { items: [] }); return; }
   try {
-    sendJson(res, 200, computeTeammateHistory(contextRoot, query));
+    const history = computeTeammateHistory(contextRoot, query);
+    const run = isPhoneSocket(req) && isRunSession(contextRoot, [query.claudeId ?? '', query.session ?? '']);
+    sendJson(res, 200, run ? { items: phoneRunItems(history.items as ChatHistoryItem[]) } : history);
   } catch {
     sendJson(res, 200, { items: [] });
   }
