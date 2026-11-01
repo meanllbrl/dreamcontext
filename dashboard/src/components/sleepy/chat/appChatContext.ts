@@ -13,8 +13,9 @@ import { useEmbed } from '../../embed/embedMode';
  *  - no remote media (`MarkdownPreview`, `dropRemoteMedia`).
  *
  * ChatPane provides it from `session.appChat` (the server says so on connect and in History), so
- * the main pane holds the rule too; the app window's frame holds it with no provider at all,
- * because everything in that document is an app chat (`useEmbed`).
+ * the main pane holds the rule too; the app window's chat screen holds it with no provider at all
+ * (`useEmbed()` with view `chat`). Other embedded screens (insight, tasks, roadmap, team) are not
+ * a chat and draw as they always have.
  *
  * Every component that draws a frame of supplied HTML asks `useInAppChat()`; a walking test
  * (`appChatHtmlOff.test.ts`) fails on a new frame that does not.
@@ -24,5 +25,5 @@ export const AppChatContext = createContext(false);
 export function useInAppChat(): boolean {
   const flagged = useContext(AppChatContext);
   const embed = useEmbed();
-  return flagged || !!embed;
+  return flagged || embed?.view === 'chat';
 }
