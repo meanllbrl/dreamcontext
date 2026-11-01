@@ -34,7 +34,8 @@ describe('toolText', () => {
     expect(toolText('ONE `reviewer` (model opus, effort high, not in the background)', 'codex')).toBe('ONE `reviewer` (effort high, not in the background)');
     expect(toolText('INVOKE any that fit via the Skill tool', 'codex')).toBe('INVOKE any that fit by opening its SKILL.md');
     expect(toolText('the Agent tool with `subagent_type` set', 'codex')).toBe('spawn_agent with `agent_type` set');
-    expect(toolText('the Agent tool with `subagent_type` set', 'antigravity')).toBe('a role you run yourself with `role` set');
+    expect(toolText('the Agent tool with `subagent_type` set', 'antigravity')).toBe('invoke_subagent with `subagent_name` set');
+    expect(toolText('ONE `reviewer` sub-agent (Agent tool, model opus, effort high)', 'antigravity')).toBe('ONE `reviewer` sub-agent (invoke_subagent, effort high)');
     // A dreamcontext CLI flag is not Claude's harness: `--model sonnet` stays.
     expect(toolText('`dreamcontext super send --model sonnet`', 'codex')).toBe('`dreamcontext super send --model sonnet`');
   });
@@ -65,7 +66,12 @@ describe('toolText', () => {
     }
     expect(toolNote('codex', { roles: ['reviewer', 'goal-planner'] })).toContain('Configured roles: reviewer, goal-planner.');
     expect(toolNote('codex')).toContain('spawn_agent with agent_type X');
-    expect(toolNote('antigravity', { roleDirs: ['/x/agents'] })).toContain('No sub-agents here');
+    // Antigravity has sub-agents: the note sends work to invoke_subagent, never "do it yourself".
+    const agy = toolNote('antigravity', { roleDirs: ['/x/agents'] });
+    expect(agy).toContain('invoke_subagent with subagent_name X');
+    expect(agy).toContain('define_subagent');
+    expect(agy).toContain('dreamcontext snapshot');
+    expect(agy).not.toContain('No sub-agents');
   });
 });
 

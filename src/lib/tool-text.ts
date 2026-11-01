@@ -2,8 +2,9 @@
  * Our instructions, made true for the tool that reads them. The briefing, the prompt hook's own
  * lines, the recipes and the skill files are written for Claude Code: "the Skill tool", "the Agent
  * tool with subagent_type X", "model opus". Codex has none of those names (its sub-agents are
- * `spawn_agent` with an `agent_type`, its skills are files it opens), and Antigravity has no
- * sub-agents at all. Claude never passes through here, so its text stays byte for byte.
+ * `spawn_agent` with an `agent_type`, its skills are files it opens), and Antigravity's are
+ * `invoke_subagent` with a `subagent_name` (our roles are a plugin in its profile,
+ * antigravity-roles.ts). Claude never passes through here, so its text stays byte for byte.
  *
  * Only OUR text is rewritten. The owner's brain (the snapshot, recall) is data and is never touched;
  * {@link toolNote} tells the model how to read Claude's names wherever they still appear there.
@@ -31,17 +32,17 @@ const RULES: Record<TextTool, ReadonlyArray<readonly [RegExp, string]>> = {
     [/\bthe Bash tool's run_in_background\b/g, 'a background shell'],
   ],
   antigravity: [
-    [new RegExp(`\\(Agent tool, model ${MODELS}, `, 'gi'), '(the role, '],
+    [new RegExp(`\\(Agent tool, model ${MODELS}, `, 'gi'), '(invoke_subagent, '],
     [new RegExp(`(?<![-\\w])model ${MODELS}, `, 'gi'), ''],
     [new RegExp(`, model ${MODELS}\\b`, 'gi'), ''],
     [new RegExp(`(?<![-\\w])\\(model ${MODELS}\\)`, 'gi'), ''],
     [/\bvia the Skill tool\b/g, 'by opening its SKILL.md'],
     [/\bthe Skill tool\b/g, 'its SKILL.md'],
     [/\bSkill tool\b/g, 'SKILL.md'],
-    [/\bthe Agent tool's\b/g, "a role's"],
-    [/\bthe Agent tool\b/g, 'a role you run yourself'],
-    [/\bAgent tool\b/g, 'role'],
-    [/\bsubagent_type\b/g, 'role'],
+    [/\bthe Agent tool's\b/g, "invoke_subagent's"],
+    [/\bthe Agent tool\b/g, 'invoke_subagent'],
+    [/\bAgent tool\b/g, 'invoke_subagent'],
+    [/\bsubagent_type\b/g, 'subagent_name'],
     [/\bthe Bash tool's `timeout: 600000`/g, 'a 10-minute command timeout'],
     [/\bthe Bash tool's run_in_background\b/g, 'a background shell'],
   ],
@@ -97,7 +98,7 @@ export function toolNote(tool: TextTool, o: { roles?: readonly string[]; roleDir
   return [
     '## dreamcontext on Antigravity',
     `- Skills: ${skills}`,
-    `- No sub-agents here: where a text hands work to a role (the Agent tool, subagent_type X), open that role's file and do its work yourself, one role after another, keeping each role's scope.${dirs}`,
+    `- Sub-agents: where a text says "the Agent tool" or subagent_type X, call invoke_subagent with subagent_name X. dreamcontext's roles and the owner's own Claude agents are installed as your sub-agents (plugin dreamcontext). A role only this project has (its .claude/agents/<role>.md, not in your sub-agent list): define_subagent with that file's body as the system_prompt, then invoke it.${dirs} A sub-agent starts without the brain: its first step is \`dreamcontext snapshot\`. The owner authorizes sub-agents for these dreamcontext flows: ${FLOWS}. Running one of them IS the owner asking for its sub-agents.`,
     `- ${models} "The Skill tool" means opening that SKILL.md.`,
   ].join('\n');
 }

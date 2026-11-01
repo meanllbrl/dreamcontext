@@ -13,6 +13,7 @@ import { listTranscriptFiles } from './transcript-sessions.js';
 import { listVaults, type Vault } from './vaults.js';
 import { compareVersions } from './version-check.js';
 import { readSleepState } from '../cli/commands/sleep.js';
+import { refreshToolKits, type KitProject } from './tool-kits-refresh.js';
 
 /**
  * A project's installed files follow the installed CLI on their own (owner 2026-10-31: the
@@ -81,6 +82,8 @@ export interface CatchUpDeps {
   runUpdate?: (projectRoot: string, cli: CatchUpCli) => Promise<void>;
   /** The job is stopping: end after the project in hand. */
   stopped?: () => boolean;
+  /** Refresh the Codex and Antigravity kits for these projects (tool-kits-refresh.ts). */
+  refreshKits?: (cliVersion: string, projects: KitProject[]) => void;
 }
 
 const UPDATE_TIMEOUT_MS = 5 * 60_000;
@@ -321,12 +324,23 @@ async function catchUp(deps: CatchUpDeps): Promise<CatchUpResult> {
     // A folder that is gone never enters the list, so it costs nothing and reports nothing.
     const seen = new Set<string>();
     const behind: Project[] = [];
+    const all: KitProject[] = [];
     for (const v of (deps.vaults ?? listVaults)()) {
       const path = resolve(v.path);
       if (seen.has(path) || !existsSync(path)) continue;
       seen.add(path);
-      if (compareVersions(projectVersion(path), target) < 0) behind.push({ name: v.name, path });
+      const version = projectVersion(path);
+      all.push({ path, version });
+      if (compareVersions(version, target) < 0) behind.push({ name: v.name, path });
     }
+    // Every tool's kit, not only Claude's: no Codex or Antigravity chat waits to open for it. The
+    // stamp holds each project's version, so a project this run updates is refreshed next check.
+    try {
+      (deps.refreshKits ?? ((version, projects) => {
+        const r = refreshToolKits(version, projects, { home });
+        if (r.ran && r.failures.length) log(`tool kits: ${r.failures[0]}`);
+      }))(target, all);
+    } catch { /* a kit is extra; the projects still update */ }
 
     // An issue lives only while its project is behind: this is what ends a failure a person
     // fixed by hand, a project removed from the list, a folder deleted.
