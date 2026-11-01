@@ -823,12 +823,13 @@ function childRunsNow(sid: string): boolean {
   return act !== 'gone' && (act !== 'idle' || backgroundBusy(e));
 }
 
-export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>, superState: Pick<SuperState, 'enabled' | 'session'> & Partial<Pick<SuperState, 'children' | 'formerChildren' | 'queue'>>, runsNow: (sid: string) => boolean = childRunsNow): RosterSummary {
+export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>, superState: Pick<SuperState, 'enabled' | 'session'> & Partial<Pick<SuperState, 'children' | 'formerChildren' | 'queue' | 'released'>>, runsNow: (sid: string) => boolean = childRunsNow): RosterSummary {
   const settled = withWindows({ sessions: saved.sessions }, saved.windows);
   // The drawer's count of a project: the owner's chats, never the Super Agent's sessions (they
   // stay in the roster; only this count leaves them out).
   const former = new Set(superState.formerChildren ?? []);
-  const isSupers = (id: string) => id === superState.session || !!superState.children?.[id] || former.has(id);
+  const released = new Set(superState.enabled ? [] : superState.released ?? []);
+  const isSupers = (id: string) => id === superState.session || (!!superState.children?.[id] && !released.has(id)) || former.has(id);
   const own = settled.sessions.filter((m) => !m.sessionId || !isSupers(m.sessionId));
   const perWindow = settled.windows.map((w) => ({ id: w.id, name: w.name, tabs: own.filter((m) => m.window === w.id).length }));
   // Mirrors the window's `needsOwner` (pinned by the super-row-marks test).

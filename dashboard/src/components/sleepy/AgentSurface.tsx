@@ -135,7 +135,7 @@ import type { PendingQuestion } from './chatSession';
 import { HandoverButton } from './super/HandoverButton';
 import { SuperCentreHead, SuperSurface, jobLookOf, prefersReducedMotion, runFlights, type FlightRun, type StageShowChild } from './super/SuperSurface';
 import { SuperDock } from './super/SuperDock';
-import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superRowMarks, workingChildren } from './super/sessionHome';
+import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superRowMarks, busyChildren } from './super/sessionHome';
 import { JobBar } from './super/JobBar';
 import { IconButton, chatStatus } from './super/SuperContainer';
 import { DockChip } from './AgentDock';
@@ -781,16 +781,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const [superDelegated, setSuperDelegated] = useState<ReadonlyMap<string, number>>(() => new Map());
   // Every session has ONE home (super/sessionHome.ts): in the new shell a chat window draws only
   // its own. A view: the roster, the panes and the transcripts keep every session.
-  // Turned off, a child still running is the owner's chat: it needs a window to be seen in.
-  const releasedKey = superState && !superState.enabled
-    ? sessionList.filter((m) => !m.dormant && !!m.claudeId && hasOwnKey(superState.children, m.claudeId)
-      && superState.children[m.claudeId].endedAt === undefined && sessions.current.get(m.id)?.status !== 'closed')
-      .map((m) => m.claudeId).join(' ')
-    : '';
-  const superOwned = useMemo(
-    () => superOwnedIds(superState, superDelegated, new Set(releasedKey ? releasedKey.split(' ') : [])),
-    [superState, superDelegated, releasedKey],
-  );
+  const superOwned = useMemo(() => superOwnedIds(superState, superDelegated), [superState, superDelegated]);
   const superOwnedRef = useRef(superOwned);
   superOwnedRef.current = superOwned;
   const inChatWindow = useCallback((m: { mode?: string; claudeId?: string }) => (
@@ -4678,15 +4669,16 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
    *  still runs. `confirmAction`: a browser `confirm()` is a silent no-op in the desktop app. */
   const turnOffSuper = useCallback(async () => {
     if (flightRunRef.current?.run.active) return;
-    const running = workingChildren(superStateRef.current?.children ?? {}, childLiveKind).length;
+    const running = busyChildren(superStateRef.current?.children ?? {}, childLiveKind).length;
+    const own = superStateRef.current?.session ? chatByClaudeId(superStateRef.current.session) : undefined;
     const ok = await confirmAction({
       title: t('super.off.confirmTitle'),
-      body: `${running > 0 ? t(running === 1 ? 'super.off.runningOne' : 'super.off.runningMany').replace('{n}', String(running)) : t('super.off.runningNone')} ${t('super.off.confirmBody')}`,
+      body: `${running > 0 ? t(running === 1 ? 'super.off.runningOne' : 'super.off.runningMany').replace('{n}', String(running)) : t('super.off.runningNone')} ${own?.busy ? `${t('super.off.ownTurn')} ` : ''}${t('super.off.confirmBody')}`,
       confirmLabel: t('super.off.button'),
       cancelLabel: t('super.off.cancel'),
     });
     if (ok) await takeBack();
-  }, [takeBack, childLiveKind, t]);
+  }, [takeBack, childLiveKind, chatByClaudeId, t]);
 
   /** A terminal in the Terminals row: take the screen back and focus that terminal. */
   const openTerminalFromSuper = useCallback((sid: string) => {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chatTopic, getChat, pendingRequest, pendingRequestIds } from '../assistant/chat-registry.js';
+import { activityOf, chatTopic, getChat, pendingRequest, pendingRequestIds } from '../assistant/chat-registry.js';
 import { isReservedId, peekSuperNote, phoneHeld, superIndex } from './store.js';
 import { clearFresh } from './fresh-session.js';
 import { MAX_BRIEF, MAX_FORMER_CHILDREN, SESSION_ID_RE, type SuperChild, type SuperState } from './types.js';
@@ -119,6 +119,7 @@ export async function enableSuper(
     showAgendaCard(s);
     for (const sid of adopt) s.notes[sid] = 'handover';
     s.enabled = true;
+    delete s.released;
     s.away = { since: null, events: 0 };
     s.queue = s.queue.filter((q) => !(q.kind === 'handover' && q.state === 'pending'));
     s.queue.push({ id: newQueueId(), sessionId: session, kind: 'handover', state: 'pending', createdAt: now });
@@ -169,6 +170,17 @@ export function adoptChat(s: SuperState, sid: string, brief: string, now: number
   return card;
 }
 
+/** The children a process still holds as the Super Agent goes off: the ones that become the
+ *  owner's chats. An ended child stays history; a dead one has nothing to come back to. */
+export function releasedAtOff(s: Pick<SuperState, 'children'>, alive: (sid: string) => boolean): string[] {
+  return Object.keys(s.children).filter((sid) => s.children[sid].endedAt === undefined && alive(sid));
+}
+
+const chatAlive = (sid: string): boolean => {
+  const e = getChat(sid);
+  return !!e && activityOf(e) !== 'gone';
+};
+
 export async function disableSuper(contextRoot: string): Promise<SuperState> {
   clearOwnerLease(contextRoot);
   stopSweep(contextRoot);
@@ -177,6 +189,8 @@ export async function disableSuper(contextRoot: string): Promise<SuperState> {
   const recorded = superIndex(contextRoot).session;
   if (recorded) clearFresh(recorded);
   return writeSuper(contextRoot, (s) => {
+    // Read once, at the moment it goes off: a second take-back must not forget a parked chat.
+    if (s.enabled) s.released = releasedAtOff(s, chatAlive);
     s.enabled = false;
     // The super's own question and a "New session" not yet delivered go with the hand-over: the
     // next hand-over must not rotate a session nobody asked to rotate.

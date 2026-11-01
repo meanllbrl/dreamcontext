@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superRowMarks, workingChildren } from '../../dashboard/src/components/sleepy/super/sessionHome';
+import { chatWindowPanes, pageCorner, sessionHome, superLanding, superOwnedIds, superRowMarks, workingChildren, busyChildren } from '../../dashboard/src/components/sleepy/super/sessionHome';
 import { adoptionBody, needsOwner } from '../../dashboard/src/components/sleepy/super/superHandover';
 import { planStage, STAGE, stageItems } from '../../dashboard/src/components/sleepy/super/superLayout';
 import { buildDrawerRows } from '../../dashboard/src/components/layout/newshell/drawerModel';
 import { drawerTogglePanel, PAGES_WITH_PANEL } from '../../dashboard/src/lib/uxMode';
 import { rosterSummary } from '../../src/server/routes/agent-sessions';
+import { releasedAtOff } from '../../src/lib/super/handover';
+import { SUPER_STATE_VERSION } from '../../src/lib/super/types';
+import { sanitizeSuperState } from '../../src/lib/super/store';
 import { superOwned } from '../../src/server/routes/agent-chat-sessions';
 import { partitionSuper } from '../../src/lib/transcript-sessions';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -186,18 +189,32 @@ describe('note 9: the Super Agent row', () => {
     expect(superRowMarks(null)).toEqual({ working: 0, asking: false });
   });
   it('with the live chats at hand, a row with nothing running it does not count (owner 2026-11-01)', () => {
-    const st = record({ children: { busy: child({ row: 'working' }), starting: child({ row: 'working' }), ended: child({ row: 'working' }), settling: child({ row: 'working' }), none: child({ row: 'working' }) } });
-    const live = { busy: 'working', starting: 'starting', ended: 'ended', settling: 'ready' } as Record<string, 'working'>;
-    expect(superRowMarks(st, (sid) => live[sid] ?? null)).toEqual({ working: 2, asking: false });
-    expect(workingChildren((st as { children: never }).children, (sid) => live[sid] ?? null)).toEqual(['busy', 'starting']);
+    const st = record({ children: { busy: child({ row: 'working' }), starting: child({ row: 'working' }), ended: child({ row: 'working' }), settling: child({ row: 'working' }), closing: child({ row: 'working', settling: true }), none: child({ row: 'working' }) } });
+    const live = { busy: 'working', starting: 'starting', ended: 'ended', settling: 'ready', closing: 'ready' } as Record<string, 'working'>;
+    expect(superRowMarks(st, (sid) => live[sid] ?? null)).toEqual({ working: 3, asking: false });
+    expect(workingChildren((st as { children: never }).children, (sid) => live[sid] ?? null)).toEqual(['busy', 'starting', 'settling']);
   });
   it('turned off, the row has no ring and a running child is the owner\'s chat, the Super never', () => {
     const st = record({ enabled: false, children: { busy: child({ row: 'working' }), old: child({ row: 'gone' }) } }) as { enabled: boolean; session: string; children: never; queue: never };
     expect(superRowMarks(st).working).toBe(0);
     expect(rosterSummary({ sessions: [] as never, windows: undefined as never }, st as never, () => true).superWorking).toBe(0);
-    const owned = superOwnedIds(st as never, new Map(), new Set(['busy', 'sup']));
+    const owned = superOwnedIds({ ...(st as object), released: ['busy', 'sup'] } as never);
     expect([...owned].sort()).toEqual(['old', 'sup']);
+    // Handed over again, the list means nothing: every child is the Super's.
+    expect([...superOwnedIds({ ...(st as object), enabled: true, released: ['busy'] } as never)].sort()).toEqual(['busy', 'old', 'sup']);
     expect(sessionHome({ claudeId: 'busy' }, owned, 'sup')).toBe('chat');
+  });
+  it('the list is taken once at turn-off, from what a process holds, and survives the record', () => {
+    const children = { up: child(), parked: child({ row: 'working' }), ended: child({ endedAt: 3 }) };
+    expect(releasedAtOff({ children } as never, (sid) => sid !== 'parked')).toEqual(['up']);
+    const id = '11111111-1111-4111-8111-111111111111';
+    expect(sanitizeSuperState({ v: SUPER_STATE_VERSION, enabled: false, released: [id, 3, id] } as never).released).toEqual([id]);
+    expect(rosterSummary({ sessions: [{ sessionId: 'up' }] as never, windows: undefined as never }, { enabled: false, session: 'sup', children: { up: child() }, released: ['up'] } as never).tabs).toBe(1);
+  });
+  it('Turn off counts every child with something under way, a question or an owner step too', () => {
+    const children = { work: child({ row: 'working' }), asks: child({ row: 'asking' }), waits: child({ row: 'waiting' }), rests: child({ row: 'done' }), ended: child({ row: 'asking', endedAt: 3 }), dead: child({ row: 'waiting' }) };
+    const live = { work: 'working', asks: 'asking', waits: 'ready', rests: 'ready', ended: 'asking' } as Record<string, 'working'>;
+    expect(busyChildren(children as never, (sid) => live[sid] ?? null).sort()).toEqual(['asks', 'waits', 'work']);
   });
   it("the server's count for a project not mounted asks the same question", () => {
     const st = record({ children: { busy: child({ row: 'working' }), dead: child({ row: 'working' }), done: child({ row: 'done' }) } });
@@ -211,6 +228,7 @@ describe('note 9: the Super Agent row', () => {
     expect(off).toMatch(/await confirmAction\(/);
     expect(off).not.toMatch(/window\.confirm|[^a-zA-Z]confirm\(/);
     expect(off).toMatch(/if \(ok\) await takeBack\(\)/);
+    expect(off).toMatch(/super\.off\.ownTurn/);
     expect(surface).toMatch(/onTurnOff=\{remoteDesktop \? undefined : turnOffSuper\}/);
   });
   it('asks while an item waits on the owner, and stops when it is done', () => {

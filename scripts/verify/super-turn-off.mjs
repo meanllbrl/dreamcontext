@@ -143,6 +143,9 @@ try {
     ok('T4 the child is on screen as a chat', await page.getByText('Busy child').first().isVisible().catch(() => false));
     ok('T4 the Super row is still there', await row.isVisible());
     ok('T4 no ring on a Super that is off', (await ring()) === 0);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(3500);
+    ok('T4 after a reload the child is still a chat, not lost', await page.getByText('Busy child').first().isVisible().catch(() => false));
     const before = record().session;
     await row.click();
     ok('T5 the row turns it on again', await until(() => record().enabled === true));

@@ -15,24 +15,23 @@ import { isSuperSession, ownerQueueCount } from './superHandover';
 
 export type SessionHome = 'super' | 'chat';
 
-type Owned = Pick<SuperState, 'session' | 'children'> & { formerChildren?: readonly string[] };
+type Owned = Pick<SuperState, 'session' | 'children'> & { enabled?: boolean; formerChildren?: readonly string[]; released?: readonly string[] };
 
 /**
  * Every conversation the record says is the Super Agent's, with the children being opened now.
- * `released`: the children still running after the Super Agent was turned off. They are the
- * owner's chats from then on; without this a running chat has no window to be seen in.
+ * Turned off, the children it `released` are the owner's chats: without this a running chat has
+ * no window to be seen in. The record holds the list, so parking or a phone's take-over keeps it.
  */
 export function superOwnedIds(
   state: Owned | null | undefined,
   delegated: ReadonlyMap<string, number> = new Map(),
-  released: ReadonlySet<string> = new Set(),
 ): Set<string> {
   const ids = new Set<string>(delegated.keys());
   if (!state) return ids;
   if (state.session) ids.add(state.session);
   for (const id of Object.keys(state.children)) ids.add(id);
   for (const id of state.formerChildren ?? []) ids.add(id);
-  for (const id of released) if (id !== state.session) ids.delete(id);
+  if (state.enabled === false) for (const id of state.released ?? []) if (id !== state.session) ids.delete(id);
   return ids;
 }
 
@@ -85,7 +84,26 @@ export function workingChildren(
     if (c?.endedAt !== undefined || c.row !== 'working') return false;
     if (!liveOf) return true;
     const kind = liveOf(sid);
-    return kind === 'working' || kind === 'starting';
+    // `ready` with a working row and no settle window: its turn ended, its background work did
+    // not (a chat reattached after a reload has no roster of that work, the row does).
+    return kind === 'working' || kind === 'starting' || (kind === 'ready' && !c.settling);
+  });
+}
+
+/** Every child with something under way, for what Turn off says: at work, or alive and blocked
+ *  on someone (a question, an owner step). A child resting between jobs is not one. */
+export function busyChildren(
+  children: SuperState['children'],
+  liveOf: (sid: string) => SessionStatusKind | null,
+): string[] {
+  const working = new Set(workingChildren(children, liveOf));
+  return Object.keys(children).filter((sid) => {
+    const c = children[sid];
+    if (working.has(sid)) return true;
+    if (c?.endedAt !== undefined) return false;
+    const kind = liveOf(sid);
+    return kind === 'working' || kind === 'starting' || kind === 'asking'
+      || (kind === 'ready' && (c.row === 'asking' || c.row === 'waiting'));
   });
 }
 
