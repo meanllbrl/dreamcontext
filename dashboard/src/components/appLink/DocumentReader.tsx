@@ -9,7 +9,7 @@ import { revealPath } from '../../lib/reveal';
 import { isValidAppLinkPath } from '../../lib/appLink';
 import { agentFileKind } from '../../lib/agentFileKind';
 import { resolveWikilinkTarget, type WikilinkCandidate } from '../../lib/wikilinks';
-import { buildSandboxSrcdoc, SANDBOX_ALLOW, THEME_BRIDGE, themeMessage } from '../../lib/sandboxHtml';
+import { buildSandboxSrcdoc, SANDBOX_ALLOW, SCROLL_KEEP_BRIDGE, THEME_BRIDGE, themeMessage } from '../../lib/sandboxHtml';
 import { pollMs } from '../../lib/windowActivity';
 import { SELECTION_BRIDGE } from '../../lib/textSelection';
 import { useFrameSelection } from '../sleepy/chat/SelectionBar';
@@ -382,6 +382,33 @@ export function useProjectHtml(path: string, vaultReads = false, watch = false) 
   const raw = state.data && state.data.type !== 'dir' && typeof state.data.content === 'string'
     ? state.data.content : null;
   const [html, setHtml] = useState<{ raw: string; html: string } | null>(null);
+  // Watching, a picture or stylesheet the page names counts as the page: its change re-reads them.
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    if (!watch || raw === null) return undefined;
+    const { images, styles } = findLocalAssets(raw, path);
+    const files = [...images.map((p) => ({ p, q: '&raw=1&probe=1' })), ...styles.map((p) => ({ p, q: '&probe=1' }))];
+    if (!files.length) return undefined;
+    const stamps = new Map<string, number>();
+    let stopped = false;
+    let timer = 0;
+    const tick = async () => {
+      if (!document.hidden) {
+        const seen = await inTurn(files.map(({ p, q }) => () => api.get<{ mtimeMs?: number }>(`/agent/file?path=${encodeURIComponent(p)}${q}`).then((r) => [p, r.mtimeMs] as const, () => [p, undefined] as const)), 4);
+        if (stopped) return;
+        let changed = false;
+        for (const [p, at] of seen) {
+          if (at === undefined) continue;
+          if (stamps.has(p) && stamps.get(p) !== at) changed = true;
+          stamps.set(p, at);
+        }
+        if (changed) setRevision((n) => n + 1);
+      }
+      if (!stopped) timer = window.setTimeout(() => { void tick(); }, pollMs(FILE_WATCH_MS));
+    };
+    void tick();
+    return () => { stopped = true; window.clearTimeout(timer); };
+  }, [api, raw, path, watch]);
   useEffect(() => {
     if (raw === null) return;
     const abort = new AbortController();
@@ -423,7 +450,7 @@ export function useProjectHtml(path: string, vaultReads = false, watch = false) 
       setHtml({ raw, html: inlineLocalAssets(raw, path, loaded) });
     });
     return () => { abort.abort(); };
-  }, [api, vault, raw, path, vaultReads]);
+  }, [api, vault, raw, path, vaultReads, revision]);
   // Watching, the page on screen stays until the new one is ready: its frame is never blanked.
   const ready = raw !== null && (html?.raw === raw || watch) ? html?.html ?? null : null;
   return { ...state, loading: state.loading || (raw !== null && ready === null), html: ready };
@@ -553,7 +580,7 @@ function HtmlPage({
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
       html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: themeNow.current, overrideCss: pageDefaultCss(fill),
-      headScript: [HEIGHT_BRIDGE, SELECTION_BRIDGE, LINK_GUARD, THEME_BRIDGE, ...(zoomBridge ? [ZOOM_BRIDGE, IMAGE_BRIDGE] : []), ...(reportsFit ? [PAGE_FIT_BRIDGE] : [])].join('\n'),
+      headScript: [HEIGHT_BRIDGE, SELECTION_BRIDGE, LINK_GUARD, THEME_BRIDGE, SCROLL_KEEP_BRIDGE, ...(zoomBridge ? [ZOOM_BRIDGE, IMAGE_BRIDGE] : []), ...(reportsFit ? [PAGE_FIT_BRIDGE] : [])].join('\n'),
     })),
     [html, zoomBridge, fill, reportsFit],
   );
@@ -592,7 +619,7 @@ function HtmlPage({
     };
   }, []);
 
-  useLayoutEffect(() => { loads.current = 0; }, [srcDoc]);
+  useLayoutEffect(() => { loads.current = 0; setTorn(false); }, [srcDoc]);
 
   const onLoad = useCallback(() => {
     loads.current += 1;

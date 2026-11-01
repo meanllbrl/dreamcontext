@@ -173,6 +173,14 @@ export const THEME_BRIDGE = `(function () {
   });
 })();`;
 
+/** A folded stage is `display: none`: the frame loses its layout and the engine clamps the scroll.
+ *  The last position it held with a layout comes back with the layout. */
+export const SCROLL_KEEP_BRIDGE = `(function () {
+  var y = 0;
+  window.addEventListener('scroll', function () { if (window.innerHeight > 0) y = window.scrollY; });
+  window.addEventListener('resize', function () { if (window.innerHeight > 0 && Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y); });
+})();`;
+
 /** The message {@link THEME_BRIDGE} answers. */
 export function themeMessage(tokens: Record<string, string>, scheme: 'light' | 'dark'): Record<string, string> {
   return { [THEME_KEY]: hostRootRule(tokens, scheme) };

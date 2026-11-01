@@ -48,7 +48,7 @@ describe('webBudget', () => {
   it('the surface asks the budget only for what is on screen, and only while visible', () => {
     const src = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperSurface.tsx'), 'utf-8');
     expect(src).toMatch(/const webOnScreen = props\.visible/);
-    expect(src).toMatch(/keptWebIds\(lru, webOnScreen, /);
+    expect(src).toMatch(/keptWebIds\(lru, heldOnScreen, /);
     // On screen = drawn on the stage: a web card in Others holds no frame, nor one open full screen,
     // nor a filmstrip thumb or a card behind a narrow sheet's tab (presentation layouts).
     expect(src).toMatch(/cp\.where === 'others' \|\| cp\.where === 'thumb' \|\| cp\.where === 'tab' \|\| full\?\.id === c\.id\) return false/);

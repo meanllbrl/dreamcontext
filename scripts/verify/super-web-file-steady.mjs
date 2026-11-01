@@ -460,6 +460,7 @@ async function reloadMatrix(page, a, b) {
     await page.setViewportSize(VIEWPORT); await page.waitForTimeout(1500);
   }, { reflows: true });
   await step('the window is hidden and comes back', async () => { await hide(true); await page.waitForTimeout(2500); await hide(false); await page.waitForTimeout(2500); });
+  moved = await scrollTo(100000); // the page's very end: a clamp shows here first
   await step('the overlay folds and opens (the hotkey)', async () => {
     await page.keyboard.press('Control+a'); await page.waitForTimeout(2000);
     console.log(`  · folded: ${(await page.locator('[data-testid="super-surface"]:visible').count()) === 0}`);
@@ -470,6 +471,11 @@ async function reloadMatrix(page, a, b) {
     console.log(`  · this card holds a frame while the other is shown: ${(await card(page, a).locator('iframe').count()) > 0}`);
     await agent(page, `super half ${a}`); await page.waitForTimeout(2500);
   });
+  await step('a picture the page names really changes', async () => {
+    copyFileSync(join(REPO, 'public', 'image', process.env.VERIFY_OTHER_PNG || 'diagram-recall.png'), join(PROJ, DIR, 'shots', '1.png'));
+    writeFileSync(join(PROJ, DIR, 'shots', '1.png'), Buffer.concat([readFileSync(join(PROJ, DIR, 'shots', '1.png')), Buffer.from('changed')]));
+    await page.waitForTimeout(Number(process.env.VERIFY_EDIT_MS || 6000));
+  }, { expect: 1 });
   const edited = `Edited ${Date.now()}`;
   await step('the file really changes', async () => {
     writeFileSync(join(PROJ, PAGE_A), readFileSync(join(PROJ, PAGE_A), 'utf-8').replace('<h1>', `<h1>${edited} `));

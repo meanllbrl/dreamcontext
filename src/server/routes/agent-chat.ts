@@ -5290,7 +5290,7 @@ export async function handleAgentFile(
   // markup, and a huge one is a generated artifact, not a picture.
   if (wantsRaw && ext === '.svg') {
     if (st.size > AGENT_FILE_MAX_BYTES) { sendTooLarge(res, st.size, AGENT_FILE_MAX_BYTES, 'File exceeds the preview size cap.'); return; }
-    if (probe) { sendProbe(res, st.size, AGENT_FILE_MAX_BYTES); return; }
+    if (probe) { sendProbe(res, st.size, AGENT_FILE_MAX_BYTES, st.mtimeMs); return; }
     res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
     res.setHeader('Content-Disposition', 'inline');
     serveMedia(req, res, abs, st.size, 'image/svg+xml');
@@ -5299,7 +5299,7 @@ export async function handleAgentFile(
 
   if (wantsRaw && rawType) {
     if (st.size > AGENT_MEDIA_MAX_BYTES) { sendTooLarge(res, st.size, AGENT_MEDIA_MAX_BYTES, 'File is too large to stream.'); return; }
-    if (probe) { sendProbe(res, st.size, AGENT_MEDIA_MAX_BYTES); return; }
+    if (probe) { sendProbe(res, st.size, AGENT_MEDIA_MAX_BYTES, st.mtimeMs); return; }
     // A document is DISPLAYED, never downloaded: without this an engine that has no built-in
     // viewer for the type falls back to saving it, which from the user's side reads as "the
     // viewer opened and nothing happened, and now there's a file in Downloads". `nosniff` is

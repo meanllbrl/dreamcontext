@@ -479,8 +479,12 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const webCards = state.containers.filter((c) => c.kind === 'web').map((c) => c.id);
   // A group shown whole (owner 2026-10-28: "open all" means all): every page it presents loads,
   // and the extra frames come on top of the kept ones, so no parked page reloads for it.
-  const auto = autoFrames(!!shownGroup, webOnScreen.length);
-  const liveWeb = keptWebIds(lru, webOnScreen, webCards, auto, MAX_KEPT_FRAMES + auto - MAX_LIVE_IFRAMES);
+  // Folded or hidden, the budget still answers for what was on screen: a fold must not evict it.
+  const lastOnScreen = useRef<string[]>([]);
+  if (props.visible) lastOnScreen.current = webOnScreen;
+  const heldOnScreen = props.visible ? webOnScreen : lastOnScreen.current;
+  const auto = autoFrames(!!shownGroup, heldOnScreen.length);
+  const liveWeb = keptWebIds(lru, heldOnScreen, webCards, auto, MAX_KEPT_FRAMES + auto - MAX_LIVE_IFRAMES);
   cuesLiveWebRef.current = liveWeb;
   // A page that loaded on its own joins the recency list, so it stays alive when moved away.
   const liveKey = [...liveWeb].join(',');

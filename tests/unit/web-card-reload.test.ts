@@ -13,7 +13,7 @@ describe('a project page on a web card reloads only when its file changes', () =
     expect([...keptWebIds(['file-a'], [], ['file-a', 'file-b'])]).toEqual(['file-a']);
     const surface = read('dashboard/src/components/sleepy/super/SuperSurface.tsx');
     expect(surface).toMatch(/const webCards = state\.containers\.filter\(\(c\) => c\.kind === 'web'\)/);
-    expect(surface).toMatch(/keptWebIds\(lru, webOnScreen, webCards,/);
+    expect(surface).toMatch(/keptWebIds\(lru, heldOnScreen, webCards,/);
   });
 
   it('a theme never rebuilds the srcdoc', () => {
