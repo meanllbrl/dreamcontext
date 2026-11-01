@@ -3,13 +3,13 @@ import { join } from 'node:path';
 import {
   HEAT_RECHECK_MS,
   HEAVY_DEFAULT_WAIT_S,
-  HEAVY_MACHINE_SLOTS,
   acquireFastSlot,
   acquireHeavy,
   clampHeavyLimit,
   fastSlotPaths,
   heavySlotPaths,
   heavySlotsHeld,
+  machineHeavySlots,
   machineLoad,
   type HeavyHold,
 } from './builder-tools.js';
@@ -67,7 +67,7 @@ export interface HeavyAcquired {
 
 export async function acquireHeavyReporting(o: HeavyAcquireOpts): Promise<HeavyAcquired> {
   const read = o.heavyLimit ?? currentHeavyLimit;
-  const safeRead = async () => { try { return clampHeavyLimit(await read()); } catch { return HEAVY_MACHINE_SLOTS; } };
+  const safeRead = async () => { try { return clampHeavyLimit(await read()); } catch { return machineHeavySlots(); } };
   const first = await safeRead();
   const waitS = o.maxWaitS ?? (first === 1 ? HEAVY_HOT_WAIT_S : HEAVY_DEFAULT_WAIT_S);
   const started = Date.now();

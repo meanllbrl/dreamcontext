@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { cpus, homedir, loadavg, tmpdir } from 'node:os';
+import { cpus, homedir, loadavg, tmpdir, totalmem } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { acquireFileLock, releaseFileLock } from './file-lock.js';
 
@@ -106,7 +106,7 @@ export const HEAVY_DEFAULT_WAIT_S = 300;
  * in it. Lives in this checkout's own git dir (`.git` for the main checkout, the same path the
  * lock always had there; `.git/worktrees/<name>` for a linked worktree), so two worktrees of one
  * repo no longer wait for each other: each has its own node_modules, and the machine's
- * {@link HEAVY_MACHINE_SLOTS} are what bound the load (measured 2026-11-01: the repo-wide lock
+ * {@link machineHeavySlots} are what bound the load (measured 2026-11-01: the repo-wide lock
  * cut the machine's two slots to one for a whole day). Outside git, a per-path file in the OS
  * temp dir. Its line (`<lock>.queue`) sits beside it.
  */
@@ -131,11 +131,35 @@ export function heavyRepoDir(cwd: string, gitCommonDir: () => string | null = ()
 // ─── machine-wide heavy slots (orchestration plan r5 D12) ─────────────────────────────────
 
 /**
- * At most this many heavy checks run at once on the WHOLE machine, every repo together. Owner,
- * 2026-11-01: speed wins, so it comes down only on a real signal (`./heat.ts`): macOS memory
- * pressure critical or the Mac truly hot. High swap or a busy load average never lowers it.
+ * Slot files that may exist: a safety cap, never the limit. The limit is {@link machineHeavySlots},
+ * read from the machine each time a check asks. Owner, 2026-11-01: a stronger Mac gets more on its
+ * own, with no code change and no setting.
  */
-export const HEAVY_MACHINE_SLOTS = 4;
+export const HEAVY_SLOT_CAP = 16;
+/** The least the machine's own numbers may give; only critical heat or memory goes under it. */
+export const HEAVY_SLOT_FLOOR = 2;
+/** A test run or build fans out over several cores. */
+const CORES_PER_SLOT = 2;
+/** The whole machine's share per check, and the room a new check needs right now. */
+const TOTAL_GB_PER_SLOT = 4;
+const FREE_GB_PER_SLOT = 2;
+
+export interface MachineRoom { cores?: number; totalGb?: number; availGb?: number | null; held?: number }
+
+/**
+ * How many heavy checks this machine takes right now: half its cores, a quarter of its memory in
+ * GB, and what is running plus what the free memory has room for, whichever is least, between
+ * {@link HEAVY_SLOT_FLOOR} and {@link HEAVY_SLOT_CAP}. Without a free-memory reading the live term
+ * drops out: a failed probe never slows a check.
+ */
+export function machineHeavySlots(m: MachineRoom = {}): number {
+  const cores = m.cores ?? cpus().length;
+  const totalGb = m.totalGb ?? totalmem() / 1024 ** 3;
+  const live = m.availGb == null ? Infinity : (m.held ?? 0) + m.availGb / FREE_GB_PER_SLOT;
+  const n = Math.floor(Math.min(cores / CORES_PER_SLOT, totalGb / TOTAL_GB_PER_SLOT, live));
+  return Math.min(HEAVY_SLOT_CAP, Math.max(HEAVY_SLOT_FLOOR, n));
+}
+
 /** A slot (or repo lock) past this age whose pid is gone is reclaimed; a live holder never is. */
 export const HEAVY_LOCK_STALE_MS = 5_000;
 
@@ -145,7 +169,7 @@ export function heavySlotDir(home: string = homedir()): string {
 }
 
 export function heavySlotPaths(dir: string): string[] {
-  return Array.from({ length: HEAVY_MACHINE_SLOTS }, (_, i) => join(dir, `slot-${i}.lock`));
+  return Array.from({ length: HEAVY_SLOT_CAP }, (_, i) => join(dir, `slot-${i}.lock`));
 }
 
 /** The machine's fast slots, for a short check (`./heavy-queue.ts` decides which). */
@@ -189,7 +213,7 @@ export const HEAT_RECHECK_MS = 20_000;
  * the short stale age safe). Null = nothing is held and nothing may run (the caller's exit 75).
  *
  * How many slots may be busy at once is `limit()` (default: `./heat.ts`, 2 at thermal state serious,
- * 1 at critical or at critical memory pressure, else {@link HEAVY_MACHINE_SLOTS}), read at entry and at most every
+ * 1 at critical or at critical memory pressure, else {@link machineHeavySlots}), read at entry and at most every
  * {@link HEAT_RECHECK_MS} while waiting. A slot is taken only while fewer than L are held, and
  * only among slots [0, L). A held slot is never revoked. Accepted race: a caller that read L=2 up
  * to 20 s earlier can take slot-1 while another runs on slot-0 under L=1; the next read converges.
@@ -217,7 +241,7 @@ export async function acquireHeavy(cwd: string, opts: {
   const limitOf = opts.limit ?? (async () => (await import('./heat.js')).currentHeavyLimit());
   const readLimit = async (): Promise<number> => {
     let n: number;
-    try { n = clampHeavyLimit(await limitOf()); } catch { n = HEAVY_MACHINE_SLOTS; }
+    try { n = clampHeavyLimit(await limitOf()); } catch { n = machineHeavySlots(); }
     try { opts.onLimit?.(n); } catch { /* informational */ }
     return n;
   };
@@ -273,10 +297,10 @@ export async function acquireFastSlot(opts: {
   }
 }
 
-/** A limit the lock may use: an integer in [1, HEAVY_MACHINE_SLOTS]; junk reads as the default. */
+/** A limit the lock may use: an integer in [1, HEAVY_SLOT_CAP]; junk reads as the machine's own. */
 export function clampHeavyLimit(n: unknown): number {
-  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return HEAVY_MACHINE_SLOTS;
-  return Math.min(HEAVY_MACHINE_SLOTS, Math.max(1, Math.floor(n)));
+  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return machineHeavySlots();
+  return Math.min(HEAVY_SLOT_CAP, Math.max(1, Math.floor(n)));
 }
 
 function gitPathOf(cwd: string, which: '--git-dir' | '--git-common-dir'): string | null {
