@@ -93,7 +93,7 @@ export interface StdioDeps {
   readonly openLimitMs?: number;
   /** The brain (context.ts): the snapshot at session start and after `/clear`, the prompt hook on
    *  every owner turn. Absent = no brain (tests, the T3 Claude engine). */
-  readonly brain?: Pick<BrainContext, 'session' | 'prompt' | 'drain'> & Partial<Pick<BrainContext, 'takeNotice'>>;
+  readonly brain?: Pick<BrainContext, 'session' | 'prompt' | 'drain'> & Partial<Pick<BrainContext, 'takeNotice' | 'edited' | 'onStopBlock'>>;
 }
 
 const userText = (frame: Record<string, unknown>): string => {
@@ -182,6 +182,21 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     ];
     if (session.busy) heldAnswers.push(...answer);
     else for (const f of answer) emit(f);
+  };
+  /** Edit cards open in this turn (tool_use id → file): a clean result runs the edit checks (row 11). */
+  const openEdits = new Map<string, string>();
+  const noteEdit = (frame: WireFrame): void => {
+    if (!deps.brain?.edited || frame.parent_tool_use_id) return;
+    const content = (frame.message as { content?: unknown } | undefined)?.content;
+    if (!Array.isArray(content)) return;
+    for (const b of content as Array<Record<string, any>>) {
+      if (frame.type === 'assistant' && b?.type === 'tool_use' && b.name === 'Edit' && typeof b.input?.file_path === 'string') openEdits.set(String(b.id), b.input.file_path);
+      if (frame.type === 'user' && b?.type === 'tool_result' && openEdits.has(String(b.tool_use_id))) {
+        const file = openEdits.get(String(b.tool_use_id))!;
+        openEdits.delete(String(b.tool_use_id));
+        if (b.is_error !== true) deps.brain.edited(session.nativeThreadId, file);
+      }
+    }
   };
   /** Codex died: stop reading stdin so the bridge exits (non-zero) and the pane shows it ended. */
   let endInput: (() => void) | null = null;
@@ -312,6 +327,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       onSidechain: (taskId, frame) => { if (session) appendSubagentStep(home, session.nativeThreadId, args.cwd, taskId, frame); },
       emit: (frame) => {
         emit(frame);
+        noteEdit(frame);
         if (keepsThread && frame.type === 'assistant' && (frame.message as { model?: unknown } | undefined)?.model !== '<synthetic>') {
           const content = (frame.message as { content?: unknown } | undefined)?.content;
           const said = Array.isArray(content) ? content.map((b) => (b && typeof b === 'object' && typeof (b as { text?: unknown }).text === 'string' ? (b as { text: string }).text : '')).join('') : '';
@@ -374,9 +390,17 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   const briefingOwed = (): AppContext[] => {
     if (!isInstanceTool(args.tool)) return [];
     // A project's own skills are read where they are: copying them would be a step per project.
-    const own: AppContext[] = existsSync(join(args.cwd, '.claude', 'skills'))
-      ? [{ key: 'dreamcontext-project-skills', text: "This project's skills are in .claude/skills/<name>/SKILL.md. When one covers the work, read it first." }]
+    // The owner's own skills too (TABLO row 4): read where they are, like the project's.
+    const skillDirs = [
+      ...(existsSync(join(args.cwd, '.claude', 'skills')) ? ["This project's skills are in .claude/skills/<name>/SKILL.md."] : []),
+      ...(existsSync(join(home, '.claude', 'skills')) ? [`The owner's own skills are in ${join(home, '.claude', 'skills')}/<name>/SKILL.md.`] : []),
+    ];
+    const own: AppContext[] = skillDirs.length
+      ? [{ key: 'dreamcontext-project-skills', text: `${skillDirs.join(' ')} When one covers the work, read it first. A message that starts with /<name> asks for that skill.` }]
       : [];
+    // A sub-agent of this agent starts with none of this (TABLO row 8, real turn 2 Nov: "No
+    // dreamcontext project brain or snapshot in context"): it is told how to get the brain itself.
+    own.push({ key: 'dreamcontext-subagents', text: `Your sub-agents (invoke_subagent) start without this project's brain or these notes. Begin every task you give one with: "First run \`dreamcontext snapshot\` in ${args.cwd} and read what it prints; it is this project's memory."` });
     // No sub-agents on ACP: the note says where a role's file is, so its work is done here.
     const roleDirs = [findPackageDir('agents'), join(home, '.claude', 'agents'), join(args.cwd, '.claude', 'agents')].filter((d): d is string => !!d && existsSync(d));
     own.push({ key: 'dreamcontext-tools', text: toolNote('antigravity', { roleDirs }) });
@@ -397,6 +421,13 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     if (out.some((c) => c.key === 'dreamcontext-brain')) brainSent = true;
     return out;
   };
+  // The Stop hook found type errors in what this turn edited: the turn goes on once, with its
+  // reason, as Claude's does when its Stop hook blocks (the next Stop does not block again).
+  if (deps.brain && 'onStopBlock' in deps.brain) {
+    deps.brain.onStopBlock = (reason) => {
+      chain = chain.then(() => handle({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `Stop hook feedback:\n${reason}` }] } })).catch(() => undefined);
+    };
+  }
   let chain: Promise<void> = deps.brain
     ? deps.brain.session(args.resume ? 'resume' : 'startup', session.nativeThreadId).catch(() => undefined)
     : Promise.resolve();

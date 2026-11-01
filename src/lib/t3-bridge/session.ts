@@ -50,6 +50,7 @@ import * as Stream from 'effect/Stream';
 import * as ChildProcessSpawner from 'effect/process/ChildProcessSpawner';
 import { bypassNeedsOwner, claudeRuntimePolicy, codexRuntimePolicy, instanceRuntimePolicy, type CodexRuntimePolicy } from './policy.js';
 import { ANTIGRAVITY_DEFAULT_MODEL } from '@t3tools/contracts';
+import { pictureAttachments } from './pictures.js';
 import { antigravityInstanceId } from '../antigravity-accounts.js';
 import { isInstanceTool, type InstanceTool } from '../instance-accounts.js';
 import { ToWire, type WireFrame } from './to-wire.js';
@@ -294,6 +295,8 @@ export class BridgeSession {
   private nativeHasTurns = false;
   /** A hidden turn (the tab-title follow-up): its frames are read here, never emitted. */
   private hidden: { text: string; finished: Promise<void>; finish: () => void; stopping: boolean } | null = null;
+  /** T3's attachment folder: a picture the owner sent is copied here and named on the turn. */
+  private attachmentsDir = '';
 
   private constructor(opts: BridgeSessionOptions) {
     this.opts = opts;
@@ -368,6 +371,7 @@ export class BridgeSession {
   private async start(): Promise<void> {
     const { opts } = this;
     const serverConfig = bridgeServerConfig(opts.stateRoot, opts.cwd);
+    this.attachmentsDir = serverConfig.attachmentsDir;
     // Loaded only for these tools: their driver reaches `node:sqlite`, which a Codex pane never needs.
     const instanceKit = isInstanceTool(opts.tool) ? await import('./instances.js') : null;
     this.runtime = ManagedRuntime.make(bridgeLayer(opts.clientFactory, opts.claudeKit, instanceKit ? { kit: instanceKit, config: serverConfig } : undefined, opts.tool === 'codex' ? opts.skillRoots : [])) as unknown as Runtime;
@@ -666,7 +670,8 @@ export class BridgeSession {
     return {
       messageId: MessageId.make(`msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`),
       text,
-      attachments: [],
+      // The owner's pictures (`[Picture N: path]` lines) as images the tool sees (TABLO row 12).
+      attachments: this.attachmentsDir ? pictureAttachments(text, this.opts.cwd, this.attachmentsDir) : [],
       createdBy: 'user' as const,
       creationSource: 'web' as const,
     } as ProviderAdapter.ProviderAdapterV2TurnMessage;

@@ -166,3 +166,17 @@ describe("Antigravity's quota reply", () => {
     expect(result.dc_limit).toEqual({ resetsAtMs: now + 2 * 3_600_000 });
   });
 });
+
+describe("the tool's own plan", () => {
+  it('is drawn as a plan card with its markdown, updated in place, and closed with the turn', () => {
+    const w = new ToWire({ tool: 'codex', model: 'm', cwd: '/p', permissionMode: 'plan', threadId: MAIN });
+    w.translate({ type: 'provider_turn.updated', providerTurn: { status: 'running' } } as never, 1);
+    const plan = (markdown: string) => w.translate({ type: 'plan.updated', plan: { id: 'p1', threadId: MAIN, kind: 'proposed_plan', status: 'active', markdown } } as never, 1);
+    const first = plan('1. Blue lid');
+    expect(first[0]).toMatchObject({ message: { content: [{ type: 'tool_use', id: 'toolu_plan_p1', name: 'ExitPlanMode', input: { plan: '1. Blue lid' } }] } });
+    expect(plan('1. Blue lid\n2. Ship')[0]).toMatchObject({ message: { content: [{ id: 'toolu_plan_p1', input: { plan: '1. Blue lid\n2. Ship' } }] } });
+    const end = w.translate({ type: 'turn.terminal', status: 'completed', failure: null } as never, 2);
+    expect(JSON.stringify(end[0])).toContain('toolu_plan_p1');
+    expect(end[end.length - 1]!.type).toBe('result');
+  });
+});

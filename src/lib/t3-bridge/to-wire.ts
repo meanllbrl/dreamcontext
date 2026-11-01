@@ -211,6 +211,8 @@ export class ToWire {
   private readonly subNotes = new Map<string, { prompt: string; title: string | null; childThreadId: string | null; result: string | null; nativeTaskId: string | null }>();
   /** The card id → the sub-agent's T3 node id, so a Stop on the card finds the tool's own task. */
   private readonly nodeByTask = new Map<string, string>();
+  /** Plan cards open in this turn (`plan.updated`), closed at its end. */
+  private readonly openPlans = new Set<string>();
   /** What this tool's `/` menu offers (slash.ts), on every `system/init`. */
   slashCommands: string[] = [];
 
@@ -345,8 +347,20 @@ export class ToWire {
         }
         return [];
       }
-      case 'plan.updated':
-        return [];
+      case 'plan.updated': {
+        // The tool's own plan (Codex in Plan mode writes a `proposed_plan`): drawn as Claude's plan
+        // card draws one, the plan as markdown (TABLO row 20). A to-do list arrives as its own item.
+        const plan = event.plan;
+        if (plan.kind !== 'proposed_plan' || !plan.markdown.trim() || this.isChildThread(plan.threadId)) return [];
+        const toolUseId = `toolu_plan_${plan.id}`;
+        this.openPlans.add(toolUseId);
+        return [...this.beginTurn(now), {
+          type: 'assistant',
+          message: { id: `msg_plan_${plan.id}`, role: 'assistant', model: this.opts.model, content: [{ type: 'tool_use', id: toolUseId, name: 'ExitPlanMode', input: { plan: plan.markdown } }] },
+          parent_tool_use_id: null,
+          session_id: this.sessionId,
+        }];
+      }
       case 'turn.terminal':
         // A sub-agent's turn ending: its card closes on its own item, the chat's turn runs on.
         if (this.providerThreadId && event.providerThreadId !== this.providerThreadId) return [];
@@ -713,6 +727,11 @@ export class ToWire {
 
   private terminal(event: Extract<ProviderAdapterV2Event, { type: 'turn.terminal' }>, now: number): WireFrame[] {
     const out: WireFrame[] = [];
+    // A plan card is done when its turn is: the owner reads it and picks the next mode.
+    for (const id of this.openPlans) {
+      out.push({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text: 'Plan written. Switch to Develop to build it.' }], is_error: false }] }, parent_tool_use_id: null, session_id: this.sessionId });
+    }
+    this.openPlans.clear();
     // Cards still open when the turn ends can no longer be answered.
     for (const id of this.openAsks) out.push({ type: 'control_cancel_request', request_id: this.wireIdFor(id) });
     this.openAsks.clear();
