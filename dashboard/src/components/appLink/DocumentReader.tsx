@@ -493,6 +493,7 @@ function HtmlPage({
   // A picture the owner clicked in the page: the app's own viewer, over the whole window.
   const [shot, setShot] = useState<ImageMessage | null>(null);
   const shotClosedAt = useRef(0);
+  const frameArmed = useRef(false);
   const html = state.html;
   // Filling at the desktop width: the scale its box's width asks for (a 0-wide box keeps the last).
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -530,10 +531,22 @@ function HtmlPage({
       const w = readPageFit(event.data);
       if (w !== undefined) pageFit.current?.(w);
       const img = readImageMessage(event.data);
-      if (img && mayOpenFromFrame({ now: Date.now(), closedAt: shotClosedAt.current, active: (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation?.isActive })) setShot(img);
+      if (img && mayOpenFromFrame({ now: Date.now(), closedAt: shotClosedAt.current, active: (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation?.isActive, armed: frameArmed.current })) {
+        frameArmed.current = false; // one open per click into the frame
+        frameRef.current?.blur(); // the next click into it moves focus again, and arms again
+        setShot(img);
+      }
     }
+    // A click into the card moves the window's focus to its frame: that, and only that, arms one open.
+    const arm = () => { if (frameRef.current && document.activeElement === frameRef.current) frameArmed.current = true; };
     window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
+    window.addEventListener('blur', arm);
+    window.addEventListener('focus', arm);
+    return () => {
+      window.removeEventListener('message', onMessage);
+      window.removeEventListener('blur', arm);
+      window.removeEventListener('focus', arm);
+    };
   }, []);
 
   useLayoutEffect(() => { loads.current = 0; }, [srcDoc]);

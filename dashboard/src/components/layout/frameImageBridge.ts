@@ -74,13 +74,16 @@ export function readImageMessage(data: unknown): ImageMessage | null {
 export const REOPEN_COOLDOWN_MS = 500;
 
 /**
- * May a page's picture message open the viewer now? Only as the answer to a click: the top window
- * must hold a live user activation (a click inside a child frame activates its ancestors), and the
- * viewer must not have just closed. A page cannot otherwise lock the app behind a modal or put a
- * fake dialog over the window on a timer. Where the browser has no `userActivation`, the cooldown
- * alone gates it.
+ * May a page's picture message open the viewer now? Only as the answer to a click INSIDE that card:
+ * - `armed`: the focus moved into the card's frame since the last open (the window blurred or got
+ *   focus with the frame as its active element). Typing in the chat or clicking a button does not
+ *   arm it, and an open uses it up, so closing the viewer cannot re-arm a page that posts on a timer.
+ * - the top window holds a live user activation, where the browser reports one;
+ * - the viewer did not just close.
+ * No engine answer to `userActivation` is not a pass: `armed` alone gates it then.
  */
-export function mayOpenFromFrame(o: { now: number; closedAt: number; active: boolean | undefined }): boolean {
+export function mayOpenFromFrame(o: { now: number; closedAt: number; active: boolean | undefined; armed: boolean }): boolean {
+  if (!o.armed) return false;
   if (o.now - o.closedAt < REOPEN_COOLDOWN_MS) return false;
   return o.active !== false;
 }
