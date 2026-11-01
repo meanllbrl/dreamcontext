@@ -16,6 +16,7 @@ import { dc } from './lib/dc.mjs';
 | `dc.tasks.update(slug, {status, …anything else})` | ✗ `backend_only` | ✓ | closing a task can end a live agent job |
 | `dc.roadmap.get()` / `.objectives()` | ✓ | ✓ | |
 | `dc.team.list()` | ✓ (narrowed) | ✓ | the AI Team |
+| `dc.ask(text)` | ✗ | ✓ | the app's assistant answers one question, `{ok, answer}` or `{ok:false, code}`. Read-only: it reads the app's files and runs nothing. Own assistant or bound member, same call. 3 at once, 20 a minute |
 | `dc.team.ask(member, text)` | ✗ | ✓ | a fresh run of that agent, labelled "from the app" |
 | `dc.team.thread(member)` | ✗ | ✓ | |
 | `dc.mcp.call(server, tool, args)` | ✗ | ✓ | key-based MCP only (no Claude, no OAuth connectors) |
@@ -24,8 +25,8 @@ import { dc } from './lib/dc.mjs';
 | `dc.schedules.list()` | ✓ | ✓ | next/last runs |
 | `dc.theme()` | ✓ | ✓ | `light` / `dark` / `system`; the page also gets `<html data-theme>` and a `dc-theme` event |
 | `dc.copy(text)` | ✓ | ✗ | the Mac pasteboard, Turkish intact |
-| `dc.embed(view, params)` | ✓ | ✓ | URL of an embeddable screen: chat, insight, tasks, roadmap, team |
-| `dc.mountEmbed(host, view, params)` | ✓ | ✗ | draws that screen into `host`, with the height it needs |
+| `dc.embed(view, params)` | ✓ | ✓ | URL of an embeddable screen: chat, insight, tasks, roadmap, team. params: `theme`, `bg`, `surface`, `text`, `accent` |
+| `dc.mountEmbed(host, view, params)` | ✓ | ✗ | draws that screen into `host`, with the height it needs and the page's colours; the iframe's `dcRetheme()` reloads it after a theme change |
 | `dc.api(method, path, body)` | subset | ✓ | any dashboard API route |
 
 **Embedding takes height.** Use `dc.mountEmbed`, not your own `<iframe>`: it fills `host` and keeps

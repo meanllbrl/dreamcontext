@@ -5,19 +5,23 @@
  * list instead of "invalid".
  *
  *   { slug, name, icon, backend?: {command, health, unguarded?}, build?, watch?: {ignore: []},
- *     agent?: {member, brief}, mcp?: [], schedules?: [], actions?: [] }
+ *     agent?: {own?, member?, brief?, readTools?: []}, mcp?: [], schedules?: [], actions?: [] }
  *
  * The platform does not validate what an action DOES (the app's backend does); it only makes
  * sure every path stays inside the app (`safeAppPath`) and every text is one clean line.
  */
 
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { APP_SLUG_RE } from './bundle.js';
 import { safeAppPath } from './safe-path.js';
 import { parseScheduleDetailed } from '../automations/schedule.js';
+import { readToolsOf } from '../agents/read-tools.js';
 
 export const MANIFEST_FILE = 'dreamcontext-app.json';
+/** The app assistant's role: this literal name at the app root, never configurable, so an edit to
+ *  the manifest cannot point the role at another file. */
+export const ROLE_FILE = 'ASSISTANT.md';
 export const ACTION_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 export type ActionMethod = (typeof ACTION_METHODS)[number];
 
@@ -45,6 +49,16 @@ export interface AppSchedule {
   catchupHours?: number;
 }
 
+/** Who talks in the app. `own`: the app's own assistant, plain Claude with the role in
+ *  `ASSISTANT.md`. `member`: an AI Team agent bound to the app; it wins when both are written. */
+export interface AppAgent {
+  member?: string;
+  brief: string;
+  own?: true;
+  /** Literal MCP tool names the own assistant runs with no card: a name is a claim. */
+  readTools?: string[];
+}
+
 export interface AppManifest {
   slug: string;
   name: string;
@@ -52,7 +66,7 @@ export interface AppManifest {
   backend: { command: string; health: string; unguarded: boolean } | null;
   build: string | null;
   watch: { ignore: string[] };
-  agent: { member: string; brief: string } | null;
+  agent: AppAgent | null;
   mcp: string[];
   schedules: AppSchedule[];
   actions: AppAction[];
@@ -139,9 +153,20 @@ export function parseManifest(text: string, appRoot: string): ManifestResult {
   let agent: AppManifest['agent'] = null;
   if (raw.agent !== undefined && raw.agent !== null) {
     const a = raw.agent;
-    if (!isObj(a) || typeof a.member !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(a.member)) {
-      err('agent', 'not {"member": "<agent slug>", "brief": "…"}', 'Name the AI Team agent assigned to this app (`dreamcontext apps assign <slug> <agent>`).');
-    } else agent = { member: a.member, brief: typeof a.brief === 'string' ? a.brief.slice(0, 4000) : '' };
+    const memberOk = isObj(a) && typeof a.member === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(a.member);
+    if (!isObj(a) || (a.member !== undefined && !memberOk) || (a.own !== undefined && a.own !== true) || (!memberOk && a.own !== true)) {
+      err('agent', 'not {"own": true} or {"member": "<agent slug>", "brief": "…"}', 'Give the app its own assistant ("agent": {"own": true}, the role in ASSISTANT.md), or name the AI Team agent assigned to it (`dreamcontext apps assign <slug> <agent>`).');
+    } else if (a.readTools !== undefined && !Array.isArray(a.readTools)) {
+      err('agent.readTools', 'not a list', 'List literal MCP tool names, e.g. ["mcp__meta-ads__list_campaigns"].');
+    } else {
+      const readTools = readToolsOf(a.readTools);
+      agent = {
+        ...(memberOk ? { member: a.member as string } : {}),
+        brief: typeof a.brief === 'string' ? a.brief.slice(0, 4000) : '',
+        ...(a.own === true ? { own: true as const } : {}),
+        ...(readTools.length ? { readTools } : {}),
+      };
+    }
   }
 
   const mcp: string[] = [];
@@ -216,6 +241,24 @@ export function readManifest(appRoot: string): ManifestResult {
     return { ok: false, errors: [{ field: '(file)', problem: `${MANIFEST_FILE} not found in ${appRoot}`, fix: 'Run `dreamcontext apps new <slug>` or write the manifest at the app root.' }], warnings: [] };
   }
   return parseManifest(readFileSync(file, 'utf-8'), appRoot);
+}
+
+/**
+ * What is wrong with the role file, or null. A real file at the app root, never a symlink, its
+ * realpath inside the root: read at every spawn, so a swap after `apps validate` is caught too.
+ */
+export function roleFileProblem(appRoot: string): ManifestProblem | null {
+  const file = join(appRoot, ROLE_FILE);
+  const missing = { field: ROLE_FILE, problem: 'missing', fix: `Write the assistant's role in ${ROLE_FILE} at the app root: its subject, what it reads, what it may do, what it asks first.` };
+  let st;
+  try { st = lstatSync(file); } catch { return missing; }
+  if (st.isSymbolicLink() || !st.isFile()) return { field: ROLE_FILE, problem: 'not a plain file (a symlink or a folder)', fix: `Replace it with a real ${ROLE_FILE} at the app root.` };
+  try {
+    const realRoot = realpathSync(appRoot);
+    const r = relative(realRoot, realpathSync(file));
+    if (r !== ROLE_FILE) return { field: ROLE_FILE, problem: 'outside the app folder', fix: `Replace it with a real ${ROLE_FILE} at the app root.` };
+  } catch { return missing; }
+  return null;
 }
 
 /** A relative path inside `root` (realpath, symlinks resolved), as an absolute path; else null. */

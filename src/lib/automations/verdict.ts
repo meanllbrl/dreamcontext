@@ -27,6 +27,7 @@
  * server routes, Telegram), so `resumeWithAnswer` is now the ONE path an
  * answer takes, whatever channel it arrived through.
  */
+import { assertNotAppChat } from '../apps/chat-store.js';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
@@ -424,6 +425,7 @@ export function buildResumeArgs(
 ): string[] {
   // A light job's envelope beats every other (`buildClaudeArgs`), on a resumed session too.
   const permission = override?.light ? lightRunArgs(m) : scopeArgs ? [...scopeArgs] : ['--permission-mode', 'bypassPermissions'];
+  assertNotAppChat(sessionId);
   const args = ['--resume', sessionId, '-p', prompt, ...permission, '--output-format', 'json'];
   // Same envelope the run was approved with — a verdict must not quietly grant
   // a bigger model or a higher effort than the hash covers. The one exception is

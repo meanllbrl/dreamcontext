@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { homedir } from 'node:os';
 import { sendJson } from '../middleware.js';
 import { isAgentHost } from '../desktop.js';
 import { projectRootOf } from './agent-spawn-shared.js';
@@ -6,6 +7,8 @@ import { listPastSessions, listTranscriptFiles, DEFAULT_LIMIT, MAX_LIMIT } from 
 import { contentOf, ensureContentIndex } from '../../lib/transcript-content-index.js';
 import { readSessionTitles } from '../../lib/session-titles.js';
 import { readSuperState } from '../../lib/super/store.js';
+import { appChatIds } from '../../lib/apps/chat-store.js';
+import { getApp, real } from '../../lib/apps/registry.js';
 import { superSanitizeOpts } from '../../lib/super/inbox.js';
 import { listCodexSessions, mergeSessionRows } from '../../lib/t3-bridge/codex-sessions.js';
 import { listInstanceSessions } from '../../lib/t3-bridge/instance-threads.js';
@@ -97,6 +100,13 @@ export async function computeChatSessions(
     titles: readSessionTitles(contextRoot),
     ...(superRows ? { superRows } : {}),
   });
+  // An app's window lists its own conversations and nothing else (`?app=<slug>`).
+  if (q.app) {
+    const rec = getApp(opts.home ?? homedir(), real(projectRoot), q.app);
+    const ids = rec ? appChatIds(rec.hash, rec.projectRoot, opts.home ?? homedir()) : new Set<string>();
+    const sessions = result.sessions.filter((s) => ids.has(s.id));
+    return { ...result, sessions, total: sessions.length, agentRuns: 0, truncated: false };
+  }
   const merged = withCodexRows(result, contextRoot, projectRoot, { query, limit, superOnly: superRows?.mode === 'only', home: opts.home });
   return query.trim() && !indexed
     ? { ...merged, indexing: { done: build.progress.done, total: build.progress.total } }

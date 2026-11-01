@@ -2,6 +2,8 @@ import { logHandoff } from '../../lib/usage-records.js';
 import { directHeavy, shellQuote } from '../../lib/run-budget.js';
 import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
 import { hookTool, setHookTool } from '../../lib/hook-tool.js';
+import { classifyBash, gateHookOutput, parseGateContext, type BashGateContext } from '../../lib/apps/bash-gate.js';
+import { AGENT_CHAT_ENV } from '../../lib/automations/types.js';
 import { SESSION_START_PARTS } from '../../lib/snapshot-budget.js';
 import { Command } from 'commander';
 import {
@@ -115,6 +117,11 @@ const SKILL_SCORE_THRESHOLD = 1.0;
  * Read JSON object from stdin (piped by Claude Code hooks).
  * Returns null if stdin is a TTY, empty, or invalid JSON.
  */
+/** An app's chat: sleep directives stay out of it, without the ledger paths a spawned marker moves. */
+function inAppChat(): boolean {
+  return (process.env[AGENT_CHAT_ENV] ?? '').startsWith('app-');
+}
+
 function readStdin(): Record<string, unknown> | null {
   if (process.stdin.isTTY) return null;
   try {
@@ -2760,7 +2767,7 @@ export function registerHookCommand(program: Command): void {
       const selfSpawn = selfSpawnMarker(root, sid || null, state);
       const directive = getConsolidationDirective(
         state, resolveSleepThresholds(readSetupConfig(dirname(root))?.sleep), readAutoSleepNagState(root),
-        { spawned: selfSpawn !== null },
+        { spawned: selfSpawn !== null || inAppChat() },
       );
       if (directive) {
         console.log(directive);
@@ -2977,6 +2984,24 @@ export function registerHookCommand(program: Command): void {
       }));
     });
 
+  // --- hook app-bash-gate ---
+  // The Bash gate of an app's own assistant (lib/apps/bash-gate.ts). Unlike its neighbours it FAILS
+  // CLOSED: no input, a non-string command or an unreadable gate file exit 2, which blocks the
+  // tool, and every answer is exactly one JSON object.
+  hook
+    .command('app-bash-gate <gateFile>')
+    .description('Classify a Bash command of an app assistant (called by its per-chat PreToolUse hook)')
+    .action((gateFile: string) => {
+      const input = readStdin();
+      const toolInput = input?.tool_input as Record<string, unknown> | undefined;
+      const command = toolInput?.command;
+      if (typeof command !== 'string') process.exit(2);
+      let ctx: BashGateContext | null = null;
+      try { ctx = parseGateContext(readFileSync(gateFile, 'utf-8')); } catch { /* refused below */ }
+      if (!ctx) process.exit(2);
+      process.stdout.write(JSON.stringify(gateHookOutput(classifyBash(command, ctx))));
+    });
+
   // --- hook subagent-start ---
   hook
     .command('subagent-start')
@@ -3105,7 +3130,7 @@ export function registerHookCommand(program: Command): void {
       const selfSpawn = selfSpawnMarker(root, promptSessionId, state);
       const reminder = userPromptReminder(
         state, resolveSleepThresholds(readSetupConfig(dirname(root))?.sleep), readAutoSleepNagState(root),
-        { spawned: selfSpawn !== null },
+        { spawned: selfSpawn !== null || inAppChat() },
       );
       // A non-stale lock means a sleep is genuinely mid-cycle — short-circuit the
       // rest of the handler (initializer/recall gates) just like the reminder does.

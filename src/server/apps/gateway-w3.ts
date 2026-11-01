@@ -10,9 +10,11 @@
  *   /__dc/schedules   cookie + bearer   the schedule views the card shows
  *   /__dc/automations bearer only       create an agent automation; the gateway stamps `app`
  *   /__dc/team/say    bearer only       ask a project agent; the gateway stamps the app
+ *   /__dc/ask         bearer only       ask the app's assistant; polled at /__dc/ask/:id
  *   /__dc/embed/:view cookie only       302 to a dreamcontext screen, carrying the embed token
  */
 
+import { randomUUID } from 'node:crypto';
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +28,10 @@ import { scheduleViews } from '../../lib/apps/schedule.js';
 import { callMcpTool, McpBridgeError } from '../../lib/apps/mcp-bridge.js';
 import { createFromBody, sayFromApp } from '../routes/automations.js';
 import { appRunBrief } from '../../lib/apps/brief.js';
+import { askRoom, readOwnAsk, startOwnAsk } from '../../lib/apps/assistant-ask.js';
+import { resolveAppAgent } from '../../lib/apps/assistant.js';
+import { readManifest } from '../../lib/apps/manifest.js';
+import { readThread } from '../../lib/automations/threads.js';
 import { mintEmbedToken } from './embed-token.js';
 import { buildAppLink } from '../../lib/app-link.js';
 import { issueLinkNonce } from './link-nonces.js';
@@ -195,14 +201,69 @@ registerGatewayRoute('/__dc/team/say', { cookie: false, bearer: true }, async (g
   else send(res, out.status, { error: out.code, message: out.message });
 });
 
+// ─── ask ────────────────────────────────────────────────────────────────────────────
+
+/** A bound member's answers, by the ask's id: `<member>|<runId>`. A map, so the id names no path. */
+const memberAsks = new Map<string, { hash: string; member: string; runId: string }>();
+
+registerGatewayRoute('/__dc/ask', { cookie: false, bearer: true }, async (gw, req, res, _ident, url) => {
+  const rec = gw.runtime.rec;
+  const poll = /^\/__dc\/ask\/([0-9a-fA-F-]{36})$/.exec(url.pathname);
+  if ((req.method ?? 'GET').toUpperCase() === 'GET' && poll) {
+    const id = poll[1];
+    const member = memberAsks.get(id);
+    if (member) {
+      if (member.hash !== rec.hash) { send(res, 404, { error: 'not_found' }); return; }
+      const done = readThread(join(rec.projectRoot, '_dream_context'), member.member, { runId: member.runId }).filter((e) => e.kind !== 'user' && e.text).pop();
+      if (!done) { send(res, 200, { state: 'running' }); return; }
+      memberAsks.delete(id);
+      send(res, 200, { state: 'done', answer: gw.runtime.scrub(done.text ?? '') });
+      return;
+    }
+    const state = readOwnAsk(rec.hash, id);
+    if (!state) { send(res, 404, { error: 'not_found' }); return; }
+    send(res, 200, state.state === 'done' ? { ...state, answer: gw.runtime.scrub(state.answer) } : state);
+    return;
+  }
+  if ((req.method ?? 'GET').toUpperCase() !== 'POST' || url.pathname !== '/__dc/ask') { send(res, 405, { error: 'method' }); return; }
+  let body: Record<string, unknown>;
+  try { body = (await readJson(req, 32 * 1024)) as Record<string, unknown>; } catch { send(res, 400, { error: 'invalid_body' }); return; }
+  const text = typeof body?.text === 'string' ? body.text : '';
+  const m = readManifest(rec.root);
+  const choice = resolveAppAgent(m.ok ? m.manifest : null, null);
+  if (choice.kind === 'none') { send(res, 409, { error: 'no_assistant', message: 'This app has no assistant: run dreamcontext apps assign <slug> --own.' }); return; }
+  if (choice.kind === 'own') {
+    const out = startOwnAsk(rec, text, { home: homeDir });
+    if (out.ok) send(res, 200, { id: out.id });
+    else send(res, out.status, { error: out.code, message: out.message });
+    return;
+  }
+  const app = appRunBrief(rec.projectRoot, rec.slug, homeDir);
+  if (!app) { send(res, 409, { error: 'not_ready' }); return; }
+  const room = askRoom(rec.hash);
+  if (room) { send(res, room.status, { error: room.code, message: room.message }); return; }
+  const out = sayFromApp(join(rec.projectRoot, '_dream_context'), { slug: choice.member, text, app });
+  if (!out.ok) { send(res, out.status, { error: out.code, message: out.message }); return; }
+  const id = randomUUID();
+  memberAsks.set(id, { hash: rec.hash, member: choice.member, runId: String(out.body.runId) });
+  // The death of the key: a question nobody polls again.
+  const t = setTimeout(() => memberAsks.delete(id), 10 * 60_000);
+  t.unref?.();
+  send(res, 200, { id });
+});
+
 // ─── embed ──────────────────────────────────────────────────────────────────────────
 
 const EMBED_VIEWS = new Set(['chat', 'insight', 'tasks', 'roadmap', 'team']);
 const EMBED_REF_RE = /^[a-z0-9][a-z0-9-]{0,99}$/;
+const EMBED_THEMES = new Set(['light', 'dark', 'system']);
+const EMBED_COLOR_RE = /^#[0-9a-f]{6}$/;
 
 // A redirect and nothing else: a JSON form would hand the token to the page's scripts.
 registerGatewayRoute('/__dc/embed', { cookie: true, bearer: false }, (gw, req, res, _ident, url) => {
   if ((req.method ?? 'GET').toUpperCase() !== 'GET') { send(res, 405, { error: 'method' }); return; }
+  // Only a frame: a top-level `location=` would land the token in the page's history.
+  if (String(req.headers['sec-fetch-dest'] ?? '').toLowerCase() !== 'iframe') { send(res, 403, { error: 'frame_only', message: 'This address opens only inside the app\'s frame.' }); return; }
   const view = /^\/__dc\/embed\/([a-z]+)$/.exec(url.pathname)?.[1] ?? '';
   const dashboardPort = gatewayDashboardPort();
   if (!EMBED_VIEWS.has(view) || !dashboardPort) { send(res, 404, { error: 'not_found' }); return; }
@@ -212,7 +273,14 @@ registerGatewayRoute('/__dc/embed', { cookie: true, bearer: false }, (gw, req, r
   to.searchParams.set('embed', view);
   to.searchParams.set('vault', rec.vault);
   to.searchParams.set('tk', tk);
-  to.searchParams.set('theme', gatewayTheme());
+  // The app's theme when the page says it, dreamcontext's own otherwise. Allowlisted, never a prompt:
+  // no text of the page's reaches the frame's chat.
+  const theme = url.searchParams.get('theme');
+  to.searchParams.set('theme', theme !== null && EMBED_THEMES.has(theme) ? theme : gatewayTheme());
+  for (const key of ['bg', 'surface', 'text', 'accent']) {
+    const value = url.searchParams.get(key);
+    if (value !== null && EMBED_COLOR_RE.test(value)) to.searchParams.set(key, value);
+  }
   for (const key of ['member', 'insight']) {
     const value = url.searchParams.get(key);
     if (value !== null && EMBED_REF_RE.test(value)) to.searchParams.set(key, value);

@@ -16,6 +16,9 @@
  *   POST   /api/apps/:slug/snapshot   a PNG of the OPEN window (never opens one)
  *   POST   /api/apps/:slug/call       one request to the backend (call lease, sink, 256 KB)
  *   DELETE /api/apps/:slug            unregister; bundle, shots and data pins go, code stays
+ *   GET    /api/apps/:slug/chats      the app's conversations (embed proof), newest first
+ *   POST   /api/apps/:slug/chats/close  {id}: off the open row, kept in the history (embed proof)
+ *   POST   /api/apps/:slug/chats/title  {id, title} (embed proof)
  *
  * DC_TOKEN and the gateway secret never leave through any route, and are never written to disk.
  */
@@ -49,7 +52,11 @@ import { configureGatewayW3 } from '../apps/gateway-w3.js';
 import { spendLinkNonce } from '../apps/link-nonces.js';
 import { getRunTarget } from '../../lib/automations/store.js';
 import { checkApproval } from '../../lib/automations/registry.js';
-import { resolveEmbedToken } from '../apps/embed-token.js';
+import { resolveEmbedToken, type EmbedGrant } from '../apps/embed-token.js';
+import { resolveAppAgent } from '../../lib/apps/assistant.js';
+import { closeAppChat, listAppChats, lookupAppChat, stampAppRemoved, titleAppChat } from '../../lib/apps/chat-store.js';
+import { stopLiveChat } from './agent-chat-live.js';
+import { isSameOriginStrict } from './agent-spawn-shared.js';
 import { appRunBrief } from '../../lib/apps/brief.js';
 import { sayFromApp } from './automations.js';
 import { inspectDispatcher } from '../../lib/automations/launchd.js';
@@ -219,6 +226,12 @@ function memberState(rec: AppRecord, member: string): 'ready' | 'needs_approval'
   }
 }
 
+/** Who talks in this app, for the card and the frame. */
+function assistantOf(rec: AppRecord): 'own' | 'member' | 'none' {
+  const m = readManifest(rec.root);
+  return resolveAppAgent(m.ok ? m.manifest : null, null).kind;
+}
+
 function publicStatus(rec: AppRecord): Record<string, unknown> {
   const rt = existingRuntime(rec.hash);
   if (rt) liveWindowsOf(rec, rt);
@@ -238,7 +251,8 @@ function publicStatus(rec: AppRecord): Record<string, unknown> {
     unguarded: m.ok ? !!m.manifest.backend?.unguarded : false,
     portFallback: st?.portFallback ?? false,
     agent: m.ok ? m.manifest.agent?.member ?? null : null,
-    agentState: m.ok && m.manifest.agent ? memberState(rec, m.manifest.agent.member) : null,
+    agentState: m.ok && m.manifest.agent?.member ? memberState(rec, m.manifest.agent.member) : null,
+    assistant: assistantOf(rec),
     // Only what /icon can serve: a true on an .icns draws a broken image on the card.
     hasIcon: m.ok ? servableIcon(m.manifest.icon) !== null : false,
     iconIssue: m.ok ? iconIssue(m.manifest.icon, notifierIconPath()) : null,
@@ -415,6 +429,55 @@ export async function handleAppSay(req: IncomingMessage, res: ServerResponse, pa
   else sendError(res, out.status, out.code, out.message);
 }
 
+/**
+ * The proof an embedded frame shows: this app's token, its project, a loopback Host, and that the
+ * page itself asked: a same-origin Origin for a write, `Sec-Fetch-Site: same-origin` for a GET (a
+ * same-origin GET sends no Origin). Never `fromOwnerPage`: a runner window has no owner key.
+ */
+function embedGate(req: IncomingMessage, res: ServerResponse, slug: string, contextRoot: string, write: boolean): EmbedGrant | null {
+  const grant = resolveEmbedToken(req.headers['x-dc-embed']);
+  const ok = isLoopbackHostRequest(req) && !!grant && grant.slug === slug && grant.projectRoot === real(projectRootOf(contextRoot))
+    && (write ? typeof req.headers.origin === 'string' && isSameOriginStrict(req) : String(req.headers['sec-fetch-site'] ?? '') === 'same-origin');
+  if (!ok) { sendError(res, 403, 'forbidden', 'Only this app\'s embedded chat can do that.'); return null; }
+  return grant;
+}
+
+/** GET /api/apps/:slug/chats: the open row and the rest of the app's conversations. */
+export async function handleAppChats(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+  const grant = embedGate(req, res, params.slug, contextRoot, false);
+  if (!grant) return;
+  const rec = getApp(home, grant.projectRoot, grant.slug);
+  if (!rec) { sendError(res, 404, 'app_not_found', 'This app is not registered any more.'); return; }
+  const m = readManifest(rec.root);
+  sendJson(res, 200, {
+    assistant: assistantOf(rec),
+    name: m.ok ? m.manifest.name : rec.name,
+    chats: listAppChats(rec.hash, rec.projectRoot, home).map((c) => ({ id: c.id, title: c.title, createdAt: c.createdAt, closedAt: c.closedAt, member: c.member })),
+  });
+}
+
+async function chatPatch(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string, change: (id: string, body: Record<string, unknown>) => void): Promise<void> {
+  const grant = embedGate(req, res, params.slug, contextRoot, true);
+  if (!grant) return;
+  const body = (await parseJsonBody(req)) ?? {};
+  const id = typeof body.id === 'string' ? body.id : '';
+  const hit = lookupAppChat(id, home);
+  const rec = getApp(home, grant.projectRoot, grant.slug);
+  if (hit.kind !== 'record' || !rec || hit.record.hash !== rec.hash) { sendError(res, 404, 'not_found', 'No such conversation in this app.'); return; }
+  change(id, body);
+  sendJson(res, 200, { ok: true });
+}
+
+/** POST /api/apps/:slug/chats/close {id}: off the open row. The child goes when its socket does. */
+export async function handleAppChatClose(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+  await chatPatch(req, res, params, contextRoot, (id) => { closeAppChat(id, home); });
+}
+
+/** POST /api/apps/:slug/chats/title {id, title}. */
+export async function handleAppChatTitle(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
+  await chatPatch(req, res, params, contextRoot, (id, body) => { titleAppChat(id, typeof body.title === 'string' ? body.title : '', home); });
+}
+
 export async function handleAppLaunch(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   if (!requireLocalDesktop(req, res)) return;
   holdOpen(req);
@@ -555,6 +618,8 @@ export async function handleAppDelete(req: IncomingMessage, res: ServerResponse,
   if (!requireLocalDesktop(req, res)) return;
   const rec = findApp(contextRoot, params.slug, res);
   if (!rec) return;
+  // Its conversations read from now on and spawn nothing; the ones running end here.
+  for (const id of stampAppRemoved(rec.hash, home)) void stopLiveChat(id).catch(() => { /* already gone */ });
   forgetRuntime(rec.hash);
   await closeMcpClients(rec.hash);
   await closeGateway(rec.hash);

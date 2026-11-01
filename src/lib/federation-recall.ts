@@ -103,7 +103,8 @@ export function crossVaultRecall(
   for (const target of opts.vaults) {
     let contextRoot: string;
     try {
-      contextRoot = resolveVaultContextRoot(target.name, home);
+      // The current vault is never a `--vault` argument: the Assistant searches its own memory so.
+      contextRoot = resolveVaultContextRoot(target.name, home, { ownAssistant: target.current === true });
     } catch (err) {
       if (err instanceof VaultError) {
         // Never-throw registry contract: a dead peer goes stale, warns once, and

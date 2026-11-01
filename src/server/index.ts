@@ -308,7 +308,7 @@ import {
 import { listVaults } from '../lib/vaults.js';
 import { receiveOwnerKey } from './owner-key.js';
 import {
-  handleAppsList, handleAppsLaunchWindow, handleAppsRunning, handleAppsEmbedCheck, handleAppSay, handleAppLaunch, handleAppStop, handleAppStatus,
+  handleAppsList, handleAppsLaunchWindow, handleAppsRunning, handleAppsEmbedCheck, handleAppSay, handleAppChats, handleAppChatClose, handleAppChatTitle, handleAppLaunch, handleAppStop, handleAppStatus,
   handleAppLogs, handleAppSnapshot, handleAppCall, handleAppDelete, handleAppIcon, startAppsSweeper,
   handleAppMcpRequest, handleAppScheduleToggle,
 } from './routes/apps.js';
@@ -522,6 +522,9 @@ export function buildRouter(): Router {
   router.post('/api/apps/embed-check', handleAppsEmbedCheck);
   router.post('/api/apps/:slug/launch', handleAppLaunch);
   router.post('/api/apps/:slug/say', handleAppSay);
+  router.get('/api/apps/:slug/chats', handleAppChats);
+  router.post('/api/apps/:slug/chats/close', handleAppChatClose);
+  router.post('/api/apps/:slug/chats/title', handleAppChatTitle);
   router.post('/api/apps/:slug/stop', handleAppStop);
   router.get('/api/apps/:slug/status', handleAppStatus);
   router.get('/api/apps/:slug/logs', handleAppLogs);
