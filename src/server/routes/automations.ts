@@ -38,7 +38,7 @@ import { faceOf, parseFace, type AgentFace } from '../../lib/agents/figure.js';
 import type { AgentIdentityPatch } from '../../lib/agents/types.js';
 import { agentModelChoices, parseModelOverride } from '../../lib/agents/model-choices.js';
 import { runLeavesNoSession, wouldStickToSession } from '../../lib/automations/light-run.js';
-import { readRunSidecar } from '../../lib/automations/store.js';
+import { listRunSidecars } from '../../lib/automations/store.js';
 import type { AppRunBrief } from '../../lib/apps/brief.js';
 import { resolveRunSession, readSessionDigest } from '../../lib/automations/session.js';
 import { foreignRunEvidence } from '../../lib/automations/session-registry.js';
@@ -75,7 +75,7 @@ import { buildFeed, readRunAnswer, threadReplies, threadRootId } from '../../lib
 import {
   announceTurn, appendThreadEntry, listThreadRuns, markThreadRead, newThreadEntryId, readThread, threadUnread,
 } from '../../lib/automations/threads.js';
-import { latestBoundSession, readAutomationSession } from '../../lib/automations/session-registry.js';
+import { latestBoundSession, readAutomationSession, sessionForRun } from '../../lib/automations/session-registry.js';
 import { findTranscriptBySessionId } from '../../lib/transcript-locate.js';
 import { readTelegramConfigForSlug, writeTelegramConfigForSlug } from '../../lib/automations/telegram.js';
 import { resolveWhiteboardPath } from '../../lib/whiteboards/store.js';
@@ -86,6 +86,8 @@ import {
   startAutomationReplyJob, currentReplyJob, reconcileReplyThreads,
   agentActivity,
   agentActivities,
+  freshFireAt,
+  runIsActive,
 } from '../automation-job.js';
 
 /** The feed's hard ceiling. A channel is read from the bottom: a window past
@@ -2151,10 +2153,10 @@ export async function handleAutomationsThreadRead(
   }
 }
 
-/** A run in flight that leaves no session (`runLeavesNoSession`): nothing can queue behind it. */
-function onOneOffJob(contextRoot: string, manifest: AutomationManifest, busy: ReturnType<typeof currentAutomationJob>): boolean {
-  return (busy?.status === 'running' && runLeavesNoSession(manifest, busy.override))
-    || readRunSidecar(contextRoot, manifest.slug)?.noSession === true;
+/** This run is in flight and leaves no session (`runLeavesNoSession`): nothing can follow it. */
+function onOneOffJob(contextRoot: string, manifest: AutomationManifest, runId: string): boolean {
+  return runningAutomationJobs(contextRoot).some((j) => j.slug === manifest.slug && j.runId === runId && runLeavesNoSession(manifest, j.override))
+    || listRunSidecars(contextRoot, manifest.slug).some((s) => s.fireAt === runId && s.noSession === true);
 }
 
 /** Who is calling an agent by name: a person typing right now, or the Super Agent handing a
@@ -2190,12 +2192,9 @@ export function sayFromApp(
       return sayRefusal(409, 'say_unapproved', `${manifest.title} is not approved to run on this machine yet. Approve it on the AI Team page, then ask again.`);
     }
     // ── synchronous from here to the job start, as in `sayToAgent` ──
-    // An app never writes into a run in flight and never queues behind it: it asks again.
-    if (currentAutomationJob(contextRoot, slug)?.status === 'running' || agentActivity(contextRoot, slug)) {
-      return sayRefusal(409, 'say_busy', `${manifest.title} is working on something else. Try again when it finishes.`);
-    }
-    // Always a fresh run: a bound session is the owner's conversation, not the app's.
-    const fireAt = new Date();
+    // Always a fresh run in its own session, beside whatever the agent is doing: a bound session
+    // is the owner's conversation, not the app's. Its `runId` is this request's alone.
+    const fireAt = freshFireAt(contextRoot, slug);
     const runId = fireAt.toISOString();
     const ask = appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text: displayText(contextRoot, text), via: 'app', app: input.app.slug, now: fireAt });
     const { job, started } = startAutomationJob(contextRoot, slug, { text, fireAt, target: 'agent', app: input.app });
@@ -2228,11 +2227,11 @@ const sayRefusal = (status: 400 | 403 | 404 | 409, code: string, message: string
 /**
  * Call ONE agent by name: the body of `POST /threads/say`, shared with the Assistant's
  * `agent` verb so both keep the same refusals in the same order (disabled, then
- * unapproved, then busy). `via` is the thread entry's provenance; `board` is the
+ * unapproved). A member at work is no refusal: this is a new question in its own session. `via` is the thread entry's provenance; `board` is the
  * whiteboard the message came from, checked to exist and passed on to the run.
  *
- * SYNCHRONOUS ON PURPOSE: the busy check, the thread write and the job start must not
- * be split by an `await` (see `handleAutomationsSay`). An `AutomationError` becomes a
+ * SYNCHRONOUS ON PURPOSE: the thread write and the job start must not be split by an
+ * `await` (see `handleAutomationsSay`). An `AutomationError` becomes a
  * `400 say_refused`; anything else throws to the caller.
  */
 export function sayToAgent(
@@ -2283,41 +2282,10 @@ export function sayToAgent(
     const boardOpt = board ? { board } : {};
     const overrideOpt = input.override ? { override: input.override } : {};
     // ── synchronous from here to the job start ──
-    // Per AGENT: only a second run of THIS agent is refused — it would write into the same
-    // thread and resume the same session. Another agent's run is no reason to wait.
-    //
-    // A message to an agent that is WORKING is not refused any more: it is written into the
-    // thread of the run in flight and queued behind it, exactly as a reply typed in that
-    // thread is. The owner talks to a busy agent the way they would to a busy colleague, and
-    // the words land where the work is. Only when nothing names that run (the moment before
-    // a first run's child spawns) is it still refused.
-    const busy = currentAutomationJob(contextRoot, slug);
-    const working = agentActivity(contextRoot, slug);
-    if (busy?.status === 'running' || working) {
-      // A run that leaves no session has nothing to queue behind: a reply would wait for it and
-      // then find no conversation. Said now, the same way as any member too busy to take it.
-      // So is a job that may not enter the session it would queue into.
-      if (onOneOffJob(contextRoot, manifest, busy) || wouldStickToSession(manifest, input.override)) {
-        return sayRefusal(409, 'say_busy', `${manifest.title} is on a one-off job or cannot take this one in its session. Try again when it finishes.`);
-      }
-      const liveRun = working?.runId
-        ?? (busy?.status === 'running' ? busy.runId : null)
-        ?? listThreadRuns(contextRoot, slug, 1)[0]?.runId
-        ?? null;
-      if (!liveRun || pendingQuestion(contextRoot, slug)?.kind === 'approval') {
-        return sayRefusal(409, 'say_busy', `${manifest.title} is still running. Try again when it finishes.`);
-      }
-      const entry = appendThreadEntry(contextRoot, slug, { runId: liveRun, kind: 'user', text: shown, via });
-      const replyJob = startAutomationReplyJob(contextRoot, slug, { runId: liveRun, text, entryId: entry.id, ...boardOpt, ...overrideOpt });
-      return {
-        ok: true, status: 200,
-        body: {
-          job: { id: replyJob.id, status: replyJob.status, kind: 'reply' },
-          started: true, runId: liveRun, entryId: entry.id, slug, mode: manifest.mode, queued: true,
-        },
-      };
-    }
-    const fireAt = new Date();
+    // Every new message is its own job: its own run id, its own session, started now, however
+    // much this member is already doing. A follow-up in an existing conversation is a reply
+    // (`POST /:slug/thread/reply`), and only that queues, behind its own conversation.
+    const fireAt = freshFireAt(contextRoot, slug);
     const runId = fireAt.toISOString();
 
     // A SCHEDULED agent that has already run on this machine is TALKED TO, not re-run:
@@ -2325,6 +2293,9 @@ export function sayToAgent(
     // promise of the channel. A `call` agent — and a `sched` one with nothing bound here
     // yet — falls through to the run path below, because there is no conversation to
     // continue.
+    //
+    // Only while nothing else runs: that session is taken, or about to be replaced, otherwise,
+    // and a new question must not wait for it.
     //
     // The ask is still written FIRST and is still `ordered[0]`, so the feed's own
     // ask/answer grouping is untouched; only what the ask STARTS changes. The reply gets
@@ -2335,12 +2306,12 @@ export function sayToAgent(
     // guard, and its refusal reaches the channel within seconds as a `system:failed`
     // entry carrying its own sentence. A second copy of the check here would drift from
     // the one that actually decides.
-    if (manifest.mode === 'sched' && latestBoundSession(slug) && !wouldStickToSession(manifest, input.override)) {
+    if (manifest.mode === 'sched' && latestBoundSession(slug) && !wouldStickToSession(manifest, input.override) && !agentActivity(contextRoot, slug)) {
       const entry = appendThreadEntry(contextRoot, slug, {
         runId, kind: 'user', text: shown, via, now: fireAt,
       });
       const replyJob = startAutomationReplyJob(contextRoot, slug, {
-        runId, text, entryId: entry.id, ...boardOpt, ...overrideOpt,
+        runId, text, entryId: entry.id, talk: true, ...boardOpt, ...overrideOpt,
       });
       return {
         ok: true, status: 200,
@@ -2350,11 +2321,9 @@ export function sayToAgent(
 
     const ask = appendThreadEntry(contextRoot, slug, { runId, kind: 'user', text: shown, via, now: fireAt });
     const { job, started } = startAutomationJob(contextRoot, slug, { text, fireAt, ...boardOpt, ...overrideOpt });
-    // Unreachable given the busy check above (nothing can interleave between
-    // them), and handled anyway: the ask is already on disk at this point, so
-    // a job that was NOT started would leave it in the channel with nothing
-    // coming. Belt and braces, because the cost of being wrong is a message
-    // that reads "running" for ever.
+    // Unreachable (an ask always starts), and handled anyway: the ask is already on
+    // disk at this point, so a job that was NOT started would leave it in the channel
+    // with nothing coming, and that message would read "running" for ever.
     if (!started) {
       appendThreadEntry(contextRoot, slug, {
         runId, kind: 'system', event: 'skipped', via,
@@ -2391,10 +2360,9 @@ export function sayToAgent(
  * reaches this message's spawn only, and is never written to the manifest, so the approved
  * envelope of every scheduled fire stays exactly what was approved.
  *
- * ORDER MATTERS AND THERE IS NO `await` INSIDE IT. The busy check, the thread
- * write and the job start run as one synchronous block (`sayToAgent`), so nothing
- * can slip a second job in between and leave a question in the channel that
- * nothing is answering. The ask is written FIRST so it is the run's opening
+ * ORDER MATTERS AND THERE IS NO `await` INSIDE IT. The thread write and the job
+ * start run as one synchronous block (`sayToAgent`), so a question can never sit in
+ * the channel with nothing answering it. The ask is written FIRST so it is the run's opening
  * entry — the feed keys the exchange on that, and it is also what makes the
  * message appear the instant the composer's request returns instead of on the
  * next poll.
@@ -2500,15 +2468,13 @@ export async function handleAutomationsThreadReply(
       sendError(res, 400, 'bad_run', 'That run id is not a timestamp this channel wrote.');
       return;
     }
-    // NEWEST RUN ONLY, and this is a correctness rule rather than a convenience one:
-    // `latestBoundSession` below resolves the LATEST session for the slug regardless of
-    // which run the caller names. Accepting an older run would file the human's words
-    // under that run's thread while they actually reached a different conversation — a
-    // thread that lies about which exchange it is. The UI only ever offers Reply on the
-    // newest run, so in practice this fires when a scheduled fire or someone's @mention
-    // opened a newer run while the panel was sitting open.
+    // THIS RUN'S OWN CONVERSATION, and this is a correctness rule rather than a convenience
+    // one: an agent has several conversations at once, so the reply reaches the session of
+    // the run it was typed under (`sessionForRun`), and the words can never be filed under one
+    // thread while reaching another. An older run that names no session, and is not in flight,
+    // has nothing to continue.
     const newest = listThreadRuns(contextRoot, slug, 1)[0]?.runId ?? null;
-    if (newest !== runId) {
+    if (newest !== runId && !sessionForRun(contextRoot, slug, runId) && !runIsActive(agentActivity(contextRoot, slug), runId)) {
       sendError(res, 409, 'stale_run', 'This conversation moved on. Reply on the newest run.');
       return;
     }
@@ -2517,7 +2483,7 @@ export async function handleAutomationsThreadReply(
     // produced a session, so nothing here could carry the reply — and a reply that will
     // never execute must not be left in the channel looking delivered.
     // A run in flight is the exception: it is about to bind the session this reply queues for.
-    if (onOneOffJob(contextRoot, manifest, currentAutomationJob(contextRoot, slug))) {
+    if (onOneOffJob(contextRoot, manifest, runId)) {
       sendError(res, 409, 'say_busy', `${manifest.title} is on a one-off job. Try again when it finishes.`);
       return;
     }
@@ -2538,7 +2504,7 @@ export async function handleAutomationsThreadReply(
       );
       return;
     }
-    // No up-front "still running" refusal either: the job WAITS for the run lock and
+    // No up-front "still running" refusal either: the job WAITS for this conversation and
     // delivers the reply the moment the turn ahead of it ends. Refusing here only moved
     // the failure from the channel to a toast; the message never needed to fail.
 

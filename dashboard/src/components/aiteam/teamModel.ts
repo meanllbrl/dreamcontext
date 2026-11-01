@@ -42,6 +42,8 @@ export interface TeamRow {
   status: TeamStatus;
   /** When `status === 'working'`: the turn's start, epoch ms. */
   workingSince: number | null;
+  /** How many turns of this member are in flight. */
+  workingCount: number;
   /** The last thing said in the conversation, one line; null before anything was. */
   preview: string | null;
   /** The newest message's time, ISO; null before anything was said. */
@@ -151,7 +153,10 @@ export function buildRoster(
     const jobs = new Set(mine.filter((m) => m.superJob).map((m) => m.runId));
     const liveRuns: Array<string | null> = [];
     for (const s of slugs) {
-      if (working[s]) liveRuns.push(working[s].runId ?? null, ...(working[s].queued ?? []).map((q) => q.runId));
+      if (working[s]) {
+        const runs = working[s].runs?.map((r) => r.runId) ?? [working[s].runId ?? null];
+        liveRuns.push(...runs, ...(working[s].queued ?? []).map((q) => q.runId));
+      }
       else if (slots[s]) liveRuns.push(slots[s].runId);
     }
     const theirs = status === 'working' || status === 'needs';
@@ -171,6 +176,7 @@ export function buildRoster(
       routines,
       status,
       workingSince: since,
+      workingCount: since === null ? 0 : Math.max(1, [...slugs].reduce((n, s) => n + (working[s]?.count ?? (working[s] || slots[s] ? 1 : 0)), 0)),
       preview: last ? previewOf(last) : null,
       // A stage talk leaves no thread entry; the server's fact keeps a member of all projects listed.
       lastAt: [last?.at, agent.lastTalkAt].filter((x): x is string => !!x).sort().pop() ?? null,
@@ -577,4 +583,11 @@ export function overrideFor(
   if (pick.model && pick.model !== (agentDefault.model ?? '')) out.model = pick.model;
   if (pick.effort && pick.effort !== (agentDefault.effort ?? '')) out.effort = pick.effort;
   return out;
+}
+
+/** A working row's line: the clock, with how many jobs when there is more than one. */
+export function workingLine(row: Pick<TeamRow, 'workingCount'>, time: string, t: (key: string) => string): string {
+  return row.workingCount > 1
+    ? t('aiteam.workingMany').replace('{n}', String(row.workingCount)).replace('{time}', time)
+    : t('aiteam.working').replace('{time}', time);
 }

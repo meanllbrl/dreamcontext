@@ -631,7 +631,8 @@ export function AgentsFeed({
                   panelId={THREAD_PANEL_ID}
                   // The run's own start, from the slot it holds, for the live elapsed time.
                   runStartedAt={m.status === 'running'
-                    ? (runSlots[m.slug]?.startedAt
+                    ? (working[m.slug]?.runs?.find((r) => r.runId === m.runId)?.since
+                      ?? (runSlots[m.slug]?.runId === m.runId ? runSlots[m.slug]?.startedAt : undefined)
                       ?? (working[m.slug]?.runId === m.runId ? working[m.slug]?.since : undefined)
                       ?? null)
                     : null}

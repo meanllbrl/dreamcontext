@@ -680,7 +680,7 @@ describe('skill/references/automations.md — the channel: posting, attachments,
     // that cannot name them will invent a generic "failed" when asked what happened.
     for (const code of [
       'reply_disabled', 'reply_unapproved', 'bad_text',
-      'bad_run', 'stale_run', 'not_bound', 'question_pending', 'busy',
+      'bad_run', 'stale_run', 'not_bound', 'question_pending', 'say_busy',
     ]) {
       expect(content, `automations.md never names refusal "${code}"`).toContain(`\`${code}\``);
     }

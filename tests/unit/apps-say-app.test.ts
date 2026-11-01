@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 
 /**
  * An app asking an agent (dreamcontext-apps plan r19, W4): `sayFromApp` through the real store,
- * thread and approval code, with only the job start replaced. Busy, bound session, fresh run,
+ * thread and approval code, with only the job start replaced. A busy agent, bound session, fresh run,
  * the scheduled job left alone, and the words never reading as the owner's anywhere.
  */
 
@@ -74,12 +74,14 @@ describe('sayFromApp', () => {
     expect(entry).toMatchObject({ kind: 'user', via: 'app', app: 'meta-ads' });
   });
 
-  it('a busy agent answers say_busy: nothing written, nothing queued', () => {
+  it('a busy agent still starts now: each ask is its own run, with its own run id', () => {
     member('ua');
     job.running = true;
-    expect(ask('ua')).toMatchObject({ ok: false, status: 409, code: 'say_busy' });
-    expect(job.started).toHaveLength(0);
-    expect(readThread(root, 'ua', {})).toEqual([]);
+    const one = ask('ua', 'first') as { ok: true; body: { runId: string } };
+    const two = ask('ua', 'second') as { ok: true; body: { runId: string } };
+    expect(one.ok && two.ok).toBe(true);
+    expect(job.started.map((j) => j.ask.text)).toEqual(['first', 'second']);
+    expect(readThread(root, 'ua', {})).toHaveLength(2);
   });
 
   it('refuses in order: missing, turned off, unapproved', () => {

@@ -37,6 +37,7 @@
 .aiteam-row-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: var(--font-size-sm); line-height: 1.4; color: var(--color-text-secondary); }
 .aiteam-row-preview--live { color: var(--color-accent-ink); }
 .aiteam-row-tags { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-1); }
+.aiteam-row-count { font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; color: var(--color-text-secondary); }
 .aiteam-row-end { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); padding-top: 22px; }
 .aiteam-tag { display: inline-flex; align-items: center; gap: var(--space-1); height: 20px; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--color-bg-tertiary); color: var(--color-text-secondary); font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold); white-space: nowrap; }
 .aiteam-row--on .aiteam-tag { background: var(--color-bg); }

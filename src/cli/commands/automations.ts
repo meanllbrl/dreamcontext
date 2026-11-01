@@ -38,6 +38,7 @@ import {
   listAutomations,
   getAutomation,
   readAutomationCache,
+  listRunSidecars,
   readRunSidecar,
   createAutomation,
   getRunTarget,
@@ -2240,11 +2241,13 @@ export function registerAutomationsCommand(program: Command): void {
         return;
       }
 
-      const sidecar = readRunSidecar(root, slug);
-      if (!sidecar) {
+      const inFlight = listRunSidecars(root, slug);
+      if (!inFlight.length) {
         success(`"${slug}": no in-flight or orphaned run recorded — nothing to kill.`);
         return;
       }
+      // A member can run several turns at once: each is shown, confirmed and killed by itself.
+      for (const sidecar of inFlight) {
 
       const groupAlive = isAlive(sidecar.childPgid);
       const runnerAlive = isAlive(sidecar.runnerPid);
@@ -2269,24 +2272,25 @@ export function registerAutomationsCommand(program: Command): void {
         const confirmed = await confirm({ message: `SIGKILL process group ${sidecar.childPgid}?`, default: false });
         if (!confirmed) {
           warn('Not killed.');
-          return;
+          continue;
         }
       }
 
-      const result: KillRunResult = killRunGroup(root, slug, { force: opts.force });
+      const result: KillRunResult = killRunGroup(root, slug, { force: opts.force, sidecar });
       if (!result.found) {
         success(`"${slug}": the run finished or the record cleared on its own — nothing to kill.`);
-        return;
+        continue;
       }
       if (result.refusedReason) {
         error(result.refusedReason);
         process.exitCode = 1;
-        return;
+        continue;
       }
       if (result.killed) {
         success(`"${slug}": process group ${result.childPgid} killed and cleared.`);
       } else {
         warn(`"${slug}": not killed.`);
+      }
       }
     });
 

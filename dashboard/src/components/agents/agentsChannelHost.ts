@@ -132,8 +132,8 @@ export function useAgentsChannelHost(
   const [, rerender] = useReducer((n: number) => n + 1, 0);
   const focusTarget = useRef<HTMLElement | null>(null);
   const [note, setNote] = useState<ChannelNote | null>(null);
-  // A HINT, not a refusal: a message to a working agent is written into the thread of the
-  // run in flight and read when that turn ends. The note says where it goes.
+  // A HINT, not a refusal: a message to a working agent is a new job in its own session and
+  // starts now. The note says so.
   const busyNote = (target: ComposerAgent): ChannelNote => ({
     kind: 'hint',
     text: tRef.current('agents.busy').replace('{name}', target.title),

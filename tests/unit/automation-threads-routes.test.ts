@@ -551,7 +551,7 @@ describe('POST /api/automations/threads/say — one route, two things an @mentio
     spy.mockRestore();
   });
 
-  it('per agent — an @mention of a DIFFERENT agent runs while one is in flight; the running one QUEUES into its running thread', async () => {
+  it('per agent — an @mention of a DIFFERENT agent runs while one is in flight; the running one takes the new job beside it', async () => {
     const manifest = getAutomation(contextRoot, 'digest')!;
     approveAutomation(projectRoot, manifest, new Date(), home);
     createAutomation(contextRoot, { slug: 'crawler', title: 'Slow crawler', days: 'daily', at: '09:00', prompt: 'go' });
@@ -568,17 +568,16 @@ describe('POST /api/automations/threads/say — one route, two things an @mentio
     const payload = other.body() as unknown as { started: boolean; runId: string };
     expect(payload.started).toBe(true);
     expect(readThread(contextRoot, 'digest', { runId: payload.runId })[0].text).toBe('and you?');
-    // The SAME agent again: not refused. The words go into the thread of the run in flight
-    // and a reply job waits behind it, so they land where the work is.
+    // The SAME agent again: a new job, started now, in its own run and thread.
     const firstRun = (first.body() as unknown as { runId: string }).runId;
     const again = await say({ slug: 'crawler', text: 'again?' });
     expect(again.status()).toBe(200);
-    const queued = again.body() as unknown as { runId: string; queued: boolean; job: { kind: string } };
-    expect(queued.queued).toBe(true);
-    expect(queued.job.kind).toBe('reply');
-    expect(queued.runId).toBe(firstRun);
-    const inThread = readThread(contextRoot, 'crawler', { runId: firstRun });
-    expect(inThread.filter((e) => e.kind === 'user').map((e) => e.text)).toEqual(['crawl please', 'again?']);
+    const second = again.body() as unknown as { runId: string; started: boolean; queued?: boolean; job: { kind: string } };
+    expect(second).toMatchObject({ started: true, job: { kind: 'run' } });
+    expect(second.queued).toBeUndefined();
+    expect(second.runId).not.toBe(firstRun);
+    expect(readThread(contextRoot, 'crawler', { runId: firstRun }).filter((e) => e.kind === 'user').map((e) => e.text)).toEqual(['crawl please']);
+    expect(readThread(contextRoot, 'crawler', { runId: second.runId }).filter((e) => e.kind === 'user').map((e) => e.text)).toEqual(['again?']);
     spy.mockRestore();
   });
 

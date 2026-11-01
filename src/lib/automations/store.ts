@@ -1,6 +1,7 @@
 import { isCodexAccountId } from '../t3-bridge/accounts.js';
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { withFileLockSync } from '../file-lock.js';
 import matter from 'gray-matter';
 import { defaultGitTrackedCheck, type GitTrackedCheck } from '../git-tracked.js';
 import { basename, dirname, join, normalize, resolve, sep } from 'node:path';
@@ -111,14 +112,28 @@ export function automationPath(contextRoot: string, slug: string): string {
 export function automationCachePath(contextRoot: string, slug: string): string {
   return memberSidePath(contextRoot, slug, join('cache', `${slug}.json`));
 }
-/** Per-slug run lock (owned/acquired by `file-lock.ts`, not this module). Per project for a
- *  global agent too: a run in one project never waits for one in another. */
+/** Per-slug EXCLUSIVE run lock (owned/acquired by `file-lock.ts`, not this module): what keeps a
+ *  scheduled fire or a task step from overlapping itself. A person's ask does not take it: each ask
+ *  and each conversation holds its own slot (`slotLockPath`). Per project for a global agent too:
+ *  a run in one project never waits for one in another. */
 export function lockPathFor(contextRoot: string, slug: string): string {
   return memberSidePath(contextRoot, slug, join('cache', `.${slug}.lock`));
 }
-/** Machine-local in-flight-child record — never brain-synced. */
-export function sidecarPathFor(contextRoot: string, slug: string): string {
-  return memberSidePath(contextRoot, slug, join('cache', `.${slug}.run.json`));
+/** Machine-local in-flight-child record — never brain-synced. With a `slot`: that turn's own. */
+export function sidecarPathFor(contextRoot: string, slug: string, slot?: string): string {
+  return memberSidePath(contextRoot, slug, join('cache', slot ? `.${slug}.slot-${slot}.run.json` : `.${slug}.run.json`));
+}
+/** The slot of one parallel turn: a fresh run (`run:<fireAt>`) or a conversation (`session:<id>`). */
+export function runSlotKey(conversation: string): string {
+  return createHash('sha1').update(conversation).digest('hex').slice(0, 16);
+}
+/** One parallel turn's lock. Named under `cache/`, so the `*.lock` ignore rule covers it. */
+export function slotLockPath(contextRoot: string, slug: string, slot: string): string {
+  return memberSidePath(contextRoot, slug, join('cache', `.${slug}.slot-${slot}.lock`));
+}
+/** The short mutex around one read-modify-write of this member's shared files. */
+export function memberMutexPath(contextRoot: string, slug: string, name: 'record' | 'lesson'): string {
+  return memberSidePath(contextRoot, slug, join('cache', `.${slug}.${name}.lock`));
 }
 
 /** `isSafeAutomationSlug` lives in `../agents/slot.ts` (the approval registry
@@ -880,8 +895,7 @@ export interface RecordLessonInput {
 /**
  * Append a lesson (and/or rewrite the playbook) in the automation's own
  * manifest, LIFO, every cap enforced. Read-modify-write of one slug's own
- * file: no cross-slug shared state, so no lock is needed here (contrast the
- * shared-JSON write paths that do take one).
+ * file, under that member's lesson mutex: its parallel turns share the file.
  *
  * Never touches frontmatter, so it can never change an approval-hashed field —
  * a run recording what it learned must never be able to block itself.
@@ -898,17 +912,22 @@ export function recordLesson(contextRoot: string, slug: string, input: RecordLes
     if (!target) throw new AutomationError(`No such automation: ${slug}`);
     return target;
   }
-  const parts = readManifestParts(path);
-  if (parts.kind === 'bound') {
+  const bound = readManifestParts(path);
+  if (bound.kind === 'bound') {
     // The pattern is identity: every automation of one agent teaches the same agent.
-    recordAgentLesson(contextRoot, parts.job.agent, input);
+    recordAgentLesson(contextRoot, bound.job.agent, input);
     return readAutomationFile(path);
   }
-  assertOwned({ owner: parts.legacy.owner }, parts.legacy.title || slug);
-  writeLessonToFile(path, effectivePattern(contextRoot, slug, parts.legacy.pattern), input);
-  const after = readAutomationFile(path);
-  adoptIfSyncing(contextRoot, slug, after.pattern);
-  return after;
+  // Two parallel turns can each learn something: the file is read inside the lock.
+  return withFileLockSync(memberMutexPath(contextRoot, slug, 'lesson'), () => {
+    const parts = readManifestParts(path);
+    if (parts.kind !== 'legacy') throw new AutomationError(`No such automation: ${slug}`);
+    assertOwned({ owner: parts.legacy.owner }, parts.legacy.title || slug);
+    writeLessonToFile(path, effectivePattern(contextRoot, slug, parts.legacy.pattern), input);
+    const after = readAutomationFile(path);
+    adoptIfSyncing(contextRoot, slug, after.pattern);
+    return after;
+  });
 }
 
 /**
@@ -1176,6 +1195,16 @@ export function recordRun(
   e: RunEvent,
   opts?: { advanceWatermark?: boolean; coalesceRepeat?: boolean },
 ): AutomationCache {
+  // Parallel turns of one member finish side by side, and a run's own record must not fail.
+  return withFileLockSync(memberMutexPath(contextRoot, slug, 'record'), () => recordRunUnlocked(contextRoot, slug, e, opts), { failOpen: true });
+}
+
+function recordRunUnlocked(
+  contextRoot: string,
+  slug: string,
+  e: RunEvent,
+  opts?: { advanceWatermark?: boolean; coalesceRepeat?: boolean },
+): AutomationCache {
   const existing = readAutomationCache(contextRoot, slug);
   const advance = opts?.advanceWatermark !== false;
   const prior = existing?.history ?? [];
@@ -1205,7 +1234,7 @@ export function recordRun(
 // ─── Run sidecar (machine-local, content-validated on read) ────────────────
 
 export function writeRunSidecar(contextRoot: string, slug: string, s: RunSidecar): void {
-  const path = sidecarPathFor(contextRoot, slug);
+  const path = sidecarPathFor(contextRoot, slug, s.slot);
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, JSON.stringify(s, null, 2) + '\n', 'utf-8');
@@ -1226,8 +1255,13 @@ export function writeRunSidecar(contextRoot: string, slug: string, s: RunSidecar
  * truncated, or planted sidecar must be INERT — never a lethal negative-PID
  * kill target — so every field is checked before a single one is trusted.
  */
-export function readRunSidecar(contextRoot: string, slug: string): RunSidecar | null {
-  const path = sidecarPathFor(contextRoot, slug);
+export function readRunSidecar(contextRoot: string, slug: string, slot?: string): RunSidecar | null {
+  // `slot` names one record exactly ('' the exclusive one); none reads what this member runs now.
+  if (slot === undefined) return parseRunSidecar(sidecarPathFor(contextRoot, slug), slug) ?? listRunSidecars(contextRoot, slug)[0] ?? null;
+  return parseRunSidecar(sidecarPathFor(contextRoot, slug, slot), slug);
+}
+
+function parseRunSidecar(path: string, slug: string): RunSidecar | null {
   if (!existsSync(path)) return null;
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf-8'));
@@ -1253,6 +1287,7 @@ export function readRunSidecar(contextRoot: string, slug: string): RunSidecar | 
       ...(r.target === 'agent' ? { target: 'agent' as const } : {}),
       ...(r.light === true ? { light: true as const } : {}),
       ...(r.noSession === true ? { noSession: true as const } : {}),
+      ...(typeof r.slot === 'string' && /^[a-f0-9]{16}$/.test(r.slot) ? { slot: r.slot } : {}),
     };
   } catch {
     return null;
@@ -1260,12 +1295,74 @@ export function readRunSidecar(contextRoot: string, slug: string): RunSidecar | 
 }
 
 /** Idempotent — safe to call whether or not a sidecar exists. */
-export function clearRunSidecar(contextRoot: string, slug: string): void {
+export function clearRunSidecar(contextRoot: string, slug: string, slot?: string): void {
   try {
-    unlinkSync(sidecarPathFor(contextRoot, slug));
+    unlinkSync(sidecarPathFor(contextRoot, slug, slot));
   } catch {
     // already gone
   }
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code !== 'ESRCH';
+  }
+}
+
+/** This member's slot files, by kind. */
+function slotFiles(contextRoot: string, slug: string): { locks: string[]; sidecars: string[] } {
+  const dir = dirname(sidecarPathFor(contextRoot, slug));
+  let names: string[] = [];
+  try { names = readdirSync(dir); } catch { names = []; }
+  const pick = (end: string): string[] => names.flatMap((n) => {
+    const m = n.startsWith(`.${slug}.slot-`) && n.endsWith(end) ? n.slice(`.${slug}.slot-`.length, -end.length) : '';
+    return /^[a-f0-9]{16}$/.test(m) ? [m] : [];
+  });
+  return { locks: pick('.lock'), sidecars: pick('.run.json') };
+}
+
+/** Every in-flight child of this member, the exclusive one and each parallel turn's, newest first. */
+export function listRunSidecars(contextRoot: string, slug: string): RunSidecar[] {
+  const all = ['', ...slotFiles(contextRoot, slug).sidecars]
+    .flatMap((slot) => parseRunSidecar(sidecarPathFor(contextRoot, slug, slot || undefined), slug) ?? []);
+  return all.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+}
+
+/** One parallel turn holding its slot. */
+export interface RunSlot { slot: string; pid: number; at: number; run: string | null }
+
+/**
+ * The parallel turns of this member that hold their slot now, oldest first. Asked of the files, so
+ * it sees every process's turns. Each key's death: a slot whose holder is gone is removed here
+ * (its lock, and its record unless a live child still needs it for `automations kill`).
+ */
+export function listRunSlots(contextRoot: string, slug: string): RunSlot[] {
+  const out: RunSlot[] = [];
+  const { locks, sidecars } = slotFiles(contextRoot, slug);
+  for (const slot of locks) {
+    const path = slotLockPath(contextRoot, slug, slot);
+    let info: { pid?: unknown; at?: unknown; run?: unknown };
+    try { info = JSON.parse(readFileSync(path, 'utf-8')) as typeof info; } catch { continue; }
+    if (typeof info.pid !== 'number' || typeof info.at !== 'number') continue;
+    if (pidAlive(info.pid)) {
+      out.push({ slot, pid: info.pid, at: info.at, run: typeof info.run === 'string' ? info.run : null });
+      continue;
+    }
+    const side = parseRunSidecar(sidecarPathFor(contextRoot, slug, slot), slug);
+    if (side && pidAlive(side.childPgid)) continue;
+    try { unlinkSync(path); } catch { /* raced */ }
+  }
+  // A record its lock left behind: nothing runs it any more.
+  const held = new Set(locks);
+  for (const slot of sidecars) {
+    if (held.has(slot)) continue;
+    const side = parseRunSidecar(sidecarPathFor(contextRoot, slug, slot), slug);
+    if (!side || (!pidAlive(side.runnerPid) && !pidAlive(side.childPgid))) clearRunSidecar(contextRoot, slug, slot);
+  }
+  return out.sort((a, b) => a.at - b.at);
 }
 
 // ─── Create / edit ──────────────────────────────────────────────────────────
@@ -2025,6 +2122,8 @@ export function removeAutomation(contextRoot: string, slug: string, opts?: { pur
     automationCachePath(contextRoot, slug),
     lockPathFor(contextRoot, slug),
     sidecarPathFor(contextRoot, slug),
+    ...slotFiles(contextRoot, slug).locks.map((slot) => slotLockPath(contextRoot, slug, slot)),
+    ...slotFiles(contextRoot, slug).sidecars.map((slot) => sidecarPathFor(contextRoot, slug, slot)),
     ...(photo ? [photo] : []),
   ]) {
     try {

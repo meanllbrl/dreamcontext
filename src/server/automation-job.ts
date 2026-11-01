@@ -6,7 +6,7 @@ import {
   announceTurn, appendThreadEntry, newThreadEntryId, readThread,
 } from '../lib/automations/threads.js';
 import {
-  getAutomation, listAutomations, lockPathFor, readRunSidecar,
+  getAutomation, listAutomations, listRunSlots, lockPathFor, readRunSidecar,
 } from '../lib/automations/store.js';
 import {
   resumeWithAnswer, resumeWithMessage, type TalkOutcome, type VerdictOptions,
@@ -16,7 +16,7 @@ import type { TaskRef } from '../lib/automations/runner.js';
 import type { AppRunBrief } from '../lib/apps/brief.js';
 import { getAgent } from '../lib/agents/store.js';
 import { logAssignmentResult } from '../lib/agents/task-assignment.js';
-import { pendingQuestion } from '../lib/automations/hitl.js';
+import { pendingQuestion, pendingQuestionOfRun } from '../lib/automations/hitl.js';
 import { trackChild } from './lifecycle.js';
 
 /**
@@ -38,6 +38,8 @@ export interface AutomationJobState {
    *  already wrote into this run's thread — the `#agents` composer — addresses
    *  the message it just posted. `null` for a plain "run now". */
   runId: string | null;
+  /** A person's ask: it took its own slot and runs beside this agent's other work. */
+  parallel?: boolean;
   /** The ask's own settings, for what arrives while it runs (`runLeavesNoSession`). */
   override?: SpawnModelOverride | null;
 }
@@ -78,13 +80,13 @@ const SKIP_REASON: Record<string, string> = {
 };
 
 /**
- * contextRoot → slug → that AGENT's latest job.
+ * contextRoot → job id → one job.
  *
- * One slot per agent, not per project (owner decision 2026-09-25): two different agents
- * run side by side, and only a second run of the SAME agent is refused, because both
- * would write into one thread and resume one session. Same-agent overlap that does not
- * come through here — a scheduler fire, a CLI run, a reply turn — is still refused by the
- * per-slug run lock inside the runner (`runner.ts`, the lock check after the sleep lock).
+ * Every ask is its own job in its own session, so one agent has as many running here as it
+ * was asked (owner decision 2026-11-01, replacing one slot per agent): each ask holds its own
+ * run slot, and its thread run is its own. Only a plain "run now" stays single: it replays the
+ * stored job, so a second one adopts the first, and a scheduled fire or a CLI run of the same
+ * job is refused by the per-slug lock in the runner.
  */
 const jobs = new Map<string, Map<string, AutomationJobState>>();
 
@@ -94,18 +96,13 @@ const JOB_TTL_MS = 60 * 60 * 1000;
 function pruneSettledJobs(): void {
   const cutoff = Date.now() - JOB_TTL_MS;
   for (const [root, bySlug] of jobs) {
-    for (const [slug, job] of bySlug) {
-      if (job.status !== 'running' && (job.finishedAt ?? 0) < cutoff) bySlug.delete(slug);
+    for (const [id, job] of bySlug) {
+      if (job.status !== 'running' && (job.finishedAt ?? 0) < cutoff) bySlug.delete(id);
     }
     if (bySlug.size === 0) jobs.delete(root);
   }
 }
 
-/**
- * One agent's job when `slug` is given. Without it, the project's NEWEST job — a running
- * one before any settled one — which is what the single-slot callers (`GET /runs`, the
- * "run now" poll) always read, so they keep their meaning.
- */
 /** Each run job's settlement, for a caller that must know when it ended (the Super Agent's team
  *  card). Dropped a minute after it settles. */
 const runSettled = new Map<string, Promise<AutomationJobState>>();
@@ -115,13 +112,17 @@ export function whenRunSettles(jobId: string): Promise<AutomationJobState> | nul
   return runSettled.get(jobId) ?? null;
 }
 
+/**
+ * The newest job, a running one before any settled one: of one agent when `slug` is given,
+ * else of the project, which is what `GET /runs` and the "run now" poll read.
+ */
 export function currentAutomationJob(contextRoot: string, slug?: string): AutomationJobState | null {
   pruneSettledJobs();
   const bySlug = jobs.get(contextRoot);
   if (!bySlug) return null;
-  if (slug !== undefined) return bySlug.get(slug) ?? null;
   let best: AutomationJobState | null = null;
   for (const job of bySlug.values()) {
+    if (slug !== undefined && job.slug !== slug) continue;
     if (!best) { best = job; continue; }
     const running = job.status === 'running';
     const bestRunning = best.status === 'running';
@@ -130,7 +131,22 @@ export function currentAutomationJob(contextRoot: string, slug?: string): Automa
   return best;
 }
 
-/** Every agent with a run in flight in this project, oldest first. */
+/** One job by its id, or null once it is pruned: what a caller holding its own job reads. */
+export function automationJobById(contextRoot: string, jobId: string): AutomationJobState | null {
+  pruneSettledJobs();
+  return jobs.get(contextRoot)?.get(jobId) ?? null;
+}
+
+/** A fire time no other job of this agent holds: it is the run's thread and its slot, so two asks
+ *  in one millisecond must not share them. Call it in the same tick as the job start. */
+export function freshFireAt(contextRoot: string, slug: string, now: Date = new Date()): Date {
+  const taken = new Set([...(jobs.get(contextRoot)?.values() ?? [])].filter((j) => j.slug === slug).map((j) => j.runId));
+  let at = now.getTime();
+  while (taken.has(new Date(at).toISOString())) at += 1;
+  return new Date(at);
+}
+
+/** Every run in flight in this project, oldest first. */
 export function runningAutomationJobs(contextRoot: string): AutomationJobState[] {
   pruneSettledJobs();
   return [...(jobs.get(contextRoot)?.values() ?? [])]
@@ -139,8 +155,8 @@ export function runningAutomationJobs(contextRoot: string): AutomationJobState[]
 }
 
 /**
- * Start a background "run now" job for one agent (or adopt that agent's job when it is
- * already running — never two engines for one AGENT; different agents run in parallel).
+ * Start a background job. An ask always starts: it is a new question with its own session. A
+ * plain "run now" adopts that agent's "run now" already running.
  * Returns immediately; poll `currentAutomationJob` for progress. Approval, the sleep-lock
  * deferral, and the orphan guard are all enforced INSIDE `runAutomation` — this function
  * carries no prompt and no bypass of its own.
@@ -155,8 +171,9 @@ export function startAutomationJob(
 ): { job: AutomationJobState; started: boolean } {
   pruneSettledJobs();
   let bySlug = jobs.get(contextRoot);
-  const existing = bySlug?.get(slug);
-  if (existing?.status === 'running') return { job: existing, started: false };
+  const parallel = !!ask?.text.trim() && !ask.task;
+  const existing = parallel ? undefined : [...(bySlug?.values() ?? [])].find((j) => j.slug === slug && !j.parallel && j.status === 'running');
+  if (existing) return { job: existing, started: false };
   const job: AutomationJobState = {
     id: `aj_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
     slug,
@@ -166,10 +183,11 @@ export function startAutomationJob(
     outcome: null,
     error: null,
     runId: ask ? ask.fireAt.toISOString() : null,
+    ...(parallel ? { parallel: true } : {}),
     ...(ask?.override ? { override: ask.override } : {}),
   };
   if (!bySlug) { bySlug = new Map(); jobs.set(contextRoot, bySlug); }
-  bySlug.set(slug, job);
+  bySlug.set(job.id, job);
   const settled = runJob(contextRoot, job, ask).then(() => job, () => job);
   runSettled.set(job.id, settled);
   void settled.then(() => { setTimeout(() => runSettled.delete(job.id), 60_000).unref?.(); });
@@ -252,6 +270,7 @@ async function runJob(contextRoot: string, job: AutomationJobState, ask?: Automa
     const runOpts: RunOptions & BoardTurnInput = {
       host: 'server',
       ...(ask ? { ask: ask.text, fireAt: ask.fireAt } : {}),
+      ...(job.parallel ? { parallel: true } : {}),
       ...(ask?.board ? { board: ask.board } : {}),
       ...(ask?.target ? { target: ask.target } : {}),
       ...(ask?.task ? { task: ask.task } : {}),
@@ -333,14 +352,14 @@ export interface ReplyJobState {
   /** The `user` entry this job is delivering. What reconciliation keys on. */
   entryId: string;
   status: 'running' | 'ok' | 'refused' | 'failed';
-  /** While `running`: `waiting` behind the turn that holds this agent's run lock, or
-   *  `delivering` once it holds the lock itself. Meaningless once settled. */
+  /** While `running`: `waiting` behind the turn of ITS conversation, or `delivering` once it
+   *  holds that conversation's slot. Meaningless once settled. */
   phase: 'waiting' | 'delivering';
   /** The server's own sentence on a non-ok settle — never a generic "failed".
    *  On `refused` this is `resumeWithMessage`'s reason, already written for a human. */
   reason: string | null;
   startedAt: string;
-  /** When it got the run lock and began delivering (ISO). A queued reply's own words in the
+  /** When it got the slot and began delivering (ISO). A queued reply's own words in the
    *  thread start here; everything before it is the turn it waited behind. */
   deliveredAt?: string;
   finishedAt: string | null;
@@ -349,11 +368,9 @@ export interface ReplyJobState {
 /**
  * Keyed by JOB ID, not by `contextRoot`.
  *
- * `jobs` above is ONE SLOT per agent and ADOPTS that agent's job when it is already
- * running — correct for "run now" (never two engines for one agent) and exactly wrong
- * here, where a job is one reply turn and its id is what the client polls. Concurrency is not
- * this map's business at all: it is owned end to end by the per-slug run lock inside
- * `resumeWithMessage`, which refuses with its own sentence when a run holds it.
+ * A job is one reply turn and its id is what the client polls. Concurrency is not this map's
+ * business at all: it is owned end to end by the conversation's slot inside
+ * `resumeWithMessage`, which refuses with its own sentence when a turn holds it.
  */
 const replyJobs = new Map<string, ReplyJobState>();
 /** Each reply job's settlement, for a caller that records the outcome where it outlives this
@@ -395,24 +412,26 @@ export function whenReplySettles(jobId: string): Promise<ReplyJobState> | null {
 /**
  * WHAT ONE AGENT IS DOING RIGHT NOW, for the thread and the channel to draw.
  *
- * Asked of the subject, not of this process's bookkeeping: the per-slug RUN LOCK is held by
- * every turn of an agent whatever started it (a scheduled fire, the CLI, "run now", a reply
- * resume, an answer), so it is the one place "is it working" has a true answer. `runSlots`
- * only ever knew the runs this server started, which is why a reply turn or a scheduled run
- * used to look idle in its own thread.
+ * Asked of the subject, not of this process's bookkeeping: every turn of an agent holds a lock
+ * whatever started it, the per-slug run lock (a scheduled fire, the CLI, "run now") or its own
+ * slot (an ask, a reply resume, an answer), so the files are where "is it working, on how
+ * many things" has a true answer. Asks of this server still before their slot are read from
+ * their jobs, so a job counts from the moment it starts.
  *
- * `runId` is the thread that turn writes into: the reply job holding the lock knows its own,
- * and a run's sidecar carries its fire time, which IS its thread's run id. Null when neither
- * says (the moment before a run's child spawns).
+ * `runs` is every turn in flight, oldest first; `count` its length, what a row shows. `since`
+ * and `runId` are the oldest turn's start and the newest turn's thread, for a reader that draws
+ * one line. A run's id is null only in the moment before an exclusive run's child spawns.
  *
- * `queued` is every reply still WAITING for the lock, oldest first, so the thread can mark
- * the message the reader just sent as queued rather than leave them guessing.
+ * `queued` is every reply still WAITING behind the turn of its own conversation, oldest first,
+ * so the thread can mark the message the reader just sent as queued.
  */
 export interface AgentActivity {
-  /** When the turn holding the lock began, epoch ms. */
+  /** When the oldest turn began, epoch ms. */
   since: number;
   runId: string | null;
   queued: { entryId: string; runId: string }[];
+  runs: { runId: string | null; since: number }[];
+  count: number;
 }
 
 /** The run lock's holder, or null when it is free, unreadable, dead or past its window. */
@@ -449,24 +468,41 @@ export function agentActivity(
     .sort((a, b) => (a.id < b.id ? -1 : 1));
   const delivering = mine.find((j) => j.phase === 'delivering') ?? null;
   const waiting = mine.filter((j) => j.phase === 'waiting');
-  const since = liveLockSince(contextRoot, slug, staleMs, nowMs);
   const queued = waiting.map((j) => ({ entryId: j.entryId, runId: j.runId }));
-  if (since === null) {
-    // Nothing holds the lock, but a reply is about to take it (it polls): the agent is
-    // about to work on it, which is what the reader needs to hear.
+  const running = [...(jobs.get(contextRoot)?.values() ?? [])].filter((j) => j.slug === slug && j.status === 'running');
+  const runs: AgentActivity['runs'] = listRunSlots(contextRoot, slug).map((s) => ({ runId: s.run, since: s.at }));
+  const exclusive = liveLockSince(contextRoot, slug, staleMs, nowMs);
+  if (exclusive !== null) {
+    const plain = running.find((j) => !j.parallel);
+    runs.push({ runId: delivering?.runId ?? readRunSidecar(contextRoot, slug, '')?.fireAt ?? plain?.runId ?? null, since: exclusive });
+  }
+  // Started here, its slot not taken yet.
+  for (const j of running) {
+    if (j.runId && !runs.some((r) => r.runId === j.runId)) runs.push({ runId: j.runId, since: j.startedAt });
+  }
+  const held = [...new Map(runs.map((r) => [r.runId ?? `?${r.since}`, r])).values()].sort((a, b) => a.since - b.since);
+  if (held.length === 0) {
+    // Nothing holds a lock, but a reply is about to take it (it polls): the agent is about
+    // to work on it, which is what the reader needs to hear.
     if (waiting.length === 0) return null;
     const [next, ...rest] = waiting;
+    const since = Date.parse(next.startedAt) || nowMs;
     return {
-      since: Date.parse(next.startedAt) || nowMs,
+      since,
       runId: next.runId,
       queued: rest.map((j) => ({ entryId: j.entryId, runId: j.runId })),
+      runs: [{ runId: next.runId, since }],
+      count: 1,
     };
   }
-  const runJob = jobs.get(contextRoot)?.get(slug);
-  const runId = delivering?.runId
-    ?? readRunSidecar(contextRoot, slug)?.fireAt
-    ?? (runJob?.status === 'running' ? runJob.runId : null);
-  return { since, runId, queued };
+  const newest = held[held.length - 1].runId;
+  return { since: held[0].since, runId: delivering?.runId ?? newest, queued, runs: held, count: held.length };
+}
+
+/** Could this thread run be among the agent's turns in flight? A turn that does not yet say which
+ *  run it is counts: "lost" and "stale" are never concluded on a guess. */
+export function runIsActive(activity: AgentActivity | null, runId: string): boolean {
+  return !!activity && (activity.runs?.some((r) => r.runId === runId || r.runId === null) ?? true);
 }
 
 /** {@link agentActivity} for every agent in the project that is doing something. */
@@ -583,17 +619,20 @@ function settleReplyThread(
 /**
  * Deliver a human's reply into the run's bound session, as a job.
  *
- * ALWAYS starts — it never adopts another job, because two agents replying at once is
- * the normal case in a channel. What it does NOT do is take a lock: `resumeWithMessage`
- * owns the per-slug run lock. A reply to a busy slug WAITS for it (bounded by the run's
- * timeout) and is delivered when the turn ahead of it ends; a reply to a different slug
- * runs beside it. A reply to an agent waiting on a question answers that question.
+ * ALWAYS starts — it never adopts another job. What it does NOT do is take a lock:
+ * `resumeWithMessage` owns the conversation's slot. A reply to a run still in flight, or to a
+ * session mid-turn, WAITS (bounded by the run's timeout) and is delivered when the turn ahead of
+ * it in THAT conversation ends; every other conversation runs beside it, this agent's too. A
+ * reply in the thread of a run waiting on a question answers that question.
  */
 export function startAutomationReplyJob(
   contextRoot: string,
   slug: string,
   opts: {
     runId: string; text: string; entryId: string; home?: string; lockPollMs?: number;
+    /** A scheduled agent's talk: this fresh thread resumes its latest session, and answers the
+     *  question open there. Absent: `runId` names the conversation. */
+    talk?: boolean;
     /** The owner's temporary model for this reply (AI Team), already validated. */
     override?: SpawnModelOverride | null;
   } & BoardTurnInput,
@@ -618,7 +657,7 @@ export function startAutomationReplyJob(
 }
 
 /**
- * A reply in the thread of an agent that is WAITING ON A QUESTION is the answer to it.
+ * A reply in the thread of a run WAITING ON A QUESTION is the answer to it.
  *
  * The owner does not distinguish "the answer box" from "the reply box", and should not have
  * to: both are them talking to the agent about this run. Refusing a reply with "answer its
@@ -640,7 +679,7 @@ async function replyOrAnswer(
   // Never a light job: read-only, it would spend the answer on a turn that cannot act on it.
   // It goes to `resumeWithMessage`, whose refusal reaches the Super as this job's failure.
   const openQuestion = () => {
-    const q = pendingQuestion(contextRoot, slug);
+    const q = verdictOpts.run ? pendingQuestionOfRun(contextRoot, slug, verdictOpts.run) : pendingQuestion(contextRoot, slug);
     return q && q.kind === 'flow-hitl' && !verdictOpts.override?.light ? q : null;
   };
   const answer = async (q: NonNullable<ReturnType<typeof openQuestion>>): Promise<TalkOutcome> => {
@@ -660,7 +699,7 @@ async function replyOrAnswer(
 async function runReplyJob(
   contextRoot: string,
   job: ReplyJobState,
-  opts: { text: string; home?: string; lockPollMs?: number; override?: SpawnModelOverride | null } & BoardTurnInput,
+  opts: { text: string; home?: string; lockPollMs?: number; talk?: boolean; override?: SpawnModelOverride | null } & BoardTurnInput,
 ): Promise<void> {
   let outcome: TalkOutcome | null = null;
   try {
@@ -672,8 +711,10 @@ async function runReplyJob(
       // THIS run's thread with no ids to pass. `VerdictOptions.env` is typed to exactly
       // these two keys, so nothing else can ride along into a bypassPermissions child.
       env: { DREAMCONTEXT_AUTOMATION_SLUG: job.slug, DREAMCONTEXT_AUTOMATION_RUN: job.runId },
-      // QUEUED, never refused, behind whatever holds the lock: the run itself, or the
-      // resume an answer started a moment ago. Bounded by the run's own envelope plus a
+      // Which conversation these words continue.
+      ...(opts.talk ? { aliasRun: job.runId } : { run: job.runId }),
+      // QUEUED, never refused, behind the turn of this conversation: the run itself, or
+      // the resume an answer started a moment ago. Bounded by the run's own envelope plus a
       // minute, which is the longest the turn ahead of it can legitimately take.
       lockWaitMs: ((manifest?.timeoutMinutes ?? 30) + 1) * 60_000,
       ...(opts.lockPollMs ? { lockPollMs: opts.lockPollMs } : {}),

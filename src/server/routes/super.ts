@@ -23,7 +23,7 @@ import { LIGHT_DEFAULT_EFFORT, LIGHT_DEFAULT_MODEL } from '../../lib/automations
 import { spawnModel } from '../../lib/automations/runner.js';
 import type { SpawnModelOverride } from '../../lib/automations/types.js';
 import { sayToAgent } from './automations.js';
-import { agentActivity, currentAutomationJob, currentReplyJob, whenReplySettles, whenRunSettles } from '../automation-job.js';
+import { agentActivity, automationJobById, currentReplyJob, runIsActive, whenReplySettles, whenRunSettles } from '../automation-job.js';
 import { getAutomation } from '../../lib/automations/store.js';
 import { memberScope } from '../../lib/agents/scope.js';
 import { AmendmentRefused, amendMember, approvedTargets } from '../../lib/agents/amendments.js';
@@ -2124,8 +2124,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
 
   'team-ask': async (c, b, res) => {
     // A job for one of THIS project's AI Team members, through the AI Team's own say path
-    // (`sayToAgent`): the member's thread, model, approval and queue rule it. Nothing here starts
-    // a run any other way.
+    // (`sayToAgent`): the member's thread, model and approval rule it, and the job starts now in
+    // its own session beside the member's other work. Nothing here starts a run any other way.
     if (!requireHandedOver(c, res)) return;
     const root = c.who.contextRoot;
     const vault = vaultNameOf(root);
@@ -2296,7 +2296,7 @@ export async function checkTeamJob(root: string, teamJobId: string): Promise<boo
   // absent, never merely unreadable), or nothing runs the job and none of its endings was written
   // (its turn lost with the server: no lock held, no say job in memory).
   const seen = memberScope(root, j.member) === null ? 'gone'
-    : end.kind === null && !agentActivity(root, j.member) && !sayJobRuns(live) ? 'lost'
+    : end.kind === null && !runIsActive(agentActivity(root, j.member), j.runId) && !sayJobRuns(live) ? 'lost'
     : null;
   if (seen && suspect.get(key) === seen) {
     suspect.delete(key);
@@ -2357,8 +2357,8 @@ function liveSayJob(root: string, j: SuperTeamJob): LiveSayJob | null {
     const r = currentReplyJob(j.jobId);
     return r ? { kind: 'reply', status: r.status, phase: r.phase, ...replyTimes(r) } : null;
   }
-  const run = currentAutomationJob(root, j.member);
-  return run && run.id === j.jobId ? { kind: 'run', status: run.status } : null;
+  const run = automationJobById(root, j.jobId);
+  return run ? { kind: 'run', status: run.status } : null;
 }
 
 /** A child's registry status right now; `gone` when nothing runs it. */

@@ -216,6 +216,12 @@ export function pendingQuestionFor(contextRoot: string, slug: string, kind: RunK
   );
 }
 
+/** The question ONE run left open, if any: a parallel turn answers for its own run, never for
+ *  what a sibling asked. */
+export function pendingQuestionOfRun(contextRoot: string, slug: string, runId: string): AutomationQuestion | null {
+  return listQuestions(contextRoot, slug).find((q) => q.state === 'pending' && q.runFiredAt === runId) ?? null;
+}
+
 /**
  * Read one question. Null for missing, unparseable, or structurally implausible
  * content — never throws.
