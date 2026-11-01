@@ -25,7 +25,7 @@ import {
   recordRed, recordStart, refusal, shellQuote, validReason, type BudgetKind, type BudgetScope,
 } from '../../lib/run-budget.js';
 import { LIGHT_LANE_MAX_LINES, laneFromGit } from '../../lib/run-lane.js';
-import { appendLedger, ledgerLine, ledgerPath, readLedger, recordCheck, summarize, type LedgerMark } from '../../lib/run-ledger.js';
+import { appendLedger, ledgerLine, ledgerPath, readLedger, recordCheck, recordStart as recordLedgerStart, summarize, waitWhy, type LedgerMark } from '../../lib/run-ledger.js';
 import { DEFAULT_SESSION_DEPS, registerBuilderSessionCommands, type SessionDeps } from './builder-sessions.js';
 
 /**
@@ -148,6 +148,19 @@ export function builderLane(deps: BuilderDeps, opts: { from?: string; to?: strin
     : 'review-router, then builder review-pick');
 }
 
+/** `why`: this repo's last waits, one line each, every run and no run alike. */
+export function builderWhy(deps: BuilderDeps, opts: { last?: string }): number {
+  const n = opts.last === undefined ? 20 : Number(opts.last);
+  if (!Number.isInteger(n) || n <= 0) {
+    deps.printErr(`builder why: --last must be a whole number, got "${opts.last}"`);
+    return 2;
+  }
+  const waits = readLedger(ledgerPath(deps.cwd())).flatMap((r) => (r.type === 'check' && r.ran - r.asked >= 1000 ? [r] : []));
+  if (waits.length === 0) deps.print('builder why: no wait on record in this repo');
+  for (const r of waits.slice(-n)) deps.print(waitWhy(r));
+  return 0;
+}
+
 export function builderBudget(deps: BuilderDeps): void {
   const cwd = deps.cwd();
   const file = readBudget(budgetPath(cwd));
@@ -231,19 +244,20 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { ma
     return HEAVY_OVER_BUDGET_EXIT;
   }
   const started = Date.now();
-  const { held, busy, line } = await acquireHeavyReporting({
+  const { held, busy, line, waits } = await acquireHeavyReporting({
     cwd: deps.cwd(), lockPath: heavyLockPath(deps.cwd()), slotDir: deps.heavySlotDir?.() ?? heavySlotDir(),
     maxWaitS, heavyLimit: deps.heavyLimit, ps: deps.ps, machineBusy: deps.machineBusy,
-    job: { key: jobKey(deps.cwd(), command), size: pick.size, label, line: pick.line },
+    job: { key: jobKey(deps.cwd(), command), size: pick.size, label, line: pick.line, shared: pick.shared },
     note: (l) => deps.printErr(`builder heavy: ${l}`),
   });
   if (!held) {
     const gaveUp = Date.now();
-    recordCheck(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran: gaveUp, ended: gaveUp, exit: null });
+    recordCheck(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran: gaveUp, ended: gaveUp, exit: null, waits });
     deps.printErr(`builder heavy: ${busy}`);
     return HEAVY_LOCK_BUSY_EXIT;
   }
   const ran = Date.now();
+  recordLedgerStart(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran });
   deps.printErr(`builder heavy: ${line} line (${pick.why}), waited ${Math.round((ran - started) / 1000)}s`);
   if (kind && scope) {
     if (over) deps.printErr(`builder heavy: over the limit (${over}), run on purpose: ${opts.because}`);
@@ -260,7 +274,7 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { ma
       process.off('SIGTERM', onTerm);
       process.off('SIGINT', onInt);
       if (code !== 0 && kind && scope) recordRed(budget, scope, target, Date.now());
-      recordCheck(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran, ended: Date.now(), exit: code });
+      recordCheck(deps.cwd(), { label, line: line ?? pick.line, asked: started, ran, ended: Date.now(), exit: code, waits });
       held.release();
       resolveExit(code);
     };
@@ -339,6 +353,12 @@ export function registerBuilderCommand(program: Command, deps: BuilderDeps = DEF
     .action(() => {
       for (const l of queueReport(heavyLockPath(deps.cwd()), deps.heavySlotDir?.() ?? heavySlotDir(), deps.ps)) deps.print(l);
     });
+
+  cmd
+    .command('why')
+    .description("Why each recent check of this repo waited, one line per wait: this checkout's lock, full slots, or others ahead in the slot line")
+    .option('--last <n>', 'how many waits (default 20)')
+    .action((opts: { last?: string }) => { process.exitCode = builderWhy(deps, opts); });
 
   cmd
     .command('mark')

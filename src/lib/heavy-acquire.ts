@@ -14,6 +14,7 @@ import {
   type HeavyHold,
 } from './builder-tools.js';
 import { currentHeavyLimit } from './heat.js';
+import type { WaitParts } from './run-ledger.js';
 import { QUEUE_KEEP_MS, QueuePlace, fastSlotLimit, ordered, readTickets, ticketRow, type QueueLine } from './heavy-queue.js';
 
 /**
@@ -36,7 +37,7 @@ export interface HeavyAcquireOpts {
   heavyLimit?: () => Promise<number>;
   ps: () => string;
   /** This check's place in line. Absent: no queue, the lock is raced as it always was. */
-  job?: { key: string; size: number; label: string; line: QueueLine };
+  job?: { key: string; size: number; label: string; line: QueueLine; shared?: boolean };
   /** A line for the waiter, printed as it starts waiting and every {@link WAIT_NOTE_MS}. */
   note?: (line: string) => void;
   /** Is the machine past its cores right now (tests inject it)? */
@@ -63,6 +64,8 @@ export interface HeavyAcquired {
   waitS: number;
   /** Why nothing ran, when `held` is null. */
   busy: string | null;
+  /** Where the wait went, for the ledger (`waitWhy`). */
+  waits?: WaitParts;
 }
 
 export async function acquireHeavyReporting(o: HeavyAcquireOpts): Promise<HeavyAcquired> {
@@ -73,24 +76,30 @@ export async function acquireHeavyReporting(o: HeavyAcquireOpts): Promise<HeavyA
   const started = Date.now();
   if (o.job?.line === 'fast' && first > 1) {
     const r = await tryFast(o, o.job, first, waitS);
-    if (!r.hot) return { held: r.held, line: 'fast', waitS, busy: r.busy };
+    if (!r.hot) return { held: r.held, line: 'fast', waitS, busy: r.busy, waits: { lockMs: 0, slotFullMs: Date.now() - started, slotLineMs: 0, limit: first } };
   }
-  const place = o.job ? QueuePlace.enter(heavyQueueDir(o.lockPath), o.job, Date.now()) : null;
+  const shared = o.job?.shared === true;
+  const place = o.job && !shared ? QueuePlace.enter(heavyQueueDir(o.lockPath), o.job, Date.now()) : null;
   const tell = waitNotes(o, place, o.lockPath, 'heavy');
   let entry: number | null = first;
   let lastLimit = first;
   let repoLocked = false;
   let slotPlace: QueuePlace | null = null;
   let slotNotes: (now: number) => void = () => {};
+  const waits: WaitParts = { lockMs: 0, slotFullMs: 0, slotLineMs: 0, limit: first };
+  let tick = started;
   const held = await acquireHeavy(o.cwd, {
     waitMs: Math.max(0, waitS * 1000 - (Date.now() - started)),
     slotDir: o.slotDir,
     repoLock: o.lockPath,
     // The entry reading is the one just taken; later rechecks read afresh.
     limit: async () => { if (entry !== null) { const n = entry; entry = null; return n; } return safeRead(); },
-    onLimit: (n) => { lastLimit = n; },
+    noRepoLock: shared,
+    onLimit: (n) => { lastLimit = n; waits.limit = n; },
     onRepoLock: () => {
       repoLocked = true;
+      tick = Date.now();
+      waits.lockMs = tick - started;
       if (o.job) {
         slotPlace = QueuePlace.enter(heavySlotQueueDir(o.slotDir), o.job, Date.now());
         slotNotes = waitNotes(o, slotPlace, null, 'heavy slot');
@@ -98,16 +107,24 @@ export async function acquireHeavyReporting(o: HeavyAcquireOpts): Promise<HeavyA
     },
     turn: place ? (now) => { const mine = place.myTurn(now); if (!mine) tell(now); return mine; } : undefined,
     onSlot: () => { slotPlace?.leave(); },
-    slotTurn: o.job ? (now, free) => { if (!slotPlace) return true; const mine = slotPlace.myTurn(now, free); if (!mine) slotNotes(now); return mine; } : undefined,
+    slotTurn: o.job ? (now, free) => {
+      if (free > 0) waits.slotLineMs += now - tick; else waits.slotFullMs += now - tick;
+      tick = now;
+      if (!slotPlace) return true;
+      const mine = slotPlace.myTurn(now, free);
+      if (!mine) slotNotes(now);
+      return mine;
+    } : undefined,
   });
   if (held) {
     place?.leave();
-    return { held, line: 'heavy', waitS, busy: null };
+    return { held, line: 'heavy', waitS, busy: null, waits };
   }
   place?.park(Date.now());
   (slotPlace as QueuePlace | null)?.park(Date.now());
   const why = busyMessage(o, { waitS, lastLimit, repoLocked });
-  return { held: null, line: 'heavy', waitS, busy: place ? `${why}${keptPlace(place)}` : `${why} Run the same command again.` };
+  const kept = place ?? (slotPlace as QueuePlace | null);
+  return { held: null, line: 'heavy', waitS, busy: kept ? `${why}${keptPlace(kept)}` : `${why} Run the same command again.`, waits };
 }
 
 /** `hot`: the Mac turned very hot while waiting, the job goes to the one heavy line. */

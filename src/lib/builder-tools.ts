@@ -233,6 +233,8 @@ export async function acquireHeavy(cwd: string, opts: {
   /** Called the moment a slot is taken, before anything else can poll: the holder leaves the
    *  slot line at once, or a waiter polling in between reads it as still ahead. */
   onSlot?: () => void;
+  /** Tests and type-checks: no turn on the checkout, only a machine slot. */
+  noRepoLock?: boolean;
 }): Promise<HeavyHold | null> {
   const now = opts.now ?? Date.now;
   const pollMs = opts.pollMs ?? 1000;
@@ -247,7 +249,9 @@ export async function acquireHeavy(cwd: string, opts: {
   };
   let limit = await readLimit();
   let readAt = now();
+  const dropRepoLock = () => { if (!opts.noRepoLock) releaseFileLock(repoLock); };
   for (;;) {
+    if (opts.noRepoLock) break;
     if ((opts.turn?.(now()) ?? true) && acquireFileLock(repoLock, now(), HEAVY_LOCK_STALE_MS, { verifyPidLiveness: true })) break;
     if (now() >= deadline) return null;
     await new Promise((r) => { setTimeout(r, pollMs); });
@@ -263,11 +267,11 @@ export async function acquireHeavy(cwd: string, opts: {
       for (const slot of heavySlotPaths(opts.slotDir).slice(0, limit)) {
         if (acquireFileLock(slot, now(), HEAVY_LOCK_STALE_MS, { verifyPidLiveness: true })) {
           try { opts.onSlot?.(); } catch { /* the line is a courtesy */ }
-          return { slot, release: () => { releaseFileLock(slot); releaseFileLock(repoLock); } };
+          return { slot, release: () => { releaseFileLock(slot); dropRepoLock(); } };
         }
       }
     }
-    if (now() >= deadline) { releaseFileLock(repoLock); return null; }
+    if (now() >= deadline) { dropRepoLock(); return null; }
     await new Promise((r) => { setTimeout(r, pollMs); });
   }
 }

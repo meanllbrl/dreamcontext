@@ -7,7 +7,7 @@ import { heavyLockPath, heavyRepoDir, heavySlotPaths } from '../../src/lib/build
 import { acquireFileLock, releaseFileLock } from '../../src/lib/file-lock.js';
 import { builderHeavy, type BuilderDeps } from '../../src/cli/commands/builder.js';
 import { acquireHeavyReporting, heavyQueueDir, heavySlotQueueDir, queueReport } from '../../src/lib/heavy-acquire.js';
-import { QUEUE_KEEP_MS, QueuePlace, readTickets } from '../../src/lib/heavy-queue.js';
+import { QUEUE_KEEP_MS, QueuePlace, queueOf, readTickets } from '../../src/lib/heavy-queue.js';
 import { ledgerPath } from '../../src/lib/run-ledger.js';
 import { budgetPath } from '../../src/lib/run-budget.js';
 
@@ -200,5 +200,30 @@ describe('heavy lock per worktree', () => {
     m.held!.release();
     expect(existsSync(join(shared, 'old-gone.json'))).toBe(false);
     expect(readTickets(shared, Date.now()).map((t) => t.key)).toEqual(['old-dead']);
+  });
+});
+
+describe('tests and type-checks take no turn on the checkout', () => {
+  it('only checks are shared: a build or a script keeps the lock, and a shared job runs beside the lock holder', async () => {
+    expect(queueOf('npx vitest run tests/unit/a.test.ts').shared).toBe(true);
+    expect(queueOf('npx vitest run').shared).toBe(false); // a whole suite keeps its turn
+    expect(queueOf('npx tsc --noEmit').shared).toBe(true);
+    expect(queueOf('npm run build', { build: 'tsup' }).shared).toBe(false);
+    expect(queueOf('node scripts/verify/x.mjs').shared).toBe(false);
+    expect(queueOf('sleep 900').shared).toBe(false);
+    const root = mkdtempSync(join(tmpdir(), 'dc-heavy-shared-'));
+    const lockPath = join(root, 'repo.lock');
+    const slotDir = join(root, 'slots');
+    try {
+      expect(acquireFileLock(lockPath, Date.now(), 5_000)).toBe(true);
+      const job = { key: 's', size: 3, label: 'tests', line: 'heavy' as const, shared: true };
+      const r = await acquireHeavyReporting({ cwd: root, lockPath, slotDir, maxWaitS: 0, heavyLimit: async () => 2, ps: () => '', job });
+      expect(r.held).not.toBeNull();
+      expect(r.waits).toMatchObject({ lockMs: 0, limit: 2 });
+      r.held!.release();
+      expect(existsSync(lockPath)).toBe(true); // the holder's lock is not ours to drop
+      const blocked = await acquireHeavyReporting({ cwd: root, lockPath, slotDir, maxWaitS: 0, heavyLimit: async () => 2, ps: () => '', job: { ...job, key: 'b', shared: false } });
+      expect(blocked.held).toBeNull();
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });
