@@ -301,6 +301,19 @@
       ]
     },
     {
+      "path": "ask",
+      "desc": "Run a prompt or an agent role on another tool (claude, codex, antigravity) and print the answer. Read-only unless --write",
+      "args": [
+        "<prompt...>"
+      ],
+      "valueFlags": [
+        "--tool",
+        "--model",
+        "--agent",
+        "--timeout"
+      ]
+    },
+    {
       "path": "assistant",
       "desc": "The dreamcontext Assistant's verbs — only its own chat session can run these",
       "args": [],
@@ -2895,6 +2908,7 @@
       ],
       "valueFlags": [
         "--model",
+        "--tool",
         "--timeout"
       ]
     },
@@ -2925,7 +2939,8 @@
         "[message...]"
       ],
       "valueFlags": [
-        "--model"
+        "--model",
+        "--tool"
       ]
     },
     {
@@ -2940,6 +2955,7 @@
         "--kind",
         "--thread",
         "--model",
+        "--tool",
         "--timeout"
       ]
     },

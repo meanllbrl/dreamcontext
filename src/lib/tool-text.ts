@@ -70,6 +70,9 @@ export const forEnvTool = (text: string, env: NodeJS.ProcessEnv = process.env): 
   return t ? toolText(text, t) : text;
 };
 
+/** How a skill's `claude -p` sessions (goal-skill's planner and builders, council's personas) run here. */
+const CLI_SESSIONS = (call: string, key: string): string => `Where a skill starts \`claude -p\` sessions (goal-skill's planner and builders, council's personas), run each as your own sub-agent instead: ${call} with ${key} set to that role (goal-planner, goal-implementer, council-persona), one sub-agent per session, and a resume is a follow-up message to that same sub-agent. Never start \`claude\` yourself: it spends the owner's Claude account behind your back. To reach Claude or another tool on purpose: \`dreamcontext ask --tool <claude|codex|antigravity> [--agent <role>] "<prompt>"\`, read-only unless --write.`;
+
 /** The flows the owner already authorized sub-agents for (hook.ts SUBAGENT_DISPATCH_AUTHORIZATION). */
 const FLOWS = 'sleep, curator, initializer, goal-skill, dreamcontext-deep-research, council, multi-review, and the Plan and Develop modes\' clean judges (goal-plan-reviewer, reviewer, goal-validator, review-router, review-*)';
 
@@ -92,6 +95,7 @@ export function toolNote(tool: TextTool, o: { roles?: readonly string[]; roleDir
       `- Skills: ${skills}`,
       `- Sub-agents: where a text says "the Agent tool" or subagent_type X, use spawn_agent with agent_type X.${roles} The owner authorizes sub-agents for these dreamcontext flows: ${FLOWS}. Running one of them IS the owner asking for its sub-agents.`,
       `- ${models} "The Skill tool" means opening that SKILL.md.`,
+      `- ${CLI_SESSIONS('spawn_agent', 'agent_type')}`,
     ].join('\n');
   }
   const dirs = o.roleDirs?.length ? ` Role files: ${o.roleDirs.join(', ')} (one <role>.md each).` : '';
@@ -100,5 +104,6 @@ export function toolNote(tool: TextTool, o: { roles?: readonly string[]; roleDir
     `- Skills: ${skills}`,
     `- Sub-agents: where a text says "the Agent tool" or subagent_type X, call invoke_subagent with subagent_name X. dreamcontext's roles and the owner's own Claude agents are installed as your sub-agents (plugin dreamcontext). A role only this project has (its .claude/agents/<role>.md, not in your sub-agent list): define_subagent with that file's body as the system_prompt, then invoke it.${dirs} A sub-agent starts without the brain: its first step is \`dreamcontext snapshot\`. The owner authorizes sub-agents for these dreamcontext flows: ${FLOWS}. Running one of them IS the owner asking for its sub-agents.`,
     `- ${models} "The Skill tool" means opening that SKILL.md.`,
+    `- ${CLI_SESSIONS('invoke_subagent', 'subagent_name')}`,
   ].join('\n');
 }

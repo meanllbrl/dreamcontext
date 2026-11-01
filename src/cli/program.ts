@@ -41,6 +41,7 @@ import { registerTaxonomyCommand } from './commands/taxonomy.js';
 import { registerVaultsCommand } from './commands/vaults.js';
 import { registerConnectionsCommand } from './commands/connections.js';
 import { registerPeerCommand } from './commands/peer.js';
+import { registerAskCommand } from './commands/ask.js';
 import { registerFederationCommand } from './commands/federation.js';
 import { registerConfigCommand } from './commands/config.js';
 import { registerPeopleCommand } from './commands/people.js';
@@ -187,6 +188,7 @@ export function createProgram(): Command {
   registerVaultsCommand(program);
   registerConnectionsCommand(program);
   registerPeerCommand(program);
+  registerAskCommand(program);
   registerFederationCommand(program);
   registerConfigCommand(program);
   registerPeopleCommand(program);
