@@ -57,6 +57,38 @@ pub fn is_slug(s: &str) -> bool {
         && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
 }
 
+/// The runner's "post one notification" mode. The gateway finds this flag in the binary before
+/// it uses it: an older runner would ignore the flag and open a window instead.
+pub const NOTIFY_FLAG: &str = "--dc-notify-1";
+pub const NOTIFY_MAX_BYTES: u64 = 16 * 1024;
+/// Kept in the binary for that search: the optimiser turns the comparison in main() into
+/// immediates, and the string goes (measured on the release build).
+#[used]
+static NOTIFY_CAPABILITY: [u8; 13] = *b"--dc-notify-1";
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct NotifyPayload {
+    pub title: String,
+    pub body: String,
+    /// A name from /System/Library/Sounds; None is silent.
+    pub sound: Option<String>,
+}
+
+pub fn parse_notify_payload(raw: &str) -> Result<NotifyPayload, String> {
+    let v: Value = serde_json::from_str(raw).map_err(|e| format!("payload is not JSON: {e}"))?;
+    let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let (title, body) = (text("title"), text("body"));
+    if title.is_empty() || body.is_empty() {
+        return Err("payload: title and body are required".into());
+    }
+    let sound = match v.get("sound") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) if !s.is_empty() && s.len() <= 32 && s.chars().all(|c| c.is_ascii_alphanumeric()) => Some(s.clone()),
+        Some(_) => return Err("payload: bad sound".into()),
+    };
+    Ok(NotifyPayload { title, body, sound })
+}
+
 /// A reverse-DNS bundle id: letters, digits, dots and dashes only (it goes into `open -b`).
 pub fn is_bundle_id(s: &str) -> bool {
     !s.is_empty()
@@ -407,6 +439,17 @@ pub fn theme_change_script(theme: Theme) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notify_payload() {
+        let p = parse_notify_payload(r#"{"title":"Yük","body":"b","sound":"Glass"}"#).unwrap();
+        assert_eq!(p, NotifyPayload { title: "Yük".into(), body: "b".into(), sound: Some("Glass".into()) });
+        assert_eq!(parse_notify_payload(r#"{"title":"t","body":"b"}"#).unwrap().sound, None);
+        assert!(parse_notify_payload(r#"{"title":"t","body":"b","sound":"../x"}"#).is_err());
+        assert!(parse_notify_payload(r#"{"title":"t","body":"b","sound":true}"#).is_err());
+        assert!(parse_notify_payload(r#"{"title":"","body":"b"}"#).is_err());
+        assert!(parse_notify_payload("nope").is_err());
+    }
 
     const INFO: &str = r#"{"schema":1,"projectRoot":"/Users/a/acme","vault":"acme","slug":"meta-ads","name":"Meta Ads","appBundleId":"com.dreamcontext.beta"}"#;
 

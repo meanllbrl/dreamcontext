@@ -12,9 +12,9 @@ import { appHash, runnerBundleId, APP_SLUG_RE } from '../../lib/apps/bundle.js';
 import { MANIFEST_FILE, readManifest, type AppManifest } from '../../lib/apps/manifest.js';
 import { appRootFor, getApp, listApps, registerApp } from '../../lib/apps/registry.js';
 import { copyShotTo, copyShotToProject } from '../../lib/apps/shots.js';
-import { notifierIconPath, notifyViaBundle, NOTIFY_SOUND_FAILED } from '../../lib/automations/notifier.js';
+import { notifierIconPath, NOTIFY_SOUND_FAILED } from '../../lib/automations/notifier.js';
+import { notifyFromApp } from '../../lib/apps/app-notify.js';
 import { acquireScheduleRunLock, appendRun, readScheduleState } from '../../lib/apps/schedule.js';
-import { appBundlePath } from '../../lib/apps/bundle.js';
 import { sdkSource } from '../../server/apps/gateway-w3.js';
 
 /**
@@ -373,23 +373,23 @@ export function registerAppsCommand(program: Command): void {
       const unlock = acquireScheduleRunLock(homedir(), rec.hash, id);
       if (!unlock) { row('skipped', 'overlap', ''); process.exit(0); }
       process.on('exit', unlock);
-      const notify = (ok: boolean, text: string) => {
+      const notify = async (ok: boolean, text: string) => {
         const when = sched.notify ?? 'failure';
         if (when === 'never' || (when === 'failure' && ok)) return;
-        notifyViaBundle(m.manifest.name, text, homedir(), { sound: ok ? undefined : NOTIFY_SOUND_FAILED, link: null, openTarget: appBundlePath(homedir(), rec.slug, rec.hash) });
+        await notifyFromApp({ title: m.manifest.name, body: text, rec, sound: ok ? undefined : NOTIFY_SOUND_FAILED });
       };
       try {
         const r = await appsApi(p, 'POST', `/api/apps/${encodeURIComponent(slug)}/call`, { method: sched.call.method, path: sched.call.path, ...(sched.call.body !== undefined ? { body: sched.call.body } : {}) }, { timeoutMs: 6 * 60_000, launch: true });
         const status = Number(r.status);
         const ok = status >= 200 && status < 300;
         row(ok ? 'ok' : 'failed', ok ? null : `http_${status}`, String(r.body ?? ''));
-        notify(ok, ok ? `${id}: done` : `${id} failed (HTTP ${status})`);
+        await notify(ok, ok ? `${id}: done` : `${id} failed (HTTP ${status})`);
       } catch (e) {
         const code = e instanceof AppsClientError ? e.code : 'error';
         // A dropped connection says nothing about whether the action ran.
         const lost = code === 'timeout' || /ECONNRESET|socket hang up/i.test((e as Error).message);
         row(lost ? 'unknown' : 'failed', code, (e as Error).message);
-        notify(false, `${id} ${lost ? 'did not report back' : 'failed'}: ${(e as Error).message}`.slice(0, 200));
+        await notify(false, `${id} ${lost ? 'did not report back' : 'failed'}: ${(e as Error).message}`.slice(0, 200));
         process.exit(1);
       }
     });

@@ -92,7 +92,11 @@ export const dc = {
     /** Call a key-based MCP server named in the manifest's `mcp` list. Backend only. */
     call: (server, tool, args = {}) => { backendOnly('dc.mcp.call'); return call('POST', `/__dc/mcp/${enc(server)}/${enc(tool)}`, args); },
   },
-  /** {body, sound?, banner?, notch?, path?}: a Mac banner and/or a notch row titled with the app name. */
+  /**
+   * {body, sound?, banner?, notch?, path?}: a Mac banner and/or a notch row titled with the app name.
+   * sound: true or 'default' plays a sound, a name from /System/Library/Sounds plays that one,
+   * false or 'none' is silent; left out is silent. Anything else is a `bad_sound` error.
+   */
   notify: (n) => call('POST', '/__dc/notify', typeof n === 'string' ? { body: n } : n),
   automations: {
     create: (manifest) => { backendOnly('dc.automations.create'); return call('POST', '/__dc/automations', manifest); },

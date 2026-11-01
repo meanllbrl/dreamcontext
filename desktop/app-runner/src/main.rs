@@ -11,8 +11,14 @@ mod model;
 
 #[cfg(target_os = "macos")]
 mod mac;
+#[cfg(target_os = "macos")]
+mod notify;
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    if std::env::args().nth(1).as_deref() == Some(model::NOTIFY_FLAG) {
+        notify::run();
+    }
     #[cfg(target_os = "macos")]
     mac::run();
     #[cfg(not(target_os = "macos"))]

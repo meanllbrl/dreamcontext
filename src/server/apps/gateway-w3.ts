@@ -19,8 +19,7 @@ import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gatewayDashboardPort, gatewayTheme, registerGatewayRoute, type AppGateway } from './gateway.js';
 import { recordAppEvent } from '../../lib/assistant/notch-inbox.js';
-import { notifyViaBundle } from '../../lib/automations/notifier.js';
-import { appBundlePath } from '../../lib/apps/bundle.js';
+import { APP_SOUND_HELP, notifyFromApp, resolveAppSound } from '../../lib/apps/app-notify.js';
 import { safeAppPath } from '../../lib/apps/safe-path.js';
 import { cleanText } from '../../lib/apps/manifest.js';
 import { scheduleViews } from '../../lib/apps/schedule.js';
@@ -32,7 +31,6 @@ import { buildAppLink } from '../../lib/app-link.js';
 import { issueLinkNonce } from './link-nonces.js';
 
 const NOTIFY_PER_MINUTE = 30;
-const SOUNDS = new Set(['default', 'none', 'Glass', 'Basso', 'Ping', 'Pop', 'Purr', 'Submarine', 'Tink', 'Hero', 'Funk', 'Blow', 'Bottle', 'Frog', 'Morse', 'Sosumi']);
 
 let homeDir = process.env.HOME ?? '';
 let loginPath: (() => Promise<string>) | undefined;
@@ -96,7 +94,8 @@ registerGatewayRoute('/__dc/notify', { cookie: true, bearer: true }, async (gw: 
   if (extra.length) { send(res, 400, { error: 'unknown_field', message: `Only body, sound, banner, notch and path (not ${extra.join(', ')}).` }); return; }
   const text = typeof body.body === 'string' ? gw.runtime.scrub(cleanText(body.body, 500)) : '';
   if (!text) { send(res, 400, { error: 'no_body', message: 'body is required' }); return; }
-  if (body.sound !== undefined && (typeof body.sound !== 'string' || !SOUNDS.has(body.sound))) { send(res, 400, { error: 'bad_sound' }); return; }
+  const sound = resolveAppSound(body.sound);
+  if (sound === null) { send(res, 400, { error: 'bad_sound', message: APP_SOUND_HELP }); return; }
   let path: string | null = null;
   if (body.path !== undefined) {
     const p = safeAppPath(body.path);
@@ -118,11 +117,10 @@ registerGatewayRoute('/__dc/notify', { cookie: true, bearer: true }, async (gw: 
   const historyLink = appHistoryLink(rec.vault, rec.slug, path ? issueLinkNonce(rec.hash, path) : null);
   const wantBanner = body.banner !== false;
   const wantNotch = body.notch !== false;
-  let banner: { banner: true } | { banner: false; reason: string } = { banner: false, reason: 'not asked' };
+  let banner: { banner: true; via: 'app' | 'dreamcontext' } | { banner: false; reason: string } = { banner: false, reason: 'not asked' };
   if (wantBanner) {
-    const sound = typeof body.sound === 'string' && body.sound !== 'default' ? (body.sound === 'none' ? undefined : body.sound) : undefined;
-    const ok = notifyViaBundle(title, text, homeDir, { sound, link: null, historyLink, openTarget: appBundlePath(homeDir, rec.slug, rec.hash) });
-    banner = ok ? { banner: true } : { banner: false, reason: process.platform !== 'darwin' ? 'macOS only' : 'notifications are not set up (Apps card → Turn on notifications)' };
+    const via = await notifyFromApp({ title, body: text, rec, sound, historyLink, home: homeDir });
+    banner = via ? { banner: true, via } : { banner: false, reason: process.platform !== 'darwin' ? 'macOS only' : 'notifications are not set up (Apps card → Turn on notifications)' };
   }
   const notch = wantNotch ? !!recordAppEvent({ vault: rec.vault, projectRoot: rec.projectRoot, slug: rec.slug, name: title, body: text }, homeDir) : false;
   send(res, 200, { ok: true, ...banner, notch });

@@ -42,6 +42,7 @@ import { safeAppPath } from '../../lib/apps/safe-path.js';
 import { appBundlePath, ensureAppBundle, removeAppBundle, shellRunnerPath } from '../../lib/apps/bundle.js';
 import { removeShots, pruneShots } from '../../lib/apps/shots.js';
 import { notifierIconPath } from '../../lib/automations/notifier.js';
+import { icnsToPng } from '../../lib/apps/icns-raster.js';
 import { sendPhotoFile } from './automations.js';
 import { configureGatewayW3 } from '../apps/gateway-w3.js';
 import { spendLinkNonce } from '../apps/link-nonces.js';
@@ -520,7 +521,14 @@ export function appIconPath(contextRoot: string, slug: string): string | null {
 /** GET /api/apps/:slug/icon: the app's raster icon (allow-listed types, nosniff). */
 export async function handleAppIcon(req: IncomingMessage, res: ServerResponse, params: Params, contextRoot: string): Promise<void> {
   if (!requireLocalDesktop(req, res)) return;
-  sendPhotoFile(res, appIconPath(contextRoot, params.slug));
+  sendPhotoFile(res, appIconPath(contextRoot, params.slug) ?? await appIcnsRaster(contextRoot, params.slug));
+}
+
+/** An `.icns` icon as the cached PNG the notch and the history can draw. */
+async function appIcnsRaster(contextRoot: string, slug: string): Promise<string | null> {
+  const rec = getApp(home, projectRootOf(contextRoot), slug);
+  const m = rec ? readManifest(rec.root) : null;
+  return m?.ok && m.manifest.icon ? icnsToPng(m.manifest.icon, home) : null;
 }
 
 // ─── MCP approval (.mcp.json definitions need the owner's one click, in the notch) ──────
