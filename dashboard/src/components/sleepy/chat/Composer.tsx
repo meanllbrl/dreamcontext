@@ -6,7 +6,7 @@ import { useVoiceCapture, PHONE_MAX_TAKE_MS, STT_RETRIES } from '../../../lib/vo
 import { publishVoiceActivity, publishVoiceLevel } from '../../../lib/voice/voiceActivity';
 import { VoiceMeter } from './VoiceMeter';
 import {
-  parseHotkey, matchesHotkey, releasesHotkey, hotkeyLabel, isLatchKey, effectiveMode,
+  parseHotkey, matchesHotkey, releasesHotkey, isHeldChordRepeat, hotkeyLabel, isLatchKey, effectiveMode,
 } from '../../../lib/voice/hotkey';
 import { voicePrefs, refreshVoicePrefs, onVoicePrefs } from '../../../lib/voice/voicePrefs';
 import { onSpeechMuted } from '../../../lib/voice/audioFocus';
@@ -1898,6 +1898,8 @@ export function Composer({
   // as a physical press sends `keyup` milliseconds after `keydown`, and without the window
   // that release would end the take instantly, every time.
   const lastFlipRef = useRef(0);
+  /** This composer took the press and its base key is still down, so its repeats are ours. */
+  const chordClaimedRef = useRef(false);
   // ── ONE composer answers the chord, not every mounted one ───────────────────────────
   //
   // A chat pane never unmounts while its session lives — AgentSurface portals EVERY live
@@ -1927,7 +1929,13 @@ export function Composer({
     };
 
     const down = (e: KeyboardEvent) => {
-      if (e.repeat) return;
+      // A held chord's repeats: nothing to start, but each would still type into the field.
+      if (e.repeat) {
+        if (isHeldChordRepeat(e, chord, chordClaimedRef.current, () => ownsPushToTalk(rootRef.current))) e.preventDefault();
+        return;
+      }
+      // A fresh press: a claim whose keyup never came (the window lost focus) ends here.
+      if (e.code === chord.code) chordClaimedRef.current = false;
       // A latch key arrives with no modifiers of its own, so it is matched on the code alone;
       // an ordinary chord must match EXACTLY, or it would fire inside somebody else's binding.
       const hit = latch ? e.code === chord.code : matchesHotkey(e, chord);
@@ -1937,11 +1945,13 @@ export function Composer({
       // should behave as it does everywhere else in the app.
       if (!ownsPushToTalk(rootRef.current)) return;
       e.preventDefault();
+      chordClaimedRef.current = true;
       if (mode === 'toggle') flip();
       else startTake();
     };
 
     const up = (e: KeyboardEvent) => {
+      if (e.code === chord.code) chordClaimedRef.current = false;
       // The release is NOT ownership-checked the way the press is, and that asymmetry is
       // deliberate: a take that started here must be closeable even if the owner clicked into
       // another pane while still holding the key. `endTake` is a no-op when nothing is

@@ -2,7 +2,7 @@
  * The REAL chat composer (dashboard/src/components/sleepy/chat/Composer.tsx), its real CSS and
  * the real theme tokens, mounted alone in a pane-sized box so the voice row can be driven and
  * photographed without building the app. `?mode=assistant|super|chat`, `?theme=dark|light`,
- * `?lang=en|tr`, `?readAloud=0|1`. `?overlay=1` draws the notch's listening card instead
+ * `?lang=en|tr`, `?readAloud=0|1`, `?field=1` (a plain input beside it, for key checks). `?overlay=1` draws the notch's listening card instead
  * (`ListeningOverlay`, on the notch's own night surface), driven through `window.__voice(phase, attempt)`.
  */
 import './stubs';
@@ -59,6 +59,7 @@ function Harness() {
   const modelConfig = useMemo(() => ({ models: [{ id: 'opus', label: 'Opus' }], efforts: ['medium', 'high'], defaultModel: 'opus', defaultEffort: 'high' }), []);
   return (
     <div className="chat-pane" data-testid="pane" style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+      {params.has('field') && <input data-testid="other-field" aria-label="Another field" style={{ margin: 16 }} />}
       <Composer
         session={session}
         model="opus"
