@@ -18,7 +18,7 @@ import { QUEUE_KEEP_MS, QueuePlace, fastSlotLimit, ordered, readTickets, ticketR
 
 /**
  * The heavy lock as `builder heavy` and `builder test` take it, with the one message both print
- * when nothing ran: the heat (one step machine-wide while macOS says very hot, `./heat.ts`), the
+ * when nothing ran: the heat or memory limit (`./heat.ts`), the
  * machine's slots, or this checkout's lock, whichever the wait actually ran out on.
  */
 
@@ -191,7 +191,7 @@ function busyMessage(o: HeavyAcquireOpts, r: { waitS: number; lastLimit: number;
   }
   if (r.lastLimit === 1 && heavySlotsHeld(o.slotDir) >= 1) {
     const slot = heavySlotPaths(o.slotDir).find((p) => heavySlotsHeldAt(p));
-    return `the Mac is very hot (macOS thermal state serious or critical), so this machine runs one heavy step at a time; slot held by ${slot ? holderOf(slot, o.ps) : 'another check'} for ${r.waitS}s; NOTHING ran.`;
+    return `macOS reports critical heat or memory pressure, so this machine runs one heavy step at a time; slot held by ${slot ? holderOf(slot, o.ps) : 'another check'} for ${r.waitS}s; NOTHING ran.`;
   }
   const holders = heavySlotPaths(o.slotDir).filter((p) => existsSync(p)).map((p) => holderOf(p, o.ps)).join(', ');
   return `all ${r.lastLimit} heavy slots of this machine stayed busy for ${r.waitS}s (other checkouts' checks${holders ? `: ${holders}` : ''}); NOTHING ran.`;

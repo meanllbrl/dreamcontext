@@ -124,7 +124,7 @@ describe('heavy lock per worktree', () => {
 
   it('the machine slots have a line: across worktrees the smaller job gets the freed slot first', async () => {
     mkdirSync(slots, { recursive: true });
-    for (const p of heavySlotPaths(slots)) expect(acquireFileLock(p, Date.now(), 5_000)).toBe(true);
+    for (const p of heavySlotPaths(slots).slice(0, 2)) expect(acquireFileLock(p, Date.now(), 5_000)).toBe(true);
     const got: string[] = [];
     const ask = (cwd: string, key: string, size: number) => acquireHeavyReporting({
       cwd, lockPath: heavyLockPath(cwd), slotDir: slots, maxWaitS: 8, heavyLimit: async () => 2, ps: () => '',
@@ -148,7 +148,7 @@ describe('heavy lock per worktree', () => {
 
   it('a slot wait that runs out keeps its place in the slot line, and the retry takes it back', async () => {
     mkdirSync(slots, { recursive: true });
-    for (const p of heavySlotPaths(slots)) expect(acquireFileLock(p, Date.now(), 5_000)).toBe(true);
+    for (const p of heavySlotPaths(slots).slice(0, 2)) expect(acquireFileLock(p, Date.now(), 5_000)).toBe(true);
     const job = { key: 'kept', size: 5, label: 'tests', line: 'heavy' as const };
     const first = await acquireHeavyReporting({ cwd: wtA, lockPath: heavyLockPath(wtA), slotDir: slots, maxWaitS: 0, heavyLimit: async () => 2, ps: () => '', job });
     expect(first.held).toBeNull();

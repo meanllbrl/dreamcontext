@@ -415,7 +415,7 @@ export function machineNotes(room: MachineRoom, light?: LightMode, heat?: Machin
     else if (r.limit === 'light') notes.push(light ? lightModeNote(light) : lightModeNote({ on: true, reason: null, setting: 'auto' }));
   }
   if (heat?.heavyLimit === 1) {
-    notes.push(`the Mac is very hot (macOS thermal state ${heat.thermal ?? 'serious'}): heavy steps of different projects run one at a time machine-wide; builder heavy/test queue them by themselves; children are not limited, keep delegating`);
+    notes.push(`the Mac is very hot (macOS thermal state ${heat.thermal ?? 'critical'}): heavy steps of different projects run one at a time machine-wide; builder heavy/test queue them by themselves; children are not limited, keep delegating`);
   }
   if (heat?.bag) notes.push('the Mac is in a bag (hands-free Bag mode): heavy processes slow down while it is warm');
   return notes;
