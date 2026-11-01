@@ -58,7 +58,7 @@ describe('webBudget', () => {
     const container = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/super/SuperContainer.tsx'), 'utf-8');
     // Past the budget a web container is a title + Load placeholder, never an iframe.
     expect(container).toMatch(/const frame = p\.webLive && p\.viewReady;/);
-    expect(container).toMatch(/\{frame\s*\n\s*\? <div className="super-card-view super-card-view--web"><WebWidget/);
+    expect(container).toMatch(/\{frame\s*\n\s*\? <div className=\{`super-card-view super-card-view--web\$\{oneLine[^}]*\}`\}><WebWidget/);
     expect(container).toMatch(/\{p\.viewReady && !p\.webLive && !tile && !p\.parked && <WebPlaceholder/);
   });
 

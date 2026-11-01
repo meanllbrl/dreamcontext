@@ -3115,7 +3115,7 @@
     },
     {
       "path": "roadmap objective edit",
-      "desc": "Update an objective (title / target / feature / manual status override)",
+      "desc": "Update an objective (title / target / feature / manual status override / RICE)",
       "args": [
         "<slug>"
       ],
@@ -3123,7 +3123,11 @@
         "--title",
         "--target",
         "--feature",
-        "--status"
+        "--status",
+        "--reach",
+        "--impact",
+        "--confidence",
+        "--effort"
       ]
     },
     {
@@ -3153,12 +3157,31 @@
       ]
     },
     {
+      "path": "roadmap objective suggest",
+      "desc": "Suggest RICE values for the EMPTY fields of an objective; the owner accepts, edits or dismisses it on the Roadmap",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--reach",
+        "--impact",
+        "--confidence",
+        "--effort",
+        "--why"
+      ]
+    },
+    {
       "path": "roadmap objective undepend",
       "desc": "Remove a dependency edge",
       "args": [
         "<slug>",
         "<on>"
       ]
+    },
+    {
+      "path": "roadmap unscored",
+      "desc": "What still needs RICE values or an objective link: the scoring agent's one payload (the board's \"Score N\")",
+      "args": []
     },
     {
       "path": "setup",
@@ -4199,6 +4222,21 @@
       "path": "tasks statuses",
       "desc": "List this project's task statuses (shipped + declared in overrides/task.md) with kind, order and remote mapping",
       "args": []
+    },
+    {
+      "path": "tasks suggest",
+      "desc": "Suggest RICE values and/or an objective link for a task; the owner accepts, edits or dismisses it on the Roadmap. Never overwrites owner values.",
+      "args": [
+        "<name>"
+      ],
+      "valueFlags": [
+        "--reach",
+        "--impact",
+        "--confidence",
+        "--effort",
+        "--objective",
+        "--why"
+      ]
     },
     {
       "path": "tasks sync",

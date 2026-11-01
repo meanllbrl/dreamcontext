@@ -230,7 +230,7 @@ describe('the device shell\'s chrome', () => {
     expect(d).toMatch(/\{!p\.device && \(\s*<button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-new-project-row"/);
     expect(d).toMatch(/\{!p\.device && \(\s*<button type="button" className="ns-dr-row ns-dr-entry" data-testid="drawer-relations"/);
     expect(d).toMatch(/onPointerDown=\{p\.device \? undefined : /);
-    expect(d).toMatch(/\{!p\.device && \(\s*<>[\s\S]{0,300}p\.onOpenInWindow[\s\S]{0,400}p\.onCloseProject/);
+    expect(d).toMatch(/\{!p\.device && \(\s*<>[\s\S]{0,900}p\.onOpenInWindow[\s\S]{0,400}p\.onCloseProject/);
     expect(read('dashboard/src/components/layout/newshell/TitleBar.tsx')).toMatch(/onNewProject=\{device \? undefined : onNewProject\}/);
   });
 
