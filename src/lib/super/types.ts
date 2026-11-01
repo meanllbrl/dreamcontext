@@ -728,6 +728,9 @@ export interface SuperState {
   enabled: boolean;
   /** Children the record no longer holds, still the Super's: a chat window never shows them. */
   formerChildren?: string[];
+  /** Children alive when the owner turned the Super Agent off: his chats from then on, whatever
+   *  happens to their process (parked, taken over by a phone). Cleared by the next hand-over. */
+  released?: string[];
   /** The `formerChildren` that were the owner's adopted chats: a phone's History still lists them. */
   formerAdopted?: string[];
   containers: SuperContainer[];

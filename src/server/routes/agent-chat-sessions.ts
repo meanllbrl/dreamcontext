@@ -122,7 +122,9 @@ function withCodexRows<R extends { sessions: Array<{ updatedAt: number; matchIn?
 export async function superOwned(contextRoot: string): Promise<Set<string>> {
   try {
     const s = await readSuperState(contextRoot, superSanitizeOpts());
-    return new Set([...Object.keys(s.children), ...(s.formerChildren ?? []), ...(s.session ? [s.session] : [])]);
+    // Released at turn-off: the owner's chats, so History lists them.
+    const released = new Set(s.enabled ? [] : s.released ?? []);
+    return new Set([...Object.keys(s.children).filter((id) => !released.has(id)), ...(s.formerChildren ?? []), ...(s.session ? [s.session] : [])]);
   } catch {
     return new Set();
   }

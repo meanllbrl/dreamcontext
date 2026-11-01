@@ -468,6 +468,8 @@ export interface SuperState {
   enabled: boolean;
   /** Children the record no longer holds, still the Super's: a chat window never shows them. */
   formerChildren?: string[];
+  /** Children alive at turn-off: the owner's chats until the next hand-over (server types.ts). */
+  released?: string[];
   formerAdopted?: string[];
   containers: SuperContainer[];
   groups: SuperGroup[];
@@ -837,6 +839,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
       : [],
     pool,
     ...(Array.isArray(v.formerChildren) ? { formerChildren: v.formerChildren.filter((x): x is string => typeof x === 'string') } : {}),
+    ...(Array.isArray(v.released) ? { released: v.released.filter((x): x is string => typeof x === 'string') } : {}),
     ownerBatches,
     ...(held.length ? { held } : {}),
     ...(pad.length ? { pad } : {}),
