@@ -107,7 +107,7 @@ import { holdSidebarCollapsed as holdClassicSidebar } from '../../hooks/useSideb
 import { readDeviceShell, readShellModeFrozen, useIsNewShell } from '../../lib/uxMode';
 import { superTap } from './phoneList';
 import {
-  addWindow, adoptWindowOrder, cleanWindowName, dropWindow, landsOnSuper, moveWindow, renameWindow, initialWindows, joinInto, neighbourOf, parkedHomes, placeTab, pruneParked,
+  addWindow, adoptWindowOrder, cleanWindowName, dropWindow, freshenWindow, freshWindowName, landsOnSuper, moveWindow, renameWindow, initialWindows, joinInto, neighbourOf, parkedHomes, placeTab, pruneParked,
   restoreWindows, rowsByWindow, savePlacement, splitOut, switchWindow, unparkPanes, updateParked, windowOfTab,
   DEFAULT_WINDOW_ID, DEFAULT_WINDOW_NAME, TAB_CAP,
   type RestoredTab, type SavedWindowMeta, type WindowFact, type WindowsState, type WinPane,
@@ -578,6 +578,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const windowsKnownRef = useRef(false);
   /** A new (or emptied last) window asks for a fresh chat tab once its empty panes render. */
   const [freshTabNonce, setFreshTabNonce] = useState(0);
+  /** Before a chat lands in the window on screen: if that window is empty, a name the owner gave
+   *  it goes (chatWindows.ts `freshenWindow`). Assigned beside the drawer rows it reads. */
+  const freshenShownIfEmptyRef = useRef<() => void>(() => {});
   /** The 40-tab ceiling was hit: a lasting notice until a tab closes or it is dismissed. */
   const [tabCapNotice, setTabCapNotice] = useState(false);
 
@@ -1830,6 +1833,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // a shell), or as the first pane.
   const addSession = useCallback((kind: SessionKind = 'agent', launch?: { bypass: boolean; explicitBypass: true }, forceTool: '' | 'codex' | 'antigravity' = ''): string => {
     if (!admitTab()) return '';
+    freshenShownIfEmptyRef.current();
     const s = spawnAndRegister(kind, launch, forceTool);
     if (panes.length === 0) {
       const pid = nextPaneId();
@@ -1846,6 +1850,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // Spawn a fresh session into a NEW pane beside the focused one (⌘D agent / ⌘⇧D terminal) → side-by-side.
   const addSplitSession = useCallback((kind: SessionKind = 'agent') => {
     if (!admitTab()) return;
+    freshenShownIfEmptyRef.current();
     const s = spawnAndRegister(kind);
     const pid = nextPaneId();
     if (panes.length === 0) {
@@ -5368,7 +5373,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const createChatWindow = useCallback(() => {
     if (!admitTab()) return;
     const cur = chatWindowsRef.current;
-    const name = tRef.current('shell.windows.newName').replace('{n}', String(cur.list.length + 1));
+    const name = freshWindowName(cur.list, tRef.current('shell.windows.newName'));
     const r = addWindow(cur, name, { panes: panesRef.current, activePaneId: activePaneIdRef.current }, sessionListRef.current);
     windowsKnownRef.current = true;
     chatWindowsRef.current = r.state;
@@ -5564,7 +5569,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       if (canSpawn) {
         // An empty window is reused, never a pile of them no row shows: the first one takes the chat.
         const empty = windowed ? chatWindowsRef.current.list.find((w) => !windowRows.get(w.id)?.length) : undefined;
-        if (empty) { showWindow(empty.id); setFreshTabNonce((n) => n + 1); }
+        // It starts clean: a closed chat's name must not come back on the new one (freshenWindow).
+        if (empty) { freshenWindowNow(empty.id); showWindow(empty.id); setFreshTabNonce((n) => n + 1); }
         else if (windowed) createChatWindow();
         else addSession(claudeKind);
       }
@@ -6056,6 +6062,17 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const shownRollup = rollupProject(ownerRows);
   const shownFacts = { live: shownRollup.live, asking: shownRollup.asking, working: shownRollup.working, flagged: shownRollup.flagged };
   const windowRows = rowsByWindow(chatWindows, ownerRows, (id) => sessionList.find((m) => m.id === id)?.claudeId);
+  /** An empty window is about to take a chat: a name the owner gave it goes. Only once the roster
+   *  is known — before that every window reads empty — and only in the windowed shell. */
+  const freshenWindowNow = (id: string) => {
+    if (!windowed || !rosterKnown || windowRows.get(id)?.length) return;
+    const next = freshenWindow(chatWindowsRef.current, id, tRef.current('shell.windows.newName'));
+    if (next === chatWindowsRef.current) return;
+    windowsKnownRef.current = true;
+    chatWindowsRef.current = next;
+    setChatWindows(next);
+  };
+  freshenShownIfEmptyRef.current = () => freshenWindowNow(chatWindowsRef.current.activeId);
   const windowFacts: WindowFact[] = chatWindows.list.map((w) => {
     const rows = windowRows.get(w.id) ?? [];
     const r = rollupProject(rows);

@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  addWindow, adoptWindowOrder, dropWindow, initialWindows, landsOnSuper, moveBefore, moveWindow, neighbourOf, parkedHomes, placeTab, pruneParked, renameWindow, restoreWindows,
+  addWindow, adoptWindowOrder, dropWindow, freshenWindow, freshWindowName, initialWindows, landsOnSuper, moveBefore, moveWindow, neighbourOf, parkedHomes, placeTab, pruneParked, renameWindow, restoreWindows,
   rowsByWindow, savePlacement, splitOut, joinInto, switchWindow, unparkPanes, windowOfTab, TAB_CAP,
   type WindowsState, type WinTab,
 } from '../../dashboard/src/components/sleepy/chatWindows.js';
@@ -138,6 +138,42 @@ describe('new, rename, close', () => {
     // A minimized chip belongs to no window: no window's close takes it, the last one included.
     expect(close).toContain('!minimizedIdsRef.current.includes(m.id)');
     expect(close).not.toMatch(/st\.list\.length <= 1 \|\|/);
+  });
+});
+
+describe("an empty window starts clean (a closed chat's name never comes back)", () => {
+  const T = 'Chat {n}';
+  it('a name the owner gave an emptied window goes back to a fresh numbered one', () => {
+    const { state } = twoWindows();
+    const out = freshenWindow(state, 'w2', T);
+    expect(out.list.find((w) => w.id === 'w2')!.name).toBe('Chat 2');
+    expect(out.list.find((w) => w.id === 'main')!.name).toBe('Chat');
+  });
+
+  it('a name nobody chose stays, so no row is renumbered under the owner', () => {
+    const { state } = twoWindows();
+    expect(freshenWindow(state, 'main', T)).toBe(state);
+    const numbered = renameWindow(state, 'w2', 'Chat 7');
+    expect(freshenWindow(numbered, 'w2', T)).toBe(numbered);
+    expect(freshenWindow(state, 'nope', T)).toBe(state);
+  });
+
+  it('the fresh name is one no other window carries, localized by the template', () => {
+    const list = [{ id: 'main', name: 'Sohbet' }, { id: 'a', name: 'Sohbet 3' }, { id: 'b', name: 'Ayarlar' }];
+    expect(freshWindowName(list, 'Sohbet {n}', 'b')).toBe('Sohbet 4');
+    expect(freshWindowName(list, 'Sohbet {n}')).toBe('Sohbet 4');
+    expect(freshWindowName([{ id: 'main', name: 'Chat' }], 'Chat {n}')).toBe('Chat 2');
+    const dup: WindowsState = { list: [{ id: 'main', name: 'Chat 2', panes: [], activePaneId: '' }, { id: 'x', name: 'Chat 2', panes: [], activePaneId: '' }], activeId: 'main' };
+    expect(freshenWindow(dup, 'x', T).list.map((w) => w.name)).toEqual(['Chat 2', 'Chat 3']);
+  });
+
+  it('AgentSurface freshens the window before a reused window or a first tab takes the chat, and names new windows the same way', () => {
+    expect(SURFACE).toMatch(/if \(empty\) \{ freshenWindowNow\(empty\.id\); showWindow\(empty\.id\);/);
+    expect(SURFACE).toMatch(/const addSession = useCallback\([^]*?if \(!admitTab\(\)\) return '';\s+freshenShownIfEmptyRef\.current\(\);\s+const s = spawnAndRegister/);
+    expect(SURFACE).toMatch(/const addSplitSession = useCallback\([^]*?if \(!admitTab\(\)\) return;\s+freshenShownIfEmptyRef\.current\(\);\s+const s = spawnAndRegister/);
+    expect(SURFACE).toContain("const name = freshWindowName(cur.list, tRef.current('shell.windows.newName'));");
+    // Before the roster is restored every window reads empty: nothing may be renamed then.
+    expect(SURFACE).toMatch(/const freshenWindowNow = \(id: string\) => \{\s+if \(!windowed \|\| !rosterKnown \|\| windowRows\.get\(id\)\?\.length\) return;/);
   });
 });
 

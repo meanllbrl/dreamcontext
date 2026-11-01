@@ -146,6 +146,48 @@ export function addWindow(
   return { state: { list, activeId: id }, id };
 }
 
+/** `template`'s name for window number `n` ("Chat {n}" → "Chat 3"). */
+function numbered(template: string, n: number): string {
+  return template.replace('{n}', String(n));
+}
+
+/**
+ * The numbered name ("Chat 3") a window gets when it starts empty: one the other windows do not
+ * already carry. `own` = an existing window starting over (it is already counted); without it,
+ * the name of a window about to be added. `template` is the localized "Chat {n}".
+ */
+export function freshWindowName(list: readonly { id: string; name: string }[], template: string, own?: string): string {
+  const taken = new Set(list.filter((w) => w.id !== own).map((w) => w.name));
+  for (let n = own ? list.length : list.length + 1; ; n++) {
+    const name = numbered(template, n);
+    if (!taken.has(name)) return name;
+  }
+}
+
+/** A name nobody chose: the first window's "Chat", or a numbered "Chat 3". */
+function isDefaultWindowName(name: string, template: string): boolean {
+  if (name === DEFAULT_WINDOW_NAME) return true;
+  const [head, tail = ''] = template.split('{n}');
+  return name.length > head.length + tail.length && name.startsWith(head) && name.endsWith(tail)
+    && /^\d+$/.test(name.slice(head.length, name.length - tail.length));
+}
+
+/**
+ * An empty window taking its next chat starts clean: a name the owner gave it goes back to a fresh
+ * numbered one. An empty window has no row in the drawer, so that name is one the owner can no
+ * longer see, and keeping it brought a closed chat's name back on a brand-new chat (owner, 0.36.9).
+ * A name nobody chose stays as it is, unless another window carries it too. Same state when the
+ * window is unknown or nothing changes.
+ */
+export function freshenWindow(state: WindowsState, id: string, template: string): WindowsState {
+  const w = state.list.find((x) => x.id === id);
+  if (!w) return state;
+  const shared = state.list.some((x) => x.id !== id && x.name === w.name);
+  if (isDefaultWindowName(w.name, template) && !shared) return state;
+  const name = freshWindowName(state.list, template, id);
+  return w.name === name ? state : { ...state, list: state.list.map((x) => (x.id === id ? { ...x, name } : x)) };
+}
+
 export function renameWindow(state: WindowsState, id: string, raw: string): WindowsState {
   const name = cleanWindowName(raw);
   if (!name) return state;
