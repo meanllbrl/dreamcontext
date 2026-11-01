@@ -59,7 +59,9 @@ function SleepTable({ data, onRun }: { data: StatsWire; onRun: (r: SleepRun) => 
   const { t } = useI18n();
   const [view, setView] = useState<'run' | 'vault' | 'spec'>('run');
   const s = data.dc.sleep;
-  const total = s.cost || 1;
+  // These lists hold runs whole, so a share is of the list it stands in, not of the in-range card.
+  const vaultTotal = s.vaults.reduce((a, g) => a + (g.cost ?? 0), 0) || 1;
+  const specTotal = s.specialists.reduce((a, g) => a + g.cost, 0) || 1;
   return (
     <div className="st-card">
       <div className="st-bh">
@@ -87,7 +89,7 @@ function SleepTable({ data, onRun }: { data: StatsWire; onRun: (r: SleepRun) => 
           {s.vaults.map((g) => (
             <div className="st-tr" key={g.key}>
               <span className="nm"><b>{g.label}</b></span><span className="num">{fmtCost(g.cost ?? 0)}</span>
-              <span className="shr"><i data-sleep="" style={{ width: `${((g.cost ?? 0) / total) * 100}%` }} /><em>{fmtPct(((g.cost ?? 0) / total) * 100)}</em></span>
+              <span className="shr"><i data-sleep="" style={{ width: `${((g.cost ?? 0) / vaultTotal) * 100}%` }} /><em>{fmtPct(((g.cost ?? 0) / vaultTotal) * 100)}</em></span>
               <span className="num dim">{g.sub}</span>
             </div>
           ))}
@@ -103,7 +105,7 @@ function SleepTable({ data, onRun }: { data: StatsWire; onRun: (r: SleepRun) => 
                 <div className="st-tr" key={`${g.name}${g.model}`}>
                   <span className="nm nm2"><span><b className="mono">{g.name}</b><span className="dim">{g.model}{g.effort ? ` · ${g.effort}` : ''}{set?.model ? ` · ${t('stats.setTo')} ${set.model}` : ''}</span></span></span>
                   <span className="num">{fmtCost(g.cost)}</span>
-                  <span className="shr"><i data-sleep="" style={{ width: `${(g.cost / total) * 100}%` }} /><em>{fmtPct((g.cost / total) * 100)}</em></span>
+                  <span className="shr"><i data-sleep="" style={{ width: `${(g.cost / specTotal) * 100}%` }} /><em>{fmtPct((g.cost / specTotal) * 100)}</em></span>
                   <span className="num dim">{fmtTokens(g.tokens)}</span>
                 </div>
               );
