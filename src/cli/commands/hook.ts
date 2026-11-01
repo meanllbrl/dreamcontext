@@ -2,9 +2,10 @@ import { logHandoff } from '../../lib/usage-records.js';
 import { directHeavy, shellQuote } from '../../lib/run-budget.js';
 import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
 import { hookTool, setHookTool } from '../../lib/hook-tool.js';
+import { SESSION_START_PARTS } from '../../lib/snapshot-budget.js';
 import { Command } from 'commander';
 import {
-  readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, mkdirSync, readdirSync, writeSync,
+  readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, mkdirSync, readdirSync,
 } from 'node:fs';
 import { format as formatArgs } from 'node:util';
 import { createHash } from 'node:crypto';
@@ -13,6 +14,11 @@ import { execFileSync, execSync, spawn } from 'node:child_process';
 import { get as httpGet, request as httpRequest } from 'node:http';
 import { dirname, resolve, join, extname, basename, relative } from 'node:path';
 import { resolveContextRoot } from '../../lib/context-path.js';
+import {
+  enterHookProject, fitPromptContext, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
+  takeSessionStartPart, writePromptOverflow, writeSessionStartParts, writeStdoutSync,
+  SESSION_START_PART_HOOK, type PromptBlock, type PromptBlockKind,
+} from '../../lib/hook-delivery.js';
 import type { SleepState, Bookmark, SessionRecord } from './sleep.js';
 import { readSleepState, writeSleepState, bumpKnowledgeAccess, resolveRecallMode, type RecallMode } from './sleep.js';
 import {
@@ -2146,13 +2152,59 @@ function beginCodexHookFormat(name: string): void {
   console.log = (...args: unknown[]) => { lines.push(formatArgs(...args)); };
   process.once('exit', () => {
     const out = codexHookAnswer(event, lines.join('\n'));
-    if (!out) return;
-    const buf = Buffer.from(out, 'utf-8');
-    let off = 0;
-    for (let tries = 0; off < buf.length && tries < 1000; tries++) {
-      try { off += writeSync(1, buf, off); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EAGAIN') return; }
-    }
+    if (out) writeStdoutSync(out);
   });
+}
+
+/**
+ * Claude's SessionStart: everything this hook prints is held, then cut for the part hooks at exit
+ * (an exit on any path, so a hook that stops early still releases them and the session does not
+ * wait on them). `parts` false: a project without the part hooks, one hook carries it all.
+ */
+function beginSessionStartDelivery(sessionId: string, parts: boolean): void {
+  const lines: string[] = [];
+  console.log = (...args: unknown[]) => { lines.push(formatArgs(...args)); };
+  process.once('exit', () => {
+    const pieces = lines.length ? splitHookOutput(`${lines.join('\n')}\n`, parts ? SESSION_START_PARTS : 1) : [];
+    // Every start with an id leaves its slots, even with no part hooks expected: settings this hook
+    // misread would otherwise hold the session's start for a part hook's whole wait.
+    if (sessionId) {
+      try {
+        writeSessionStartParts(sessionId, parts ? pieces.slice(1) : []);
+      } catch (e) {
+        console.error('[dreamcontext] Could not hand the snapshot to its part hooks:', (e as Error).message);
+      }
+    }
+    if (pieces[0]) writeStdoutSync(pieces[0]);
+  });
+}
+
+/** One turn's output, held so it can be fitted under the limit at exit. Empty outside a Claude prompt. */
+let promptBlocks: PromptBlock[] | null = null;
+
+function beginPromptDelivery(sessionId: string): void {
+  const blocks: PromptBlock[] = [];
+  promptBlocks = blocks;
+  console.log = (...args: unknown[]) => { blocks.push({ kind: 'must', text: formatArgs(...args) }); };
+  process.once('exit', () => {
+    if (blocks.length === 0) return;
+    const fit = fitPromptContext(blocks);
+    let text = fit.text;
+    if (fit.overflow !== null) {
+      try {
+        text += promptOverflowNote(writePromptOverflow(sessionId, fit.overflow));
+      } catch (e) {
+        console.error('[dreamcontext] Could not keep the full prompt context:', (e as Error).message);
+      }
+    }
+    writeStdoutSync(`${text}\n`);
+  });
+}
+
+/** Print a block the turn can lose before its rules; `console.log` is `must`. */
+function emitPromptBlock(kind: PromptBlockKind, text: string, compact?: string): void {
+  if (promptBlocks) promptBlocks.push({ kind, text, compact });
+  else console.log(text);
 }
 
 /**
@@ -2527,6 +2579,7 @@ export function registerHookCommand(program: Command): void {
       const input = readStdin();
       if (isMcpProbeChild()) process.exit(0);
 
+      const brainNote = hookTool() === 'codex' ? null : enterHookProject();
       const root = resolveContextRoot();
       if (!root) {
         // No brain at all. If cwd is a real project, surface the initializer
@@ -2553,6 +2606,12 @@ export function registerHookCommand(program: Command): void {
       // screen, not the conversation frozen at the last rotation.
       const sid = input && typeof input.session_id === 'string' ? input.session_id : '';
       if (sid) recordTabSessionFromHook(root, sid);
+
+      // Codex has its own limit and splitter; a session with no id has nothing to key the parts on.
+      const claudeHook = hookTool() !== 'codex';
+      const partsInstalled = claudeHook && !!sid && sessionStartPartsInstalled(hookSettingsRoot(dirname(root)));
+      if (claudeHook) beginSessionStartDelivery(sid, partsInstalled);
+      if (brainNote) console.log(brainNote);
 
       // Keep the per-pattern "/" entries in step with the vault, WITHOUT anybody
       // running a command. A pattern added, renamed, or retired since the last
@@ -2691,7 +2750,7 @@ export function registerHookCommand(program: Command): void {
       }
 
       // Generate and output snapshot
-      const snapshot = generateSnapshot();
+      const snapshot = generateSnapshot(undefined, { singleHook: claudeHook && !partsInstalled });
       if (!snapshot) process.exit(0);
 
       // Thresholds come from `.config.json` `sleep.thresholds` (defaults when
@@ -2790,6 +2849,25 @@ export function registerHookCommand(program: Command): void {
       } catch { /* housekeeping is never allowed to cost a session */ }
 
       console.log(snapshot);
+    });
+
+  // --- hook session-start-part <n> ---
+  hook
+    .command(`${SESSION_START_PART_HOOK} <n>`)
+    .description('Print one later piece of the context snapshot (runs beside session-start)')
+    .action(async (n: string) => {
+      const startedAt = Date.now();
+      const input = readStdin();
+      if (isMcpProbeChild()) process.exit(0);
+      enterHookProject();
+      const sid = input && typeof input.session_id === 'string' ? input.session_id : '';
+      const part = Number.parseInt(n, 10);
+      if (!sid || !Number.isInteger(part) || part < 2 || part > SESSION_START_PARTS || !resolveContextRoot()) process.exit(0);
+      // Hooks reach the model in the order they finish: a later piece lets the earlier one go first.
+      const text = await takeSessionStartPart(sid, part, { startedAt });
+      if (!text) process.exit(0);
+      await new Promise((r) => setTimeout(r, (part - 2) * 60));
+      writeStdoutSync(text);
     });
 
   // --- hook pre-tool-use ---
@@ -2904,6 +2982,7 @@ export function registerHookCommand(program: Command): void {
     .command('subagent-start')
     .description('Inject context briefing into sub-agents (called by Claude Code SubagentStart hook)')
     .action(() => {
+      const brainNote = hookTool() === 'codex' ? null : enterHookProject();
       const root = resolveContextRoot();
       if (!root) process.exit(0);
 
@@ -2914,7 +2993,7 @@ export function registerHookCommand(program: Command): void {
       console.log(JSON.stringify({
         hookSpecificOutput: {
           hookEventName: 'SubagentStart',
-          additionalContext: briefing,
+          additionalContext: brainNote ? `${brainNote}\n\n${briefing}` : briefing,
         },
       }));
     });
@@ -2927,6 +3006,9 @@ export function registerHookCommand(program: Command): void {
       const input = readStdin();
       if (isMcpProbeChild()) process.exit(0);
       if (!input) process.exit(0);
+      const brainNote = hookTool() === 'codex' ? null : enterHookProject();
+      if (hookTool() !== 'codex') beginPromptDelivery(typeof input.session_id === 'string' ? input.session_id : '');
+      if (brainNote) console.log(brainNote);
 
       // ── Deferred first-message context ─────────────────────────────────────
       // The embedded terminal can park an initial prompt in a tmp file instead of
@@ -3160,7 +3242,7 @@ export function registerHookCommand(program: Command): void {
               // re-ranking (see recallGatePasses).
               if (recallGatePasses(hits, haiku)) {
                 const lines = renderRecallBlock(hits, label);
-                console.log(lines.join('\n'));
+                emitPromptBlock('recall', lines.join('\n'));
                 hadRecallHits = true;
 
                 // C4: a recall hit on a knowledge doc IS an access — bump
@@ -3219,7 +3301,7 @@ export function registerHookCommand(program: Command): void {
                       '  (Live reference — recall the source vault directly with ' +
                         '`dreamcontext memory recall <q> --vault <name>`. Nothing is copied here.)',
                     );
-                    console.log(lines.join('\n'));
+                    emitPromptBlock('peers', lines.join('\n'));
                     hadRecallHits = true;
                   }
                 }
@@ -3299,6 +3381,7 @@ export function registerHookCommand(program: Command): void {
               // pointer form rather than dropping silently.
               const plan = selectForInjection(hits);
               const lines: string[] = ['', `— Project patterns (${hits.length} triggered) —`];
+              const allPointers = plan.inline.map((i) => i.match).concat(plan.pointers);
               lines.push(
                 '  ⛔ These are DECIDED ways of doing things in this project, not suggestions. ' +
                   'FOLLOW them; do not re-derive an approach one already settles.',
@@ -3358,7 +3441,13 @@ export function registerHookCommand(program: Command): void {
                 lines.push('  Also matched — READ these in full before acting (they did not fit inline):');
                 for (const h of plan.pointers) lines.push(`    ${h.pattern.relPath}  (${h.pattern.name})`);
               }
-              console.log(lines.join('\n'));
+              // What a turn too long for its rules gets instead: the same directives, every file by path.
+              const compact = [
+                ...lines.slice(0, 4),
+                '  READ these in full before acting (they did not fit this turn):',
+                ...allPointers.map((h) => `    ${h.pattern.relPath}  (${h.pattern.name})`),
+              ].join('\n');
+              emitPromptBlock('patterns', lines.join('\n'), compact);
               hadRecallHits = true;
             }
           }
@@ -3410,7 +3499,7 @@ export function registerHookCommand(program: Command): void {
         g.push('  • For depth, RECALL more: dreamcontext memory recall "<your keywords>" [--types knowledge,feature,task,memory] — try a few keyword sets and read the relevant hits in full.');
         g.push('  • CHECK whether a task already exists for this work: dreamcontext memory recall "<keywords>" --types task (or look in _dream_context/state/). If one exists, follow it; if the work is untracked and non-trivial, create one.');
         g.push('  Act only once the relevant memory is in your context — be the agent that has seen the whole picture, not one re-deriving it blind.');
-        console.log(g.join('\n'));
+        emitPromptBlock('gate', g.join('\n'));
       }
     });
 

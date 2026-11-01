@@ -61,9 +61,8 @@ describe('ensureClaudeHooks: legacy npx handlers are rewritten in place', () => 
     const all = handlers(readHooks());
     expect(all).toHaveLength(HOOK_SPECS.length);
     for (const spec of HOOK_SPECS) {
-      const matching = all.filter((h) => h.event === spec.event && h.matcher === (spec.matcher ?? ''));
+      const matching = all.filter((h) => h.event === spec.event && h.matcher === (spec.matcher ?? '') && h.command === hookCommand(spec.name));
       expect(matching).toHaveLength(1);
-      expect(matching[0].command).toBe(hookCommand(spec.name));
       expect(matching[0].timeout).toBe(spec.timeout);
     }
     expect(all.some((h) => h.command.startsWith('npx '))).toBe(false);

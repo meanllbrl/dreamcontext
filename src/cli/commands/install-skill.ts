@@ -1,3 +1,5 @@
+import { SESSION_START_PART_HOOK } from '../../lib/hook-delivery.js';
+import { SESSION_START_PARTS } from '../../lib/snapshot-budget.js';
 import { Command } from 'commander';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, readdirSync, cpSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -67,6 +69,7 @@ const POST_TOOL_USE_HOOK = hookCommand('post-tool-use');
 const PRE_COMPACT_HOOK = hookCommand('pre-compact');
 const ENSURE_DASHBOARD_HOOK = hookCommand('ensure-dashboard');
 const OLD_HOOK = 'npx dreamcontext snapshot'; // migration target
+const SESSION_START_MATCHER = 'startup|resume|compact|clear';
 
 /**
  * The 0.33.0 task system (reverted 2026-10-20) installed two hooks this version does not run:
@@ -110,11 +113,19 @@ interface HookSpec {
 }
 
 export const HOOK_SPECS: readonly HookSpec[] = [
-  { event: 'SessionStart', name: 'session-start', command: SESSION_START_HOOK, timeout: 10, matcher: 'startup|resume|compact|clear' },
+  { event: 'SessionStart', name: 'session-start', command: SESSION_START_HOOK, timeout: 10, matcher: SESSION_START_MATCHER },
+  // The snapshot's later pieces. One hook carries at most HARNESS_PERSIST_CHAR_LIMIT, so these run
+  // beside session-start and print what it left them (lib/hook-delivery.ts). An older CLI has no such
+  // subcommand: the hook fails on its own and session-start still works.
+  ...Array.from({ length: SESSION_START_PARTS - 1 }, (_, i) => {
+    const name = `${SESSION_START_PART_HOOK} ${i + 2}`;
+    return { event: 'SessionStart', name, command: hookCommand(name), timeout: 10, matcher: SESSION_START_MATCHER };
+  }),
   // 45 s, not 5: a TS project whose check takes over 4 s is type-checked once per turn, at Stop
   // (lib/tsc-check.ts), and a hook killed by its timeout loses its answer.
   { event: 'Stop', name: 'stop', command: STOP_HOOK, timeout: 45 },
-  { event: 'SubagentStart', name: 'subagent-start', command: SUBAGENT_START_HOOK, timeout: 5 },
+  // 10 s, not 5: under load a hook killed by its timeout left the sub-agent with no briefing at all.
+  { event: 'SubagentStart', name: 'subagent-start', command: SUBAGENT_START_HOOK, timeout: 10 },
   { event: 'PreToolUse', name: 'pre-tool-use', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: 'Agent' },
   // Second PreToolUse entry: gates direct writes to protected files (e.g. marketing/.env).
   // The hook.ts action already branches on tool_name, so the same command serves both gates.

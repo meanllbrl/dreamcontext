@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import { analyzeTranscript, scoreSession } from '../../src/cli/commands/hook.js';
 import {
   DEBT_DROWSY,
@@ -2120,5 +2120,93 @@ describe('hook initializer detection (integration)', () => {
     });
     expect(output).not.toContain(OFFER_MARKER);
     expect(output).toContain(`Sleep debt is ${DEBT_DROWSY}`);
+  });
+});
+
+describe('hook delivery: a session that moved out of the brain, and the snapshot parts (integration)', () => {
+  const CLI_PATH = join(__dirname, '..', '..', 'dist', 'index.js');
+  const run = (args: string[], cwd: string, input: unknown, env: NodeJS.ProcessEnv = {}) =>
+    spawnSync(process.execPath, [CLI_PATH, 'hook', ...args], {
+      cwd, input: JSON.stringify(input), encoding: 'utf-8', timeout: 30_000,
+      env: { ...process.env, HOME: cwd, DREAMCONTEXT_BRAIN_SYNC: '0', DREAMCONTEXT_RECALL_CLOUD: '0', DREAMCONTEXT_VERSION_CHECK: '0', ...env },
+    });
+
+  function brainAndCode(): { brain: string; code: string } {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'dc-hook-moved-')));
+    const brain = join(base, 'brain');
+    const code = join(base, 'code');
+    mkdirSync(join(brain, '_dream_context', 'core'), { recursive: true });
+    mkdirSync(join(brain, '_dream_context', 'state'), { recursive: true });
+    mkdirSync(code);
+    writeFileSync(join(brain, '_dream_context', 'core', '0.soul.md'), `---\nname: acme\ntype: soul\n---\n\n## Identity\n\nFictional.\n\n${'Rule line.\n'.repeat(1_400)}`);
+    return { brain, code };
+  }
+
+  it.skipIf(!existsSync(CLI_PATH))('sub-agent and prompt hooks find the brain from a code folder, and say where it is', () => {
+    const { brain, code } = brainAndCode();
+    const sub = run(['subagent-start'], code, {}, { CLAUDE_PROJECT_DIR: brain });
+    const context = JSON.parse(sub.stdout).hookSpecificOutput.additionalContext as string;
+    expect(context.startsWith(`Your working folder has no brain. This project's brain is at ${brain}`)).toBe(true);
+    const prompt = run(['user-prompt-submit'], code, { prompt: 'hello there world', session_id: 's1' }, { CLAUDE_PROJECT_DIR: brain });
+    expect(prompt.stdout.startsWith('Your working folder has no brain.')).toBe(true);
+    // Without a project dir the hook stays silent, as it always did.
+    expect(run(['subagent-start'], code, {}).stdout).toBe('');
+  });
+
+  it.skipIf(!existsSync(CLI_PATH))('with the part hooks installed the pieces arrive whole; without them one hook stays under the limit', () => {
+    const { brain } = brainAndCode();
+    const sid = '11111111-1111-4111-8111-111111111111';
+    const single = run(['session-start'], brain, { session_id: sid, source: 'startup' });
+    expect(single.stdout.length).toBeLessThanOrEqual(9_800);
+    expect(single.stdout).toContain('Rule line.');
+
+    mkdirSync(join(brain, '.claude'), { recursive: true });
+    const commands = ['session-start', 'session-start-part 2', 'session-start-part 3'].map((n) => ({ hooks: [{ type: 'command', command: `dreamcontext hook ${n}` }] }));
+    writeFileSync(join(brain, '.claude', 'settings.json'), JSON.stringify({ hooks: { SessionStart: commands } }));
+    const first = run(['session-start'], brain, { session_id: sid, source: 'startup' });
+    const second = run(['session-start-part', '2'], brain, { session_id: sid });
+    const third = run(['session-start-part', '3'], brain, { session_id: sid });
+    expect(first.stdout.length).toBeLessThanOrEqual(9_800);
+    expect(first.stdout).toContain('continues in part 2 of');
+    expect(second.stdout.length).toBeGreaterThan(0);
+    expect(second.stdout.length).toBeLessThanOrEqual(9_800);
+    expect(third.stdout.length).toBeLessThanOrEqual(9_800);
+    const lost = (first.stdout + second.stdout + third.stdout).split('Rule line.').length - 1;
+    expect(lost).toBe(1_400);
+  });
+
+  it.skipIf(!existsSync(CLI_PATH))('a Codex hook never crosses into CLAUDE_PROJECT_DIR\'s brain', () => {
+    const { brain, code } = brainAndCode();
+    const env = { CLAUDE_PROJECT_DIR: brain };
+    expect(run(['subagent-start', '--format', 'codex'], code, {}, env).stdout).toBe('');
+    expect(run(['user-prompt-submit', '--format', 'codex'], code, { prompt: 'hello there world', session_id: 's1' }, env).stdout).toBe('');
+    const start = run(['session-start', '--format', 'codex'], code, { session_id: 's1', source: 'startup' }, env);
+    expect(start.stdout).not.toContain('Your working folder has no brain');
+    expect(start.stdout).not.toContain('Rule line.');
+  });
+
+  it.skipIf(!existsSync(CLI_PATH))('a Codex snapshot stays whole and is never left to the part hooks', () => {
+    const { brain } = brainAndCode();
+    const sid = '44444444-4444-4444-8444-444444444444';
+    const out = run(['session-start', '--format', 'codex'], brain, { session_id: sid, source: 'startup' });
+    const context = JSON.parse(out.stdout).hookSpecificOutput.additionalContext as string;
+    expect(context.split('Rule line.').length - 1).toBe(1_400);
+    expect(context).not.toContain('continues in part');
+  });
+
+  it.skipIf(!existsSync(CLI_PATH))('settings misread as no part hooks cost no wait: the slots are left all the same', () => {
+    const { brain } = brainAndCode();
+    const sid = '55555555-5555-4555-8555-555555555555';
+    expect(run(['session-start'], brain, { session_id: sid, source: 'compact' }).stdout.length).toBeLessThanOrEqual(9_800);
+    const started = Date.now();
+    expect(run(['session-start-part', '2'], brain, { session_id: sid }).stdout).toBe('');
+    expect(Date.now() - started).toBeLessThan(3_000);
+  });
+
+  it.skipIf(!existsSync(CLI_PATH))('a part hook exits at once where there is no brain', () => {
+    const { code } = brainAndCode();
+    const started = Date.now();
+    expect(run(['session-start-part', '2'], code, { session_id: 's' }).stdout).toBe('');
+    expect(Date.now() - started).toBeLessThan(3_000);
   });
 });

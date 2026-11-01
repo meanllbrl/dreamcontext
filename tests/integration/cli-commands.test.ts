@@ -840,10 +840,10 @@ parent_task: null
       const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
       expect(settings.hooks).toBeDefined();
       expect(settings.hooks.SessionStart).toBeDefined();
-      // Two SessionStart groups: the context snapshot + the dashboard auto-open.
-      expect(settings.hooks.SessionStart).toHaveLength(2);
-      expect(settings.hooks.SessionStart[0].hooks[0].command).toBe(hookCommand('session-start'));
-      expect(settings.hooks.SessionStart[1].hooks[0].command).toBe(hookCommand('ensure-dashboard'));
+      // Four SessionStart groups: the context snapshot, its two later pieces + the dashboard auto-open.
+      expect(settings.hooks.SessionStart.map((g: { hooks: { command: string }[] }) => g.hooks[0].command)).toEqual([
+        hookCommand('session-start'), hookCommand('session-start-part 2'), hookCommand('session-start-part 3'), hookCommand('ensure-dashboard'),
+      ]);
       expect(settings.hooks.Stop).toBeDefined();
       expect(settings.hooks.Stop).toHaveLength(1);
       expect(settings.hooks.Stop[0].hooks[0].command).toBe(hookCommand('stop'));
@@ -869,9 +869,9 @@ parent_task: null
       expect(settings.hooks.PostToolUse[0].hooks[0].command).toBe('echo done');
       expect(settings.hooks.PostToolUse[1].hooks[0].command).toBe(hookCommand('post-tool-use'));
       // Hooks added (session-start snapshot + ensure-dashboard auto-open)
-      expect(settings.hooks.SessionStart).toHaveLength(2);
+      expect(settings.hooks.SessionStart).toHaveLength(4);
       expect(settings.hooks.SessionStart[0].hooks[0].command).toBe(hookCommand('session-start'));
-      expect(settings.hooks.SessionStart[1].hooks[0].command).toBe(hookCommand('ensure-dashboard'));
+      expect(settings.hooks.SessionStart[3].hooks[0].command).toBe(hookCommand('ensure-dashboard'));
       expect(settings.hooks.Stop).toHaveLength(1);
     });
 
@@ -891,9 +891,9 @@ parent_task: null
       const settings = JSON.parse(readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'));
 
       // Old hook replaced, not duplicated; ensure-dashboard added as the 2nd group
-      expect(settings.hooks.SessionStart).toHaveLength(2);
+      expect(settings.hooks.SessionStart).toHaveLength(4);
       expect(settings.hooks.SessionStart[0].hooks[0].command).toBe(hookCommand('session-start'));
-      expect(settings.hooks.SessionStart[1].hooks[0].command).toBe(hookCommand('ensure-dashboard'));
+      expect(settings.hooks.SessionStart[3].hooks[0].command).toBe(hookCommand('ensure-dashboard'));
       // Stop hook also added
       expect(settings.hooks.Stop).toHaveLength(1);
     });
@@ -924,8 +924,8 @@ parent_task: null
       run('install-skill', tmpDir);
       run('install-skill', tmpDir);
       const settings = JSON.parse(readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'));
-      // Two SessionStart groups (snapshot + ensure-dashboard), each deduped to one.
-      expect(settings.hooks.SessionStart).toHaveLength(2);
+      // Four SessionStart groups (snapshot, its two pieces, ensure-dashboard), each deduped to one.
+      expect(settings.hooks.SessionStart).toHaveLength(4);
       expect(settings.hooks.Stop).toHaveLength(1);
       expect(settings.hooks.PostToolUse).toHaveLength(1);
       expect(settings.hooks.PreCompact).toHaveLength(1);

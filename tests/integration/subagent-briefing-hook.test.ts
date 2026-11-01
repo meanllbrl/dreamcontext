@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process';
  */
 
 const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
-const MAX_CHARS = 12_000; // SUBAGENT_BRIEFING_MAX_CHARS
+const MAX_CHARS = 9_500; // SUBAGENT_BRIEFING_MAX_CHARS
 
 function write(file: string, content: string): void {
   mkdirSync(dirname(file), { recursive: true });

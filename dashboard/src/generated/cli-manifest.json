@@ -1836,6 +1836,16 @@
       ]
     },
     {
+      "path": "hook session-start-part",
+      "desc": "Print one later piece of the context snapshot (runs beside session-start)",
+      "args": [
+        "<n>"
+      ],
+      "valueFlags": [
+        "--format"
+      ]
+    },
+    {
       "path": "hook stop",
       "desc": "Record session metadata (called by Claude Code Stop hook)",
       "args": [],

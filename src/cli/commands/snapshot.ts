@@ -42,7 +42,8 @@ import { RECALL_GUIDANCE, TASK_CREATE_GUIDANCE, BRIEFING_RECOVERY_NOTE } from '.
 import {
   applyBudget, resolveBudget, resolveBudgetForTool, resolveSubagentBriefingBudget, SUBAGENT_BRIEFING_MAX_CHARS,
   demoteMemoryBlock, demoteTaskList,
-  renderOverBudgetBanner, HARNESS_PERSIST_CHAR_LIMIT,
+  renderOverBudgetBanner, SNAPSHOT_DELIVERY_CHAR_LIMIT, HOOK_OUTPUT_MAX_CHARS, SINGLE_HOOK_BUDGET_TOKENS,
+  CODEX_SUBAGENT_BRIEFING_MAX_CHARS, CODEX_SNAPSHOT_BANNER_CHARS,
   type BudgetSection, type BudgetRung, type BudgetResult,
 } from '../../lib/snapshot-budget.js';
 import {
@@ -1238,6 +1239,11 @@ const EMPTY_BUDGET_RESULT: BudgetResult = Object.freeze({
 /** Options shared by `measureSnapshot` and `generateSnapshot`. */
 export interface SnapshotOptions {
   /**
+   * This render goes out through ONE SessionStart hook: the project's settings predate the part
+   * hooks (lib/hook-delivery.ts). The ladder aims at one hook's room, unless the owner set a budget.
+   */
+  singleHook?: boolean;
+  /**
    * Whether matched contextual reminders consume a firing (`fired_count++` plus
    * a `.sleep.json` write). The reminders still RENDER when false — only the
    * mutation is skipped. This is the sole write in the whole snapshot path, and
@@ -2371,22 +2377,31 @@ export function measureSnapshot(
   // demotion ladder only engages when the full render exceeds the budget;
   // under budget the output is byte-identical to the legacy format.
   // A bridge tool's hook (`hook … --format codex`) names its tool in process memory; Claude never does.
-  const budget = resolveBudgetForTool(process.env.DREAMCONTEXT_SNAPSHOT_BUDGET, hookTool() ?? undefined);
+  const envBudget = process.env.DREAMCONTEXT_SNAPSHOT_BUDGET;
+  const budget = opts.singleHook && !envBudget?.trim()
+    ? SINGLE_HOOK_BUDGET_TOKENS
+    : resolveBudgetForTool(envBudget, hookTool() ?? undefined);
   const result = applyBudget(sections, budget);
   let text = result.text.trim();
 
-  // Harness persist guard, and ONLY for the band that actually loses content.
-  // Claude Code persists hook stdout past HARNESS_PERSIST_CHAR_LIMIT to a file
-  // and injects the first ~2KB as a blind positional slice. Being over the TOKEN
-  // budget is a different, milder state — the snapshot is thinner than the brain
-  // but still arrives complete, and `applyBudget`'s footer says so. Claiming a
-  // truncated preview there would be false, so the banner is gated on the char
-  // limit alone. It goes immediately after the H1 so it lands INSIDE the window
-  // it is warning about.
-  if (text.length > HARNESS_PERSIST_CHAR_LIMIT) {
+  // Delivery guard, and ONLY for the band that actually loses content. The
+  // session-start hooks carry so much (lib/hook-delivery.ts) and cut the tail
+  // past it. Being over the TOKEN budget is a different, milder state: the
+  // snapshot is thinner than the brain but still arrives complete, and
+  // `applyBudget`'s footer says so. Claiming a cut there would be false, so the
+  // banner is gated on the char limit alone. It goes immediately after the H1
+  // so it lands in the part that always arrives.
+  const codex = hookTool() === 'codex';
+  const deliveryChars = codex
+    ? CODEX_SNAPSHOT_BANNER_CHARS
+    : opts.singleHook ? HOOK_OUTPUT_MAX_CHARS : SNAPSHOT_DELIVERY_CHAR_LIMIT;
+  if (text.length > deliveryChars) {
     const banner = renderOverBudgetBanner({
       chars: text.length,
-      budgetChars: budget === null ? HARNESS_PERSIST_CHAR_LIMIT : budget * 4,
+      budgetChars: budget === null ? deliveryChars : budget * 4,
+      limitLabel: codex
+        ? `${deliveryChars.toLocaleString('en-US')}-char harness limit`
+        : `${deliveryChars.toLocaleString('en-US')} chars the session hooks can carry`,
       neverEvictChars: result.neverEvictChars,
       neverEvictSectionIds: sections.filter((s) => s.neverEvict).map((s) => s.id),
       flooredSectionIds: result.flooredSectionIds,
@@ -2854,7 +2869,7 @@ export function measureSubagentBriefing(opts: SubagentBriefingOptions = {}): Sub
   });
 
   const budgetTokens = opts.budgetTokens === undefined
-    ? resolveSubagentBriefingBudget(process.env.DREAMCONTEXT_SNAPSHOT_BUDGET)
+    ? resolveSubagentBriefingBudget(process.env.DREAMCONTEXT_SNAPSHOT_BUDGET, hookTool() ?? undefined)
     : opts.budgetTokens;
   const result = applyBudget(sections, budgetTokens, {
     subject: 'briefing',
@@ -2865,7 +2880,10 @@ export function measureSubagentBriefing(opts: SubagentBriefingOptions = {}): Sub
   // An unbounded render (budget disabled) is exempt: the cap belongs to the budget.
   const capped = budgetTokens === null
     ? { text: result.text.trim(), clipped: [] as string[] }
-    : enforceBriefingCap(result.text.trim(), clippable, SUBAGENT_BRIEFING_MAX_CHARS);
+    : enforceBriefingCap(
+      result.text.trim(), clippable,
+      hookTool() === 'codex' ? CODEX_SUBAGENT_BRIEFING_MAX_CHARS : SUBAGENT_BRIEFING_MAX_CHARS,
+    );
 
   const footerAt = capped.text.lastIndexOf('\n\n---\n_Budget note:');
   const body = footerAt === -1 ? capped.text : capped.text.slice(0, footerAt);

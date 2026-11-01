@@ -89,15 +89,18 @@ context, or the snapshot carries a `⚠️ CONTEXT IS INCOMPLETE` banner under i
 heading. The agent behaves as if the project has no memory and starts re-exploring the
 codebase it already mapped.
 
-**Cause:** the rendered snapshot exceeded the harness's 20,000-character hook-output
-limit, so Claude Code persisted the whole thing to a file and injected only the first
-2,000 chars as a blind positional preview. The demotion ladder ran every rung it could
-and still could not fit — almost always because the core files have grown past their
-anti-bloat ceiling.
+**Cause:** one hook's output past 10,000 characters is persisted to a file by Claude Code,
+which injects only the first 2,000 chars as a blind positional preview. Three hooks carry the
+snapshot in pieces under that limit, so a preview means the project's settings predate the part
+hooks (`dreamcontext update` fixes it), or a new Claude Code moved the limit (`dreamcontext doctor`
+reports it from the project's transcripts as `doctor/context-preview-fallback`). A banner with no
+preview means the render passed the 28,500 chars the hooks carry and its tail was cut: the ladder
+ran every rung it could and still could not fit, almost always because the core files have grown
+past their anti-bloat ceiling.
 
 **First, don't start blind.** If a `Full output saved to:` path is in your context,
-`Read` that file now — the full brain is in it. The banner says this too, and it is
-placed inside the preview window precisely so it survives the cut.
+`Read` that file now — the full brain is in it. The banner says this too, and it sits at
+the top of the first piece precisely so it survives the cut.
 
 **Then fix the cause:**
 
