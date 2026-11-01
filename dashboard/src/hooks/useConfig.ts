@@ -38,13 +38,27 @@ export interface SleepSpecialistConfig {
 
 export interface SleepConfig {
   thresholds?: { drowsy?: number; sleepy?: number; mustSleep?: number };
+  /** The Sleep line every unpinned specialist follows (absent = each keeps its own). */
+  model?: string;
+  effort?: 'low' | 'medium' | 'high';
   specialists?: Partial<Record<SleepSpecialist, SleepSpecialistConfig>>;
   maxNewTasksPerCycle?: number;
 }
 
 /** A PATCH of the sleep block. `null` on any field means "reset to default". */
+/** What one specialist runs on: its pin, else the Sleep line (mirrors `effectiveSpecialist`). */
+export function effectiveSpecialist(config: SleepConfig | undefined, name: SleepSpecialist): SleepSpecialistConfig | undefined {
+  const own = config?.specialists?.[name];
+  const model = own?.model ?? config?.model;
+  const effort = own?.effort ?? config?.effort;
+  if (model === undefined && effort === undefined) return undefined;
+  return { ...(model !== undefined ? { model } : {}), ...(effort !== undefined ? { effort } : {}) };
+}
+
 export interface SleepConfigPatch {
   thresholds?: { drowsy?: number | null; sleepy?: number | null; mustSleep?: number | null } | null;
+  model?: string | null;
+  effort?: 'low' | 'medium' | 'high' | null;
   specialists?: Partial<Record<SleepSpecialist, SleepSpecialistConfig | null>> | null;
   maxNewTasksPerCycle?: number | null;
 }

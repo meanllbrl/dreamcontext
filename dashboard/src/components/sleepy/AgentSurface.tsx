@@ -23,7 +23,7 @@ import { AgentConversation } from '../aiteam/AgentStage';
 import {
   initAgentSettingsFromServer, readAgentSettings, patchAgentSettings, matchesAccel,
   doubleTapToken, createDoubleTapMatcher,
-  onAgentSettings, type AgentSettings,
+  onAgentSettings, type AgentSettings, agentSurfaceSettings,
   readChatPermissionMode, writeChatPermissionMode,
   CHAT_PERMISSION_MODE_EVENT, type ChatPermissionMode, OPEN_AGENT_SURFACE_EVENT, AGENT_SURFACE_EXPANDED_EVENT,
 } from '../../lib/agentSettings';
@@ -482,7 +482,9 @@ const START_INTENT_WAIT_MS = 10_000;
 function tunnelCaps(c: Capabilities): Capabilities {
   return isMacPhoneSurface() ? { ...c, embeddedTerminal: false, openTerminal: false } : c;
 }
-function tunnelSettings(s: AgentSettings): AgentSettings {
+function tunnelSettings(raw: AgentSettings): AgentSettings {
+  // The new layout is always Chat and always on (`agentSurfaceSettings`, read-side only).
+  const s = agentSurfaceSettings(raw);
   return isMacPhoneSurface() && !s.chatView ? { ...s, chatView: true } : s;
 }
 
@@ -645,7 +647,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // past tabs, default agent, in-app toggle hotkey. Seeded synchronously from
   // localStorage, then reconciled with the server file on mount, and kept live via
   // the AGENT_SETTINGS_EVENT the Settings page dispatches on save.
-  const [agentSettings, setAgentSettings] = useState<AgentSettings>(() => readAgentSettings());
+  const [agentSettings, setAgentSettings] = useState<AgentSettings>(() => tunnelSettings(readAgentSettings()));
   // Mirrored into a ref for the SAME reason `chatPermissionModeRef` is: `spawn` reads the
   // remembered chat model/effort default, and a settings change can be followed by a spawn in
   // the same tick (the composer's "Set as default" then a ⌘T). Reading through the ref also
@@ -5121,6 +5123,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     if (!expanded) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      // The new shell's Settings window owns Esc while it is open (it closes itself, then the
+      // chat behind is exactly as it was).
+      if (document.body.dataset.settingsWindow) return;
       // A tab drag in flight owns Esc: tabDrag.ts cancels it there. Its own listener is added
       // when the drag starts, AFTER this one (registered when the overlay expanded), so its
       // stopPropagation cannot reach us — capture listeners on one node run in registration
@@ -5198,12 +5203,16 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   //    terminal — which is exactly what a "double-tap to show/hide the terminal" wants.
   // Disabled surface → no binding at all. Rebind or clear it in Settings.
   useEffect(() => {
-    if (!caps?.desktop || !agentSettings.enabled || !agentSettings.hotkey.trim()) return;
+    // The new layout has no show/hide shortcut: chats are a full window, not a floating panel,
+    // so ⌃A stays with the text field (select all).
+    if (windowed || !caps?.desktop || !agentSettings.enabled || !agentSettings.hotkey.trim()) return;
     const dt = doubleTapToken(agentSettings.hotkey);
     const matchDouble = dt ? createDoubleTapMatcher(dt) : null;
     const onKey = (e: KeyboardEvent) => {
       const hit = matchDouble ? matchDouble(e) : matchesAccel(e, agentSettings.hotkey);
       if (!hit) return;
+      // The Settings window over the app: its keys stay its own (⌃A selects a field's text).
+      if (document.body.dataset.settingsWindow) return;
       const ae = document.activeElement as Element | null;
       // Only a chord defers to the terminal (it may be a real PTY keystroke); a
       // double-tap modifier is safe to toggle even while a terminal owns focus.
@@ -5218,7 +5227,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [caps, agentSettings.enabled, agentSettings.hotkey, expanded]);
+  }, [caps, agentSettings.enabled, agentSettings.hotkey, expanded, windowed]);
 
   // Turning the surface OFF in Settings must also collapse an open overlay — otherwise
   // a fullscreen agent view would linger with no entry point to dismiss it.

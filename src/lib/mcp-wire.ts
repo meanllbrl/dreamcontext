@@ -122,6 +122,28 @@ export interface McpOverview {
   projectRoot: string;
 }
 
+/** What `codex mcp list --json` says about one server, whitelisted (`parseCodexMcpList`). */
+export const CODEX_MCP_AUTH = ['unsupported', 'not_logged_in', 'bearer_token', 'oauth', 'unknown'] as const;
+export type CodexMcpAuth = (typeof CODEX_MCP_AUTH)[number];
+
+/**
+ * One server Codex itself has configured. Four fields and nothing else: the CLI's transport
+ * object carries the command, its arguments and its env, so none of it crosses the wire.
+ */
+export interface CodexMcpRow {
+  name: string;
+  enabled: boolean;
+  authStatus: CodexMcpAuth;
+  transport: 'stdio' | 'http' | 'other';
+}
+
+/** GET /api/agent/mcp/codex. Every Codex account shares one config, so this is one column. */
+export interface CodexMcpList {
+  /** `ok` = read; `not_installed` = no codex CLI; `failed` = it ran but gave no list. */
+  state: 'ok' | 'not_installed' | 'failed';
+  servers: CodexMcpRow[];
+}
+
 /** Control characters, by code point: a name carrying one is not a name. */
 const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
 

@@ -9,6 +9,7 @@ import { publishPage } from '../../lib/pageContext';
 import { readDeviceShell, useIsNewShell } from '../../lib/uxMode';
 import { DEVICE_HIDDEN_PAGES } from './newshell/railModel';
 import { NewShellControls } from './newshell/NewShellControls';
+import { SettingsWindow, type SettingsWindowFocus } from '../settings/window/SettingsWindow';
 import './Shell.css';
 
 const ACTIVE_PAGE_STORAGE_KEY = 'dreamcontext.dashboard.activePage';
@@ -56,6 +57,16 @@ function readStoredPage(vault: string | null, instanceId: string, newShell = fal
   return 'tasks';
 }
 
+/**
+ * The new shell has no Settings page: Settings is a window over the page behind. A stored or
+ * `?page=settings` value lands on Tasks with the window open.
+ */
+function initialPage(vault: string | null, instanceId: string, newShell: boolean): { page: Page; settings: boolean } {
+  const page = readStoredPage(vault, instanceId, newShell);
+  if (newShell && page === 'settings') return { page: 'tasks', settings: true };
+  return { page, settings: false };
+}
+
 export type NavOrigin = 'chat' | 'rail' | 'other';
 
 export interface ShellNavigation {
@@ -85,7 +96,20 @@ interface ShellProps {
 export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProps) {
   const { vault, instanceId, isActive, bus } = useVault();
   const newShell = useIsNewShell();
-  const [activePage, setActivePage] = useState<Page>(() => readStoredPage(vault, instanceId, newShell));
+  const [initial] = useState(() => initialPage(vault, instanceId, newShell));
+  const [activePage, setActivePage] = useState<Page>(initial.page);
+  // The new shell's Settings window: open over the page, which stays exactly as it was.
+  const [settingsWindow, setSettingsWindow] = useState<SettingsWindowFocus | null>(
+    () => (initial.settings ? { focusId: null, nonce: 0 } : null),
+  );
+  const closeSettingsWindow = useCallback(() => setSettingsWindow(null), []);
+  // A remembered 'settings' (the classic page someone left on before switching layouts) opens
+  // the window once; it is then remembered as the page behind, or it would reopen every launch.
+  useEffect(() => {
+    if (newShell && initial.settings && readScopedRaw(vault, ACTIVE_PAGE_STORAGE_KEY) === 'settings') {
+      writeScopedRaw(vault, ACTIVE_PAGE_STORAGE_KEY, initial.page);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once, for the stored value read at mount
   const [origin, setOrigin] = useState<NavOrigin>('other');
   // The new shell's ← → in the title bar: this project's own page history.
   const historyRef = useRef<{ stack: Page[]; at: number }>({ stack: [activePage], at: 0 });
@@ -106,6 +130,8 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!isActive) return;
+      // The Settings window has its own search: ⌘K does not open the palette under it.
+      if (document.body.dataset.settingsWindow) return;
       if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setPaletteOpen((o) => !o);
@@ -154,6 +180,12 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     // A device shell never shows Settings or Project Relations, whoever asks (a chat's link, the
     // setup notice): it drives another machine's project set.
     if (newShell && readDeviceShell() && DEVICE_HIDDEN_PAGES.has(page)) return;
+    // New shell: Settings opens as a window. The page behind, its history and its stored
+    // value stay, and no `dreamcontext-navigate` goes out (that would collapse an expanded chat).
+    if (newShell && page === 'settings') {
+      setSettingsWindow((prev) => ({ focusId: id, nonce: (prev?.nonce ?? 0) + 1 }));
+      return;
+    }
     setActivePage(page);
     setOrigin(from);
     const h = historyRef.current;
@@ -176,6 +208,7 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!isActive || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'u') return;
+      if (document.body.dataset.settingsWindow) return;
       e.preventDefault();
       navigate('stats', null);
     };
@@ -247,6 +280,9 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
           onClose={closePalette}
           onNavigate={navigate}
         />
+        {isActive && settingsWindow && (
+          <SettingsWindow open focus={settingsWindow} onClose={closeSettingsWindow} />
+        )}
       </div>
     );
   }

@@ -3,7 +3,7 @@ import type { Task } from '../../../hooks/useTasks';
 import { useUpdateTask } from '../../../hooks/useTasks';
 import { useAgents, findAgent } from '../../../hooks/useAgents';
 import { useAgentCapabilities, isSleepAgentReady } from '../../../hooks/useAgentCapabilities';
-import { readAgentSettings, AGENT_SETTINGS_EVENT } from '../../../lib/agentSettings';
+import { agentSurfaceSettings, readAgentSettings, AGENT_SETTINGS_EVENT } from '../../../lib/agentSettings';
 import { useI18n } from '../../../context/I18nContext';
 import { offeredAgents, tr } from '../../../lib/assignToAgent';
 import { AgentAvatar } from '../../agents/AgentAvatar';
@@ -21,7 +21,8 @@ function useAgentRuntimeReady(): boolean {
     window.addEventListener(AGENT_SETTINGS_EVENT, onChange);
     return () => window.removeEventListener(AGENT_SETTINGS_EVENT, onChange);
   }, []);
-  return isSleepAgentReady(caps, settings.chatView) && settings.enabled;
+  const s = agentSurfaceSettings(settings);
+  return isSleepAgentReady(caps, s.chatView) && s.enabled;
 }
 
 /**

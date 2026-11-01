@@ -2,6 +2,7 @@
  * The r29 picker in the composer (Track T W4): the part that reads the machine. Mounted only
  * while the menu is open, so the auto-switch flag costs nothing otherwise.
  */
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi, useVaultId, emitInstance } from '../../../../context/VaultContext';
 import { useClaudeAccounts } from '../../../../hooks/useAgentCapabilities';
 import { OPEN_TOOL_CHAT_EVENT, type OpenToolChatDetail } from '../../../../lib/chatToolBinding';
@@ -29,7 +30,23 @@ export function ComposerModelPicker({ pick, model, effort, onModelChange, onEffo
   // An embed has no chat surface to open a new chat in.
   const embedded = !!useEmbed();
   const res = useClaudeAccounts(true);
-  const autoSwitch = res.data?.autoSwitch;
+  // Each tool keeps its own limit rules (account-rules.ts): a Codex chat's switch is Codex's.
+  const codex = pick.current === 'codex';
+  const qc = useQueryClient();
+  const rules = useQuery({
+    queryKey: ['agent-account-rules'],
+    queryFn: () => api.get<{ codex: { autoSwitch: boolean } }>('/agent/accounts/rules'),
+    enabled: codex,
+  });
+  const autoSwitch = codex ? rules.data?.codex.autoSwitch : res.data?.autoSwitch;
+  const toggleAutoSwitch = (): void => {
+    if (codex) {
+      void api.post('/agent/accounts/rules', { tool: 'codex', patch: { autoSwitch: !autoSwitch } })
+        .then(() => qc.invalidateQueries({ queryKey: ['agent-account-rules'] }));
+      return;
+    }
+    void api.post('/agent/accounts/auto-switch', { enabled: !autoSwitch }).then(() => res.refetch());
+  };
   const openSettings = (target: SettingsTarget): void => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'settings', id: target });
 
   // A version without this chat's effort lands on one it has: the CLI would take the old value
@@ -59,7 +76,7 @@ export function ComposerModelPicker({ pick, model, effort, onModelChange, onEffo
       onAccountChange={onAccountChange}
       autoSwitch={autoSwitch === undefined ? undefined : {
         enabled: autoSwitch,
-        onToggle: () => { void api.post('/agent/accounts/auto-switch', { enabled: !autoSwitch }).then(() => res.refetch()); },
+        onToggle: toggleAutoSwitch,
       }}
       newChatsLine={newChatsLine}
       onSetDefault={onSetDefault}

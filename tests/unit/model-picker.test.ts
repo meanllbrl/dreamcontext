@@ -1,4 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { createElement } from '../../dashboard/node_modules/react/index.js';
+import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
+import { I18nProvider } from '../../dashboard/src/context/I18nContext';
+import { ModelPicker, type ModelPickerProps } from '../../dashboard/src/components/sleepy/chat/model-picker/ModelPicker';
 import {
   activeRow, blockerFix, blockerOf, claudeState, codexState, effortsFor, searchModels, shortcutFor,
   splitByVersion, type ToolReadiness,
@@ -117,5 +123,49 @@ describe('Codex blockers come in the order they can be fixed', () => {
   it('signed out alone gets Sign in, missing gets Install', () => {
     expect(blockerFix(blockerOf(base))).toBe('codex-signin');
     expect(blockerFix(blockerOf({ ...base, installed: false }))).toBe('codex-install');
+  });
+});
+
+describe('settings mode (the Settings window chip)', () => {
+  const tools = [claudeState(CONFIG, 'opus'), codexState(codex())];
+  const base: ModelPickerProps = {
+    tools, currentTool: 'claude', model: 'opus', effort: 'high',
+    onModelChange: () => {}, onEffortChange: () => {}, onCrossTool: () => {},
+    accounts: [{ id: 'a', email: 'ada@example.com', state: 'ok', sessionPercent: 10 } as never],
+    activeAccountId: 'a', onOpenSettings: () => {}, close: () => {},
+  };
+  const html = (over: Partial<ModelPickerProps> = {}) => renderToStaticMarkup(createElement(I18nProvider, null, createElement(ModelPicker, { ...base, ...over })));
+
+  it('the composer keeps its account chip and Models ›', () => {
+    const out = html();
+    expect(out).toContain('model-picker-account-chip');
+    expect(out).toContain('Models ›');
+  });
+
+  it('a target draws no account chip and no Models ›', () => {
+    const out = html({ target: {} });
+    expect(out).not.toContain('model-picker-account-chip');
+    expect(out).not.toContain('Models ›');
+    expect(out).not.toContain('Opens a new');
+  });
+
+  it('a locked tool is passive in the rail and says why', () => {
+    const out = html({ target: { lockedTools: { codex: 'The Super Agent runs on Claude Code only.' } } });
+    expect(out).toContain('aria-label="Codex (The Super Agent runs on Claude Code only.)"');
+    expect(out).toMatch(/aria-disabled="true"[^>]*data-tool="codex"|data-tool="codex"[^>]*aria-disabled="true"/);
+  });
+
+  it('a locked tool\'s models can never be picked, even from search', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'dashboard', 'src', 'components', 'sleepy', 'chat', 'model-picker', 'ModelPicker.tsx'), 'utf-8');
+    expect(src).toMatch(/const usable = \(m: PickerModel\): boolean => !locked\(m\) && !toolLockedWhy\(m\.tool\) &&/);
+  });
+
+  it('the job\'s own efforts replace the tool\'s', () => {
+    // The effort chip reads the job's list: Sleep has no xhigh even where Claude does.
+    const src = readFileSync(join(__dirname, '..', '..', 'dashboard', 'src', 'components', 'sleepy', 'chat', 'model-picker', 'ModelPicker.tsx'), 'utf-8');
+    expect(src).toMatch(/const ownEfforts = p\.target\?\.efforts \?\? \(own \? effortsFor\(own, p\.model\) : \[\]\);/);
+    expect(src).toMatch(/\{ownEfforts\.map\(\(lvl\) =>/);
+    expect(html({ target: { efforts: [] } })).not.toContain('Effort</span>');
+    expect(html({ target: { efforts: ['low', 'medium', 'high'] } })).toContain('Effort</span>');
   });
 });

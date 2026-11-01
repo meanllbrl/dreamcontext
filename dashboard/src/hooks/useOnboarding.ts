@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { initAgentSettingsFromServer, onAgentSettings } from '../lib/agentSettings';
+import { agentSurfaceSettings, initAgentSettingsFromServer, onAgentSettings } from '../lib/agentSettings';
 import { pollMs } from '../lib/windowActivity';
 import {
   checksForScope,
@@ -423,13 +423,13 @@ export function useAgentSettings() {
     queryKey: AGENT_SETTINGS_QUERY_KEY,
     queryFn: async (): Promise<AgentSettingsLite> => {
       const cfg = await initAgentSettingsFromServer();
-      return { enabled: cfg.enabled, chatView: cfg.chatView };
+      return agentSurfaceSettings({ enabled: cfg.enabled, chatView: cfg.chatView });
     },
     staleTime: Infinity,
   });
   useEffect(
     () => onAgentSettings((cfg) => {
-      queryClient.setQueryData<AgentSettingsLite>(AGENT_SETTINGS_QUERY_KEY, { enabled: cfg.enabled, chatView: cfg.chatView });
+      queryClient.setQueryData<AgentSettingsLite>(AGENT_SETTINGS_QUERY_KEY, agentSurfaceSettings({ enabled: cfg.enabled, chatView: cfg.chatView }));
     }),
     [queryClient],
   );

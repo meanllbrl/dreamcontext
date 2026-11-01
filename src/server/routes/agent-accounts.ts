@@ -1,3 +1,6 @@
+import {
+  AccountRulesError, claudeRules, codexRules, parseRulesPatch, pinCodexRules, setClaudeOnExhausted, setCodexRules,
+} from '../../lib/account-rules.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { clearSignedOut } from '../../lib/claude-signed-out.js';
@@ -170,6 +173,7 @@ export async function handleAgentAccountsList(req: IncomingMessage, res: ServerR
     // windows under, and when it waits because no account qualifies (null = not waiting).
     agentThreshold: agentThresholdFor(home),
     agentWaitUntil: readAccountWait(home),
+    onExhausted: claudeRules(home).onExhausted,
   });
 }
 
@@ -473,6 +477,7 @@ export async function handleAgentAccountsAutoSwitch(req: IncomingMessage, res: S
     return;
   }
   try {
+    pinCodexRules(); // a Claude edit must not move Codex (account-rules.ts)
     await setAutoSwitchEnabled(body.enabled);
   } catch (err) {
     sendError(res, 500, 'account_error', (err as Error).message);
@@ -541,6 +546,7 @@ export async function handleAgentAccountsSwitchPolicy(req: IncomingMessage, res:
     return;
   }
 
+  pinCodexRules(); // a Claude edit must not move Codex (account-rules.ts)
   const saved = setSwitchPolicy(patch);
   sendJson(res, 200, { switchStrategy: saved.strategy, switchWeights: saved.weights });
 }
@@ -580,10 +586,68 @@ export async function handleAgentAccountsAgentThreshold(req: IncomingMessage, re
     return;
   }
   try {
+    pinCodexRules(); // a Claude edit must not move Codex (account-rules.ts)
     const saved = setAgentThreshold(percent);
     clearAccountWait();
     sendJson(res, 200, { agentThreshold: saved });
   } catch (err) {
     sendError(res, err instanceof ClaudeAccountError ? 422 : 500, 'account_error', (err as Error).message);
   }
+}
+
+/**
+ * GET /api/agent/accounts/rules — both tools' limit rules as they are in force (Codex reads
+ * Claude's for any key it has not stored yet).
+ */
+export async function handleAgentAccountsRulesGet(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!agentGuard(req, res)) return;
+  const home = homedir();
+  sendJson(res, 200, { claude: claudeRules(home), codex: codexRules(home) });
+}
+
+/**
+ * POST /api/agent/accounts/rules — `{ tool: 'claude' | 'codex', patch }`. One tool's limit rules.
+ *
+ * Codex: every key goes to `account-rules.json`; `claude-accounts.json` is not written. Claude:
+ * `onExhausted` goes to `account-rules.json`, the switch policy to Claude's own register
+ * through the same setters its existing routes use, after pinning Codex. A bad value is a 422.
+ */
+export async function handleAgentAccountsRulesSet(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!agentGuard(req, res)) return;
+  const body = await parseJsonBody(req);
+  const tool = body?.tool;
+  if (tool !== 'claude' && tool !== 'codex') {
+    sendError(res, 422, 'bad_request', '`tool` must be "claude" or "codex".');
+    return;
+  }
+  let patch;
+  try {
+    patch = parseRulesPatch(body?.patch);
+  } catch (err) {
+    sendError(res, 422, 'bad_request', (err as Error).message);
+    return;
+  }
+  try {
+    if (tool === 'codex') {
+      setCodexRules(patch);
+    } else {
+      pinCodexRules();
+      if (patch.onExhausted !== undefined) setClaudeOnExhausted(patch.onExhausted);
+      if (patch.autoSwitch !== undefined) await setAutoSwitchEnabled(patch.autoSwitch);
+      if (patch.strategy !== undefined || patch.weights !== undefined) {
+        setSwitchPolicy({
+          ...(patch.strategy !== undefined ? { strategy: patch.strategy } : {}),
+          ...(patch.weights !== undefined ? { weights: sanitizeSwitchWeights({ ...switchWeightsFor(), ...patch.weights }) } : {}),
+        });
+      }
+      if (patch.agentThreshold !== undefined) setAgentThreshold(patch.agentThreshold);
+    }
+    // The set of usable accounts for unattended work may have changed.
+    if (patch.agentThreshold !== undefined) clearAccountWait();
+  } catch (err) {
+    sendError(res, err instanceof ClaudeAccountError || err instanceof AccountRulesError ? 422 : 500, 'account_error', (err as Error).message);
+    return;
+  }
+  const home = homedir();
+  sendJson(res, 200, { claude: claudeRules(home), codex: codexRules(home) });
 }

@@ -9,8 +9,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  handleMcpCheck, handleMcpConnect, handleMcpImport, handleMcpOverview, handleMcpServerMove, handleMcpServerRemove,
-  handleMcpServerSave,
+  handleMcpCheck, handleMcpCodex, handleMcpConnect, handleMcpImport, handleMcpOverview, handleMcpServerMove, handleMcpServerRemove,
+  handleMcpServerSave, parseCodexMcpList, setCodexMcpRunnerForTests,
 } from '../../src/server/routes/agent-mcp.js';
 import { handleAgentMcpProjectAdopt, handleAgentMcpProjectGet } from '../../src/server/routes/agent-mcp-project.js';
 import { computerStorePath, projectStorePath, readStore } from '../../src/lib/mcp-store.js';
@@ -77,6 +77,7 @@ describe('owner window only', () => {
       [handleMcpImport, { name: 'posthog', source: 'user' }],
       [handleAgentMcpProjectGet, undefined],
       [handleAgentMcpProjectAdopt, { name: 'posthog' }],
+      [handleMcpCodex, undefined],
     ];
     for (const [h, body] of routes) {
       const r = await call(h, { headers: REBIND, body, method: body === undefined ? 'GET' : 'POST' });
@@ -187,5 +188,50 @@ describe('store edits', () => {
     expect(a.status).toBe(409);
     expect(a.raw).not.toContain(SECRETS[3]);
     expect(existsSync(join(project, '.mcp.json'))).toBe(false);
+  });
+});
+
+describe('GET /api/agent/mcp/codex (read only)', () => {
+  // The CLI's real shape (codex-cli 0.164): the transport carries command, args, cwd and env.
+  const CODEX_OUT = JSON.stringify([
+    { name: 'node_repl', enabled: true, disabled_reason: null, auth_status: 'unsupported', startup_timeout_sec: 10, tool_timeout_sec: 60,
+      transport: { type: 'stdio', command: '/opt/x/node', args: [`--key=${SECRETS[3]}`], cwd: '/Users/someone', env: { TOKEN: SECRETS[1] }, env_vars: ['TOKEN'] } },
+    { name: 'linear', enabled: false, disabled_reason: 'off', auth_status: 'not_logged_in', transport: { type: 'streamable_http', url: `https://mcp.example.test/?k=${SECRETS[2]}`, http_headers: { Authorization: SECRETS[0] } } },
+    { name: '-evil', enabled: true, auth_status: 'oauth', transport: { type: 'stdio' } },
+    { name: 'odd', enabled: true, auth_status: 'something_new', transport: { type: 'websocket' } },
+  ]);
+
+  afterEach(() => setCodexMcpRunnerForTests(null));
+
+  it('whitelists name, enabled, auth status and transport type; no env, header, url or argument leaves', async () => {
+    let seen: { cmd: string; args: string[] } | null = null;
+    setCodexMcpRunnerForTests(async (cmd, args) => { seen = { cmd, args }; return { spawned: true, timedOut: false, code: 0, stdout: CODEX_OUT }; });
+    const r = await call(handleMcpCodex, { method: 'GET' });
+    expect(r.status).toBe(200);
+    expect(seen).toEqual({ cmd: 'codex', args: ['mcp', 'list', '--json'] });
+    expect(r.json).toEqual({
+      state: 'ok',
+      servers: [
+        { name: 'node_repl', enabled: true, authStatus: 'unsupported', transport: 'stdio' },
+        { name: 'linear', enabled: false, authStatus: 'not_logged_in', transport: 'http' },
+        { name: 'odd', enabled: true, authStatus: 'unknown', transport: 'other' },
+      ],
+    });
+    for (const secret of SECRETS) expect(r.raw).not.toContain(secret);
+    for (const word of ['/opt/x/node', '/Users/someone', 'mcp.example.test', 'env', 'command']) expect(r.raw).not.toContain(word);
+  });
+
+  it('no codex CLI = not_installed; a failed run or bad output = failed', async () => {
+    setCodexMcpRunnerForTests(async () => ({ spawned: false, timedOut: false, code: null, stdout: '' }));
+    expect((await call(handleMcpCodex, { method: 'GET' })).json).toEqual({ state: 'not_installed', servers: [] });
+    setCodexMcpRunnerForTests(async () => ({ spawned: true, timedOut: false, code: 1, stdout: '' }));
+    expect((await call(handleMcpCodex, { method: 'GET' })).json).toEqual({ state: 'failed', servers: [] });
+    setCodexMcpRunnerForTests(async () => ({ spawned: true, timedOut: false, code: 0, stdout: '{"not":"a list"}' }));
+    expect((await call(handleMcpCodex, { method: 'GET' })).json).toEqual({ state: 'failed', servers: [] });
+  });
+
+  it('parseCodexMcpList drops duplicates and non-objects', () => {
+    expect(parseCodexMcpList('[1, null, {"name":"a","enabled":true}, {"name":"a"}]')).toEqual([{ name: 'a', enabled: true, authStatus: 'unknown', transport: 'other' }]);
+    expect(parseCodexMcpList('not json')).toBeNull();
   });
 });

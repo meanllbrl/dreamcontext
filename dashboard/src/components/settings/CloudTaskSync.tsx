@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../context/I18nContext';
 import { useApi } from '../../context/VaultContext';
+import { useAuthStatus } from '../../hooks/useBrainStatus';
 import { useConfig, useUpdateConfig } from '../../hooks/useConfig';
 import { SearchableSelect } from '../tasks/SearchableSelect';
 import { useInstantSave, SaveMark } from './useInstantSave';
@@ -51,7 +52,7 @@ interface ConnectionTestResponse {
 
 interface ProviderTokenStatus {
   set: boolean;
-  source: 'env' | 'secrets' | null;
+  source: 'env' | 'secrets' | 'global' | null;
   masked: string | null;
 }
 
@@ -61,12 +62,19 @@ interface TokenStatusResponse extends ProviderTokenStatus {
 
 type Provider = 'clickup' | 'github';
 
-export function CloudTaskSync({ provider }: { provider: Provider }) {
+/**
+ * `embedded` (the Settings window's Task mirroring, which chooses the backend itself): no
+ * on/off switch and no "the other one is on" row, and for GitHub no token row while the Team
+ * sync login supplies the token (a token stored for this project still wins and stays shown).
+ * Provision moves behind Details there.
+ */
+export function CloudTaskSync({ provider, embedded = false }: { provider: Provider; embedded?: boolean }) {
   const { t } = useI18n();
   const api = useApi();
   const queryClient = useQueryClient();
   const { data: config } = useConfig();
   const updateConfig = useUpdateConfig();
+  const { data: auth } = useAuthStatus();
 
   const backend = config?.taskBackend ?? 'local';
   const active = backend === provider;
@@ -257,9 +265,22 @@ export function CloudTaskSync({ provider }: { provider: Provider }) {
     ? t('settings.tasksync.github.label')
     : t('settings.tasksync.clickup.label');
 
+  // The Team sync login is the last token tier (secrets.ts): its own row would ask for a
+  // second copy of the same thing.
+  const loginSuppliesToken = embedded && provider === 'github' && !!auth?.connected
+    && (!providerTokenStatus?.set || providerTokenStatus.source === 'global');
+
+  const provisionButton = (
+    <button className="btn btn--secondary" onClick={() => void handleProvisionPreview()} disabled={provisioning || testing}>
+      {provisioning && !provisionPreview
+        ? (provider === 'github' ? t('settings.cloud_tasks.github.provisioning') : t('settings.cloud_tasks.provisioning'))
+        : (provider === 'github' ? t('settings.cloud_tasks.github.provision') : t('settings.cloud_tasks.provision'))}
+    </button>
+  );
+
   return (
     <div className="setting-rows">
-      <SettingRow
+      {!embedded && <SettingRow
         title={toggleLabel}
         hint={provider === 'github' ? t('settings.tasksync.github.hint') : t('settings.tasksync.clickup.hint')}
         status={<SaveMark state={toggleSave.state} />}
@@ -271,11 +292,11 @@ export function CloudTaskSync({ provider }: { provider: Provider }) {
             onChange={() => void toggleActive()}
           />
         }
-      />
+      />}
 
       {/* The two backends are one setting. Say so instead of letting the second
           switch look like an independent one that simply refuses to stick. */}
-      {otherActive && (
+      {otherActive && !embedded && (
         <SettingRow
           tone="warn"
           title={t('settings.tasksync.switching.title')}
@@ -370,7 +391,7 @@ export function CloudTaskSync({ provider }: { provider: Provider }) {
             </div>
           </SettingRow>
 
-          <SettingRow
+          {!loginSuppliesToken && <SettingRow
             title={t('settings.cloud_tasks.api_key')}
             hint={tokenStatusHint(providerTokenStatus)}
             more={provider === 'github' ? t('settings.cloud_tasks.github.token_hint') : t('settings.cloud_tasks.token_hint')}
@@ -387,7 +408,7 @@ export function CloudTaskSync({ provider }: { provider: Provider }) {
                 onBlur={() => void saveToken()}
               />
             }
-          />
+          />}
 
           <SettingRow
             title={t('settings.tasksync.check.title')}
@@ -397,11 +418,7 @@ export function CloudTaskSync({ provider }: { provider: Provider }) {
               <button className="btn btn--secondary" onClick={() => void handleTestConnection()} disabled={testing || provisioning}>
                 {testing ? t('settings.cloud_tasks.testing') : t('settings.cloud_tasks.test')}
               </button>
-              <button className="btn btn--secondary" onClick={() => void handleProvisionPreview()} disabled={provisioning || testing}>
-                {provisioning && !provisionPreview
-                  ? (provider === 'github' ? t('settings.cloud_tasks.github.provisioning') : t('settings.cloud_tasks.provisioning'))
-                  : (provider === 'github' ? t('settings.cloud_tasks.github.provision') : t('settings.cloud_tasks.provision'))}
-              </button>
+              {!embedded && provisionButton}
               {testResult && testResult.ok && (
                 <span className="settings-test-ok">
                   \u2713 {testResult.note ?? `${t('settings.cloud_tasks.test_ok')} ${testResult.user}`}
@@ -409,6 +426,12 @@ export function CloudTaskSync({ provider }: { provider: Provider }) {
               )}
               {testResult && !testResult.ok && <span className="settings-test-err">\u2717 {testResult.error}</span>}
             </div>
+            {embedded && (
+              <details className="setting-row-more" open={!!provisionPreview || provisioning || undefined}>
+                <summary>{'Details'}</summary>
+                <div className="settings-test-row">{provisionButton}</div>
+              </details>
+            )}
             {provisionNote && <p className="settings-field-hint">{provisionNote}</p>}
 
             {provisionPreview && (

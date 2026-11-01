@@ -20,7 +20,7 @@ import { abandonProposal, createProposal, listProposals, resolveProposal } from 
 import { getChat, listChats, pendingRequest, watchChat, activityOf, chatTopic, CHAT_STATUSES, type ChatEntry, type ChatStatus, type WatchUntil } from '../../lib/assistant/chat-registry.js';
 import { collectRoster } from '../../lib/assistant/roster.js';
 import { broadcast, type BroadcastRow } from '../../lib/assistant/broadcast.js';
-import { AvatarError, findAvatar, writeAvatar, AVATAR_MAX_BYTES } from '../../lib/assistant/avatar.js';
+import { AvatarError, findAvatar, removeAvatar, writeAvatar, AVATAR_MAX_BYTES } from '../../lib/assistant/avatar.js';
 import {
   bindCommandToWindow, claimCommand, deliverResult, registerWindow, relayCommand, windowVault,
   releaseWindowNonce, windowLabelsForVault,
@@ -1211,6 +1211,14 @@ export async function handleAssistantAvatarSet(req: IncomingMessage, res: Server
     if (err instanceof AvatarError) { sendError(res, err.code === 'too_large' ? 413 : 400, err.code, err.message); return; }
     throw err;
   }
+}
+
+/** DELETE /api/assistant/avatar — back to the initial. Idempotent: no avatar is still 200. */
+export async function handleAssistantAvatarDelete(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!ownerGate(req, res)) return;
+  if (!assistantExists()) { sendError(res, 404, 'no_assistant', 'The dreamcontext Assistant has not been created yet.'); return; }
+  const removed = removeAvatar();
+  sendJson(res, 200, { ok: true, removed });
 }
 
 /** GET /api/assistant/avatar */

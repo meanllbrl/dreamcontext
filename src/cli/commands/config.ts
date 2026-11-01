@@ -112,7 +112,7 @@ function printConfig(projectRoot: string): void {
     if (cfg.taskBackend === 'clickup') {
       const resolved = resolveClickUpToken(projectRoot);
       const tokenLine = resolved
-        ? chalk.green('present') + chalk.dim(` (${resolved.source === 'env' ? `env:${resolved.via}` : 'secrets file'}, ${maskToken(resolved.token)})`)
+        ? chalk.green('present') + chalk.dim(` (${resolved.source === 'env' ? `env:${resolved.via}` : resolved.source === 'global' ? 'GitHub sign-in' : 'secrets file'}, ${maskToken(resolved.token)})`)
         : chalk.yellow('absent') + chalk.dim(' (set with `dreamcontext config clickup-token`)');
       console.log(`  ClickUp token:  ${tokenLine}`);
       if (cfg.clickup?.listId) {
@@ -122,7 +122,7 @@ function printConfig(projectRoot: string): void {
     if (cfg.taskBackend === 'github') {
       const resolved = resolveGitHubToken(projectRoot);
       const tokenLine = resolved
-        ? chalk.green('present') + chalk.dim(` (${resolved.source === 'env' ? `env:${resolved.via}` : 'secrets file'}, ${maskToken(resolved.token)})`)
+        ? chalk.green('present') + chalk.dim(` (${resolved.source === 'env' ? `env:${resolved.via}` : resolved.source === 'global' ? 'GitHub sign-in' : 'secrets file'}, ${maskToken(resolved.token)})`)
         : chalk.yellow('absent') + chalk.dim(' (set with `dreamcontext config github-token`)');
       console.log(`  GitHub token:   ${tokenLine}`);
       if (cfg.github?.owner && cfg.github?.repo) {

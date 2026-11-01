@@ -249,6 +249,24 @@ export interface SleepSpecialistConfig {
 }
 
 /**
+ * What one specialist actually runs on: its own pin, else the Sleep line, else
+ * nothing (the packaged frontmatter stays). Per field, so a helper that pins
+ * only its model still follows the line's effort. Every reader that injects or
+ * fingerprints a specialist's model goes through here, so the agent file, the
+ * auto-sleep consent and Settings can never disagree about what will run.
+ */
+export function effectiveSpecialist(
+  config: SleepConfig | null | undefined,
+  name: SleepSpecialist,
+): SleepSpecialistConfig | undefined {
+  const own = config?.specialists?.[name];
+  const model = own?.model ?? config?.model;
+  const effort = own?.effort ?? config?.effort;
+  if (model === undefined && effort === undefined) return undefined;
+  return { ...(model !== undefined ? { model } : {}), ...(effort !== undefined ? { effort } : {}) };
+}
+
+/**
  * Per-brain sleep settings (`.config.json` `sleep: {}`) — SYNCED to teammates.
  *
  * Machine-local switches (auto-sleep on/off + trigger) deliberately do NOT live
@@ -262,6 +280,15 @@ export interface SleepSpecialistConfig {
 export interface SleepConfig {
   /** Debt levels. Must satisfy drowsy < sleepy < mustSleep or the whole set is ignored. */
   thresholds?: { drowsy?: number; sleepy?: number; mustSleep?: number };
+  /**
+   * The Sleep LINE: the model every specialist follows unless it pins its own
+   * (`specialists.<name>.model`). Absent = each specialist keeps its packaged
+   * frontmatter, exactly as before the line existed. Read through
+   * {@link effectiveSpecialist}, never directly.
+   */
+  model?: string;
+  /** The Sleep line's effort; followed per field the same way as {@link SleepConfig.model}. */
+  effort?: SleepEffort;
   /** Model/effort override per specialist, injected into the agent frontmatter at install. */
   specialists?: Partial<Record<SleepSpecialist, SleepSpecialistConfig>>;
   /** How many NEW tasks one sleep cycle may file (the curator chore is exempt). */
@@ -480,6 +507,12 @@ function sanitizeSleep(raw: unknown): SleepConfig | undefined {
       if (v !== undefined) thresholds[key] = v;
     }
     if (Object.keys(thresholds).length > 0) out.thresholds = thresholds;
+  }
+
+  const lineModel = typeof o.model === 'string' ? sanitizeModel(o.model) : '';
+  if (lineModel) out.model = lineModel;
+  if (typeof o.effort === 'string' && (SLEEP_EFFORT_LEVELS as readonly string[]).includes(o.effort)) {
+    out.effort = o.effort as SleepEffort;
   }
 
   if (o.specialists !== null && typeof o.specialists === 'object' && !Array.isArray(o.specialists)) {

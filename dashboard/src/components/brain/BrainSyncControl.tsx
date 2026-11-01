@@ -11,7 +11,7 @@ import {
 } from '../../hooks/useBrainStatus';
 import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCapabilities';
 import { useVault } from '../../context/VaultContext';
-import { readAgentSettings } from '../../lib/agentSettings';
+import { agentSurfaceSettings, readAgentSettings } from '../../lib/agentSettings';
 import { runBrainResolveAgent, DREAM_SYNC_COMMAND } from '../../lib/brainResolveAgent';
 import { readAutoCheckpointOnOpen } from '../../lib/brainSyncPrefs';
 import './BrainSyncControl.css';
@@ -64,7 +64,7 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
   // The in-app agent can drive `/dream-sync` only in the desktop app with the agent
   // prerequisites met AND the agent surface enabled. Otherwise we fall back to a copyable command.
   const canRunAgent = (() => {
-    const s = readAgentSettings();
+    const s = agentSurfaceSettings(readAgentSettings());
     return isSleepAgentReady(caps, s.chatView) && s.enabled;
   })();
 

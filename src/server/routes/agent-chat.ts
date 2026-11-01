@@ -67,6 +67,8 @@ import {
   accountEnvFor, autoSwitchEnabled, isRealHomeConfigDir, listClaudeAccounts, resolveConfigDir, sandboxDirFor,
   switchStrategyFor, switchWeightsFor,
 } from '../../lib/claude-accounts.js';
+import { claudeRules, codexRules } from '../../lib/account-rules.js';
+import { createResumeAtReset, RESET_CONTINUE_TEXT } from '../../lib/resume-at-reset.js';
 import { ensureSandbox } from '../../lib/claude-account-sandbox.js';
 import { mcpStoreFiles, storeFileRefs } from '../../lib/mcp-store.js';
 import { McpControl, isSafeAuthUrl, redactContextFor, redactStatus, routeChildLine, writeStatusCache } from '../../lib/mcp-live.js';
@@ -3009,9 +3011,57 @@ export function startChatSession(
     })();
   };
 
+  // "When every account is out → Continue at reset": one timer per pane, armed only under the
+  // tool's `continue` rule with a known reset, fired only into an idle, living pane the owner
+  // has not written to since (resume-at-reset.ts). Cleared when the pane ends or hands off.
+  let ownerSeq = 0;
+  const resumeAtReset = createResumeAtReset({
+    now: Date.now,
+    setTimer: (fn, ms) => { const h = setTimeout(fn, ms); h.unref?.(); return h; },
+    clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    alive: () => alive && !detached && !stdinEnding(),
+    idle: () => turnsInFlight === 0 && !switchPending,
+    ownerSeq: () => ownerSeq,
+  });
+  const armResumeAtReset = (until: number | undefined, accountId: string | null, tool: 'claude' | 'codex'): void => {
+    if (until === undefined) return;
+    if ((tool === 'codex' ? codexRules() : claudeRules()).onExhausted !== 'continue') return;
+    resumeAtReset.arm(until, () => {
+      // The rule is read again at the reset: a switch to Stop since arming means nothing goes out.
+      if ((tool === 'codex' ? codexRules() : claudeRules()).onExhausted !== 'continue') return;
+      const seq = ownerSeq;
+      const resumed = () => sendMeta({ subtype: 'account_switch', switched: false, reason: 'resumed_at_reset', accountId, ...(tool === 'codex' ? { tool: 'codex' } : {}) });
+      // Through the same gate as an owner message: the account it lands on is decided again,
+      // and a wall that is still up (the decision re-arms the timer) sends nothing.
+      switchGate = switchGate.then(() => (ownerSeq !== seq ? false : maybeSwitchAccount(RESET_CONTINUE_TEXT)))
+        .catch(() => false)
+        .then((held) => {
+          // He wrote while the decision ran: if it held the text for a restart, it gives way.
+          if (ownerSeq !== seq) { if (held) dropHeldContinue(); return; }
+          if (!alive || resumeAtReset.armed()) return;
+          if (held) { resumed(); return; }
+          if (respawnTo !== null || handedOff) return;
+          resumed();
+          writeOwnerTurn(RESET_CONTINUE_TEXT);
+        });
+    });
+  };
+  /** An owner message arrived: a continue-at-reset text held for a restart is no longer needed. */
+  const dropHeldContinue = (): void => {
+    const at = heldTexts.indexOf(RESET_CONTINUE_TEXT);
+    if (at >= 0) heldTexts.splice(at, 1);
+  };
+  /** A refusal that will not be switched away from: arm only on a reset the API stated. */
+  const armOnRefusal = (recorded: { until: number; estimated?: boolean }, accountId: string | null, tool: 'claude' | 'codex'): void => {
+    if (!recorded.estimated) armResumeAtReset(recorded.until, accountId, tool);
+  };
+
   /** Hand one OWNER message to the CLI as a turn — the socket's user frame, and a held message
    *  released by `releaseStalledSwitch`. */
   const writeOwnerTurn = (text: string): void => {
+    // Any owner message cancels a "continue at reset" (resume-at-reset.ts): he is here.
+    ownerSeq += 1;
+    resumeAtReset.cancel();
     // A turn already in flight when his frame goes in (read BEFORE his own turn is counted): the
     // Super's lease must then outlive that turn's end (inbox.ts superOwnerSpoke).
     const midTurn = turnsInFlight > 0;
@@ -3206,6 +3256,7 @@ export function startChatSession(
     clearLingerTimers();
     clearDetachTimers();
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
+    resumeAtReset.cancel();
     stopPing();
     if (live) unregisterLiveChat(live);
     if (mirrors) { mirrors.closeAll(MIRROR_CLOSE_ENDED, 'super ended'); superMirrorSets.delete(mirrors); digestKeys.delete(pinId); digestSeq.delete(pinId); stageKeys.delete(pinId); }
@@ -3248,6 +3299,7 @@ export function startChatSession(
     mirrors?.closeAll(MIRROR_CLOSE_ENDED, 'super ended');
     clearDetachTimers();
     if (switchStallTimer) { clearTimeout(switchStallTimer); switchStallTimer = null; }
+    resumeAtReset.cancel();
     stopPing();
     // No longer adoptable (a reattach arriving now resumes in a new process instead), but still
     // listed as running and cuttable until it actually exits (D22; teardown unregisters it).
@@ -3956,6 +4008,7 @@ export function startChatSession(
           rejected: choice.rejected,
           ...(choice.earliestResetAt === undefined ? {} : { earliestResetAt: choice.earliestResetAt }),
         });
+        if (choice.accountId === null) armResumeAtReset(choice.earliestResetAt, activeAccountId, 'claude');
       }
       return false;
     }
@@ -4074,9 +4127,10 @@ export function startChatSession(
         accountId: activeAccountId,
         earliestResetAt: recorded.until,
       });
+      armOnRefusal(recorded, activeAccountId, 'claude');
       return;
     }
-    if (listClaudeAccounts().length < 2) return;   // nothing to switch to
+    if (listClaudeAccounts().length < 2) { armOnRefusal(recorded, activeAccountId, 'claude'); return; }   // nothing to switch to
     // A switch really happens from here on: the refused turn is not a stuck child (plan r4 D6).
     registry?.markLimited();
 
@@ -4166,11 +4220,12 @@ export function startChatSession(
     if (switchPending) return;
     const recorded = recordToolRejection('codex', codexAccountId, signal);
     if (switchAbandoned) return;
-    if (!autoSwitchEnabled()) {
+    if (!codexRules().autoSwitch) {
       sendMeta({ subtype: 'account_switch', switched: false, reason: 'auto_switch_disabled', accountId: codexAccountId, tool: 'codex', earliestResetAt: recorded.until });
+      armOnRefusal(recorded, codexAccountId, 'codex');
       return;
     }
-    if (listCodexAccounts().length < 2) return;
+    if (listCodexAccounts().length < 2) { armOnRefusal(recorded, codexAccountId, 'codex'); return; }
     registry?.markLimited();
     const text = lastSentText && !turnProgressed ? lastSentText : CODEX_LIMIT_CONTINUE_TEXT;
     switchGate = switchGate.then(() => (switchPending
@@ -4183,7 +4238,7 @@ export function startChatSession(
     if (!codexAccountId) return false;
     const standing = readToolRejections('codex')[codexAccountId];
     let active = codexLimitsFor(readCodexUsage(codexAccountId));
-    if (!autoSwitchEnabled()) {
+    if (!codexRules().autoSwitch) {
       if (standing || shouldSwitchAway(active)) {
         sendMeta({ subtype: 'account_switch', switched: false, reason: 'auto_switch_disabled', accountId: codexAccountId, tool: 'codex', limits: active.limits, ...(standing ? { earliestResetAt: standing.until } : {}) });
       }
@@ -4191,7 +4246,7 @@ export function startChatSession(
     }
     if (listCodexAccounts().length < 2) return false;
     if (standing) return decideCodexAndAnnounce(text, 'limit_known', { id: codexAccountId, problem: 'unknown' }, standing.until, resubmit);
-    if (switchStrategyFor() === 'sequential') return false;
+    if (codexRules().strategy === 'sequential') return false;
     // The bridge reports this account's windows on every turn, so the cached reading is fresh;
     // only past the probe line is it read again for real before acting on it.
     if (!shouldProbe(active)) return false;
@@ -4216,6 +4271,7 @@ export function startChatSession(
           accountId: codexAccountId, tool: 'codex', rejected: choice.rejected,
           ...(choice.earliestResetAt === undefined ? {} : { earliestResetAt: choice.earliestResetAt }),
         });
+        if (!choice.target) armResumeAtReset(choice.earliestResetAt, codexAccountId, 'codex');
       }
       return false;
     }
@@ -4594,6 +4650,11 @@ export function startChatSession(
       // A phone's words with no window attached WHEN THE GATE REACHES THEM: nobody could perform
       // an account switch's restart, so a held text would die with the idle reap. They go out on
       // this account instead (decided when the gate reaches them, not when they arrived).
+      // He is here: a "continue at reset" waiting in the gate must not go out ahead of him, and
+      // one already held for an account switch's restart gives way to his message.
+      ownerSeq += 1;
+      resumeAtReset.cancel();
+      dropHeldContinue();
       const fromMirror = typeof raw !== 'string' && mirrorFrames.has(raw);
       switchGate = switchGate.then(() => (fromMirror && detached ? Promise.resolve(false) : maybeSwitchAccount(text))
         // A THROW HERE MUST NOT EAT THE TURN. Without this the guarantee "the message is

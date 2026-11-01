@@ -6,7 +6,25 @@ import {
   isKnownSleepModel,
   resolveMaxNewTasksPerCycle,
   DEFAULT_MAX_NEW_TASKS_PER_CYCLE,
+  applySleepConfigPatch,
 } from '../../src/lib/sleep-settings.js';
+import { effectiveSpecialist, readSetupConfig } from '../../src/lib/setup-config.js';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+/** Round-trip the sleep block through the defensive reader (the real `.config.json` parse). */
+const readSetupConfigSleep = (sleep: object) => {
+  const root = mkdtempSync(join(tmpdir(), 'dc-sleep-line-'));
+  try {
+    mkdirSync(join(root, '_dream_context', 'state'), { recursive: true });
+    writeFileSync(join(root, '_dream_context', 'state', '.config.json'), JSON.stringify({ platforms: ['claude'], packs: [], sleep }));
+    const out = readSetupConfig(root)?.sleep ?? {};
+    return { model: out.model, effort: out.effort };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+};
 import { resolveSleepThresholds, DEFAULT_SLEEP_THRESHOLDS } from '../../src/lib/sleep-consolidation.js';
 
 /**
@@ -198,5 +216,77 @@ describe('validateThresholdLadder', () => {
   });
   it('names the FIRST rule broken', () => {
     expect(validateThresholdLadder({ drowsy: 50 })).toContain('drowsy (50) must be less than sleepy (40)');
+  });
+});
+
+describe('applySleepConfigPatch — the Sleep line', () => {
+  const okP = (r: ReturnType<typeof applySleepConfigPatch>) => {
+    if (!r.ok) throw new Error(`expected ok, got: ${r.error}`);
+    return r;
+  };
+  const ALL = ['sleep-tasks', 'sleep-state', 'sleep-product', 'sleep-migration', 'sleep-learn'];
+
+  it('sets the line and marks all five specialists for re-injection', () => {
+    const r = okP(applySleepConfigPatch({}, { model: 'claude-sonnet-5-5', effort: 'medium' }));
+    expect(r.config.model).toBe('claude-sonnet-5-5');
+    expect(r.config.effort).toBe('medium');
+    expect([...r.changedSpecialists].sort()).toEqual([...ALL].sort());
+  });
+
+  it('followers take the line; a pinned helper keeps its own; ↺ (null) returns it to the line', () => {
+    let r = okP(applySleepConfigPatch({}, { model: 'claude-sonnet-5-5', effort: 'low' }));
+    r = okP(applySleepConfigPatch(r.config, { specialists: { 'sleep-product': { model: 'claude-opus-5-5', effort: 'high' } } }));
+    r = okP(applySleepConfigPatch(r.config, { model: 'claude-haiku-5-5' }));
+    expect(effectiveSpecialist(r.config, 'sleep-tasks')).toEqual({ model: 'claude-haiku-5-5', effort: 'low' });
+    expect(effectiveSpecialist(r.config, 'sleep-product')).toEqual({ model: 'claude-opus-5-5', effort: 'high' });
+    r = okP(applySleepConfigPatch(r.config, { specialists: { 'sleep-product': null } }));
+    expect(effectiveSpecialist(r.config, 'sleep-product')).toEqual({ model: 'claude-haiku-5-5', effort: 'low' });
+  });
+
+  it('with no line, a specialist keeps its packaged default (undefined)', () => {
+    expect(effectiveSpecialist({}, 'sleep-tasks')).toBeUndefined();
+    expect(effectiveSpecialist(undefined, 'sleep-tasks')).toBeUndefined();
+  });
+
+  it('legacy: the first line write clears five EQUAL pins (they were the old "line")', () => {
+    const uniform = Object.fromEntries(ALL.map((n) => [n, { model: 'claude-opus-5-5', effort: 'medium' }]));
+    const r = okP(applySleepConfigPatch({ specialists: uniform as never }, { model: 'claude-sonnet-5-5', effort: 'low' }));
+    expect(r.config.specialists).toBeUndefined();
+    expect(effectiveSpecialist(r.config, 'sleep-learn')).toEqual({ model: 'claude-sonnet-5-5', effort: 'low' });
+  });
+
+  it('legacy: a first write of ONE half keeps the other half the five pins had', () => {
+    const uniform = Object.fromEntries(ALL.map((n) => [n, { model: 'claude-opus-5-5', effort: 'high' }]));
+    const effortOnly = okP(applySleepConfigPatch({ specialists: uniform as never }, { effort: 'medium' }));
+    expect(effortOnly.config.specialists).toBeUndefined();
+    expect(effectiveSpecialist(effortOnly.config, 'sleep-state')).toEqual({ model: 'claude-opus-5-5', effort: 'medium' });
+    const modelOnly = okP(applySleepConfigPatch({ specialists: uniform as never }, { model: 'claude-sonnet-5-5' }));
+    expect(effectiveSpecialist(modelOnly.config, 'sleep-tasks')).toEqual({ model: 'claude-sonnet-5-5', effort: 'high' });
+  });
+
+  it('legacy: mixed pins stay pinned', () => {
+    const mixed = Object.fromEntries(ALL.map((n, i) => [n, { model: 'claude-opus-5-5', effort: i === 0 ? 'high' : 'medium' }]));
+    const r = okP(applySleepConfigPatch({ specialists: mixed as never }, { model: 'claude-sonnet-5-5' }));
+    expect(Object.keys(r.config.specialists ?? {})).toHaveLength(5);
+  });
+
+  it('legacy clearing runs only on the FIRST line write', () => {
+    const r1 = okP(applySleepConfigPatch({}, { model: 'claude-sonnet-5-5', effort: 'low' }));
+    const uniform = Object.fromEntries(ALL.map((n) => [n, { model: 'claude-opus-5-5', effort: 'medium' }]));
+    const r2 = okP(applySleepConfigPatch({ ...r1.config, specialists: uniform as never }, { model: 'claude-haiku-5-5' }));
+    expect(Object.keys(r2.config.specialists ?? {})).toHaveLength(5);
+  });
+
+  it('refuses an unknown model or effort, and null resets the line', () => {
+    expect(applySleepConfigPatch({}, { model: 'claude-opus5' }).ok).toBe(false);
+    expect(applySleepConfigPatch({}, { effort: 'max' }).ok).toBe(false);
+    const r = okP(applySleepConfigPatch({ model: 'claude-sonnet-5-5', effort: 'low' }, { model: null, effort: null }));
+    expect(r.config.model).toBeUndefined();
+    expect(r.config.effort).toBeUndefined();
+  });
+
+  it('the reader keeps what the writer accepted', () => {
+    const r = okP(applySleepConfigPatch({}, { model: 'claude-sonnet-5-5', effort: 'high' }));
+    expect(readSetupConfigSleep(r.config)).toEqual({ model: 'claude-sonnet-5-5', effort: 'high' });
   });
 });

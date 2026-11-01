@@ -23,6 +23,19 @@ import './model-picker.css';
 
 export type SettingsTarget = 'models' | 'accounts' | 'accounts-codex';
 
+/**
+ * Settings mode (the Settings window's model chip): the pick is a saved default, not this chat's
+ * model. No "opens a new chat" note (a tool switch is just written), a locked tool's rail is
+ * passive and says why, the effort list may be the job's own, and there is no account chip and
+ * no "Models ›" (it is already Models).
+ */
+export interface PickerTarget {
+  /** Tools this job cannot run on, with the one-line reason shown in their place. */
+  lockedTools?: Partial<Record<PickerTool, string>>;
+  /** The job's own effort levels (Sleep takes low, medium, high). */
+  efforts?: string[];
+}
+
 export interface ModelPickerProps {
   /** Rail order: Claude, then Codex (a tool the server does not offer is absent). */
   tools: PickerToolState[];
@@ -46,10 +59,11 @@ export interface ModelPickerProps {
   savedDefault?: boolean;
   onOpenSettings: (target: SettingsTarget) => void;
   close: () => void;
+  target?: PickerTarget;
 }
 
 /** Each tool's mark in the rail, drawn here: the app ships no vendor artwork of its own. */
-function ToolMark({ tool }: { tool: PickerTool }) {
+export function ToolMark({ tool }: { tool: PickerTool }) {
   if (tool === 'claude') {
     return (
       <svg className="mp-mark mp-mark--claude" viewBox="0 0 24 24" aria-hidden>
@@ -92,7 +106,9 @@ export function ModelPicker(p: ModelPickerProps) {
   // The running row is on view when the list opens, however far down Legacy it sits.
   const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => { listRef.current?.querySelector('.mp-row.is-active')?.scrollIntoView({ block: 'nearest' }); }, []);
-  const ownEfforts = own ? effortsFor(own, p.model) : [];
+  // Settings mode: a tool this job cannot run on says why; the job may carry its own effort levels.
+  const toolLockedWhy = (t: PickerTool): string | undefined => p.target?.lockedTools?.[t];
+  const ownEfforts = p.target?.efforts ?? (own ? effortsFor(own, p.model) : []);
 
   const rows = useMemo<PickerModel[]>(() => {
     if (query.trim()) return searchModels(p.tools, query);
@@ -101,7 +117,7 @@ export function ModelPicker(p: ModelPickerProps) {
   }, [query, tool, legacyOpen, p.tools]);
 
   const locked = (m: PickerModel): boolean => !!p.lock && m.tool !== p.currentTool;
-  const usable = (m: PickerModel): boolean => !locked(m) && (p.tools.find((t) => t.tool === m.tool)?.ready ?? false);
+  const usable = (m: PickerModel): boolean => !locked(m) && !toolLockedWhy(m.tool) && (p.tools.find((t) => t.tool === m.tool)?.ready ?? false);
   const pick = (m: PickerModel): void => {
     if (!usable(m)) return;
     if (m.tool === p.currentTool) p.onModelChange(m.id);
@@ -157,15 +173,16 @@ export function ModelPicker(p: ModelPickerProps) {
               key={t.tool}
               type="button"
               className={`mp-tool${rail === t.tool ? ' is-on' : ''}${t.tool === p.currentTool ? ' is-current' : ''}`}
-              aria-label={t.ready ? t.label : `${t.label} (${blockerLine(t)})`}
-              title={t.ready ? t.label : blockerLine(t)}
+              aria-label={toolLockedWhy(t.tool) ? `${t.label} (${toolLockedWhy(t.tool)})` : t.ready ? t.label : `${t.label} (${blockerLine(t)})`}
+              aria-disabled={toolLockedWhy(t.tool) ? true : undefined}
+              title={toolLockedWhy(t.tool) ?? (t.ready ? t.label : blockerLine(t))}
               aria-pressed={rail === t.tool}
               data-tool={t.tool}
               onClick={() => { setRail(t.tool); setQuery(''); setLegacyOpen(false); setPanel(''); }}
             >
               <ToolMark tool={t.tool} />
               <span className="mp-tool-name">{t.label}</span>
-              {!t.ready && <span className="mp-tool-state">{tx(blockerWord(t))}</span>}
+              {!t.ready && !toolLockedWhy(t.tool) && <span className="mp-tool-state">{tx(blockerWord(t))}</span>}
             </button>
           ))}
         </nav>
@@ -182,7 +199,10 @@ export function ModelPicker(p: ModelPickerProps) {
             />
           </label>
           <div className="mp-list" ref={listRef}>
-            {!searching && tool && !tool.ready && (
+            {!searching && tool && toolLockedWhy(tool.tool) && (
+              <p className="mp-note mp-note--warn" data-testid="model-picker-locked">{toolLockedWhy(tool.tool)}</p>
+            )}
+            {!searching && tool && !tool.ready && !toolLockedWhy(tool.tool) && (
               <p className="mp-note mp-note--warn" data-testid="model-picker-signin">
                 {blockerLine(tool)}
                 {tool.tool === 'codex' && blockerFix(tool.blocker) && <CodexFix fix={blockerFix(tool.blocker)!} />}
@@ -191,7 +211,7 @@ export function ModelPicker(p: ModelPickerProps) {
                 )}
               </p>
             )}
-            {!searching && tool && tool.ready && tool.tool !== p.currentTool && !p.lock && (
+            {!p.target && !searching && tool && tool.ready && tool.tool !== p.currentTool && !p.lock && (
               <p className="mp-note">Opens a new {tool.label} chat with a summary of this one</p>
             )}
             {lockedTool && (
@@ -258,7 +278,7 @@ export function ModelPicker(p: ModelPickerProps) {
                 <span className="mp-chip-label">Effort</span> {effortLabel(p.effort)}
               </button>
             ) : <span />}
-            {active && (
+            {active && !p.target && (
               <button type="button" className={`mp-chip${panel === 'account' ? ' is-on' : ''}`} aria-expanded={panel === 'account'} onClick={() => setPanel((x) => (x === 'account' ? '' : 'account'))} data-testid="model-picker-account-chip">
                 <span className={`mp-dot${active.state === 'ok' ? '' : ' is-warn'}`} title={tx(active.state === 'ok' ? 'chat.modelPicker.signedIn' : 'chat.modelPicker.needsSignIn')} />
                 <span className="mp-chip-email">{active.email}</span>
@@ -268,15 +288,17 @@ export function ModelPicker(p: ModelPickerProps) {
           </div>
         </div>
       </div>
-      <div className="mp-foot">
-        <span className="mp-foot-line">
-          {newChats && <span>{newChats[0]}: <strong>{newChats[1]}</strong></span>}
-          {p.onSetDefault && (
-            <button type="button" className="mp-link mp-link--quiet" onClick={p.onSetDefault}>{p.savedDefault ? 'Saved as default' : 'Set as default'}</button>
-          )}
-        </span>
-        <button type="button" className="mp-link mp-link--quiet" onClick={() => { p.onOpenSettings('models'); p.close(); }}>Models ›</button>
-      </div>
+      {!p.target && (
+        <div className="mp-foot">
+          <span className="mp-foot-line">
+            {newChats && <span>{newChats[0]}: <strong>{newChats[1]}</strong></span>}
+            {p.onSetDefault && (
+              <button type="button" className="mp-link mp-link--quiet" onClick={p.onSetDefault}>{p.savedDefault ? 'Saved as default' : 'Set as default'}</button>
+            )}
+          </span>
+          <button type="button" className="mp-link mp-link--quiet" onClick={() => { p.onOpenSettings('models'); p.close(); }}>Models ›</button>
+        </div>
+      )}
     </div>
   );
 }

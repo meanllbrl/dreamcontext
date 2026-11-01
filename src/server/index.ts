@@ -21,7 +21,7 @@ import { assistantContextRoot, assistantExists, isAssistantVault } from '../lib/
 import { declineAllProposals } from '../lib/assistant/proposals.js';
 import {
   handleAssistantStatus, handleAssistantRollup, handleAssistantGlance, handleAssistantOwnerAnswer, handleAssistantDelegationDismiss, handleAssistantCreate, handleAssistantProfileGet, handleAssistantProfileSet,
-  handleAssistantAvatarGet, handleAssistantAvatarSet, handleAssistantProposalsList, handleAssistantProposalDecide,
+  handleAssistantAvatarGet, handleAssistantAvatarSet, handleAssistantAvatarDelete, handleAssistantProposalsList, handleAssistantProposalDecide,
   handleAssistantWindowRegister, handleAssistantWindowRelease, handleAssistantWindowLookup, handleAssistantOpen, handleAssistantCommandBind, handleAssistantCommandClaim, handleAssistantCommandResult,
   handleAssistantProjects, handleAssistantSessions, handleAssistantWatch, handleAssistantBroadcast, handleAssistantUi, handleAssistantLook, handleAssistantApps, handleAssistantAppOpen, handleAssistantAppDo, handleAssistantAppShot,
   handleAssistantRecall, handleAssistantIndex, handleAssistantRead,
@@ -234,11 +234,13 @@ import { closeAllWebSessions } from './web-session-proxy.js';
 import {
   handleAgentAccountsAdopt, handleAgentAccountsAutoSwitch,
   handleAgentAccountsSwitchPolicy, handleAgentAccountsList, handleAgentAccountsOwnerOnly, handleAgentAccountsAgentThreshold,
+  handleAgentAccountsRulesGet,
+  handleAgentAccountsRulesSet,
   handleAgentAccountsLogin, handleAgentAccountsRelogin, handleAgentAccountsPreferred, handleAgentAccountsRefresh,
   handleAgentAccountsReorder, handleAgentAccountsRemove,
 } from './routes/agent-accounts.js';
 import {
-  handleMcpOverview, handleMcpCheck, handleMcpConnect, handleMcpConnectStatus, handleMcpConnectCancel,
+  handleMcpOverview, handleMcpCodex, handleMcpCheck, handleMcpConnect, handleMcpConnectStatus, handleMcpConnectCancel,
   handleMcpServerSave, handleMcpServerRemove, handleMcpServerMove, handleMcpImport,
 } from './routes/agent-mcp.js';
 import {
@@ -563,6 +565,7 @@ export function buildRouter(): Router {
   router.post('/api/assistant/profile', handleAssistantProfileSet);
   router.get('/api/assistant/avatar', handleAssistantAvatarGet);
   router.post('/api/assistant/avatar', handleAssistantAvatarSet);
+  router.delete('/api/assistant/avatar', handleAssistantAvatarDelete);
   router.get('/api/assistant/proposals', handleAssistantProposalsList);
   router.post('/api/assistant/proposals/:id', handleAssistantProposalDecide);
   router.post('/api/assistant/windows', handleAssistantWindowRegister);
@@ -668,6 +671,8 @@ export function buildRouter(): Router {
   router.post('/api/agent/accounts/switch-policy', handleAgentAccountsSwitchPolicy);
   router.post('/api/agent/accounts/owner-only', handleAgentAccountsOwnerOnly);
   router.post('/api/agent/accounts/agent-threshold', handleAgentAccountsAgentThreshold);
+  router.get('/api/agent/accounts/rules', handleAgentAccountsRulesGet);
+  router.post('/api/agent/accounts/rules', handleAgentAccountsRulesSet);
   // Per-tool accounts (Track T W2): Codex's, each route with its Claude twin's guard.
   router.get('/api/agent/accounts/codex', handleCodexAccountsList);
   router.post('/api/agent/accounts/codex/login', handleCodexAccountsLogin);
@@ -679,6 +684,7 @@ export function buildRouter(): Router {
   // fill it, a sign-in per account, and the store edits. Owner window only, reads included.
   // `/mcp` in Chat talks to its OWN process over the chat socket instead (agent-chat.ts).
   router.get('/api/agent/mcp/overview', handleMcpOverview);
+  router.get('/api/agent/mcp/codex', handleMcpCodex);
   router.post('/api/agent/mcp/check', handleMcpCheck);
   router.post('/api/agent/mcp/connect', handleMcpConnect);
   router.get('/api/agent/mcp/connect/:ticket', handleMcpConnectStatus);

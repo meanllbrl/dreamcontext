@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { agentThresholdFor } from '../claude-accounts.js';
+import { codexRules } from '../account-rules.js';
 import { readToolRejections } from '../account-switch.js';
 import { codexLimitsFor, listCodexAccounts, readCodexUsage } from '../codex-accounts.js';
 import { CODEX_PRIMARY_ID } from '../t3-bridge/accounts.js';
@@ -24,7 +24,7 @@ export function pickCodexRunAccount(o: {
 }): CodexPick {
   const home = o.home ?? homedir();
   const now = o.now ?? Date.now();
-  const threshold = agentThresholdFor(home);
+  const threshold = codexRules(home).agentThreshold;
   const rejected = readToolRejections('codex', home, now);
   const accounts = listCodexAccounts(home).filter((a) => a.signedIn && (!o.pinned || a.id === o.pinned) && !o.exclude?.includes(a.id));
   if (accounts.length === 0) return { none: true };

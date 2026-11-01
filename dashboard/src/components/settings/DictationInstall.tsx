@@ -13,7 +13,7 @@ import { DICTATION_CHANGED_EVENT, notifyDictationChanged } from '../../lib/voice
  * Voice and the Assistant setup.
  */
 
-type ModelId = 'tiny' | 'base' | 'small' | 'medium' | 'large-v3-turbo';
+export type ModelId = 'tiny' | 'base' | 'small' | 'medium' | 'large-v3-turbo';
 
 interface ModelOption {
   id: ModelId;
@@ -23,7 +23,7 @@ interface ModelOption {
   fits: boolean;
 }
 
-interface DictationState {
+export interface DictationState {
   installed: boolean;
   choice: { engine: 'local' | 'cloud'; model: ModelId | null } | null;
   engine: boolean;
@@ -59,7 +59,12 @@ function optionLabel(m: ModelOption, recommended: ModelId): string {
   return `On this Mac — ${m.id} (${cost}, ~${size(m.ramMB)} memory)${tail}`;
 }
 
-export function DictationInstall() {
+/**
+ * The dictation choice and the local install's progress, read from the server and polled while
+ * an install runs. Shared by this row and the Settings window's Voice rows (wave 4), so both
+ * draw the same truth and neither downloads without an explicit choice.
+ */
+export function useDictationState() {
   const [state, setState] = useState<DictationState | null>(null);
   const [failed, setFailed] = useState(false);
   const [picking, setPicking] = useState(false);
@@ -125,6 +130,13 @@ export function DictationInstall() {
     const t = setInterval(() => { void read(); }, POLL_MS);
     return () => clearInterval(t);
   }, [busy, read]);
+
+  return { state, failed, read, choose, sending, postError, setPostError, picking, setPicking, pick, setPick, busy };
+}
+
+
+export function DictationInstall() {
+  const { state, failed, read, choose, sending, postError, setPostError, picking, setPicking, pick, setPick, busy } = useDictationState();
 
   if (failed && !state) {
     return (

@@ -16,8 +16,10 @@ import './SettingRow.css';
  * something means reaching for the right one.
  */
 
-export function SettingGroup({ title, note, children, collapsible, defaultOpen, badge }: {
+export function SettingGroup({ title, note, children, collapsible, defaultOpen, badge, tab }: {
   title?: string;
+  /** The Settings window: which Models tab this group belongs to, so a search hit can jump there. */
+  tab?: string;
   note?: string;
   children: ReactNode;
   /**
@@ -51,7 +53,7 @@ export function SettingGroup({ title, note, children, collapsible, defaultOpen, 
     );
   }
   return (
-    <div className="setting-group">
+    <div className="setting-group" data-tab={tab}>
       {title && (
         <h3 className="setting-group-title">
           {title}
@@ -84,18 +86,29 @@ interface SettingRowProps {
   /** Renders the whole row as a <label> so the text is part of the hit target. */
   labelled?: boolean;
   tone?: 'default' | 'warn';
+  /** Stable id (the Settings window scrolls a search hit to it). */
+  id?: string;
+  /** Extra words search should find this row by (never drawn). */
+  keywords?: string;
+  /** A passive control says why, in its own line under the hint. */
+  why?: string;
 }
 
-export function SettingRow({ title, hint, more, children, control, status, labelled, tone = 'default' }: SettingRowProps) {
+export function SettingRow({ title, hint, more, children, control, status, labelled, tone = 'default', id, keywords, why }: SettingRowProps) {
   // A <summary> inside a <label> would toggle the control on every expand, so a
   // row carrying folded detail is never the label itself.
   const Wrapper = labelled && !more ? 'label' : 'div';
   return (
-    <Wrapper className={`setting-row${labelled && !more ? ' setting-row--labelled' : ''}${tone === 'warn' ? ' setting-row--warn' : ''}`}>
+    <Wrapper
+      className={`setting-row${labelled && !more ? ' setting-row--labelled' : ''}${tone === 'warn' ? ' setting-row--warn' : ''}${why ? ' setting-row--passive' : ''}`}
+      data-row={id}
+      data-search-k={keywords}
+    >
       <span className="setting-row-head">
         <span className="setting-row-text">
           <span className="setting-row-title">{title}</span>
           {hint && <span className="setting-row-hint">{hint}</span>}
+          {why && <span className="setting-row-why">{why}</span>}
           {more && (
             <details className="setting-row-more">
               <summary>{'Details'}</summary>
