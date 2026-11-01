@@ -8,6 +8,7 @@ import { appAskArgs } from '../../src/lib/apps/assistant-ask.js';
 import { prepareAppChat, appBashGateHook, type AppChatEnvelope } from '../../src/lib/apps/assistant.js';
 import { createAppChat } from '../../src/lib/apps/chat-store.js';
 import { registerApp } from '../../src/lib/apps/registry.js';
+import { appChatBriefing } from '../../src/server/chat-surface.js';
 
 /**
  * The envelope against a REAL `claude` (plan r9, task criterion 6): haiku, one scratch project with a
@@ -154,4 +155,79 @@ describe.skipIf(!real)('a real claude in the envelope', () => {
     expect(doc.result).not.toContain('never-this');
     expect(existsSync(join(root, 'x.txt'))).toBe(false);
   }, 120_000);
+});
+
+describe.skipIf(!real)('a real claude on a real vault, hooks live', () => {
+  let home: string; let project: string; let root: string; let app: AppChatEnvelope; let chat: Chat;
+  const counts: Array<[string, number]> = [];
+
+  beforeAll(() => {
+    home = realpathSync(mkdtempSync(join(tmpdir(), 'dc-vault-')));
+    project = join(home, 'proj'); mkdirSync(project, { recursive: true });
+    const bin = join(home, 'bin'); mkdirSync(bin);
+    writeFileSync(join(bin, 'dreamcontext'), `#!/bin/sh\nexec "${process.execPath}" "${CLI[1]}" "$@"\n`, { mode: 0o755 });
+    spawnSync(process.execPath, [CLI[1], 'init', '-y', '--name', 'proj', '--platforms', 'claude'], { cwd: project, env: { ...process.env, HOME: home }, encoding: 'utf-8' });
+    mkdirSync(join(project, '.claude'), { recursive: true });
+    writeFileSync(join(project, '.claude', 'settings.json'), readFileSync(resolve('tests/fixtures/apps/hooks-settings.json'), 'utf-8'));
+    writeFileSync(join(project, '_dream_context', 'knowledge', 'load-note.md'), '---\ntitle: load note\ntype: knowledge\n---\n\nThe load ceiling of this machine is twelve.\n');
+    root = join(home, 'proj-apps', 'yuk'); mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'hedef-sinir.md'), 'The alarm threshold is 77 percent.\n');
+    writeFileSync(join(root, 'dreamcontext-app.json'), JSON.stringify({ slug: 'yuk', name: 'Yuk', agent: { own: true } }));
+    writeFileSync(join(root, 'ASSISTANT.md'), 'You answer questions about this machine\'s load. Be brief.\n');
+    const rec = registerApp(home, { projectRoot: project, vault: 'real', slug: 'yuk', name: 'Yuk', root });
+    const r = createAppChat({ id: randomUUID(), hash: rec.hash, slug: 'yuk', projectRoot: project, member: null }, home);
+    const p = prepareAppChat(r, { projectRoot: project, home, cli: CLI });
+    if (!p.ok) throw new Error(p.reason);
+    app = p.app;
+    const settings = join(home, 'settings.json');
+    writeFileSync(settings, JSON.stringify({ hooks: app.hooks }));
+    chat = new Chat([
+      '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--permission-prompt-tool', 'stdio',
+      '--permission-mode', app.permissionMode, '--allowedTools', ...app.allowed, '--setting-sources', 'project',
+      ...app.addDirs.flatMap((d) => ['--add-dir', d]), '--settings', settings, '--session-id', r.id, '--model', 'haiku',
+      '--append-system-prompt', `${app.briefing}\n\n${appChatBriefing(app)}`, '--disallowedTools', ['EnterPlanMode,ExitPlanMode', ...app.denied].join(','), '--strict-mcp-config',
+    ], project, { ...app.env, PATH: `${bin}:${process.env.PATH}` });
+  });
+  afterAll(() => { chat?.end(); app?.dispose(); console.log(`cards per turn: ${JSON.stringify(counts)}`); if (home) rmSync(home, { recursive: true, force: true }); });
+
+  it.each([
+    ['a metric', 'What does the insight called weekly-load say?'],
+    ['an action', 'What actions does this app have, and what are its current status and logs?'],
+    ['a recall', 'What do we know about the load ceiling of this machine?'],
+    ['a file it is not told the name of', 'There is a note in this app\'s folder about the alarm threshold. What is the threshold?'],
+  ])('%s raises no card', async (name, q) => {
+    const t = await chat.ask(q);
+    counts.push([name, t.cards.length]);
+    console.log(`${name}: ${t.results.map((r) => `${r.tool}:${String(r.input.command ?? r.input.file_path ?? '').slice(0, 60)}`).join(' | ')}`);
+    expect(t.cards.map((c) => JSON.stringify(c.input))).toEqual([]);
+  }, 180_000);
+
+  it('a shell search raises exactly one card, and the project\'s own PreToolUse hook still fires', async () => {
+    const t = await chat.ask('Run this one command with Bash and nothing else: grep -r threshold .');
+    counts.push(['a shell search', t.cards.length]);
+    expect(t.cards).toHaveLength(1);
+    const heavy = await chat.ask('Run exactly this one command with Bash: npx vitest run');
+    expect(heavy.cards).toEqual([]);
+    expect(heavy.results.map((r) => r.text).join(' ')).toContain('heavy step');
+  }, 240_000);
+
+  it('the session-start and stop hooks ran on this chat', () => {
+    const state = readFileSync(join(project, '_dream_context', 'state', '.sleep.json'), 'utf-8');
+    expect(JSON.parse(state).sessions.length).toBeGreaterThan(0);
+  });
+
+  it('on a high-debt vault an app chat gets no sleep directive', () => {
+    const file = join(project, '_dream_context', 'state', '.sleep.json');
+    const state = JSON.parse(readFileSync(file, 'utf-8'));
+    writeFileSync(file, JSON.stringify({ ...state, debt: 99 }));
+    const run = (cmd: string, extra: Record<string, string>) => spawnSync(process.execPath, [CLI[1], 'hook', cmd], {
+      cwd: project, encoding: 'utf-8', input: JSON.stringify({ session_id: randomUUID(), source: 'startup', prompt: 'hello', cwd: project }),
+      env: { ...process.env, HOME: home, DREAMCONTEXT_AGENT_CHAT: '', ...extra },
+    }).stdout;
+    const line = (t: string) => t.split('\n').filter((l) => /sleep debt|run a sleep|consolidat/i.test(l) && !/Consolidated/.test(l));
+    for (const cmd of ['session-start', 'user-prompt-submit']) {
+      expect(line(run(cmd, {})).length, cmd).toBeGreaterThan(0);
+      expect(line(run(cmd, { DREAMCONTEXT_AGENT_CHAT: 'app-yuk' })), cmd).toEqual([]);
+    }
+  });
 });

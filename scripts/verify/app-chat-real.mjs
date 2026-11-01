@@ -59,6 +59,11 @@ function turn(text) {
     return say('read it');
   }
   if (text === 'ROTATE') { id = '${'11111111-2222-4333-8444-555555555555'}'; out({ type: 'system', subtype: 'init', session_id: id, model: 'x', tools: [], mcp_servers: [], slash_commands: [], permissionMode: 'default', cwd: process.cwd() }); return say('rotated'); }
+  if (text === 'LIMIT') {
+    out({ type: 'rate_limit_event', session_id: id, rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour', resetsAt: Math.floor(Date.now() / 1000) + 3600 } });
+    out({ type: 'assistant', session_id: id, message: { role: 'assistant', content: [{ type: 'text', text: "You've hit your session limit" }] } });
+    return out({ type: 'result', subtype: 'success', is_error: true, result: "You've hit your session limit", session_id: id, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+  }
   if (text === 'SLOW') { setTimeout(() => { if (!stopped) say('slow answer'); }, 6000); return; }
   say('answer to ' + text);
 }
@@ -214,6 +219,12 @@ try {
     await f.getByRole('button', { name: /^Deny|^Reddet/ }).first().click();
     p.off('dialog', onDialog);
     await p.waitForTimeout(400);
+
+    // A limit: a plain error, and the next message is not held.
+    await send(f, 'LIMIT');
+    await see(f, where, 'session limit');
+    await p.waitForTimeout(500);
+    await send(f, 'after limit'); await see(f, where, 'answer to after limit');
 
     // Stop.
     await send(f, 'SLOW');
