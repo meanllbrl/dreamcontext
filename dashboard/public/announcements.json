@@ -213,5 +213,36 @@
       "0.34.5",
       "0.34.6"
     ]
+  },
+  {
+    "id": "v0-40-0",
+    "date": "2026-11-02",
+    "version": "0.40.0",
+    "title": "Claude or Codex, in the same chat window",
+    "summary": "Everything since 0.36.1 in one release. Chats can run on Codex with the same question cards, step lists and project skills, every app gets its own assistant, an AI Team member's runs open in place, Settings is one new window, and the roadmap ranks work with RICE. Codex work outside a chat is in beta, and Antigravity is experimental.",
+    "tags": [
+      "chat",
+      "codex",
+      "apps",
+      "agents",
+      "settings"
+    ],
+    "story": "v0-40-0.json",
+    "covers": [
+      "0.36.2",
+      "0.36.3",
+      "0.36.4",
+      "0.36.5",
+      "0.36.6",
+      "0.36.7",
+      "0.36.8",
+      "0.36.9",
+      "0.36.10",
+      "0.36.11",
+      "0.36.12",
+      "0.36.13",
+      "0.36.14",
+      "0.36.15"
+    ]
   }
 ]
