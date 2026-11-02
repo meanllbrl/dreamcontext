@@ -1466,6 +1466,10 @@ video.chat-msg-user-media-el { cursor: default; }
 .chat-subagents-entry { border-bottom: 1px solid var(--color-border); }
 .chat-subagents-entry:last-child { border-bottom: none; }
 .chat-subagents-entry > .chat-subagents-row { width: 100%; border-bottom: none; }
+/* The row and, while it runs, its own Stop: one sub-agent ends, the turn goes on. */
+.chat-subagents-line { display: flex; align-items: center; }
+.chat-subagents-line > .chat-subagents-row { flex: 1 1 auto; min-width: 0; border-bottom: none; }
+.chat-subagents-stop { flex: 0 0 auto; margin-right: var(--space-4); }
 
 /* A peer envoy run is ANOTHER PROJECT working, and its row says so the way the docked
    peer-session row does: the accent, on the chip that names the vault. The avatar slot

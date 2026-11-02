@@ -2010,6 +2010,9 @@ export function ChatPane({
         explain={p.id === firstJudgePartyId}
         peers={peers}
         onDrillIn={handleDrillIn}
+        // One sub-agent stops alone on Claude (`stop_task`). T3's Codex and Antigravity adapters
+        // have no such call, so there Stop ends the whole turn and the row gets no button.
+        onStop={session.tool === 'codex' || session.tool === 'antigravity' ? undefined : handleStopShell}
         // The rail pins over ONE card: the one its chips summarize.
         rootRef={p === railParty ? setSubAgentCardEl : undefined}
         highlightRunId={jumped?.id ?? null}
