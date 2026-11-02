@@ -13,7 +13,7 @@ import {
   createSession, currentZoom,
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
-import { FOCUS_FRAME_THROTTLE_MS, createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
+import { FOCUS_FRAME_THROTTLE_MS, bindCrewTicket, createChatSession, type ChatSession, type ParkVerdict, type SuperSignal } from './chatSession';
 import { publishSuperEventContext, publishSuperQuestions } from './super/superJobsStore';
 import { usePhoneSuperQuestions } from './super/usePhoneSuperQuestions';
 import { openOwnerQuestions, trimOwnerAnswers } from './super/superQuestions';
@@ -100,7 +100,8 @@ import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { dropSurveyDraftsFor } from './chat/surveyDrafts';
 import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
-import { readSuperStateView, type SuperDigestWire, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
+import { readSuperStateView, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
+import { MAIN_SUPER, dropSuperRecords, readSuperRecord, subscribeSuperRecords, superIdOf, writeSuperRecord, type SuperRecordUpdate } from './super/superRecordStore';
 import { cardTitle } from './super/superTitles';
 import type { SurveyRead } from './chat/SurveyCard';
 import { PhoneAgenda, phoneEventContext } from './super/PhoneAgenda';
@@ -730,7 +731,36 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // session in `sessionList` (mode `super`) that is NEVER a tab: no pane holds it, the roster
   // never saves it, the restore never places it, the reconcile never adopts it (D9's one
   // predicate, `isSuperSession`). While handed over it is homed into the centre slot.
-  const [superState, setSuperState] = useState<SuperStateView | null>(null);
+  //
+  // The record itself lives in the keyed store (super/superRecordStore.ts, vault + superId); the
+  // view state below stays ONE copy, bound to `activeSuperId` (always main for now). `superState`
+  // is this render's copy of the active super's record: the store's listener sets it inside the
+  // writer's own call, so a write renders in the same update a state setter's would.
+  const activeSuperId: SuperId = MAIN_SUPER;
+  /** This pane in the record store: its unmount drops only the records it wrote. */
+  const [superPane] = useState<object>(() => ({}));
+  // Null on the first render, as before: a record still held by a pane this one replaces dies in
+  // that pane's unmount, and the effect below reads what is left once this pane is committed.
+  const [superState, setSuperStateView] = useState<SuperStateView | null>(null);
+  /** Set by the unmount: a server answer landing after it writes nothing (a state setter's no-op
+   *  on an unmounted component), so no key outlives its pane. */
+  const superPaneGoneRef = useRef(false);
+  const setSuperState = useCallback((next: SuperRecordUpdate) => {
+    if (superPaneGoneRef.current) return;
+    writeSuperRecord(vault, activeSuperId, next, superPane);
+  }, [vault, activeSuperId, superPane]);
+  useEffect(() => {
+    superPaneGoneRef.current = false;
+    let seen = readSuperRecord(vault, activeSuperId);
+    setSuperStateView(seen);
+    const off = subscribeSuperRecords(() => {
+      const now = readSuperRecord(vault, activeSuperId);
+      if (now === seen) return;
+      seen = now;
+      setSuperStateView(now);
+    });
+    return () => { superPaneGoneRef.current = true; off(); dropSuperRecords(vault, superPane); };
+  }, [vault, activeSuperId, superPane]);
   const superStateRef = useRef(superState);
   /** Delegated children being opened right now, before the server's record names them: their
    *  lean MCP set (orchestration plan r5 D14). Read by `spawn` with the record. */
@@ -777,7 +807,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const stageShowChild = useRef<StageShowChild | null>(null);
   // Read by every chat `spawn` creates, so a respawned Super Agent (an account switch, a
   // resume) keeps its wiring: the handlers are refs, rebuilt every render below.
-  const superCommandRef = useRef<(cmd: { verb: string; args: Record<string, unknown> }) =>
+  // `superId`: the super the frame is for (absent = main), on the frame or in its args.
+  const superCommandRef = useRef<(cmd: { verb: string; args: Record<string, unknown>; superId?: SuperId }) =>
     Promise<{ ok: true; result?: unknown } | { ok: false; error: string }>>(async () => ({ ok: false, error: 'no_window' }));
   const superSignalRef = useRef<(signal: SuperSignal) => void>(() => {});
   const superWindowGuardRef = useRef<(cs: ChatSession, verb: string, args: Record<string, unknown>) => string | null>(() => null);
@@ -4048,8 +4079,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // The server already checked the caller, the cap and (for answer) the child's pending
   // request; the window re-checks what only it can see and does the work the way the owner's
   // own click would.
-  superCommandRef.current = async ({ verb, args }) => {
-    const st = superStateRef.current;
+  superCommandRef.current = async ({ verb, args, superId }) => {
+    // The record of the super the frame is for (absent or unknown = main): the active one is this
+    // render's copy, any other is read from the keyed store. No record = refused, as ever.
+    const frameSuper = superIdOf(superId ?? args.superId);
+    const st = frameSuper === activeSuperId ? superStateRef.current : readSuperRecord(vault, frameSuper);
     if (!st?.enabled) return { ok: false, error: 'not_handed_over' };
     if (verb === 'delegate') {
       // Past the server's deadline: open NO child (the server would never record it).
@@ -4065,6 +4099,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       const childId = newClaudeId();
       leanOpeningRef.current.set(childId, d.mcp);
       if (d.tool) bindChatTool(childId, d.tool);
+      // A member Super's child: the server's crew ticket rides on its connection (main's frames
+      // carry none, so its child's URL is unchanged).
+      bindCrewTicket(childId, args.crewTicket);
       const s = spawn(false, childId, false, 'chat', prepared.inline, d.model, true, prepared.token, false, d.effort, false, d.mode) as ChatSession;
       s.setSuperChild(true);
       // …and it STAYS marked until the server's push names it (the mark effect would otherwise

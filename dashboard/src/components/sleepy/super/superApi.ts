@@ -8,11 +8,33 @@
  * `_meta{subtype:'super_state'}` down the Super Agent's own socket after every store write.
  */
 import type { ApiClient } from '../../../api/client';
-import { readSuperStateView, type SuperStateView } from '../../../lib/superTypes';
+import { readSuperStateView, type SuperId, type SuperStateView } from '../../../lib/superTypes';
 import type { LayoutPatch } from './superLayout';
 
+/**
+ * A route for one super: main's path unchanged (the server reads an absent superId as main), a
+ * member's with `?superId=m:<slug>`. No request for main ever carries a superId.
+ */
+export function superRoute(path: string, superId: SuperId = 'main'): string {
+  if (superId === 'main') return path;
+  return `${path}${path.includes('?') ? '&' : '?'}superId=${encodeURIComponent(superId)}`;
+}
+
+/**
+ * The client for one super's routes: main's is the client itself (every call byte-identical to
+ * before), a member's sends each path through {@link superRoute}.
+ */
+export function forSuper(api: ApiClient, superId: SuperId = 'main'): ApiClient {
+  if (superId === 'main') return api;
+  const member = Object.create(api) as ApiClient;
+  member.get = <T>(path: string): Promise<T> => api.get<T>(superRoute(path, superId));
+  member.post = <T>(path: string, body: unknown): Promise<T> => api.post<T>(superRoute(path, superId), body);
+  return member;
+}
+
 /** `GET /api/super/state` — the first paint after a reload. Null when unreadable. */
-export async function fetchSuperState(api: ApiClient): Promise<SuperStateView | null> {
+export async function fetchSuperState(api: ApiClient, superId: SuperId = 'main'): Promise<SuperStateView | null> {
+  api = forSuper(api, superId);
   try {
     return readSuperStateView(await api.get<unknown>('/super/state'));
   } catch {
@@ -22,7 +44,8 @@ export async function fetchSuperState(api: ApiClient): Promise<SuperStateView | 
 
 /** `POST /api/super/enable` — hand over: adopt these chats. Answers the session to resume or
  *  the one just minted, and the state after the write. */
-export async function enableSuper(api: ApiClient, body: { adopt: string[]; titles: Record<string, string> }): Promise<{ session: string; state: SuperStateView | null; skipped: SkippedChat[] }> {
+export async function enableSuper(api: ApiClient, body: { adopt: string[]; titles: Record<string, string> }, superId: SuperId = 'main'): Promise<{ session: string; state: SuperStateView | null; skipped: SkippedChat[] }> {
+  api = forSuper(api, superId);
   const r = await api.post<{ session?: unknown; state?: unknown; skipped?: unknown }>('/super/enable', body);
   if (typeof r?.session !== 'string' || !r.session) throw new Error('the server named no Super Agent session');
   return { session: r.session, state: readSuperStateView(r.state), skipped: readSkipped(r.skipped) };
@@ -45,31 +68,36 @@ export function remoteSkippedTitles(skipped: readonly SkippedChat[]): string[] {
 }
 
 /** `POST /api/super/disable` — take it back. */
-export async function disableSuper(api: ApiClient): Promise<SuperStateView | null> {
+export async function disableSuper(api: ApiClient, superId: SuperId = 'main'): Promise<SuperStateView | null> {
+  api = forSuper(api, superId);
   const r = await api.post<{ state?: unknown }>('/super/disable', {});
   return readSuperStateView(r?.state);
 }
 
 /** `POST /api/super/layout` — the owner's gesture as a PATCH (plan-r8 F3, §0 C3): a drop, a
  *  card stacked or brought back, a close, and the view only when the gesture changes it. */
-export async function postSuperLayout(api: ApiClient, patch: LayoutPatch): Promise<SuperStateView | null> {
+export async function postSuperLayout(api: ApiClient, patch: LayoutPatch, superId: SuperId = 'main'): Promise<SuperStateView | null> {
+  api = forSuper(api, superId);
   const r = await api.post<{ state?: unknown }>('/super/layout', patch);
   return readSuperStateView(r?.state);
 }
 
 /** `POST /api/super/activity` — the owner is typing to the Super Agent (no text is ever sent). */
-export async function postSuperActivity(api: ApiClient): Promise<void> {
+export async function postSuperActivity(api: ApiClient, superId: SuperId = 'main'): Promise<void> {
+  api = forSuper(api, superId);
   await api.post<unknown>('/super/activity', {});
 }
 
 /** `POST /api/super/end` — the owner ended a child from its card (his window closed the tab). */
-export async function postSuperEnd(api: ApiClient, child: string): Promise<SuperStateView | null> {
+export async function postSuperEnd(api: ApiClient, child: string, superId: SuperId = 'main'): Promise<SuperStateView | null> {
+  api = forSuper(api, superId);
   const r = await api.post<{ state?: unknown }>('/super/end', { child });
   return readSuperStateView(r?.state);
 }
 
 /** `POST /api/super/pad` — the owner moved an agenda line by hand; the server never moves it again. */
-export async function postSuperPad(api: ApiClient, id: string, section: 'now' | 'done'): Promise<SuperStateView | null> {
+export async function postSuperPad(api: ApiClient, id: string, section: 'now' | 'done', superId: SuperId = 'main'): Promise<SuperStateView | null> {
+  api = forSuper(api, superId);
   const r = await api.post<{ state?: unknown }>('/super/pad', { id, section });
   return readSuperStateView(r?.state);
 }
@@ -83,7 +111,8 @@ export interface SuperOpened { id: string; groupId: string | null; state: SuperS
 /** `POST /api/super/open` — the owner opens a card himself. Throws the server's refusal as a
  *  RequestError (`code`: stage_full, record_full, a file's reason); its `message` is the server's
  *  English and is never shown. */
-export async function postSuperOpen(api: ApiClient, body: SuperOpenBody): Promise<SuperOpened> {
+export async function postSuperOpen(api: ApiClient, body: SuperOpenBody, superId: SuperId = 'main'): Promise<SuperOpened> {
+  api = forSuper(api, superId);
   const r = await api.post<{ result?: { container?: { id?: unknown }; group?: { id?: unknown } }; state?: unknown }>('/super/open', body);
   const id = r?.result?.container?.id;
   if (typeof id !== 'string') throw new Error('the server named no card');
@@ -92,14 +121,16 @@ export async function postSuperOpen(api: ApiClient, body: SuperOpenBody): Promis
 }
 
 /** `POST /api/super/recap` — the window came back after a long absence. */
-export async function postSuperRecap(api: ApiClient): Promise<boolean> {
+export async function postSuperRecap(api: ApiClient, superId: SuperId = 'main'): Promise<boolean> {
+  api = forSuper(api, superId);
   const r = await api.post<{ queued?: unknown }>('/super/recap', {});
   return r?.queued === true;
 }
 
 /** `POST /api/super/fresh` — the owner pressed "New session". Throws the server's refusal
  *  (409 `off` / `rotating`) as a RequestError; true = a fresh turn was queued. */
-export async function postSuperFresh(api: ApiClient): Promise<boolean> {
+export async function postSuperFresh(api: ApiClient, superId: SuperId = 'main'): Promise<boolean> {
+  api = forSuper(api, superId);
   const r = await api.post<{ queued?: unknown }>('/super/fresh', {});
   return r?.queued === true;
 }

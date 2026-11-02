@@ -24,7 +24,7 @@ import { dropBrowserLive, pushBrowserFrame } from './chat/browserLiveStore';
 import { createNotifyCoalescer } from './chat/notifyCoalescer';
 import { leanMcpParam, superEventText } from './super/superHandover';
 import { createChildAlarmGate } from './super/childAlarm';
-import { readSuperDigest, type SuperDigestWire } from '../../lib/superTypes';
+import { readSuperDigest, type SuperDigestWire, type SuperId } from '../../lib/superTypes';
 import { dropSettledSurveyDrafts } from './chat/surveyDrafts';
 import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { openExternalUrl } from '../../lib/desktop';
@@ -240,7 +240,9 @@ export function parkGraceOf(asked: unknown): number {
 /** The window sends `focus` at most this often per chat (the server's grace is 2 min). */
 export const FOCUS_FRAME_THROTTLE_MS = 30_000;
 
-export type WindowCommandHandler = (cmd: { verb: string; args: Record<string, unknown> }) =>
+/** `superId`: the super a Super verb is for, set only when its frame names a member's
+ *  (`m:<slug>`); absent = main, and main's command is exactly `{ verb, args }` as before. */
+export type WindowCommandHandler = (cmd: { verb: string; args: Record<string, unknown>; superId?: SuperId }) =>
   Promise<{ ok: true; result?: unknown } | { ok: false; error: string }>;
 
 /** Runs one Super Agent verb only the window can run (`delegate`, `answer`) — sent down the
@@ -1000,6 +1002,26 @@ export function mergeReplay(transcript: ChatItem[], live: ChatItem[]): { history
   return { history: transcript, kept };
 }
 
+/** A member Super's `delegate` frame carries `crewTicket` (opaque, the server's): the window binds
+ *  it to the child's id before spawning it, and the child's connection takes it as `crewTicket`. */
+const crewTickets = new Map<string, string>();
+const MAX_CREW_TICKET = 512;
+
+/** Bind a delegate's crew ticket to the child about to be spawned. Anything not a non-empty
+ *  string (main's frames carry none) binds nothing. */
+export function bindCrewTicket(claudeId: string, ticket: unknown): void {
+  if (!claudeId || typeof ticket !== 'string' || !ticket || ticket.length > MAX_CREW_TICKET) return;
+  crewTickets.set(claudeId, ticket);
+}
+
+/** The child's `&crewTicket=` query, or '' (no ticket bound). Taken: the binding dies here. */
+export function takeCrewTicketParam(claudeId: string): string {
+  const ticket = crewTickets.get(claudeId);
+  if (ticket === undefined) return '';
+  crewTickets.delete(claudeId);
+  return `&crewTicket=${encodeURIComponent(ticket)}`;
+}
+
 // ─── Session factory ────────────────────────────────────────────────────────────────
 
 let chatSessionSeq = 0;
@@ -1090,6 +1112,9 @@ export function createChatSession(
   const stageParam = agent && isStageChat(claudeId) ? '&stage=1' : '';
   // On BOTH URLs too: a reconnect that respawns a lean child must respawn it lean.
   const leanParam = leanMcpParam(leanMcp);
+  // A member Super's delegated child: the server's crew ticket for it (taken once, at spawn), on
+  // BOTH URLs like `lean`. '' for every other chat, so their URLs are unchanged byte-for-byte.
+  const crewParam = takeCrewTicketParam(claudeId);
   // The tool this conversation runs on (Track T), on BOTH URLs: a reconnect that respawns a Codex
   // pane must respawn it on Codex. '' for Claude, so a Claude URL is unchanged byte-for-byte.
   const toolParam = chatToolParam(claudeId);
@@ -1104,7 +1129,7 @@ export function createChatSession(
       : `&prompt=${encodeURIComponent(initialPrompt)}`;
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
-    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}${stageParam}${leanParam}${toolParam}${appParam}`;
+    + `&bypass=${bypassParam}${idParam}${modelParam}${effortParam}${modeParam}${accountParam}${originParam}${promptParam}${deferParam}${cardParam}${agentParam}${stageParam}${leanParam}${crewParam}${toolParam}${appParam}`;
   /** The reconnect after a DROPPED socket: the same conversation, `reattach` so the server
    *  adopts the live child instead of spawning a twin — PASSIVE, because it is automatic: a
    *  live screen holding the chat is never evicted by it (the server answers 4409 instead).
@@ -1113,7 +1138,7 @@ export function createChatSession(
    *  a live permission switch may have moved it. */
   const reconnectUrl = (how: typeof REATTACH_EVICT | typeof REATTACH_PASSIVE = REATTACH_PASSIVE): string => `${proto}://${location.host}/api/agent/chat?vault=${encodeURIComponent(vault)}`
     + `&bypass=${session.bypass ? '1' : '0'}&resume=${encodeURIComponent(claudeId)}&reattach=${how}`
-    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}${stageParam}${leanParam}${toolParam}${appParam}`;
+    + `${modelParam}${effortParam}${modeParam}${accountParam}${cardParam}${agentParam}${stageParam}${leanParam}${crewParam}${toolParam}${appParam}`;
   // Reassigned by every reconnect attempt; handlers check they belong to the CURRENT socket.
   let ws = new WebSocket(url);
 
@@ -2940,10 +2965,12 @@ export function createChatSession(
       try { fn(signal); } catch (err) { console.warn('[chat] super listener failed:', err); }
     }
   }
-  async function runSuperCommand(cmd: { id: string; verb: string; args: Record<string, unknown> }): Promise<void> {
+  async function runSuperCommand(cmd: { id: string; verb: string; args: Record<string, unknown>; superId?: SuperId }): Promise<void> {
     let out: Awaited<ReturnType<SuperCommandHandler>>;
     try {
-      out = superHandler ? await superHandler({ verb: cmd.verb, args: cmd.args }) : { ok: false, error: 'no_window' };
+      // A member's frame names its super; main's carries none and goes on as `{ verb, args }`.
+      const forSuper = cmd.superId && cmd.superId !== 'main' ? { superId: cmd.superId } : {};
+      out = superHandler ? await superHandler({ verb: cmd.verb, args: cmd.args, ...forSuper }) : { ok: false, error: 'no_window' };
     } catch (err) {
       out = { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

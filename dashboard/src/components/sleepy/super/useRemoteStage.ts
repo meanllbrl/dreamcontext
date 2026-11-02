@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiClient } from '../../../api/client';
-import type { SuperStateView } from '../../../lib/superTypes';
+import type { SuperId, SuperStateView } from '../../../lib/superTypes';
 import { pollMs } from '../../../lib/windowActivity';
 import type { LiveChatsWire, SuperChatWire } from '../../handsfree/macContract';
 import { superRowFor } from '../phoneList';
@@ -18,6 +18,8 @@ export function useRemoteStage(o: {
   remoteDesktop: boolean;
   vault: string | null;
   api: ApiClient;
+  /** The super whose stage this reads; absent = main (the only one a remote screen shows today). */
+  superId?: SuperId;
   /** The stage is drawn now: no retry needed. */
   shown: boolean;
   onStage: (st: SuperStateView) => void;
@@ -36,16 +38,17 @@ export function useRemoteStage(o: {
   cb.current = { onStage: o.onStage, onOff: o.onOff };
   // Until the stage is drawn, each poll of the live list is a retry; once drawn, frames keep it.
   const retry = o.shown ? 0 : dataUpdatedAt;
+  const superId = o.superId ?? 'main';
   useEffect(() => {
     if (!o.remoteDesktop) return undefined;
     if (!session) { cb.current.onOff(); return undefined; }
     let cancelled = false;
-    void fetchRemoteStage(o.api).then((st) => {
+    void fetchRemoteStage(o.api, superId).then((st) => {
       if (cancelled || !st) return;
       if (st === 'off' || !st.enabled) { cb.current.onOff(); return; }
       cb.current.onStage(st);
     });
     return () => { cancelled = true; };
-  }, [o.remoteDesktop, session, o.api, retry]);
+  }, [o.remoteDesktop, session, o.api, retry, superId]);
   return { superRow };
 }
