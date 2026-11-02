@@ -8,7 +8,7 @@
  * THE REPORT (screen recording, desktop app = WKWebView): two panes, both long transcripts.
  * Frame-change gaps measured off the recording during the interactions: 66–116ms (target ~16).
  *   S  collapsing / expanding the left nav rail
- *   P  clicking the other pane (it takes the focus bonus — `.agent-pane.active` flex-basis)
+ *   P  clicking the other pane (focus moves; width only if under `--pane-read-min`)
  *   T  opening a "Thought it through" row
  *
  * WHAT IS MEASURED, per interaction, in the real app (real server, real bundle, real mouse):
@@ -29,7 +29,7 @@
  *   C*  setup — two panes, each a resumed several-hundred-item transcript, both pinned
  *   S*  the rail ends at EXACTLY its collapsed / expanded width, the surface's left edge on it,
  *       and both transcripts still pinned to the bottom
- *   P*  the clicked pane is the focused one, at the width the focus-bonus formula gives, with
+ *   P*  the clicked pane is the focused one, at the width the focus-floor formula gives, with
  *       both transcripts still pinned
  *   T*  the thinking body is visible after the click, and the transcript still pinned
  *   H*  history: wheel up through the transcript — including the "load older" reveals — and
@@ -606,16 +606,16 @@ async function runEngine(engineName, base) {
         const cs = getComputedStyle(document.querySelector('.agent-surface'));
         return {
           rowW: row.getBoundingClientRect().width,
-          bonus: parseFloat(cs.getPropertyValue('--pane-focus-bonus')),
+          read: parseFloat(cs.getPropertyValue('--pane-read-min')),
           min: parseFloat(cs.getPropertyValue('--pane-min')),
         };
       });
       const n = after.length;
-      const bonus = Math.max(0, Math.min(geo.bonus, geo.rowW - n * geo.min));
-      const wantW = bonus + (geo.rowW - bonus) / n;
+      const floor = Math.max(0, Math.min(geo.read, geo.rowW - (n - 1) * geo.min));
+      const wantW = Math.max(geo.rowW / n, floor);
       const act = after.findIndex((x) => x.active);
       const okGeo = act === bg && Math.abs(after[act].width - wantW) <= 2;
-      if (r === 0 || !okGeo) check(`${tag} P #${r + 1}: the clicked pane is focused, at the focus-bonus width (${Math.round(wantW)}px)`,
+      if (r === 0 || !okGeo) check(`${tag} P #${r + 1}: the clicked pane is focused, at the focus-floor width (${Math.round(wantW)}px)`,
         okGeo, `active=${act} clicked=${bg} width=${Math.round(after[act]?.width)}`);
       const pinned = await pinnedAll();
       if (r === 0 || !pinned) check(`${tag} P #${r + 1}: both transcripts still pinned to the bottom`, pinned, JSON.stringify(after));

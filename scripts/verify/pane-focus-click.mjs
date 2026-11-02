@@ -9,7 +9,10 @@
  * that pane. The click had to be made twice.
  *
  * THE MECHANISM, and why it is a geometry bug rather than a handler bug: the focused pane
- * claims `--pane-focus-bonus` (340px) through `flex-basis`, animated over 240ms. Switching on
+ * then claimed a 340px bonus through `flex-basis`, animated over 240ms (since 0.40.1 it no
+ * longer grows at all unless the equal share is under `--pane-read-min`, see
+ * pane-focus-width.mjs). At this script's 1500px two-pane width nothing moves on focus any
+ * more, so T2/T3 now only guard the narrow-window case in spirit, not in fact). Switching on
  * `mousedown` starts that slide WHILE THE BUTTON IS STILL HELD — by `mouseup`, ~120ms of human
  * press later, the control has travelled ~200px out from under the cursor. The browser then
  * fires `click` on the nearest common ancestor of the mousedown and mouseup targets, which is
@@ -23,8 +26,8 @@
  *   T3  the mechanism — the pressed control does NOT move while the button is held. Sampled
  *       mid-press against its own pre-press position; this is the assertion the old code fails
  *       (it has already slid ~200px by the same sample).
- *   T4  the feature still works — after the release the pressed pane IS the active one and it
- *       has grown by the focus bonus.
+ *   T4  focus still follows — after the release the pressed pane IS the active one, and at
+ *       this width (two panes, each well above `--pane-read-min`) its width did not change.
  *   T5  the keyboard path is untouched — a focus landing in the other pane with no pointer
  *       involved switches the active pane immediately (nothing to wait for, no click to lose).
  *
@@ -233,15 +236,15 @@ try {
   check('T2 ONE press in the background pane opens its menu — the first click counts',
     opened && menus === 1, `aria-expanded=${await trigger.getAttribute('aria-expanded')} menus=${menus}`);
 
-  // ── T4 — and the widening still follows the click ────────────────────────────────
+  // ── T4 — focus follows the click, and the width does not ───────────────────────
   const widthOf = (pane) => page.$eval(`.agent-pane-slot[data-pane="${pane}"]`,
     (el) => el.getBoundingClientRect().width);
-  await page.waitForTimeout(700);           // let the 240ms slide finish
+  await page.waitForTimeout(700);
   const a1 = await activeOf();
   const wBg = await widthOf(bgPane);
   const wOther = await widthOf(paneIds[0]);
-  check('T4 focus followed the click — the pressed pane is active and wider',
-    a1.index === bgIndex && wBg - wOther > 200,
+  check('T4 focus followed the click — the pressed pane is active, and the panes stay equal',
+    a1.index === bgIndex && Math.abs(wBg - wOther) <= 2,
     `active=${a1.index} (was ${a0.index}) widths=${Math.round(wBg)}/${Math.round(wOther)}`);
 
   // ── T5 — the keyboard path still switches immediately ────────────────────────────

@@ -6592,8 +6592,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
            attribute, so the desktop layout is untouched at any width. */
         data-mobile={isMobile ? 'true' : undefined}
         data-swipe={phoneChatNav.swipe ?? undefined}
-        /* The live pane count, for the focus-widening math in CSS — the focused pane's
-           extra width is capped at what is left once every OTHER pane keeps `--pane-min`,
+        /* The live pane count, for the focus-floor math in CSS — the focused pane's
+           readable floor is capped at what is left once every OTHER pane keeps `--pane-min`,
            and that cap cannot be computed without N. Read by BOTH the pane row and the tab
            strip above it, which is why it lives on their common ancestor: one number, so
            the two can never disagree and drift a divider off its pane edge. */

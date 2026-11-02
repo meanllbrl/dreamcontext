@@ -23,6 +23,9 @@
  *       inside the page). SUPERSEDED 09-28: the flex-basis slide this script first proved was
  *       a layout of every pane per frame, and with real transcripts in WebKit it stepped
  *       ("kare kare"). The row now lands in one layout and the motion moved to a bar:
+ *       SUPERSEDED again 0.40.1: at this width the panes no longer change width on focus at
+ *       all, so T2 now asserts ONE width across every sample (pane-focus-width.mjs has the
+ *       full width matrix).
  *   T3  the accent bar (`.agent-pane-glide`) glides over MANY frames — transform only
  *   T4  and lands exactly on the focused pane's rect
  *
@@ -266,8 +269,8 @@ try {
   // Owner call 09-28: the slide was a flex-basis transition, i.e. a layout of every pane per
   // frame, and with real transcripts in WebKit it painted in steps. The panes now land in ONE
   // layout and the motion is a single transform-animated bar — so the contract inverted:
-  check('T2 the focused pane widens in ONE step — no per-frame layout of the row',
-    widths.length <= 2 && Math.abs(last - first) > 100,
+  check('T2 the clicked pane does not change width at all (0.40.1: focus never widens a pane above --pane-read-min)',
+    widths.length === 1 && last === first,
     `distinct=${widths.length} ${first}px → ${last}px · computed=${diag.after.map((d) => d.tr).join(' | ')}`);
   check('T3 the accent bar GLIDES to the focused pane over many frames',
     barLefts.length > 5,
