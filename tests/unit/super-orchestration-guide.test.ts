@@ -99,8 +99,9 @@ describe('super-orchestration guide: shape', () => {
   // +150 (2026-10-31, 0.36.6): secim-yorum's [About card] lines, already in the 0.36.5 guide (measured 22,490); nothing dropped.
   // +100 (2026-11-01, Track T W4): `--tool codex` on a delegated child.
   // +100 (2026-11-01): the owner opens cards himself too (measured 22,655).
-  it('is at most 22,700 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(22_700);
+  // +300 (2026-11-02, 0.36.15): `--tool antigravity` on a delegated child and the rows the integration merges added (measured 22,977).
+  it('is at most 23,000 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(23_000);
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {
