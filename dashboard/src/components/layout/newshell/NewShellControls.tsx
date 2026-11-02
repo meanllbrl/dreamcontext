@@ -10,6 +10,7 @@ import { UpdateBadge } from '../UpdateBadge';
 import type { Page } from '../Sidebar';
 import { useNavBadges } from '../useNavBadges';
 import { Rail } from './Rail';
+import { SetupStatusChip } from './SetupStatusChip';
 
 interface NewShellControlsProps {
   activePage: Page;
@@ -64,6 +65,8 @@ export function NewShellControls({ activePage, onNavigate, onOpenSearch, canBack
         <>
           {/* Only what the phone may read: on the tunnel a control whose route is refused is not
               drawn at all (no local refusal, `window.__dcPhoneRefused` stays 0). */}
+          {/* Draws nothing unless something big stops the app (lib/setupStatus.ts). */}
+          {!phone && phoneAllows('GET', '/api/onboarding/readiness') && <SetupStatusChip />}
           {!phone && phoneAllows('GET', '/api/sleep') && <SleepDebtTracker onOpen={() => onNavigate('sleep')} />}
           {phoneAllows('GET', '/api/launcher/upgrade/status') && <UpdateBadge onManagePacks={() => onNavigate('packs')} />}
         </>,

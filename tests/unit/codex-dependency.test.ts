@@ -324,11 +324,16 @@ describe('the readiness rows', () => {
     expect(row(cs, 'codex')).toMatchObject({ status: 'ok', version: '0.164.0' });
     expect(row(cs, 'codex-auth').status).toBe('ok');
   });
-  it('missing offers the install, and stays recommended: Claude chats never wait on it', () => {
+  it('missing offers the install on its row, and is optional: "Set everything up" never runs it (owner 2026-11-03)', () => {
     const cs = rows({ ...good, bin: null, runs: false, version: null, signedIn: false });
-    expect(row(cs, 'codex')).toMatchObject({ status: 'missing', tier: 'recommended', fix: { id: 'codex-install', kind: 'auto' } });
+    expect(row(cs, 'codex')).toMatchObject({ status: 'missing', tier: 'optional', fix: { id: 'codex-install', kind: 'auto' } });
     expect(row(cs, 'codex-auth').status).toBe('blocked');
-    expect(planFixes(cs)).toContain('codex-install');
+    expect(planFixes(cs)).not.toContain('codex-install');
+  });
+  it('signed out: the sign-in is optional too, never planned', () => {
+    const cs = rows({ ...good, signedIn: false });
+    expect(row(cs, 'codex-auth')).toMatchObject({ status: 'needs-action', tier: 'optional', fix: { id: 'codex-signin' } });
+    expect(planFixes(cs)).not.toContain('codex-signin');
   });
   it('old, dead and no-Node all offer the update', () => {
     expect(row(rows({ ...good, outdated: true }), 'codex')).toMatchObject({ reason: 'too-old', fix: { id: 'codex-update' } });
