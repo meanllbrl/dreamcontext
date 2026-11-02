@@ -303,6 +303,35 @@ describe.skipIf(nodeMajor < 22)('Antigravity on the bridge (fake ACP agent)', ()
     expect(results[0]).toMatchObject({ subtype: 'error_during_execution', dc_tool: 'antigravity' });
   }, 60_000);
 
+  it('a Stop the agent is slow to confirm is acked at once and ends the turn once, from the Stop', async () => {
+    // The mock answers a cancel after about 15 s, past the server's 5 s watchdog on the ack.
+    process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL = '1';
+    const cwd = join(dir, 'project');
+    mkdirSync(join(cwd, '_dream_context'), { recursive: true });
+    const input = new PassThrough();
+    const frames: Record<string, any>[] = [];
+    const done = runBridgeStdio(
+      { tool: 'antigravity', cwd, model: '', mode: 'auto', paneId: 'pane-1', binaryPath: fakeAgent(dir) },
+      { input, home: dir, env: { ...process.env, DREAMCONTEXT_CLI: '/fake/cli.js' }, write: (l) => { const f = JSON.parse(l) as Record<string, any>; f.at = Date.now(); frames.push(f); } },
+    );
+    input.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'take your time' } })}\n`);
+    for (let i = 0; i < 200 && !frames.some((f) => f.type === 'system' && f.subtype === 'init'); i++) await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 1000));
+    const stopAt = Date.now();
+    input.write(`${JSON.stringify({ type: 'control_request', request_id: 'stop-1', request: { subtype: 'interrupt' } })}\n`);
+    for (let i = 0; i < 500 && frames.filter((f) => f.type === 'result').length === 0; i++) await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 12_000));
+    input.end();
+    expect(await done).toBe(0);
+    const ack = frames.find((f) => f.type === 'control_response' && f.response?.request_id === 'stop-1')!;
+    expect(ack.response.subtype).toBe('success');
+    expect(ack.at - stopAt).toBeLessThan(2_500);
+    const results = frames.filter((f) => f.type === 'result');
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ subtype: 'error_during_execution', dc_tool: 'antigravity' });
+    expect(results[0].at - stopAt).toBeLessThan(8_000);
+  }, 60_000);
+
   it('answers the MCP card\'s status ask with the servers its session holds', async () => {
     const cwd = join(dir, 'project');
     mkdirSync(join(cwd, '_dream_context'), { recursive: true });

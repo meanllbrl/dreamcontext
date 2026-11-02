@@ -823,18 +823,17 @@ export class BridgeSession {
     await this.awaitTurnId();
     const run = this.activeRun;
     if (!session || !this.providerThread || !run?.providerTurnId) return;
-    try {
-      await this.run(session.interruptTurn({ providerThread: this.providerThread, providerTurnId: run.providerTurnId as never }));
-    } finally {
-      this.closeAfterStop(run);
-    }
+    // Counted from the Stop, not from the agent's answer: an ACP agent's cancel can take 15 s to
+    // come back (measured on the mock, 2 Nov) and the owner is waiting from the click.
+    this.closeAfterStop(run);
+    await this.run(session.interruptTurn({ providerThread: this.providerThread, providerTurnId: run.providerTurnId as never }));
   }
 
   /**
    * An agent that never confirms a Stop must not hold the pane: the turn stays open and the
    * owner's next message would wait behind it (an ACP agent cannot take one mid-turn). Measured on
    * the scenario tour (2 Nov): the interrupt ended with "All fibers interrupted" and no turn end.
-   * If the run is still the open one after {@link STOP_CONFIRM_MS}, it is closed here; a late end
+   * If the run is still the open one {@link STOP_CONFIRM_MS} after the Stop, it is closed here; a late end
    * from the agent (known by its turn id) then reaches nothing, and never ends the run after it.
    */
   private closeAfterStop(run: NonNullable<BridgeSession['activeRun']>): void {

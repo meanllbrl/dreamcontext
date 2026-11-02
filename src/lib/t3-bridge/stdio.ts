@@ -136,6 +136,9 @@ const CLOSE_LIMIT_MS = 5_000;
 const MCP_LIST_LIMIT_MS = 15_000;
 
 /** Run until stdin ends. Resolves with the exit code. */
+/** How long a Stop's ack waits for the agent before it goes out anyway (the server kills at 5 s). */
+const ACK_STOP_MS = 1_000;
+
 /** The MCP status ask, which is answered beside the frame queue. */
 function isMcpStatusAsk(obj: object): obj is Record<string, unknown> {
   const frame = obj as { type?: unknown; request?: unknown };
@@ -557,10 +560,17 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     if (frame.type === 'control_request') {
       const req = (frame.request ?? {}) as Record<string, unknown>;
       switch (req.subtype) {
-        case 'interrupt':
-          // Always acked: an unanswered interrupt would leave the server's watchdog to kill us.
-          try { await session.interrupt(); ack(frame.request_id); } catch (err) { ack(frame.request_id, String(err).slice(0, 200)); }
+        case 'interrupt': {
+          // Always acked, and within a second: the server's watchdog kills a child whose Stop is
+          // not answered in 5 s, and an ACP agent's cancel can take 15 s to come back. The turn's
+          // end still follows: the agent's own, or the bridge's after STOP_CONFIRM_MS.
+          const stopping = session.interrupt().then(() => undefined, (err: unknown) => String(err).slice(0, 200));
+          const early = await Promise.race([stopping, new Promise<'pending'>((r) => { setTimeout(() => r('pending'), ACK_STOP_MS).unref(); })]);
+          // A late refusal is not the owner's news: the turn ends either way (the agent's own end,
+          // or the bridge's), and the mock's cancel answers with an error even as it ends the turn.
+          ack(frame.request_id, early === 'pending' ? undefined : early);
           return;
+        }
         case 'set_model':
           if (typeof req.model === 'string' && req.model) session.setModel(req.model);
           ack(frame.request_id);
