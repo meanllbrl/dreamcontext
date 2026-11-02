@@ -110,7 +110,7 @@ import { holdSidebarCollapsed as holdClassicSidebar } from '../../hooks/useSideb
 import { readDeviceShell, readShellModeFrozen, useIsNewShell } from '../../lib/uxMode';
 import { superTap } from './phoneList';
 import {
-  addWindow, adoptWindowOrder, cleanWindowName, dropWindow, freshenWindow, freshWindowName, landsOnSuper, moveWindow, renameWindow, initialWindows, joinInto, neighbourOf, parkedHomes, placeTab, pruneParked,
+  addWindow, adoptWindowOrder, cleanWindowName, dropWindow, freshenWindow, freshWindowName, historyPickPlan, landsOnSuper, moveWindow, renameWindow, initialWindows, joinInto, neighbourOf, parkedHomes, placeTab, pruneParked,
   restoreWindows, rowsByWindow, savePlacement, splitOut, switchWindow, unparkPanes, updateParked, windowOfTab,
   DEFAULT_WINDOW_ID, DEFAULT_WINDOW_NAME, TAB_CAP,
   type RestoredTab, type SavedWindowMeta, type WindowFact, type WindowsState, type WinPane,
@@ -830,6 +830,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const [superPeek, setSuperPeek] = useState<{ kind: 'member'; slug: string; title: string } | { kind: 'transcript'; claudeId: string; title: string } | null>(null);
   /** The rule's door for a pick: a Super session opens in the Super window, never as a tab. */
   const openInSuperWindowRef = useRef<(past: { id: string; title?: string }) => boolean>(() => false);
+  /** A History pick: the chat opens in its own window and the chat area comes forward. */
+  const openPickedPastRef = useRef<(past: PastSession) => void>(() => {});
+  /** The pick waiting for the window just opened for it to be on screen (empty panes). */
+  const [pickIntoWindow, setPickIntoWindow] = useState<{ past: PastSession; nonce: number } | null>(null);
   // The owner's hand-over actions in order: a result belonging to one already reversed is dropped.
   const superGenRef = useRef(actionGeneration());
 
@@ -3121,7 +3125,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
         });
       return undefined;
     }
-    resumePastSession(past);
+    if (pick) openPickedPastRef.current(past);
+    else resumePastSession(past);
     return undefined;
   }, [linkedSession, sessionList, caps, settingsReady, claudeReady, agentSettings.enabled, resumePastSession, adoptLiveChat, scopedApi]);
 
@@ -5461,6 +5466,12 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freshTabNonce]);
+  useEffect(() => {
+    if (!pickIntoWindow) return;
+    setPickIntoWindow(null);
+    resumePastSession(pickIntoWindow.past);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickIntoWindow]);
   const renameChatWindow = useCallback((id: string, name: string) => {
     if (!cleanWindowName(name)) return;
     windowsKnownRef.current = true;
@@ -6131,6 +6142,40 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     setChatWindows(next);
   };
   freshenShownIfEmptyRef.current = () => freshenWindowNow(chatWindowsRef.current.activeId);
+  // A History pick (any entry: the window's History, this surface's own picker), from the Super
+  // stage or a chat window alike: the chat opens in its OWN window and the chat area comes
+  // forward. It never joins a window already holding chats (owner 2026-11-03). A tab already
+  // holding it is brought forward instead; a Super session keeps its own door.
+  openPickedPastRef.current = (past) => {
+    const st = superStateRef.current;
+    const meta = sessionListRef.current.find((m) => m.claudeId === past.id);
+    const superOwned = past.id === st?.session || sessionHome(meta ?? { claudeId: past.id }, superOwnedRef.current, st?.session) === 'super';
+    if (!windowed || isMobile || isMacPhoneSurface() || superOwned) { resumePastSession(past); return; }
+    setHistoryOpen(false);
+    setSuperPeek(null);
+    setSuperView('panes');
+    setExpanded(true);
+    const plan = historyPickPlan(chatWindowsRef.current, !!meta, (id) => windowRows.get(id)?.length ?? 0);
+    if (plan.kind === 'focus' || plan.kind === 'here') { resumePastSession(past); return; }
+    if (!admitTab()) return;
+    if (plan.kind === 'reuse') {
+      freshenWindowNow(plan.windowId);
+      showWindow(plan.windowId);
+    } else {
+      const cur = chatWindowsRef.current;
+      const r = addWindow(cur, freshWindowName(cur.list, tRef.current('shell.windows.newName')), { panes: panesRef.current, activePaneId: activePaneIdRef.current }, sessionListRef.current);
+      windowsKnownRef.current = true;
+      chatWindowsRef.current = r.state;
+      panesRef.current = [];
+      activePaneIdRef.current = '';
+      setChatWindows(r.state);
+      setPanes([]);
+      setActivePaneId('');
+    }
+    // Resumed once the new window's panes are the ones on screen: a resume in this tick would
+    // still read the old window's panes and land there.
+    setPickIntoWindow({ past, nonce: Date.now() });
+  };
   const windowFacts: WindowFact[] = chatWindows.list.map((w) => {
     const rows = windowRows.get(w.id) ?? [];
     const r = rollupProject(rows);
@@ -6805,7 +6850,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
         <ChatHistoryPicker
           open
           onClose={() => setHistoryOpen(false)}
-          onPick={resumePastSession}
+          onPick={(past) => openPickedPastRef.current(past)}
           openIds={sessionList.map((m) => m.claudeId).filter(Boolean)}
         />
       )}
