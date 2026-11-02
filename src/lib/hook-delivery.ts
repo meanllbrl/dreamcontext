@@ -105,9 +105,9 @@ const partFooter = (next: number, total: number): string =>
 const FRAME_RESERVE_CHARS = 200;
 
 /** Where to cut `text` at or under `max`: a section start, else a line end, else a whole character. */
-function cutPoint(text: string, max: number): number {
+function cutPoint(text: string, max: number, sections = true): number {
   const head = text.slice(0, max);
-  const section = head.lastIndexOf('\n## ');
+  const section = sections ? head.lastIndexOf('\n## ') : -1;
   // A section start early in the window would waste the rest of the part.
   if (section >= max * 0.7) return section;
   const line = head.lastIndexOf('\n');
@@ -124,14 +124,21 @@ function cutPoint(text: string, max: number): number {
 export function splitHookOutput(text: string, parts: number = SESSION_START_PARTS, max: number = HOOK_OUTPUT_MAX_CHARS): string[] {
   if (text.length <= max) return [text];
   const usable = Math.max(1, max - FRAME_RESERVE_CHARS);
-  const chunks: string[] = [];
-  let rest = text;
-  while (rest.length > 0 && chunks.length < parts) {
-    if (rest.length <= usable) { chunks.push(rest); rest = ''; break; }
-    const cut = cutPoint(rest, usable);
-    chunks.push(rest.slice(0, cut));
-    rest = rest.slice(cut).replace(/^\n+/, '');
-  }
+  const cut = (sections: boolean): { chunks: string[]; rest: string } => {
+    const chunks: string[] = [];
+    let rest = text;
+    while (rest.length > 0 && chunks.length < parts) {
+      if (rest.length <= usable) { chunks.push(rest); rest = ''; break; }
+      const at = cutPoint(rest, usable, sections);
+      chunks.push(rest.slice(0, at));
+      rest = rest.slice(at).replace(/^\n+/, '');
+    }
+    return { chunks, rest };
+  };
+  // Cutting at section starts reads best, but each such cut can leave up to 30% of a part empty:
+  // three parts then carry ~20,000 chars, not ~28,800. When that would drop text, cut at lines.
+  let { chunks, rest } = cut(true);
+  if (rest.length > 0) ({ chunks, rest } = cut(false));
   const total = chunks.length;
   return chunks.map((chunk, i) => {
     const head = i === 0 ? '' : partFrame(i + 1, total);
