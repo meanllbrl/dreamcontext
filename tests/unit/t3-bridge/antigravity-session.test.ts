@@ -280,6 +280,35 @@ describe.skipIf(nodeMajor < 22)('Antigravity on the bridge (fake ACP agent)', ()
     expect(readdirSync(cwd)).toEqual(['_dream_context']);
   }, 60_000);
 
+  it('answers the MCP card\'s status ask with the servers its session holds', async () => {
+    const cwd = join(dir, 'project');
+    mkdirSync(join(cwd, '_dream_context'), { recursive: true });
+    const lean = join(dir, 'lean.json');
+    writeFileSync(lean, JSON.stringify({ mcpServers: { 'ads-api': { command: 'node', args: ['x.js'] }, 'docs-api': { command: 'node', args: ['y.js'] } } }));
+    const input = new PassThrough();
+    const frames: Record<string, any>[] = [];
+    const done = runBridgeStdio(
+      { tool: 'antigravity', cwd, model: '', mode: 'auto', paneId: 'pane-1', binaryPath: fakeAgent(dir), mcpConfig: lean },
+      {
+        input, home: dir, env: { ...process.env, DREAMCONTEXT_CLI: '/fake/cli.js' },
+        write: (l) => { frames.push(JSON.parse(l) as Record<string, any>); },
+        brain: { session: async () => undefined, prompt: async () => [], drain: async () => undefined },
+        checkServers: async () => new Map([['ads-api', 'connected'], ['docs-api', 'needs-auth']]),
+      },
+    );
+    input.write(`${JSON.stringify({ type: 'control_request', request_id: 'dcmcp-1', request: { subtype: 'mcp_status' } })}\n`);
+    for (let i = 0; i < 400 && !frames.some((f) => f.type === 'control_response'); i++) await new Promise((r) => setTimeout(r, 50));
+    input.end();
+    expect(await done).toBe(0);
+    const reply = frames.find((f) => f.type === 'control_response')!.response;
+    expect(reply).toMatchObject({ subtype: 'success', request_id: 'dcmcp-1' });
+    expect(reply.response.mcpServers).toEqual([
+      { name: 'dreamcontext', status: 'connected', scope: 'dynamic' },
+      { name: 'ads-api', scope: 'dynamic', status: 'connected' },
+      { name: 'docs-api', scope: 'dynamic', status: 'needs-auth' },
+    ]);
+  }, 60_000);
+
   it('says it runs in dreamcontext, sends nothing of T3 Code, and never calls itself Claude', async () => {
     const cwd = join(dir, 'project');
     mkdirSync(join(cwd, '_dream_context'), { recursive: true });

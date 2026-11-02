@@ -3039,8 +3039,9 @@ export function startChatSession(
     mcpLastAt = Date.now();
     sendMeta({ subtype: 'mcp_status', servers, at: mcpLastAt });
     if (mcpTab) writeMcpHealth(contextRoot, mcpTab, servers);
-    // A lean child sees only its subset: not the account's truth, so it writes no cell.
-    if (mcpAccount && !opts.leanMcp && !app?.own) {
+    // A lean child sees only its subset: not the account's truth, so it writes no cell. Nor does a
+    // Codex or Antigravity chat: the cache is Claude's account's.
+    if (mcpAccount && !opts.leanMcp && !app?.own && !bridgeTool) {
       try { writeStatusCache(mcpAccount, servers, redactContextFor(projectRoot)); } catch { /* shown anyway */ }
     }
   };
@@ -3075,6 +3076,13 @@ export function startChatSession(
    *  3 s for 5 min; one `mcp_reconnect` at the end, then `timeout`. One at a time per chat. */
   const mcpConnect = async (name: string): Promise<void> => {
     if (mcpConnecting) { sendMeta({ subtype: 'mcp_connect', name, state: 'busy' }); return; }
+    // Codex and Antigravity sign in to no server from a chat (a server that wants it stays out of
+    // their session): the card hears the session's own answer at once, never a 5-minute wait.
+    if (bridgeTool) {
+      const servers = await mcpPoll();
+      sendMeta({ subtype: 'mcp_connect', name, state: servers?.find((x) => x.name === name)?.status === 'connected' ? 'connected' : 'failed' });
+      return;
+    }
     mcpConnecting = name;
     sendMeta({ subtype: 'mcp_connect', name, state: 'opening' });
     try {
@@ -3108,7 +3116,8 @@ export function startChatSession(
     }
   };
   // Right after spawn most servers are still `pending`: read until they settle (≤ 20 s).
-  if (!scopedCard && !bridgeTool) setImmediate(() => mcpSettle());
+  // A Codex or Antigravity chat answers from its bridge (stdio.ts `mcp_status`), after its session opened.
+  if (!scopedCard) setImmediate(() => mcpSettle());
 
   /** The socket's MCP verbs. Refused unless the socket holding the chat RIGHT NOW is the desktop. */
   const onMcpMessage = (msg: { type?: string; name?: unknown }): void => {
@@ -3732,7 +3741,7 @@ export function startChatSession(
       if (mainResult) {
         closeTurn();
         // The turn may have used, broken or fixed an MCP server: read again once it settles.
-        if (!scopedCard && !bridgeTool) {
+        if (!scopedCard) {
           if (mcpTurnTimer) clearTimeout(mcpTurnTimer);
           mcpTurnTimer = setTimeout(() => { mcpTurnTimer = null; mcpSettle(10_000); }, 2000);
         }

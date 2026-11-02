@@ -272,6 +272,33 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   const leftServers = askedServers.filter((s) => checked.get(s.name) !== 'connected').map((s) => s.name);
   let serversNotice = leftServers.length ? `${toolLabel(args.tool)} is running without ${leftServers.join(', ')}: ${leftServers.length > 1 ? 'they' : 'it'} did not answer, or asked for a sign-in this tool cannot do. Settings > Tool servers shows why.` : null;
   const instanceServers = [...(brainServer ? [brainServer] : []), ...keptServers];
+  /**
+   * The servers this chat was given, as the tool's session reports them. Antigravity: the brain and
+   * what the check before `session/new` found (a server left out stays out for the session). Codex:
+   * its own app-server's server status, asked of the live thread; a store server Codex could not
+   * reach is `failed`.
+   */
+  const mcpStatusRows = async (): Promise<Record<string, unknown>[]> => {
+    if (isInstanceTool(args.tool)) {
+      return [
+        ...(brainServer ? [{ name: brainServer.name, status: 'connected', scope: 'dynamic' }] : []),
+        ...askedServers.map((s) => {
+          const said = checked.get(s.name);
+          return { name: s.name, scope: 'dynamic', status: said === 'connected' ? 'connected' : said === 'needs-auth' ? 'needs-auth' : 'failed' };
+        }),
+      ];
+    }
+    if (args.tool !== 'codex') return [];
+    const names = [...new Set([...(deps.brain ? ['dreamcontext'] : []), ...leanMcpNames(args.mcpConfig), ...(storePlan?.routes.map((r) => r.name) ?? [])])];
+    const counts = await session.mcpToolCounts(names);
+    return [
+      ...names.map((name) => {
+        const n = counts.get(name);
+        return { name, scope: 'dynamic', status: typeof n === 'number' && n > 0 ? 'connected' : 'failed', ...(typeof n === 'number' ? { tools: Array.from({ length: n }, () => ({})) } : {}) };
+      }),
+      ...(storePlan?.left ?? []).filter((l) => !names.includes(l.name)).map((l) => ({ name: l.name, scope: 'dynamic', status: 'failed' })),
+    ];
+  };
   const launchArgs = isInstanceTool(args.tool) ? '' : args.tool === 'claude'
     ? claudeLaunchArgs({ briefingFile: args.briefingFile })
     : [
@@ -535,6 +562,13 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
           // One sub-agent's card asked to stop. The tool says whether it can (Codex can close one).
           const done = typeof req.task_id === 'string' ? await session.stopSubagent(req.task_id).catch(() => false) : false;
           ack(frame.request_id, done ? undefined : `${toolLabel(args.tool)} cannot stop that sub-agent alone: Stop ends the whole turn.`);
+          return;
+        }
+        case 'mcp_status': {
+          // The MCP card and the tab's server health ask this as they ask Claude (mcp-live.ts):
+          // Claude's raw shape, read and redacted by the server like Claude's own answer.
+          const servers = await mcpStatusRows().catch(() => []);
+          if (typeof frame.request_id === 'string') emit({ type: 'control_response', response: { subtype: 'success', request_id: frame.request_id, response: { mcpServers: servers } } });
           return;
         }
         case 'set_permission_mode':

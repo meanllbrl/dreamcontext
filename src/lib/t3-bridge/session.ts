@@ -739,6 +739,23 @@ export class BridgeSession {
     }
   }
 
+  /**
+   * How many tools each named server shows in the tool's live session (Codex: its app-server's own
+   * server status). null = the session could not say; a tool with no such channel gives an empty map.
+   */
+  async mcpToolCounts(names: readonly string[], ms = 5_000): Promise<Map<string, number | null>> {
+    const out = new Map<string, number | null>();
+    const apps = this.session?.mcpApps;
+    const thread = this.providerThread;
+    if (!apps || !thread || this.closed) return out;
+    for (const server of names) {
+      const ask = this.run(apps.listTools({ providerThread: thread, server })).then((tools) => tools.length);
+      const late = new Promise<null>((r) => { setTimeout(() => r(null), ms).unref(); });
+      out.set(server, await Promise.race([ask, late]).catch(() => null));
+    }
+    return out;
+  }
+
   /** Stop one sub-agent (the card's `stop_task`). False = the tool cannot, or no such card. */
   async stopSubagent(taskId: string): Promise<boolean> {
     const session = this.session;
