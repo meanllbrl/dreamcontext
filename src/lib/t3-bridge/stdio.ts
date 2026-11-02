@@ -8,6 +8,7 @@
  *   - `control_response`        → the owner's answer to an approval or question card
  *   - `control_request` interrupt / set_model / set_permission_mode → done, then acked
  *   - control_request stop_task → one sub-agent stopped when the tool can (Codex), else an error
+ *   - control_request mcp_status → the servers the session holds, answered beside the queue
  *   - any other control_request → acked with an error (rewind, MCP: not on this tool yet)
  */
 import { spawnSync } from 'node:child_process';
@@ -135,6 +136,12 @@ const CLOSE_LIMIT_MS = 5_000;
 const MCP_LIST_LIMIT_MS = 15_000;
 
 /** Run until stdin ends. Resolves with the exit code. */
+/** The MCP status ask, which is answered beside the frame queue. */
+function isMcpStatusAsk(obj: object): obj is Record<string, unknown> {
+  const frame = obj as { type?: unknown; request?: unknown };
+  return frame.type === 'control_request' && !!frame.request && typeof frame.request === 'object' && (frame.request as { subtype?: unknown }).subtype === 'mcp_status';
+}
+
 export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<number> {
   const home = deps.home ?? homedir();
   // Codex by absolute path, with a PATH its launcher's `env node` resolves on: what the readiness
@@ -564,13 +571,6 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
           ack(frame.request_id, done ? undefined : `${toolLabel(args.tool)} cannot stop that sub-agent alone: Stop ends the whole turn.`);
           return;
         }
-        case 'mcp_status': {
-          // The MCP card and the tab's server health ask this as they ask Claude (mcp-live.ts):
-          // Claude's raw shape, read and redacted by the server like Claude's own answer.
-          const servers = await mcpStatusRows().catch(() => []);
-          if (typeof frame.request_id === 'string') emit({ type: 'control_response', response: { subtype: 'success', request_id: frame.request_id, response: { mcpServers: servers } } });
-          return;
-        }
         case 'set_permission_mode':
           // No gate: Bypass stays off, whatever the composer sends.
           if (typeof req.mode === 'string' && !gateLoss) session.setMode(req.mode);
@@ -580,6 +580,19 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
           ack(frame.request_id, `${String(req.subtype)} is not available on ${args.tool} yet`);
       }
     }
+  };
+
+  /**
+   * The MCP card and the tab's server health ask this as they ask Claude (mcp-live.ts), and the
+   * server polls it after every turn: Claude's raw shape, read and redacted by the server like
+   * Claude's own answer. Answered beside the queue, never in it: it must not stop the hidden
+   * tab-title turn or hold the owner's next message behind a slow server.
+   */
+  let asides: Promise<void> = Promise.resolve();
+  const answerMcpStatus = async (frame: Record<string, unknown>): Promise<void> => {
+    trace('in ', frame);
+    const servers = await mcpStatusRows().catch(() => []);
+    if (typeof frame.request_id === 'string') emit({ type: 'control_response', response: { subtype: 'success', request_id: frame.request_id, response: { mcpServers: servers } } });
   };
 
   // The server ends a pane with SIGTERM (then SIGKILL): `onSignal` closes the session first, which
@@ -596,6 +609,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
         let obj: unknown;
         try { obj = JSON.parse(line); } catch { continue; }
         if (!obj || typeof obj !== 'object') continue;
+        if (isMcpStatusAsk(obj)) { const ask = answerMcpStatus(obj).catch(() => undefined); asides = asides.then(() => ask); continue; }
         chain = chain.then(() => handle(obj as Record<string, unknown>)).catch((err) => {
           emit({ type: 'system', subtype: 'bridge_error', message: String(err).slice(0, 400), dc_tool: args.tool });
         });
@@ -606,6 +620,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     deps.input.on('close', () => resolve());
   });
   await chain.catch(() => undefined);
+  await asides;
   if (deps.handleSignals) { process.off('SIGTERM', onSignal); process.off('SIGINT', onSignal); }
   await deps.brain?.drain().catch(() => undefined);
   await session.close();
