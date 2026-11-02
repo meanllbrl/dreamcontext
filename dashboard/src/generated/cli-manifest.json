@@ -3450,6 +3450,17 @@
       ]
     },
     {
+      "path": "super allow",
+      "desc": "Answer a permission request of a child the owner runs in Bypass (a [super events] permission line): allow it, or --deny it. Inside its own worktree or the project and covered by its brief: allow. Outside, push, publish, merge or unsure: `super queue ask <item> \"<why>\"` hands it to the owner. A child not in Bypass: the owner's alone",
+      "args": [
+        "<child>",
+        "<requestId>"
+      ],
+      "valueFlags": [
+        "--why"
+      ]
+    },
+    {
       "path": "super answer",
       "desc": "Answer a child's QUESTION (never a permission) with its option label(s) or --text",
       "args": [
@@ -3697,7 +3708,7 @@
     },
     {
       "path": "super queue ask",
-      "desc": "Escalate a child's question to the owner in your words (never a permission): a notch row, a banner and his phone carry it, his bar holds its buttons; the reply says whether it `reached` him",
+      "desc": "Escalate a child's question to the owner in your words: a notch row, a banner and his phone carry it, his bar holds its buttons; the reply says whether it `reached` him. A Bypass child's permission you will not decide goes to him too, shown as the child's own request (your words never caption it: say why in your turn)",
       "args": [
         "<item>",
         "<text>"
@@ -3708,7 +3719,7 @@
     },
     {
       "path": "super queue done",
-      "desc": "Mark an item handled (never a permission)",
+      "desc": "Mark an item handled (never a permission: answer one with `super allow`)",
       "args": [
         "<item>"
       ]

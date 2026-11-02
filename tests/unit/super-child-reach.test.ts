@@ -108,7 +108,7 @@ describe('resolveChildRef / expandChildRefs (pure)', () => {
     };
     const fields = new Map<string, 'child' | 'children'>();
     walk(sup, '');
-    expect(verbs.sort()).toEqual(['answer', 'brief', 'end', 'merge', 'read', 'resume', 'send', 'update', 'worktree-remove']);
+    expect(verbs.sort()).toEqual(['allow', 'answer', 'brief', 'end', 'merge', 'read', 'resume', 'send', 'update', 'worktree-remove']);
     for (const v of verbs) {
       const field = fields.get(v) as 'child' | 'children';
       const out = expandChildRefs(state, v, { [field]: field === 'child' ? '5e536d3c' : ['5e536d3c'] });

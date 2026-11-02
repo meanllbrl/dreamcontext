@@ -624,6 +624,11 @@ export interface SuperQueueItem {
    *  task, knowledge, a board; `isReadKind`), so his question card points at them ("To read:
    *  <card> →", owner 2026-10-30). Server-written by `super ask`; at most MAX_ASK_READS. */
   read?: string[];
+  /** A `permission` of a child the owner runs in Bypass (`permissionGoesToSuper`): the Super
+   *  decides it first (`super allow`), so it is no owner head, notch row or phone card while this
+   *  holds. Escalated (`super queue ask`) or unanswered past SUPER_PERMISSION_GRACE_MS, it loses
+   *  the flag and is the owner's like any permission. Never on another kind. */
+  toSuper?: true;
 }
 
 /** The cards a question can point at to be read: what carries information, never a picture
@@ -1176,6 +1181,8 @@ export const STOPPED_SETTLE_MS = 30_000;
 export const MAX_WAIT_KEY = 300;
 /** How often the stale sweep looks at working rows (plan r4 D17). */
 export const STALE_SWEEP_MS = 60_000;
+/** How long a Bypass child's permission waits on the Super Agent before it goes to the owner. */
+export const SUPER_PERMISSION_GRACE_MS = 3 * 60_000;
 /** At most this many events go in one `[super events]` turn (plan r4 D10). */
 export const MAX_BATCH = 8;
 
@@ -1365,7 +1372,7 @@ export function askSummary(spec: SuperAskSpec): { ownerText: string; options: st
 
 export const SUPER_VERBS = [
   'state', 'delegate', 'open', 'shape', 'half', 'present', 'stack', 'float', 'close', 'group', 'ungroup', 'brief', 'read',
-  'answer', 'send', 'queue-list', 'queue-ask', 'queue-done', 'merge', 'worktree-list', 'worktree-remove',
+  'answer', 'allow', 'send', 'queue-list', 'queue-ask', 'queue-done', 'merge', 'worktree-list', 'worktree-remove',
   'pool-add', 'pool-remove', 'pool-list', 'ask',
   'end', 'resume', 'update', 'adopt',
   'clean', 'team-ask', 'team-amend',
@@ -1374,7 +1381,7 @@ export const SUPER_VERBS = [
 export type SuperVerb = typeof SUPER_VERBS[number];
 
 /** The verbs the WINDOW runs (sent down the super chat's own socket as `super_command`). */
-export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume'] as const;
+export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume', 'allow'] as const;
 export type SuperWindowVerb = typeof SUPER_WINDOW_VERBS[number];
 
 // ─── Frames (`_meta` subtypes on the super chat's socket) ──────────────────────
@@ -1416,7 +1423,7 @@ export const SUPER_NOTE_TEXT: Record<SuperNote, string> = {
  * bumps the number. The update text is the whole current briefing (`SUPER_BRIEF_TEXT` in
  * src/server/chat-modes.ts).
  */
-export const SUPER_BRIEF_REV = 27;
+export const SUPER_BRIEF_REV = 28;
 export const SUPER_BRIEF_MARKER = `<super-brief rev=${SUPER_BRIEF_REV}>`;
 
 /** S4-S8: show, don't tell. */

@@ -255,6 +255,13 @@ export function registerSuperCommand(program: Command): void {
     .action((child: string, requestId: string, choice: string[], o: { text?: string }) =>
       run('answer', { child, requestId, choices: choice, text: o.text }));
 
+  s.command('allow <child> <requestId>')
+    .description('Answer a permission request of a child the owner runs in Bypass (a [super events] permission line): allow it, or --deny it. Inside its own worktree or the project and covered by its brief: allow. Outside, push, publish, merge or unsure: `super queue ask <item> "<why>"` hands it to the owner. A child not in Bypass: the owner\'s alone')
+    .option('--deny', 'Deny the request instead of allowing it')
+    .option('--why <text>', 'With --deny: one line the child reads as the reason')
+    .action((child: string, requestId: string, o: { deny?: boolean; why?: string }) =>
+      run('allow', { child, requestId, deny: o.deny === true, why: o.why }));
+
   s.command('end [children...]')
     .description('End idle children for good: the process exits, the tab and card go, the transcript stays (`super resume` reopens it). Refused while one works, asks or runs background tasks')
     .option('--idle', 'List the idle children you started; add --yes to end them all')
@@ -341,12 +348,12 @@ export function registerSuperCommand(program: Command): void {
     .description('Every queue item: what it is, whose, its state')
     .action(() => run('queue-list', {}));
   q.command('ask <item> <text>')
-    .description('Escalate a child\'s question to the owner in your words (never a permission): a notch row, a banner and his phone carry it, his bar holds its buttons; the reply says whether it `reached` him')
+    .description('Escalate a child\'s question to the owner in your words: a notch row, a banner and his phone carry it, his bar holds its buttons; the reply says whether it `reached` him. A Bypass child\'s permission you will not decide goes to him too, shown as the child\'s own request (your words never caption it: say why in your turn)')
     .option('--show <cards...>', 'The cards the stage presents with this question (default: the child\'s option-preview pictures, else the pictures shown for its job in the last 10 minutes); they go back after his answer')
     .option('--no-show', 'Present no cards with this question')
     .action((item: string, text: string, o: { show?: string[] | false }) => run('queue-ask', { item, text, ...showBody(o.show) }));
   q.command('done <item>')
-    .description('Mark an item handled (never a permission)')
+    .description('Mark an item handled (never a permission: answer one with `super allow`)')
     .action((item: string) => run('queue-done', { item }));
 
   const p = s.command('pool').description('Jobs kept for later (the job list\'s Havuz)');

@@ -229,6 +229,12 @@ block, `[super event]`/`[super events]`/`[super handover]`/`[super recap]` turn,
 - Independent units start together. The cheapest model that fits. End your turn after delegating:
   never poll, never wait idle. A finished child is ended (`super end`) the turn you use its result.
 
+**Permissions (owner, 2026-11-02).** A child he runs in Bypass still asks for a few things;
+those come as `event=permission`. Allow (`super allow <child> <request>`) work inside its own
+worktree or the project that its brief covers; deny (`--deny --why`) what is wrong for the job;
+`super queue ask <item> "<why>"` anything outside, a push, publish, merge or outward send, or doubt.
+Undecided, it is his after 3 minutes. Any other child's permission: his alone.
+
 **Field rules (owner, 2026-10-21).**
 - Never open a screenshot or a video yourself: hand its path to the child it concerns (a super that
   read 8 images and 2 videos filled its context in 73 minutes). Showing one to the owner reads nothing:

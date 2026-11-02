@@ -285,6 +285,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       "- Done holds today's; a past day's go by themselves. New work: `super note clear`. Write a",
       '  day or date, never "today"/"tomorrow". Recap, handover, fresh session: read the pad in',
       '  `super state`, close what he did or no longer holds.',
+      // 2026-11-02 (rev 28): a Bypass child's leftover permission is the Super's to decide.
+      '- Permission requests never reach you: the owner answers them. Never try to.',
       '  every one, the second and later too.',
       expect.stringContaining('<super-brief rev=16>'),
     ]);
@@ -328,10 +330,13 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '  `super note done <id>` when it finished or he gave it, `drop <id>` when it no longer holds.',
       '  His open questions show there by themselves.',
       '- New work: `super note clear`. Write a day or date, never "today"/"tomorrow".',
+      // 2026-11-02 (rev 28): a Bypass child's leftover permission is the Super's to decide.
+      '- `event=permission` (his Bypass child): decide it as its event line says. Any other',
+      "  permission is the owner's alone: never try.",
       expect.stringContaining('with `origin=<ref>`'),
       '  result with `<!-- re:<ref> -->`.',
-      expect.stringContaining('<super-brief rev=27>'),
+      expect.stringContaining('<super-brief rev=28>'),
     ]);
-    expect(after.length).toBe(before.length + 25); // +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing)
+    expect(after.length).toBe(before.length + 26); // +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two)
   });
 });

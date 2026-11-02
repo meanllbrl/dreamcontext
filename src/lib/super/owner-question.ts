@@ -1,5 +1,6 @@
 import { buildAppLink } from '../app-link.js';
 import type { SuperQueueItem, SuperState } from './types.js';
+import { getChat, pendingRequest } from '../assistant/chat-registry.js';
 
 /**
  * A question the Super Agent puts to the owner REACHES him (Tilki, 2026-10-21: three `super
@@ -88,9 +89,12 @@ function remember(id: string, reach: OwnerQuestionReach): void {
   while (announced.size > ANNOUNCED_CAP) announced.delete(announced.keys().next().value as string);
 }
 
-/** Does the owner answer this item (not a permission: the window rings that one)? */
+/** Does the owner answer this item (not a permission: the window rings that one)? The exception is
+ *  a Bypass child's permission its Super handed him (`escalated`, `permissionToOwner`): the
+ *  registry's own ring for it went to the Super, so it is announced here, once. */
 function announces(item: SuperQueueItem | null): item is SuperQueueItem {
   if (item?.kind === 'owner') return item.state !== 'done';
+  if (item?.kind === 'permission') return item.state === 'escalated' && !item.toSuper;
   // A child's question shown to him from birth (`direct`): announced when it is asked.
   if (item?.kind === 'question' && item.direct === true && !item.team) return item.state !== 'done';
   return !!item && item.state === 'escalated' && (item.kind === 'question' || item.kind === 'ask' || item.kind === 'approval');
@@ -104,6 +108,12 @@ function clip(s: string): string {
 function bodyOf(item: SuperQueueItem): string {
   if (item.kind === 'approval') return `An AI Team member needs your approval${item.member ? `: ${item.member}` : ''}.`;
   if (item.kind === 'owner') return clip(`A job needs you: ${item.ownerText ?? 'something only you can do'}`);
+  // The tool's NAME only (the push rule, dashboard-server-security §7): never its command or path,
+  // and never the Super's words, which it wrote from that command. Those show on the phone card.
+  if (item.kind === 'permission') {
+    const tool = pendingRequest(getChat(item.sessionId), item.requestId)?.toolName ?? '';
+    return clip(`A job asks to use ${/^[A-Za-z0-9_.:-]{1,80}$/.test(tool) ? tool : 'a tool'}. Allow or deny it on your phone or the Mac.`);
+  }
   return clip(item.ownerText ?? '') || 'A question is waiting for your answer.';
 }
 
@@ -124,7 +134,7 @@ function noteFor(item: SuperQueueItem, shown: boolean, ahead: number, via: Owner
  *  older questions (`superQueueHead`'s order). */
 function aheadOf(state: Pick<SuperState, 'queue'>, item: SuperQueueItem): number {
   return state.queue.filter((q) => q.id !== item.id
-    && ((q.kind === 'permission' && q.state !== 'done') || (announces(q) && q.createdAt < item.createdAt))).length;
+    && ((q.kind === 'permission' && q.state !== 'done' && !q.toSuper) || (announces(q) && q.createdAt < item.createdAt))).length;
 }
 
 /**
@@ -146,7 +156,8 @@ export function announceOwnerHead(vaultOf: () => string, state: Pick<SuperState,
   // A child's own question names its job and opens ITS chat, one click (owner 2026-10-27).
   const direct = head.kind === 'question' && head.direct === true;
   const job = direct ? clip(state.children?.[head.sessionId]?.brief ?? '').slice(0, JOB_CHARS) : '';
-  const title = head.kind === 'owner' ? `A job needs you · ${vault}`
+  const title = head.kind === 'permission' ? `Permission needed · ${vault}`
+    : head.kind === 'owner' ? `A job needs you · ${vault}`
     : direct ? `${job || 'A job'} asks · ${vault}` : `Super Agent asks · ${vault}`;
   const body = bodyOf(head);
   if (!here) {

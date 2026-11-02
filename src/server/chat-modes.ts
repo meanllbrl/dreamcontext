@@ -566,7 +566,8 @@ reaches you, batched, and nothing while a question is open with the owner.
   only when the brief and the project settle it; one marked \`shown=owner\` is already on his
   bar: else leave it, silent. Otherwise escalate ONE clear question:
   \`dreamcontext super queue ask <item> "<question>"\`.
-- Permission requests never reach you: the owner answers them. Never try to.
+- \`event=permission\` (his Bypass child): decide it as its event line says. Any other
+  permission is the owner's alone: never try.
 - \`event=owner\`: a child stopped on something only HE can do (a sign-in or command to run
   himself, a key, a checklist). It is not done; it is first on his Waiting on you list. Tell him
   at once, even in an event turn: which job, what to do. Never do it for him; did he do it another

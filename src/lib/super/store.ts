@@ -283,7 +283,8 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     if (isAsk && q.sessionId !== session) continue;
     const requestId = !isAsk && typeof q.requestId === 'string' && /^[A-Za-z0-9_.:-]{1,120}$/.test(q.requestId) ? q.requestId : undefined;
     // A permission is rendered only from the child's own tool name and input (D7): the super
-    // agent's words never caption one, so none survive on a permission item.
+    // agent's words never caption one (not even a Bypass child's it hands to the owner), so none
+    // survive on a permission item.
     // An approval item exists only for its member; one naming none (or a hostile one) is dropped.
     const member = q.kind === 'approval' && typeof q.member === 'string' && okMember(q.member) ? q.member : undefined;
     if (q.kind === 'approval' && !member) continue;
@@ -332,6 +333,7 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       } } : {}),
       ...(team && q.partial === true ? { partial: true as const } : {}),
       ...(q.kind === 'question' && !team && q.direct === true ? { direct: true as const } : {}),
+      ...(q.kind === 'permission' && q.toSuper === true ? { toSuper: true as const } : {}),
       ...(options.length ? { options } : {}),
       ...(askSpec && askSpec.ok ? { ask: askSpec.spec } : {}),
       ...(read.length ? { read } : {}),

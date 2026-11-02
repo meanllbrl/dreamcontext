@@ -252,7 +252,7 @@ import {
 import { handleAgentTaskProgress, handleAgentSessionFacts } from './routes/agent-shelf.js';
 import { handleAgentTeammates, handleAgentTeammateHistory } from './routes/agent-teammates.js';
 import { handleAppMachine } from './routes/machine.js';
-import { handleSuperPhoneAnswer, handleSuperPhoneQuestions } from './routes/super-phone-questions.js';
+import { handleSuperPhoneAnswer, handleSuperPhonePermission, handleSuperPhoneQuestions } from './routes/super-phone-questions.js';
 import { handleSuperReadGet, handleSuperReadPost } from './routes/super-read.js';
 import { handleSuperStageGet, handleSuperStageLayout, handleSuperStageSeen } from './routes/super-remote.js';
 import { attachAgentChat, handleAgentLiveChats, handleAgentChatHistory, handleAgentSlashCommands, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentPhoneGrant, handleLoopbackGrantsGet, handleLoopbackGrantSet, handleWebSessionOpen, handleAgentBackgroundOutput } from './routes/agent-chat.js';
@@ -720,6 +720,7 @@ export function buildRouter(): Router {
   router.get('/api/agent/live-chats', handleAgentLiveChats);
   router.get('/api/agent/super-questions', handleSuperPhoneQuestions);
   router.post('/api/agent/super-answer', handleSuperPhoneAnswer);
+  router.post('/api/agent/super-permission', handleSuperPhonePermission);
   router.get('/api/agent/super-read', handleSuperReadGet);
   router.post('/api/agent/super-read', handleSuperReadPost);
   // The remote screen's Super stage (read and arrange only; the Mac window stays the bridge).

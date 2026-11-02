@@ -5,7 +5,7 @@ import { isPhoneSocket } from '../phone-origin.js';
 import { isReservedId, readSuperState } from '../../lib/super/store.js';
 import { directQuestion, superSanitizeOpts, superVaultName, writeSuper } from '../../lib/super/inbox.js';
 import { askSpecFromLegacy, type SuperAskSpec, type SuperQueueItem, type SuperState } from '../../lib/super/types.js';
-import { getChat, pendingRequest, type RegistryQuestion } from '../../lib/assistant/chat-registry.js';
+import { getChat, pendingRequest, type PendingQuestion, type RegistryQuestion } from '../../lib/assistant/chat-registry.js';
 import { sendSuperCommand, superTokenOfSession } from '../../lib/window-control.js';
 
 /**
@@ -25,6 +25,9 @@ import { sendSuperCommand, superTokenOfSession } from '../../lib/window-control.
  *        the window answers through the child's own session, exactly as the child's card would,
  *        so its card leaves there too. The super's own `ask` needs no route: its answer is owner
  *        text, which the mirror carries.
+ *   POST /api/agent/super-permission — the owner's Allow/Deny on a child's permission that waits
+ *        for HIM (never the Super's to decide first), carried by the `super allow` window verb
+ *        with `by: 'owner'`. The GET lists those permissions too (tool and capped command text).
  *
  * The read is gated like the phone's other chat routes (`isAgentRequest`: the laptop on loopback,
  * a phone with its device session); the phone vault gate already scoped the project. The answer
@@ -36,12 +39,15 @@ import { sendSuperCommand, superTokenOfSession } from '../../lib/window-control.
  *  question is too large to carry whole): the item's words only, answered to the super. */
 export interface PhoneSuperQuestion {
   id: string;
-  kind: 'ask' | 'question';
+  kind: 'ask' | 'question' | 'permission';
   sessionId: string;
   requestId?: string;
   ownerText?: string;
   createdAt: number;
   card: SuperAskSpec | null;
+  /** A permission that waits for the owner: the tool and the registry's capped command/path
+   *  text. This response travels only to the signed-in phone. */
+  permission?: { tool: string; text: string };
 }
 
 export interface PhoneSuperQuestions {
@@ -67,24 +73,41 @@ function childQuestions(item: SuperQueueItem): RegistryQuestion[] | null {
   return pq.questions ?? null;
 }
 
+/** The child's permission request behind an owner-bound permission item, while it still waits. */
+function childPermission(item: SuperQueueItem): PendingQuestion | null {
+  const pq = pendingRequest(getChat(item.sessionId), item.requestId);
+  return pq && pq.isPermission ? pq : null;
+}
+
+/** A permission item that waits for the OWNER: not the Super's to decide first, not answered. */
+export function ownerPermissionOpen(item: SuperQueueItem): boolean {
+  return item.kind === 'permission' && !item.toSuper && item.state !== 'done' && !!item.requestId;
+}
+
 /** What the phone may draw, from the record and the live registry. Pure over its inputs. */
 export function phoneSuperQuestions(state: Pick<SuperState, 'enabled' | 'session' | 'queue' | 'children'>, questionsOf: (item: SuperQueueItem) => RegistryQuestion[] | null | 'gone' = (item) => {
   const qs = childQuestions(item);
   if (qs) return qs;
   // Still asking it, only too large to carry: the words only. Not asking it: nothing to answer.
   return pendingRequest(getChat(item.sessionId), item.requestId) ? null : 'gone';
-}): PhoneSuperQuestions {
+}, permissionOf: (item: SuperQueueItem) => PendingQuestion | null = childPermission): PhoneSuperQuestions {
   if (!state.enabled || !state.session) return { session: null, questions: [] };
   const open = state.queue
     // A child's question is his from birth (`direct`), not only once the Super escalated it.
-    .filter((q) => (q.state === 'escalated' && (q.kind === 'ask' || q.kind === 'question')) || directQuestion(q))
+    .filter((q) => (q.state === 'escalated' && (q.kind === 'ask' || q.kind === 'question')) || directQuestion(q) || ownerPermissionOpen(q))
     .sort((a, b) => a.createdAt - b.createdAt);
   const questions: PhoneSuperQuestion[] = [];
   for (const q of open) {
     const base = {
-      id: q.id, kind: q.kind as 'ask' | 'question', sessionId: q.sessionId, createdAt: q.createdAt,
+      id: q.id, kind: q.kind as PhoneSuperQuestion['kind'], sessionId: q.sessionId, createdAt: q.createdAt,
       ...(q.requestId ? { requestId: q.requestId } : {}), ...(q.ownerText ? { ownerText: q.ownerText } : {}),
     };
+    if (q.kind === 'permission') {
+      // Hands-free: a permission that waits for the owner reaches his phone with Allow/Deny.
+      const pq = permissionOf(q);
+      if (pq) questions.push({ ...base, card: null, permission: { tool: pq.toolName, text: pq.text } });
+      continue;
+    }
     if (q.kind === 'ask') {
       questions.push({ ...base, card: q.ask ?? askSpecFromLegacy(q.ownerText ?? '', q.options ?? []) });
       continue;
@@ -115,6 +138,11 @@ export async function handleSuperPhoneQuestions(req: IncomingMessage, res: Serve
     const qs = childQuestions(item);
     if (qs) return qs;
     return pendingRequest(getChat(item.sessionId), item.requestId) ? null : 'gone';
+  }, (item) => {
+    if (!ownChild(state, vault, item)) return null;
+    const pq = childPermission(item);
+    // The command text goes to the signed-in phone only: the laptop answers in the child's tab.
+    return pq && !isPhoneSocket(req) ? { ...pq, text: '' } : pq;
   }));
 }
 
@@ -181,6 +209,43 @@ export async function handleSuperPhoneAnswer(req: IncomingMessage, res: ServerRe
   try {
     await writeSuper(contextRoot, (s) => {
       for (const q of s.queue) if (q.kind === 'question' && q.sessionId === item.sessionId && q.requestId === requestId) q.state = 'done';
+    });
+  } catch (err) {
+    console.warn(`[super-phone] ${id}: the child was answered but the record was not closed: ${(err as Error).message}`);
+  }
+  sendJson(res, 200, { ok: true });
+}
+
+/** POST /api/agent/super-permission {item, requestId, choice: 'allow'|'deny'}: the owner's answer,
+ *  from the phone, to a Super child's permission that waits for him (hands-free: never only the
+ *  Mac window). Carried by the window verb `super allow` uses, marked as the owner's (`by`). */
+export async function handleSuperPhonePermission(req: IncomingMessage, res: ServerResponse, _params: unknown, contextRoot: string): Promise<void> {
+  if (!isPhoneSocket(req) || !isAgentRequest(req)) { sendError(res, 403, 'forbidden', 'Available only on a signed-in phone.'); return; }
+  const b = (await parseJsonBody(req)) ?? {};
+  const id = typeof b.item === 'string' ? b.item : '';
+  const requestId = typeof b.requestId === 'string' ? b.requestId : '';
+  const choice = b.choice === 'allow' || b.choice === 'deny' ? b.choice : null;
+  if (!id || !requestId || requestId.length > 200 || !choice) { sendError(res, 400, 'invalid_args', 'item, requestId and choice (allow or deny) are required'); return; }
+  let state: SuperState;
+  try { state = await readSuperState(contextRoot, superSanitizeOpts()); } catch (err) {
+    console.warn(`[super-phone] ${contextRoot}: the record could not be read for a permission: ${(err as Error).message}`);
+    sendError(res, 503, 'unavailable', 'The Super Agent record could not be read; try again.');
+    return;
+  }
+  if (!state.enabled || !state.session) { sendError(res, 409, 'not_handed_over', 'The Super Agent is not handed over.'); return; }
+  const item = state.queue.find((q) => q.id === id);
+  if (!item || item.kind !== 'permission' || item.state === 'done' || item.requestId !== requestId
+    || !ownChild(state, superVaultName(contextRoot), item) || !childPermission(item)) {
+    sendError(res, 409, 'stale_request', 'That permission request is no longer open.');
+    return;
+  }
+  const token = superTokenOfSession(state.session);
+  if (!token) { sendError(res, 409, 'no_window', 'The Mac window that holds the Super Agent is not open.'); return; }
+  const r = await sendSuperCommand(token, 'allow', { child: item.sessionId, requestId, behavior: choice, by: 'owner' });
+  if (!r.ok) { sendJson(res, r.error === 'no_window' ? 409 : 200, { ok: false, error: r.error }); return; }
+  try {
+    await writeSuper(contextRoot, (s) => {
+      for (const q of s.queue) if (q.kind === 'permission' && q.sessionId === item.sessionId && q.requestId === requestId) q.state = 'done';
     });
   } catch (err) {
     console.warn(`[super-phone] ${id}: the child was answered but the record was not closed: ${(err as Error).message}`);
