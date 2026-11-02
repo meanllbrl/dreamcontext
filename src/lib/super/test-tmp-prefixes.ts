@@ -256,6 +256,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-embed-offline-',
   'dc-embhome-',
   'dc-envsecret-',
+  'dc-every-tool-',
   'dc-explorer-page-',
   'dc-facts-cache-',
   'dc-facts-route-',
