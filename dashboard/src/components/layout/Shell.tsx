@@ -2,10 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { Header } from './Header';
 import { Sidebar, type Page } from './Sidebar';
 import { CommandPalette } from '../search/CommandPalette';
-import { useVault, emitInstance } from '../../context/VaultContext';
+import { useVault, emitInstance, useInstanceEvent } from '../../context/VaultContext';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import { useRailGlide } from './useRailGlide';
 import { publishPage } from '../../lib/pageContext';
+import { planProjectSwitch, publishShownSurface, readShownSurface, takeProjectSwitch } from '../../lib/projectSwitchPage';
+import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from '../../lib/agentSettings';
 import { readDeviceShell, useIsNewShell } from '../../lib/uxMode';
 import { DEVICE_HIDDEN_PAGES } from './newshell/railModel';
 import { NewShellControls } from './newshell/NewShellControls';
@@ -215,6 +217,42 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isActive, navigate]);
+
+  // Switching project keeps the page (owner 2026-11-03, lib/projectSwitchPage.ts): the project
+  // on screen publishes its page and whether Chat is open; the one coming on screen follows once.
+  const [chatOpen, setChatOpen] = useState(false);
+  const chatOpenRef = useRef(chatOpen);
+  chatOpenRef.current = chatOpen;
+  // The carried Chat's retries (a freshly mounted surface is not listening yet) stop the moment
+  // it opens, and on any navigation: they never reopen a chat the owner closed or left.
+  const chatRetriesRef = useRef<number[]>([]);
+  const stopChatRetries = useCallback(() => { for (const t of chatRetriesRef.current) window.clearTimeout(t); chatRetriesRef.current = []; }, []);
+  useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => { setChatOpen(open === true); if (open === true) stopChatRetries(); });
+  useInstanceEvent('dreamcontext-navigate', stopChatRetries);
+  const wasActiveRef = useRef(false);
+  useEffect(() => {
+    const arrived = isActive && !wasActiveRef.current;
+    wasActiveRef.current = isActive;
+    // Only the owner's own switch carries the page: a link, a start or a drawer row lands itself.
+    if (!arrived || !vault || !takeProjectSwitch(vault)) return undefined;
+    const plan = planProjectSwitch(readShownSurface(), { page: activePage, chat: chatOpen },
+      (p) => !(newShell && readDeviceShell() && DEVICE_HIDDEN_PAGES.has(p)));
+    if (plan.navigate) navigate(plan.navigate, null);
+    // Closing the chat with a navigate signal no page reads as its own (Lab clears its open funnel
+    // on `page: 'lab'`); the agent surface collapses on any.
+    if (plan.chat === false && !plan.navigate) emitInstance(bus, 'dreamcontext-navigate', { page: null });
+    if (plan.chat !== true) return undefined;
+    // A project mounted by this switch has no chat surface listening yet: ask until it opens.
+    openAgentSurface(bus);
+    if (chatOpenRef.current) return undefined;
+    chatRetriesRef.current = [150, 500, 1200, 2500].map((ms) => window.setTimeout(() => {
+      if (!chatOpenRef.current) openAgentSurface(bus);
+    }, ms));
+    return stopChatRetries;
+  }, [isActive]); // eslint-disable-line react-hooks/exhaustive-deps -- once per arrival on screen
+  useEffect(() => {
+    if (isActive) publishShownSurface({ page: activePage, chat: chatOpen });
+  }, [isActive, activePage, chatOpen]);
 
   const handleSidebarNavigate = useCallback(
     (page: Page, id?: string) => {

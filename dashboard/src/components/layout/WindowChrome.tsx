@@ -27,6 +27,7 @@ import { APP_LINK_OPEN_EVENT, isProjectAppLink, parseAppLink } from '../../lib/a
 import type { ProjectRollup } from '../sleepy/agentStatus';
 import { ProjectInstance, type PendingAppLink, type PendingStartIntent } from '../../ProjectInstance';
 import { ProjectSwitcher } from '../search/ProjectSwitcher';
+import { markProjectSwitch } from '../../lib/projectSwitchPage';
 import { UpgradeRelaunchBanner } from './UpgradeRelaunchBanner';
 import { HandsfreeButton } from '../handsfree/HandsfreeButton';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
@@ -606,6 +607,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       setPreview(null);
       if (target === null || target === activeRef.current) return;
       if (!openRef.current.some((p) => p.vault === target)) return;
+      markProjectSwitch(target);
       activate(target);
     };
 
@@ -1273,6 +1275,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
         const target = projectOrderRef.current[Number(e.key) - 1];
         if (!target) return;
         e.preventDefault();
+        markProjectSwitch(target);
         void addTab(target);
       }
     };
@@ -1355,7 +1358,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
             pickerOpen={pickerOpen}
             onNewProject={() => { setPickerOpen(false); setNewProjectOpen(true); }}
             onPickerOpen={setPickerOpen}
-            onPick={(name) => { setFloatingOpen(false); void addTab(name); }}
+            onPick={(name) => { setFloatingOpen(false); markProjectSwitch(name); void addTab(name); }}
             notice={notice}
             onToggleDrawer={() => setDrawerToggleNonce((n) => n + 1)}
             waiting={drawerWaiting}
@@ -1495,7 +1498,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
 
           <ProjectTabs
             chips={chips}
-            onActivate={activate}
+            onActivate={(vault) => { markProjectSwitch(vault); activate(vault); }}
             onClose={closeTab}
             onAdd={openSwitcher}
             onDetach={(vault) => void detachToWindow(vault)}
