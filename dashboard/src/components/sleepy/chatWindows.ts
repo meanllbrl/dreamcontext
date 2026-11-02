@@ -431,3 +431,19 @@ export function rowsByWindow<R extends { id: string; claudeId?: string }>(state:
   }
   return out;
 }
+
+/**
+ * Where a chat picked in History opens (owner 2026-11-03): in its OWN window, never in the one
+ * already holding other chats. A chat that already has a tab brings that tab's window forward
+ * (`focus`); a window on screen with no chat in it takes it (`here`), so does any other empty
+ * window (`reuse`, never a pile of empty windows); otherwise a new window opens (`new`). A Super
+ * Agent session never reaches this rule: its own door (`openInSuperWindow`) runs first.
+ */
+export type HistoryPickPlan = { kind: 'focus' } | { kind: 'here' } | { kind: 'reuse'; windowId: string } | { kind: 'new' };
+
+export function historyPickPlan(state: WindowsState, hasTab: boolean, chatsIn: (windowId: string) => number): HistoryPickPlan {
+  if (hasTab) return { kind: 'focus' };
+  if (chatsIn(state.activeId) === 0) return { kind: 'here' };
+  const empty = state.list.find((w) => w.id !== state.activeId && chatsIn(w.id) === 0);
+  return empty ? { kind: 'reuse', windowId: empty.id } : { kind: 'new' };
+}
