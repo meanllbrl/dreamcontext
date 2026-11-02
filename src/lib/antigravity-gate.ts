@@ -17,7 +17,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
-import { anchors, dropHeredocBodies, expandHome, segmentsOf } from './agents/member-file-guard.js';
+import { anchors, dropHeredocBodies, expandHome, segmentsOf, shellWords } from './agents/member-file-guard.js';
 import { antigravityProfileDir } from './antigravity-accounts.js';
 import { resolveContextRoot } from './context-path.js';
 
@@ -82,7 +82,7 @@ const isDir = (p: string): boolean => { try { return lstatSync(nearestReal(p)).i
 function shellMovesGuarded(command: string, cwd: string, home: string): boolean {
   const dirs = anchors(command, cwd.replace(/\\/g, '/'), home);
   return segmentsOf(dropHeredocBodies(command)).some((segment) => {
-    const words = segment.trim().split(/\s+/).map((w) => w.replace(/^['"]|['"]$/g, '')).filter(Boolean);
+    const words = shellWords(segment).filter(Boolean);
     while (words.length > 0 && (LEADERS.has(words[0]) || /^[A-Za-z_]\w*=/.test(words[0]) || /^-|^\d+[smhd]?$/.test(words[0]))) words.shift();
     if (words[0] === 'git' && (words[1] === 'mv' || words[1] === 'rm')) words.shift();
     const verb = (words[0] ?? '').split('/').pop() ?? '';

@@ -90,6 +90,31 @@ function maskQuotes(s: string): string {
   return out;
 }
 
+/**
+ * A segment's words as the shell reads them: a quoted run is one word with its quotes gone, so
+ * `mv "/My Project/_dream_context" x` names one folder, not `/My` and `Project/...`. A backslash
+ * keeps the next character outside single quotes.
+ */
+export function shellWords(segment: string): string[] {
+  const out: string[] = [];
+  let word = '';
+  let has = false;
+  let quote = '';
+  for (let i = 0; i < segment.length; i += 1) {
+    const c = segment[i];
+    if (quote) {
+      if (c === quote) quote = '';
+      else if (c === '\\' && quote === '"' && i + 1 < segment.length) { word += segment[i + 1]; i += 1; }
+      else word += c;
+    } else if (c === '"' || c === "'") { quote = c; has = true; }
+    else if (c === '\\' && i + 1 < segment.length) { word += segment[i + 1]; has = true; i += 1; }
+    else if (/\s/.test(c)) { if (has || word) out.push(word); word = ''; has = false; }
+    else { word += c; has = true; }
+  }
+  if (has || word) out.push(word);
+  return out;
+}
+
 /** The shell's own segments of a command, as the original text. */
 export function segmentsOf(command: string): string[] {
   const masked = maskQuotes(command);
@@ -112,11 +137,11 @@ type WordMatch = (word: string) => string | null;
 /** The guarded file one shell segment writes, or null. */
 function segmentTarget(segment: string, match: WordMatch): string | null {
   const masked = maskQuotes(segment);
-  for (const m of masked.matchAll(/>{1,2}\s*(['"]?)([^\s\0'"]{1,1024})/g)) {
-    const hit = match(m[2]);
+  for (const m of masked.matchAll(/>{1,2}\s*(?:(['"])([^'"]{1,1024})\1|([^\s\0'"]{1,1024}))/g)) {
+    const hit = match(m[2] ?? m[3]);
     if (hit) return hit;
   }
-  const words = segment.trim().split(/\s+/).filter((w) => w.length <= MAX_TOKEN);
+  const words = shellWords(segment).filter((w) => w.length <= MAX_TOKEN);
   while (words.length > 0 && (/^[A-Za-z_]\w*=/.test(words[0]) || words[0] === 'sudo' || words[0] === 'command')) words.shift();
   const verb = (words[0] ?? '').split('/').pop() ?? '';
   const args = words.slice(1);

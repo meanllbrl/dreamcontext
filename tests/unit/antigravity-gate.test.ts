@@ -123,6 +123,8 @@ describe('a shell write to a guarded file', () => {
     expect(at('cd marketing && echo x > .env')).toBeTruthy();
     expect(at(`python3 -c "open('marketing/.env','w').write('x')"`)).toBeTruthy();
     expect(at('printf x > "marketing/.env"')).toBeTruthy();
+    expect(at('printf x > "/My Project/_dream_context/marketing/.env"')).toBe('/My Project/_dream_context/marketing/.env');
+    expect(at("cp /tmp/a '/My Project/_dream_context/marketing/.env'")).toBe('/My Project/_dream_context/marketing/.env');
   });
 
   it('leaves reads and other files alone', () => {
@@ -168,6 +170,18 @@ describe('moving, removing or copying over a place that holds the token file or 
     expect(sh('mv /tmp/notes.md _dream_context/marketing/')).toBe(false);
     rmSync(join(dir, '_dream_context', 'marketing'), { recursive: true });
     expect(sh('mv mk _dream_context/marketing')).toBe(true);
+  });
+
+  it('reads a quoted path with spaces as one path, the way the shell does', () => {
+    const spaced = join(dir, 'My Project');
+    mkdirSync(join(spaced, '_dream_context', 'marketing'), { recursive: true });
+    writeFileSync(join(spaced, '_dream_context', 'marketing', '.env'), 'X=1\n');
+    const at = (command: string) => movesGuardedPlace('Bash', { command }, spaced, home);
+    for (const c of [
+      `mv "${spaced}/_dream_context" /tmp/stolen`, `rm -rf '${spaced}/_dream_context'`, `mv ${spaced.replace(/ /g, '\\ ')}/_dream_context /tmp/s`,
+      `mv "${spaced}" /tmp/elsewhere`, `cp -r /tmp/evil/_dream_context "${spaced}"`, `cd "${spaced}" && mv _dream_context /tmp/s`,
+    ]) expect([c, at(c)]).toEqual([c, true]);
+    expect(at(`mv "${spaced}/notes one.md" "${spaced}/notes two.md"`)).toBe(false);
   });
 
   it('refuses the gate folders up to and including .dreamcontext', () => {
