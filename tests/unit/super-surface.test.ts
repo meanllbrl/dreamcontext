@@ -78,7 +78,8 @@ describe('hand over / take back (D5, D9, D17)', () => {
     const take = surface.slice(surface.indexOf('const takeBack = useCallback'), surface.indexOf('const settleReversed'));
     expect(take).not.toMatch(/setPanes/);
     expect(take).toMatch(/await disableSuper\(scopedApi\)/);
-    expect(surface).toMatch(/hidden=\{handedOver\}/);
+    // A phone showing a member also hides the panes (plan-r10 Wave 3).
+    expect(surface).toMatch(/hidden=\{handedOver \|\| phoneMemberShown\}/);
   });
 
   it('a delegated child lands as a NON-active tab of the active pane (D5)', () => {
@@ -128,7 +129,8 @@ describe('hand over / take back (D5, D9, D17)', () => {
     const guard = surface.slice(surface.indexOf('superWindowGuardRef.current = (cs, verb, args) =>'), surface.indexOf('// The Super Agent\'s session in this window'));
     expect(guard).toMatch(/m\.id === args\.tab \|\| m\.claudeId === args\.tab/);
     expect(guard).toMatch(/target = \{ sid: meta\.id, pin: meta\.claudeId, conversation: live && live\.kind === 'chat' \? live\.claudeId : null \}/);
-    expect(guard).toMatch(/children: markedChildren\(superState\)/);
+    // Every super's children (main alone: exactly main's record), Wave 3.
+    expect(guard).toMatch(/children: markedChildren\(allSupersView\)/);
     expect(surface).toMatch(/const refusal = superWindowGuardRef\.current\(cs, verb, args\);\s*if \(refusal\) return \{ ok: false, error: refusal \};/);
   });
 
@@ -176,24 +178,26 @@ describe('late hand-over results never overwrite a newer action (AC6)', () => {
     expect(begin).toBeGreaterThan(-1);
     expect(begin).toBeLessThan(take.indexOf('await disableSuper(scopedApi)'));
     // Both the answer and the failure path check before writing the state.
-    const guards = [...take.matchAll(/if \(!superGenRef\.current\.isCurrent\(gen\)\) return;\s*setSuperState/g)];
+    // Main's record (a member's stage never reaches the disable: it returns before), Wave 3.
+    const guards = [...take.matchAll(/if \(!superGenRef\.current\.isCurrent\(gen\)\) return;\s*setMainSuperState/g)];
     expect(guards).toHaveLength(2);
+    expect(take.indexOf('if (activeSuperIdRef.current !== MAIN_SUPER) {')).toBeLessThan(take.indexOf('await disableSuper(scopedApi)'));
   });
 
   it('a reversed flight is a new action: its enable / disable results are guarded the same way', () => {
     const settle = surface.slice(surface.indexOf('const settleReversed = useCallback'), surface.indexOf('// The flight itself'));
     expect(settle).toMatch(/const gen = superGenRef\.current\.begin\(\);/);
-    expect(settle).toMatch(/\(st\) => \{ if \(current\(\)\) setSuperState/);
-    expect(settle).toMatch(/\(\) => \{ if \(current\(\)\) setSuperState/);
-    expect(settle).toMatch(/if \(state && current\(\)\) setSuperState\(state\)/);
-    // Every setSuperState in it is behind the check.
-    expect((settle.match(/setSuperState\(/g) ?? []).length).toBe((settle.match(/current\(\)\) setSuperState\(/g) ?? []).length);
+    expect(settle).toMatch(/\(st\) => \{ if \(current\(\)\) setMainSuperState/);
+    expect(settle).toMatch(/\(\) => \{ if \(current\(\)\) setMainSuperState/);
+    expect(settle).toMatch(/if \(state && current\(\)\) setMainSuperState\(state\)/);
+    // Every write in it is behind the check.
+    expect((settle.match(/set(?:Main)?SuperState\(/g) ?? []).length).toBe((settle.match(/current\(\)\) set(?:Main)?SuperState\(/g) ?? []).length);
   });
 
   it('a hand-over also begins a generation, so a take-back\'s late disable cannot land on it', () => {
     const hand = surface.slice(surface.indexOf('const handOver = useCallback'), surface.indexOf('const takeBack = useCallback'));
     expect(hand.indexOf('const gen = superGenRef.current.begin();')).toBeLessThan(hand.indexOf('await enableSuper'));
-    expect(hand).toMatch(/if \(st && superGenRef\.current\.isCurrent\(gen\)\) setSuperState\(withPendingEdits\(st\)\)/);
+    expect(hand).toMatch(/if \(st && superGenRef\.current\.isCurrent\(gen\)\) setMainSuperState\(withPendingEdits\(st\)\)/);
   });
 });
 
@@ -205,11 +209,12 @@ describe('quiet children (D16, AC6 client half)', () => {
     expect(del).toMatch(/const markUntil = delegateMarkUntil\(args\);/);
     // The mark effect reads the record AND the pending delegates, never the record alone.
     const effect = surface.slice(surface.indexOf('// ── Mark the children (D16)'), surface.indexOf('// ── The owner-activity lease'));
-    expect(effect).toMatch(/const marks = childMarks\(superState, superDelegated, now\);/);
-    expect(effect).not.toMatch(/markedChildren\(superState\)/);
-    expect(effect).toMatch(/\[superState, sessionList, superDelegated\]/);
+    // Every super's record (main alone: exactly main's), Wave 3.
+    expect(effect).toMatch(/const marks = childMarks\(allSupersView, superDelegated, now\);/);
+    expect(effect).not.toMatch(/markedChildren\(allSupersView\)/);
+    expect(effect).toMatch(/\[allSupersView, vaultSupers\.length, sessionList, superDelegated\]/);
     // The dock rows (the project chip) use the same marks.
-    expect(surface).toMatch(/const marked = childMarks\(superState, superDelegated, Date\.now\(\)\)\.marked;/);
+    expect(surface).toMatch(/const marked = childMarks\(allSupersView, superDelegated, Date\.now\(\)\)\.marked;/);
   });
 
   it('a marked child\'s question raises no chime, banner, bounce or badge', () => {
@@ -222,11 +227,11 @@ describe('quiet children (D16, AC6 client half)', () => {
   });
 
   it('children are marked from the record, and on spawn (no window between spawn and the first frame)', () => {
-    expect(surface).toMatch(/cs\.setSuperChild\(superKnownRef\.current \|\| superStateRef\.current\s*\? markedChildren\(superStateRef\.current\)\.has\(cs\.claudeId\)\s*: null\)/);
+    expect(surface).toMatch(/cs\.setSuperChild\(superKnownRef\.current \|\| vaultSupersRef\.current\.length > 0\s*\? markedChildren\(allSupersRef\.current\)\.has\(cs\.claudeId\)\s*: null\)/);
     // The first GET (or no record to read) makes it known and releases what waited.
     expect(surface).toMatch(/superKnownRef\.current = true;[\s\S]{0,200}setSuperChild\(marked\.has\(s\.claudeId\)\)/);
     // Until the record is read the effect keeps the alarm waiting, never an early "not a child".
-    expect(surface).toMatch(/const known = superKnownRef\.current \|\| !!superState;[\s\S]{0,200}\(s as ChatSession\)\.setSuperChild\(known \? set\.has\(s\.claudeId\) : null\)/);
+    expect(surface).toMatch(/const known = superKnownRef\.current \|\| vaultSupers\.length > 0;[\s\S]{0,200}\(s as ChatSession\)\.setSuperChild\(known \? set\.has\(s\.claudeId\) : null\)/);
   });
 
   it('ONE alarm per owner item, EVERY item (not only the head), linked to the super agent, raised where the record lives', () => {
@@ -236,14 +241,17 @@ describe('quiet children (D16, AC6 client half)', () => {
     const strip = read(`${superDir}/JobBar.tsx`);
     expect(strip).not.toMatch(/raiseAskAttention|headAlarmOnce/);
     const effect = surface.slice(surface.indexOf('const superOwnerItems = useMemo('), surface.indexOf('const superTitleFor = useCallback('));
-    expect(effect).toMatch(/superState\.queue\.filter\(needsOwner\)/);
+    // Main's record whichever stage shows (Wave 3): a member's stage never silences main's questions.
+    expect(effect).toMatch(/mainSuperState\.queue\.filter\(needsOwner\)/);
     expect(effect).toMatch(/const fresh = superOwnerItems\.filter\(\(q\) => headAlarmOnce\(vault, q\)\);\s*if \(!fresh\.length\) return;[\s\S]{0,200}raiseAskAttention\(/);
-    expect(effect).toMatch(/sessionId: superChatSession\?\.claudeId \?\? null,/);
+    expect(effect).toMatch(/sessionId: mainChatSession\?\.claudeId \?\? null,/);
+    // Main's chat is the active one while main shows.
+    expect(surface).toMatch(/const mainChatSession = activeSuperId === MAIN_SUPER \? superChatSession : /);
     expect((surface.match(/raiseAskAttention\(/g) ?? []).length).toBe(1);
     // A banner the server posted (owner-question.ts names it in the view) is never posted twice.
     expect(effect).toMatch(/banner: !\(superBannered \?\? \[\]\)\.includes\(item\.id\),/);
     // The super chat's tab gets the attention badge, like any asking chat.
-    expect(effect).toMatch(/superChatSession\.attention = true;\s*bumpStatus\(\);/);
+    expect(effect).toMatch(/mainChatSession\.attention = true;\s*bumpStatus\(\);/);
   });
 
   it('a link to the super agent opens its stage before any resume (AC4)', () => {
@@ -423,11 +431,13 @@ describe('the window rules (D10, AC12)', () => {
     const edit = surface.slice(surface.indexOf('const editSuperLayout = useCallback'), surface.indexOf('const askAboutCard = useCallback'));
     expect(edit).toMatch(/pendingPatchesRef\.current = \[\.\.\.pendingPatchesRef\.current, patch\]/);
     expect(edit).toMatch(/applyLayoutPatch\(prev, patch\)/);
-    expect(edit).toMatch(/postSuperLayout\(scopedApi, patch\)/);
+    // The super the gesture was made on (main's: `forSuper(scopedApi, 'main')` IS `scopedApi`).
+    expect(edit).toMatch(/const api = forSuper\(scopedApi, sid\);/);
+    expect(edit).toMatch(/postSuperLayout\(api, patch\)/);
     // A save that did not land (refused, or no state answered) drops the patch and re-reads
     // the record: the screen never keeps an edit the server does not have (end review r8).
     expect(edit).toMatch(/const notSaved = \(why: unknown\) => \{\n\s*settle\(\);/);
-    expect(edit).toMatch(/fetchSuperState\(scopedApi\)\.then\(\(st\) => \{ if \(st\) setSuperState\(withPendingEdits\(st\)\); \}\)/);
+    expect(edit).toMatch(/fetchSuperState\(api\)\.then\(\(st\) => \{ if \(st\) setSuperState\(withPendingEdits\(st\)\); \}\)/);
     expect(edit).toMatch(/if \(!st\) \{ notSaved\('no state in the answer'\); return; \}/);
     expect(edit).toMatch(/\n\s*notSaved,\n\s*\);/);
     expect(surface).toMatch(/if \(st\) setSuperState\(withPendingEdits\(st\)\);\n\s*\};/);
@@ -540,7 +550,8 @@ describe('the window rules (D10, AC12)', () => {
     f.lease.typed();
     expect(f.posts).toEqual([0]);
     // Never from Mac mode's tunnel: the lease is the Mac window's (W2).
-    expect(surface).toMatch(/if \(!superState\?\.enabled \|\| isMacPhoneSurface\(\)\) return undefined;\s*const lease = createActivityLease\(/);
+    // Wave 3: the lease posts for the super whose stage shows (main's: `forSuper` IS `scopedApi`).
+    expect(surface).toMatch(/if \(!superState\?\.enabled \|\| isMacPhoneSurface\(\)\) return undefined;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const leaseApi = forSuper\(scopedApi, activeSuperId\);\s*const lease = createActivityLease\(\(\) => \{ void postSuperActivity\(leaseApi\)/);
     expect(surface).toMatch(/return \(\) => \{\s*lease\.dispose\(\);/);
     // Wired to the Super Agent's composer only, and only while handed over.
     expect(surface).toMatch(/cs\.setDraftListener\(\(\) => \{ if \(superStateRef\.current\?\.enabled\) superLeaseRef\.current\?\.typed\(\); \}\)/);
@@ -556,7 +567,10 @@ describe('the window rules (D10, AC12)', () => {
     // The one timer is the activity lease's trailing post (a keystroke happened), never a poll.
     expect((api.match(/setTimeout\(/g) ?? []).length).toBe(1);
     expect(api).toMatch(/schedule: \(fn, ms\) => setTimeout\(fn, ms\)/);
-    expect(surface).toMatch(/superSignalRef\.current = \(signal\) => \{[\s\S]{0,700}?if \(signal\.kind !== 'state'\) return;\s*const st = readSuperStateView\(signal\.state\);/);
+    // Wave 3: a push names its chat's super (`from`); one from a super not shown writes that super's
+    // record and returns, main's push on main's stage takes the path it always took.
+    expect(surface).toMatch(/superSignalRef\.current = \(signal, from\) => \{[\s\S]{0,600}?if \(from !== activeSuperIdRef\.current\) \{[\s\S]{0,300}?return;\s*\}/);
+    expect(surface).toMatch(/superSignalRef\.current = \(signal, from\) => \{[\s\S]{0,1400}?if \(signal\.kind !== 'state'\) return;\s*const st = readSuperStateView\(signal\.state\);/);
   });
 });
 
@@ -605,5 +619,45 @@ describe('TR + EN for every new string; the button reads the owner\'s words', ()
       expect(en, `EN ${k}`).toContain(`'${k}':`);
       expect(tr, `TR ${k}`).toContain(`'${k}':`);
     }
+  });
+
+  it('every Wave 3 key (the member stage\'s and the lanes\' pinned ones) exists in English AND Turkish, Turkish as pinned', () => {
+    const pinned: Record<string, string> = {
+      'drawer.team.row': 'Ekip', 'drawer.team.superOnly': 'Super için', 'drawer.team.superWorking': 'Super için çalışıyor',
+      'drawer.team.manage': 'Üyeleri yönet', 'drawer.team.global': 'Global ekip', 'drawer.team.globalAll': 'Tüm projeler',
+      'drawer.team.independent': 'Projelerden bağımsız', 'drawer.team.listTitle': '{project} · Ekip', 'drawer.team.approval': 'onay',
+      'drawer.team.toggle': 'Aç/kapat', 'drawer.team.off': 'Kapalı', 'drawer.team.question': 'Soru: {text}', 'drawer.team.count': '{n} sana dönük',
+      'drawer.newChat.claude': 'Claude', 'drawer.newChat.menu': 'Yeni sohbet seçenekleri',
+      'drawer.member.working': '{n} iş çalışıyor, {q} sırada', 'drawer.member.idle': 'Boşta · {when}',
+      'aiteam.manage.openChat': 'Sohbeti aç', 'tasks.agent.openMember': '{name} sayfasını aç',
+      'superStage.member.subtitle': '{job} · tek konuşma', 'superStage.member.claudeOnly': "Super Claude\\'da çalışır, çocukları {tool}\\'da",
+      'superStage.member.placeholder': '{name} ne yapsın?', 'superStage.member.profile': 'Profil',
+      'superStage.member.fromSuper': "Super Agent\\'tan", 'superStage.member.forSuper': 'Super için', 'superStage.member.tasks': 'Görevleri',
+      'superStage.task.open': 'Görevi aç', 'superStage.task.role.doer': 'yapan', 'superStage.task.role.reviewer': 'inceleyici',
+      'superStage.task.round': 'tur {n}/{cap}', 'superStage.task.reviewer': 'Gözden geçiren: {name}',
+      'superStage.task.waitsOn.reviewer': 'İnceleyici çalışıyor · senden bir şey beklemiyor', 'superStage.task.waitsOn.owner': 'Senin onayında',
+      'superStage.task.waitsOn.stuck': 'Takıldı', 'superStage.task.waitsOn.doer': 'Üye çalışıyor', 'superStage.member.projectChip': 'Projeyi değiştir',
+    };
+    for (const [k, v] of Object.entries(pinned)) {
+      expect(en, `EN ${k}`).toContain(`'${k}':`);
+      expect(tr, `TR ${k}`).toContain(`'${k}': '${v}'`);
+    }
+    // Every superStage.* key the member stage uses, in both.
+    const files = readdirSync(join(ROOT, superDir)).filter((f) => f.endsWith('.tsx')).map((f) => `${superDir}/${f}`);
+    for (const f of [...files, `${SLEEPY}/ChatPane.tsx`, `${SLEEPY}/AgentSurface.tsx`]) {
+      for (const m of read(f).matchAll(/t\('(superStage\.[a-zA-Z.]+)'\)/g)) {
+        expect(en, `EN ${m[1]}`).toContain(`'${m[1]}':`);
+        expect(tr, `TR ${m[1]}`).toContain(`'${m[1]}':`);
+      }
+    }
+    // No em dash in any of them.
+    for (const v of Object.values(pinned)) expect(v).not.toContain('\u2014');
+  });
+
+  it("main's stage is unchanged: no member, main's head, main's id", () => {
+    const agentSurface = read(`${SLEEPY}/AgentSurface.tsx`);
+    expect(agentSurface).toMatch(/member=\{stageMemberInfo\}/);
+    expect(agentSurface).toMatch(/const stageMemberInfo = stageMember \? \{/);
+    expect(agentSurface).toMatch(/const stageMember = memberOf\(activeSuperId\);/);
   });
 });

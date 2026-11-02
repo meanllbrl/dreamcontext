@@ -4,6 +4,7 @@ import { useI18n } from '../../../context/I18nContext';
 import { tr } from '../../../lib/assignToAgent';
 import { reviewRounds, shortWhen, type RoundResult } from '../../../lib/taskAgentJob';
 import { Section } from './BodySections';
+import { TaskFaceButton } from './AgentJobRow';
 
 const TONE: Record<RoundResult, string> = {
   passed: 'good', 'sent-back': 'warn', 'owner-sent-back': 'warn', failed: 'bad', stuck: 'bad', reviewing: 'accent', owner: 'neutral',
@@ -11,7 +12,12 @@ const TONE: Record<RoundResult, string> = {
 
 /** One row per delivered round and what came of it (AI Team v2 C2). Shown only once a reviewer
  *  agent is on the task: with the owner reviewing, Deliveries already says it all. */
-export function ReviewRoundsSection({ job, history }: { job: AgentJobDetail; history: readonly StatusHistoryRow[] }) {
+export function ReviewRoundsSection({ job, history, taskSlug }: {
+  job: AgentJobDetail;
+  history: readonly StatusHistoryRow[];
+  /** The task these rounds are of: the reviewer's face opens its stage on it (plan-r10 1c). */
+  taskSlug?: string;
+}) {
   const { t } = useI18n();
   const { data: agents } = useAgents();
   const rows = reviewRounds(job, job.deliveries, history);
@@ -28,7 +34,11 @@ export function ReviewRoundsSection({ job, history }: { job: AgentJobDetail; his
   })[r];
   return (
     <Section k="review-rounds" title={tr(t, 'tasks.reviewRounds', 'Review rounds')} count={`${job.round}/${job.cap}`}>
-      <p className="drev-by">{tr(t, 'tasks.reviewBy', 'Reviewed by {name}', { name: reviewer })}</p>
+      <p className="drev-by" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+        {/* Without the task (an older caller) the face still opens the member, with no strip. */}
+        <TaskFaceButton slug={job.reviewer} task={taskSlug ?? ''} role="reviewer" size={20} />
+        {tr(t, 'tasks.reviewBy', 'Reviewed by {name}', { name: reviewer })}
+      </p>
       <ol className="drev-list">
         {rows.map((r) => (
           <li key={r.round} className="drev-row" data-round-result={r.result} style={r.findings ? { flexWrap: 'wrap' } : undefined}>

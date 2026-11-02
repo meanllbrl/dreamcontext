@@ -7,7 +7,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { homeRows, newlyWaiting, swipeTarget, HOME_SECTIONS } from '../../dashboard/src/components/sleepy/phoneHome.js';
-import { deviceWaitingCount } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
+import { readFileSync } from 'node:fs';
+import { buildDrawerRows, buildGlobalTeam, deviceChatsOf, deviceWaitingCount, ekipByProject } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
 import type { LiveChatWire, LiveChatsWire } from '../../dashboard/src/components/handsfree/macContract.js';
 import type { StackTab } from '../../dashboard/src/components/sleepy/phoneStack.js';
 
@@ -95,5 +96,49 @@ describe('a tab whose chat another screen holds', () => {
     });
     expect(rows.map((r) => [r.kind, r.section])).toEqual([['open', 'waiting']]);
     expect(deviceWaitingCount({ rows }, null)).toBe(1);
+  });
+});
+
+describe('phone 390 Sohbetler: the Ekip rows and the Global ekip group (plan-r10 1d, 1f, 2.4; AC9)', () => {
+  const m = (slug: string, o: Record<string, unknown> = {}) => ({
+    slug, global: false, enabled: true, ownerWorking: 0, asking: false, approval: false, unread: 0, superOnly: false, lastAt: 0, ...o,
+  });
+  const live = {
+    chats: [], draining: [],
+    supers: [{ conversationId: 's1', vault: 'acme', title: null, busy: false, state: 'idle', lastLine: 'Rota sana bir fiyat sorusu sordu.', updatedAt: 1, live: true, jobs: [], runningIds: [], childIds: [] }],
+    members: [
+      { vault: 'acme', members: [m('rota', { asking: true }), m('mira', { unread: 1 }), m('atlas', { global: true, asking: true, lastAt: 9 })] },
+      { vault: 'payments', members: [m('deniz', { unread: 1 })] },
+    ],
+  } as any;
+  const device = deviceChatsOf({ activeVault: 'acme', projects: ['acme', 'payments'], tabsByVault: {}, live, tunnel: true, liveAnswered: true });
+  const projects = ['acme', 'payments'].map((name) => ({ name, logo: false, logoStamp: null, mounted: name === 'acme', asleep: false, otherWindow: false, rollup: null }));
+
+  it('main\'s Super row, then ONE Ekip row per project with its own members; no member rows', () => {
+    const rows = buildDrawerRows({ projects, activeVault: 'acme', expanded: ['acme', 'payments'], facts: {}, fanout: {}, device });
+    expect(rows[0].children.map((c) => c.kind === 'chat' ? `chat:${c.row.kind}` : c.kind)).toEqual(['chat:super', 'team', 'new-chat']);
+    const acme = rows[0].children.find((c) => c.kind === 'team') as any;
+    expect(acme.members.map((x: any) => x.slug)).toEqual(['rota', 'mira']);
+    expect(acme.count).toBe(2);
+    expect(acme.asking).toBe(true);
+    expect((rows[1].children.find((c) => c.kind === 'team') as any).count).toBe(1);
+  });
+
+  it('the Global ekip group: each member of all projects once, opening in its project', () => {
+    const g = buildGlobalTeam(ekipByProject({ projects, facts: {}, fanout: {}, device }), 'acme')!;
+    expect(g.members.map((x) => x.slug)).toEqual(['atlas']);
+    expect(g.members[0]).toMatchObject({ project: 'acme', openIn: 'acme' });
+    expect(g.count).toBe(1);
+  });
+
+  it('the rows and the sheet carry the phone test ids; a sheet has the switch and no "Üyeleri yönet"', () => {
+    const drawer = readFileSync(new URL('../../dashboard/src/components/layout/newshell/ChatDrawer.tsx', import.meta.url), 'utf8');
+    const list = readFileSync(new URL('../../dashboard/src/components/layout/newshell/TeamList.tsx', import.meta.url), 'utf8');
+    expect(drawer).toContain("p.device ? 'phone-team-row' : 'drawer-team-row'");
+    expect(drawer).toContain("p.device ? 'phone-global-team-row' : 'drawer-global-team-row'");
+    expect(drawer).toMatch(/const phone = !!p\.device \|\| !!p\.home;/);
+    expect(list).toContain("data-testid={p.sheet ? 'phone-team-sheet' : p.testid}");
+    expect(list).toContain('data-testid="team-member-switch"');
+    expect(list).toMatch(/\{!p\.sheet && p\.onManage && \(/);
   });
 });

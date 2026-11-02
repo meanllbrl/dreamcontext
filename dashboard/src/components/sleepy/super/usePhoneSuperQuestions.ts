@@ -1,9 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { pollMs } from '../../../lib/windowActivity';
 import type { SuperAskSpec, SuperQueueItem } from '../../../lib/superTypes';
 import type { ChatSession } from '../chatSession';
 import { publishSuperQuestions, type SuperQuestionView } from './superJobsStore';
 import { dropSurveyDraft, surveyDraftKey } from '../chat/surveyDrafts';
+import type { SuperId } from '../../../lib/superTypes';
+import { superRoute } from './superApi';
 
 /**
  * The hands-free phone's Super Agent questions (owner 2026-10-24: a child's 4-question card the
@@ -78,8 +80,18 @@ export function usePhoneSuperQuestions(opts: {
   api: Api;
   /** The phone's live chat on a conversation (its mirror of the Super's chat, when open). */
   sessionFor: (claudeId: string) => ChatSession | undefined;
+  /** Whose questions (plan-r10 AC9): the super the phone shows, a member's from its Ekip sheet.
+   *  Absent = main, every request byte-identical to before. */
+  superId?: SuperId;
 }): void {
-  const { enabled, api, sessionFor } = opts;
+  const { enabled, sessionFor } = opts;
+  const superId = opts.superId ?? 'main';
+  // A member's questions and answers go through its own door (`?superId=m:<slug>`).
+  const base = opts.api;
+  const api: Api = useMemo(() => (superId === 'main' ? base : {
+    get: <T>(path: string) => base.get<T>(superRoute(path, superId)),
+    post: <T>(path: string, body?: unknown) => base.post<T>(superRoute(path, superId), body),
+  }), [base, superId]);
   const sessionForRef = useRef(sessionFor);
   sessionForRef.current = sessionFor;
 

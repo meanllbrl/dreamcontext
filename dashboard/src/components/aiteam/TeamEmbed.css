@@ -1,0 +1,25 @@
+/* The deep-link alias page and an app's embedded team list (pages/AiTeamPage.tsx). Tokens only. */
+
+.aiteam--alias { grid-template-columns: minmax(0, 1fr); }
+.aiteam--alias .aiteam-zero { display: grid; place-items: center; }
+
+.aiteam-embed-list { margin: 0; padding: var(--space-2); list-style: none; overflow-y: auto; }
+.aiteam-embed-member {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 40px;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.aiteam-embed-member:hover { background: var(--color-bg-tertiary); }
+.aiteam-embed-member.is-sel { background: var(--color-accent-soft); }
+.aiteam-embed-member:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }

@@ -156,14 +156,10 @@ describe('sidebar rail — the icon family is one hand (C9)', () => {
     expect(src).not.toMatch(/stroke-width=/);
   });
 
-  it('draws Agents as agents, not as a clock (C10)', () => {
+  it('has no AI Team glyph any more: the row left the rail (plan-r10 1d)', () => {
     const src = read(NAV_ICONS);
-    const start = src.indexOf('function AiTeamIcon');
-    const body = src.slice(start, src.indexOf('\n}', start));
-    // The clock was a ring plus two hands plus two bells. Two heads is the shape now; the
-    // assertion is on the GLYPH's own body so a comment elsewhere cannot satisfy it.
-    expect([...body.matchAll(/<circle/g)].length).toBeGreaterThanOrEqual(2);
-    expect(body).not.toMatch(/cy="13\.6"/);
+    expect(src).not.toContain('function AiTeamIcon');
+    expect(iconPages(src)).not.toContain('automations');
   });
 });
 
@@ -301,29 +297,31 @@ describe('sidebar rail — the Workspace entry is Whiteboard, the settings group
 });
 
 describe('sidebar rail — Workspace order (owner, 2026-10-02)', () => {
-  it('reads Chat, Tasks, AI Team, Insights, Roadmap, then the alpha pages last', () => {
+  it('reads Chat, Tasks, Insights, Roadmap, then the alpha pages last (no AI Team row, plan-r10 1d)', () => {
     const block = navGroupsBlock(read(SIDEBAR_TSX));
     const workspace = block.slice(0, block.indexOf("'nav.group.memory'"));
     const rows = [...workspace.matchAll(/\{\s*(?:page|launch):\s*'([^']+)'([^}]*)\}/g)].map((m) => ({ id: m[1], maturity: /maturity:\s*'([^']+)'/.exec(m[2])?.[1] }));
-    // AI Team (page key `automations`) is Agents and Automations in one row (owner, 2026-10-20).
-    expect(rows.map((r) => r.id)).toEqual(['chat', 'tasks', 'automations', 'lab', 'roadmap', 'apps', 'hypotheses', 'whiteboards', 'council']);
+    // The AI Team row left the rail (owner `uv773y`): members are the Ekip row under Chat.
+    expect(rows.map((r) => r.id)).toEqual(['chat', 'tasks', 'lab', 'roadmap', 'apps', 'hypotheses', 'whiteboards', 'council']);
     // No beta or stable row may sit below an alpha one.
     const firstAlpha = rows.findIndex((r) => r.maturity === 'alpha');
     expect(rows.slice(firstAlpha).every((r) => r.maturity === 'alpha')).toBe(true);
   });
 });
 
-describe('sidebar rail — the hero row (C5)', () => {
-  it('puts AI Team right after Tasks in Workspace, with no maturity tag, flagged hero', () => {
+describe('sidebar rail — no AI Team row; the Ekip row under Chat (plan-r10 1d)', () => {
+  it('has no automations or agents row, and so no hero row', () => {
     const items = navItems(read(SIDEBAR_TSX));
-    // Chat (a launcher row, not a page) leads; Tasks then Automations follow (owner, 2026-10-02).
     expect(items[0].page).toBe('tasks');
-    expect(items[1].page).toBe('automations');
-    expect(items[1].labelKey).toBe('nav.aiTeam');
-    expect(items[1].maturity).toBeUndefined();
-    expect(items[1].hero).toBe(true);
-    // Exactly one hero: the emphasis is only worth anything if it is not shared.
-    expect(items.filter((i) => i.hero)).toHaveLength(1);
+    expect(items.some((i) => i.page === 'automations' || i.page === 'agents')).toBe(false);
+    expect(items.filter((i) => i.hero)).toHaveLength(0);
+  });
+
+  it('draws ONE Ekip row under Chat and the Global ekip row in the footer', () => {
+    const src = read(SIDEBAR_TSX);
+    expect(src).toContain('<SidebarTeam kind="project" />');
+    expect(src).toContain('<SidebarTeam kind="global" />');
+    expect(src.indexOf('<SidebarTeam kind="global" />')).toBeGreaterThan(src.indexOf('className="sidebar-footer"'));
   });
 
   it('shows Insights (page: lab) at beta, like Automations v2 (Insights v2, owner 2026-09-29)', () => {

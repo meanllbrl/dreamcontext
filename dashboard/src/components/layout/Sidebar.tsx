@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
+import { SidebarTeam } from './SidebarTeam';
 import { isMacPhoneSurface } from '../../lib/phoneSurface';
 import { useI18n } from '../../context/I18nContext';
 import { BrandMark } from '../brand/BrandMark';
@@ -86,11 +87,9 @@ export const NAV_GROUPS: NavGroup[] = [
       // top to bottom instead of alternating.
       { launch: 'chat', labelKey: 'nav.chat' },
       { page: 'tasks', labelKey: 'nav.tasks' },
-      // AI TEAM (owner, 2026-10-20): Agents and Automations are ONE row now. A teammate is an
-      // agent, its automations are its routines, and you talk to each one in its own
-      // conversation. Production from day one, so no maturity tag. The page key stays
-      // `automations` (persisted nav state); `agents` lands on the same page.
-      { page: 'automations', labelKey: 'nav.aiTeam', hero: true },
+      // NO AI TEAM ROW (plan-r10 1d, owner `uv773y`): each project's members are ONE Ekip row
+      // under Chat, opened, switched on/off and seen there; created and edited in "Üyeleri
+      // yönet". The `automations` and `agents` page ids stay only as deep-link aliases.
       { page: 'lab', labelKey: 'nav.labpage', maturity: 'beta' },
       { page: 'roadmap', labelKey: 'nav.roadmap', maturity: 'beta' },
       // dreamcontext Apps: this project's own local web apps, each in its own Mac window.
@@ -154,8 +153,8 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
   const { unread, agentUnread, learningOff, showChat, chatRollup, chatOpen } = useNavBadges();
   // What the owner has not read in this project's Super Agent chat (the pane publishes it).
   const superUnread = useSuperUnreadCount(vault);
-  // `agents` is the AI Team too (its old deep links land there), so its row lights up.
-  const current: Page | null = chatOpen && showChat ? null : activePage === 'agents' ? 'automations' : activePage;
+  // `agents`/`automations` are deep-link aliases now (they open "Üyeleri yönet"): no row lights.
+  const current: Page | null = chatOpen && showChat ? null : activePage;
   const vaultLabel = vault ?? '';
 
   // 3-state cloud-sync CTA: not signed in → invite sign-in; signed in but no
@@ -228,7 +227,8 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
                 const { live, waiting } = chatRollup;
                 const showUnread = superUnread > 0;
                 return (
-                  <li key={item.launch} className={`animate-stagger animate-stagger-${staggerIndex}`}>
+                  <Fragment key={item.launch}>
+                  <li className={`animate-stagger animate-stagger-${staggerIndex}`}>
                     <button
                       className={`sidebar-item sidebar-item--launcher${chatOpen ? ' sidebar-item--active' : ''}`}
                       aria-current={chatOpen ? 'page' : undefined}
@@ -248,6 +248,9 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
                       )}
                     </button>
                   </li>
+                  {/* ONE Ekip row under Chat (plan-r10 1d, r8-05). */}
+                  {!tunnel && <SidebarTeam kind="project" />}
+                  </Fragment>
                 );
               }
               const { page, labelKey, maturity, hero } = item as NavItem;
@@ -299,6 +302,8 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
           on click (label shows live status), the gear opens Settings, and a
           teammate-conflict surfaces as a one-click "Resolve with AI" banner. */}
       <div className="sidebar-footer">
+        {/* "Projelerden bağımsız": the Global ekip row (plan-r10 1f, r8-12). */}
+        {!tunnel && <SidebarTeam kind="global" />}
         <button
           className={`sidebar-item sidebar-item--announcements ${activePage === 'announcements' ? 'sidebar-item--active' : ''}`}
           onClick={() => onNavigate('announcements')}

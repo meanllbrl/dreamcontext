@@ -780,3 +780,20 @@
 .ns-logo-done {
   margin-left: auto;
 }
+
+/* New chat with its chevron (r8-07): the row, and beside it the menu of Claude or a member. */
+.ns-dr-newchat-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.ns-dr-newchat-wrap > .ns-dr-newchat { flex: 1; min-width: 0; }
+.ns-drawer-menu-item.ns-newchat-item {
+  justify-content: flex-start;
+  gap: var(--space-2);
+}
+.ns-newchat-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

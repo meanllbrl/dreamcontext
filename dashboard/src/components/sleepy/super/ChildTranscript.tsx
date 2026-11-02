@@ -7,6 +7,7 @@ import { FALLBACK_MODEL_CONFIG } from '../../../lib/agentComposer';
 import { ChatPaneHost, type ChatSurfaceActions } from '../ChatPaneHost';
 import type { HistoryEntry } from '../chatSession';
 import { createTranscriptSession } from '../transcriptSession';
+import { useI18n } from '../../../context/I18nContext';
 
 const noop = () => { /* a finished child: the pane offers nothing to act on */ };
 const ACTIONS: ChatSurfaceActions = {
@@ -81,9 +82,19 @@ export function ChildTranscript({ claudeId, live = false, foot, prepare }: {
       readOnly={foot === 'own' ? 'silent' : live ? true : 'finished'}
     />
   ), [session, modelConfig, live, foot]);
+  // A read-only transcript never draws a new chat's "Say something to start": until the history
+  // is read the pane stays hidden behind a loading line, and an empty one says so (super-team.mjs T4).
+  const { t } = useI18n();
+  const loaded = !!history.data;
+  const shown = prepare && history.data ? prepare(history.data) : history.data;
+  const empty = loaded && (shown?.length ?? 0) === 0;
   return (
-    <div className="super-slot" data-testid="super-child-transcript" ref={hostRef}>
-      {createPortal(pane, session.container)}
+    <div className="super-slot" data-testid="super-child-transcript" data-loaded={loaded ? 'true' : 'false'}>
+      {!loaded && <div className="run-view-note" data-transcript-loading>{t(history.isError ? 'aiteam.run.stepsFailed' : 'aiteam.history.loading')}</div>}
+      {empty && <div className="run-view-note" data-transcript-empty>{t('aiteam.run.noSteps')}</div>}
+      <div ref={hostRef} style={loaded && !empty ? { display: 'contents' } : { display: 'none' }}>
+        {createPortal(pane, session.container)}
+      </div>
     </div>
   );
 }

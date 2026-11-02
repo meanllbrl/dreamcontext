@@ -38,40 +38,28 @@ function locales(): { en: Map<string, string>; tr: Map<string, string> } {
   };
 }
 
-describe('AI Team: one rail row for agents and automations (A1)', () => {
-  it('the Workspace group runs Chat, Tasks, AI Team; no Agents row, no maturity tag on AI Team', () => {
+describe('no AI Team rail row (plan-r10 1d, owner uv773y)', () => {
+  it('the Workspace group has no Agents or AI Team row; the page keys stay as aliases', () => {
     const src = code(read(SIDEBAR));
     expect(src).toMatch(/export type Page = [^;]*'agents'/);
+    expect(src).toMatch(/export type Page = [^;]*'automations'/);
     expect(src).not.toMatch(/\{\s*page:\s*'agents'/);
-    const row = /\{\s*page:\s*'automations',\s*labelKey:\s*'nav\.aiTeam'([^}]*)\}/.exec(src);
-    expect(row, 'no AI Team rail row').toBeTruthy();
-    expect(row![1]).not.toMatch(/maturity/);
-    const chat = src.indexOf("launch: 'chat'");
-    const tasks = src.indexOf("page: 'tasks'");
-    const team = src.indexOf("page: 'automations'");
-    expect(chat).toBeLessThan(tasks);
-    expect(tasks).toBeLessThan(team);
+    expect(src).not.toMatch(/\{\s*page:\s*'automations'/);
   });
 
-  it('the old agents page key lights the AI Team row', () => {
-    expect(code(read(SIDEBAR))).toMatch(/activePage === 'agents' \? 'automations' : activePage/);
-  });
-
-  it('the label is AI Team in English and Turkish', () => {
-    const { en, tr } = locales();
-    expect(en.get('nav.aiTeam')).toBe('AI Team');
-    expect(tr.get('nav.aiTeam')).toBe('AI Team');
+  it('no row lights for the alias keys', () => {
+    expect(code(read(SIDEBAR))).not.toMatch(/activePage === 'agents' \? 'automations'/);
   });
 });
 
-describe('routing (A1, requestOpenAgents)', () => {
-  it('both page keys render the AI Team with both focus channels', () => {
+describe('routing (plan-r10 1c, 1d: requestOpenAgents, requestManageMembers)', () => {
+  it('both page keys render the alias with both focus channels', () => {
     const src = code(read(INSTANCE));
     expect(src).toMatch(/case 'automations':\s*case 'agents':\s*return \(\s*<AiTeamPage\s+automationFocus=\{automationFocus\}\s+onAutomationFocusDone=\{onAutomationFocusDone\}\s+agentsFocus=\{agentsFocus\}\s+onAgentsFocusDone=\{onAgentsFocusDone\}/);
     expect(src).not.toMatch(/AgentsPage|AutomationsPage/);
   });
 
-  it('a page/agents link lands on the page with the slug as the page\'s own focus', () => {
+  it('a page/agents link lands on the alias with the slug as its own focus', () => {
     const src = code(read(INSTANCE));
     expect(src).toMatch(/parsed\.page === 'agents'\)\s*\{\s*nav\.navigate\('agents', null\);\s*onAgentsFocus\(parsed\.id \? \{ slug: parsed\.id \} : \{\}\);/);
   });
@@ -82,11 +70,25 @@ describe('routing (A1, requestOpenAgents)', () => {
       const at = src.indexOf(`function ${name}`);
       expect(at, name).toBeGreaterThan(-1);
       const body = src.slice(at, src.indexOf('\n}\n', at));
-      expect(body, name).toMatch(/if \(!isActive\) return;/);
+      expect(body, name).toMatch(/if \(!isActive\) return( undefined)?;/);
       expect(body, name).toMatch(/window\.addEventListener\(/);
       expect(body, name).toMatch(/window\.removeEventListener\(/);
       expect(src, `${name} is not mounted`).toMatch(new RegExp(`<${name}[ />]`));
     }
+  });
+
+  it('a member request rings the member intent on the bus; create, a board and a bare request open the modal', () => {
+    const src = code(read(INSTANCE));
+    const at = src.indexOf('function OpenAgentsBridge');
+    const body = src.slice(at, src.indexOf('\n}\n', at));
+    expect(body).toMatch(/routeOpenAgents\(readOpenAgentsDetail\(/);
+    expect(body).toMatch(/memberIntent\(route\.slug, title, route\.task\)/);
+    expect(body).toMatch(/emitInstance<DrawerIntent>\(bus, DRAWER_INTENT_EVENT, intent\)/);
+    expect(body).toMatch(/route\.to === 'manage'\) \{ onManage\(route\.detail\)/);
+    expect(body).toMatch(/MANAGE_MEMBERS_EVENT/);
+    // It never lands on a page any more.
+    expect(body).not.toMatch(/nav\.navigate/);
+    expect(src).toMatch(/<ManageMembersModal focus=\{manage\} onClose=\{closeManage\} \/>/);
   });
 
   it('a plain navigate(\'agents\', slug) (an agent recall hit) becomes the page\'s own focus, once per nonce', () => {
@@ -99,12 +101,14 @@ describe('routing (A1, requestOpenAgents)', () => {
     expect(src).toMatch(/<NavFocusAgentsBridge nav=\{nav\} onAgentsFocus=\{focusAgents\} \/>/);
   });
 
-  it('the AI Team takes an agent focus (profile or create) and an automation focus (its agent)', () => {
+  it('the alias turns an agent focus (profile or create) and an automation focus (its agent) into the modal', () => {
     const src = code(read(PAGE));
-    expect(src).toMatch(/if \(agentsFocus\.create\)/);
-    expect(src).toMatch(/setPanel\('profile'\)/);
-    expect(src).toMatch(/setSelected\(a\?\.agent \?\? automationFocus\.slug\)/);
-    expect(src).toMatch(/useAgents\(\)/);
+    expect(src).toMatch(/requestManageMembers\(\{/);
+    expect(src).toMatch(/agentsFocus\.create \? \{ create: true \} : \{\}/);
+    // An automation link: a member's routine opens that member's stage; any other keeps the modal.
+    expect(src).toMatch(/automationLinkRoute\(automationFocus\.slug, automationsQ\.data, agentsQ\.data\)/);
+    expect(src).toMatch(/if \(route\.to === 'member'\) requestOpenAgents\(\{ slug: route\.slug \}\);\s*else requestManageMembers\(\{ slug: route\.slug \}\);/);
+    expect(src).not.toMatch(/AgentStage|stageSession|TeamRoster|RunFoot/);
   });
 
   it('the corner Chat button and dock step aside on the AI Team, as on a whiteboard (A9)', () => {

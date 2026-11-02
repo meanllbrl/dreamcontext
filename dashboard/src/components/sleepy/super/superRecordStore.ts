@@ -97,5 +97,59 @@ export function useSuperRecord(vault: string | null, superId: SuperId = MAIN_SUP
   return useSyncExternalStore(subscribeSuperRecords, read, read);
 }
 
+export interface VaultSuperRecord { superId: SuperId; record: SuperStateView }
+
+/** Bumped on every change: the vault snapshots below are rebuilt only after one. */
+let version = 0;
+subscribeSuperRecords(() => { version += 1; });
+const vaultSnapshots = new Map<string, { version: number; list: readonly VaultSuperRecord[] }>();
+const NO_RECORDS: readonly VaultSuperRecord[] = Object.freeze([]);
+
+/**
+ * Every super's record this window holds for the vault (main first, then the members by id): what
+ * must see ALL supers at once (which chats are some super's children, whose push a chat is). The
+ * same array until a record changes, so `useSyncExternalStore` and memo deps stay quiet.
+ */
+export function readVaultSuperRecords(vault: string | null): readonly VaultSuperRecord[] {
+  const vk = vault ?? '';
+  const held = vaultSnapshots.get(vk);
+  if (held && held.version === version) return held.list;
+  const prefix = vaultPrefix(vault);
+  const list: VaultSuperRecord[] = [];
+  for (const [key, h] of records) {
+    if (!key.startsWith(prefix)) continue;
+    list.push({ superId: key.slice(prefix.length) as SuperId, record: h.record });
+  }
+  list.sort((a, b) => (a.superId === MAIN_SUPER ? -1 : b.superId === MAIN_SUPER ? 1 : a.superId.localeCompare(b.superId)));
+  const out = list.length ? list : NO_RECORDS;
+  // A same-content rebuild keeps the old array (a change in another vault is no change here).
+  if (held && held.list.length === out.length && held.list.every((r, i) => r.superId === out[i].superId && r.record === out[i].record)) {
+    vaultSnapshots.set(vk, { version, list: held.list });
+    return held.list;
+  }
+  if (out.length) vaultSnapshots.set(vk, { version, list: out });
+  else vaultSnapshots.delete(vk);
+  return out;
+}
+
+export function useVaultSuperRecords(vault: string | null): readonly VaultSuperRecord[] {
+  const read = () => readVaultSuperRecords(vault);
+  return useSyncExternalStore(subscribeSuperRecords, read, read);
+}
+
+/** The super whose OWN chat this conversation is (its record's `session`), or null. */
+export function superIdOfSession(vault: string | null, claudeId: string | null | undefined): SuperId | null {
+  if (!claudeId) return null;
+  for (const r of readVaultSuperRecords(vault)) if (r.record.session === claudeId) return r.superId;
+  return null;
+}
+
+/** The super whose child this conversation is (a key of its record's `children`), or null. */
+export function superIdOfChild(vault: string | null, claudeId: string | null | undefined): SuperId | null {
+  if (!claudeId) return null;
+  for (const r of readVaultSuperRecords(vault)) if (Object.prototype.hasOwnProperty.call(r.record.children, claudeId)) return r.superId;
+  return null;
+}
+
 /** Tests only. */
 export function _superRecordSize(): number { return records.size; }

@@ -26,12 +26,14 @@ const INLINE: Record<string, [string, string, RegExp]> = {
   brain: ['pages/BrainPage.tsx', 'nav.brain', /newShell \? \(\s*<>\s*<PageTitle title=\{t\('nav\.brain'\)\} \/>/],
   council: ['components/council/CouncilHall.tsx', 'nav.council', /\{newShell && <PageTitle title=\{t\('nav\.council'\)\} \/>\}/],
   whiteboards: ['pages/WhiteboardsPage.tsx', 'nav.whiteboard', /\{newShell && <PageTitle title=\{t\('nav\.whiteboard'\)\} \/>\}/],
-  automations: ['pages/AiTeamPage.tsx', 'nav.aiTeam', /if \(!newShell\) return page;[\s\S]*<PageBar title=\{t\('nav\.aiTeam'\)\}>/],
+  // No rail row any more (plan-r10 1d): the `automations`/`agents` alias page is titled by what it
+  // opens, "Üyeleri yönet", still in one bar and still only in the new shell.
+  automations: ['pages/AiTeamPage.tsx', 'drawer.team.manage', /if \(!newShell\) return page;[\s\S]*<PageBar title=\{t\('drawer\.team\.manage'\)\} \/>/],
 };
 const TITLE_ONLY = ['core', 'taxonomy', 'sleep', 'packs', 'announcements'];
 
 describe('page headers', () => {
-  it('every inline title sits in its row, from the rail label, gated on the new shell', () => {
+  it('every inline title sits in its row, from the rail label (the alias page: what it opens), gated on the new shell', () => {
     for (const [page, [file, , gate]] of Object.entries(INLINE)) {
       expect(read(file), page).toMatch(gate);
     }
@@ -66,8 +68,6 @@ describe('page headers', () => {
     // its title is the window's crumb, never a page bar.
     expect(read('components/settings/window/SettingsWindow.tsx')).toMatch(/<span className="sw-crumb">[\s\S]{0,200}\{t\('nav\.settings'\)\}/);
     expect(read('pages/SettingsPage.tsx')).not.toMatch(/<PageBar/);
-    // The AI Team roster drops its own h1 under the page bar.
-    expect(read('components/aiteam/TeamRoster.tsx')).toMatch(/\{!headless && \(\s*<div className="aiteam-roster-head">/);
   });
 
   it('a title is one 18px h1 of the bar\'s class; "← Chat" shows only for a page a chat opened', () => {

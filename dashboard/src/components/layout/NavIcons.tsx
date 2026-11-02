@@ -206,31 +206,6 @@ function AnnouncementsIcon() {
   );
 }
 
-/** AI Team — two AI teammates side by side: a rounded head with an antenna and two eyes each,
- *  over its shoulders.
- *
- * THE PAGE IS A ROSTER OF AI MEMBERS who work together (owner pick "A3", 2026-10-22). Two equal
- * heads say "a team of peers"; the antenna and the two eyes say they are agents, and the eyes
- * are Sleepy's two-eye mark, the brand's own face. The old glyph's speech tail is gone: Chat and
- * Council already say "talk", and the rail read three bubbles in a row. Never a clock, gear or
- * lightning: none of those is what a user comes here to find. */
-function AiTeamIcon() {
-  return (
-    <Svg>
-      <rect x="2.5" y="5.5" width="8" height="7.5" rx="2.5" />
-      <path d="M6.5 5.5V3.2" />
-      <circle cx="5.1" cy="9.3" r="1" fill="currentColor" stroke="none" />
-      <circle cx="7.9" cy="9.3" r="1" fill="currentColor" stroke="none" />
-      <path d="M2.5 20.5a4 4 0 0 1 8 0" />
-      <rect x="13.5" y="5.5" width="8" height="7.5" rx="2.5" />
-      <path d="M17.5 5.5V3.2" />
-      <circle cx="16.1" cy="9.3" r="1" fill="currentColor" stroke="none" />
-      <circle cx="18.9" cy="9.3" r="1" fill="currentColor" stroke="none" />
-      <path d="M13.5 20.5a4 4 0 0 1 8 0" />
-    </Svg>
-  );
-}
-
 /** Control Panel (page id `whiteboards`) — a board on an easel with a stroke drawn on it:
  *  the canvas you and the agent draw on together. */
 function WhiteboardsIcon() {
@@ -300,7 +275,6 @@ export const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   roadmap: RoadmapIcon,
   hypotheses: HypothesesIcon,
   lab: LabIcon,
-  automations: AiTeamIcon,
   whiteboards: WhiteboardsIcon,
   apps: AppsIcon,
   council: CouncilIcon,

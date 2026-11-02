@@ -14,7 +14,7 @@ export function AutonomyChip({ level, onEdit }: { level: AgentAutonomy; onEdit?:
   const { t } = useI18n();
   const word = autonomyWord(level, t);
   const label = t('aiteam.autonomy.label').replace('{level}', word);
-  // A narrow head shows the level alone (AgentStage.css); its name keeps the full label.
+  // A narrow head shows the level alone; its name keeps the full label.
   const text = <><span className="aiteam-autonomy-full">{label}</span><span className="aiteam-autonomy-short" aria-hidden="true">{word}</span></>;
   return onEdit ? (
     <button type="button" className={`aiteam-autonomy aiteam-autonomy--${level}`} onClick={onEdit} title={t(`aiteam.autonomy.${level}.desc`)} aria-label={label}>

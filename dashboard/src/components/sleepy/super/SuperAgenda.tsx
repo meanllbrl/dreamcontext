@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import type { SuperState } from '../../../lib/superTypes';
 import type { OwnerInboxRow } from '../../../hooks/useAgents';
@@ -28,7 +29,7 @@ import './SuperAgenda.css';
  * no job behind it that has not changed for two hours is marked "unchanged". The owner moves a
  * note by hand with its own small button (Done / Put back): the server never moves it again.
  */
-export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, onShowChild, onShowQuestion, onWriteAbout, onMoveNote, taskRows = [], onOpenTask }: {
+export function SuperAgenda({ state, look, variant = 'full', wide = false, canShowChild, onShowChild, onShowQuestion, onWriteAbout, onMoveNote, taskRows = [], onOpenTask, extra }: {
   /** The record (the stage), or the phone's digest of it (PhoneAgenda): only these two read. */
   state: Pick<SuperState, 'queue' | 'pad'>;
   /** `tile`: the three counts (a small or medium card); `full`: the notepad. */
@@ -49,6 +50,8 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
   onOpenTask?: (slug: string) => void;
   /** The owner moves a note by hand (`POST /api/super/pad`); absent = the notes are only read. */
   onMoveNote?: (id: string, section: 'now' | 'done') => void;
+  /** Drawn after the sections in the full notepad: a member's "Görevleri" (plan-r10 1c). */
+  extra?: ReactNode;
 }) {
   const { t } = useI18n();
   const sections = superNotepad(state, look);
@@ -174,6 +177,7 @@ export function SuperAgenda({ state, look, variant = 'full', wide = false, canSh
           </section>
         );
       })}
+      {extra}
     </div>
   );
 }

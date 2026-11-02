@@ -83,18 +83,27 @@ describe('note 2: the Super stage has no bar and chat windows have no Super butt
 });
 
 describe('note 3: a team member opens in the chat area', () => {
-  it('the row sends a member intent, never the AI Team page', () => {
+  // Per-member rows became ONE Ekip row (plan-r10 1d): its list's member click sends the member
+  // intent (the member's stage, its one conversation), never the AI Team page.
+  it('the Ekip list\'s member click sends a member intent, never the AI Team page', () => {
     const d = src('dashboard/src/components/layout/newshell/ChatDrawer.tsx');
     expect(d).not.toContain("page: 'automations'");
-    expect(d).toContain("{ kind: 'member', slug: c.slug, title: c.title }");
+    expect(d).toContain("pick(vault, { kind: 'member', slug: m.slug, title: m.title })");
+    expect(d).toMatch(/onOpen=\{\(m\) => openMember\(teamOpen\.vault, m\)\}/);
   });
-  it('the drawer marks the member on screen', () => {
-    const rows = buildDrawerRows({
+  it('the drawer marks the Ekip row while a member is on screen', () => {
+    const build = (member?: string) => buildDrawerRows({
       projects: [{ name: 'acme', logo: false, logoStamp: null, mounted: true, asleep: false, otherWindow: false, rollup: null }],
       activeVault: 'acme', expanded: ['acme'], fanout: {},
-      facts: { acme: { superOn: true, superSelected: false, chatOpen: true, team: [{ slug: 'scout', title: 'Scout', hasPhoto: false, status: 'working' }], member: 'scout' } },
+      facts: { acme: {
+        superOn: true, superSelected: false, chatOpen: true, team: [],
+        members: [{ slug: 'scout', global: false, enabled: true, ownerWorking: 1, asking: false, approval: false, unread: 0, superOnly: false, lastAt: 1 }],
+        identities: [{ slug: 'scout', title: 'Scout', hasPhoto: false }],
+        ...(member ? { member } : {}),
+      } },
     });
-    expect(rows[0].children.find((c) => c.kind === 'member')).toMatchObject({ selected: true });
+    expect(build('scout')[0].children.find((c) => c.kind === 'team')).toMatchObject({ selected: true });
+    expect(build()[0].children.find((c) => c.kind === 'team')).toMatchObject({ selected: false });
   });
 });
 
@@ -229,7 +238,8 @@ describe('note 9: the Super Agent row', () => {
     expect(off).not.toMatch(/window\.confirm|[^a-zA-Z]confirm\(/);
     expect(off).toMatch(/if \(ok\) await takeBack\(\)/);
     expect(off).toMatch(/super\.off\.ownTurn/);
-    expect(surface).toMatch(/onTurnOff=\{remoteDesktop \? undefined : turnOffSuper\}/);
+    // A member's stage has no Turn off either (plan-r10 Wave 3): it turns off from the Ekip list.
+    expect(surface).toMatch(/onTurnOff=\{remoteDesktop \|\| stageMember \? undefined : turnOffSuper\}/);
   });
   it('asks while an item waits on the owner, and stops when it is done', () => {
     expect(superRowMarks(record({ queue: [q({ kind: 'owner' })] })).asking).toBe(true);

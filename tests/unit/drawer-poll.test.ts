@@ -10,12 +10,14 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const asked: Array<[string | null, string]> = [];
+/** One `summary=1` `members` entry (plan-r10 1d): the Ekip row reads these. */
+const MEMBER = { slug: 'digest', global: false, enabled: true, ownerWorking: 1, asking: false, approval: false, unread: 0, superOnly: false, lastAt: 5 };
 vi.mock('../../dashboard/src/api/client.js', () => ({
   ApiClient: class {
     constructor(private vault: string | null) {}
     async get(path: string) {
       asked.push([this.vault, path]);
-      if (path.startsWith('/agent/sessions')) return { windows: 1, tabs: 4, superOn: true };
+      if (path.startsWith('/agent/sessions')) return { windows: 1, tabs: 4, superOn: true, members: [MEMBER, { no: 'slug' }] };
       if (path === '/agents') return { agents: [{ slug: 'digest', title: 'Digest', hasPhoto: false, roleLine: '', description: '', approvedForChat: true, approvedToRun: true }] };
       if (path === '/automations') return { automations: [] };
       return { messages: [], unreadBySlug: {}, runSlots: {}, working: { digest: { since: 1 } } };
@@ -48,7 +50,14 @@ describe('a far project\'s facts', () => {
   it('come from that project\'s own client, the summary roster and the team inputs', async () => {
     asked.length = 0;
     const f = await readFanoutFacts('globex');
-    expect(f).toEqual({ tabs: 4, superOn: true, superMarks: { working: 0, asking: false }, team: [{ slug: 'digest', title: 'Digest', hasPhoto: false, status: 'working' }] });
+    // The Ekip row reads the summary's `members` (each entry checked) and who they are; the
+    // headless roster (`team`) is kept only for in-flight headless jobs and a routine's question.
+    expect(f).toEqual({
+      tabs: 4, superOn: true, superMarks: { working: 0, asking: false },
+      team: [{ slug: 'digest', title: 'Digest', hasPhoto: false, status: 'working', superOnly: false, preview: null }],
+      members: [MEMBER],
+      identities: [{ slug: 'digest', title: 'Digest', hasPhoto: false, global: false }],
+    });
     expect(asked.every(([v]) => v === 'globex')).toBe(true);
     expect(asked.map(([, p]) => p).sort()).toEqual(['/agent/sessions?summary=1', '/agents', '/automations', '/automations/threads']);
   });

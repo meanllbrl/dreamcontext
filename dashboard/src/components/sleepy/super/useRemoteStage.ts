@@ -41,7 +41,9 @@ export function useRemoteStage(o: {
   const superId = o.superId ?? 'main';
   useEffect(() => {
     if (!o.remoteDesktop) return undefined;
-    if (!session) { cb.current.onOff(); return undefined; }
+    // Main's stage waits for main's live row; a member's (opened from the phone's Ekip sheet,
+    // plan-r10 AC9) is read from its own door, which answers 'off' when it has no Super.
+    if (!session && superId === 'main') { cb.current.onOff(); return undefined; }
     let cancelled = false;
     void fetchRemoteStage(o.api, superId).then((st) => {
       if (cancelled || !st) return;

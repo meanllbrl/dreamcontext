@@ -189,7 +189,7 @@ export function TaskDetailPanel({ task, allTasks = [], onOpenTask, onClose }: Ta
                 subtasks: parent ? null : subtasksSlot,
                 criteria: <CriteriaSection body={shownBody} onToggle={(i, c) => onToggle('acceptance_criteria', i, c)} />,
                 media: <MediaSection task={task} />,
-                work: job ? <><DeliveriesSection deliveries={job.deliveries} /><ReviewRoundsSection job={job} history={history} /></> : null,
+                work: job ? <><DeliveriesSection deliveries={job.deliveries} /><ReviewRoundsSection job={job} history={history} taskSlug={task.slug} /></> : null,
                 history: <HistorySection history={history} />,
               }}
             />

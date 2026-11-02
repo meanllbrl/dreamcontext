@@ -5,10 +5,12 @@ import { VaultLogo } from '../VaultLogo';
 import { ProjectLogoPanel } from './ProjectLogoPanel';
 import { ProjectChipBubbles } from '../ProjectTabs';
 import { AgentAvatar } from '../../agents/AgentAvatar';
+import type { EkipMember } from '../../aiteam/teamModel';
+import { TeamList, TeamRowButton, type TeamListMember } from './TeamList';
 import { DRAWER_WIDTH_MAX, DRAWER_WIDTH_MIN } from '../../../lib/launcherPrefs';
 import type { DrawerIntent } from '../../../lib/drawerIntents';
 import { armPointerDrag } from '../../sleepy/tabDrag';
-import { windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow } from './drawerModel';
+import { windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow, type GlobalTeamRow } from './drawerModel';
 import './ChatDrawer.css';
 
 /** Pixels a press must travel before it is a drag, not a click (`tabDrag.ts`'s threshold). */
@@ -44,9 +46,19 @@ export interface ChatDrawerProps {
   /** Under the rows, outside the scroll: Mac mode's tunnel puts the notification opt-in and the
    *  connection-log button here (the Sohbetler list's foot before the phone joined the shell). */
   foot?: ReactNode;
+  /** The Global ekip row at the very bottom (plan-r10 1f), or null when no project has a member
+   *  of all projects. */
+  globalTeam?: GlobalTeamRow | null;
+  /** A member's on/off switch in an Ekip list: `POST /api/agents/:slug/enabled` in `vault`. */
+  onSwitchMember?(vault: string, slug: string, enabled: boolean): Promise<unknown>;
+  /** "Üyeleri yönet" from a list (desktop only): the modal in `vault` (null: the project in view). */
+  onManage?(vault: string | null): void;
 }
 
-interface Menu { kind: 'project' | 'new' | 'window'; name?: string; windowId?: string; x: number; y: number }
+interface Menu { kind: 'project' | 'new' | 'window' | 'new-chat'; name?: string; windowId?: string; x: number; y: number }
+
+/** Which Ekip list is open: a project's, or the Global ekip's. */
+type TeamOpen = { kind: 'project'; vault: string; x: number; y: number } | { kind: 'global'; x: number; y: number };
 
 /** The stored name of a project's first window (agent-sessions.ts `DEFAULT_WINDOW`): drawn in the
  *  owner's language. */
@@ -63,6 +75,10 @@ export function ChatDrawer(p: ChatDrawerProps) {
   const [renaming, setRenaming] = useState<{ vault: string; id: string; value: string } | null>(null);
   /** The project whose logo panel is open. */
   const [editing, setEditing] = useState<string | null>(null);
+  /** The open Ekip list (r8-06, r8-12). */
+  const [teamOpen, setTeamOpen] = useState<TeamOpen | null>(null);
+  /** A phone: the lists are bottom sheets, and nothing is edited there. */
+  const phone = !!p.device || !!p.home;
   const renameDone = useRef(false);
   const rootRef = useRef<HTMLElement | null>(null);
   const newRowRef = useRef<HTMLButtonElement | null>(null);
@@ -232,6 +248,32 @@ export function ChatDrawer(p: ChatDrawerProps) {
     if (p.floating) p.onClose();
   };
 
+  /** A project's Ekip row (r8-05): faces, one count; a click opens its list. */
+  const teamRow = (c: Extract<DrawerChild, { kind: 'team' }>) => (
+    <TeamRowButton key="team" members={c.members} count={c.count} asking={c.asking} label={t('drawer.team.row')}
+      selected={c.selected} className="ns-dr-child" testid={p.device ? 'phone-team-row' : 'drawer-team-row'} vault={c.vault}
+      expanded={teamOpen?.kind === 'project' && teamOpen.vault === c.vault}
+      onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setTeamOpen({ kind: 'project', vault: c.vault, x: r.right + 8, y: r.top }); }} />
+  );
+
+  /** A project's members for the New chat menu: its own, then the members of all projects. */
+  const newChatMembers = (row: DrawerProjectRow): EkipMember[] => {
+    const own = row.children.find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team')?.members ?? [];
+    const global = (p.globalTeam?.members ?? []).filter((g) => !own.some((m) => m.slug === g.slug));
+    return [...own, ...global].filter((m) => m.enabled);
+  };
+
+  const teamOf = (vault: string): EkipMember[] => {
+    const row = p.rows.find((r) => r.name === vault);
+    return row?.children.find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team')?.members ?? row?.team?.members ?? [];
+  };
+
+  /** The member's stage, its one conversation, in the project it is opened for. */
+  const openMember = (vault: string, m: Pick<EkipMember, 'slug' | 'title'>) => {
+    setTeamOpen(null);
+    pick(vault, { kind: 'member', slug: m.slug, title: m.title });
+  };
+
   const child = (row: DrawerProjectRow, c: DrawerChild) => {
     if (c.kind === 'super') {
       return (
@@ -240,16 +282,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
           unreadLabel={(n) => t('super.unread.count').replace('{n}', String(n))} onPick={() => pick(row.name, { kind: 'super' })} />
       );
     }
-    if (c.kind === 'member') {
-      return (
-        <button key={`m-${c.slug}`} type="button" className={`ns-dr-row ns-dr-child ns-dr-member${c.selected ? ' is-sel' : ''}`} data-status={c.status}
-          data-testid="drawer-member-row" onClick={() => pick(row.name, { kind: 'member', slug: c.slug, title: c.title })}>
-          <AgentAvatar of="agent" slug={c.slug} title={c.title} hasPhoto={c.hasPhoto} size={16} />
-          <span className="ns-dr-t">{c.title}</span>
-          <span className="ns-dr-status" data-status={c.status} aria-hidden="true" />
-        </button>
-      );
-    }
+    if (c.kind === 'team') return teamRow(c);
     if (c.kind === 'chat') {
       const title = c.title || t('shell.drawer.untitled');
       return (
@@ -274,12 +307,23 @@ export function ChatDrawer(p: ChatDrawerProps) {
       );
     }
     if (c.kind === 'new-chat') {
+      // r8-07: "Claude" (today's new chat) or a member's ONE conversation, behind the chevron.
+      const members = newChatMembers(row);
       return (
-        <button key="new-chat" type="button" className="ns-dr-row ns-dr-child ns-dr-newchat" data-testid="drawer-new-chat"
-          onClick={() => pick(row.name, { kind: 'new-window' })}>
-          <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>
-          <span className="ns-dr-t">{t('shell.drawer.newChat')}</span>
-        </button>
+        <div key="new-chat" className="ns-dr-newchat-wrap">
+          <button type="button" className="ns-dr-row ns-dr-child ns-dr-newchat" data-testid="drawer-new-chat"
+            onClick={() => pick(row.name, { kind: 'new-window' })}>
+            <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>
+            <span className="ns-dr-t">{t('shell.drawer.newChat')}</span>
+          </button>
+          {members.length > 0 && (
+            <button type="button" className="ns-dr-act ns-dr-newchat-menu" data-testid="new-chat-menu" aria-haspopup="menu"
+              aria-label={t('drawer.newChat.menu')}
+              onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); openMenu({ kind: 'new-chat', name: row.name, x: r.left, y: r.bottom + 4 }); }}>
+              <svg className="ns-dr-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>
+            </button>
+          )}
+        </div>
       );
     }
     const live = c.working + c.asking + c.other;
@@ -405,19 +449,68 @@ export function ChatDrawer(p: ChatDrawerProps) {
               <svg className={`ns-dr-chev${row.expanded ? ' is-open' : ''}`} viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>
             </div>
             {row.expanded && <div className="ns-dr-children">{row.children.map((c) => child(row, c))}</div>}
+            {!row.expanded && row.team && <div className="ns-dr-children">{teamRow(row.team)}</div>}
           </div>
         ))}
         {drag && drag.over >= p.rows.length && <div className="ns-dr-drop-end" aria-hidden="true" />}
       </div>
+      {p.globalTeam && (
+        // r8-12: outside every project, at the very bottom.
+        <div className="ns-team-global">
+          <div className="ns-team-global-head">{t('drawer.team.independent')}</div>
+          <TeamRowButton members={p.globalTeam.members} count={p.globalTeam.count} asking={p.globalTeam.asking}
+            label={t('drawer.team.global')} testid={p.device ? 'phone-global-team-row' : 'drawer-global-team-row'}
+            expanded={teamOpen?.kind === 'global'}
+            onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setTeamOpen({ kind: 'global', x: r.right + 8, y: r.bottom }); }} />
+        </div>
+      )}
       {p.foot && <div className="ns-dr-foot" data-testid="drawer-foot">{p.foot}</div>}
+      {teamOpen?.kind === 'project' && (
+        <TeamList title={t('drawer.team.listTitle').replace('{project}', () => teamOpen.vault)} members={teamOf(teamOpen.vault)}
+          sheet={phone} testid="team-list" anchor={{ x: teamOpen.x, y: teamOpen.y }}
+          onOpen={(m) => openMember(teamOpen.vault, m)}
+          onSwitch={(m, enabled) => p.onSwitchMember?.(teamOpen.vault, m.slug, enabled) ?? Promise.resolve()}
+          {...(!phone && p.onManage ? { onManage: () => p.onManage?.(teamOpen.vault) } : {})}
+          onClose={() => setTeamOpen(null)} />
+      )}
+      {teamOpen?.kind === 'global' && p.globalTeam && (
+        <TeamList title={`${t('drawer.team.global')} · ${t('drawer.team.globalAll')}`} members={p.globalTeam.members as TeamListMember[]}
+          sheet={phone} testid="global-team-list" anchor={{ x: teamOpen.x, y: teamOpen.y - 8 }}
+          onOpen={(m) => { const g = p.globalTeam?.members.find((x) => x.slug === m.slug); if (g?.openIn) openMember(g.openIn, m); }}
+          onSwitch={(m, enabled) => {
+            // A global member's switch writes its global manifest: any project it opens in will do.
+            const g = p.globalTeam?.members.find((x) => x.slug === m.slug);
+            return g?.openIn ? (p.onSwitchMember?.(g.openIn, m.slug, enabled) ?? Promise.resolve()) : Promise.reject(new Error('no project'));
+          }}
+          {...(!phone && p.onManage ? { onManage: () => p.onManage?.(null) } : {})}
+          onClose={() => setTeamOpen(null)} />
+      )}
 
       {!p.floating && <div className="ns-dr-handle" onPointerDown={startResize} aria-hidden="true" />}
       {guide !== null && <div className="ns-dr-guide" style={{ left: guide }} aria-hidden="true" />}
 
       {menu && (
         <div ref={menuRef} className="ns-menu ns-drawer-menu" role="menu" onKeyDown={onMenuKey} style={{ left: menu.x, top: menu.y }}
-          data-testid={menu.kind === 'new' ? 'drawer-new-menu' : menu.kind === 'window' ? 'drawer-window-menu' : 'drawer-project-menu'}>
-          {menu.kind === 'new' ? (
+          data-testid={menu.kind === 'new' ? 'drawer-new-menu' : menu.kind === 'window' ? 'drawer-window-menu' : menu.kind === 'new-chat' ? 'new-chat-menu-list' : 'drawer-project-menu'}>
+          {menu.kind === 'new-chat' && menu.name ? (
+            <>
+              <div className="ns-drawer-menu-head">{t('shell.drawer.newChat')}</div>
+              <button type="button" role="menuitem" className="ns-drawer-menu-item ns-newchat-item" data-testid="new-chat-claude"
+                onClick={() => { closeMenu(); pick(menu.name!, { kind: 'new-window' }); }}>
+                <span className="ns-newchat-name">{t('drawer.newChat.claude')}</span>
+              </button>
+              {(() => {
+                const row = p.rows.find((r) => r.name === menu.name);
+                return row ? newChatMembers(row).map((m) => (
+                  <button key={m.slug} type="button" role="menuitem" className="ns-drawer-menu-item ns-newchat-item" data-testid="new-chat-member" data-slug={m.slug}
+                    onClick={() => { closeMenu(); openMember(menu.name!, m); }}>
+                    <AgentAvatar of="agent" slug={m.slug} title={m.title} hasPhoto={m.hasPhoto} size={20} />
+                    <span className="ns-newchat-name">{m.title}</span>
+                  </button>
+                )) : null;
+              })()}
+            </>
+          ) : menu.kind === 'new' ? (
             <>
               <div className="ns-drawer-menu-head">{t('shell.drawer.pickProject')}</div>
               {p.rows.map((row) => (

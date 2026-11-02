@@ -10,6 +10,28 @@ import { instantToLocalInput, jobChip, jobWaitLine, localInputToInstant, queuePo
 import { TaskAgentFace } from '../AssignToAgentComposer';
 import { JobChipView } from '../JobChipView';
 
+/**
+ * A task's doer or reviewer face as a BUTTON (plan-r10 1c, AC18): it opens that member's stage
+ * with the task on top (`requestOpenAgents({ slug, task })`, routed by `ProjectInstance` to the
+ * member intent). Used on the board card, the properties panel, the job row and the review
+ * rounds. A click never reaches the card under it.
+ */
+export function TaskFaceButton({ slug, task, role, size = 20 }: { slug: string; task: string; role: 'doer' | 'reviewer'; size?: number }) {
+  const { t } = useI18n();
+  const { data: agents } = useAgents();
+  const name = findAgent(agents, slug)?.title ?? slug;
+  const label = tr(t, 'tasks.agent.openMember', "Open {name}'s page", { name });
+  return (
+    <button type="button" className="task-agent-face-btn" data-testid="task-agent-face" data-slug={slug} data-role={role}
+      aria-label={label} title={label}
+      style={{ display: 'inline-flex', padding: 0, border: 0, background: 'transparent', borderRadius: 'var(--radius-sm)', cursor: 'pointer', lineHeight: 0 }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); requestOpenAgents({ slug, task }); }}>
+      <TaskAgentFace slug={slug} size={size} />
+    </button>
+  );
+}
+
 /** Actions the drawer offers on its own (the rows' `open-task`/`dismiss` mean nothing here). */
 const ROW_SKIP = new Set(['open-task', 'dismiss']);
 /** Actions that take the owner's words (or, for reschedule, a time) before they go. */
@@ -197,7 +219,7 @@ export function AgentJobRow({ task, detail, allTasks }: { task: Task; detail: Ag
           {detail.reason && !closed && <p className="djob-reason">{detail.reason}</p>}
         </div>
         {task.agent && (
-          <button type="button" className="djob-link" onClick={() => requestOpenAgents({ slug: task.agent ?? undefined })}>
+          <button type="button" className="djob-link" onClick={() => requestOpenAgents({ slug: task.agent ?? undefined, task: task.slug })}>
             {tr(t, 'tasks.job.openStage', 'Open its stage')}
           </button>
         )}

@@ -710,6 +710,9 @@ export interface ChatSession {
   /** Called with the composer's text on every keystroke (`syncDraft`). The Super Agent's chat
    *  uses it for the owner-activity lease; the text itself never leaves the window. */
   setDraftListener: (fn: ((text: string) => void) | null) => void;
+  /** The stage's header for the owner's next message (`[About task <slug>]` while a member's
+   *  task strip is up); null = none. */
+  setAboutHeader?: (fn: ((text: string) => string) | null) => void;
   /** Answer a pending permission request (or a plain non-question `can_use_tool` prompt).
    *  FALSE when the answer could not be written (the socket is not open): the card stays, and
    *  the caller says so instead of reporting an answer nobody received. TRUE after a write,
@@ -1420,6 +1423,7 @@ export function createChatSession(
       session.superChild = childAlarm.child;
     },
     setDraftListener: (fn) => { draftListener = fn; },
+    setAboutHeader: (fn) => { aboutHeader = fn; },
     interrupt,
     bargeInSpeech,
     armSpoken: (text: string) => { spokenNext = text.trim() || null; },
@@ -2607,9 +2611,18 @@ export function createChatSession(
     try { return ownerWordsHook(clean) === true; } catch { return false; }
   }
 
+  /** What the stage wants on top of the owner's next message (a member's task strip:
+   *  `[About task <slug>]`, plan-r10 1c); null = nothing. Read at the send, so the strip in view
+   *  at that moment decides. */
+  let aboutHeader: ((text: string) => string) | null = null;
+  function withAbout(text: string): string {
+    if (!aboutHeader) return text;
+    try { return aboutHeader(text); } catch { return text; }
+  }
+
   function send(text: string): boolean {
     if (ownerWordsTaken(text)) return true;
-    return writeUser(text, { steered: false });
+    return writeUser(withAbout(text), { steered: false });
   }
 
   /**
@@ -2626,7 +2639,7 @@ export function createChatSession(
     // The owner just changed the subject mid-turn. Whatever is still playing belongs to the
     // answer they are talking over.
     silenceSpeech('steer');
-    return writeUser(text, { steered: true });
+    return writeUser(withAbout(text), { steered: true });
   }
 
   /**

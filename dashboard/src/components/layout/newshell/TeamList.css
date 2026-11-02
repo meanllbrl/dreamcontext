@@ -1,0 +1,229 @@
+/* The Ekip row and its list (plan-r10 1d, 1f; r8-05, r8-06, r8-12). Tokens only, 4px grid. */
+
+.ns-team-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.ns-team-row:hover { background: var(--color-bg-tertiary); }
+.ns-team-row.is-sel { background: var(--color-accent-soft); }
+.ns-team-row:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+
+.ns-team-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ns-team-faces { display: inline-flex; flex: none; }
+.ns-team-face {
+  display: inline-flex;
+  border-radius: var(--radius-full);
+  box-shadow: 0 0 0 2px var(--color-bg-secondary);
+}
+.ns-team-face + .ns-team-face { margin-left: calc(-1 * var(--space-1)); }
+.ns-team-face[data-off="true"] { opacity: 0.5; }
+
+/* One count: the accent for unread, the question colour when a question or a card waits. */
+.ns-team-count {
+  flex: none;
+  min-width: var(--space-5);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-xs);
+  line-height: var(--space-5);
+  text-align: center;
+}
+.ns-team-count[data-asking="true"] { background: var(--mood-waiting); }
+
+/* The list: a popover beside the row (desktop), a bottom sheet (phone). */
+.ns-team-list {
+  position: fixed;
+  z-index: 61;
+  width: min(400px, calc(100vw - var(--space-4)));
+  max-height: calc(100vh - var(--space-16));
+  overflow-y: auto;
+  padding: var(--space-2);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-xl);
+  color: var(--color-text);
+}
+.ns-team-list.is-sheet {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  max-height: 70vh;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+}
+.ns-team-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--color-overlay, rgba(0, 0, 0, 0.32));
+}
+.ns-team-grip {
+  display: block;
+  width: var(--space-10);
+  height: var(--space-1);
+  margin: 0 auto var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-border);
+}
+
+.ns-team-head {
+  padding: var(--space-2) var(--space-3) var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.ns-team-rows { margin: 0; padding: 0; list-style: none; }
+
+.ns-team-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-2);
+  border-radius: var(--radius-md);
+}
+.ns-team-item[data-facing="true"] { background: var(--color-bg-secondary); }
+
+.ns-team-open {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ns-team-open:hover { background: var(--color-bg-tertiary); }
+.ns-team-open:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.ns-team-item[data-off="true"] .ns-team-open { color: var(--color-text-secondary); }
+
+.ns-team-text { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+.ns-team-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+.ns-team-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.ns-team-tag {
+  flex: none;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--space-5);
+}
+
+.ns-team-chip {
+  flex: none;
+  min-width: var(--space-5);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--color-accent-strong);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-xs);
+  line-height: var(--space-5);
+  text-align: center;
+}
+.ns-team-chip[data-kind="question"],
+.ns-team-chip[data-kind="approval"] { background: var(--mood-waiting); }
+
+/* The on/off switch: the member's `call.enabled`. */
+.ns-team-switch {
+  position: relative;
+  flex: none;
+  width: calc(var(--space-8) + var(--space-1));
+  height: var(--space-5);
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.ns-team-switch[aria-checked="true"] { background: var(--color-accent); border-color: var(--color-accent); }
+.ns-team-switch:disabled { opacity: 0.6; cursor: default; }
+.ns-team-switch:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.ns-team-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: var(--space-3);
+  height: var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-text-tertiary);
+  transition: transform 140ms ease, background 140ms ease;
+}
+.ns-team-switch[aria-checked="true"] .ns-team-knob { transform: translateX(var(--space-4)); background: var(--color-bg-elevated); }
+
+.ns-team-manage {
+  display: block;
+  width: 100%;
+  margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border: 0;
+  border-top: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-accent-strong);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.ns-team-manage:hover { text-decoration: underline; }
+.ns-team-manage:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+
+/* "Projelerden bağımsız": the Global ekip row's own section at the drawer's foot. */
+.ns-team-global {
+  flex: none;
+  padding: var(--space-2) var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+.ns-team-global-head {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}

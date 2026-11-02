@@ -1,0 +1,301 @@
+/* The member stage's task strip (plan-r10 1c, mockup r8-08b) and its header, approval band and
+   project chip. The app's tokens only; a 4px grid. */
+
+.super-task-strip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+.super-task-strip--loading { min-height: 40px; }
+.super-task-strip-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.super-task-strip-title {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40ch;
+}
+.super-task-strip-status {
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+}
+.super-task-strip-role {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+}
+.super-task-strip-facts {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  min-width: 0;
+}
+.super-task-strip-link {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-accent);
+  cursor: pointer;
+}
+.super-task-strip-close {
+  background: none;
+  border: 0;
+  padding: 0 var(--space-1);
+  font: inherit;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+.super-task-strip-close:hover { color: var(--color-text); }
+.super-task-strip-wait {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+.super-task-strip[data-wait='owner'] .super-task-strip-wait { color: var(--mood-waiting, var(--color-accent)); }
+.super-task-strip[data-wait='stuck'] .super-task-strip-wait { color: var(--color-error); }
+.super-task-strip-actions,
+.super-task-strip-ask {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+.super-task-strip-ask textarea { flex: 1 1 240px; min-width: 0; }
+.super-task-strip .djob-btn {
+  font: inherit;
+  font-size: var(--font-size-xs);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  cursor: pointer;
+}
+.super-task-strip .djob-btn:hover:not(:disabled) { border-color: var(--color-border-hover); }
+/* The task job row's own primary (TaskDetailPanel.css): the text colour as the fill, no accent fill. */
+.super-task-strip .djob-btn--primary { background: var(--color-text); border-color: var(--color-text); color: var(--color-bg); }
+.super-task-strip .djob-btn--primary:hover:not(:disabled) { background: var(--color-text); border-color: var(--color-text); opacity: 0.9; }
+.super-task-strip .djob-btn--danger { color: var(--color-error-ink); }
+.super-task-strip .djob-btn:disabled { opacity: 0.6; cursor: default; }
+.super-task-strip-error { margin: 0; font-size: var(--font-size-xs); color: var(--color-error); }
+
+/* ── The member's head in the centre (mockup r8-08): face, name, "job · tek konuşma" ──
+   One row, nothing overlaps: the member's head takes what the buttons leave (basis 0) and gives
+   way first (subtitle, then the model chip and the tool note); the buttons never shrink under
+   their own width (main's `.super-fresh` may, it shares the row with less). */
+.super-member-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.super-member-head > * { flex: none; }
+.super-member-head > .super-member-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.super-member-head > .super-member-sub { flex: 1 1 0; }
+.super-member-head > .super-member-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.super-centre-head:has(.super-member-head) .super-fresh,
+.super-centre-head:has(.super-member-head) .super-add-btn,
+.super-centre-head:has(.super-member-head) .super-agenda-open { flex: none; }
+@container super-centre (max-width: 719px) {
+  .super-member-head .super-member-sub,
+  .super-member-head .super-member-note { display: none; }
+}
+@container super-centre (max-width: 559px) {
+  .super-member-head .super-member-model { display: none; }
+  .super-centre-head:has(.super-member-head) .super-fresh-btn { padding: 0 var(--space-1); }
+  .super-centre-head:has(.super-member-head) .super-fresh-btn-label { display: none; }
+}
+@container super-centre (max-width: 419px) {
+  .super-member-head .super-member-chip { display: none; }
+}
+.super-member-name {
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+.super-member-sub {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.super-member-model {
+  font-size: var(--font-size-2xs);
+  color: var(--color-text-tertiary);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+.super-member-note {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+.super-member-btn {
+  font: inherit;
+  font-size: var(--font-size-xs);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.super-member-btn:hover { border-color: var(--color-border-hover); }
+.super-member-chip select {
+  font: inherit;
+  font-size: var(--font-size-xs);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+}
+
+/* ── Above the centre chat: the strip, the approval band, a refused open ── */
+.super-member-top {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) 0;
+  flex: none;
+  max-height: 60%;
+  overflow: auto;
+}
+.super-member-top:empty { display: none; }
+.super-member-band {
+  flex: none;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+}
+/* TeamApproval as-is, at its natural height: its page rule (`max-height: 55%`, page padding) is the
+   AI Team page's; inside the band it would clip the card to a sliver. */
+.super-member-band .aiteam-approval { max-height: none; overflow: visible; padding: 0; }
+.super-member-refusal {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+/* ── The agenda's "Görevleri" ── */
+.member-agenda-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+}
+.member-agenda-tasks-title {
+  margin: 0;
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+.member-agenda-task {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.member-agenda-task:hover,
+.member-agenda-task[aria-pressed='true'] { background: var(--color-bg-tertiary); }
+.member-agenda-task-name { font-size: var(--font-size-sm); }
+.member-agenda-task-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-2xs);
+  color: var(--color-text-tertiary);
+}
+.member-agenda-task[data-open='false'] .member-agenda-task-name { color: var(--color-text-secondary); }
+
+/* ── A request from main Super, framed, on the member's stage ── */
+.super-request-block {
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+.super-request-block-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+.super-request-block-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.super-for-main {
+  display: inline-block;
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-2);
+  font-size: var(--font-size-2xs);
+  color: var(--color-text-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+}
+
+/* The member's routine questions (a band like the approval card's): one line until opened. */
+.member-routine-questions { display: flex; flex-direction: column; gap: var(--space-2); }
+.member-routine-questions-bar {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  padding: 0; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; color: var(--color-text);
+}
+.member-routine-questions-line { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); }
+.member-routine-questions-go { flex: none; font-size: var(--font-size-xs); font-weight: 600; color: var(--color-accent); }
+
+/* The phone's member view (one chat, no stage): its head, a note, its conversation read only. */
+.phone-member-stage { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; background: var(--color-bg); }
+.phone-member-head { flex: none; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--color-border); }
+.phone-member-note { flex: none; padding: var(--space-2) var(--space-3) 0; }
+.phone-member-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }

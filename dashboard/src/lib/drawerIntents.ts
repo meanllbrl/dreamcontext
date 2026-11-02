@@ -40,10 +40,25 @@ export type DrawerIntent =
   /** A chat row's close: the tab closes, as the tab strip's close does. Nothing else moves, not
    *  even which project is on screen. */
   | { kind: 'close-chat'; id: string }
-  /** An AI Team member's conversation: opens in the chat area, never on the AI Team page. */
-  | { kind: 'member'; slug: string; title: string }
+  /** An AI Team member's stage (plan-r10 1, 1c): its Super, its ONE conversation, in this project.
+   *  `task` (a task slug): the stage opens with that task's strip on top. */
+  | { kind: 'member'; slug: string; title: string; task?: string }
   /** Project Relations: a page of this project. */
   | { kind: 'page'; page: 'relations'; id?: string };
+
+/** A task slug a member intent may carry (the task-slug charset, no 64 cap: slugs reach ~100). */
+const TASK_SLUG = /^[a-z0-9][a-z0-9-]{0,251}$/;
+/** A member slug (the agents' charset). */
+const MEMBER_SLUG = /^[a-z0-9][a-z0-9-]{0,99}$/;
+
+/** The member intent, checked: a bad slug is no intent, a bad task is dropped (the stage still opens). */
+export function memberIntent(slug: unknown, title: unknown, task?: unknown): Extract<DrawerIntent, { kind: 'member' }> | null {
+  if (typeof slug !== 'string' || !MEMBER_SLUG.test(slug)) return null;
+  const name = typeof title === 'string' && title.trim() ? title.trim() : slug;
+  return typeof task === 'string' && TASK_SLUG.test(task)
+    ? { kind: 'member', slug, title: name, task }
+    : { kind: 'member', slug, title: name };
+}
 
 export interface PendingDrawerIntent {
   intent: DrawerIntent;
