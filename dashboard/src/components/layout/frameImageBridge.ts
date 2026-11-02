@@ -70,6 +70,19 @@ export function readImageMessage(data: unknown): ImageMessage | null {
   return index < 0 ? null : { index, images };
 }
 
+/**
+ * Take the window's focus back from a card's frame once the viewer opens, so the NEXT click into the
+ * page moves focus into it again (a window `blur`) and arms the gate below once more. `frame.blur()`
+ * is not enough: WebKit (the desktop app) ignores it on a focused iframe, so focus stayed in the
+ * page, the viewer handed it back there on close, and every later picture click armed nothing
+ * (owner 2026-11-03: "I close it, click another picture, it does not open"). Focusing an element of
+ * the host document moves it in every engine; the viewer then also returns focus THERE on close.
+ */
+export function releaseFrameFocus(frame: Element | null, anchor: HTMLElement | null): void {
+  if (!frame || !anchor || frame.ownerDocument.activeElement !== frame) return;
+  anchor.focus({ preventScroll: true });
+}
+
 /** Ms after the viewer closes in which the same page cannot open it again. */
 export const REOPEN_COOLDOWN_MS = 500;
 /** How long a click into the card's frame keeps the gate armed. */

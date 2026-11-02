@@ -35,7 +35,7 @@ import { BoardEmbed, BoardFullscreen } from '../sleepy/chat/BoardEmbed';
 import { CloseIcon } from '../whiteboard/PanelIcons';
 import { fileNameOf, resolveDocumentRef, stripFrontmatter } from './viewerPaths';
 import { ZOOM_BRIDGE } from '../layout/frameZoomBridge';
-import { IMAGE_BRIDGE, mayOpenFromFrame, readImageMessage, type ImageMessage } from '../layout/frameImageBridge';
+import { IMAGE_BRIDGE, mayOpenFromFrame, readImageMessage, releaseFrameFocus, type ImageMessage } from '../layout/frameImageBridge';
 import { ImageViewer } from '../layout/ImageViewer';
 import '../sleepy/chat/cards.css';
 import '../sleepy/chat/overlays.css';
@@ -553,6 +553,8 @@ function HtmlPageLive({
   const { resolved: theme } = useTheme();
   const state = useProjectHtml(path, vaultReads, fill);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
+  // The host-side element that takes focus back from the frame when a picture opens (releaseFrameFocus).
+  const rootRef = useRef<HTMLDivElement | null>(null);
   useFrameSelection(frameRef);
   const loads = useRef(0);
   const [height, setHeight] = useState<number | null>(null);
@@ -608,7 +610,8 @@ function HtmlPageLive({
       const img = readImageMessage(event.data);
       if (img && mayOpenFromFrame({ now: Date.now(), closedAt: shotClosedAt.current, active: (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation?.isActive, armedAt: frameArmedAt.current })) {
         frameArmedAt.current = null; // one open per click into the frame
-        frameRef.current?.blur(); // the next click into it moves focus again, and arms again
+        // The next click into it must move focus again, and arm again; `blur()` alone is a no-op in WebKit.
+        releaseFrameFocus(frameRef.current, rootRef.current);
         setShot(img);
       }
     }
@@ -654,7 +657,7 @@ function HtmlPageLive({
     />
   );
   return (
-    <div className={fill ? 'doc-reader-html doc-reader-html--fill' : 'doc-reader-html'}>
+    <div ref={rootRef} tabIndex={-1} className={fill ? 'doc-reader-html doc-reader-html--fill' : 'doc-reader-html'}>
       {state.loading && <p className="viewer-status">{t('viewer.loading')}</p>}
       {state.error && (state.tooLarge
         ? <p className="viewer-status viewer-status--error">{tx('reader.tooLarge', 'This page is too large to show here (the limit is 8 MB). Open it on the computer.')}</p>

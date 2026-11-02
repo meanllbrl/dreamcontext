@@ -4,7 +4,7 @@
  * the same shape, so the host keeps only data:image sources and the clicked picture must survive.
  */
 import { describe, it, expect } from 'vitest';
-import { IMAGE_BRIDGE, IMAGE_MESSAGE_KEY, MAX_IMAGES, readImageMessage } from '../../dashboard/src/components/layout/frameImageBridge.js';
+import { IMAGE_BRIDGE, IMAGE_MESSAGE_KEY, MAX_IMAGES, readImageMessage, releaseFrameFocus } from '../../dashboard/src/components/layout/frameImageBridge.js';
 
 const msg = (m: unknown) => ({ [IMAGE_MESSAGE_KEY]: m });
 const png = (n: number) => ({ src: `data:image/png;base64,AAA${n}`, alt: `a${n}` });
@@ -56,5 +56,34 @@ describe('mayOpenFromFrame: a page opens the viewer only as the answer to a clic
     expect(mayOpenFromFrame({ ...base, active: undefined, armedAt: null })).toBe(false); // …and never open by default
     expect(mayOpenFromFrame({ ...base, closedAt: 10_000 - REOPEN_COOLDOWN_MS + 1 })).toBe(false);
     expect(mayOpenFromFrame({ ...base, closedAt: 10_000 - REOPEN_COOLDOWN_MS })).toBe(true);
+  });
+});
+
+describe('releaseFrameFocus', () => {
+  // WebKit's iframe: blur() leaves the focus where it was (owner 2026-11-03, the second picture never opened).
+  const setup = () => {
+    const doc: { activeElement: unknown } = { activeElement: null };
+    const frame = { ownerDocument: doc, blur: () => {} } as unknown as Element;
+    const anchorOpts: (FocusOptions | undefined)[] = [];
+    const anchor = { focus: (o?: FocusOptions) => { anchorOpts.push(o); doc.activeElement = anchor; } } as unknown as HTMLElement;
+    return { doc, frame, anchor, anchorOpts };
+  };
+
+  it('moves focus out of a focused frame even where frame.blur() does nothing', () => {
+    const { doc, frame, anchor, anchorOpts } = setup();
+    doc.activeElement = frame;
+    releaseFrameFocus(frame, anchor);
+    expect(doc.activeElement).toBe(anchor);
+    expect(anchorOpts).toEqual([{ preventScroll: true }]);
+  });
+
+  it('leaves focus alone when the frame does not hold it', () => {
+    const { doc, frame, anchor } = setup();
+    const chat = {};
+    doc.activeElement = chat;
+    releaseFrameFocus(frame, anchor);
+    releaseFrameFocus(null, anchor);
+    releaseFrameFocus(frame, null);
+    expect(doc.activeElement).toBe(chat);
   });
 });
