@@ -268,7 +268,8 @@ export async function authorizeSuperAgent(req: IncomingMessage, res: ServerRespo
  * approved): a member waiting for its approval card never spawns (review, Wave 2). False = refused.
  */
 function requireMemberReady(c: Pick<SuperCaller, 'superId' | 'who'>, res: ServerResponse): boolean {
-  const member = memberOfSuperId(c.superId);
+  // Absent means main, as everywhere a super id is optional.
+  const member = memberOfSuperId(c.superId ?? 'main');
   if (member === null) return true;
   let state: string;
   try { state = memberCallState(c.who.contextRoot, member).state; } catch { state = 'missing'; }
