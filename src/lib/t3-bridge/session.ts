@@ -274,6 +274,9 @@ type Runtime = ManagedRuntime.ManagedRuntime<
   never
 >;
 
+/** How long a Stop waits for the agent to end the turn before the bridge closes it. */
+export const STOP_CONFIRM_MS = 5_000;
+
 export class BridgeSession {
   readonly wire: ToWire;
   private readonly opts: BridgeSessionOptions;
@@ -286,6 +289,8 @@ export class BridgeSession {
   private effort: string;
   private runOrdinal = 0;
   private activeRun: { runId: RunId; providerTurnId: string | null } | null = null;
+  /** The run a Stop closed itself ({@link closeAfterStop}): its late end draws no second result. */
+  private stoppedRun: RunId | null = null;
   /** Resolves once the active run has its provider turn id (or ended): a Stop or a steer that
    *  arrives before Codex reported the turn running waits for it instead of being lost. */
   private turnKnown: { promise: Promise<void>; resolve: () => void } | null = null;
@@ -522,7 +527,10 @@ export class BridgeSession {
     if (event.type === 'provider_thread.updated' && this.providerThread && event.providerThread.id === this.providerThread.id) {
       this.providerThread = event.providerThread;
     }
+    const lateEnd = event.type === 'turn.terminal' && this.stoppedRun !== null && !this.activeRun;
+    if (lateEnd) this.stoppedRun = null;
     for (const frame of this.wire.translate(event)) {
+      if (lateEnd && frame.type === 'result') continue;
       if (this.answeredForBypass(frame)) continue;
       if (!this.hidden) { this.opts.emit(frame); continue; }
       if (frame.type === 'assistant') this.hidden.text += hiddenText(frame);
@@ -811,7 +819,31 @@ export class BridgeSession {
     await this.awaitTurnId();
     const run = this.activeRun;
     if (!session || !this.providerThread || !run?.providerTurnId) return;
-    await this.run(session.interruptTurn({ providerThread: this.providerThread, providerTurnId: run.providerTurnId as never }));
+    try {
+      await this.run(session.interruptTurn({ providerThread: this.providerThread, providerTurnId: run.providerTurnId as never }));
+    } finally {
+      this.closeAfterStop(run);
+    }
+  }
+
+  /**
+   * An agent that never confirms a Stop must not hold the pane: the turn stays open and the
+   * owner's next message would wait behind it (an ACP agent cannot take one mid-turn). Measured on
+   * the scenario tour (2 Nov): the interrupt ended with "All fibers interrupted" and no turn end.
+   * If the run is still the open one after {@link STOP_CONFIRM_MS}, it is closed here; a late end
+   * from the agent then draws no second result.
+   */
+  private closeAfterStop(run: NonNullable<BridgeSession['activeRun']>): void {
+    setTimeout(() => {
+      if (this.closed || this.hidden || this.activeRun !== run) return;
+      this.stoppedRun = run.runId;
+      this.opts.emit({
+        type: 'result', subtype: 'error_during_execution', is_error: false, result: 'Stopped.',
+        num_turns: 0, total_cost_usd: 0, usage: {}, session_id: this.wire.sessionId, dc_tool: this.opts.tool,
+      });
+      this.activeRun = null;
+      this.turnKnown?.resolve();
+    }, STOP_CONFIRM_MS).unref();
   }
 
   /** The owner answered an approval or a question card. */

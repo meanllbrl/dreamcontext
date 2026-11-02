@@ -280,6 +280,29 @@ describe.skipIf(nodeMajor < 22)('Antigravity on the bridge (fake ACP agent)', ()
     expect(readdirSync(cwd)).toEqual(['_dream_context']);
   }, 60_000);
 
+  it('a Stop the agent never confirms still ends the turn, once', async () => {
+    process.env.T3_ACP_HANG_PROMPT_FOREVER = '1';
+    const cwd = join(dir, 'project');
+    mkdirSync(join(cwd, '_dream_context'), { recursive: true });
+    const input = new PassThrough();
+    const frames: Record<string, any>[] = [];
+    const done = runBridgeStdio(
+      { tool: 'antigravity', cwd, model: '', mode: 'auto', paneId: 'pane-1', binaryPath: fakeAgent(dir) },
+      { input, home: dir, env: { ...process.env, DREAMCONTEXT_CLI: '/fake/cli.js' }, write: (l) => { frames.push(JSON.parse(l) as Record<string, any>); } },
+    );
+    input.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'take your time' } })}\n`);
+    for (let i = 0; i < 200 && !frames.some((f) => f.type === 'system' && f.subtype === 'init'); i++) await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 500));
+    input.write(`${JSON.stringify({ type: 'control_request', request_id: 'stop-1', request: { subtype: 'interrupt' } })}\n`);
+    for (let i = 0; i < 300 && !frames.some((f) => f.type === 'result'); i++) await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 1000));
+    input.end();
+    expect(await done).toBe(0);
+    const results = frames.filter((f) => f.type === 'result');
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ subtype: 'error_during_execution', dc_tool: 'antigravity' });
+  }, 60_000);
+
   it('answers the MCP card\'s status ask with the servers its session holds', async () => {
     const cwd = join(dir, 'project');
     mkdirSync(join(cwd, '_dream_context'), { recursive: true });
