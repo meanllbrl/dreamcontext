@@ -100,8 +100,9 @@ describe('super-orchestration guide: shape', () => {
   // +100 (2026-11-01, Track T W4): `--tool codex` on a delegated child.
   // +100 (2026-11-01): the owner opens cards himself too (measured 22,655).
   // +300 (2026-11-02, 0.36.15): `--tool antigravity` on a delegated child and the rows the integration merges added (measured 22,977).
-  it('is at most 23,000 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(23_000);
+  // +500 (2026-11-02): weigh the owner's idea before saying yes, never agree or argue by reflex (measured 23,448).
+  it('is at most 23,500 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(23_500);
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {
