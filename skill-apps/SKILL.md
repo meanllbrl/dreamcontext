@@ -69,6 +69,9 @@ write tools that truly only read. Anything else it does raises a card the owner 
 work stays in main Chat with /apps. It writes only in the app's data folder (`_dream_context/apps/<slug>/`),
 never the code folder, the project or another app's data, and it can queue a lesson for sleep with
 `dreamcontext apps learn <slug> "<lesson>"`.
+That folder rule is the app's OWN assistant's (its file gate). A bound AI Team member's shell is not
+gated by it and there is no OS sandbox: such a member can read other apps' data, so bind one only where
+that is fine.
 
 **Required: the app's own icon.** `apps new` leaves a placeholder letter, never the finished icon,
 and the dreamcontext logo is never an app icon, not even for a moment. Replace `icon.png` with a
