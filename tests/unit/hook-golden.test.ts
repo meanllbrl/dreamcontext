@@ -4,7 +4,8 @@
  * of the wave with `node scripts/hook-golden.mjs <base dist/index.js> <dir>`: W1 by 0.36.2
  * (d26f0cc0); W3 by its own base, the 0.36.7 merge before any W3 change (ce5f1bab), adding the
  * `.env` deny and the Stop hook (only the version line differs from 0.36.2's files); W4 moved
- * only that version line, to 0.36.8, with its merge (8525a9fe); this
+ * only that version line, to 0.36.8, with its merge (8525a9fe); 0.40.0 moved only that line again
+ * (release prep), and the harness now drops every inherited DREAMCONTEXT_/CLAUDE* variable; this
  * runs the same harness on the CURRENT build and compares every hook's stdout, stderr and exit.
  * The fixture's context sits over the handoff threshold, so the nudge path (`maybeNudge`, which
  * W1 extended with `context_tokens`) is in the output.

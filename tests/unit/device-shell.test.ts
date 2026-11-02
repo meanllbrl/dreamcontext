@@ -317,7 +317,8 @@ describe('the phone layout in the new shell (part 2)', () => {
 
   it('back is ONE window-level mark: from a chat back to the drawer, never out of the app', () => {
     expect(chrome).toMatch(/const backMarkOn = isMobile && activeOnChat && !drawerVisible && !historyOpen;/);
-    expect(chrome).toMatch(/window\.history\.pushState\(\{ phoneChat: mark \}, ''\);\s*\/\/[^\n]*\n\s*const onPop = \(\) => \{ if \(drawerFloatsRef\.current\) setFloatingOpen\(true\); \};/);
+    // d48b3b95 (phone sheets): a pop that lands ON this mark is a sheet closing, not a step back off the chat.
+    expect(chrome).toMatch(/window\.history\.pushState\(\{ phoneChat: mark \}, ''\);\s*(?:\/\/[^\n]*\n\s*)+const onPop = \(\) => \{ if \(window\.history\.state\?\.phoneChat !== mark && drawerFloatsRef\.current\) setFloatingOpen\(true\); \};/);
     expect(surface).not.toContain('pushState');
   });
 

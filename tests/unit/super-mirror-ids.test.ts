@@ -47,7 +47,8 @@ describe('superMirrorIds', () => {
   it('the window\'s live read feeds it from `live.supers`, the Super row\'s tap too, and every chat spawn reads it', () => {
     // The device shell's one live read (useDrawerChats, hands-free W2) serves the drawer and the chat screen alike.
     const list = readFileSync(join(ROOT, 'dashboard/src/hooks/useDrawerChats.ts'), 'utf-8');
-    expect(list).toMatch(/rememberSuperMirrorIds\(\(wire\.supers \?\? \[\]\)\.map\(\(x\) => x\.conversationId\)\);/);
+    // 7a0240dc: parked Super conversations are remembered alongside the live ones.
+    expect(list).toMatch(/rememberSuperMirrorIds\(\[\.\.\.\(wire\.supers \?\? \[\]\)\.map\(\(x\) => x\.conversationId\), \.\.\.\(wire\.parked \?\? \[\]\)\]\);/);
     const surface = readFileSync(join(ROOT, 'dashboard/src/components/sleepy/AgentSurface.tsx'), 'utf-8');
     expect(surface).toMatch(/const mirror = mode !== 'super' && isSuperMirrorId\(cid\);/);
     expect(surface).toMatch(/rememberSuperMirrorIds\(\[row\.conversationId\]\);/);

@@ -93,9 +93,11 @@ describe('resume at reset', () => {
 describe('the route arms it only under Continue, and cancels it', () => {
   const route = readFileSync(join(__dirname, '..', '..', 'src', 'server', 'routes', 'agent-chat.ts'), 'utf-8');
   it('reads the tool\'s own rule; Stop arms nothing', () => {
-    expect(route).toMatch(/if \(\(tool === 'codex' \? codexRules\(\) : claudeRules\(\)\)\.onExhausted !== 'continue'\) return;/);
+    // d627ba32 (Antigravity): rules come from rulesOfTool, which has no rule for a third tool, so it never continues.
+    expect(route).toMatch(/const rulesOfTool = \(tool: string\) => \(tool === 'codex' \? codexRules\(\) : tool === 'claude' \? claudeRules\(\) : null\);/);
+    expect(route).toMatch(/if \(rulesOfTool\(tool\)\?\.onExhausted !== 'continue'\) return;/);
     expect(route).toMatch(/if \(choice\.accountId === null\) armResumeAtReset\(choice\.earliestResetAt, activeAccountId, 'claude'\);/);
-    expect(route).toMatch(/if \(!choice\.target\) armResumeAtReset\(choice\.earliestResetAt, codexAccountId, 'codex'\);/);
+    expect(route).toMatch(/if \(!choice\.target\) armResumeAtReset\(choice\.earliestResetAt, toolAccountId, accounts\.tool\);/);
   });
   it('an owner turn and the pane ending cancel it', () => {
     const at = route.indexOf('const writeOwnerTurn = (text: string): void => {');
@@ -127,8 +129,9 @@ describe('the route arms it only under Continue, and cancels it', () => {
   it('one account, or switching off: it still arms, on a reset the API stated only', () => {
     expect(route).toMatch(/if \(!recorded\.estimated\) armResumeAtReset\(recorded\.until, accountId, tool\);/);
     expect(route).toMatch(/if \(listClaudeAccounts\(\)\.length < 2\) \{ armOnRefusal\(recorded, activeAccountId, 'claude'\); return; \}/);
-    expect(route).toMatch(/if \(listCodexAccounts\(\)\.length < 2\) \{ armOnRefusal\(recorded, codexAccountId, 'codex'\); return; \}/);
-    expect(route.match(/armOnRefusal\(recorded, (activeAccountId, 'claude'|codexAccountId, 'codex')\);\n      return;/g)?.length).toBe(2);
+    // d627ba32: the Codex path became the per-tool `accounts` adapter (Codex and Antigravity).
+    expect(route).toMatch(/if \(accounts\.list\(\)\.length < 2\) \{ armOnRefusal\(recorded, toolAccountId, accounts\.tool\); return; \}/);
+    expect(route.match(/armOnRefusal\(recorded, (activeAccountId, 'claude'|toolAccountId, accounts\.tool)\);\n      return;/g)?.length).toBe(2);
   });
   it('says so to the pane', () => {
     expect(route).toMatch(/reason: 'resumed_at_reset'/);
