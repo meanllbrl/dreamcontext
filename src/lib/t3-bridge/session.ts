@@ -289,8 +289,9 @@ export class BridgeSession {
   private effort: string;
   private runOrdinal = 0;
   private activeRun: { runId: RunId; providerTurnId: string | null } | null = null;
-  /** The run a Stop closed itself ({@link closeAfterStop}): its late end draws no second result. */
-  private stoppedRun: RunId | null = null;
+  /** The turn a Stop closed itself ({@link closeAfterStop}): its late end, known by its provider
+   *  turn id, draws no second result and never closes the run that came after it. */
+  private stoppedTurn: string | null = null;
   /** Resolves once the active run has its provider turn id (or ended): a Stop or a steer that
    *  arrives before Codex reported the turn running waits for it instead of being lost. */
   private turnKnown: { promise: Promise<void>; resolve: () => void } | null = null;
@@ -527,10 +528,11 @@ export class BridgeSession {
     if (event.type === 'provider_thread.updated' && this.providerThread && event.providerThread.id === this.providerThread.id) {
       this.providerThread = event.providerThread;
     }
-    const lateEnd = event.type === 'turn.terminal' && this.stoppedRun !== null && !this.activeRun;
-    if (lateEnd) this.stoppedRun = null;
+    const lateEnd = event.type === 'turn.terminal' && this.stoppedTurn !== null && event.providerTurnId === this.stoppedTurn;
+    // Nothing of it reaches the wire: its result was drawn at the Stop, and its card closing would
+    // cancel the cards of the run that came after it.
+    if (lateEnd) { this.stoppedTurn = null; return; }
     for (const frame of this.wire.translate(event)) {
-      if (lateEnd && frame.type === 'result') continue;
       if (this.answeredForBypass(frame)) continue;
       if (!this.hidden) { this.opts.emit(frame); continue; }
       if (frame.type === 'assistant') this.hidden.text += hiddenText(frame);
@@ -756,11 +758,13 @@ export class BridgeSession {
     const apps = this.session?.mcpApps;
     const thread = this.providerThread;
     if (!apps || !thread || this.closed) return out;
-    for (const server of names) {
+    // Every server at once: one slow server costs the ask its limit once, not once per server.
+    const counts = await Promise.all(names.map((server) => {
       const ask = this.run(apps.listTools({ providerThread: thread, server })).then((tools) => tools.length);
       const late = new Promise<null>((r) => { setTimeout(() => r(null), ms).unref(); });
-      out.set(server, await Promise.race([ask, late]).catch(() => null));
-    }
+      return Promise.race([ask, late]).catch(() => null);
+    }));
+    names.forEach((server, i) => out.set(server, counts[i]));
     return out;
   }
 
@@ -831,16 +835,19 @@ export class BridgeSession {
    * owner's next message would wait behind it (an ACP agent cannot take one mid-turn). Measured on
    * the scenario tour (2 Nov): the interrupt ended with "All fibers interrupted" and no turn end.
    * If the run is still the open one after {@link STOP_CONFIRM_MS}, it is closed here; a late end
-   * from the agent then draws no second result.
+   * from the agent (known by its turn id) then reaches nothing, and never ends the run after it.
    */
   private closeAfterStop(run: NonNullable<BridgeSession['activeRun']>): void {
     setTimeout(() => {
       if (this.closed || this.hidden || this.activeRun !== run) return;
-      this.stoppedRun = run.runId;
-      this.opts.emit({
-        type: 'result', subtype: 'error_during_execution', is_error: false, result: 'Stopped.',
-        num_turns: 0, total_cost_usd: 0, usage: {}, session_id: this.wire.sessionId, dc_tool: this.opts.tool,
-      });
+      this.stoppedTurn = run.providerTurnId;
+      // The end the agent never sent, read like a real one: its open cards close and the wire's
+      // turn ends, so the next message is not taken for a step of this one.
+      const end = {
+        type: 'turn.terminal', driver: this.opts.tool, providerThreadId: this.providerThread?.id, providerTurnId: run.providerTurnId,
+        runOrdinal: this.runOrdinal, status: 'interrupted', failure: null, threadDisposition: 'reusable',
+      } as unknown as ProviderAdapter.ProviderAdapterV2Event;
+      for (const frame of this.wire.translate(end)) this.opts.emit(frame);
       this.activeRun = null;
       this.turnKnown?.resolve();
     }, STOP_CONFIRM_MS).unref();
