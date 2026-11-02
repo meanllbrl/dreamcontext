@@ -216,6 +216,24 @@ describe('super types — server record <-> window mirror', () => {
     expect(client.readSuperStateView(JSON.parse(JSON.stringify(view)))).toEqual(view);
   });
 
+  it('plan-r10 Wave 3: the summary=1 member entry has the same fields on both sides, `pending` included', () => {
+    // The field names of `interface SuperMemberSummary { … }` in a file, sorted.
+    const fields = (file: string): string[] => {
+      const src = readFileSync(join(ROOT, file), 'utf-8');
+      const at = src.indexOf('export interface SuperMemberSummary {');
+      expect(at, file).toBeGreaterThan(-1);
+      const body = src.slice(at, src.indexOf('\n}', at));
+      return [...body.matchAll(/^\s+([a-zA-Z]+)\??:/gm)].map((m) => m[1]).sort();
+    };
+    const onServer = fields('src/lib/super/types.ts');
+    expect(fields('dashboard/src/lib/superTypes.ts')).toEqual(onServer);
+    expect(onServer).toEqual(['approval', 'asking', 'enabled', 'global', 'lastAt', 'ownerWorking', 'pending', 'slug', 'superOnly', 'unread']);
+    // Type-level: an entry of one side is an entry of the other.
+    const entry: server.SuperMemberSummary = { slug: 'rota', global: false, enabled: true, ownerWorking: 0, asking: false, approval: false, unread: 0, superOnly: true, lastAt: 1, pending: 2 };
+    const mirrored: client.SuperMemberSummary = entry;
+    expect(mirrored.pending).toBe(2);
+  });
+
   it('both files carry the MIRRORED comment that sends the next reader to the other one', () => {
     expect(readFileSync(join(ROOT, 'src/lib/super/types.ts'), 'utf-8')).toContain('dashboard/src/lib/superTypes.ts');
     expect(readFileSync(join(ROOT, 'dashboard/src/lib/superTypes.ts'), 'utf-8')).toContain('src/lib/super/types.ts');

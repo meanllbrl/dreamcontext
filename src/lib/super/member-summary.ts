@@ -25,8 +25,11 @@ export function summarizeMember(
   slug: string, s: SuperState | null, facts: { global: boolean; enabled: boolean; approval: boolean },
   live: (sid: string) => boolean = runsNow,
 ): SuperMemberSummary {
-  const base: SuperMemberSummary = { slug, global: facts.global, enabled: facts.enabled, ownerWorking: 0, asking: false, approval: facts.approval, unread: 0, superOnly: false, lastAt: 0 };
+  const base: SuperMemberSummary = { slug, global: facts.global, enabled: facts.enabled, ownerWorking: 0, asking: false, approval: facts.approval, unread: 0, superOnly: false, lastAt: 0, pending: 0 };
   if (!s) return base;
+  // What waits for the member's Super to be attached (plan-r10 1): main's requests and replies
+  // the pump has not carried yet. A spawn signal for the window, never part of the owner's count.
+  const pending = s.queue.filter((q) => (q.kind === 'request' || q.kind === 'reply') && q.state === 'pending').length;
   const kids = Object.entries(s.children);
   const ownerKids = kids.filter(([, c]) => !isMain(c.workOrigin));
   const ownerWorking = ownerKids.filter(([sid, c]) => c.endedAt === undefined && (c.row === 'working' || c.row === 'asking') && live(sid)).length;
@@ -47,7 +50,15 @@ export function summarizeMember(
     unread,
     superOnly: mainOpen && ownerWorking === 0 && !asking,
     lastAt: times.length ? Math.max(0, ...times) : 0,
+    pending,
   };
+}
+
+/** A member's row for the phone (`live-chats`): the owner-facing facts only. `pending` is the
+ *  window's spawn signal, and the phone never opens a Super chat. */
+export function phoneMemberRow(m: SuperMemberSummary): Omit<SuperMemberSummary, 'pending'> {
+  const { pending: _pending, ...row } = m;
+  return row;
 }
 
 /** Every member of the project (project and global agents), its record read when it has one. */

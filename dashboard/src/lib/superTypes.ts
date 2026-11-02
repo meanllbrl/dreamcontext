@@ -448,6 +448,9 @@ export interface SuperMemberSummary {
   unread: number;
   superOnly: boolean;
   lastAt: number;
+  /** Main's `request`/`reply` items still waiting for this member's Super to be attached: the
+   *  window spawns a cold member's Super when above 0 and no live chat holds it. Not a count. */
+  pending: number;
 }
 
 /** A Super verb the window runs, as its frame names it (MIRROR of src/lib/window-control.ts):

@@ -42,7 +42,7 @@ import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.
 import { parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
 import { chatSubagents } from '../../lib/automations/chat-subagents.js';
 import {
-  chatSpawnRoster, collectTeam, renderSuperTeamBlock, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
+  chatSpawnRoster, collectTeam, memberCallState, renderSuperTeamBlock, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
 } from '../../lib/agents/team-roster.js';
 import { refreshSuperTools, superOwnerToolsBlock, toolsBlockFingerprint, toolsBlockNow } from '../../lib/super/tools-block.js';
 import { SUPER_BRIEF_TEXT, memberSlotOf, modeBriefing, superMemberBriefing, type ChatMode } from '../chat-modes.js';
@@ -114,7 +114,7 @@ import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
 import { DEFAULT_AGENT_AUTONOMY, MEMBER_CREW_ENV, MEMBER_SUPER_ENV, SUPER_CREW_ENV } from '../../lib/automations/types.js';
 import { levelPermissionArgs } from '../../lib/agents/permission.js';
-import { memberSummaries, memberSuperSessions } from '../../lib/super/member-summary.js';
+import { memberSummaries, memberSuperSessions, phoneMemberRow } from '../../lib/super/member-summary.js';
 import type { SuperMemberSummary } from '../../lib/super/types.js';
 import { consumeCrewTicket, membersDelegating } from '../../lib/super/delegating.js';
 import { crewBridgeMode, crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
@@ -392,13 +392,25 @@ export function assistantAllowedTools(autonomy: Autonomy): string[] {
  * upgrade path).
  */
 export function superUpgradeRefusal(o: {
-  mode: string; phone: boolean; contextRoot: string; resumeId: string; sessionId: string; chatAgent?: string | null;
+  mode: string; phone: boolean; contextRoot: string; resumeId: string; sessionId: string; chatAgent?: string | null; home?: string;
 }): 403 | 409 | null {
   if (o.mode !== 'super') return null;
   if (o.phone) return 403;
-  const recorded = superEntry(o.contextRoot, o.chatAgent ? superIdOfMember(o.chatAgent) : 'main').session;
+  const entry = superEntry(o.contextRoot, o.chatAgent ? superIdOfMember(o.chatAgent) : 'main');
   const asked = o.resumeId || o.sessionId;
-  return recorded && asked === recorded ? null : 409;
+  if (!entry.session || asked !== entry.session) return 409;
+  // A member turned off or waiting for its approval card has no Super (review 2026-11-02): a
+  // Resume or a reattach fallback must not bring back the chat `stopMemberSuper` ended, to run on
+  // what the owner types. Its record says off first (no disk); its manifest is read only for a
+  // member Super, and an unreadable one refuses.
+  if (o.chatAgent) {
+    if (!entry.enabled) return 409;
+    try {
+      const call = memberCallState(o.contextRoot, o.chatAgent, o.home).state;
+      if (call === 'off' || call === 'needs-approval' || call === 'not_owner') return 409;
+    } catch { return 409; }
+  }
+  return null;
 }
 
 /** The crew mark of a child no ticket or record ties to exactly ONE member (security, end review):
@@ -1170,14 +1182,15 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
   const view = phoneLiveChats(chats, records);
   // Each project's AI Team members as Supers (plan-r10 2.4): one entry per project with each
   // member's owner-facing state; a member's Super session and its children are never his chats.
-  const memberRows: Array<{ vault: string; members: SuperMemberSummary[] }> = [];
+  // `pending` is the window's spawn signal (the phone never opens a Super chat): never sent here.
+  const memberRows: Array<{ vault: string; members: Array<ReturnType<typeof phoneMemberRow>> }> = [];
   const memberHeld = new Set<string>();
   for (const [path, name] of byPath) {
     if (!visible(name)) continue;
     const ctx = join(path, '_dream_context');
     for (const id of await memberSuperSessions(ctx, superSanitizeOpts()).catch(() => new Set<string>())) memberHeld.add(id);
     const members = await memberSummaries(ctx, superSanitizeOpts()).catch(() => [] as SuperMemberSummary[]);
-    if (members.length) memberRows.push({ vault: name, members });
+    if (members.length) memberRows.push({ vault: name, members: members.map(phoneMemberRow) });
   }
   const ownChats = memberHeld.size ? view.chats.filter((c) => !memberHeld.has((c as { conversationId: string }).conversationId)) : view.chats;
   sendJson(res, 200, { chats: ownChats, draining, ...(view.supers.length ? { supers: view.supers } : {}), ...(view.parked.length ? { parked: view.parked } : {}), ...(memberRows.length ? { members: memberRows } : {}) });

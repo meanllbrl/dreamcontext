@@ -32,19 +32,19 @@ import { _resetChatRegistry, registerChat, type ChatHandle } from '../../src/lib
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex, sanitizeSuperState, superKey, withSuperState } from '../../src/lib/super/store.js';
 import { MAX_QUEUE, emptySuperState, trimTeamJobs, type SuperQueueItem, type SuperState } from '../../src/lib/super/types.js';
 import {
-  REQUEST_FROM, REQUEST_QUIET_MS, _resetSuperInbox, _superInboxDrained, attachSuperInbox, bootRequests, checkQuietRequests, nextBatch,
-  noteOwnerActivity, ownerQuestionOpen, setMemberGateForTest, superQueueHead, superOwnerSpoke, superTurnEnded, superTurnOrigin, superView, wireSuperInbox, writeSuper,
+  REQUEST_FROM, REQUEST_QUIET_MS, REQUEST_UNSTARTED_MS, TEAM_LINE, _resetSuperInbox, _superInboxDrained, attachSuperInbox, bootRequests, checkQuietRequests, isRequestQuestion, nextBatch,
+  noteOwnerActivity, ownerQuestionOpen, setMemberGateForTest, superBatchText, superQueueHead, superOwnerSpoke, superTurnEnded, superTurnOrigin, superView, wireSuperInbox, writeSuper,
   type SuperEventFrame, type SuperInbox,
 } from '../../src/lib/super/inbox.js';
 import { deliverSuperResult, mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { TEAM_ASK_ROUTE, handleSuperLayout, handleSuperStateGet, handleSuperVerb, setTeamAskRouteForTest, stopMemberSuper } from '../../src/server/routes/super.js';
 import { handleAgentsSetEnabled } from '../../src/server/routes/agents.js';
 import { registerLiveChat, unregisterLiveChat, type LiveChatEntry } from '../../src/server/routes/agent-chat-live.js';
-import { createAgent } from '../../src/lib/agents/store.js';
-import { summarizeMember } from '../../src/lib/super/member-summary.js';
+import { createAgent, setAgentCallEnabled } from '../../src/lib/agents/store.js';
+import { memberSummaries, phoneMemberRow, summarizeMember } from '../../src/lib/super/member-summary.js';
 import { rosterSummary } from '../../src/server/routes/agent-sessions.js';
 import { superWindowRefusal } from '../../src/server/routes/window-control.js';
-import { memberCrewCandidates, memberCrewDecision, memberCrewOf, memberCrewPermissionMode } from '../../src/server/routes/agent-chat.js';
+import { memberCrewCandidates, memberCrewDecision, memberCrewOf, memberCrewPermissionMode, superUpgradeRefusal } from '../../src/server/routes/agent-chat.js';
 import { crewBridgeMode, crewToolRefusal } from '../../src/lib/super/member-crew.js';
 import { _resetDelegating, mintCrewTicket, noteDelegating } from '../../src/lib/super/delegating.js';
 import { _resetOwnerQuestions, setOwnerQuestionSinks } from '../../src/lib/super/owner-question.js';
@@ -95,7 +95,8 @@ async function askRota(text = 'Plan the Friday routes.') {
   return { request: result.request, job: result.job, session: (await rota()).session as string };
 }
 
-// The request route is built and tested, but not live until Wave 3 (TEAM_ASK_ROUTE): selected here.
+// The request route is live since Wave 3 (TEAM_ASK_ROUTE); named here anyway, so these tests keep
+// testing it whatever the default says. 'the live route' below runs with no override.
 beforeEach(() => { setTeamAskRouteForTest('request'); });
 afterEach(() => { setTeamAskRouteForTest(null); });
 
@@ -141,6 +142,10 @@ describe('team ask is a request in the member\'s own Super', () => {
     expect(un.status).toBe(409);
     expect(un.json.error).toBe('say_unapproved');
     expect((await readSuperState(root, 'm:pera')).queue).toEqual([]);
+    // Where the owner approves it now (plan-r10 1e): its stage band and "Üyeleri yönet", no AI Team page.
+    expect(String(un.json.message)).toContain('the owner does, on its approval card (its stage, or "Üyeleri yönet")');
+    const approval = (await main()).queue.find((q) => q.kind === 'approval' && q.member === 'pera');
+    expect(approval?.ownerText).toBe('pera waits for its one approval card (on its stage, and in "Üyeleri yönet"), so the Super Agent cannot give it a job. Open the card there, then tell the Super Agent.');
     for (let i = 0; i < 20; i++) await askRota(`job ${i}`);
     const full = await verb(tokenFor(MAIN), 'team-ask', { member: 'rota', text: 'one more' });
     expect(full.status).toBe(429);
@@ -166,6 +171,28 @@ describe('team ask is a request in the member\'s own Super', () => {
     expect(s.team.find((j) => j.id === 'team-old-1')).toMatchObject({ open: true });
     expect(s.team.find((j) => j.id === job)?.followUpOf).toBeUndefined();
     expect(s.containers.filter((c) => c.kind === 'team')).toHaveLength(1);
+  });
+});
+
+describe('the live route (Wave 3): team ask with no route override', () => {
+  beforeEach(() => { setTeamAskRouteForTest(null); });
+
+  it('the default is `request`: a request item in the member\'s record, and main\'s team job for the member\'s one card', async () => {
+    expect(TEAM_ASK_ROUTE).toBe('request');
+    const r = await verb(tokenFor(MAIN), 'team-ask', { member: 'rota', text: 'Check Monday.', brief: 'Monday' });
+    expect(r.status, JSON.stringify(r.json)).toBe(200);
+    const result = r.json.result as { job: string; member: string; request: string; queued: boolean; status: string };
+    expect(result).toMatchObject({ member: 'rota', queued: true, status: 'queued' });
+    expect(typeof result.request).toBe('string');
+    const m = await rota();
+    expect(m).toMatchObject({ enabled: true, member: 'rota' });
+    expect(m.queue).toEqual([expect.objectContaining({ id: result.request, kind: 'request', state: 'pending', text: 'Check Monday.' })]);
+    const s = await main();
+    expect(s.team.find((j) => j.id === result.job)).toMatchObject({ member: 'rota', request: result.request, open: true, brief: 'Monday' });
+    expect(s.containers.filter((c) => c.kind === 'team')).toEqual([expect.objectContaining({ ref: result.job })]);
+    // Nothing for main's own pump: the request lives in the member's queue only.
+    expect(s.queue.some((q) => q.kind === 'request')).toBe(false);
+    expect(superView(root, s).teamLive?.[result.job]?.status).toBe('queued');
   });
 });
 
@@ -315,6 +342,25 @@ describe('a member\'s question to main, and main\'s answer', () => {
     const r = await verb(tokenFor(MAIN), 'queue-ask', { item: q.id, text: 'Owner, which depot?' });
     expect(r.status).toBe(400);
     expect(r.json.error).toBe('team_question');
+    // …and its message sends main to `team answer`, never to the owner.
+    expect(String(r.json.message)).toContain('super team answer');
+    expect(String(r.json.message)).not.toMatch(/owner's to answer/);
+  });
+
+  it('main\'s event turn tags it from=member-super, and the team rule says it is main\'s to answer, never the owner\'s', async () => {
+    const { request, job, session } = await askRota();
+    await verb(tokenFor(session, 'm:rota'), 'ask', { text: 'Which depot?', for: request });
+    const s = await main();
+    const q = s.queue.find((x) => x.kind === 'question' && x.team === job)!;
+    const text = superBatchText(root, s, [q], 'b-q');
+    expect(text).toMatch(new RegExp(`^- item=${q.id} team=${job} member=rota event=question from=member-super`, 'm'));
+    expect(text).toContain(TEAM_LINE);
+    expect(TEAM_LINE).toContain('event=question on a line WITHOUT from=member-super means the member\'s run stopped to ask the owner');
+    expect(TEAM_LINE).toContain('event=question on a line WITH from=member-super is that member\'s own Super asking YOU about the job you gave it, never the owner\'s');
+    expect(TEAM_LINE).toContain('`dreamcontext super team answer <item> "<answer>"`');
+    expect(TEAM_LINE).toContain('never tell him the member asks and never forward it');
+    // The approval card lives on the member's stage and in "Üyeleri yönet" now, not an AI Team page.
+    expect(TEAM_LINE).not.toMatch(/in AI Team\b/);
   });
 });
 
@@ -445,6 +491,49 @@ describe('window, sessions, summary', () => {
     expect(both).toMatchObject({ slug: 'rota', global: true, ownerWorking: 1, superOnly: false, lastAt: 30 });
     const onlyMain = summarizeMember('rota', { ...s, children: { mainKid: s.children.mainKid } }, { global: false, enabled: true, approval: true }, () => true);
     expect(onlyMain).toMatchObject({ ownerWorking: 0, superOnly: true, approval: true, asking: false, unread: 0 });
+  });
+
+  it('summary members[].pending: request and reply items still pending, nothing else; owner counts unchanged', () => {
+    const item = (id: string, kind: SuperQueueItem['kind'], state: SuperQueueItem['state'], extra: Partial<SuperQueueItem> = {}) =>
+      ({ id, sessionId: 's', kind, state, createdAt: 5, text: 'x', ...extra }) as SuperQueueItem;
+    const s: SuperState = {
+      ...emptySuperState(), session: 's', enabled: true, member: 'rota',
+      queue: [
+        item('q-req-pend-0001', 'request', 'pending'),
+        item('q-req-pend-0002', 'request', 'pending'),
+        item('q-req-dlvr-0003', 'request', 'delivered'),
+        item('q-req-done-0004', 'request', 'done'),
+        item('q-rep-pend-0005', 'reply', 'pending'),
+        item('q-rep-done-0006', 'reply', 'done'),
+        // Pending, but not main's work waiting for the member's Super: never counted.
+        item('q-ask-pend-0007', 'ask', 'pending', { workOrigin: 'main:q-req-dlvr-0003' }),
+        item('q-don-pend-0008', 'done', 'pending'),
+      ],
+    };
+    const m = summarizeMember('rota', s, { global: false, enabled: true, approval: false }, () => true);
+    expect(m.pending).toBe(3);
+    // The owner-facing facts are those of the same record without its pending items.
+    const without = summarizeMember('rota', { ...s, queue: s.queue.filter((q) => !((q.kind === 'request' || q.kind === 'reply') && q.state === 'pending')) },
+      { global: false, enabled: true, approval: false }, () => true);
+    expect({ ...m, pending: 0, lastAt: 0 }).toEqual({ ...without, pending: 0, lastAt: 0 });
+    // No record yet: nothing waits.
+    expect(summarizeMember('rota', null, { global: false, enabled: true, approval: false }).pending).toBe(0);
+    // The phone's row carries the owner-facing facts only.
+    expect(Object.keys(phoneMemberRow(m)).sort()).toEqual(['approval', 'asking', 'enabled', 'global', 'lastAt', 'ownerWorking', 'slug', 'superOnly', 'unread']);
+  });
+
+  it('summary members[].pending follows a real team ask: 1 while it waits for the member\'s Super, 0 once delivered', async () => {
+    const { session } = await askRota();
+    const before = (await memberSummaries(root)).find((x) => x.slug === 'rota');
+    expect(before?.pending).toBe(1);
+    // A request is main's work: no owner-facing count for it.
+    expect(before).toMatchObject({ ownerWorking: 0, asking: false, unread: 0 });
+    expect((await memberSummaries(root)).find((x) => x.slug === 'mira')?.pending).toBe(0);
+    idle(session);
+    const { inbox, delivered } = fakeInbox(session);
+    attachSuperInbox(inbox);
+    await vi.waitFor(() => expect(delivered).toHaveLength(1), W);
+    await vi.waitFor(async () => expect((await memberSummaries(root)).find((x) => x.slug === 'rota')?.pending).toBe(0), W);
   });
 
   it('a crewTicket ties the FIRST child to exactly its member (consumed once); main\'s delegate frame-free children unchanged', () => {
@@ -608,11 +697,13 @@ describe('end review (Wave 2)', () => {
     expect((await main()).queue.filter((q) => q.team === job && q.partial)).toHaveLength(1);
   });
 
-  it('3: team ask stays on the Wave 1 headless route until Wave 3 flips TEAM_ASK_ROUTE; the guide says so', () => {
-    expect(TEAM_ASK_ROUTE).toBe('say');
-    const guide = readFileSync(new URL('../../skill/references/super-orchestration.md', import.meta.url), 'utf-8');
-    expect(guide).toMatch(/after Wave 3/i);
-    expect(guide).not.toMatch(/`super team ask` is a request/);
+  it('3: Wave 3 flipped TEAM_ASK_ROUTE to the request route; the guide describes it as live', () => {
+    expect(TEAM_ASK_ROUTE).toBe('request');
+    const guide = readFileSync(new URL('../../skill/references/super-orchestration.md', import.meta.url), 'utf-8').replace(/\s+/g, ' ');
+    expect(guide).not.toMatch(/after Wave 3|not live yet|Until then `team ask`/i);
+    expect(guide).toContain('lands in the member\'s own Super as a request');
+    expect(guide).toContain('`super team answer <item> "<answer>"`');
+    expect(guide).toContain('`super team done`');
   });
 
   it('4: team done closes the member\'s asks to main about that request and main\'s linked question; a later ask to main is free', async () => {
@@ -677,5 +768,90 @@ describe('end review (Wave 2)', () => {
     const t = (memberFrame.args as Record<string, string>).crewTicket;
     expect(memberCrewDecision({ conversation: 'k1', ticket: t, contextRoot: root }).mark).toBe('rota');
     expect(memberCrewDecision({ conversation: 'k2', ticket: t, contextRoot: root }).mark).toBeNull();
+  });
+});
+
+describe('review 2026-11-02: no window, a member\'s question to main, an off member\'s Super', () => {
+  const memberKey = () => superKey(root, 'm:rota');
+  const unstartedLines = async (job: string) => (await main()).queue.filter((q) => q.team === job && q.kind === 'done' && q.partial && /has not started this job/.test(q.text ?? ''));
+
+  it('a request nothing started for 10 minutes (no live member Super) gives main ONE line and closes nothing', async () => {
+    const { request, job } = await askRota();
+    const born = (await rota()).queue.find((q) => q.id === request)!;
+    // Before 10 minutes: nothing.
+    checkQuietRequests(memberKey(), await rota(), born.createdAt + REQUEST_UNSTARTED_MS - 1);
+    await _superInboxDrained();
+    expect(await unstartedLines(job)).toHaveLength(0);
+    // After: one line, naming why and when it starts.
+    checkQuietRequests(memberKey(), await rota(), born.createdAt + REQUEST_UNSTARTED_MS + 1);
+    await vi.waitFor(async () => expect(await unstartedLines(job)).toHaveLength(1), W);
+    expect((await unstartedLines(job))[0].text).toBe('Rota has not started this job: no window is open to start its Super; it starts when the app shows the project.');
+    // Once per request, and the request stays pending and open; main's job stays open.
+    checkQuietRequests(memberKey(), await rota(), born.createdAt + 3 * REQUEST_UNSTARTED_MS);
+    await _superInboxDrained();
+    expect(await unstartedLines(job)).toHaveLength(1);
+    expect((await rota()).queue.find((q) => q.id === request)).toMatchObject({ kind: 'request', state: 'pending' });
+    expect((await main()).team.find((j) => j.id === job)?.open).toBe(true);
+  });
+
+  it('no line while a live chat holds the member\'s Super, for an accepted request, or for an off member', async () => {
+    const { request, job, session } = await askRota();
+    const born = (await rota()).queue.find((q) => q.id === request)!;
+    const late = born.createdAt + REQUEST_UNSTARTED_MS + 1;
+    reg(session, 'super');
+    checkQuietRequests(memberKey(), await rota(), late);
+    await _superInboxDrained();
+    expect(await unstartedLines(job)).toHaveLength(0);
+    _resetChatRegistry();
+    // Accepted already: the 30-minute fallback's business, not this one.
+    const accepted = await rota();
+    accepted.queue = accepted.queue.map((q) => (q.id === request ? { ...q, acceptedAt: born.createdAt } : q));
+    checkQuietRequests(memberKey(), accepted, late);
+    await _superInboxDrained();
+    expect(await unstartedLines(job)).toHaveLength(0);
+    // An off member has its own line; this one would mislead.
+    setMemberGateForTest(() => 'off');
+    checkQuietRequests(memberKey(), await rota(), late);
+    await _superInboxDrained();
+    expect(await unstartedLines(job)).toHaveLength(0);
+  });
+
+  it('a member Super\'s question about main\'s request never makes main\'s event turn the owner\'s', async () => {
+    const { request, job, session } = await askRota();
+    idle(MAIN);
+    const { inbox, delivered } = fakeInbox(MAIN);
+    attachSuperInbox(inbox);
+    const asked = await verb(tokenFor(session, 'm:rota'), 'ask', { text: 'Which depot?', for: request });
+    expect(asked.status, JSON.stringify(asked.json)).toBe(200);
+    const q = (await main()).queue.find((x) => x.kind === 'question' && x.team === job)!;
+    expect(isRequestQuestion(await main(), q)).toBe(true);
+    await vi.waitFor(() => expect(delivered.some((d) => d.text.includes('from=member-super'))).toBe(true), W);
+    await vi.waitFor(async () => expect((await main()).queue.find((x) => x.id === q.id)?.state).not.toBe('pending'), W);
+    // Not folded into an owner-facing turn: no owner batch, so no unfolded turn and no owner unread.
+    expect((await main()).ownerBatches ?? []).toEqual([]);
+    // A headless (Wave 1) member's question is still the owner's.
+    expect(isRequestQuestion({ team: [{ id: 'team-h', member: 'rota', runId: 'r', jobKind: 'run', queued: false, brief: '', startedAt: 1 }] },
+      { id: 'q-h-00000001', sessionId: MAIN, kind: 'question', state: 'pending', createdAt: 1, team: 'team-h' } as SuperQueueItem)).toBe(false);
+  });
+
+  it('the upgrade gate refuses a member Super whose member is off or waits for its approval card', async () => {
+    const { session } = await askRota();
+    const gate = (sid: string, slug: string) => superUpgradeRefusal({ mode: 'super', phone: false, contextRoot: root, resumeId: sid, sessionId: '', chatAgent: slug });
+    expect(gate(session, 'rota')).toBeNull();
+    // Turned off by the owner (its manifest): refused even with its own session.
+    setAgentCallEnabled(root, 'rota', false);
+    expect(gate(session, 'rota')).toBe(409);
+    setAgentCallEnabled(root, 'rota', true);
+    expect(gate(session, 'rota')).toBeNull();
+    // Its live Super stopped (the record says off): refused, no disk needed.
+    await stopMemberSuper(root, 'rota');
+    expect(gate(session, 'rota')).toBe(409);
+    // A member waiting for its approval card: refused.
+    createAgent(root, { slug: 'pera', title: 'Pera', prompt: 'You price things.' });
+    const PERA = '77777777-6666-4555-8444-333333333333';
+    await withSuperState(root, 'm:pera', (s) => { s.session = PERA; s.enabled = true; s.member = 'pera'; });
+    expect(gate(PERA, 'pera')).toBe(409);
+    // Main's own Super is unchanged by this.
+    expect(superUpgradeRefusal({ mode: 'super', phone: false, contextRoot: root, resumeId: MAIN, sessionId: '' })).toBeNull();
   });
 });

@@ -1220,13 +1220,14 @@ function workForArg(c: Pick<SuperCaller, 'superId' | 'state'>, b: Record<string,
 }
 
 /**
- * THE switch of `super team ask` (lead decision, Wave 2 end review): `say` = the Wave 1 headless
- * chain (the member's own thread, one conversation and one card), live today; `request` = a request
- * in the member's OWN Super (plan-r10 1), fully built and tested, but no window spawns a member's
- * Super until Wave 3. Wave 3 flips this to `request`; until then main's `team ask` works exactly as
- * at 0.40.1 + Wave 1. The briefing and the skill describe only what is live.
+ * THE switch of `super team ask`. Live since Wave 3 (the window spawns a member's Super when its
+ * record holds `pending` items): `request` = a request in the member's OWN Super (plan-r10 1), shown
+ * on its stage as "Super Agent'tan", closed by its `super team done`. `say` = the Wave 1 headless
+ * chain, kept only for tests of that machinery: in-flight Wave 1 headless team jobs keep their own
+ * card and watch (`checkTeamJob`) until they end (plan-r10 5), whatever this says, and routines,
+ * apps and CLI `agents say` never came through here (plan-r10 4).
  */
-export const TEAM_ASK_ROUTE: 'request' | 'say' = 'say';
+export const TEAM_ASK_ROUTE: 'request' | 'say' = 'request';
 let teamAskRoute: 'request' | 'say' = TEAM_ASK_ROUTE;
 /** Tests pick a route explicitly; null puts TEAM_ASK_ROUTE back. */
 export function setTeamAskRouteForTest(route: 'request' | 'say' | null): void { teamAskRoute = route ?? TEAM_ASK_ROUTE; }
@@ -1266,10 +1267,10 @@ async function teamAskRequest(
     return;
   }
   if (call.state === 'needs-approval') {
-    const ownerText = `${member} waits for its one approval card on the AI Team page, so the Super Agent cannot give it a job. Open the card there, then tell the Super Agent.`;
+    const ownerText = `${member} waits for its one approval card (on its stage, and in "Üyeleri yönet"), so the Super Agent cannot give it a job. Open the card there, then tell the Super Agent.`;
     let item: string | null = null;
     await writeSuper(root, c.superId, (s) => { item = askOwnerToApprove(s, member, ownerText); });
-    refuse(res, 409, 'say_unapproved', `${wrapUntrusted(vault, `${member} is not approved on this machine.`)} You cannot approve it: the owner does, in AI Team. His queue strip asks him now; give the job again once he says so.`, { item });
+    refuse(res, 409, 'say_unapproved', `${wrapUntrusted(vault, `${member} is not approved on this machine.`)} You cannot approve it: the owner does, on its approval card (its stage, or "Üyeleri yönet"). His queue strip asks him now; give the job again once he says so.`, { item });
     return;
   }
   const born = await ensureMemberSuper(root, member);
@@ -1941,7 +1942,15 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (!item) { refuse(res, 404, 'unknown_item', 'no such queue item (`dreamcontext super queue list`)'); return; }
     if (item.kind === 'permission') { refuse(res, 403, 'permission_item', 'a permission is shown to the owner from the child\'s own request; you cannot caption or close it'); return; }
     if (item.kind !== 'question') { refuse(res, 400, 'not_a_question', 'only a child\'s question can be escalated'); return; }
-    if (item.team) { refuse(res, 400, 'team_question', 'an AI Team member\'s question is the owner\'s to answer in AI Team; tell him in your reply which member asks what'); return; }
+    if (item.team) {
+      // Never forwarded (plan-r10 1): a member's own Super asking about the job main gave it is
+      // main's to answer; a Wave 1 headless run's question is the owner's, on that member's card.
+      const ofRequest = c.state.team.some((j) => j.id === item.team && !!j.request);
+      refuse(res, 400, 'team_question', ofRequest
+        ? 'this member\'s Super asks YOU about the job you gave it: answer with `dreamcontext super team answer <item> "<answer>"`; if only the owner can say, ask him with your own `super ask`'
+        : 'an AI Team member\'s question is the owner\'s to answer on that member\'s card; tell him in your reply which member asks what');
+      return;
+    }
     if (item.state === 'done') { refuse(res, 409, 'stale_request', 'that question is already answered'); return; }
     const text = oneLine(typeof b.text === 'string' ? b.text : '').slice(0, MAX_OWNER_TEXT);
     if (!text) { refuse(res, 400, 'invalid_args', 'write the question for the owner'); return; }
@@ -2514,10 +2523,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 
   'team-ask': async (c, b, res) => {
-    // A job for one of THIS project's AI Team members, through the AI Team's own paths: asking the
-    // SAME member again continues its one conversation (`replyToAgent`, a follow-up on its card),
-    // else a fresh run (`sayToAgent`) becomes the member's new root ON THE SAME CARD (plan-r10 1b,
-    // owner i74xj5: "aynı üyeye tek konuşma, tek kart"). Nothing here starts a run any other way.
+    // A job for one of THIS project's AI Team members: a `request` in the member's OWN Super
+    // (`teamAskRequest`, live since Wave 3), its one conversation and main's one card for it
+    // (plan-r10 1, 1b; owner i74xj5: "aynı üyeye tek konuşma, tek kart"). The Wave 1 headless
+    // chain below (`replyToAgent` / `sayToAgent`) runs only when a test selects the `say` route.
     if (!requireHandedOver(c, res)) return;
     const root = c.who.contextRoot;
     const vault = vaultNameOf(root);
@@ -2538,8 +2547,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const override: SpawnModelOverride | null = light
       ? { model: picked.override?.model ?? LIGHT_DEFAULT_MODEL, effort: picked.override?.effort ?? LIGHT_DEFAULT_EFFORT, light: true }
       : picked.override && { ...picked.override, oneJob: true as const };
-    // Wave 2 (plan-r10 1): a request in the member's OWN Super; the headless say chain below serves
-    // only in-flight Wave 1 jobs (and tests of that machinery, `setTeamAskRouteForTest`).
+    // Live (plan-r10 1, Wave 3): a request in the member's OWN Super. The headless say chain below
+    // is reached only when a test selects it (`setTeamAskRouteForTest('say')`).
     if (teamAskRoute === 'request') { await teamAskRequest(c, b, res, member, text, origin.ref, light, override); return; }
     // The member's conversation: its chain root, continued when it can be (`continueBlock`).
     const chain = memberRoot(c.state, member);
@@ -2570,10 +2579,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       if (r.code === 'say_unapproved') {
         // A member waits for approval only when its ONE card does (a synced or widening change,
         // plan-r10 1e): a local member never gets here. His strip points him at that card.
-        const ownerText = `${member} waits for its one approval card on the AI Team page, so the Super Agent cannot give it a job. Open the card there, then tell the Super Agent.`;
+        const ownerText = `${member} waits for its one approval card (on its stage, and in "Üyeleri yönet"), so the Super Agent cannot give it a job. Open the card there, then tell the Super Agent.`;
         let item: string | null = null;
         await writeSuper(root, c.superId, (s) => { item = askOwnerToApprove(s, member, ownerText); });
-        refuse(res, 409, 'say_unapproved', `${wrapUntrusted(vault, r.message)} You cannot approve it: the owner does, in AI Team. His queue strip asks him now; give the job again once he says so.`, { item });
+        refuse(res, 409, 'say_unapproved', `${wrapUntrusted(vault, r.message)} You cannot approve it: the owner does, on its approval card (its stage, or "Üyeleri yönet"). His queue strip asks him now; give the job again once he says so.`, { item });
         return;
       }
       // Its title can ride the refusal (a shared brain's text): fenced.
