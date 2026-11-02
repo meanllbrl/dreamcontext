@@ -30,14 +30,18 @@ export function appsPathspec(gitCwd: string, contextRoot: string): string | null
 export function appDataStagePass(gitCwd: string, contextRoot: string, opts: { home?: string } = {}): string[] {
   const spec = appsPathspec(gitCwd, contextRoot);
   if (!spec) return [];
+  // The pathspec is rooted at the repo's top folder (a nested brain's prefix included): git
+  // must run from there, not from the project folder a nested brain sits in.
+  const top = git.topLevel(gitCwd);
+  if (!top) return [];
   let dropped: string[] = [];
   try {
-    dropped = git.indexPaths(gitCwd, [spec]);
+    dropped = git.indexPaths(top, [spec]);
     if (!dropped.length) return [];
-    git.removeFromIndex(gitCwd, [spec]);
+    git.removeFromIndex(top, [spec]);
   } catch {
     // Could not list or drop one by one: drop the whole folder from the index.
-    try { git.removeFromIndex(gitCwd, [spec]); } catch { /* the push gate still holds it */ }
+    try { git.removeFromIndex(top, [spec]); } catch { /* the push gate still holds it */ }
   }
   if (dropped.length) {
     try {

@@ -63,7 +63,9 @@ describe('staging', () => {
     git(top, 'add', '-A');
     expect(git(top, 'diff', '--cached', '--name-only')).not.toContain('apps/');
     git(top, 'add', '-f', 'pkg/_dream_context/apps/yuk/x.json');
-    expect(appDataStagePass(top, join(sub, '_dream_context'), { home })).toEqual(['pkg/_dream_context/apps/yuk/x.json']);
+    // The sync engine runs from the PROJECT folder (gitCwd = projectRoot), not the repo top (security r1 M3).
+    expect(appDataStagePass(sub, join(sub, '_dream_context'), { home })).toEqual(['pkg/_dream_context/apps/yuk/x.json']);
+    expect(git(top, 'ls-files', '--', 'pkg/_dream_context/apps')).toBe('');
   });
 });
 

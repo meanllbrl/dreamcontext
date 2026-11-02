@@ -173,19 +173,26 @@ export async function restoreAppData(home: string, rec: { hash: string; projectR
   try { dataDir = ensureAppDataDir(rec.projectRoot, rec.slug); } catch (e) {
     return { ok: false, code: 'restore_failed', message: (e as Error).message };
   }
+  const meta = readMeta(pick.path);
+  const parent = join(dataDir, '..');
+  const incoming = join(parent, `.${rec.slug}.restoring-${randomBytes(4).toString('hex')}`);
+  const aside = join(parent, `.${rec.slug}.replaced-${randomBytes(4).toString('hex')}`);
+  // The picked copy comes in FIRST: the pre-restore backup below prunes to the newest few, and
+  // the pick (the oldest, say) may be one it removes.
+  try { await copyTree(pick.path, incoming); } catch (e) {
+    await rm(incoming, { recursive: true, force: true }).catch(() => {});
+    return { ok: false, code: 'restore_failed', message: `the backup could not be read (${(e as NodeJS.ErrnoException).code ?? (e as Error).message}); nothing was changed` };
+  }
   let previous: string | null = null;
   if (!isEmptyDir(dataDir)) {
     const b = await backupAppData(home, rec.hash, dataDir, { reason: 'before-restore', force: true });
     if (!b.ok && !('skipped' in b && b.skipped === 'unchanged')) {
+      await rm(incoming, { recursive: true, force: true }).catch(() => {});
       return { ok: false, code: 'restore_failed', message: `the current data could not be backed up first (${'error' in b ? b.error : b.skipped}); nothing was changed` };
     }
     previous = b.ok ? b.stamp : null;
   }
-  const parent = join(dataDir, '..');
-  const incoming = join(parent, `.${rec.slug}.restoring-${randomBytes(4).toString('hex')}`);
-  const aside = join(parent, `.${rec.slug}.replaced-${randomBytes(4).toString('hex')}`);
   try {
-    await copyTree(pick.path, incoming);
     renameSync(dataDir, aside);
     try { renameSync(incoming, dataDir); } catch (e) { renameSync(aside, dataDir); throw e; }
   } catch (e) {
@@ -193,7 +200,6 @@ export async function restoreAppData(home: string, rec: { hash: string; projectR
     return { ok: false, code: 'restore_failed', message: (e as NodeJS.ErrnoException).code ?? (e as Error).message };
   }
   await rm(aside, { recursive: true, force: true }).catch(() => {});
-  const meta = readMeta(pick.path);
   return { ok: true, stamp: pick.stamp, files: meta?.files ?? 0, previous };
 }
 

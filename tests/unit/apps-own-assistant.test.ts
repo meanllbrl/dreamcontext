@@ -137,6 +137,13 @@ describe('the envelope of the own assistant', () => {
     expect(rules.some((x) => x.includes(`${r(join(project, '_dream_context', 'apps', 'yuk'))}/**`) && x.startsWith('Write'))).toBe(false);
     expect(rules).not.toContain(`Write(/${r(join(project, '_dream_context'))}/**)`);
   });
+  it('a file name the shell would expand gets no belt rule and never refuses the chat (review r1 M1)', () => {
+    writeFileSync(join(project, 'notes!.md'), 'x');
+    writeFileSync(join(project, 'Icon\r'), '');
+    const rules = appWriteDenies({ projectRoot: project, appRoot: root, dataDir: join(project, '_dream_context', 'apps', 'yuk'), home, slug: 'yuk' });
+    expect(rules.some((x) => x.includes('notes!') || x.includes('Icon'))).toBe(false);
+    expect(prep()).toMatchObject({ ok: true });
+  });
   it('credential reads name every child of ~/.dreamcontext, all of its apps/ and other apps\' data in the brain', () => {
     const dc = join(home, '.dreamcontext');
     mkdirSync(join(dc, 'claude-accounts'), { recursive: true });

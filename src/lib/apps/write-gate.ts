@@ -68,6 +68,28 @@ function decideWrite(path: unknown, ctx: BashGateContext): BashGateDecision {
   return { decision: 'pass' };
 }
 
+/**
+ * A Grep/Glob search root (its `path`, or the cwd when it names none) that holds the apps folder
+ * would walk every app's data: refused, the search goes inside a folder that holds none.
+ */
+function decideSearchRoot(path: unknown, ctx: BashGateContext, cwd: string | undefined): BashGateDecision {
+  if (!ctx.projectRoot) return { decision: 'pass' };
+  const given = typeof path === 'string' && path ? path : cwd;
+  if (!given) return deny('Not searched: name a folder to search in (not one that holds the apps data).');
+  const abs = isAbsolute(given) ? given : cwd ? resolve(cwd, given) : null;
+  if (!abs) return deny('Not searched: name an absolute folder to search in.');
+  const appsRoot = appsDataRoot(ctx.projectRoot);
+  let realApps = appsRoot;
+  try { realApps = realpathSync.native(appsRoot); } catch { /* not made yet */ }
+  const lex = resolve(abs);
+  const real = realNear(lex);
+  const holds = (p: string, root: string) => foldName(p) === foldName(root) || inside(p, root, true);
+  if (holds(lex, appsRoot) || holds(real, realApps)) {
+    return deny(`Not searched: ${given} holds every app's data. Search inside this app's data folder (${ctx.dataDir}) or a folder that holds no app data.`);
+  }
+  return { decision: 'pass' };
+}
+
 function decideRead(path: unknown, ctx: BashGateContext, cwd: string | undefined): BashGateDecision {
   if (typeof path !== 'string' || !path) return { decision: 'pass' };
   if (!ctx.projectRoot) return { decision: 'pass' };
@@ -93,6 +115,8 @@ export function classifyFileTool(tool: string, input: Record<string, unknown>, c
   if (WRITE_TOOLS.includes(tool)) return decideWrite(input.file_path ?? input.notebook_path, ctx);
   if (tool === 'Read') return decideRead(input.file_path, ctx, cwd);
   if (tool === 'Grep' || tool === 'Glob') {
+    const root = decideSearchRoot(input.path, ctx, cwd);
+    if (root.decision !== 'pass') return root;
     const p = decideRead(input.path, ctx, cwd);
     if (p.decision !== 'pass') return p;
     const pattern = typeof input.pattern === 'string' && tool === 'Glob' ? globBase(input.pattern) : null;

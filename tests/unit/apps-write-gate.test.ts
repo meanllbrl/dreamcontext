@@ -69,6 +69,13 @@ describe('the file gate, as a function', () => {
     expect(decide('Grep', { pattern: 'x', path: other })).toBe('deny');
     expect(decide('Glob', { pattern: `${other}/**/*.csv` })).toBe('deny');
     expect(decide('Glob', { pattern: '**/*.csv', path: join(project, '_dream_context', 'apps', 'crm') })).toBe('deny');
+    // A search rooted at or above the apps folder would walk every app's data (security r1 M2).
+    expect(decide('Grep', { pattern: 'x', path: join(project, '_dream_context', 'apps') })).toBe('deny');
+    expect(decide('Grep', { pattern: 'x', path: join(project, '_dream_context') })).toBe('deny');
+    expect(decide('Grep', { pattern: 'x' })).toBe('deny'); // no path: the cwd, the project root
+    expect(decide('Glob', { pattern: '**/*.csv', path: project })).toBe('deny');
+    expect(decide('Grep', { pattern: 'x', path: own })).toBe('pass');
+    expect(decide('Grep', { pattern: 'x', path: join(project, '_dream_context', 'core') })).toBe('pass');
     // A folder made later is still another app's.
     const later = ensureAppDataDir(project, 'later-app');
     expect(decide('Read', { file_path: join(later, 'x') })).toBe('deny');

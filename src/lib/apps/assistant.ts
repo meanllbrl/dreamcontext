@@ -124,6 +124,9 @@ function writeChildRules(dir: string, skip: ReadonlySet<string>): string[] {
     let isDir = false;
     try { isDir = statSync(join(dir, name)).isDirectory(); } catch { /* a dangling entry: as a file */ }
     const p = rulePath(join(dir, name)) + (isDir ? '/**' : '');
+    // A name the login shell would expand (`notes!.md`, Finder's `Icon\r`) gets no belt rule
+    // rather than refusing the whole chat: the file gate decides every write anyway.
+    if (unsafeRule(p)) continue;
     rules.push(`Edit(/${p})`, `Write(/${p})`);
   }
   return rules;

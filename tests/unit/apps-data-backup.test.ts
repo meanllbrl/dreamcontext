@@ -74,6 +74,20 @@ describe('the restore', () => {
     expect(readFileSync(join(dir, 'a.json'), 'utf-8')).toBe('newer and different');
   });
 
+  it('restoring the OLDEST of a full set works: the pre-restore backup never prunes the pick first', async () => {
+    for (let i = 0; i < BACKUP_KEEP; i++) {
+      writeFileSync(join(dir, 'n.txt'), `v${i}`);
+      await backupAppData(home, 'hh1', dir, { reason: 'interval', now: new Date(Date.UTC(2026, 10, 2, 9, i)), force: true });
+    }
+    const oldest = listBackups(home, 'hh1').at(-1)!;
+    writeFileSync(join(dir, 'n.txt'), 'broken now');
+    const r = await restoreAppData(home, rec(), { at: oldest.stamp });
+    expect(r).toMatchObject({ ok: true, stamp: oldest.stamp });
+    expect(readFileSync(join(dir, 'n.txt'), 'utf-8')).toBe('v0');
+    // What was there is the newest backup now.
+    expect(readFileSync(join(listBackups(home, 'hh1')[0].path, 'n.txt'), 'utf-8')).toBe('broken now');
+  });
+
   it('no backup, or an unknown stamp, is said and changes nothing', async () => {
     expect(await restoreAppData(home, rec())).toMatchObject({ ok: false, code: 'no_backup' });
     writeFileSync(join(dir, 'a.json'), 'x');
