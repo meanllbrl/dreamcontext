@@ -39,7 +39,7 @@ export interface T3RunOptions {
 }
 
 const DECLINED = 'This run has nobody to approve that. Finish without it, and say what you could not do.';
-const READ_ONLY = 'Refused: this run is read-only. Edits are refused. A command runs only when every program in it reads (cat, head, ls, grep, find, sed -n, printf, git log/diff/show/status, dreamcontext memory recall / tasks list / snapshot), alone or chained with &&, |, ;, and with no redirect, $ or backtick. Retry with reads only.';
+const READ_ONLY = 'Refused: this run is read-only. Edits are refused. A command runs only when every program in it reads (cat, head, ls, grep, find, sed -n, printf, git log/diff/show/status, dreamcontext memory recall / tasks list), alone or chained with &&, |, ;, and with no redirect, $ or backtick. Retry with reads only.';
 
 /** What a read-only Antigravity run allows: reads, searches and plain read commands. Nothing that writes. */
 export function readOnlyAllows(toolName: string, input: unknown): boolean {

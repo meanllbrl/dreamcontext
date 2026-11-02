@@ -79,7 +79,8 @@ const READ_PROGRAMS = new Set(['cat', 'head', 'tail', 'ls', 'grep', 'wc', 'pwd',
 const SYSTEM_BIN = /^\/(?:usr\/)?bin\/([a-z]+)$/;
 /** `git` and `dreamcontext` subcommands that only read. */
 const READ_GIT = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'blame']);
-const READ_DC = /^(?:memory recall|snapshot|knowledge (?:index|show|list|read)|tasks (?:list|show|get)|features (?:list|show)|roadmap(?:$| (?:list|show)\b)|bookmark list|changelog list|insights? (?:list|show)|lab (?:list|show)|theses list|peer list|super (?:read|jobs|status)|agents (?:list|show)|automations (?:list|show)|--version|--help)\b/;
+/** Not `snapshot` (it counts trigger firings into `.sleep.json`) nor `roadmap` (it rewrites the board file). */
+const READ_DC = /^(?:memory recall|knowledge (?:index|show|list|read)|tasks (?:list|show|get)|features (?:list|show)|bookmark list|changelog list|insights? (?:list|show)|lab (?:list|show)|theses list|peer list|super (?:read|jobs|status)|agents (?:list|show)|automations (?:list|show)|--version|--help)\b/;
 
 /**
  * `c` cut at its unquoted `&&`, `||`, `;` and `|` into commands of words, quotes taken off; null
@@ -127,7 +128,8 @@ function readsOnly(words: readonly string[]): boolean {
   if (READ_PROGRAMS.has(prog)) return !(prog === 'find' && words.some((w) => /^-(?:delete|exec|execdir|ok|okdir|fprint|fprint0|fprintf|fls)$/.test(w)));
   // `sed -n '<a>,<b>p' <files>` only prints; any other script (`w`, `e`, `-i`) is refused.
   if (prog === 'sed') return words[1] === '-n' && /^\d+(?:,\d+)?p$/.test(words[2] ?? '') && words.slice(3).every((w) => !w.startsWith('-'));
-  // A diff driver or textconv from the repo's config runs a program: refused by name.
+  // The flags that force a diff driver or textconv are refused; one the owner set in git config
+  // still runs, and a read-only run cannot write git config.
   if (prog === 'git') return READ_GIT.has(words[1] ?? '') && !words.some((w) => /^--output\b|^-o|^--ext-diff\b|^--textconv\b/.test(w));
   if (prog === 'dreamcontext') return READ_DC.test(words.slice(1).join(' '));
   return false;
