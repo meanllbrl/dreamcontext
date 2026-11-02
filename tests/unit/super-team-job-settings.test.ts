@@ -143,16 +143,20 @@ describe('--model / --effort belong to one job', () => {
     spawns.holdRun = new Promise<void>((d) => { release = d; });
     await ask({ member: 'desk', text: 'the long one' });
     await until(() => spawns.runs.length === 1);
+    // plan-r10 1b: asking the same member again continues its one conversation. Desk has its own
+    // model, so a one-job model does not stick to the session (`wouldStickToSession` false): the
+    // second ask is a follow-up on the running root, and it carries ITS settings to that turn only.
     const q = await ask({ member: 'desk', text: 'the second one', model: 'sonnet', effort: 'low' });
     expect(q.status).toBe(200);
-    await until(() => spawns.runs.length === 2);
-    expect(spawns.runs[1].override).toEqual({ model: 'sonnet', effort: 'low', oneJob: true });
+    expect(q.json.result).toMatchObject({ continued: true, model: 'sonnet', effort: 'low' });
+    await until(() => spawns.replies.length === 1);
+    expect(spawns.replies[0].override).toEqual({ model: 'sonnet', effort: 'low', oneJob: true });
     expect(spawns.runs[0].override).toBeNull();
+    // A light job never continues a conversation: a fresh run, on the same card.
     const l = await ask({ member: 'desk', text: 'a light one', light: true });
     expect(l.status).toBe(200);
-    await until(() => spawns.runs.length === 3);
-    expect(spawns.runs[2].override).toMatchObject({ light: true });
-    expect(spawns.replies).toEqual([]);
+    await until(() => spawns.runs.length === 2);
+    expect(spawns.runs[1].override).toMatchObject({ light: true });
     release();
     await settle();
   });

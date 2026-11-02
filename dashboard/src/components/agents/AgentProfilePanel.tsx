@@ -7,7 +7,6 @@ import {
   findAgent,
   useAgent,
   useAgents,
-  useApproveAgent,
   useDeleteAgentIdentity,
   type AgentPattern,
   type AgentSummary,
@@ -137,10 +136,10 @@ function automationWhen(a: AgentUsageAutomation, t: (k: string) => string, local
 /**
  * One agent's profile, in the order a teammate is read: who it is and its state, then its soul
  * (how it works), its job (the prompt), its pattern (what it learned, read-only), where it works,
- * and approval for chat and approval to run, shown SEPARATELY. Approve
- * happens here, in place: the review (every field an approval grants) opens inside the panel,
- * and only the owner's click on Approve grants it. No browser dialog anywhere (they are silent
- * no-ops in the desktop app). No Run now and no Telegram on this page.
+ * and approval for chat and approval to run, shown SEPARATELY, read-only. There is no Approve here
+ * any more (plan-r10 1e): a member changed on this Mac stamps itself; a synced or widening change
+ * waits for its ONE card (TeamApproval, on the AI Team page), which this panel names. No browser
+ * dialog anywhere (they are silent no-ops in the desktop app). No Run now and no Telegram.
  */
 export function AgentProfilePanel({
   slug, onClose, onEdit, onDeleted, onToast, placement = null,
@@ -157,24 +156,18 @@ export function AgentProfilePanel({
   const { bus } = useVault();
   const roster = useAgents();
   const detail = useAgent(slug);
-  const approve = useApproveAgent();
   const remove = useDeleteAgentIdentity();
   const agent = findAgent(roster.data, slug) ?? detail.data?.agent ?? null;
 
-  const [reviewing, setReviewing] = useState(false);
-  const [approveError, setApproveError] = useState<string | null>(null);
   const [armed, setArmed] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [talkError, setTalkError] = useState<string | null>(null);
   const [talking, setTalking] = useState(false);
   const [lessonsOpen, setLessonsOpen] = useState(false);
-  const approvalRef = useRef<HTMLElement>(null);
   const panelRef = useRef<HTMLElement>(null);
 
   // A different agent opens on a clean panel: no half-finished review or armed delete carries over.
   useEffect(() => {
-    setReviewing(false);
-    setApproveError(null);
     setArmed(false);
     setDeleteError(null);
     setTalkError(null);
@@ -205,26 +198,10 @@ export function AgentProfilePanel({
 
   const name = agent.title;
   const fullyApproved = agent.approvedForChat && agent.approvedToRun;
-  // Someone else's agent (B1-4): read-only here, no talk, edit, approve or delete.
+  // Someone else's agent (B1-4): read-only here, no talk, edit or delete.
   const readOnly = agent.readOnly === true;
-
-  const openReview = () => {
-    setApproveError(null);
-    setReviewing(true);
-    // The review must be what Approve grants NOW, not a copy from when the panel opened.
-    void detail.refetch();
-  };
-
-  const doApprove = () => {
-    if (approve.isPending || detail.isFetching) return;
-    approve.mutate(slug, {
-      onSuccess: (fresh) => {
-        setReviewing(false);
-        onToast(t('agents.approval.approved').replace('{name}', fresh.title));
-      },
-      onError: (err) => setApproveError(t('agents.approval.failed').replace('{name}', name).replace('{reason}', (err as Error).message)),
-    });
-  };
+  // The fields a synced or waiting change moved (`changedFields`, plan-r10 1e), when known.
+  const changedFields = (detail.data as { changedFields?: string[] | null } | undefined)?.changedFields ?? null;
 
   const talk = () => {
     if (talking) return;
@@ -265,20 +242,6 @@ export function AgentProfilePanel({
   const lessons = data?.pattern.lessons ?? [];
   const shownLessons = visibleLessons(lessons, lessonsOpen);
 
-  const reviewFromHeader = () => {
-    openReview();
-    const reduce = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    // NOT `scrollIntoView`: it scrolls every scrollable ancestor, and the app shell's own
-    // overflow-hidden main counts. Hosted in the AI Team panel, that shoved the whole page up
-    // and left the list and the composer hanging mid-screen. Only the panel's scroller moves.
-    const target = approvalRef.current;
-    const scroller = target ? scrollParentOf(target) : null;
-    if (target && scroller) {
-      const top = scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-      scroller.scrollTo({ top, behavior: reduce ? 'auto' : 'smooth' });
-    }
-  };
-
   return (
     <aside ref={panelRef} className="agp-panel" aria-label={t('agents.profile.aria').replace('{name}', name)} data-agent-profile={slug}>
       <div className="agp-panel-top">
@@ -306,11 +269,6 @@ export function AgentProfilePanel({
         </span>}
         {readOnly && (
           <span className="agr-tag" data-readonly-owner>{t('aiteam.section.readonly').replace('{owner}', agent.ownerLabel ?? agent.owner ?? '')}</span>
-        )}
-        {state !== 'ready' && !readOnly && (
-          <button type="button" className="agp-textbtn" onClick={reviewFromHeader} data-review-approval>
-            {t('agents.profile.reviewApproval')}
-          </button>
         )}
         {agent.shared && <span className="agr-tag" title={t('agents.roster.sharedHint')}>{t('agents.roster.shared')}</span>}
         {agent.implicit && <span className="agr-tag" title={t('agents.roster.implicitHint')}>{t('agents.roster.implicit')}</span>}
@@ -461,7 +419,6 @@ export function AgentProfilePanel({
 
       {/* Approval: two verdicts, two rows, never one. A teammate's agent asks nothing here. */}
       {!readOnly && <section
-        ref={approvalRef}
         className="agp-section"
         aria-label={t('agents.approval.title')}
         data-approval-section
@@ -482,29 +439,12 @@ export function AgentProfilePanel({
           </div>
         ))}
 
-        {!fullyApproved && !reviewing && (
-          <button type="button" className="agp-btn" onClick={openReview}>{t('agents.approval.review')}</button>
-        )}
-
-        {reviewing && (
-          <div className="agp-review" data-approval-review>
-            <p className="agp-muted">{t('agents.approval.reviewLead')}</p>
-            <pre className="agp-review-text">{detail.isFetching && !detail.data ? t('agents.page.loading') : detail.data?.review ?? ''}</pre>
-            {approveError && <p className="agp-error" role="alert">{approveError}</p>}
-            <div className="agp-review-foot">
-              <button type="button" className="agp-btn" onClick={() => setReviewing(false)} disabled={approve.isPending}>
-                {t('agents.approval.cancel')}
-              </button>
-              <button
-                type="button"
-                className="agp-btn agp-btn--primary"
-                onClick={doApprove}
-                disabled={approve.isPending || detail.isFetching || !detail.data}
-              >
-                {approve.isPending ? t('agents.approval.approving') : t('agents.approval.approve')}
-              </button>
-            </div>
-          </div>
+        {!fullyApproved && (
+          <p className="agp-muted" data-approval-waits>
+            {changedFields && changedFields.length > 0
+              ? t('agents.approval.synced').replace('{fields}', changedFields.join(', '))
+              : t('agents.approval.waitsCard')}
+          </p>
         )}
       </section>}
 

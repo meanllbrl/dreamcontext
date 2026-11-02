@@ -46,29 +46,39 @@ afterEach(() => {
   rmSync(projectRoot, { recursive: true, force: true });
 });
 
+// plan-r10 1e: another tool is a WIDENING change. The owner's own save says so first (409 with the
+// fields, nothing written), and his save with `confirmWiden` IS the approval: no card for him.
 describe('saving an automation whose tool changed', () => {
-  it('waits for the owner, across every later save', async () => {
-    expect((await save({ tool: 'codex' })).needsApproval).toBe(true);
-    expect(approved()).toBe(false);
-    // The dialog resends the same tool with any later edit.
-    expect((await save({ tool: 'codex', title: 'Digest again' })).needsApproval).toBe(true);
-    expect((await save({ title: 'Digest once more' })).needsApproval).toBe(true);
-    expect(approved()).toBe(false);
+  it('without confirmWiden: 409 with the fields, nothing written, still approved', async () => {
+    const r = await save({ tool: 'codex' });
+    expect(r).toMatchObject({ error: 'widen_unconfirmed', fields: ['tool'] });
+    expect(getAutomation(contextRoot, 'digest')?.tool ?? null).toBeNull();
+    expect(approved()).toBe(true);
   });
 
-  it('the owner approves, then ordinary saves re-approve as they always did', async () => {
-    await save({ tool: 'codex' });
-    approveAutomation(projectRoot, getAutomation(contextRoot, 'digest')!, new Date());
+  it('with confirmWiden the owner\'s save stamps the new tool; later saves keep it approved', async () => {
+    expect((await save({ tool: 'codex', confirmWiden: ['tool'] })).needsApproval).toBeUndefined();
+    expect(approved()).toBe(true);
     expect(getApproval(projectRoot, 'digest')?.tool).toBe('codex');
+    // The dialog resends the same tool with any later edit: no widening, no confirm.
     expect((await save({ tool: 'codex', title: 'Digest again' })).needsApproval).toBeUndefined();
     expect(approved()).toBe(true);
   });
 
-  it('going back to Claude waits too', async () => {
-    await save({ tool: 'codex' });
-    approveAutomation(projectRoot, getAutomation(contextRoot, 'digest')!, new Date());
-    expect((await save({ tool: 'claude' })).needsApproval).toBe(true);
-    expect((await save({ title: 'Digest x' })).needsApproval).toBe(true);
+  it('going back to Claude is a tool change too: confirmed, then stamped', async () => {
+    await save({ tool: 'codex', confirmWiden: ['tool'] });
+    expect((await save({ tool: 'claude' })).error).toBe('widen_unconfirmed');
+    expect((await save({ tool: 'claude', confirmWiden: ['tool'] })).needsApproval).toBeUndefined();
+    expect(approved()).toBe(true);
+  });
+
+  it('a later save never stamps over a tool change that arrived from elsewhere (a synced edit)', async () => {
+    // A teammate's file now names codex: the hash moved with no local stamp.
+    const m = getAutomation(contextRoot, 'digest')!;
+    const { readFileSync, writeFileSync } = await import('node:fs');
+    writeFileSync(m.path, readFileSync(m.path, 'utf-8').replace(/^---\n/, '---\ntool: codex\n'));
+    expect(approved()).toBe(false);
+    expect((await save({ title: 'Digest once more' })).needsApproval).toBe(true);
     expect(approved()).toBe(false);
   });
 

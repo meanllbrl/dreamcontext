@@ -25,7 +25,6 @@ import {
 } from './teamModel';
 import { TeamIcon } from './TeamIcons';
 import { TeamAmendments } from './TeamAmendments';
-import { TeamApproval } from './TeamApproval';
 import { OpenInMainApp, useEmbed } from '../embed/embedMode';
 import '../sleepy/ChatPane.css';
 import '../sleepy/chat/composer.css';
@@ -371,7 +370,8 @@ export function TeamConversation({
         )}
       </header>
 
-      {!embed && <TeamApproval agentTitle={agent.title} pending={pending} onToast={onToast} />}
+      {/* No approval strip here (plan-r10 1e): the member's ONE card is the stage's TeamApproval;
+          this was its duplicate. A blocked member still says so in its header tag. */}
       {!embed && agent.readOnly !== true && <TeamAmendments slug={agent.slug} onToast={onToast} />}
       {!embed && !blocked && messages.length === 0 && dispatcher && !dispatcher.installed && (
         <div className="aiteam-banner">

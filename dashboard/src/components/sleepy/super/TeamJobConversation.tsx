@@ -6,10 +6,13 @@ import { RunReport, RunView } from '../../aiteam/RunView';
 import { teamStatusOf, type TeamCard } from './TeamTile';
 
 /**
- * A team job's card, large: the job's own session, the transcript a child's card shows, and
- * below it the one honest way to go on. While the job runs nothing can be typed into it. Once it
- * ended, what the owner writes continues THAT session through the run's own reply path, and the
- * Super Agent hears both his words and the answer (a follow-up job, `recordTeamFollowUp`).
+ * A member's one card, large (plan-r10 1b): the root session's transcript, which holds every
+ * resumed turn of the conversation (the Super Agent's follow-ups and the owner's), and below it the
+ * one honest way to go on. While the job runs nothing can be typed into it. Once it ended, what the
+ * owner writes continues THAT session through the run's own reply path, and the Super Agent hears
+ * both his words and the answer (a follow-up job, `recordTeamFollowUp`). After a rotation (20
+ * turns, or a conversation that could not be continued) a first line "önceki konuşma" opens the
+ * previous run's transcript.
  */
 export function TeamJobConversation({ card }: { card: TeamCard }) {
   const { t } = useI18n();
@@ -19,6 +22,8 @@ export function TeamJobConversation({ card }: { card: TeamCard }) {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState(false);
+  const [previous, setPrevious] = useState(false);
+  const prev = card.job.chain?.previous;
   const { mutate, isPending } = useReplyToAgentThread();
   // A reply the server took can still be refused at the resume: said here, never silent.
   const delivery = useReplyDelivery(card.job.member, card.job.runId).data;
@@ -37,6 +42,18 @@ export function TeamJobConversation({ card }: { card: TeamCard }) {
     : !card.resumable ? t('super.team.reply.noSession') : null;
   return (
     <section className="super-team-job" data-testid="team-job-conversation" data-team-status={status}>
+      {prev && (
+        <button type="button" className="chat-feed-link super-team-job-previous" aria-expanded={previous} data-testid="team-job-previous" onClick={() => setPrevious((v) => !v)}>
+          {t('superStage.team.previous')}
+        </button>
+      )}
+      {prev && previous && (
+        <div className="super-team-job-body super-team-job-body--previous" data-testid="team-job-previous-body">
+          {prev.sessionId
+            ? <RunView key={prev.sessionId} claudeId={prev.sessionId} live={false} />
+            : <RunReport slug={card.job.member} runId={prev.runId} />}
+        </div>
+      )}
       <div className="super-team-job-body">
         {card.sessionId
           ? <RunView key={card.sessionId} claudeId={card.sessionId} live={running} />

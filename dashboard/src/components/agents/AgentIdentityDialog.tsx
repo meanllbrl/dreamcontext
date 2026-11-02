@@ -111,6 +111,17 @@ export function identityPatch(before: IdentityForm, after: IdentityForm): AgentI
   return patch;
 }
 
+/**
+ * The fields a widening owner save names (plan-r10 1e): the server answers 409 `widen_unconfirmed`
+ * with "... new reach: <a, b>. ..." (routes/agents.ts); null for any other failure.
+ */
+export function widenFieldsOf(err: unknown): string[] | null {
+  if (!(err instanceof RequestError) || err.code !== 'widen_unconfirmed') return null;
+  const m = /new reach: ([A-Za-z, ]+)\./.exec(err.message);
+  const fields = m ? m[1].split(',').map((f) => f.trim()).filter(Boolean) : [];
+  return fields.length ? fields : null;
+}
+
 /** A save failure in the owner's words: the truncation refusal gets its own sentence. */
 export function identityErrorKey(err: unknown): 'agents.identity.truncated' | 'agents.identity.failed' {
   return err instanceof RequestError && err.code === 'prompt_truncated'
@@ -172,6 +183,8 @@ export function AgentIdentityDialog({
   const codexInfo = form.tool === 'antigravity' ? agyInfo : codexToolInfo;
   const codexAccounts = useCodexAccounts(form.tool === 'codex').data?.accounts ?? [];
   const [error, setError] = useState<string | null>(null);
+  /** The fields a widening save names (409 `widen_unconfirmed`): shown inline; Save again = consent. */
+  const [widen, setWiden] = useState<string[] | null>(null);
   const [photo, setPhoto] = useState<Blob | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   /** After a template replaced text the owner had: what to put back, and the template's name. */
@@ -253,6 +266,9 @@ export function AgentIdentityDialog({
   };
 
   const fail = (err: unknown) => {
+    // A widening save (plan-r10 1e): his next Save is his consent, said on one inline line.
+    const fields = widenFieldsOf(err);
+    if (fields) { setWiden(fields); setError(null); return; }
     const key = identityErrorKey(err);
     setError(key === 'agents.identity.truncated' ? t(key) : t(key).replace('{reason}', (err as Error).message));
   };
@@ -269,7 +285,9 @@ export function AgentIdentityDialog({
         finish(detail.data!.agent);
         return;
       }
-      update.mutate({ slug, patch }, { onSuccess: finish, onError: fail });
+      // The fields the inline line named: the server stamps only this exact list (`confirmWiden`).
+      const body = (widen ? { ...patch, confirmWiden: widen } : patch) as typeof patch;
+      update.mutate({ slug, patch: body }, { onSuccess: finish, onError: fail });
       return;
     }
     const draft = {
@@ -521,6 +539,7 @@ export function AgentIdentityDialog({
 
         <p className="aid-note">{note ?? t('agents.identity.callSettingsNote')}</p>
 
+        {widen && <p className="aid-error" role="status" data-widen-confirm>{t('agents.approval.widenConfirm').replace('{fields}', widen.join(', '))}</p>}
         {error && <p className="aid-error" role="alert">{error}</p>}
 
         <div className="aid-foot">

@@ -641,6 +641,10 @@ export function startAutomationReplyJob(
     runId: string; text: string; entryId: string; home?: string; lockPollMs?: number;
     /** The owner's temporary model for this reply (AI Team), already validated. */
     override?: SpawnModelOverride | null;
+    /** These words are never an ANSWER (plan-r10 1b, security r8-1): the Super Agent's follow-up.
+     *  A question of the run, even one that appears while the reply waits, stays the owner's: the
+     *  reply goes as a plain message or is refused, never through `resumeWithAnswer`. */
+    noAnswer?: boolean;
   } & BoardTurnInput,
 ): ReplyJobState {
   pruneSettledReplyJobs();
@@ -679,12 +683,14 @@ async function replyOrAnswer(
   slug: string,
   text: string,
   verdictOpts: VerdictOptions & BoardTurnInput,
+  noAnswer = false,
 ): Promise<TalkOutcome> {
   // Synchronous up to the first resume call, on purpose: the job starts its turn in the
   // same tick it was created, exactly as it did before this routing existed.
   // Never a light job: read-only, it would spend the answer on a turn that cannot act on it.
   // It goes to `resumeWithMessage`, whose refusal reaches the Super as this job's failure.
   const openQuestion = () => {
+    if (noAnswer) return null;
     const q = pendingQuestionOfRun(contextRoot, slug, verdictOpts.run as string);
     return q && q.kind === 'flow-hitl' && !verdictOpts.override?.light ? q : null;
   };
@@ -705,7 +711,7 @@ async function replyOrAnswer(
 async function runReplyJob(
   contextRoot: string,
   job: ReplyJobState,
-  opts: { text: string; home?: string; lockPollMs?: number; override?: SpawnModelOverride | null } & BoardTurnInput,
+  opts: { text: string; home?: string; lockPollMs?: number; override?: SpawnModelOverride | null; noAnswer?: boolean } & BoardTurnInput,
 ): Promise<void> {
   let outcome: TalkOutcome | null = null;
   try {
@@ -729,7 +735,7 @@ async function runReplyJob(
       ...(opts.board ? { board: opts.board } : {}),
       ...(opts.override ? { override: opts.override } : {}),
     };
-    outcome = await replyOrAnswer(contextRoot, job.slug, opts.text, verdictOpts);
+    outcome = await replyOrAnswer(contextRoot, job.slug, opts.text, verdictOpts, opts.noAnswer === true);
     job.status = outcome.status === 'ok' ? 'ok' : outcome.status === 'refused' ? 'refused' : 'failed';
     job.reason = outcome.error;
   } catch (err) {

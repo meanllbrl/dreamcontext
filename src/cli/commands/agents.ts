@@ -14,11 +14,11 @@ import {
   removeAgent,
   setAgentPlacement,
   setAgentShared,
-  withRestamp,
 } from '../../lib/agents/store.js';
 import type { AgentIdentityPatch, AgentPlacementPatch } from '../../lib/agents/types.js';
 import { buildTree, flattenTree } from '../../lib/agents/tree.js';
-import { listAmendments, revertAmendment } from '../../lib/agents/amendments.js';
+import { AmendmentRefused, amendMember, createRisks, listAmendments, ownerEdit, revertAmendment, traceMemberCreate } from '../../lib/agents/amendments.js';
+import { memberActorFromEnv, widensAuthority } from '../../lib/agents/instruction-fields.js';
 import { settleApprovalQuestions } from '../../lib/automations/hitl.js';
 import { assertOwned, ownerLabel } from '../../lib/agents/owner.js';
 import { agentSyncPreview, agentSyncState, confirmAgentSyncHere } from '../../lib/agents/agent-sync.js';
@@ -85,10 +85,11 @@ export function inSession(env: NodeJS.ProcessEnv = process.env): boolean {
   return SELF_APPROVAL_ENVS.some((k) => env[k] !== undefined);
 }
 
-/** A hashed field's edit from a session. `agents edit` re-stamps what it changes, so a session
- *  that may not approve must not reach the same result through an edit. */
+/** What a session's or an agent's hashed edit says about itself (plan-r10 1e). It is no refusal any
+ *  more: the edit goes through `team amend`'s checks (risk filter, size caps, trace, `agents revert`)
+ *  and stamps when it is clean and narrows nothing; otherwise it waits for the owner's one card. */
 export const SESSION_EDIT_REFUSAL =
-  'A Claude session or an agent run does not edit a member\'s instructions or reach: an edit re-approves it, and approving is the owner\'s step. The Super Agent corrects instructions with `dreamcontext super team amend`; any other session tells the Super Agent, or asks the owner to edit it on the AI Team page.';
+  'Saved through the AI Team\'s amendment door: it is traced (`dreamcontext agents amendments <slug>`) and the owner can take it back. A change that widens what the member may reach, or a risky one from a background run, waits for his one approval card.';
 
 /** True when `patch` changes something the approval hash covers. */
 function touchesHash(patch: AgentIdentityPatch): boolean {
@@ -281,12 +282,29 @@ export function registerAgentsCommand(program: Command): void {
         fail(new Error(`--scope is project or global, not "${opts.scope}".`));
         return;
       }
-      // Inside an agent run or the Super Agent's crew, nothing it creates is approved by it: the
-      // owner approves on the AI Team page (a self-approved global agent would run in every project
-      // of this machine, and a new member is the widest change there is).
-      const selfRun = createNeedsOwner();
+      // Who creates it decides its stamp (plan-r10 1e): the owner's own create is approved; an
+      // in-app session's or an agent's goes through the risk filter over its prompt and soul and
+      // is judged against the default baseline. A clean, non-widening one is approved and traced;
+      // a widening one (a global member, the widest change there is), or a risky one from a run
+      // that never talks to the owner, waits for his one approval card.
+      // Who made it is decided exactly as before this change (`createNeedsOwner`): a plain
+      // Claude shell is the owner's and stamps like his terminal. Only an agent run, a member's
+      // conversation or the Super Agent's crew is judged, and only to stamp MORE than before.
+      const actor = !createNeedsOwner() ? 'owner' as const : memberActorFromEnv().actor === 'agent' ? 'agent' as const : 'session' as const;
+      let soulText = '';
+      try { soulText = resolveSoulOption(opts) ?? ''; } catch { soulText = ''; }
+      const risks = actor === 'owner' ? [] : createRisks(opts.prompt, soulText);
+      const widened = actor === 'owner' ? [] : widensAuthority(null, {
+        prompt: opts.prompt, soul: soulText, model: opts.model ?? null, whiteboard: opts.whiteboard ?? null,
+        learning: opts.learning, scope: opts.scope === 'global' ? 'global' : 'project',
+      }, actor);
+      const selfRun = actor !== 'owner' && (widened.length > 0 || (actor === 'agent' && risks.length > 0));
       const approve = selfRun ? {} : { approve: { now: new Date() } };
-      const unapproved = selfRun ? ' It waits for the owner\'s approval on the AI Team page.' : '';
+      const unapproved = selfRun ? ' It waits for the owner\'s one approval card on the AI Team page.' : '';
+      const trace = (projectRoot: string) => {
+        if (actor === 'owner') return;
+        traceMemberCreate(projectRoot, { member: slug, by: actor, risks, widened, waits: selfRun });
+      };
       if (opts.scope === 'global') {
         try {
           const soul = resolveSoulOption(opts);
@@ -300,6 +318,9 @@ export function registerAgentsCommand(program: Command): void {
             whiteboard: opts.whiteboard ?? null,
             learning: opts.learning,
           }, approve);
+          if (actor !== 'owner') {
+            try { trace(dirname(ensureContextRoot())); } catch { /* no project here: the global card still waits */ }
+          }
           success(`Created the global agent "${slug}" (~/.dreamcontext/agents/${slug}.md): every project lists it${selfRun ? '.' + unapproved : ', approved on this machine.'}`);
         } catch (err) {
           fail(err);
@@ -320,6 +341,7 @@ export function registerAgentsCommand(program: Command): void {
           whiteboard: opts.whiteboard ?? null,
           learning: opts.learning,
         }, approve);
+        trace(dirname(root));
         success(`Created the agent "${slug}" (agents/${slug}.md)${selfRun ? '.' + unapproved : ', approved on this machine.'}`);
       } catch (err) {
         fail(err);
@@ -365,9 +387,8 @@ export function registerAgentsCommand(program: Command): void {
           warn('Nothing to change.');
           return;
         }
-        if (touchesHash(patch) && inSession()) {
-          throw new AutomationError(SESSION_EDIT_REFUSAL);
-        }
+        const { actor, self } = memberActorFromEnv();
+        const viaDoor = touchesHash(patch) && actor !== 'owner';
         // The placement first: it is checked against the team (a loop, an unknown manager) and
         // refused before any identity change lands.
         if (Object.keys(place).length > 0) {
@@ -376,10 +397,24 @@ export function registerAgentsCommand(program: Command): void {
             warn(`"${slug}" has no reports yet: its team "${placed.team}" shows once someone reports to it.`);
           }
         }
-        if (Object.keys(patch).length > 0) withRestamp(root, dirname(root), slug, patch);
+        if (viaDoor) {
+          // One door with `team amend` (plan-r10 1e): checks, trace, revert, and the stamp rule.
+          const { prompt, soul: newSoul, ...extra } = patch;
+          const a = amendMember(root, {
+            member: slug, by: actor as Exclude<typeof actor, 'owner'>, self,
+            why: `edited with \`dreamcontext agents edit\` from ${actor === 'session' ? 'a chat session' : 'a background run'}`,
+            ...(prompt !== undefined ? { prompt } : {}),
+            ...(newSoul !== undefined ? { soul: newSoul } : {}),
+            extra,
+          });
+          success(`Saved "${slug}". ${SESSION_EDIT_REFUSAL}${a.waits ? ' This one waits for that card.' : ''}`);
+          return;
+        }
+        // His own edit: stamped as before, and traced (`agents amendments`), so he can take it back.
+        if (Object.keys(patch).length > 0) ownerEdit(root, slug, patch, { why: 'edited with `dreamcontext agents edit`' });
         success(`Saved "${slug}".`);
       } catch (err) {
-        fail(err);
+        fail(err instanceof AmendmentRefused ? new AutomationError(`${err.code}: ${err.message}`) : err);
       }
     });
 

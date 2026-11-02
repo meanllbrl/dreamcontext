@@ -313,7 +313,7 @@ export function registerSuperCommand(program: Command): void {
     }));
 
   team.command('amend <member>')
-    .description('Correct a member\'s instructions after a mistake: only its prompt, soul or a routine\'s job. It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page. Refused: `amend_needs_owner` (the text adds an address, a command, a secret path or a hidden character), `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `amend_unapproved`, `owner_reverted` (he took this text back), `amend_global`')
+    .description('Correct a member\'s instructions after a mistake: only its prompt, soul or a routine\'s job. It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global`')
     .requiredOption('--why <line>', 'The mistake this fixes, in a line the owner reads')
     .option('--prompt-file <path>', 'A file with its whole new prompt')
     .option('--soul-file <path>', 'A file with its whole new soul (empty removes it)')

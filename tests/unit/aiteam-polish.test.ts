@@ -133,9 +133,13 @@ describe('the surfaces wire it (source scan; the behaviour is proven in the brow
     // The mark fades on its own effect, not the landing's cleanup (which the page clears at once).
     expect(convo).toMatch(/if \(!flash\) return;\s*const timer = setTimeout\(\(\) => setFlash\(null\), 2400\)/);
   });
-  it('the strip sits above the conversation and Approve waits for a fresh read', () => {
-    expect(convo).toMatch(/<TeamApproval agentTitle=\{agent\.title\} pending=\{pending\}/);
+  it('the ONE card is the stage\'s strip, never a duplicate in the conversation, and Approve waits for a fresh read', () => {
+    const stage = readFileSync('dashboard/src/components/aiteam/AgentStage.tsx', 'utf8');
+    expect(stage).toMatch(/<TeamApproval agentTitle=\{agent\.title\} pending=\{pending\}/);
+    expect(convo).not.toMatch(/<TeamApproval\b/);
     expect(convo).toMatch(/const blocked = talkBlocked\(pending\)/);
+    // The card names the fields a synced or waiting change moved.
+    expect(strip).toMatch(/data-approval-fields/);
     expect(strip).toMatch(/invalidateQueries\(\{ queryKey: item\.kind === 'agent' \? \['agents', item\.slug\] : \['automations', item\.slug\], exact: true \}\)/);
     expect(strip).toMatch(/const ready = !!review && !detail\.isFetching && detail\.isFetchedAfterMount;/);
   });

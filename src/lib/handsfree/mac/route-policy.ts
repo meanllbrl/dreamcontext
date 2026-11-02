@@ -495,6 +495,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'POST /api/agents/:slug/bring-here': deny('moves where an agent runs: decided at the machine that will run it'),
   'GET /api/agents/:slug': allow(READ),
   'POST /api/agents/:slug/update': allow(PROJECT_WRITE),
+  'POST /api/agents/:slug/enabled': allow('the owner turns this project\'s member on or off (the Ekip list switch), as on the laptop; it never re-approves'),
   'POST /api/agents/:slug/delete': allow(PROJECT_WRITE),
   'POST /api/agents/:slug/approve': allow('the owner approves this project\'s agent, as on the laptop'),
   'POST /api/agents/:slug/place': allow(PROJECT_WRITE),

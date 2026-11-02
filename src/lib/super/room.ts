@@ -47,7 +47,10 @@ export function retirable(s: SuperState, c: SuperContainer, live: LiveTest): boo
   if (c.kind === 'browser' && !childFinished(s, c.ref, live)) return false;
   if (c.kind === 'team') {
     const job = s.team.find((j) => j.id === c.ref);
-    return !job || job.endedAt !== undefined || job.outcome !== undefined;
+    if (!job) return true;
+    // A member's one card (plan-r10 1b) stays while a follow-up of its conversation is still open.
+    if (s.team.some((j) => j.followUpOf === job.id && j.open === true)) return false;
+    return job.endedAt !== undefined || job.outcome !== undefined;
   }
   return true;
 }

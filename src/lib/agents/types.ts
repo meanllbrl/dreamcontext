@@ -29,8 +29,9 @@ export const AGENTS_DIR = 'agents';
  * an agent that has no automation of its own. Every field but `enabled` and
  * `notify` is approval-hashed in the agent's call target.
  *
- * Nothing edits these in this build: the migration writes them for an on-call
- * agent (its old run settings), and every other agent has the defaults.
+ * The migration writes them for an on-call agent (its old run settings), and every other agent
+ * has the defaults. One write path exists: `enabled`, through `setAgentCallEnabled` (the Ekip
+ * list's on/off switch, owner page only, plan-r10 1d); it is unhashed, so the member stays approved.
  */
 export interface AgentCallSettings {
   timeoutMinutes: number;

@@ -71,7 +71,9 @@ import { approvalCardBlock, staleApprovalBlock } from '../../lib/automations/app
 import { checkRoutineCreate, ownerInTurn, recordRoutineCreated } from '../../lib/automations/routine-gate.js';
 import { refuseSelfApproval } from './agents.js';
 import { logAssignmentResult } from '../../lib/agents/task-assignment.js';
-import { getAgent, setAgentShared } from '../../lib/agents/store.js';
+import { getAgent, setAgentShared, widenViewOf } from '../../lib/agents/store.js';
+import { createRisks, traceMemberCreate } from '../../lib/agents/amendments.js';
+import { memberActorFromEnv, widensAuthority } from '../../lib/agents/instruction-fields.js';
 import {
   adoptGlobalTelegramConfig,
   forgetTelegramConfigForSlug,
@@ -222,6 +224,55 @@ function boardExists(contextRoot: string, slug: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * An agent run, a member's conversation or the Super Agent's crew (`createNeedsOwner`) may not open
+ * a member's slot (plan-r10 1e, security r8-2-3): `enable` would turn a member the owner switched
+ * off back on, `share` would publish it to every teammate. Both widen who and what runs, and
+ * neither goes through the approval hash. The owner does both in the app. Returns true when it refused.
+ */
+function refuseMemberSlotForAgent(root: string, slug: string, what: string): boolean {
+  if (!createNeedsOwner()) return false;
+  // A member's OWN slot only: a routine bound to a member shares as it always did.
+  let member = false;
+  try { member = getAgent(root, slug) !== null; } catch { member = true; }
+  if (!member) return false;
+  error(`${what[0].toUpperCase()}${what.slice(1)} is the owner's step, and this is an agent run or the Super Agent's crew. He does it in the app.`);
+  process.exitCode = 1;
+  return true;
+}
+
+/**
+ * An automation an agent run, a member's conversation or the Super Agent's crew created
+ * (`createNeedsOwner`), judged on the manifest as written, like `agents create` (plan-r10 1e):
+ *  - the risk filter over its prompt, job and soul (`createRisks`);
+ *  - widening against the default baseline (`widensAuthority(null, …)`): a schedule, an output
+ *    folder or instructions, an app, a tool, read tools, review off from on...; `shared` widens
+ *    who sees it. The derived `## Flow` is left out: the CLI never authors one at create, it is
+ *    drawn from the fields judged here;
+ *  - a trace row (`agents amendments`), whether it stamps or waits.
+ * True only for a clean, non-widening create (a background run's text must also be clean).
+ * `--mode call` alone grants nothing.
+ */
+/** MIRROR of the store's `OUTPUT_INSTRUCTIONS_PLACEHOLDER` (not exported there): the body every new
+ *  manifest's `## Output instructions` starts with. A drift only makes an agent's create wait. */
+const OUTPUT_PLACEHOLDER = '(Optional — extra guidance for how the output should be formatted or where else it should go.)';
+
+export function judgeAgentCreate(projectRoot: string, m: AutomationManifest, env: NodeJS.ProcessEnv = process.env): boolean {
+  const actor = memberActorFromEnv(env).actor === 'agent' ? 'agent' as const : 'session' as const;
+  const risks = createRisks(m.prompt, [typeof m.soul === 'string' ? m.soul : '', typeof m.job === 'string' ? m.job : ''].join('\n'));
+  // A `## ` line in the prompt file opens another section of the manifest (output instructions, a
+  // flow): text an agent may not author unseen.
+  if (/^\s*##(?:\s|$)/m.test(m.prompt)) risks.push('a section heading in the prompt');
+  const { flow: _flow, ...view } = widenViewOf(m);
+  // The scaffold's own placeholder is no destination: it is what every new manifest starts with.
+  if (typeof view.outputInstructions === 'string' && view.outputInstructions.trim() === OUTPUT_PLACEHOLDER) view.outputInstructions = '';
+  const widened = widensAuthority(null, view, actor);
+  if (m.shared) widened.push('shared');
+  const ok = widened.length === 0 && (actor !== 'agent' || risks.length === 0);
+  traceMemberCreate(projectRoot, { member: m.slug, by: actor, risks, widened, waits: !ok });
+  return ok;
 }
 
 /**
@@ -898,6 +949,7 @@ export function registerAutomationsCommand(program: Command): void {
       }
       // An agent's run or the Super Agent's crew gets no approval by creating: only the owner's own
       // chat or terminal, or his yes on a `propose --routine`, grants one.
+      // An agent-made standalone automation is judged below (`judgeAgentCreate`), on what was written.
       const stamp = !createNeedsOwner() || gate.question !== null;
       if (opts.agent !== undefined) {
         const created = createBoundFromFlags(root, slug, stamp, opts);
@@ -985,10 +1037,14 @@ export function registerAutomationsCommand(program: Command): void {
 
         const projectRoot = projectRootFor(root);
         registerProject(projectRoot);
-        if (stamp) approveAutomation(projectRoot, manifest, new Date());
+        // An agent's create goes through the same door as `agents create` (plan-r10 1e): the risk
+        // filter over its text, widening against the default baseline, a trace row. Only a clean,
+        // non-widening one stamps; anything else waits for the owner's one card.
+        const stamped = stamp || (createNeedsOwner() && judgeAgentCreate(projectRoot, manifest));
+        if (stamped) approveAutomation(projectRoot, manifest, new Date());
 
-        success(`Automation created: automations/${manifest.slug}.md${stamp ? ' (approved on this machine)' : ''}.`);
-        if (!stamp) printOwnerApprovalCard(manifest.slug);
+        success(`Automation created: automations/${manifest.slug}.md${stamped ? ' (approved on this machine)' : ''}.`);
+        if (!stamped) printOwnerApprovalCard(manifest.slug);
         if (manifest.whiteboard) {
           console.log(chalk.dim(`  Home board: ${manifest.whiteboard}. Every run is scoped to that board.`));
         }
@@ -2099,6 +2155,7 @@ export function registerAutomationsCommand(program: Command): void {
     .description('Enable an automation (tick will consider it again)')
     .action((slug: string) => {
       const root = ensureContextRoot();
+      if (refuseMemberSlotForAgent(root, slug, 'turning a member back on')) return;
       try {
         setAutomationEnabled(root, slug, true);
         success(`"${slug}" enabled.`);
@@ -2129,6 +2186,7 @@ export function registerAutomationsCommand(program: Command): void {
       const root = ensureContextRoot();
       const manifest = requireAutomation(root, slug);
       if (!manifest) return;
+      if (refuseMemberSlotForAgent(root, slug, 'sharing a member')) return;
 
       try {
         setAutomationShared(root, slug, true);

@@ -64,6 +64,11 @@ export interface ApprovalEntry {
   /** The tool the approved manifest ran on, when it was not Claude (Track T W4): what tells a
    *  later save that the target is waiting for the owner, not merely edited. */
   tool?: string;
+  /** One short hash per reviewed field (`APPROVAL_DIFF_FIELDS`, plus `mode`) of what was stamped,
+   *  machine-local and OUTSIDE the hashed payload: what lets the one approval card name the fields
+   *  a synced or waiting change moved (`changedApprovalFields`). Never part of the verdict, so an
+   *  entry written before it existed judges exactly as before. */
+  fieldHashes?: Record<string, string>;
 }
 
 /** One project's approvals, keyed by automation slug. */
@@ -131,8 +136,15 @@ function isValidApprovalEntry(v: unknown): v is ApprovalEntry {
     // value drops the entry (reads as never-approved): failing closed costs a
     // re-approval, failing open could unscope a board agent.
     (e.whiteboard === undefined || (typeof e.whiteboard === 'string' && e.whiteboard.length > 0)) &&
-    (e.tool === undefined || typeof e.tool === 'string')
+    (e.tool === undefined || typeof e.tool === 'string') &&
+    // Display data only: a malformed map drops the entry like any other bad field (fail closed).
+    (e.fieldHashes === undefined || isFieldHashMap(e.fieldHashes))
   );
+}
+
+function isFieldHashMap(v: unknown): v is Record<string, string> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  return Object.entries(v as Record<string, unknown>).every(([k, h]) => k.length > 0 && k.length <= 40 && typeof h === 'string' && h.length <= 64);
 }
 
 /** Keep only well-formed entries; a malformed sibling never costs the others. */
@@ -692,7 +704,37 @@ function approvalEntryFor(m: AutomationManifest, now: Date): ApprovalEntry {
     payloadVersion: APPROVAL_PAYLOAD_VERSION,
     ...(m.whiteboard ? { whiteboard: m.whiteboard } : {}),
     ...(m.tool ? { tool: m.tool } : {}),
+    fieldHashes: approvalFieldHashes(m),
   };
+}
+
+/** Each reviewed field's short hash, as `approvalFields` shows it (and `mode`, hashed but not on the
+ *  review list). Display data for the one approval card, never compared for the verdict. */
+export function approvalFieldHashes(m: AutomationManifest): Record<string, string> {
+  const fields = approvalFields(m) as unknown as Record<string, unknown>;
+  const out: Record<string, string> = {};
+  const keys: string[] = [...APPROVAL_DIFF_FIELDS, 'mode'];
+  for (const k of keys) {
+    const v = k === 'mode' ? (m.mode ?? 'call') : fields[k];
+    out[k] = createHash('sha256').update(JSON.stringify(v ?? null), 'utf8').digest('hex').slice(0, 16);
+  }
+  return out;
+}
+
+/**
+ * Which reviewed fields moved since this Mac last stamped `m`: the fields the one approval card
+ * names ("Takımdan gelen değişiklik: prompt, readTools"). Null when nothing was ever stamped here,
+ * or the stamp predates field hashes (the card then says it changed, without the list), or `m` is
+ * approved as it stands (nothing waits).
+ */
+export function changedApprovalFields(projectRoot: string, m: AutomationManifest, home?: string): string[] | null {
+  const verdict = checkApproval(projectRoot, m, home, 'run');
+  if (verdict.approved || verdict.reason === 'not_owner') return null;
+  const bucket = m.agentScope === 'global' ? GLOBAL_REGISTRY_KEY : projectRoot;
+  const entry = getApproval(bucket, m.slug, home, m.runKind === 'agent' ? 'agent' : 'automation');
+  if (!entry?.fieldHashes) return null;
+  const now = approvalFieldHashes(m);
+  return Object.keys(now).filter((k) => entry.fieldHashes![k] !== undefined && entry.fieldHashes![k] !== now[k]);
 }
 
 /** Slots in which `approvals[<slug>]` can only be the AGENT's own legacy record,

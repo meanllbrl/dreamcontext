@@ -55,7 +55,7 @@ import {
   type ManifestParts,
   type RecordLessonInput,
 } from '../automations/store.js';
-import { approveAutomation, checkApproval, listRegisteredProjects, manifestHash, revokeAgent } from '../automations/registry.js';
+import { approvalFields, approveAutomation, checkApproval, listRegisteredProjects, manifestHash, revokeAgent } from '../automations/registry.js';
 import { readWhiteboard, listWhiteboards } from '../whiteboards/store.js';
 import { liveElements } from '../whiteboards/ops.js';
 import { widgetPayloadOf } from '../whiteboards/widgets.js';
@@ -883,14 +883,18 @@ export function withRestamp(
   patch: AgentIdentityPatch,
   home?: string,
   now: Date = new Date(),
+  opts: RestampOptions = {},
 ): AgentManifest {
   assertIdentityPatch(patch);
   const agent = getAgent(contextRoot, agentSlug);
   if (!agent) throw new AutomationError(`No agent named "${agentSlug}" in this project.`);
   const next = applyIdentityPatch(agent, patch);
+  // The change waits for the one approval card (plan-r10 1e): written, never stamped.
+  if (opts.stamp === false) return updateAgent(contextRoot, agentSlug, patch);
   // Another tool means another vendor reads the prompt: that needs the owner's approval of the
-  // new hash, never a quiet re-stamp of the old one (Track T W4).
-  if ((next.tool ?? '') !== (agent.tool ?? '')) return updateAgent(contextRoot, agentSlug, patch);
+  // new hash, never a quiet re-stamp of the old one (Track T W4). His own confirmed save on the
+  // dashboard IS that approval (`consent`, set only by an owner-page route after `confirmWiden`).
+  if ((next.tool ?? '') !== (agent.tool ?? '') && !opts.consent) return updateAgent(contextRoot, agentSlug, patch);
 
   const plan = restampTargets(contextRoot, agentSlug).map(({ kind, target }) => {
     const verdict = checkApproval(projectRoot, target, home, 'run');
@@ -906,6 +910,65 @@ export function withRestamp(
     if (reread && manifestHash(reread) === p.expected) approveAutomation(projectRoot, reread, now, home);
   }
   return updated;
+}
+
+/** How `withRestamp` stamps. Both absent = today's rule (re-stamp what was directly approved
+ *  before and is exactly what the edit produced; never across a tool change). */
+export interface RestampOptions {
+  /** false: write only. The change waits for the one approval card (an agent's risky, widening,
+   *  global or cross-member change; plan-r10 1e). */
+  stamp?: boolean;
+  /** The owner confirmed this widening in his own save (`confirmWiden`): a tool change stamps too.
+   *  Set ONLY by an owner-page route. The "approved as it stood before" precondition still holds. */
+  consent?: boolean;
+}
+
+/** The agent's call target as it would read once `patch` is written: what the approval rule
+ *  judges a change by (`widensAuthority`), computed in memory, nothing written. */
+export function previewCallTarget(contextRoot: string, agentSlug: string, patch: AgentIdentityPatch): { before: AutomationManifest; after: AutomationManifest } | null {
+  assertIdentityPatch(patch);
+  const agent = getAgent(contextRoot, agentSlug);
+  const before = getRunTarget(contextRoot, agentSlug, 'agent');
+  if (!agent || !before) return null;
+  return { before, after: withIdentity(before, applyIdentityPatch(agent, patch)) };
+}
+
+/** A run target as `widensAuthority` reads it: its review fields, `mode`, `enabled`, where it lives. */
+export function widenViewOf(m: AutomationManifest): Record<string, unknown> & { scope: 'project' | 'global' } {
+  return {
+    ...(approvalFields(m) as unknown as Record<string, unknown>),
+    mode: m.mode ?? 'call',
+    enabled: m.enabled !== false,
+    ...(m.fallbackTools?.length ? { fallbackTools: [...m.fallbackTools] } : {}),
+    scope: m.agentScope === 'global' ? 'global' : 'project',
+  };
+}
+
+/**
+ * Turn a member's calls on or off: `call.enabled` in its file and nothing else (unhashed, so the
+ * member stays exactly as approved). A global member's file is the global manifest (off in every
+ * project). The ONE write path behind the Ekip list's switch (`POST /api/agents/:slug/enabled`,
+ * owner page only, plan-r10 1d); an agent never reaches it.
+ */
+export function setAgentCallEnabled(contextRoot: string, slug: string, enabled: boolean): AgentManifest {
+  const agent = getAgent(contextRoot, slug);
+  if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
+  assertOwned({ owner: agent.owner }, agent.title || slug);
+  if (agent.implicit) {
+    // An unsplit on-call agent IS its legacy manifest: its own `enabled` is the call's.
+    patchManifestFrontmatter(agent.path, { enabled });
+  } else {
+    assertRegularFile(agent.path);
+    const { data, content } = parseManifestFrontmatter(readFileSync(agent.path, 'utf-8'));
+    const call = data.call && typeof data.call === 'object' && !Array.isArray(data.call) ? { ...(data.call as Record<string, unknown>) } : {};
+    if (enabled) delete call.enabled; else call.enabled = false;
+    const nextData: Record<string, unknown> = { ...data };
+    if (Object.keys(call).length > 0) nextData.call = call; else delete nextData.call;
+    rewriteManifestText(agent.path, matter.stringify(content, nextData));
+  }
+  const after = getAgent(contextRoot, slug);
+  if (!after) throw new AutomationError(`Agent "${slug}" could not be read back after the switch.`);
+  return after;
 }
 
 /** The agent's call target first, then every automation file that runs as it

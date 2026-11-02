@@ -6,7 +6,7 @@ import { sendJson, sendError, parseJsonBody } from '../middleware.js';
 import { refuseUnlessOwnerPage } from '../owner-page.js';
 import { refuseNotOwner, sendIfNotOwner } from './owner-guard.js';
 import { ownerLabel } from '../../lib/agents/owner.js';
-import { AmendmentRefused, listAmendments, revertAmendment } from '../../lib/agents/amendments.js';
+import { AmendmentRefused, listAmendments, ownerEdit, revertAmendment } from '../../lib/agents/amendments.js';
 import { settleApprovalQuestions } from '../../lib/automations/hitl.js';
 import { placement } from '../../lib/agents/active.js';
 import { GLOBAL_REGISTRY_KEY, globalAgentExists, hasProjectMember } from '../../lib/agents/scope.js';
@@ -21,11 +21,14 @@ import {
   listGlobalAgents,
   listAgents,
   listAgentTargets,
+  previewCallTarget,
   removeAgent,
+  setAgentCallEnabled,
   setAgentPlacement,
   updateAgent,
-  withRestamp,
+  widenViewOf,
 } from '../../lib/agents/store.js';
+import { widensAuthority } from '../../lib/agents/instruction-fields.js';
 import {
   DEFAULT_CALL_SETTINGS,
   type AgentIdentityPatch,
@@ -50,6 +53,7 @@ import { roleLineOf, soulExcerpt } from '../../lib/agents/soul.js';
 import {
   approvalFields,
   approveAutomation,
+  changedApprovalFields,
   checkApproval,
   registerProject,
   renderApprovalReview,
@@ -380,6 +384,9 @@ export async function handleAgentsShow(
     learning: target.learning,
     pattern: parsePattern(agent?.pattern ?? target.pattern),
     review: renderApprovalReview(approvalFields(target)),
+    // The fields the one approval card names (a synced or waiting change, plan-r10 1e); null when
+    // nothing waits or this Mac never stamped it with field hashes.
+    changedFields: changedApprovalFields(dirname(contextRoot), target),
   });
 }
 
@@ -570,10 +577,66 @@ export async function handleAgentsUpdate(
     if (soul !== undefined) patch.soul = soul;
     const autonomy = readAutonomy(body.autonomy);
     if (autonomy !== undefined) patch.autonomy = autonomy;
-    if (Object.keys(patch).length > 0) withRestamp(contextRoot, dirname(contextRoot), params.slug, patch);
+    if (Object.keys(patch).length > 0) {
+      // His save is his consent, but a WIDENING one says so first (plan-r10 1e): the dashboard
+      // sends `confirmWiden` with exactly the fields `widensAuthority` names, after its inline
+      // line; anything else is 409 with the list, and nothing is written.
+      const preview = previewCallTarget(contextRoot, params.slug, patch);
+      const widened = preview ? widensAuthority(widenViewOf(preview.before), widenViewOf(preview.after), 'owner') : [];
+      if (widened.length > 0 && !sameFields(body.confirmWiden, widened)) {
+        sendJson(res, 409, {
+          error: 'widen_unconfirmed',
+          message: `This change gives the member new reach: ${widened.join(', ')}. Save again with confirmWiden to confirm it.`,
+          fields: widened,
+        });
+        return;
+      }
+      // Stamped (his confirmed save is his consent) and traced, so he can take it back.
+      ownerEdit(contextRoot, params.slug, patch, { consent: widened.length > 0, why: 'edited on the AI Team page' });
+    }
     sendSummary(res, contextRoot, params.slug);
   } catch (err) {
     sendWriteError(res, err, 'update_failed', 'Failed to save the agent.');
+  }
+}
+
+/** `confirmWiden` names exactly the widened fields (order free). */
+function sameFields(raw: unknown, want: readonly string[]): boolean {
+  if (!Array.isArray(raw) || !raw.every((x) => typeof x === 'string')) return false;
+  const got = [...new Set(raw as string[])].sort();
+  return got.length === want.length && got.every((x, i) => x === [...want].sort()[i]);
+}
+
+/**
+ * POST /api/agents/:slug/enabled {enabled} — the Ekip list's on/off switch (plan-r10 1d): the
+ * member's `call.enabled` and nothing else, so it stays exactly as approved. The owner's page only
+ * (an agent never turns a member back on, plan-r10 1e), never a teammate's member (`not_owner`). A
+ * global member's switch writes the global manifest: off in every project.
+ */
+export async function handleAgentsSetEnabled(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (refuseUnlessOwnerPage(req, res, 'turns a member on or off')) return;
+  if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
+  const agent = isSafeAutomationSlug(params.slug) ? getAgent(contextRoot, params.slug) : null;
+  if (!agent) {
+    sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
+    return;
+  }
+  if (refuseNotOwner(res, { slug: agent.slug, owner: agent.owner, title: agent.title })) return;
+  const body = await parseJsonBody(req);
+  if (!body || typeof body.enabled !== 'boolean') {
+    sendError(res, 400, 'bad_body', 'Expected { enabled: true | false }.');
+    return;
+  }
+  try {
+    setAgentCallEnabled(contextRoot, params.slug, body.enabled);
+    sendSummary(res, contextRoot, params.slug);
+  } catch (err) {
+    sendWriteError(res, err, 'enable_failed', 'Failed to switch the member.');
   }
 }
 

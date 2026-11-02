@@ -41,6 +41,10 @@ export interface ApprovalCardFacts {
  * change things. Capability, not intent: a scheduled run can write files and run commands unless
  * it lives on a board, so the card says so beside the prompt's own words.
  *
+ * Only for a routine that runs BY ITSELF (`mode: sched`): that is the one an agent's create widens
+ * (plan-r10 1e), so it is the one that still asks here. Anything else an agent made stamps on this
+ * Mac, or waits for the member's ONE card on the AI Team page, which this card then names.
+ *
  * One tap each way. Approve (and turn on, when it is off) or Turn down (it is turned off, never
  * deleted). Both routes take the owner's page only; an agent's call is refused. When the card
  * sits in the Super Agent's chat the server tells the super (`told`); anywhere else the decision
@@ -124,7 +128,9 @@ export function AutomationApprovalCard({ spec, session, report }: {
     : !f.enabled ? 'off' : f.approvalReason === 'never-approved' ? 'waiting' : 'changed';
   const stateLabel = t(`chat.autocard.state.${state}`);
   const next = f.approved && f.enabled ? fireTime(f.nextFireAt, locale) : '';
-  const canAct = owned && (state !== 'approved' || !f.enabled);
+  // The chat's yes stays only for a routine that runs by itself (plan-r10 1e, mode sched = widening).
+  const scheduled = f.mode === 'sched';
+  const canAct = owned && scheduled && (state !== 'approved' || !f.enabled);
   const approveLabel = t(f.enabled ? 'chat.autocard.approve' : 'chat.autocard.approveOn');
 
   return (
@@ -154,6 +160,7 @@ export function AutomationApprovalCard({ spec, session, report }: {
       {phase === 'refused' && <p className="chat-autocard-error">{t('chat.autocard.refused')}</p>}
       {phase === 'failed' && <p className="chat-autocard-error">{t('chat.autocard.failed')}</p>}
       {!owned && <p className="chat-autocard-note">{t('chat.autocard.teammate')}</p>}
+      {owned && !scheduled && state !== 'approved' && <p className="chat-autocard-note" data-approval-waits>{t('agents.approval.waitsCard')}</p>}
       {canAct && (
         <div className="chat-autocard-foot">
           <p className="chat-autocard-note">{t('chat.autocard.fallback')}</p>

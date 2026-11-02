@@ -691,9 +691,12 @@ export interface SuperTeamJob {
   toldPost?: string;
   /** When its done or stuck was told: a late post is still watched for `TEAM_TRAIL_MS`. */
   toldEndAt?: number;
-  /** The owner wrote to the member on this job's own conversation: the job it continues. It has
-   *  no card of its own. */
+  /** A follow-up on this job's own conversation: the job it continues (the chain's root). It has
+   *  no card of its own: the member's one card shows the chain. */
   followUpOf?: string;
+  /** Who wrote the follow-up: `super` when the Super Agent asked the same member again
+   *  (`team ask` continuing its conversation, plan-r10 1b). Absent = the owner wrote it. */
+  by?: 'super';
 }
 
 /** What a team job's ending tells the super: it finished, failed, or its run stopped to ask the owner. */
@@ -707,6 +710,34 @@ export type TeamJobStatus = typeof TEAM_JOB_STATUSES[number];
 
 /** Team jobs the record keeps (newest first). */
 export const MAX_TEAM_JOBS = 30;
+
+/**
+ * The record's team list, newest first, cut to MAX_TEAM_JOBS (plan-r10 1b): over the cap the
+ * OLDEST follow-ups go first, then the oldest roots; a member's CURRENT root (its newest job with
+ * no `followUpOf`, the one its card shows) is never dropped. Pure; `team` sorted newest first.
+ */
+export function trimTeamJobs(team: SuperTeamJob[], max: number = MAX_TEAM_JOBS): SuperTeamJob[] {
+  if (team.length <= max) return team;
+  const current = new Set<string>();
+  const seen = new Set<string>();
+  for (const j of team) {
+    if (j.followUpOf || seen.has(j.member)) continue;
+    seen.add(j.member);
+    current.add(j.id);
+  }
+  const drop = new Set<string>();
+  let over = team.length - max;
+  // Oldest first: follow-ups, then roots that are no longer a member's current one.
+  for (const pass of [(j: SuperTeamJob) => !!j.followUpOf, (j: SuperTeamJob) => !j.followUpOf && !current.has(j.id)]) {
+    for (let i = team.length - 1; i >= 0 && over > 0; i--) {
+      const j = team[i];
+      if (drop.has(j.id) || !pass(j)) continue;
+      drop.add(j.id);
+      over--;
+    }
+  }
+  return team.filter((j) => !drop.has(j.id));
+}
 export const TEAM_JOB_ID_RE = /^team-[a-z0-9-]{1,35}$/;
 
 /**

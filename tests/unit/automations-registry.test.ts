@@ -753,7 +753,8 @@ describe('approveAutomation / getApproval / revokeApproval', () => {
   it('approveAutomation records hash, timestamp, and the current payload version', () => {
     const m = makeManifest();
     const entry = approveAutomation(PROJECT_A, m, NOW, home);
-    expect(entry).toEqual({ manifestSha256: manifestHash(m), approvedAt: NOW.toISOString(), payloadVersion: 'automation-approval/v1' });
+    // `fieldHashes` is machine-local display data for the one approval card (plan-r10 1e), outside the hash.
+    expect(entry).toEqual({ manifestSha256: manifestHash(m), approvedAt: NOW.toISOString(), payloadVersion: 'automation-approval/v1', fieldHashes: expect.any(Object) });
     expect(getApproval(PROJECT_A, m.slug, home)).toEqual(entry);
   });
 

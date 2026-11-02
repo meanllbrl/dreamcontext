@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Task } from '../../hooks/useTasks';
 import { useAssignTaskToAgent } from '../../hooks/useTasks';
-import { findAgent, useAgent, useAgents, useApproveAgent } from '../../hooks/useAgents';
+import { findAgent, useAgent, useAgents } from '../../hooks/useAgents';
 import { useLinkedRepos } from '../../hooks/useLinkedRepos';
 import { useAutomationDispatcher, useInstallDispatcher } from '../../hooks/useAutomations';
 import { guessWorkspace, instantToLocalInput, localInputToInstant, shortWhen } from '../../lib/taskAgentJob';
 import { useI18n } from '../../context/I18nContext';
 import { requestOpenAgents } from '../../lib/openAgents';
 import {
-  ASSIGN_NOTE_MAX_CHARS, approvalReasonText, approveThenAssign, assignedMessage, initialAgentSlug,
+  ASSIGN_NOTE_MAX_CHARS, assignedMessage, initialAgentSlug,
   noteTooLong, offeredAgents, refusalView, tr,
 } from '../../lib/assignToAgent';
 import { AgentAvatar } from '../agents/AgentAvatar';
@@ -54,10 +54,10 @@ interface AssignToAgentComposerProps {
  * "Assign to agent": pick an agent, add an optional note, read what will happen, Assign.
  *
  * A refusal is answered IN PLACE, never by a toast or a browser dialog (both vanish or no-op in
- * the desktop app). `agent_not_approved_to_run` opens the agent's review right here, the exact
- * text an approval grants, with "Approve and assign"; every other refusal is one plain line. The
- * decisions themselves (who is offered, what a refusal says, approve-then-assign) live in
- * `lib/assignToAgent.ts`.
+ * the desktop app). `agent_not_approved_to_run` shows the agent's review right here, read-only, and
+ * names the ONE approval card it waits for (plan-r10 1e: a synced or widening change; there is no
+ * "Approve and assign" any more); every other refusal is one plain line. The decisions themselves
+ * (who is offered, what a refusal says) live in `lib/assignToAgent.ts`.
  */
 export function AssignToAgentComposer({ task, onClose, onAssigned, initialAgent }: AssignToAgentComposerProps) {
   const { t } = useI18n();
@@ -90,9 +90,9 @@ export function AssignToAgentComposer({ task, onClose, onAssigned, initialAgent 
   const [reviewing, setReviewing] = useState(false);
   const [done, setDone] = useState<string | null>(null);
   const assign = useAssignTaskToAgent();
-  const approve = useApproveAgent();
   const detail = useAgent(reviewing ? slug : null, { fresh: true });
-  const busy = assign.isPending || approve.isPending;
+  const busy = assign.isPending;
+  const changedFields = (detail.data as { changedFields?: string[] | null } | undefined)?.changedFields ?? null;
   const options = {
     ...(startAt ? { startAt } : {}),
     workspace: ws,
@@ -127,29 +127,6 @@ export function AssignToAgentComposer({ task, onClose, onAssigned, initialAgent 
         },
       },
     );
-  };
-
-  const approveAndAssign = async () => {
-    if (!slug || busy) return;
-    setError(null);
-    const outcome = await approveThenAssign({
-      approve: () => approve.mutateAsync(slug),
-      assign: () => assign.mutateAsync({ slug: task.slug, agent: slug, note, ...options }),
-    });
-    if (outcome.ok) { setReviewing(false); assigned(outcome.result); return; }
-    if (outcome.stage === 'approve') {
-      setError(tr(t, 'agents.approval.failed', "Couldn't approve {name}. {reason}", {
-        name, reason: tr(t, 'tasks.assignTryAgain', 'Try again in a moment.'),
-      }));
-    } else if (outcome.stage === 'still-unapproved') {
-      setError(approvalReasonText(outcome.reason, t) || tr(t, 'tasks.assignNotApproved',
-        '{name} is not approved to run on this Mac. Review it, then approve and assign.', { name }));
-    } else {
-      const view = refusalView(outcome.error, name, t);
-      if (view.kind === 'message') { setReviewing(false); setError(view.text); }
-      else setError(tr(t, 'tasks.assignNotApproved',
-        '{name} is not approved to run on this Mac. Review it, then approve and assign.', { name }));
-    }
   };
 
   const openAgents = (focus: { slug?: string; create?: boolean }) => { requestOpenAgents(focus); onClose(); };
@@ -212,12 +189,13 @@ export function AssignToAgentComposer({ task, onClose, onAssigned, initialAgent 
 
               {reviewing && agent ? (
                 <div className="ata-review" aria-live="polite">
-                  <p className="ata-review-lead">
-                    {tr(t, 'tasks.assignNotApproved',
-                      '{name} is not approved to run on this Mac. Review it, then approve and assign.', { name })}
+                  <p className="ata-review-lead" data-assign-waits-card>
+                    {tr(t, 'tasks.assignWaitsCard',
+                      '{name} waits for its approval card on the AI Team page. Open it there, then assign again.', { name })}
                   </p>
-                  <p className="ata-muted">{tr(t, 'agents.approval.reviewLead',
-                    'This is everything an approval grants on this Mac. Read it, then approve.')}</p>
+                  {changedFields && changedFields.length > 0 && (
+                    <p className="ata-muted">{t('agents.approval.synced').replace('{fields}', changedFields.join(', '))}</p>
+                  )}
                   {detail.data ? (
                     <pre className="ata-review-text">{detail.data.review}</pre>
                   ) : detail.isError ? (
@@ -333,20 +311,11 @@ export function AssignToAgentComposer({ task, onClose, onAssigned, initialAgent 
             ) : (
               <>
                 <button type="button" className="btn btn--ghost" onClick={onClose}>{t('common.cancel')}</button>
-                {offered.length > 0 && (reviewing ? (
-                  <button
-                    type="button"
-                    className="btn btn--primary"
-                    onClick={approveAndAssign}
-                    disabled={busy || !detail.data || badWhen}
-                  >
-                    {busy ? t('tasks.assigning') : t('tasks.approveAndAssign')}
-                  </button>
-                ) : (
+                {offered.length > 0 && !reviewing && (
                   <button type="button" className="btn btn--primary" onClick={submit} disabled={!slug || busy || tooLong || badWhen}>
                     {busy ? t('tasks.assigning') : t('tasks.assignSubmit')}
                   </button>
-                ))}
+                )}
               </>
             )}
           </div>

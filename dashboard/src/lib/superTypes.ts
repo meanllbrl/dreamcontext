@@ -442,6 +442,43 @@ export interface SuperTeamJob {
   open?: true;
   /** A stuck its watch concluded: the member left, or its turn was lost with the server. */
   concluded?: 'gone' | 'lost';
+  /** A follow-up on the member's conversation: the root job it continues (no card of its own). */
+  followUpOf?: string;
+  /** `super`: the Super Agent asked the same member again (MIRROR of `SuperTeamJob.by`). */
+  by?: 'super';
+  /** Window-only, derived when the record is read (`teamChainOf`), never stored: the member's one
+   *  card's whole story (plan-r10 1b). Set on a member's current root only. */
+  chain?: TeamChain;
+}
+
+/** What a member's one card says beyond its root job: how many jobs it holds ("3 iş"), the newest
+ *  one (its brief, model, whether it waits its turn) and the run before a rotation. */
+export interface TeamChain {
+  jobs: number;
+  newest: Pick<SuperTeamJob, 'id' | 'brief' | 'model' | 'effort' | 'light' | 'queued' | 'startedAt'>;
+  /** The member's previous root ("önceki konuşma"): its run, and its session when this Mac knows it. */
+  previous?: { id: string; runId: string; sessionId?: string };
+}
+
+/**
+ * A member's one card's chain (plan-r10 1b): every job of the member in the record (roots after a
+ * rotation and their follow-ups), its newest job, and the root before the current one. `team` is
+ * newest first, as the record keeps it. Pure.
+ */
+export function teamChainOf(team: readonly SuperTeamJob[], root: SuperTeamJob, prevSessionId?: string): TeamChain {
+  const mine = team.filter((j) => j.member === root.member);
+  const newest = mine[0] ?? root;
+  const roots = mine.filter((j) => !j.followUpOf);
+  const at = roots.findIndex((j) => j.id === root.id);
+  const prev = at >= 0 ? roots[at + 1] : undefined;
+  return {
+    jobs: Math.max(1, mine.length),
+    newest: {
+      id: newest.id, brief: newest.brief, queued: newest.queued, startedAt: newest.startedAt,
+      ...(newest.model ? { model: newest.model } : {}), ...(newest.effort ? { effort: newest.effort } : {}), ...(newest.light ? { light: true as const } : {}),
+    },
+    ...(prev ? { previous: { id: prev.id, runId: prev.runId, ...(prevSessionId ? { sessionId: prevSessionId } : {}) } } : {}),
+  };
 }
 
 export const TEAM_JOB_STATUSES = ['queued', 'running', 'asking', 'done', 'failed'] as const;
@@ -638,7 +675,7 @@ export interface SuperStateView extends SuperState {
   vault: string;
   /** Each AI Team job on the stage (a `team` card): its status and last line, read now from the
    *  member's thread. Absent when no team card is open. */
-  teamLive?: Record<string, { status: TeamJobStatus; lastLine: string; sessionId?: string; resumable?: boolean }>;
+  teamLive?: Record<string, { status: TeamJobStatus; lastLine: string; sessionId?: string; resumable?: boolean; prevSessionId?: string }>;
   /** Queue items whose banner the server posted (lib/super/owner-question.ts): the job bar posts
    *  no second one. Absent: none. */
   bannered?: string[];
@@ -797,17 +834,28 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
   const queue = v.queue.filter((q): q is SuperQueueItem =>
     isRecord(q) && typeof q.id === 'string' && typeof q.sessionId === 'string' && oneOf(QUEUE_KINDS, q.kind)
     && oneOf(QUEUE_STATES, q.state) && typeof q.createdAt === 'number');
-  const team = (Array.isArray(v.team) ? v.team : []).filter((j): j is SuperTeamJob =>
+  const read = (Array.isArray(v.team) ? v.team : []).filter((j): j is SuperTeamJob =>
     isRecord(j) && typeof j.id === 'string' && typeof j.member === 'string' && typeof j.runId === 'string'
     && typeof j.brief === 'string' && typeof j.startedAt === 'number' && typeof j.queued === 'boolean'
     && (j.jobKind === 'run' || j.jobKind === 'reply'));
+  // A member's one card (plan-r10 1b): the root its card shows carries the chain, only when there
+  // is more than the root itself to say (a follow-up, or a root before it).
+  const shownRoots = new Set(containers.filter((c) => c.kind === 'team').map((c) => c.ref));
+  const liveRows = isRecord(v.teamLive) ? v.teamLive as Record<string, unknown> : {};
+  const team = read.map((j) => {
+    if (!shownRoots.has(j.id) || j.followUpOf) return j;
+    const row = liveRows[j.id];
+    const prevSession = isRecord(row) && typeof row.prevSessionId === 'string' ? row.prevSessionId : undefined;
+    const chain = teamChainOf(read, j, prevSession);
+    return chain.jobs > 1 || chain.previous ? { ...j, chain } : j;
+  });
   // Each team card's status now: only a known job, a known status and a string line survive.
   let teamLive: SuperStateView['teamLive'];
   if (isRecord(v.teamLive)) {
     teamLive = {};
     for (const j of team) {
       const row = (v.teamLive as Record<string, unknown>)[j.id];
-      if (isRecord(row) && oneOf(TEAM_JOB_STATUSES, row.status) && typeof row.lastLine === 'string') teamLive[j.id] = { status: row.status, lastLine: row.lastLine, ...(typeof row.sessionId === 'string' ? { sessionId: row.sessionId } : {}), ...(row.resumable === true ? { resumable: true } : {}) };
+      if (isRecord(row) && oneOf(TEAM_JOB_STATUSES, row.status) && typeof row.lastLine === 'string') teamLive[j.id] = { status: row.status, lastLine: row.lastLine, ...(typeof row.sessionId === 'string' ? { sessionId: row.sessionId } : {}), ...(row.resumable === true ? { resumable: true } : {}), ...(typeof row.prevSessionId === 'string' ? { prevSessionId: row.prevSessionId } : {}) };
     }
   }
   const children: Record<string, SuperChild> = {};

@@ -22,6 +22,13 @@
  *       when the run ended) with its last line, in the shared tone map's colour on tile and frame
  *       (screenshots at 1280 and 1920 px); a click shows it side by side ON THE STAGE with the
  *       member's conversation (the AI Team pane), written to there, never leaving the Super screen.
+ *   T5  (plan-r10 1b, Wave 1) three `super team ask` to ONE member (Gantt): one conversation and ONE
+ *       card on the stage reading "3 iş" ("3 jobs" in English), never three cards; the record holds
+ *       one root and two follow-ups `by: super` (or, when the stand-in's run left no session to
+ *       resume, new roots on the same card). Screenshots at 1440 and 390 in tmp/verify/super-team/.
+ *   T6  (plan-r10 1e, Wave 1) an agent-made prompt edit (`agents edit` from inside the member's own
+ *       run, DREAMCONTEXT_AGENT_SELF) stamps itself: the member is approved, the edit is traced, and
+ *       its AI Team page shows no approve button anywhere. Screenshots at 1440 and 390.
  *   No console errors.
  */
 
@@ -38,6 +45,11 @@ const HOME = join(SCRATCH, 'home');
 const PROJ = join(SCRATCH, 'acme-app');
 const CLI = join(REPO, 'dist', 'index.js');
 const OUT = join(REPO, 'tmp', 'verify-super-team');
+/** Wave 1's shots (plan-r10 1b and 1e), read by the lead. */
+const OUT_W1 = join(REPO, 'tmp', 'verify', 'super-team');
+/** A second member, approved by the owner, for one conversation and one card (T5) and the agent's edit (T6). */
+const MEMBER2 = 'gantt';
+const THREE = ['Fix the ClickUp assignments', 'Rename Ozan in the plan', 'Close the sprint'];
 const REPORTS = join(SCRATCH, 'reports.ndjson');
 const RECORD = join(PROJ, '_dream_context', 'state', '.super-agent.json');
 const MEMBER = 'scout';
@@ -85,6 +97,11 @@ async function superTurn(text) {
     const steps = [cli('super', 'team', 'ask', ${JSON.stringify(MEMBER)}, 'Look at this week\\'s signup funnel and name the step that dropped.', '--brief', 'Funnel check')];
     report({ kind: 'team', steps });
     return 'asked the team';
+  }
+  if (text.includes('GO-THREE')) {
+    const steps = ${JSON.stringify(THREE)}.map((job) => cli('super', 'team', 'ask', ${JSON.stringify(MEMBER2)}, job, '--brief', job));
+    report({ kind: 'three', steps });
+    return 'asked the same member three times';
   }
   if (text.includes('GO-STATE')) {
     const s = cli('super', 'state');
@@ -137,7 +154,7 @@ const dc = (...args) => spawnSync(process.execPath, [CLI, ...args], { cwd: PROJ,
 
 function setupScratch() {
   rmSync(SCRATCH, { recursive: true, force: true });
-  for (const d of [join(HOME, '.dreamcontext'), join(HOME, '.local', 'bin'), join(PROJ, '_dream_context', 'state'), OUT]) mkdirSync(d, { recursive: true });
+  for (const d of [join(HOME, '.dreamcontext'), join(HOME, '.local', 'bin'), join(PROJ, '_dream_context', 'state'), OUT, OUT_W1]) mkdirSync(d, { recursive: true });
   writeFileSync(join(HOME, '.dreamcontext', 'agent-ui.json'), `${JSON.stringify({
     enabled: true, restoreTabs: true, defaultAgent: 'claude', autoTitle: false, hotkey: 'Ctrl+A', renderer: 'dom',
     chatView: true, screenMigrated: true, chatPermissionMode: 'auto', chatDefaultModel: '', chatDefaultEffort: '', lightMode: 'off',
@@ -150,6 +167,7 @@ function setupScratch() {
   for (const [what, r] of [
     ['vaults add', spawnSync(process.execPath, [CLI, 'vaults', 'add', 'acme-app', PROJ], { env: env(), encoding: 'utf-8' })],
     ['agent', dc('agents', 'create', MEMBER, '--title', 'Scout', '--prompt', 'Reads the product funnel and names what moved.')],
+    ['agent 2', dc('agents', 'create', MEMBER2, '--title', 'Gantt', '--prompt', 'Keeps the project plan and the ClickUp assignments right.')],
   ]) if (r.status !== 0) throw new Error(`${what} failed: ${r.stderr || r.stdout}`);
   // A teammate's edit: the member is no longer approved on this Mac.
   appendFileSync(join(PROJ, '_dream_context', 'agents', `${MEMBER}.md`), 'It also checks the pricing page.\n');
@@ -402,6 +420,66 @@ async function run(engineName, base) {
     console.log(`  card at ${w[0]}: conversation visible ${await convo.isVisible().catch(() => false)}, overflow ${await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)}`);
   }
   await page.setViewportSize({ width: 1600, height: 1000 });
+  await frame.getByTestId('super-card-minimize').click().catch(() => {});
+
+  console.log(`── ${engineName}: T5 three asks to one member, one card`);
+  // Under about 1600 px the stage folds its cards into Others (T4): wide enough to keep them out.
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.waitForTimeout(800);
+  const t5 = await superDoes(page, 'GO-THREE', 'three', 90000);
+  ok(tag('T5 three team asks to one member all go through'), (t5?.steps ?? []).length === 3 && t5.steps.every((x) => x.status === 0), JSON.stringify(t5?.steps?.map((x) => x.out.slice(0, 200))));
+  const gJobs = (record().team ?? []).filter((j) => j.member === MEMBER2);
+  const gRoots = gJobs.filter((j) => !j.followUpOf);
+  ok(tag('T5 the record holds three jobs for the member, Super\'s follow-ups marked by super'), gJobs.length === 3 && gJobs.filter((j) => j.followUpOf).every((j) => j.by === 'super'), JSON.stringify(gJobs));
+  const gCards = (record().containers ?? []).filter((c) => c.kind === 'team' && gJobs.some((j) => j.id === c.ref));
+  ok(tag('T5 ONE card for the member on the record, pointing at its current root'), gCards.length === 1 && gCards[0].ref === gRoots[0]?.id, JSON.stringify(gCards));
+  const gTile = page.locator('[data-testid="super-team-tile"]:visible').filter({ hasText: 'Gantt' });
+  ok(tag('T5 ONE Gantt tile on the stage'), await until(page, async () => (await gTile.count()) === 1, 20000), String(await gTile.count()));
+  // No \b after "iş": in JS a word boundary never follows a non-ASCII letter.
+  const threeJobs = /(^|[^0-9])3 (iş|jobs)(?![A-Za-z])/;
+  ok(tag('T5 it reads "3 iş"'), await until(page, async () => threeJobs.test(await gTile.getByTestId('super-team-jobs').innerText().catch(() => '')), 20000),
+    await gTile.getByTestId('super-team-jobs').innerText().catch(() => ''));
+  for (const [w, h] of [[1440, 900], [390, 844]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(1500);
+    // The card is drawn at this width (on the stage, or in Others when the stage folds it there).
+    const seen = page.locator('[data-testid="super-team-tile"]').filter({ hasText: 'Gantt' });
+    if (!(await seen.first().isVisible().catch(() => false))) {
+      await page.locator('[data-testid="super-others-open"]:visible').first().click().catch(() => {});
+      await page.waitForTimeout(800);
+    }
+    const shown = await seen.first().isVisible().catch(() => false);
+    const reads = shown ? await seen.first().getByTestId('super-team-jobs').innerText().catch(() => '') : '';
+    ok(tag(`T5 at ${w} px the one Gantt card is drawn and reads "3 iş"`), shown && threeJobs.test(reads), `${shown} | ${reads}`);
+    await page.screenshot({ path: join(OUT_W1, `${engineName}-one-card-${w}.png`) });
+  }
+  await page.setViewportSize({ width: 1600, height: 1000 });
+
+  console.log(`── ${engineName}: T6 an agent's prompt edit asks nothing`);
+  const edit = spawnSync(process.execPath, [CLI, 'agents', 'edit', MEMBER2, '--prompt', 'Keeps the project plan and the ClickUp assignments right.\nNames the owner of each item.'],
+    { cwd: PROJ, env: { ...env(), DREAMCONTEXT_AGENT_SELF: MEMBER2 }, encoding: 'utf-8' });
+  ok(tag('T6 the member\'s own run edits its prompt'), edit.status === 0, edit.stderr || edit.stdout);
+  const listed = dc('agents', 'list', '--json');
+  let gRow = null; try { gRow = JSON.parse(listed.stdout).agents.find((a) => a.slug === MEMBER2); } catch { /* reported below */ }
+  ok(tag('T6 it stays approved to run, with no card'), gRow?.approvedToRun === true, listed.stdout.slice(0, 400));
+  const traced = dc('agents', 'amendments', MEMBER2, '--json');
+  ok(tag('T6 the edit is traced, by agent, waiting for nothing'), /"by": "agent"/.test(traced.stdout) && !/"waits": true/.test(traced.stdout), traced.stdout.slice(0, 400));
+  await page.evaluate((slug) => window.dispatchEvent(new CustomEvent('dreamcontext-open-agents', { detail: { slug } })), MEMBER2);
+  ok(tag('T6 the AI Team page opens on the member'), await until(page, async () =>
+    (await page.locator('.aiteam:visible').count()) === 1
+    && (await page.locator('.aiteam-stage:visible, .aiteam-convo:visible').filter({ hasText: 'Gantt' }).count()) >= 1, 15000));
+  const team = page.locator('.aiteam:visible');
+  const approveCount = async () => (await team.locator('[data-team-approval], [data-approval-review], .adp-approve-btn, [data-review-approval]').count())
+    + (await team.getByRole('button', { name: /^(Approve|Onayla)/ }).count());
+  await page.waitForTimeout(1500);
+  ok(tag('T6 no approve button anywhere on its page'), (await approveCount()) === 0, String(await approveCount()));
+  for (const [w, h] of [[1440, 900], [390, 844]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.waitForTimeout(1500);
+    ok(tag(`T6 at ${w} px the member's page shows no approve button`), (await approveCount()) === 0, String(await approveCount()));
+    await page.screenshot({ path: join(OUT_W1, `${engineName}-agent-edit-no-approve-${w}.png`) });
+  }
+  await page.setViewportSize({ width: 1600, height: 1000 });
   ok(tag('no console errors'), errors.length === 0, errors.slice(0, 5).join('\n'));
   await browser.close();
 }
@@ -416,7 +494,7 @@ async function main() {
     finally { srv.kill(); spawnSync('pkill', ['-f', SCRATCH]); }
   }
   console.log(`\n${result.pass} passed, ${result.fails.length} failed${result.fails.length ? `:\n  - ${result.fails.join('\n  - ')}` : ''}`);
-  console.log(`screenshots: ${OUT}`);
+  console.log(`screenshots: ${OUT} and ${OUT_W1}`);
   rmSync(SCRATCH, { recursive: true, force: true });
   process.exit(result.fails.length ? 1 : 0);
 }

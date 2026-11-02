@@ -7,7 +7,11 @@ import type { PendingApproval } from './teamModel';
 import { TeamIcon } from './TeamIcons';
 
 /**
- * WHAT WAITS FOR YOUR APPROVAL, at the top of the conversation.
+ * WHAT WAITS FOR YOUR APPROVAL, at the top of the conversation: the member's ONE approval card
+ * (plan-r10 1e). A member changed on this Mac stamps itself; this card is only for a change that
+ * came by team sync, or one an agent made that widens the member's reach or that a background run
+ * made risky, global or across members. Each row names the fields that moved (`changedFields`,
+ * from the machine-local field hashes of the last stamp) when this Mac knows them.
  *
  * The rule is unchanged: nothing runs on this Mac until the owner approved exactly what it is
  * (a machine-local SHA-256 of every hashed field). Only where it is said moved: one line per
@@ -70,6 +74,10 @@ function ApprovalRow({
   const approveAgent = useApproveAgent();
   const approveRoutine = useApproveAutomation();
   const queryClient = useQueryClient();
+  // Which fields moved since this Mac last stamped it: read whether or not the row is open.
+  const agentFacts = useAgent(item.kind === 'agent' ? item.slug : null);
+  const routineFacts = useAutomation(item.kind === 'routine' ? item.slug : null);
+  const changedFields = ((item.kind === 'agent' ? agentFacts.data : routineFacts.data) as { changedFields?: string[] | null } | undefined)?.changedFields ?? null;
   const [error, setError] = useState<string | null>(null);
 
   const detail = item.kind === 'agent' ? agentDetail : routineDetail;
@@ -105,7 +113,12 @@ function ApprovalRow({
     <div className={`aiteam-approval-row${open ? ' aiteam-approval-row--open' : ''}`} data-approval-item={`${item.kind}:${item.slug}`}>
       <div className="aiteam-approval-line">
         <span className="aiteam-approval-mark" aria-hidden="true"><TeamIcon name="lock" size={12} /></span>
-        <span className="aiteam-approval-text">{approvalSentence(item, agentTitle, t)}</span>
+        <span className="aiteam-approval-text">
+          {approvalSentence(item, agentTitle, t)}
+          {changedFields && changedFields.length > 0 && (
+            <span className="aiteam-approval-fields" data-approval-fields> {t('agents.approval.synced').replace('{fields}', changedFields.join(', '))}</span>
+          )}
+        </span>
         <button type="button" className="agent-btn aiteam-approval-btn" onClick={toggle} aria-expanded={open}>
           {open ? t('aiteam.approval.hide') : t('aiteam.approval.review')}
         </button>

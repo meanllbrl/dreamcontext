@@ -5,10 +5,11 @@ import { readAutomationCache } from '../automations/store.js';
 import { plainPostText, readThread } from '../automations/threads.js';
 import type { AutomationQuestion, ThreadEntry } from '../automations/types.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
-import { MAX_CONTAINERS, MAX_FLOAT, MAX_READ_BYTES, MAX_TEAM_JOBS, floatCount, type SuperQueueItem, type SuperState, type SuperTeamJob, type TeamJobConclusion, type TeamJobEvent, type TeamJobStatus } from './types.js';
+import { MAX_CONTAINERS, MAX_FLOAT, MAX_READ_BYTES, MAX_TEAM_JOBS, floatCount, trimTeamJobs, type SuperQueueItem, type SuperState, type SuperTeamJob, type TeamJobConclusion, type TeamJobEvent, type TeamJobStatus } from './types.js';
 import { runChatSession } from '../automations/run-chat.js';
-import { containerIdFor, countEvent, newQueueId } from './inbox.js';
+import { countEvent, newQueueId } from './inbox.js';
 import { makeRoom } from './room.js';
+import { memberTeamCardId } from './store.js';
 
 /**
  * The Super Agent's jobs for the project's AI Team (`super team ask`, task
@@ -24,28 +25,92 @@ export function newTeamJobId(): string {
   return `team-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
 }
 
-/** Record a job (newest first, capped), put its card on the stage, and close every open approval
- *  question about its member: a member that just took a job is approved. */
+/** Record a job (newest first, capped: a member's current root is never cut), put its member's
+ *  card on the stage (or point that card at it when it is the member's new root), and close every
+ *  open approval question about its member: a member that just took a job is approved. */
 export function recordTeamJob(s: SuperState, job: SuperTeamJob): void {
-  s.team = [job, ...s.team.filter((j) => j.id !== job.id)].slice(0, MAX_TEAM_JOBS);
-  // A job that fell off the record takes its card with it (no tile without a job).
-  const kept = new Set(s.team.map((j) => j.id));
-  s.containers = s.containers.filter((c) => c.kind !== 'team' || kept.has(c.ref));
-  ensureTeamContainer(s, job.id);
+  s.team = trimTeamJobs([job, ...s.team.filter((j) => j.id !== job.id)], MAX_TEAM_JOBS);
+  dropOrphanTeamCards(s);
+  // A follow-up continues its member's conversation: the member's ONE card shows it, put back when
+  // it was retired or closed meanwhile (the same id, so never a second card).
+  const root = job.followUpOf ? memberRoot(s, job.member) : job;
+  if (root) ensureTeamContainer(s, job.member, root.id);
   for (const q of s.queue) if (q.kind === 'approval' && q.member === job.member && q.state !== 'done') q.state = 'done';
 }
 
-/** A team job's card: square, placed like a child's chat card (floating while the stage has
- *  room, in Others when it is full; a full record retires its oldest finished cards first, and
- *  adds none only when every card must stay). */
-export function ensureTeamContainer(s: SuperState, jobId: string): string | null {
-  const have = s.containers.find((c) => c.kind === 'team' && c.ref === jobId);
-  if (have) return have.id;
-  const id = containerIdFor('team', jobId);
+/** A card whose job fell off the record goes with it (no tile without a job). */
+function dropOrphanTeamCards(s: SuperState): void {
+  const kept = new Set(s.team.map((j) => j.id));
+  s.containers = s.containers.filter((c) => c.kind !== 'team' || kept.has(c.ref));
+}
+
+/** A member's chain root now: its newest job with no `followUpOf` (plan-r10 1b). */
+export function memberRoot(s: Pick<SuperState, 'team'>, member: string): SuperTeamJob | null {
+  return s.team.find((j) => j.member === member && !j.followUpOf) ?? null;
+}
+
+/**
+ * A member's ONE card (plan-r10 1b, `i74xj5`): square, id `containerIdFor('team', 'member:' + slug)`,
+ * its `ref` the member's current root. A new root on the same member moves the card's `ref` and
+ * keeps its place, drop and size. A first card is placed like a child's chat card (floating while
+ * the stage has room, in Others when it is full; a full record retires its oldest finished cards
+ * first, and adds none only when every card must stay).
+ */
+export function ensureTeamContainer(s: SuperState, member: string, rootId: string): string | null {
+  const id = memberTeamCardId(member);
+  const have = s.containers.find((c) => c.id === id && c.kind === 'team')
+    // A card from before the member's own id (one per job): it becomes the member's card.
+    ?? s.containers.find((c) => c.kind === 'team' && s.team.find((j) => j.id === c.ref)?.member === member);
+  if (have) {
+    if (have.id !== id) {
+      for (const g of s.groups) g.cards = g.cards.map((x) => (x === have.id ? id : x));
+      if (s.view.card === have.id) s.view.card = id;
+      if (s.view.cards) s.view.cards = s.view.cards.map((x) => (x === have.id ? id : x));
+      have.id = id;
+    }
+    have.ref = rootId;
+    return id;
+  }
   makeRoom(s, 1, [id]);
   if (s.containers.length >= MAX_CONTAINERS) return null;
-  s.containers.push({ id, kind: 'team', ref: jobId, shape: 'square', place: floatCount(s) < MAX_FLOAT ? 'float' : 'others' });
+  s.containers.push({ id, kind: 'team', ref: rootId, shape: 'square', place: floatCount(s) < MAX_FLOAT ? 'float' : 'others' });
   return id;
+}
+
+/** How many of a member's conversation's turns its current root carries (the root and every
+ *  follow-up on it): the 20-turn rotation reads it. */
+export function chainTurns(s: Pick<SuperState, 'team'>, root: SuperTeamJob): number {
+  return 1 + s.team.filter((j) => j.followUpOf === root.id).length;
+}
+
+/** The follow-ups of a root still waiting for the conversation's turn slot (`queued`). */
+export function waitingFollowUps(contextRoot: string, s: Pick<SuperState, 'team'>, root: SuperTeamJob): number {
+  return s.team.filter((j) => {
+    if (j.followUpOf !== root.id || j.open !== true) return false;
+    const live = liveSource ? liveSource(contextRoot, j) : null;
+    return live?.kind === 'reply' ? live.status === 'running' && live.phase === 'waiting' : j.queued;
+  }).length;
+}
+
+/** The chain's recent posts and asks, oldest first, as the preamble of a NEW root on the same card
+ *  (a rotation, or a continue that could not be made): the scheduled-member recent-thread idea
+ *  (`sayToAgent`), so the fresh run knows where the conversation stood. '' when there is nothing. */
+export function chainPreamble(contextRoot: string, root: SuperTeamJob, maxChars = 900): string {
+  let entries: ThreadEntry[] = [];
+  try { entries = readThread(contextRoot, root.member, { runId: root.runId }); } catch { entries = []; }
+  const lines = [...entries]
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .filter((e) => (e.kind === 'agent' || e.kind === 'user') && e.text.trim())
+    .map((e) => `${e.kind === 'user' ? 'Asked' : 'You said'}: ${firstLine(e.text, 200)}`);
+  if (!lines.length) return '';
+  const out: string[] = [];
+  let used = 0;
+  for (const l of lines.reverse()) {
+    if (used + l.length + 1 > maxChars) break;
+    out.unshift(l);
+    used += l.length + 1;
+  }
+  return out.length ? `Earlier in this conversation (recent posts, for context):\n${out.join('\n')}\n\nNow:\n` : '';
 }
 
 /** Where the say path's live jobs are read from: the server injects it (this module imports no
@@ -97,6 +162,9 @@ export interface TeamLiveRow {
   /** This machine bound the session to the run, so a reply can resume it. A session only noted
    *  while it ran (a one-off job, a killed run) shows but cannot be continued. */
   resumable?: true;
+  /** The member's previous root's session, after a rotation (plan-r10 1b): the card's "önceki
+   *  konuşma" opens it. Absent when there is none or this Mac does not know it. */
+  prevSessionId?: string;
 }
 
 /** The session a job's run lives in, as every surface believes it (`runChatSession`). */
@@ -125,7 +193,10 @@ export function teamLiveRows(contextRoot: string, s: Pick<SuperState, 'team' | '
     try {
       const own = teamJobStatus(contextRoot, j, liveSource ? liveSource(contextRoot, j) : null);
       const status = next ? teamJobStatus(contextRoot, next, liveSource ? liveSource(contextRoot, next) : null).status : own.status;
-      const row: TeamLiveRow = { status, lastLine: own.lastLine, ...jobSession(contextRoot, j) };
+      // A member's one card after a rotation: the conversation before this one.
+      const prevRoot = j.followUpOf ? undefined : s.team.filter((x) => x.member === j.member && !x.followUpOf && x.startedAt < j.startedAt)[0];
+      const prevSession = prevRoot ? jobSession(contextRoot, prevRoot).sessionId : undefined;
+      const row: TeamLiveRow = { status, lastLine: own.lastLine, ...jobSession(contextRoot, j), ...(prevSession ? { prevSessionId: prevSession } : {}) };
       out[j.id] = row;
       // A reply is final only once its outcome is recorded (its zero-post mirror lands just after it
       // settles); a job whose ending is still owed to the super is never final (an answer resumes it),
@@ -492,7 +563,9 @@ export function recordTeamFollowUp(
     jobKind: 'reply', jobId: reply.jobId, queued: false,
     brief: firstLine(reply.text, 200), startedAt: now, open: true, followUpOf: root.id,
   };
-  s.team = [job, ...s.team].slice(0, MAX_TEAM_JOBS);
+  // Over the cap the oldest follow-ups go first, never a member's current root (plan-r10 1b).
+  s.team = trimTeamJobs([job, ...s.team], MAX_TEAM_JOBS);
+  dropOrphanTeamCards(s);
   return job;
 }
 
@@ -520,8 +593,8 @@ export function teamItemLines(contextRoot: string, vault: string, s: Pick<SuperS
   const row = teamJobStatus(contextRoot, job, live);
   const end = teamJobEnding(contextRoot, job, live);
   const status = q.kind === 'question' ? 'asking' : row.status;
-  const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${q.partial ? 'answer' : q.kind}${job.followUpOf ? ' followup=owner' : ''}${awaitedTeamItem(s, q) ? ` awaited=owner${job.origin ? ` origin=${job.origin}` : ''}` : ''} status=${status}`];
-  if (job.followUpOf) {
+  const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${q.partial ? 'answer' : q.kind}${job.followUpOf ? (job.by === 'super' ? ' followup=super' : ' followup=owner') : ''}${awaitedTeamItem(s, q) ? ` awaited=owner${job.origin ? ` origin=${job.origin}` : ''}` : ''} status=${status}`];
+  if (job.followUpOf && job.by !== 'super') {
     const asked = jobThread(contextRoot, job).ordered.find((e) => e.id === job.entryId)?.text ?? job.brief;
     lines.push(wrapUntrusted(vault, `The owner wrote to the member: ${asked.slice(0, TEAM_ANSWER_EXCERPT)}`));
   } else if (job.brief) lines.push(wrapUntrusted(vault, `Brief: ${job.brief}`));

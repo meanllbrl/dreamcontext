@@ -7,7 +7,7 @@ import { isCrossSiteRequest, isLoopback, isSameOriginStrict, requireLocalDesktop
 import {
   WINDOW_TOKEN_HEADER, channelFor, identityOf, pushFrame, sendSuperCommand, sendWindowCommand, type WindowIdentity,
 } from '../../lib/window-control.js';
-import { PhoneHeldError, SuperStoreRefused, isReservedId, okMember, phoneHeld, readSuperState, superRootOfChild, superWorktreeRoot } from '../../lib/super/store.js';
+import { PhoneHeldError, SuperStoreRefused, isReservedId, memberTeamCardId, okMember, phoneHeld, readSuperState, superRootOfChild, superWorktreeRoot } from '../../lib/super/store.js';
 import {
   CONTAINER_KINDS, CONTAINER_SHAPES, imagesInPreviews, presentCards, groupPresentCards, CONTAINER_SIZES, MAX_ASK_OPTION, MAX_ASK_OPTIONS, MAX_BRIEF, MAX_CONTAINERS, MAX_FLOAT, MAX_OWNER_TEXT,
   MAX_LIVE_CHILDREN, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_PRESENT, MAX_READ_BYTES, SUPER_FRAME_CUE,
@@ -16,13 +16,15 @@ import {
   MAX_ASK_PICTURES, MAX_ASK_READS, MAX_FILMSTRIP, PRESENT_LAYOUTS, isReadKind, applyOwnerViewFields, layoutFits, layoutRule, readOwnerViewFields, sameCardSet, type PresentLayout,
   type AskShow, type ContainerKind, type ContainerShape, type PreviewImage, type ContainerSize, type PadSection, type SuperAskSpec, type SuperChild, type SuperPadItem, type SuperPoolItem, type SuperState, type SuperStateView, type SuperTeamJob, type SuperVerb, type TeamJobConclusion,
 } from '../../lib/super/types.js';
-import { armTeamJobWatches, askOwnerToApprove, closeSettledApprovals, newTeamJobId, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
+import { armTeamJobWatches, askOwnerToApprove, chainPreamble, chainTurns, closeSettledApprovals, memberRoot, newTeamJobId, waitingFollowUps, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, recordTeamJob, setTeamFollowUpNote, setTeamJobWatcher, setTeamLiveSource, settleTeamJob, teamJobAnswer, teamJobEnding, teamJobOwed, teamJobStatus, teamJobTrailing, teamPostsDue, type LiveSayJob, type TeamFollowUpNote } from '../../lib/super/team.js';
 import { collectTeam, memberCallState, teamFit, type TeamMember } from '../../lib/agents/team-roster.js';
 import { agentModelChoices, parseModelOverride } from '../../lib/agents/model-choices.js';
-import { LIGHT_DEFAULT_EFFORT, LIGHT_DEFAULT_MODEL } from '../../lib/automations/light-run.js';
+import { LIGHT_DEFAULT_EFFORT, LIGHT_DEFAULT_MODEL, wouldStickToSession } from '../../lib/automations/light-run.js';
 import { spawnModel } from '../../lib/automations/runner.js';
 import type { SpawnModelOverride } from '../../lib/automations/types.js';
-import { sayToAgent } from './automations.js';
+import { replyToAgent, sayToAgent, type SayResult } from './automations.js';
+import { runChatSession } from '../../lib/automations/run-chat.js';
+import { pendingQuestion, pendingQuestionOfRun } from '../../lib/automations/hitl.js';
 import { agentActivity, automationJobById, currentReplyJob, runIsActive, whenReplySettles, whenRunSettles } from '../automation-job.js';
 import { getAutomation } from '../../lib/automations/store.js';
 import { memberScope } from '../../lib/agents/scope.js';
@@ -275,8 +277,12 @@ function refFor(c: Pick<SuperCaller, 'state'>, kind: ContainerKind, raw: unknown
       return hasChild(c.state, ref) ? { ref } : { error: 'a chat container shows one of your children: give its session id' };
     case 'browser':
       return hasChild(c.state, ref) ? { ref } : { error: 'a browser container shows one of your children\'s live browser: give its session id' };
-    case 'team':
-      return c.state.team.some((j) => j.id === ref) ? { ref } : { error: 'a team container shows one of your AI Team jobs: give its job id (`super state` lists them)' };
+    case 'team': {
+      // Any job of a member opens THAT member's one card, which shows its current root (plan-r10 1b).
+      const job = c.state.team.find((j) => j.id === ref);
+      if (!job) return { error: 'a team container shows one of your AI Team jobs: give its job id (`super state` lists them)' };
+      return { ref: memberRoot(c.state, job.member)?.id ?? job.id };
+    }
     case 'web': {
       const w = validateSuperWebUrl(ref, ownedLoopbackPorts());
       return w.ok
@@ -972,7 +978,8 @@ async function openCards(c: OpenCaller, b: Record<string, unknown>, res: ServerR
   if (b.present !== undefined && typeof b.present !== 'boolean') { refuse(res, 400, 'invalid_args', 'present is true or false'); return; }
   const presentNow = b.present === true;
   if (presentNow && !isMediaKind(kind as ContainerKind)) { refuse(res, 400, 'invalid_args', '--present opens media only (kind image, pdf or video); other cards: `super present <card…>`'); return; }
-  const ids = refs.map((ref) => containerIdFor(kind, ref));
+  // A team card is its member's one card (plan-r10 1b), whatever job of it was named.
+  const ids = refs.map((ref) => (kind === 'team' ? memberTeamCardId(c.state.team.find((j) => j.id === ref)?.member ?? ref) : containerIdFor(kind, ref)));
   // A live job is never opened into a group: its card floats on its own (live.ts).
   if (groupName && kind === 'chat') {
     const live = refs.filter((ref) => childIsLive(c.state, ref)).map((ref) => containerIdFor('chat', ref));
@@ -2180,6 +2187,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         amendment: a.id,
         changed: a.changes.map((x) => (x.routine ? `${x.routine}:${x.field}` : x.field)),
         approved: approvedTargets(root, member),
+        // Applied and stamped even when flagged (the owner talks to Super, plan-r10 1e); the trace
+        // row names what the risk filter saw, and he can take it back.
+        ...(a.risks?.length ? { flagged: a.risks } : {}),
+        ...(a.waits ? { waits: 'card' } : {}),
       });
     } catch (err) {
       if (err instanceof AmendmentRefused) { refuse(res, err.status, err.code, wrapUntrusted(vaultNameOf(root), err.message)); return; }
@@ -2190,9 +2201,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   },
 
   'team-ask': async (c, b, res) => {
-    // A job for one of THIS project's AI Team members, through the AI Team's own say path
-    // (`sayToAgent`): the member's thread, model and approval rule it, and the job starts now in
-    // its own session beside the member's other work. Nothing here starts a run any other way.
+    // A job for one of THIS project's AI Team members, through the AI Team's own paths: asking the
+    // SAME member again continues its one conversation (`replyToAgent`, a follow-up on its card),
+    // else a fresh run (`sayToAgent`) becomes the member's new root ON THE SAME CARD (plan-r10 1b,
+    // owner i74xj5: "aynı üyeye tek konuşma, tek kart"). Nothing here starts a run any other way.
     if (!requireHandedOver(c, res)) return;
     const root = c.who.contextRoot;
     const vault = vaultNameOf(root);
@@ -2213,7 +2225,23 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const override: SpawnModelOverride | null = light
       ? { model: picked.override?.model ?? LIGHT_DEFAULT_MODEL, effort: picked.override?.effort ?? LIGHT_DEFAULT_EFFORT, light: true }
       : picked.override && { ...picked.override, oneJob: true as const };
-    const r = sayToAgent(root, { slug: member, text, via: 'super', ...(override ? { override } : {}) });
+    // The member's conversation: its chain root, continued when it can be (`continueBlock`).
+    const chain = memberRoot(c.state, member);
+    let r: SayResult | null = null;
+    let continued = false;
+    if (chain && continueBlock(root, c.state, chain, member, light, override) === null) {
+      const rr = replyToAgent(root, { slug: member, runId: chain.runId, text, via: 'super', ...(override ? { override } : {}) });
+      if (rr.ok) { r = rr; continued = true; }
+      // The machine is full: the same 429 a fresh run would get, nothing queued.
+      else if (rr.code === 'say_at_limit') { refuse(res, 429, rr.code, rr.message); return; }
+      // Any other refusal (busy one-off, not bound, a question, a stale run): a fresh root below.
+    }
+    if (!r) {
+      // A new root on the member's card opens with where the conversation stood.
+      const preamble = chain ? chainPreamble(root, chain) : '';
+      const sayText = preamble && preamble.length + text.length <= TEAM_SAY_MAX ? `${preamble}${text}` : text;
+      r = sayToAgent(root, { slug: member, text: sayText, via: 'super', ...(override ? { override } : {}) });
+    }
     if (!r.ok) {
       if (r.code === 'not_found' || r.code === 'say_disabled') {
         // Gone or turned off: an approval question about it no longer waits on the owner.
@@ -2224,8 +2252,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         return;
       }
       if (r.code === 'say_unapproved') {
-        // The owner approves a member in AI Team; the super never can. His strip gets the question.
-        const ownerText = `${member} is not approved on this Mac, so the Super Agent cannot give it a job. Approve it in AI Team, then tell the Super Agent.`;
+        // A member waits for approval only when its ONE card does (a synced or widening change,
+        // plan-r10 1e): a local member never gets here. His strip points him at that card.
+        const ownerText = `${member} waits for its one approval card on the AI Team page, so the Super Agent cannot give it a job. Open the card there, then tell the Super Agent.`;
         let item: string | null = null;
         await writeSuper(root, (s) => { item = askOwnerToApprove(s, member, ownerText); });
         refuse(res, 409, 'say_unapproved', `${wrapUntrusted(vault, r.message)} You cannot approve it: the owner does, in AI Team. His queue strip asks him now; give the job again once he says so.`, { item });
@@ -2236,7 +2265,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       return;
     }
     const out = r.body as { runId?: unknown; entryId?: unknown; queued?: unknown; job?: { id?: unknown; kind?: unknown } };
-    const runId = typeof out.runId === 'string' ? out.runId : new Date().toISOString();
+    const runId = continued && chain ? chain.runId : typeof out.runId === 'string' ? out.runId : new Date().toISOString();
     // What it runs on, for its record and card. The job already started: a failed read costs the
     // member's half of that record, never the record.
     let settings: { model: string | null; effort: string | null } = { model: null, effort: null };
@@ -2250,7 +2279,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       ...(used.effort ? { effort: used.effort } : {}),
       ...(light ? { light: true as const } : {}),
       ...(typeof out.entryId === 'string' ? { entryId: out.entryId } : {}),
-      jobKind: out.job?.kind === 'reply' ? 'reply' : 'run',
+      jobKind: continued || out.job?.kind === 'reply' ? 'reply' : 'run',
       ...(typeof out.job?.id === 'string' ? { jobId: out.job.id } : {}),
       queued: out.queued === true,
       brief: oneLine(str(b.brief) ?? firstLine(text, MAX_BRIEF)).slice(0, MAX_BRIEF),
@@ -2261,6 +2290,9 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       ...(origin.ref ? { origin: origin.ref } : {}),
       // Its ending is owed to the super until its done or stuck is told (watched until then).
       open: true,
+      // The same member again: its conversation goes on, on its one card, and it is Super's
+      // follow-up, never the owner's words (`teamItemLines`).
+      ...(continued && chain ? { followUpOf: chain.id, by: 'super' as const } : {}),
     };
     await writeSuper(root, (s) => recordTeamJob(s, job));
     if (job.jobKind === 'reply' && job.jobId) recordReplyEnding(root, job.id, job.jobId);
@@ -2269,10 +2301,44 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     if (job.jobKind === 'run' && job.jobId) void whenRunSettles(job.jobId)?.then(() => teamJobSettled(root, job.id)).catch(() => { /* best-effort */ });
     ok(res, {
       job: job.id, member, runId, queued: job.queued, status: job.queued ? 'queued' : 'running',
+      ...(continued ? { continued: true, root: chain!.id } : {}),
       ...(job.model ? { model: job.model } : {}), ...(job.effort ? { effort: job.effort } : {}), ...(light ? { light: true } : {}),
     });
   },
 };
+
+/** The longest text a fresh say takes (`sayToAgent`'s own cap): a preamble that would push the ask
+ *  over it is left out, never the ask. */
+const TEAM_SAY_MAX = 2000;
+/** A member's conversation rotates to a fresh run (same card) after this many turns. */
+export const TEAM_CHAIN_MAX_TURNS = 20;
+/** At most this many follow-ups wait behind the conversation's turn: one more starts beside it. */
+export const TEAM_CHAIN_MAX_WAITING = 2;
+
+/**
+ * Why a member's conversation cannot be continued by this ask, or null when it can (plan-r10 1b):
+ * the root must be resumable or still running, with NO question of the owner's waiting (Super's
+ * words must never become his answer), not light (root or ask), with an override that would not
+ * stick to its session, under 20 turns and under 2 waiting follow-ups. Exported for tests.
+ */
+export function continueBlock(
+  root: string, s: Pick<SuperState, 'team'>, chain: SuperTeamJob, member: string, light: boolean, override: SpawnModelOverride | null,
+): string | null {
+  if (light || chain.light) return 'light';
+  let manifest: Parameters<typeof wouldStickToSession>[0] | null = null;
+  try { manifest = memberCallState(root, member).manifest ?? null; } catch { manifest = null; }
+  if (!manifest) return 'missing';
+  if (wouldStickToSession(manifest, override)) return 'override_sticks';
+  try {
+    if (pendingQuestionOfRun(root, member, chain.runId) || pendingQuestion(root, member)) return 'question_pending';
+  } catch { return 'question_pending'; }
+  if (chainTurns(s, chain) >= TEAM_CHAIN_MAX_TURNS) return 'turns';
+  if (waitingFollowUps(root, s, chain) >= TEAM_CHAIN_MAX_WAITING) return 'waiting';
+  let resumable = false;
+  try { resumable = runChatSession(root, member, chain.runId)?.resumable === true; } catch { resumable = false; }
+  if (!resumable && !runIsActive(agentActivity(root, member), chain.runId)) return 'not_resumable';
+  return null;
+}
 
 /** The say path's own job for a team job is still in flight (running, or a reply waiting). */
 function sayJobRuns(live: LiveSayJob | null): boolean {

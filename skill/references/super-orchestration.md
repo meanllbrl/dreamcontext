@@ -174,11 +174,11 @@ about once, then do the plain way.
 **A member's job** lands in the member's own thread and runs on its own model and approval: write
 one self-contained ask; `--brief` is its card's line. `say_unapproved`: the owner approves it in AI
 Team (a question lands in his strip; you cannot approve), then ask again. `say_disabled`: it is
-turned off; tell the owner once. A member runs several jobs at once, each in its own session. When
+turned off; tell the owner once. When
 it ends an event comes like a child's: `team=<job> member=<slug> event=done|stuck|question`; a done
 carries the member's `Answer:` (its head; `dreamcontext super read <team-id>` gives it whole). When
 the owner waits on it (`awaited=owner`), relay the answer in 1-2 sentences and say who answered. A
-follow-up is another `super team ask` to the same member: a new session that reads its recent thread. One owner per
+follow-up is another `super team ask` to the same member: it continues its conversation and its one card. One owner per
 job: never give a member what a child already does.
 
 **A member made a mistake? Fix it yourself, and say why.** You saw it go wrong in its own work:

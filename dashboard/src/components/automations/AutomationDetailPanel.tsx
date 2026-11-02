@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AutomationPattern, AutomationRunEvent, AutomationSummary } from '../../hooks/useAutomations';
 import {
-  useApproveAutomation,
   useAutomation,
   useAutomationFlow,
   useAutomationSession,
 } from '../../hooks/useAutomations';
 import { openAutomationRunChat, openTrainChat, runChatUnavailableReason } from '../../lib/automationRunChat';
 import { useVault } from '../../context/VaultContext';
+import { useI18n } from '../../context/I18nContext';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
 import { useOverlayId } from '../../lib/useOverlayId';
 import { AutomationFlowCanvas } from './AutomationFlowCanvas';
@@ -314,7 +314,7 @@ function RunHandoff({
 export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onToast, onEdit }: Props) {
   const detail = useAutomation(summary.slug);
   const flowResp = useAutomationFlow(summary.slug);
-  const approve = useApproveAutomation();
+  const { t } = useI18n();
   const { bus } = useVault();
   const overlayId = useOverlayId('automation-detail-panel');
   /** Which run's session is open, 1-based newest-first. Null = the history list. */
@@ -411,12 +411,6 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
     handleRunOpened();
   };
 
-  const handleApprove = () => {
-    approve.mutate(summary.slug, {
-      onSuccess: () => onToast(`"${summary.slug}" approved — it will run on this machine.`),
-      onError: (err) => onToast(`Approval failed — ${(err as Error).message}`),
-    });
-  };
 
   // D-A path 3 (never-approved) is the only one with review-then-approve UI
   // below — its copy still points there. Paths 2's two reasons (manifest-
@@ -708,9 +702,10 @@ export function AutomationDetailPanel({ summary, autoOpenLatestRun, onClose, onT
                         </div>
                       </div>
                     )}
-                    <button className="adp-approve-btn" onClick={handleApprove} disabled={approve.isPending}>
-                      {approve.isPending ? 'Approving…' : `Approve — this will run on this machine`}
-                    </button>
+                    {/* No Approve here any more (plan-r10 1e): a routine made on this Mac stamps
+                        itself; one that still waits (an agent's widening routine, a synced change)
+                        waits for its ONE card on the AI Team page, named here. */}
+                    <p className="adp-warn-sub" data-approval-waits>{t('agents.approval.waitsCard')}</p>
                   </>
                 )}
 

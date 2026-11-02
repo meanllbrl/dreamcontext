@@ -181,6 +181,7 @@ import {
   handleAgentsAmendmentRevert,
   handleAgentsAmendments,
   handleAgentsApprove,
+  handleAgentsSetEnabled,
   handleAgentsPlace,
   handleAgentsPhotoGet, handleAgentsStage, handleAgentsHistory,
   handleAgentsPhotoUpload,
@@ -942,6 +943,8 @@ export function buildRouter(): Router {
   router.post('/api/agents/:slug/update', handleAgentsUpdate);
   router.post('/api/agents/:slug/delete', handleAgentsDelete);
   router.post('/api/agents/:slug/approve', handleAgentsApprove);
+  // The Ekip list's on/off switch (plan-r10 1d): owner page only, never re-approves.
+  router.post('/api/agents/:slug/enabled', handleAgentsSetEnabled);
   router.post('/api/agents/:slug/place', handleAgentsPlace);
   router.get('/api/agents/:slug/photo', handleAgentsPhotoGet);
   router.get('/api/agents/:slug/stage', handleAgentsStage);

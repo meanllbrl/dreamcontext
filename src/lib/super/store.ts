@@ -1,12 +1,12 @@
 import { promises as fsp } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   AGENDA_REF, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, MAX_START_ERROR, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
-  ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, viewWithout,
+  ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, trimTeamJobs, viewWithout,
   type AskShow, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
 import { JOB_EFFORTS, parseJob, promptHash } from './jobs.js';
@@ -396,9 +396,77 @@ function sanitizeTeam(raw: unknown): SuperTeamJob[] {
       ...(typeof j.toldPost === 'string' && ENTRY_ID_RE.test(j.toldPost) ? { toldPost: j.toldPost } : {}),
       ...(finite(j.toldEndAt) !== undefined ? { toldEndAt: finite(j.toldEndAt) } : {}),
       ...(typeof j.followUpOf === 'string' && TEAM_JOB_ID_RE.test(j.followUpOf) ? { followUpOf: j.followUpOf } : {}),
+      ...(j.by === 'super' && typeof j.followUpOf === 'string' ? { by: 'super' as const } : {}),
     });
   }
-  return out.sort((a, b) => b.startedAt - a.startedAt).slice(0, MAX_TEAM_JOBS);
+  // Over the cap the oldest follow-ups go first; a member's current root never does (plan-r10 1b).
+  return trimTeamJobs(out.sort((a, b) => b.startedAt - a.startedAt), MAX_TEAM_JOBS);
+}
+
+/** The one card of a member on the stage (plan-r10 1b): `containerIdFor('team', 'member:' + slug)`,
+ *  computed here the same way (this module imports nothing of the inbox). */
+export function memberTeamCardId(member: string): string {
+  return `team-${createHash('sha1').update(`member:${member}`).digest('hex').slice(0, 12)}`;
+}
+
+/**
+ * ONE team card per member (plan-r10 1b; the owner's nine Gantt cards, i74xj5). Every read runs
+ * it and it is idempotent, so the first boot after the upgrade collapses the record and every later
+ * read finds nothing to do: the team cards of one member become one, the NEWEST card survives with
+ * its place, drop and size, re-keyed to the member's card id and pointed at the member's current
+ * root; the others retire (machine-made cards, never an owner's placement of anything else). Groups
+ * and the view follow the new id; a retired card leaves them. Works on the raw record, before
+ * the containers are sanitized.
+ */
+export function collapseTeamCards(raw: Record<string, unknown>, team: readonly SuperTeamJob[]): Record<string, unknown> {
+  const list = raw.containers;
+  if (!Array.isArray(list)) return raw;
+  const byId = new Map(team.map((j) => [j.id, j] as const));
+  const current = new Map<string, SuperTeamJob>();
+  for (const j of team) if (!j.followUpOf && !current.has(j.member)) current.set(j.member, j);
+  // The member a team card belongs to, and when its job started.
+  const cards: { i: number; member: string; at: number }[] = [];
+  list.forEach((c: unknown, i: number) => {
+    if (!isRecord(c) || c.kind !== 'team' || typeof c.ref !== 'string') return;
+    const job = byId.get(c.ref);
+    if (job) cards.push({ i, member: job.member, at: job.startedAt });
+  });
+  if (cards.length === 0) return raw;
+  const rename = new Map<string, string>();
+  const retire = new Set<string>();
+  const next: unknown[] = [...list];
+  let changed = false;
+  const members = new Set(cards.map((c) => c.member));
+  for (const member of members) {
+    const mine = cards.filter((c) => c.member === member).sort((a, b) => b.at - a.at);
+    const keep = mine[0];
+    const want = memberTeamCardId(member);
+    const root = current.get(member);
+    const kept = next[keep.i] as Record<string, unknown>;
+    const already = mine.length === 1 && kept.id === want && (!root || kept.ref === root.id);
+    if (already) continue;
+    changed = true;
+    if (typeof kept.id === 'string' && kept.id !== want) rename.set(kept.id, want);
+    next[keep.i] = { ...kept, id: want, ...(root ? { ref: root.id } : {}) };
+    for (const c of mine.slice(1)) {
+      const id = (next[c.i] as Record<string, unknown>).id;
+      if (typeof id === 'string') retire.add(id);
+      next[c.i] = null;
+    }
+  }
+  if (!changed) return raw;
+  const map = (id: unknown): string | null => (typeof id !== 'string' ? null : retire.has(id) ? null : rename.get(id) ?? id);
+  const groups = Array.isArray(raw.groups)
+    ? raw.groups.map((g: unknown) => (isRecord(g) && Array.isArray(g.cards) ? { ...g, cards: g.cards.map(map).filter((x): x is string => x !== null) } : g))
+    : raw.groups;
+  let view = raw.view;
+  if (isRecord(view)) {
+    const v: Record<string, unknown> = { ...view };
+    if (v.card !== undefined) { const m = map(v.card); if (m) v.card = m; else delete v.card; }
+    if (Array.isArray(v.cards)) v.cards = v.cards.map(map).filter((x): x is string => x !== null);
+    view = v;
+  }
+  return { ...raw, containers: next.filter((c) => c !== null), groups, view };
 }
 
 /**
@@ -507,17 +575,19 @@ function sanitizeHeld(raw: unknown, queue: readonly SuperQueueItem[]): SuperHeld
 }
 
 /** A record read from disk (or built by a caller), with everything hostile dropped. */
-export function sanitizeSuperState(raw: unknown, opts: SanitizeOpts = {}): SuperState {
+export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): SuperState {
   const base = emptySuperState();
-  if (!isRecord(raw) || raw.v !== SUPER_STATE_VERSION) return base;
-  const session = typeof raw.session === 'string' && okSessionId(raw.session) ? raw.session : null;
+  if (!isRecord(input) || input.v !== SUPER_STATE_VERSION) return base;
+  const session = typeof input.session === 'string' && okSessionId(input.session) ? input.session : null;
   // A child trimmed from the history is still the Super's: its id stays in `formerChildren`.
   const trimmedChildren: string[] = [];
-  const children = sanitizeChildren(raw.children, session, opts, trimmedChildren);
+  const children = sanitizeChildren(input.children, session, opts, trimmedChildren);
   // Groups settle against the cards (a closed card leaves its group, a group of one dissolves
   // into its card), so they come back with the cards they may have changed.
   // A team card shows a recorded job: one whose job fell off the record goes with it.
-  const team = sanitizeTeam(raw.team);
+  const team = sanitizeTeam(input.team);
+  // One card per member, the owner's old pile of cards collapsed once (idempotent, every read).
+  const raw: Record<string, unknown> = collapseTeamCards(input, team);
   const { containers, groups } = normalizeGroups(sanitizeContainers(raw.containers, children, new Set(team.map((j) => j.id))), raw.groups);
   const notes: Record<string, SuperNote> = {};
   if (isRecord(raw.notes)) {
