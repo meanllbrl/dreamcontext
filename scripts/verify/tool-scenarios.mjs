@@ -326,7 +326,7 @@ async function superChildren() {
   const browser = await chromium.launch();
   const shots = join(SCRATCH, 'shots');
   mkdirSync(shots, { recursive: true });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
   await markAnnouncementsSeen(context, base);
   const page = await context.newPage();
   const errors = [];
@@ -373,6 +373,21 @@ async function superChildren() {
       for (let i = 0; child && i < 60 && !settled(back); i++) { await page.waitForTimeout(1000); back = readReply(await page.locator('body').innerText()); }
       const readOk = /RAN \(exit 0\)[\s\S]{0,800}(fixture simple ok|lid is blue)/.test(back);
       await page.screenshot({ path: join(shots, `super-child-${T}-1440.png`) });
+      // Its card names the tool and the model it really runs on (super-araclar): Antigravity with
+      // no --model runs the agent's own default, which its init now names.
+      if (T === 'antigravity' && child) {
+        const chip = page.locator('[data-testid="super-card-model"][data-tool="antigravity"]').first();
+        // Its words as the chip says them to a reader: the tool, the model and its level.
+        const chipText = await chip.getAttribute('aria-label', { timeout: 15_000 }).catch(() => '') ?? '';
+        const mark = await chip.locator('svg.mp-mark').count().catch(() => 0);
+        await chip.screenshot({ path: join(shots, 'super-child-antigravity-chip.png') }).catch(() => {});
+        row('Super child card names its tool and model', T, chipText === 'Antigravity Gemini Test · low' && mark === 1, `chip "${chipText}", tool mark ${mark}`);
+        // And `super state`, from the lead's own chat, says the same for that child.
+        await say(`SH: dreamcontext super state | node -e 'let d="";process.stdin.on("data",(c)=>{d+=c}).on("end",()=>{const c=JSON.parse(d).children["${child}"]||{};console.log(JSON.stringify({tool:c.tool,model:c.model}))})'`);
+        let st = '';
+        for (let i = 0; i < 60 && !/RAN \(exit \d+\)/.test(st); i++) { await page.waitForTimeout(1000); const now = await page.locator('body').innerText(); const at = now.lastIndexOf('dreamcontext super state |'); st = at < 0 ? '' : now.slice(at + 26); }
+        row('super state names the child\'s tool and model', T, /"tool":"antigravity","model":"gemini-test-low"/.test(st), st.replace(/\s+/g, ' ').slice(0, 200));
+      }
       if (T === 'antigravity' && child && words.test(read) && /no transcript yet/.test(back)) {
         // `super read` reads the agent's own conversations/<thread>.db (antigravity-conversation.ts);
         // the mock agent writes none, so the read is not provable here, and no real turn ran it yet.
@@ -404,9 +419,12 @@ async function superChildren() {
 
 setup();
 await startServer();
-for (const tool of ['codex', 'antigravity']) {
-  await tour(tool);
-  await headless(tool);
+// ONLY=super: just the Super Agent's children (the card and its model chip).
+if (process.env.ONLY !== 'super') {
+  for (const tool of ['codex', 'antigravity']) {
+    await tour(tool);
+    await headless(tool);
+  }
 }
 await superChildren();
 stopServer();
