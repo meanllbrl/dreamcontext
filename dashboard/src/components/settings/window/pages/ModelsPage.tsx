@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react';
 import { useI18n } from '../../../../context/I18nContext';
-import { useAgentTools, useClaudeAccounts, useCodexAccounts } from '../../../../hooks/useAgentCapabilities';
+import { useAgentTools, useClaudeAccounts, useCodexAccounts, type AgentToolInfo } from '../../../../hooks/useAgentCapabilities';
 import { SLEEP_SPECIALISTS, type SleepSpecialist } from '../../../../hooks/useConfig';
 import { SettingGroup, SettingRow } from '../../SettingRow';
 import { ClaudeAccounts } from '../../ClaudeAccounts';
-import { CodexAccounts } from '../../ToolAccounts';
+import { AntigravityAccounts, CodexAccounts } from '../../ToolAccounts';
 import { ToolMark } from '../../../sleepy/chat/model-picker/ModelPicker';
 import type { SettingsTarget } from '../../../sleepy/chat/model-picker/ModelPicker';
 import { PageHead } from '../controls';
@@ -18,8 +18,15 @@ const TABS: ReadonlyArray<{ id: SwModelsTab; name: string }> = [
   { id: 'claude', name: 'Claude Code' },
   { id: 'codex', name: 'Codex' },
   { id: 'antigravity', name: 'Antigravity' },
-  { id: 'opencode', name: 'OpenCode' },
 ];
+
+/** Where a "Models ›" / "Add ›" link from a chip or the composer lands in this page. */
+export function modelsTabFor(target: SettingsTarget): SwModelsTab {
+  if (target === 'accounts-codex') return 'codex';
+  if (target === 'accounts-antigravity') return 'antigravity';
+  if (target === 'accounts') return 'claude';
+  return 'defaults';
+}
 
 const JOBS: ReadonlyArray<{ job: Job; key: string; kw: string }> = [
   { job: 'chat', key: 'chat', kw: 'chat new chats default model effort opus sonnet codex' },
@@ -43,7 +50,7 @@ const HELPER_KEY: Record<SleepSpecialist, string> = {
  */
 export function ModelsPage({ tab, setTab, searching }: WindowPageProps) {
   const { t } = useI18n();
-  const openTab = (target: SettingsTarget) => setTab(target === 'accounts-codex' ? 'codex' : target === 'accounts' ? 'claude' : 'defaults');
+  const openTab = (target: SettingsTarget) => setTab(modelsTabFor(target));
   const show = (id: SwModelsTab) => searching || tab === id;
   return (
     <>
@@ -60,7 +67,7 @@ export function ModelsPage({ tab, setTab, searching }: WindowPageProps) {
               data-sw-tab={x.id}
               onClick={() => setTab(x.id)}
             >
-              {(x.id === 'claude' || x.id === 'codex') && <span className="sw-tab-mark"><ToolMark tool={x.id} /></span>}
+              {x.id !== 'defaults' && <span className="sw-tab-mark"><ToolMark tool={x.id} /></span>}
               {x.id === 'defaults' ? t('shell.sw.models.defaults') : x.name}
             </button>
           ))}
@@ -69,8 +76,7 @@ export function ModelsPage({ tab, setTab, searching }: WindowPageProps) {
       {show('defaults') && <DefaultsTab onOpenTab={openTab} />}
       {show('claude') && <ClaudeTab />}
       {show('codex') && <CodexTab />}
-      {show('antigravity') && <LaterTab id="antigravity" name="Antigravity" />}
-      {show('opencode') && <LaterTab id="opencode" name="OpenCode" />}
+      {show('antigravity') && <AntigravityTab />}
     </>
   );
 }
@@ -113,7 +119,7 @@ function DefaultsTab({ onOpenTab }: { onOpenTab: (t: SettingsTarget) => void }) 
 function UseRow({ tool, title, hint, state }: { tool: string; title: string; hint: string; state: ReactNode }) {
   return (
     <SettingGroup tab={tool}>
-      <SettingRow id={`${tool}-use`} title={title} hint={hint} keywords="tool provider agent cli sign in installed" control={<span className="sw-state">{state}</span>} />
+      <SettingRow id={`${tool}-use`} title={title} hint={hint} keywords={`tool provider agent cli sign in installed ${tool}`} control={<span className="sw-state">{state}</span>} />
     </SettingGroup>
   );
 }
@@ -130,33 +136,38 @@ function ClaudeTab() {
   );
 }
 
+/** A bridge tool's state word, read from `GET /api/agent/tools`; blank until it answers. */
+function toolState(info: AgentToolInfo | undefined, t: (key: string) => string): string {
+  if (!info) return '';
+  if (!info.installed) return t('shell.sw.models.state.notInstalled');
+  if (!info.signedIn) return t('shell.sw.models.state.signIn');
+  return info.ready ? t('shell.sw.models.state.ready') : t('shell.sw.models.state.needsNode');
+}
+
 function CodexTab() {
   const { t } = useI18n();
   const info = useAgentTools().data?.find((x) => x.tool === 'codex');
   const n = useCodexAccounts(true).data?.accounts?.length ?? 0;
-  const state = !info ? '' : !info.installed ? t('shell.sw.models.state.notInstalled') : !info.signedIn ? t('shell.sw.models.state.signIn') : info.ready ? t('shell.sw.models.state.ready') : t('shell.sw.models.state.needsNode');
   return (
     <>
-      <UseRow tool="codex" title={t('shell.sw.models.use').replace('{tool}', 'Codex')} hint={t('shell.sw.models.use.codex.h')} state={state} />
+      <UseRow tool="codex" title={t('shell.sw.models.use').replace('{tool}', 'Codex')} hint={t('shell.sw.models.use.codex.h')} state={toolState(info, t)} />
       <SettingGroup tab="codex" title={t('shell.sw.models.accounts')}><div className="sw-wide sw-acc"><CodexAccounts /></div></SettingGroup>
       <ToolRules tool="codex" toolName="Codex" accountCount={n} />
     </>
   );
 }
 
-/** A tool with no backend in this version: passive, and it says so. No made-up accounts. */
-function LaterTab({ id, name }: { id: SwModelsTab; name: string }) {
+/**
+ * Antigravity: the same template as Codex, minus limit rules. Its account switching has no
+ * stored rules yet (`src/lib/account-rules.ts` keeps Claude and Codex only), so none are drawn.
+ */
+function AntigravityTab() {
   const { t } = useI18n();
+  const info = useAgentTools().data?.find((x) => x.tool === 'antigravity');
   return (
-    <SettingGroup tab={id}>
-      <SettingRow
-        id={`${id}-use`}
-        title={t('shell.sw.models.use').replace('{tool}', name)}
-        hint={t('shell.sw.models.later.h').replace('{tool}', name)}
-        keywords={`tool provider ${id}`}
-        why={t('shell.sw.models.later.why')}
-        control={<span className="sw-state">{t('shell.sw.models.state.later')}</span>}
-      />
-    </SettingGroup>
+    <>
+      <UseRow tool="antigravity" title={t('shell.sw.models.use').replace('{tool}', 'Antigravity')} hint={t('shell.sw.models.use.antigravity.h')} state={toolState(info, t)} />
+      <SettingGroup tab="antigravity" title={t('shell.sw.models.accounts')}><div className="sw-wide sw-acc"><AntigravityAccounts /></div></SettingGroup>
+    </>
   );
 }

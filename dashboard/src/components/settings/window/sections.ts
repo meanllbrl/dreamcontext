@@ -12,7 +12,7 @@ export type SwPageId =
   | 'system';
 
 /** The tabs of the Models page: Defaults, then one per tool. */
-export type SwModelsTab = 'defaults' | 'claude' | 'codex' | 'antigravity' | 'opencode';
+export type SwModelsTab = 'defaults' | 'claude' | 'codex' | 'antigravity';
 
 export interface SwGroup {
   id: 'top' | 'agents' | 'memory' | 'project' | 'connections' | 'end';
@@ -55,6 +55,7 @@ export function swTarget(focusId: string | null | undefined): SwTarget {
     case 'models': return { page: 'models', tab: 'defaults' };
     case 'accounts': return { page: 'models', tab: 'claude' };
     case 'accounts-codex': return { page: 'models', tab: 'codex' };
+    case 'accounts-antigravity': return { page: 'models', tab: 'antigravity' };
     default: {
       if (focusId && (SW_PAGES as readonly string[]).includes(focusId)) return { page: focusId as SwPageId };
       return { page: 'general' };

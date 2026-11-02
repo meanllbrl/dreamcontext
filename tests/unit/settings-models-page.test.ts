@@ -65,9 +65,10 @@ describe('sleep helpers', () => {
 });
 
 describe('tool tabs', () => {
-  it('Defaults, Claude Code, Codex, Antigravity, OpenCode, in that order', () => {
+  it('Defaults, Claude Code, Codex, Antigravity, in that order; OpenCode is gone', () => {
     const ids = [...page.matchAll(/\{ id: '([a-z]+)', name: /g)].map((m) => m[1]);
-    expect(ids).toEqual(['defaults', 'claude', 'codex', 'antigravity', 'opencode']);
+    expect(ids).toEqual(['defaults', 'claude', 'codex', 'antigravity']);
+    expect(page).not.toMatch(/opencode|OpenCode|LaterTab/);
   });
 
   it('each tool tab: whether it is used, its accounts, its own limit rules', () => {
@@ -79,10 +80,21 @@ describe('tool tabs', () => {
     expect(page).not.toMatch(/<Toggle/);
   });
 
-  it('Antigravity and OpenCode are passive and say why, with no accounts', () => {
-    const later = page.slice(page.indexOf('function LaterTab'));
-    expect(later).toMatch(/why=\{t\('shell\.sw\.models\.later\.why'\)\}/);
-    expect(later).not.toMatch(/Accounts|ToolRules/);
+  it('Antigravity: its real state and its accounts; no limit rules, the rules store has none for it', () => {
+    const ag = page.slice(page.indexOf('function AntigravityTab'));
+    expect(ag).toMatch(/useAgentTools\(\)\.data\?\.find\(\(x\) => x\.tool === 'antigravity'\)/);
+    expect(ag).toMatch(/state=\{toolState\(info, t\)\}/);
+    expect(ag).toMatch(/<AntigravityAccounts \/>/);
+    expect(ag).not.toMatch(/ToolRules/);
+    // Every tool tab carries its mark.
+    expect(page).toMatch(/\{x\.id !== 'defaults' && <span className="sw-tab-mark"><ToolMark tool=\{x\.id\} \/><\/span>\}/);
+  });
+
+  it('the composer\'s "Add ›" for Antigravity lands on its tab', async () => {
+    const { swTarget } = await import('../../dashboard/src/components/settings/window/sections');
+    expect(swTarget('accounts-antigravity')).toEqual({ page: 'models', tab: 'antigravity' });
+    expect(page).toMatch(/if \(target === 'accounts-antigravity'\) return 'antigravity';/);
+    expect(win).toMatch(/setTab\(modelsTabFor\(target\)\)/);
   });
 
   it('every group carries its tab, so a search hit jumps there', () => {
