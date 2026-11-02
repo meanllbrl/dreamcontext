@@ -52,7 +52,7 @@
 
 /* skeleton in the board's shape */
 .pv-skel { display: flex; flex-direction: column; gap: 16px; padding: 20px 24px; flex: 1; }
-.pv-skel-band { height: 140px; border-radius: var(--radius-lg); background: var(--color-bg-secondary); animation: pv-pulse 1.4s ease-in-out infinite; }
+.pv-skel-band { height: 140px; border-radius: var(--radius-lg); background: var(--color-bg-secondary); animation: var(--dc-motion-status-name, pv-pulse) 1.4s ease-in-out infinite; animation-play-state: var(--dc-motion-play, running); }
 @keyframes pv-pulse { 50% { opacity: .55; } }
 
 /* ── Bands ───────────────────────────────────────────────────────────────── */

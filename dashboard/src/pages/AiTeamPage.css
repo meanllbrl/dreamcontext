@@ -465,7 +465,7 @@ button.aiteam-person:not(:disabled):hover { border-color: var(--color-border-hov
 .aiteam-roster .aiteam-section { padding: var(--space-3) var(--space-2) var(--space-1); font-weight: var(--font-weight-normal); letter-spacing: 0; text-transform: none; font-size: var(--font-size-xs); }
 .aiteam-roster .aiteam-row { grid-template-columns: 22px minmax(0, 1fr) auto; gap: var(--space-2); align-items: center; height: 32px; padding: 0 var(--space-2); border-radius: var(--radius-md); }
 .aiteam-roster .aiteam-face { width: 22px; height: 22px; }
-.aiteam-roster .aiteam-row-name { font-weight: var(--font-weight-medium); }
+.aiteam-roster .aiteam-row-name { font-weight: var(--font-weight-normal); }
 .aiteam-roster .aiteam-row--on .aiteam-row-name { font-weight: var(--font-weight-semibold); }
 .aiteam-roster .aiteam-row-end { flex-direction: row; align-items: center; gap: var(--space-2); padding-top: 0; }
 .aiteam-roster .aiteam-draft-av { width: 22px; height: 22px; }
