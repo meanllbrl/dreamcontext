@@ -6,7 +6,7 @@
  */
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = join(__dirname, '../..');
@@ -48,7 +48,7 @@ describe('vendored T3 provider layer', () => {
   it('no file is in the tree that the manifest does not account for', () => {
     const known = new Set([...Object.keys(manifest.files), ...Object.keys(manifest.stubs)]);
     const extra = walk(VENDOR)
-      .map((p) => relative(VENDOR, p))
+      .map((p) => relative(VENDOR, p).split(sep).join('/')) // the manifest keys are /-separated
       .filter((rel) => !rel.startsWith('_stubs/') && !rel.startsWith('patches/') && !OURS.has(rel) && !rel.endsWith('/package.json') && !known.has(rel));
     expect(extra).toEqual([]);
   });

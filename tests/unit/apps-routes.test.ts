@@ -3,7 +3,7 @@ import http from 'node:http';
 import { execFile } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, delimiter } from 'node:path';
 import { promisify } from 'node:util';
 import { appHash } from '../../src/lib/apps/bundle.js';
 import { registerApp } from '../../src/lib/apps/registry.js';
@@ -16,10 +16,11 @@ import { registerApp } from '../../src/lib/apps/registry.js';
  */
 
 const execFileAsync = promisify(execFile);
-const VITE_NODE = resolve('node_modules/.bin/vite-node');
+/** vite-node's own entry under this Node: `.bin/vite-node` is a .cmd shim on Windows, which execFile cannot run. */
+const VITE_NODE = resolve('node_modules/vite-node/dist/cli.mjs');
 const CLI = resolve('src/cli/index.ts');
 const FIXTURE = join(__dirname, '..', 'fixtures', 'apps', 'echo-backend');
-const PATH = `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin`;
+const PATH = [dirname(process.execPath), ...(process.platform === 'win32' ? [] : ['/usr/bin', '/bin', '/usr/sbin'])].join(delimiter);
 
 const saved = { HOME: process.env.HOME, DESKTOP: process.env.DREAMCONTEXT_DESKTOP };
 let home: string;
@@ -43,7 +44,7 @@ function req(opts: { method?: string; path: string; headers?: Record<string, str
 
 async function cli(args: string[], cwd: string, extraEnv: Record<string, string> = {}): Promise<{ code: number; out: string }> {
   try {
-    const { stdout, stderr } = await execFileAsync(VITE_NODE, ['--root', resolve('.'), CLI, ...args], { cwd, env: { ...process.env, HOME: home, PATH: process.env.PATH ?? PATH, ...extraEnv }, timeout: 60_000 });
+    const { stdout, stderr } = await execFileAsync(process.execPath, [VITE_NODE, '--root', resolve('.'), CLI, ...args], { cwd, env: { ...process.env, HOME: home, PATH: process.env.PATH ?? PATH, ...extraEnv }, timeout: 60_000 });
     return { code: 0, out: stdout + stderr };
   } catch (e) {
     const err = e as { code?: number; stdout?: string; stderr?: string };
@@ -122,7 +123,7 @@ describe('/api/apps', () => {
     await onPlatform('darwin', async () => {
       for (const body of [{ link: true }, { link: true, nonce: 'a'.repeat(43) }]) {
         const r = await req({ method: 'POST', path: '/api/apps/echo/launch', body });
-        expect(r.status).toBe(200);
+        expect(r.status, JSON.stringify(r.json)).toBe(200);
         expect(r.json).toMatchObject({ ok: true, landed: 'card' });
       }
     });

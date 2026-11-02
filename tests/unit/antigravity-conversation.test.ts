@@ -87,7 +87,7 @@ describe('writeAntigravityTranscript', () => {
     place('abc-123');
     const path = writeAntigravityTranscript('abc-123', 'primary', { home, readRows: () => [user('hello'), model('hi')] })!;
     expect(lines(readFileSync(path, 'utf-8'))).toHaveLength(2);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(findTranscriptBySessionId(['abc-123'], home)).toBe(path);
   });
 

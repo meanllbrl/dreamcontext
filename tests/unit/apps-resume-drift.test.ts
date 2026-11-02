@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
 
 /**
  * An app conversation runs only in its envelope, so every path that resumes a session has to ask
@@ -23,7 +22,7 @@ const NOT_A_CLAUDE_RESUME = new Set([
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
-    const p = join(dir, name);
+    const p = `${dir}/${name}`; // '/'-joined on every platform: the lists above are POSIX paths
     if (p.startsWith('src/vendor') || p.startsWith('src/dashboard')) continue;
     if (statSync(p).isDirectory()) walk(p, out);
     else if (p.endsWith('.ts')) out.push(p);

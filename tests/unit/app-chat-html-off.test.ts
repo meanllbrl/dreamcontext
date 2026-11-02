@@ -15,7 +15,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createElement as h } from '../../dashboard/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
@@ -53,7 +53,7 @@ function code(text: string): string {
 }
 
 describe('every frame of supplied HTML holds the app-chat rule', () => {
-  const files = walk(SRC).map((p) => ({ rel: relative(SRC, p), text: code(readFileSync(p, 'utf-8')) }));
+  const files = walk(SRC).map((p) => ({ rel: relative(SRC, p).split(sep).join('/'), text: code(readFileSync(p, 'utf-8')) }));
   const framing = files.filter((f) => /<iframe\b|createElement\(\s*['"]iframe['"]\s*\)/.test(f.text));
 
   it('finds the frames it is meant to judge', () => {

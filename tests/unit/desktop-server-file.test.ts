@@ -60,7 +60,7 @@ describe('the record', () => {
     const a = writeDesktopServerFile({ port: 4173, home: h, env: DESKTOP, ppid: 4242, pid: 777, platform: 'darwin' });
     expect(a.written).toBe(true);
     const path = desktopServerFilePath(h);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     const rec = JSON.parse(readFileSync(path, 'utf-8'));
     expect(rec).toEqual({ schema: 1, pid: 777, port: 4173, launchToken: expect.any(String), appBundleId: DESKTOP_BUNDLE_ID });
     expect(rec.launchToken.length).toBeGreaterThanOrEqual(43);

@@ -34,7 +34,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 const SRC = join(import.meta.dirname, '../../dashboard/src');
 const DESKTOP = join(SRC, 'lib/desktop.ts');
@@ -73,8 +73,8 @@ describe('no window.confirm anywhere in the dashboard', () => {
   it('is never called, in any dashboard source file', () => {
     const offenders = sourceFiles(SRC)
       .filter((f) => CALLS_WINDOW_CONFIRM.test(code(f)))
-      .filter((f) => !APP_FRAME_ALERT.has(relative(SRC, f)))
-      .map((f) => relative(SRC, f));
+      .map((f) => relative(SRC, f).split(sep).join('/'))
+      .filter((f) => !APP_FRAME_ALERT.has(f));
 
     expect(
       offenders,

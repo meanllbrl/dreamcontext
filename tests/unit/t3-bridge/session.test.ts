@@ -133,7 +133,7 @@ describe('t3 bridge secrets', () => {
     const { readdirSync, statSync } = await import('node:fs');
     const { join } = await import('node:path');
     const logs = join(stateRoot, 'logs');
-    expect(statSync(logs).mode & 0o777).toBe(0o700);
+    if (process.platform !== 'win32') expect(statSync(logs).mode & 0o777).toBe(0o700); // Windows has no POSIX mode bits
     expect(readdirSync(join(logs, 'provider'))).toEqual([]);
   });
 });
