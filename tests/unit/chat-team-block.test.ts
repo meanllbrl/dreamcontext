@@ -299,6 +299,10 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       'it needs (the exception to 2-4). A report on a plan or on options is DRAWN, never written: screen',
       expect.stringContaining('mockups, options side by side, short headings; text at the minimum.'),
       expect.stringContaining('Write nothing between tool calls (but the line before `super ask`), and nothing'),
+      // rev 26 (2026-11-02): which tool and model a child runs on.
+      '- Which tool and model: `## Tools on this Mac` (a later `<super-tools>` replaces it) lists what is ready.',
+      '  `--tool codex|antigravity --model <id>`; "Gemini" = antigravity, "GPT"/OpenAI = codex. Match a model he',
+      '  names to that list, never refuse it; a tool not ready: tell him the one step.',
       '- His note on a running job: before its first reviewer, into that child; after, a new small job.',
       expect.stringContaining('Never AskUserQuestion: it locks your turn. Write'),
       '  your one line FIRST (a question waits), then run `super ask` as the LAST act of the turn, with no text after it',
@@ -321,8 +325,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       '- New work: `super note clear`. Write a day or date, never "today"/"tomorrow".',
       expect.stringContaining('with `origin=<ref>`'),
       '  result with `<!-- re:<ref> -->`.',
-      expect.stringContaining('<super-brief rev=25>'),
+      expect.stringContaining('<super-brief rev=26>'),
     ]);
-    expect(after.length).toBe(before.length + 18);
+    expect(after.length).toBe(before.length + 21);
   });
 });

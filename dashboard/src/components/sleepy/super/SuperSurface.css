@@ -701,6 +701,8 @@
 .super-tile[data-tile='chat'] .super-tile-title { -webkit-line-clamp: 3; flex: none; }
 .super-tile[data-tile='chat'] .super-tile-line { -webkit-line-clamp: 1; }
 .super-tile-model {
+  display: inline-flex;
+  align-items: center;
   flex: 0 1 auto;
   min-width: 0;
   height: 18px;
@@ -714,6 +716,23 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* A Codex or Antigravity child: the tool's mark before its model, as the model picker draws it.
+   The name shortens in a narrow tile; the mark and the level always show. */
+.super-tile-model .mp-mark {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  margin-right: var(--space-1);
+}
+.super-tile-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.super-tile-model-level {
+  flex: none;
+  white-space: pre;
 }
 .super-tile-line {
   font-size: var(--font-size-xs);

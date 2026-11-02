@@ -10,6 +10,7 @@ import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
 import { armTeamJobWatches, awaitedTeamItem, staleTeamItem, teamItemLines, teamLiveRows } from './team.js';
 import { closeAnswered, markPadTold, padNotice, settlePad } from './pad.js';
 import { superRestoreHold } from './restore.js';
+import { sanitizeModel } from '../claude-args.js';
 import { makeRoom } from './room.js';
 import { bringLiveCard, floatLiveChildren } from './live.js';
 import { keepQuestionsAcrossRelaunch } from './outbox.js';
@@ -396,6 +397,25 @@ export async function writeSuper(
   }, { ...superSanitizeOpts(), ...(opts.onDemoted ? { onDemoted: opts.onDemoted } : {}) });
   afterSuperWrite(contextRoot, next);
   return next;
+}
+
+/**
+ * The model a child really runs on, from its own `system/init` (an Antigravity account's default
+ * included): `super state`, its card and `super resume` read it from the record. Written only when
+ * it differs; not a child of any Super, nothing.
+ */
+export async function noteChildModel(sessionId: string, model: string): Promise<void> {
+  const root = superRootOfChild(sessionId);
+  // Only what `super resume` accepts back (sanitizeModel): a `[1m]`-tagged id would make the
+  // child impossible to resume, so the record keeps what it had.
+  if (!root || model.length > 60 || sanitizeModel(model) !== model) return;
+  const st = await readSuperState(root);
+  const have = st.children[sessionId];
+  if (!have || have.endedAt !== undefined || have.model === model) return;
+  await writeSuper(root, (s) => {
+    const c = s.children[sessionId];
+    if (c && c.model !== model) c.model = model;
+  });
 }
 
 export function countEvent(s: SuperState): void {

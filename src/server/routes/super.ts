@@ -645,7 +645,10 @@ function poolRows(vault: string, pool: readonly SuperPoolItem[]): Array<Record<s
 async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string, noteText?: string, origin?: string): Promise<void> {
   // No effort named: a default by mode, never the owner's global one (often xhigh). It is
   // recorded on the pool row and the child, so `super state` and `resume` show the real value.
-  const job: Job = jobIn.effort ? jobIn : { ...jobIn, effort: childDefaultEffort(jobIn.mode) };
+  // Antigravity names its effort in the model id (`-high`), so it gets none of ours.
+  // No --model: the tool's own default (an Antigravity account's choice included); the model it
+  // really runs on reaches the record from its first `system/init` (agent-chat.ts noteChildModel).
+  const job: Job = jobIn.effort || jobIn.tool === 'antigravity' ? jobIn : { ...jobIn, effort: childDefaultEffort(jobIn.mode) };
   // D11: the cap is the ONLY hold on a NEW delegation (calls in flight count too). The
   // machine's facts never hold (owner, 2026-10-21): `super state` shows them as information.
   // No await between the cap check and the in-flight count, or parallel delegates all pass.
@@ -1115,7 +1118,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const root = c.who.contextRoot;
     const vault = vaultNameOf(root);
     const now = Date.now();
-    const children: Record<string, SuperChild & Record<string, unknown>> = {};
+    const children: Record<string, Record<string, unknown>> = {};
     const status: Array<Record<string, unknown>> = [];
     for (const [sid, ch] of Object.entries(c.state.children)) {
       const e = getChat(sid);
@@ -1123,6 +1126,10 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       const { line: last, limit } = childLastLine(e?.lastAssistantText ?? [], live);
       const row = {
         status: live,
+        // What it runs on: the tool (absent in the record = Claude) and the model its own
+        // `system/init` reported, else the one it was started with (`default`: not known yet).
+        tool: ch.tool ?? 'claude',
+        model: ch.model ?? 'default',
         ...(ch.endedAt !== undefined ? { endedAt: ch.endedAt } : {}),
         elapsedMs: Math.max(0, now - ch.startedAt),
         lastLine: last ? wrapUntrusted(vault, last.length > 600 ? `${last.slice(0, 600)}…` : last) : '',

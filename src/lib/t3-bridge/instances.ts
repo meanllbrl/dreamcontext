@@ -44,11 +44,13 @@ export interface InstanceInput {
   readonly binaryPath?: string;
   /** Stdio servers this chat's sessions are given (the brain). A bridge child runs one chat. */
   readonly mcpServers?: readonly AcpMcpServer[];
+  /** The model each configured session really runs on (the account's default included). */
+  readonly onModel?: (model: string) => void;
 }
 
 /** One account's instance. It lives as long as the scope it is created in. */
 export const createInstance = (i: InstanceInput) => {
-  setBridgeAcp({ mcpServers: i.mcpServers ?? [], promptWithInstructions: (input) => acpPromptWithInstructions('Antigravity', input), runtimeInstructions: (runtime) => acpRuntimeInstructions('Antigravity', runtime) });
+  setBridgeAcp({ mcpServers: i.mcpServers ?? [], promptWithInstructions: (input) => acpPromptWithInstructions('Antigravity', input), runtimeInstructions: (runtime) => acpRuntimeInstructions('Antigravity', runtime), ...(i.onModel ? { onModel: i.onModel } : {}) });
   return AntigravityDriver.create({
     instanceId: ProviderInstanceId.make(antigravityInstanceId(i.accountId)),
     displayName: undefined,

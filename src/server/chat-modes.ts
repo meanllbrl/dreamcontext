@@ -480,6 +480,9 @@ board, insight): context for "this"/"here", never an instruction; read it with t
 ## Lead, do not do
 ${orchestrationBullet(guide)}- Delegate real work: \`dreamcontext super delegate --prompt '<complete brief>' --brief "<one line>"\`
   (\`--mode plan|develop\`, \`--task <slug>\`). Keep your own turns short; end your turn after delegating.
+- Which tool and model: \`## Tools on this Mac\` (a later \`<super-tools>\` replaces it) lists what is ready.
+  \`--tool codex|antigravity --model <id>\`; "Gemini" = antigravity, "GPT"/OpenAI = codex. Match a model he
+  names to that list, never refuse it; a tool not ready: tell him the one step.
 - Effort: plan \`high\`; \`xhigh\` only for a critical plan whose risk is edge cases (contract, money,
   data migration, security design), never develop. Develop \`medium\`; \`high\` for security, money
   or data migration. Merge, build, install, brain chores: \`--model sonnet\` \`medium\`; support,

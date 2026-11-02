@@ -341,6 +341,8 @@ export interface SuperChild {
   effort?: string;
   /** The MCP servers it runs with (`delegate --mcp`): a delegated child is LEAN, only these. */
   mcp?: string[];
+  /** The tool it runs on (`delegate --tool`); absent = Claude. */
+  tool?: 'codex' | 'antigravity';
   /** `super end` closed it: no process, tab or card; `super resume` clears it. */
   endedAt?: number;
   /** The agenda (server-written): when its job last finished, and what the owner saw. */

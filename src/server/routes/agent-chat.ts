@@ -44,6 +44,7 @@ import { chatSubagents } from '../../lib/automations/chat-subagents.js';
 import {
   chatSpawnRoster, collectTeam, renderSuperTeamBlock, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
 } from '../../lib/agents/team-roster.js';
+import { refreshSuperTools, superOwnerToolsBlock, toolsBlockFingerprint, toolsBlockNow } from '../../lib/super/tools-block.js';
 import { SUPER_BRIEF_TEXT, modeBriefing, type ChatMode } from '../chat-modes.js';
 import { appChatBriefing } from '../chat-surface.js';
 import { heldModeFromTranscript, modeNoteHookOutput, modeNoteSettings, modeNoteSources, modeSwitchNote, superBriefState } from '../chat-mode-drift.js';
@@ -117,7 +118,7 @@ import { remoteViewOf } from './super-remote.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, type PhoneSuperRecord, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
-  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superOwnerSpoke, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
+  attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superOwnerSpoke, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
 } from '../../lib/super/inbox.js';
 import { listNotchEvents, lookingAt, recordAccountSwitch } from '../../lib/assistant/notch-inbox.js';
 import { buildLiveContextParts } from '../../lib/assistant/live-context.js';
@@ -2240,6 +2241,13 @@ export function startChatSession(
   if (isSuper) {
     try { superTeamBlock = superSpawnTeamBlock(contextRoot, superVaultName(contextRoot)); } catch { superTeamBlock = ''; }
   }
+  // The Super's `## Tools on this Mac` (tools-block.ts): which tools can start a child right now
+  // and their models. In this spawn's prompt; an owner message carries it again when it changed.
+  const superToolsSpawn = isSuper ? toolsBlockNow() : '';
+  const superTools: { inPrompt: string | null; delivered: string | null } = { inPrompt: null, delivered: null };
+  /** The tools block's fingerprint once this spawn's briefing file really carried it. */
+  let spawnToolsFp: string | null = null;
+  if (isSuper) void refreshSuperTools();
   // Which team the Super session holds (its fingerprint): the block in THIS spawn's system prompt
   // once the briefing file really carried it; a resume reads its transcript instead (below).
   const superTeam: { inPrompt: string | null; delivered: string | null } = { inPrompt: null, delivered: null };
@@ -2249,6 +2257,7 @@ export function startChatSession(
   const superTeamCleared = (): void => {
     superTeam.inPrompt = spawnTeamFp;
     superTeam.delivered = spawnTeamFp;
+    superTools.inPrompt = superTools.delivered = spawnToolsFp;
   };
   let agentsArg: string[] = [];
   let cleanupAgents = () => { /* nothing written */ };
@@ -2289,7 +2298,7 @@ export function startChatSession(
     const ownBrief = app ? app.briefing : card ? card.briefing : agentChat ? [agentChat.briefing, tabBrief].filter(Boolean).join('\n\n') : tabBrief;
     // Named only when the `--agents` definitions really ride this spawn (`subagents` is cleared
     // when their file could not be written), so the model is never told about agents it lacks.
-    const modeBrief = [ownBrief, subagents?.roster ?? '', superTeamBlock].filter(Boolean).join('\n\n');
+    const modeBrief = [ownBrief, subagents?.roster ?? '', superTeamBlock, superToolsSpawn].filter(Boolean).join('\n\n');
     // A Super Agent's delegated child (lean, above) is also told how to reach its Super Agent.
     const surface = app ? `${CHAT_SURFACE_BRIEFING}\n${appChatBriefing(app)}` : opts.leanMcp ? `${CHAT_SURFACE_BRIEFING}\n${SUPER_CHILD_BRIEFING}` : CHAT_SURFACE_BRIEFING;
     const briefing = modeBrief ? `${surface}\n${modeBrief}` : surface;
@@ -2299,6 +2308,9 @@ export function startChatSession(
     // spawn) holds this team from its first turn.
     if (superTeamBlock) spawnTeamFp = teamBlockFingerprint(superTeamBlock);
     if (spawnTeamFp && !resumeTarget) superTeam.inPrompt = superTeam.delivered = spawnTeamFp;
+    // A resumed session's prompt is its first spawn's: the tools block rides its next message.
+    if (superToolsSpawn) spawnToolsFp = toolsBlockFingerprint(superToolsSpawn);
+    if (spawnToolsFp && !resumeTarget) superTools.inPrompt = superTools.delivered = spawnToolsFp;
     cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };
     
   } catch { /* no briefing this session — the chat still works, just terminal-flavoured */ }
@@ -2603,6 +2615,8 @@ export function startChatSession(
   let handedOff = false;
   const heldForSuccessor: Array<Buffer | string> = [];
   let observedConversation = '';
+  /** The model this chat's last init named, so a Super child's record is written once per change. */
+  let notedChildModel = '';
   let unlistenAutonomy = () => { /* not the Assistant */ };
 
   // Liveness guard (mirrors agent-terminal.ts:1408's `if (!alive) return;`): a stale
@@ -3240,6 +3254,9 @@ export function startChatSession(
     }
     if (teamTurn) content.push(...teamTurn.blocks);
     else if (brief) content.push({ type: 'text', text: SUPER_BRIEF_TEXT });
+    // The tools on this Mac changed since it last saw them (a sign-in, an install, a resume): once.
+    const toolsTurn = isSuper ? superOwnerToolsBlock({ text, block: toolsBlockNow(), delivered: superTools.delivered }) : null;
+    if (toolsTurn?.block) content.push({ type: 'text', text: toolsTurn.block });
     // A spoken message to the Super Agent (K1): its answer is read aloud. The window reads
     // only what streams between `voice_turn` and `voice_turn_end`; an event turn never arms it.
     const voice = isSuper && spokenTexts.delete(text);
@@ -3274,6 +3291,9 @@ export function startChatSession(
     }
     if (brief && wrote) superBrief.due = false;
     if (teamTurn && wrote) superTeam.delivered = teamTurn.delivered;
+    if (toolsTurn && wrote) superTools.delivered = toolsTurn.delivered;
+    // Fresh for the next message: `codex --version` and Claude's model list, off this turn's path.
+    if (isSuper) void refreshSuperTools();
     if (isSuper && wrote && text.trim() === '/clear') superTeamCleared();
     if (voice && wrote && !voiceArmed) { voiceArmed = true; sendMeta({ subtype: 'voice_turn' }); }
     lastSentSpoken = voice && wrote;
@@ -3654,6 +3674,7 @@ export function startChatSession(
       if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary' && !superBrief.inPrompt) superBrief.due = true;
       // It drops a `<super-team>` a message carried too: what it holds is its system prompt's block.
       if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary') superTeam.delivered = superTeam.inPrompt;
+      if (isSuper && obj.type === 'system' && obj.subtype === 'compact_boundary') superTools.delivered = superTools.inPrompt;
       if (obj.type === 'system' && obj.subtype === 'background_tasks_changed') {
         backgroundTasks = Array.isArray(obj.tasks) ? obj.tasks.length : 0;
       }
@@ -3707,6 +3728,14 @@ export function startChatSession(
       // read is the right price for closing that direction against a future CLI change.
       if (obj.type === 'system' && obj.subtype === 'init' && typeof obj.session_id === 'string') {
         observedConversation = obj.session_id;
+      }
+      // A Super child's model as it really runs (its own init, a tool's default included): into
+      // the record once per change, so `super state` and its card say it (inbox.ts noteChildModel).
+      if (!isSuper && obj.type === 'system' && obj.subtype === 'init' && !obj.parent_tool_use_id
+        && typeof obj.model === 'string' && obj.model && obj.model !== notedChildModel) {
+        const m = obj.model;
+        // Remembered once written: a failed write is tried again on the next init.
+        void noteChildModel(chatRegistryId, m).then(() => { notedChildModel = m; }, () => { /* the record keeps what it had */ });
       }
       // An app conversation that rotated (`/clear`, a compaction, a handoff): its successor gets
       // its record from the stream itself, so the envelope holds with hooks off too.

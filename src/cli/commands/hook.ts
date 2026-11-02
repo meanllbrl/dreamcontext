@@ -63,6 +63,7 @@ import { memberFileRefusal, memberFileWriteTarget, shellWriteTarget } from '../.
 import { chatTabTitleNudge, chatTabTitleStopBlock } from '../../lib/chat-tab-title-nudge.js';
 import { bm25Search, loadSkillDocs, RECALL_STRONG_SCORE, type RecallHit, type CorpusDoc } from '../../lib/recall.js';
 import { stripSuperTeamBlocks, teamPromptDirectives, teamRouteOf } from '../../lib/agents/team-roster.js';
+import { stripSuperToolsBlocks } from '../../lib/super/tools-block.js';
 import { buildCorpusCached } from '../../lib/recall-corpus-cache.js';
 import {
   loadPatternsReporting, matchPatterns, selectForInjection, syncPatternShimsIfStale,
@@ -3344,9 +3345,9 @@ export function registerHookCommand(program: Command): void {
       // never disagree (env override, else persisted .sleep.json, else 'haiku').
       if (process.env.DREAMCONTEXT_MEMORY_HOOK !== '0') {
         try {
-          // The Super's `<super-team>` roster is never recall's input (team-roster.ts): without one
-          // the prompt is byte-identical.
-          const prompt = stripSuperTeamBlocks(String((input as Record<string, unknown>).prompt ?? ''));
+          // The Super's `<super-team>` roster and `<super-tools>` list are never recall's input
+          // (team-roster.ts, tools-block.ts): without them the prompt is byte-identical.
+          const prompt = stripSuperToolsBlocks(stripSuperTeamBlocks(String((input as Record<string, unknown>).prompt ?? '')));
           if (prompt.trim().length >= 8) {
             const recallMode = resolveRecallMode(root);
 

@@ -90,6 +90,14 @@ describe.skipIf(nodeMajor < 22)('Antigravity on the bridge (fake ACP agent)', ()
     expect(frames.some((f) => f.type === 'system' && f.subtype === 'dc_thread' && !!f.session_id)).toBe(true);
   }, 60_000);
 
+  it('no model asked: its init names the model the agent really runs on, its own default (super-araclar)', async () => {
+    const { code, frames } = await chat('auto', 'WHICH-MODEL');
+    expect(code).toBe(0);
+    const init = frames.find((f) => f.type === 'system' && f.subtype === 'init');
+    // The fake agent's own default; before, the init said '' and the card showed no model.
+    expect(init?.model).toBe('gemini-test-low');
+  }, 60_000);
+
   it('rotates like Eco: /clear opens a fresh thread that carries the briefing again', async () => {
     const input = new PassThrough();
     const frames: Record<string, unknown>[] = [];
