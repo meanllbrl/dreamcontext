@@ -31,6 +31,14 @@ vi.mock('node:child_process', async (importOriginal) => {
   };
 });
 
+// Whether Codex is installed is this machine's business, not the pane's: a runner without
+// `codex` on it would refuse every Codex pane before it spawns. Each test says what it finds.
+const codexProblem = vi.hoisted(() => ({ value: null as string | null }));
+vi.mock('../../../src/lib/codex-bin.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/lib/codex-bin.js')>()),
+  codexStartProblem: () => codexProblem.value,
+}));
+
 const { startChatSession } = await import('../../../src/server/routes/agent-chat.js');
 const { readTabHandoff, writeHandoffRecord, readHandoffRecord } = await import('../../../src/lib/context-watch.js');
 
@@ -46,6 +54,7 @@ let project = '';
 
 beforeEach(() => {
   spawned.length = 0;
+  codexProblem.value = null;
   project = mkdtempSync(join(tmpdir(), 'dc-codex-pane-'));
   mkdirSync(join(project, '_dream_context', 'state'), { recursive: true });
   process.env.DREAMCONTEXT_CLI = '/opt/dreamcontext/dist/index.js';
@@ -99,6 +108,19 @@ describe('a Codex chat pane', () => {
     expect(users[0]).toContain('"/clear"');
     expect(users[1]).toContain('acme-checkout');
     expect(readHandoffRecord(contextRoot, PANE)?.actedAt).toBeTruthy();
+  });
+
+  it('a machine without Codex refuses the pane out loud and spawns nothing', () => {
+    codexProblem.value = 'Codex is not installed. Open the model menu and press Install, or run dreamcontext setup.';
+    const ws = new FakeWs();
+    startChatSession(ws as unknown as import('ws').WebSocket, project, {
+      bypass: false, sessionId: PANE, resumeId: '', model: 'gpt-5.6-terra', effort: 'high', mode: 'basic' as never,
+      account: '', initialPrompt: '', deferPrompt: false, tool: 'codex',
+    });
+    expect(spawned).toHaveLength(0);
+    const sent = ws.send.mock.calls.map((c) => String(c[0]));
+    expect(sent.some((m) => m.includes('"code":"tool_refused"') && m.includes('Codex is not installed'))).toBe(true);
+    expect(ws.close).toHaveBeenCalled();
   });
 
   it('never runs a Claude account switch or usage reading for a Codex pane', () => {

@@ -108,14 +108,37 @@ describe('/api/apps', () => {
     expect(r.json.apps[0].actions[0]).toMatchObject({ id: 'leak' });
   });
 
+  // App windows open in the Mac app only: the route answers by the platform it runs on, so each
+  // case says which one it is (the CI runner is Linux, a dev box a Mac).
+  const onPlatform = async (platform: NodeJS.Platform, run: () => Promise<void>): Promise<void> => {
+    const real = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { ...real, value: platform });
+    try { await run(); } finally { Object.defineProperty(process, 'platform', real); }
+  };
+
   it('a bare app link, or a spent nonce, lands on the card and spawns nothing', async () => {
     const list = () => req({ path: '/api/apps' }).then((r) => r.json.apps.find((a: { slug: string }) => a.slug === 'echo'));
     const before = await list();
-    for (const body of [{ link: true }, { link: true, nonce: 'a'.repeat(43) }]) {
-      const r = await req({ method: 'POST', path: '/api/apps/echo/launch', body });
-      expect(r.status).toBe(200);
-      expect(r.json).toMatchObject({ ok: true, landed: 'card' });
-    }
+    await onPlatform('darwin', async () => {
+      for (const body of [{ link: true }, { link: true, nonce: 'a'.repeat(43) }]) {
+        const r = await req({ method: 'POST', path: '/api/apps/echo/launch', body });
+        expect(r.status).toBe(200);
+        expect(r.json).toMatchObject({ ok: true, landed: 'card' });
+      }
+    });
+    expect((await list()).state).toBe(before.state);
+  });
+
+  it('off the Mac, a launch is refused as mac_only and spawns nothing (the link still lands on the card)', async () => {
+    const list = () => req({ path: '/api/apps' }).then((r) => r.json.apps.find((a: { slug: string }) => a.slug === 'echo'));
+    const before = await list();
+    await onPlatform('linux', async () => {
+      for (const body of [{ link: true }, { owner: true }]) {
+        const r = await req({ method: 'POST', path: '/api/apps/echo/launch', body });
+        expect(r.status).toBe(409);
+        expect(r.json.error).toBe('mac_only');
+      }
+    });
     expect((await list()).state).toBe(before.state);
   });
 
