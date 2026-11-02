@@ -9,6 +9,7 @@
  */
 
 import { lstatSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { BashGateContext, BashGateDecision } from './bash-gate.js';
 import { appsDataRoot, checkAppDataChain, foldName, isInstructionName, WRITE_REFUSED_NAMES } from './data-dir.js';
@@ -31,21 +32,40 @@ function inside(root: string, p: string, fold = false): boolean {
   return r !== '' && !r.startsWith('..') && !isAbsolute(r);
 }
 
-/** The literal folder a glob pattern starts in, or null when it starts with a wildcard. */
-function globBase(pattern: string): string | null {
-  const segs = pattern.split('/');
-  const lit: string[] = [];
-  for (const s of segs) {
-    if (/[*?[\]{}]/.test(s)) break;
-    lit.push(s);
-  }
-  const base = lit.join('/');
-  return base || null;
+/**
+ * A path as Claude Code reads it before it touches the disk: trimmed, `~` expanded, resolved
+ * against the cwd. Judging the raw string instead let `.../apps ` (a trailing space) or
+ * `~/…` through while Claude searched the apps folder itself (security review of e6f7dadc).
+ */
+function asClaudeSees(p: string, cwd: string | undefined): string | null {
+  const t = p.trim();
+  if (!t) return null;
+  if (t === '~') return homedir();
+  if (t.startsWith('~/') || t.startsWith('~\\')) return resolve(homedir(), t.slice(2));
+  if (isAbsolute(t)) return resolve(t);
+  return cwd ? resolve(cwd, t) : null;
 }
 
-function decideWrite(path: unknown, ctx: BashGateContext): BashGateDecision {
+/**
+ * The folder a glob pattern starts searching in, the way Claude Code takes it: cut at the first
+ * wildcard character, then at the last separator (`/` or `\`). An absolute pattern whose first
+ * part is a wildcard starts at the root. Null for a relative pattern that starts with a wildcard
+ * (it searches `path`).
+ */
+function globBase(pattern: string): string | null {
+  const p = pattern.trim();
+  const w = p.search(/[*?[{]/);
+  const literal = w === -1 ? p : p.slice(0, w);
+  const cut = Math.max(literal.lastIndexOf('/'), literal.lastIndexOf('\\'));
+  const base = cut === -1 ? '' : literal.slice(0, cut);
+  if (base) return base;
+  return cut === 0 || isAbsolute(p) ? (p.startsWith('\\') ? '\\' : '/') : null;
+}
+
+function decideWrite(raw: unknown, ctx: BashGateContext): BashGateDecision {
   const own = ctx.dataDir;
-  if (typeof path !== 'string' || !isAbsolute(path)) return deny('Not written: give an absolute path inside this app\'s data folder.');
+  const path = typeof raw === 'string' && isAbsolute(raw.trim()) ? resolve(raw.trim()) : null;
+  if (!path) return deny('Not written: give an absolute path inside this app\'s data folder.');
   if (!ctx.projectRoot) return deny('Not written: this chat has no data folder on record.');
   const chain = checkAppDataChain(ctx.projectRoot, ctx.slug);
   if (!chain.ok) return deny(`Not written: ${chain.path} is a symlink or not a folder.`);
@@ -74,9 +94,9 @@ function decideWrite(path: unknown, ctx: BashGateContext): BashGateDecision {
  */
 function decideSearchRoot(path: unknown, ctx: BashGateContext, cwd: string | undefined): BashGateDecision {
   if (!ctx.projectRoot) return { decision: 'pass' };
-  const given = typeof path === 'string' && path ? path : cwd;
+  const given = typeof path === 'string' && path.trim() ? path : cwd;
   if (!given) return deny('Not searched: name a folder to search in (not one that holds the apps data).');
-  const abs = isAbsolute(given) ? given : cwd ? resolve(cwd, given) : null;
+  const abs = asClaudeSees(given, cwd);
   if (!abs) return deny('Not searched: name an absolute folder to search in.');
   const appsRoot = appsDataRoot(ctx.projectRoot);
   let realApps = appsRoot;
@@ -91,10 +111,10 @@ function decideSearchRoot(path: unknown, ctx: BashGateContext, cwd: string | und
 }
 
 function decideRead(path: unknown, ctx: BashGateContext, cwd: string | undefined): BashGateDecision {
-  if (typeof path !== 'string' || !path) return { decision: 'pass' };
+  if (typeof path !== 'string' || !path.trim()) return { decision: 'pass' };
   if (!ctx.projectRoot) return { decision: 'pass' };
-  const abs = isAbsolute(path) ? path : cwd ? resolve(cwd, path) : null;
-  if (!abs) return { decision: 'pass' };
+  const abs = asClaudeSees(path, cwd);
+  if (!abs) return deny('Not read: give an absolute path.');
   const appsRoot = appsDataRoot(ctx.projectRoot);
   let realApps = appsRoot;
   try { realApps = realpathSync.native(appsRoot); } catch { /* not made yet */ }
@@ -125,8 +145,8 @@ export function classifyFileTool(tool: string, input: Record<string, unknown>, c
     if (input.pattern.split(/[\\/]/).includes('..')) return deny('Not searched: a pattern that climbs with `..`; give the folder as an absolute path instead.');
     const base = globBase(input.pattern);
     if (!base) return p;
-    const from = typeof input.path === 'string' && isAbsolute(input.path) ? input.path : cwd;
-    const baseAbs = isAbsolute(base) ? base : from ? resolve(from, base) : null;
+    const from = typeof input.path === 'string' && input.path.trim() ? asClaudeSees(input.path, cwd) ?? undefined : cwd;
+    const baseAbs = asClaudeSees(base, from);
     if (!baseAbs) return deny('Not searched: name an absolute folder to search in.');
     const baseRoot = decideSearchRoot(baseAbs, ctx, cwd);
     if (baseRoot.decision !== 'pass') return baseRoot;

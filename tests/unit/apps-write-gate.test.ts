@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { existsSync, linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { join, relative, resolve } from 'node:path';
 import { appFileGateHook } from '../../src/lib/apps/assistant.js';
 import { classifyFileTool } from '../../src/lib/apps/write-gate.js';
 import { ensureAppDataDir } from '../../src/lib/apps/data-dir.js';
@@ -81,6 +81,19 @@ describe('the file gate, as a function', () => {
     expect(decide('Glob', { pattern: `${project}/**/*`, path: join(project, '_dream_context', 'core') })).toBe('deny');
     expect(decide('Glob', { pattern: '../**/*', path: own })).toBe('deny');
     expect(decide('Glob', { pattern: '**/*.json', path: own })).toBe('pass');
+    // Read the way Claude Code reads them (security look at e6f7dadc): trimmed, `~` expanded,
+    // an absolute pattern starting with a wildcard searches from the root, `\` separates too.
+    const apps = join(project, '_dream_context', 'apps');
+    expect(decide('Glob', { pattern: `${apps} /**/*`, path: '/tmp' })).toBe('deny');
+    expect(decide('Glob', { pattern: `${apps}\t/**/*`, path: '/tmp' })).toBe('deny');
+    expect(decide('Grep', { pattern: 'x', path: `${apps} ` })).toBe('deny');
+    expect(decide('Glob', { pattern: '**/*', path: ` ${apps}` })).toBe('deny');
+    expect(decide('Glob', { pattern: '/**/customers.csv', path: '/tmp' })).toBe('deny');
+    expect(decide('Glob', { pattern: '/{Users,x}/**/apps/**', path: '/tmp' })).toBe('deny');
+    expect(decide('Read', { file_path: ` ${join(other, 'customers.csv')} ` })).toBe('deny');
+    expect(decide('Grep', { pattern: 'x', path: `~/${relative(homedir(), apps)}` })).toBe('deny');
+    expect(decide('Glob', { pattern: 'src/**/*.ts', path: '/tmp' })).toBe('pass');
+    expect(decide('Glob', { pattern: `${join(project, '_dream_context', 'core')}/*.md`, path: '/tmp' })).toBe('pass');
     expect(decide('Glob', { pattern: `${own}/**/*.json`, path: own })).toBe('pass');
     expect(decide('Grep', { pattern: 'x', path: join(project, '_dream_context', 'core') })).toBe('pass');
     // A folder made later is still another app's.
