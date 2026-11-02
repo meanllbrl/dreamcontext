@@ -25,12 +25,12 @@
      The surface lands at its new edge in ONE layout; the motion is the rail's glide curtain
      (`.sidebar-glide`, Shell.tsx), animated with `transform` only. */
 
-  /* ── Focus widening (see `.agent-panes.split > .agent-pane.active` below) ──
+  /* ── Focus floor (see `.agent-panes.split > .agent-pane.active` below) ──
      `--pane-count` is set inline from React (the live pane count); the two lengths are
-     the whole policy: how much extra width the pane you are reading takes, and how
-     narrow the others are allowed to get before it stops taking any. */
-  --pane-focus-bonus: 340px;   /* extra width for the focused pane, in ABSOLUTE px */
-  --pane-min: 250px;           /* no other pane may be squeezed below this */
+     the whole policy: the width under which the pane you are reading stops being
+     readable, and how narrow the others may get so it can reach it. */
+  --pane-read-min: 280px;      /* the focused pane is never narrower than this, if room allows */
+  --pane-min: 180px;           /* no other pane may be squeezed below this */
   --pane-count: 1;             /* overridden inline; the fallback keeps the math finite */
 }
 /* Expanded = fill ONLY the page content area: below the title bar (--header-height)
@@ -1192,29 +1192,33 @@
 }
 .agent-panes > .agent-pane + .agent-pane { border-left: 1px solid var(--color-border); }
 
-/* ── The focused pane takes a bigger slice ─────────────────────────────────────
-   With 4–5 panes open, equal tiling starves the one you are actually reading. The
-   focused pane therefore claims a FIXED extra slice (`--pane-focus-bonus`) rather
-   than a bigger proportional share, because `flex-basis` is ADDITIVE: the remaining
-   `100% - bonus` is still split evenly, so the bonus is paid for by all the others
-   TOGETHER — each gives up bonus/N, which gets smaller as more panes open. A
-   proportional `flex-grow` would do the opposite and crush them as the row fills.
+/* ── The focused pane keeps a readable width, and nothing more ─────────────────
+   Panes tile EQUALLY and a click never changes that: with 2-3 chats side by side every
+   pane already has room, and a pane that grows on every click moves the text you were
+   about to read (owner, 0.40.0). The focused pane only claims width when its equal share
+   would fall under `--pane-read-min`, and then only up to it.
 
-   The bonus is capped at whatever is left after every pane keeps `--pane-min`, so the
-   others can be trimmed but never collapsed; on a window too narrow to afford any of
-   it the cap goes negative, `max()` floors it at 0, and the row tiles equally exactly
-   as it did before. `min-width: 0` above is deliberately left alone — the floor lives
-   in this cap, so a genuinely narrow window shrinks everything instead of overflowing.
+   280px is measured, not picked: it is the narrowest pane in which every chat composer
+   control still shows whole (mode, Attach, model + effort, Send, after the `chatcmp`
+   stages in chat/composer.css have shed their words). At 260px the model trigger starts
+   to truncate and at 200px it is gone, so a narrower pane is one you cannot work in.
+   `--pane-min` (180px) lets a background pane give that up so the focused one can reach
+   280px with three chats at a 1024px window; a pane you are not typing in keeps Send.
 
-   The IDENTICAL basis must land on the active tab group: each group sits directly
-   above its pane, edge for edge, and widening one side alone would drift every
-   divider off its pane edge. Same formula, same percentage base (both containers span
-   the row), so the two stay locked together. */
+   It is a `min-width`, not a `flex-basis`: flex freezes an item at its min-width only when
+   its equal share is smaller, so above the floor this rule is a no-op and the row stays
+   exactly as it was. The floor is capped at what is left once every OTHER pane keeps
+   `--pane-min`, so they are trimmed, never collapsed; on a window too narrow for even that
+   `max()` floors it at 0 and the row tiles equally.
+
+   The IDENTICAL floor must land on the active tab group: each group sits directly above
+   its pane, edge for edge, and widening one side alone would drift every divider off its
+   pane edge. Same formula, same percentage base (both containers span the row). */
 .agent-panes.split > .agent-pane.active,
 .agent-overlay-tabs[data-split] > .agent-pane-tabbar.active {
-  flex-basis: max(0px, min(var(--pane-focus-bonus), 100% - var(--pane-count) * var(--pane-min)));
+  min-width: max(0px, min(var(--pane-read-min), 100% - (var(--pane-count) - 1) * var(--pane-min)));
 }
-/* NOT animated. A `flex-basis` transition is a layout per frame of every pane in the row —
+/* NOT animated. A width transition is a layout per frame of every pane in the row —
    transcripts, cards, diagram frames — and in WebKit with long transcripts that painted 6
    frames in 160ms with 36ms gaps: the widening stepped instead of sliding (owner, 09-28).
    The row now lands in ONE layout and the motion lives on `.agent-pane-glide` below, a
