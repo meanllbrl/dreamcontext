@@ -75,6 +75,13 @@ describe('the file gate, as a function', () => {
     expect(decide('Grep', { pattern: 'x' })).toBe('deny'); // no path: the cwd, the project root
     expect(decide('Glob', { pattern: '**/*.csv', path: project })).toBe('deny');
     expect(decide('Grep', { pattern: 'x', path: own })).toBe('pass');
+    // The pattern's own start is a search root too (security r2): absolute, above apps/, or `..`.
+    expect(decide('Glob', { pattern: `${join(project, '_dream_context', 'apps')}/**/*`, path: '/tmp' })).toBe('deny');
+    expect(decide('Glob', { pattern: `${join(project, '_dream_context')}/**/*.csv`, path: '/tmp' })).toBe('deny');
+    expect(decide('Glob', { pattern: `${project}/**/*`, path: join(project, '_dream_context', 'core') })).toBe('deny');
+    expect(decide('Glob', { pattern: '../**/*', path: own })).toBe('deny');
+    expect(decide('Glob', { pattern: '**/*.json', path: own })).toBe('pass');
+    expect(decide('Glob', { pattern: `${own}/**/*.json`, path: own })).toBe('pass');
     expect(decide('Grep', { pattern: 'x', path: join(project, '_dream_context', 'core') })).toBe('pass');
     // A folder made later is still another app's.
     const later = ensureAppDataDir(project, 'later-app');

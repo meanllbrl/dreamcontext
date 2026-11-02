@@ -119,8 +119,18 @@ export function classifyFileTool(tool: string, input: Record<string, unknown>, c
     if (root.decision !== 'pass') return root;
     const p = decideRead(input.path, ctx, cwd);
     if (p.decision !== 'pass') return p;
-    const pattern = typeof input.pattern === 'string' && tool === 'Glob' ? globBase(input.pattern) : null;
-    return pattern ? decideRead(pattern, ctx, typeof input.path === 'string' && isAbsolute(input.path) ? input.path : cwd) : p;
+    if (tool !== 'Glob' || typeof input.pattern !== 'string') return p;
+    // A Glob pattern is a search root of its own: an absolute or `..` start can climb out of
+    // `path`. A `..` anywhere is refused; the literal start is judged like `path` (security r2).
+    if (input.pattern.split(/[\\/]/).includes('..')) return deny('Not searched: a pattern that climbs with `..`; give the folder as an absolute path instead.');
+    const base = globBase(input.pattern);
+    if (!base) return p;
+    const from = typeof input.path === 'string' && isAbsolute(input.path) ? input.path : cwd;
+    const baseAbs = isAbsolute(base) ? base : from ? resolve(from, base) : null;
+    if (!baseAbs) return deny('Not searched: name an absolute folder to search in.');
+    const baseRoot = decideSearchRoot(baseAbs, ctx, cwd);
+    if (baseRoot.decision !== 'pass') return baseRoot;
+    return decideRead(baseAbs, ctx, cwd);
   }
   return { decision: 'pass' };
 }
