@@ -105,6 +105,7 @@ import { coldMembers, coldWaiting, memberMirrorVerdict, type ColdTry, phoneMembe
 import { useMemberSummaries } from './super/useMemberSummaries';
 import { MemberApprovalBand, MemberRefusalLine } from './super/MemberStage';
 import { PhoneMemberStage } from './super/PhoneMemberStage';
+import { MemberRoutineQuestions } from './super/MemberRoutineQuestions';
 import { AgentAvatar } from '../agents/AgentAvatar';
 import { cardTitle } from './super/superTitles';
 import type { SurveyRead } from './chat/SurveyCard';
@@ -6679,6 +6680,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     refusal: memberRefusal?.slug === stageMember ? memberRefusal.refusal : null,
     onRetry: () => void openMemberStageRef.current(stageMember, memberTaskRef.current ?? undefined),
     spawn: memberSpawnRef.current(stageMember),
+    // Its routines' open questions, answered on its stage (the card is chat UI: mounted from here).
+    routineQuestions: <MemberRoutineQuestions slug={stageMember} />,
   } : undefined;
   let body: React.ReactNode;
   if (capsError) {

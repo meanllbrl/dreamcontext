@@ -302,3 +302,7 @@
 .phone-member-head { flex: none; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--color-border); }
 .phone-member-note { flex: none; padding: var(--space-2) var(--space-3) 0; }
 .phone-member-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+
+/* Main's card for a member's request: the request and its result above the conversation. */
+.super-team-job-request { flex: none; display: flex; flex-direction: column; gap: var(--space-1); padding: 0 var(--space-3); }
+.super-team-job-result { margin: 0; font-size: var(--font-size-sm); color: var(--color-text); white-space: pre-wrap; overflow-wrap: anywhere; }

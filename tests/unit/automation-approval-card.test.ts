@@ -271,7 +271,9 @@ describe('the Super Agent hears the decision', () => {
 
   it('his decision is a turn the owner reads in full, never folded into one event line', () => {
     const src = readFileSync(new URL('../../src/lib/super/inbox.ts', import.meta.url), 'utf-8');
-    expect(src).toMatch(/const tells = [^\n]*q\.kind === 'automation'/);
+    // The predicate spans lines since a member's question about main's request is excluded
+    // (review 2026-11-02): read up to the statement's end, and the automation decision still tells.
+    expect(src).toMatch(/const tells = [^;]*q\.kind === 'automation'/);
   });
 
   it('its event line carries the live state and the next run, and the batch says what to do', () => {

@@ -11,6 +11,7 @@ import { ChildTranscript } from './ChildTranscript';
 import { fetchSuperState } from './superApi';
 import { memberSuperId } from './memberStageModel';
 import { readSuperRecord } from './superRecordStore';
+import { SuperRequestBlock } from './MemberStage';
 
 /**
  * The member's own Super session, for a job main gave it as a `request` (plan-r10 1b, Wave 3):
@@ -18,15 +19,35 @@ import { readSuperRecord } from './superRecordStore';
  * member's record (`GET /api/super/state?superId=m:<slug>`). Null while unknown or never born.
  */
 export function useMemberSuperSession(vault: string, member: string, enabled: boolean): string | null {
+  return useMemberSuperRecord(vault, member, enabled, null).session;
+}
+
+/** What the card shows of the request from the member's own record: main's text and, once the
+ *  member closed it (`super team done`), its result. */
+export interface MemberRequestView { text: string; result: string | null }
+
+/**
+ * The member's record for its card (super-team.mjs T4): its Super session and the request item
+ * this job is, from this window's record store, else read from the member's record (and again
+ * while the job runs, so the result lands). The request and the answer show from the record at
+ * once, whatever the transcript's read does.
+ */
+export function useMemberSuperRecord(vault: string, member: string, enabled: boolean, requestId: string | null): { session: string | null; request: MemberRequestView | null } {
   const api = useApi();
-  const held = enabled ? readSuperRecord(vault, memberSuperId(member))?.session ?? null : null;
+  const held = enabled ? readSuperRecord(vault, memberSuperId(member)) : null;
   const q = useQuery({
-    queryKey: ['super-member-session', vault, member],
-    queryFn: async () => (await fetchSuperState(api, memberSuperId(member)))?.session ?? null,
+    queryKey: ['super-member-record', vault, member],
+    queryFn: async () => fetchSuperState(api, memberSuperId(member)),
     enabled: enabled && !held,
-    staleTime: 10_000,
+    staleTime: 5_000,
+    refetchInterval: enabled && !held ? 5_000 : false,
   });
-  return held ?? q.data ?? null;
+  const rec = held ?? q.data ?? null;
+  const item = requestId ? rec?.queue.find((x) => x.id === requestId && x.kind === 'request') : undefined;
+  return {
+    session: rec?.session ?? null,
+    request: item && item.text ? { text: item.text, result: typeof item.result === 'string' && item.result ? item.result : null } : null,
+  };
 }
 
 /**
@@ -43,7 +64,8 @@ export function TeamJobConversation({ card, vault = '' }: { card: TeamCard; vaul
   // A request to the member's own Super (Wave 3): the card IS that member's one conversation, read
   // from its record's session, never an empty new chat. The owner talks to it on its stage.
   const isRequest = !!card.job.request;
-  const memberSession = useMemberSuperSession(vault, card.job.member, isRequest);
+  const memberRec = useMemberSuperRecord(vault, card.job.member, isRequest, card.job.request ?? null);
+  const memberSession = memberRec.session;
   const name = useAgent(card.job.member).data?.agent?.title || card.job.member;
   const status = teamStatusOf(card);
   const running = status === 'running' || status === 'queued';
@@ -71,6 +93,14 @@ export function TeamJobConversation({ card, vault = '' }: { card: TeamCard; vaul
   if (isRequest) {
     return (
       <section className="super-team-job" data-testid="team-job-conversation" data-team-status={status} data-request={card.job.request}>
+        {/* The request and the member's answer, from its record: shown at once (T4), above the
+            conversation it happened in. */}
+        {memberRec.request && (
+          <div className="super-team-job-request" data-testid="team-job-request">
+            <SuperRequestBlock turn={{ kind: 'request', itemId: card.job.request ?? '', text: memberRec.request.text }} itemId={`req-${card.job.request ?? ''}`} />
+            {memberRec.request.result && <p className="super-team-job-result" data-testid="team-job-result">{memberRec.request.result}</p>}
+          </div>
+        )}
         <div className="super-team-job-body">
           {memberSession
             ? <ChildTranscript key={memberSession} claudeId={memberSession} live={running} foot="own" />

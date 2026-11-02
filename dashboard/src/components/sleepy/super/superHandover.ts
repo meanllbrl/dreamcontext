@@ -1361,6 +1361,36 @@ export function superRequestOf(text: unknown): SuperRequestTurn | null {
   return { kind: m[2] as 'request' | 'reply', itemId: m[1], text: body.trim() };
 }
 
+/** The window's own LIVE chip for a request/reply turn (`superEventText` of a `super_event` batch
+ *  frame): exactly the head and ONE item line, no fence (the text never rides the frame). */
+const LIVE_REQUEST_LINE = /^- item=([A-Za-z0-9_-]{1,80}) child=[A-Za-z0-9_-]{0,80} event=(request|reply)$/;
+
+/**
+ * A member's live delivery turn (the chip the window wrote from the frame, before any replay):
+ * its item and kind, read from the chip's two lines only. Its TEXT is the member record's own
+ * request item (`SuperEventContext.requests`), never anything in the turn. Null otherwise.
+ */
+export function superLiveRequestOf(text: unknown): { kind: 'request' | 'reply'; itemId: string } | null {
+  if (typeof text !== 'string') return null;
+  const lines = text.split('\n');
+  if (lines.length !== 2 || !REQUEST_HEAD.test(lines[0])) return null;
+  const m = LIVE_REQUEST_LINE.exec(lines[1]);
+  return m ? { kind: m[2] as 'request' | 'reply', itemId: m[1] } : null;
+}
+
+/**
+ * The request block a turn draws, stored or live (end review / super-team.mjs T3): the stored
+ * turn's own fenced text, else the live chip's item looked up in the member's record. Null when
+ * neither says it is main's request (or the record no longer holds its text).
+ */
+export function requestTurnOf(text: unknown, requests?: Readonly<Record<string, { kind: 'request' | 'reply'; text: string }>>): SuperRequestTurn | null {
+  const stored = superRequestOf(text);
+  if (stored) return stored;
+  const live = superLiveRequestOf(text);
+  const known = live ? requests?.[live.itemId] : undefined;
+  return live && known && known.text ? { kind: live.kind, itemId: live.itemId, text: known.text } : null;
+}
+
 /** `[About task <slug>]` for a well-formed task slug, else '' (ABOUT_TASK_RE: no 64 cap). */
 export function aboutTaskHeader(slug: string | null | undefined): string {
   if (!slug) return '';

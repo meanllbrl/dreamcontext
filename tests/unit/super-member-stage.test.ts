@@ -13,7 +13,7 @@ import { memberIntent } from '../../dashboard/src/lib/drawerIntents';
 import {
   coldMembers, memberOf, memberOpenRefusal, memberSuperId, memberSuperSpawn, openMemberSuper, readMemberSummaries, superIdOfIntent, unionSuperView,
 } from '../../dashboard/src/components/sleepy/super/memberStageModel';
-import { REQUEST_FROM, superRequestOf } from '../../dashboard/src/components/sleepy/super/superHandover';
+import { REQUEST_FROM, requestTurnOf, superEventText, superLiveRequestOf, superRequestOf } from '../../dashboard/src/components/sleepy/super/superHandover';
 import { COLD_RETRY_MS, PHONE_MIRROR_WAIT_MS, coldRetryAt, coldWaiting, memberMirrorVerdict, memberPlaceholderState, memberRoutineQuestions, phoneMemberOpen } from '../../dashboard/src/components/sleepy/super/memberStageModel';
 
 const src = (p: string) => readFileSync(join(__dirname, '..', '..', p), 'utf-8');
@@ -351,10 +351,20 @@ describe('end review fixes', () => {
     const q = (o: Record<string, unknown>) => ({ id: 'q', kind: 'flow-hitl', state: 'pending', slug: 'rota', ...o });
     const list = [q({ id: 'own' }), q({ id: 'routine', slug: 'rota-weekly' }), q({ id: 'other', slug: 'gantt' }), q({ id: 'done', state: 'answered' }), q({ id: 'appr', kind: 'approval' })];
     expect(memberRoutineQuestions(list, [{ slug: 'rota-weekly', agent: 'rota' }, { slug: 'gantt', agent: 'gantt' }], 'rota').map((x) => x.id)).toEqual(['own', 'routine']);
-    const parts = src('dashboard/src/components/sleepy/super/MemberStage.tsx');
+    // Its own module (the answer card is chat UI), mounted by the Chat surface into the stage.
+    const parts = src('dashboard/src/components/sleepy/super/MemberRoutineQuestions.tsx');
     expect(parts).toMatch(/<AgentQuestionBlock\s+key=\{q\.id\}/);
     expect(parts).toContain('data-testid="member-routine-questions"');
-    expect(src('dashboard/src/components/sleepy/super/SuperSurface.tsx')).toMatch(/<MemberRoutineQuestions slug=\{member\.slug\} \/>/);
+    expect(src('dashboard/src/components/sleepy/super/SuperSurface.tsx')).toMatch(/\{member\.routineQuestions\}/);
+    expect(surface).toMatch(/routineQuestions: <MemberRoutineQuestions slug=\{stageMember\} \/>,/);
+  });
+
+  it('the stage modules never import chat UI (super-size.test.ts loads SuperSurface in Node, no xterm)', () => {
+    for (const f of ['SuperSurface.tsx', 'MemberStage.tsx', 'TaskStrip.tsx', 'memberStageModel.ts']) {
+      // Value imports only (a type import is erased and loads nothing).
+      const code = src(`dashboard/src/components/sleepy/super/${f}`).split('\n').filter((l) => l.startsWith('import ') && !l.startsWith('import type')).join('\n');
+      expect(code, f).not.toMatch(/from '[^']*(AgentQuestionBlock|MemberRoutineQuestions|ChildTranscript|ChatPane|chatSession|agentSession|termCore)'/);
+    }
   });
 
   it('M6: Esc closes "Üyeleri yönet" or the Ekip list, never the member\'s stage under it', () => {
@@ -436,6 +446,45 @@ describe('the phone mirror and the task strip look right (observed run 3)', () =
     expect(css).toMatch(/\.super-member-top \.super-task-strip \{ box-shadow: none; \}/);
     // The slot change re-places the chat and re-pins every chat on screen (`fitAndResize`).
     expect(surface).toMatch(/foreground\.forEach\(\(id\) => \{ const s = sessions\.current\.get\(id\); if \(s\) \{ s\.ensureOpen\(\{ focus: isActive \}\); s\.fitAndResize\(\); \} \}\);/);
+  });
+});
+
+describe("the request on the member's own stage, live (super-team.mjs T3)", () => {
+  // The chip the window writes from the `super_event` frame: no fence, no text.
+  const chip = superEventText('batch', 'sess-1', { batch: 'B7', items: [{ item: 'req-9', child: 'sess-1', kind: 'request' }] });
+  it('the live chip names its item and kind, and nothing else', () => {
+    expect(chip).toBe('[super events] batch=B7 items=1\n- item=req-9 child=sess-1 event=request');
+    expect(superLiveRequestOf(chip)).toEqual({ kind: 'request', itemId: 'req-9' });
+    expect(superRequestOf(chip)).toBeNull();
+    // A child's done chip, two items, or a stored turn are not a live request chip.
+    expect(superLiveRequestOf(superEventText('batch', 'c', { batch: 'B8', items: [{ item: 'x', child: 'c', kind: 'done' }] }))).toBeNull();
+    expect(superLiveRequestOf(superEventText('batch', 'c', { batch: 'B9', items: [{ item: 'a', child: 'c', kind: 'request' }, { item: 'b', child: 'c', kind: 'request' }] }))).toBeNull();
+  });
+  it('its block reads main\'s text from the member\'s record; no record text, no block (the event line stays)', () => {
+    expect(requestTurnOf(chip, { 'req-9': { kind: 'request', text: 'Fonu incele' } })).toEqual({ kind: 'request', itemId: 'req-9', text: 'Fonu incele' });
+    expect(requestTurnOf(chip, {})).toBeNull();
+    expect(requestTurnOf(chip)).toBeNull();
+    // The stored turn still reads its own fenced text first.
+    const stored = ['[super events] batch=B7 items=1', '- item=req-9 event=request from=super',
+      `<untrusted-project-output vault="acme">${REQUEST_FROM}: kayıttaki metin</untrusted-project-output>`].join('\n');
+    expect(requestTurnOf(stored, { 'req-9': { kind: 'request', text: 'other' } })?.text).toBe('kayıttaki metin');
+  });
+  it('the stage publishes its request texts; the pane draws the block from them, never folded', () => {
+    const stage = src('dashboard/src/components/sleepy/super/SuperSurface.tsx');
+    expect(stage).toMatch(/if \(\(q\.kind === 'request' \|\| q\.kind === 'reply'\) && typeof q\.text === 'string' && q\.text\) out\[q\.id\] = \{ kind: q\.kind, text: q\.text \};/);
+    expect(stage).toMatch(/\.\.\.\(Object\.keys\(requestTexts\)\.length \? \{ requests: requestTexts \} : \{\}\),/);
+    const pane = src('dashboard/src/components/sleepy/ChatPane.tsx');
+    expect(pane).toMatch(/const request = requestTurnOf\(item\.text, superCtx\?\.requests\);/);
+    expect(pane).toMatch(/requestTurnOf\(\(it as \{ text\?: string \}\)\.text, superCtx\.requests\) !== null/);
+    // The block is drawn before the event line is: the request is never folded behind "Show".
+    expect(pane.indexOf('const request = requestTurnOf(')).toBeLessThan(pane.indexOf('const line = <SuperEventLine'));
+  });
+  it("main's card shows the request and the member's answer from the member's record at once (T4)", () => {
+    const card = src('dashboard/src/components/sleepy/super/TeamJobConversation.tsx');
+    expect(card).toMatch(/const item = requestId \? rec\?\.queue\.find\(\(x\) => x\.id === requestId && x\.kind === 'request'\) : undefined;/);
+    expect(card).toContain('data-testid="team-job-request"');
+    expect(card).toContain('data-testid="team-job-result"');
+    expect(card).toMatch(/<SuperRequestBlock turn=\{\{ kind: 'request', itemId: card\.job\.request \?\? '', text: memberRec\.request\.text \}\}/);
   });
 });
 

@@ -76,7 +76,7 @@ import { msgRef, splitPageContext } from '../../lib/superTypes';
 import { createHiddenRenderGate } from './chat/hiddenRenderGate';
 import { shouldInterruptChat } from './chat/interruptKey';
 import { useI18n } from '../../context/I18nContext';
-import { groupSuperEventTurns, replyAboutBlock, replySelectionBlock, selectionQuote, splitAbout, splitAboutParts, superEventOf, superRequestOf, type SuperEventGroup } from './super/superHandover';
+import { groupSuperEventTurns, replyAboutBlock, replySelectionBlock, selectionQuote, splitAbout, splitAboutParts, superEventOf, requestTurnOf, type SuperEventGroup } from './super/superHandover';
 import { SuperRequestBlock } from './super/MemberStage';
 import { memberSuperId } from './super/memberStageModel';
 import { chatAgentFor } from '../../lib/chatAgentBinding';
@@ -2052,7 +2052,8 @@ export function ChatPane({
         );
       }
       // Main Super's request (or its answer) on a member's stage: framed, in full (plan-r10 1).
-      const request = superRequestOf(item.text);
+      // Stored (its fenced text) or live (the chip's item, its text from the member's record).
+      const request = requestTurnOf(item.text, superCtx?.requests);
       if (request) return <SuperRequestBlock key={item.id} turn={request} itemId={item.id} />;
       if (group && superCtx) {
         const line = <SuperEventLine key={item.id} group={group} titleFor={superCtx.titleFor} expanded={openEvents.has(item.id)} onToggle={toggleEvent} />;
@@ -2196,7 +2197,7 @@ export function ChatPane({
     let drawn = piece;
     if (superCtx) {
       // A request turn's answer is the member's reply to main Super: drawn, never folded away.
-      const requests = piece.filter((it) => it.kind === 'user' && superRequestOf((it as { text?: string }).text) !== null).map((it) => it.id);
+      const requests = piece.filter((it) => it.kind === 'user' && requestTurnOf((it as { text?: string }).text, superCtx.requests) !== null).map((it) => it.id);
       const expanded = requests.length ? new Set([...openEvents, ...requests]) : openEvents;
       const folded = groupSuperEventTurns(piece as Array<T & { text?: string }>, { ownerBatches: superCtx.ownerBatches, expanded });
       for (const [k, g] of folded.groups) superGroups.set(k, g);

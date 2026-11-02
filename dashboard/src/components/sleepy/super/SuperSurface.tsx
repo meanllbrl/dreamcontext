@@ -41,7 +41,7 @@ import { LIGHT_POLL_FACTOR, pollMs, useWindowActivity } from '../../../lib/windo
 import { useStageCues, withGhosts } from './useStageCues';
 import { deviceAspect, isWebDevice, useWebDevices } from '../../../lib/webDevice';
 import { pageFitKey, pageFitOf, pageFitsVersion, subscribePageFits } from '../../../lib/pageFit';
-import { MemberAgendaTasks, MemberApprovalBand, MemberRefusalLine, MemberRoutineQuestions, MemberStageHead, type MemberStageInfo } from './MemberStage';
+import { MemberAgendaTasks, MemberApprovalBand, MemberRefusalLine, MemberStageHead, type MemberStageInfo } from './MemberStage';
 import { TaskStrip } from './TaskStrip';
 import './SuperSurface.css';
 import './superTone.css';
@@ -880,7 +880,16 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // for the super session, notified only when one of them changes (superJobsStore).
   const superId = superSession?.claudeId ?? null;
   const titleKey = Object.keys(state.children).map((sid) => `${sid}=${props.titleFor(sid)}`).join('\u0001');
-  const batchKey = `${state.ownerBatches.join(',')}|${(state.mainBatches ?? []).join(',')}`;
+  // A member's requests from main, by item (the live delivery chip's text comes from here).
+  const requestTexts = useMemo(() => {
+    const out: Record<string, { kind: 'request' | 'reply'; text: string }> = {};
+    for (const q of state.queue) {
+      if ((q.kind === 'request' || q.kind === 'reply') && typeof q.text === 'string' && q.text) out[q.id] = { kind: q.kind, text: q.text };
+    }
+    return out;
+  }, [state.queue]);
+  const requestKey = Object.entries(requestTexts).map(([id, r]) => `${id}:${r.kind}:${r.text.length}`).join(',');
+  const batchKey = `${state.ownerBatches.join(',')}|${(state.mainBatches ?? []).join(',')}|${requestKey}`;
   const titleForRef = useRef(props.titleFor);
   titleForRef.current = props.titleFor;
   // Published once the stage has landed, never mid-flight: a change re-renders the centre's
@@ -892,9 +901,10 @@ export function SuperSurface(props: SuperSurfaceProps) {
       ownerBatches: state.ownerBatches,
       // A member's turns for main Super: "Super için" on its stage, never unread (plan-r10 1).
       ...(state.mainBatches?.length ? { mainBatches: state.mainBatches } : {}),
+      ...(Object.keys(requestTexts).length ? { requests: requestTexts } : {}),
       titleFor: (c) => titleForRef.current(c),
     }, `${batchKey}\u0002${titleKey}`);
-  }, [superId, batchKey, titleKey, state.ownerBatches, state.mainBatches, motion]);
+  }, [superId, batchKey, titleKey, state.ownerBatches, state.mainBatches, requestTexts, motion]);
   // The agenda and the question band read the same record and the children's live sessions (0 requests).
   const jobLook: JobLook = jobLookOf({ sessionFor: props.sessionFor, titleFor: props.titleFor, nameFor: props.nameFor, children: state.children, superTitle: t('super.centre.name') });
   // A child the agenda points at (a permission waiting on the owner) shows beside the centre,
@@ -1057,7 +1067,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
                 {(member.approval || member.refusal === 'unapproved') && <MemberApprovalBand slug={member.slug} />}
                 {member.refusal && <MemberRefusalLine slug={member.slug} refusal={member.refusal} onRetry={member.onRetry} />}
                 {/* Its routines' open questions, answered here (the Ekip row counts them). */}
-                <MemberRoutineQuestions slug={member.slug} />
+                {member.routineQuestions}
               </div>
             )}
             <div className="super-slot" data-super-slot="centre" />
