@@ -79,8 +79,9 @@ const READ_PROGRAMS = new Set(['cat', 'head', 'tail', 'ls', 'grep', 'wc', 'pwd',
 const SYSTEM_BIN = /^\/(?:usr\/)?bin\/([a-z]+)$/;
 /** `git` and `dreamcontext` subcommands that only read. */
 const READ_GIT = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'blame']);
-/** Not `snapshot` (it counts trigger firings into `.sleep.json`) nor `roadmap` (it rewrites the board file). */
-const READ_DC = /^(?:memory recall|knowledge (?:index|show|list|read)|tasks (?:list|show|get)|features (?:list|show)|bookmark list|changelog list|insights? (?:list|show)|lab (?:list|show)|theses list|peer list|super (?:read|jobs|status)|agents (?:list|show)|automations (?:list|show)|--version|--help)\b/;
+/** Not `snapshot` (it counts trigger firings into `.sleep.json`), `roadmap` (it rewrites the board file)
+ *  nor `automations list|show` (they repair `.gitignore` first). */
+const READ_DC = /^(?:memory recall|knowledge (?:index|show|list|read)|tasks (?:list|show|get)|features (?:list|show)|bookmark list|changelog list|insights? (?:list|show)|lab (?:list|show)|theses list|peer list|super (?:read|jobs|status)|agents (?:list|show)|--version|--help)\b/;
 
 /**
  * `c` cut at its unquoted `&&`, `||`, `;` and `|` into commands of words, quotes taken off; null

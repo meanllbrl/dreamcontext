@@ -63,7 +63,7 @@ describe('headless envelopes', () => {
       'git diff --ext-diff', 'git log -p --textconv', 'git -c core.pager=sh log']) expect(isPlainReadCommand(no), no).toBe(false);
     for (const ok of ['/bin/cat a', '/usr/bin/grep -n x a']) expect(isPlainReadCommand(ok), ok).toBe(true);
     // These two write the brain's state, so a read-only run never starts them.
-    for (const no of ['dreamcontext snapshot', 'dreamcontext roadmap', 'dreamcontext roadmap list']) expect(isPlainReadCommand(no), no).toBe(false);
+    for (const no of ['dreamcontext snapshot', 'dreamcontext roadmap', 'dreamcontext roadmap list', 'dreamcontext automations list', 'dreamcontext automations show x']) expect(isPlainReadCommand(no), no).toBe(false);
   });
 
   it('the run command names Antigravity only when asked, before the extra roots', () => {
