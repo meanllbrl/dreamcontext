@@ -28,8 +28,8 @@ export interface MemberRequestView { text: string; result: string | null }
 
 /**
  * The member's record for its card (super-team.mjs T4): its Super session and the request item
- * this job is, from this window's record store, else read from the member's record (and again
- * while the job runs, so the result lands). The request and the answer show from the record at
+ * this job is, from this window's record store (kept current by the member chat's own pushes),
+ * else read ONCE from the member's record. The request and the answer show from the record at
  * once, whatever the transcript's read does.
  */
 export function useMemberSuperRecord(vault: string, member: string, enabled: boolean, requestId: string | null): { session: string | null; request: MemberRequestView | null } {
@@ -38,9 +38,11 @@ export function useMemberSuperRecord(vault: string, member: string, enabled: boo
   const q = useQuery({
     queryKey: ['super-member-record', vault, member],
     queryFn: async () => fetchSuperState(api, memberSuperId(member)),
+    // Read once when this window holds no record of the member, as before Wave 3's card change:
+    // never polled. Each GET of a member's record can write it (its agenda card) and runs the
+    // tidy sweep, while the owner talks to that member on its stage (super-team.mjs T4).
     enabled: enabled && !held,
-    staleTime: 5_000,
-    refetchInterval: enabled && !held ? 5_000 : false,
+    staleTime: 10_000,
   });
   const rec = held ?? q.data ?? null;
   const item = requestId ? rec?.queue.find((x) => x.id === requestId && x.kind === 'request') : undefined;
