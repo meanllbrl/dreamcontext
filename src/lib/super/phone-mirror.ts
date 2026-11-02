@@ -364,7 +364,7 @@ export const DIGEST_MAX_NAME = 80;
 /** The slice of the super record a digest reads (`SuperState` satisfies it). */
 export interface SuperDigestSource {
   pad?: ReadonlyArray<{ id: string; section: string; text: string; at: number; for?: string; by?: 'auto' | 'owner' }>;
-  queue: ReadonlyArray<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string; direct?: true; workOrigin?: string }>;
+  queue: ReadonlyArray<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string; direct?: true; workOrigin?: string; toSuper?: true }>;
   ownerBatches: readonly string[];
   /** A member Super's main-origin turns (plan-r10 1); absent = none. */
   mainBatches?: readonly string[];
@@ -430,6 +430,8 @@ export function superDigest(state: SuperDigestSource): SuperDigest {
   const mainWork = (o: string | undefined) => typeof o === 'string' && o.startsWith('main:');
   const owes = (q: SuperDigestSource['queue'][number]) => q.state !== 'done'
     && !mainWork(q.workOrigin) && !mainWork(Object.prototype.hasOwnProperty.call(state.children, q.sessionId) ? state.children[q.sessionId].workOrigin : undefined)
+    // A Bypass child's permission its Super decides first (`toSuper`) waits on nobody's phone.
+    && !(q.kind === 'permission' && q.toSuper)
     && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && (q.state === 'pending' || q.direct === true)));
   const waiting = state.queue.filter(owes).slice(0, DIGEST_MAX_WAITING).map((q) => ({
     id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId,

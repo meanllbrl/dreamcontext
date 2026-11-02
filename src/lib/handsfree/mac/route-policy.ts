@@ -356,6 +356,7 @@ export const ROUTE_POLICY: Readonly<Record<string, RoutePolicy>> = {
   'GET /api/agent/live-chats': allow(`${CHAT}: this project's running chats (names, never paths); side-effect free`),
   'GET /api/agent/super-questions': allow(`${CHAT}: a handed-over project's open Super Agent questions, each with its card (the child's question as it asks it); side-effect free`),
   'POST /api/agent/super-answer': allow(`${CHAT}: the owner answers a child's question the Super Agent escalated; the Mac window answers it through the child's own session`),
+  'POST /api/agent/super-permission': allow(`${CHAT}: the owner allows or denies a Super child's permission request that waits for him; the Mac window answers it through the child's own session`),
   'GET /api/agent/super-read': allow(`${CHAT}: what the owner has read in the Super Agent's chat; side-effect free`),
   'POST /api/agent/super-read': allow(`${CHAT}: marks messages of the Super Agent's chat read, add-only (an empty body starts a project's record)`),
   'GET /api/agent/super-stage': allow(`${STAGE}; side-effect free`),

@@ -161,8 +161,8 @@ describe('notes never send RAM or swap pressure to disk cleanup', () => {
     // About and reply links, +380 on 2026-10-24 for one section per message and a choice asked in
     // the card, never only in the text (measured +377), +770 on 2026-10-24 for several references in
     // one message, a section per part (measured +768), +100 on 2026-10-24 for heat limiting heavy steps, +400 on 2026-10-25 for a verify script run once per wave, +100 on 2026-10-29 for a whiteboard opening as `whiteboard`, never `board`, +200 on 2026-10-29 for `open … --present` and the landscape filmstrip (measured 19,769), +700 on 2026-10-29 for the AI Team: §1's team check, §4's team in the prompt, a member's job's real event (measured 20,446).
-    // Kept with super-orchestration-guide.test.ts's ceiling, which has moved on since (23,500 on 2026-11-02).
-    // +450 (2026-11-02, plan-r10 Wave 2): every member is a Super; `team answer`, `team done`, no member assigns.
-    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(23_950);
+    // Kept with super-orchestration-guide.test.ts's ceiling, which has moved on since (24,250 on 2026-11-03).
+    // +450 (plan-r10 Wave 2: every member is a Super) and +500 (the Bypass permission rule), merged in the 0.40.2 cut.
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(24_250);
   });
 });

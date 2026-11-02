@@ -69,7 +69,17 @@ describe('a handed-over project keeps its children quiet', () => {
     await settle();
     expect(sent.map((p) => [p.kind, p.conversationId])).toEqual([['permission', SUPER]]);
     expect(sent[0].url).toContain(encodeURIComponent(SUPER));
-    expect(sent[0].body).toMatch(/answer it on the Mac/);
+    // The phone answers it now (GET /api/agent/super-questions draws it with Allow and Deny).
+    expect(sent[0].body).toMatch(/allow or deny it on your phone/);
+    expect(sent[0].body).not.toMatch(/on the Mac/);
+  });
+
+  it('a Bypass child\'s permission does not push: its Super decides it first', async () => {
+    const child = registerChat({ sessionId: '11111111-2222-4333-8444-00000000000e', conversationId: '11111111-2222-4333-8444-00000000000e', vault: 'handed', mode: 'basic', bypass: true });
+    child.userSent('go');
+    permit(child, 'c-p9');
+    await settle();
+    expect(sent).toEqual([]);
   });
 
   it('…even while the phone shows the Super\'s chat (it draws no permission there)', async () => {

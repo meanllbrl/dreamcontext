@@ -85,6 +85,11 @@ export interface SuperRemoteQuestions {
   /** Send the owner's answer. `ok`: the child has it; `retry`: it did not, and another tap may
    *  land (the window away, a socket down, a timeout); neither: stale, answered elsewhere. */
   answer: (item: SuperQueueItem, body: { picked: Record<string, string>; notes?: Record<string, string> } | { unclear: string }) => Promise<{ ok: boolean; retry: boolean }>;
+  /** A child's permission that waits for the owner: its tool and command, as the server read
+   *  them from the child (null: not a permission, or gone). */
+  permissionOf?: (itemId: string) => { tool: string; text: string } | null;
+  /** The owner's Allow or Deny on it, through the Mac window (`/api/agent/super-permission`). */
+  answerPermission?: (item: SuperQueueItem, choice: 'allow' | 'deny') => Promise<{ ok: boolean; retry: boolean; error?: string }>;
 }
 const questionViews = new Map<string, SuperQuestionView>();
 const questionKeys = new Map<string, string>();

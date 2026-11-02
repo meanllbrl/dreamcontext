@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { activityOf, chatTopic, getChat, pendingRequest, pendingRequestIds } from '../assistant/chat-registry.js';
-import { isReservedId, peekSuperNote, phoneHeld, superEntry } from './store.js';
+import { activityOf, chatTopic, getChat, pendingRequest, pendingRequestIds, superDecidesPermission } from '../assistant/chat-registry.js';
+import { isReservedId, peekSuperNote, phoneHeld, superEntry, superIndex } from './store.js';
 import { clearFresh } from './fresh-session.js';
 import { MAX_BRIEF, MAX_FORMER_CHILDREN, SESSION_ID_RE, type SuperChild, type SuperState } from './types.js';
 import {
@@ -147,6 +147,8 @@ function queueWhatItAsks(s: SuperState, sid: string, now: number): void {
     s.queue.push({
       id: newQueueId(), sessionId: sid, kind: pq.isPermission ? 'permission' : 'question',
       requestId: id, state: 'pending', createdAt: now,
+      // A Bypass child's residual permission: its new Super decides it first (inbox.ts).
+      ...(pq.isPermission && superDecidesPermission(chat, pq) ? { toSuper: true as const } : {}),
     });
   }
 }

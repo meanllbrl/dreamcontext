@@ -336,6 +336,16 @@ async function awaitResumeHandoff(contextRoot: string, resumeId: string): Promis
   }
 }
 
+/** The tool_use ids a `user` frame's tool_result blocks answer. */
+export function toolResultIds(frame: Record<string, unknown>): string[] {
+  const msg = frame.message as { content?: unknown } | undefined;
+  if (!msg || !Array.isArray(msg.content)) return [];
+  return msg.content
+    .filter((b): b is Record<string, unknown> => !!b && typeof b === 'object' && (b as { type?: unknown }).type === 'tool_result')
+    .map((b) => b.tool_use_id)
+    .filter((id): id is string => typeof id === 'string');
+}
+
 // ─── Permission mode (identical rule to the terminal — agent-terminal.ts:1206) ────────
 
 /** No-bypass chat maps to Auto (`auto`); bypass maps to `bypassPermissions` — the same
@@ -2580,8 +2590,9 @@ export function startChatSession(
     cleanupBriefing(); cleanupAgents(); cleanupModeNote(); cleanupDeferred();
     return;
   }
+  const bridgeMode = assistantConfig ? 'default' : crewBridge ?? (opts.leanMcp ? HEADLESS_ENVELOPES['super-child'].codex ?? 'default' : permissionModeFor(bypass));
   const bridgeCommand = bridgeTool && bridgeNodePath && !noEnvGate && !codexMissing
-    ? bridgeChatCommand({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : crewBridge ?? (opts.leanMcp ? HEADLESS_ENVELOPES['super-child'].codex ?? 'default' : permissionModeFor(bypass)), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(carryThread ? { carry: carryThread } : {}), ...(leanMcpPath ? { mcpConfig: leanMcpPath } : {}), ...(opts.leanMcp ? { strictMcp: true, unattended: true } : {}), ...(!assistantConfig && !opts.leanMcp && !scopedCard ? { storeMcp: true } : {}), ...(toolAccountId ? { account: toolAccountId } : {}) })
+    ? bridgeChatCommand({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: bridgeMode, pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(carryThread ? { carry: carryThread } : {}), ...(leanMcpPath ? { mcpConfig: leanMcpPath } : {}), ...(opts.leanMcp ? { strictMcp: true, unattended: true } : {}), ...(!assistantConfig && !opts.leanMcp && !scopedCard ? { storeMcp: true } : {}), ...(toolAccountId ? { account: toolAccountId } : {}) })
     : null;
   const bridgeScript = bridgeCommand ? `exec ${[bridgeCommand.file, ...bridgeCommand.args].map((a) => `"${a}"`).join(' ')}` : null;
   if (bridgeTool && !bridgeScript) {
@@ -2595,6 +2606,12 @@ export function startChatSession(
     return;
   }
   const script = bridgeScript ?? `exec claude ${argv.map((a) => `"${a}"`).join(' ')}`;
+  // Does this process run Bypass? Read from what it is actually launched with (the bridge's
+  // mode, whose `bypassPermissions` is Codex/Antigravity full access, or Claude's own
+  // `--permission-mode` value), never from the pane's flag: an app, an agent level or an
+  // envelope can override it. The registry's flag routes its leftover asks to the Super Agent.
+  const launchedBypass = bridgeScript ? bridgeMode === 'bypassPermissions'
+    : argv.indexOf('--permission-mode') >= 0 && argv[argv.indexOf('--permission-mode') + 1] === 'bypassPermissions';
 
   // An agent-chat process exports its tab's STABLE roster id so the SessionStart/Stop
   // hooks (which inherit this env through `claude`) record roster id → live conversation
@@ -2712,6 +2729,7 @@ export function startChatSession(
     vault: opts.vault ?? basename(projectRoot),
     mode,
     ...(delegated ? { origin: 'assistant' as const } : {}),
+    ...(launchedBypass ? { bypass: true } : {}),
     seed,
   });
   // An ended Super Agent child running again without `super resume`: the owner reopened it.
@@ -2993,8 +3011,10 @@ export function startChatSession(
   let pingTimer: ReturnType<typeof setInterval> | null = null;
   /** Permission/question prompts the CLI is still waiting on, as the raw lines it printed. A
    *  prompt printed while detached reached no socket, so an adopting socket is handed them
-   *  again — otherwise the turn would wait forever on a card nobody can see. */
-  const outstandingAsks = new Map<string, string>();
+   *  again — otherwise the turn would wait forever on a card nobody can see. A prompt leaves on
+   *  its answer, a `control_cancel_request`, or a tool_result for its `tool_use_id` (the CLI
+   *  rejected it itself, e.g. on a closed stream): a replayed dead card is a ghost "asking". */
+  const outstandingAsks = new Map<string, { line: string; toolUseId?: string; tool: string }>();
 
   // ── Parking under load (chat-park.ts) ───────────────────────────────────────────────
   // A pinned project chat (not the Assistant, not a whiteboard card) can be parked by the
@@ -3687,7 +3707,7 @@ export function startChatSession(
     if (isSuper && voiceArmed) sendMeta({ subtype: 'voice_turn' });
     if (activeAccountId) sendMeta({ subtype: 'account_active', accountId: activeAccountId });
     if (app) sendMeta({ subtype: 'app_chat' });
-    for (const line of outstandingAsks.values()) {
+    for (const { line } of outstandingAsks.values()) {
       try { ws.send(line); } catch { /* closing */ }
     }
     if (handoffRun) sendMeta(handoffProgressFrame(handoffRun));
@@ -3794,9 +3814,25 @@ export function startChatSession(
 
       // A prompt the CLI now waits on (or no longer does) — replayed to an adopting socket.
       if (typeof obj.request_id === 'string') {
-        const req = obj.request as { subtype?: unknown } | undefined;
-        if (obj.type === 'control_request' && req?.subtype === 'can_use_tool') outstandingAsks.set(obj.request_id, line);
-        else if (obj.type === 'control_cancel_request') outstandingAsks.delete(obj.request_id);
+        const req = obj.request as { subtype?: unknown; tool_use_id?: unknown; tool_name?: unknown } | undefined;
+        if (obj.type === 'control_request' && req?.subtype === 'can_use_tool') {
+          outstandingAsks.set(obj.request_id, {
+            line,
+            tool: typeof req.tool_name === 'string' ? req.tool_name : 'tool',
+            ...(typeof req.tool_use_id === 'string' && req.tool_use_id ? { toolUseId: req.tool_use_id } : {}),
+          });
+        } else if (obj.type === 'control_cancel_request') outstandingAsks.delete(obj.request_id);
+      }
+      // A tool_result (top level or a sub-agent's) for a prompt's tool call: the CLI is done with
+      // it, so the prompt is dead. Never replayed again (the registry settles it on the same frame).
+      if (obj.type === 'user' && outstandingAsks.size) {
+        for (const id of toolResultIds(obj)) {
+          for (const [requestId, ask] of outstandingAsks) {
+            if (ask.toolUseId !== id) continue;
+            outstandingAsks.delete(requestId);
+            console.warn(`[agent-chat] ${chatRegistryId.slice(0, 8)}: a ${ask.tool} permission request closed by its tool_result (no answer reached the CLI)`);
+          }
+        }
       }
 
       // An interrupt resolves either as a `result` frame or the CLI's own control_response
@@ -5001,6 +5037,9 @@ export function startChatSession(
     // An agent's mode is its autonomy level, so a pane switch must not move it either.
     if (msg.type === 'setPermissionMode' && !app && !isAssistant && !scopedCard && !agentChat?.levelArgs && (msg.mode === 'auto' || msg.mode === 'bypass')) {
       const requestId = sanitizeControlId(msg.requestId) || randomUUID();
+      // Off Bypass: its leftover asks are the owner's again, from this moment and for good
+      // (a switch back never re-arms the Super's say: fail closed).
+      if (msg.mode === 'auto') registry?.notBypass();
       writeStdin({
         type: 'control_request',
         request_id: requestId,

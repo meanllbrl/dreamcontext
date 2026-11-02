@@ -1,4 +1,4 @@
-import type { ChatChange, ChatEntry } from '../../assistant/chat-registry.js';
+import { superDecidesPermission, type ChatChange, type ChatEntry } from '../../assistant/chat-registry.js';
 import { buildAppLink } from '../../app-link.js';
 import type { PushStore } from './push-store.js';
 import type { SendOutcome, PushSubscriptionLike } from './push.js';
@@ -129,13 +129,15 @@ export class PushNotifier {
     if (!p || !p.payload.vault || !exposed.includes(p.payload.vault)) return 0;
     const sup = this.d.superSession?.(p.payload.vault) ?? null;
     if (!superAllows(sup, change.entry, this.d.superChild ?? (() => false))) {
-      // The one exception, as on the laptop (the queue head's permission rings): a permission is
-      // the owner's alone (the Super is refused one) and the phone draws it nowhere (the mirror
-      // strips prompts), so a child would wait on it unseen. It pushes even to a phone showing the
-      // Super's chat (suppressed only by the CHILD's own screen, which the phone never shows),
-      // says where it is answered, and the tap opens the Super's chat.
+      // The one exception, as on the laptop (the queue head's permission rings): a permission
+      // that waits for the OWNER, so a child would otherwise wait on it unseen. It pushes even to a
+      // phone showing the Super's chat (suppressed only by the CHILD's own screen, which the phone
+      // never shows), and the tap opens the Super's chat, where the phone draws it with Allow and
+      // Deny (GET /api/agent/super-questions). A Bypass child's permission is its Super's to decide
+      // first: no push now; if it falls to the owner, owner-question.ts announces it then.
       if (!sup || p.payload.kind !== 'permission') return 0;
-      return this.deliver(p.key, change.entry.sessionId, { ...p.payload, conversationId: sup, body: clip(`${p.payload.body} · answer it on the Mac`) }).done;
+      if (superDecidesPermission(change.entry, change.entry.pendingQuestion)) return 0;
+      return this.deliver(p.key, change.entry.sessionId, { ...p.payload, conversationId: sup, body: clip(`${p.payload.body} · allow or deny it on your phone`) }).done;
     }
     return this.deliver(p.key, change.entry.sessionId, p.payload).done;
   }

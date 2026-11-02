@@ -80,6 +80,10 @@ export interface PendingQuestion {
    *  and when the input is over {@link MAX_QUESTION_BYTES}: never cut, since a cut text would
    *  key an answer the CLI cannot match. */
   questions?: RegistryQuestion[];
+  /** The tool call this request is about (`request.tool_use_id`). A tool_result for it means
+   *  the CLI is no longer waiting on the request (it was rejected on a closed stream, say), so
+   *  the request settles like a `control_cancel_request`. Absent on an older CLI. */
+  toolUseId?: string;
 }
 
 export interface RegistryQuestionOption { label: string; description?: string; preview?: string }
@@ -132,6 +136,11 @@ export interface ChatEntry {
   /** Set when the Assistant started this chat (a delegation). Rides the entry's own lifetime:
    *  a respawn of the same conversation inherits it via {@link isDelegatedConversation}. */
   origin?: 'assistant';
+  /** Present (true) only while the process runs `--permission-mode bypassPermissions`: its
+   *  residual permission requests go to its Super Agent first (super/inbox.ts
+   *  `permissionGoesToSuper`). Fail closed: once cleared (an init frame reporting another mode,
+   *  or {@link ChatHandle.notBypass}) it never comes back for this process. */
+  bypass?: true;
   /** How the last top-level turn ended, stamped BEFORE the move to `idle` is emitted: when, and
    *  whether the owner interrupted it. `resultSeq` is unique across the process (a respawned
    *  chat gets a fresh entry and must never repeat an earlier number). */
@@ -155,6 +164,9 @@ export interface ChatHandle {
   /** The running (or just-ended) turn was refused on a usage limit and an account switch is
    *  under way: its end is not an error worth reporting. */
   markLimited(): void;
+  /** The bridge moved the process off `bypassPermissions` (it wrote `set_permission_mode`):
+   *  {@link ChatEntry.bypass} is cleared for good. */
+  notBypass(): void;
   exited(): void;
 }
 
@@ -417,6 +429,7 @@ export function readPendingQuestion(frame: Record<string, unknown>): PendingQues
   if (!req || req.subtype !== 'can_use_tool' || typeof frame.request_id !== 'string') return null;
   const toolName = typeof req.tool_name === 'string' ? req.tool_name : 'tool';
   const input = (req.input && typeof req.input === 'object' ? req.input : {}) as Record<string, unknown>;
+  const toolUse = typeof req.tool_use_id === 'string' && req.tool_use_id ? { toolUseId: req.tool_use_id } : {};
   if (toolName === 'AskUserQuestion') {
     const qs = Array.isArray(input.questions) ? input.questions as Array<Record<string, unknown>> : [];
     const first = qs[0] ?? {};
@@ -426,12 +439,19 @@ export function readPendingQuestion(frame: Record<string, unknown>): PendingQues
     const text = qs.map((q) => (typeof q.question === 'string' ? q.question : '')).filter(Boolean).join('\n');
     const images = imagesInPreviews(qs.map((q) => ({ options: Array.isArray(q.options) ? q.options as Array<{ label?: unknown; preview?: unknown }> : [] })));
     const questions = registryQuestions(qs);
-    return { requestId: frame.request_id, toolName, isPermission: false, text: cap(text, 600), options, ...(images.length ? { images } : {}), ...(questions ? { questions } : {}) };
+    return { requestId: frame.request_id, toolName, isPermission: false, text: cap(text, 600), options, ...(images.length ? { images } : {}), ...(questions ? { questions } : {}), ...toolUse };
   }
   const described = typeof input.command === 'string' ? input.command
     : typeof input.file_path === 'string' ? input.file_path
       : typeof input.description === 'string' ? input.description : '';
-  return { requestId: frame.request_id, toolName, isPermission: true, text: cap(described, 600), options: ['allow', 'deny'] };
+  return { requestId: frame.request_id, toolName, isPermission: true, text: cap(described, 600), options: ['allow', 'deny'], ...toolUse };
+}
+
+/** Does its Super Agent decide this request first? Only a TOOL permission (never a question or a
+ *  plan approval) of a process that runs `bypassPermissions` right now (`ChatEntry.bypass`): the
+ *  residual asks Claude Code still raises in Bypass. Anything else is the owner's alone. */
+export function superDecidesPermission(entry: Pick<ChatEntry, 'bypass'> | null | undefined, q: Pick<PendingQuestion, 'isPermission' | 'toolName'> | null | undefined): boolean {
+  return entry?.bypass === true && !!q && q.isPermission && q.toolName !== 'ExitPlanMode' && q.toolName !== 'AskUserQuestion';
 }
 
 /** What a chat is about, in one line: its title, else the first line of its newest assistant
@@ -446,7 +466,7 @@ export function chatTopic(e: Pick<ChatEntry, 'title' | 'lastAssistantText'>, max
 /** Register a live chat. Returns the handle the bridge feeds. `seed` carries what an existing
  *  conversation is already about (a `--resume` respawn replays no history, chat-seed.ts reads it
  *  from disk); it sets title and texts only — never status or updatedAt. */
-export function registerChat(init: { sessionId: string; conversationId: string | null; vault: string; mode: string; origin?: 'assistant'; seed?: { title?: string; lastAssistantText?: string[] } }): ChatHandle {
+export function registerChat(init: { sessionId: string; conversationId: string | null; vault: string; mode: string; origin?: 'assistant'; bypass?: boolean; seed?: { title?: string; lastAssistantText?: string[] } }): ChatHandle {
   const existingDeath = deathTimers.get(init.sessionId);
   if (existingDeath) { clearTimeout(existingDeath); deathTimers.delete(init.sessionId); }
   const e: ChatEntry = {
@@ -462,6 +482,7 @@ export function registerChat(init: { sessionId: string; conversationId: string |
     lastFrameAt: new Date().toISOString(),
     toolsInFlight: 0,
     ...(init.origin === 'assistant' ? { origin: 'assistant' as const } : {}),
+    ...(init.bypass === true ? { bypass: true as const } : {}),
   };
   entries.set(init.sessionId, e);
   unheard.delete(init.sessionId);
@@ -495,6 +516,10 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       alive();
       if (frame.type === 'system' && frame.subtype === 'init' && typeof frame.session_id === 'string') {
         e.conversationId = frame.session_id;
+      }
+      // The process says what it runs: anything but bypass clears the flag for good (fail closed).
+      if (frame.type === 'system' && frame.subtype === 'init' && typeof frame.permissionMode === 'string' && frame.permissionMode !== 'bypassPermissions') {
+        delete e.bypass;
       }
       if (frame.type === 'system' && frame.subtype === 'background_tasks_changed') {
         const tasks = Array.isArray(frame.tasks) ? frame.tasks as unknown[] : [];
@@ -531,6 +556,14 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       // `null` and absent both mean top level: real CLI frames carry `parent_tool_use_id: null`
       // on `assistant` and omit it on `result`.
       const topLevel = frame.parent_tool_use_id == null;
+      // A tool_result for a request's tool call (top level or inside a sub-agent): the CLI is done
+      // with that call, so it waits on the request no more (a stream that closed under it, say).
+      if (frame.type === 'user' && pendingRequestIds(e).length) {
+        for (const id of blockIds(frame, 'tool_result')) {
+          const closed = [...(e.earlierPending ?? []), ...(e.pendingQuestion ? [e.pendingQuestion] : [])].find((p) => p.toolUseId === id);
+          if (closed) settlePending(closed.requestId);
+        }
+      }
       if (topLevel && (frame.type === 'assistant' || frame.type === 'stream_event') && (e.status === 'idle' || e.status === 'starting')) {
         setStatus(e, 'working');
       }
@@ -598,6 +631,9 @@ export function registerChat(init: { sessionId: string; conversationId: string |
       // The refusal can arrive on the turn's own `result`, after it was stamped: mark that turn.
       if (e.status === 'idle' && e.lastTurn) { e.lastTurn = { ...e.lastTurn, limited: true }; return; }
       limitAsked = true;
+    },
+    notBypass() {
+      delete e.bypass;
     },
     answered(requestId) {
       if (dead) return;

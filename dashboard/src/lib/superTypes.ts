@@ -397,6 +397,9 @@ export interface SuperQueueItem {
   /** A child's question shown to the owner from birth: his bar opens the child's chat, where its
    *  own card answers it (MIRROR of src/lib/super/types.ts `SuperQueueItem.direct`). */
   direct?: true;
+  /** A Bypass child's permission its Super Agent decides first (MIRROR of src/lib/super/types.ts
+   *  `SuperQueueItem.toSuper`): no owner head, count or alarm while it holds. */
+  toSuper?: true;
   /** A Super `ask`'s report cards, read to answer it: his card points at them (MIRROR of
    *  src/lib/super/types.ts `SuperQueueItem.read`). */
   read?: string[];
@@ -752,7 +755,7 @@ export interface SuperStateView extends SuperState {
   rotating?: boolean;
 }
 
-export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume'] as const;
+export const SUPER_WINDOW_VERBS = ['delegate', 'answer', 'resume', 'allow'] as const;
 export type SuperWindowVerb = typeof SUPER_WINDOW_VERBS[number];
 
 export const SUPER_EVENT_PREFIXES = ['[super event]', '[super recap]', '[super handover]', '[super events]', '[super fresh]'] as const;

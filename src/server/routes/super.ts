@@ -37,7 +37,7 @@ import { AutomationError } from '../../lib/automations/types.js';
 import { checkApproval } from '../../lib/automations/registry.js';
 import {
   agendaMissing, containerIdFor, ensureAgendaCard, ensureChatContainer, minimiseAgendaCard, showAgendaCard, newQueueId, noteOwnerActivity, noteOwnerBatch, noteResuming, pumpSuper, setRow, startFailedDraft, superOpenBatch, takeStartError, expectChild,
-  superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation,
+  superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation, permissionGoesToSuper, permissionToOwner,
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach } from '../../lib/super/owner-question.js';
 import { freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
@@ -1863,7 +1863,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     // FAIL CLOSED (D7): only the plain question the registry names right now. A permission is
     // the owner's alone, whoever asks; anything else is stale.
     if (pq && pq.requestId === requestId && pq.isPermission) {
-      refuse(res, 403, 'permission_refused', 'a permission request is answered only by the owner, from the queue strip');
+      refuse(res, 403, 'permission_refused', 'a permission request is not a question: a Bypass child\'s permission is answered with `dreamcontext super allow <child> <request> [--deny --why <text>]`; any other permission is the owner\'s alone');
       return;
     }
     if (!asking || !pq || pq.requestId !== requestId || pq.isPermission || pq.toolName !== 'AskUserQuestion') {
@@ -1881,6 +1881,50 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       for (const q of s.queue) if (q.sessionId === child && q.requestId === requestId && q.kind === 'question') q.state = 'done';
     });
     ok(res, { child, requestId, answered: true });
+  },
+
+  // A Bypass child's residual permission, answered by its Super (task super-bypass-taki…). The
+  // Super of THAT child only (the door above), on the request the child holds open right now,
+  // still the Super's to decide (not escalated to the owner). Any other permission: the owner's.
+  allow: async (c, b, res) => {
+    if (!requireHandedOver(c, res)) return;
+    const child = str(b.child);
+    if (!child || !SESSION_ID_RE.test(child) || !hasChild(c.state, child)) {
+      refuse(res, 403, 'not_your_child', 'only a permission of one of your own children (`dreamcontext super state` lists them)');
+      return;
+    }
+    const requestId = str(b.requestId);
+    if (!requestId || requestId.length > 200) { refuse(res, 400, 'invalid_args', 'name the permission request id'); return; }
+    if (phoneHeld(child)) { refusePhoneHeld(res); return; }
+    const chat = getChat(child);
+    const pq = pendingRequest(chat, requestId);
+    // The live chat must be this project's too (the record alone is a same-user file).
+    if (chat && chat.vault !== vaultNameOf(c.who.contextRoot)) {
+      refuse(res, 403, 'not_your_child', 'only a permission of one of your own children (`dreamcontext super state` lists them)');
+      return;
+    }
+    if (!chat || !pq || !pq.isPermission) {
+      refuse(res, 409, 'stale_request', 'that child is not asking this permission any more');
+      return;
+    }
+    if (!permissionGoesToSuper(chat, pq)) {
+      refuse(res, 403, 'owner_only', 'this child does not run in Bypass: its permissions are the owner\'s alone');
+      return;
+    }
+    const item = c.state.queue.find((q) => q.kind === 'permission' && q.sessionId === child && q.requestId === requestId && q.toSuper && q.state !== 'done');
+    if (!item) { refuse(res, 409, 'escalated', 'that permission is the owner\'s now (escalated, or past your time to decide): he answers it'); return; }
+    const deny = b.deny === true;
+    const why = oneLine(typeof b.why === 'string' ? b.why : '').slice(0, 300);
+    const behavior = deny ? 'deny' : 'allow';
+    const r = await sendSuperCommand(c.token, 'allow', {
+      child, requestId, behavior, ...(deny ? { message: `Denied by the Super Agent${why ? `: ${why}` : '.'}` } : {}),
+    });
+    if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the window did not answer the child'); return; }
+    await writeSuper(c.who.contextRoot, (s) => {
+      for (const q of s.queue) if (q.kind === 'permission' && q.sessionId === child && q.requestId === requestId) q.state = 'done';
+    });
+    void pumpSuper(c.who.contextRoot);
+    ok(res, { child, requestId, answered: behavior });
   },
 
   send: async (c, b, res) => {
@@ -1955,7 +1999,16 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const id = str(b.item);
     const item = id ? c.state.queue.find((q) => q.id === id) : undefined;
     if (!item) { refuse(res, 404, 'unknown_item', 'no such queue item (`dreamcontext super queue list`)'); return; }
-    if (item.kind === 'permission') { refuse(res, 403, 'permission_item', 'a permission is shown to the owner from the child\'s own request; you cannot caption or close it'); return; }
+    if (item.kind === 'permission') {
+      // A Bypass child's permission the Super was handed (`toSuper`): `queue ask` hands it to the
+      // owner (head, notch, phone), with the Super's words. Any other permission is his already.
+      if (!item.toSuper || item.state === 'done') { refuse(res, 403, 'permission_item', 'a permission is shown to the owner from the child\'s own request; you cannot caption or close it'); return; }
+      // His card shows the child's own request, never your words (D7): say why in your turn's text.
+      if (!(await permissionToOwner(c.who.contextRoot, item.id))) { refuse(res, 409, 'stale_request', 'that permission is no longer open, or the owner has it already'); return; }
+      void pumpSuper(c.who.contextRoot);
+      ok(res, { item: id, escalated: true, permission: true, note: 'It is his now: his bar, the notch and his phone show the child\'s own request. Tell him in one line why it is his to decide.' });
+      return;
+    }
     if (item.kind !== 'question') { refuse(res, 400, 'not_a_question', 'only a child\'s question can be escalated'); return; }
     if (item.team) { refuse(res, 400, 'team_question', 'an AI Team member\'s question is the owner\'s to answer in AI Team; tell him in your reply which member asks what'); return; }
     if (item.state === 'done') { refuse(res, 409, 'stale_request', 'that question is already answered'); return; }

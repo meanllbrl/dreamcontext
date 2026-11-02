@@ -324,7 +324,17 @@ export type ChatEvent =
   /** `parentToolUseId` present ⇒ this is a result for a tool a SUB-AGENT called, not the
    *  main agent (the parent's own final Agent-tool result carries none — spike-verified),
    *  so the parent transcript must not open or close a card for it. */
-  | { kind: 'tool-result'; toolUseId: string; content: unknown; isError: boolean; agentResult?: SubAgentResult; parentToolUseId?: string }
+  | { kind: 'tool-result'; toolUseId: string; content: unknown; isError: boolean; agentResult?: SubAgentResult; parentToolUseId?: string;
+      /** EVERY `tool_result.tool_use_id` the frame carried, present only when it carried more
+       *  than this event's own (parallel tools answer in one frame). Read only to settle a
+       *  permission card whose tool already got its result (see `settledToolUseIds`). */
+      settledToolUseIds?: string[] }
+  /** A user frame whose FIRST block is not a tool_result but that still answers tools: only
+   *  the ids, so a permission card for one of them can be dropped. Never draws a card. */
+  | { kind: 'tool-uses-settled'; toolUseIds: string[] }
+  /** The CLI withdrew a `can_use_tool` request it sent (`control_cancel_request`), e.g. its
+   *  stdin closed ("Stream closed"): the card for it is dead and must go. */
+  | { kind: 'request-cancelled'; requestId: string }
   /** A `control_response` ack for a control request WE sent (set_model / rewind_conversation).
    *  `payload` is the CLI's nested `response` object when present (e.g. rewind's
    *  `{rewound, prefillText, precedingAssistantUuid, error?}`). */
@@ -934,7 +944,28 @@ function fromUserFrame(obj: Record<string, unknown>): ChatEvent {
     return { kind: 'compact-summary', text: message.content };
   }
   const ev = fromAssistant(obj);
-  return ev.kind === 'tool-result' ? ev : ignored('user:non_tool_result');
+  const ids = toolResultIds(message.content);
+  if (ev.kind === 'tool-result') {
+    return ids.length > 1 || (ids.length === 1 && ids[0] !== ev.toolUseId) ? { ...ev, settledToolUseIds: ids } : ev;
+  }
+  return ids.length ? { kind: 'tool-uses-settled', toolUseIds: ids } : ignored('user:non_tool_result');
+}
+
+/** Every `tool_result.tool_use_id` in a user frame's content, in order, without repeats. */
+export function toolResultIds(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  const out: string[] = [];
+  for (const b of content) {
+    if (isRecord(b) && b.type === 'tool_result' && typeof b.tool_use_id === 'string' && b.tool_use_id && !out.includes(b.tool_use_id)) out.push(b.tool_use_id);
+  }
+  return out;
+}
+
+/** Every tool_use id a parsed event says got its result (empty for any other event). */
+export function settledToolUseIds(ev: ChatEvent): string[] {
+  if (ev.kind === 'tool-uses-settled') return ev.toolUseIds;
+  if (ev.kind === 'tool-result') return ev.settledToolUseIds ?? (ev.toolUseId ? [ev.toolUseId] : []);
+  return [];
 }
 
 // ─── control_request (permission prompts + AskUserQuestion) ───────────────────────
@@ -1358,6 +1389,12 @@ export function toChatEvent(obj: Record<string, unknown>): ChatEvent {
       return fromControlRequest(obj);
     case 'control_response':
       return fromControlResponse(obj);
+    // The CLI withdrew a request it had sent (Claude Code 2.1.316 does this when its stdin
+    // closes): the card for it is dead.
+    case 'control_cancel_request': {
+      const requestId = str(obj.request_id);
+      return requestId ? { kind: 'request-cancelled', requestId } : ignored('control_cancel_request:no_id');
+    }
     case 'result':
       return fromResult(obj);
     case '_meta':

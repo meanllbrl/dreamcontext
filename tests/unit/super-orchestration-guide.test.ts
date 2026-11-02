@@ -102,8 +102,9 @@ describe('super-orchestration guide: shape', () => {
   // +300 (2026-11-02, 0.36.15): `--tool antigravity` on a delegated child and the rows the integration merges added (measured 22,977).
   // +500 (2026-11-02): weigh the owner's idea before saying yes, never agree or argue by reflex (measured 23,448).
   // +450 (2026-11-02, plan-r10 Wave 2): every member is a Super; `team answer`, `team done`, no member assigns.
-  it('is at most 23,950 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(23_950);
+  // +500 (2026-11-02): a Bypass child's permission is the Super's to allow, deny or hand to the owner. Both merged in 0.40.2 (measured 24,244).
+  it('is at most 24,250 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(24_250);
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {
