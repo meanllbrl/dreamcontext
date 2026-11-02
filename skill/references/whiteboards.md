@@ -104,21 +104,21 @@ dreamcontext whiteboard kit                            # the drawing kit: types,
 ### Groups (the dashboard's board explorer)
 
 The Whiteboard page has a left explorer listing every board, in groups. A board's group is its
-own frontmatter, `group: "Tilki metrics"`, next to `group-by: owner|agent` (who placed it), so the
+own frontmatter, `group: "Orbit metrics"`, next to `group-by: owner|agent` (who placed it), so the
 team, another machine and agents see the same groups and brain sync merges them per key.
 Nothing moves on disk; a board with no (or an invalid) `group` is Ungrouped.
 
 ```bash
 dreamcontext whiteboard group list [--json]               # groups and their boards
-dreamcontext whiteboard group set <slug> "Tilki metrics"  # put a board in a group
+dreamcontext whiteboard group set <slug> "Orbit metrics"  # put a board in a group
 dreamcontext whiteboard group clear <slug>                # take it out
 dreamcontext whiteboard group rename "Satis" "Satış"      # every board, every spelling of the group
-dreamcontext whiteboard create "Name" --group "Tilki metrics"
+dreamcontext whiteboard create "Name" --group "Orbit metrics"
 ```
 
 - A name is 1-60 characters on one line, without `/`. An existing group with the same letters
-  (case, accents and ı aside) keeps its spelling: `group set x "tilki metrics"` lands in
-  "Tilki metrics". A rename that only fixes case or letters ("Satis" → "Satış") is taken as typed.
+  (case, accents and ı aside) keeps its spelling: `group set x "orbit metrics"` lands in
+  "Orbit metrics". A rename that only fixes case or letters ("Satis" → "Satış") is taken as typed.
 - **A board the owner placed is refused** (`owner_grouped`) — also after he took it OUT of a
   group (`group-by: owner` stays). Pass `--force` only when the owner asked for that move.
   `group rename` skips such boards and lists them as failed; it exits 1 when any failed.
