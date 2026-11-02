@@ -3014,7 +3014,7 @@ function appFacts(projectRoot: string, slug: string, hash: string, home: string)
     if ((!scan || !scan.files) && dataLostWithBackup(home, hash, dir)) facts.push(`⚠ data gone, backup: \`dreamcontext apps restore ${slug}\``);
   } catch { /* the count drops, the line stays */ }
   const n = countFindings(home, hash);
-  if (n) facts.push(`${n} finding${n === 1 ? '' : 's'} wait for sleep`);
+  if (n) facts.push(`${n} finding${n === 1 ? ' waits' : 's wait'} for sleep`);
   return facts.length ? ` · ${facts.join(' · ')}` : '';
 }
 
