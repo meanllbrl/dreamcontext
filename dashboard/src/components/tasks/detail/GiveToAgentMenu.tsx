@@ -11,6 +11,7 @@ import { SparkIcon } from '../../sleepy/TypeIcons';
 import { AssignToAgentComposer, TaskAgentFace } from '../AssignToAgentComposer';
 import { DelegateComposer } from '../DelegateComposer';
 import { taskAgent } from '../boardModel';
+import { taskToolBlocked, waitsOnApprovalCard } from '../../../lib/taskAgentJob';
 
 /** The in-app agent runtime is ready (desktop, claude CLI, Agents enabled): "New Claude chat" is offered. */
 function useAgentRuntimeReady(): boolean {
@@ -93,20 +94,37 @@ export function GiveToAgentMenu({ task, onError }: { task: Task; onError: (msg: 
             )}
             <div className="gta-label">AI Team</div>
             {offered.length === 0 && <div className="gta-empty">No agents in this project yet.</div>}
-            {offered.map((a) => (
-              <button
-                key={a.slug}
-                type="button"
-                role="menuitem"
-                className="gta-item"
-                data-testid={`give-agent-${a.slug}`}
-                onClick={() => { setOpen(false); setAssigning(a.slug); }}
-              >
-                <AgentAvatar of="agent" slug={a.slug} title={a.title} hasPhoto={a.hasPhoto ?? false} size={20} />
-                <span className="gta-item-name">{a.title}</span>
-                {!a.approvedToRun && <span className="gta-item-hint">needs approval</span>}
-              </button>
-            ))}
+            {offered.map((a) => {
+              // A member on a tool a task step cannot run on is shown, disabled, with the reason
+              // (the server refuses it as `tool_unsupported`; derived from the envelope's row).
+              const blockedTool = taskToolBlocked(a);
+              const why = blockedTool
+                ? tr(t, 'tasks.assignToolUnsupported', '{tool} members cannot take a task yet: a task step pins a Claude session.', { tool: blockedTool === 'antigravity' ? 'Antigravity' : 'Codex' })
+                : '';
+              return (
+                <button
+                  key={a.slug}
+                  type="button"
+                  role="menuitem"
+                  className="gta-item"
+                  data-testid={`give-agent-${a.slug}`}
+                  disabled={!!blockedTool}
+                  aria-disabled={blockedTool ? true : undefined}
+                  title={why || undefined}
+                  style={blockedTool ? { opacity: 0.55, cursor: 'not-allowed', flexWrap: 'wrap' } : undefined}
+                  onClick={() => { if (blockedTool) return; setOpen(false); setAssigning(a.slug); }}
+                >
+                  <AgentAvatar of="agent" slug={a.slug} title={a.title} hasPhoto={a.hasPhoto ?? false} size={20} />
+                  <span className="gta-item-name">{a.title}</span>
+                  {!blockedTool && waitsOnApprovalCard(a) && (
+                    <span className="gta-item-hint" title={a.syncedChangeBy ? tr(t, 'tasks.assignSyncedBy', 'Changed by {name}', { name: a.syncedChangeBy }) : undefined}>
+                      {tr(t, 'tasks.assignWaitsApproval', 'waits for your approval')}
+                    </span>
+                  )}
+                  {blockedTool && <span className="gta-item-hint" data-testid={`give-agent-why-${a.slug}`} style={{ flexBasis: '100%', whiteSpace: 'normal' }}>{why}</span>}
+                </button>
+              );
+            })}
             {runtimeReady && (
               <>
                 <div className="gta-divider" />

@@ -239,7 +239,8 @@ describe('prepareAssignment and commitAssignment', () => {
     expect(prep.ok).toBe(false);
     if (prep.ok) return;
     expect(prep.code).toBe('agent_not_approved_to_run');
-    expect(prep.message).toContain('Approve it on the AI Team page.');
+    // Names the one approval card and the page it waits on, never a command (plan-r10 1e).
+    expect(prep.message).toContain('waits for its approval card on the AI Team page');
     expect(prep.message).not.toContain('dreamcontext');
     expect(prep.message).not.toContain('approve writer');
   });

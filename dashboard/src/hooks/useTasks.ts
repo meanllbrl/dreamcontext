@@ -343,12 +343,13 @@ export type AssignAgentRefusal =
   | 'unknown_reviewer'
   | 'reviewer_is_agent'
   | 'not_owner'
+  | 'tool_unsupported'
   | 'assign_failed';
 
 const ASSIGN_REFUSALS: ReadonlySet<string> = new Set<AssignAgentRefusal>([
   'agent_not_approved_to_run', 'agent_disabled', 'agent_busy', 'unknown_task', 'unknown_agent',
   'note_too_long', 'missing_agent', 'invalid_note', 'invalid_path', 'invalid_start',
-  'invalid_workspace', 'no_repo', 'unknown_reviewer', 'reviewer_is_agent', 'not_owner', 'assign_failed',
+  'invalid_workspace', 'no_repo', 'unknown_reviewer', 'reviewer_is_agent', 'not_owner', 'tool_unsupported', 'assign_failed',
 ]);
 
 /**

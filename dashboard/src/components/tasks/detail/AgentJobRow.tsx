@@ -6,7 +6,7 @@ import { useAnswerQuestion, useAutomationQuestions } from '../../../hooks/useAut
 import { useI18n } from '../../../context/I18nContext';
 import { tr, type Translate } from '../../../lib/assignToAgent';
 import { requestOpenAgents } from '../../../lib/openAgents';
-import { instantToLocalInput, jobChip, localInputToInstant, queuePosition, shortWhen } from '../../../lib/taskAgentJob';
+import { instantToLocalInput, jobChip, jobWaitLine, localInputToInstant, queuePosition, shortWhen } from '../../../lib/taskAgentJob';
 import { TaskAgentFace } from '../AssignToAgentComposer';
 import { JobChipView } from '../JobChipView';
 
@@ -119,6 +119,8 @@ export function AgentJobRow({ task, detail, allTasks }: { task: Task; detail: Ag
   useEffect(() => { setAsking(null); setText(''); }, [detail.state, detail.step]);
 
   const chip = jobChip(detail, t);
+  // Who the job waits on (mockup r8-11): the status stays the project's own (In Review), this says whose turn it is.
+  const wait = closed ? null : jobWaitLine(detail, t, nameOf(task.agent ?? ''));
   const rows = readOnly || closed ? [] : detail.rows.filter((r) => r.actions.some((a) => !ROW_SKIP.has(a)));
   const own = readOnly || closed ? [] : stateActions(detail);
   const rowActions = new Set<string>(rows.flatMap((r) => r.actions));
@@ -177,6 +179,14 @@ export function AgentJobRow({ task, detail, allTasks }: { task: Task; detail: Ag
               <span className="djob-machine">{tr(t, 'tasks.job.onMachine', 'on {machine}', { machine: detail.claimedMachine })}</span>
             )}
           </div>
+          {wait && (
+            <p className="djob-wait" data-testid="job-wait" data-wait={wait.key} style={{ margin: '2px 0 0', fontSize: 'var(--font-size-sm)', display: 'flex', flexWrap: 'wrap', gap: '0 var(--space-2)', alignItems: 'baseline' }}>
+              <strong style={{ fontWeight: 600, color: wait.key === 'stuck' ? 'var(--color-danger, var(--color-text))' : 'var(--color-text)' }}>
+                {wait.round ? `${wait.label} · ${wait.round}` : wait.label}
+              </strong>
+              {wait.hint && <span style={{ color: 'var(--color-text-tertiary)' }}>{wait.hint}</span>}
+            </p>
+          )}
           <p className="djob-say">
             {!closed
               ? stateLine(task, detail, allTasks, t, nameOf)

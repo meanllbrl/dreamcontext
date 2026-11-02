@@ -110,7 +110,8 @@ export async function handleAgentsInbox(
 
 /** Start one task assigned outside the app: the same steps as "Assign to agent". */
 function startOutsideTask(contextRoot: string, taskSlug: string, agent: string): { ok: true } | { ok: false; status: number; code: string; message: string } {
-  const prep = prepareAssignment(contextRoot, taskSlug, agent, { source: 'dashboard' });
+  // keepReviewer: a reviewer the task file already names (set outside too) stays on the job.
+  const prep = prepareAssignment(contextRoot, taskSlug, agent, { source: 'dashboard', keepReviewer: true });
   if (!prep.ok) return { ok: false, status: prep.code === 'not_owner' ? 403 : 409, code: prep.code, message: prep.message };
   commitAssignment(contextRoot, prep, new Date());
   startDueTaskJobs(contextRoot);

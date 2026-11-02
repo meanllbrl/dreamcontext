@@ -2565,8 +2565,12 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     const noCodexAccount = onCodex && !(codexPick && 'account' in codexPick);
     if (codexRefusal || noCodexAccount || (onCodex && (!codexNode || !codexCli))) {
       const n = nowFn();
+      // A task step its tool cannot hold is `blocked` (the task host asks the owner instead of
+      // queueing it again). Only that refusal: the home board's, the account's and Node's stay
+      // `failed`, and no team job is a task step, so `blocked` never reaches one.
+      const toolBlocksTask = !!codexRefusal && !!taskStep && !scope;
       return await finalize({
-        status: 'failed',
+        status: toolBlocksTask ? 'blocked' : 'failed',
         error: codexRefusal
           ? `"${manifest.title}" cannot run on ${toolName}. ${codexRefusal} Set its tool back to Claude.`
           : noCodexAccount

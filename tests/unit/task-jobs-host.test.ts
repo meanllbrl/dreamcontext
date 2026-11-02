@@ -186,7 +186,8 @@ describe('the reviewer loop (C1-12, AC-C1-2, AC-C1-8)', () => {
     expect(h.calls[2].args.slice(0, 2)).toEqual(['--resume', doerSession]);
     expect(argAfter(h.calls[2].args, '-p')).toContain('AC 1: the login still 500s');
     const hist = parseStatusHistory(taskText(f, 'fix'));
-    expect(hist.map((r) => `${r.to}:${r.by}`)).toEqual(['in_review:agent:scout', 'in_progress:reviewer:checker', 'in_review:agent:scout', 'in_progress:owner']);
+    // The pass leaves its own line by the reviewer, on the status the task already has (Wave 1 lane G).
+    expect(hist.map((r) => `${r.to}:${r.by}`)).toEqual(['in_review:reviewer:checker', 'in_review:agent:scout', 'in_progress:reviewer:checker', 'in_review:agent:scout', 'in_progress:owner']);
     expect(taskData(f, 'fix')).toMatchObject({ review_round: 2, review_passed: true, agent_state: 'delivered' });
   });
 

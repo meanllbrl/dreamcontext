@@ -88,7 +88,14 @@ export interface TaskMeta {
   /** Which of its agents were this machine's GLOBAL agents when it was assigned (D1). A project
    *  member of the same name arriving later must never run the job in the global agent's place. */
   globalAgents?: string[];
+  /** The last refusal before any child ran (never a lock wait): its status and words, and how
+   *  many times in a row it came. The same one twice blocks the task (no respawn loop). Cleared
+   *  by any spawn. */
+  lastRefusal?: { key: string; count: number } | null;
 }
+
+/** A pre-spawn refusal that comes this many times in a row in the same words blocks the task. */
+export const REPEAT_REFUSAL_BLOCKS = 2;
 
 export interface TaskSessionEntry {
   sessionId: string;

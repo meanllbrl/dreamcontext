@@ -6,7 +6,7 @@ import { taskAssetUrl } from '../../api/client';
 import {
   type CardProps,
   assigneeHue, assigneeInitials, criteriaCount, dueInfo, fmtUpdated, levelLabel, prioColor, subtaskProgress,
-  tagHue, taskAssignees, taskAgent, taskName, taskRice, urgColor,
+  tagHue, taskAssignees, taskAgent, taskName, taskReviewer, taskRice, urgColor,
 } from './boardModel';
 import { JobChipView } from './JobChipView';
 import { jobChip } from '../../lib/taskAgentJob';
@@ -98,6 +98,8 @@ export function BoardCard({
   const assignees = taskAssignees(task);
   const name = taskName(task);
   const agent = taskAgent(task);
+  // The reviewer is on the task too: the card shows its face beside the doer's.
+  const reviewer = agent ? taskReviewer(task) : null;
   const { t } = useI18n();
   // The agent job's one chip: scheduled, queued, working, reviewing, round result, passed, stuck.
   const chip = jobChip(task.agent_job, t);
@@ -188,6 +190,7 @@ export function BoardCard({
         )}
         {showVersion && <span className="bd-ver-chip" title="Versions & Sprints">{task.version}</span>}
         {agent && <TaskAgentFace slug={agent} />}
+        {reviewer && reviewer !== agent && <span className="bd-card-reviewer" data-testid="card-reviewer"><TaskAgentFace slug={reviewer} /></span>}
         {showAssignee && <AvatarStack slugs={assignees} ring="var(--color-bg-elevated)" nameOf={nameOf} />}
         {!cp.priority && !showVersion && <span className="bd-card-mono">{fmtUpdated(task.updated_at)}</span>}
       </div>

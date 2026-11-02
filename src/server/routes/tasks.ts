@@ -1666,6 +1666,7 @@ const ASSIGN_REFUSAL_STATUS: Record<AssignmentRefusal, 400 | 403 | 404 | 409> = 
   no_repo: 409,
   unknown_reviewer: 404,
   reviewer_is_agent: 400,
+  tool_unsupported: 409,
 };
 
 /**

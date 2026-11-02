@@ -10,7 +10,7 @@ import {
   type BoardFilters, type CardProps, type Dim, type DueFilter, type SortKey,
   PRIO_ORDER, SORT_LABEL, URG_ORDER,
   BACKLOG_RE, VV_BACKLOG, VV_COMPLETED, VV_CURRENT,
-  dimGet, levelLabel, prioColor, taskAgentKey, taskAssignees, taskFeature, taskVersion, urgColor,
+  dimGet, levelLabel, prioColor, taskAgentKeys, taskAssignees, taskFeature, taskVersion, urgColor,
   activeFilterCount,
 } from './boardModel';
 import { type BarFit, fitOnLayout, fitOnResize, fitRetest, initialFit, menusToClose } from './toolbarCollapse';
@@ -106,7 +106,8 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
   const featureValues = Array.from(new Set([...featureOptions.map((o) => o.slug), ...allTasks.map(taskFeature).filter((v) => v !== 'none')]));
   const featureLabelOf = (v: string) => (v === 'none' ? 'No feature' : featureName.get(v) ?? v);
   // Agents: the roster plus any slug a task names that is no longer on it.
-  const agentValues = Array.from(new Set([...(agents ?? []).map((a) => a.slug), ...allTasks.map(taskAgentKey).filter((v) => v !== 'none')]));
+  // A reviewer counts as on the task too (the filter matches the doer or the reviewer).
+  const agentValues = Array.from(new Set([...(agents ?? []).map((a) => a.slug), ...allTasks.flatMap(taskAgentKeys).filter((v) => v !== 'none')]));
   const agentLabelOf = (v: string) => (v === 'none' ? 'No agent' : findAgent(agents, v)?.title ?? v);
 
   const fieldOpts = (key: keyof BoardFilters): FieldOpt[] => {
@@ -119,7 +120,7 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
       .map((k) => ({ value: k, label: k === 'none' ? 'No version' : k, color: null, count: countBy('version', k) }));
     if (key === 'assignee') return assignees.map((a) => ({ value: a.value, label: a.label, color: a.value === 'none' ? null : a.color, count: countAssignee(a.value) }));
     if (key === 'feature') return [...featureValues, 'none'].map((v) => ({ value: v, label: featureLabelOf(v), color: null, count: allTasks.filter((t) => taskFeature(t) === v).length }));
-    if (key === 'agent') return [...agentValues, 'none'].map((v) => ({ value: v, label: agentLabelOf(v), color: null, count: allTasks.filter((t) => taskAgentKey(t) === v).length }));
+    if (key === 'agent') return [...agentValues, 'none'].map((v) => ({ value: v, label: agentLabelOf(v), color: null, count: allTasks.filter((t) => taskAgentKeys(t).includes(v)).length }));
     return allTags.map((tg) => ({ value: tg, label: tg, color: null, count: allTasks.filter((t) => t.tags.includes(tg)).length }));
   };
 
