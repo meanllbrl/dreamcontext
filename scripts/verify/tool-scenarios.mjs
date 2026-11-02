@@ -412,6 +412,7 @@ await superChildren();
 stopServer();
 if (process.env.RESULTS_JSON) writeFileSync(process.env.RESULTS_JSON, JSON.stringify({ at: new Date().toISOString(), rows }, null, 2));
 const failed = rows.filter((r) => !r.ok);
-console.log(`\n${rows.length - failed.length}/${rows.length} passed (fake agents). Scratch: ${SCRATCH}`);
+const unproved = rows.filter((r) => r.ok && r.evidence === 'none').length;
+console.log(`\n${rows.length - failed.length - unproved}/${rows.length} proved on fake agents, ${unproved} not provable on them, ${failed.length} red. Scratch: ${SCRATCH}`);
 if (!process.env.KEEP_SCRATCH && !failed.length) rmSync(SCRATCH, { recursive: true, force: true });
 process.exit(failed.length ? 1 : 0);
