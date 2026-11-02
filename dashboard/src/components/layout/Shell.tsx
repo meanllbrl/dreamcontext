@@ -223,7 +223,12 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   const [chatOpen, setChatOpen] = useState(false);
   const chatOpenRef = useRef(chatOpen);
   chatOpenRef.current = chatOpen;
-  useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => setChatOpen(open === true));
+  // The carried Chat's retries (a freshly mounted surface is not listening yet) stop the moment
+  // it opens, and on any navigation: they never reopen a chat the owner closed or left.
+  const chatRetriesRef = useRef<number[]>([]);
+  const stopChatRetries = useCallback(() => { for (const t of chatRetriesRef.current) window.clearTimeout(t); chatRetriesRef.current = []; }, []);
+  useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => { setChatOpen(open === true); if (open === true) stopChatRetries(); });
+  useInstanceEvent('dreamcontext-navigate', stopChatRetries);
   const wasActiveRef = useRef(false);
   useEffect(() => {
     const arrived = isActive && !wasActiveRef.current;
@@ -239,10 +244,11 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     if (plan.chat !== true) return undefined;
     // A project mounted by this switch has no chat surface listening yet: ask until it opens.
     openAgentSurface(bus);
-    const timers = [150, 500, 1200, 2500].map((ms) => window.setTimeout(() => {
+    if (chatOpenRef.current) return undefined;
+    chatRetriesRef.current = [150, 500, 1200, 2500].map((ms) => window.setTimeout(() => {
       if (!chatOpenRef.current) openAgentSurface(bus);
     }, ms));
-    return () => { for (const t of timers) window.clearTimeout(t); };
+    return stopChatRetries;
   }, [isActive]); // eslint-disable-line react-hooks/exhaustive-deps -- once per arrival on screen
   useEffect(() => {
     if (isActive) publishShownSurface({ page: activePage, chat: chatOpen });

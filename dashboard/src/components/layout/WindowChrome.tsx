@@ -1498,7 +1498,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
 
           <ProjectTabs
             chips={chips}
-            onActivate={activate}
+            onActivate={(vault) => { markProjectSwitch(vault); activate(vault); }}
             onClose={closeTab}
             onAdd={openSwitcher}
             onDetach={(vault) => void detachToWindow(vault)}
