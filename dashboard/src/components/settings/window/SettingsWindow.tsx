@@ -10,7 +10,7 @@ import {
 } from './pages/SimplePages';
 import { McpPage, MemoryPage, MirrorPage, TeamSyncPage, VoicePage } from './pages/TopicPages';
 import { AssistantPage } from './pages/AssistantPage';
-import { ModelsPage } from './pages/ModelsPage';
+import { ModelsPage, modelsTabFor } from './pages/ModelsPage';
 import { JobChip } from './JobChip';
 import './SettingsWindow.css';
 
@@ -215,7 +215,7 @@ export function SettingsWindow({ open, focus, onClose }: {
   const group = groupOf(page);
   // Every job's model row is the same chip as in Models → Defaults; its "Sign in" opens the tool's tab.
   const chip: PageProps['chip'] = (job) => (
-    <JobChip job={job} onOpenTab={(target) => { setPage('models'); setQuery(''); setTab(target === 'accounts-codex' ? 'codex' : target === 'accounts' ? 'claude' : 'defaults'); }} />
+    <JobChip job={job} onOpenTab={(target) => { setPage('models'); setQuery(''); setTab(modelsTabFor(target)); }} />
   );
   const props: WindowPageProps = { searching, chip, go, tab, setTab };
   const Page = PAGES[page];

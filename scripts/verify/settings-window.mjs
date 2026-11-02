@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * /verify for the Settings window of the new layout (task settings-konuya-gore-…, 2026-11-01).
- * The prototype's check31 ported to the real selectors; its Super→Codex, MCP sign-in and
- * Antigravity/OpenCode data checks are dropped (this version does not have them).
+ * The prototype's check31 ported to the real selectors; its Super→Codex and MCP sign-in checks
+ * are dropped (this version does not have them). Antigravity's tab is checked with no agent, then
+ * with a stand-in agent file on PATH (installed, not signed in).
  *
  *   dreamcontext builder heavy --max-wait 1200 -- node scripts/verify/settings-window.mjs
  *
@@ -177,10 +178,25 @@ try {
   await page.click('[data-sw-tab="claude"]'); await W(page);
   ok('Claude rule stays Stop', (await page.locator('[data-row="claude-out"] .sw-seg-btn.on').innerText()).includes('Stop'));
   await shot(page, 'models-claude-1440-dark');
-  for (const id of ['antigravity', 'opencode']) {
-    await page.click(`[data-sw-tab="${id}"]`); await W(page);
-    ok(`${id} tab passive and says why`, (await txt(page, '.sw-body')).includes('This version cannot run it yet'));
+  ok('no OpenCode tab', (await page.locator('[data-sw-tab="opencode"]').count()) === 0);
+  ok('Antigravity tab carries its mark', (await page.locator('[data-sw-tab="antigravity"] .sw-tab-mark svg').count()) === 1);
+  await page.click('[data-sw-tab="antigravity"]'); await W(page, 600);
+  {
+    const body = await txt(page, '.sw-body');
+    ok('Antigravity: no placeholder text', !/cannot run it yet|Not available yet/.test(body));
+    ok('Antigravity: not installed state', (await txt(page, '[data-row="antigravity-use"]')).includes('Not installed'));
+    ok('Antigravity: accounts panel', /Accounts/.test(body) && (await page.locator('[data-tab="antigravity"] .sw-acc').count()) === 1);
+    ok('Antigravity: no limit rules', (await page.locator('[data-row^="antigravity-out"]').count()) === 0);
   }
+  await shot(page, 'models-antigravity-notinstalled-1440-dark');
+  // A stand-in agent file on PATH is what the server reads as installed; no account is signed in.
+  writeFileSync(join(bin, 'agy_acp_server.par'), '');
+  await page.click('[data-sw-tab="codex"]'); await W(page);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await page.click('[data-sw-tab="antigravity"]');
+  await page.waitForFunction(() => (document.querySelector('[data-row="antigravity-use"]')?.textContent ?? '').includes('Sign in'), null, { timeout: 40_000 }).catch(() => {});
+  ok('Antigravity: installed, sign in state', (await txt(page, '[data-row="antigravity-use"]')).includes('Sign in'));
+  await shot(page, 'models-antigravity-installed-1440-dark');
 
   // Assistant, Sleep and Super pages: Codex passive in their chips (checked above for Super); the chips exist.
   await go(page, 'super');
