@@ -4,6 +4,17 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.40.1] - 2026-11-02
+
+Patch on 0.40.0. Local build; not published.
+
+- **CI is green again.** Linux and Windows runners: the nested-brain guard matches the names git prints off macOS, the bind check finds `lsof`, Codex, Antigravity, apps and the builder start on Windows, and the credential denies match there. No check was loosened.
+- **Settings > Models > Antigravity shows its real state and accounts.** The OpenCode tab is gone.
+- **The Super Agent knows this Mac's tools and models.** A Codex or Antigravity child's card names its model in the picker's own words, never cut.
+- **Every tool's new session gets the whole snapshot.** Peer mail is bounded, a splitter fault is fixed, and Codex and Antigravity no longer show a false "incomplete" warning.
+- **Side-by-side panes keep their width when you focus one.**
+- **The Super Agent weighs a new idea before saying yes.** It checks it against your earlier decisions and the project's patterns, and says where it breaks; a clear task it just does. Super brief revision 27.
+
 ## [0.40.0] - 2026-11-02
 
 First public release since 0.36.1. It carries every local cut from 0.36.2 to 0.36.15 below, plus:
