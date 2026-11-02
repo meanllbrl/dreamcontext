@@ -4,9 +4,18 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
-## [0.40.1] - 2026-11-02
+## [0.40.2] - 2026-11-02
 
-Patch on 0.40.0. Local build; not published.
+Patch on 0.40.0. It carries 0.40.1, which was cut locally and never published, plus AI Team Waves 1 and 2. Local build; not published.
+
+AI Team:
+
+- **One conversation and one card per member.** Asking a member again continues its conversation; its card counts the jobs ("3 iş") instead of opening a new card each time.
+- **Approval only when it matters.** Your own changes and the Super Agent's need no approval card; a card comes up only for a synced change, a change that widens a member's rights, or a risky change from a background run. A member can be turned on or off without losing its approval.
+- **Review rounds show on the task** and say who they wait on: the reviewer, you, or nobody because it is stuck. A Codex or Antigravity member that cannot run a task step is refused when you assign it.
+- **A project can hold several Super Agents:** the main one plus one per AI Team member, each with its own record, inbox and limits. A member's helpers never run with wider rights than the member, a member cannot read or write another Super's record, and the phone page cannot start a member. The main Super works as before.
+
+From 0.40.1:
 
 - **CI is green again.** Linux and Windows runners: the nested-brain guard matches the names git prints off macOS, the bind check finds `lsof`, Codex, Antigravity, apps and the builder start on Windows, and the credential denies match there. No check was loosened.
 - **Settings > Models > Antigravity shows its real state and accounts.** The OpenCode tab is gone.
