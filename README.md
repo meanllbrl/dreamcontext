@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <sub>Works with <strong>Claude Code</strong> today. Built agent-agnostic.</sub>
+  <sub>Works with <strong>Claude Code</strong>. <strong>Codex</strong> chats in the desktop app; <strong>Antigravity</strong> in beta.</sub>
 </p>
 
 <p align="center">
@@ -185,7 +185,7 @@ irm https://cdn.jsdelivr.net/npm/dreamcontext/install.ps1 | iex
 npm install -g dreamcontext
 ```
 
-> Requires **Node.js >= 18**. Currently supports **Claude Code**.
+> Requires **Node.js >= 18**. Full support for **Claude Code**; Codex and Antigravity chats run in the [desktop app](#desktop-app) (see [Works With](#works-with)).
 
 ```bash
 # One-shot setup: checks this machine first (Node.js, Claude and its sign-in,
@@ -352,7 +352,7 @@ dreamcontext app update       # Update the installed app to the latest release
 dreamcontext app status       # Show installed app version and state
 ```
 
-**One window over all your projects.** The launcher lists every registered [vault](#federation), and opening one adds it to a centered **chip strip** at the top of a single window rather than spawning another window to hunt for. Every open project stays **live**: a background project's chat keeps streaming and its PTY never remounts, because visibility is not allowed to touch a WebSocket. Each chip reports what its project is doing at a glance, rolled up from that project's live sessions into asking / working / idle, and a project whose agent is waiting on you bounces the way an app bounces in the Dock, firing a native banner even when the window is already focused. Hold ⌥ and press Tab to walk the strip and release to switch (Control chords stay with the terminal, where ⌃C and ⌃D belong); ⇧-click a project to spread it into its own window anyway. Six projects stay hot at once and idle ones evict to cold chips, so the window does not degrade as you open more. Per-project status dots (green up-to-date / yellow needs-update / red folder-gone) let you update from the UI.
+**One window over all your projects.** The launcher lists every registered [vault](#federation), and opening one adds it to a centered **chip strip** at the top of a single window rather than spawning another window to hunt for. Every open project stays **live**: a background project's chat keeps streaming and its PTY never remounts, because visibility is not allowed to touch a WebSocket. Each chip reports what its project is doing at a glance, rolled up from that project's live sessions into asking / working / idle, and a project whose agent is waiting on you bounces the way an app bounces in the Dock, firing a native banner even when the window is already focused. Hold ⌥ and press Tab to walk the strip and release to switch (Control chords stay with the terminal, where ⌃C and ⌃D belong); ⇧-click a project to spread it into its own window anyway. Six projects stay hot at once and idle ones evict to cold chips, so the window does not degrade as you open more. Per-project status dots show green up-to-date, yellow behind, red folder gone; when the CLI or the app changes version, every registered project updates itself on the next start, and one with an agent at work waits its turn.
 
 **Onboarding without a terminal.** The first launch sets your Mac up for you. No Node.js? The opening screen hands over to a short setup that downloads a private, checksum-verified copy just for dreamcontext, then the app starts. The Launcher greets you with a short welcome that says what dreamcontext is, then walks three steps. **This Mac** checks everything Claude needs (dreamcontext in Terminal, Claude and its sign-in, Git, GitHub) and fixes it with one **Set everything up** button: Git's install starts first and keeps going in the background, Claude signs in through your browser, GitHub through a short code (or reuses the GitHub command line tool's sign-in when it already has one). **Project** creates a new folder (making `~/projects` if it is missing), sets up a folder you already have (counting its documents for Claude to read in, and offering Git), or clones one of your GitHub repositories. **Start with Claude** opens the project and starts the conversation that builds its brain with you, so there is no prompt to copy and paste. Calm motion in the splash's style, and none at all with Reduce Motion on.
 
@@ -916,7 +916,10 @@ dreamcontext notify <title> [body] [--session <id> | --session-stdin | --automat
 - **Web Dashboard & Desktop App** — ship with the package / desktop release ([Dashboard](#dashboard), [Desktop App](#desktop-app)).
 - **Obsidian** — `_dream_context/` opens as a vault with curated graph settings scaffolded at init.
 
-More agents coming soon — the brain is platform-neutral; only the thin hook/skill layer is per-platform.
+- **Codex**: chats in the desktop app with our skills, Claude's agents as Codex sub-agents, Plan mode, question and permission cards, stop and resume, all seen on a real account. Your tool servers reach its chats too. Work outside the chat (sleep, automations, AI Team agents) is experimental: built and tested, not yet proven on a real account. Automations run without network. Row by row: [`docs/tool-parity.md`](docs/tool-parity.md).
+- **Antigravity** _(beta, experimental)_: chats, a write gate and skills, proven on one account so far; sleep, automations and AI Team agents on it are tested only against a stand-in agent. It cannot stop a single sub-agent, take a message during a running turn (it goes in as the next turn) or sign in to a tool server from the chat.
+
+The brain is platform-neutral; only the thin hook/skill layer is per-platform.
 
 ## Why It's Built This Way
 
