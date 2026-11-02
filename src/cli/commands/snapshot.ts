@@ -4,6 +4,12 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { listApps } from '../../lib/apps/registry.js';
+import { appDataDir, scanAppData } from '../../lib/apps/data-dir.js';
+import { dataLostWithBackup } from '../../lib/apps/data-backup.js';
+import { countFindings } from '../../lib/apps/learn-queue.js';
+
+/** The `## Apps` line's cap (plan-veri K3). */
+export const APPS_LINE_MAX = 300;
 import fg from '../../lib/glob.js';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { resolveVaultContextRoot, VaultError } from '../../lib/vaults.js';
@@ -1870,7 +1876,7 @@ export function measureSnapshot(
   parts.push('');
   flushPinned('awareness');
 
-  // dreamcontext Apps: ONE line, this project's apps by slug and name (no state), ~200 bytes.
+  // dreamcontext Apps: ONE line, this project's apps by slug and name plus counts (no state), ≤300 bytes.
   // A registry that cannot be read drops the line; it never breaks the snapshot.
   const appsLine = appsSnapshotLine(root);
   if (appsLine) {
@@ -2997,18 +3003,35 @@ export function registerSnapshotCommand(program: Command): void {
     });
 }
 
-/** `- meta-ads (Meta Ads), crm (CRM) · actions: dreamcontext apps actions <slug>`, or null. */
+/** Counts only, never a file name or content (plan-veri K3): data files, findings waiting, warnings. */
+function appFacts(projectRoot: string, slug: string, hash: string, home: string): string {
+  const facts: string[] = [];
+  try {
+    const dir = appDataDir(projectRoot, slug);
+    const scan = existsSync(dir) ? scanAppData(dir, { maxEntries: 500 }) : null;
+    if (scan && scan.files) facts.push(`${scan.files}${scan.truncated ? '+' : ''} data file${scan.files === 1 ? '' : 's'}`);
+    if (scan?.instruction) facts.push('⚠ instruction file in data');
+    if ((!scan || !scan.files) && dataLostWithBackup(home, hash, dir)) facts.push(`⚠ data gone, backup: \`dreamcontext apps restore ${slug}\``);
+  } catch { /* the count drops, the line stays */ }
+  const n = countFindings(home, hash);
+  if (n) facts.push(`${n} finding${n === 1 ? ' waits' : 's wait'} for sleep`);
+  return facts.length ? ` · ${facts.join(' · ')}` : '';
+}
+
+/** `- meta-ads (Meta Ads · 2 data files), crm (CRM) · actions: dreamcontext apps actions <slug>`, or null. */
 export function appsSnapshotLine(contextRoot: string, home?: string): string | null {
   try {
     const projectRoot = dirname(contextRoot);
-    const apps = listApps(home ?? homedir(), projectRoot);
+    const h = home ?? homedir();
+    const apps = listApps(h, projectRoot);
     if (!apps.length) return null;
     const tail = ' · actions: `dreamcontext apps actions <slug>`';
     let names = '';
     let shown = 0;
     for (const a of apps) {
-      const piece = `${shown ? ', ' : ''}${a.slug} (${a.name.replace(/[\r\n`]/g, ' ').slice(0, 40)})`;
-      if (names.length + piece.length + tail.length > 200) break;
+      const piece = `${shown ? ', ' : ''}${a.slug} (${a.name.replace(/[\r\n`]/g, ' ').slice(0, 40)}${appFacts(a.projectRoot, a.slug, a.hash, h)})`;
+      // Room kept for the ` +NN more` an overflow adds.
+      if (Buffer.byteLength(names + piece + tail) + 10 > APPS_LINE_MAX) break;
       names += piece;
       shown++;
     }

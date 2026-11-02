@@ -2,7 +2,7 @@ import { getRunTarget } from '../../lib/automations/store.js';
 import { Command } from 'commander';
 import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { findPackageDir } from '../../lib/catalog.js';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -17,6 +17,35 @@ import { notifierIconPath, NOTIFY_SOUND_FAILED } from '../../lib/automations/not
 import { notifyFromApp } from '../../lib/apps/app-notify.js';
 import { acquireScheduleRunLock, appendRun, readScheduleState } from '../../lib/apps/schedule.js';
 import { sdkSource } from '../../server/apps/gateway-w3.js';
+import { appDataDir, ensureAppDataDir } from '../../lib/apps/data-dir.js';
+import { backupAppData, listBackups, restoreAppData } from '../../lib/apps/data-backup.js';
+import { appendFinding, doneThrough, listFindings } from '../../lib/apps/learn-queue.js';
+
+/** The first line every copy of the SDK carries: a file without it is the app's own, left alone. */
+export const SDK_HEADER = '// dreamcontext App SDK';
+
+/** The app's `lib/dc.mjs` against this install's SDK. */
+export function sdkCopyState(appRoot: string): 'current' | 'stale' | 'missing' | 'not_sdk' {
+  const p = join(appRoot, 'lib', 'dc.mjs');
+  let text: string;
+  try {
+    if (lstatSync(p).isSymbolicLink()) return 'not_sdk';
+    text = readFileSync(p, 'utf-8');
+  } catch { return 'missing'; }
+  if (!text.startsWith(SDK_HEADER)) return 'not_sdk';
+  return text === sdkSource() ? 'current' : 'stale';
+}
+
+/** Is the app's backend up right now? Unknown (no server) counts as not running: no server, no backend. */
+async function backendRunning(p: ProjectRef, slug: string): Promise<boolean> {
+  try {
+    const r = await appsApi(p, 'GET', `/api/apps/${encodeURIComponent(slug)}/status`, undefined, { launch: false, timeoutMs: 5000 });
+    return ['running', 'starting', 'updating'].includes(String(r.state ?? ''));
+  } catch (e) {
+    if (e instanceof AppsClientError && (e.code === 'dreamcontext_not_running' || e.code === 'app_not_found')) return false;
+    throw e;
+  }
+}
 
 /**
  * `dreamcontext apps …`: dreamcontext Apps, project-owned local web apps that open in their
@@ -116,7 +145,18 @@ export function registerAppsCommand(program: Command): void {
         if (!APP_SLUG_RE.test(slug)) throw new AppsClientError('bad_slug', 'Use lowercase letters, digits and dashes, starting with a letter.');
         const root = appRootFor(p.projectRoot, slug);
         const name = opts.name?.trim() || slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-        if (existsSync(join(root, MANIFEST_FILE))) throw new AppsClientError('app_exists', `${root} already holds an app.`);
+        if (existsSync(join(root, MANIFEST_FILE))) {
+          // A removed app (plan-veri K5): its code and data stayed; registering it again brings both back.
+          if (getApp(homedir(), p.projectRoot, slug)) throw new AppsClientError('app_exists', `${root} already holds an app.`);
+          const old = readManifest(root);
+          if (!old.ok || old.manifest.slug !== slug) throw new AppsClientError('app_exists', `${root} already holds an app that is not "${slug}".`);
+          const rec = registerApp(homedir(), { projectRoot: p.projectRoot, vault: p.vault, slug, name: old.manifest.name, root });
+          try { allowAppDir(p.projectRoot, rec.root); } catch { /* the agent asks for the folder instead */ }
+          success(`App "${old.manifest.name}" registered again from ${rec.root}`);
+          if (existsSync(appDataDir(p.projectRoot, slug))) info(`Its data is back: ${appDataDir(p.projectRoot, slug)}`);
+          info(`Open it: dreamcontext apps open ${slug}`);
+          return;
+        }
         const template = findPackageDir('skill-apps') ? join(findPackageDir('skill-apps') as string, 'template') : null;
         const esc = (v: string) => v.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
         if (template && existsSync(template)) {
@@ -225,7 +265,8 @@ export function registerAppsCommand(program: Command): void {
   apps
     .command('validate [slug]')
     .description('Check an app manifest and say how to fix each problem (no server needed)')
-    .action((slug: string | undefined) => {
+    .option('--fix-sdk', "Replace the app's lib/dc.mjs with this install's SDK (only a file that is the SDK)")
+    .action((slug: string | undefined, opts: { fixSdk?: boolean }) => {
       try {
         let root: string;
         const p = project();
@@ -251,6 +292,15 @@ export function registerAppsCommand(program: Command): void {
         if (role) {
           console.log(`error ${role.field}: ${role.problem}. Fix: ${role.fix}`);
           process.exit(1);
+        }
+        const sdk = sdkCopyState(root);
+        if (sdk === 'stale' && opts.fixSdk) {
+          writeFileSync(join(root, 'lib', 'dc.mjs'), sdkSource());
+          console.log('fixed lib/dc.mjs: now this install\'s SDK');
+        } else if (sdk === 'stale') {
+          console.log(`warning lib/dc.mjs: older than this install's SDK. Fix: dreamcontext apps validate ${m.manifest.slug} --fix-sdk`);
+        } else if (sdk === 'not_sdk' && opts.fixSdk) {
+          console.log("warning lib/dc.mjs: not the dreamcontext SDK (no SDK header); left alone");
         }
         if (isDefaultIcon(m.manifest.icon, m.manifest.slug, m.manifest.name)) {
           console.log(`warning icon: still the placeholder letter from \`apps new\`. Draw this app's own icon (/apps).`);
@@ -425,6 +475,95 @@ export function registerAppsCommand(program: Command): void {
         await notify(false, `${id} ${lost ? 'did not report back' : 'failed'}: ${(e as Error).message}`.slice(0, 200));
         process.exit(1);
       }
+    });
+
+  apps
+    .command('backup <slug>')
+    .description("Back up the app's data folder now, outside every repo (~/.dreamcontext/apps/backup/)")
+    .action(async (slug: string) => {
+      try {
+        const p = project();
+        const rec = getApp(homedir(), p.projectRoot, slug);
+        if (!rec) throw new AppsClientError('app_not_found', `No app "${slug}" in this project.`);
+        const r = await backupAppData(homedir(), rec.hash, appDataDir(p.projectRoot, slug), { reason: 'manual' });
+        if (r.ok) success(`${slug}: backed up ${r.files} files as ${r.stamp}`);
+        else if ('skipped' in r) info(`${slug}: no backup made (${r.skipped})`);
+        else throw new AppsClientError('backup_failed', r.error);
+      } catch (e) { fail(e); }
+    });
+
+  apps
+    .command('restore <slug>')
+    .description("Put a backup back as the app's data folder (the current data is backed up first)")
+    .option('--at <stamp>', 'Which backup (default: the newest)')
+    .option('--list', 'List the backups and change nothing')
+    .action(async (slug: string, opts: { at?: string; list?: boolean }) => {
+      try {
+        const p = project();
+        const rec = getApp(homedir(), p.projectRoot, slug);
+        if (!rec) throw new AppsClientError('app_not_found', `No app "${slug}" in this project.`);
+        const all = listBackups(homedir(), rec.hash);
+        if (opts.list) {
+          if (!all.length) { info(`${slug}: no backup yet`); return; }
+          for (const b of all) console.log(`${b.stamp}  ${b.files} files  ${Math.ceil(b.bytes / 1024)} KB  (${b.reason})`);
+          return;
+        }
+        if (await backendRunning(p, slug)) throw new AppsClientError('app_running', `Stop it first: dreamcontext apps stop ${slug}`);
+        const r = await restoreAppData(homedir(), rec, { at: opts.at });
+        if (!r.ok) throw new AppsClientError(r.code, r.message);
+        success(`${slug}: data restored from ${r.stamp} (${r.files} files) into ${ensureAppDataDir(p.projectRoot, slug)}`);
+        if (r.previous) info(`What was there is backup ${r.previous}: dreamcontext apps restore ${slug} --at ${r.previous}`);
+      } catch (e) { fail(e); }
+    });
+
+  apps
+    .command('learn <slug> <text...>')
+    .description('Queue one finding of this app for sleep (its assistant\'s verb; the text is data, at most 600 characters)')
+    .action((slug: string, words: string[]) => {
+      try {
+        const p = resolveProject();
+        const rec = getApp(homedir(), p.projectRoot, slug);
+        if (!rec) throw new AppsClientError('app_not_found', `No app "${slug}" in this project.`);
+        const r = appendFinding(homedir(), rec.hash, { source: 'assistant', text: words.join(' ') });
+        if (!r.ok) throw new AppsClientError(r.code, r.code === 'learn_full' ? 'Twenty findings already wait for sleep.' : 'An empty finding.');
+        success(`queued ${r.id}: sleep turns it into knowledge/apps/${slug}.md`);
+      } catch (e) { fail(e); }
+    });
+
+  apps
+    .command('learn-list <slug>', { hidden: true })
+    .description("The app's queued findings, fenced as untrusted data (sleep-product reads this)")
+    .option('--json', 'JSON output')
+    .action((slug: string, opts: { json?: boolean }) => {
+      try {
+        const p = resolveProject();
+        const rec = getApp(homedir(), p.projectRoot, slug);
+        if (!rec) throw new AppsClientError('app_not_found', `No app "${slug}" in this project.`);
+        const all = listFindings(homedir(), rec.hash);
+        const body = opts.json ? JSON.stringify(all, null, 2) : all.map((f) => `${f.id} ${f.at} [${f.source}] ${f.text}`).join('\n') || '(none)';
+        console.log(fenced('findings UNTRUSTED CONTENT', body));
+      } catch (e) { fail(e); }
+    });
+
+  apps
+    .command('learn-done <slug>', { hidden: true })
+    .description('Drop the findings sleep wrote into knowledge/apps/<slug>.md, up to and including --through')
+    .requiredOption('--through <id>', 'The last processed finding id')
+    .action((slug: string, opts: { through: string }) => {
+      try {
+        const p = resolveProject();
+        const rec = getApp(homedir(), p.projectRoot, slug);
+        if (!rec) throw new AppsClientError('app_not_found', `No app "${slug}" in this project.`);
+        const hit = listFindings(homedir(), rec.hash).find((f) => f.id === opts.through);
+        if (!hit) throw new AppsClientError('finding_not_found', `No queued finding ${opts.through}.`);
+        const note = join(p.projectRoot, '_dream_context', 'knowledge', 'apps', `${slug}.md`);
+        let mtime = 0;
+        try { const st = lstatSync(note); if (st.isFile() && !st.isSymbolicLink()) mtime = statSync(note).mtimeMs; } catch { /* missing */ }
+        if (!mtime) throw new AppsClientError('note_missing', `Write ${note} first; the queue empties only after the note holds the findings.`);
+        if (mtime <= Date.parse(hit.at)) throw new AppsClientError('note_stale', `${note} is older than ${opts.through}: write the findings into it first.`);
+        const r = doneThrough(homedir(), rec.hash, opts.through);
+        success(`${slug}: ${r.removed} finding(s) done`);
+      } catch (e) { fail(e); }
     });
 
   apps

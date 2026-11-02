@@ -23,7 +23,9 @@ import { knownMcpServers, removeLeanMcpConfig, writeLeanMcpConfig } from '../sup
 import { LISTED_VERBS, type BashGateContext } from './bash-gate.js';
 import { gateFilePath, type AppChatRecord } from './chat-store.js';
 import { MANIFEST_FILE, ROLE_FILE, cleanText, readManifest, roleFileProblem, type AppManifest } from './manifest.js';
-import { appChatsDir, appDataDir, appsHome, getApp, real, registryPath } from './registry.js';
+import { appChatsDir, appsHome, getApp, real, registryPath } from './registry.js';
+import { AppDataError, appsDataRoot, contextRootOf, ensureAppDataDir } from './data-dir.js';
+import { FILE_GATE_MATCHER } from './write-gate.js';
 
 /** The role's cap: the same trust as the backend command, kept small because it rides every turn. */
 export const ROLE_MAX_CHARS = 8000;
@@ -91,28 +93,58 @@ function childRules(dir: string, skip: ReadonlySet<string>): string[] {
 }
 
 /**
- * Credential reads. A deny outranks an allow, so "all of `~/.dreamcontext` minus the data dir"
- * cannot be written: its children are enumerated, other apps' data dirs and the Assistant's hidden
- * vault included, and `assistant` is named even before it exists.
+ * Credential reads. A deny outranks an allow. The app's data no longer lives in `~/.dreamcontext`
+ * (plan-veri: `_dream_context/apps/<slug>/`), so all of `~/.dreamcontext/apps` is denied, the
+ * findings queue and the data backup named even before they exist; the other children of
+ * `~/.dreamcontext` are enumerated and `assistant` is named. Other apps' data folders in the
+ * brain are enumerated too (the file gate covers the ones made later).
  */
-export function appCredentialDenies(home: string, hash: string): string[] {
+export function appCredentialDenies(home: string, own: { projectRoot: string; slug: string }): string[] {
   const dc = join(home, '.dreamcontext');
   const apps = appsHome(home);
   return [
     ...credentialHomeDirs().filter((d) => d !== '.dreamcontext').map((d) => `Read(/${rulePath(join(home, d))}/**)`),
     ...CREDENTIAL_HOME_FILES.map((f) => `Read(/${rulePath(join(home, f))})`),
     `Read(/${rulePath(join(dc, 'assistant'))}/**)`,
+    `Read(/${rulePath(apps)}/**)`,
+    `Read(/${rulePath(join(apps, 'learn'))}/**)`,
+    `Read(/${rulePath(join(apps, 'backup'))}/**)`,
     ...childRules(dc, new Set(['apps', 'assistant'])),
-    ...childRules(apps, new Set(['data'])),
-    ...childRules(join(apps, 'data'), new Set([hash])),
+    ...childRules(appsDataRoot(own.projectRoot), new Set([own.slug])),
     ...[...CREDENTIAL_ANYWHERE, ...APP_CREDENTIAL_FILES].map((g) => `Read(//${g})`),
   ];
 }
 
-/** Root-anchored write denies: they outrank Allow, whatever a card or a project rule says. */
-export function appWriteDenies(input: { projectRoot: string; appRoot: string; dataDir: string; home: string }): string[] {
+function writeChildRules(dir: string, skip: ReadonlySet<string>): string[] {
+  let names: string[];
+  try { names = readdirSync(dir); } catch { return []; }
+  const rules: string[] = [];
+  for (const name of names) {
+    if (skip.has(name)) continue;
+    let isDir = false;
+    try { isDir = statSync(join(dir, name)).isDirectory(); } catch { /* a dangling entry: as a file */ }
+    const p = rulePath(join(dir, name)) + (isDir ? '/**' : '');
+    // A name the login shell would expand (`notes!.md`, Finder's `Icon\r`) gets no belt rule
+    // rather than refusing the whole chat: the file gate decides every write anyway.
+    if (unsafeRule(p)) continue;
+    rules.push(`Edit(/${p})`, `Write(/${p})`);
+  }
+  return rules;
+}
+
+/**
+ * Root-anchored write denies: they outrank Allow, whatever a card or a project rule says. The
+ * project is no longer denied whole (the data folder is inside it): its children are enumerated
+ * down the data folder's chain, a belt under the file gate, which decides every call.
+ */
+export function appWriteDenies(input: { projectRoot: string; appRoot: string; dataDir: string; home: string; slug: string }): string[] {
+  const contextRoot = contextRootOf(input.projectRoot);
+  const belt = [
+    ...writeChildRules(input.projectRoot, new Set(['_dream_context'])),
+    ...writeChildRules(contextRoot, new Set(['apps'])),
+    ...writeChildRules(appsDataRoot(input.projectRoot), new Set([input.slug])),
+  ];
   const paths = [
-    `${input.projectRoot}/**`,
     join(input.appRoot, ROLE_FILE),
     join(input.appRoot, MANIFEST_FILE),
     `${input.appRoot}/.claude/**`,
@@ -120,15 +152,23 @@ export function appWriteDenies(input: { projectRoot: string; appRoot: string; da
     `${appChatsDir(input.home)}/**`,
     registryPath(input.home),
   ];
-  return paths.map((p) => rulePath(p)).flatMap((p) => [`Edit(/${p})`, `Write(/${p})`]);
+  return [...belt, ...paths.map((p) => rulePath(p)).flatMap((p) => [`Edit(/${p})`, `Write(/${p})`])];
+}
+
+function gateCommand(cli: readonly string[], verb: string, gateFile: string): string {
+  const call = [...cli.map((c) => `"${c}"`), 'hook', verb, `"${gateFile}"`].join(' ');
+  return `o=$(${call}) || exit 2; case "$o" in '{'*'}') printf '%s' "$o";; *) exit 2;; esac`;
 }
 
 /** The per-chat PreToolUse hook. Fails closed on everything it can see: a missing CLI, a non-zero
  *  exit, empty or noisy stdout all exit 2. Only a timeout stays open (R7). */
 export function appBashGateHook(cli: readonly string[], gateFile: string): { PreToolUse: unknown[] } {
-  const call = [...cli.map((c) => `"${c}"`), 'hook', 'app-bash-gate', `"${gateFile}"`].join(' ');
-  const command = `o=$(${call}) || exit 2; case "$o" in '{'*'}') printf '%s' "$o";; *) exit 2;; esac`;
-  return { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command, timeout: 30 }] }] };
+  return { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: gateCommand(cli, 'app-bash-gate', gateFile), timeout: 30 }] }] };
+}
+
+/** The file gate (write-gate.ts) on the file tools, for both an own assistant and a bound member. */
+export function appFileGateHook(cli: readonly string[], gateFile: string): { PreToolUse: unknown[] } {
+  return { PreToolUse: [{ matcher: FILE_GATE_MATCHER, hooks: [{ type: 'command', command: gateCommand(cli, 'app-write-gate', gateFile), timeout: 30 }] }] };
 }
 
 /** The running CLI, absolute: node plus its entry, so a Finder-started server needs no PATH. */
@@ -189,15 +229,35 @@ export function prepareAppChat(record: AppChatRecord, opts: { projectRoot: strin
   if (!rec || rec.hash !== record.hash) return refuse('this app is not registered any more');
   const m = readManifest(rec.root);
   if (!m.ok) return refuse(`its manifest is broken: ${m.errors.map((e) => `${e.field}: ${e.problem}`).join('; ')}`);
-  const dataDir = appDataDir(home, rec.hash);
-  const denied = [
-    ...appDeniedTools(),
-    ...appWriteDenies({ projectRoot, appRoot: rec.root, dataDir, home }),
-    ...appCredentialDenies(home, rec.hash),
-  ];
-  const baseEnv = { [AGENT_CHAT_ENV]: `app-${rec.slug}` };
   const pathProblem = forbiddenPathReason('app', rec.root) ?? forbiddenPathReason('project', projectRoot);
   if (pathProblem) return refuse(pathProblem);
+  // The data folder, privacy first: a symlinked step (or an ignore that did not land) opens no chat.
+  let dataDir: string;
+  try { dataDir = ensureAppDataDir(projectRoot, rec.slug); } catch (err) {
+    return refuse(err instanceof AppDataError ? `its data folder cannot be used (${err.message})` : `its data folder cannot be made (${(err as NodeJS.ErrnoException).code ?? (err as Error).message})`);
+  }
+  const denied = [
+    ...appDeniedTools(),
+    ...appWriteDenies({ projectRoot, appRoot: rec.root, dataDir, home, slug: rec.slug }),
+    ...appCredentialDenies(home, { projectRoot, slug: rec.slug }),
+  ];
+  const baseEnv = { [AGENT_CHAT_ENV]: `app-${rec.slug}` };
+  // The hook line runs in bash (Git Bash on Windows), where a forward-slash `C:/...` is the same
+  // file and a backslash would be an escape: the install path rides with forward slashes there.
+  const cli = (opts.cli ?? ownCliCommand()).map((c) => (process.platform === 'win32' ? c.replace(/\\/g, '/') : c));
+  if (!cli.every(Boolean)) return refuse('the dreamcontext install path is unknown');
+  if (cli.some(unsafeRule)) return refuse('the dreamcontext install path is not shell-safe');
+  const context: BashGateContext = { slug: rec.slug, appRoot: rec.root, dataDir, projectRoot, home, actions: m.manifest.actions.filter((a) => !a.danger).map((a) => a.id) };
+  const gateFile = gateFilePath(record.id, home);
+  const hookGateFile = process.platform === 'win32' ? gateFile.replace(/\\/g, '/') : gateFile;
+  try {
+    mkdirSync(appChatsDir(home), { recursive: true, mode: 0o700 });
+    if (existsSync(gateFile) && lstatSync(gateFile).isSymbolicLink()) return refuse('its gate file is a symlink');
+    writeFileSync(gateFile, JSON.stringify(context), { encoding: 'utf-8', mode: 0o600 });
+  } catch (err) {
+    return refuse(`its chat could not be prepared (${(err as NodeJS.ErrnoException).code ?? (err as Error).message})`);
+  }
+  const fileGate = appFileGateHook(cli, hookGateFile);
 
   if (record.member) {
     const contextRoot = join(projectRoot, '_dream_context');
@@ -217,7 +277,7 @@ export function prepareAppChat(record: AppChatRecord, opts: { projectRoot: strin
       app: {
         slug: rec.slug, name: m.manifest.name, hash: rec.hash, appRoot: rec.root, dataDir, own: false, member: record.member,
         briefing: prep.briefing, permissionMode, allowed: [], denied: all, addDirs: [rec.root, dataDir], mcpConfig: null, settingSources: null,
-        env: { ...prep.env, ...baseEnv }, hooks: null, dispose: prep.dispose,
+        env: { ...prep.env, ...baseEnv }, hooks: fileGate, dispose: prep.dispose,
       },
     };
   }
@@ -227,22 +287,11 @@ export function prepareAppChat(record: AppChatRecord, opts: { projectRoot: strin
   let role: string;
   try { role = sanitizeAutomationPrompt(readFileSync(join(rec.root, ROLE_FILE), 'utf-8')).trim().slice(0, ROLE_MAX_CHARS); } catch { return refuse(`${ROLE_FILE} cannot be read`); }
 
-  // The hook line runs in bash (Git Bash on Windows), where a forward-slash `C:/...` is the same
-  // file and a backslash would be an escape: the install path rides with forward slashes there.
-  const cli = (opts.cli ?? ownCliCommand()).map((c) => (process.platform === 'win32' ? c.replace(/\\/g, '/') : c));
-  if (!cli.every(Boolean)) return refuse('the dreamcontext install path is unknown');
-  if (cli.some(unsafeRule)) return refuse('the dreamcontext install path is not shell-safe');
   const allowed = appAllowedTools({ slug: rec.slug, dataDir, actions: m.manifest.actions, readTools: m.manifest.agent?.readTools ?? [] });
   if ([...allowed, ...denied].some(unsafeRule)) return refuse('its folders contain a character the shell would expand');
 
   let mcpConfig: string | null = null;
-  const context: BashGateContext = { slug: rec.slug, appRoot: rec.root, dataDir, actions: m.manifest.actions.filter((a) => !a.danger).map((a) => a.id) };
-  const gateFile = gateFilePath(record.id, home);
   try {
-    mkdirSync(dataDir, { recursive: true });
-    mkdirSync(appChatsDir(home), { recursive: true, mode: 0o700 });
-    if (existsSync(gateFile) && lstatSync(gateFile).isSymbolicLink()) return refuse('its gate file is a symlink');
-    writeFileSync(gateFile, JSON.stringify(context), { encoding: 'utf-8', mode: 0o600 });
     const known = knownMcpServers(projectRoot, home);
     mcpConfig = writeLeanMcpConfig(m.manifest.mcp.filter((n) => known.has(n)), known);
   } catch (err) {
@@ -256,7 +305,8 @@ export function prepareAppChat(record: AppChatRecord, opts: { projectRoot: strin
       slug: rec.slug, name: m.manifest.name, hash: rec.hash, appRoot: rec.root, dataDir, own: true, member: null,
       briefing: ownBriefing(cleanText(m.manifest.name, 60), role),
       permissionMode: 'default', allowed, denied, addDirs: [rec.root, dataDir], mcpConfig,
-      settingSources: 'project', env: baseEnv, hooks: appBashGateHook(cli, process.platform === 'win32' ? gateFile.replace(/\\/g, '/') : gateFile),
+      settingSources: 'project', env: baseEnv,
+      hooks: { PreToolUse: [...appBashGateHook(cli, hookGateFile).PreToolUse, ...fileGate.PreToolUse] },
       dispose: () => removeLeanMcpConfig(mcpConfig),
     },
   };

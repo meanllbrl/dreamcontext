@@ -5,6 +5,8 @@ import { buildGraph } from '../../lib/graph.js';
 import { readFrontmatter } from '../../lib/frontmatter.js';
 import { sendJson, sendError } from '../middleware.js';
 import { serveMedia } from '../media.js';
+import { isPhoneSocket } from '../phone-origin.js';
+import { isInsideAppsData } from '../../lib/apps/data-dir.js';
 
 /**
  * GET /api/graph — return the full context graph (nodes + links).
@@ -104,6 +106,12 @@ export async function handleGraphContentGet(
   const absTarget = resolve(absRoot, normalize(rawPath));
   if (!absTarget.startsWith(absRoot + sep) && absTarget !== absRoot) {
     sendError(res, 400, 'invalid_path', 'Path escapes context root.');
+    return;
+  }
+
+  // App data (plan-veri K3) is never served to a phone, by any spelling of the path.
+  if (isPhoneSocket(req) && isInsideAppsData(contextRoot, absTarget)) {
+    sendError(res, 400, 'invalid_path', 'That path cannot be read.');
     return;
   }
 

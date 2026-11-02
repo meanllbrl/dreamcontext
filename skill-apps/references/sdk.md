@@ -17,6 +17,7 @@ import { dc } from './lib/dc.mjs';
 | `dc.roadmap.get()` / `.objectives()` | ✓ | ✓ | |
 | `dc.team.list()` | ✓ (narrowed) | ✓ | the AI Team |
 | `dc.ask(text)` | ✗ | ✓ | the app's assistant answers one question, `{ok, answer}` or `{ok:false, code}`. Read-only: it reads the app's files and runs nothing. Own assistant or bound member, same call. 3 at once, 20 a minute |
+| `dc.learn(text)` | ✗ | ✓ | one lesson this app learned (≤600 characters, no personal data) for sleep, which writes `knowledge/apps/<slug>.md`; `{ok, id}`, 20 waiting → `learn_full` |
 | `dc.team.ask(member, text)` | ✗ | ✓ | a fresh run of that agent, labelled "from the app" |
 | `dc.team.thread(member)` | ✗ | ✓ | |
 | `dc.mcp.call(server, tool, args)` | ✗ | ✓ | key-based MCP only (no Claude, no OAuth connectors) |

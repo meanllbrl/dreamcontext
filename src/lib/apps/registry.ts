@@ -6,7 +6,8 @@
  *
  * An app's code lives NEXT to its project, never in the brain:
  *   <dirname(projectRoot)>/<basename(projectRoot)>-apps/<slug>/   (its own git)
- * Its data lives in `~/.dreamcontext/apps/data/<hash>/` (DC_DATA_DIR).
+ * Its data lives in the brain, `<project>/_dream_context/apps/<slug>/` (DC_DATA_DIR, data-dir.ts),
+ * ignored by git: it never leaves this Mac.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -50,9 +51,6 @@ export function registryPath(home: string = homedir()): string {
 /** `~/.dreamcontext/apps/chats/`: one record per app conversation (chat-store.ts). */
 export function appChatsDir(home: string = homedir()): string {
   return join(appsHome(home), 'chats');
-}
-export function appDataDir(home: string, hash: string): string {
-  return join(appsHome(home), 'data', hash);
 }
 
 /** Where an app's code goes: beside the project, in `<project>-apps/<slug>/`. */

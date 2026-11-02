@@ -153,6 +153,12 @@ export const dc = {
     }
     return { ok: false, code: 'ask_timeout', message: 'The assistant took too long.' };
   },
+  /**
+   * Tell dreamcontext one thing this app learned (a decision, a pattern, a lesson; at most 600
+   * characters, no personal data). Sleep turns it into the brain's knowledge/apps/<slug>.md.
+   * Backend only. Returns {ok: true, id}; 20 waiting findings answer `learn_full`.
+   */
+  learn: (text) => { backendOnly('dc.learn'); return call('POST', '/__dc/learn', { text }); },
   mcp: {
     /** Call a key-based MCP server named in the manifest's `mcp` list. Backend only. */
     call: (server, tool, args = {}) => { backendOnly('dc.mcp.call'); return call('POST', `/__dc/mcp/${enc(server)}/${enc(tool)}`, args); },

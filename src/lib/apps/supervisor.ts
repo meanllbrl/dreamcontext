@@ -36,7 +36,9 @@ import { join, relative, sep, win32 } from 'node:path';
 import http from 'node:http';
 import net from 'node:net';
 import { readManifest, type AppManifest, type ManifestProblem } from './manifest.js';
-import { appDataDir, type AppRecord } from './registry.js';
+import { type AppRecord } from './registry.js';
+import { AppDataError, appDataDir, ensureAppDataDir, migrateAppData, scanAppData } from './data-dir.js';
+import { backupAppData } from './data-backup.js';
 import { LineLog, makeRedactor, parseDotenv, type Redactor, type SecretValue } from './redact.js';
 import { killPortable, win32PowerShell, win32System32 } from '../proc.js';
 
@@ -70,7 +72,12 @@ export interface SupervisorDeps {
   now?: () => number;
   /** Turn the file watch off (tests). */
   noWatch?: boolean;
+  /** Turn the data backup off (tests). */
+  noBackup?: boolean;
 }
+
+/** While a backend runs, its data is backed up this often (only when something changed). */
+export const BACKUP_INTERVAL_MS = 30 * 60_000;
 
 interface Backend {
   child: ChildProcess;
@@ -266,6 +273,7 @@ export class AppRuntime {
   private updates: number[] = [];
   private starting: Promise<void> | null = null;
   private bindTimer: NodeJS.Timeout | null = null;
+  private backupTimer: NodeJS.Timeout | null = null;
   private lastSweep = 0;
   /** A window being opened (launch-window), before its first heartbeat: holds the backend, is no window. */
   private launchHoldAt = 0;
@@ -418,6 +426,9 @@ export class AppRuntime {
       if (!this.deps.noWatch) this.startWatch();
       return;
     }
+    if (!this.prepareData()) return;
+    await this.backup('start');
+    if (mine !== this.epoch) return;
     const built = await this.runBuild();
     if (mine !== this.epoch || !built) return;
     const b = await this.spawnBackend();
@@ -428,7 +439,48 @@ export class AppRuntime {
     this.backend = b;
     this.state = 'running';
     this.scheduleBindRecheck();
+    this.scheduleBackup();
     if (!this.deps.noWatch) this.startWatch();
+  }
+
+  /**
+   * The data folder before a backend may use it (plan-veri K1, K3): the old folder moved in,
+   * privacy written, the chain checked, nothing a link or an agent instruction inside. Sets the
+   * error and returns false otherwise.
+   */
+  private prepareData(): boolean {
+    const mig = migrateAppData(this.home, this.rec);
+    if (mig.status === 'refused') { this.setError(`${mig.code}: ${mig.message}`); return false; }
+    if (mig.status === 'moved') this.log.push(`[dreamcontext] data moved from ${mig.from} to ${mig.to}`);
+    let dir: string;
+    try { dir = ensureAppDataDir(this.rec.projectRoot, this.rec.slug); } catch (e) {
+      this.setError(e instanceof AppDataError ? e.message : `data folder: ${(e as Error).message}`);
+      return false;
+    }
+    const scan = scanAppData(dir);
+    if (scan.symlink) { this.setError(`app_data_symlink: ${scan.symlink} is a symlink inside the data folder; remove it to start the app`); return false; }
+    if (scan.instruction) { this.setError(`app_instruction_file: ${scan.instruction} is an agent instruction file inside the data folder; app data is data, never instructions. Remove it to start the app`); return false; }
+    return true;
+  }
+
+  /** One backup of the data folder, outside every repo (data-backup.ts). Never throws. */
+  async backup(reason: string): Promise<void> {
+    if (this.deps.noBackup) return;
+    try {
+      const r = await backupAppData(this.home, this.hash, appDataDir(this.rec.projectRoot, this.rec.slug), { reason });
+      if (!r.ok && 'error' in r) this.log.push(`[dreamcontext] data backup failed: ${r.error}`);
+      else if (!r.ok && r.skipped === 'too_big') {
+        const w = 'the data folder is over 512 MB (or 20,000 entries): it is not backed up';
+        if (!this.warnings.includes(w)) this.warnings.push(w);
+      }
+    } catch { /* a backup never stops the app */ }
+  }
+
+  private scheduleBackup(): void {
+    if (this.backupTimer) clearInterval(this.backupTimer);
+    if (this.deps.noBackup) return;
+    this.backupTimer = setInterval(() => { if (this.state === 'running') void this.backup('interval'); }, BACKUP_INTERVAL_MS);
+    this.backupTimer.unref();
   }
 
   private async runBuild(): Promise<boolean> {
@@ -466,10 +518,9 @@ export class AppRuntime {
     });
   }
 
+  /** `_dream_context/apps/<slug>/`, made (privacy first) if missing. Throws AppDataError. */
   dataDir(): string {
-    const d = appDataDir(this.home, this.hash);
-    mkdirSync(d, { recursive: true, mode: 0o700 });
-    return d;
+    return ensureAppDataDir(this.rec.projectRoot, this.rec.slug);
   }
 
   /** Its own process group off Windows; on Windows a hidden child of this server (no groups there). */
@@ -585,9 +636,12 @@ export class AppRuntime {
     if (this.buildChild) { killGroup(this.buildChild); this.buildChild = null; }
     this.stopWatch();
     if (this.bindTimer) { clearInterval(this.bindTimer); this.bindTimer = null; }
+    if (this.backupTimer) { clearInterval(this.backupTimer); this.backupTimer = null; }
     const b = this.backend;
     this.backend = null;
     if (b) killGroup(b.child);
+    // After the backend has had a moment to write its last state down.
+    if (b && !this.deps.noBackup) setTimeout(() => { void this.backup('stop'); }, 2000).unref();
     this.state = 'stopped';
   }
 

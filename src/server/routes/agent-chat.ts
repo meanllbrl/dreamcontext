@@ -90,7 +90,8 @@ import { chatSpawnAccount } from '../../lib/automations/account.js';
 import { appChatUpgrade } from '../apps/app-chat-gate.js';
 import { APP_CHAT_MAX_LIVE, appChatHasRoom, prepareAppChat, reserveAppChat, userChatDefaults, type AppChatEnvelope } from '../../lib/apps/assistant.js';
 import { appChatRoot, lookupAppChat, lookupAppChatOf, newestAppChat, rotateAppChat, type AppChatRecord } from '../../lib/apps/chat-store.js';
-import { getApp, real, appDataDir } from '../../lib/apps/registry.js';
+import { getApp, real } from '../../lib/apps/registry.js';
+import { appDataDir, isInsideAppsData } from '../../lib/apps/data-dir.js';
 import { cliAwarePath } from '../../lib/automations/cli-path.js';
 import { clearToolSignedOut, readToolRejections, recordToolRejection, recordToolSignedOut } from '../../lib/account-switch.js';
 import { isAccountTool, toolSwitchFor } from '../../lib/tool-switch.js';
@@ -2462,8 +2463,8 @@ export function startChatSession(
       }
     } catch { /* the model keeps the mode it was born with — the defect, not a crash */ }
   }
-  // An app chat's Bash gate rides here, AFTER the mode note's assign, which a plain assign of its
-  // own would drop; a member's has none. The carve-out for builders is not an app chat's business.
+  // An app chat's gates ride here, AFTER the mode note's assign, which a plain assign of its
+  // own would drop: the Bash gate (own assistant) and the file gate (own assistant and member). The carve-out for builders is not an app chat's business.
   if (app) delete spawnSettings.autoMode;
   if (app?.hooks) spawnSettings.hooks = { ...(spawnSettings.hooks as Record<string, unknown> | undefined), ...app.hooks };
   try {
@@ -5615,7 +5616,7 @@ function appChatRoots(contextRoot: string, session: string): string[] {
   const hit = lookupAppChat(session);
   if (hit.kind !== 'record' || hit.record.removedAt || hit.record.projectRoot !== real(projectRootOf(contextRoot))) return [];
   const rec = getApp(homedir(), hit.record.projectRoot, hit.record.slug);
-  return rec ? [rec.root, appDataDir(homedir(), rec.hash)] : [];
+  return rec ? [rec.root, appDataDir(rec.projectRoot, rec.slug)] : [];
 }
 
 function resolveServablePath(
@@ -5652,6 +5653,9 @@ function resolveServablePath(
   // Any OTHER realpath failure (a permission error, a race, a loop) still fails CLOSED to
   // `needs_grant`: an answer we could not verify must ask rather than serve.
   const refAbs = ref.abs;
+  // A phone (grants off) never reads app data (plan-veri K3): refused outright, not `outside`,
+  // which `phoneOutsideMedia` would then serve after a phone grant.
+  if (!opts.grants && contextRoot && isInsideAppsData(contextRoot, refAbs)) return { deny: 'invalid' };
   let outside = ref.outside && !ownRoots.some((root) => isInside(resolve(root), refAbs));
   if (contextRoot) {
     try {

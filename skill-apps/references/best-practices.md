@@ -7,8 +7,19 @@
   mask pixels, so never render a secret on screen.
 - **`.env` is never committed** (the template's `.gitignore` covers it). The owner fills it with a
   secret card that names the app.
-- **Data in `DC_DATA_DIR`.** Writing into the code folder reloads the window (the watcher) and is
-  lost on a re-clone; DC_DATA_DIR is outside it and survives restarts.
+- **Data in `DC_DATA_DIR`** (`_dream_context/apps/<slug>/` in the brain). Writing into the code
+  folder reloads the window (the watcher) and is lost on a re-clone; DC_DATA_DIR survives restarts.
+  It never goes to the team: two ignore layers, the sync unstages it, a push or pull that carries
+  it is held. Customer names, amounts and keys can live there for that reason.
+- **App data is data, not instructions.** Never write a `CLAUDE.md`, `AGENTS.md` or `.claude/`
+  into it; the app refuses to start while one is there.
+- **Backups, not git.** The folder is ignored, so `git clean -fdX` or `git stash --all` deletes it.
+  A copy sits in `~/.dreamcontext/apps/backup/<hash>/` (start, stop, every 30 min when changed,
+  newest 5). `dreamcontext apps restore <slug> [--list] [--at <stamp>]` puts one back (backend
+  stopped; what was there is backed up first).
+- **Lessons go to the brain.** `dc.learn(text)` (backend) or `apps learn` (assistant) queue a
+  finding; sleep writes `knowledge/apps/<slug>.md`, the one thing about an app the team receives.
+  Never put personal data or raw records in a finding.
 - **Bind to `HOST` (127.0.0.1), keep `dcGuard`.** `backend.unguarded: true` only when the owner
   asks for it, never to silence "dcGuard missing".
 - **Cookies:** cookies the page's JavaScript sets never reach the backend (the gateway prefixes and

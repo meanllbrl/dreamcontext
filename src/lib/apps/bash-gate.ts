@@ -12,6 +12,7 @@
 
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative } from 'node:path';
+import { checkAppDataChain, scanAppData } from './data-dir.js';
 
 /** What the gate knows about one chat, written at spawn under the `chats/**` write deny. */
 export interface BashGateContext {
@@ -20,6 +21,10 @@ export interface BashGateContext {
   dataDir: string;
   /** Ids of the non-danger actions, the ones `apps do` runs with no card. */
   actions: string[];
+  /** The owning project (real path): the data folder's chain is checked from here. */
+  projectRoot?: string;
+  /** The HOME the chat was prepared for: its `~/.dreamcontext/apps` is protected data too. */
+  home?: string;
 }
 
 export type BashGateDecision =
@@ -51,6 +56,7 @@ export const LISTED_VERBS: readonly ListedVerb[] = [
   { words: ['apps', 'status'], ownSlug: true, flags: [] },
   { words: ['apps', 'logs'], ownSlug: true, flags: ['-n', '--lines'] },
   { words: ['apps', 'do'], ownSlug: true, action: true, flags: ['--input'] },
+  { words: ['apps', 'learn'], ownSlug: true, flags: [] },
 ];
 
 /** A verb's flags that reach past this chat's project: a card each. `memory recall --vault`. */
@@ -169,7 +175,12 @@ export function classifyBash(command: string, ctx: BashGateContext): BashGateDec
   if (parts.length === 1 && isLs) {
     const paths = first.slice(1).filter((t) => !t.startsWith('-'));
     if (first.slice(1).some((t) => t.startsWith('-') && !/^-[A-Za-z0-9]+$/.test(t))) return ASK('a flag of ls');
-    if (paths.length && paths.every((p) => realInside(ctx.appRoot, p) || realInside(ctx.dataDir, p))) return { decision: 'pass' };
+    // A link inside the data folder could make `ls -L`/`-R` list another app's names: none allowed.
+    const dataOk = (!ctx.projectRoot || checkAppDataChain(ctx.projectRoot, ctx.slug).ok) && (() => {
+      const scan = scanAppData(ctx.dataDir);
+      return !scan.symlink && !scan.truncated;
+    })();
+    if (paths.length && paths.every((p) => realInside(ctx.appRoot, p) || (dataOk && realInside(ctx.dataDir, p)))) return { decision: 'pass' };
     if (!paths.length || paths.some((p) => !isAbsolute(p))) {
       return { decision: 'deny', reason: `Not run: list with an absolute path, \`ls ${ctx.appRoot}\` or \`ls ${ctx.dataDir}\`.` };
     }
@@ -188,7 +199,11 @@ export function parseGateContext(text: string): BashGateContext | null {
   try {
     const r = JSON.parse(text) as Record<string, unknown>;
     if (typeof r.slug !== 'string' || typeof r.appRoot !== 'string' || typeof r.dataDir !== 'string' || !Array.isArray(r.actions)) return null;
-    return { slug: r.slug, appRoot: r.appRoot, dataDir: r.dataDir, actions: r.actions.filter((a): a is string => typeof a === 'string') };
+    return {
+      slug: r.slug, appRoot: r.appRoot, dataDir: r.dataDir, actions: r.actions.filter((a): a is string => typeof a === 'string'),
+      ...(typeof r.projectRoot === 'string' ? { projectRoot: r.projectRoot } : {}),
+      ...(typeof r.home === 'string' ? { home: r.home } : {}),
+    };
   } catch {
     return null;
   }

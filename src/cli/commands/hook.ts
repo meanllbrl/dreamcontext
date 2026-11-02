@@ -5,6 +5,7 @@ import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
 import { hookTool, setHookTool } from '../../lib/hook-tool.js';
 import { GATE_BEAT_ENV, antigravityCallAsClaude, isAntigravityGateFile, movesGuardedPlace, shellTouchesGuarded } from '../../lib/antigravity-gate.js';
 import { classifyBash, gateHookOutput, parseGateContext, type BashGateContext } from '../../lib/apps/bash-gate.js';
+import { classifyFileTool } from '../../lib/apps/write-gate.js';
 import { AGENT_CHAT_ENV } from '../../lib/automations/types.js';
 import { antigravityTranscriptsDir } from '../../lib/antigravity-conversation.js';
 import { SESSION_START_PARTS } from '../../lib/snapshot-budget.js';
@@ -3093,6 +3094,24 @@ export function registerHookCommand(program: Command): void {
       try { ctx = parseGateContext(readFileSync(gateFile, 'utf-8')); } catch { /* refused below */ }
       if (!ctx) process.exit(2);
       process.stdout.write(JSON.stringify(gateHookOutput(classifyBash(command, ctx))));
+    });
+
+  // --- hook app-write-gate ---
+  // The file gate of an app chat (lib/apps/write-gate.ts), own assistant and bound member alike.
+  // Fails CLOSED like app-bash-gate: no tool name or an unreadable gate file exit 2.
+  hook
+    .command('app-write-gate <gateFile>')
+    .description('Gate a file tool call of an app chat: writes only in its data folder, never another app\'s data (called by its per-chat PreToolUse hook)')
+    .action((gateFile: string) => {
+      const input = readStdin();
+      const tool = input?.tool_name;
+      if (typeof tool !== 'string') process.exit(2);
+      const toolInput = (input?.tool_input && typeof input.tool_input === 'object' ? input.tool_input : {}) as Record<string, unknown>;
+      let ctx: BashGateContext | null = null;
+      try { ctx = parseGateContext(readFileSync(gateFile, 'utf-8')); } catch { /* refused below */ }
+      if (!ctx) process.exit(2);
+      const cwd = typeof input?.cwd === 'string' ? input.cwd : undefined;
+      process.stdout.write(JSON.stringify(gateHookOutput(classifyFileTool(tool, toolInput, ctx, cwd))));
     });
 
   // --- hook subagent-start ---

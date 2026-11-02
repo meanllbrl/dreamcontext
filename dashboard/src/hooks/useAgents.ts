@@ -468,7 +468,7 @@ export interface AgentSyncState {
 /** One owner-inbox row — mirrors `InboxRow` (src/lib/owner-inbox.ts). */
 export interface OwnerInboxRow {
   id: string;
-  kind: 'secret-held' | 'assigned-outside' | 'assigned-elsewhere' | 'renamed' | 'parked' | 'replaced-by-sync' | 'adopt-pattern' | 'unowned'
+  kind: 'secret-held' | 'app-data-held' | 'assigned-outside' | 'assigned-elsewhere' | 'renamed' | 'parked' | 'replaced-by-sync' | 'adopt-pattern' | 'unowned'
     // Task jobs (AI Team v2 C1): each dies when its task moves on. `ref` is the task slug.
     | 'task-start-missed' | 'task-orphaned' | 'task-stopped' | 'task-blocked' | 'task-plan'
     | 'task-question' | 'task-stalled' | 'task-review' | 'task-stuck';

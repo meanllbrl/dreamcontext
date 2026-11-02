@@ -194,3 +194,59 @@
   gap: var(--space-2);
   flex-wrap: wrap;
 }
+
+/* Beside the apps (plan-veri K5): a teammate's app note, a removed app's data. One quiet row each. */
+.apps-others {
+  list-style: none;
+  margin: var(--space-6) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.apps-other {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+}
+
+.apps-other__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.apps-other__name {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.apps-other__note {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.apps-other__btn {
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.apps-other__btn:hover {
+  border-color: var(--color-accent-strong);
+}

@@ -1,6 +1,7 @@
 import { dirname } from 'node:path';
 import { readSetupConfig, readBrainLocal, writeBrainLocal, type SetupConfig } from '../setup-config.js';
 import * as git from './git.js';
+import { APP_DATA_HELD_NOTE, APP_DATA_PULL_NOTE, appDataInPushRange, appDataStagePass, incomingAppData } from '../apps/data-stage.js';
 import { GitSyncError } from './git.js';
 import { scrubStagedFiles, scrubCommitRange, summarizeScrub, type ScrubHit } from './scrub.js';
 import { resolveConflicts } from './semantic-merge.js';
@@ -80,7 +81,9 @@ export type SyncAction =
   /** A merge is mid-flight that dreamcontext did NOT start (the user's own `git merge`/`rebase`). */
   | 'user-merge-in-progress'
   /** full-repo only: a real code file conflicts — defer to the human's editor, never semantically merge. */
-  | 'code-conflict';
+  | 'code-conflict'
+  /** A commit to push holds app data (`_dream_context/apps/`, plan-veri): the push waits. */
+  | 'app-data-held';
 
 export interface SyncOptions {
   /** Absolute path to `_dream_context/` (what `ensureContextRoot()` returns). */
@@ -173,6 +176,10 @@ export interface SyncEngineDeps {
   resolvePendingRestores: typeof resolvePendingRestores;
   /** B1-2: this machine's ignored agent files the staging pass will force-add (agent sync confirmed). */
   pendingOwnAgentFiles: typeof pendingOwnAgentFiles;
+  /** plan-veri K2: the push gate (a commit of the range holding app data). */
+  appDataInPushRange: typeof appDataInPushRange;
+  /** plan-veri K2: the pull gate (incoming app data). */
+  incomingAppData: typeof incomingAppData;
 }
 
 const defaultDeps: SyncEngineDeps = {
@@ -191,6 +198,8 @@ const defaultDeps: SyncEngineDeps = {
   guardPullCollisions,
   resolvePendingRestores,
   pendingOwnAgentFiles,
+  appDataInPushRange,
+  incomingAppData,
 };
 
 /** Uncommitted changes, plus this machine's own agent files waiting to be force-added: an ignored
@@ -210,6 +219,8 @@ function stageForSync(ctx: Ctx, scope: 'all' | 'brain' = 'all'): void {
   if (scope === 'brain') ctx.d.git.stagePath(ctx.gitCwd, '_dream_context');
   else ctx.d.git.stageAll(ctx.gitCwd);
   ctx.d.agentStagePass(ctx.gitCwd, ctx.contextRoot);
+  // App data never enters git, a `git add -f` included (plan-veri K2): out of the index again.
+  appDataStagePass(ctx.gitCwd, ctx.contextRoot);
 }
 
 interface Ctx {
@@ -562,6 +573,12 @@ function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcom
   const { d, gitCwd, contextRoot, projectRoot, config } = ctx;
   // B1-2: incoming NEW agent files landing where this machine holds an untracked one of the same
   // name park the local one first (moved, so git never refuses the merge).
+  // App data never comes in from the team either: a pull that carries any stops here, before
+  // git could overwrite or delete this Mac's data (plan-veri K2). A guard that cannot answer stops too.
+  const incomingApps = d.incomingAppData(gitCwd, contextRoot, ctx.remoteRef);
+  if (incomingApps === null || incomingApps.length > 0) {
+    return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: incomingApps === null ? 'Skipped the pull: could not check whether the team\'s update carries app data. It is retried at the next sync.' : APP_DATA_PULL_NOTE }, needsTaskSync: false };
+  }
   const guard = d.guardPullCollisions(gitCwd, contextRoot, ctx.remoteRef);
   if (!guard.ok) return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: guard.note }, needsTaskSync: false };
   let mergeResult: { clean: boolean; conflicts: string[] };
@@ -682,6 +699,16 @@ async function pushWithRetry(
     return { action: 'no-remote', scrub, note: NO_TOKEN_NOTE };
   }
 
+  // The one door every push goes through (autoSync, push-only, --continue, resume): a commit of
+  // the range whose tree holds app data holds the push. A gate that cannot answer holds it too.
+  const appDataHeld = (): SyncResult | null => {
+    let hit: string | null;
+    try { hit = d.appDataInPushRange(gitCwd, ctx.contextRoot, ctx.remoteRef); } catch { hit = 'unknown'; }
+    return hit ? { action: 'app-data-held', scrub, note: APP_DATA_HELD_NOTE } : null;
+  };
+  const held = appDataHeld();
+  if (held) return held;
+
   const tryPush = async (): Promise<boolean> => {
     try {
       await s.run(async (env) => {
@@ -705,6 +732,8 @@ async function pushWithRetry(
   }
   const outcome = mergeAndMaybeDefer(ctx, { abortOnDefer: false, markPendingOnDefer: false });
   if (outcome.result) return outcome.result;
+  const heldAfterMerge = appDataHeld();
+  if (heldAfterMerge) return heldAfterMerge;
 
   if (await tryPush()) return { action: 'pushed', scrub, pushed: true };
 

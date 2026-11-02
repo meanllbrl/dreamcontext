@@ -609,7 +609,10 @@ function loadMarkdownDocs(
       const slug = basename(file, '.md');
       // `claim` is the thesis identity field (theses/<slug>.md have no name/title) —
       // additive fallback so a thesis indexes under its claim text.
-      const title = String(data.name ?? data.title ?? data.claim ?? slug);
+      const baseTitle = String(data.name ?? data.title ?? data.claim ?? slug);
+      // What an app reported (knowledge/apps/<slug>.md, `source: app:<slug>`) says so in every
+      // surface that shows the title: it is the app's lesson, distilled by sleep, not the owner's.
+      const title = typeof data.source === 'string' && data.source.startsWith('app:') ? `${baseTitle} (app bildirdi)` : baseTitle;
       const description = String(data.description ?? data.summary ?? '');
       const tags = Array.isArray(data.tags) ? data.tags.map(String) : [];
       // For Excalidraw boards: extract only Text Elements text for the BM25
