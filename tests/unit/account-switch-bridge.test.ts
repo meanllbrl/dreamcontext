@@ -16,7 +16,8 @@ vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { tmpdir } = require('node:os') as typeof import('node:os');
   process.env.HOME = mkdtempSync(`${tmpdir()}/codex-switch-home-`);
-  process.env.DREAMCONTEXT_CLI = '/opt/dreamcontext/dist/index.js';
+  // win32 starts the bridge child from a drive path with no shell; POSIX quotes it into a script.
+  process.env.DREAMCONTEXT_CLI = process.platform === 'win32' ? 'C:\\dreamcontext\\dist\\index.js' : '/opt/dreamcontext/dist/index.js';
 });
 
 const spawned: FakeChild[] = [];
@@ -40,7 +41,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 vi.mock('../../src/lib/t3-bridge/node-floor.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../src/lib/t3-bridge/node-floor.js')>();
-  return { ...real, bridgeNode: () => '/usr/local/bin/node' };
+  return { ...real, bridgeNode: () => (process.platform === 'win32' ? 'C:\\nodejs\\node.exe' : '/usr/local/bin/node') };
 });
 // A Codex pane starts only where a Codex is found; this test fakes the bridge child, not the install.
 vi.mock('../../src/lib/codex-bin.js', async (importOriginal) => {
@@ -203,7 +204,9 @@ describe('part 2: a Codex pane switches accounts through the chat server', () =>
   it('opens on the account it was given, tells the chip which Codex account it runs on, and passes it to the bridge child', async () => {
     const { ws } = startCodexPane(SECOND);
     const { spawn } = await import('node:child_process');
-    const script = String((vi.mocked(spawn).mock.calls.at(-1)![1] as string[]).join(' '));
+    const args = vi.mocked(spawn).mock.calls.at(-1)![1] as string[];
+    // POSIX: the login-shell script is the last arg; win32: the bridge child's own argv.
+    const script = process.platform === 'win32' ? args.map((a) => `"${a}"`).join(' ') : args.join(' ');
     expect(script).toContain(`"--account" "${SECOND}"`);
     expect(metas(ws, 'account_active').at(-1)).toMatchObject({ accountId: SECOND, tool: 'codex' });
   });

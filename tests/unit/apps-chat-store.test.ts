@@ -21,7 +21,7 @@ describe('the record', () => {
   it('is a 0600 file, and membership is the file', () => {
     const r = make();
     const file = join(appChatsDir(home), `${r.id}.json`);
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(lookupAppChat(r.id, home)).toEqual({ kind: 'record', record: r });
     expect(lookupAppChat(randomUUID(), home)).toEqual({ kind: 'none' });
   });

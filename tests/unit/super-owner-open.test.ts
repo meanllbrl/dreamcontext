@@ -222,7 +222,8 @@ describe('AC3: only { kind, ref } or { path } gets through', () => {
 
   it.each([
     ['../outside.html', 'unknown_file', 404], ['docs/n.md', 'unsupported_file', 400], ['docs', 'not_a_file', 400],
-    ['/etc/hosts', 'outside_project', 400], ['docs/none.png', 'unknown_file', 404],
+    // A file that exists on every OS, outside the project (Windows has no /etc/hosts: it would read unknown_file).
+    [process.execPath, 'outside_project', 400], ['docs/none.png', 'unknown_file', 404],
   ])('the file %s is refused with %s', async (path, error, status) => {
     ownerRoot = vault('owner', {});
     const r = await ownerOpen(ownerRoot, { path });

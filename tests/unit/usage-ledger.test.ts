@@ -6,7 +6,7 @@ import { accountIndexAt, currentLedger, ledgerRoots, loadLedger, scanLedger, ses
 import { buildStats } from '../../src/lib/usage-report.js';
 import { APP_BRIEF_OPENINGS, SUPER_BIRTH_OPENINGS, claudeSleepMark, initialCodexState, parseCodexRecord, parseLimitHit } from '../../src/lib/usage-readers.js';
 import { resolvePrice } from '../../src/lib/usage-pricing.js';
-import { closeSleepRun, logHandoff, noteSleepRunCost, openSleepRun, readLimitHistory, readSleepRuns } from '../../src/lib/usage-records.js';
+import { appendNoFollow, closeSleepRun, logHandoff, noteSleepRunCost, openSleepRun, readLimitHistory, readSleepRuns } from '../../src/lib/usage-records.js';
 import { recordUsageMeter } from '../../src/lib/claude-usage-meter.js';
 
 const NOW = Date.parse('2026-10-20T15:30:00Z');
@@ -310,6 +310,19 @@ describe('usage ledger', () => {
     symlinkSync(target, join(root, 'state', '.handoff-log.jsonl'));
     logHandoff(root, { title: '$(id)', at: at(1), contextTokens: 1, fromSession: 'x', consumedAt: at(1) });
     expect(readFileSync(target, 'utf-8')).toBe('keep');
+  });
+
+  it('the same refusal holds without O_NOFOLLOW, as on Windows where the flag does not exist', () => {
+    const target = join(home, 'outside-win.txt');
+    writeFileSync(target, 'keep');
+    const link = join(home, 'link.jsonl');
+    symlinkSync(target, link);
+    expect(() => appendNoFollow(link, 'x', 0)).toThrow(/not a regular file/);
+    expect(readFileSync(target, 'utf-8')).toBe('keep');
+    const plain = join(home, 'plain.jsonl');
+    appendNoFollow(plain, 'a', 0);
+    appendNoFollow(plain, 'b', 0);
+    expect(readFileSync(plain, 'utf-8')).toBe('a\nb\n');
   });
 
   it('limits that ran out but no window the logs explain read as unclear, never as none', async () => {

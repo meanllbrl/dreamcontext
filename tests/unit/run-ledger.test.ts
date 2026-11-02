@@ -56,7 +56,7 @@ describe('the ledger through the commands', () => {
     const path = ledgerPath(repo);
     markPhase(repo, 'build', 'task', Date.now());
     appendLedger(path, { type: 'mark', run: 'task', what: 'open', at: Date.now() });
-    const job = 'SECRET_KEY=sk-FAKE true';
+    const job = 'node -e 0 SECRET_KEY=sk-FAKE'; // a line both sh and cmd.exe run
     expect(await builderHeavy(deps, [job], { maxWait: '1' })).toBe(0);
     expect(acquireFileLock(heavyLockPath(repo), Date.now(), 5_000)).toBe(true);
     expect(await builderHeavy(deps, [job], { maxWait: '0' })).toBe(75);

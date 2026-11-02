@@ -26,6 +26,7 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
 import { codexChildEnv, codexCommand } from './codex-bin.js';
+import { spawnSpec } from './win-cmd.js';
 import { CODEX_PRIMARY_ID, codexAccountHome, codexInstanceSettings, isCodexAccountId } from './t3-bridge/accounts.js';
 import { bridgeNode } from './t3-bridge/node-floor.js';
 import { recordLimitPoints } from './usage-records.js';
@@ -297,7 +298,9 @@ export const defaultCodexRunner: CodexRunner = (cmd, args, o) => new Promise((re
   let child: ReturnType<typeof spawn>;
   try {
     // Output of `codex login` can carry a callback URL with an authorization code: never kept.
-    child = spawn(cmd, args, { env: o.env, stdio: ['ignore', o.keepStdout ? 'pipe' : 'ignore', 'ignore'] });
+    // win32: `codex.cmd` only starts through cmd.exe (win-cmd.ts).
+    const spec = spawnSpec(cmd, args);
+    child = spawn(spec.file, spec.args, { env: o.env, stdio: ['ignore', o.keepStdout ? 'pipe' : 'ignore', 'ignore'], ...(spec.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
   } catch {
     resolve({ spawned: false, timedOut: false, code: null, stdout: '' });
     return;

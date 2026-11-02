@@ -135,9 +135,26 @@ export const BOARD_AGENT_DISALLOWED_TOOLS = ['Agent', 'Task', 'Workflow'] as con
 // eslint-disable-next-line no-control-regex
 const FORBIDDEN_PATH_CHARS = /[,()*"?[\]{}!\\#\u0000-\u001f\u007f]/;
 
+/**
+ * A real path as a Claude Code permission rule spells it. On Windows Claude Code turns a path into
+ * POSIX form before it matches (`C:\Users\x` is `/c/Users/x`, the conversion its Git Bash layer
+ * uses; its own absolute rules read `//c/...`), so a rule written with the native spelling matches
+ * nothing, and a deny that matches nothing is no deny. Everywhere else the path is unchanged: on
+ * macOS and Linux a backslash is a character of the name, and `forbiddenPathReason` refuses it.
+ * Pure (`platform` is injectable), so a Mac test pins the Windows spelling with `path.win32`.
+ */
+export function rulePath(p: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32') return p;
+  const drive = /^([A-Za-z]):[\\/]+/.exec(p);
+  const rest = (drive ? p.slice(drive[0].length) : p).replace(/\\/g, '/');
+  return drive ? `/${drive[1].toLowerCase()}${rest ? `/${rest}` : ''}` : rest;
+}
+
 /** Why `path` cannot go into a rule, or null when it can. Exported for the unit test. */
-export function forbiddenPathReason(label: string, path: string): string | null {
-  const hit = FORBIDDEN_PATH_CHARS.exec(path);
+export function forbiddenPathReason(label: string, path: string, platform: NodeJS.Platform = process.platform): string | null {
+  // A Windows network path (`\\server\share`) has no drive to anchor a rule on: refused, not guessed.
+  if (platform === 'win32' && /^[\\/]{2}/.test(path)) return `the ${label} path is a network path, which a permission rule cannot hold safely`;
+  const hit = FORBIDDEN_PATH_CHARS.exec(rulePath(path, platform));
   if (!hit) return null;
   const ch = hit[0];
   const shown = ch === '\n' ? 'a newline' : /[\u0000-\u001f\u007f]/.test(ch) ? 'a control character' : `"${ch}"`;
@@ -312,21 +329,31 @@ export function prepareScopePaths(root: string, scope: BoardScope): ScopePathsRe
 export const CREDENTIAL_HOME_DIRS = [
   '.ssh', '.aws', '.claude', '.dreamcontext', '.config/gh', '.config/gcloud', '.docker', '.gnupg', '.kube', '.azure',
 ] as const;
+/**
+ * The credential folders of a home on this platform. Windows keeps gh's token and gcloud's
+ * credentials under the roaming profile, not `~/.config`, so a deny list of the POSIX folders
+ * alone would leave both readable there.
+ */
+export function credentialHomeDirs(platform: NodeJS.Platform = process.platform): readonly string[] {
+  if (platform !== 'win32') return CREDENTIAL_HOME_DIRS;
+  return [...CREDENTIAL_HOME_DIRS, 'AppData/Roaming/GitHub CLI', 'AppData/Roaming/gcloud'];
+}
 /** Single files under the home. */
 export const CREDENTIAL_HOME_FILES = ['.claude.json', '.npmrc', '.netrc', '.git-credentials', '.pypirc'] as const;
 /** Patterns denied wherever they sit, the project included. */
 export const CREDENTIAL_ANYWHERE = ['**/.env*', '**/*.pem', '**/*.key', '**/id_rsa*', '**/id_ed25519*'] as const;
 
-/** `Write(//abs/**)`: Claude Code reads a rule path starting `//` as absolute from the root. */
-function absRule(tool: string, realPath: string, glob = '/**'): string {
-  return `${tool}(/${realPath}${glob})`;
+/** `Write(//abs/**)`: Claude Code reads a rule path starting `//` as absolute from the root
+ *  (`//c/Users/...` on Windows, see {@link rulePath}). */
+export function absRule(tool: string, realPath: string, glob = '/**'): string {
+  return `${tool}(/${rulePath(realPath)}${glob})`;
 }
 
 /** The credential folders and files of a home, as deny rules. */
-export function credentialReadDenies(userHome?: string): string[] {
+export function credentialReadDenies(userHome?: string, platform: NodeJS.Platform = process.platform): string[] {
   const home = userHome ?? realHome();
   return [
-    ...CREDENTIAL_HOME_DIRS.map((d) => absRule('Read', join(home, d))),
+    ...credentialHomeDirs(platform).map((d) => absRule('Read', join(home, d))),
     ...CREDENTIAL_HOME_FILES.map((f) => absRule('Read', join(home, f), '')),
   ];
 }

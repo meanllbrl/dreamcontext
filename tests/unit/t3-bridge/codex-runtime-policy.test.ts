@@ -7,11 +7,11 @@
  * the reviewer `user`, so any escalation comes to the owner as an approval card.
  */
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import path, { join, resolve } from 'node:path';
 import * as CodexAdapterV2 from '@t3tools/server/orchestration-v2/Adapters/CodexAdapterV2';
 import * as Effect from 'effect/Effect';
 import { describe, expect, it } from 'vitest';
-import { codexRuntimePolicy, writableRoots } from '../../../src/lib/t3-bridge/policy.js';
+import { codexRuntimePolicy, isUnderDreamcontextHome, writableRoots } from '../../../src/lib/t3-bridge/policy.js';
 
 const PROJECT = '/work/acme-app';
 const LINKED = '/work/acme-api';
@@ -42,7 +42,7 @@ describe('codex turn/start per mode', () => {
     expect(p.approvalPolicy).toBe('on-request');
     expect(p.sandboxPolicy).toEqual({
       type: 'workspaceWrite',
-      writableRoots: [PROJECT, LINKED, TMP],
+      writableRoots: [PROJECT, LINKED, TMP].map((p) => resolve(p)), // host-absolute: <drive>:\\work\\... on Windows
       networkAccess: false,
       excludeTmpdirEnvVar: true,
       excludeSlashTmp: true,
@@ -72,6 +72,29 @@ describe('codex turn/start per mode', () => {
       extraRoots: [join(home, '.dreamcontext'), join(home, '.dreamcontext', 'claude-accounts', 'x'), home, '/', 'relative/path'],
       home,
     });
-    expect(roots).toEqual([PROJECT]);
+    expect(roots).toEqual([resolve(PROJECT)]);
+  });
+});
+
+// The same rule in Windows paths, on any host: a drive root is `/` there, and the folder names
+// compare without case, so `C:\` or a differently spelled `~\.DreamContext` never becomes writable.
+describe('writable roots in Windows paths (path.win32)', () => {
+  const W = path.win32;
+  const home = 'C:\\Users\\robin';
+  const roots = (extraRoots: string[]) => writableRoots({ mode: 'auto', cwd: 'C:\\work\\acme-app', extraRoots, home }, W);
+
+  it('keeps the project and a linked repo, as Windows paths', () => {
+    expect(roots(['D:\\repos\\acme-api\\'])).toEqual(['C:\\work\\acme-app', 'D:\\repos\\acme-api']);
+  });
+  it('never a drive root, a share root or the home, however it is spelled', () => {
+    expect(roots(['C:\\', 'D:/', 'c:\\', '\\\\server\\share\\', 'c:\\users\\ROBIN', 'C:/Users/robin/'])).toEqual(['C:\\work\\acme-app']);
+  });
+  it('never ~\\.dreamcontext or below it, in another case or with forward slashes', () => {
+    expect(roots(['C:\\Users\\Robin\\.DreamContext', 'c:/users/robin/.dreamcontext/claude-accounts/x'])).toEqual(['C:\\work\\acme-app']);
+    expect(isUnderDreamcontextHome('C:\\USERS\\robin\\.dreamcontext\\t3', home, W)).toBe(true);
+    expect(isUnderDreamcontextHome('C:\\Users\\robin\\.dreamcontext-other', home, W)).toBe(false);
+  });
+  it('one root once, whatever its case', () => {
+    expect(roots(['c:\\WORK\\acme-app'])).toEqual(['C:\\work\\acme-app']);
   });
 });

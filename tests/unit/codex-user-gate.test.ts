@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ensureCodexUserGate } from '../../src/cli/commands/install-skill.js';
 import { codexGateConsent } from '../../src/cli/commands/install-tool.js';
-import { approveCodexGate, carryGateToAccount, CODEX_USER_GATE_COMMAND, codexGateLive, codexProjectOptedIn, listCodexHooks, type CodexHook, type Rpc } from '../../src/lib/t3-bridge/codex-user-gate.js';
+import { approveCodexGate, carryGateToAccount, CODEX_USER_GATE_COMMAND, codexGateLive, codexProjectOptedIn, listCodexHooks, tomlKey, type CodexHook, type Rpc } from '../../src/lib/t3-bridge/codex-user-gate.js';
 import { NO_ENV_GATE, codexEnvGateGap } from '../../src/lib/t3-bridge/env-gate.js';
 
 const GATE = CODEX_USER_GATE_COMMAND;
@@ -29,7 +29,7 @@ function fakeCodex(hooks: CodexHook[]) {
     const batch = (c.params as { edits: Array<{ keyPath: string; value: string }> }).edits;
     edits.push(...batch);
     for (const e of batch) {
-      const i = hooks.findIndex((h) => e.keyPath === `hooks.state."${h.key}".trusted_hash`);
+      const i = hooks.findIndex((h) => e.keyPath === `hooks.state."${tomlKey(h.key)}".trusted_hash`);
       if (i >= 0) hooks[i] = { ...hooks[i]!, trustStatus: 'trusted' };
     }
     return { result: {} };
@@ -82,7 +82,7 @@ describe('the Mac-wide Codex gate', () => {
     const { rpc, edits } = fakeCodex([hook(), other, project]);
     const out = approveCodexGate(home, home, rpc);
     expect(out.problems).toEqual([]);
-    expect(edits).toEqual([expect.objectContaining({ keyPath: `hooks.state."${codexHome}/hooks.json:pre_tool_use:0:0".trusted_hash`, value: HASH })]);
+    expect(edits).toEqual([expect.objectContaining({ keyPath: `hooks.state."${tomlKey(`${codexHome}/hooks.json:pre_tool_use:0:0`)}".trusted_hash`, value: HASH })]);
   });
 
   it('writes nothing for a hook switched off, or one Codex lists under an unsafe key', () => {
@@ -117,7 +117,7 @@ describe('the Mac-wide Codex gate', () => {
       const { rpc, writes } = codexWith(hook({ trustStatus: 'trusted' }), shadowHook());
       carryGateToAccount(home, home, accountAt(), rpc);
       expect(lstatSync(join(accountAt(), 'hooks.json')).isSymbolicLink()).toBe(true);
-      expect(writes).toEqual([{ at: codexHome, keyPath: `hooks.state."${accountAt()}/hooks.json:pre_tool_use:0:0".trusted_hash` }]);
+      expect(writes).toEqual([{ at: codexHome, keyPath: `hooks.state."${tomlKey(`${accountAt()}/hooks.json:pre_tool_use:0:0`)}".trusted_hash` }]);
     });
 
     it('gets nothing when the owner never approved, or the definition differs', () => {
@@ -173,10 +173,18 @@ describe('the Mac-wide Codex gate', () => {
 
   it('names the one command, and the consent names the files', () => {
     expect(NO_ENV_GATE).toContain('dreamcontext install --tool codex --global');
-    expect(codexGateConsent('/h')).toContain('/h/.codex/hooks.json');
-    expect(codexGateConsent('/h')).toContain('/h/.codex/config.toml');
+    expect(codexGateConsent('/h')).toContain(join('/h', '.codex', 'hooks.json'));
+    expect(codexGateConsent('/h')).toContain(join('/h', '.codex', 'config.toml'));
     expect(codexGateConsent('/h')).toContain('shell command that writes those files is not stopped');
     expect(codexGateConsent('/h')).toContain('now or later');
     expect(codexGateConsent('/h')).toContain('builds and test suites');
+  });
+});
+
+describe('a Windows hook key (pure)', () => {
+  it('REGRESSION: a key full of backslashes is approved, escaped as a TOML key', () => {
+    const { rpc, edits } = fakeCodex([hook({ key: 'C:\\Users\\robin\\.codex\\hooks.json:pre_tool_use:0:0' })]);
+    expect(approveCodexGate(home, home, rpc).problems).toEqual([]);
+    expect(edits.map((e) => e.keyPath)).toEqual(['hooks.state."C:\\\\Users\\\\robin\\\\.codex\\\\hooks.json:pre_tool_use:0:0".trusted_hash']);
   });
 });

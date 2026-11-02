@@ -3,7 +3,7 @@
  * key (their sessions are shared, so a switch resumes the same thread) while their credentials
  * live in separate private homes. The live cross-account resume needs a second Codex login (W2).
  */
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import * as NodeServices from '@effect/platform-node/NodeServices';
 import { CodexSettings } from '@t3tools/contracts';
 import * as HostProcess from '@t3tools/shared/HostProcess';
@@ -13,7 +13,8 @@ import * as Schema from 'effect/Schema';
 import { describe, expect, it } from 'vitest';
 import { codexInstanceSettings } from '../../../src/lib/t3-bridge/accounts.js';
 
-const HOME = '/Users/someone';
+// Resolved: T3 resolves the home it is given, and on Windows `/Users/someone` gains a drive.
+const HOME = resolve('/Users/someone');
 const layout = (accountId: string | null) => {
   const s = codexInstanceSettings(HOME, accountId);
   const config = Schema.decodeSync(CodexSettings)({ homePath: s.homePath, shadowHomePath: s.shadowHomePath });

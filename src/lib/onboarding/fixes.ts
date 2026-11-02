@@ -18,6 +18,7 @@ import { findBridgeNode, resetBridgeNodeCache } from '../t3-bridge/node-floor.js
 import { installManagedCodex, installPinnedNode, withCodexInstallLock, type NodePins } from './codex-install.js';
 import { cliAwarePath } from '../automations/cli-path.js';
 import { killPortable } from '../proc.js';
+import { spawnSpec } from '../win-cmd.js';
 import { withNodeDirOnPath } from '../git-sync/credentials.js';
 import { commandLineToolsInstalled, gitAvailable } from '../git-sync/git.js';
 import { DownloadError, downloadVerified } from './download.js';
@@ -133,7 +134,9 @@ function defaultRun(file: string, args: string[], o: RunOptions, sink: RunSink, 
     let timedOut = false;
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(file, args, { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
+      // win32: an npm `.cmd` launcher (`codex.cmd`) only starts through cmd.exe (win-cmd.ts).
+      const spec = spawnSpec(file, args);
+      child = spawn(spec.file, spec.args, { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32', ...(spec.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
     } catch (err) {
       resolve({ ok: false, stdout: '', stderr: (err as Error).message, code: null });
       return;

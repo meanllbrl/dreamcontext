@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
+import path, { posix, type PlatformPath } from 'node:path';
 import { FAST_SLOTS } from './builder-tools.js';
 import { heavyStep, shellSegments, type HeavyStep } from './run-budget.js';
 
@@ -80,6 +80,17 @@ const IMPORT = /(?:from\s+|import\s*\(\s*|import\s+|require\(\s*|vi\.mock\(\s*)[
 const TEST_FILE = /(?:^|\/)[^/]+\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
 /**
+ * A source as `git ls-files` names it: relative to the repo root, `/`-separated. Null outside the
+ * repo. On Windows git prints the root as `D:/a/repo` and a source may come as `src\\x.ts` or
+ * `D:\\a\\repo\\src\\x.ts`; both resolve through the platform's own path rules first.
+ */
+export function repoRelativeSource(root: string, cwd: string, source: string, p: PlatformPath = path): string | null {
+  const rel = p.relative(p.resolve(root), p.resolve(cwd, source));
+  if (!rel || rel.startsWith('..') || p.isAbsolute(rel)) return null;
+  return rel.split(p.sep).join('/');
+}
+
+/**
  * The test files that reach `sources` through relative imports, read from the tracked files with
  * `git ls-files`. It stops counting past `cap`. Null: not a repo, or nothing to read. A dynamic
  * or aliased import is not seen, so this is a good estimate and not a proof.
@@ -97,13 +108,13 @@ export function countRelatedTests(cwd: string, sources: readonly string[], cap: 
       let text: string;
       try { text = readFileSync(join(root, f), 'utf-8'); } catch { continue; }
       for (const m of text.matchAll(IMPORT)) {
-        const target = byStem.get(noExt(resolve('/', dirname(f), m[1]).slice(1)));
+        const target = byStem.get(noExt(posix.resolve('/', posix.dirname(f), m[1]).slice(1))); // git paths are always /
         if (target) importers.set(target, [...(importers.get(target) ?? []), f]);
       }
     }
     const seen = new Set<string>();
     const tests = new Set<string>();
-    const todo = sources.map((s) => (s.startsWith('/') ? s.slice(root.length + 1) : join(cwd, s).slice(root.length + 1))).filter((s) => known.has(s));
+    const todo = sources.map((s) => repoRelativeSource(root, cwd, s)).filter((s): s is string => s !== null && known.has(s));
     if (todo.length === 0) return null;
     while (todo.length > 0) {
       const f = todo.pop()!;

@@ -134,7 +134,7 @@ import {
 } from './agent-chat-live.js';
 import { BRIDGE_TOOLS, sanitizeTool, type ToolId } from '../../lib/t3-bridge/registry.js';
 import { codexHistoryFor } from '../../lib/t3-bridge/codex-history-route.js';
-import { bridgeChatScript, bridgeResumeTarget } from '../../lib/t3-bridge/spawn.js';
+import { bridgeChatCommand, bridgeResumeTarget } from '../../lib/t3-bridge/spawn.js';
 import { HEADLESS_ENVELOPES } from '../../lib/t3-bridge/headless-envelope.js';
 import { pruneToolHandoffSeeds } from '../../lib/t3-bridge/tool-handoff.js';
 import { NO_ENV_GATE, codexEnvGateGap } from '../../lib/t3-bridge/env-gate.js';
@@ -673,9 +673,11 @@ export function chatSpawnCommand(o: {
   script: string;
   platform?: NodeJS.Platform;
   shell?: string;
+  /** A bridge pane's child (`bridgeChatCommand`): on win32 it is spawned instead of claude. */
+  bridge?: { file: string; args: string[] };
 }): { file: string; args: string[]; detached: boolean; windowsHide: boolean } {
   if ((o.platform ?? process.platform) === 'win32') {
-    return { ...claudeDirectCommand(o.argv), detached: false, windowsHide: true };
+    return { ...(o.bridge ?? claudeDirectCommand(o.argv)), detached: false, windowsHide: true };
   }
   return { file: o.shell ?? (process.env.SHELL || '/bin/zsh'), args: ['-ilc', o.script], detached: true, windowsHide: false };
 }
@@ -2461,9 +2463,11 @@ export function startChatSession(
   const noEnvGate = envGateGap !== null;
   // Said before anything starts: a chat on a Codex that cannot start would only end in silence.
   const codexMissing = bridgeTool === 'codex' ? codexStartProblem() : null;
-  const bridgeScript = bridgeTool && bridgeNodePath && !noEnvGate && !codexMissing
-    ? bridgeChatScript({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : opts.leanMcp ? HEADLESS_ENVELOPES['super-child'].codex ?? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(carryThread ? { carry: carryThread } : {}), ...(leanMcpPath ? { mcpConfig: leanMcpPath } : {}), ...(opts.leanMcp ? { strictMcp: true, unattended: true } : {}), ...(!assistantConfig && !opts.leanMcp && !scopedCard ? { storeMcp: true } : {}), ...(toolAccountId ? { account: toolAccountId } : {}) })
+  // One command, two spellings: win32 spawns it as an argv array, POSIX quotes it into the script.
+  const bridgeCommand = bridgeTool && bridgeNodePath && !noEnvGate && !codexMissing
+    ? bridgeChatCommand({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : opts.leanMcp ? HEADLESS_ENVELOPES['super-child'].codex ?? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(carryThread ? { carry: carryThread } : {}), ...(leanMcpPath ? { mcpConfig: leanMcpPath } : {}), ...(opts.leanMcp ? { strictMcp: true, unattended: true } : {}), ...(!assistantConfig && !opts.leanMcp && !scopedCard ? { storeMcp: true } : {}), ...(toolAccountId ? { account: toolAccountId } : {}) })
     : null;
+  const bridgeScript = bridgeCommand ? `exec ${[bridgeCommand.file, ...bridgeCommand.args].map((a) => `"${a}"`).join(' ')}` : null;
   if (bridgeTool && !bridgeScript) {
     const why = noEnvGate ? `${envGateGap} ${bridgeTool === 'antigravity' ? NO_ANTIGRAVITY_GATE : NO_ENV_GATE}` : bridgeNodePath && codexMissing ? codexMissing : bridgeNodePath ? `${bridgeTool} could not start: the dreamcontext install path is not shell-safe.` : nodeTooOldMessage(bridgeTool === 'codex' ? 'Codex' : bridgeTool === 'antigravity' ? 'Antigravity' : 'The T3 Claude engine');
     noteLeanChildFailed(why);
@@ -2556,7 +2560,7 @@ export function startChatSession(
   // Held from the spawn to the child's exit; nothing async ran since `appChatHasRoom`.
   const releaseAppSlot = app ? reserveAppChat(app.hash, appSeat) : () => { /* not an app chat */ };
   // Its own process group on POSIX, so the whole tree can be ended at once (win32: see chatSpawnCommand).
-  const spawnCmd = chatSpawnCommand({ argv, script });
+  const spawnCmd = chatSpawnCommand({ argv, script, ...(bridgeCommand ? { bridge: bridgeCommand } : {}) });
   const child: ChildProcessWithoutNullStreams = spawn(spawnCmd.file, spawnCmd.args, {
     cwd: projectRoot,
     stdio: ['pipe', 'pipe', 'pipe'],

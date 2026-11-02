@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, posix, win32 } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { acquireHeavy, fastSlotPaths, heavySlotPaths, heavyLockPath } from '../../src/lib/builder-tools.js';
 import { acquireFileLock, releaseFileLock } from '../../src/lib/file-lock.js';
 import { builderHeavy, type BuilderDeps } from '../../src/cli/commands/builder.js';
 import { heavyQueueDir, queueReport } from '../../src/lib/heavy-acquire.js';
 import {
-  FAST_TEST_FILES, QUEUE_AGE_MS, QUEUE_KEEP_MS, QueuePlace, countRelatedTests, fastSlotLimit, jobKey, ordered, queueOf, readTickets, safeLabel, type Ticket,
+  FAST_TEST_FILES, QUEUE_AGE_MS, QUEUE_KEEP_MS, QueuePlace, countRelatedTests, repoRelativeSource, fastSlotLimit, jobKey, ordered, queueOf, readTickets, safeLabel, type Ticket,
 } from '../../src/lib/heavy-queue.js';
 
 const files = (n: number) => Array.from({ length: n }, (_, i) => `tests/unit/f${i}.test.ts`).join(' ');
@@ -104,6 +104,16 @@ describe('countRelatedTests', () => {
     expect(countRelatedTests(repo, ['src/leaf.ts'], 1)).toBe(2);
     expect(countRelatedTests(repo, ['src/nope.ts'])).toBeNull();
     expect(countRelatedTests(tmpdir(), ['x.ts'])).toBeNull();
+  });
+
+  it('names a source the way git ls-files does, on Windows too (git prints D:/a/repo)', () => {
+    expect(repoRelativeSource('D:/a/repo', 'D:\\a\\repo', 'src\\leaf.ts', win32)).toBe('src/leaf.ts');
+    expect(repoRelativeSource('D:/a/repo', 'D:\\a\\repo\\src', 'leaf.ts', win32)).toBe('src/leaf.ts');
+    expect(repoRelativeSource('D:/a/repo', 'C:\\x', 'D:\\a\\repo\\src\\leaf.ts', win32)).toBe('src/leaf.ts');
+    expect(repoRelativeSource('D:/a/repo', 'D:\\a\\repo', 'E:\\other\\x.ts', win32)).toBeNull();
+    expect(repoRelativeSource('D:/a/repo', 'D:\\a\\repo', '..\\x.ts', win32)).toBeNull();
+    expect(repoRelativeSource('/r', '/r', 'src/leaf.ts', posix)).toBe('src/leaf.ts');
+    expect(repoRelativeSource('/r', '/elsewhere', '/r/src/leaf.ts', posix)).toBe('src/leaf.ts');
   });
 });
 

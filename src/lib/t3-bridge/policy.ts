@@ -13,7 +13,7 @@
  * `~/.dreamcontext` is refused as a root even when it was asked for.
  */
 import { homedir } from 'node:os';
-import { isAbsolute, join, resolve, sep } from 'node:path';
+import nodePath, { isAbsolute, join } from 'node:path';
 import { memberFileWriteTarget } from '../agents/member-file-guard.js';
 import { movesGuardedPlace } from '../antigravity-gate.js';
 import { isMarketingEnvPath } from '../marketing/path-guards.js';
@@ -88,24 +88,30 @@ export function normalizeMode(mode: string): ChatPermissionMode {
   return mode === 'acceptEdits' || mode === 'plan' || mode === 'auto' || mode === 'bypassPermissions' ? mode : 'default';
 }
 
+/** The path flavour a check runs in: the host's, or `path.win32` / `path.posix` in a test. */
+export type PathApi = Pick<typeof nodePath, 'isAbsolute' | 'resolve' | 'join' | 'parse' | 'sep'>;
+/** Windows paths compare without case (`C:\Users\X\.DreamContext` is the same folder). */
+const pathKey = (p: PathApi, s: string): string => (p.sep === '\\' ? s.toLowerCase() : s);
+
 /** True when `p` is `~/.dreamcontext` or inside it: never a writable root for a sandboxed tool. */
-export function isUnderDreamcontextHome(p: string, home: string = homedir()): boolean {
-  const base = resolve(join(home, '.dreamcontext'));
-  const abs = resolve(p);
-  return abs === base || abs.startsWith(base + sep);
+export function isUnderDreamcontextHome(p: string, home: string = homedir(), paths: PathApi = nodePath): boolean {
+  const base = pathKey(paths, paths.resolve(paths.join(home, '.dreamcontext')));
+  const abs = pathKey(paths, paths.resolve(p));
+  return abs === base || abs.startsWith(base + paths.sep);
 }
 
 /** The writable roots for a sandboxed (auto / acceptEdits) Codex turn. */
-export function writableRoots(input: PolicyInput): string[] {
+export function writableRoots(input: PolicyInput, paths: PathApi = nodePath): string[] {
   const home = input.home ?? homedir();
   const roots = [input.cwd, ...(input.extraRoots ?? []), ...(input.privateTmp ? [input.privateTmp] : [])];
   const out: string[] = [];
   for (const r of roots) {
-    if (!r || !isAbsolute(r)) continue;
-    const abs = resolve(r);
-    if (isUnderDreamcontextHome(abs, home)) continue;
-    if (abs === '/' || abs === resolve(home)) continue; // a root that wide is no sandbox at all
-    if (!out.includes(abs)) out.push(abs);
+    if (!r || !paths.isAbsolute(r)) continue;
+    const abs = paths.resolve(r);
+    if (isUnderDreamcontextHome(abs, home, paths)) continue;
+    // A root that wide is no sandbox at all: `/`, a Windows drive (`C:\`) or share root, the home.
+    if (abs === paths.parse(abs).root || pathKey(paths, abs) === pathKey(paths, paths.resolve(home))) continue;
+    if (!out.some((o) => pathKey(paths, o) === pathKey(paths, abs))) out.push(abs);
   }
   return out;
 }

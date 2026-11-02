@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { Command } from 'commander';
 import { LISTED_VERBS, REFUSED_FLAGS, classifyBash, gateHookOutput, parseCommand, parseGateContext, type BashGateContext } from '../../src/lib/apps/bash-gate.js';
 import { createProgram } from '../../src/cli/program.js';
@@ -33,10 +33,13 @@ describe('runs with no card', () => {
     'dreamcontext apps logs yuk -n 20',
     `dreamcontext apps do yuk snapshot --input '{"q":"a;b"}'`,
   ])('%s', (c) => expect(verdict(c)).toBe('pass'));
+  // Written with '/' as an agent writes it in a shell (Git Bash on Windows): a backslash is a
+  // card by design (parseCommand), so a native `D:\…` path asks rather than passes.
+  const fwd = (p: string) => p.split(sep).join('/');
   it('`ls` of the app root and the data dir', () => {
-    expect(verdict(`ls ${ctx.appRoot}`)).toBe('pass');
-    expect(verdict(`ls -la ${ctx.dataDir}`)).toBe('pass');
-    expect(verdict(`ls ${join(ctx.appRoot, 'public')}`)).toBe('pass');
+    expect(verdict(`ls ${fwd(ctx.appRoot)}`)).toBe('pass');
+    expect(verdict(`ls -la ${fwd(ctx.dataDir)}`)).toBe('pass');
+    expect(verdict(`ls ${fwd(join(ctx.appRoot, 'public'))}`)).toBe('pass');
   });
 });
 

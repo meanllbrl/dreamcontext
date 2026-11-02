@@ -133,8 +133,11 @@ export function brainPrefix(gitCwd: string, contextRoot: string): string | null 
   let rel: string;
   try {
     // git prints the real path (`/private/var/…` on macOS): compare real paths, in the on-disk
-    // letter case (native), composed (NFC) as git prints every path it lists.
-    rel = relative(realpathSync.native(top), realpathSync.native(contextRoot)).normalize('NFC');
+    // letter case (native), in the form git prints every path it lists: composed (NFC) on macOS,
+    // where git precomposes (core.precomposeUnicode); byte for byte as stored everywhere else, so
+    // a folder named in decomposed form on Linux is not matched in a form git never prints.
+    rel = relative(realpathSync.native(top), realpathSync.native(contextRoot));
+    if (process.platform === 'darwin') rel = rel.normalize('NFC');
   } catch {
     return null;
   }

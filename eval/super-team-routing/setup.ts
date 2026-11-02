@@ -6,7 +6,7 @@
  * Lookout are approved; Atlas is not.
  */
 import { cpSync, mkdirSync, mkdtempSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getAutomation } from '../../src/lib/automations/store.js';
 import { approveAutomation } from '../../src/lib/automations/registry.js';
@@ -23,7 +23,7 @@ export interface TeamProject { proj: string; contextRoot: string; home: string }
 /** A fresh copy under `root`: `team` adds the members. `home` is created beside it. */
 export function makeTeamProject(root: string, opts: { team: boolean; proj?: string; home?: string }): TeamProject {
   const proj = opts.proj ?? mkdtempSync(join(root, opts.team ? 'team-' : 'noteam-'));
-  const home = opts.home ?? join(proj, '..', `${proj.split('/').pop()}-home`);
+  const home = opts.home ?? join(dirname(proj), `${basename(proj)}-home`);
   mkdirSync(home, { recursive: true });
   cpSync(ORBIT_FIXTURE, proj, { recursive: true });
   const contextRoot = join(proj, '_dream_context');

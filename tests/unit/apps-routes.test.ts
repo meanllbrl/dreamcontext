@@ -3,7 +3,7 @@ import http from 'node:http';
 import { execFile } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, delimiter } from 'node:path';
 import { promisify } from 'node:util';
 import { appHash } from '../../src/lib/apps/bundle.js';
 import { registerApp } from '../../src/lib/apps/registry.js';
@@ -16,10 +16,11 @@ import { registerApp } from '../../src/lib/apps/registry.js';
  */
 
 const execFileAsync = promisify(execFile);
-const VITE_NODE = resolve('node_modules/.bin/vite-node');
+/** vite-node's own entry under this Node: `.bin/vite-node` is a .cmd shim on Windows, which execFile cannot run. */
+const VITE_NODE = resolve('node_modules/vite-node/dist/cli.mjs');
 const CLI = resolve('src/cli/index.ts');
 const FIXTURE = join(__dirname, '..', 'fixtures', 'apps', 'echo-backend');
-const PATH = `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin`;
+const PATH = [dirname(process.execPath), ...(process.platform === 'win32' ? [] : ['/usr/bin', '/bin', '/usr/sbin'])].join(delimiter);
 
 const saved = { HOME: process.env.HOME, DESKTOP: process.env.DREAMCONTEXT_DESKTOP };
 let home: string;
@@ -43,7 +44,7 @@ function req(opts: { method?: string; path: string; headers?: Record<string, str
 
 async function cli(args: string[], cwd: string, extraEnv: Record<string, string> = {}): Promise<{ code: number; out: string }> {
   try {
-    const { stdout, stderr } = await execFileAsync(VITE_NODE, ['--root', resolve('.'), CLI, ...args], { cwd, env: { ...process.env, HOME: home, PATH: process.env.PATH ?? PATH, ...extraEnv }, timeout: 60_000 });
+    const { stdout, stderr } = await execFileAsync(process.execPath, [VITE_NODE, '--root', resolve('.'), CLI, ...args], { cwd, env: { ...process.env, HOME: home, PATH: process.env.PATH ?? PATH, ...extraEnv }, timeout: 60_000 });
     return { code: 0, out: stdout + stderr };
   } catch (e) {
     const err = e as { code?: number; stdout?: string; stderr?: string };
@@ -108,14 +109,37 @@ describe('/api/apps', () => {
     expect(r.json.apps[0].actions[0]).toMatchObject({ id: 'leak' });
   });
 
+  // App windows open in the Mac app only: the route answers by the platform it runs on, so each
+  // case says which one it is (the CI runner is Linux, a dev box a Mac).
+  const onPlatform = async (platform: NodeJS.Platform, run: () => Promise<void>): Promise<void> => {
+    const real = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { ...real, value: platform });
+    try { await run(); } finally { Object.defineProperty(process, 'platform', real); }
+  };
+
   it('a bare app link, or a spent nonce, lands on the card and spawns nothing', async () => {
     const list = () => req({ path: '/api/apps' }).then((r) => r.json.apps.find((a: { slug: string }) => a.slug === 'echo'));
     const before = await list();
-    for (const body of [{ link: true }, { link: true, nonce: 'a'.repeat(43) }]) {
-      const r = await req({ method: 'POST', path: '/api/apps/echo/launch', body });
-      expect(r.status).toBe(200);
-      expect(r.json).toMatchObject({ ok: true, landed: 'card' });
-    }
+    await onPlatform('darwin', async () => {
+      for (const body of [{ link: true }, { link: true, nonce: 'a'.repeat(43) }]) {
+        const r = await req({ method: 'POST', path: '/api/apps/echo/launch', body });
+        expect(r.status, JSON.stringify(r.json)).toBe(200);
+        expect(r.json).toMatchObject({ ok: true, landed: 'card' });
+      }
+    });
+    expect((await list()).state).toBe(before.state);
+  });
+
+  it('off the Mac, a launch is refused as mac_only and spawns nothing (the link still lands on the card)', async () => {
+    const list = () => req({ path: '/api/apps' }).then((r) => r.json.apps.find((a: { slug: string }) => a.slug === 'echo'));
+    const before = await list();
+    await onPlatform('linux', async () => {
+      for (const body of [{ link: true }, { owner: true }]) {
+        const r = await req({ method: 'POST', path: '/api/apps/echo/launch', body });
+        expect(r.status).toBe(409);
+        expect(r.json.error).toBe('mac_only');
+      }
+    });
     expect((await list()).state).toBe(before.state);
   });
 

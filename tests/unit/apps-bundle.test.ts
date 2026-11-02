@@ -61,7 +61,7 @@ describe('ensureAppBundle', () => {
 
     const exe = join(r.path, 'Contents', 'MacOS', 'app-runner');
     expect(readFileSync(exe, 'utf-8')).toBe('runner-v1');
-    expect(statSync(exe).mode & 0o111).toBeTruthy();
+    if (process.platform !== 'win32') expect(statSync(exe).mode & 0o111).toBeTruthy(); // Windows has no POSIX mode bits
 
     const plist = readFileSync(join(r.path, 'Contents', 'Info.plist'), 'utf-8');
     expect(plist).toContain('<key>CFBundleExecutable</key><string>app-runner</string>');
@@ -86,7 +86,7 @@ describe('ensureAppBundle', () => {
     const r = ensureAppBundle({ ...input, name: '../../Evil </string><key>X</key>\n<string>' }, { exec, platform: 'darwin' });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.path.startsWith(appsBundleDir(home) + '/meta-ads-')).toBe(true);
+    expect(r.path.startsWith(join(appsBundleDir(home), 'meta-ads-'))).toBe(true);
     const plist = readFileSync(join(r.path, 'Contents', 'Info.plist'), 'utf-8');
     expect(plist).toContain('<key>CFBundleDisplayName</key><string>../../Evil &lt;/string&gt;&lt;key&gt;X&lt;/key&gt; &lt;string&gt;</string>');
     expect(plist.match(/<key>X<\/key>/)).toBeNull();

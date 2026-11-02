@@ -1,6 +1,6 @@
 /** Every headless surface, one row each: a Codex run is never wider than its Claude rule. */
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { HEADLESS_ENVELOPES, codexModelOf, codexRunArgs, envelopeMode, envelopeRefusal, isPlainReadCommand, toolRunArgs, type HeadlessSurface } from '../../src/lib/t3-bridge/headless-envelope.js';
 import { codexRuntimePolicy } from '../../src/lib/t3-bridge/policy.js';
@@ -24,7 +24,8 @@ describe('headless envelopes', () => {
       expect(sandbox.networkAccess).toBe(false);
       expect(sandbox.excludeSlashTmp).toBe(true);
       expect(sandbox.excludeTmpdirEnvVar).toBe(true);
-      expect(sandbox.writableRoots).toEqual([CWD, '/tmp/linked', '/tmp/own']);
+      // Absolute on the host: on Windows `/tmp/project` is `<drive>:\\tmp\\project` (writableRoots resolves).
+      expect(sandbox.writableRoots).toEqual([CWD, '/tmp/linked', '/tmp/own'].map((p) => resolve(p)));
     } else {
       expect(p.sandboxPolicy).toBeUndefined();
       expect(p.runtimeMode).toBe('approval-required');

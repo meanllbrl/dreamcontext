@@ -49,14 +49,19 @@ const nearestReal = (abs: string): string => {
 export function isAntigravityGateFile(path: string): boolean {
   const gate = /\/providers\/antigravity\/[0-9a-f]{64}(?:\/config(?:\/hooks\.json)?)?$/;
   const abs = resolve(path.replace(/\\/g, '/'));
-  return gate.test(abs.toLowerCase()) || gate.test(nearestReal(abs).toLowerCase());
+  return gate.test(lower(abs)) || gate.test(lower(nearestReal(abs)));
 }
 
-const lower = (p: string): string => p.toLowerCase().replace(/\/+$/, '') || '/';
+/** One spelling to compare: forward slashes (on Windows `resolve` and `realpath` answer with
+ *  backslashes, and every rule here is written with `/`), lower case, no trailing slash. */
+function lower(p: string): string { return p.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '') || '/'; }
 /** The gate's folders by name, in any HOME: up to and including `.dreamcontext`. */
 const GATE_CHAIN = /\/\.dreamcontext(?:\/t3(?:\/state(?:\/providers(?:\/antigravity)?)?)?)?$/;
 /** Any brain's token folder or file, by name. */
 const TOKEN_CHAIN = /\/_dream_context\/marketing(?:\/\.env)?$/;
+/** A spelling names a protected place (the gate's folders, a token folder or file), in any
+ *  separator and case. Exported for the unit test, which pins it on Windows spellings. */
+export const guardedByName = (p: string): boolean => GATE_CHAIN.test(lower(p)) || TOKEN_CHAIN.test(lower(p));
 const aboveOrSelf = (dir: string, file: string): boolean => dir === '/' || file === dir || file.startsWith(`${dir}/`);
 
 /**
@@ -67,7 +72,7 @@ const aboveOrSelf = (dir: string, file: string): boolean => dir === '/' || file 
  */
 function holdsGuarded(abs: string, cwd: string): boolean {
   const spelled = [lower(resolve(abs)), lower(nearestReal(resolve(abs)))];
-  if (isAntigravityGateFile(abs) || spelled.some((p) => GATE_CHAIN.test(p) || TOKEN_CHAIN.test(p))) return true;
+  if (isAntigravityGateFile(abs) || spelled.some(guardedByName)) return true;
   const root = resolveContextRoot(cwd);
   if (!root) return false;
   const token = lower(join(nearestReal(root), 'marketing', '.env'));

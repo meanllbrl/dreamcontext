@@ -2,13 +2,14 @@
  * The owner's tool servers on Antigravity. A fictional stdio server and a local HTTP one stand in;
  * what the real agent does with them is in the module header.
  */
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { antigravityProfileDir } from '../../src/lib/antigravity-accounts.js';
 import { checkAcpServers, forgetProbe, refusedServer, sessionServers } from '../../src/lib/antigravity-mcp.js';
+import { cmdArg, leanSpawnPlan } from '../../src/lib/super/lean-exec.js';
 import { acpLeanMcpServers, acpStoreServers, type AcpMcpServer } from '../../src/lib/t3-bridge/launch.js';
 import { probeSession, type ProbeSession } from '../../src/lib/t3-bridge/mcp-probe.js';
 import { readAntigravityMcp, setAntigravityMcpProbeForTests } from '../../src/server/routes/agent-mcp.js';
@@ -38,18 +39,19 @@ describe('asking a server before a chat is given it', () => {
   let dir: string;
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'dc-agy-mcp-')); });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
-  const bin = (body: string): string => {
+  // Node + a script, the shape every server the product checks has (acpStoreServers: node, the
+  // CLI, `mcp lean-exec`); a shebang file would not start on Windows.
+  const script = (body: string): string => {
     const p = join(dir, `s-${Math.random().toString(36).slice(2)}.mjs`);
-    writeFileSync(p, `#!${process.execPath}\n${body}`);
-    chmodSync(p, 0o755);
+    writeFileSync(p, body);
     return p;
   };
 
   it('tells a stdio server that answers from one that dies or hangs', async () => {
-    const good = bin(`process.stdin.on('data',(d)=>{const m=JSON.parse(String(d));process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{}})+'\\n')});`);
-    const dead = bin('process.exit(1);');
-    const hung = bin('setTimeout(()=>{},60000);');
-    const r = await checkAcpServers([good, dead, hung].map((command, i) => ({ name: `s${i}`, command, args: [], env: [] })), { env: process.env, limitMs: 1500 });
+    const good = script(`process.stdin.on('data',(d)=>{const m=JSON.parse(String(d));process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{}})+'\\n')});`);
+    const dead = script('process.exit(1);');
+    const hung = script('setTimeout(()=>{},60000);');
+    const r = await checkAcpServers([good, dead, hung].map((file, i) => ({ name: `s${i}`, command: process.execPath, args: [file], env: [] })), { env: process.env, limitMs: 1500 });
     expect([...r.values()]).toEqual(['connected', 'failed', 'failed']);
   }, 20_000);
 
@@ -155,5 +157,37 @@ describe('readAntigravityMcp', () => {
     expect((await readAntigravityMcp(home, home)).state).toBe('failed');
     setAntigravityMcpProbeForTests(async () => ({ state: 'ok', servers: [{ name: 'fox', status: 'connected', toolCount: 3 }] }));
     expect(await readAntigravityMcp(home, home)).toEqual({ state: 'ok', servers: [{ name: 'fox', status: 'connected', toolCount: 3 }], left: [] });
+  });
+});
+
+describe('an owner\'s stdio server on Windows (mcp lean-exec)', () => {
+  const NPX = 'C:\\Program Files\\nodejs\\npx.cmd';
+  const onPath = (hit: string) => (p: string): boolean => p === hit;
+  const win = { platform: 'win32' as const, path: 'C:\\Windows\\System32;C:\\Program Files\\nodejs', comspec: 'C:\\Windows\\System32\\cmd.exe' };
+
+  it('is spawned as written off Windows', () => {
+    expect(leanSpawnPlan({ command: 'npx', args: ['-y', 'fox-mcp'] }, { platform: 'darwin' })).toEqual({ command: 'npx', args: ['-y', 'fox-mcp'], verbatim: false });
+  });
+
+  it('a bare npx is found as npx.cmd and runs through cmd.exe, every part escaped', () => {
+    const plan = leanSpawnPlan({ command: 'npx', args: ['-y', 'fox-mcp'] }, { ...win, isFile: onPath(NPX) });
+    expect(plan.command).toBe('C:\\Windows\\System32\\cmd.exe');
+    expect(plan.verbatim).toBe(true);
+    expect(plan.args.slice(0, 3)).toEqual(['/d', '/s', '/c']);
+    expect(plan.args[3]).toBe('"C:\\Program^ Files\\nodejs\\npx.cmd ^^^"-y^^^" ^^^"fox-mcp^^^""');
+  });
+
+  it('no argument reaches cmd as syntax: &, |, %VAR% and a quote stay escaped', () => {
+    const a = cmdArg('x" & calc | %PATH% ^');
+    for (const ch of ['&', '|', '%', '"']) {
+      const bare = [...a.matchAll(new RegExp(`(\\^*)\\${ch}`, 'g'))].filter((m) => m[1]!.length % 2 === 0);
+      expect(bare, ch).toEqual([]);
+    }
+  });
+
+  it('an .exe runs directly, a full path is not looked up, and an unknown command fails as written', () => {
+    expect(leanSpawnPlan({ command: 'uvx', args: ['a'] }, { ...win, isFile: onPath('C:\\Windows\\System32\\uvx.exe') })).toEqual({ command: 'C:\\Windows\\System32\\uvx.exe', args: ['a'], verbatim: false });
+    expect(leanSpawnPlan({ command: 'D:\\srv\\run.bat', args: [] }, { ...win, isFile: () => false })).toMatchObject({ command: win.comspec, verbatim: true });
+    expect(leanSpawnPlan({ command: 'nope', args: [] }, { ...win, isFile: () => false })).toEqual({ command: 'nope', args: [], verbatim: false });
   });
 });

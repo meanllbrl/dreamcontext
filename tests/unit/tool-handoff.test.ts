@@ -54,8 +54,8 @@ describe('tool handoff seed', () => {
   it('is private, read once, and gone afterwards', () => {
     const path = writeRawHandoff(root, PANE, raw(2));
     expect(path).toBeTruthy();
-    expect(statSync(path!).mode & 0o777).toBe(0o600);
-    expect(statSync(seedDir(root)).mode & 0o777).toBe(0o700);
+    if (process.platform !== 'win32') expect(statSync(path!).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
+    if (process.platform !== 'win32') expect(statSync(seedDir(root)).mode & 0o777).toBe(0o700);
     const out = seedOutputPath(root, PANE)!;
     writeFileSync(out, 'seed text', { mode: 0o600 });
     expect(consumeToolHandoffSeed(root, PANE)).toBe('seed text');

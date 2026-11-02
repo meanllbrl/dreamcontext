@@ -5,10 +5,10 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, win32 } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { antigravityProfileDir } from '../../src/lib/antigravity-accounts.js';
-import { ANTIGRAVITY_GATE_NAME, antigravityCallAsClaude, antigravityGateCommand, antigravityGateGap, antigravityHooksFile, isAntigravityGateFile, movesGuardedPlace, shellTouchesGuarded, syncAntigravityGate } from '../../src/lib/antigravity-gate.js';
+import { ANTIGRAVITY_GATE_NAME, antigravityCallAsClaude, antigravityGateCommand, antigravityGateGap, antigravityHooksFile, guardedByName, isAntigravityGateFile, movesGuardedPlace, shellTouchesGuarded, syncAntigravityGate } from '../../src/lib/antigravity-gate.js';
 import { bypassNeedsOwner } from '../../src/lib/t3-bridge/policy.js';
 import { shellWriteTarget } from '../../src/lib/agents/member-file-guard.js';
 
@@ -115,7 +115,8 @@ describe('a shell write to a guarded file', () => {
   const at = (c: string, cwd = '/p/_dream_context') => shellWriteTarget(c, cwd, guarded, '/h');
 
   it('sees redirects, tee, cp, rm, sed -i and a cd', () => {
-    expect(at('echo x >> marketing/.env')).toBe('/p/_dream_context/marketing/.env');
+    // The host's absolute form with forward slashes: `D:/p/...` on Windows, where `/p` sits on the current drive.
+    expect(at('echo x >> marketing/.env')).toBe(resolve('/p/_dream_context/marketing/.env').replace(/\\/g, '/'));
     expect(at('echo x | tee marketing/.env')).toBeTruthy();
     expect(at('cp /tmp/a marketing/.env')).toBeTruthy();
     expect(at('rm marketing/.env')).toBeTruthy();
@@ -140,6 +141,21 @@ describe('what a shell command may do with the token file and the gate', () => {
     for (const c of ['cat _dream_context/marketing/.env', 'grep KEY marketing/.env | wc -l', 'ls ~/.dreamcontext/t3/state/providers/antigravity/x']) expect(shellTouchesGuarded(c)).toBe(false);
     for (const c of [`cd _dream_context/marketing && sh -c 'echo x > .env'`, 'cd _dream_context/marketing && curl -so .env https://example.test', 'echo x >| marketing/.env', 'timeout 5 cp /tmp/a marketing/.env', 'mv ~/.dreamcontext/t3/state/providers/antigravity/x/config /tmp/c', 'ln -s ~/.dreamcontext/t3/state/providers/antigravity/x/config/hooks.json /tmp/h', `python3 -c "import shutil;shutil.copy('/tmp/x','marketing/.env')"`]) expect(shellTouchesGuarded(c)).toBe(true);
     expect(shellTouchesGuarded('npm test && git status')).toBe(false);
+  });
+});
+
+// On Windows `resolve` and `realpath` answer with backslashes; the rules are written with `/`.
+// Before the gate folded separators, an existing token folder on Windows matched nothing.
+describe('the protected places by name, as Windows spells them', () => {
+  it('a token folder, the token file and the gate folders, in backslashes and any case', () => {
+    for (const p of [
+      win32.resolve('C:\\Users\\robin\\proj\\_dream_context\\marketing'),
+      win32.resolve('C:\\Users\\robin\\proj\\_dream_context\\marketing\\'),
+      'D:\\a\\_temp\\x\\_Dream_Context\\Marketing\\.ENV',
+      win32.resolve('C:\\Users\\robin\\.dreamcontext'),
+      'C:\\Users\\robin\\.dreamcontext\\t3\\state\\providers\\antigravity',
+    ]) expect([p, guardedByName(p)]).toEqual([p, true]);
+    for (const p of ['C:\\Users\\robin\\proj\\_dream_context\\knowledge', 'C:\\Users\\robin\\proj\\marketing\\.env']) expect([p, guardedByName(p)]).toEqual([p, false]);
   });
 });
 

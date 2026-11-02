@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'node:http';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, delimiter } from 'node:path';
 import { writeDefaultIcon } from '../../src/lib/apps/icon.js';
 
 /**
@@ -12,7 +12,7 @@ import { writeDefaultIcon } from '../../src/lib/apps/icon.js';
  * and log. And the /apps template: what `apps new` writes runs under the supervisor as is.
  */
 
-const PATH = `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin`;
+const PATH = [dirname(process.execPath), ...(process.platform === 'win32' ? [] : ['/usr/bin', '/bin', '/usr/sbin'])].join(delimiter);
 const saved = { HOME: process.env.HOME, DESKTOP: process.env.DREAMCONTEXT_DESKTOP, PATH: process.env.PATH };
 const TOKEN = 'EAAB-fixture-token-0123456789';
 let home: string;
@@ -43,7 +43,7 @@ beforeAll(async () => {
   mkdirSync(join(project, '_dream_context'), { recursive: true });
   process.env.HOME = home;
   process.env.DREAMCONTEXT_DESKTOP = '1';
-  process.env.PATH = `${PATH}:${saved.PATH ?? ''}`;
+  process.env.PATH = `${PATH}${delimiter}${saved.PATH ?? ''}`;
   mkdirSync(join(home, '.dreamcontext'), { recursive: true });
   writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: [{ name: 'acme', path: project }] }));
 

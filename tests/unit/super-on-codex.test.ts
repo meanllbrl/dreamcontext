@@ -121,7 +121,7 @@ describe('the Codex terminal', () => {
     expect(codexTerminalEnv('primary', home)).toEqual({ env: {}, pre: [] });
     expect(codexTerminalEnv('../x', home)).toEqual({ env: {}, pre: [] });
     const acct = codexTerminalEnv('acct1', home);
-    expect(acct.env.CODEX_HOME).toContain('codex-accounts/acct1');
+    expect(acct.env.CODEX_HOME).toContain(join('codex-accounts', 'acct1'));
     expect(acct.pre).toContain('cli_auth_credentials_store="file"');
   });
 });

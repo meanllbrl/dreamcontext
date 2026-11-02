@@ -43,7 +43,7 @@ import {
   type SessionMode,
   type SessionRecord,
 } from '../../lib/builder-spawn.js';
-import { HEAVY_LOCK_BUSY_EXIT, heavyLockPath, heavySlotDir, listProcesses, repoToplevel } from '../../lib/builder-tools.js';
+import { HEAVY_LOCK_BUSY_EXIT, heavyLockPath, heavySlotDir, heavySpawnPlan, listProcesses, repoToplevel } from '../../lib/builder-tools.js';
 import { acquireHeavyReporting } from '../../lib/heavy-acquire.js';
 import { countRelatedTests, jobKey, queueOf, safeLabel } from '../../lib/heavy-queue.js';
 import { recordCheck, recordStart } from '../../lib/run-ledger.js';
@@ -164,7 +164,9 @@ async function runCheckLocked(argv: string[], cwd: string, logFile: string): Pro
   const off: Array<() => void> = [];
   try {
     exit = await new Promise<number | null>((done) => {
-      const child = spawn('npx', argv, { cwd, stdio: ['ignore', fd, fd] });
+      // heavySpawnPlan: on Windows npx is npx.cmd, which only starts through cmd.exe.
+      const plan = heavySpawnPlan(['npx', ...argv])!;
+      const child = spawn(plan.file, plan.args, { cwd, stdio: ['ignore', fd, fd], shell: plan.shell, windowsVerbatimArguments: plan.windowsVerbatimArguments });
       for (const sig of ['SIGTERM', 'SIGINT'] as const) {
         const onSig = () => { killedBy = sig; child.kill(sig); };
         process.on(sig, onSig);

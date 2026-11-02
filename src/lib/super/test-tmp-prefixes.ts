@@ -568,6 +568,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-tomb-',
   'dc-tool-accounts-',
   'dc-tool-finder-',
+  'dc-tool-finder-npmrc-',
   'dc-tool-route-',
   'dc-tool-route-home-',
   'dc-transcript-cwd-',

@@ -57,6 +57,12 @@ jobs:
         working-directory: dashboard
         run: npm ci
 
+      # tests/unit/drop-remote-media.test.ts draws model text in a real headless Chromium and
+      # counts every request it makes. A dev box has the browser from Playwright's own cache; a
+      # bare runner does not, and the file dies in beforeAll. The version is the lockfile's.
+      - name: Install headless Chromium for the browser unit test
+        run: npx playwright install --with-deps --only-shell chromium
+
       # The integration suite spawns the COMPILED CLI at dist/index.js
       # (tests/integration/*.test.ts and a few unit tests do
       # `const CLI = join(__dirname, '..', '..', 'dist', 'index.js')`), so the CLI
@@ -112,6 +118,9 @@ jobs:
       - name: Install dashboard dependencies
         working-directory: dashboard
         run: npm ci
+
+      - name: Install headless Chromium for the browser unit test
+        run: npx playwright install --only-shell chromium
 
       - name: Type-check the CLI
         run: npx tsc --noEmit -p .

@@ -14,7 +14,7 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { accessSync, constants, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, dirname, isAbsolute, join } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, win32 } from 'node:path';
 
 const LOGIN_MARK = '__DC_LOGIN_PATH__';
 const LOGIN_TIMEOUT_MS = 5_000;
@@ -66,21 +66,29 @@ const newestFirst = (a: { v: number[] }, b: { v: number[] }): number =>
   (b.v[0]! - a.v[0]!) || (b.v[1]! - a.v[1]!) || (b.v[2]! - a.v[2]!);
 
 /** `prefix=` in `~/.npmrc`, the folder a plain `npm install -g` writes to. */
-function npmrcPrefix(home: string): string | null {
+function npmrcPrefix(home: string, platform: NodeJS.Platform = process.platform): string | null {
   try {
     const m = /^\s*prefix\s*=\s*(.+?)\s*$/m.exec(readFileSync(join(home, '.npmrc'), 'utf-8'));
     if (!m) return null;
-    const raw = m[1]!.replace(/^["']|["']$/g, '').replace(/^~(?=\/)/, home).replace(/\$\{?HOME\}?/g, home);
-    return raw.startsWith('/') ? raw : null;
+    const raw = m[1]!.replace(/^["']|["']$/g, '').replace(/^~(?=[\\/])/, home).replace(/\$\{?HOME\}?/g, home);
+    // `C:\Users\…\npm` is as absolute as `/opt/npm`: the POSIX-only test dropped every Windows prefix.
+    return (platform === 'win32' ? win32.isAbsolute(raw) : raw.startsWith('/')) ? raw : null;
   } catch {
     return null;
   }
 }
 
+/**
+ * Where `npm install -g` leaves a launcher under `prefix`: `<prefix>/bin` on macOS and Linux,
+ * the prefix itself on Windows (`%APPDATA%\npm\codex.cmd`).
+ */
+export const npmPrefixBin = (prefix: string, platform: NodeJS.Platform = process.platform): string =>
+  platform === 'win32' ? prefix : join(prefix, 'bin');
+
 export const systemToolDirs = (): string[] => [dirname(process.execPath), '/opt/homebrew/bin', '/usr/local/bin'];
 
 /** Every folder a tool's install can land in, most specific first. Reads folders, starts nothing. */
-export function knownToolDirs(home: string, env: NodeJS.ProcessEnv = process.env, system: readonly string[] = systemToolDirs()): string[] {
+export function knownToolDirs(home: string, env: NodeJS.ProcessEnv = process.env, system: readonly string[] = systemToolDirs(), platform: NodeJS.Platform = process.platform): string[] {
   const managers = [
     ...versionDirs(join(env.NVM_DIR || join(home, '.nvm'), 'versions', 'node'), ['bin']),
     ...versionDirs(join(home, '.local', 'share', 'fnm', 'node-versions'), ['installation', 'bin']),
@@ -89,13 +97,15 @@ export function knownToolDirs(home: string, env: NodeJS.ProcessEnv = process.env
     ...versionDirs(join(home, '.asdf', 'installs', 'nodejs'), ['bin']),
     ...versionDirs(join(home, '.local', 'share', 'mise', 'installs', 'node'), ['bin']),
   ].sort(newestFirst).map((e) => e.dir);
-  const prefix = env.NPM_CONFIG_PREFIX || env.npm_config_prefix || npmrcPrefix(home);
+  const prefix = env.NPM_CONFIG_PREFIX || env.npm_config_prefix || npmrcPrefix(home, platform);
+  // Windows' default global prefix, when nothing names another one.
+  const winDefault = platform === 'win32' ? [win32.join(env.APPDATA || win32.join(home, 'AppData', 'Roaming'), 'npm')] : [];
   const dirs = [
     ...managers,
     join(env.VOLTA_HOME || join(home, '.volta'), 'bin'),
     join(home, '.asdf', 'shims'),
     join(home, '.local', 'share', 'mise', 'shims'),
-    ...(prefix ? [join(prefix, 'bin')] : []),
+    ...(prefix ? [npmPrefixBin(prefix, platform)] : winDefault),
     join(home, '.dreamcontext', 'npm-global', 'bin'),
     join(home, '.npm-global', 'bin'),
     join(home, '.npm-packages', 'bin'),

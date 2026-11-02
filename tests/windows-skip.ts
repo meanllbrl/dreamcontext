@@ -86,7 +86,7 @@ export const WINDOWS_SKIPS: readonly WindowsSkip[] = [
   },
   {
     file: 'tests/unit/board-agent-envelope.test.ts',
-    reason: 'The scoped board envelope writes Claude permission rules in POSIX `//abs/path/**` spelling (boardScopeArgs), and its spawn paths fail on that. The spelling Claude Code accepts on Windows is not measured yet: a product follow-up for a real Windows machine.',
+    reason: 'Since rulePath (board-scope.ts) the scoped envelope spells a Windows path as Claude Code matches it (`//c/Users/...`, read off its binary, pinned in rule-path-win32.test.ts), but this file\'s spawn fixtures still assume POSIX paths and the spelling is not run against a real Windows claude yet: leaves the list after a measured run on a Windows machine.',
   },
   {
     file: 'tests/integration/task-filing-bar-end-to-end.test.ts',
@@ -271,26 +271,6 @@ export const WINDOWS_SKIPS: readonly WindowsSkip[] = [
     file: 'tests/unit/agent-sessions-generation.test.ts',
     test: 'a roster lock left by a DEAD process is reclaimed at once',
     reason: 'Gets a dead pid by spawning /usr/bin/true.',
-  },
-  {
-    file: 'tests/unit/board-card-chat.test.ts',
-    test: 'prepareCardChat',
-    reason: 'Board scope refuses every path that contains a backslash (FORBIDDEN_PATH_CHARS: inside a Claude permission rule it is quoting), and every Windows path does, so a board-scoped agent fails closed on Windows. Making it work needs the rule spelling Claude Code accepts on Windows, measured on a real machine: a product follow-up.',
-  },
-  {
-    file: 'tests/unit/board-card-chat.test.ts',
-    test: 'a card spawn and the native plan-mode deny',
-    reason: 'Board scope refuses every path that contains a backslash (FORBIDDEN_PATH_CHARS: inside a Claude permission rule it is quoting), and every Windows path does, so a board-scoped agent fails closed on Windows. Making it work needs the rule spelling Claude Code accepts on Windows, measured on a real machine: a product follow-up.',
-  },
-  {
-    file: 'tests/unit/board-card-chat.test.ts',
-    test: 'prepareAgentChat',
-    reason: 'Board scope refuses every path that contains a backslash (FORBIDDEN_PATH_CHARS: inside a Claude permission rule it is quoting), and every Windows path does, so a board-scoped agent fails closed on Windows. Making it work needs the rule spelling Claude Code accepts on Windows, measured on a real machine: a product follow-up.',
-  },
-  {
-    file: 'tests/unit/assistant-latency.test.ts',
-    test: 'a scoped home-board card carries only its board scope',
-    reason: 'Board scope refuses every path that contains a backslash (FORBIDDEN_PATH_CHARS: inside a Claude permission rule it is quoting), and every Windows path does, so a board-scoped agent fails closed on Windows. Making it work needs the rule spelling Claude Code accepts on Windows, measured on a real machine: a product follow-up.',
   },
   {
     file: 'tests/integration/auto-sleep-end-to-end.test.ts',
@@ -520,5 +500,34 @@ export const WINDOWS_SKIPS: readonly WindowsSkip[] = [
     file: 'tests/unit/voice-phone-stt.test.ts',
     test: 'one phone take in flight',
     reason: 'The fake whisper-server is a #!/bin/sh script, which Windows cannot spawn. Local whisper on Windows is not measured yet.',
+  },
+  {
+    file: 'tests/unit/t3-bridge/antigravity-session.test.ts',
+    reason: 'Every test drives T3\'s fake ACP agent through a #!/bin/sh launcher named agy_acp_server.par. On Windows T3 (AntigravityInstallation executableNames) only starts a PE agy_acp_server.exe with a localharness_external.exe beside it, which the suite cannot fake without a compiled binary. The Windows names T3 resolves are in its vendored AntigravityInstallation; our side (antigravityAgentName, the PATH lookup, the doctor row, the stdio server check) is unit-tested with win32 inputs in antigravity-accounts, doctor-antigravity and antigravity-mcp. A real Windows Antigravity chat is not measured yet.',
+  },
+  {
+    file: 'tests/unit/t3-bridge/headless-run-antigravity.test.ts',
+    test: 'read-only: the plain read it asked for runs',
+    reason: 'Reads the request log of T3\'s fake ACP agent, a #!/bin/sh launcher on PATH; Windows starts only a PE agy_acp_server.exe (same mechanism as antigravity-session.test.ts). The other test of the file still runs there.',
+  },
+  {
+    file: 'tests/unit/codex-dependency.test.ts',
+    test: 'lands a macOS/Linux install on disk',
+    reason: 'The pinned Codex install has no win32 pin (codex-pin.ts) and Windows takes it as a manual fix (onboarding/checks.ts); its launcher is a /bin/sh script. These tests land a darwin install, which installManagedCodex refuses on a drive path by design. The win32 refusal itself is tested ("no automatic install on a system with no pin").',
+  },
+  {
+    file: 'tests/unit/codex-dependency.test.ts',
+    test: '`env node` resolves through the bridge Node',
+    reason: 'A #!/usr/bin/env node launcher is how a POSIX npm install finds Node. npm\'s Windows codex.cmd names node.exe itself; that launcher is covered by the other tests of the describe, which write a codex.cmd on Windows.',
+  },
+  {
+    file: 'tests/unit/tool-finder.test.ts',
+    test: 'a file that cannot run is not a tool',
+    reason: 'Windows has no execute bit: fs.accessSync(X_OK) reads as F_OK there. What runs on Windows is chosen by the name the caller asks for (codex.cmd / codex.exe, codex-bin.ts).',
+  },
+  {
+    file: 'tests/unit/codex-mcp.test.ts',
+    test: 'never reads a store file that is not 0600',
+    reason: 'The 0600 gate is POSIX only: Windows has no mode to read (mcp-store.ts storeFileProblem), the same entry as mcp-store.test.ts.',
   },
 ];

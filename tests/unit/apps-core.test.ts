@@ -93,7 +93,7 @@ describe('registry', () => {
     mkdirSync(root, { recursive: true });
     mkdirSync(appRootFor(proj, 'ab'), { recursive: true });
     const rec = registerApp(home, { projectRoot: proj, vault: 'acme', slug: 'a', name: 'A', root });
-    expect(statSync(registryPath(home)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(registryPath(home)).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(getApp(home, proj, 'a')?.hash).toBe(rec.hash);
     expect(listApps(home, proj)).toHaveLength(1);
     expect(appContaining(home, join(root, 'public'))?.slug).toBe('a');
@@ -155,7 +155,7 @@ describe('shots', () => {
     const id = 'a'.repeat(24);
     const p = writeShot(home, '0123456789abcdef', id, PNG);
     expect(p).toBe(shotPath(home, '0123456789abcdef', id));
-    expect(statSync(p).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(p).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     expect(() => writeShot(home, '0123456789abcdef', 'b'.repeat(24), Buffer.from('nope'))).toThrow();
     expect(() => shotPath(home, '0123456789abcdef', '../x')).toThrow();
     pruneShots(home, Date.now() + 31 * 60_000);
@@ -171,7 +171,7 @@ describe('shots', () => {
     const src = writeShot(home, '0123456789abcdef', id, PNG);
     const r = copyShotToProject(src, ctx, id);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(statSync(r.path).mode & 0o777).toBe(0o600);
+    if (r.ok && process.platform !== 'win32') expect(statSync(r.path).mode & 0o777).toBe(0o600); // Windows has no POSIX mode bits
     execFileSync('git', ['add', '-A'], { cwd: proj });
     expect(execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: proj, encoding: 'utf-8' })).not.toMatch(/tmp\/apps/);
 

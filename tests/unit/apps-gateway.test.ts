@@ -2,9 +2,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'node:http';
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, delimiter } from 'node:path';
 import { registerApp, type AppRecord } from '../../src/lib/apps/registry.js';
-import { runtimeFor, stopAllRuntimes, type AppRuntime } from '../../src/lib/apps/supervisor.js';
+import { lsofPath, runtimeFor, stopAllRuntimes, type AppRuntime } from '../../src/lib/apps/supervisor.js';
 import { closeAllGateways, configureGateways, gatewayFor, type AppGateway } from '../../src/server/apps/gateway.js';
 import { MASK } from '../../src/lib/apps/redact.js';
 
@@ -14,7 +14,9 @@ import { MASK } from '../../src/lib/apps/redact.js';
  */
 
 const FIXTURE = join(__dirname, '..', 'fixtures', 'apps', 'echo-backend');
-const PATH = `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin`;
+const PATH = [dirname(process.execPath), ...(process.platform === 'win32' ? [] : ['/usr/bin', '/bin', '/usr/sbin'])].join(delimiter);
+/** A one-second build, the same under /bin/sh and cmd.exe (Windows has no `sleep`). */
+const SLEEP_1 = 'node -e "setTimeout(() => {}, 1000)"';
 const cleanup: string[] = [];
 const tmp = (p: string) => { const d = mkdtempSync(join(tmpdir(), p)); cleanup.push(d); return d; };
 
@@ -291,6 +293,12 @@ describe('gateway', () => {
 });
 
 describe('supervisor checks', () => {
+  it('finds lsof where macOS keeps it and where Linux keeps it, never through PATH', () => {
+    expect(lsofPath((p) => p === '/usr/sbin/lsof')).toBe('/usr/sbin/lsof');
+    expect(lsofPath((p) => p === '/usr/bin/lsof')).toBe('/usr/bin/lsof');
+    expect(lsofPath(() => false)).toBeNull();
+  });
+
   it('a backend bound to all interfaces is an error ("bind to 127.0.0.1")', async () => {
     const r = rt(makeApp('wide', 'BIND_ALL=1\n'));
     await gatewayFor(r);
@@ -394,7 +402,7 @@ describe('supervisor checks', () => {
 
   it('an owner Stop during the build is not undone when the start finishes', async () => {
     const rec = makeApp('slowstart');
-    writeFileSync(join(rec.root, 'dreamcontext-app.json'), JSON.stringify({ slug: 'slowstart', name: 'S', build: 'sleep 1', backend: { command: 'node server.mjs', health: '/health' } }));
+    writeFileSync(join(rec.root, 'dreamcontext-app.json'), JSON.stringify({ slug: 'slowstart', name: 'S', build: SLEEP_1, backend: { command: 'node server.mjs', health: '/health' } }));
     const r = rt(rec);
     await gatewayFor(r);
     const started = r.ensureRunning();
@@ -408,7 +416,7 @@ describe('supervisor checks', () => {
 
   it('a Start right after a Stop starts afresh, not the cancelled start', async () => {
     const rec = makeApp('restart');
-    writeFileSync(join(rec.root, 'dreamcontext-app.json'), JSON.stringify({ slug: 'restart', name: 'R', build: 'sleep 1', backend: { command: 'node server.mjs', health: '/health' } }));
+    writeFileSync(join(rec.root, 'dreamcontext-app.json'), JSON.stringify({ slug: 'restart', name: 'R', build: SLEEP_1, backend: { command: 'node server.mjs', health: '/health' } }));
     const r = rt(rec);
     await gatewayFor(r);
     const first = r.ensureRunning();
@@ -423,7 +431,7 @@ describe('supervisor checks', () => {
 
   it('a Stop while a start waits for an update wins: nothing starts afterwards', async () => {
     const rec = makeApp('stopwait');
-    writeFileSync(join(rec.root, 'dreamcontext-app.json'), JSON.stringify({ slug: 'stopwait', name: 'W', build: 'sleep 1', backend: { command: 'node server.mjs', health: '/health' } }));
+    writeFileSync(join(rec.root, 'dreamcontext-app.json'), JSON.stringify({ slug: 'stopwait', name: 'W', build: SLEEP_1, backend: { command: 'node server.mjs', health: '/health' } }));
     const r = rt(rec);
     await gatewayFor(r);
     await r.ensureRunning();
@@ -439,7 +447,7 @@ describe('supervisor checks', () => {
 
   it('a start asked for while an update runs waits for it: one backend, never two', async () => {
     const rec = makeApp('racer');
-    writeFileSync(join(rec.root, 'dreamcontext-app.json'), JSON.stringify({ slug: 'racer', name: 'R', build: 'sleep 1', backend: { command: 'node server.mjs', health: '/health' } }));
+    writeFileSync(join(rec.root, 'dreamcontext-app.json'), JSON.stringify({ slug: 'racer', name: 'R', build: SLEEP_1, backend: { command: 'node server.mjs', health: '/health' } }));
     const r = rt(rec);
     await gatewayFor(r);
     await r.ensureRunning();

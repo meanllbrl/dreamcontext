@@ -32,12 +32,13 @@ import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, watch, type FSWatcher } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, relative, sep } from 'node:path';
+import { join, relative, sep, win32 } from 'node:path';
 import http from 'node:http';
 import net from 'node:net';
 import { readManifest, type AppManifest, type ManifestProblem } from './manifest.js';
 import { appDataDir, type AppRecord } from './registry.js';
 import { LineLog, makeRedactor, parseDotenv, type Redactor, type SecretValue } from './redact.js';
+import { killPortable, win32PowerShell, win32System32 } from '../proc.js';
 
 export type AppState = 'stopped' | 'starting' | 'running' | 'updating' | 'error';
 
@@ -52,6 +53,8 @@ const BIND_RECHECK_MS = 60_000;
 export const GATEWAY_SECRET_HEADER = 'x-dc-gateway-secret';
 
 const ENV_ALLOW = ['PATH', 'HOME', 'USER', 'LANG', 'TMPDIR', 'SHELL', 'TERM'];
+/** win32 only: what cmd.exe and a Node backend need to run at all (no secret among them). */
+const ENV_ALLOW_WIN32 = ['SystemRoot', 'windir', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'ProgramFiles', 'ProgramData'];
 const DEFAULT_IGNORE = ['node_modules', '.git', 'dist', 'build', '.next', 'data', 'tmp'];
 
 export interface SupervisorDeps {
@@ -101,11 +104,74 @@ function httpGet(port: number, path: string, headers: Record<string, string>, ti
   });
 }
 
-/** `lsof -nP -a -p <pids> -iTCP -sTCP:LISTEN` → the NAME column (`127.0.0.1:5000`, `*:5000`). */
+/** Where lsof lives: /usr/sbin on macOS, /usr/bin on Linux. Absolute, never a PATH lookup. */
+export const LSOF_PATHS = ['/usr/sbin/lsof', '/usr/bin/lsof'] as const;
+
+/** The first lsof that exists, or null (the bind check then degrades to a warning). */
+export function lsofPath(exists: (p: string) => boolean = existsSync): string | null {
+  return LSOF_PATHS.find((p) => exists(p)) ?? null;
+}
+
+/**
+ * How a manifest's `command` / `build` line runs: `/bin/sh -c` off Windows; on Windows, where
+ * there is no /bin/sh, `cmd.exe /d /s /c "<line>"` from System32 (`/s` strips exactly the outer
+ * quotes, so the line reaches cmd as written; never a PATH lookup of the shell).
+ */
+export function shellInvocation(cmd: string, platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): { file: string; args: string[]; verbatim: boolean } {
+  if (platform === 'win32') return { file: win32.join(win32System32(env), 'cmd.exe'), args: ['/d', '/s', '/c', `"${cmd}"`], verbatim: true };
+  return { file: '/bin/sh', args: ['-c', cmd], verbatim: false };
+}
+
+/**
+ * win32 `netstat -ano` → the local address of every TCP listener owned by one of `pids`. A
+ * listener is told by its foreign address (`0.0.0.0:0`, `[::]:0`), not by the state column,
+ * which Windows translates (`LISTENING`, `ABHÖREN`, …).
+ */
+export function parseNetstatListeners(stdout: string, pids: readonly number[]): string[] {
+  const want = new Set(pids);
+  const out: string[] = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    const t = line.trim().split(/\s+/);
+    if (t.length !== 5 || t[0].toUpperCase() !== 'TCP') continue;
+    if (t[2] !== '0.0.0.0:0' && t[2] !== '[::]:0') continue;
+    if (want.has(Number(t[4]))) out.push(t[1]);
+  }
+  return out;
+}
+
+/**
+ * win32 process table lines `<pid> <ppid> <created>` → `root` and every descendant. Windows never
+ * reparents and reuses pids, so a child must be younger than its parent: an old process whose
+ * recorded parent id happens to be a recycled `root` is not ours.
+ */
+export function win32TreePids(stdout: string, root: number): number[] {
+  const rows = stdout.split(/\r?\n/).map((l) => l.trim().split(/\s+/).map(Number)).filter((r) => r.length === 3 && r.every(Number.isFinite));
+  const created = new Map(rows.map(([pid, , c]) => [pid, c]));
+  const tree = [root];
+  for (let i = 0; i < tree.length; i++) {
+    const parent = tree[i];
+    const born = created.get(parent) ?? 0;
+    for (const [pid, ppid, c] of rows) if (ppid === parent && pid !== parent && c >= born && !tree.includes(pid)) tree.push(pid);
+  }
+  return tree;
+}
+
+function win32Listeners(pids: number[]): Promise<string[] | null> {
+  return new Promise((resolve) => {
+    execFile(win32.join(win32System32(), 'NETSTAT.EXE'), ['-ano'], { timeout: 10_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
+      resolve(err ? null : parseNetstatListeners(String(stdout), pids));
+    });
+  });
+}
+
+/** `lsof -nP -a -p <pids> -iTCP -sTCP:LISTEN` → the NAME column (`127.0.0.1:5000`, `*:5000`); netstat on Windows. */
 export function realListeners(pids: number[]): Promise<string[] | null> {
   if (!pids.length) return Promise.resolve([]);
+  if (process.platform === 'win32') return win32Listeners(pids);
+  const lsof = lsofPath();
+  if (!lsof) return Promise.resolve(null);
   return new Promise((resolve) => {
-    execFile('/usr/sbin/lsof', ['-nP', '-a', '-p', pids.join(','), '-iTCP', '-sTCP:LISTEN', '-Fn'], { timeout: 5000 }, (err, stdout) => {
+    execFile(lsof, ['-nP', '-a', '-p', pids.join(','), '-iTCP', '-sTCP:LISTEN', '-Fn'], { timeout: 5000 }, (err, stdout) => {
       // lsof exits 1 when nothing matched: an empty answer, not a failure.
       if (err && !stdout) { resolve((err as NodeJS.ErrnoException).code === 'ENOENT' ? null : []); return; }
       resolve(String(stdout).split('\n').filter((l) => l.startsWith('n')).map((l) => l.slice(1)));
@@ -119,8 +185,23 @@ export function exposedListener(addr: string): boolean {
   return !(host === '127.0.0.1' || host === '::1' || host === 'localhost' || /^127\./.test(host));
 }
 
-/** All pids in a process group (the backend may fork its listener). */
-function groupPids(pgid: number): Promise<number[]> {
+/**
+ * All pids in a process group (the backend may fork its listener). On Windows there are no
+ * groups: the backend's process tree from CIM, or null when it cannot be read (the bind check
+ * then degrades to a warning, never to a silent pass on cmd.exe's own pid).
+ */
+function groupPids(pgid: number): Promise<number[] | null> {
+  if (process.platform === 'win32') {
+    return new Promise((resolve) => {
+      execFile(win32PowerShell(), ['-NoProfile', '-NonInteractive', '-Command',
+        // No double quotes in the script: they would need a second round of argv escaping.
+        "Get-CimInstance Win32_Process | Where-Object { $_.CreationDate } | ForEach-Object { [string]$_.ProcessId + ' ' + $_.ParentProcessId + ' ' + $_.CreationDate.ToFileTimeUtc() }",
+      ], { timeout: 15_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (_err, stdout) => {
+        // A table is enough even when PowerShell also reported an error on one row.
+        resolve(String(stdout ?? '').trim() ? win32TreePids(String(stdout), pgid) : null);
+      });
+    });
+  }
   return new Promise((resolve) => {
     execFile('/bin/ps', ['-A', '-o', 'pid=,pgid='], { timeout: 3000 }, (err, stdout) => {
       if (err) { resolve([pgid]); return; }
@@ -133,6 +214,12 @@ function groupPids(pgid: number): Promise<number[]> {
 function killGroup(child: ChildProcess): void {
   const pid = child.pid;
   if (!pid) return;
+  if (process.platform === 'win32') {
+    // No groups: taskkill /T over the tree, escalating to /F itself. No delayed second kill:
+    // Windows reuses pids fast and that one could land on a stranger.
+    try { killPortable(-pid, 'SIGTERM'); } catch { /* gone */ }
+    return;
+  }
   try { process.kill(-pid, 'SIGTERM'); } catch { /* gone */ }
   setTimeout(() => { try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } }, 2000).unref();
 }
@@ -249,11 +336,14 @@ export class AppRuntime {
   private async baseEnv(): Promise<Record<string, string>> {
     const env: Record<string, string> = {};
     for (const k of ENV_ALLOW) if (process.env[k]) env[k] = process.env[k] as string;
+    if (process.platform === 'win32') for (const k of ENV_ALLOW_WIN32) if (process.env[k]) env[k] = process.env[k] as string;
     for (const [k, v] of Object.entries(process.env)) if (k.startsWith('LC_') && v) env[k] = v;
     if (this.deps.loginPath) {
       try { env.PATH = await this.deps.loginPath(); } catch { /* keep this process's PATH */ }
     }
     env.HOME = this.home === homedir() ? (process.env.HOME ?? this.home) : this.home;
+    // Windows reads the home from USERPROFILE: it follows the same rule.
+    if (process.platform === 'win32') env.USERPROFILE = this.home === homedir() ? (process.env.USERPROFILE ?? this.home) : this.home;
     return env;
   }
 
@@ -350,7 +440,7 @@ export class AppRuntime {
     delete (env as Record<string, string>).DC_GATEWAY_SECRET;
     this.quietUntil = Number.POSITIVE_INFINITY;
     return new Promise((resolve) => {
-      const child = spawn('/bin/sh', ['-c', cmd], { cwd: this.rec.root, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = this.spawnShell(cmd, env);
       this.buildChild = child;
       const untrack = this.deps.trackChild?.(() => killGroup(child)) ?? (() => {});
       child.stdout?.on('data', (c) => this.log.write(c, '[build] '));
@@ -382,6 +472,13 @@ export class AppRuntime {
     return d;
   }
 
+  /** Its own process group off Windows; on Windows a hidden child of this server (no groups there). */
+  private spawnShell(cmd: string, env: Record<string, string>): ChildProcess {
+    const sh = shellInvocation(cmd);
+    const win = process.platform === 'win32';
+    return spawn(sh.file, sh.args, { cwd: this.rec.root, env, detached: !win, windowsHide: true, windowsVerbatimArguments: sh.verbatim, stdio: ['ignore', 'pipe', 'pipe'] });
+  }
+
   private async spawnBackend(): Promise<Backend | null> {
     const mine = this.epoch;
     const be = this.manifest!.backend!;
@@ -396,7 +493,7 @@ export class AppRuntime {
       DC_GATEWAY_SECRET: this.gatewaySecret,
       DC_DATA_DIR: this.dataDir(),
     };
-    const child = spawn('/bin/sh', ['-c', be.command], { cwd: this.rec.root, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = this.spawnShell(be.command, env);
     const release = this.deps.claimPort?.(port) ?? (() => {});
     const untrack = this.deps.trackChild?.(() => killGroup(child)) ?? (() => {});
     const b: Backend = { child, port, release, untrack };
@@ -444,9 +541,9 @@ export class AppRuntime {
   private async checkBackend(b: Backend): Promise<string | null> {
     const be = this.manifest!.backend!;
     const pids = b.child.pid ? await groupPids(b.child.pid) : [];
-    const lsof = await (this.deps.listeners ?? realListeners)(pids);
+    const lsof = pids === null ? null : await (this.deps.listeners ?? realListeners)(pids);
     if (lsof === null) {
-      this.warnings.push('could not check what the backend listens on (lsof unavailable)');
+      this.warnings.push(`could not check what the backend listens on (${process.platform === 'win32' ? 'netstat' : 'lsof'} unavailable)`);
     } else {
       const exposed = lsof.filter(exposedListener);
       if (exposed.length) {

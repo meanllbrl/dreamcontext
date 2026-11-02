@@ -86,7 +86,7 @@ describe('Codex accounts are T3 instances (plan r5 §4b)', () => {
     const calls: Call[] = [];
     const acc = await signInNewCodexAccount({ home: HOME, node: '/usr/bin/node', cli: '/opt/dc/index.js', run: machine({}, calls), env: { PATH: '/usr/bin', CODEX_HOME: '/elsewhere' } });
     const home = join(HOME, '.dreamcontext', 'codex-accounts', acc.id);
-    expect(statSync(home).mode & 0o777).toBe(0o700);
+    if (process.platform !== 'win32') expect(statSync(home).mode & 0o777).toBe(0o700); // Windows has no POSIX mode bits
     // The new account is read, then #0 (its email was never on record) for the twin check.
     expect(calls.map((c) => c.args[2] ?? c.args.at(-1))).toEqual(['prepare', 'login', 'probe', 'probe']);
     const login = calls[1]!;

@@ -57,12 +57,17 @@ describe('checkAntigravity', () => {
   });
 
   it('a Windows install has no exec bits, and that is no damage', () => {
+    // Both halves name their platform: the suite runs on Windows too, where a chmod is a no-op
+    // and the host's own target would take the no-exec-bit branch.
     const dir = install();
     chmodSync(join(dir, 'agy_acp_server.par'), 0o644);
-    expect(antigravityRuntime({ home, platform: process.platform, arch: process.arch }).intact).toBe(false);
-    const win = join(home, '.dreamcontext', 't3', 'tools', 'antigravity-acp', `win32-${process.arch}`);
+    const tools = join(home, '.dreamcontext', 't3', 'tools', 'antigravity-acp');
+    const posix = join(tools, `linux-${process.arch}`);
+    if (root() !== posix) renameSync(root(), posix);
+    expect(antigravityRuntime({ home, platform: 'linux', arch: process.arch }).intact).toBe(false);
+    const win = join(tools, `win32-${process.arch}`);
     mkdirSync(dirname(win), { recursive: true });
-    renameSync(root(), win);
+    renameSync(posix, win);
     expect(antigravityRuntime({ home, platform: 'win32', arch: process.arch }).intact).toBe(true);
   });
 

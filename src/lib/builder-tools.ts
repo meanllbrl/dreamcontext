@@ -2,8 +2,9 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { cpus, homedir, loadavg, tmpdir, totalmem } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { acquireFileLock, releaseFileLock } from './file-lock.js';
+import { resolvedSpawnSpec } from './win-cmd.js';
 
 /**
  * The pieces behind `dreamcontext builder …`: what a headless `claude -p` builder and the
@@ -112,7 +113,7 @@ export const HEAVY_DEFAULT_WAIT_S = 300;
  */
 export function heavyLockPath(cwd: string, gitDir: () => string | null = () => gitPathOf(cwd, '--git-dir')): string {
   const own = gitDir();
-  if (own) return join(isAbsolute(own) ? own : resolve(cwd, own), 'dc-heavy.lock');
+  if (own) return join(resolve(cwd, own), 'dc-heavy.lock'); // resolve: git prints D:/x on Windows
   const key = createHash('sha256').update(resolve(cwd)).digest('hex').slice(0, 16);
   return join(tmpdir(), `dc-heavy-${key}.lock`);
 }
@@ -124,7 +125,7 @@ export function heavyLockPath(cwd: string, gitDir: () => string | null = () => g
  */
 export function heavyRepoDir(cwd: string, gitCommonDir: () => string | null = () => gitPathOf(cwd, '--git-common-dir')): string {
   const common = gitCommonDir();
-  if (common) return isAbsolute(common) ? common : resolve(cwd, common);
+  if (common) return resolve(cwd, common); // resolve: git prints D:/x on Windows, the OS spells D:\\x
   return tmpdir();
 }
 
@@ -317,11 +318,18 @@ function gitPathOf(cwd: string, which: '--git-dir' | '--git-common-dir'): string
 
 /**
  * How the command is spawned: argv as given, or — when a single argument holds the whole
- * line (`builder heavy -- "npx tsc --noEmit"`) — through the shell.
+ * line (`builder heavy -- "npx tsc --noEmit"`) — through the shell. On Windows `npm`, `npx` and
+ * `pnpm` are `.cmd` files spawn cannot start bare (ENOENT, read as 127): the argv goes through
+ * the one launcher helper (`win-cmd.ts`), looked up on PATH and escaped for cmd.exe.
  */
-export function heavySpawnPlan(argv: string[]): { file: string; args: string[]; shell: boolean } | null {
+export function heavySpawnPlan(
+  argv: string[],
+  platform: NodeJS.Platform = process.platform,
+  o: { path?: string; env?: NodeJS.ProcessEnv; isFile?: (p: string) => boolean } = {},
+): { file: string; args: string[]; shell: boolean; windowsVerbatimArguments?: boolean } | null {
   if (argv.length === 0 || !argv[0]) return null;
   if (argv.length === 1 && /\s/.test(argv[0])) return { file: argv[0], args: [], shell: true };
+  if (platform === 'win32') return { ...resolvedSpawnSpec(argv[0], argv.slice(1), { platform, ...o }), shell: false };
   return { file: argv[0], args: argv.slice(1), shell: false };
 }
 
