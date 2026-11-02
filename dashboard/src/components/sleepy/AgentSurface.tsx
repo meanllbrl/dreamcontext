@@ -101,7 +101,7 @@ import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
 import { readSuperStateView, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
 import { MAIN_SUPER, dropSuperRecords, readSuperRecord, subscribeSuperRecords, superIdOf, useVaultSuperRecords, writeSuperRecord, type SuperRecordUpdate } from './super/superRecordStore';
-import { coldMembers, coldWaiting, type ColdTry, phoneMemberOpen, memberOf, memberOpenRefusal, memberPlaceholderState, memberSuperId, memberSuperSpawn, openMemberSuper, superIdOfIntent, unionSuperView, type MemberRefusal } from './super/memberStageModel';
+import { coldMembers, coldWaiting, memberMirrorVerdict, type ColdTry, phoneMemberOpen, memberOf, memberOpenRefusal, memberPlaceholderState, memberSuperId, memberSuperSpawn, openMemberSuper, superIdOfIntent, unionSuperView, type MemberRefusal } from './super/memberStageModel';
 import { useMemberSummaries } from './super/useMemberSummaries';
 import { MemberApprovalBand, MemberRefusalLine } from './super/MemberStage';
 import { PhoneMemberStage } from './super/PhoneMemberStage';
@@ -871,6 +871,10 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   memberTaskRef.current = memberTask;
   /** The phone's member view (plan-r10 AC9): its Super's session, read from its transcript. */
   const [phoneMember, setPhoneMember] = useState<{ slug: string; session: string } | null>(null);
+  /** The member mirror the phone is opening (or holds): while it stands the tab shows, not the view. */
+  const [phoneMirror, setPhoneMirror] = useState<{ slug: string; session: string; at: number } | null>(null);
+  /** Member Super sessions the phone opened as a mirror: the "taken back" cleanup spares them. */
+  const memberMirrorsRef = useRef<Set<string>>(new Set());
   /** Why the member on the stage could not be opened (its approval card, off, gone), or null. */
   const [memberRefusal, setMemberRefusal] = useState<{ slug: string; refusal: MemberRefusal } | null>(null);
   /** Show another super's stage: the view state stays one copy, re-bound to it (its pending edits
@@ -886,7 +890,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     const next = readSuperRecord(vault, id);
     superStateRef.current = next;
     setSuperStateView(next);
-    if (id === MAIN_SUPER) { setMemberTask(null); setMemberRefusal(null); setPhoneMember(null); }
+    if (id === MAIN_SUPER) { setMemberTask(null); setMemberRefusal(null); setPhoneMember(null); setPhoneMirror(null); }
   }, [vault]);
   /** The rule's door for a pick: a Super session opens in the Super window, never as a tab. */
   const openInSuperWindowRef = useRef<(past: { id: string; title?: string }) => boolean>(() => false);
@@ -5796,10 +5800,16 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       const plan = await phoneMemberOpen(scopedApi, slug);
       if (seq !== openMemberSeq.current || activeSuperIdRef.current !== sid) return;
       if (plan.kind === 'refused') { setMemberRefusal({ slug, refusal: plan.refusal }); return; }
-      // The Mac refuses a phone's socket on a member's Super session (agent-chat.ts, this wave), and
-      // a mirror tab live-chats does not name as a Super is closed again at once: the phone shows
-      // the member's conversation read only, from its transcript, and says so (super-members.mjs i).
+      // A member's LIVE Super opens as the phone's mirror tab, as main's Super row does: the owner
+      // writes to it there, and its questions are cards (usePhoneSuperQuestions, this superId).
+      // The read-only view (its transcript) stands behind it: shown again when the Mac does not
+      // take the mirror (its Super is not live: the socket is refused or never opens).
       setPhoneMember({ slug, session: plan.session });
+      memberMirrorsRef.current.add(plan.session);
+      setPhoneMirror({ slug, session: plan.session, at: Date.now() });
+      const held = stackTabsRef.current.find((x) => x.claudeId === plan.session || x.altClaudeId === plan.session);
+      if (held) selectTab(held.paneId, held.id);
+      else openSuperOnPhone({ conversationId: plan.session, vault: vault ?? '', live: true } as SuperChatWire);
       return;
     }
     const r = await openMemberSuper(scopedApi, slug);
@@ -6282,6 +6292,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       const live = sessions.current.get(m.id);
       const cid = live?.claudeId ?? m.claudeId;
       if (!cid || !isSuperMirrorId(cid) || named.has(cid) || live?.status === 'open') continue;
+      // A member's mirror the phone opened (live-chats lists no member as a Super row): its own
+      // watcher below closes it when the Mac does not take it.
+      if (memberMirrorsRef.current.has(cid) && live?.status !== 'closed') continue;
       // The owner's unsent words go with the tab into a fresh chat: its own composer is shut.
       const draft = live?.kind === 'chat' ? (live as ChatSession).getModel().draft : '';
       closeSessionById(m.id);
@@ -6293,6 +6306,26 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       }
     }
   }, [deviceRows, deviceAnswered, sessionList, closeSessionById, addSession, claudeKind, vault]);
+  // The member mirror's first attach: kept once it opens; closed (and the read-only view shown)
+  // when the Mac refuses it or it has not opened within PHONE_MIRROR_WAIT_MS.
+  useEffect(() => {
+    if (!phoneMirror) return undefined;
+    const check = () => {
+      const meta = sessionListRef.current.find((m) => m.claudeId === phoneMirror.session);
+      const live = meta ? sessions.current.get(meta.id) : undefined;
+      const verdict = memberMirrorVerdict(live?.status, Date.now() - phoneMirror.at);
+      if (verdict === 'wait') return false;
+      if (verdict === 'fall-back') {
+        memberMirrorsRef.current.delete(phoneMirror.session);
+        if (meta) closeSessionById(meta.id);
+        setPhoneMirror((cur) => (cur === phoneMirror ? null : cur));
+      }
+      return true;
+    };
+    if (check()) return undefined;
+    const tick = window.setInterval(() => { if (check()) window.clearInterval(tick); }, 500);
+    return () => window.clearInterval(tick);
+  }, [phoneMirror, closeSessionById]);
   const phoneToastEl = phoneChatOn ? <PhoneWaitingToast row={phoneChatNav.toast} onOpen={phoneChatNav.openToast} /> : null;
   // Collapsed dock rows — one chip per session, in roster order. Never the Super Agent (it is
   // not a tab; its queue speaks through the hand-over button's dot and the queue head).
@@ -6614,7 +6647,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // ── The member stage's props (plan-r10 1, 1c, 1e, 1f) ──
   const stageMember = memberOf(activeSuperId);
   /** The phone (one chat, no stage) shows the member's own view over its chats while it is up. */
-  const phoneMemberShown = isMobile && isMacPhoneSurface() && superView === 'super' && !!stageMember;
+  const phoneMemberShown = isMobile && isMacPhoneSurface() && superView === 'super' && !!stageMember
+    && phoneMirror?.slug !== stageMember;
   const stageSummary = stageMember ? memberSummaries.find((m) => m.slug === stageMember) : undefined;
   const otherProjects = windowChrome.open.filter((p) => !p.cold && p.vault !== vault).map((p) => p.vault);
   const stageMemberInfo = stageMember ? {

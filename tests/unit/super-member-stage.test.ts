@@ -14,7 +14,7 @@ import {
   coldMembers, memberOf, memberOpenRefusal, memberSuperId, memberSuperSpawn, openMemberSuper, readMemberSummaries, superIdOfIntent, unionSuperView,
 } from '../../dashboard/src/components/sleepy/super/memberStageModel';
 import { REQUEST_FROM, superRequestOf } from '../../dashboard/src/components/sleepy/super/superHandover';
-import { COLD_RETRY_MS, coldRetryAt, coldWaiting, memberPlaceholderState, memberRoutineQuestions, phoneMemberOpen } from '../../dashboard/src/components/sleepy/super/memberStageModel';
+import { COLD_RETRY_MS, PHONE_MIRROR_WAIT_MS, coldRetryAt, coldWaiting, memberMirrorVerdict, memberPlaceholderState, memberRoutineQuestions, phoneMemberOpen } from '../../dashboard/src/components/sleepy/super/memberStageModel';
 
 const src = (p: string) => readFileSync(join(__dirname, '..', '..', p), 'utf-8');
 const surface = src('dashboard/src/components/sleepy/AgentSurface.tsx');
@@ -364,12 +364,34 @@ describe('end review fixes', () => {
 
 describe('the phone opens a member (super-members.mjs step i)', () => {
   const open = surface.slice(surface.indexOf('const openMemberStage = async'), surface.indexOf('const openMemberStageRef'));
-  it('never opens a mirror the Mac refuses (a member\'s Super socket is desktop-only this wave)', () => {
-    expect(open).not.toMatch(/openSuperOnPhone\(/);
-    expect(open).toMatch(/setPhoneMember\(\{ slug, session: plan\.session \}\);/);
+  it('a live member Super opens as the phone\'s mirror tab (as main\'s Super row does), the read-only view behind it', () => {
+    expect(open).toMatch(/setPhoneMember\(\{ slug, session: plan\.session \}\);\s*memberMirrorsRef\.current\.add\(plan\.session\);\s*setPhoneMirror\(\{ slug, session: plan\.session, at: Date\.now\(\) \}\);/);
+    expect(open).toMatch(/if \(held\) selectTab\(held\.paneId, held\.id\);\s*else openSuperOnPhone\(\{ conversationId: plan\.session, vault: vault \?\? '', live: true \} as SuperChatWire\);/);
+    // A refused or not-running member never opens a tab: its line instead.
+    expect(open.indexOf("if (plan.kind === 'refused') { setMemberRefusal")).toBeLessThan(open.indexOf('openSuperOnPhone('));
+  });
+  it('the "taken back" cleanup spares a member mirror the phone opened (live-chats lists no member Super row)', () => {
+    const clean = surface.slice(surface.indexOf('A Super taken back ended this phone'), surface.indexOf('The member mirror\'s first attach'));
+    expect(clean).toMatch(/if \(memberMirrorsRef\.current\.has\(cid\) && live\?\.status !== 'closed'\) continue;/);
+    expect(clean.indexOf('memberMirrorsRef.current.has(cid)')).toBeLessThan(clean.indexOf('closeSessionById(m.id);'));
+  });
+  it('the mirror is kept once open; refused or never opened, it closes and the read-only view shows', () => {
+    expect(memberMirrorVerdict('open', 0)).toBe('keep');
+    expect(memberMirrorVerdict('open', 60_000)).toBe('keep');
+    expect(memberMirrorVerdict('closed', 100)).toBe('fall-back');
+    expect(memberMirrorVerdict('connecting', 1000)).toBe('wait');
+    expect(memberMirrorVerdict(undefined, 1000)).toBe('wait');
+    expect(memberMirrorVerdict('connecting', PHONE_MIRROR_WAIT_MS)).toBe('fall-back');
+    const watch = surface.slice(surface.indexOf('The member mirror\'s first attach'), surface.indexOf('}, [phoneMirror, closeSessionById]);'));
+    expect(watch).toMatch(/const verdict = memberMirrorVerdict\(live\?\.status, Date\.now\(\) - phoneMirror\.at\);/);
+    expect(watch).toMatch(/if \(verdict === 'fall-back'\) \{\s*memberMirrorsRef\.current\.delete\(phoneMirror\.session\);\s*if \(meta\) closeSessionById\(meta\.id\);\s*setPhoneMirror/);
+  });
+  it('its question cards are answerable in the mirror: the phone polls and answers the shown member', () => {
+    expect(surface).toMatch(/usePhoneSuperQuestions\(\{ enabled: isMacPhoneSurface\(\) && !!vault, api: scopedApi, superId: activeSuperId, sessionFor: chatByClaudeId \}\);/);
   });
   it('the phone shows the member\'s view over its chats: name, its conversation read only, or why not', () => {
-    expect(surface).toMatch(/const phoneMemberShown = isMobile && isMacPhoneSurface\(\) && superView === 'super' && !!stageMember;/);
+    // Shown unless the member's mirror tab stands (then the tab is the stage).
+    expect(surface).toMatch(/const phoneMemberShown = isMobile && isMacPhoneSurface\(\) && superView === 'super' && !!stageMember\s*&& phoneMirror\?\.slug !== stageMember;/);
     expect(surface).toMatch(/hidden=\{handedOver \|\| phoneMemberShown\}/);
     expect(surface).toMatch(/\{phoneMemberShown && stageMember && \(\s*<PhoneMemberStage/);
     const view = src('dashboard/src/components/sleepy/super/PhoneMemberStage.tsx');
@@ -381,7 +403,7 @@ describe('the phone opens a member (super-members.mjs step i)', () => {
     expect(src('src/lib/handsfree/mac/route-policy.ts')).toContain("'GET /api/agent/chat-history': allow(");
   });
   it('leaving for main clears it', () => {
-    expect(surface).toMatch(/if \(id === MAIN_SUPER\) \{ setMemberTask\(null\); setMemberRefusal\(null\); setPhoneMember\(null\); \}/);
+    expect(surface).toMatch(/if \(id === MAIN_SUPER\) \{ setMemberTask\(null\); setMemberRefusal\(null\); setPhoneMember\(null\); setPhoneMirror\(null\); \}/);
   });
   it('says so in both languages', () => {
     const i18n = src('dashboard/src/context/I18nContext.tsx');

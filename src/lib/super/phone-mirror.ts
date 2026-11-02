@@ -267,14 +267,47 @@ export function phoneSuperOpen(o: {
   mode: string; resumeId: string; sessionId: string;
   index: { session: string | null; enabled: boolean };
   liveSuper: boolean;
+  /** Each member Super of THIS vault (plan-r10 2.4): its record's session, mirrored like main's
+   *  only when enabled, live on the Mac and the member is ready (on and approved). */
+  members?: ReadonlyArray<PhoneMemberSuper>;
 }): 'mirror' | 'refuse' | 'pass' {
+  return phoneSuperTarget(o).decision;
+}
+
+/** One member Super as the phone's open decision reads it (in memory, no disk). */
+export interface PhoneMemberSuper {
+  slug: string;
+  session: string | null;
+  enabled: boolean;
+  /** Its chat is live on the Mac, in this project, with a mirror to join. */
+  live: boolean;
+  /** The member is on and approved (`memberCallState` ready); asked only when its session is named. */
+  ready: () => boolean;
+}
+
+/** Does this open name `session` (resume or pin)? Case-blind: an id is a UUID, and an upper-case
+ *  copy must not slip past as "another chat". */
+export function opensSession(o: { resumeId: string; sessionId: string }, session: string | null | undefined): boolean {
+  const s = session?.toLowerCase();
+  return !!s && (o.resumeId.toLowerCase() === s || o.sessionId.toLowerCase() === s);
+}
+
+/**
+ * `phoneSuperOpen` with WHICH super it mirrors: main's (`slug` absent) or one member's. A member's
+ * recorded session is held exactly like main's: a phone mirrors it when it may, and is refused any
+ * other open of it (resume, spawn, reattach).
+ */
+export function phoneSuperTarget(o: Parameters<typeof phoneSuperOpen>[0]): { decision: 'mirror' | 'refuse' | 'pass'; slug?: string } {
   // The RECORDED session, handed over or parked: a phone never adopts, resumes or respawns it
   // (a parked super child it took would hold the session from the next hand-over).
-  // Case-blind: an id is a UUID, and an upper-case copy must not slip past as "another chat".
-  const session = o.index.session?.toLowerCase() ?? null;
-  const names = !!session && (o.resumeId.toLowerCase() === session || o.sessionId.toLowerCase() === session);
-  if (names) return o.index.enabled && o.liveSuper ? 'mirror' : 'refuse';
-  return o.mode === 'super' ? 'refuse' : 'pass';
+  if (opensSession(o, o.index.session)) return { decision: o.index.enabled && o.liveSuper ? 'mirror' : 'refuse' };
+  for (const m of o.members ?? []) {
+    if (!opensSession(o, m.session)) continue;
+    let ready = false;
+    try { ready = m.enabled && m.live && m.ready(); } catch { ready = false; }
+    return { decision: ready ? 'mirror' : 'refuse', slug: m.slug };
+  }
+  return { decision: o.mode === 'super' ? 'refuse' : 'pass' };
 }
 
 /** The live-chat row shapes this module needs (contract.ts `LiveChatWire`). */

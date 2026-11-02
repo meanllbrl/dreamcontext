@@ -298,3 +298,17 @@ export function memberRoutineQuestions<Q extends { kind: string; state: string; 
     return automations.some((a) => a.slug === q.slug && a.agent === member);
   });
 }
+
+/** How long the phone waits for a member's mirror to open before it shows the read-only view. */
+export const PHONE_MIRROR_WAIT_MS = 8_000;
+
+/**
+ * A member's mirror tab on the phone, at its first attach: `keep` once its socket is open (the Mac
+ * took it: the member's Super is live), `fall-back` when the Mac refused it (closed) or it has not
+ * opened in time (the read-only view takes over), else `wait`. Pure.
+ */
+export function memberMirrorVerdict(status: 'connecting' | 'open' | 'closed' | string | undefined, waitedMs: number): 'keep' | 'fall-back' | 'wait' {
+  if (status === 'open') return 'keep';
+  if (status === 'closed') return 'fall-back';
+  return waitedMs >= PHONE_MIRROR_WAIT_MS ? 'fall-back' : 'wait';
+}
