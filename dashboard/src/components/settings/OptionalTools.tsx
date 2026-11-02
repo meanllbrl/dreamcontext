@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../context/I18nContext';
 import { useAgentTools, useToolAccounts } from '../../hooks/useAgentCapabilities';
-import { useFixRuns } from '../../hooks/useOnboarding';
+import { useFixRuns, type FixRuns } from '../../hooks/useOnboarding';
 import { accountSummary, optionalToolModel, primaryAccount, type OptionalRowModel, type OptionalTool } from '../../lib/optionalTools';
 import './SystemDependencies.css';
 
@@ -14,21 +14,22 @@ import './SystemDependencies.css';
  */
 export function OptionalTools() {
   const { data: tools } = useAgentTools();
+  // One run at a time across both tools: each tool's button waits while the other's install runs.
+  const fixRuns = useFixRuns();
   // An older server has no tool list: say nothing rather than call every tool missing.
   if (!tools || tools.length === 0) return null;
   return (
     <div className="sysdep sysdep-optional" data-testid="optional-tools">
       {(['codex', 'antigravity'] as const).map((tool) => (
-        <OptionalToolItem key={tool} tool={tool} info={tools.find((x) => x.tool === tool)} />
+        <OptionalToolItem key={tool} tool={tool} info={tools.find((x) => x.tool === tool)} fixRuns={fixRuns} />
       ))}
     </div>
   );
 }
 
-function OptionalToolItem({ tool, info }: { tool: OptionalTool; info: Parameters<typeof optionalToolModel>[1] }) {
+function OptionalToolItem({ tool, info, fixRuns }: { tool: OptionalTool; info: Parameters<typeof optionalToolModel>[1]; fixRuns: FixRuns }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const fixRuns = useFixRuns();
   const model = optionalToolModel(tool, info);
   const accounts = useToolAccounts(tool, !!model.account && model.account.tone === 'ok').data?.accounts;
   const busy = Object.values(fixRuns.runs).some((r) => r && (r.phase === 'starting' || r.phase === 'running'));
@@ -51,7 +52,8 @@ function OptionalToolItem({ tool, info }: { tool: OptionalTool; info: Parameters
       </button>
     );
   };
-  const failed = Object.values(fixRuns.runs).find((r) => r?.phase === 'error');
+  const mine = [model.install.action?.fix, model.account?.action?.fix].filter(Boolean);
+  const failed = Object.values(fixRuns.runs).find((r) => r?.phase === 'error' && mine.includes(r.fix));
 
   return (
     <div className="sysdep-item" data-testid={`optional-${tool}`}>
