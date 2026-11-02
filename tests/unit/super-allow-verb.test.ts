@@ -181,3 +181,26 @@ describe('the phone\'s Allow / Deny (POST /api/agent/super-permission)', () => {
     expect(frames).toEqual([]);
   });
 });
+
+describe('super allow from an AI Team member\'s Super (0.40.2 merge)', () => {
+  it('closes the item in the member\'s own record, never main\'s', async () => {
+    const { createAgent } = await import('../../src/lib/agents/store.js');
+    const { withSuperState } = await import('../../src/lib/super/store.js');
+    createAgent(vaultA, { slug: 'rota', title: 'Rota', prompt: 'You keep the routes.' }, { approve: { now: new Date() } });
+    await withSuperState(vaultA, 'main', (s) => { s.queue = []; delete s.children[CHILD]; });
+    await withSuperState(vaultA, 'm:rota', (s) => {
+      s.session = 'sess-m'; s.enabled = true;
+      s.children[CHILD] = kid(CHILD);
+      s.queue.push(permItem());
+    });
+    askPermission(CHILD, true);
+    const t = mintWindowToken({
+      send: (f: unknown) => { const frame = f as { id: string }; setImmediate(() => deliverSuperResult(t, frame.id, { ok: true })); return true; },
+      vault: 'acme', contextRoot: vaultA, sessionId: 'sess-m', mode: 'super', superId: 'm:rota',
+    }).token;
+    const r = await allow(H(t));
+    expect(r.status, JSON.stringify(r.json)).toBe(200);
+    expect((await readSuperState(vaultA, 'm:rota')).queue.find((q) => q.id === 'q-perm1')?.state).toBe('done');
+    expect((await readSuperState(vaultA)).queue).toEqual([]);
+  });
+});

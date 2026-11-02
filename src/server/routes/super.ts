@@ -1921,10 +1921,11 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       child, requestId, behavior, ...(deny ? { message: `Denied by the Super Agent${why ? `: ${why}` : '.'}` } : {}),
     });
     if (!r.ok) { refuse(res, r.error === 'no_window' ? 409 : 200, r.error, 'the window did not answer the child'); return; }
-    await writeSuper(c.who.contextRoot, (s) => {
+    // The caller's own record (a member's Super closes its own child's item, never main's).
+    await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       for (const q of s.queue) if (q.kind === 'permission' && q.sessionId === child && q.requestId === requestId) q.state = 'done';
     });
-    void pumpSuper(c.who.contextRoot);
+    void pumpSuper(superKey(c.who.contextRoot, callerSuper(c)));
     ok(res, { child, requestId, answered: behavior });
   },
 
@@ -2005,8 +2006,8 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       // owner (head, notch, phone), with the Super's words. Any other permission is his already.
       if (!item.toSuper || item.state === 'done') { refuse(res, 403, 'permission_item', 'a permission is shown to the owner from the child\'s own request; you cannot caption or close it'); return; }
       // His card shows the child's own request, never your words (D7): say why in your turn's text.
-      if (!(await permissionToOwner(c.who.contextRoot, item.id))) { refuse(res, 409, 'stale_request', 'that permission is no longer open, or the owner has it already'); return; }
-      void pumpSuper(c.who.contextRoot);
+      if (!(await permissionToOwner(superKey(c.who.contextRoot, callerSuper(c)), item.id))) { refuse(res, 409, 'stale_request', 'that permission is no longer open, or the owner has it already'); return; }
+      void pumpSuper(superKey(c.who.contextRoot, callerSuper(c)));
       ok(res, { item: id, escalated: true, permission: true, note: 'It is his now: his bar, the notch and his phone show the child\'s own request. Tell him in one line why it is his to decide.' });
       return;
     }
