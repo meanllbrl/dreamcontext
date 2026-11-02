@@ -8,6 +8,7 @@ All notable changes to dreamcontext will be documented in this file.
 
 First public release since 0.36.1. It carries every local cut from 0.36.2 to 0.36.15 below, plus:
 
+- **The app's own CLI starts on a Mac with no global install.** A library the Apps bridge needs was left out of the bundle, so the CLI inside the app stopped at launch.
 - **Projects update themselves.** When the installed CLI or app changes version, every registered project is refreshed on the next app start, with no prompt. A project with a working agent, a sleep or a half-done merge waits its turn; a failure stays on record and is retried. The `Update all` button and the UPDATE tag are gone.
 
 ## [0.36.15] - 2026-11-02

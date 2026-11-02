@@ -69,6 +69,8 @@ export default defineConfig({
   noExternal: [
     // The dreamcontext Apps MCP bridge (src/lib/apps/mcp-bridge.ts): pure JS, bundled.
     '@modelcontextprotocol/sdk',
+    // The MCP SDK imports zod (v3, v4, v4-mini): left external, the .app's CLI dies at load.
+    /^zod(\/|$)/,
     'commander',
     'chalk',
     'gray-matter',
