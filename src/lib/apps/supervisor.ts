@@ -101,11 +101,21 @@ function httpGet(port: number, path: string, headers: Record<string, string>, ti
   });
 }
 
+/** Where lsof lives: /usr/sbin on macOS, /usr/bin on Linux. Absolute, never a PATH lookup. */
+export const LSOF_PATHS = ['/usr/sbin/lsof', '/usr/bin/lsof'] as const;
+
+/** The first lsof that exists, or null (the bind check then degrades to a warning). */
+export function lsofPath(exists: (p: string) => boolean = existsSync): string | null {
+  return LSOF_PATHS.find((p) => exists(p)) ?? null;
+}
+
 /** `lsof -nP -a -p <pids> -iTCP -sTCP:LISTEN` → the NAME column (`127.0.0.1:5000`, `*:5000`). */
 export function realListeners(pids: number[]): Promise<string[] | null> {
   if (!pids.length) return Promise.resolve([]);
+  const lsof = lsofPath();
+  if (!lsof) return Promise.resolve(null);
   return new Promise((resolve) => {
-    execFile('/usr/sbin/lsof', ['-nP', '-a', '-p', pids.join(','), '-iTCP', '-sTCP:LISTEN', '-Fn'], { timeout: 5000 }, (err, stdout) => {
+    execFile(lsof, ['-nP', '-a', '-p', pids.join(','), '-iTCP', '-sTCP:LISTEN', '-Fn'], { timeout: 5000 }, (err, stdout) => {
       // lsof exits 1 when nothing matched: an empty answer, not a failure.
       if (err && !stdout) { resolve((err as NodeJS.ErrnoException).code === 'ENOENT' ? null : []); return; }
       resolve(String(stdout).split('\n').filter((l) => l.startsWith('n')).map((l) => l.slice(1)));

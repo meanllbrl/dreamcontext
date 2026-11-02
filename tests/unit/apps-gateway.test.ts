@@ -4,7 +4,7 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { registerApp, type AppRecord } from '../../src/lib/apps/registry.js';
-import { runtimeFor, stopAllRuntimes, type AppRuntime } from '../../src/lib/apps/supervisor.js';
+import { lsofPath, runtimeFor, stopAllRuntimes, type AppRuntime } from '../../src/lib/apps/supervisor.js';
 import { closeAllGateways, configureGateways, gatewayFor, type AppGateway } from '../../src/server/apps/gateway.js';
 import { MASK } from '../../src/lib/apps/redact.js';
 
@@ -291,6 +291,12 @@ describe('gateway', () => {
 });
 
 describe('supervisor checks', () => {
+  it('finds lsof where macOS keeps it and where Linux keeps it, never through PATH', () => {
+    expect(lsofPath((p) => p === '/usr/sbin/lsof')).toBe('/usr/sbin/lsof');
+    expect(lsofPath((p) => p === '/usr/bin/lsof')).toBe('/usr/bin/lsof');
+    expect(lsofPath(() => false)).toBeNull();
+  });
+
   it('a backend bound to all interfaces is an error ("bind to 127.0.0.1")', async () => {
     const r = rt(makeApp('wide', 'BIND_ALL=1\n'));
     await gatewayFor(r);

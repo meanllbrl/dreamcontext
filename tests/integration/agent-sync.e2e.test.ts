@@ -400,7 +400,17 @@ describe('B1 e2e: agents ride the brain sync', { timeout: 120_000 }, () => {
     expect(blind).toMatchObject({ ok: false, note: expect.stringMatching(/could not check/) });
   });
 
-  it.each([['proj'], ['Masau\u0308stu\u0308']])('security: a project in a subfolder (%s) of its repo never sends its agent files and skips a pull that changes them', (sub) => {
+  // `git as stored`: git that lists names byte for byte as the disk keeps them (Linux, Windows; on
+  // a Mac, core.precomposeUnicode off), with a folder named in decomposed form. The guard must ask
+  // git in the form git prints, or a nested layout takes agent files in.
+  it.each([['proj', 'native'], ['Masau\u0308stu\u0308', 'native'], ['Masau\u0308stu\u0308', 'git as stored']])('security: a project in a subfolder (%s, %s) of its repo never sends its agent files and skips a pull that changes them', (sub, form) => {
+    const asStored = form === 'git as stored' && process.platform === 'darwin';
+    const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    if (asStored) Object.defineProperty(process, 'platform', { ...realPlatform, value: 'linux' });
+    try { nestedCase(sub, asStored); } finally { Object.defineProperty(process, 'platform', realPlatform); }
+  });
+
+  function nestedCase(sub: string, asStored: boolean): void {
     const bare = newBare();
     const home = tmp('dc-b1-home-nested-');
     process.env.HOME = home;
@@ -409,6 +419,7 @@ describe('B1 e2e: agents ride the brain sync', { timeout: 120_000 }, () => {
       execFileSync('git', ['clone', '--quiet', bare, repo], { stdio: 'ignore' });
       git(repo, ['config', 'user.email', `${name}@users.noreply.github.com`]);
       git(repo, ['config', 'user.name', name]);
+      if (asStored) git(repo, ['config', 'core.precomposeUnicode', 'false']);
       const proj = join(repo, sub);
       const ctx = join(proj, '_dream_context');
       mkdirSync(join(ctx, 'agents'), { recursive: true });
@@ -440,7 +451,7 @@ describe('B1 e2e: agents ride the brain sync', { timeout: 120_000 }, () => {
     const guard = guardPullCollisions(b.proj, b.ctx, 'origin/main', home);
     expect(guard).toMatchObject({ ok: false, note: expect.stringMatching(/top folder of its git repository/) });
     expect(readFileSync(join(b.ctx, 'agents', 'diary.md'), 'utf-8')).toContain('private.');
-  });
+  }
 
   it('security: an incoming path that differs only in letter case from agents/ or automations/ is never taken in', () => {
     const bare = newBare();
