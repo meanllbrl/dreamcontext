@@ -192,6 +192,13 @@
       ]
     },
     {
+      "path": "apps backup",
+      "desc": "Back up the app's data folder now, outside every repo (~/.dreamcontext/apps/backup/)",
+      "args": [
+        "<slug>"
+      ]
+    },
+    {
       "path": "apps call",
       "desc": "One raw request to the app backend (prefer `apps do`)",
       "args": [
@@ -212,6 +219,31 @@
       ],
       "valueFlags": [
         "--input"
+      ]
+    },
+    {
+      "path": "apps learn",
+      "desc": "Queue one finding of this app for sleep (its assistant's verb; the text is data, at most 600 characters)",
+      "args": [
+        "<slug>",
+        "<text...>"
+      ]
+    },
+    {
+      "path": "apps learn-done",
+      "desc": "Drop the findings sleep wrote into knowledge/apps/<slug>.md, up to and including --through",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--through"
+      ]
+    },
+    {
+      "path": "apps learn-list",
+      "desc": "The app's queued findings, fenced as untrusted data (sleep-product reads this)",
+      "args": [
+        "<slug>"
       ]
     },
     {
@@ -252,6 +284,16 @@
       "desc": "Unregister the app (its window bundle and data pins go; the code folder stays)",
       "args": [
         "<slug>"
+      ]
+    },
+    {
+      "path": "apps restore",
+      "desc": "Put a backup back as the app's data folder (the current data is backed up first)",
+      "args": [
+        "<slug>"
+      ],
+      "valueFlags": [
+        "--at"
       ]
     },
     {
@@ -1811,6 +1853,16 @@
     {
       "path": "hook app-bash-gate",
       "desc": "Classify a Bash command of an app assistant (called by its per-chat PreToolUse hook)",
+      "args": [
+        "<gateFile>"
+      ],
+      "valueFlags": [
+        "--format"
+      ]
+    },
+    {
+      "path": "hook app-write-gate",
+      "desc": "Gate a file tool call of an app chat: writes only in its data folder, never another app's data (called by its per-chat PreToolUse hook)",
       "args": [
         "<gateFile>"
       ],
