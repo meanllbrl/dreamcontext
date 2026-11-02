@@ -12,6 +12,7 @@ import { createAppChat, gateFilePath, rotateAppChat } from '../../src/lib/apps/c
 import { ROLE_FILE, parseManifest, roleFileProblem } from '../../src/lib/apps/manifest.js';
 import { registerApp } from '../../src/lib/apps/registry.js';
 import { LIGHT_DISALLOWED_TOOLS } from '../../src/lib/automations/light-run.js';
+import { rulePath } from '../../src/lib/automations/board-scope.js';
 import { addVault } from '../../src/lib/vaults.js';
 import { computeChatSessions } from '../../src/server/routes/agent-chat-sessions.js';
 
@@ -126,13 +127,16 @@ describe('the envelope of the own assistant', () => {
     mkdirSync(join(dc, 'apps', 'data', 'other-app'), { recursive: true });
     writeFileSync(join(dc, 'vaults.json'), '{}');
     const rules = appCredentialDenies(home, hash);
-    expect(rules).toContain(`Read(/${dc}/claude-accounts/**)`);
-    expect(rules).toContain(`Read(/${dc}/vaults.json)`);
-    expect(rules).toContain(`Read(/${dc}/assistant/**)`);
-    expect(rules).toContain(`Read(/${dc}/apps/data/other-app/**)`);
-    expect(rules).not.toContain(`Read(/${dc}/apps/data/${hash}/**)`);
-    expect(rules).not.toContain(`Read(/${dc}/**)`);
-    expect(rules).toContain(`Read(/${join(home, '.ssh')}/**)`);
+    // In the rule's spelling: the path itself here, `/c/Users/...` on Windows (rule-path-win32.test.ts).
+    const r = (p: string) => rulePath(p);
+    expect(rules).toContain(`Read(/${r(join(dc, 'claude-accounts'))}/**)`);
+    expect(rules).toContain(`Read(/${r(join(dc, 'vaults.json'))})`);
+    expect(rules).toContain(`Read(/${r(join(dc, 'assistant'))}/**)`);
+    expect(rules).toContain(`Read(/${r(join(dc, 'apps', 'data', 'other-app'))}/**)`);
+    expect(rules).not.toContain(`Read(/${r(join(dc, 'apps', 'data', hash))}/**)`);
+    expect(rules).not.toContain(`Read(/${r(dc)}/**)`);
+    expect(rules).toContain(`Read(/${r(join(home, '.ssh'))}/**)`);
+    expect(rules.some((x) => x.includes('\\'))).toBe(false);
     expect(rules).toContain('Read(//**/.env*)');
     expect(rules).toContain('Read(//**/.secrets.json)');
     expect(rules).toContain('Read(//**/lab/credentials.json)');

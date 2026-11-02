@@ -7,7 +7,7 @@
  * so the model still knows which picture the owner wrote about.
  */
 import { copyFileSync, lstatSync, mkdirSync } from 'node:fs';
-import { extname, isAbsolute, join, resolve } from 'node:path';
+import { basename, extname, isAbsolute, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 const LINE = /^\[Picture (\d+): ('(?:[^']|'\\'')*'|[^\n\]]+)\]$/gm;
@@ -51,7 +51,7 @@ export function pictureAttachments(text: string, cwd: string, attachmentsDir: st
     try {
       mkdirSync(attachmentsDir, { recursive: true, mode: 0o700 });
       copyFileSync(path, join(attachmentsDir, `${id}${ext === '.jpeg' ? '.jpg' : ext}`));
-      out.push({ type: 'image', id, name: path.split('/').pop()!.slice(0, 255), mimeType: MIME[ext]!, sizeBytes: lstatSync(path).size });
+      out.push({ type: 'image', id, name: basename(path).slice(0, 255), mimeType: MIME[ext]!, sizeBytes: lstatSync(path).size });
     } catch { /* left out: the line still names the path */ }
   }
   return out;

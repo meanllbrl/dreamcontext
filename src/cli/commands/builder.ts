@@ -264,7 +264,7 @@ export async function builderHeavy(deps: BuilderDeps, argv: string[], opts: { ma
     recordStart(budget, scope, kind, target, Date.now(), over ? { command, reason: opts.because! } : undefined);
   }
   return new Promise<number>((resolveExit) => {
-    const child = spawn(plan.file, plan.args, { stdio: 'inherit', shell: plan.shell });
+    const child = spawn(plan.file, plan.args, { stdio: 'inherit', shell: plan.shell, windowsVerbatimArguments: plan.windowsVerbatimArguments });
     const forward = (sig: NodeJS.Signals) => () => { child.kill(sig); };
     const onTerm = forward('SIGTERM');
     const onInt = forward('SIGINT');

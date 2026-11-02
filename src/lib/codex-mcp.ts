@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
+import { spawnSpec } from './win-cmd.js';
 import { homedir } from 'node:os';
 import { computerStorePath, mcpStoreFiles, projectStorePath, readScope, type McpDefinition } from './mcp-store.js';
 import { adoptConnect, secretLiterals, type ConnectTicket, type SpawnFn } from './mcp-live.js';
@@ -148,7 +149,9 @@ function startAppServer(o: AppServerOptions): AppServer | null {
   const spawnFn = o.spawnImpl ?? (nodeSpawn as unknown as SpawnFn);
   let child: ChildProcess;
   try {
-    child = spawnFn(o.bin, [...o.argv, 'app-server'], { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', 'ignore'], detached: process.platform !== 'win32' });
+    // win32: `codex.cmd` only starts through cmd.exe (win-cmd.ts).
+    const spec = spawnSpec(o.bin, [...o.argv, 'app-server']);
+    child = spawnFn(spec.file, spec.args, { cwd: o.cwd, env: o.env, stdio: ['pipe', 'pipe', 'ignore'], detached: process.platform !== 'win32', ...(spec.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
   } catch { return null; }
   child.on('error', () => { /* reported through `exited` */ });
   if (!child.stdin || !child.stdout) return null;

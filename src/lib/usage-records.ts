@@ -23,7 +23,20 @@ function appendInState(contextRoot: string, name: string, line: string): void {
   const state = join(contextRoot, 'state');
   if (existsSync(state) && !lstatSync(state).isDirectory()) return;
   mkdirSync(state, { recursive: true });
-  const fd = openSync(join(state, name), constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+  appendNoFollow(join(state, name), line);
+}
+
+/**
+ * Append one line to a file that must not be a link. Windows has no O_NOFOLLOW (the constant is
+ * undefined there, so the flag silently drops and the open follows a committed symlink): a
+ * link, or anything but a regular file, at the path is refused before the open on every OS.
+ * `noFollow` is injectable so the Windows path is tested on any machine.
+ */
+export function appendNoFollow(file: string, line: string, noFollow: number = constants.O_NOFOLLOW ?? 0): void {
+  let st;
+  try { st = lstatSync(file); } catch { st = null; }
+  if (st && (st.isSymbolicLink() || !st.isFile())) throw new Error(`refusing to write through ${file}: not a regular file`);
+  const fd = openSync(file, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | noFollow, 0o600);
   try { writeSync(fd, `${line}\n`); } finally { closeSync(fd); }
 }
 

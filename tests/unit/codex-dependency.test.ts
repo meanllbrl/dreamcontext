@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { codexAwarePath, codexChildEnv, codexHealth, codexStartProblem, findCodexBin, forgetCodexHealth, managedCodexBin, managedCodexVersion } from '../../src/lib/codex-bin.js';
 import { codexEnsureSkipped } from '../../src/cli/ensure-codex.js';
@@ -13,7 +13,8 @@ import type { CodexFacts, ExtraFacts, ProbeContext, ReadinessCheck, ShellFacts }
 import { codexInfo, listTools } from '../../src/lib/t3-bridge/registry.js';
 import { resetToolFinderForTests } from '../../src/lib/tool-finder.js';
 
-const NARROW = '/usr/bin:/bin:/usr/sbin:/sbin';
+const NARROW = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(delimiter);
+const WIN = process.platform === 'win32';
 let home = '';
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), 'dc-codex-dep-')); resetToolFinderForTests(); forgetCodexHealth(); });
 afterEach(() => { rmSync(home, { recursive: true, force: true }); });
@@ -25,25 +26,37 @@ const tool = (rel: string, body: string): string => {
   chmodSync(p, 0o755);
   return p;
 };
+/**
+ * A stand-in Codex launcher in `dir`: what npm leaves there on this platform. POSIX: a `codex`
+ * shell script. Windows: `codex.cmd` (the name codex-bin.ts looks for), run through cmd.exe.
+ */
+const fakeCodex = (dir: string, o: { out?: string; err?: string; code?: number } = {}): string => {
+  if (WIN) {
+    return tool(`${dir}/codex.cmd`, ['@echo off', ...(o.out ? [`echo ${o.out}`] : []), ...(o.err ? [`echo ${o.err} 1>&2`] : []), `exit /b ${o.code ?? 0}`, ''].join('\r\n'));
+  }
+  return tool(`${dir}/codex`, ['#!/bin/sh', ...(o.out ? [`echo "${o.out}"`] : []), ...(o.err ? [`echo "${o.err}" >&2`] : []), ...(o.code ? [`exit ${o.code}`] : []), ''].join('\n'));
+};
 const signIn = (): void => { mkdirSync(join(home, '.codex'), { recursive: true }); writeFileSync(join(home, '.codex', 'auth.json'), '{}'); };
 const lookup = (extra: object = {}) => ({ home, path: NARROW, env: {}, loginPath: null, system: [] as string[], node: '/fake/node', ...extra });
 
 describe('a Finder-started app on an nvm Codex', () => {
   it('REGRESSION: on a launchd PATH Codex under nvm reads ready', () => {
-    tool('.nvm/versions/node/v20.19.0/bin/codex', '#!/bin/sh\necho "codex-cli 0.164.0"\n');
+    fakeCodex('.nvm/versions/node/v20.19.0/bin', { out: 'codex-cli 0.164.0' });
     signIn();
     const info = codexInfo(lookup());
     expect(info).toMatchObject({ installed: true, runs: true, signedIn: true, nodeOk: true, ready: true, version: '0.164.0' });
     expect(listTools(lookup()).find((t) => t.tool === 'codex')?.ready).toBe(true);
   });
 
+  // `#!/usr/bin/env node` is how a POSIX npm launcher finds Node; npm's Windows `codex.cmd` names
+  // node.exe itself. Listed in tests/windows-skip.ts.
   it('asks Codex with the PATH a child gets: `env node` resolves through the bridge Node', () => {
     tool('.nvm/versions/node/v20.19.0/bin/codex', '#!/usr/bin/env node\nconsole.log("codex-cli 0.164.0")\n');
     expect(codexHealth(lookup())).toMatchObject({ runs: true, version: '0.164.0' });
   });
 
   it('an installed Codex that cannot start is not ready, and says why', () => {
-    tool('.volta/bin/codex', '#!/bin/sh\necho "env: node: No such file or directory" >&2\nexit 127\n');
+    fakeCodex('.volta/bin', { err: 'env: node: No such file or directory', code: 127 });
     signIn();
     const info = codexInfo(lookup());
     expect(info).toMatchObject({ installed: true, runs: false, ready: false });
@@ -51,14 +64,14 @@ describe('a Finder-started app on an nvm Codex', () => {
   });
 
   it('one stall at boot does not retire Codex', () => {
-    tool('.volta/bin/codex', '#!/bin/sh\necho 0.164.0\n');
+    fakeCodex('.volta/bin', { out: '0.164.0' });
     const dead = codexHealth(lookup({ run: () => ({ status: null, stdout: '', stderr: '', error: 'ETIMEDOUT' }) }));
     expect(dead.runs).toBe(false);
     expect(codexHealth(lookup()).runs).toBe(true);
   });
 
   it('too old is not ready and asks for the update', () => {
-    tool('.volta/bin/codex', '#!/bin/sh\necho "codex-cli 0.100.0"\n');
+    fakeCodex('.volta/bin', { out: 'codex-cli 0.100.0' });
     signIn();
     expect(codexInfo(lookup())).toMatchObject({ installed: true, runs: true, outdated: true, ready: false });
     expect(codexStartProblem(lookup())).toMatch(/too old/);
@@ -71,16 +84,16 @@ describe('a Finder-started app on an nvm Codex', () => {
   });
 
   it('nodeOk is the bridge floor, separate from the install', () => {
-    tool('.volta/bin/codex', '#!/bin/sh\necho 0.164.0\n');
+    fakeCodex('.volta/bin', { out: '0.164.0' });
     signIn();
     expect(codexInfo(lookup({ node: null }))).toMatchObject({ installed: true, runs: true, nodeOk: false, ready: false });
   });
 
   it('the child PATH gets Codex and a Node, appended', () => {
-    const bin = tool('.volta/bin/codex', '#!/bin/sh\n');
+    const bin = fakeCodex('.volta/bin');
     const p = codexAwarePath(NARROW, lookup({ node: '/brew/bin/node' }));
     expect(p.startsWith(NARROW)).toBe(true);
-    expect(p.split(':')).toEqual(expect.arrayContaining([dirname(bin), '/brew/bin']));
+    expect(p.split(delimiter)).toEqual(expect.arrayContaining([dirname(bin), '/brew/bin']));
   });
 
   it('codexChildEnv keeps every other variable', () => {
@@ -155,6 +168,10 @@ describe('the managed install', () => {
   }
   const env = (run: CodexInstallEnv['run']): CodexInstallEnv => ({ home, platform: 'darwin', arch: 'arm64', run, say: () => undefined, npm: '/x/npm', env: {} });
 
+  // The pinned install exists for macOS and Linux only (no win32 pin: `codex-install` is a
+  // manual fix there, checks.ts), and its launcher is a /bin/sh script. These land a darwin
+  // install on disk; listed in tests/windows-skip.ts. The win32 refusal is the test after them.
+  describe('lands a macOS/Linux install on disk', () => {
   it('lands the launcher, the finder sees it first, and no folder of the user is touched', async () => {
     const mine = tool('.nvm/versions/node/v20.19.0/bin/codex', '#!/bin/sh\necho mine\n');
     const before = readFileSync(mine, 'utf-8');
@@ -210,6 +227,8 @@ describe('the managed install', () => {
     expect(findCodexBin(lookup())).toBe(mine);
   });
 
+  });
+
   it('one install at a time across processes', async () => {
     let inner: unknown = 'not run';
     const outer = await withCodexInstallLock(home, async () => { inner = await withCodexInstallLock(home, async () => 'second'); return 'first'; });
@@ -257,8 +276,10 @@ describe('the managed install', () => {
 });
 
 describe('Sign in', () => {
+  /** The Codex a sign-in runs: the managed launcher on POSIX; npm's `codex.cmd` on Windows, which has no managed install. */
+  const signInBin = (): string => (WIN ? fakeCodex('.volta/bin') : tool('.dreamcontext/tools/codex/bin/codex', '#!/bin/sh\nexec "/bin/sh" "$@"\n'));
   it('shows the sign-in page and nothing else of what codex login prints', async () => {
-    const bin = tool('.dreamcontext/tools/codex/bin/codex', '#!/bin/sh\nexec "/bin/sh" "$@"\n');
+    const bin = signInBin();
     mkdirSync(join(home, '.codex'), { recursive: true });
     const lines: string[] = [];
     const waits: Array<string | null> = [];
@@ -279,7 +300,7 @@ describe('Sign in', () => {
   });
 
   it('a login that ended with no sign-in says so', async () => {
-    tool('.dreamcontext/tools/codex/bin/codex', '#!/bin/sh\nexec "/bin/sh" "$@"\n');
+    signInBin();
     const sink: RunSink = { output: () => undefined, progress: () => undefined, awaiting: () => undefined, deviceCode: () => undefined, onCancel: () => undefined };
     const deps = { ...defaultFixDeps, env: {}, run: async (_f: string, a: string[]) => ({ ok: a[1] !== 'status', stdout: '', stderr: '', code: 0 }) };
     const ctx = { home, execPath: process.execPath, platform: 'darwin', arch: 'arm64' } as unknown as ProbeContext;

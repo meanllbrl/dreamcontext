@@ -11,6 +11,8 @@ import { bridgeChatScript } from '../../src/lib/t3-bridge/spawn.js';
 import { relayTarget, runRelay, takeSseEvents } from '../../src/lib/codex-http-relay.js';
 
 const SECRET = 'fixture-value-not-a-real-secret-123456';
+/** A path as it reads inside a quoted string of the `-c` override (JSON/TOML escaping). */
+const tomlString = (p: string): string => JSON.stringify(p).slice(1, -1);
 let home: string;
 const root = '/tmp/kettle-works';
 
@@ -30,7 +32,8 @@ describe('codexStorePlan', () => {
     const p = plan();
     expect(p.reached).toEqual([{ name: 'kettle', transport: 'stdio' }]);
     expect(planLaunchArgs(p)).toContain('lean-exec');
-    expect(planLaunchArgs(p)).toContain(computerStorePath(home));
+    // The path sits in a TOML string: a Windows path's backslashes arrive escaped.
+    expect(planLaunchArgs(p)).toContain(tomlString(computerStorePath(home)));
     expect(planLaunchArgs(p)).not.toContain(SECRET);
   });
 
@@ -69,7 +72,7 @@ describe('codexStorePlan', () => {
     store(projectStorePath(root, home), { both: { command: 'project' } });
     const p = plan(['own']);
     expect(p.reached.map((r) => r.name)).toEqual(['both']);
-    expect(planLaunchArgs(p)).toContain(projectStorePath(root, home));
+    expect(planLaunchArgs(p)).toContain(tomlString(projectStorePath(root, home)));
   });
 
   it('adds nothing when Codex did not list its servers: a clash could stop it starting', () => {

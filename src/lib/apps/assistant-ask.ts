@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { accountEnvFor, resolveConfigDir } from '../claude-accounts.js';
 import { ensureSandbox } from '../claude-account-sandbox.js';
 import { chatSpawnAccount } from '../automations/account.js';
-import { CREDENTIAL_ANYWHERE, credentialReadDenies } from '../automations/board-scope.js';
+import { CREDENTIAL_ANYWHERE, credentialReadDenies, rulePath } from '../automations/board-scope.js';
 import { LIGHT_DEFAULT_MODEL, LIGHT_DISALLOWED_TOOLS } from '../automations/light-run.js';
 import { buildAppAskBlock, executeClaudeDetached, newTurnNonce, sanitizeAutomationPrompt, type ClaudeExecution } from '../automations/runner.js';
 import { APP_CREDENTIAL_FILES, ROLE_MAX_CHARS } from './assistant.js';
@@ -79,7 +79,7 @@ function settle(id: string, job: Job, value: AskState): void {
 
 /** The own assistant's closed envelope: its folder to read, nothing else. */
 export function appAskArgs(prompt: string, appRoot: string, home?: string): string[] {
-  const scope = `/${appRoot}/**`;
+  const scope = `/${rulePath(appRoot)}/**`;
   return [
     '-p', prompt,
     '--model', LIGHT_DEFAULT_MODEL,

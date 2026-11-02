@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, delimiter, join } from 'node:path';
+import { basename, join, posix, win32 } from 'node:path';
 
 export const ANTIGRAVITY_PRIMARY_ID = 'primary';
 
@@ -37,12 +37,21 @@ export function antigravitySignedIn(accountId: string, home: string = homedir())
   }
 }
 
+/** The agent's file name, as T3 looks it up (AntigravityInstallation `executableNames`): a PE `.exe` on Windows. */
+export function antigravityAgentName(platform: string = process.platform): string {
+  return platform === 'win32' ? 'agy_acp_server.exe' : 'agy_acp_server.par';
+}
+
 /** Installed = T3's managed runtime is active here, or the agent is on PATH (T3's own two routes). */
-export function antigravityInstalled(o: { home?: string; path?: string; platform?: string; arch?: string } = {}): boolean {
+export function antigravityInstalled(o: { home?: string; path?: string; platform?: string; arch?: string; exists?: (p: string) => boolean } = {}): boolean {
   const home = o.home ?? homedir();
-  const target = `${o.platform ?? process.platform}-${o.arch ?? process.arch}`;
+  const platform = o.platform ?? process.platform;
+  const target = `${platform}-${o.arch ?? process.arch}`;
   if (existsSync(join(t3StateRoot(home), 'tools', 'antigravity-acp', target, 'active.json'))) return true;
-  return (o.path ?? process.env.PATH ?? '').split(delimiter).some((dir) => !!dir && existsSync(join(dir, 'agy_acp_server.par')));
+  const p = platform === 'win32' ? win32 : posix;
+  const exists = o.exists ?? existsSync;
+  return (o.path ?? process.env.PATH ?? process.env.Path ?? '').split(p.delimiter)
+    .some((dir) => !!dir && exists(p.join(dir.replace(/^"(.*)"$/, '$1'), antigravityAgentName(platform))));
 }
 
 export interface AntigravityRuntime {

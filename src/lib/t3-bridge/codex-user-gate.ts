@@ -19,6 +19,7 @@ import { existsSync, lstatSync, realpathSync, symlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { codexChildEnv, codexCommand } from '../codex-bin.js';
+import { spawnSpec } from '../win-cmd.js';
 import { isCodexAccountId, codexAccountHome } from './accounts.js';
 
 /** A hook's command, in the file Codex reads. Its text is part of the hash Codex trusts. */
@@ -55,9 +56,10 @@ export type Rpc = (calls: readonly Call[], cwd: string, codexHome: string) => Ar
  */
 const RPC_CHILD = `
 const { spawn } = require('node:child_process');
-const [bin, raw] = process.argv.slice(1);
+const [specRaw, raw] = process.argv.slice(1);
+const spec = JSON.parse(specRaw);
 const calls = JSON.parse(raw);
-const p = spawn(bin, ['app-server'], { stdio: ['pipe', 'pipe', 'ignore'] });
+const p = spawn(spec.file, spec.args, { stdio: ['pipe', 'pipe', 'ignore'], windowsVerbatimArguments: !!spec.windowsVerbatimArguments });
 const out = [];
 const send = (o) => p.stdin.write(JSON.stringify(o) + '\\n');
 const next = () => { if (out.length === calls.length) { process.stdout.write(JSON.stringify(out), () => { p.kill(); process.exit(0); }); return; } send({ id: 100 + out.length, ...calls[out.length] }); };
@@ -78,7 +80,8 @@ send({ id: 1, method: 'initialize', params: { clientInfo: { name: 'dreamcontext'
 `;
 
 export const codexRpc: Rpc = (calls, cwd, codexHome) => {
-  const r = spawnSync(process.execPath, ['-e', RPC_CHILD, codexCommand(), JSON.stringify(calls)], { cwd, env: { ...codexChildEnv(process.env), CODEX_HOME: codexHome }, encoding: 'utf-8', timeout: 15_000 });
+  // win32: `codex.cmd` only starts through cmd.exe (win-cmd.ts); the child spawns what this says.
+  const r = spawnSync(process.execPath, ['-e', RPC_CHILD, JSON.stringify(spawnSpec(codexCommand(), ['app-server'])), JSON.stringify(calls)], { cwd, env: { ...codexChildEnv(process.env), CODEX_HOME: codexHome }, encoding: 'utf-8', timeout: 15_000 });
   if (r.status !== 0) return null;
   try { return JSON.parse(r.stdout) as Array<{ result?: unknown; error?: unknown }>; } catch { return null; }
 };
@@ -127,10 +130,18 @@ export function codexProjectOptedIn(from: string, home: string = homedir()): boo
   }
 }
 
-/** A key we hand back inside a TOML path, a hash we hand back as a value. */
-const writable = (h: CodexHook): boolean => !/["\\\n]/.test(h.key) && /^sha256:[0-9a-f]{64}$/.test(h.currentHash);
+/**
+ * A key we hand back inside a TOML path, a hash we hand back as a value. A Windows key is a path
+ * full of backslashes (`C:\Users\…\.codex\hooks.json:pre_tool_use:0:0`): refusing them meant the
+ * gate could never be approved on Windows. A backslash is escaped ({@link tomlKey}); a quote or a
+ * control character still refuses.
+ */
+const writable = (h: CodexHook): boolean => !/["\u0000-\u001f\u007f]/.test(h.key) && /^sha256:[0-9a-f]{64}$/.test(h.currentHash);
 
-const recordTrust = (hook: CodexHook, cwd: string, primary: string, rpc: Rpc) => rpc([{ method: 'config/batchWrite', params: { edits: [{ keyPath: `hooks.state."${hook.key}".trusted_hash`, value: hook.currentHash, mergeStrategy: 'upsert' }], reloadUserConfig: false } }], cwd, primary)?.[0];
+/** The key as it sits between the quotes of a TOML basic-string key. */
+export const tomlKey = (key: string): string => key.replace(/\\/g, '\\\\');
+
+const recordTrust = (hook: CodexHook, cwd: string, primary: string, rpc: Rpc) => rpc([{ method: 'config/batchWrite', params: { edits: [{ keyPath: `hooks.state."${tomlKey(hook.key)}".trusted_hash`, value: hook.currentHash, mergeStrategy: 'upsert' }], reloadUserConfig: false } }], cwd, primary)?.[0];
 
 export interface GateApproval {
   /** The hook key Codex recorded now; null when it was already trusted or nothing was written. */

@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { antigravityInstalled, antigravityInstanceId, antigravityProfileDir, antigravitySignedIn } from '../../../src/lib/antigravity-accounts.js';
+import { antigravityAgentName, antigravityInstalled, antigravityInstanceId, antigravityProfileDir, antigravitySignedIn } from '../../../src/lib/antigravity-accounts.js';
 import { recordToolRejection, recordToolSignedOut, type AccountReading } from '../../../src/lib/account-switch.js';
 import {
   getInstanceAccount, instanceLimitsFor, isInstanceAccountId, listInstanceAccounts, noteInstanceAccount, readInstanceUsage,
@@ -59,9 +59,17 @@ describe('readiness: install → sign in → ready', () => {
   it('finds an agent on PATH too, which is T3\'s other install route', () => {
     const bin = join(home, 'bin');
     mkdirSync(bin);
-    writeFileSync(join(bin, 'agy_acp_server.par'), '');
+    writeFileSync(join(bin, antigravityAgentName()), '');
     expect(antigravityInstalled({ home, path: bin })).toBe(true);
     expect(antigravityInstalled({ home, path: '' })).toBe(false);
+  });
+
+  it('on Windows the agent on PATH is the .exe T3 starts, on a ;-joined PATH', () => {
+    const seen: string[] = [];
+    const exists = (p: string): boolean => { seen.push(p); return p === 'C:\\Tools\\Agy\\agy_acp_server.exe'; };
+    expect(antigravityInstalled({ home, platform: 'win32', path: 'C:\\Windows;"C:\\Tools\\Agy"', exists })).toBe(true);
+    expect(seen).toEqual(['C:\\Windows\\agy_acp_server.exe', 'C:\\Tools\\Agy\\agy_acp_server.exe']);
+    expect(antigravityInstalled({ home, platform: 'win32', path: 'C:\\Tools\\Agy', exists: (p) => p.endsWith('.par') })).toBe(false);
   });
 
   it('lists T3\'s manifest models, current ones first, with no efforts of their own', () => {

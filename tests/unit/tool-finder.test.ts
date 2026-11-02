@@ -1,10 +1,10 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join, relative } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { findTool, parseLoginPath, pathWithDirs, resetToolFinderForTests } from '../../src/lib/tool-finder.js';
+import { findTool, knownToolDirs, npmPrefixBin, parseLoginPath, pathWithDirs, resetToolFinderForTests } from '../../src/lib/tool-finder.js';
 
-const NARROW = '/usr/bin:/bin:/usr/sbin:/sbin';
+const NARROW = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(delimiter);
 let home = '';
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), 'dc-tool-finder-')); resetToolFinderForTests(); });
 afterEach(() => { rmSync(home, { recursive: true, force: true }); });
@@ -50,7 +50,7 @@ describe('findTool on a launchd-like PATH', () => {
   });
 
   it('the npm global prefix from ~/.npmrc', () => {
-    const want = tool('my-prefix/bin');
+    const want = tool(relative(home, npmPrefixBin(join(home, 'my-prefix'))));
     writeFileSync(join(home, '.npmrc'), `registry=https://registry.npmjs.org/\nprefix=${join(home, 'my-prefix')}\n`);
     expect(findTool(['codex'], search())).toBe(want);
   });
@@ -67,7 +67,7 @@ describe('findTool on a launchd-like PATH', () => {
   it('what the login shell sees beats a guess: it knows which install is the default', () => {
     tool('.nvm/versions/node/v24.0.0/bin');
     const chosen = tool('.nvm/versions/node/v20.19.0/bin');
-    expect(findTool(['codex'], search({ loginPath: () => `${dirname(chosen)}:/usr/bin` }))).toBe(chosen);
+    expect(findTool(['codex'], search({ loginPath: () => `${dirname(chosen)}${delimiter}/usr/bin` }))).toBe(chosen);
   });
 
   it('a login shell that does not answer still leaves the folders', () => {
@@ -78,9 +78,9 @@ describe('findTool on a launchd-like PATH', () => {
   it('the process PATH wins over everything but a managed install', () => {
     const onPath = tool('mine');
     tool('.nvm/versions/node/v24.0.0/bin');
-    expect(findTool(['codex'], search({ path: `${dirname(onPath)}:${NARROW}` }))).toBe(onPath);
+    expect(findTool(['codex'], search({ path: `${dirname(onPath)}${delimiter}${NARROW}` }))).toBe(onPath);
     const managed = tool('managed');
-    expect(findTool(['codex'], search({ path: `${dirname(onPath)}:${NARROW}`, first: [dirname(managed)] }))).toBe(managed);
+    expect(findTool(['codex'], search({ path: `${dirname(onPath)}${delimiter}${NARROW}`, first: [dirname(managed)] }))).toBe(managed);
   });
 
   it('a path that vanished is searched for again', () => {
@@ -97,9 +97,10 @@ describe('findTool on a launchd-like PATH', () => {
     const cwd = process.cwd();
     tool('.bin');
     process.chdir(home);
-    try { expect(findTool(['codex'], search({ path: `./.bin:${NARROW}` }))).toBeNull(); } finally { process.chdir(cwd); }
+    try { expect(findTool(['codex'], search({ path: `./.bin${delimiter}${NARROW}` }))).toBeNull(); } finally { process.chdir(cwd); }
   });
 
+  // POSIX only: Windows has no execute bit (listed in tests/windows-skip.ts).
   it('a file that cannot run is not a tool', () => {
     const p = tool('.volta/bin');
     chmodSync(p, 0o644);
@@ -117,5 +118,29 @@ describe('the login shell line', () => {
 });
 
 it('pathWithDirs appends, keeps order, skips empties', () => {
-  expect(pathWithDirs('/a:/b', ['/b', '/c', null])).toBe('/a:/b:/c');
+  const d = delimiter;
+  expect(pathWithDirs(`/a${d}/b`, ['/b', '/c', null])).toBe(`/a${d}/b${d}/c`);
+});
+
+describe('the folders npm installs into, per platform (pure)', () => {
+  it('REGRESSION: on Windows a ~/.npmrc prefix is a drive path and holds the launcher itself', () => {
+    const h = mkdtempSync(join(tmpdir(), 'dc-tool-finder-npmrc-'));
+    try {
+      writeFileSync(join(h, '.npmrc'), 'prefix=D:\\tools\\npm\n');
+      expect(knownToolDirs(h, {}, [], 'win32')).toContain('D:\\tools\\npm');
+      expect(knownToolDirs(h, {}, [], 'win32')).not.toContain(join('D:\\tools\\npm', 'bin'));
+      // Off Windows the same line is not a path at all.
+      expect(knownToolDirs(h, {}, [], 'darwin').some((d) => d.includes('tools\\npm'))).toBe(false);
+    } finally { rmSync(h, { recursive: true, force: true }); }
+  });
+
+  it("with no prefix, Windows looks in npm's default global folder under APPDATA", () => {
+    expect(knownToolDirs('C:\\Users\\robin', { APPDATA: 'C:\\Users\\robin\\AppData\\Roaming' }, [], 'win32')).toContain('C:\\Users\\robin\\AppData\\Roaming\\npm');
+    expect(knownToolDirs('/Users/robin', {}, [], 'darwin').some((d) => d.endsWith('npm'))).toBe(false);
+  });
+
+  it('npmPrefixBin: <prefix>/bin on POSIX, the prefix on Windows', () => {
+    expect(npmPrefixBin('/opt/npm', 'linux')).toBe(join('/opt/npm', 'bin'));
+    expect(npmPrefixBin('C:\\npm', 'win32')).toBe('C:\\npm');
+  });
 });

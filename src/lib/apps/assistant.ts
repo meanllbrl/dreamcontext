@@ -12,7 +12,7 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { CREDENTIAL_ANYWHERE, CREDENTIAL_HOME_DIRS, CREDENTIAL_HOME_FILES, forbiddenPathReason } from '../automations/board-scope.js';
+import { CREDENTIAL_ANYWHERE, CREDENTIAL_HOME_FILES, credentialHomeDirs, forbiddenPathReason, rulePath } from '../automations/board-scope.js';
 import { LIGHT_DISALLOWED_TOOLS } from '../automations/light-run.js';
 import { sanitizeAutomationPrompt } from '../automations/runner.js';
 import { getRunTarget } from '../automations/store.js';
@@ -56,7 +56,7 @@ export function appAllowedTools(input: {
   const doVerbs = input.actions.filter((a) => !a.danger).map((a) => `Bash(dreamcontext apps do ${input.slug} ${a.id}:*)`);
   return [
     'Read', 'Skill', 'ToolSearch', 'TodoWrite',
-    `Edit(/${input.dataDir}/**)`, `Write(/${input.dataDir}/**)`,
+    `Edit(/${rulePath(input.dataDir)}/**)`, `Write(/${rulePath(input.dataDir)}/**)`,
     ...verbs, ...doVerbs, ...input.readTools,
   ];
 }
@@ -85,7 +85,7 @@ function childRules(dir: string, skip: ReadonlySet<string>): string[] {
     if (skip.has(name)) continue;
     let isDir = false;
     try { isDir = statSync(join(dir, name)).isDirectory(); } catch { /* a dangling entry: as a file */ }
-    rules.push(`Read(/${join(dir, name)}${isDir ? '/**' : ''})`);
+    rules.push(`Read(/${rulePath(join(dir, name))}${isDir ? '/**' : ''})`);
   }
   return rules;
 }
@@ -99,9 +99,9 @@ export function appCredentialDenies(home: string, hash: string): string[] {
   const dc = join(home, '.dreamcontext');
   const apps = appsHome(home);
   return [
-    ...CREDENTIAL_HOME_DIRS.filter((d) => d !== '.dreamcontext').map((d) => `Read(/${join(home, d)}/**)`),
-    ...CREDENTIAL_HOME_FILES.map((f) => `Read(/${join(home, f)})`),
-    `Read(/${join(dc, 'assistant')}/**)`,
+    ...credentialHomeDirs().filter((d) => d !== '.dreamcontext').map((d) => `Read(/${rulePath(join(home, d))}/**)`),
+    ...CREDENTIAL_HOME_FILES.map((f) => `Read(/${rulePath(join(home, f))})`),
+    `Read(/${rulePath(join(dc, 'assistant'))}/**)`,
     ...childRules(dc, new Set(['apps', 'assistant'])),
     ...childRules(apps, new Set(['data'])),
     ...childRules(join(apps, 'data'), new Set([hash])),
@@ -120,7 +120,7 @@ export function appWriteDenies(input: { projectRoot: string; appRoot: string; da
     `${appChatsDir(input.home)}/**`,
     registryPath(input.home),
   ];
-  return paths.flatMap((p) => [`Edit(/${p})`, `Write(/${p})`]);
+  return paths.map((p) => rulePath(p)).flatMap((p) => [`Edit(/${p})`, `Write(/${p})`]);
 }
 
 /** The per-chat PreToolUse hook. Fails closed on everything it can see: a missing CLI, a non-zero
@@ -227,7 +227,9 @@ export function prepareAppChat(record: AppChatRecord, opts: { projectRoot: strin
   let role: string;
   try { role = sanitizeAutomationPrompt(readFileSync(join(rec.root, ROLE_FILE), 'utf-8')).trim().slice(0, ROLE_MAX_CHARS); } catch { return refuse(`${ROLE_FILE} cannot be read`); }
 
-  const cli = opts.cli ?? ownCliCommand();
+  // The hook line runs in bash (Git Bash on Windows), where a forward-slash `C:/...` is the same
+  // file and a backslash would be an escape: the install path rides with forward slashes there.
+  const cli = (opts.cli ?? ownCliCommand()).map((c) => (process.platform === 'win32' ? c.replace(/\\/g, '/') : c));
   if (!cli.every(Boolean)) return refuse('the dreamcontext install path is unknown');
   if (cli.some(unsafeRule)) return refuse('the dreamcontext install path is not shell-safe');
   const allowed = appAllowedTools({ slug: rec.slug, dataDir, actions: m.manifest.actions, readTools: m.manifest.agent?.readTools ?? [] });
@@ -246,14 +248,15 @@ export function prepareAppChat(record: AppChatRecord, opts: { projectRoot: strin
   } catch (err) {
     return refuse(`its chat could not be prepared (${(err as NodeJS.ErrnoException).code ?? (err as Error).message})`);
   }
-  if (mcpConfig && unsafeRule(mcpConfig)) { removeLeanMcpConfig(mcpConfig); return refuse('its MCP config path is not shell-safe'); }
+  // A Windows path carries backslashes by nature; it is judged in the slash form Claude reads.
+  if (mcpConfig && unsafeRule(process.platform === 'win32' ? mcpConfig.replace(/\\/g, '/') : mcpConfig)) { removeLeanMcpConfig(mcpConfig); return refuse('its MCP config path is not shell-safe'); }
   return {
     ok: true,
     app: {
       slug: rec.slug, name: m.manifest.name, hash: rec.hash, appRoot: rec.root, dataDir, own: true, member: null,
       briefing: ownBriefing(cleanText(m.manifest.name, 60), role),
       permissionMode: 'default', allowed, denied, addDirs: [rec.root, dataDir], mcpConfig,
-      settingSources: 'project', env: baseEnv, hooks: appBashGateHook(cli, gateFile),
+      settingSources: 'project', env: baseEnv, hooks: appBashGateHook(cli, process.platform === 'win32' ? gateFile.replace(/\\/g, '/') : gateFile),
       dispose: () => removeLeanMcpConfig(mcpConfig),
     },
   };

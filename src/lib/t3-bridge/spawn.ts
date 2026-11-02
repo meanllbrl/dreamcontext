@@ -14,6 +14,18 @@ export function isScriptSafePath(p: string): boolean {
   return p.length > 0 && p.length < 1024 && /^\/[A-Za-z0-9._\/ +@,=-]*$/.test(p);
 }
 
+/**
+ * The same question on win32, where the bridge child is started with an argv array and no shell
+ * ({@link bridgeChatCommand}): a drive-absolute path with no double quote, line break or NUL. Any
+ * letter passes (`C:\Users\Öğretmen\…`); the POSIX allowlist refused every Windows path, so every
+ * Codex and Antigravity pane on Windows was refused before it started.
+ */
+export function isWin32ArgvSafePath(p: string): boolean {
+  return p.length > 0 && p.length < 1024 && /^[A-Za-z]:[\\/][^"\r\n\0]*$/u.test(p);
+}
+
+const pathSafeFor = (platform: NodeJS.Platform) => (platform === 'win32' ? isWin32ArgvSafePath : isScriptSafePath);
+
 const TOKEN_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const PANE_RE = /^[0-9a-f-]{36}$/i;
 
@@ -48,9 +60,20 @@ export interface BridgeScriptInput {
 
 /** `exec "<node>" "<cli>" t3-chat …` for `chatSpawnCommand`, or null when a path is not safe. */
 export function bridgeChatScript(i: BridgeScriptInput): string | null {
+  const c = bridgeChatCommand(i, 'darwin');
+  return c ? `exec ${[c.file, ...c.args].map((a) => `"${a}"`).join(' ')}` : null;
+}
+
+/**
+ * The bridge child as a program and its argv: what win32 spawns directly (no login shell there,
+ * see `chatSpawnCommand`), and what the POSIX script quotes. Null when a path is not safe for
+ * `platform`'s way of starting it.
+ */
+export function bridgeChatCommand(i: BridgeScriptInput, platform: NodeJS.Platform = process.platform): { file: string; args: string[] } | null {
+  const safe = pathSafeFor(platform);
   const node = i.node ?? process.execPath;
   const cli = i.cli ?? (process.env.DREAMCONTEXT_CLI || process.argv[1] || '');
-  if (!isScriptSafePath(node) || !isScriptSafePath(cli)) return null;
+  if (!safe(node) || !safe(cli)) return null;
   // No model asked for: the account's own default (config.toml), else the first model Codex
   // cached for this login. Never a guessed id (a ChatGPT login refuses unknown models).
   const model = TOKEN_RE.test(i.model) ? i.model : i.tool === 'claude' || isInstanceTool(i.tool) ? null : codexDefaultModel(i.home ?? homedir()) ?? codexCachedModels(i.home ?? homedir())[0]?.id ?? null;
@@ -61,19 +84,19 @@ export function bridgeChatScript(i: BridgeScriptInput): string | null {
   if (TOKEN_RE.test(i.effort)) args.push('--effort', i.effort);
   if (PANE_RE.test(i.pane)) args.push('--pane', i.pane);
   if (isInstanceTool(i.tool) ? TOKEN_RE.test(i.resume) : CODEX_THREAD_RE.test(i.resume)) args.push('--resume', i.resume);
-  if (briefing && isScriptSafePath(briefing)) args.push('--briefing-file', briefing);
+  if (briefing && safe(briefing)) args.push('--briefing-file', briefing);
   // A root that is not shell-safe is left out, never quoted around: the sandbox only gets narrower.
-  const roots = (i.extraRoots ?? []).filter(isScriptSafePath);
+  const roots = (i.extraRoots ?? []).filter(safe);
   if (i.tool === 'codex' && i.account && isCodexAccountId(i.account)) args.push('--account', i.account);
   if (isInstanceTool(i.tool) && i.account && isInstanceAccountId(i.account)) args.push('--account', i.account);
   if (isInstanceTool(i.tool) && i.carry && TOKEN_RE.test(i.carry)) args.push('--carry', i.carry);
-  if ((i.tool === 'codex' || isInstanceTool(i.tool)) && i.mcpConfig && isScriptSafePath(i.mcpConfig)) args.push('--mcp-config', i.mcpConfig);
+  if ((i.tool === 'codex' || isInstanceTool(i.tool)) && i.mcpConfig && safe(i.mcpConfig)) args.push('--mcp-config', i.mcpConfig);
   if (i.tool === 'codex' && i.strictMcp) args.push('--strict-mcp');
   if ((i.tool === 'codex' || isInstanceTool(i.tool)) && i.storeMcp && !i.strictMcp) args.push('--store-mcp');
   if (isInstanceTool(i.tool) && i.unattended) args.push('--unattended');
   // Last: `--extra-root` takes every value after it.
   if (roots.length) args.push('--extra-root', ...roots);
-  return `exec "${node}" "${cli}" ${args.map((a) => `"${a}"`).join(' ')}`;
+  return { file: node, args: [cli, ...args] };
 }
 
 /**

@@ -7,7 +7,7 @@ import chalk from 'chalk';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { header } from '../../lib/format.js';
 import { CHECK_COPY } from '../../lib/onboarding/copy.js';
-import { antigravityRuntime } from '../../lib/antigravity-accounts.js';
+import { antigravityAgentName, antigravityRuntime } from '../../lib/antigravity-accounts.js';
 import { listInstanceAccounts } from '../../lib/instance-accounts.js';
 import { findTool } from '../../lib/tool-finder.js';
 import { bridgeNode, BRIDGE_MIN_NODE_TEXT } from '../../lib/t3-bridge/node-floor.js';
@@ -1610,7 +1610,7 @@ export function checkAntigravity(o: { home?: string; node?: string | null; path?
   const code = 'doctor/machine-antigravity';
   const notChecked = 'not checked without a live chat: whether the sign-in still works, and whether context reaches the model';
   const rt = antigravityRuntime(o.home ? { home: o.home } : {});
-  const onPath = rt.intact === null ? findTool(['agy_acp_server.par'], { ...(o.home ? { home: o.home } : {}), ...(o.path === undefined ? {} : { path: o.path }), ...(o.loginPath === undefined ? {} : { loginPath: o.loginPath }) }) : null;
+  const onPath = rt.intact === null ? findTool([antigravityAgentName()], { ...(o.home ? { home: o.home } : {}), ...(o.path === undefined ? {} : { path: o.path }), ...(o.loginPath === undefined ? {} : { loginPath: o.loginPath }) }) : null;
   if (rt.intact === false) return { name, status: 'warn', code, message: 'Antigravity: the install is damaged. Install it again from the model picker.' };
   if (rt.intact === null && !onPath) return { name, status: 'ok', code, message: 'Antigravity: not installed (optional)' };
   const label = rt.version ? `Antigravity ${rt.version}` : 'Antigravity';

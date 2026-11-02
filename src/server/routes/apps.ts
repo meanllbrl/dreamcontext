@@ -92,6 +92,8 @@ let loginPathCache: Promise<string> | null = null;
 function loginPath(): Promise<string> {
   if (!loginPathCache) {
     loginPathCache = new Promise((resolve) => {
+      // Windows has no login shell to ask (a Git Bash $SHELL would answer a POSIX ':' PATH).
+      if (process.platform === 'win32') { resolve(process.env.PATH ?? ''); return; }
       const shell = process.env.SHELL || '/bin/zsh';
       execFile(shell, ['-ilc', 'printf "%s" "$PATH"'], { timeout: 10_000 }, (err, stdout) => {
         const p = String(stdout ?? '').trim().split('\n').pop() ?? '';
