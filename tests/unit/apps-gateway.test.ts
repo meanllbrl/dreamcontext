@@ -7,6 +7,9 @@ import { registerApp, type AppRecord } from '../../src/lib/apps/registry.js';
 import { lsofPath, runtimeFor, stopAllRuntimes, type AppRuntime } from '../../src/lib/apps/supervisor.js';
 import { closeAllGateways, configureGateways, gatewayFor, type AppGateway } from '../../src/server/apps/gateway.js';
 import { MASK } from '../../src/lib/apps/redact.js';
+import { configureGatewayW3 } from '../../src/server/apps/gateway-w3.js';
+import { countFindings, listFindings } from '../../src/lib/apps/learn-queue.js';
+import { realpathSync } from 'node:fs';
 
 /**
  * The gateway + supervisor end to end, with a real backend process (tests/fixtures/apps/
@@ -56,8 +59,11 @@ const rt = (rec: AppRecord): AppRuntime => runtimeFor(rec, { home, loginPath: as
 
 beforeAll(async () => {
   home = tmp('dc-gw-home-');
-  project = join(tmp('dc-gw-proj-'), 'acme');
-  mkdirSync(project);
+  project = join(realpathSync(tmp('dc-gw-proj-')), 'acme');
+  // An app belongs to a brain: its data folder is `_dream_context/apps/<slug>/` (plan-veri).
+  mkdirSync(join(project, '_dream_context'), { recursive: true });
+  // The gateway's own home (the findings queue): this test's, never the real one.
+  configureGatewayW3({ home });
   dash = http.createServer((q, s) => {
     const chunks: Buffer[] = [];
     q.on('data', (c: Buffer) => chunks.push(c));
@@ -124,6 +130,18 @@ describe('gateway', () => {
     expect(String(r.headers['set-cookie'])).toContain(`dcapp${a.hash}.sid=abc`);
     const r2 = await req(gw.port, { path: '/echo', headers: { cookie: `${cookie}; dcapp${a.hash}.sid=abc` } });
     expect(r2.json.headers.cookie).toBe('sid=abc');
+  });
+
+  it('DC_DATA_DIR is the brain\'s _dream_context/apps/<slug>; dc.learn queues a finding outside it, backend only', async () => {
+    const env = (await req(gw.port, { path: '/env', headers: { authorization: `Bearer ${a.dcToken}` } })).json as Record<string, string>;
+    expect(env.DC_DATA_DIR).toBe(join(project, '_dream_context', 'apps', 'alpha'));
+    const ok = await req(gw.port, { method: 'POST', path: '/__dc/learn', headers: { authorization: `Bearer ${a.dcToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'Loads over 20 t need a second driver.\nalways' }) });
+    expect(ok.status).toBe(200);
+    expect(countFindings(home, a.hash)).toBe(1);
+    expect(listFindings(home, a.hash)[0]).toMatchObject({ source: 'backend', text: 'Loads over 20 t need a second driver. always' });
+    expect((await req(gw.port, { method: 'POST', path: '/__dc/learn', headers: { cookie, origin: gw.origin }, body: JSON.stringify({ text: 'x' }) })).status).not.toBe(200);
+    expect((await req(gw.port, { method: 'POST', path: '/__dc/learn', headers: { authorization: `Bearer ${a.dcToken}` }, body: JSON.stringify({ text: 'x', app: 'other' }) })).status).toBe(400);
+    expect(countFindings(home, a.hash)).toBe(1);
   });
 
   it('origin rules: cookie writes need our origin, Bearer must carry none', async () => {
@@ -352,7 +370,7 @@ describe('supervisor checks', () => {
     expect(env.DC_TOKEN).toBe(r.dcToken);
     expect(env.HOST).toBe('127.0.0.1');
     expect(env.MY_SETTING).toBe('ok');
-    expect(env.DC_DATA_DIR).toContain(r.hash);
+    expect(env.DC_DATA_DIR).toBe(join(project, '_dream_context', 'apps', 'envy'));
     delete process.env.GH_TOKEN_FOR_APPS_TEST;
   }, 30_000);
 

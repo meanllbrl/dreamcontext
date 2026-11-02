@@ -14,6 +14,8 @@ import { readLocalJson, updateLocalJson } from './local-store.js';
 
 export type InboxKind =
   | 'secret-held'
+  /** App data (plan-veri) was staged or committed: it stays on this Mac, the push waits. */
+  | 'app-data-held'
   | 'assigned-outside'
   | 'assigned-elsewhere'
   | 'renamed'

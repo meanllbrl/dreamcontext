@@ -158,6 +158,58 @@ describe('git-sync/sync-engine — runBrainSync', () => {
     };
   }
 
+  // ── plan-veri K2: app data never leaves through any push path, never arrives through a pull ──
+  describe('app data (plan-veri)', () => {
+    const held = (deps: Partial<SyncEngineDeps>): Partial<SyncEngineDeps> => ({ ...deps, appDataInPushRange: () => 'abc123', incomingAppData: () => [] });
+    it('autoSync: a commit holding app data holds the push (app_data_held), nothing pushed', async () => {
+      const state = makeState({ dirty: ['knowledge/x.md'] });
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, held(baseDeps(state)));
+      expect(r.action).toBe('app-data-held');
+      expect(r.note).toContain('app_data_held');
+      expect(state.pushCalls).toBe(0);
+    });
+    it('push-only: held the same way', async () => {
+      const state = makeState();
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'push-only' }, held(baseDeps(state)));
+      expect(r.action).toBe('app-data-held');
+      expect(state.pushCalls).toBe(0);
+    });
+    it('--continue: held the same way', async () => {
+      writeConflictReport(contextRoot, {
+        remoteRef: 'origin/main', resolvedByCli: [],
+        deferred: [{ path: 'knowledge/x.md', class: 'knowledge-md', reason: 'r', base: 'b', ours: 'o', theirs: 't' }],
+      });
+      writeBrainLocal(projectRoot, { pendingAgentMerge: false });
+      const state = makeState({ hasMergeHead: true });
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'auto', continue: true }, held(baseDeps(state)));
+      expect(r.action).toBe('app-data-held');
+      expect(state.pushCalls).toBe(0);
+    });
+    it('--resume: held the same way', async () => {
+      writeConflictReport(contextRoot, {
+        remoteRef: 'origin/main', resolvedByCli: [],
+        deferred: [{ path: 'knowledge/old.md', class: 'knowledge-md', reason: 'r', base: 'b', ours: 'o', theirs: 't' }],
+      });
+      writeBrainLocal(projectRoot, { pendingAgentMerge: true });
+      const state = makeState({ hasMergeHead: false, mergeConflicts: null });
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'auto', resume: true }, held(baseDeps(state)));
+      expect(r.action).toBe('app-data-held');
+      expect(state.pushCalls).toBe(0);
+    });
+    it('a gate that cannot answer holds the push too', async () => {
+      const state = makeState({ dirty: ['knowledge/x.md'] });
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, { ...baseDeps(state), appDataInPushRange: () => { throw new Error('git broke'); } });
+      expect(r.action).toBe('app-data-held');
+      expect(state.pushCalls).toBe(0);
+    });
+    it('a pull carrying app data stops before the merge', async () => {
+      const state = makeState({ aheadCount: 1 });
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, { ...baseDeps(state), incomingAppData: () => ['_dream_context/apps/x'] });
+      expect(r.note).toContain('app data');
+      expect(state.commitCalls).toHaveLength(0);
+    });
+  });
+
   // ── basic auto flow ────────────────────────────────────────────────────
   it('noop on a clean tree', async () => {
     const state = makeState();

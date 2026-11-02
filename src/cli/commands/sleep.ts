@@ -2,6 +2,9 @@ import { closeSleepRun, openSleepRun } from '../../lib/usage-records.js';
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { listApps } from '../../lib/apps/registry.js';
+import { countFindings } from '../../lib/apps/learn-queue.js';
 import chalk from 'chalk';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { promptInput } from '../../lib/prompt.js';
@@ -630,6 +633,18 @@ export function registerSleepCommand(program: Command): void {
           }
         }
 
+        // What this project's apps learned (plan-veri K4): a COUNT per app, never the text. A
+        // non-empty list fires sleep-product, which alone reads the text (`apps learn-list`).
+        let appFindings: Array<{ slug: string; count: number }> = [];
+        try {
+          appFindings = listApps(homedir(), dirname(root))
+            .map((a) => ({ slug: a.slug, count: countFindings(homedir(), a.hash) }))
+            .filter((a) => a.count > 0);
+        } catch { appFindings = []; }
+        if (appFindings.length) {
+          say.info(`App findings waiting: app_findings=${appFindings.map((a) => a.slug).join(',')} (${appFindings.map((a) => `${a.slug}: ${a.count}`).join(', ')}). Fire sleep-product.`);
+        }
+
         // The task-filing rules learned from the owner's objections, and the objections no
         // rule rests on yet: sleep-tasks reads the first before it files anything and distils
         // the second into rules. An unreadable rules file or ledger is SAID, never read as
@@ -648,6 +663,7 @@ export function registerSleepCommand(program: Command): void {
             cappedByCatchup: decision.cappedByCatchup,
             migrations: codeNotices,
             automationOutputs,
+            appFindings,
             filingRules: filingRules.json,
           }, null, 2));
         }

@@ -114,26 +114,46 @@ describe('the envelope of the own assistant', () => {
     expect(d.every((t) => (LIGHT_DISALLOWED_TOOLS as readonly string[]).includes(t))).toBe(true);
   });
   it('write denies are root-anchored and cover each protected path', () => {
-    const rules = appWriteDenies({ projectRoot: '/p', appRoot: '/a', dataDir: '/d', home: '/h' });
-    for (const path of ['/p/**', '/a/ASSISTANT.md', '/a/dreamcontext-app.json', '/a/.claude/**', '/d/.claude/**', '/h/.dreamcontext/apps/chats/**', '/h/.dreamcontext/apps/registry.json']) {
+    const rules = appWriteDenies({ projectRoot: '/p', appRoot: '/a', dataDir: '/d', home: '/h', slug: 'yuk' });
+    for (const path of ['/a/ASSISTANT.md', '/a/dreamcontext-app.json', '/a/.claude/**', '/d/.claude/**', '/h/.dreamcontext/apps/chats/**', '/h/.dreamcontext/apps/registry.json']) {
       expect(rules).toContain(`Edit(/${path})`);
       expect(rules).toContain(`Write(/${path})`);
     }
+    // The project is no longer denied whole: its data folder is inside it (plan-veri K1).
+    expect(rules).not.toContain('Edit(//p/**)');
   });
-  it('credential reads name every child of ~/.dreamcontext but this app\'s data', () => {
+  it('the belt enumerates the project down the data folder chain, sparing only that chain', () => {
+    mkdirSync(join(project, 'src'), { recursive: true });
+    writeFileSync(join(project, 'README.md'), 'x');
+    mkdirSync(join(project, '_dream_context', 'core'), { recursive: true });
+    mkdirSync(join(project, '_dream_context', 'apps', 'other'), { recursive: true });
+    mkdirSync(join(project, '_dream_context', 'apps', 'yuk'), { recursive: true });
+    const rules = appWriteDenies({ projectRoot: project, appRoot: root, dataDir: join(project, '_dream_context', 'apps', 'yuk'), home, slug: 'yuk' });
+    const r = (p: string) => rulePath(p);
+    expect(rules).toContain(`Write(/${r(join(project, 'src'))}/**)`);
+    expect(rules).toContain(`Write(/${r(join(project, 'README.md'))})`);
+    expect(rules).toContain(`Write(/${r(join(project, '_dream_context', 'core'))}/**)`);
+    expect(rules).toContain(`Write(/${r(join(project, '_dream_context', 'apps', 'other'))}/**)`);
+    expect(rules.some((x) => x.includes(`${r(join(project, '_dream_context', 'apps', 'yuk'))}/**`) && x.startsWith('Write'))).toBe(false);
+    expect(rules).not.toContain(`Write(/${r(join(project, '_dream_context'))}/**)`);
+  });
+  it('credential reads name every child of ~/.dreamcontext, all of its apps/ and other apps\' data in the brain', () => {
     const dc = join(home, '.dreamcontext');
     mkdirSync(join(dc, 'claude-accounts'), { recursive: true });
-    mkdirSync(join(dc, 'apps', 'data', hash), { recursive: true });
-    mkdirSync(join(dc, 'apps', 'data', 'other-app'), { recursive: true });
+    mkdirSync(join(project, '_dream_context', 'apps', 'yuk'), { recursive: true });
+    mkdirSync(join(project, '_dream_context', 'apps', 'other-app'), { recursive: true });
     writeFileSync(join(dc, 'vaults.json'), '{}');
-    const rules = appCredentialDenies(home, hash);
+    const rules = appCredentialDenies(home, { projectRoot: project, slug: 'yuk' });
     // In the rule's spelling: the path itself here, `/c/Users/...` on Windows (rule-path-win32.test.ts).
     const r = (p: string) => rulePath(p);
     expect(rules).toContain(`Read(/${r(join(dc, 'claude-accounts'))}/**)`);
     expect(rules).toContain(`Read(/${r(join(dc, 'vaults.json'))})`);
     expect(rules).toContain(`Read(/${r(join(dc, 'assistant'))}/**)`);
-    expect(rules).toContain(`Read(/${r(join(dc, 'apps', 'data', 'other-app'))}/**)`);
-    expect(rules).not.toContain(`Read(/${r(join(dc, 'apps', 'data', hash))}/**)`);
+    expect(rules).toContain(`Read(/${r(join(dc, 'apps'))}/**)`);
+    expect(rules).toContain(`Read(/${r(join(dc, 'apps', 'learn'))}/**)`);
+    expect(rules).toContain(`Read(/${r(join(dc, 'apps', 'backup'))}/**)`);
+    expect(rules).toContain(`Read(/${r(join(project, '_dream_context', 'apps', 'other-app'))}/**)`);
+    expect(rules).not.toContain(`Read(/${r(join(project, '_dream_context', 'apps', 'yuk'))}/**)`);
     expect(rules).not.toContain(`Read(/${r(dc)}/**)`);
     expect(rules).toContain(`Read(/${r(join(home, '.ssh'))}/**)`);
     expect(rules.some((x) => x.includes('\\'))).toBe(false);
@@ -146,7 +166,11 @@ describe('the envelope of the own assistant', () => {
     const p = prep(r);
     expect(p.ok).toBe(true);
     const gate = JSON.parse(readFileSync(gateFilePath(r.id, home), 'utf-8'));
-    expect(gate).toMatchObject({ slug: 'yuk', appRoot: root, actions: ['read'] });
+    expect(gate).toMatchObject({ slug: 'yuk', appRoot: root, actions: ['read'], projectRoot: project, dataDir: join(project, '_dream_context', 'apps', 'yuk') });
+    // Both gates ride the own assistant: Bash and the file tools.
+    if (!p.ok) throw new Error(p.reason);
+    const matchers = (p.app.hooks?.PreToolUse as Array<{ matcher: string }>).map((h) => h.matcher);
+    expect(matchers).toEqual(['Bash', 'Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Glob']);
   });
   it('the hook fails closed: exit 2 on a failed CLI, or anything that is not one object', () => {
     const h = appBashGateHook(['/n/node', '/c/cli.js'], '/h/x.gate.json');
@@ -222,7 +246,7 @@ describe('the scaffold', () => {
 describe('a bound member', () => {
   const clean = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(?:CLAUDE|DREAMCONTEXT_)/.test(k)));
   const dc = (...args: string[]) => spawnSync(process.execPath, [resolve('dist/index.js'), ...args], { cwd: project, encoding: 'utf-8', env: { ...clean(), HOME: home } });
-  it.skipIf(!existsSync(resolve('dist/index.js')))('runs free at auto, with danger actions and apps call denied, no gate, no strict settings', () => {
+  it.skipIf(!existsSync(resolve('dist/index.js')))('runs free at auto, with danger actions and apps call denied, the file gate only, no strict settings', () => {
     addVault('acme', project, home);
     mkdirSync(join(home, '.dreamcontext'), { recursive: true });
     writeFileSync(join(home, '.dreamcontext', '.secrets.json'), '{"github":{"token":"gho_fake_verify_token","login":"verify-user"}}');
@@ -234,7 +258,9 @@ describe('a bound member', () => {
     const p = prep(rec({ member: 'ua' }));
     process.env.HOME = saved;
     if (!p.ok) throw new Error(p.reason);
-    expect(p.app).toMatchObject({ own: false, member: 'ua', permissionMode: 'auto', settingSources: null, hooks: null, allowed: [] });
+    expect(p.app).toMatchObject({ own: false, member: 'ua', permissionMode: 'auto', settingSources: null, allowed: [] });
+    // plan-veri K1: a bound member writes only in the app's data folder too (no Bash gate).
+    expect((p.app.hooks?.PreToolUse as Array<{ matcher: string }>).map((h) => h.matcher)).toEqual(['Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Glob']);
     expect(p.app.denied).toContain('Bash(dreamcontext apps call:*)');
     expect(p.app.denied).toContain('Bash(dreamcontext apps do yuk wipe:*)');
     expect(p.app.denied).not.toContain('Bash(dreamcontext apps do yuk read:*)');

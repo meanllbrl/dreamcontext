@@ -728,6 +728,25 @@ export interface RawEntry {
   newMode: string;
 }
 
+// ─── App data helpers (plan-veri K2: app data never enters git) ────────────────────────────
+
+/** Every index entry under the pathspecs (repo-relative), NUL-split. THROWS when git cannot answer. */
+export function indexPaths(cwd: string, pathspecs: string[]): string[] {
+  return run(cwd, ['ls-files', '-z', '--cached', '--', ...pathspecs]).split('\0').filter((p) => p.length > 0);
+}
+
+/** Drop paths from the index only (the files stay on disk). THROWS when git cannot. */
+export function removeFromIndex(cwd: string, pathspecs: string[]): void {
+  run(cwd, ['rm', '--cached', '-r', '-q', '--ignore-unmatch', '--', ...pathspecs]);
+}
+
+/** The commits a push would send: `HEAD --not <remoteRef>`, or `--not --remotes` when it has none. THROWS. */
+export function commitsToPush(cwd: string, remoteRef: string | null): string[] {
+  const args = remoteRef ? ['rev-list', 'HEAD', '--not', remoteRef] : ['rev-list', 'HEAD', '--not', '--remotes'];
+  return run(cwd, args).split('\n').map((l) => l.trim()).filter(Boolean);
+}
+
+
 /**
  * Every changed path of `range` (`HEAD...<remote>`) with its modes on both sides, renames split
  * into a delete and an add. THROWS when git cannot answer: a caller guarding a pull must fail

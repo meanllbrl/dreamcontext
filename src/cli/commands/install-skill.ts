@@ -470,10 +470,18 @@ export function ensureClaudeHooks(projectRoot: string): { added: string[]; updat
     }
   }
 
+  // App data (plan-veri K3): an instruction file inside `_dream_context/apps/` is data, never
+  // loaded into a session. Claude Code reads `claudeMdExcludes` (picomatch on absolute paths).
+  const excludes = Array.isArray(settings.claudeMdExcludes) ? (settings.claudeMdExcludes as unknown[]).filter((e): e is string => typeof e === 'string') : [];
+  if (!excludes.includes(APP_DATA_CLAUDE_MD_EXCLUDE)) settings.claudeMdExcludes = [...excludes, APP_DATA_CLAUDE_MD_EXCLUDE];
+
   mkdirSync(join(projectRoot, '.claude'), { recursive: true });
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
   return result;
 }
+
+/** The `claudeMdExcludes` entry that keeps app data's CLAUDE.md files out of every session. */
+export const APP_DATA_CLAUDE_MD_EXCLUDE = '**/_dream_context/apps/**';
 
 // ─── Catalog (re-exported from lib/catalog) ──────────────────────────────────
 

@@ -58,6 +58,9 @@ import { appChatRoot, closeAppChat, listAppChats, lookupAppChat, newestAppChat, 
 import { stopLiveChat } from './agent-chat-live.js';
 import { claudeConversationExists, isSameOriginStrict } from './agent-spawn-shared.js';
 import { appRunBrief } from '../../lib/apps/brief.js';
+import { appOthers } from '../../lib/apps/others.js';
+import { migrateAppData } from '../../lib/apps/data-dir.js';
+import { listVaults } from '../../lib/vaults.js';
 import { sayFromApp } from './automations.js';
 import { inspectDispatcher } from '../../lib/automations/launchd.js';
 import { inspectNotifier } from '../../lib/automations/notifier.js';
@@ -147,11 +150,31 @@ function refreshIdleBundles(): void {
   }
 }
 
+/**
+ * Server start, before any backend: the data of every app of THIS server's projects moves from
+ * `~/.dreamcontext/apps/data/<hash>/` into the brain (plan-veri K1). Another server's projects
+ * are not touched (its backend may still hold the old folder); a refusal is shown when that app
+ * starts, which retries the move.
+ */
+function migrateOpenProjectsData(): void {
+  let roots: Set<string>;
+  try { roots = new Set(listVaults(home).map((v) => real(v.path))); } catch { return; }
+  for (const rec of listApps(home)) {
+    if (!roots.has(rec.projectRoot)) continue;
+    try {
+      const r = migrateAppData(home, rec);
+      if (r.status === 'moved') console.log(`  dreamcontext Apps: ${rec.slug} data moved into ${r.to}`);
+      else if (r.status === 'refused') console.log(`  dreamcontext Apps: ${rec.slug} data not moved (${r.code})`);
+    } catch { /* the app's own start retries */ }
+  }
+}
+
 let sweeper: NodeJS.Timeout | null = null;
 /** Lease sweeping + shot pruning, every 5 s while the server runs. */
 export function startAppsSweeper(): () => void {
   if (sweeper) return () => {};
   configureGatewayW3({ home, loginPath });
+  migrateOpenProjectsData();
   pruneShots(home);
   let ticks = 0;
   sweeper = setInterval(() => {
@@ -357,8 +380,11 @@ export async function handleAppsList(req: IncomingMessage, res: ServerResponse, 
     return;
   }
   if (!requireLocalDesktop(req, res)) return;
-  const apps = listApps(home, projectRootOf(contextRoot)).map((a) => ({ ...publicStatus(a), root: a.root }));
-  sendJson(res, 200, { apps, platform: process.platform, runner: !!shellRunnerPath(), setup: await appSetup() });
+  const registered = listApps(home, projectRootOf(contextRoot));
+  const apps = registered.map((a) => ({ ...publicStatus(a), root: a.root }));
+  // A teammate's app (its knowledge note, no app here) and a removed app's data (plan-veri K5).
+  const others = appOthers(projectRootOf(contextRoot), new Set(registered.map((a) => a.slug)));
+  sendJson(res, 200, { apps, others, platform: process.platform, runner: !!shellRunnerPath(), setup: await appSetup() });
 }
 
 export async function handleAppsLaunchWindow(req: IncomingMessage, res: ServerResponse): Promise<void> {

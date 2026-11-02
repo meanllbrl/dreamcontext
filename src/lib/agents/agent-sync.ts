@@ -124,7 +124,8 @@ function isManifestPath(relPath: string): boolean {
 const EXCLUDE_BEGIN = '# >>> dreamcontext: agent files stay on this machine unless agent sync is confirmed here';
 const EXCLUDE_END = '# <<< dreamcontext agents';
 /** Never synced, on any machine: the run lock, the in-flight sidecar, the cache record. */
-const LOCAL_ONLY_ENTRIES = ['automations/cache/*.lock', 'automations/cache/*.run.json', 'automations/cache/*.run.json.tmp', 'automations/cache/*.json', 'agents/.active/*.tmp'];
+/** `apps/`: app data (plan-veri K2) never leaves this Mac; the tracked `/apps/` line is its twin. */
+const LOCAL_ONLY_ENTRIES = ['automations/cache/*.lock', 'automations/cache/*.run.json', 'automations/cache/*.run.json.tmp', 'automations/cache/*.json', 'agents/.active/*.tmp', 'apps/'];
 
 /** The brain folder's path inside its git repo (`_dream_context/`), real paths compared. */
 export function brainPrefix(gitCwd: string, contextRoot: string): string | null {

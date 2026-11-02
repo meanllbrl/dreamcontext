@@ -12,6 +12,7 @@
  *   /__dc/team/say    bearer only       ask a project agent; the gateway stamps the app
  *   /__dc/ask         bearer only       ask the app's assistant; polled at /__dc/ask/:id
  *   /__dc/embed/:view cookie only       302 to a dreamcontext screen, carrying the embed token
+ *   /__dc/learn       bearer only       {text}: one finding for sleep (learn-queue.ts); the gateway stamps the app
  */
 
 import { randomUUID } from 'node:crypto';
@@ -36,6 +37,7 @@ import { readThread } from '../../lib/automations/threads.js';
 import { mintEmbedToken } from './embed-token.js';
 import { buildAppLink } from '../../lib/app-link.js';
 import { issueLinkNonce } from './link-nonces.js';
+import { appendFinding } from '../../lib/apps/learn-queue.js';
 
 const NOTIFY_PER_MINUTE = 30;
 
@@ -131,6 +133,21 @@ registerGatewayRoute('/__dc/notify', { cookie: true, bearer: true }, async (gw: 
   }
   const notch = wantNotch ? !!recordAppEvent({ vault: rec.vault, projectRoot: rec.projectRoot, slug: rec.slug, name: title, body: text }, homeDir) : false;
   send(res, 200, { ok: true, ...banner, notch });
+});
+
+// ─── learn ──────────────────────────────────────────────────────────────────────────
+
+registerGatewayRoute('/__dc/learn', { cookie: false, bearer: true }, async (gw: AppGateway, req, res) => {
+  if ((req.method ?? 'GET').toUpperCase() !== 'POST') { send(res, 405, { error: 'method' }); return; }
+  let body: Record<string, unknown>;
+  try { body = (await readJson(req, 8 * 1024)) as Record<string, unknown>; } catch { send(res, 400, { error: 'invalid_body' }); return; }
+  if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.text !== 'string') { send(res, 400, { error: 'learn_bad', message: '{text} is required' }); return; }
+  const extra = Object.keys(body).filter((k) => k !== 'text');
+  if (extra.length) { send(res, 400, { error: 'unknown_field', message: `Only text (not ${extra.join(', ')}).` }); return; }
+  let r: ReturnType<typeof appendFinding>;
+  try { r = appendFinding(homeDir, gw.runtime.hash, { source: 'backend', text: gw.runtime.scrub(body.text) }); } catch { send(res, 503, { error: 'learn_busy' }); return; }
+  if (!r.ok) { send(res, r.code === 'learn_full' ? 429 : 400, { error: r.code, message: r.code === 'learn_full' ? 'Twenty findings already wait for sleep.' : 'An empty finding.' }); return; }
+  send(res, 200, { ok: true, id: r.id });
 });
 
 // ─── MCP ────────────────────────────────────────────────────────────────────────────
