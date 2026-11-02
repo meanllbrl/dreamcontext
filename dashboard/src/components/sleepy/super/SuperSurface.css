@@ -634,7 +634,7 @@
 }
 .super-tile[data-kind='working'] .super-tile-corners { opacity: 0.85; }
 .super-tile[data-kind='asking'] .super-tile-corners { opacity: 0.9; }
-.super-tile-top { display: flex; align-items: center; gap: 8px; min-height: 20px; min-width: 0; }
+.super-tile-top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-height: 20px; min-width: 0; }
 .super-tile-kind {
   font-family: var(--font-mono);
   font-size: var(--font-size-2xs);
@@ -700,39 +700,39 @@
 /* A chat tile's title reads whole (owner 2026-10-21): up to three lines, its doing-line one. */
 .super-tile[data-tile='chat'] .super-tile-title { -webkit-line-clamp: 3; flex: none; }
 .super-tile[data-tile='chat'] .super-tile-line { -webkit-line-clamp: 1; }
+/* The model a child runs on is never cut (owner 2026-11-02): too wide for the row, the chip
+   wraps onto its own line of the card (the tile's top row and the card's tags both wrap), and if
+   the name and level still do not fit, the level drops under the name. */
 .super-tile-model {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
+  column-gap: var(--space-1);
   flex: 0 1 auto;
   min-width: 0;
-  height: 18px;
+  max-width: 100%;
+  min-height: 18px;
   padding: 0 6px;
-  border-radius: var(--radius-full);
+  border-radius: 9px;
   background: color-mix(in srgb, var(--color-text) 8%, transparent);
   color: var(--color-text-secondary);
   font-family: var(--font-mono);
   font-size: var(--font-size-2xs);
   line-height: 18px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-/* A Codex or Antigravity child: the tool's mark before its model, as the model picker draws it.
-   The name shortens in a narrow tile; the mark and the level always show. */
+/* A Codex or Antigravity child: the tool's mark before its model, as the model picker draws it. */
 .super-tile-model .mp-mark {
   flex: none;
   width: 11px;
   height: 11px;
-  margin-right: var(--space-1);
 }
 .super-tile-model-name {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 .super-tile-model-level {
   flex: none;
-  white-space: pre;
+  white-space: nowrap;
 }
 .super-tile-line {
   font-size: var(--font-size-xs);

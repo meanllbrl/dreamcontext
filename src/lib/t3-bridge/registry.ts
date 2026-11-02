@@ -91,6 +91,13 @@ export function codexCachedModels(home: string = homedir()): ToolModel[] {
   }
 }
 
+/** The model a Codex chat started with no model really runs: the account's own default, else the
+ *  first model Codex cached, else its known default. The bridge starts Codex on exactly this
+ *  (main.ts), so a Super child's record can name it before its first turn. */
+export function codexStartModel(home: string = homedir()): string {
+  return codexDefaultModel(home) || codexCachedModels(home)[0]?.id || 'gpt-5.5';
+}
+
 export interface ToolLookup {
   home?: string;
   path?: string;

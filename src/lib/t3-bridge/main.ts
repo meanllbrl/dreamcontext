@@ -9,7 +9,7 @@ import { ecoJoins } from './eco.js';
 import { BrainContext } from './context.js';
 import { findCodexRollout } from './codex-threads.js';
 import { writeAntigravityTranscript } from '../antigravity-conversation.js';
-import { codexCachedModels, codexDefaultModel } from './registry.js';
+import { codexStartModel } from './registry.js';
 import { runBridgeStdio } from './stdio.js';
 import type { BridgeSessionOptions } from './session.js';
 import type { ClaudeKit } from './claude-kit.js';
@@ -47,7 +47,7 @@ export async function runBridgeChat(o: T3ChatOptions, claudeKit?: ClaudeKit): Pr
       tool: o.tool,
       cwd: o.cwd,
       // No model asked for: the account's own default, else the first model Codex cached for it.
-      model: o.model || (o.tool === 'antigravity' ? '' : o.tool === 'claude' ? 'sonnet' : codexDefaultModel() || codexCachedModels()[0]?.id || 'gpt-5.5'),
+      model: o.model || (o.tool === 'antigravity' ? '' : o.tool === 'claude' ? 'sonnet' : codexStartModel()),
       ...(o.effort ? { effort: o.effort } : {}),
       mode: o.mode,
       paneId: o.pane ?? '',

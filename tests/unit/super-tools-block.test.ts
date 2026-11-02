@@ -19,7 +19,10 @@ import type { ToolInfo } from '../../src/lib/t3-bridge/registry.js';
 import { superBriefing } from '../../src/server/chat-modes.js';
 import { sanitizeSuperState } from '../../src/lib/super/store.js';
 import { SUPER_STATE_VERSION, emptySuperState } from '../../src/lib/super/types.js';
-import { modelChip, modelChipParts } from '../../dashboard/src/components/sleepy/super/superHandover.js';
+import { chipFromPickerLabel, modelChip, modelChipParts } from '../../dashboard/src/components/sleepy/super/superHandover.js';
+import { codexStartModel } from '../../src/lib/t3-bridge/registry.js';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 const claude: ToolInfo = { tool: 'claude', label: 'Claude', installed: true, signedIn: true, nodeOk: true, ready: true, defaultModel: null, models: [] };
 const codex: ToolInfo = {
@@ -154,20 +157,68 @@ describe('the card chip names a Codex or Antigravity model', () => {
     expect(modelChip('', 'high', 'antigravity')).toBeNull();
   });
 
-  it('in two parts: a narrow tile shortens the name, never the level', () => {
+  it('in two parts: name and level', () => {
     expect(modelChipParts('gemini-3.8-flash-high', 'medium', 'antigravity')).toEqual({ name: 'Gemini 3.8 Flash', level: 'high' });
     expect(modelChipParts('gpt-5.5', 'high', 'codex')).toEqual({ name: 'GPT-5.5', level: 'high' });
-    const css = readFileSync(join(__dirname, '../../dashboard/src/components/sleepy/super/SuperSurface.css'), 'utf-8');
-    expect(css).toMatch(/\.super-tile-model-name \{\n\s+min-width: 0;\n\s+overflow: hidden;\n\s+text-overflow: ellipsis;/);
-    expect(css).toMatch(/\.super-tile-model-level \{\n\s+flex: none;/);
   });
 
   it('the card and the tile draw the tool mark always, also before the model is known, and say it in words', () => {
     const src = readFileSync(join(__dirname, '../../dashboard/src/components/sleepy/super/AgentCard.tsx'), 'utf-8');
     expect(src.match(/<ChildModelChip session=\{session\} child=\{child\} \/>/g)?.length).toBe(2);
     expect(src).toContain("{chip || tool !== 'claude'");
+    // The name comes from the model picker's own rows, never a second map.
+    expect(src).toContain('activeRow(own, model)');
+    expect(src).toContain('[claudeState(modelConfig), ...(codexInfo ? [codexState(codexInfo)] : []), ...(antigravityInfo ? [codexState(antigravityInfo)] : [])]');
     expect(src).toContain("{tool !== 'claude' && <ToolMark tool={tool} />}");
     expect(src).toContain('title={words} aria-label={words}');
     expect(src).toMatch(/return session\?\.tool \|\| child\?\.tool \|\| 'claude';/);
+  });
+});
+
+describe('the card names the model with the picker\'s words, never cut (owner 2026-11-02: "Gemini Flash mı, Luna mı")', () => {
+  it('a picker label: Antigravity\'s level from its label, a Codex or Claude model keeps the effort', () => {
+    expect(chipFromPickerLabel('Gemini 3.8 Flash (High)', 'gemini-3.8-flash-high', 'medium', 'antigravity')).toEqual({ name: 'Gemini 3.8 Flash', level: 'high' });
+    expect(chipFromPickerLabel('Gemini 3.1 Pro (High)', 'gemini-pro-agent', null, 'antigravity')).toEqual({ name: 'Gemini 3.1 Pro', level: 'high' });
+    expect(chipFromPickerLabel('GPT-6 Luna', 'gpt-6-luna', 'High', 'codex')).toEqual({ name: 'GPT-6 Luna', level: 'high' });
+    expect(chipFromPickerLabel('Opus 5', 'claude-opus-5-5', 'xhigh', 'claude')).toEqual({ name: 'Opus 5', level: 'xhigh' });
+  });
+
+  it('an id the picker does not list: the raw id, never nothing; no id and no label: null', () => {
+    expect(chipFromPickerLabel(null, 'gpt-9-preview', 'low', 'codex')).toEqual({ name: 'gpt-9-preview', level: 'low' });
+    expect(chipFromPickerLabel(undefined, 'gemini-x', 'low', 'antigravity')).toEqual({ name: 'gemini-x', level: '' });
+    expect(chipFromPickerLabel('', '', 'low', 'codex')).toBeNull();
+  });
+
+  it('the name never ellipsises: the chip wraps onto its own line, the level under the name', () => {
+    const css = readFileSync(join(__dirname, '../../dashboard/src/components/sleepy/super/SuperSurface.css'), 'utf-8');
+    const chip = /\.super-tile-model \{([^}]*)\}/.exec(css)![1]!;
+    expect(chip).toContain('flex-wrap: wrap;');
+    expect(chip).toContain('max-width: 100%;');
+    expect(chip).not.toContain('text-overflow');
+    expect(chip).not.toMatch(/(^|\s)height: 18px/);
+    const name = /\.super-tile-model-name \{([^}]*)\}/.exec(css)![1]!;
+    expect(name).not.toContain('ellipsis');
+    expect(name).not.toContain('overflow: hidden');
+    expect(css).toMatch(/\.super-tile-top \{[^}]*flex-wrap: wrap;/);
+    expect(css).toMatch(/\.super-card-tags \{[^}]*flex-wrap: wrap;/);
+  });
+});
+
+describe('a Codex child started with no model is recorded with the one it runs', () => {
+  it('codexStartModel: the account default, else the first cached model, else gpt-5.5; the bridge uses the same', () => {
+    const home = mkdtempSync(join(tmpdir(), 'dc-codexstart-'));
+    try {
+      expect(codexStartModel(home)).toBe('gpt-5.5');
+      mkdirSync(join(home, '.codex'));
+      writeFileSync(join(home, '.codex', 'models_cache.json'), JSON.stringify({ models: [{ slug: 'gpt-6-luna', display_name: 'GPT-6 Luna' }] }));
+      expect(codexStartModel(home)).toBe('gpt-6-luna');
+      writeFileSync(join(home, '.codex', 'config.toml'), 'model = "gpt-6-sol"\n');
+      expect(codexStartModel(home)).toBe('gpt-6-sol');
+    } finally { rmSync(home, { recursive: true, force: true }); }
+    const main = readFileSync(join(__dirname, '../../src/lib/t3-bridge/main.ts'), 'utf-8');
+    expect(main).toContain("o.tool === 'claude' ? 'sonnet' : codexStartModel()");
+    const sup = readFileSync(join(__dirname, '../../src/server/routes/super.ts'), 'utf-8');
+    expect(sup).toContain("const recordModel = job.model || (job.tool === 'codex' ? safeCodexStartModel() : '');");
+    expect(sup).toContain('...(recordModel ? { model: recordModel } : {})');
   });
 });

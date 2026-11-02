@@ -1,4 +1,4 @@
-import { useEffect, useReducer } from 'react';
+import { useEffect, useMemo, useReducer } from 'react';
 import { useI18n } from '../../../context/I18nContext';
 import { pollMs } from '../../../lib/windowActivity';
 import type { SuperChild } from '../../../lib/superTypes';
@@ -7,9 +7,11 @@ import type { ChatSession } from '../chatSession';
 import { useSpinSlot } from './spinSlots';
 import { useLiveSession } from './liveSession';
 import { AccountLimitRing } from '../chat/UsageRings';
-import { chatAccountOf } from '../../../lib/agentComposer';
+import { FALLBACK_MODEL_CONFIG, chatAccountOf } from '../../../lib/agentComposer';
+import { useAgentModelConfig, useAgentTools } from '../../../hooks/useAgentCapabilities';
 import { ToolMark } from '../chat/model-picker/ModelPicker';
-import { backgroundOf, doingOf, elapsedLabel, lastLineOf, lastLinesOf, modelChip, modelChipParts, toneOfStatus, type DoingLine } from './superHandover';
+import { activeRow, claudeState, codexState, type PickerToolState } from '../chat/model-picker/pickerModel';
+import { backgroundOf, doingOf, elapsedLabel, lastLineOf, lastLinesOf, chipFromPickerLabel, modelChip, toneOfStatus, type DoingLine } from './superHandover';
 
 /** What a child's card says it waits on the owner for: a question it asks (`ask`), or something
  *  only he can do (`owner`: a command to run himself, a key, a checklist, a sign-in). */
@@ -209,25 +211,49 @@ export function childModelChip(session: ChatSession | undefined, child: SuperChi
 
 const TOOL_LABEL = { codex: 'Codex', antigravity: 'Antigravity' } as const;
 
+/** Every tool's models as the chat's model picker lists them (ChatPaneHost reads them the same
+ *  way), so a card names a model with the picker's own words. */
+function usePickerCatalog(): PickerToolState[] {
+  const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
+  const tools = useAgentTools().data;
+  const codexInfo = tools?.find((x) => x.tool === 'codex');
+  const antigravityInfo = tools?.find((x) => x.tool === 'antigravity');
+  return useMemo(
+    () => [claudeState(modelConfig), ...(codexInfo ? [codexState(codexInfo)] : []), ...(antigravityInfo ? [codexState(antigravityInfo)] : [])],
+    [modelConfig, codexInfo, antigravityInfo],
+  );
+}
+
+/** A child's model as the picker names it, with its level: the live session's spawn values, else
+ *  what the record holds (its `system/init` or `delegate --model`). Null when no model is known. */
+export function childChipParts(catalog: PickerToolState[], session: ChatSession | undefined, child: SuperChild | undefined): { name: string; level: string } | null {
+  const tool = childTool(session, child);
+  const model = (session?.model || child?.model || '').trim();
+  if (!model) return null;
+  const effort = session?.model ? session.effort || child?.effort : child?.effort;
+  const own = catalog.find((x) => x.tool === tool);
+  const row = own ? activeRow(own, model) : null;
+  return chipFromPickerLabel(row?.label, model, effort, tool);
+}
+
 /**
- * A child's model chip: a Codex or Antigravity child's tool mark ALWAYS (also before its first
- * turn names the model), then the model's name, which a narrow tile may shorten, and its level,
- * which always shows. Its title and label say the tool and the model in words. Null for a Claude
- * child whose model is not known yet.
+ * A child's model chip: a Codex or Antigravity child's tool mark (an icon, no tool word) and the
+ * model's full name as the picker shows it, then its level. The name is never cut: in a narrow
+ * card the chip takes its own line and the level drops under the name. Its title and label say
+ * the tool and the model in words. Null for a Claude child whose model is not known yet.
  */
 function ChildModelChip({ session, child }: { session: ChatSession | undefined; child: SuperChild | undefined }) {
+  const catalog = usePickerCatalog();
   const tool = childTool(session, child);
-  const parts = session?.model
-    ? modelChipParts(session.model, session.effort || child?.effort, tool)
-    : modelChipParts(child?.model, child?.effort, tool);
+  const parts = childChipParts(catalog, session, child);
   if (!parts && tool === 'claude') return null;
   const label = tool === 'claude' ? '' : TOOL_LABEL[tool];
   const words = [label, parts ? (parts.level ? `${parts.name} · ${parts.level}` : parts.name) : ''].filter(Boolean).join(' ');
   return (
     <span className="super-tile-model" data-testid="super-card-model" data-tool={tool} title={words} aria-label={words}>
       {tool !== 'claude' && <ToolMark tool={tool} />}
-      <span className="super-tile-model-name">{parts ? parts.name : label}</span>
-      {parts?.level ? <span className="super-tile-model-level">{` · ${parts.level}`}</span> : null}
+      <span className="super-tile-model-name" data-testid="super-card-model-name">{parts ? parts.name : label}</span>
+      {parts?.level ? <span className="super-tile-model-level">{`· ${parts.level}`}</span> : null}
     </span>
   );
 }
