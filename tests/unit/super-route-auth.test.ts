@@ -205,6 +205,7 @@ describe('the owner\'s routes: this machine\'s desktop window only', () => {
       expect(phoneAllows('GET', '/api/super/state')).toBe(false);
       expect(phoneAllows('POST', '/api/super/fresh')).toBe(false);
       expect(phoneAllows('POST', '/api/super/open')).toBe(false);
+      expect(phoneAllows('POST', '/api/super/member')).toBe(false);
       expect(phoneAllows('POST', '/api/super/seen')).toBe(false);
       expect(phoneAllows('POST', '/api/super/v/state')).toBe(false);
     } finally { setPhoneSurfaceForTests(null); }

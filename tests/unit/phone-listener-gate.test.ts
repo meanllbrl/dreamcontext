@@ -212,6 +212,21 @@ beforeEach(() => {
   setMacExposedVaults([PROJECT]);
 });
 
+
+/** live-chats' `members` (plan-r10 2.4): absent when no project has a member, else one entry per
+ *  project, each member with exactly the owner-facing fields of `SuperMemberSummary`. */
+function expectMemberRows(members: unknown): void {
+  if (members === undefined) return;
+  expect(Array.isArray(members)).toBe(true);
+  for (const row of members as Array<{ vault: unknown; members: Array<Record<string, unknown>> }>) {
+    expect(typeof row.vault).toBe('string');
+    expect(row.members.length).toBeGreaterThan(0);
+    for (const m of row.members) {
+      expect(Object.keys(m).sort()).toEqual(['approval', 'asking', 'enabled', 'global', 'lastAt', 'ownerWorking', 'slug', 'superOnly', 'unread']);
+    }
+  }
+}
+
 describe('phone listener: the route policy over the FULL route table (AC4/AC5)', () => {
   const H = () => ({ cookie, origin: ORIGIN, accept: 'application/json' });
 
@@ -512,7 +527,10 @@ describe('the projects chosen at start (AC16)', () => {
     expect(r.status).toBe(302);
     expect(r.headers.location).toBe(`/?vault=${THIRD}`);
     const live = JSON.parse((await request(phonePort, 'GET', '/api/agent/live-chats', H(PROJECT))).body);
-    expect(live).toEqual({ chats: [], draining: [] });
+    // plan-r10 2.4: one entry per project with members, each member's owner-facing state; the rest unchanged.
+    const { members, ...rest } = live;
+    expect(rest).toEqual({ chats: [], draining: [] });
+    expectMemberRows(members);
   });
 
   it('a handed-over Super Agent: live-chats lists its one row and no chat; the phone may not reopen or take its session', async () => {
@@ -535,7 +553,10 @@ describe('the projects chosen at start (AC16)', () => {
       // would hold the session from the next hand-over).
       writeFileSync(join(ctx, SUPER_STATE_REL), JSON.stringify({ ...emptySuperState(), session: SUPER_ID, enabled: false }));
       await primeSuperIndex([ctx]);
-      expect(JSON.parse((await request(phonePort, 'GET', '/api/agent/live-chats', H(PROJECT))).body)).toEqual({ chats: [], draining: [], parked: [SUPER_ID] });
+      const parkedLive = JSON.parse((await request(phonePort, 'GET', '/api/agent/live-chats', H(PROJECT))).body);
+      const { members: parkedMembers, ...parkedRest } = parkedLive;
+      expect(parkedRest).toEqual({ chats: [], draining: [], parked: [SUPER_ID] });
+      expectMemberRows(parkedMembers);
       for (const q of [`resume=${SUPER_ID}&reattach=passive`, `resume=${SUPER_ID}`]) {
         expect(await upgrade(phonePort, `/api/agent/chat?vault=${PROJECT}&${q}`, { cookie, origin: ORIGIN })).toBe(403);
       }
