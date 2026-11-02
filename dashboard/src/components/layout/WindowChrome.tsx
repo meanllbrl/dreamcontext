@@ -12,6 +12,7 @@ import { setActiveOverlayScope } from '../../lib/overlayStack';
 import {
   focusThisWindow,
   focusWindow,
+  confirmAction,
   isDesktop,
   openVaultWindow,
   setGoToProjectHandler,
@@ -40,6 +41,8 @@ import { ProjectTabs, type ProjectChip } from './ProjectTabs';
 import { readDeviceShell, useIsNewShell, type NewProjectLanding } from '../../lib/uxMode';
 import { readLayoutPrefs, writeLayoutPrefs } from '../../lib/launcherPrefs';
 import { useShellProjects } from '../../hooks/useShellProjects';
+import { useUnregisterVault } from '../../hooks/useLauncher';
+import { confirmRemoveProject, nextProjectAfterRemove } from '../../lib/removeProject';
 import { TitleBar } from './newshell/TitleBar';
 import type { PickerRow } from './newshell/ProjectPicker';
 import { mergeProjectOrder } from './newshell/projectOrder';
@@ -1142,6 +1145,32 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     });
   }, [newShell, launcherStatus, projectOrder, open, activeVault, drawerExpanded, drawerFacts, fanout, deviceShell, deviceChats]);
 
+  // "Remove from app…" (owner 2026-11-03): ask, drop the registry entry (the folder stays), and
+  // when the project is open here, land on the next one first so the window is never left on it.
+  const unregisterVault = useUnregisterVault();
+  const removeProject = useCallback(async (name: string) => {
+    const entry = (launcherStatus?.vaults ?? []).find((v) => v.name === name) as { path?: unknown } | undefined;
+    const path = typeof entry?.path === 'string' ? entry.path : null;
+    let removed = false;
+    try {
+      removed = await confirmRemoveProject(name, path, {
+        confirm: confirmAction,
+        unregister: (n) => unregisterVault.mutateAsync(n),
+        t: tRef.current,
+      });
+    } catch (err) {
+      notify(tRef.current('shell.drawer.removeFailed').replace('{name}', name).replace('{error}', err instanceof Error ? err.message : String(err)));
+      return;
+    }
+    if (!removed || !openRef.current.some((p) => p.vault === name)) return;
+    if (openRef.current.length <= 1) {
+      const next = nextProjectAfterRemove(projectOrderRef.current, name);
+      if (!next) return;
+      await addTab(next);
+    }
+    closeTab(name);
+  }, [launcherStatus, unregisterVault, notify, addTab, closeTab]);
+
   // The queue (D5): a row's click brings its project forward FIRST, and the intent travels
   // only when that project is now on screen and mounted (the `landLink` rule).
   const [pendingDrawerIntents, setPendingDrawerIntents] = useState<Record<string, PendingDrawerIntent>>(
@@ -1413,6 +1442,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                   else void openVaultWindow(name).catch((err) => notify(`Couldn't open a window for ${name}: ${err instanceof Error ? err.message : String(err)}`));
                 }}
                 onCloseProject={(name) => closeTab(name)}
+                {...(deviceShell ? {} : { onRemoveProject: (name: string) => { void removeProject(name); } })}
                 newWindowNonce={newWindowNonce}
                 {...(deviceShell ? { device: true } : {})}
                 {...(tunnel ? { foot: <PhoneDrawerFoot /> } : {})}
