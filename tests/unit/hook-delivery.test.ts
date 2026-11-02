@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   HARNESS_PERSIST_CHAR_LIMIT, HOOK_OUTPUT_MAX_CHARS, SESSION_START_PARTS, SNAPSHOT_DELIVERY_CHAR_LIMIT,
-  CODEX_SNAPSHOT_BANNER_CHARS, CODEX_SUBAGENT_BRIEFING_MAX_CHARS, resolveSubagentBriefingBudget,
+  CODEX_SUBAGENT_BRIEFING_MAX_CHARS, resolveSubagentBriefingBudget,
   SINGLE_HOOK_BUDGET_TOKENS, SUBAGENT_BRIEFING_BUDGET_TOKENS, SUBAGENT_BRIEFING_MAX_CHARS, DEFAULT_SNAPSHOT_BUDGET_TOKENS,
 } from '../../src/lib/snapshot-budget.js';
 import {
@@ -51,7 +51,6 @@ describe('Codex keeps its own numbers', () => {
     expect(resolveSubagentBriefingBudget(undefined, 'codex')).toBe(2_900);
     expect(resolveSubagentBriefingBudget(undefined)).toBe(SUBAGENT_BRIEFING_BUDGET_TOKENS);
     expect(CODEX_SUBAGENT_BRIEFING_MAX_CHARS).toBe(12_000);
-    expect(CODEX_SNAPSHOT_BANNER_CHARS).toBe(20_000);
   });
 });
 

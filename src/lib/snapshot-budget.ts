@@ -87,6 +87,14 @@ export interface BudgetSection {
   /** Identity/warning tier — never demoted regardless of budget pressure. */
   neverEvict?: boolean;
   /**
+   * The render a section falls to when the ladder is exhausted AND the snapshot would still not
+   * arrive whole (`applyBudget`'s `deliveryChars`), the last such section first. Allowed on a never-evict section: past that
+   * point the choice is no longer "full or pointer" but "pointer or a tail cut off unseen", and a
+   * pointer that names the command reaching the content beats losing everything after it.
+   * The soul and the active person never get one: a constitution renders verbatim or not at all.
+   */
+  lastResort?: BudgetRung;
+  /**
    * Demotion priority — LOWER demotes first. Defaults to the section's array
    * index, so a section that sets nothing behaves exactly as it did before
    * ranks existed. Order sections cheapest-loss first, NOT in reading order.
@@ -150,8 +158,22 @@ export const SUBAGENT_BRIEFING_MAX_CHARS = HOOK_OUTPUT_MAX_CHARS - 300;
 export const CODEX_SUBAGENT_BRIEFING_BUDGET_TOKENS = 2_900;
 export const CODEX_SUBAGENT_BRIEFING_MAX_CHARS = 12_000;
 
-/** The over-budget banner's line for a Codex snapshot, which no session hook carries. */
-export const CODEX_SNAPSHOT_BANNER_CHARS = 20_000;
+/**
+ * What the session-start hook prints beside the snapshot (the sleep line, an Eco handoff banner,
+ * a team-merge note, the brain-path line) rides the same parts, so the snapshot aims under the
+ * carrier by this much.
+ */
+export const HOOK_EXTRAS_RESERVE_CHARS = 2_500;
+
+/**
+ * The size a snapshot must get under to arrive whole, for every tool. A Codex or Antigravity chat
+ * has no per-hook limit (the bridge splits Codex's entries and puts Antigravity's in the message),
+ * but it gets the SAME snapshot Claude's parts carry: one brain, one text, whichever tool opens it.
+ * `singleHook`: a Claude project whose settings predate the part hooks, one hook carries it all.
+ */
+export function snapshotFitChars(singleHook = false): number {
+  return singleHook ? HOOK_OUTPUT_MAX_CHARS - 1_500 : SNAPSHOT_DELIVERY_CHAR_LIMIT - HOOK_EXTRAS_RESERVE_CHARS;
+}
 
 /**
  * Resolve the active budget from DREAMCONTEXT_SNAPSHOT_BUDGET:
@@ -231,7 +253,12 @@ export interface BudgetResult {
   neverEvictChars: number;
   /** Demoted sections sitting at their deepest allowed rung (array order). */
   flooredSectionIds: string[];
+  /** Sections taken to their {@link BudgetSection.lastResort} render so the snapshot arrives whole (array order). */
+  lastResortIds: string[];
 }
+
+/** Room the budget note takes after the delivery fit decides; the fit aims under the limit by this much. */
+const FOOTER_RESERVE_CHARS = 900;
 
 /**
  * Apply the budget. Sections are demoted in WAVES: first every demotable
@@ -247,6 +274,7 @@ export function applyBudget(
   sections: BudgetSection[],
   budgetTokens: number | null,
   footer: BudgetFooterOptions = {},
+  delivery: { deliveryChars?: number } = {},
 ): BudgetResult {
   // Resolved rungs, keyed by `${id}:${level}`. Keying by id alone would serve
   // rung 1's text for every deeper rung and silently freeze the ladder.
@@ -285,6 +313,7 @@ export function applyBudget(
       overBudget: false,
       neverEvictChars,
       flooredSectionIds: [],
+      lastResortIds: [],
     };
   }
 
@@ -307,6 +336,30 @@ export function applyBudget(
     }
   }
 
+  // The delivery fit: the ladder is exhausted and what is left would not arrive whole. Sections
+  // with a last-resort render fall to it from the END of the snapshot backward (the text the cut
+  // would have taken first), until the text fits what carries it.
+  // Without this the carrier cuts the TAIL, and the tail is whatever renders last, not what
+  // matters least (measured 2026-11-02: 14 KB of pending peer mail pushed a 49 KB snapshot past
+  // the hooks, and Objectives onward never reached the agent).
+  const lastResort = new Map<string, string>();
+  const fitChars = delivery.deliveryChars;
+  if (fitChars !== undefined && estimateTokens(text) > budgetTokens) {
+    const renderAll = (): string =>
+      sections
+        .map((s) => lastResort.get(s.id) ?? ((levels.get(s.id) ?? 0) === 0 ? s.text : rungText(s, levels.get(s.id)!)))
+        .filter((t) => t.trim() !== '')
+        .join('\n');
+    const candidates = sections.filter((s) => s.lastResort !== undefined).reverse();
+    for (const s of candidates) {
+      if (text.length + FOOTER_RESERVE_CHARS <= fitChars) break;
+      const rung = s.lastResort!;
+      lastResort.set(s.id, typeof rung === 'function' ? rung() : rung);
+      text = renderAll();
+    }
+  }
+  const lastResortIds = sections.filter((s) => lastResort.has(s.id)).map((s) => s.id);
+
   // Both lists are built in array order so the footer reads top-to-bottom like
   // the document. A section is "floored" only once it has actually been taken
   // to its deepest allowed rung — one nobody touched has spare capacity, not a
@@ -327,9 +380,10 @@ export function applyBudget(
   const overBudget = preFooterTokens > budgetTokens;
 
   if (overBudget) {
-    text += renderExhaustedFooter(demoted, flooredSectionIds, preFooterTokens, budgetTokens, footer);
-  } else if (demoted.length > 0) {
-    text += renderFittedFooter(demoted, footer);
+    text += renderExhaustedFooter(demoted, flooredSectionIds, preFooterTokens, budgetTokens, footer, lastResortIds);
+  } else if (demoted.length > 0 || lastResortIds.length > 0) {
+    text += renderFittedFooter([...demoted, ...lastResortIds.map((id) => ({ id }))], footer);
+    if (lastResortIds.length > 0) text += `\n${pointersNote(lastResortIds)}_`;
   }
 
   return {
@@ -339,7 +393,13 @@ export function applyBudget(
     overBudget,
     neverEvictChars,
     flooredSectionIds,
+    lastResortIds,
   };
+}
+
+/** Names the sections the delivery fit took to their pointer render. */
+function pointersNote(ids: string[]): string {
+  return `Shown as pointers so the rest arrives whole: ${ids.join(', ')} (each names the command that prints it in full).`;
 }
 
 /**
@@ -377,6 +437,7 @@ function renderExhaustedFooter(
   tokens: number,
   budgetTokens: number,
   opts: BudgetFooterOptions = {},
+  lastResortIds: string[] = [],
 ): string {
   // When every demoted section is also at its floor — the usual exhausted state
   // — one list tells the whole story. The old footer printed the same ids
@@ -412,6 +473,9 @@ function renderExhaustedFooter(
     '\n\n---',
     `_Budget note: the demotion ladder is EXHAUSTED and the ${opts.subject ?? 'snapshot'} is still over budget (${tokens} tok vs ${budgetTokens} tok).`,
     inventory,
+    ...(lastResortIds.length > 0
+      ? [pointersNote(lastResortIds)]
+      : []),
     ...tail,
   ].join('\n');
 }
