@@ -180,4 +180,12 @@ describe('superBriefState', () => {
       expect(t).toContain('(but the line before');
     }
   });
+
+  it('rev 26 (2026-11-02): a new idea from the owner is weighed before agreeing, a clear task is just done', () => {
+    expect(SUPER_BRIEF_REV).toBeGreaterThanOrEqual(26);
+    for (const t of [superBriefing(), SUPER_BRIEF_TEXT]) {
+      expect(t).toContain('weigh it before you agree or start');
+      expect(t).toContain('Never agree by reflex, never argue by reflex');
+    }
+  });
 });

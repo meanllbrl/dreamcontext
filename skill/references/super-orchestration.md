@@ -80,6 +80,11 @@ read, the card still goes, with a `warning`.
 plan: "görsel olarak görmek istiyorum, bu tip yazılı işi sevmem"): screen mockups, options side by
 side, short headings; text at the minimum, the 3-6 bullets become labels on the drawing.
 
+**Weigh his idea before you say yes** (owner, 2026-11-02). A new idea, design change or
+direction: does it hold, does it break an earlier decision or a project pattern, what does it
+cost? Sound: say so in one line and why. Not: say where it breaks and what you would do instead;
+he decides in a `super ask` card. Never agree or argue by reflex. A clear task is not a design question: just do it.
+
 Ask only for:
 - **An outward or irreversible step:** push, publish, release, `npm publish`, deleting data, spending
   money, merging to the default branch: always, even when the owner asked for it. A message
@@ -88,6 +93,7 @@ Ask only for:
 - **An answer that grows the owner's intent.** Answer a child's question for him only inside what
   he said he wants. An answer that raises a limit, changes a default or widens the scope is his:
   `super ask` (a 183-day limit once became a whole school year on a super's own call).
+- **Your objection to his idea** (above): the card, never only your text.
 Never ask about the split, modes, models, order, names or worktrees: decide, and show it in the list.
 
 **A message about one agenda line.** The owner's agenda rows each have a faint "Write about this"
