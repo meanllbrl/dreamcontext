@@ -62,10 +62,18 @@ function code(file: string): string {
     .replace(/(^|[^:'"`\\])\/\/.*$/gm, '$1');
 }
 
+/**
+ * The ONE call that is meant: an app's own window (desktop/app-runner) implements the JS confirm
+ * panel (`runJavaScriptConfirmPanelWithMessage`, mac.rs), and in an app frame the permission card's
+ * yes is a native alert the page around it cannot cover. The main app's webview has no such panel.
+ */
+const APP_FRAME_ALERT = new Set(['components/sleepy/chat/PermissionCard.tsx']);
+
 describe('no window.confirm anywhere in the dashboard', () => {
   it('is never called, in any dashboard source file', () => {
     const offenders = sourceFiles(SRC)
       .filter((f) => CALLS_WINDOW_CONFIRM.test(code(f)))
+      .filter((f) => !APP_FRAME_ALERT.has(relative(SRC, f)))
       .map((f) => relative(SRC, f));
 
     expect(

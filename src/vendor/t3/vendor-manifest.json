@@ -31,7 +31,7 @@
     "apps/server/src/orchestration-v2/unknownField.ts": "48ddaaa5b54aca6255d66cda1e7d5574795bd74e9e89a5cce07015c1fb8fb6ca",
     "apps/server/src/orchestration-v2/workflowAgentAnswers.ts": "ec7bd1910b0e503bc77ae34878c71824fe96874e4a8c9b7993c771e52389589b",
     "apps/server/src/orchestration-v2/workflowAgentTranscript.ts": "91f5d9f41ffda1df1c82b93acc96dce03e728068ec262c32391d5b86ad8220c0",
-    "apps/server/src/orchestration-v2/workflowFileRead.ts": "8bbe6aedd48cea7e06ec414f543a3d791499efd03147f30f1a2d8738f7e77ab8",
+    "apps/server/src/orchestration-v2/workflowFileRead.ts": "69347193f5a47e556d82779b191fee0a634735a8268c0f409e820ac968080f6e",
     "apps/server/src/provider/AntigravityAuth.test.ts": "8b10deca658378082c5fd7a66cd6205ce74ad239bba7bb0c531d2607df3ee018",
     "apps/server/src/provider/AntigravityAuth.ts": "3aba84aeef7e309c9fb40a59582b49d05e008f106ce64846b040ef28338b007d",
     "apps/server/src/provider/AntigravityInstallation.test.ts": "d0d22342ba6b59c6568d57b67e077a468e27a7e879d5ee383cda563c0590735d",
@@ -386,10 +386,11 @@
   "patches": [
     {
       "file": "01-antigravity-ts59.patch",
-      "reason": "TypeScript 5.9 differs from T3's tsc-rs in two places, behaviour unchanged: it cannot yield* a Schema.is-narrowed ProviderSetupError in a ternary (AntigravityAuth.ts, Effect.fail on the same value), and it infers the generic error of an Effect.fn generator as any, which leaks into probeUsage (antigravityUsageLimits.ts; swallowed by orElseSucceed, so unknown is exact).",
+      "reason": "TypeScript 5.9 differs from T3's tsc-rs in three places, behaviour unchanged: it cannot yield* a Schema.is-narrowed ProviderSetupError in a ternary (AntigravityAuth.ts, Effect.fail on the same value), and it infers the generic error of an Effect.fn generator as any, which leaks into probeUsage (antigravityUsageLimits.ts; swallowed by orElseSucceed, so unknown is exact), and it does not narrow a failure that `\"failure\" in read` leaves optional, so workflowFileRead.ts names a failure with no reason as read-failed (the reason the read's catch already uses).",
       "touches": [
         "apps/server/src/provider/AntigravityAuth.ts",
-        "apps/server/src/provider/antigravityUsageLimits.ts"
+        "apps/server/src/provider/antigravityUsageLimits.ts",
+        "apps/server/src/orchestration-v2/workflowFileRead.ts"
       ]
     },
     {

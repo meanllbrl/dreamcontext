@@ -38,7 +38,8 @@ describe('the phone composer\'s mic', () => {
 
   it('turns the existing push-to-talk on with ONE added term on the gate line (AC1, AC5)', () => {
     // The desktop half is the K7 mic gate (jarvis plan r9); the phone stays ONE added term.
-    expect(composer).toMatch(/const phoneVoice = usePhoneDictation\(\);\s*const voiceEnabled = \(isDesktop\(\) && \(mode === 'assistant' \|\| dictationReady\)\) \|\| phoneVoice;/);
+    // An app's frame (the embedded chat) has no mic: `!inAppFrame &&` leads the one expression.
+    expect(composer).toMatch(/const phoneVoice = usePhoneDictation\(\);\s*const inAppFrame = !!useEmbed\(\);\s*const voiceEnabled = !inAppFrame && \(\(isDesktop\(\) && \(mode === 'assistant' \|\| dictationReady\)\) \|\| phoneVoice\);/);
   });
 
   it('keeps the laptop\'s voice off the phone: no read-aloud switch, no warm/prefs, no hotkey wording (AC4)', () => {

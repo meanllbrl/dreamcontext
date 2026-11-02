@@ -132,10 +132,11 @@ describe('MCP', () => {
 
   it('the Codex column reads the whitelisted list and offers no Codex sign-in or Add', () => {
     expect(mcp).toMatch(/api\.get<CodexMcpList>\('\/agent\/mcp\/codex'\)/);
-    expect(mcp).toMatch(/if \(r\.home === 'claudeai'\) return <span className="mcpm-absent" title="claude\.ai connectors exist only in Claude Code\.">/);
+    expect(mcp).toMatch(/if \(r\.home === 'claudeai'\) return <span className="mcpm-muted" data-codex="claude-only" title="A claude\.ai connector belongs to your claude\.ai account, so Codex cannot use it\.">/);
     const codexOnly = mcp.slice(mcp.indexOf('{codexOnly.length > 0 && ('), mcp.indexOf('</tbody>'));
     expect(codexOnly).not.toMatch(/connect\(|setForm\(|<button/);
-    expect(codexOnly).toMatch(/<td className="mcpm-actions" \/>/);
+    // A server found only in Codex's own config can be signed in through the bridge (codexConnect), never added here.
+    expect(codexOnly).toMatch(/<td className="mcpm-actions">\{codexConnect\(c\.name\)\}<\/td>/);
   });
 });
 

@@ -361,7 +361,7 @@ describe('note 11: History holds one Super Agent entry per project', () => {
   });
   it('the entry row is no session id, and classic never asks for grouping', () => {
     expect(superGroupRow('acme', { count: 2, lastAt: 9 }, 'Super Agent')).toMatchObject({ id: 'super-group:acme', superCount: 2 });
-    expect(src('dashboard/src/components/sleepy/ChatHistoryPicker.tsx')).toContain('? api.get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT))\n');
+    expect(src('dashboard/src/components/sleepy/ChatHistoryPicker.tsx')).toContain('? api.get<ChatHistoryResponse>(historyPath(q, showAgentRuns, PAGE_LIMIT, undefined, app))\n');
   });
 });
 

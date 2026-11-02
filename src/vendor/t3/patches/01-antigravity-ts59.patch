@@ -1,4 +1,4 @@
-# reason: TypeScript 5.9 differs from T3's tsc-rs in two places, behaviour unchanged: it cannot yield* a Schema.is-narrowed ProviderSetupError in a ternary (AntigravityAuth.ts, Effect.fail on the same value), and it infers the generic error of an Effect.fn generator as any, which leaks into probeUsage (antigravityUsageLimits.ts; swallowed by orElseSucceed, so unknown is exact).
+# reason: TypeScript 5.9 differs from T3's tsc-rs in three places, behaviour unchanged: it cannot yield* a Schema.is-narrowed ProviderSetupError in a ternary (AntigravityAuth.ts, Effect.fail on the same value), and it infers the generic error of an Effect.fn generator as any, which leaks into probeUsage (antigravityUsageLimits.ts; swallowed by orElseSucceed, so unknown is exact), and it does not narrow a failure that `"failure" in read` leaves optional, so workflowFileRead.ts names a failure with no reason as read-failed (the reason the read's catch already uses).
 --- a/apps/server/src/provider/AntigravityAuth.ts
 +++ b/apps/server/src/provider/AntigravityAuth.ts
 @@ -533,9 +533,8 @@
@@ -27,3 +27,14 @@
      ) {
        const responses = yield* Effect.forEach(
          ENDPOINTS,
+--- a/apps/server/src/orchestration-v2/workflowFileRead.ts
++++ b/apps/server/src/orchestration-v2/workflowFileRead.ts
+@@ -125,7 +125,7 @@ export const readContainedWorkflowFile = Effect.fn("orchestration.readContainedW
+         new OrchestrationWorkflowFileError({ reason: "read-failed", path: resolved, cause }),
+     });
+     if ("failure" in read) {
+-      return yield* new OrchestrationWorkflowFileError({ reason: read.failure, path: resolved });
++      return yield* new OrchestrationWorkflowFileError({ reason: read.failure ?? "read-failed", path: resolved });
+     }
+ 
+     return {
