@@ -1,4 +1,5 @@
 import { getRunTarget } from '../automations/store.js';
+import { memberCallState } from '../agents/team-roster.js';
 import { DEFAULT_AGENT_AUTONOMY } from '../automations/types.js';
 import { levelPermissionArgs } from '../agents/permission.js';
 import { HEADLESS_ENVELOPES } from '../t3-bridge/headless-envelope.js';
@@ -11,9 +12,13 @@ import { HEADLESS_ENVELOPES } from '../t3-bridge/headless-envelope.js';
 /** Permission modes, narrowest first. */
 export const MODE_RANK: Record<string, number> = { plan: 0, default: 1, auto: 2, bypassPermissions: 3 };
 
-/** One member's own chat level (its Super's mode); a member gone leaves `default`, the narrowest. */
+/**
+ * One member's own chat level (its Super's mode); a member gone, off, unapproved or not the
+ * owner's leaves `default`, the narrowest: a level nobody approved never widens a child.
+ */
 export function memberLevelMode(contextRoot: string, slug: string): string {
   try {
+    if (memberCallState(contextRoot, slug).state !== 'ready') return 'default';
     const target = getRunTarget(contextRoot, slug, 'agent');
     if (target) return levelPermissionArgs(target.autonomy ?? DEFAULT_AGENT_AUTONOMY, 'chat')[1] ?? 'default';
   } catch { /* gone */ }

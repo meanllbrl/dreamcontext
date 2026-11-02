@@ -679,3 +679,30 @@ describe('end review (Wave 2)', () => {
     expect(memberCrewDecision({ conversation: 'k2', ticket: t, contextRoot: root }).mark).toBeNull();
   });
 });
+
+describe('surum-0402 review (Wave 2 re-check)', () => {
+  it('an unapproved member\'s level never widens a child, and its Super cannot delegate or resume', async () => {
+    // Pera asks for Free but nobody approved it: its children run at the narrowest level.
+    createAgent(root, { slug: 'pera', title: 'Pera', prompt: 'You price things.', autonomy: 'free' });
+    expect(memberCrewPermissionMode(root, ['pera'], true)).toBe('default');
+    // Rota is approved (balanced): its own level holds.
+    expect(memberCrewPermissionMode(root, ['rota'], true)).toBe('auto');
+    await writeSuper(root, 'm:pera', (s) => { s.session = 'sess-pera-1'; s.enabled = true; });
+    const tok = tokenFor('sess-pera-1', 'm:pera');
+    const d = await verb(tok, 'delegate', { prompt: 'do it', brief: 'x' });
+    expect(d.status, JSON.stringify(d.json)).toBe(409);
+    expect(d.json.error).toBe('member_not_ready');
+    const r = await verb(tok, 'resume', { child: 'kid-none' });
+    expect(r.status).toBe(409);
+    expect(r.json.error).toBe('member_not_ready');
+  });
+
+  it('a member\'s `super end` records the end in the member\'s own record, never main\'s', async () => {
+    const { session } = await askRota();
+    await writeSuper(root, 'm:rota', (s) => { s.children['kid-end'] = { sessionId: 'kid-end', brief: 'x', adopted: false, startedAt: Date.now() }; });
+    const r = await verb(tokenFor(session, 'm:rota'), 'end', { child: 'kid-end' });
+    expect(r.status, JSON.stringify(r.json)).toBe(200);
+    expect((await rota()).children['kid-end']?.endedAt).toBeTypeOf('number');
+    expect((await main()).children['kid-end']).toBeUndefined();
+  });
+});

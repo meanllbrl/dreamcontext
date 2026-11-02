@@ -263,6 +263,21 @@ export async function authorizeSuperAgent(req: IncomingMessage, res: ServerRespo
   return { token, who, superId, state };
 }
 
+/**
+ * A member's Super starts or resumes work only while the member is ready (on, the owner's,
+ * approved): a member waiting for its approval card never spawns (review, Wave 2). False = refused.
+ */
+function requireMemberReady(c: Pick<SuperCaller, 'superId' | 'who'>, res: ServerResponse): boolean {
+  const member = memberOfSuperId(c.superId);
+  if (member === null) return true;
+  let state: string;
+  try { state = memberCallState(c.who.contextRoot, member).state; } catch { state = 'missing'; }
+  if (state === 'ready') return true;
+  const why = state === 'needs-approval' ? "waiting for the owner's approval" : state === 'off' ? 'turned off' : 'not available';
+  refuse(res, 409, 'member_not_ready', `AI Team member "${member}" is ${why}: nothing new starts until it is ready`, { state });
+  return false;
+}
+
 /** A member slot this project has (an agent manifest, project or global): its record may exist. */
 export function memberKnown(contextRoot: string, slug: string, home?: string): boolean {
   try { return memberCallState(contextRoot, slug, home).state !== 'missing'; } catch { return false; }
@@ -1497,6 +1512,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
 
   delegate: async (c, b, res) => {
     if (!requireHandedOver(c, res)) return;
+    if (!requireMemberReady(c, res)) return;
     const root = c.who.contextRoot;
     // `--from <pool id>`: the job the pool kept, exactly as it was kept (plan r4 D9).
     const fromId = str(b.from);
@@ -2300,6 +2316,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
 
   resume: async (c, b, res) => {
     if (!requireHandedOver(c, res)) return;
+    if (!requireMemberReady(c, res)) return;
     const child = childArg(c, b, res);
     if (!child) return;
     const root = c.who.contextRoot;
@@ -2941,7 +2958,7 @@ async function endChild(c: SuperCaller, sid: string, force: boolean): Promise<En
   } else {
     noProcess = true;
   }
-  await recordEnded(c.who.contextRoot, sid);
+  await recordEnded(superKey(c.who.contextRoot, c.superId), sid);
   return { child: sid, ended: true, ...(noProcess ? { noProcess } : {}) };
 }
 
