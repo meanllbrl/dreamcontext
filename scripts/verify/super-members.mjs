@@ -40,7 +40,8 @@
  *   (g) Ada's stage shows `member-approval-band` and `member-project-chip`.
  *   (h) "Üyeleri yönet" (`team-manage`) opens `manage-members-modal`, with no chat pane inside.
  *   (i) phone 390: `phone-team-row` and `phone-global-team-row`; the sheet (`phone-team-sheet`)
- *       opens a member's stage.
+ *       opens Rota's conversation (the phone's mirror tab of her live Super), and her open question
+ *       is answered there: the summary stops asking and her Super gets the answer.
  *   (j) main's stage unchanged: the Super Agent row still opens main.
  *   Console errors and failed requests are recorded per page: any is a FAIL.
  *
@@ -495,9 +496,27 @@ async function run(engineName, base, port) {
     await shots(phone, '09', 'phone-team-sheet', () => openSheet(), [[390, 844]], null);
     await openSheet();
     await sheet.getByText('Rota', { exact: false }).first().click();
-    ok(tag('(i) the sheet opens Rota\'s stage'), await until(phone, async () =>
-      (await phone.locator('[data-super-id="m:rota"]:visible').count()) > 0
-      || ((await sheet.count()) === 0 && !(await drawerShown(phone)) && /Rota/.test(await phone.locator('.agent-surface:visible').first().innerText().catch(() => ''))), 20000));
+    // The phone opens a LIVE member's Super as its mirror tab (50271fd8): Rota's conversation.
+    const mirrorText = () => phone.locator('[data-super-id="m:rota"]:visible, .agent-surface:visible').first().innerText().catch(() => '');
+    ok(tag('(i) the sheet opens Rota\'s conversation (its mirror tab)'), await until(phone, async () =>
+      (await sheet.count()) === 0 && !(await drawerShown(phone)) && /Rota|ROTA SUPER/.test(await mirrorText())
+      && /GO-ASK|Sana bir soru sordum/.test(await mirrorText()), 20000), (await mirrorText()).slice(0, 400));
+    await shots(phone, '09', 'phone-member-conversation', (w) => stageOnly(phone, w), [[390, 844]], null);
+    // Her question is still open (nothing answered it on the desk): answered here, it settles everywhere.
+    const qcard = phone.locator('[data-testid="super-question-card"][data-state="open"]:visible').first();
+    if (await until(phone, async () => (await qcard.count()) > 0, 10000)) {
+      await qcard.locator('.chat-surveycard-opt').filter({ hasText: '%10' }).first().click().catch(() => {});
+      await phone.waitForTimeout(300);
+      if (await qcard.locator('.chat-btn.primary:visible').count()) await qcard.locator('.chat-btn.primary:visible').first().click().catch(() => {});
+      ok(tag('(i) Rota\'s question is answered from the phone'), await until(phone, async () =>
+        (await summaryMembers(page)).find((m) => m.slug === 'rota')?.asking === false, 20000), JSON.stringify((await summaryMembers(page)).find((m) => m.slug === 'rota')));
+      ok(tag('(i) …and her Super gets the answer'), await until(phone, async () =>
+        reports().some((r) => r.kind === 'member-turn' && r.slug === 'rota' && /%10/.test(r.text) && /super answer|\[super/.test(r.text)), 30000),
+        JSON.stringify(reports().filter((r) => r.kind === 'member-turn' && r.slug === 'rota').map((r) => r.text.slice(0, 120))));
+    } else {
+      ok(tag('(i) Rota\'s open question shows as a card on the phone'), (await summaryMembers(page)).find((m) => m.slug === 'rota')?.asking === false,
+        `no open question card; summary: ${JSON.stringify((await summaryMembers(page)).find((m) => m.slug === 'rota'))}`);
+    }
     await shots(phone, '09', 'phone-member-stage', (w) => stageOnly(phone, w), [[390, 844]], null);
     await pctx.close();
   }

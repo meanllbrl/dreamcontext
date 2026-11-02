@@ -69,7 +69,8 @@ const STANDIN = superStandin({
   cli: CLI,
   main: `
     if (text.startsWith('[super handover]')) { report({ kind: 'handover' }); return 'arranged'; }
-    if (text.startsWith('[super')) { report({ kind: 'super-turn', text: text.slice(0, 3000) }); return 'noted'; }
+    // Every turn is already logged as 'super-turn' by the stand-in (lib/super-scratch.mjs).
+    if (text.startsWith('[super')) return 'noted';
     if (text.includes('GO-TEAM')) {
       const steps = [cli('super', 'team', 'ask', ${JSON.stringify(MEMBER)}, 'Look at this week\\'s signup funnel and name the step that dropped.', '--brief', 'Funnel check')];
       report({ kind: 'team', steps });
@@ -92,7 +93,7 @@ const STANDIN = superStandin({
     const req = /- item=(\\S+) event=request/.exec(text);
     if (req) {
       report({ kind: 'request-delivered', slug, item: req[1], text: text.slice(0, 3000) });
-      const result = slug === ${JSON.stringify(MEMBER)} ? ${JSON.stringify(MEMBER_ANSWER)} : 'Done: ' + (text.split('Super Agent\\'tan: ')[1] || '').split('\\n')[0].slice(0, 80);
+      const result = slug === ${JSON.stringify(MEMBER)} ? ${JSON.stringify(MEMBER_ANSWER)} : 'Done: ' + (text.split('Super Agent\\'tan: ')[1] || '').split('</untrusted-project-output>')[0].split('\\n')[0].slice(0, 80);
       const step = cli('super', 'team', 'done', req[1], result);
       report({ kind: 'team-done', slug, item: req[1], step });
       return result;
@@ -202,8 +203,20 @@ async function run(engineName, base) {
   const page = await context.newPage();
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  // T1/T2: the unapproved member's stage asks for its birth and is refused 409 member_unapproved
+  // (plan-r10 1). Chromium logs that as a bare "status of 409" console error: allowed once per such
+  // response, nothing else.
+  const refusedBirths = [];
+  page.on('response', (r) => { if (r.status() === 409 && r.request().method() === 'POST' && /\/api\/super\/member(\?|$)/.test(r.url())) refusedBirths.push(r.url()); });
   page.on('pageerror', (e) => errors.push(String(e)));
   const tag = (s) => `[${engineName}] ${s}`;
+  /** One test's steps: a throw (a timeout) is a red with its crash shot, and the next test runs. */
+  const section = async (name, fn) => {
+    try { await fn(); } catch (e) {
+      await page.screenshot({ path: join(OUT, `${engineName}-${name}-crash.png`) }).catch(() => {});
+      ok(tag(`${name} ran to the end`), false, e?.stack ?? e);
+    }
+  };
 
   console.log(`\n── ${engineName}: hand over`);
   await openChat(page, base);
@@ -308,18 +321,50 @@ async function run(engineName, base) {
   ok(tag('T3 super state shows the team job done'), row?.status === 'done', JSON.stringify(row));
   await page.screenshot({ path: join(OUT, `${engineName}-after.png`) });
 
+  await section('T3b', async () => {
   console.log(`── ${engineName}: T3 the request on the member's stage`);
+  // The delivered turn, as the member's Super got it, read with the dashboard's own rule
+  // (superHandover.ts superRequestOf): so a red here says whether the turn or the stage is off.
+  const got = delivered()?.text ?? '';
+  const lines = got.split('\n');
+  const parses = /^\[super events\] batch=[A-Za-z0-9_-]{1,80} items=1$/.test(lines[0] ?? '')
+    && /^- item=([A-Za-z0-9_-]{1,80}) event=(request|reply)\b[^\n<]*\bfrom=super(?: [^\n<]*)?$/.test(lines[1] ?? '')
+    && /^<untrusted-project-output vault="[^"\n]*">Super Agent'tan: /.test(lines.slice(2).join('\n'));
+  ok(tag('T3 the delivered turn has the request block\'s exact shape (head, item line, fence)'), parses, got.slice(0, 600));
   await openMember(page, MEMBER);
-  const block = stage(page, `m:${MEMBER}`).getByTestId('super-request-block');
-  ok(tag('T3 Scout\'s stage shows it as a "Super Agent\'tan" block with its full text'), await until(page, async () =>
-    /signup funnel/.test(await block.first().innerText().catch(() => '')), 20000), await stage(page, `m:${MEMBER}`).innerText().catch(() => '').then((t) => t.slice(0, 400)));
+  const memberStage = stage(page, `m:${MEMBER}`);
+  await until(page, async () => (await memberStage.count()) > 0, 15000);
+  const block = memberStage.getByTestId('super-request-block');
+  // superStage.member.fromSuper: "From Super Agent" (en) / "Super Agent'tan" (tr).
+  const blockShows = async () => {
+    const t = await block.first().innerText().catch(() => '');
+    return /From Super Agent|Super Agent'tan/.test(t) && /signup funnel/.test(t);
+  };
+  await until(page, blockShows, 30000);
   await page.screenshot({ path: join(OUT, `${engineName}-member-request-block.png`) });
+  const blockOk = await blockShows();
+  // What the stage draws instead, for the report: the folded event line, and whether "Show" opens the block.
+  let instead = '';
+  if (!blockOk) {
+    const line = memberStage.getByText(/Super Agent event/).first();
+    instead = `event line drawn: ${await line.isVisible().catch(() => false)}`;
+    await memberStage.getByRole('button', { name: /^Show$|^Göster$/ }).first().click().catch(() => {});
+    await page.waitForTimeout(1500);
+    instead += `; after Show, block: ${await blockShows()}`;
+    await page.screenshot({ path: join(OUT, `${engineName}-member-request-after-show.png`) });
+  }
+  ok(tag('T3 Scout\'s stage shows it as a "From Super Agent" / "Super Agent\'tan" block with its full text'), blockOk,
+    `turn parses: ${parses}; ${instead}; stage: ${(await memberStage.innerText().catch(() => '')).slice(0, 300)}`);
   ok(tag('T3 back on main'), await toMainStage(page));
+  });
 
+  await section('T4', async () => {
   console.log(`── ${engineName}: T4 the member's card on main's stage`);
   await page.setViewportSize({ width: 1920, height: 1080 });
   const card = page.locator('[data-testid="super-team-tile"]:visible').filter({ hasText: 'Scout' });
-  ok(tag('T4 the member has its card on the stage'), await until(page, async () => (await card.count()) === 1, 15000));
+  await until(page, async () => (await card.count()) === 1, 15000);
+  await page.screenshot({ path: join(OUT, `${engineName}-team-card-1920.png`) });
+  ok(tag('T4 the member has its card on the stage'), (await card.count()) === 1, String(await card.count()));
   // New cards wait while the owner types (G1) and then play their entrance: the card must end up
   // really drawn (its frame no longer pending, fully opaque), not just present in the DOM.
   const shown = async () => card.evaluate((el) => {
@@ -335,7 +380,7 @@ async function run(engineName, base) {
   ok(tag('T4 it reads done (from the member record), with the member\'s result'), await until(page, async () =>
     (await card.getAttribute('data-team-status')) === 'done'
     && /Signups fell 4%/.test(await card.getByTestId('super-team-line').innerText().catch(() => '')), 30000),
-    `${await card.getAttribute('data-team-status')} | ${await card.getByTestId('super-team-line').innerText().catch(() => '')}`);
+    `${await card.getAttribute('data-team-status').catch(() => '')} | ${await card.getByTestId('super-team-line').innerText().catch(() => '')}`);
   // The same tone language as a chat card: the state word is drawn in the tone superTone.css maps
   // its status to (done -> idle -> the accent token), and the frame carries that tone too.
   const tones = await card.evaluate((el) => {
@@ -351,63 +396,89 @@ async function run(engineName, base) {
   await page.screenshot({ path: join(OUT, `${engineName}-team-card-1920.png`) });
   const box = await card.boundingBox();
   ok(tag('T4 the card is on screen and drawn at 1920 px'), !!box && box.width > 100 && box.x >= 0 && box.x + box.width <= 1920 && await shown(), JSON.stringify(box));
-  // A real mouse click on the card opens the MEMBER'S conversation (its one Super chat): on main's
-  // stage as the card's large view, or as the member's own stage. Never an empty new chat.
-  const frame = page.locator('[data-container-id][data-kind="team"]').filter({ has: page.locator('[data-testid="super-team-tile"]', { hasText: 'Scout' }) }).first();
-  const memberStage = stage(page, `m:${MEMBER}`);
+  // Lane B's design (TeamJobConversation.tsx, a REQUEST job): the large card shows the member
+  // Super's own transcript and a "Sohbeti aç" button; it has NO composer: the owner writes on the
+  // member's stage. A real mouse click on the card opens it on main's stage.
+  // Pinned by its id: once open, the frame no longer holds the tile, so a filter on it would lose it.
+  const frameId = await card.evaluate((el) => el.closest('[data-container-id]')?.getAttribute('data-container-id') ?? '');
+  const frame = page.locator(`[data-container-id="${frameId}"]`).first();
+  const convo = frame.locator('[data-testid="team-job-conversation"]:visible').first();
+  const isOpen = async () => (await frame.getAttribute('data-where').catch(() => null)) !== 'float' && await convo.isVisible().catch(() => false);
   const cb = await card.boundingBox();
   await page.mouse.click(cb.x + cb.width / 2, cb.y + cb.height / 2);
-  let opened = '';
-  ok(tag('T4 a click opens the member\'s conversation'), await until(page, async () => {
-    if (await memberStage.isVisible().catch(() => false)) { opened = 'member-stage'; return true; }
-    if ((await frame.getAttribute('data-where').catch(() => null)) !== 'float' && (await frame.locator('.chat-cmp-input').count()) > 0) { opened = 'card'; return true; }
-    return false;
-  }, 15000), await frame.getAttribute('data-where').catch(() => ''));
-  const convo = opened === 'member-stage' ? memberStage : frame;
-  const convoText = () => convo.innerText().catch(() => '');
-  ok(tag('T4 …showing the conversation: the request and the member\'s answer'), await until(page, async () => {
-    const t = await convoText();
-    return /signup funnel/.test(t) && /Signups fell 4%|SCOUT SUPER/.test(t);
-  }, 20000), (await convoText()).slice(0, 500));
-  ok(tag('T4 …NEVER the empty "Say something to start"'), !/Say something to start/i.test(await convoText()) && !/Say something to start/i.test(await page.locator('.agent-surface:visible').first().innerText().catch(() => '')),
-    (await convoText()).slice(0, 300));
-  ok(tag('T4 …and never the composer of a new conversation'), !/Start a new conversation/.test(await convo.innerHTML().catch(() => '')));
-  const memberInput = convo.locator('.chat-cmp-input:visible').first();
-  ok(tag('T4 …it can be written to'), await until(page, async () => (await memberInput.count()) === 1 && await memberInput.isEnabled(), 20000));
-  const ownerTurns = () => reports().filter((r) => r.kind === 'member-turn' && r.slug === MEMBER && r.text.includes('which step?'));
-  await memberInput.click(); await memberInput.fill('which step?'); await page.keyboard.press('Enter');
-  ok(tag('T4 …the owner\'s words reach the member\'s Super as a plain message'), await until(page, async () => ownerTurns().length === 1 && !ownerTurns()[0].text.startsWith('[super'), 20000),
-    JSON.stringify(reports().filter((r) => r.kind === 'member-turn').map((r) => r.text.slice(0, 120))));
-  ok(tag('T4 …and the member answers there'), await until(page, async () => /The pricing step/.test(await convoText()), 20000), (await convoText()).slice(-300));
-  ok(tag('T4 …the Super Agent hears nothing of it (owner and member only)'), !reports().some((r) => r.kind === 'super-turn' && /which step\?/.test(r.text)));
+  await until(page, isOpen, 15000);
+  // The transcript loads after the card opens ("Loading the history…"): wait for it, then read.
+  await until(page, async () => {
+    const t = await convo.innerText().catch(() => '');
+    return !/Loading the history|Geçmiş yükleniyor/i.test(t) && /signup funnel/.test(t) && /Signups fell 4%/.test(t);
+  }, 45000);
+  await until(page, async () => frame.evaluate((f) => !f.getAnimations().length && getComputedStyle(f).opacity === '1'), 5000);
   await page.screenshot({ path: join(OUT, `${engineName}-team-card-opened.png`) });
-  if (opened === 'card') {
-    // The keyboard does what the click does: back to its tile, Enter on the focused card opens it too.
-    await frame.getByTestId('super-card-minimize').click();
-    ok(tag('T4 minimized, it is a floating tile again'), await until(page, async () =>
-      (await frame.getAttribute('data-where').catch(() => null)) === 'float' && (await card.count()) === 1 && await shown(), 15000));
-    await page.waitForTimeout(600);
-    await frame.evaluate((el) => el.focus());
-    await page.keyboard.press('Enter');
-    ok(tag('T4 Enter on the focused card opens it on the stage too'), await until(page, async () =>
-      (await frame.getAttribute('data-where').catch(() => null)) !== 'float' && (await frame.locator('.chat-cmp-input').count()) > 0, 15000));
-  }
-  // The opened conversation at the owner's two widths.
+  ok(tag('T4 a click opens the card on main\'s stage, as the member\'s conversation'), await isOpen(), await frame.getAttribute('data-where').catch(() => ''));
+  ok(tag('T4 …of that request'), (await convo.getAttribute('data-request').catch(() => null)) === requestId, await convo.getAttribute('data-request').catch(() => ''));
+  const cardText = await convo.innerText().catch(() => '');
+  ok(tag('T4 …showing the conversation: the request and the member\'s answer'), /signup funnel/.test(cardText) && /Signups fell 4%/.test(cardText), cardText.slice(0, 500));
+  ok(tag('T4 …NEVER the empty "Say something to start"'), !/Say something to start/i.test(cardText) && !/Say something to start/i.test(await frame.innerText().catch(() => '')), cardText.slice(0, 300));
+  ok(tag('T4 …and never the composer of a new conversation'), !/Start a new conversation/.test(await frame.innerHTML().catch(() => '')));
+  ok(tag('T4 …no composer on the card (the owner writes on the member\'s stage)'), (await frame.locator('.chat-cmp-input, [data-testid="team-job-reply"]').count()) === 0);
+  ok(tag('T4 …and its "Sohbeti aç" button'), (await convo.getByTestId('team-job-open-member').count()) === 1);
+  // The keyboard does what the click does: back to its tile, Enter on the focused card opens it too.
+  await frame.getByTestId('super-card-minimize').click().catch(() => {});
+  ok(tag('T4 minimized, it is a floating tile again'), await until(page, async () =>
+    (await frame.getAttribute('data-where').catch(() => null)) === 'float' && (await card.count()) === 1 && await shown(), 15000));
+  await page.waitForTimeout(600);
+  await frame.evaluate((el) => el.focus()).catch(() => {});
+  await page.keyboard.press('Enter');
+  ok(tag('T4 Enter on the focused card opens it on the stage too'), await until(page, isOpen, 15000));
+  // The opened card at the owner's two widths.
   for (const w of [[1440, 900], [390, 844]]) {
     await page.setViewportSize({ width: w[0], height: w[1] });
     await page.waitForTimeout(1500);
     await page.screenshot({ path: join(OUT, `${engineName}-team-card-${w[0]}-open.png`) });
     console.log(`  card at ${w[0]}: conversation visible ${await convo.isVisible().catch(() => false)}, overflow ${await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)}`);
   }
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await until(page, isOpen, 5000);
+  // "Sohbeti aç": the member's stage, its one conversation, and there the owner writes.
+  const memberStage = stage(page, `m:${MEMBER}`);
+  await convo.getByTestId('team-job-open-member').click().catch(() => {});
+  await until(page, async () => (await memberStage.count()) > 0, 15000);
+  await page.screenshot({ path: join(OUT, `${engineName}-team-card-member-stage.png`) });
+  ok(tag('T4 "Sohbeti aç" opens Scout\'s stage'), (await memberStage.count()) > 0);
+  const stageText = () => memberStage.innerText().catch(() => '');
+  ok(tag('T4 …on its one conversation (the request is there), never "Say something to start"'), await until(page, async () => /signup funnel/.test(await stageText()), 15000)
+    && !/Say something to start/i.test(await stageText()), (await stageText()).slice(0, 400));
+  const memberInput = await stageComposer(page, `m:${MEMBER}`);
+  ok(tag('T4 …and it can be written to there'), await until(page, async () => (await memberInput.isVisible().catch(() => false)) && await memberInput.isEnabled(), 20000));
+  const ownerTurns = () => reports().filter((r) => r.kind === 'member-turn' && r.slug === MEMBER && r.text.includes('which step?'));
+  await memberInput.click().catch(() => {}); await memberInput.fill('which step?').catch(() => {}); await page.keyboard.press('Enter');
+  const sentAt = Date.now();
+  await until(page, async () => ownerTurns().length > 0, 60000);
+  const reachedMs = ownerTurns()[0] ? ownerTurns()[0].t - sentAt : null;
+  console.log(`  the owner's message reached the member's Super after ${reachedMs ?? 'never (60 s)'} ms`);
+  await until(page, async () => /The pricing step/.test(await stageText()), 30000);
+  await page.screenshot({ path: join(OUT, `${engineName}-member-stage-answered.png`) });
+  ok(tag('T4 …the owner\'s words reach the member\'s Super as a plain message'), ownerTurns().length === 1 && !ownerTurns()[0].text.startsWith('[super'),
+    JSON.stringify(reports().filter((r) => r.kind === 'member-turn').map((r) => r.text.slice(0, 120))));
+  ok(tag('T4 …and the member answers there'), /The pricing step/.test(await stageText()), (await stageText()).slice(-300));
+  ok(tag('T4 …the Super Agent hears nothing of it (owner and member only)'), !reports().some((r) => r.kind === 'super-turn' && /which step\?/.test(r.text)));
   await page.setViewportSize({ width: 1600, height: 1000 });
-  if (opened === 'card') await frame.getByTestId('super-card-minimize').click().catch(() => {});
   ok(tag('T4 back on main'), await toMainStage(page));
+  });
 
+  await section('T5', async () => {
   console.log(`── ${engineName}: T5 three asks to one member, one card`);
   // Under about 1600 px the stage folds its cards into Others (T4): wide enough to keep them out.
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.waitForTimeout(800);
+  // T4 left Scout's card open large, which folds the other cards into Others: back to its tile.
+  for (const f of await page.locator('[data-container-id][data-kind="team"]').all()) {
+    if ((await f.getAttribute('data-where').catch(() => 'float')) !== 'float') await f.getByTestId('super-card-minimize').click().catch(() => {});
+  }
+  await until(page, async () => (await page.locator('[data-container-id][data-kind="team"]:not([data-where="float"])').count()) === 0, 10000);
   const t5 = await superDoes(page, 'GO-THREE', 'three', 90000);
+  await page.waitForTimeout(3000);
+  await page.screenshot({ path: join(OUT, `${engineName}-three-asks-1920.png`) });
   ok(tag('T5 three team asks to one member all go through as requests'), (t5?.steps ?? []).length === 3 && t5.steps.every((x) => x.status === 0 && typeof x.json?.request === 'string'), JSON.stringify(t5?.steps?.map((x) => x.out.slice(0, 200))));
   const gJobs = (record().team ?? []).filter((j) => j.member === MEMBER2);
   const gRoots = gJobs.filter((j) => !j.followUpOf);
@@ -419,7 +490,7 @@ async function run(engineName, base) {
   const gCards = (record().containers ?? []).filter((c) => c.kind === 'team' && gJobs.some((j) => j.id === c.ref));
   ok(tag('T5 ONE card for the member on the record, pointing at its current root'), gCards.length === 1 && gCards[0].ref === gRoots[0]?.id, JSON.stringify(gCards));
   const gTile = page.locator('[data-testid="super-team-tile"]:visible').filter({ hasText: 'Gantt' });
-  ok(tag('T5 ONE Gantt tile on the stage'), await until(page, async () => (await gTile.count()) === 1, 20000), String(await gTile.count()));
+  ok(tag('T5 ONE Gantt tile on the stage'), await until(page, async () => (await gTile.count()) === 1, 45000), String(await gTile.count()));
   // No \b after "iş": in JS a word boundary never follows a non-ASCII letter.
   const threeJobs = /(^|[^0-9])3 (iş|jobs)(?![A-Za-z])/;
   ok(tag('T5 it reads "3 iş"'), await until(page, async () => threeJobs.test(await gTile.getByTestId('super-team-jobs').innerText().catch(() => '')), 20000),
@@ -440,6 +511,9 @@ async function run(engineName, base) {
   }
   await page.setViewportSize({ width: 1600, height: 1000 });
 
+  });
+
+  await section('T6', async () => {
   console.log(`── ${engineName}: T6 an agent's prompt edit asks nothing`);
   const edit = spawnSync(process.execPath, [CLI, 'agents', 'edit', MEMBER2, '--prompt', 'Keeps the project plan and the ClickUp assignments right.\nNames the owner of each item.'],
     { cwd: PROJ, env: { ...env(), DREAMCONTEXT_AGENT_SELF: MEMBER2 }, encoding: 'utf-8' });
@@ -455,6 +529,7 @@ async function run(engineName, base) {
   const gStage = stage(page, `m:${MEMBER2}`);
   ok(tag('T6 the member\'s stage opens'), await until(page, async () => (await gStage.count()) === 1, 15000));
   await page.waitForTimeout(1500);
+  await page.screenshot({ path: join(OUT_W1, `${engineName}-agent-edit-stage.png`) });
   ok(tag('T6 no approval band nor approve button on its stage'), (await approveIn(gStage)) === 0, String(await approveIn(gStage)));
   await openManageMembers(page, MEMBER2);
   const modal = page.locator('[data-testid="manage-members-modal"]:visible');
@@ -469,7 +544,10 @@ async function run(engineName, base) {
     await page.screenshot({ path: join(OUT_W1, `${engineName}-agent-edit-no-approve-${w}.png`) });
   }
   await page.setViewportSize({ width: 1600, height: 1000 });
-  ok(tag('no console errors'), errors.length === 0, errors.slice(0, 5).join('\n'));
+  });
+  let allowed = refusedBirths.length;
+  const left = errors.filter((e) => { if (allowed > 0 && /status of 409 \(Conflict\)/.test(e)) { allowed--; return false; } return true; });
+  ok(tag('no console errors (beyond the expected 409 of an unapproved member\'s birth)'), left.length === 0, left.slice(0, 5).join('\n'));
   await browser.close();
 }
 

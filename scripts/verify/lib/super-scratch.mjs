@@ -197,11 +197,12 @@ const bodies = {
 };
 const TAG = role === 'super' ? 'SUPER ' : role === 'member' ? slug.toUpperCase() + ' SUPER ' : 'CHILD ';
 let inited = false;
-async function turn(blocks) {
+async function turn(blocks, content) {
   if (!inited) { inited = true; out({ type: 'system', subtype: 'init', session_id: sid, model: 'claude-opus-5-5', cwd: process.cwd(), permissionMode: 'auto', slash_commands: [] }); }
   const text = blocks.join('\\n');
-  report({ kind: role + '-turn', slug, crew, sid, text: text.slice(0, 4000) });
-  row({ type: 'user', message: { role: 'user', content: text } });
+  report({ kind: role + '-turn', slug, crew, sid, text: text.slice(0, 4000), blocks: blocks.length });
+  // The turn exactly as the server sent it (string or blocks), as Claude Code records it.
+  row({ type: 'user', message: { role: 'user', content } });
   let said = 'ok';
   try { said = await bodies[role](text); } catch (e) { said = 'error ' + e; }
   if (said === null) return new Promise(() => {});
@@ -224,7 +225,7 @@ process.stdin.on('data', (c) => {
     const content = (o.message && o.message.content) || [];
     const blocks = typeof content === 'string' ? [content] : content.filter((b) => b.type === 'text').map((b) => b.text);
     if (!blocks.length) continue;
-    chain = chain.then(() => turn(blocks));
+    chain = chain.then(() => turn(blocks, content));
   }
 });
 process.stdin.on('end', () => chain.then(() => process.exit(0)));
