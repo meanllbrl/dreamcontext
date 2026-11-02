@@ -6,6 +6,19 @@ All notable changes to dreamcontext will be documented in this file.
 
 - **Projects update themselves.** When the installed CLI or app changes version, every registered project is refreshed on the next app start, with no prompt. A project with a working agent, a sleep or a half-done merge waits its turn; a failure stays on record and is retried. The `Update all` button and the UPDATE tag are gone.
 
+## [0.36.15] - 2026-11-02
+
+Integration cut on top of 0.36.14. Local build; not published.
+
+- **Codex chats know our skills, the project's and Claude's agents.** They are copied to `~/.dreamcontext/codex` in Codex's words and listed through the app-server, with nothing written to `~/.codex`. Claude's agents become roles for `spawn_agent`.
+- **The owner's tool servers reach Codex chats**, and Settings shows what Codex reports.
+- **Antigravity gets a write gate**, a second skills folder that cannot reach `~/.gemini`, a gated Super child, visible sleep turns and a tool-servers column. Proved on a real 1.4.1 agent for one account.
+- **Chats on Codex and Antigravity follow Claude's chat**: sub-agent cards, `/` menu, plan mode and question cards, Develop mode with edit checks, pictures, a message during a turn, Stop and resume, effort and `/compact`. Rows in `docs/tool-parity.md` say per row whether a real turn, a fake agent or only code backs it.
+- **Work outside the chat runs on Codex and Antigravity too**: sleep, automations, AI Team agents, verdict resumes, usage, session ids, `dreamcontext ask` between tools, and Develop builders, goal-skill and council.
+- **App assistant.** An app's window gets its own assistant chat; assistant-written HTML is not drawn, and the app window switches off WebRTC, preconnect and prefetch.
+- **AI Team in place.** A member's history, run and questions open in the Chat pane on the AI Team page.
+- **Fixes.** The read gate no longer starts `automations list` and `show`, which repair `.gitignore`; a pinned test anchor follows `spawnAutoSleep`'s new parameter; the read-only pane test follows the silent member branch.
+
 ## [0.36.1] - 2026-10-29
 
 Seven branches merged on top of 0.36.0. Local build; not published.
