@@ -201,6 +201,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-codex-sessions-',
   'dc-codex-threads-',
   'dc-codex-transcripts-',
+  'dc-codexstart-',
   'dc-compose-',
   'dc-computer-',
   'dc-conflict-report-',

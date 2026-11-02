@@ -27,6 +27,8 @@ import { markAnnouncementsSeen } from './lib/measure.mjs';
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CLI = join(REPO, 'dist', 'index.js');
 const SCRATCH = join(tmpdir(), `dc-verify-tool-scenarios-${process.pid}`);
+/** A suffix for the screenshots (`SHOT_TAG=-v2`), so a later round keeps the earlier ones beside it. */
+const TAG = process.env.SHOT_TAG ?? '';
 const HOME = join(SCRATCH, 'home');
 const PROJ = join(SCRATCH, 'proj');
 const BIN = join(HOME, '.local', 'bin');
@@ -372,16 +374,35 @@ async function superChildren() {
       let back = '';
       for (let i = 0; child && i < 60 && !settled(back); i++) { await page.waitForTimeout(1000); back = readReply(await page.locator('body').innerText()); }
       const readOk = /RAN \(exit 0\)[\s\S]{0,800}(fixture simple ok|lid is blue)/.test(back);
-      await page.screenshot({ path: join(shots, `super-child-${T}-1440.png`) });
-      // Its card names the tool and the model it really runs on (super-araclar): Antigravity with
-      // no --model runs the agent's own default, which its init now names.
-      if (T === 'antigravity' && child) {
-        const chip = page.locator('[data-testid="super-card-model"][data-tool="antigravity"]').first();
+      await page.screenshot({ path: join(shots, `super-child-${T}-1440${TAG}.png`) });
+      // Its card names the tool (a mark) and the model it really runs on, in the picker's words,
+      // never cut (super-araclar, owner 2026-11-02): Antigravity with no --model runs the agent's
+      // own default, which its init names; Codex with none runs the account default, named in the
+      // record at delegate time (fake Codex: gpt-6-luna = "GPT-6 Luna").
+      if (child) {
+        const chip = page.locator(`[data-testid="super-card-model"][data-tool="${T}"]`).first();
         // Its words as the chip says them to a reader: the tool, the model and its level.
-        const chipText = await chip.getAttribute('aria-label', { timeout: 15_000 }).catch(() => '') ?? '';
+        let chipText = '';
+        const want = T === 'codex' ? /^Codex GPT-6 Luna( · \w+)?$/ : /^Antigravity gemini-test-low$/;
+        for (let i = 0; i < 30 && !want.test(chipText); i++) { chipText = await chip.getAttribute('aria-label', { timeout: 15_000 }).catch(() => '') ?? ''; if (!want.test(chipText)) await page.waitForTimeout(500); }
         const mark = await chip.locator('svg.mp-mark').count().catch(() => 0);
-        await chip.screenshot({ path: join(shots, 'super-child-antigravity-chip.png') }).catch(() => {});
-        row('Super child card names its tool and model', T, chipText === 'Antigravity Gemini Test · low' && mark === 1, `chip "${chipText}", tool mark ${mark}`);
+        // Never cut: the name's box holds all of its text, and the chip stays inside its card.
+        const cut = await chip.evaluate((el) => {
+          const n = el.querySelector('.super-tile-model-name');
+          const card = el.closest('.super-tile, .super-card');
+          const r = el.getBoundingClientRect(); const c = card?.getBoundingClientRect();
+          return { name: n ? n.scrollWidth > n.clientWidth + 1 : true, outside: c ? r.right > c.right + 1 || r.left < c.left - 1 : false, text: n?.textContent ?? '' };
+        }).catch(() => ({ name: true, outside: true, text: '' }));
+        await chip.screenshot({ path: join(shots, `super-child-${T}-chip${TAG}.png`) }).catch(() => {});
+        row('Super child card names its tool and model, never cut', T, want.test(chipText) && mark === 1 && !cut.name && !cut.outside, `chip "${chipText}", tool mark ${mark}, name "${cut.text}" cut ${cut.name}, outside its card ${cut.outside}`);
+      }
+      if (T === 'codex' && child) {
+        await say(`SH: dreamcontext super state | node -e 'let d="";process.stdin.on("data",(c)=>{d+=c}).on("end",()=>{const c=JSON.parse(d).children["${child}"]||{};console.log(JSON.stringify({tool:c.tool,model:c.model}))})'`);
+        let st = '';
+        for (let i = 0; i < 60 && !/RAN \(exit \d+\)/.test(st); i++) { await page.waitForTimeout(1000); const now = await page.locator('body').innerText(); const at = now.lastIndexOf('dreamcontext super state |'); st = at < 0 ? '' : now.slice(at + 26); }
+        row('super state names the child\'s tool and model', T, /"tool":"codex","model":"gpt-6-luna"/.test(st), st.replace(/\s+/g, ' ').slice(0, 200));
+      }
+      if (T === 'antigravity' && child) {
         // And `super state`, from the lead's own chat, says the same for that child.
         await say(`SH: dreamcontext super state | node -e 'let d="";process.stdin.on("data",(c)=>{d+=c}).on("end",()=>{const c=JSON.parse(d).children["${child}"]||{};console.log(JSON.stringify({tool:c.tool,model:c.model}))})'`);
         let st = '';
@@ -407,7 +428,20 @@ async function superChildren() {
     }
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(1500);
-    await page.screenshot({ path: join(shots, 'super-children-390.png') });
+    await page.screenshot({ path: join(shots, `super-children-390${TAG}.png`) });
+    // On the phone the children sit behind the stage's cards button: opened, as the owner does.
+    await page.locator('button:has(.super-others-count)').first().click({ timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    await page.screenshot({ path: join(shots, `super-children-390-open${TAG}.png`) });
+    // On the phone stage too, every child's model name is whole.
+    for (const T of ['codex', 'antigravity']) {
+      const chip = page.locator(`[data-testid="super-card-model"][data-tool="${T}"]`).first();
+      if (!(await chip.isVisible().catch(() => false))) { row('390: the model name is whole', T, true, 'chip not on the phone stage view'); rows[rows.length - 1].evidence = 'none'; continue; }
+      await chip.scrollIntoViewIfNeeded().catch(() => {});
+      await chip.screenshot({ path: join(shots, `super-child-${T}-chip-390${TAG}.png`) }).catch(() => {});
+      const whole = await chip.evaluate((el) => { const n = el.querySelector('.super-tile-model-name'); return !!n && n.scrollWidth <= n.clientWidth + 1; }).catch(() => false);
+      row('390: the model name is whole', T, whole, `name "${await chip.locator('.super-tile-model-name').textContent().catch(() => '')}"`);
+    }
   } catch (err) {
     await page.screenshot({ path: join(shots, 'super-failed.png') }).catch(() => {});
     row('Super child on the tool', 'both', false, `threw: ${err?.message ?? err}`);

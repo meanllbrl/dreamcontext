@@ -490,6 +490,23 @@ export function modelChipParts(model: string | undefined | null, effort: string 
   return { name: family, level: (effort ?? '').trim().toLowerCase() };
 }
 
+/**
+ * A child's chip from the model picker's own row label (the names the chat's picker shows, never
+ * a second map): "Gemini 3.8 Flash (High)" = "Gemini 3.8 Flash" · "high" (Antigravity names its
+ * level in the model, so a stored effort never overrides it); "GPT-5.5" or "Opus 5" keep the
+ * child's effort. No row (an id the picker does not list): the raw id, never nothing.
+ */
+export function chipFromPickerLabel(label: string | null | undefined, rawId: string, effort: string | undefined | null, tool?: string | null): { name: string; level: string } | null {
+  const id = rawId.trim();
+  const l = (label ?? '').trim();
+  if (!l && !id) return null;
+  const e = tool === 'antigravity' ? '' : (effort ?? '').trim().toLowerCase();
+  if (!l) return { name: id, level: e };
+  const paren = /^(.*\S)\s*\(([A-Za-z-]+)\)$/.exec(l);
+  if (paren) return { name: paren[1]!, level: paren[2]!.toLowerCase() };
+  return { name: l, level: e };
+}
+
 /** A Codex or Antigravity model id as a chip: `gemini-3.8-flash-high` = "Gemini 3.8 Flash · high",
  *  `gpt-5.5` = "GPT-5.5"; an id it cannot read keeps its first 20 characters. */
 function bridgeModelChip(m: string, effort: string | undefined | null): { name: string; level: string } {

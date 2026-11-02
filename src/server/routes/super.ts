@@ -40,6 +40,7 @@ import { isRotating } from '../../lib/super/fresh-session.js';
 import { clearReadMarks } from '../../lib/super/read-marks.js';
 import { padJobOver, padRolledOff, padStale, withoutTwins } from '../../lib/super/pad.js';
 import { childDefaultEffort } from '../../lib/model-facts.js';
+import { codexStartModel } from '../../lib/t3-bridge/registry.js';
 import { JOB_EFFORTS as EFFORTS, JOB_MODES as MODES, firstLine, oneLine, parseJob, promptHash, type Job } from '../../lib/super/jobs.js';
 import { adoptChat, adoptableChats, disableSuper, enableSuper } from '../../lib/super/handover.js';
 import { findLiveChat, stopLiveChat } from './agent-chat-live.js';
@@ -642,6 +643,14 @@ function poolRows(vault: string, pool: readonly SuperPoolItem[]): Array<Record<s
 /** Start `job` as a child (the cap, the worktree, the window), or keep it in the pool when the
  *  cap holds it. `fromRow` is the pool row it came from: removed in the same write that records
  *  the child, kept on any refusal, marked `maybeStarted` when the window did not confirm. */
+/** {@link codexStartModel}, only when `super resume` would accept it back (sanitizeModel). */
+function safeCodexStartModel(): string {
+  try {
+    const m = codexStartModel();
+    return m.length <= 60 && sanitizeModel(m) === m ? m : '';
+  } catch { return ''; }
+}
+
 async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jobIn: Job, fromRow: SuperPoolItem | undefined, succeeds?: string, noteText?: string, origin?: string): Promise<void> {
   // No effort named: a default by mode, never the owner's global one (often xhigh). It is
   // recorded on the pool row and the child, so `super state` and `resume` show the real value.
@@ -726,11 +735,15 @@ async function delegateJob(c: SuperCaller, res: ServerResponse, root: string, jo
     let container: string | null = null;
     let noted: SuperPadItem | 'full' | null = null;
     let startError: string | null = null;
+    // A Codex child with no --model runs the account's default (the bridge starts it on exactly
+    // this, main.ts): named in the record now, so its card says the model before any turn.
+    // Its own `system/init` corrects it if Codex reports another (agent-chat.ts noteChildModel).
+    const recordModel = job.model || (job.tool === 'codex' ? safeCodexStartModel() : '');
     const after = await writeSuper(root, (s) => {
       const now = Date.now();
       s.children[sid] = {
         sessionId: sid, brief: job.brief || job.title, adopted: false, startedAt: now, row: 'working', rowAt: now,
-        ...(job.mode !== 'basic' ? { mode: job.mode } : {}), ...(job.model ? { model: job.model } : {}), ...(job.effort ? { effort: job.effort } : {}),
+        ...(job.mode !== 'basic' ? { mode: job.mode } : {}), ...(recordModel ? { model: recordModel } : {}), ...(job.effort ? { effort: job.effort } : {}),
         ...(job.mcp ? { mcp: job.mcp } : {}),
         ...(job.tool ? { tool: job.tool } : {}),
         ...(wt ? { worktree: wt.path, branch: wt.branch } : {}),
