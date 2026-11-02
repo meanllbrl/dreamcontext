@@ -1,4 +1,5 @@
-/** Track T W4, end-review finding: a later save must not stamp away a tool waiting for approval. */
+/** Track T W4, end-review finding: a later save must not stamp away a tool waiting for approval.
+ *  Saves come from the owner's page: an automation edit is owner-only since 2026-11-01. */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { approveAutomation, checkApproval, getApproval } from '../../src/lib/automations/registry.js';
 import { createAutomation, getAutomation } from '../../src/lib/automations/store.js';
 import { handleAutomationsUpdate } from '../../src/server/routes/automations.js';
+import { OWNER_PAGE_HEADERS } from '../helpers/owner-page.js';
 
 let projectRoot: string;
 let contextRoot: string;
@@ -15,7 +17,7 @@ let fakeHome: string;
 let realHome: string | undefined;
 
 function req(body: unknown): IncomingMessage {
-  return Object.assign(Readable.from([Buffer.from(JSON.stringify(body), 'utf-8')]), { method: 'POST', headers: {} }) as unknown as IncomingMessage;
+  return Object.assign(Readable.from([Buffer.from(JSON.stringify(body), 'utf-8')]), { method: 'POST', headers: { ...OWNER_PAGE_HEADERS } }) as unknown as IncomingMessage;
 }
 
 async function save(body: Record<string, unknown>): Promise<Record<string, unknown>> {
