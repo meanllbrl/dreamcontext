@@ -247,7 +247,7 @@ export function prepareAppChat(record: AppChatRecord, opts: { projectRoot: strin
   const cli = (opts.cli ?? ownCliCommand()).map((c) => (process.platform === 'win32' ? c.replace(/\\/g, '/') : c));
   if (!cli.every(Boolean)) return refuse('the dreamcontext install path is unknown');
   if (cli.some(unsafeRule)) return refuse('the dreamcontext install path is not shell-safe');
-  const context: BashGateContext = { slug: rec.slug, appRoot: rec.root, dataDir, projectRoot, actions: m.manifest.actions.filter((a) => !a.danger).map((a) => a.id) };
+  const context: BashGateContext = { slug: rec.slug, appRoot: rec.root, dataDir, projectRoot, home, actions: m.manifest.actions.filter((a) => !a.danger).map((a) => a.id) };
   const gateFile = gateFilePath(record.id, home);
   const hookGateFile = process.platform === 'win32' ? gateFile.replace(/\\/g, '/') : gateFile;
   try {

@@ -289,6 +289,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-gitignore-',
   'dc-global-cwd-',
   'dc-global-home-',
+  'dc-gmatrix-',
   'dc-golden-home-',
   'dc-graph-outside-',
   'dc-graph-outsidedir-',

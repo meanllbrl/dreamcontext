@@ -92,8 +92,9 @@ describe('the file gate, as a function', () => {
     expect(decide('Glob', { pattern: '/{Users,x}/**/apps/**', path: '/tmp' })).toBe('deny');
     expect(decide('Read', { file_path: ` ${join(other, 'customers.csv')} ` })).toBe('deny');
     expect(decide('Grep', { pattern: 'x', path: `~/${relative(homedir(), apps)}` })).toBe('deny');
-    expect(decide('Glob', { pattern: 'src/**/*.ts', path: '/tmp' })).toBe('pass');
-    expect(decide('Glob', { pattern: `${join(project, '_dream_context', 'core')}/*.md`, path: '/tmp' })).toBe('pass');
+    const neutral = join(base, 'neutral'); mkdirSync(neutral);
+    expect(decide('Glob', { pattern: 'src/**/*.ts', path: neutral })).toBe('pass');
+    expect(decide('Glob', { pattern: `${join(project, '_dream_context', 'core')}/*.md`, path: neutral })).toBe('pass');
     expect(decide('Glob', { pattern: `${own}/**/*.json`, path: own })).toBe('pass');
     expect(decide('Grep', { pattern: 'x', path: join(project, '_dream_context', 'core') })).toBe('pass');
     // A folder made later is still another app's.

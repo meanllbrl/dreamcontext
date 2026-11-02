@@ -40,8 +40,13 @@ export const INSTRUCTION_NAMES: readonly string[] = ['claude.md', 'claude.local.
 /** What the app assistant may never write anywhere: the instruction names plus `.gitignore`. */
 export const WRITE_REFUSED_NAMES: readonly string[] = [...INSTRUCTION_NAMES, '.gitignore'];
 
+/**
+ * Folded the way a case-insensitive file system may match a name, erring wide: compatibility forms
+ * (NFKC) and a round trip through upper case, so `ſ` (long s) folds to `s` as APFS opens it
+ * (`agentſ.md` is `AGENTS.md` there). An over-match only refuses more.
+ */
 export function foldName(name: string): string {
-  return name.normalize('NFC').toLowerCase();
+  return name.normalize('NFKC').toUpperCase().toLowerCase().normalize('NFC');
 }
 
 export function isInstructionName(name: string, isDir: boolean, list: readonly string[] = INSTRUCTION_NAMES): boolean {

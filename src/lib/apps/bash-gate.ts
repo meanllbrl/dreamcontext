@@ -12,7 +12,7 @@
 
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative } from 'node:path';
-import { checkAppDataChain } from './data-dir.js';
+import { checkAppDataChain, scanAppData } from './data-dir.js';
 
 /** What the gate knows about one chat, written at spawn under the `chats/**` write deny. */
 export interface BashGateContext {
@@ -23,6 +23,8 @@ export interface BashGateContext {
   actions: string[];
   /** The owning project (real path): the data folder's chain is checked from here. */
   projectRoot?: string;
+  /** The HOME the chat was prepared for: its `~/.dreamcontext/apps` is protected data too. */
+  home?: string;
 }
 
 export type BashGateDecision =
@@ -173,7 +175,11 @@ export function classifyBash(command: string, ctx: BashGateContext): BashGateDec
   if (parts.length === 1 && isLs) {
     const paths = first.slice(1).filter((t) => !t.startsWith('-'));
     if (first.slice(1).some((t) => t.startsWith('-') && !/^-[A-Za-z0-9]+$/.test(t))) return ASK('a flag of ls');
-    const dataOk = !ctx.projectRoot || checkAppDataChain(ctx.projectRoot, ctx.slug).ok;
+    // A link inside the data folder could make `ls -L`/`-R` list another app's names: none allowed.
+    const dataOk = (!ctx.projectRoot || checkAppDataChain(ctx.projectRoot, ctx.slug).ok) && (() => {
+      const scan = scanAppData(ctx.dataDir);
+      return !scan.symlink && !scan.truncated;
+    })();
     if (paths.length && paths.every((p) => realInside(ctx.appRoot, p) || (dataOk && realInside(ctx.dataDir, p)))) return { decision: 'pass' };
     if (!paths.length || paths.some((p) => !isAbsolute(p))) {
       return { decision: 'deny', reason: `Not run: list with an absolute path, \`ls ${ctx.appRoot}\` or \`ls ${ctx.dataDir}\`.` };
@@ -196,6 +202,7 @@ export function parseGateContext(text: string): BashGateContext | null {
     return {
       slug: r.slug, appRoot: r.appRoot, dataDir: r.dataDir, actions: r.actions.filter((a): a is string => typeof a === 'string'),
       ...(typeof r.projectRoot === 'string' ? { projectRoot: r.projectRoot } : {}),
+      ...(typeof r.home === 'string' ? { home: r.home } : {}),
     };
   } catch {
     return null;
