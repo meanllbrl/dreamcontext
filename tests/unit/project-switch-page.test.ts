@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { Page } from '../../dashboard/src/components/layout/Sidebar';
-import { _resetShownSurface, planProjectSwitch, publishShownSurface, readShownSurface } from '../../dashboard/src/lib/projectSwitchPage';
+import { _resetShownSurface, markProjectSwitch, planProjectSwitch, publishShownSurface, readShownSurface, takeProjectSwitch } from '../../dashboard/src/lib/projectSwitchPage';
 
 const PAGES: Page[] = ['relations', 'tasks', 'roadmap', 'hypotheses', 'lab', 'automations', 'agents', 'core', 'knowledge', 'sleep', 'brain', 'council', 'packs', 'taxonomy', 'announcements', 'whiteboards', 'stats', 'apps'];
 const all = () => true;
@@ -45,5 +45,17 @@ describe('switching project keeps the page', () => {
     expect(readShownSurface()).toBeNull();
     publishShownSurface({ page: 'whiteboards', chat: true, id: 'board-1' } as never);
     expect(readShownSurface()).toEqual({ page: 'whiteboards', chat: true });
+  });
+
+  it('only the owner\'s own switch carries: the mark is taken once, by its project, while fresh', () => {
+    // A link, a start or a drawer row never marks: nothing to take.
+    expect(takeProjectSwitch('globex', 1000)).toBe(false);
+    markProjectSwitch('globex', 1000);
+    expect(takeProjectSwitch('initech', 1001)).toBe(false);
+    expect(takeProjectSwitch('globex', 1002)).toBe(true);
+    expect(takeProjectSwitch('globex', 1003)).toBe(false);
+    // A mark that never landed (the picked project was already on screen) goes stale.
+    markProjectSwitch('globex', 1000);
+    expect(takeProjectSwitch('globex', 1000 + 3_001)).toBe(false);
   });
 });

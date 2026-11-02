@@ -6,7 +6,7 @@ import { useVault, emitInstance, useInstanceEvent } from '../../context/VaultCon
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import { useRailGlide } from './useRailGlide';
 import { publishPage } from '../../lib/pageContext';
-import { planProjectSwitch, publishShownSurface, readShownSurface } from '../../lib/projectSwitchPage';
+import { planProjectSwitch, publishShownSurface, readShownSurface, takeProjectSwitch } from '../../lib/projectSwitchPage';
 import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from '../../lib/agentSettings';
 import { readDeviceShell, useIsNewShell } from '../../lib/uxMode';
 import { DEVICE_HIDDEN_PAGES } from './newshell/railModel';
@@ -221,17 +221,28 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
   // Switching project keeps the page (owner 2026-11-03, lib/projectSwitchPage.ts): the project
   // on screen publishes its page and whether Chat is open; the one coming on screen follows once.
   const [chatOpen, setChatOpen] = useState(false);
+  const chatOpenRef = useRef(chatOpen);
+  chatOpenRef.current = chatOpen;
   useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => setChatOpen(open === true));
   const wasActiveRef = useRef(false);
   useEffect(() => {
     const arrived = isActive && !wasActiveRef.current;
     wasActiveRef.current = isActive;
-    if (!arrived) return;
+    // Only the owner's own switch carries the page: a link, a start or a drawer row lands itself.
+    if (!arrived || !vault || !takeProjectSwitch(vault)) return undefined;
     const plan = planProjectSwitch(readShownSurface(), { page: activePage, chat: chatOpen },
       (p) => !(newShell && readDeviceShell() && DEVICE_HIDDEN_PAGES.has(p)));
     if (plan.navigate) navigate(plan.navigate, null);
-    if (plan.chat === true) openAgentSurface(bus);
-    else if (plan.chat === false && !plan.navigate) emitInstance(bus, 'dreamcontext-navigate', { page: activePage });
+    // Closing the chat with a navigate signal no page reads as its own (Lab clears its open funnel
+    // on `page: 'lab'`); the agent surface collapses on any.
+    if (plan.chat === false && !plan.navigate) emitInstance(bus, 'dreamcontext-navigate', { page: null });
+    if (plan.chat !== true) return undefined;
+    // A project mounted by this switch has no chat surface listening yet: ask until it opens.
+    openAgentSurface(bus);
+    const timers = [150, 500, 1200, 2500].map((ms) => window.setTimeout(() => {
+      if (!chatOpenRef.current) openAgentSurface(bus);
+    }, ms));
+    return () => { for (const t of timers) window.clearTimeout(t); };
   }, [isActive]); // eslint-disable-line react-hooks/exhaustive-deps -- once per arrival on screen
   useEffect(() => {
     if (isActive) publishShownSurface({ page: activePage, chat: chatOpen });

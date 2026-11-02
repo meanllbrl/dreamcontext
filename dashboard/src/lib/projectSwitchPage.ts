@@ -28,9 +28,31 @@ export function readShownSurface(): ShownSurface | null {
   return shown;
 }
 
+/**
+ * Only the owner's own switch carries the page (the top-left switcher, ⌘1-9, ⌥Tab): a link, a
+ * "Start with Claude" or a drawer row brings a project to a page of its own, which a carry would
+ * override (review, 2026-11-03). The window marks the switch; the arriving project takes the mark
+ * once, for its own name, within a short window, so a mark that never lands goes stale.
+ */
+const SWITCH_TTL_MS = 3_000;
+let switchMark: { vault: string; at: number } | null = null;
+
+export function markProjectSwitch(vault: string, now = Date.now()): void {
+  switchMark = { vault, at: now };
+}
+
+/** True once when `vault` is arriving from the owner's own switch. */
+export function takeProjectSwitch(vault: string, now = Date.now()): boolean {
+  const m = switchMark;
+  if (!m || m.vault !== vault || now - m.at > SWITCH_TTL_MS) return false;
+  switchMark = null;
+  return true;
+}
+
 /** Tests only. */
 export function _resetShownSurface(): void {
   shown = null;
+  switchMark = null;
 }
 
 /** What a project coming on screen does to match `carried`. */
