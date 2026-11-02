@@ -9,11 +9,13 @@
  * by a keyword in the prompt:
  *   APPROVE → a shell command that asks for approval     QUESTION → a structured question
  *   DIFF    → a file change behind an approval           INTERRUPT → a turn that waits to be stopped
- *   PLAN    → a plan (todo list)                          anything else → a short text reply. The tab name only
+ *   PLAN    → a plan (todo list)                          RUN: <cmd> → runs <cmd> in a shell, the reply is its output
+ *   anything else → a short text reply. The tab name only
  *                                                          comes from the bridge's hidden follow-up turn.
  *
  *   FAKE_CODEX_FIXTURES=<fixtures dir> codex app-server [-c …]   (the -c overrides are ignored)
  */
+import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -33,6 +35,8 @@ log(`app-server CODEX_HOME=${process.env.CODEX_HOME ?? ''}`);
   for (let i = 3; i < process.argv.length; i++) if (process.argv[i - 1] === '-c') cfg.push(process.argv[i]);
   const dev = cfg.find((c) => c.startsWith('developer_instructions=')) ?? '';
   log(`config keys=${cfg.map((c) => c.split('=')[0]).join(',')} devHasBrain=${/Agent Context|BRAIN-MARKER/.test(dev)} context_by=${process.env.DREAMCONTEXT_CONTEXT_BY ?? ''}`);
+  // Which chat mode's briefing the developer instructions carry (scenario tour: Plan, Develop).
+  log(`devMode=${(dev.match(/# Mode: ([A-Za-z]+)/) ?? [])[1] ?? 'none'}`);
   const mcp = cfg.find((c) => c.startsWith('mcp_servers.dreamcontext.args=')) ?? '';
   if (mcp) log(`mcp args=${mcp.slice('mcp_servers.dreamcontext.args='.length)}`);
   const mcpEnv = cfg.find((c) => c.startsWith('mcp_servers.dreamcontext.env=')) ?? '';
@@ -184,6 +188,14 @@ async function onRequest(msg) {
         const pick = (key) => String(extra[key]?.value ?? '').split('\n').find((l) => /checkout/i.test(l))?.trim() ?? '(nothing)';
         override = `From the brain: ${pick('dreamcontext-brain')} · Recall: ${pick('dreamcontext-prompt')}`;
       }
+      // RUN: the agent runs one shell command in its own environment (scenario tour: a Codex chat
+      // asking Claude with `dreamcontext ask`), and answers with what it printed.
+      const run = text.match(/\bRUN: (.+)$/m);
+      if (run) {
+        const r = spawnSync('/bin/sh', ['-c', run[1]], { cwd, encoding: 'utf-8', timeout: 120_000 });
+        log(`RUN exit=${r.status} ${run[1].slice(0, 80)}`);
+        override = `RAN (exit ${r.status}): ${`${r.stdout ?? ''}${r.stderr ?? ''}`.trim().slice(0, 600)}`;
+      }
       // A carried chat (W4): the reply quotes what the new thread was handed from the old one.
       if (/\bHISTORY\b/.test(text)) override = `Handed over: ${String(extra['dreamcontext-prompt']?.value ?? '').split('\n').find((l) => /marigold/.test(l))?.trim() ?? '(nothing)'}`;
       recordUser(wantTitle ? 'user.text' : 'user.text', text);
@@ -204,6 +216,13 @@ async function onRequest(msg) {
         return;
       }
       out({ id: msg.id, result: {} });
+      return;
+    }
+    case 'mcpServerStatus/list': {
+      // The app-server's own server status (scenario tour: the MCP card). A server named
+      // `broken-…` shows no tools, every other one three.
+      const name = String(msg.params?.serverName ?? 'dreamcontext');
+      out({ id: msg.id, result: { data: [{ name, tools: /^broken-/.test(name) ? {} : Object.fromEntries(['a', 'b', 'c'].map((t) => [t, { name: t, inputSchema: { type: 'object' } }])), resources: [], resourceTemplates: [], authStatus: 'unsupported' }], nextCursor: null } });
       return;
     }
     case 'turn/steer':
