@@ -72,31 +72,76 @@ export function envelopeRefusal(surface: HeadlessSurface, tool: HeadlessTool): s
   return (tool === 'antigravity' ? row.antigravityWhy : row.why) ?? `${surface} runs on Claude only.`;
 }
 
-/** Commands a read-only Antigravity run may start: one plain reading program, no shell. */
-const READ_PROGRAMS = new Set(['cat', 'head', 'tail', 'ls', 'grep', 'wc', 'pwd', 'stat', 'file', 'diff', 'find', 'tree', 'echo', 'true']);
+/** Programs a read-only run may start: each only prints. */
+const READ_PROGRAMS = new Set(['cat', 'head', 'tail', 'ls', 'grep', 'wc', 'pwd', 'stat', 'file', 'diff', 'find', 'tree', 'echo', 'printf', 'true']);
 /** `git` and `dreamcontext` subcommands that only read. */
 const READ_GIT = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'blame']);
 const READ_DC = /^(?:memory recall|snapshot|knowledge (?:index|show|list|read)|tasks (?:list|show|get)|features (?:list|show)|roadmap|bookmark list|changelog list|insights? (?:list|show)|lab (?:list|show)|theses list|peer list|super (?:read|jobs|status)|agents (?:list|show)|automations (?:list|show)|--version|--help)\b/;
 
 /**
- * True when `command` is ONE program that only reads: no shell operator, no redirect, no
- * substitution, and no flag that writes (`find -delete`, `-exec`). Anything else is refused
- * on a read-only run, a sentence-shaped false refusal being far cheaper than a write.
+ * `c` cut at its unquoted `&&`, `||`, `;` and `|` into commands of words, quotes taken off; null
+ * when anything else could run or write: an unquoted redirect, `$`, backtick, backslash, bracket
+ * or newline, a `$` / backtick / backslash inside double quotes, an unclosed quote, a lone `&`.
+ * Single quotes hold everything literally, as the shell does.
  */
-export function isPlainReadCommand(command: string): boolean {
-  let c = command.trim();
-  // Codex runs every command as `/bin/zsh -lc "<command>"`: judge the one command inside.
-  const wrapped = c.match(/^(?:\/(?:usr\/)?bin\/)?(?:ba|z)?sh\s+-l?c\s+(?:'([^']*)'|"([^"]*)")$/);
-  if (wrapped) c = (wrapped[1] ?? wrapped[2] ?? '').trim();
-  if (!c || /[;&|<>`$\n\r\\]|\(|\)/.test(c)) return false;
-  const words = c.split(/\s+/);
+function plainCommands(c: string): string[][] | null {
+  const out: string[][] = [];
+  let words: string[] = [];
+  let word = '';
+  let inWord = false;
+  let q: "'" | '"' | null = null;
+  const endWord = () => { if (inWord) words.push(word); word = ''; inWord = false; };
+  const endCommand = (): boolean => { endWord(); if (!words.length) return false; out.push(words); words = []; return true; };
+  for (let i = 0; i < c.length; i++) {
+    const ch = c[i]!;
+    if (q) {
+      if (ch === q) { q = null; continue; }
+      if (q === '"' && (ch === '$' || ch === '`' || ch === '\\')) return null;
+      word += ch;
+      continue;
+    }
+    if (ch === "'" || ch === '"') { q = ch; inWord = true; continue; }
+    if (ch === ' ' || ch === '\t') { endWord(); continue; }
+    if ((ch === '&' && c[i + 1] === '&') || (ch === '|' && c[i + 1] === '|')) { if (!endCommand()) return null; i++; continue; }
+    if (ch === ';' || ch === '|') { if (!endCommand()) return null; continue; }
+    if (/[&<>`$\\\n\r(){}]/.test(ch)) return null;
+    word += ch;
+    inWord = true;
+  }
+  if (q || !endCommand()) return null;
+  return out;
+}
+
+/** One command that only reads: a reading program, and none of its flags that write or run. */
+function readsOnly(words: readonly string[]): boolean {
   const prog = words[0]!.replace(/^.*\//, '');
-  if (READ_PROGRAMS.has(prog)) return !(prog === 'find' && words.some((w) => /^-(?:delete|exec|execdir|ok|okdir|fprint|fprintf|fls)$/.test(w)));
+  if (READ_PROGRAMS.has(prog)) return !(prog === 'find' && words.some((w) => /^-(?:delete|exec|execdir|ok|okdir|fprint|fprint0|fprintf|fls)$/.test(w)));
   // `sed -n '<a>,<b>p' <files>` only prints; any other script (`w`, `e`, `-i`) is refused.
-  if (prog === 'sed') return words[1] === '-n' && /^(['"]?)\d+(?:,\d+)?p\1$/.test(words[2] ?? '') && words.slice(3).every((w) => !w.startsWith('-'));
+  if (prog === 'sed') return words[1] === '-n' && /^\d+(?:,\d+)?p$/.test(words[2] ?? '') && words.slice(3).every((w) => !w.startsWith('-'));
   if (prog === 'git') return READ_GIT.has(words[1] ?? '') && !words.some((w) => /^--output\b|^-o$/.test(w));
   if (prog === 'dreamcontext') return READ_DC.test(words.slice(1).join(' '));
   return false;
+}
+
+/**
+ * True when `command` only reads: one plain reading program, or several chained with `&&`, `||`,
+ * `;` or `|` (Codex chains its reads: a real turn sent `sed -n '1,240p' a && printf '\\n---\\n' &&
+ * sed -n '1,80p' b`), each of them a reading program, with no redirect, no substitution and no
+ * flag that writes (`find -delete`, `-exec`). Anything else is refused on a read-only run, a
+ * sentence-shaped false refusal being far cheaper than a write.
+ */
+export function isPlainReadCommand(command: string): boolean {
+  let c = command.trim();
+  // Codex runs every command as `/bin/zsh -lc "<command>"`: judge the command inside. Inside the
+  // double-quoted form nothing may expand: no `$` or backtick anywhere in it.
+  const wrapped = c.match(/^(?:\/(?:usr\/)?bin\/)?(?:ba|z)?sh\s+-l?c\s+(?:'([^']*)'|"([^"]*)")$/);
+  if (wrapped) {
+    if (wrapped[2] !== undefined && /[$`]/.test(wrapped[2])) return false;
+    c = (wrapped[1] ?? wrapped[2] ?? '').trim();
+  }
+  if (!c) return false;
+  const commands = plainCommands(c);
+  return !!commands && commands.length <= 8 && commands.every(readsOnly);
 }
 
 export interface CodexRunArgs {

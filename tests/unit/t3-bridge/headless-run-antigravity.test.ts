@@ -3,12 +3,14 @@
  * T3's real driver, the agent as a child. The fake asks before `cat server/package.json`: a read-only
  * run lets that plain read through and prints one `claude -p`-shaped document.
  */
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseClaudeJson } from '../../../src/lib/automations/runner.js';
 import { runT3Headless } from '../../../src/lib/t3-bridge/run.js';
+import { HEADLESS_ENVELOPES, type HeadlessSurface } from '../../../src/lib/t3-bridge/headless-envelope.js';
+import { antigravityProfileDir } from '../../../src/lib/antigravity-accounts.js';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
 const AGENT = join(ROOT, 'src/vendor/t3/apps/server/scripts/acp-mock-agent.ts');
@@ -59,4 +61,30 @@ describe.skipIf(nodeMajor < 22)('headless Antigravity run (fake ACP agent)', () 
     const log = readFileSync(join(dir, 'requests.ndjson'), 'utf-8');
     expect(log).toContain('session/prompt');
   }, 60_000);
+
+  // Night lane 2, W5: every unattended surface Antigravity takes, on the fake agent (the only
+  // account is out of quota: no real turn). Each prints one parseable document on Antigravity,
+  // and the account profile carries our roles as its sub-agents (antigravity-roles.ts).
+  it('every surface with an Antigravity flavour runs on the fake agent, and the roles are in the profile', async () => {
+    const cwd = join(dir, 'project');
+    mkdirSync(cwd, { recursive: true });
+    const surfaces = (Object.keys(HEADLESS_ENVELOPES) as HeadlessSurface[]).filter((x) => HEADLESS_ENVELOPES[x].antigravity);
+    expect(surfaces).toEqual(expect.arrayContaining(['automation', 'agent', 'light', 'verdict', 'sleep', 'super-child', 'approval-question', 'peer', 'ask', 'ask-write']));
+    for (const surface of surfaces) {
+      const lines: string[] = [];
+      await runT3Headless(
+        { cwd, prompt: `Say what the ${surface} run would do.`, surface, tool: 'antigravity' },
+        { write: (l) => lines.push(l), env: process.env, home: dir, brain: null },
+      );
+      expect(lines, surface).toHaveLength(1);
+      expect(JSON.parse(lines[0]!).dc_tool, surface).toBe('antigravity');
+      expect(parseClaudeJson(lines[0]!).parsed, surface).toBe(true);
+    }
+    const agents = join(antigravityProfileDir('primary', dir), 'config', 'plugins', 'dreamcontext', 'agents');
+    expect(readdirSync(agents)).toEqual(expect.arrayContaining(['sleep-state.md', 'goal-planner.md', 'reviewer.md']));
+    // A surface that stays on Claude is refused before anything starts.
+    const refused: string[] = [];
+    const code = await runT3Headless({ cwd, prompt: 'x', surface: 'board-agent', tool: 'antigravity' }, { write: (l) => refused.push(l), env: process.env, home: dir, brain: null });
+    expect(code).not.toBe(0);
+  }, 240_000);
 });
