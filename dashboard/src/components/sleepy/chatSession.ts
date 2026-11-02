@@ -12,7 +12,7 @@ import { appChatParam } from '../../lib/chatAppBinding';
 import { chatToolFor, chatToolParam, type ChatTool } from '../../lib/chatToolBinding';
 import { raiseAskAttention } from '../../lib/attention';
 import {
-  parseChatLine, buildQuestionAnswer, isUrgentChatEvent,
+  parseChatLine, buildQuestionAnswer, isUrgentChatEvent, settledToolUseIds,
   type ChatEvent, type QuestionSpec, type ClientControl, type HandoffProgress,
 } from '../../lib/chatProtocol';
 import type { TermStatus } from './agentSession';
@@ -1469,6 +1469,17 @@ export function createChatSession(
    * drift on which edge counts: a plan landing while a question is open must not chime a
    * second time, and vice versa — it is one interruption, not two.
    */
+  /** Drop every PERMISSION card whose `toolUseId` is in `ids`: its tool already has a result,
+   *  so the CLI no longer waits on it. A question or plan card carries no tool_use id and is
+   *  never dropped here. */
+  function dropSettledPermissions(ids: readonly string[]): void {
+    if (ids.length === 0) return;
+    const pending = conv.pending.filter((p) => !(p.kind === 'permission' && !!p.toolUseId && ids.includes(p.toolUseId)));
+    if (pending.length === conv.pending.length) return;
+    conv = { ...conv, pending };
+    session.asking = conv.pending.length > 0;
+  }
+
   function pushAsk(others: PendingItem[], entry: PendingQuestion | PendingPlan): void {
     const hadAskBefore = conv.pending.some((p) => p.kind === 'question' || p.kind === 'plan');
     conv = { ...conv, pending: [...others, entry] };
@@ -1958,7 +1969,23 @@ export function createChatSession(
         conv = { ...conv, subAgents: [...reconciled, ...adopted] };
         return;
       }
+      case 'request-cancelled': {
+        // The CLI withdrew the request (its stdin closed: "Stream closed"): whatever card it
+        // drew is dead, of any kind, and answering it would write into nothing.
+        if (!conv.pending.some((p) => p.requestId === ev.requestId)) return;
+        conv = { ...conv, pending: conv.pending.filter((p) => p.requestId !== ev.requestId) };
+        session.asking = conv.pending.length > 0;
+        return;
+      }
+      case 'tool-uses-settled': {
+        dropSettledPermissions(ev.toolUseIds);
+        return;
+      }
       case 'tool-result': {
+        // A permission card whose tool already got its result is a ghost: the CLI gave up on
+        // the request (e.g. 'Stream closed') and told the model. Every id the frame answered
+        // counts (parallel tools share one frame), a sub-agent's result included.
+        dropSettledPermissions(settledToolUseIds(ev));
         // The card half is skipped for a SUB-AGENT's result (its tool_use was never carded —
         // see the `assistant-tool-use` note). Load-bearing that this skips the whole block and
         // not just the update arm: the `else` below MATERIALIZES a card for an unknown

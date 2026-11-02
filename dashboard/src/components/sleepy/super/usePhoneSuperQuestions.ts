@@ -26,12 +26,14 @@ const ON_CHANGE_MIN_MS = 1_000;
 /** The server's wire (src/server/routes/super-phone-questions.ts). */
 export interface PhoneSuperQuestionWire {
   id: string;
-  kind: 'ask' | 'question';
+  kind: 'ask' | 'question' | 'permission';
   sessionId: string;
   requestId?: string;
   ownerText?: string;
   createdAt: number;
   card: SuperAskSpec | null;
+  /** A permission that waits for the owner: its tool and command (plain text, never HTML). */
+  permission?: { tool: string; text: string };
 }
 export interface PhoneSuperQuestionsWire { session: string | null; questions: PhoneSuperQuestionWire[] }
 
@@ -43,18 +45,30 @@ interface Api {
 /** A refusal that means the question is gone (answered elsewhere, taken back): nothing to tap
  *  again. Every other refusal (the Mac window away, a socket down, a timeout, a bad answer)
  *  brings the card back with its picks. */
-const STALE = new Set(['stale_request', 'no_such_question', 'not_handed_over', 'not_a_child']);
+const STALE = new Set(['stale_request', 'no_such_question', 'no_such_permission', 'not_handed_over', 'not_a_child']);
 export function retryableAnswerError(error: string | undefined): boolean {
   return !error || !STALE.has(error);
 }
 
 /** The wire as the cards read it: queue items (an `ask` carries its spec) and each child
  *  question's card. Pure. */
-export function phoneQuestionItems(wire: PhoneSuperQuestionsWire): { open: SuperQueueItem[]; cards: Map<string, SuperAskSpec | null>; key: string } {
+export function phoneQuestionItems(wire: PhoneSuperQuestionsWire): { open: SuperQueueItem[]; cards: Map<string, SuperAskSpec | null>; permissions: Map<string, { tool: string; text: string }>; key: string } {
   const open: SuperQueueItem[] = [];
   const cards = new Map<string, SuperAskSpec | null>();
+  const permissions = new Map<string, { tool: string; text: string }>();
   for (const q of wire.questions ?? []) {
-    if (!q || typeof q.id !== 'string' || (q.kind !== 'ask' && q.kind !== 'question')) continue;
+    if (!q || typeof q.id !== 'string') continue;
+    if (q.kind === 'permission') {
+      // A permission that waits for him: Allow or Deny on the phone (hands-free, never only the Mac).
+      if (!q.requestId || !q.permission || typeof q.permission.tool !== 'string' || typeof q.permission.text !== 'string') continue;
+      open.push({
+        id: q.id, sessionId: q.sessionId, kind: 'permission', state: 'escalated', createdAt: q.createdAt, requestId: q.requestId,
+        ...(q.ownerText ? { ownerText: q.ownerText } : {}),
+      });
+      permissions.set(q.id, { tool: q.permission.tool, text: q.permission.text });
+      continue;
+    }
+    if (q.kind !== 'ask' && q.kind !== 'question') continue;
     open.push({
       id: q.id, sessionId: q.sessionId, kind: q.kind, state: 'escalated', createdAt: q.createdAt,
       ...(q.requestId ? { requestId: q.requestId } : {}), ...(q.ownerText ? { ownerText: q.ownerText } : {}),
@@ -63,8 +77,8 @@ export function phoneQuestionItems(wire: PhoneSuperQuestionsWire): { open: Super
     if (q.kind === 'question') cards.set(q.id, q.card);
   }
   // The same item re-asked under a new request id, or its card appearing, redraws.
-  const key = open.map((q) => `${q.id}\u0003${q.requestId ?? ''}\u0003${q.ownerText ?? ''}\u0003${cards.has(q.id) ? (cards.get(q.id) ? 'card' : 'words') : ''}`).join('\u0001');
-  return { open, cards, key };
+  const key = open.map((q) => `${q.id}\u0003${q.requestId ?? ''}\u0003${q.ownerText ?? ''}\u0003${cards.has(q.id) ? (cards.get(q.id) ? 'card' : 'words') : permissions.has(q.id) ? 'permission' : ''}`).join('\u0001');
+  return { open, cards, permissions, key };
 }
 
 /** How far the mirror's transcript reaches (rows, not streamed text). */
@@ -129,7 +143,7 @@ export function usePhoneSuperQuestions(opts: {
         if (published && published !== wire.session) unpublish();
         const superSession = sessionForRef.current(wire.session);
         watch(superSession);
-        const { open, cards, key } = phoneQuestionItems(wire);
+        const { open, cards, permissions, key } = phoneQuestionItems(wire);
         const now = new Map(open.filter((q) => q.kind === 'question' && q.requestId).map((q) => [q.id, surveyDraftKey(q.sessionId, q.requestId as string)] as const));
         for (const [id, draft] of drawn) if (now.get(id) !== draft) dropSurveyDraft(draft);
         drawn = now;
@@ -147,6 +161,17 @@ export function usePhoneSuperQuestions(opts: {
                 // A 409 says why (stale_request: answered elsewhere; no_window: the Mac window).
                 const code = (err as { code?: unknown; error?: unknown })?.code ?? (err as { error?: unknown })?.error;
                 return { ok: false, retry: retryableAnswerError(typeof code === 'string' ? code : 'network') };
+              } finally { schedule(); }
+            },
+            permissionOf: (id) => permissions.get(id) ?? null,
+            answerPermission: async (item, choice) => {
+              try {
+                const r = await api.post<{ ok?: boolean; error?: string }>('/agent/super-permission', { item: item.id, requestId: item.requestId, choice });
+                return r?.ok === true ? { ok: true, retry: false } : { ok: false, retry: retryableAnswerError(r?.error), ...(r?.error ? { error: r.error } : {}) };
+              } catch (err) {
+                const code = (err as { code?: unknown; error?: unknown })?.code ?? (err as { error?: unknown })?.error;
+                const error = typeof code === 'string' ? code : 'network';
+                return { ok: false, retry: retryableAnswerError(error), error };
               } finally { schedule(); }
             },
           },

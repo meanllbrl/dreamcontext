@@ -134,6 +134,7 @@ function holdSidebarCollapsed(instanceId: string, on: boolean): void {
   holdClassicSidebar(instanceId, on);
 }
 import type { PendingQuestion } from './chatSession';
+import { superAllow } from './super/superAllow';
 import { HandoverButton } from './super/HandoverButton';
 import { SuperCentreHead, SuperSurface, jobLookOf, prefersReducedMotion, runFlights, type FlightRun, type StageShowChild } from './super/SuperSurface';
 import { SuperDock } from './super/SuperDock';
@@ -4044,7 +4045,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     });
   }, [superState?.enabled, scopedApi]);
 
-  // ── The Super Agent's window-side verbs (`super delegate`, `super answer`) ───────────
+  // ── The Super Agent's window-side verbs (`super delegate`, `super answer`, `super allow`) ───────────
   // The server already checked the caller, the cap and (for answer) the child's pending
   // request; the window re-checks what only it can see and does the work the way the owner's
   // own click would.
@@ -4108,6 +4109,12 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // the honest answer — never report an answer nobody received.
       if (!cs.answerQuestion(requestId, q.questions, picks.picked, picks.notes)) return { ok: false, error: 'not_connected' };
       return { ok: true };
+    }
+    if (verb === 'allow') {
+      // `super allow` (the Super answering its Bypass child's residual permission) or the
+      // owner's Allow/Deny from the phone (`by: 'owner'`): only a PERMISSION card, never a
+      // question or a plan approval (super/superAllow.ts).
+      return superAllow(args, (child) => hasOwnKey(st.children, child), chatByClaudeId);
     }
     if (verb === 'resume') {
       // `super resume <child>`: the same conversation (`--resume <id>`), as a child again. A

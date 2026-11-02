@@ -201,6 +201,8 @@ export function latchSeen(latch: AnswerLatch, key: string | null, pendingPresent
  *  with words of its own. */
 export function needsOwner(item: SuperQueueItem): boolean {
   if (item.state === 'done') return false;
+  // A Bypass child's permission is its Super's to decide first; it is his once it falls to him.
+  if (item.kind === 'permission' && item.toSuper === true) return false;
   return item.kind === 'permission' || item.kind === 'owner' || item.state === 'escalated' || directChildQuestion(item);
 }
 
