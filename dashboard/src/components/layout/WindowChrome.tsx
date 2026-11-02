@@ -1164,9 +1164,15 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     }
     if (!removed || !openRef.current.some((p) => p.vault === name)) return;
     if (openRef.current.length <= 1) {
-      const next = nextProjectAfterRemove(projectOrderRef.current, name);
-      if (!next) return;
-      await addTab(next);
+      // Land on a project this window can hold: one open in another window would only bring
+      // that window forward and leave this one on the removed project.
+      const order = projectOrderRef.current.filter((n) => n === name || !findWindowForVault(n));
+      const next = nextProjectAfterRemove(order, name);
+      const landed = next ? await addTab(next) : null;
+      if (landed !== 'added' && landed !== 'focused-tab') {
+        notify(tRef.current('shell.drawer.removedStillOpen').replace('{name}', name));
+        return;
+      }
     }
     closeTab(name);
   }, [launcherStatus, unregisterVault, notify, addTab, closeTab]);

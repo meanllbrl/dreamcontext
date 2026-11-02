@@ -65,6 +65,12 @@ describe('the menu item', () => {
     expect(chrome).toMatch(/deviceShell \? \{\} : \{ onRemoveProject:/);
   });
 
+  it('lands only on a project this window can hold, and says so when it cannot', () => {
+    expect(chrome).toMatch(/projectOrderRef\.current\.filter\(\(n\) => n === name \|\| !findWindowForVault\(n\)\)/);
+    expect(chrome).toMatch(/if \(landed !== 'added' && landed !== 'focused-tab'\)/);
+    expect(chrome).toMatch(/shell\.drawer\.removedStillOpen/);
+  });
+
   it('asks through confirmAction and never window.confirm, and offers no delete', () => {
     const lib = read('dashboard/src/lib/removeProject.ts');
     expect(chrome).toMatch(/confirm: confirmAction/);
