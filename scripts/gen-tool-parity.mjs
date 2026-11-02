@@ -27,6 +27,9 @@ const rows = [...block.matchAll(/^\s*'?([a-z-]+)'?: \{ (claude: .*) \},$/gm)].ma
   antigravityWhy: field(rest, 'antigravityWhy'),
 }));
 
+const EVIDENCE = { real: 'real turn', fake: 'fake agent', code: 'code and tests' };
+/** One tool's cell: state, what proves it, and the note or the tool's limit. */
+const cell = (c) => [`**${c.state}**${c.when ? ` ${c.when}` : ''} (${EVIDENCE[c.evidence]})`, c.limit ? `Limit: ${c.limit}` : '', c.note ?? ''].filter(Boolean).join('. ').replace(/\.\./g, '.').replace(/\|/g, '/');
 const MODE = { auto: 'Sandboxed: project and linked repos, no network, approvals declined', default: 'Read-only: a command is approved only when every program in it reads, anything else declined' };
 const AG_MODE = { write: 'Answered by the bridge once its write gate ran; what the gate leaves to the owner is refused', read: 'Read-only: no edits, only plain read commands' };
 const lines = [
@@ -47,6 +50,14 @@ const lines = [
   '| Surface | On Claude | On Codex | On Antigravity |',
   '|---|---|---|---|',
   ...rows.map((r) => `| ${r.name} | ${r.claude} | ${r.codex === 'null' ? `Claude only. ${r.why ?? ''}` : MODE[r.codex]} | ${r.antigravity === 'null' || r.antigravity === undefined ? `Claude only. ${r.antigravityWhy ?? ''}` : AG_MODE[r.antigravity]} |`),
+  '',
+  '## Every Claude capability, per tool',
+  '',
+  'Read from the code by `tests/unit/tool-parity-guard.test.ts`: a hook, skill, skill pack, sub-agent role, dream-view type, chat mode, control request or unattended surface that Claude gains without these two cells is red. **works** = a real turn showed it (date given). **built** = built and proved on a fake agent or in tests, not on a real turn. **partly**, **missing**, **impossible** (the tool\'s own limit is named), **claude-only** (on purpose).',
+  '',
+  '| Capability | Codex | Antigravity |',
+  '|---|---|---|',
+  ...data.capabilities.rows.map((r) => `| ${r.what} (${r.ids.length > 3 ? `${r.ids.length} ${r.kind}s` : r.ids.map((id) => `\`${id}\``).join(', ')}) | ${cell(r.codex)} | ${cell(r.antigravity)} |`),
   '',
 ];
 const out = lines.join('\n');
