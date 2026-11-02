@@ -77,7 +77,7 @@ Each session you wake up fresh; you do not remember previous sessions. The `_dre
 
 ## Capabilities at a Glance (read this before saying "we don't support X")
 
-dreamcontext is **more than memory files**. Every capability below is real and shipping; its reference has the full surface.
+dreamcontext is **more than memory files**. Each capability below ships; its reference has the full surface.
 
 | Capability | What it is | Reference |
 |---|---|---|
@@ -85,14 +85,14 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Tasks** | Working documents: changelog, RICE, statuses, dates, assignees, custom fields | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Roadmap / Objectives** | PO-authored OKR board in `core/objectives/`: task links, dependency DAG, forecast, slip detection (`dreamcontext roadmap`) | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Lab / Insights** | Curated **metrics** synced from APIs or scripts into `lab/insights/`, cached, KR-bindable; Funnel analytics and app renders; **funnel explorer** (`lab create --preset funnel-explorer`). **Boards (Beta)** compose them: `lab/boards/<slug>.md`, cards of catalog blocks (`lab block list`) plus saved HTML blocks (`lab/blocks/`). Never `knowledge create` | [tasks-and-features.md](references/tasks-and-features.md) |
-| **Features (PRDs)** | Retrospective product docs, updated in sleep only | [tasks-and-features.md](references/tasks-and-features.md) |
+| **Features (PRDs)** | Product docs, updated in sleep only | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Knowledge** | Tagged deep docs, pinning, staleness, Excalidraw diagrams | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Memory recall** | Hybrid (BM25 + embeddings), 3 tiers: local default; cloud-index/cloud via `recall cloud enable` (user only, agents never); auto-injected | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Bookmarks** | Tag important moments for the sleep agent; link sessions to tasks | this file |
 | **Triggers** | Prospective memory: reminders that fire when context matches | this file |
 | **Whiteboard** | drawings, live widgets, agent cards. Explain = draw (`draw --spec`). Verify with `whiteboard render`, never a browser | [whiteboards.md](references/whiteboards.md) |
 | **Automations** | Scheduled headless `claude` jobs: dated output, learned pattern, a `## Flow` graph. A run that must ask hands over a **question** (chat, CLI or a **per-automation** Telegram bot); replying in a thread or `@`-mentioning an agent resumes its bound session (`agent-thread` card). A usage-limited run publishes **nothing**. Disabled until approved here; private until `automations share <slug>` | [automations.md](references/automations.md) |
-| **Apps** | Own-window apps, own icon, never our logo (`/apps`) | [apps.md](references/apps.md) |
+| **Apps** | Own-window apps, own icon, not our logo (`/apps`) | [apps.md](references/apps.md) |
 | **Agents** | Who does the work (`agents/<slug>.md`), **AI Team**: automations pick one, tasks go to one, Chat and boards talk to one. Routines: `propose --routine` then `create --answer <qid>`. A mistake: `super team amend` | [automations.md](references/automations.md#ai-team-the-dashboard-page) |
 | **Sleep / consolidation** | Multi-agent RemSleep cycle that folds changes back into the brain | [sleep.md](references/sleep.md) |
 | **Taxonomy** | Project tag vocabulary that drives recall precision | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
@@ -182,7 +182,7 @@ The SessionStart hook injects this automatically every session — answer from i
 - **Features**: name, status and path
 - **Knowledge index**: pinned files (📌, with path) and every pattern by name; other knowledge is counted, not listed (`dreamcontext knowledge index` or `memory recall`). Pinned bodies are NOT inlined: Read the file when the pin applies
 
-**On a mature brain this shrinks, never blindly.** One hook can carry 10,000 chars, so three hooks carry the snapshot (`session-start` and two `session-start-part` hooks, up to 28,500 chars). Past its budget, sections demote cheapest-loss first; every file path stays and `Read` or `memory recall` recovers the full text. `core/0.soul.md` and the active `people/<slug>.md` always render verbatim. If it still cannot fit, a **`⚠️ CONTEXT IS INCOMPLETE`** banner under the H1 names the fix: act on it before assuming an empty brain. Full ladder → [cli-reference.md](references/cli-reference.md).
+**On a mature brain this shrinks, never blindly.** Three hooks carry it (`session-start` + two `session-start-part`, 10,000 chars each, 28,500 in all). Past that, sections demote cheapest-loss first; paths stay, and `Read` or `memory recall` recovers the text. `core/0.soul.md` and the active `people/<slug>.md` always render verbatim. If it still cannot fit, a **`⚠️ CONTEXT IS INCOMPLETE`** banner under the H1 names the fix: act on it before assuming an empty brain. Full ladder → [cli-reference.md](references/cli-reference.md).
 
 **Do not re-read auto-loaded files.** For more, load on demand:
 
@@ -383,7 +383,7 @@ It refuses while a part is missing. Details → [tasks-and-features.md](referenc
 
 **First-run self-recognition (do not skip):** a missing or sparse brain → **offer, unasked,** to ingest the user's material (docs, a Notion export, a wiki) or bootstrap from the codebase with the `initializer` skill. A hook's `🧠 dreamcontext:` offer means the same: relay it, invoke on consent (→ [cli-reference.md](references/cli-reference.md) § Setup & maintenance).
 
-Sub-agents get a budgeted briefing from the SubagentStart hook (≤9,500 chars → [cli-reference.md](references/cli-reference.md) § Sub-agent briefing budget). Delegating to a Plan agent? Name the relevant `_dream_context/` paths in its prompt.
+Sub-agents get a budgeted briefing from the SubagentStart hook (≤9,500 chars → [cli-reference.md](references/cli-reference.md) § Sub-agent briefing budget). For a Plan agent, name the `_dream_context/` paths in its prompt.
 
 ---
 
@@ -454,5 +454,5 @@ Open these with `Read` when the task needs depth:
 - **[integrations.md](references/integrations.md)**: ClickUp/GitHub task sync, dashboard and Chat view, desktop app, federation/vaults, peer mail, council, marketing.
 - **[hands-free.md](references/hands-free.md)**: Mac mode.
 - **[super-orchestration.md](references/super-orchestration.md)**: how the Super Agent splits a job list.
-- **[troubleshooting.md](references/troubleshooting.md)**: careful fixes for broken-brain states: duplicate tasks, ledger refusals, a stuck brain sync, version drift.
+- **[troubleshooting.md](references/troubleshooting.md)**: fixes for broken-brain states: duplicate tasks, ledger refusals, a stuck brain sync, version drift.
 - **[improving-dreamcontext.md](references/improving-dreamcontext.md)**: the feedback loop, when and how to file.
