@@ -602,14 +602,18 @@ interface AcpMcpContext {
 let bridgeMcpServers: ReadonlyArray<EffectAcpSchema.McpServer> = [];
 let bridgePrompt: typeof t3AcpPromptWithInstructions | undefined;
 let bridgeRuntimeInstructions: typeof buildRuntimeInstructions | undefined;
+let bridgeOnModel: ((model: string) => void) | undefined;
 export const setBridgeAcp = (bridge: {
   readonly mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly promptWithInstructions: typeof t3AcpPromptWithInstructions;
   readonly runtimeInstructions: typeof buildRuntimeInstructions;
+  /** The model a configured session really runs on, the agent's own default included. */
+  readonly onModel?: (model: string) => void;
 }): void => {
   bridgeMcpServers = bridge.mcpServers;
   bridgePrompt = bridge.promptWithInstructions;
   bridgeRuntimeInstructions = bridge.runtimeInstructions;
+  bridgeOnModel = bridge.onModel;
 };
 
 function acpMcpContext(
@@ -6753,6 +6757,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               };
             });
           }
+          const runsOn = appliedModel ?? startResult.sessionSetupResult.models?.currentModelId;
+          if (runsOn) bridgeOnModel?.(runsOn);
           const optionSelections = (modelSelection.options ?? []).map((selection) =>
             selection.value === ACP_EMPTY_OPTION_VALUE ? { ...selection, value: "" } : selection,
           );

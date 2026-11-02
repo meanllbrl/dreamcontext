@@ -472,14 +472,40 @@ export function toneOfRow(row: ChildRow): StatusTone {
   return 'idle';
 }
 
-/** "Opus · medium": the model a child really runs (its session's spawn values, else what the
- *  record stored), never a guess; null when neither is known. */
-export function modelChip(model: string | undefined | null, effort: string | undefined | null): string | null {
+/** "Opus · medium", "GPT-5.5 · high", "Gemini 3.8 Flash · high": the model a child really runs
+ *  (its session's spawn values, else what the record stored), never a guess; null when neither
+ *  is known. A Codex or Antigravity model reads as its vendor names it; Antigravity's effort is
+ *  the model id's own suffix, never a stored one. */
+export function modelChip(model: string | undefined | null, effort: string | undefined | null, tool?: string | null): string | null {
+  const p = modelChipParts(model, effort, tool);
+  return p ? (p.level ? `${p.name} · ${p.level}` : p.name) : null;
+}
+
+/** {@link modelChip} in two parts, so a narrow tile shortens the name and always keeps the level. */
+export function modelChipParts(model: string | undefined | null, effort: string | undefined | null, tool?: string | null): { name: string; level: string } | null {
   const m = (model ?? '').trim();
   if (!m) return null;
+  if (tool === 'antigravity' || tool === 'codex') return bridgeModelChip(m, tool === 'antigravity' ? null : effort);
   const family = /opus/i.test(m) ? 'Opus' : /sonnet/i.test(m) ? 'Sonnet' : /haiku/i.test(m) ? 'Haiku' : /fable/i.test(m) ? 'Fable' : m.replace(/^claude-/, '').slice(0, 16);
+  return { name: family, level: (effort ?? '').trim().toLowerCase() };
+}
+
+/** A Codex or Antigravity model id as a chip: `gemini-3.8-flash-high` = "Gemini 3.8 Flash · high",
+ *  `gpt-5.5` = "GPT-5.5"; an id it cannot read keeps its first 20 characters. */
+function bridgeModelChip(m: string, effort: string | undefined | null): { name: string; level: string } {
   const e = (effort ?? '').trim().toLowerCase();
-  return e ? `${family} · ${e}` : family;
+  const tail = /-(xhigh|high|medium|low|minimal)$/i.exec(m);
+  const level = tail ? tail[1]!.toLowerCase() : e;
+  const base = tail ? m.slice(0, tail.index) : m;
+  let name: string;
+  if (/^gemini-/i.test(base)) {
+    name = base.split('-').map((w, i) => (i === 0 ? 'Gemini' : /^[a-z]/.test(w) ? w[0]!.toUpperCase() + w.slice(1) : w)).join(' ');
+  } else if (/^gpt-/i.test(base)) {
+    name = `GPT-${base.slice(4)}`;
+  } else {
+    name = base.slice(0, 20);
+  }
+  return { name, level };
 }
 
 // ─── The agenda: the super agent's notepad (owner 2026-10-22 19:15) ──────────────

@@ -8,7 +8,8 @@ import { useSpinSlot } from './spinSlots';
 import { useLiveSession } from './liveSession';
 import { AccountLimitRing } from '../chat/UsageRings';
 import { chatAccountOf } from '../../../lib/agentComposer';
-import { backgroundOf, doingOf, elapsedLabel, lastLineOf, lastLinesOf, modelChip, toneOfStatus, type DoingLine } from './superHandover';
+import { ToolMark } from '../chat/model-picker/ModelPicker';
+import { backgroundOf, doingOf, elapsedLabel, lastLineOf, lastLinesOf, modelChip, modelChipParts, toneOfStatus, type DoingLine } from './superHandover';
 
 /** What a child's card says it waits on the owner for: a question it asks (`ask`), or something
  *  only he can do (`owner`: a command to run himself, a key, a checklist, a sign-in). */
@@ -52,6 +53,7 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
   const lines = tall && model ? lastLinesOf(model.items, 4).filter((l) => l !== line) : [];
   const since = session?.busy && model?.turnStartedAt ? model.turnStartedAt : child?.startedAt;
   const chip = childModelChip(session, child);
+  const tool = childTool(session, child);
   return (
     <div className="super-card" data-kind={status.kind} data-super-tone={toneOfStatus(status.kind)}>
       <div className="super-card-top">
@@ -67,10 +69,10 @@ export function AgentCard({ session, child, title, asksOwner, status, tall }: {
       )}
       {/* Anchored to the card's foot, like a widget: what state it is in, for how long, what it holds. */}
       <div className="super-card-foot">
-        {(asksOwner || child?.branch || chip) && (
+        {(asksOwner || child?.branch || chip || tool !== 'claude') && (
           <div className="super-card-tags">
             {asksOwner && <span className="super-card-asks" data-asks={asksOwner}>{t(asksKey(asksOwner))}</span>}
-            {chip && <span className="super-tile-model" data-testid="super-card-model">{chip}</span>}
+            <ChildModelChip session={session} child={child} />
             {child?.branch && <span className="super-card-branch" title={child.worktree}>{child.branch}</span>}
           </div>
         )}
@@ -117,6 +119,7 @@ export function ChatTile({ session, child, title, asksOwner, status }: {
   const bgCount = bg.shells + bg.agents;
   // The model it really runs (owner 2026-10-21), where the kind word stood: a chat tile is a chat.
   const chip = childModelChip(session, child);
+  const tool = childTool(session, child);
   // While it works, a thin ring turns on its border (motion carries "working", the colour the
   // state): one of at most MAX_SPINNING at a time, the rest drawn closed (spinSlots.ts).
   const working = status.kind === 'working';
@@ -130,8 +133,8 @@ export function ChatTile({ session, child, title, asksOwner, status }: {
             the composer's ring. The chat's state, which this ring used to draw, is the dot and
             the toned state word at the foot. */}
         <AccountLimitRing accountId={chatAccountOf(session)} />
-        {chip
-          ? <span className="super-tile-model" data-testid="super-card-model" title={session?.model || undefined}>{chip}</span>
+        {chip || tool !== 'claude'
+          ? <ChildModelChip session={session} child={child} />
           : <span className="super-tile-kind">{t('super.tile.kind.chat')}</span>}
       </div>
       <div className="super-tile-title">{title}</div>
@@ -199,9 +202,39 @@ export function cardKeyOf(session: ChatSession | undefined, tall: boolean): stri
 /** A child's model chip: its live session's spawn values (what its composer shows), else what the
  *  record stored for it (`super delegate --model/--effort`, a field a newer record carries). */
 export function childModelChip(session: ChatSession | undefined, child: SuperChild | undefined): string | null {
-  const stored = child as (SuperChild & { model?: string; effort?: string }) | undefined;
-  if (session?.model) return modelChip(session.model, session.effort || stored?.effort);
-  return modelChip(stored?.model, stored?.effort);
+  const tool = childTool(session, child);
+  if (session?.model) return modelChip(session.model, session.effort || child?.effort, tool);
+  return modelChip(child?.model, child?.effort, tool);
+}
+
+const TOOL_LABEL = { codex: 'Codex', antigravity: 'Antigravity' } as const;
+
+/**
+ * A child's model chip: a Codex or Antigravity child's tool mark ALWAYS (also before its first
+ * turn names the model), then the model's name, which a narrow tile may shorten, and its level,
+ * which always shows. Its title and label say the tool and the model in words. Null for a Claude
+ * child whose model is not known yet.
+ */
+function ChildModelChip({ session, child }: { session: ChatSession | undefined; child: SuperChild | undefined }) {
+  const tool = childTool(session, child);
+  const parts = session?.model
+    ? modelChipParts(session.model, session.effort || child?.effort, tool)
+    : modelChipParts(child?.model, child?.effort, tool);
+  if (!parts && tool === 'claude') return null;
+  const label = tool === 'claude' ? '' : TOOL_LABEL[tool];
+  const words = [label, parts ? (parts.level ? `${parts.name} · ${parts.level}` : parts.name) : ''].filter(Boolean).join(' ');
+  return (
+    <span className="super-tile-model" data-testid="super-card-model" data-tool={tool} title={words} aria-label={words}>
+      {tool !== 'claude' && <ToolMark tool={tool} />}
+      <span className="super-tile-model-name">{parts ? parts.name : label}</span>
+      {parts?.level ? <span className="super-tile-model-level">{` · ${parts.level}`}</span> : null}
+    </span>
+  );
+}
+
+/** The tool a child runs on: its live session's binding, else the record's (`delegate --tool`). */
+export function childTool(session: ChatSession | undefined, child: SuperChild | undefined): 'claude' | 'codex' | 'antigravity' {
+  return session?.tool || child?.tool || 'claude';
 }
 
 function doingText(t: (k: string) => string, d: DoingLine): string {

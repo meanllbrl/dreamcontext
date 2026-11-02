@@ -397,6 +397,10 @@ export class BridgeSession {
     const modelSelection = this.modelSelection();
     const resumeNative = opts.resumeNativeThreadId;
     const providerSessionId = ProviderSessionId.make(`dc-${opts.paneId}`);
+    // What the agent really runs on, its own default included (Antigravity with no model asked):
+    // every later `system/init` names it, so the chat's composer and its Super card show it. The
+    // selection we send stays as asked, so an account default keeps following the account.
+    const runsOn = (model: string): void => { if (/^[A-Za-z0-9._[\]-]{1,80}$/.test(model)) this.wire.setModel(model); };
     const open = Effect.gen(function* () {
       const kit = opts.tool === 'claude' ? opts.claudeKit : undefined;
       const adapter = instanceKit ? (yield* instanceKit.createInstance({
@@ -404,6 +408,7 @@ export class BridgeSession {
         accountId: opts.accountId ?? '',
         ...(opts.binaryPath ? { binaryPath: opts.binaryPath } : {}),
         ...(opts.mcpServers?.length ? { mcpServers: opts.mcpServers } : {}),
+        onModel: runsOn,
       })).orchestrationAdapter : kit ? yield* kit.make({
         instanceId: kit.instanceId,
         settings: decodeClaudeSettings(settingsInput),
