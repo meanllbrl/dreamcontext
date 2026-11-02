@@ -301,6 +301,19 @@
       ]
     },
     {
+      "path": "ask",
+      "desc": "Run a prompt or an agent role on another tool (claude, codex, antigravity) and print the answer. Read-only unless --write",
+      "args": [
+        "<prompt...>"
+      ],
+      "valueFlags": [
+        "--tool",
+        "--model",
+        "--agent",
+        "--timeout"
+      ]
+    },
+    {
       "path": "assistant",
       "desc": "The dreamcontext Assistant's verbs — only its own chat session can run these",
       "args": [],
@@ -2905,6 +2918,7 @@
       ],
       "valueFlags": [
         "--model",
+        "--tool",
         "--timeout"
       ]
     },
@@ -2935,7 +2949,8 @@
         "[message...]"
       ],
       "valueFlags": [
-        "--model"
+        "--model",
+        "--tool"
       ]
     },
     {
@@ -2950,6 +2965,7 @@
         "--kind",
         "--thread",
         "--model",
+        "--tool",
         "--timeout"
       ]
     },
@@ -3857,11 +3873,12 @@
     },
     {
       "path": "t3-run",
-      "desc": "Run one headless turn on Codex; prints one JSON document (used by automations)",
+      "desc": "Run one headless turn on Codex or Antigravity; prints one JSON document (used by automations, sleep, AI Team)",
       "args": [],
       "valueFlags": [
         "--surface",
         "--prompt",
+        "--tool",
         "--model",
         "--effort",
         "--account",

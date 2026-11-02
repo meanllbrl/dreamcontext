@@ -23,8 +23,8 @@ import { recordAccountRejection } from '../claude-limit-rejections.js';
 import type { ProbeOutcome } from '../claude-usage-probe.js';
 import { levelBrief } from '../agents/permission.js';
 import { LIGHT_JOB_BLOCK, lightRunArgs, runLeavesNoSession } from './light-run.js';
-import { codexRunAccountArg, pickCodexRunAccount, type CodexPick } from './codex-account.js';
-import { HEADLESS_ENVELOPES, codexModelOf, codexRunArgs } from '../t3-bridge/headless-envelope.js';
+import { pickToolRunAccount, toolRunAccountArg, type CodexPick } from './codex-account.js';
+import { codexModelOf, codexRunArgs, envelopeRefusal } from '../t3-bridge/headless-envelope.js';
 import { bridgeNode } from '../t3-bridge/node-floor.js';
 import { linkedWritableRoots } from '../t3-bridge/roots.js';
 import { recordToolRejection } from '../account-switch.js';
@@ -2284,20 +2284,22 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
   // the machine records when the earliest account frees up, so the tick skips every unattended
   // start until then instead of probing a full machine every five minutes.
   let protectedAccount: AutomationAccount | null = null;
-  // A Codex run spends Codex's accounts: Claude's windows do not decide it (its pick is below).
-  const onCodex = manifest.tool === 'codex';
+  // A Codex or Antigravity run spends that tool's accounts: Claude's windows do not decide it.
+  const runTool = manifest.tool ?? null;
+  const onCodex = runTool !== null;
+  const toolName = runTool === 'antigravity' ? 'Antigravity' : 'Codex';
   let codexPick: CodexPick | null = null;
   if (opts.unattended && onCodex) {
-    const pick = codexPick = pickCodexRunAccount({ pinned: manifest.account, unattended: true, home: accountsHome, now: nowFn().getTime() });
+    const pick = codexPick = pickToolRunAccount(runTool!, { pinned: manifest.account, unattended: true, home: accountsHome, now: nowFn().getTime() });
     if ('waitUntil' in pick) {
       // Queued only: `recordAccountWait` is the machine-wide pause for CLAUDE's accounts, and a
       // full Codex account must not stop every Claude automation with it.
       try {
         if (!opts.target && !opts.task) enqueueFire(projectRoot, slug, fireAt.toISOString(), home);
       } catch (err) {
-        logFn(`warning: could not queue "${slug}" for its Codex account: ${(err as Error).message}`);
+        logFn(`warning: could not queue "${slug}" for its ${toolName} account: ${(err as Error).message}`);
       }
-      return shortCircuit('deferred', `every Codex account is near its usage limit; it waits until ${new Date(pick.waitUntil).toISOString()}`);
+      return shortCircuit('deferred', `every ${toolName} account is near its usage limit; it waits until ${new Date(pick.waitUntil).toISOString()}`);
     }
   } else if (opts.unattended) {
     const pick = await protectedAutomationAccount({ home: accountsHome, probe: opts.probeUsage, now: nowFn().getTime() });
@@ -2415,12 +2417,26 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // existing grant. Asks and EXITS: nothing of the job runs here.
     if (needsApprovalQuestion) {
       const review = renderApprovalReview(approvalFields(manifest));
-      const questionExecution = await executeClaudeDetached(
-        buildApprovalQuestionArgs(sanitizeAutomationPrompt(buildApprovalQuestionPrompt(manifest, review))),
+      const questionPrompt = sanitizeAutomationPrompt(buildApprovalQuestionPrompt(manifest, review));
+      // On Codex or Antigravity the question is asked there too, read-only, on the job's own
+      // account: a Codex job never spends Claude's. No account or no Node: the fixed question.
+      const qPick = onCodex ? (codexPick ??= pickToolRunAccount(runTool!, { pinned: manifest.account, home: accountsHome })) : null;
+      const qNode = onCodex ? bridgeNode() : null;
+      const qCli = process.env.DREAMCONTEXT_CLI || process.argv[1] || '';
+      const toolQuestion = onCodex && qPick && 'account' in qPick && qNode && qCli
+        ? codexRunArgs({
+          surface: 'approval-question', prompt: `${QUESTION_GUARD_PROMPT}\n\n${questionPrompt}`,
+          ...(runTool === 'antigravity' ? { tool: 'antigravity' as const } : {}),
+          account: toolRunAccountArg(runTool!, qPick.account),
+        })
+        : null;
+      const questionExecution = onCodex && !toolQuestion ? { result: null } : await executeClaudeDetached(
+        toolQuestion ?? buildApprovalQuestionArgs(questionPrompt),
         {
           cwd: projectRoot,
           // Same account as the job itself — this child is part of the same automation.
           env: accountEnvFor(account.configDir, accountsHome),
+          ...(toolQuestion && qNode ? { command: { file: qNode, prefix: [qCli] } } : {}),
           timeoutMs: APPROVAL_QUESTION_TIMEOUT_MS,
           spawnImpl: spawnFn,
           killImpl: killFn,
@@ -2542,8 +2558,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     // What Codex cannot hold stays refused, never widened (headless-envelope.ts): a home board's
     // read denies and a task step's pinned session. Said plainly, and the fire is consumed.
     // A pinned account that is gone ends the run: another login must not send this prompt.
-    if (onCodex) codexPick ??= pickCodexRunAccount({ pinned: manifest.account, home: accountsHome });
-    const codexRefusal = !onCodex ? '' : scope ? HEADLESS_ENVELOPES['board-agent'].why : taskStep ? HEADLESS_ENVELOPES['task-step'].why : '';
+    if (onCodex) codexPick ??= pickToolRunAccount(runTool!, { pinned: manifest.account, home: accountsHome });
+    const codexRefusal = !onCodex ? '' : scope ? envelopeRefusal('board-agent', runTool!) : taskStep ? envelopeRefusal('task-step', runTool!) : '';
     const codexNode = onCodex ? bridgeNode() : null;
     const codexCli = process.env.DREAMCONTEXT_CLI || process.argv[1] || '';
     const noCodexAccount = onCodex && !(codexPick && 'account' in codexPick);
@@ -2552,10 +2568,10 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       return await finalize({
         status: 'failed',
         error: codexRefusal
-          ? `"${manifest.title}" cannot run on Codex. ${codexRefusal} Set its tool back to Claude.`
+          ? `"${manifest.title}" cannot run on ${toolName}. ${codexRefusal} Set its tool back to Claude.`
           : noCodexAccount
-            ? (manifest.account ? 'The Codex account this is pinned to is not signed in on this Mac.' : 'No Codex account is signed in on this Mac.')
-            : 'Codex needs Node 22.16 or newer on this Mac.',
+            ? (manifest.account ? `The ${toolName} account this is pinned to is not signed in on this Mac.` : `No ${toolName} account is signed in on this Mac.`)
+            : `${toolName} needs Node 22.16 or newer on this Mac.`,
         outputPath: null, exitCode: null, sessionId: null, costUsd: null, numTurns: null, permissionDenials: 0,
         startedAt: n, finishedAt: n, durationMs: 0,
         advanceWatermark: consumesFire,
@@ -2593,7 +2609,8 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
     const codexArgs = (accountId: string, resume: string | null, text: string): string[] => {
       const { model, effort } = spawnModel(manifest, opts.override);
       return codexRunArgs({
-        surface: runSurface, prompt: text, model: codexModelOf(model), effort, account: codexRunAccountArg(accountId), resume,
+        surface: runSurface, prompt: text, ...(runTool === 'antigravity' ? { tool: 'antigravity' as const } : {}),
+        model: codexModelOf(model), effort, account: toolRunAccountArg(runTool!, accountId), resume,
         extraRoots: linkedWritableRoots(projectRoot),
       });
     };
@@ -2712,18 +2729,19 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       const limit = execution.result.limit;
       codexTried.push(codexAccount);
       try {
-        recordToolRejection('codex', codexAccount, limit, accountsHome);
+        recordToolRejection(runTool!, codexAccount, limit, accountsHome);
       } catch (err) {
         logFn(`automation "${slug}": could not record the account refusal: ${(err as Error).message}`);
       }
       if (manifest.account) break;
-      const nextPick = pickCodexRunAccount({ unattended: opts.unattended, exclude: codexTried, home: accountsHome, now: nowFn().getTime() });
+      const nextPick = pickToolRunAccount(runTool!, { unattended: opts.unattended, exclude: codexTried, home: accountsHome, now: nowFn().getTime() });
       if (!('account' in nextPick)) break;
       const budgetMs = timeoutMs - (nowFn().getTime() - startedAt.getTime());
       if (budgetMs < MIN_SWITCH_BUDGET_MS) break;
-      postSystemEntry(contextRoot, slug, fireAt.toISOString(), 'started', `The ${limitWindowLabel(limit)} usage limit stopped it on one Codex account. Continuing on the next.`, logFn);
+      postSystemEntry(contextRoot, slug, fireAt.toISOString(), 'started', `The ${limitWindowLabel(limit)} usage limit stopped it on one ${toolName} account. Continuing on the next.`, logFn);
       codexAccount = nextPick.account;
-      const thread = (execution.result.numTurns ?? 0) > 1 ? execution.result.sessionId : null;
+      // An Antigravity conversation lives in its account's profile: the next account starts fresh.
+      const thread = runTool === 'codex' && (execution.result.numTurns ?? 0) > 1 ? execution.result.sessionId : null;
       execution = await runOn(account, thread ? codexArgs(codexAccount, thread, CONTINUE_AFTER_SWITCH_PROMPT) : codexArgs(codexAccount, null, sanitizeAutomationPrompt(prompt)), budgetMs);
     }
 

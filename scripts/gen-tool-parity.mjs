@@ -11,9 +11,24 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const data = JSON.parse(readFileSync(join(root, 'docs', 'tool-parity.json'), 'utf-8'));
 const envelope = readFileSync(join(root, 'src', 'lib', 't3-bridge', 'headless-envelope.ts'), 'utf-8');
-const rows = [...envelope.matchAll(/^\s*'?([a-z-]+)'?: \{ claude: '([^']+)', codex: (null|'[a-z]+'), brain: (?:true|false)(?:, strict: true)?(?:, why: '((?:[^'\\]|\\.)*)')? \},$/gm)];
+const block = envelope.slice(envelope.indexOf('export const HEADLESS_ENVELOPES'), envelope.indexOf('\n};', envelope.indexOf('export const HEADLESS_ENVELOPES')));
+/** One field of a row line: a quoted string (escapes kept), null, or a bare word. */
+const field = (line, key) => {
+  const m = line.match(new RegExp(`\\b${key}: (null|true|false|'((?:[^'\\\\]|\\\\.)*)')`));
+  if (!m) return undefined;
+  return m[2] !== undefined ? m[2].replace(/\\'/g, "'") : m[1];
+};
+const rows = [...block.matchAll(/^\s*'?([a-z-]+)'?: \{ (claude: .*) \},$/gm)].map(([, name, rest]) => ({
+  name,
+  claude: field(rest, 'claude'),
+  codex: field(rest, 'codex'),
+  antigravity: field(rest, 'antigravity'),
+  why: field(rest, 'why'),
+  antigravityWhy: field(rest, 'antigravityWhy'),
+}));
 
-const MODE = { "'auto'": 'Sandboxed: project and linked repos, no network, approvals declined', "'default'": 'Read-only, approvals declined' };
+const MODE = { auto: 'Sandboxed: project and linked repos, no network, approvals declined', default: 'Read-only: a command is approved only when every program in it reads, anything else declined' };
+const AG_MODE = { write: 'Answered by the bridge once its write gate ran; what the gate leaves to the owner is refused', read: 'Read-only: no edits, only plain read commands' };
 const lines = [
   '# What runs on which tool',
   '',
@@ -29,9 +44,9 @@ const lines = [
   '',
   '## Unattended surfaces',
   '',
-  '| Surface | On Claude | On Codex |',
-  '|---|---|---|',
-  ...rows.map(([, name, claude, codex, why]) => `| ${name} | ${claude} | ${codex === 'null' ? `Claude only. ${(why ?? '').replace(/\\'/g, "'")}` : MODE[codex]} |`),
+  '| Surface | On Claude | On Codex | On Antigravity |',
+  '|---|---|---|---|',
+  ...rows.map((r) => `| ${r.name} | ${r.claude} | ${r.codex === 'null' ? `Claude only. ${r.why ?? ''}` : MODE[r.codex]} | ${r.antigravity === 'null' || r.antigravity === undefined ? `Claude only. ${r.antigravityWhy ?? ''}` : AG_MODE[r.antigravity]} |`),
   '',
 ];
 const out = lines.join('\n');

@@ -119,7 +119,7 @@ function linkOtherSkills(dir: string, sources: readonly string[], skip: Readonly
 }
 
 /** The text before Claude's `<example>` blocks, on one line, short enough for a role list. */
-function shortDescription(raw: unknown): string {
+export function shortDescription(raw: unknown): string {
   const text = typeof raw === 'string' ? raw : '';
   return text.split('<example>')[0].replace(/\s+/g, ' ').trim().slice(0, 400);
 }

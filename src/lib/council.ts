@@ -14,6 +14,7 @@ import { ensureContextRoot } from './context-path.js';
 import { readFrontmatter } from './frontmatter.js';
 import { slugify } from './id.js';
 import { readJsonArray, readJsonObject, writeJsonArray, writeJsonObject } from './json-file.js';
+import { agentSessionId } from './session-id.js';
 
 export const COUNCIL_STATUSES = [
   'created',
@@ -760,7 +761,7 @@ export function updateCouncilLive(debateId: string, update: CouncilLiveUpdate = 
       // later write: persona sessions run `verdict submit` with their OWN
       // CLAUDE_CODE_SESSION_ID, and re-stamping here would scope the chamber
       // panel out of the orchestrator's pane mid-round.
-      session: sameDebate ? (prev.session ?? '') : (process.env.CLAUDE_CODE_SESSION_ID ?? ''),
+      session: sameDebate ? (prev.session ?? '') : (agentSessionId() ?? ''),
       started: sameDebate && prev.started ? prev.started : now,
       updated: now,
       phase: update.phase ?? (sameDebate ? prev.phase : 'setup'),

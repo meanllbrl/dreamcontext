@@ -77,7 +77,7 @@ export function isHotState(s: MacThermalState | null | undefined): boolean {
   return s != null && (HEAT_HOT as readonly string[]).includes(s);
 }
 
-export interface LiveChatWire { conversationId: string; vault: string | null; title: string | null; busy: boolean; state: 'working' | 'asking' | 'idle'; lastLine: string | null; updatedAt: number | null; tool?: 'codex' }
+export interface LiveChatWire { conversationId: string; vault: string | null; title: string | null; busy: boolean; state: 'working' | 'asking' | 'idle'; lastLine: string | null; updatedAt: number | null; tool?: 'codex' | 'antigravity' }
 
 export interface LiveChatsWire {
   chats: LiveChatWire[];

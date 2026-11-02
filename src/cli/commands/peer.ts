@@ -83,6 +83,11 @@ function reportSend(result: SendResult, peerName: string): void {
  * the peer must accept inbound from us) and every live delivery runs under
  * `auto` permissions in the PEER's directory, never `bypassPermissions`.
  */
+/** `--tool`: a name we know, else nothing (the tool this runs under decides). */
+function peerTool(t: string | undefined): { tool?: 'claude' | 'codex' | 'antigravity' } {
+  return t === 'claude' || t === 'codex' || t === 'antigravity' ? { tool: t } : {};
+}
+
 export function registerPeerCommand(program: Command): void {
   const peer = program
     .command('peer')
@@ -97,10 +102,11 @@ export function registerPeerCommand(program: Command): void {
     .option('--deferred', 'Just leave it in the inbox, even for a question')
     .option('--thread <id>', 'Continue an existing thread')
     .option('--model <alias>', 'Model for the peer run')
+    .option('--tool <tool>', 'Run the peer on claude, codex or antigravity (default: the tool this runs under)')
     .option('--timeout <seconds>', 'Give the peer run this long before giving up')
     .action(async (vault: string, message: string[], opts: {
       kind?: string; live?: boolean; deferred?: boolean;
-      thread?: string; model?: string; timeout?: string;
+      thread?: string; model?: string; timeout?: string; tool?: string;
     }) => {
       const contextRoot = ensureContextRoot();
       const body = (message ?? []).join(' ').trim();
@@ -142,6 +148,7 @@ export function registerPeerCommand(program: Command): void {
           {
             live,
             model: opts.model,
+            ...peerTool(opts.tool),
             timeoutMs: opts.timeout ? Number(opts.timeout) * 1000 : undefined,
           },
         );
@@ -157,8 +164,9 @@ export function registerPeerCommand(program: Command): void {
     .command('ask <vault> [question...]')
     .description('Ask a connected peer a question and wait for its answer (live)')
     .option('--model <alias>', 'Model for the peer run')
+    .option('--tool <tool>', 'Run the peer on claude, codex or antigravity (default: the tool this runs under)')
     .option('--timeout <seconds>', 'Give the peer run this long before giving up')
-    .action(async (vault: string, question: string[], opts: { model?: string; timeout?: string }) => {
+    .action(async (vault: string, question: string[], opts: { model?: string; timeout?: string; tool?: string }) => {
       const contextRoot = ensureContextRoot();
       const body = (question ?? []).join(' ').trim();
       if (!body) {
@@ -179,7 +187,7 @@ export function registerPeerCommand(program: Command): void {
         const result = await sendToPeer(
           contextRoot, target,
           { kind: 'question', body },
-          { live: true, model: opts.model, timeoutMs: opts.timeout ? Number(opts.timeout) * 1000 : undefined },
+          { live: true, model: opts.model, ...peerTool(opts.tool), timeoutMs: opts.timeout ? Number(opts.timeout) * 1000 : undefined },
         );
         reportSend(result, vault);
       } catch (err) {
@@ -280,7 +288,8 @@ export function registerPeerCommand(program: Command): void {
     .description("Reply to a message, back to whoever sent it")
     .option('--live', 'Wake the peer now instead of leaving it in their inbox')
     .option('--model <alias>', 'Model for the peer run')
-    .action(async (id: string, message: string[], opts: { live?: boolean; model?: string }) => {
+    .option('--tool <tool>', 'Run the peer on claude, codex or antigravity (default: the tool this runs under)')
+    .action(async (id: string, message: string[], opts: { live?: boolean; model?: string; tool?: string }) => {
       const contextRoot = ensureContextRoot();
       const body = (message ?? []).join(' ').trim();
       if (!body) {
@@ -310,7 +319,7 @@ export function registerPeerCommand(program: Command): void {
         const result = await sendToPeer(
           contextRoot, target,
           { kind: 'note', body, thread: original.thread, replyTo: original.id },
-          { live: opts.live === true, model: opts.model },
+          { live: opts.live === true, model: opts.model, ...peerTool(opts.tool) },
         );
         updateMessage(contextRoot, original.id, { status: 'answered' });
         reportSend(result, peerName);

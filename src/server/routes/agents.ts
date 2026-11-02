@@ -103,7 +103,7 @@ export interface AgentSummary {
   roleLine: string;
   model: string | null;
   effort: EffortLevel | null;
-  tool: 'claude' | 'codex';
+  tool: 'claude' | 'codex' | 'antigravity';
   account: string | null;
   whiteboard: string | null;
   shared: boolean;
@@ -554,8 +554,8 @@ export async function handleAgentsUpdate(
     const effort = readEffort(body.effort);
     if (effort !== undefined) patch.effort = effort;
     if (body.tool !== undefined) {
-      if (body.tool !== null && body.tool !== '' && body.tool !== 'claude' && body.tool !== 'codex') throw new AutomationError('Invalid tool: Claude or Codex.');
-      patch.tool = body.tool === 'codex' ? 'codex' : null;
+      if (body.tool !== null && body.tool !== '' && body.tool !== 'claude' && body.tool !== 'codex' && body.tool !== 'antigravity') throw new AutomationError('Invalid tool: Claude, Codex or Antigravity.');
+      patch.tool = body.tool === 'codex' || body.tool === 'antigravity' ? body.tool : null;
     }
     if (body.account !== undefined) {
       if (body.account !== null && body.account !== '' && !(typeof body.account === 'string' && isCodexAccountId(body.account))) throw new AutomationError('Invalid account.');

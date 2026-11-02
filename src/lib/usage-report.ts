@@ -39,7 +39,7 @@ export interface StatsQuery {
 
 export interface Bucket { start: number; end: number }
 
-export interface SpendRow { alias?: string; key: string; label: string; tool: 'claude' | 'codex' | null; sub?: string; tokens: number; cost: number | null; trend?: number[]; cacheHit?: number; priceSource?: PriceSource; price?: number[] | null }
+export interface SpendRow { alias?: string; key: string; label: string; tool: 'claude' | 'codex' | 'antigravity' | null; sub?: string; tokens: number; cost: number | null; trend?: number[]; cacheHit?: number; priceSource?: PriceSource; price?: number[] | null }
 
 export interface SleepSpecialist { name: string; model: string; effort: string | null; tokens: number; cost: number }
 
@@ -138,8 +138,9 @@ const HOUR = 3_600_000;
 const FIVE_HOURS = 5 * HOUR;
 const RANGE_DAYS: Record<StatsRange, number> = { '24h': 1, '7d': 7, '30d': 30, '90d': 90 };
 
-/** The tools a chat can run on later. No usage reader yet, so the screen says so. */
-const NOT_COUNTED = [{ id: 'antigravity', name: 'Antigravity' }, { id: 'opencode', name: 'OpenCode' }];
+/** The tools with no usage reader, so the screen says so. Antigravity is counted from the
+ *  transcripts its turns leave (usage-ledger.ts), tokens only: it reports no price. */
+const NOT_COUNTED = [{ id: 'opencode', name: 'OpenCode' }];
 
 export function bucketsFor(range: StatsRange, now: number): { buckets: Bucket[]; hourly: boolean } {
   if (range === '24h') {
@@ -729,6 +730,7 @@ export function buildStats(q: StatsQuery, home: string = homedir()): StatsWire {
     tools: [
       { id: 'claude', name: 'Claude Code', counted: true, accounts: names.claude.map(({ id, label, plan }) => ({ id, label, plan })) },
       { id: 'codex', name: 'Codex', counted: true, accounts: [...new Set(views.filter((v) => v.f.tool === 'codex' && v.account).map((v) => v.account as string))].map((id) => ({ id, label: names.label('codex', id), plan: names.codex.find((a) => a.id === id)?.plan ?? '' })) },
+      { id: 'antigravity', name: 'Antigravity', counted: true, accounts: [] },
       ...NOT_COUNTED.map((t) => ({ ...t, counted: false, accounts: [] })),
     ],
     projects: [...new Set(views.map((v) => v.project))].filter((p) => p !== 'Unknown').sort((a, b) => a.localeCompare(b)),

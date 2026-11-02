@@ -326,16 +326,20 @@ export function AutomationDialog({
   const [rows, setRows] = useState<SlotRow[]>(() =>
     initialSlotRows(agent?.schedule?.slots, agent ? undefined : start, new Date()));
   const [model, setModel] = useState(agent?.model ?? 'opus');
-  const [tool, setTool] = useState<'claude' | 'codex'>(agent?.tool ?? 'claude');
+  const [tool, setTool] = useState<'claude' | 'codex' | 'antigravity'>(agent?.tool ?? 'claude');
   const [account, setAccount] = useState(agent?.account ?? '');
   // A home board's read denies stay on Claude (Track T W4), and a Codex run cannot hold them.
   const hasBoard = !!(start?.whiteboard || agent?.whiteboard);
-  const toolInfo = useAgentTools().data?.find((t) => t.tool === 'codex');
+  const tools = useAgentTools().data;
+  const codexInfo = tools?.find((t) => t.tool === 'codex');
+  const agyInfo = tools?.find((t) => t.tool === 'antigravity');
+  // The model list is the picked tool's own; a Claude model never goes to another vendor.
+  const toolInfo = tool === 'antigravity' ? agyInfo : codexInfo;
   const codexAccounts = useCodexAccounts(tool === 'codex').data?.accounts ?? [];
-  const pickTool = (next: 'claude' | 'codex') => {
+  const pickTool = (next: 'claude' | 'codex' | 'antigravity') => {
     setTool(next);
     setAccount('');
-    setModel(next === 'codex' ? CODEX_DEFAULT : 'opus');
+    setModel(next !== 'claude' ? CODEX_DEFAULT : 'opus');
   };
   const [effort, setEffort] = useState<string>(agent?.effort ?? 'medium');
 
@@ -769,17 +773,18 @@ export function AutomationDialog({
           <label className="agent-field">
             <span className="agent-label">Model</span>
             <select className="agent-select" value={model} onChange={(e) => setModel(e.target.value)}>
-              {tool === 'codex'
+              {tool !== 'claude'
                 ? <><option value={CODEX_DEFAULT}>Account default</option>{(toolInfo?.models ?? []).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</>
                 : MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
           </label>
-          {(toolInfo || tool === 'codex') && !hasBoard && !bound && (
+          {(codexInfo || agyInfo || tool !== 'claude') && !hasBoard && !bound && (
             <label className="agent-field">
               <span className="agent-label">Tool</span>
-              <select className="agent-select" value={tool} onChange={(e) => pickTool(e.target.value as 'claude' | 'codex')} data-testid="automation-tool">
+              <select className="agent-select" value={tool} onChange={(e) => pickTool(e.target.value as 'claude' | 'codex' | 'antigravity')} data-testid="automation-tool">
                 <option value="claude">Claude</option>
-                <option value="codex" disabled={!toolInfo?.ready}>{toolInfo?.ready ? 'Codex' : 'Codex (sign in first)'}</option>
+                <option value="codex" disabled={!codexInfo?.ready}>{codexInfo?.ready ? 'Codex' : 'Codex (sign in first)'}</option>
+                {(agyInfo || tool === 'antigravity') && <option value="antigravity" disabled={!agyInfo?.ready}>{agyInfo?.ready ? 'Antigravity' : 'Antigravity (sign in first)'}</option>}
               </select>
             </label>
           )}

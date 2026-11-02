@@ -1335,10 +1335,10 @@ export function registerSleepCommand(program: Command): void {
   sleep
     .command('auto-run', { hidden: true })
     .description('INTERNAL: run one background consolidation now (spawned detached by the Stop hook)')
-    .option('--tool <tool>', 'codex: run the cycle on Codex (experimental, docs/tool-parity.md)')
+    .option('--tool <tool>', 'codex or antigravity: run the cycle on that tool (docs/tool-parity.md)')
     .action(async (o: { tool?: string }) => {
       const root = ensureContextRoot();
-      const res = await runAutoSleep(root, o.tool === 'codex' ? { tool: 'codex' } : {});
+      const res = await runAutoSleep(root, o.tool === 'codex' || o.tool === 'antigravity' ? { tool: o.tool } : {});
       if (!res.started) process.exitCode = 1;
     });
 }

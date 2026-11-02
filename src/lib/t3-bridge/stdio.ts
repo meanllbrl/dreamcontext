@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { codexChildEnv, codexCommand } from '../codex-bin.js';
 import { BridgeOpenTimeout, BridgeSession, toolLabel, type BridgeSessionOptions } from './session.js';
 import { syncAntigravitySkills } from '../antigravity-skills.js';
+import { syncAntigravityRoles } from '../antigravity-roles.js';
 import { findPackageDir } from '../catalog.js';
 import { codexRoleArgs, prepareCodexKit, type CodexKit, type CodexKitOptions } from '../codex-skills.js';
 import { toolNote, toolText } from '../tool-text.js';
@@ -227,6 +228,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
   const instanceAccount = isInstanceTool(args.tool) && args.account && isInstanceAccountId(args.account) ? args.account : null;
   // The skills go in the account's profile as a chat opens, so no project and no sign-in owes a step.
   const skills = isInstanceTool(args.tool) ? syncAntigravitySkills(instanceAccount ?? INSTANCE_PRIMARY_ID, { home }) : null;
+  // Lane 2 seam: Claude's roles as the account's sub-agents (antigravity-roles.ts), same moment.
+  if (isInstanceTool(args.tool)) syncAntigravityRoles(instanceAccount ?? INSTANCE_PRIMARY_ID, { home });
   // Codex: our skills, the project's and the owner's Claude skills, and Claude's agents as roles,
   // all under ~/.dreamcontext/codex, pointed at for this app-server only (codex-skills.ts).
   // A replay client (tests) answers only what it recorded: it gets the kit only when one is given.
@@ -405,7 +408,7 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
     // A sub-agent of this agent starts with none of this (TABLO row 8, real turn 2 Nov: "No
     // dreamcontext project brain or snapshot in context"): it is told how to get the brain itself.
     own.push({ key: 'dreamcontext-subagents', text: `Your sub-agents (invoke_subagent) start without this project's brain or these notes. Begin every task you give one with: "First run \`dreamcontext snapshot\` in ${args.cwd} and read what it prints; it is this project's memory."` });
-    // No sub-agents on ACP: the note says where a role's file is, so its work is done here.
+    // The note says where a role's file is, for a project role made with define_subagent.
     const roleDirs = [findPackageDir('agents'), join(home, '.claude', 'agents'), join(args.cwd, '.claude', 'agents')].filter((d): d is string => !!d && existsSync(d));
     own.push({ key: 'dreamcontext-tools', text: toolNote('antigravity', { roleDirs }) });
     if (!args.briefingFile) return own;

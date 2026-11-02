@@ -6,6 +6,7 @@ import { hookTool, setHookTool } from '../../lib/hook-tool.js';
 import { GATE_BEAT_ENV, antigravityCallAsClaude, isAntigravityGateFile, movesGuardedPlace, shellTouchesGuarded } from '../../lib/antigravity-gate.js';
 import { classifyBash, gateHookOutput, parseGateContext, type BashGateContext } from '../../lib/apps/bash-gate.js';
 import { AGENT_CHAT_ENV } from '../../lib/automations/types.js';
+import { antigravityTranscriptsDir } from '../../lib/antigravity-conversation.js';
 import { SESSION_START_PARTS } from '../../lib/snapshot-budget.js';
 import { Command } from 'commander';
 import {
@@ -16,7 +17,7 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 import { get as httpGet, request as httpRequest } from 'node:http';
-import { dirname, resolve, join, extname, basename, relative } from 'node:path';
+import { dirname, resolve, join, extname, basename, relative, sep } from 'node:path';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import {
   enterHookProject, fitPromptContext, hookSettingsRoot, promptOverflowNote, sessionStartPartsInstalled, splitHookOutput,
@@ -631,6 +632,11 @@ export interface PromptRecall {
  */
 export async function selectPromptRecall(prompt: string, root: string, recallMode: RecallMode, deps: PromptRecallDeps = {}): Promise<PromptRecall> {
   const env = deps.env ?? process.env;
+  // The Haiku extractor is a `claude` call: under a Codex or Antigravity prompt hook it would spend
+  // the owner's Claude account behind that tool's back (row 30). BM25 there, and the header says so.
+  if (recallMode === 'haiku' && hookTool() !== null) {
+    return { hits: bm25Search(prompt, buildCorpusCached(root), RECALL_HAIKU_TOP_K), label: 'BM25 · Haiku is Claude only', haiku: false, timing: null };
+  }
   if (recallMode === 'haiku') {
     const result = (deps.haiku ?? haikuRecall)(prompt, root);
     if (result === 'skip') {
@@ -1994,7 +2000,22 @@ function spawnDashboard(port: number): void {
  * src/lib/proc.ts), the cycle's claude is hidden and not detached there, and the cancel path
  * kills the tree through `killPortable` instead of a POSIX process group.
  */
-function spawnAutoSleep(): void {
+/**
+ * The tool the turn that just ended ran on, so its background sleep runs there too (TABLO row 6).
+ * A Claude hook is Claude. A bridge or Codex hook (`--format codex`) is Codex unless the turn says
+ * Antigravity: its own `dc_tool`, or a transcript the bridge wrote from an Antigravity
+ * conversation (antigravity-conversation.ts).
+ */
+export function stopTurnTool(input: Record<string, unknown>, home: string = homedir()): 'codex' | 'antigravity' | null {
+  if (hookTool() === 'antigravity') return 'antigravity';
+  if (hookTool() !== 'codex') return null;
+  if (input.dc_tool === 'antigravity' || input.dc_tool === 'codex') return input.dc_tool;
+  const transcript = typeof input.transcript_path === 'string' ? resolve(input.transcript_path) : '';
+  const agTranscripts = resolve(antigravityTranscriptsDir(home));
+  return transcript && transcript.startsWith(agTranscripts + sep) ? 'antigravity' : 'codex';
+}
+
+function spawnAutoSleep(tool: 'codex' | 'antigravity' | null = null): void {
   const cliEntry = process.argv[1];
   if (!cliEntry) return;
   // THE BACKGROUND CYCLE IS TAB-LESS — it must not inherit the identity of the tab
@@ -2017,7 +2038,7 @@ function spawnAutoSleep(): void {
   delete env.CLAUDE_CODE_SESSION_ID;
   // Nor the chat's AI Team route: a headless cycle must never be told to `super team ask`.
   delete env.DREAMCONTEXT_TEAM_ROUTE;
-  const child = spawn(process.execPath, [cliEntry, 'sleep', 'auto-run'], {
+  const child = spawn(process.execPath, [cliEntry, 'sleep', 'auto-run', ...(tool ? ['--tool', tool] : [])], {
     detached: true,
     stdio: 'ignore',
     cwd: process.cwd(),
@@ -2511,7 +2532,7 @@ export function registerHookCommand(program: Command): void {
           currentFingerprint: currentAutoSleepFingerprint(projectRoot),
           nested,
         });
-        if (decision.start) spawnAutoSleep();
+        if (decision.start) spawnAutoSleep(stopTurnTool(input));
       } catch (autoErr) {
         // A bug here must never break a turn — the worst case is that the brain
         // does not consolidate itself and the user is nagged as before.

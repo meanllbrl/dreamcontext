@@ -29,7 +29,7 @@ export interface IdentityForm {
   title: string;
   prompt: string;
   model: string;
-  tool: 'claude' | 'codex';
+  tool: 'claude' | 'codex' | 'antigravity';
   account: string;
   effort: '' | AgentEffort;
   whiteboard: string;
@@ -165,7 +165,11 @@ export function AgentIdentityDialog({
   draftTitle.current = onDraftTitle;
   useEffect(() => { if (!editing) draftTitle.current?.(form.title); }, [editing, form.title]);
   const [original, setOriginal] = useState<IdentityForm | null>(editing ? null : EMPTY_IDENTITY_FORM);
-  const codexInfo = useAgentTools().data?.find((x) => x.tool === 'codex');
+  const tools = useAgentTools().data;
+  const codexToolInfo = tools?.find((x) => x.tool === 'codex');
+  const agyInfo = tools?.find((x) => x.tool === 'antigravity');
+  // The model list is the picked tool's own.
+  const codexInfo = form.tool === 'antigravity' ? agyInfo : codexToolInfo;
   const codexAccounts = useCodexAccounts(form.tool === 'codex').data?.accounts ?? [];
   const [error, setError] = useState<string | null>(null);
   const [photo, setPhoto] = useState<Blob | null>(null);
@@ -404,7 +408,7 @@ export function AgentIdentityDialog({
         </div>
 
         <div className="aid-row">
-          {(codexInfo || form.tool === 'codex') && !form.whiteboard && (
+          {(codexToolInfo || agyInfo || form.tool !== 'claude') && !form.whiteboard && (
             <label className="aid-field">
               <span className="aid-label">{t('agents.identity.tool')}</span>
               <select
@@ -412,10 +416,11 @@ export function AgentIdentityDialog({
                 value={form.tool}
                 disabled={!ready}
                 data-testid="agent-tool"
-                onChange={(e) => { const next = e.target.value as 'claude' | 'codex'; setForm((f) => ({ ...f, tool: next, account: '', model: '' })); }}
+                onChange={(e) => { const next = e.target.value as 'claude' | 'codex' | 'antigravity'; setForm((f) => ({ ...f, tool: next, account: '', model: '' })); }}
               >
                 <option value="claude">Claude</option>
-                <option value="codex" disabled={!codexInfo?.ready}>{codexInfo?.ready ? 'Codex' : t('agents.identity.toolSignIn')}</option>
+                <option value="codex" disabled={!codexToolInfo?.ready}>{codexToolInfo?.ready ? 'Codex' : t('agents.identity.toolSignIn')}</option>
+                {(agyInfo || form.tool === 'antigravity') && <option value="antigravity" disabled={!agyInfo?.ready}>{agyInfo?.ready ? 'Antigravity' : t('agents.identity.toolSignInAgy')}</option>}
               </select>
             </label>
           )}
@@ -432,7 +437,7 @@ export function AgentIdentityDialog({
             <span className="aid-label">{t('agents.identity.model')}</span>
             <select className="aid-select" value={form.model} onChange={(e) => set('model', e.target.value)} disabled={!ready}>
               <option value="">{t('agents.profile.modelDefault')}</option>
-              {form.tool === 'codex'
+              {form.tool !== 'claude'
                 ? (codexInfo?.models ?? []).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)
                 : MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
               {form.tool === 'claude' && form.model && !(MODELS as readonly string[]).includes(form.model) && (

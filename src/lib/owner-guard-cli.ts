@@ -1,18 +1,20 @@
 /**
  * The CLI's agent guard for owner RICE values: an agent never overwrites an
- * owner score. From an agent session (CLAUDE_CODE_SESSION_ID set), a command
+ * owner score. From an agent session (any tool's, session-id.ts), a command
  * that would change a RICE field already holding a value — or clear values —
  * is refused unless --owner says the owner asked for it in the conversation.
  * Proposals go through `tasks suggest` / `roadmap objective suggest` instead.
  *
- * This guard only sees that one variable: it protects against an agent
+ * This guard only sees the session variables: it protects against an agent
  * forgetting the rule, not against a determined caller.
  */
+import { inAgentSession } from './session-id.js';
 
 type RiceLike = { reach?: number | null; impact?: number | null; confidence?: number | null; effort?: number | null } | null | undefined;
 
+/** Claude's session id, or a Codex or Antigravity chat (session-id.ts): a bridge chat is an agent too. */
 export function isAgentSession(env: NodeJS.ProcessEnv = process.env): boolean {
-  return typeof env.CLAUDE_CODE_SESSION_ID === 'string' && env.CLAUDE_CODE_SESSION_ID.trim() !== '';
+  return inAgentSession(env);
 }
 
 export function agentGuardRefuses(
