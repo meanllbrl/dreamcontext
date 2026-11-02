@@ -35,6 +35,10 @@ describe('Bash', () => {
     const command = `python3 - <<'EOF'\np='agents/doctor.md'\ns=open(p).read()\ns=s.replace('## Pattern','A new line\\n\\n## Pattern',1)\nopen(p,'w').write(s)\nEOF`;
     expect(bash(command, BRAIN)).toBe(`${BRAIN}/agents/doctor.md`);
   });
+  it('reads a Windows path with backslashes as a path, quoted or not', () => {
+    for (const c of ['cp x "C:\\p\\_dream_context\\agents\\a.md"', 'cp x C:\\p\\_dream_context\\agents\\a.md', 'rm C:\\p\\_dream_context\\automations\\job.md']) expect([c, bash(c)]).not.toEqual([c, null]);
+    expect(bash('cp x C:\\p\\notes\\a.md')).toBeNull();
+  });
   it('follows a cd', () => {
     expect(bash(`cd ${BRAIN} && sed -i '' 's/a/b/' agents/doctor.md`)).toBe(`${BRAIN}/agents/doctor.md`);
   });

@@ -184,6 +184,14 @@ describe('moving, removing or copying over a place that holds the token file or 
     expect(at(`mv "${spaced}/notes one.md" "${spaced}/notes two.md"`)).toBe(false);
   });
 
+  it('reads a Windows path with backslashes as a path, not as bash escapes', () => {
+    for (const c of [
+      'rm -rf C:\\p\\_dream_context\\marketing', 'rm -rf "C:\\p\\_dream_context\\marketing"',
+      'cp x "C:\\p\\_dream_context\\marketing\\.env"', 'mv C:\\p\\_dream_context\\marketing mk',
+    ]) expect([c, sh(c)]).toEqual([c, true]);
+    expect(sh('mv C:\\p\\notes.md C:\\p\\old.md')).toBe(false);
+  });
+
   it('refuses the gate folders up to and including .dreamcontext', () => {
     for (const c of [`rm -rf ${agy}`, `rm -rf ${agy}/`, `mv ${agy} /tmp/a`, 'mv ~/.dreamcontext /tmp/d', 'rm -rf ~/.dreamcontext/t3/state', 'cd ~/.dreamcontext/t3 && mv state /tmp/s']) expect([c, sh(c)]).toEqual([c, true]);
     // Into the folder while it is there lands beside the gate; back onto it once it is gone is refused.

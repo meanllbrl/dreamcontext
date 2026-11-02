@@ -17,7 +17,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
-import { anchors, dropHeredocBodies, expandHome, segmentsOf, shellWords } from './agents/member-file-guard.js';
+import { anchors, dropHeredocBodies, expandHome, segmentsOf, shellReadings } from './agents/member-file-guard.js';
 import { antigravityProfileDir } from './antigravity-accounts.js';
 import { resolveContextRoot } from './context-path.js';
 
@@ -81,8 +81,8 @@ const isDir = (p: string): boolean => { try { return lstatSync(nearestReal(p)).i
 /** A shell move, removal or copy whose source, or the place it lands, holds a protected file. */
 function shellMovesGuarded(command: string, cwd: string, home: string): boolean {
   const dirs = anchors(command, cwd.replace(/\\/g, '/'), home);
-  return segmentsOf(dropHeredocBodies(command)).some((segment) => {
-    const words = shellWords(segment).filter(Boolean);
+  return segmentsOf(dropHeredocBodies(command)).some((segment) => shellReadings(segment).some((reading) => {
+    const words = reading.filter(Boolean);
     while (words.length > 0 && (LEADERS.has(words[0]) || /^[A-Za-z_]\w*=/.test(words[0]) || /^-|^\d+[smhd]?$/.test(words[0]))) words.shift();
     if (words[0] === 'git' && (words[1] === 'mv' || words[1] === 'rm')) words.shift();
     const verb = (words[0] ?? '').split('/').pop() ?? '';
@@ -102,7 +102,7 @@ function shellMovesGuarded(command: string, cwd: string, home: string): boolean 
       const contents = /\/\.?$/.test(src) || src === '.';
       return holdsGuarded(contents ? d : join(d, basename(src.replace(/\/+$/, ''))), cwd);
     })));
-  });
+  }));
 }
 
 const CLAUDE_READS = new Set(['Read', 'Glob', 'Grep', 'LS']);

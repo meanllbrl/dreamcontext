@@ -93,9 +93,10 @@ function maskQuotes(s: string): string {
 /**
  * A segment's words as the shell reads them: a quoted run is one word with its quotes gone, so
  * `mv "/My Project/_dream_context" x` names one folder, not `/My` and `Project/...`. A backslash
- * keeps the next character outside single quotes.
+ * keeps the next character outside single quotes; with `escapes` off it is a plain character, as
+ * PowerShell and a Windows path read it (`C:\p\_dream_context`).
  */
-export function shellWords(segment: string): string[] {
+export function shellWords(segment: string, escapes = true): string[] {
   const out: string[] = [];
   let word = '';
   let has = false;
@@ -104,15 +105,25 @@ export function shellWords(segment: string): string[] {
     const c = segment[i];
     if (quote) {
       if (c === quote) quote = '';
-      else if (c === '\\' && quote === '"' && i + 1 < segment.length) { word += segment[i + 1]; i += 1; }
+      else if (escapes && c === '\\' && quote === '"' && i + 1 < segment.length) { word += segment[i + 1]; i += 1; }
       else word += c;
     } else if (c === '"' || c === "'") { quote = c; has = true; }
-    else if (c === '\\' && i + 1 < segment.length) { word += segment[i + 1]; has = true; i += 1; }
+    else if (escapes && c === '\\' && i + 1 < segment.length) { word += segment[i + 1]; has = true; i += 1; }
     else if (/\s/.test(c)) { if (has || word) out.push(word); word = ''; has = false; }
     else { word += c; has = true; }
   }
   if (has || word) out.push(word);
   return out;
+}
+
+/**
+ * Both ways a gate must read a segment: as bash (a backslash escapes) and as PowerShell or a
+ * Windows path (a backslash is a separator). A gate refuses when either reading names a guarded
+ * place, so neither shell's spelling is a way around it.
+ */
+export function shellReadings(segment: string): string[][] {
+  const bash = shellWords(segment);
+  return segment.includes('\\') ? [bash, shellWords(segment, false)] : [bash];
 }
 
 /** The shell's own segments of a command, as the original text. */
@@ -141,7 +152,15 @@ function segmentTarget(segment: string, match: WordMatch): string | null {
     const hit = match(m[2] ?? m[3]);
     if (hit) return hit;
   }
-  const words = shellWords(segment).filter((w) => w.length <= MAX_TOKEN);
+  for (const reading of shellReadings(segment)) {
+    const hit = wordsTarget(reading.filter((w) => w.length <= MAX_TOKEN), match);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** The guarded file one reading of a segment's words writes, or null. */
+function wordsTarget(words: string[], match: WordMatch): string | null {
   while (words.length > 0 && (/^[A-Za-z_]\w*=/.test(words[0]) || words[0] === 'sudo' || words[0] === 'command')) words.shift();
   const verb = (words[0] ?? '').split('/').pop() ?? '';
   const args = words.slice(1);
