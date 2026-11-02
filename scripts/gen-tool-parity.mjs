@@ -27,7 +27,7 @@ const rows = [...block.matchAll(/^\s*'?([a-z-]+)'?: \{ (claude: .*) \},$/gm)].ma
   antigravityWhy: field(rest, 'antigravityWhy'),
 }));
 
-const MODE = { auto: 'Sandboxed: project and linked repos, no network, approvals declined', default: 'Read-only, approvals declined' };
+const MODE = { auto: 'Sandboxed: project and linked repos, no network, approvals declined', default: 'Read-only: a command is approved only when every program in it reads, anything else declined' };
 const AG_MODE = { write: 'Answered by the bridge once its write gate ran; what the gate leaves to the owner is refused', read: 'Read-only: no edits, only plain read commands' };
 const lines = [
   '# What runs on which tool',

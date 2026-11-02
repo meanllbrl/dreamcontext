@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { claudeAwarePath, claudeDirectCommand } from './claude-path.js';
 import { treeKillRealChild } from './proc.js';
 import { SPAWNED_ENV } from './session-origin.js';
-import { codexModelOf, codexRunArgs, type HeadlessTool } from './t3-bridge/headless-envelope.js';
+import { codexModelOf, codexRunArgs, envelopeMode, envelopeRefusal, type HeadlessTool } from './t3-bridge/headless-envelope.js';
 import { bridgeNode } from './t3-bridge/node-floor.js';
 import { envTextTool } from './tool-text.js';
 import { listConnections } from './connections.js';
@@ -239,6 +239,9 @@ export function runPeerHeadless(
   const onTool = opts.tool ?? null;
   const node = onTool ? bridgeNode() : null;
   const cli = process.env.DREAMCONTEXT_CLI || process.argv[1] || '';
+  if (onTool && envelopeRefusal('peer', onTool)) {
+    return Promise.resolve({ ok: false, reply: '', sessionId: null, error: envelopeRefusal('peer', onTool) });
+  }
   if (onTool && (!node || !cli)) {
     return Promise.resolve({ ok: false, reply: '', sessionId: null, error: `${onTool === 'antigravity' ? 'Antigravity' : 'Codex'} needs Node 22.16 or newer on this Mac.` });
   }
@@ -410,7 +413,10 @@ export async function sendToPeer(
   }
 
   // 3. Wake the peer.
-  const tool = opts.tool === 'claude' ? null : opts.tool ?? envTextTool();
+  // The caller's tool, when that tool runs the peer surface: an Antigravity chat's peer turn goes
+  // to Claude (narrower than Antigravity's write bridge, headless-envelope.ts `peer`).
+  const callerTool = envTextTool();
+  const tool = opts.tool === 'claude' ? null : opts.tool ?? (callerTool && envelopeMode('peer', callerTool) ? callerTool : null);
   const run = await runPeerHeadless(peer, buildDeliveryPrompt(msg), {
     timeoutMs: opts.timeoutMs,
     model: opts.model,

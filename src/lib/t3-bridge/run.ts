@@ -92,7 +92,11 @@ export async function runT3Headless(o: T3RunOptions, deps: RunDeps = {}): Promis
   // proved per request (session.ts); Codex's is the project's trusted hooks.json, checked here.
   if (tool === 'codex' && !(deps.envGate ?? codexEnvGateReady(o.cwd, deps.home, undefined, o.account))) return say(fail(NO_ENV_GATE), 1);
   // A read-only surface reads on both tools: Codex reads through its shell, so a declined command
-  // would leave it blind. A plain read is allowed; on Codex it runs in the read-only sandbox too.
+  // would leave it blind. A plain read is allowed. The bridge cannot tell Codex's first ask from its
+  // ask to retry outside the sandbox (the frame carries the command only), so the gate is what
+  // holds: a command it allows only reads, and a read outside the read-only sandbox is the same
+  // read (that sandbox already reads the whole disk). Nothing that writes or reaches the network
+  // passes isPlainReadCommand, sandboxed or not.
   const readOnly = (tool === 'antigravity' && mode === 'read') || (tool === 'codex' && mode === 'default');
 
   const env = deps.env ?? process.env;

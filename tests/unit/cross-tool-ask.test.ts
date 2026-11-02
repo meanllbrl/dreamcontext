@@ -17,9 +17,9 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 describe('the envelope', () => {
   it('read-only by default on every tool, and --write is the ask-write row', () => {
     const c = askCommand({ tool: 'claude', prompt: 'p', cwd: dir }, 'p');
-    expect('args' in c && c.args).toEqual(['-p', 'p', '--output-format', 'json', '--permission-mode', 'default', '--allowedTools', 'Read', 'Grep', 'Glob']);
+    expect('args' in c && c.args).toEqual(['-p', 'p', '--output-format', 'json', '--strict-mcp-config', '--permission-mode', 'dontAsk', '--tools', 'Read,Grep,Glob']);
     const cw = askCommand({ tool: 'claude', prompt: 'p', cwd: dir, write: true, model: 'sonnet' }, 'p');
-    expect('args' in cw && cw.args).toEqual(['-p', 'p', '--output-format', 'json', '--permission-mode', 'acceptEdits', '--model', 'sonnet']);
+    expect('args' in cw && cw.args).toEqual(['-p', 'p', '--output-format', 'json', '--strict-mcp-config', '--permission-mode', 'acceptEdits', '--tools', 'Read,Grep,Glob,Edit,MultiEdit,Write', '--model', 'sonnet']);
     const x = askCommand({ tool: 'codex', prompt: 'p', cwd: dir, model: 'opus' }, 'p', { node: '/n', cli: '/cli.js' });
     expect('args' in x && x.args).toEqual(['/cli.js', 't3-run', '--surface', 'ask', '--prompt=p']);
     const a = askCommand({ tool: 'antigravity', prompt: 'p', cwd: dir, write: true }, 'p', { node: '/n', cli: '/cli.js' });
@@ -31,6 +31,9 @@ describe('the envelope', () => {
     const sandboxed = { DREAMCONTEXT_AGENT_TOOL: 'codex', CODEX_SANDBOX: 'seatbelt' };
     expect(askRefusal({ tool: 'claude', write: true }, sandboxed)).toMatch(/sandboxed/);
     expect(askRefusal({ tool: 'antigravity', write: true }, sandboxed)).toMatch(/sandboxed/);
+    // Antigravity's only writing flavour runs any command: wider than Claude's, so no --write there.
+    expect(askRefusal({ tool: 'antigravity', write: true }, {})).toMatch(/no edits-only mode/);
+    expect(askRefusal({ tool: 'antigravity' }, {})).toBeNull();
     expect(askRefusal({ tool: 'codex', write: true }, sandboxed)).toBeNull();
     expect(askRefusal({ tool: 'claude' }, sandboxed)).toBeNull();
     expect(askRefusal({ tool: 'codex' }, { DREAMCONTEXT_ASK_DEPTH: '2' })).toMatch(/inside an ask/);

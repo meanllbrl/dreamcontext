@@ -13,7 +13,7 @@ export function registerAskCommand(program: Command): void {
     .requiredOption('--tool <tool>', 'claude | codex | antigravity')
     .option('--model <model>', "a model of that tool (a Claude name is not sent to another tool)")
     .option('--agent <name>', 'run as this agent role (.claude/agents, ~/.claude/agents, or dreamcontext\'s own)')
-    .option('--write', 'let it edit files in this project (Claude acceptEdits, Codex its sandbox, Antigravity its write gate)')
+    .option('--write', 'let it edit files in this project (Claude: file tools only, Codex: its sandbox; not on Antigravity)')
     .option('--timeout <seconds>', 'give up after this long (default 600)')
     .option('--json', 'print the result as JSON')
     .action(async (words: string[], o: { tool: string; model?: string; agent?: string; write?: boolean; timeout?: string; json?: boolean }) => {

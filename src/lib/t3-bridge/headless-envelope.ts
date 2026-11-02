@@ -50,9 +50,9 @@ export const HEADLESS_ENVELOPES: Readonly<Record<HeadlessSurface, HeadlessEnvelo
   'task-step': { claude: 'its level, a pinned session id', codex: null, antigravity: null, brain: false, why: 'A task step pins a Claude session id before its first turn.', antigravityWhy: 'A task step pins a Claude session id before its first turn.' },
   'approval-question': { claude: 'plan mode, no orchestration tools', codex: 'default', antigravity: 'read', brain: false, strict: true },
   builder: { claude: 'allowlisted tools, forked sessions', codex: null, antigravity: null, brain: false, why: 'Not built yet: Codex threads do fork (thread/fork, a real turn on 0.164.0 kept the parent\'s words), but the builder runner starts Claude sessions only. A Codex lead builds its waves itself, its reviewers as spawn_agent sub-agents.', antigravityWhy: 'Not built yet: the builder runner starts Claude sessions only, and forking an Antigravity conversation was never tried. An Antigravity lead builds its waves itself, its reviewers as invoke_subagent sub-agents.' },
-  peer: { claude: 'auto, in the other project', codex: 'auto', antigravity: 'write', brain: true },
+  peer: { claude: 'auto, in the other project', codex: 'auto', antigravity: null, brain: true, antigravityWhy: 'Not built yet: Antigravity has no classifier-gated mode like Claude\'s auto, and its write bridge would let a peer\'s message run any command in another project.' },
   ask: { claude: 'read-only tools', codex: 'default', antigravity: 'read', brain: false, strict: true },
-  'ask-write': { claude: 'acceptEdits in the project', codex: 'auto', antigravity: 'write', brain: true, strict: true },
+  'ask-write': { claude: 'acceptEdits in the project', codex: 'auto', antigravity: null, brain: true, strict: true, antigravityWhy: 'Not built yet: Antigravity has no edits-only mode, and its write bridge would run any command, wider than Claude\'s acceptEdits.' },
 };
 
 export type HeadlessTool = 'codex' | 'antigravity';
@@ -73,10 +73,13 @@ export function envelopeRefusal(surface: HeadlessSurface, tool: HeadlessTool): s
 }
 
 /** Programs a read-only run may start: each only prints. */
-const READ_PROGRAMS = new Set(['cat', 'head', 'tail', 'ls', 'grep', 'wc', 'pwd', 'stat', 'file', 'diff', 'find', 'tree', 'echo', 'printf', 'true']);
+/** Not `tree` (`-o` writes a file) nor `file` (`-C` writes one): every name here has no flag that writes. */
+const READ_PROGRAMS = new Set(['cat', 'head', 'tail', 'ls', 'grep', 'wc', 'pwd', 'stat', 'diff', 'find', 'echo', 'printf', 'true']);
+/** The only paths a program may be named by: the system's own folders. */
+const SYSTEM_BIN = /^\/(?:usr\/)?bin\/([a-z]+)$/;
 /** `git` and `dreamcontext` subcommands that only read. */
 const READ_GIT = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'blame']);
-const READ_DC = /^(?:memory recall|snapshot|knowledge (?:index|show|list|read)|tasks (?:list|show|get)|features (?:list|show)|roadmap|bookmark list|changelog list|insights? (?:list|show)|lab (?:list|show)|theses list|peer list|super (?:read|jobs|status)|agents (?:list|show)|automations (?:list|show)|--version|--help)\b/;
+const READ_DC = /^(?:memory recall|snapshot|knowledge (?:index|show|list|read)|tasks (?:list|show|get)|features (?:list|show)|roadmap(?:$| (?:list|show)\b)|bookmark list|changelog list|insights? (?:list|show)|lab (?:list|show)|theses list|peer list|super (?:read|jobs|status)|agents (?:list|show)|automations (?:list|show)|--version|--help)\b/;
 
 /**
  * `c` cut at its unquoted `&&`, `||`, `;` and `|` into commands of words, quotes taken off; null
@@ -114,11 +117,18 @@ function plainCommands(c: string): string[][] | null {
 
 /** One command that only reads: a reading program, and none of its flags that write or run. */
 function readsOnly(words: readonly string[]): boolean {
-  const prog = words[0]!.replace(/^.*\//, '');
+  // `X=/bin/cat rm -rf ~` is an assignment and then `rm`: a first word with `=` is never a program
+  // name, and a path is only one of the system's own (`/bin/cat`), never `./cat` or `/tmp/x/cat`.
+  const first = words[0]!;
+  if (first.includes('=')) return false;
+  const sys = first.match(SYSTEM_BIN);
+  if (first.includes('/') && !sys) return false;
+  const prog = sys ? sys[1]! : first;
   if (READ_PROGRAMS.has(prog)) return !(prog === 'find' && words.some((w) => /^-(?:delete|exec|execdir|ok|okdir|fprint|fprint0|fprintf|fls)$/.test(w)));
   // `sed -n '<a>,<b>p' <files>` only prints; any other script (`w`, `e`, `-i`) is refused.
   if (prog === 'sed') return words[1] === '-n' && /^\d+(?:,\d+)?p$/.test(words[2] ?? '') && words.slice(3).every((w) => !w.startsWith('-'));
-  if (prog === 'git') return READ_GIT.has(words[1] ?? '') && !words.some((w) => /^--output\b|^-o$/.test(w));
+  // A diff driver or textconv from the repo's config runs a program: refused by name.
+  if (prog === 'git') return READ_GIT.has(words[1] ?? '') && !words.some((w) => /^--output\b|^-o|^--ext-diff\b|^--textconv\b/.test(w));
   if (prog === 'dreamcontext') return READ_DC.test(words.slice(1).join(' '));
   return false;
 }

@@ -6,9 +6,10 @@
  * The envelope is the `ask` / `ask-write` row of headless-envelope.ts, never wider:
  *   - read (default): Claude gets Read, Grep and Glob only; Codex runs read-only and may start a
  *     plain read command; Antigravity edits nothing and runs only a plain read command.
- *   - `--write`: Claude `acceptEdits` (edits in the project, every command refused, since `-p`
- *     has nobody to ask); Codex its `auto` sandbox (the project, no network); Antigravity the
- *     write gate's bridge.
+ *   - `--write`: Claude `acceptEdits` with only the file tools (edits in the project, no command);
+ *     Codex its `auto` sandbox (the project, no network). Not on Antigravity: its only writing
+ *     flavour runs any command, wider than Claude's.
+ *   Claude's tools are named with `--tools`, so a settings allow rule cannot add Bash back.
  *
  * Never less protected than the caller: a sandboxed Codex chat cannot hand a write to Claude or
  * Antigravity (neither has an OS sandbox), and an ask inside an ask inside an ask is refused (the
@@ -25,7 +26,7 @@ import { findPackageDir } from './catalog.js';
 import { claudeAwarePath, claudeDirectCommand } from './claude-path.js';
 import { SPAWNED_ENV } from './session-origin.js';
 import { sessionTool } from './session-id.js';
-import { codexModelOf, codexRunArgs, type HeadlessTool } from './t3-bridge/headless-envelope.js';
+import { codexModelOf, codexRunArgs, envelopeRefusal, type HeadlessTool } from './t3-bridge/headless-envelope.js';
 import { bridgeNode } from './t3-bridge/node-floor.js';
 import { SAFE_SKILL_NAME } from './tool-skills.js';
 import { toolText } from './tool-text.js';
@@ -93,14 +94,20 @@ export function askRefusal(i: Pick<AskInput, 'tool' | 'write' | 'model'>, env: N
   if (i.write && sessionTool(env) === 'codex' && env.CODEX_SANDBOX && i.tool !== 'codex') {
     return `This Codex chat runs sandboxed: it cannot hand a write to ${i.tool === 'claude' ? 'Claude' : 'Antigravity'}, which has no sandbox. Ask read-only, or ask Codex.`;
   }
+  if (i.tool !== 'claude') {
+    const why = envelopeRefusal(i.write ? 'ask-write' : 'ask', i.tool);
+    if (why) return why;
+  }
   return null;
 }
 
 /** The command line the ask runs, and the program. */
 export function askCommand(i: AskInput, prompt: string, o: { node?: string | null; cli?: string } = {}): { file: string; args: string[] } | { error: string } {
   if (i.tool === 'claude') {
-    const args = ['-p', prompt, '--output-format', 'json',
-      ...(i.write ? ['--permission-mode', 'acceptEdits'] : ['--permission-mode', 'default', '--allowedTools', 'Read', 'Grep', 'Glob']),
+    // `--tools` is the set of built-in tools that EXIST for this run, so no settings allow rule
+    // (`Bash(node:*)`) can add one back; `--strict-mcp-config` with no config = no MCP tools.
+    const args = ['-p', prompt, '--output-format', 'json', '--strict-mcp-config',
+      ...(i.write ? ['--permission-mode', 'acceptEdits', '--tools', 'Read,Grep,Glob,Edit,MultiEdit,Write'] : ['--permission-mode', 'dontAsk', '--tools', 'Read,Grep,Glob']),
       ...(i.model ? ['--model', i.model] : [])];
     const direct = claudeDirectCommand(args);
     return { file: direct.file, args: direct.args };

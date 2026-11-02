@@ -69,7 +69,10 @@ describe.skipIf(nodeMajor < 22)('headless Antigravity run (fake ACP agent)', () 
     const cwd = join(dir, 'project');
     mkdirSync(cwd, { recursive: true });
     const surfaces = (Object.keys(HEADLESS_ENVELOPES) as HeadlessSurface[]).filter((x) => HEADLESS_ENVELOPES[x].antigravity);
-    expect(surfaces).toEqual(expect.arrayContaining(['automation', 'agent', 'light', 'verdict', 'sleep', 'super-child', 'approval-question', 'peer', 'ask', 'ask-write']));
+    expect(surfaces).toEqual(expect.arrayContaining(['automation', 'agent', 'light', 'verdict', 'sleep', 'super-child', 'approval-question', 'ask']));
+    // Wider than Claude there, so they stay off (headless-envelope.ts): peer, ask-write.
+    expect(surfaces).not.toContain('peer');
+    expect(surfaces).not.toContain('ask-write');
     for (const surface of surfaces) {
       const lines: string[] = [];
       await runT3Headless(
