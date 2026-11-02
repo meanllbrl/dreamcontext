@@ -58,7 +58,9 @@ import type { AutomationManifest, AutomationQuestion } from '../../src/lib/autom
 let projectRoot: string;
 let contextRoot: string;
 let home: string;
-const NOW = new Date('2026-08-03T18:00:00.000Z');
+// Recent, never a fixed calendar day: a binding older than its 90-day TTL is expired on read
+// against the real clock, so a fixed date turned this suite red on 2026-11-01.
+const NOW = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000 - 2 * 3_600_000);
 const SESSION = 'sess-abc123';
 const RUN_PGID = 4242;
 
@@ -548,7 +550,7 @@ describe('resumeWithAnswer — capability lifetime', () => {
   it('KEEPS the binding while another question for the same automation is still open', async () => {
     makeAutomation();
     const q = makeQuestion();
-    makeQuestion({ nowISO: '2026-08-03T19:00:00.000Z' });
+    makeQuestion({ nowISO: new Date(NOW.getTime() + 3_600_000).toISOString() });
     const { impl } = fakeSpawn(claudeJson('done'));
     await resumeWithAnswer(contextRoot, q, 'send', 'cli', { home, spawnImpl: impl, now: () => NOW });
     expect(readAutomationSession('digest', SESSION, home)).toBe(SESSION);
