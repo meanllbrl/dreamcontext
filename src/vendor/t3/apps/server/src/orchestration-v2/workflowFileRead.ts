@@ -125,7 +125,7 @@ export const readContainedWorkflowFile = Effect.fn("orchestration.readContainedW
         new OrchestrationWorkflowFileError({ reason: "read-failed", path: resolved, cause }),
     });
     if ("failure" in read) {
-      return yield* new OrchestrationWorkflowFileError({ reason: read.failure, path: resolved });
+      return yield* new OrchestrationWorkflowFileError({ reason: read.failure ?? "read-failed", path: resolved });
     }
 
     return {
