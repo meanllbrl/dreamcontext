@@ -192,6 +192,9 @@
   overflow: auto;
 }
 .super-member-top:empty { display: none; }
+/* In the column's flow, never over the chat: no float shadow, its own stacking. */
+.super-member-top { position: relative; }
+.super-member-top .super-task-strip { box-shadow: none; }
 .super-member-band {
   flex: none;
   padding: var(--space-2) var(--space-3);

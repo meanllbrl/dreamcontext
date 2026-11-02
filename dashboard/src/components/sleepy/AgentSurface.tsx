@@ -105,6 +105,7 @@ import { coldMembers, coldWaiting, memberMirrorVerdict, type ColdTry, phoneMembe
 import { useMemberSummaries } from './super/useMemberSummaries';
 import { MemberApprovalBand, MemberRefusalLine } from './super/MemberStage';
 import { PhoneMemberStage } from './super/PhoneMemberStage';
+import { AgentAvatar } from '../agents/AgentAvatar';
 import { cardTitle } from './super/superTitles';
 import type { SurveyRead } from './chat/SurveyCard';
 import { PhoneAgenda, phoneEventContext } from './super/PhoneAgenda';
@@ -873,8 +874,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const [phoneMember, setPhoneMember] = useState<{ slug: string; session: string } | null>(null);
   /** The member mirror the phone is opening (or holds): while it stands the tab shows, not the view. */
   const [phoneMirror, setPhoneMirror] = useState<{ slug: string; session: string; at: number } | null>(null);
-  /** Member Super sessions the phone opened as a mirror: the "taken back" cleanup spares them. */
-  const memberMirrorsRef = useRef<Set<string>>(new Set());
+  /** Member Super sessions the phone opened as a mirror, to the member's slug: the "taken back"
+   *  cleanup spares them, and the tab names the member (head, placeholder), never main. */
+  const memberMirrorsRef = useRef<Map<string, string>>(new Map());
   /** Why the member on the stage could not be opened (its approval card, off, gone), or null. */
   const [memberRefusal, setMemberRefusal] = useState<{ slug: string; refusal: MemberRefusal } | null>(null);
   /** Show another super's stage: the view state stays one copy, re-bound to it (its pending edits
@@ -2844,10 +2846,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // The phone opens a handed-over Super Agent as an ordinary chat tab on its conversation. The
   // Mac decides it is a MIRROR (agent-chat.ts `phoneSuperOpen`): never `reattach=1`, so not even a
   // Mac that had stopped recognising the session would evict the window that holds it.
-  const openSuperOnPhone = useCallback((row: SuperChatWire) => {
+  const openSuperOnPhone = useCallback((row: SuperChatWire, title?: string) => {
     rememberSuperMirrorIds([row.conversationId]);
-    // The product's name, the same in every language (`handsfree.super.title`).
-    resumePastSession({ id: row.conversationId, title: 'Super Agent', named: true, updatedAt: Date.now(), preview: '' } as unknown as PastSession, 'passive');
+    // The product's name, the same in every language (`handsfree.super.title`); a member's mirror
+    // (plan-r10 AC9) is named by the member, so the owner never thinks he writes to main.
+    resumePastSession({ id: row.conversationId, title: title || 'Super Agent', named: true, updatedAt: Date.now(), preview: '' } as unknown as PastSession, 'passive');
   }, [resumePastSession]);
   // ── Run sleep agent (from the header's Sleep-debt tracker) ────────────────────────
   // Spawn a dedicated "Sleep" agent that auto-runs the project's consolidation flow, and
@@ -5805,11 +5808,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       // The read-only view (its transcript) stands behind it: shown again when the Mac does not
       // take the mirror (its Super is not live: the socket is refused or never opens).
       setPhoneMember({ slug, session: plan.session });
-      memberMirrorsRef.current.add(plan.session);
+      memberMirrorsRef.current.set(plan.session, slug);
       setPhoneMirror({ slug, session: plan.session, at: Date.now() });
       const held = stackTabsRef.current.find((x) => x.claudeId === plan.session || x.altClaudeId === plan.session);
       if (held) selectTab(held.paneId, held.id);
-      else openSuperOnPhone({ conversationId: plan.session, vault: vault ?? '', live: true } as SuperChatWire);
+      else openSuperOnPhone({ conversationId: plan.session, vault: vault ?? '', live: true } as SuperChatWire, findAgent(memberRoster.data, slug)?.title || slug);
       return;
     }
     const r = await openMemberSuper(scopedApi, slug);
@@ -6639,7 +6642,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   );
   /** A Super chat's composer line: main's as before, a member's "<name> ne yapsın?". */
   const superPlaceholderFor = (cs: ChatSession): string => {
-    const member = chatAgentFor(cs.claudeId);
+    const member = chatAgentFor(cs.claudeId) || memberMirrorsRef.current.get(cs.claudeId) || '';
     if (!member) return t('super.centre.placeholder');
     const name = findAgent(memberRoster.data, member)?.title || member;
     return t('superStage.member.placeholder').replace('{name}', name);
@@ -6647,6 +6650,13 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // ── The member stage's props (plan-r10 1, 1c, 1e, 1f) ──
   const stageMember = memberOf(activeSuperId);
   /** The phone (one chat, no stage) shows the member's own view over its chats while it is up. */
+  /** The phone's tab on screen, when it is a member's mirror: that member (its head, its placeholder). */
+  const mobileMemberSlug = (() => {
+    if (!isMobile || !mobileActive) return null;
+    const cid = sessions.current.get(mobileActive.id)?.claudeId || sessionList.find((m) => m.id === mobileActive.id)?.claudeId;
+    return cid ? memberMirrorsRef.current.get(cid) ?? null : null;
+  })();
+  const mobileMemberName = mobileMemberSlug ? (findAgent(memberRoster.data, mobileMemberSlug)?.title || mobileMemberSlug) : '';
   const phoneMemberShown = isMobile && isMacPhoneSurface() && superView === 'super' && !!stageMember
     && phoneMirror?.slug !== stageMember;
   const stageSummary = stageMember ? memberSummaries.find((m) => m.slug === stageMember) : undefined;
@@ -6766,7 +6776,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             onRetry={() => void openMemberStageRef.current(stageMember, memberTaskRef.current ?? undefined)}
           />
         )}
-        {superView === 'super' && stageMember && !superState && isMobile && !phoneMemberShown && (
+        {superView === 'super' && stageMember && !superState && isMobile && !phoneMemberShown && phoneMirror?.slug !== stageMember && (
           <div className="super-member-top" data-testid="member-stage-pending" data-super-id={activeSuperId}>
             {(memberRefusal?.slug === stageMember && memberRefusal.refusal === 'unapproved') || stageSummary?.approval ? <MemberApprovalBand slug={stageMember} /> : null}
             {memberRefusal?.slug === stageMember
@@ -7004,7 +7014,11 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             <>
               <span className="mchat-head-title" data-testid="chat-head-title">
                 {mobileActive && <span className="mchat-dot" data-kind={mobileActive.info.kind} aria-hidden />}
-                {mobileActive?.title ?? t('nav.chat')}
+                {/* A member's mirror: its face and name, as on the desktop's member stage. */}
+                {mobileMemberSlug && (
+                  <AgentAvatar of="agent" slug={mobileMemberSlug} title={mobileMemberName} hasPhoto={!!findAgent(memberRoster.data, mobileMemberSlug)?.hasPhoto} size={20} face={findAgent(memberRoster.data, mobileMemberSlug)?.face} />
+                )}
+                {mobileMemberSlug ? <span data-testid="super-member-name">{mobileMemberName}</span> : (mobileActive?.title ?? t('nav.chat'))}
               </span>
               {/* The phone's Super chat: the bar stays one line and the chat keeps the screen. */}
               {phoneSuperChat && <PhoneAgenda digest={phoneDigest} onWriteAbout={writePhoneAboutRow} onScreen={phoneSheetsOn} />}
@@ -7280,7 +7294,9 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
           // A handed-over Super Agent's child: the owner looks, and writes only to the Super
           // Agent (owner decision 3). Back to a normal composer the moment it is taken back.
           readOnly={marked.has(cs.claudeId)}
-          idlePlaceholder={cs.mode === 'super' ? superPlaceholderFor(cs) : undefined}
+          // A member's phone mirror (an ordinary chat mode) asks "<name> ne yapsın?" too; main's
+          // mirror and every other chat are unchanged.
+          idlePlaceholder={cs.mode === 'super' || memberMirrorsRef.current.has(cs.claudeId) ? superPlaceholderFor(cs) : undefined}
           aboveComposer={cs.id === mobileActive?.id ? phoneToastEl : undefined}
         />
         </StageCardsContext.Provider>,

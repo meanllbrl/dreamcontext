@@ -226,6 +226,26 @@ function CardSelectionScope({ id, onComment, onCommented, children }: {
 export function SuperSurface(props: SuperSurfaceProps) {
   const { state, pending, motion, superSession, onSlotsChanged } = props;
   const member = props.member;
+  // The member's top area (task strip, approval band, refusal) takes its own room above the chat,
+  // in the column's flow; it grows after its task loads, so the chat is re-placed and re-pinned
+  // whenever its height changes (the slot's epoch), never left scrolled under it at 390.
+  const memberTopRef = useRef<HTMLDivElement | null>(null);
+  const slotsChangedRef = useRef(onSlotsChanged);
+  slotsChangedRef.current = onSlotsChanged;
+  const hasMember = !!member;
+  useEffect(() => {
+    const el = memberTopRef.current;
+    if (!hasMember || !el || typeof ResizeObserver === 'undefined') return undefined;
+    let last = el.offsetHeight;
+    const ro = new ResizeObserver(() => {
+      const h = el.offsetHeight;
+      if (h === last) return;
+      last = h;
+      slotsChangedRef.current();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hasMember]);
   const remote = props.remote ?? null;
   // A remote screen's gestures pass the server's allowlist first (super/remoteStage.ts): what it
   // may not do (close, Others, group, a look) is not done here either, never applied for show.
@@ -1030,7 +1050,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               )}
             />
             {member && (
-              <div className="super-member-top">
+              <div className="super-member-top" ref={memberTopRef} data-testid="super-member-top">
                 {member.task && (
                   <TaskStrip task={member.task} member={member.slug} onOpenTask={member.onOpenTask} onClose={() => member.onTask(null)} />
                 )}

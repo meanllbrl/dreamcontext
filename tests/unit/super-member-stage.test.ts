@@ -212,7 +212,7 @@ describe("the stage's head is the member's (AC2)", () => {
     expect(parts).toContain('data-testid="member-agenda-tasks"');
   });
   it('the member\'s composer asks "<name> ne yapsın?"', () => {
-    expect(surface).toMatch(/idlePlaceholder=\{cs\.mode === 'super' \? superPlaceholderFor\(cs\) : undefined\}/);
+    expect(surface).toMatch(/idlePlaceholder=\{cs\.mode === 'super' \|\| memberMirrorsRef\.current\.has\(cs\.claudeId\) \? superPlaceholderFor\(cs\) : undefined\}/);
     expect(surface).toMatch(/return t\('superStage\.member\.placeholder'\)\.replace\('\{name\}', name\);/);
   });
 });
@@ -365,8 +365,8 @@ describe('end review fixes', () => {
 describe('the phone opens a member (super-members.mjs step i)', () => {
   const open = surface.slice(surface.indexOf('const openMemberStage = async'), surface.indexOf('const openMemberStageRef'));
   it('a live member Super opens as the phone\'s mirror tab (as main\'s Super row does), the read-only view behind it', () => {
-    expect(open).toMatch(/setPhoneMember\(\{ slug, session: plan\.session \}\);\s*memberMirrorsRef\.current\.add\(plan\.session\);\s*setPhoneMirror\(\{ slug, session: plan\.session, at: Date\.now\(\) \}\);/);
-    expect(open).toMatch(/if \(held\) selectTab\(held\.paneId, held\.id\);\s*else openSuperOnPhone\(\{ conversationId: plan\.session, vault: vault \?\? '', live: true \} as SuperChatWire\);/);
+    expect(open).toMatch(/setPhoneMember\(\{ slug, session: plan\.session \}\);\s*memberMirrorsRef\.current\.set\(plan\.session, slug\);\s*setPhoneMirror\(\{ slug, session: plan\.session, at: Date\.now\(\) \}\);/);
+    expect(open).toMatch(/if \(held\) selectTab\(held\.paneId, held\.id\);\s*else openSuperOnPhone\(\{ conversationId: plan\.session, vault: vault \?\? '', live: true \} as SuperChatWire, findAgent\(memberRoster\.data, slug\)\?\.title \|\| slug\);/);
     // A refused or not-running member never opens a tab: its line instead.
     expect(open.indexOf("if (plan.kind === 'refused') { setMemberRefusal")).toBeLessThan(open.indexOf('openSuperOnPhone('));
   });
@@ -408,6 +408,34 @@ describe('the phone opens a member (super-members.mjs step i)', () => {
   it('says so in both languages', () => {
     const i18n = src('dashboard/src/context/I18nContext.tsx');
     expect(i18n.match(/'superStage\.member\.phoneReadOnly'/g)?.length).toBe(2);
+  });
+});
+
+describe('the phone mirror and the task strip look right (observed run 3)', () => {
+  it("a member's mirror is named by the member: the tab title, the head's face and name, its placeholder", () => {
+    // The tab title: the member's name (main's stays "Super Agent").
+    expect(surface).toMatch(/resumePastSession\(\{ id: row\.conversationId, title: title \|\| 'Super Agent',/);
+    // The phone head: the member's face and name when the tab on screen is a member's mirror.
+    expect(surface).toMatch(/return cid \? memberMirrorsRef\.current\.get\(cid\) \?\? null : null;/);
+    expect(surface).toMatch(/\{mobileMemberSlug && \(\s*<AgentAvatar of="agent" slug=\{mobileMemberSlug\}/);
+    expect(surface).toMatch(/\{mobileMemberSlug \? <span data-testid="super-member-name">\{mobileMemberName\}<\/span> : \(mobileActive\?\.title \?\? t\('nav\.chat'\)\)\}/);
+    // The composer: "<name> ne yapsın?" on a member's mirror; main's mirror and other chats unchanged.
+    expect(surface).toMatch(/idlePlaceholder=\{cs\.mode === 'super' \|\| memberMirrorsRef\.current\.has\(cs\.claudeId\) \? superPlaceholderFor\(cs\) : undefined\}/);
+    expect(surface).toMatch(/const member = chatAgentFor\(cs\.claudeId\) \|\| memberMirrorsRef\.current\.get\(cs\.claudeId\) \|\| '';/);
+  });
+  it('the "Opening…" line goes once the mirror stands (it never sits over the transcript)', () => {
+    expect(surface).toMatch(/\{superView === 'super' && stageMember && !superState && isMobile && !phoneMemberShown && phoneMirror\?\.slug !== stageMember && \(/);
+    expect(surface).toMatch(/const phoneMemberShown = isMobile && isMacPhoneSurface\(\) && superView === 'super' && !!stageMember\s*&& phoneMirror\?\.slug !== stageMember;/);
+  });
+  it('the task strip takes its own room above the chat: in flow, and the chat is re-pinned when it grows', () => {
+    const stage = src('dashboard/src/components/sleepy/super/SuperSurface.tsx');
+    expect(stage).toMatch(/<div className="super-member-top" ref=\{memberTopRef\} data-testid="super-member-top">/);
+    expect(stage).toMatch(/const ro = new ResizeObserver\(\(\) => \{[\s\S]{0,120}slotsChangedRef\.current\(\);/);
+    const css = src('dashboard/src/components/sleepy/super/TaskStrip.css');
+    expect(css).toMatch(/\.super-member-top \{[^}]*flex: none;/);
+    expect(css).toMatch(/\.super-member-top \.super-task-strip \{ box-shadow: none; \}/);
+    // The slot change re-places the chat and re-pins every chat on screen (`fitAndResize`).
+    expect(surface).toMatch(/foreground\.forEach\(\(id\) => \{ const s = sessions\.current\.get\(id\); if \(s\) \{ s\.ensureOpen\(\{ focus: isActive \}\); s\.fitAndResize\(\); \} \}\);/);
   });
 });
 
