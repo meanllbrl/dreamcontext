@@ -65,10 +65,16 @@ describe('the menu item', () => {
     expect(chrome).toMatch(/deviceShell \? \{\} : \{ onRemoveProject:/);
   });
 
-  it('lands only on a project this window can hold, and says so when it cannot', () => {
-    expect(chrome).toMatch(/projectOrderRef\.current\.filter\(\(n\) => n === name \|\| !findWindowForVault\(n\)\)/);
-    expect(chrome).toMatch(/if \(landed !== 'added' && landed !== 'focused-tab'\)/);
-    expect(chrome).toMatch(/shell\.drawer\.removedStillOpen/);
+  it('lands on a project this window can hold BEFORE unregistering, and removes nothing without one', () => {
+    const body = chrome.slice(chrome.indexOf('const removeProject = useCallback'), chrome.indexOf('}, [launcherStatus, unregisterVault'));
+    expect(body).toMatch(/projectOrderRef\.current\.filter\(\(n\) => n === name \|\| !findWindowForVault\(n\)\)/);
+    // Nowhere to land: refused before the question is even asked.
+    expect(body.indexOf("'shell.drawer.removeNeedsAnother'")).toBeLessThan(body.indexOf('confirmRemoveProject('));
+    // Landing happens inside the unregister step, before the registry call, and a failed landing throws.
+    const land = body.indexOf('await addTab(landOn)');
+    expect(land).toBeGreaterThan(-1);
+    expect(land).toBeLessThan(body.indexOf('unregisterVault.mutateAsync(n)'));
+    expect(body).toMatch(/if \(landed !== 'added' && landed !== 'focused-tab'\) throw new Error/);
   });
 
   it('asks through confirmAction and never window.confirm, and offers no delete', () => {
