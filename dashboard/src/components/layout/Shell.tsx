@@ -2,10 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { Header } from './Header';
 import { Sidebar, type Page } from './Sidebar';
 import { CommandPalette } from '../search/CommandPalette';
-import { useVault, emitInstance } from '../../context/VaultContext';
+import { useVault, emitInstance, useInstanceEvent } from '../../context/VaultContext';
 import { readScopedRaw, writeScopedRaw } from '../../lib/scopedStorage';
 import { useRailGlide } from './useRailGlide';
 import { publishPage } from '../../lib/pageContext';
+import { planProjectSwitch, publishShownSurface, readShownSurface } from '../../lib/projectSwitchPage';
+import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from '../../lib/agentSettings';
 import { readDeviceShell, useIsNewShell } from '../../lib/uxMode';
 import { DEVICE_HIDDEN_PAGES } from './newshell/railModel';
 import { NewShellControls } from './newshell/NewShellControls';
@@ -215,6 +217,25 @@ export function Shell({ children, sidebarCollapsed, onToggleSidebar }: ShellProp
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isActive, navigate]);
+
+  // Switching project keeps the page (owner 2026-11-03, lib/projectSwitchPage.ts): the project
+  // on screen publishes its page and whether Chat is open; the one coming on screen follows once.
+  const [chatOpen, setChatOpen] = useState(false);
+  useInstanceEvent<boolean>(AGENT_SURFACE_EXPANDED_EVENT, (open) => setChatOpen(open === true));
+  const wasActiveRef = useRef(false);
+  useEffect(() => {
+    const arrived = isActive && !wasActiveRef.current;
+    wasActiveRef.current = isActive;
+    if (!arrived) return;
+    const plan = planProjectSwitch(readShownSurface(), { page: activePage, chat: chatOpen },
+      (p) => !(newShell && readDeviceShell() && DEVICE_HIDDEN_PAGES.has(p)));
+    if (plan.navigate) navigate(plan.navigate, null);
+    if (plan.chat === true) openAgentSurface(bus);
+    else if (plan.chat === false && !plan.navigate) emitInstance(bus, 'dreamcontext-navigate', { page: activePage });
+  }, [isActive]); // eslint-disable-line react-hooks/exhaustive-deps -- once per arrival on screen
+  useEffect(() => {
+    if (isActive) publishShownSurface({ page: activePage, chat: chatOpen });
+  }, [isActive, activePage, chatOpen]);
 
   const handleSidebarNavigate = useCallback(
     (page: Page, id?: string) => {
