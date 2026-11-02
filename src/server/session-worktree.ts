@@ -2,7 +2,7 @@ import { realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve, sep } from 'node:path';
 import { resolveAgentSession } from '../lib/agent-session-map.js';
-import { readSuperState, acceptableWorktree, superWorktreeRoot } from '../lib/super/store.js';
+import { readSuperState, acceptableWorktree, listMemberSupers, superIdOfMember, superWorktreeRoot } from '../lib/super/store.js';
 import { isGovernedCheckout } from '../lib/session-cwd.js';
 import { resolveSessionDir } from './routes/agent-shelf.js';
 
@@ -35,13 +35,17 @@ export async function sessionWorktreeRoot(
   const ids = [...new Set([session, resolveAgentSession(contextRoot, session) || session])];
 
   const candidates: string[] = [];
-  try {
-    const state = await readSuperState(contextRoot, { home });
-    for (const id of ids) {
-      const wt = Object.hasOwn(state.children, id) ? state.children[id]?.worktree : undefined;
-      if (wt) candidates.push(wt);
-    }
-  } catch { /* no readable record: the session's own checkout below may still answer */ }
+  // Main's record, then each member Super's (plan-r10 1): a member's child has its worktree too.
+  const ids2 = ['main' as const, ...(await listMemberSupers(contextRoot)).map(superIdOfMember)];
+  for (const sid of ids2) {
+    try {
+      const state = await readSuperState(contextRoot, sid, { home });
+      for (const id of ids) {
+        const wt = Object.hasOwn(state.children, id) ? state.children[id]?.worktree : undefined;
+        if (wt) candidates.push(wt);
+      }
+    } catch { /* no readable record: the session's own checkout below may still answer */ }
+  }
   const moved = resolveSessionDir(session, projectRoot, { home });
   if (moved !== projectRoot) candidates.push(moved);
 

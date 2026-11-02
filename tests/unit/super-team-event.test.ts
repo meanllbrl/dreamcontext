@@ -57,7 +57,7 @@ import { emptySuperState, type SuperState, type SuperTeamJob } from '../../src/l
 import { AWAITED_LINE, TEAM_LINE, _resetSuperInbox, heldBlock, markSuperEventTurn, nextBatch, noteHeld, superBatchText, writeSuper } from '../../src/lib/super/inbox.js';
 import { noteTeamFollowUp, setTeamLiveSource, teamJobAnswer, noteTeamJobEnd, noteTeamJobPosts, recordTeamFollowUp, teamItemLines, teamJobStatus, teamJobTrailing, teamLiveRows } from '../../src/lib/super/team.js';
 import { noteRunSession, runningSessionFor } from '../../src/lib/automations/run-session.js';
-import { TEAM_JOB_WATCH_MS, checkTeamJob, handleSuperVerb } from '../../src/server/routes/super.js';
+import { TEAM_JOB_WATCH_MS, checkTeamJob, handleSuperVerb, setTeamAskRouteForTest } from '../../src/server/routes/super.js';
 import { createQuestion, listQuestions, noteResolution, resolveQuestion } from '../../src/lib/automations/hitl.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { createAutomation, getRunTarget, lockPathFor } from '../../src/lib/automations/store.js';
@@ -73,6 +73,11 @@ let root: string;
 let token = '';
 const SUPER = 'sup-1';
 const RUN = '2026-10-21T01:00:00.000Z';
+
+// Wave 1's headless team-ask chain (it still serves in-flight jobs and the owner's thread reply):
+// these tests drive it through `team ask`; Wave 2's request route is super-multi-*.test.ts.
+beforeEach(() => { setTeamAskRouteForTest('say'); });
+afterEach(() => { setTeamAskRouteForTest(null); });
 
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'super-team-')));

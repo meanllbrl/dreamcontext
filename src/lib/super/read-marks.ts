@@ -1,7 +1,9 @@
 import { promises as fsp } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { renameWithRetry } from '../fs-retry.js';
+import { superReadMarksPath } from './store.js';
+import type { SuperId } from './types.js';
 
 /**
  * What the owner has read in the Super Agent's chat — `state/.super/read-marks.json`, one per
@@ -81,7 +83,8 @@ export function parseReadPatch(body: unknown): ReadPatch | null {
   return patch;
 }
 
-const marksPath = (contextRoot: string) => join(contextRoot, READ_MARKS_REL);
+/** Main's file (READ_MARKS_REL), or a member Super's beside its record (plan-r10 1). */
+const marksPath = (contextRoot: string, id: SuperId = 'main') => (id === 'main' ? join(contextRoot, READ_MARKS_REL) : superReadMarksPath(contextRoot, id));
 
 async function loadFile(path: string): Promise<SuperReadMarks | null> {
   try {
@@ -97,6 +100,11 @@ async function loadFile(path: string): Promise<SuperReadMarks | null> {
 async function checkDir(dir: string): Promise<void> {
   const st = await fsp.lstat(dir).catch(() => null);
   if (st && !st.isDirectory()) throw new Error('state/.super is not a directory');
+  // A member's marks live one folder down (`state/.super/members/`): its parent is checked too.
+  if (basename(dir) === 'members') {
+    const up = await fsp.lstat(dirname(dir)).catch(() => null);
+    if (up && !up.isDirectory()) throw new Error('state/.super is not a directory');
+  }
 }
 
 async function saveFile(path: string, marks: SuperReadMarks): Promise<void> {
@@ -122,14 +130,14 @@ function serial<T>(path: string, run: () => Promise<T>): Promise<T> {
 }
 
 /** The vault's record, or null before its birth. Never writes (the phone's GET rule). */
-export function readReadMarks(contextRoot: string): Promise<SuperReadMarks | null> {
-  const path = marksPath(contextRoot);
+export function readReadMarks(contextRoot: string, id: SuperId = 'main'): Promise<SuperReadMarks | null> {
+  const path = marksPath(contextRoot, id);
   return serial(path, () => loadFile(path));
 }
 
 /** Any write births the record (an empty patch is how the window does it): `since` = now. */
-export function applyReadMarks(contextRoot: string, patch: ReadPatch, now: number = Date.now()): Promise<SuperReadMarks> {
-  const path = marksPath(contextRoot);
+export function applyReadMarks(contextRoot: string, patch: ReadPatch, now: number = Date.now(), id: SuperId = 'main'): Promise<SuperReadMarks> {
+  const path = marksPath(contextRoot, id);
   return serial(path, async () => {
     const merged = mergeReadMarks((await loadFile(path)) ?? { since: now, read: [] }, patch);
     await saveFile(path, merged);
@@ -138,8 +146,8 @@ export function applyReadMarks(contextRoot: string, patch: ReadPatch, now: numbe
 }
 
 /** The record's death: the owner took the Super Agent back. */
-export function clearReadMarks(contextRoot: string): Promise<void> {
-  const path = marksPath(contextRoot);
+export function clearReadMarks(contextRoot: string, id: SuperId = 'main'): Promise<void> {
+  const path = marksPath(contextRoot, id);
   return serial(path, async () => {
     await checkDir(dirname(path));
     await fsp.rm(path, { force: true });

@@ -9,7 +9,32 @@ import { MAX_CONTAINERS, MAX_FLOAT, MAX_READ_BYTES, MAX_TEAM_JOBS, floatCount, t
 import { runChatSession } from '../automations/run-chat.js';
 import { countEvent, newQueueId } from './inbox.js';
 import { makeRoom } from './room.js';
-import { memberTeamCardId } from './store.js';
+import { memberTeamCardId, superEntry, superIdOfMember } from './store.js';
+
+/**
+ * A team job that is a `request` in the member's own Super (plan-r10 1, Wave 2): its card and
+ * `super state` read the MEMBER's record, never a thread. The inbox registers where that record's
+ * item is read from (its cache of each super's last record): this module imports none of it.
+ */
+type RequestSource = (contextRoot: string, member: string, requestId: string) => SuperQueueItem | null;
+/** Kept on the (hoisted) function itself, never a module `let`: the inbox registers it while this
+ *  module may still be evaluating (inbox.ts and team.ts import each other). */
+export function setRequestSource(fn: RequestSource | null): void { (setRequestSource as unknown as { fn: RequestSource | null }).fn = fn; }
+function requestSourceOf(): RequestSource | null { return (setRequestSource as unknown as { fn?: RequestSource | null }).fn ?? null; }
+
+/** A request job's status and line, from the member's record: queued until its turn carries it,
+ *  running while it is delivered or accepted, done at `team done`. */
+export function requestJobStatus(contextRoot: string, job: SuperTeamJob): { status: TeamJobStatus; lastLine: string } {
+  const source = requestSourceOf();
+  const item = job.request && source ? source(contextRoot, job.member, job.request) : null;
+  if (job.told === 'done' && !item) return { status: 'done', lastLine: job.brief };
+  if (!item) return { status: job.told === 'done' ? 'done' : 'queued', lastLine: job.brief };
+  if (item.state === 'done') return { status: 'done', lastLine: firstLine(item.result ?? job.brief, 200) };
+  // The member was turned off: the job waits, undelivered (main was told once).
+  if (!superEntry(contextRoot, superIdOfMember(job.member)).enabled) return { status: 'failed', lastLine: 'The member is turned off: this job waits until the owner turns it on.' };
+  if (item.state === 'pending') return { status: 'queued', lastLine: job.brief };
+  return { status: 'running', lastLine: job.brief };
+}
 
 /**
  * The Super Agent's jobs for the project's AI Team (`super team ask`, task
@@ -140,7 +165,8 @@ export function teamJobOwed(j: SuperTeamJob): boolean {
  *  memory, the record survives a restart and an answer days later. */
 export function armTeamJobWatches(contextRoot: string, s: Pick<SuperState, 'team' | 'enabled' | 'session'>): void {
   if (!jobWatcher || !s.enabled || !s.session) return;
-  for (const j of s.team) if (teamJobOwed(j) || teamJobTrailing(j)) jobWatcher(contextRoot, j.id);
+  // A request job is the member's own Super's: no thread to watch (its events come from team done).
+  for (const j of s.team) if (!j.request && (teamJobOwed(j) || teamJobTrailing(j))) jobWatcher(contextRoot, j.id);
 }
 
 /** How long a job whose ending was told is still read for a late post (a background wait that
@@ -169,6 +195,11 @@ export interface TeamLiveRow {
 
 /** The session a job's run lives in, as every surface believes it (`runChatSession`). */
 function jobSession(contextRoot: string, j: SuperTeamJob): { sessionId?: string; resumable?: true } {
+  // A request lives in the member's own Super chat: its session is the card's.
+  if (j.request) {
+    const sid = superEntry(contextRoot, superIdOfMember(j.member)).session;
+    return sid ? { sessionId: sid } : {};
+  }
   try {
     const chat = runChatSession(contextRoot, j.member, j.runId);
     return chat ? { sessionId: chat.claudeId, ...(chat.resumable ? { resumable: true as const } : {}) } : {};
@@ -320,6 +351,11 @@ function replyWindow(job: SuperTeamJob, liveReply: Extract<LiveSayJob, { kind: '
  * MAX_READ_BYTES of it.
  */
 export function teamJobAnswer(contextRoot: string, job: SuperTeamJob, live: LiveSayJob | null): string {
+  if (job.request) {
+    const source = requestSourceOf();
+    const item = source ? source(contextRoot, job.member, job.request) : null;
+    return item?.result ?? '';
+  }
   const { after } = jobThread(contextRoot, job);
   // A run's window is every post after its ask, the one `teamJobLive` reads (plan r8 §B). A follow-up
   // asked while the member still runs lands in the same run: task super-takip-sorusu-cevap-penceresi.
@@ -424,6 +460,7 @@ export function teamJobEnding(contextRoot: string, job: SuperTeamJob, live: Live
 /** A team job's status and last line as the card and `super state` show them: the same reading
  *  as the super's events (a run that asked reads asking, never done), the thread for the rest. */
 export function teamJobStatus(contextRoot: string, job: SuperTeamJob, live: LiveSayJob | null): { status: TeamJobStatus; lastLine: string } {
+  if (job.request) return requestJobStatus(contextRoot, job);
   // A stuck its watch concluded (gone, lost with the server) stays what the super was told.
   if (job.concluded) return { status: 'failed', lastLine: CONCLUDED_LINES[job.concluded] };
   const row = teamJobLive(contextRoot, job, live);
@@ -574,6 +611,8 @@ export function recordTeamFollowUp(
 export function staleTeamItem(s: Pick<SuperState, 'team'>, q: SuperQueueItem, contextRoot?: string): boolean {
   const job = s.team.find((j) => j.id === q.team);
   if (q.partial) return !job;
+  // A request job's events come from the member's own Super, never from a thread.
+  if (job?.request) return q.kind === 'question' ? false : job.told !== q.kind;
   if (!job || job.told !== q.kind) return true;
   if (q.kind !== 'question' || contextRoot === undefined) return false;
   const end = teamJobEnding(contextRoot, job, null);
@@ -589,6 +628,7 @@ export function awaitedTeamItem(s: Pick<SuperState, 'team'>, q: SuperQueueItem):
 export function teamItemLines(contextRoot: string, vault: string, s: Pick<SuperState, 'team'>, q: SuperQueueItem): string[] {
   const job = s.team.find((j) => j.id === q.team);
   if (!job) return [`- item=${q.id} team=${q.team} event=${q.kind} moved-on`];
+  if (job.request) return requestJobLines(contextRoot, vault, s, job, q);
   const live = liveSource ? liveSource(contextRoot, job) : null;
   const row = teamJobStatus(contextRoot, job, live);
   const end = teamJobEnding(contextRoot, job, live);
@@ -628,6 +668,25 @@ function itemPosts(contextRoot: string, s: Pick<SuperState, 'team'>, job: SuperT
     .filter((e) => (range.after === undefined || e.id > range.after) && e.id <= (range.upto as string))
     .map((e) => e.text.trim());
   return posts.length ? [posts[posts.length - 1], ...posts.slice(0, -1)].join('\n\n') : '';
+}
+
+/**
+ * One event of a job main gave a member's own Super (plan-r10 1): its `team done` (the result), a
+ * note that closes nothing (event=answer), or the member's QUESTION to main, which only main
+ * answers (`super team answer`), or asks the owner as its own question.
+ */
+function requestJobLines(contextRoot: string, vault: string, s: Pick<SuperState, 'team'>, job: SuperTeamJob, q: SuperQueueItem): string[] {
+  const status = q.kind === 'question' ? 'asking' : requestJobStatus(contextRoot, job).status;
+  const event = q.kind === 'question' ? 'question' : q.partial ? 'answer' : q.kind;
+  const lines = [`- item=${q.id} team=${job.id} member=${job.member} event=${event} from=member-super${awaitedTeamItem(s, q) ? ` awaited=owner${job.origin ? ` origin=${job.origin}` : ''}` : ''} status=${status}`];
+  if (job.brief) lines.push(wrapUntrusted(vault, `Brief: ${job.brief}`));
+  if (q.kind === 'question') {
+    lines.push(wrapUntrusted(vault, `Question: ${q.text ?? ''}`));
+    lines.push(`  This member's Super asks YOU, about the job you gave it: answer with \`dreamcontext super team answer ${q.id} "<answer>"\`; if only the owner can say, ask him with your own \`super ask\` (never forward the member).`);
+    return lines;
+  }
+  if (q.text) lines.push(...answerLines(vault, job, q.text));
+  return lines;
 }
 
 function answerLines(vault: string, job: SuperTeamJob, answer: string): string[] {

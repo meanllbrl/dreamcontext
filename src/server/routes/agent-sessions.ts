@@ -14,6 +14,8 @@ import { isAutomationBoundSession } from '../../lib/automations/session-registry
 import { isSafeAutomationSlug } from '../../lib/automations/store.js';
 import { CHAT_MODES, type ChatMode } from '../chat-modes.js';
 import { readSuperState } from '../../lib/super/store.js';
+import { memberSummaries, memberSuperSessions } from '../../lib/super/member-summary.js';
+import type { SuperMemberSummary } from '../../lib/super/types.js';
 import { backgroundBusy, superSanitizeOpts } from '../../lib/super/inbox.js';
 import { activityOf, getChat } from '../../lib/assistant/chat-registry.js';
 import { superRestoreHold, type SuperRestoreHold } from '../../lib/super/restore.js';
@@ -759,14 +761,18 @@ export async function handleAgentSessionsGet(
   // window's (D3): read-only, narrowed, never written.
   if (phone && new URL(_req.url ?? '/', 'http://x').searchParams.get('of') === 'desktop') {
     // An unreadable record may be a handed-over project: the seed fails closed (nothing).
-    sendJson(res, 200, { sessions: superUnread ? [] : desktopSeed(readSurface(contextRoot, false), superState) });
+    const memberSessions = await memberSuperSessions(contextRoot, superSanitizeOpts()).catch(() => new Set<string>());
+    sendJson(res, 200, { sessions: superUnread ? [] : desktopSeed(readSurface(contextRoot, false), superState).filter((t) => !memberSessions.has(t.sessionId)) });
     return;
   }
   const saved = readSurface(contextRoot, phone);
   // The new shell's drawer polls a project it has not mounted (D7): counts only, never the
   // tab bodies or the drafts (up to 1 MB a project), so a poll stays a few bytes.
   if (new URL(_req.url ?? '/', 'http://x').searchParams.get('summary') === '1') {
-    sendJson(res, 200, rosterSummary(saved, superUnread ? emptySuperState() : superState));
+    // A member's own Super and its children are never the owner's tabs; each member's Ekip facts ride along.
+    const memberSessions = await memberSuperSessions(contextRoot, superSanitizeOpts()).catch(() => new Set<string>());
+    const members = await memberSummaries(contextRoot, { ...superSanitizeOpts(), home }).catch(() => []);
+    sendJson(res, 200, { ...rosterSummary(saved, superUnread ? emptySuperState() : superState, childRunsNow, memberSessions), members });
     return;
   }
   const body = surfaceBody(saved, (id) => isAutomationBoundSession(id, home) !== null);
@@ -812,6 +818,8 @@ export interface RosterSummary {
   /** The drawer's Super Agent row for a project not mounted: children at work, a question waiting. */
   superWorking: number;
   superAsking: boolean;
+  /** Each AI Team member's owner-facing facts (plan-r10 1; the route adds them). */
+  members?: SuperMemberSummary[];
 }
 
 /** Does a process run this child now? A row can outlive its process, so the record alone is not
@@ -823,13 +831,13 @@ function childRunsNow(sid: string): boolean {
   return act !== 'gone' && (act !== 'idle' || backgroundBusy(e));
 }
 
-export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>, superState: Pick<SuperState, 'enabled' | 'session'> & Partial<Pick<SuperState, 'children' | 'formerChildren' | 'queue' | 'released'>>, runsNow: (sid: string) => boolean = childRunsNow): RosterSummary {
+export function rosterSummary(saved: Pick<SavedSurface, 'sessions' | 'windows'>, superState: Pick<SuperState, 'enabled' | 'session'> & Partial<Pick<SuperState, 'children' | 'formerChildren' | 'queue' | 'released'>>, runsNow: (sid: string) => boolean = childRunsNow, memberSessions: ReadonlySet<string> = new Set()): RosterSummary {
   const settled = withWindows({ sessions: saved.sessions }, saved.windows);
   // The drawer's count of a project: the owner's chats, never the Super Agent's sessions (they
   // stay in the roster; only this count leaves them out).
   const former = new Set(superState.formerChildren ?? []);
   const released = new Set(superState.enabled ? [] : superState.released ?? []);
-  const isSupers = (id: string) => id === superState.session || (!!superState.children?.[id] && !released.has(id)) || former.has(id);
+  const isSupers = (id: string) => id === superState.session || (!!superState.children?.[id] && !released.has(id)) || former.has(id) || memberSessions.has(id);
   const own = settled.sessions.filter((m) => !m.sessionId || !isSupers(m.sessionId));
   const perWindow = settled.windows.map((w) => ({ id: w.id, name: w.name, tabs: own.filter((m) => m.window === w.id).length }));
   // Mirrors the window's `needsOwner` (pinned by the super-row-marks test).

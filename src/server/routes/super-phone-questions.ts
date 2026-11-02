@@ -3,6 +3,7 @@ import { parseJsonBody, sendError, sendJson } from '../middleware.js';
 import { isAgentRequest } from '../desktop.js';
 import { isPhoneSocket } from '../phone-origin.js';
 import { isReservedId, readSuperState } from '../../lib/super/store.js';
+import { querySuperId } from '../super-id-query.js';
 import { directQuestion, superSanitizeOpts, superVaultName, writeSuper } from '../../lib/super/inbox.js';
 import { askSpecFromLegacy, type SuperAskSpec, type SuperQueueItem, type SuperState } from '../../lib/super/types.js';
 import { getChat, pendingRequest, type RegistryQuestion } from '../../lib/assistant/chat-registry.js';
@@ -100,9 +101,11 @@ export function phoneSuperQuestions(state: Pick<SuperState, 'enabled' | 'session
 /** GET /api/agent/super-questions */
 export async function handleSuperPhoneQuestions(req: IncomingMessage, res: ServerResponse, _params: unknown, contextRoot: string): Promise<void> {
   if (!isAgentRequest(req)) { sendError(res, 403, 'forbidden', 'Available only in the desktop app or a signed-in phone.'); return; }
+  const superId = querySuperId(req, res, contextRoot);
+  if (!superId) return;
   let state: SuperState;
   try {
-    state = await readSuperState(contextRoot, superSanitizeOpts());
+    state = await readSuperState(contextRoot, superId, superSanitizeOpts());
   } catch (err) {
     // Unread is not "not handed over": the phone keeps what it draws and reads again.
     console.warn(`[super-phone] ${contextRoot}: the record could not be read: ${(err as Error).message}`);
@@ -147,8 +150,10 @@ export async function handleSuperPhoneAnswer(req: IncomingMessage, res: ServerRe
   const id = typeof b.item === 'string' ? b.item : '';
   const requestId = typeof b.requestId === 'string' ? b.requestId : '';
   if (!id || !requestId || requestId.length > 200) { sendError(res, 400, 'invalid_args', 'item and requestId are required'); return; }
+  const answerSuper = querySuperId(req, res, contextRoot);
+  if (!answerSuper) return;
   let state: SuperState;
-  try { state = await readSuperState(contextRoot, superSanitizeOpts()); } catch (err) {
+  try { state = await readSuperState(contextRoot, answerSuper, superSanitizeOpts()); } catch (err) {
     // Unread is not "not handed over": a retry may land (the card comes back with its picks).
     console.warn(`[super-phone] ${contextRoot}: the record could not be read for an answer: ${(err as Error).message}`);
     sendError(res, 503, 'unavailable', 'The Super Agent record could not be read; try again.');

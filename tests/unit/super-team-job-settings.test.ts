@@ -53,7 +53,7 @@ import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { SUPER_STATE_REL, readSuperState, resetSuperIndex } from '../../src/lib/super/store.js';
 import { emptySuperState } from '../../src/lib/super/types.js';
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
-import { handleSuperVerb } from '../../src/server/routes/super.js';
+import { handleSuperVerb, setTeamAskRouteForTest } from '../../src/server/routes/super.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { createAgent, getAgent } from '../../src/lib/agents/store.js';
 import { approveAutomation, canonicalApprovalPayload, checkApproval } from '../../src/lib/automations/registry.js';
@@ -67,6 +67,11 @@ let dir: string;
 let root: string;
 let token = '';
 const SUPER = 'sup-1';
+
+// Wave 1's headless team-ask chain (it still serves in-flight jobs and the owner's thread reply):
+// these tests drive it through `team ask`; Wave 2's request route is super-multi-*.test.ts.
+beforeEach(() => { setTeamAskRouteForTest('say'); });
+afterEach(() => { setTeamAskRouteForTest(null); });
 
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'super-team-settings-')));

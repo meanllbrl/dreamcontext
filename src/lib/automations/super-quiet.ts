@@ -2,7 +2,7 @@ import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readMachineIdentity } from '../machine-id.js';
 import { getAutomation } from './store.js';
-import { MAX_FILE_BYTES, SUPER_STATE_REL } from '../super/store.js';
+import { MAX_FILE_BYTES, superRecordPath } from '../super/store.js';
 import { listQuestions } from './hitl.js';
 import { parseDayFile, readThread, threadSlugDir } from './threads.js';
 import type { AutomationQuestion, ThreadEntry } from './types.js';
@@ -40,7 +40,7 @@ interface SuperRecord { enabled: boolean; open: Set<string> }
  *  oversize file is no record, and no record means notify. */
 function readRecord(contextRoot: string): SuperRecord | null {
   try {
-    const path = join(contextRoot, SUPER_STATE_REL);
+    const path = superRecordPath(contextRoot, 'main');
     const st = lstatSync(path);
     if (!st.isFile() || st.size > MAX_FILE_BYTES) return null;
     const raw = JSON.parse(readFileSync(path, 'utf-8')) as { enabled?: unknown; team?: unknown; queue?: unknown };

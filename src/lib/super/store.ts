@@ -4,10 +4,10 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   AGENDA_REF, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
-  MAX_OWNER_BATCHES, MAX_OWNER_TEXT, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
+  MAX_OWNER_BATCHES, MAX_MAIN_BATCHES, MAX_OWNER_TEXT, MAX_REQUEST_TEXT, MAX_REQUEST_RESULT, MEMBER_SUPER_PREFIX, parseWorkOrigin, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, MAX_START_ERROR, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
   ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, trimTeamJobs, viewWithout,
-  type AskShow, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
+  type AskShow, type SuperId, type SuperChild, type SuperContainer, type SuperPadItem, type SuperDismissed, type SuperNote, type SuperPoolItem, type SuperQueueItem, type SuperState, type SuperTeamJob, type SuperView, type SuperHeldEvent,
 } from './types.js';
 import { JOB_EFFORTS, parseJob, promptHash } from './jobs.js';
 import { sanitizeModel } from '../claude-args.js';
@@ -72,6 +72,78 @@ const okSessionId = (id: string): boolean => SESSION_ID_RE.test(id) && !RESERVED
 
 export function superStatePath(contextRoot: string): string {
   return join(contextRoot, SUPER_STATE_REL);
+}
+
+// ─── Which super (plan-r10 1: one Super per AI Team member beside the project's own) ─────────
+
+/** Where every member Super's files live: `state/.super/members/` (local-only, brain-repo.ts). */
+export const MEMBER_SUPER_DIR = join('state', '.super', 'members');
+
+/**
+ * A super id from the wire: absent or '' = `main`; `m:<slug>` with the agent slug charset
+ * (`isSafeAutomationSlug`, at most 100 characters: `..`, `/` and anything else refused) = that
+ * member; anything else = null (the caller answers 400). Whether the member EXISTS is the caller's
+ * check (no manifest: 404).
+ */
+export function parseSuperId(raw: unknown): SuperId | null {
+  if (raw === undefined || raw === null || raw === '' || raw === 'main') return 'main';
+  if (typeof raw !== 'string' || !raw.startsWith(MEMBER_SUPER_PREFIX)) return null;
+  const slug = raw.slice(MEMBER_SUPER_PREFIX.length);
+  return okMember(slug) ? `m:${slug}` : null;
+}
+
+/** The member slug of a member super id; null for `main`. */
+export function memberOfSuperId(id: SuperId): string | null {
+  return id === 'main' ? null : id.slice(MEMBER_SUPER_PREFIX.length);
+}
+
+/** A member's super id (the slug unchecked: the caller passes a known member). */
+export function superIdOfMember(slug: string): SuperId {
+  return `m:${slug}`;
+}
+
+/** The record of `id`: main's is today's `state/.super-agent.json`, unchanged on disk. */
+export function superRecordPath(contextRoot: string, id: SuperId = 'main'): string {
+  const member = memberOfSuperId(id);
+  return member === null ? superStatePath(contextRoot) : join(contextRoot, MEMBER_SUPER_DIR, `${member}.json`);
+}
+
+/** `id`'s read marks: main's `state/.super/read-marks.json`, a member's beside its record. */
+export function superReadMarksPath(contextRoot: string, id: SuperId = 'main'): string {
+  const member = memberOfSuperId(id);
+  return member === null ? join(contextRoot, 'state', '.super', 'read-marks.json') : join(contextRoot, MEMBER_SUPER_DIR, `${member}.read-marks.json`);
+}
+
+/** `id`'s handoff file: main's `state/.super/handoff.md`, a member's beside its record. */
+export function superHandoffPath(contextRoot: string, id: SuperId = 'main'): string {
+  const member = memberOfSuperId(id);
+  return member === null ? join(contextRoot, 'state', '.super', 'handoff.md') : join(contextRoot, MEMBER_SUPER_DIR, `${member}.handoff.md`);
+}
+
+/**
+ * The key every in-memory map of one super is kept under (locks, index, the inbox's maps): main's
+ * is the resolved context root itself (so every map keyed by root before Wave 2 still names main),
+ * a member's the root, a NUL (never in a path) and its id. Decoded by {@link parseSuperKey}.
+ */
+export function superKey(contextRoot: string, id: SuperId = 'main'): string {
+  const root = resolve(contextRoot);
+  return id === 'main' ? root : `${root}\u0000${id}`;
+}
+
+/**
+ * A root or a super key, with the super it names: a key's own id wins over `id` (the inbox passes
+ * a super's key everywhere a root went before Wave 2, so one call shape serves every super).
+ */
+export function splitSuperRoot(rootOrKey: string, id: SuperId = 'main'): { root: string; superId: SuperId } {
+  return rootOrKey.includes('\u0000') ? parseSuperKey(rootOrKey) : { root: rootOrKey, superId: id };
+}
+
+/** A super key back to its root and id; a plain root is main's. */
+export function parseSuperKey(key: string): { root: string; superId: SuperId } {
+  const at = key.indexOf('\u0000');
+  if (at < 0) return { root: key, superId: 'main' };
+  const id = parseSuperId(key.slice(at + 1));
+  return { root: key.slice(0, at), superId: id ?? 'main' };
 }
 
 /** The directory every child worktree lives under. */
@@ -246,6 +318,8 @@ function sanitizeChildren(raw: unknown, session: string | null, opts: SanitizeOp
     if (child.row === 'stuck' && typeof c.startError === 'string') child.startError = c.startError.slice(0, MAX_START_ERROR);
     if (c.awaited === true) child.awaited = true;
     if (typeof c.origin === 'string' && MSG_REF_RE.test(c.origin)) child.origin = c.origin;
+    const wo = parseWorkOrigin(c.workOrigin);
+    if (wo) child.workOrigin = wo;
     // The agenda's two stamps (epoch ms): a non-finite or negative value is dropped.
     const sentAt = finite(c.sentAt);
     if (sentAt !== undefined && sentAt >= 0) child.sentAt = sentAt;
@@ -306,6 +380,17 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
     const batch = typeof q.batch === 'string' && QUEUE_ID_RE.test(q.batch) ? q.batch : undefined;
     // A team job's ending names its job; only an ending kind does.
     const team = (q.kind === 'done' || q.kind === 'stuck' || q.kind === 'question') && typeof q.team === 'string' && TEAM_JOB_ID_RE.test(q.team) ? q.team : undefined;
+    // A request carries its job; a reply its answer and the ask it answers. Neither without its text.
+    const isRequest = q.kind === 'request';
+    const isReply = q.kind === 'reply';
+    // A team event about a member Super's job (its result, a note, its question to main) carries text too.
+    const teamText = !!team && (q.kind === 'done' || q.kind === 'question');
+    const text = isRequest || isReply || teamText ? cap(q.text, MAX_REQUEST_TEXT) : undefined;
+    if ((isRequest || isReply) && !text) continue;
+    const answers = (isReply || (q.kind === 'question' && !!team)) && typeof q.answers === 'string' && QUEUE_ID_RE.test(q.answers) ? q.answers : undefined;
+    const result = isRequest ? cap(q.result, MAX_REQUEST_RESULT) : undefined;
+    const acceptedAt = isRequest ? finite(q.acceptedAt) : undefined;
+    const workOrigin = parseWorkOrigin(q.workOrigin);
     const count = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v > 0 ? Math.min(v, 9) : 0);
     // An ask's report cards, while it is open (nothing points at them after his answer).
     const read = isAsk && q.state !== 'done' && Array.isArray(q.read)
@@ -335,12 +420,24 @@ function sanitizeQueue(raw: unknown, session: string | null): SuperQueueItem[] {
       ...(options.length ? { options } : {}),
       ...(askSpec && askSpec.ok ? { ask: askSpec.spec } : {}),
       ...(read.length ? { read } : {}),
+      ...(text ? { text } : {}),
+      ...(isRequest && typeof q.model === 'string' && sanitizeModel(q.model) ? { model: q.model } : {}),
+      ...(isRequest && typeof q.effort === 'string' && (JOB_EFFORTS as readonly string[]).includes(q.effort) ? { effort: q.effort } : {}),
+      ...(isRequest && q.light === true ? { light: true as const } : {}),
+      ...(result ? { result } : {}),
+      ...(acceptedAt !== undefined && acceptedAt >= 0 ? { acceptedAt } : {}),
+      ...(answers ? { answers } : {}),
+      ...(workOrigin ? { workOrigin } : {}),
     });
   }
-  // Over the cap: the oldest finished items go first, then the oldest of the rest.
+  // Over the cap: the oldest finished items go first, then the oldest of the rest. An OPEN request
+  // is never pruned (only `team done` closes it); open requests are capped per member at the verb.
   while (out.length > MAX_QUEUE) {
     const done = out.findIndex((q) => q.state === 'done');
-    out.splice(done >= 0 ? done : 0, 1);
+    const other = out.findIndex((q) => q.kind !== 'request');
+    const at = done >= 0 ? done : other;
+    if (at < 0) break;
+    out.splice(at, 1);
   }
   return out;
 }
@@ -397,6 +494,7 @@ function sanitizeTeam(raw: unknown): SuperTeamJob[] {
       ...(finite(j.toldEndAt) !== undefined ? { toldEndAt: finite(j.toldEndAt) } : {}),
       ...(typeof j.followUpOf === 'string' && TEAM_JOB_ID_RE.test(j.followUpOf) ? { followUpOf: j.followUpOf } : {}),
       ...(j.by === 'super' && typeof j.followUpOf === 'string' ? { by: 'super' as const } : {}),
+      ...(typeof j.request === 'string' && QUEUE_ID_RE.test(j.request) ? { request: j.request } : {}),
     });
   }
   // Over the cap the oldest follow-ups go first; a member's current root never does (plan-r10 1b).
@@ -558,6 +656,14 @@ function sanitizeOwnerBatches(raw: unknown): string[] {
   return out.slice(-MAX_OWNER_BATCHES);
 }
 
+/** A member Super's main-origin batch ids: unique, newest MAX_MAIN_BATCHES kept. */
+function sanitizeMainBatches(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const b of raw) if (typeof b === 'string' && QUEUE_ID_RE.test(b) && !out.includes(b)) out.push(b);
+  return out.slice(-MAX_MAIN_BATCHES);
+}
+
 /** The held ledger: well-formed entries of items still on the queue, unique, newest MAX_HELD. */
 function sanitizeHeld(raw: unknown, queue: readonly SuperQueueItem[]): SuperHeldEvent[] {
   if (!Array.isArray(raw)) return [];
@@ -609,6 +715,8 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
   const padSeq = rawSeq !== undefined && rawSeq > 0 && rawSeq < 1e6 ? Math.floor(rawSeq) : 0;
   const since = finite(away.since);
   const events = finite(away.events);
+  const mainBatches = sanitizeMainBatches(raw.mainBatches);
+  const member = typeof raw.member === 'string' && okMember(raw.member) ? raw.member : undefined;
   return {
     v: SUPER_STATE_VERSION,
     session,
@@ -631,15 +739,22 @@ export function sanitizeSuperState(input: unknown, opts: SanitizeOpts = {}): Sup
     ...(pad.length ? { pad } : {}),
     ...(padSeq ? { padSeq } : {}),
     ...(askShows.length ? { askShows } : {}),
+    ...(member ? { member } : {}),
+    ...(mainBatches.length ? { mainBatches } : {}),
   };
 }
 
 // ─── Containment ────────────────────────────────────────────────────────────────
 
-/** Refuse a symlinked state file, or a `state/` directory that resolves outside the vault. */
-async function assertContained(contextRoot: string): Promise<string> {
-  const path = superStatePath(contextRoot);
-  const stateDir = dirname(path);
+/**
+ * Refuse a symlinked record file, a `state/` directory that resolves outside the vault, and, for a
+ * member Super, a `state/.super/` or `state/.super/members/` that is a link or resolves anywhere
+ * but where it stands (lstat + realpath-contain). `create`: a write may make the members folder
+ * (0700) first; a read never does.
+ */
+async function assertContained(contextRoot: string, id: SuperId = 'main', create = false): Promise<string> {
+  const path = superRecordPath(contextRoot, id);
+  const stateDir = join(contextRoot, 'state');
   let realRoot: string;
   let realDir: string;
   try {
@@ -649,11 +764,27 @@ async function assertContained(contextRoot: string): Promise<string> {
     throw new SuperStoreRefused('outside', 'the vault has no state directory');
   }
   if (realDir !== join(realRoot, 'state')) throw new SuperStoreRefused('outside', 'state/ resolves outside the vault');
+  if (id !== 'main') {
+    for (const rel of [join('state', '.super'), MEMBER_SUPER_DIR]) {
+      const dir = join(contextRoot, rel);
+      let st: Awaited<ReturnType<typeof fsp.lstat>>;
+      try { st = await fsp.lstat(dir); } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+        if (!create) return path;
+        await fsp.mkdir(dir, { mode: 0o700 }).catch((e: NodeJS.ErrnoException) => { if (e.code !== 'EEXIST') throw e; });
+        st = await fsp.lstat(dir);
+      }
+      if (st.isSymbolicLink() || !st.isDirectory()) throw new SuperStoreRefused('symlink', `${rel} is not a plain folder; refusing it`);
+      const real = await fsp.realpath(dir);
+      if (real !== join(realRoot, rel)) throw new SuperStoreRefused('outside', `${rel} resolves outside the vault`);
+    }
+  }
+  const name = id === 'main' ? '.super-agent.json' : `members/${memberOfSuperId(id)}.json`;
   try {
     const st = await fsp.lstat(path);
-    if (st.isSymbolicLink()) throw new SuperStoreRefused('symlink', '.super-agent.json is a symlink; refusing it');
-    if (!st.isFile()) throw new SuperStoreRefused('symlink', '.super-agent.json is not a file; refusing it');
-    if (st.size > MAX_FILE_BYTES) throw new SuperStoreRefused('too_large', '.super-agent.json is too large');
+    if (st.isSymbolicLink()) throw new SuperStoreRefused('symlink', `${name} is a symlink; refusing it`);
+    if (!st.isFile()) throw new SuperStoreRefused('symlink', `${name} is not a file; refusing it`);
+    if (st.size > MAX_FILE_BYTES) throw new SuperStoreRefused('too_large', `${name} is too large`);
   } catch (err) {
     if (err instanceof SuperStoreRefused) throw err;
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
@@ -661,43 +792,57 @@ async function assertContained(contextRoot: string): Promise<string> {
   return path;
 }
 
+/** A record as it belongs to `id`: a member's always names its own member (whatever the file
+ *  says), main's never names one. */
+function ownedBy(state: SuperState, id: SuperId): SuperState {
+  const member = memberOfSuperId(id);
+  if (member === null) { if (state.member !== undefined) delete state.member; return state; }
+  state.member = member;
+  return state;
+}
+
 /** The record on disk, sanitized, with no effect on the index. */
-async function loadSuperState(contextRoot: string, opts: SanitizeOpts): Promise<SuperState> {
-  const path = await assertContained(contextRoot);
+async function loadSuperState(contextRoot: string, opts: SanitizeOpts, id: SuperId = 'main'): Promise<SuperState> {
+  const path = await assertContained(contextRoot, id);
   let text: string;
   try {
     text = await fsp.readFile(path, 'utf-8');
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return emptySuperState();
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return ownedBy(emptySuperState(), id);
     throw err;
   }
   let parsed: unknown = null;
   try { parsed = JSON.parse(text); } catch { parsed = null; }
-  return sanitizeSuperState(parsed, opts);
+  return ownedBy(sanitizeSuperState(parsed, opts), id);
 }
 
+const isSuperId = (v: unknown): v is SuperId => v === 'main' || (typeof v === 'string' && v.startsWith(MEMBER_SUPER_PREFIX));
+
 /**
- * The vault's record, sanitized. Absent → an empty state. A symlinked file → SuperStoreRefused.
+ * The vault's record (main's, or `id`'s), sanitized. Absent → an empty state. A symlinked file →
+ * SuperStoreRefused. `readSuperState(root, opts)` stays main's (every caller before Wave 2).
  *
  * A read takes no lock, so it can START before a write and FINISH after it holding the old
- * record. It refreshes the in-memory index only when nothing changed the vault's entry while
+ * record. It refreshes the in-memory index only when nothing changed that super's entry while
  * it ran ({@link generation}): otherwise a slow `super state` racing the owner's Take back
  * would put `enabled: true` back in memory (children hidden from the notch again), or put a
  * cleared note back (a second message would carry it).
  */
-export async function readSuperState(contextRoot: string, opts: SanitizeOpts = {}): Promise<SuperState> {
-  const key = resolve(contextRoot);
+export async function readSuperState(rootOrKey: string, idOrOpts?: SuperId | SanitizeOpts, maybeOpts: SanitizeOpts = {}): Promise<SuperState> {
+  const { root: contextRoot, superId: id } = splitSuperRoot(rootOrKey, isSuperId(idOrOpts) ? idOrOpts : 'main');
+  const opts: SanitizeOpts = isSuperId(idOrOpts) ? maybeOpts : (idOrOpts ?? {});
+  const key = superKey(contextRoot, id);
   const startedAt = generation.get(key) ?? 0;
-  const state = await loadSuperState(contextRoot, opts);
+  const state = await loadSuperState(contextRoot, opts, id);
   if ((generation.get(key) ?? 0) === startedAt) indexState(key, state);
   return state;
 }
 
-async function writeSuperState(contextRoot: string, state: SuperState): Promise<void> {
-  const path = await assertContained(contextRoot);
+async function writeSuperState(contextRoot: string, state: SuperState, id: SuperId = 'main'): Promise<void> {
+  const path = await assertContained(contextRoot, id, true);
   const text = `${JSON.stringify(state, null, 2)}\n`;
   // Measured in UTF-8 bytes, as the read's `st.size` is: never write what the read refuses.
-  if (Buffer.byteLength(text, 'utf-8') > MAX_FILE_BYTES) throw new SuperStoreRefused('too_large', 'this change would make .super-agent.json too large; nothing was written');
+  if (Buffer.byteLength(text, 'utf-8') > MAX_FILE_BYTES) throw new SuperStoreRefused('too_large', 'this change would make the Super record too large; nothing was written');
   const tmp = `${path}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   await fsp.writeFile(tmp, text, { encoding: 'utf-8', flag: 'wx', mode: 0o600 });
   try {
@@ -710,9 +855,8 @@ async function writeSuperState(contextRoot: string, state: SuperState): Promise<
 
 const locks = new Map<string, Promise<unknown>>();
 
-/** Run `fn` under the vault's lock. */
-function withVaultLock<T>(contextRoot: string, fn: () => Promise<T>): Promise<T> {
-  const key = resolve(contextRoot);
+/** Run `fn` under one super's lock (main's is keyed by the vault root, as before). */
+function withVaultLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = locks.get(key) ?? Promise.resolve();
   const run = prev.then(fn, fn);
   const settled = run.then(() => undefined, () => undefined);
@@ -788,8 +932,8 @@ function demotePhoneHeld(before: WriteBefore, next: SuperState): string[] {
   return demoted;
 }
 
-/** Per vault, what the write in flight is about to make true: the socket gate reads it beside
- *  the index, so a phone open racing a hand-over write is judged by the record being written. */
+/** Per super (its key), what the write in flight is about to make true: the socket gate reads it
+ *  beside the index, so a phone open racing a hand-over write is judged by the record being written. */
 const pendingArm = new Map<string, { enabled: boolean; children: Set<string> }>();
 
 export interface UpdateOpts extends SanitizeOpts {
@@ -798,29 +942,32 @@ export interface UpdateOpts extends SanitizeOpts {
 }
 
 /**
- * Read, change, sanitize and write the vault's record as one step. `fn` mutates the draft (or
- * returns a replacement); what it produces is sanitized again before it is written, so no
+ * Read, change, sanitize and write ONE super's record as one step, under its lock. `fn` mutates the
+ * draft (or returns a replacement); what it produces is sanitized again before it is written, so no
  * caller can persist a field a read would drop. Returns what was written.
  *
- * Every write keeps the phone-held invariant ({@link demotePhoneHeld}), whoever the caller is.
+ * Every write keeps the phone-held invariant ({@link demotePhoneHeld}), whoever the caller is. A
+ * member's record keeps naming its member; main's never names one.
  */
-export function updateSuperState(
-  contextRoot: string,
+export function withSuperState(
+  rootOrKey: string,
+  idIn: SuperId,
   fn: (draft: SuperState) => SuperState | void,
   opts: UpdateOpts = {},
 ): Promise<SuperState> {
-  const key = resolve(contextRoot);
-  return withVaultLock(contextRoot, async () => {
-    const draft = await loadSuperState(contextRoot, opts);
+  const { root: contextRoot, superId: id } = splitSuperRoot(rootOrKey, idIn);
+  const key = superKey(contextRoot, id);
+  return withVaultLock(key, async () => {
+    const draft = await loadSuperState(contextRoot, opts, id);
     const before = beforeWrite(draft);
     const out = fn(draft) ?? draft;
     const demoted = demotePhoneHeld(before, out);
-    const next = sanitizeSuperState(out, opts);
-    const mine = { enabled: next.enabled, children: new Set([...armedChildren(next)].map((id) => id.toLowerCase())) };
+    const next = ownedBy(sanitizeSuperState(out, opts), id);
+    const mine = { enabled: next.enabled, children: new Set([...armedChildren(next)].map((cid) => cid.toLowerCase())) };
     pendingArm.set(key, mine);
     try {
-      await writeSuperState(contextRoot, next);
-      noteSuperState(contextRoot, next);
+      await writeSuperState(contextRoot, next, id);
+      noteSuperState(contextRoot, next, id);
     } finally {
       if (pendingArm.get(key) === mine) pendingArm.delete(key);
     }
@@ -829,9 +976,21 @@ export function updateSuperState(
   });
 }
 
+/** Main's record, as every caller before Wave 2 writes it ({@link withSuperState} with `main`). */
+export function updateSuperState(
+  contextRoot: string,
+  fn: (draft: SuperState) => SuperState | void,
+  opts: UpdateOpts = {},
+): Promise<SuperState> {
+  return withSuperState(contextRoot, 'main', fn, opts);
+}
+
 // ─── The in-memory index (D4b, D16, D17) ─────────────────────────────────────
 
 interface IndexEntry {
+  /** The resolved context root and the super this entry is. */
+  root: string;
+  superId: SuperId;
   session: string | null;
   enabled: boolean;
   children: Set<string>;
@@ -844,12 +1003,13 @@ interface IndexEntry {
   notes: Map<string, SuperNote>;
 }
 
+/** Keyed by {@link superKey}: main's entry under the resolved root, each member's beside it. */
 const index = new Map<string, IndexEntry>();
-/** Bumped by every change to a vault's entry (a write, a note cleared in memory). A read that
+/** Bumped by every change to a super's entry (a write, a note cleared in memory). A read that
  *  saw a different value when it started is older than the index and is not indexed. */
 const generation = new Map<string, number>();
 
-/** Notes delivered and cleared in memory whose persist has not finished: vault → session →
+/** Notes delivered and cleared in memory whose persist has not finished: key → session →
  *  the note that was delivered. Until that persist lands, disk still holds the note, so NO
  *  index of the vault — a read, another locked write that loaded it, the boot prime — may put
  *  it back (it would ride a second message, D17). Filtering every path is consistent with disk:
@@ -860,7 +1020,10 @@ function indexState(key: string, state: SuperState): void {
   const pending = clearing.get(key);
   const notes = new Map(Object.entries(state.notes));
   if (pending) for (const [sid, note] of pending) if (notes.get(sid) === note) notes.delete(sid);
+  const { root, superId } = parseSuperKey(key);
   index.set(key, {
+    root,
+    superId,
     session: state.session,
     enabled: state.enabled,
     // An ended child is history, not a child: no events, the notch shows it if reopened.
@@ -876,77 +1039,161 @@ function bump(key: string): void {
   generation.set(key, (generation.get(key) ?? 0) + 1);
 }
 
-/** Make the vault's in-memory entry this record — authoritative: the record was just WRITTEN,
+/** Make one super's in-memory entry this record — authoritative: the record was just WRITTEN,
  *  so any read still in flight is now older than it. Only for a record already on disk. */
-export function noteSuperState(contextRoot: string, state: SuperState): void {
-  const key = resolve(contextRoot);
+export function noteSuperState(rootOrKey: string, state: SuperState, idIn: SuperId = 'main'): void {
+  const { root: contextRoot, superId: id } = splitSuperRoot(rootOrKey, idIn);
+  const key = superKey(contextRoot, id);
   bump(key);
   indexState(key, state);
 }
 
-/** At server boot, before the first registry event: load every vault's record. A refused or
- *  unreadable one is indexed as empty (the mode is simply off there). */
+/** The member records of a vault on disk (their slugs), sorted; none when the folder is missing,
+ *  a link or unreadable (a refused folder is never read). */
+export async function listMemberSupers(contextRoot: string): Promise<string[]> {
+  const dir = join(contextRoot, MEMBER_SUPER_DIR);
+  try {
+    for (const rel of [join('state', '.super'), MEMBER_SUPER_DIR]) {
+      const st = await fsp.lstat(join(contextRoot, rel));
+      if (st.isSymbolicLink() || !st.isDirectory()) return [];
+    }
+    const names = await fsp.readdir(dir);
+    return names.filter((n) => n.endsWith('.json') && !n.endsWith('.read-marks.json'))
+      .map((n) => n.slice(0, -'.json'.length)).filter(okMember).sort();
+  } catch { return []; }
+}
+
+/** At server boot, before the first registry event: load every vault's records, main's and each
+ *  member's (`state/.super/members/*.json`), so a member session resolves after a restart. A
+ *  refused or unreadable one is indexed as empty (the mode is simply off there). */
 export async function primeSuperIndex(contextRoots: readonly string[], opts: SanitizeOpts = {}): Promise<void> {
-  await Promise.all(contextRoots.map(async (root) => {
-    const key = resolve(root);
+  const prime = async (root: string, id: SuperId) => {
+    const key = superKey(root, id);
     const startedAt = generation.get(key) ?? 0;
     let state: SuperState;
-    try { state = await loadSuperState(root, opts); } catch { state = emptySuperState(); }
+    try { state = await loadSuperState(root, opts, id); } catch { state = ownedBy(emptySuperState(), id); }
     if ((generation.get(key) ?? 0) === startedAt) indexState(key, state);
+  };
+  await Promise.all(contextRoots.map(async (root) => {
+    const members = await listMemberSupers(root);
+    await Promise.all([prime(root, 'main'), ...members.map((m) => prime(root, superIdOfMember(m)))]);
   }));
 }
 
-/** The vault's entry: its super session, whether it is handed over, its children. */
-export function superIndex(contextRoot: string): { session: string | null; enabled: boolean; children: ReadonlySet<string> } {
-  const e = index.get(resolve(contextRoot));
-  return e ? { session: e.session, enabled: e.enabled, children: e.children } : { session: null, enabled: false, children: new Set() };
+/** One super's entry as the index holds it. */
+export interface SuperIndexEntry { session: string | null; enabled: boolean; children: ReadonlySet<string> }
+const EMPTY_ENTRY = (): SuperIndexEntry => ({ session: null, enabled: false, children: new Set() });
+
+/**
+ * Every super of the vault the index knows: main's entry ALWAYS (empty when none), and each
+ * member's that has a record. Ordered main first.
+ */
+export function superIndex(rootOrKey: string): Map<SuperId, SuperIndexEntry> {
+  const root = resolve(splitSuperRoot(rootOrKey).root);
+  const out = new Map<SuperId, SuperIndexEntry>();
+  const main = index.get(root);
+  out.set('main', main ? { session: main.session, enabled: main.enabled, children: main.children } : EMPTY_ENTRY());
+  for (const e of index.values()) {
+    if (e.root !== root || e.superId === 'main') continue;
+    out.set(e.superId, { session: e.session, enabled: e.enabled, children: e.children });
+  }
+  return out;
 }
 
-/** Is `sessionId` some vault's recorded super session (handed over or parked)? */
-export function isSuperSessionId(sessionId: string): boolean {
-  for (const e of index.values()) if (e.session === sessionId) return true;
-  return false;
+/** One super's entry (main's by default); an empty one when the index has none. */
+export function superEntry(rootOrKey: string, idIn: SuperId = 'main'): SuperIndexEntry {
+  const { root, superId } = splitSuperRoot(rootOrKey, idIn);
+  return superIndex(root).get(superId) ?? EMPTY_ENTRY();
 }
 
-/** The context root whose recorded super session `sessionId` is, or null. */
-export function superRootOfSession(sessionId: string): string | null {
-  for (const [root, e] of index) if (e.session === sessionId) return root;
+/** The key of a super ref (null stays null): what every per-super map of the inbox is keyed by. */
+export function keyOfRef(ref: SuperRef | null): string | null {
+  return ref ? superKey(ref.root, ref.superId) : null;
+}
+
+/** Forget one super's in-memory entry (a member record retired or turned off): its keys die with it. */
+export function dropSuperIndex(contextRoot: string, id: SuperId): void {
+  if (id === 'main') return;
+  const key = superKey(contextRoot, id);
+  index.delete(key);
+  generation.delete(key);
+  clearing.delete(key);
+  pendingArm.delete(key);
+}
+
+/** Every super ref the index knows of one vault, main first. */
+export function supersOf(contextRoot: string): SuperRef[] {
+  const root = resolve(splitSuperRoot(contextRoot).root);
+  return [...superIndex(root).keys()].map((superId) => ({ root, superId }));
+}
+
+/** A super of some vault: its root (resolved) and its id. */
+export interface SuperRef { root: string; superId: SuperId }
+
+/** The root of a ref when it is main's, else null (the callers that stay main-only until A2). */
+export function mainRootOf(ref: SuperRef | null): string | null {
+  return ref && ref.superId === 'main' ? ref.root : null;
+}
+
+/** THE resolver of a super's OWN session (handed over or parked): which vault and which super. */
+export function superOfSession(sessionId: string): SuperRef | null {
+  if (!sessionId) return null;
+  for (const e of index.values()) if (e.session === sessionId) return { root: e.root, superId: e.superId };
   return null;
 }
 
-/** A recorded child of a vault that is handed over RIGHT NOW (D16: the owner is not pinged). */
+/** THE resolver of a recorded LIVE child (handed over or not): the super that owns it. */
+export function superOfChild(sessionId: string): SuperRef | null {
+  if (!sessionId) return null;
+  for (const e of index.values()) if (e.children.has(sessionId)) return { root: e.root, superId: e.superId };
+  return null;
+}
+
+/** The super whose record names `sessionId` an ENDED child, or null. */
+export function superOfEnded(sessionId: string): SuperRef | null {
+  if (!sessionId) return null;
+  for (const e of index.values()) if (e.ended.has(sessionId)) return { root: e.root, superId: e.superId };
+  return null;
+}
+
+/** Is `sessionId` some super's recorded session (main's or a member's, handed over or parked)? */
+export function isSuperSessionId(sessionId: string): boolean {
+  return superOfSession(sessionId) !== null;
+}
+
+/** A recorded child of a super that is on RIGHT NOW (D16: the owner is not pinged). */
 export function isSuperChild(sessionId: string): boolean {
   for (const e of index.values()) if (e.enabled && e.children.has(sessionId)) return true;
   return false;
 }
 
 /**
- * THE gate for "a child while handed over" (any vault, ids compared case-blind): the index (not
- * ended children of an enabled record) OR the write in flight's pending entry. A take-back flips
- * the index only after its commit, so a stale "on" fails closed.
+ * THE gate for "a child while handed over" (any super of any vault, ids compared case-blind): the
+ * index (not ended children of an enabled record) OR the write in flight's pending entry. A
+ * take-back flips the index only after its commit, so a stale "on" fails closed.
  */
 export function isHandedOverChild(sessionId: string): boolean {
   return handedOverChildRoot(sessionId) !== null;
 }
 
-/** The context root (resolved) whose handed-over record names `sessionId` a child — the index or
- *  the write in flight — or null. Case-blind. */
-export function handedOverChildRoot(sessionId: string): string | null {
+/** The super (resolved root and id) whose handed-over record names `sessionId` a child — the
+ *  index or the write in flight — or null. Case-blind. */
+export function handedOverChildRoot(sessionId: string): SuperRef | null {
   const id = sessionId.toLowerCase();
   if (!id) return null;
-  for (const [root, e] of index) {
+  for (const e of index.values()) {
     if (!e.enabled) continue;
-    for (const c of e.children) if (c.toLowerCase() === id) return root;
+    for (const c of e.children) if (c.toLowerCase() === id) return { root: e.root, superId: e.superId };
   }
-  for (const [root, p] of pendingArm) if (p.enabled && p.children.has(id)) return root;
+  for (const [key, p] of pendingArm) if (p.enabled && p.children.has(id)) return parseSuperKey(key);
   return null;
 }
 
 /**
  * The MCP servers a child `super delegate` started runs with (orchestration plan r5 D14), from
- * its record: [] = none. Null = not such a child (the owner's adopted chats, the super, any
- * other chat). Handed over or not, live or ended: a delegated child is lean for its whole life,
- * whichever window or reload spawns it (the server decides, never the URL alone).
+ * its record: [] = none. Null = not such a child (the owner's adopted chats, a super, any other
+ * chat). Handed over or not, live or ended: a delegated child is lean for its whole life,
+ * whichever window or reload spawns it (the server decides, never the URL alone). Any super's.
  */
 export function delegatedChildMcp(sessionId: string): string[] | null {
   if (!sessionId) return null;
@@ -954,23 +1201,11 @@ export function delegatedChildMcp(sessionId: string): string[] | null {
   return null;
 }
 
-/** A child `super delegate` started, of a vault handed over right now (never an adopted chat
- *  of the owner's): what the done-child park backstop may park (orchestration plan r5 D13). */
+/** A child `super delegate` started, of a super that is on right now (never an adopted chat of
+ *  the owner's): what the done-child park backstop may park (orchestration plan r5 D13). */
 export function isDelegatedSuperChild(sessionId: string): boolean {
   for (const e of index.values()) if (e.enabled && e.delegated.has(sessionId)) return true;
   return false;
-}
-
-/** The context root that has `sessionId` as a recorded child (handed over or not), or null. */
-export function superRootOfChild(sessionId: string): string | null {
-  for (const [root, e] of index) if (e.children.has(sessionId)) return root;
-  return null;
-}
-
-/** The vault whose record names `sessionId` an ENDED child, or null. */
-export function superRootOfEnded(sessionId: string): string | null {
-  for (const [root, e] of index) if (e.ended.has(sessionId)) return root;
-  return null;
 }
 
 /** The note `sessionId`'s next owner message carries, read from memory (never from disk on the
@@ -986,14 +1221,15 @@ export function peekSuperNote(sessionId: string): SuperNote | null {
 /**
  * A note was delivered: forget it in memory at once (so a second message cannot carry it),
  * then persist. Only the note that was DELIVERED is cleared — a different one written
- * meanwhile (Take back while the hand-over note was riding) stays.
+ * meanwhile (Take back while the hand-over note was riding) stays. Main's record (only a
+ * hand-over writes notes).
  *
  * Nothing that could still hold the delivered note may index it: a read already in flight sees
  * the generation move, and every index taken before the persist lands (a read, another locked
  * write, the boot prime) is filtered through the `clearing` set.
  */
 export async function clearSuperNote(contextRoot: string, sessionId: string, delivered: SuperNote, opts: SanitizeOpts = {}): Promise<void> {
-  const key = resolve(contextRoot);
+  const key = superKey(contextRoot);
   const notes = index.get(key)?.notes;
   if (notes?.get(sessionId) === delivered) notes.delete(sessionId);
   let pending = clearing.get(key);

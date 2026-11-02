@@ -496,6 +496,8 @@ export interface SuperChild {
   /** The owner message it answers (`msgRef`, the turn's `<owner-msg ref>`): its awaited=owner
    *  events carry `origin=<ref>`, so the result the super writes links under that message. */
   origin?: string;
+  /** A member Super's child: whose work it does (`delegate --for`, else the issuing turn's). */
+  workOrigin?: SuperWorkOrigin;
   /** When its job last FINISHED (epoch ms): stamped by `setRow` only when the row moves from
    *  not finished (working, asking, stuck, none) to done or gone, never on done <-> gone. The
    *  agenda's "new until seen" compares against it (task super-agent-ajandasi-…). */
@@ -564,8 +566,15 @@ from birth, reaches the super as an event that says the child waits on him, stay
 crew set up (`automation` names it, `decision` says which). The server writes it, never the
 super's words; its `sessionId` is the super's own. Delivered in the next batch with the
 automation's live state and next run, then done.
+`request` (plan-r10 1, Wave 2): a job the project's MAIN Super gave a member Super (`super team ask`),
+written by the server into the MEMBER's queue (never the main Super's words as a user message):
+`text` is the job, `model`/`effort`/`light` ride to the child it opens, `acceptedAt` is the end of
+the turn that carried it, `result` is what the member's `super team done` said. Never pruned while
+open; only `team done` closes it. `reply`: main Super's answer (`super team answer`) to a member's
+question about a request, written into the member's queue; its delivery closes the member's ask
+(`answers` names it). Both are solo: one per turn, never batched with another origin.
  */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation'] as const;
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -624,6 +633,77 @@ export interface SuperQueueItem {
    *  task, knowledge, a board; `isReadKind`), so his question card points at them ("To read:
    *  <card> →", owner 2026-10-30). Server-written by `super ask`; at most MAX_ASK_READS. */
   read?: string[];
+  /** A `request`'s job (main Super's words: untrusted for the member) or a `reply`'s answer. */
+  text?: string;
+  /** A `request`'s per-job model, effort and light flag (`team ask --model/--effort/--light`):
+   *  for the child the member opens for it, never the member's own. */
+  model?: string;
+  effort?: string;
+  light?: true;
+  /** A `request`'s result, from the member's `super team done` (then `done`). */
+  result?: string;
+  /** When the turn that carried a `request` ended (epoch ms): it is the member's work from then. */
+  acceptedAt?: number;
+  /** A `reply`: the member's `ask` item it answers. */
+  answers?: string;
+  /** Whose work this item is about (plan-r10 1, owner `wnfvtj`): absent = the owner's (as today). */
+  workOrigin?: SuperWorkOrigin;
+}
+
+/**
+ * Which super a record, a token or a verb belongs to (plan-r10 1): the project's own Super Agent
+ * (`main`, its record unchanged on disk) or an AI Team member's Super (`m:<member slug>`, its record
+ * under `state/.super/members/`). Absent anywhere = `main`, so every older caller is main's.
+ * The parser is `parseSuperId` (store.ts: the member slug is the agent slug charset).
+ */
+export type SuperId = 'main' | `m:${string}`;
+export const MEMBER_SUPER_PREFIX = 'm:';
+
+/**
+ * Whose work a member Super's turn, child or question is (owner `wnfvtj`): the owner's (he typed on
+ * the member's stage), a routine's (a scheduled automation of the member), or main Super's (a
+ * `request` item, `main:<itemId>`). `main:*` work is between the member and main only.
+ */
+export type SuperWorkOrigin = 'owner' | 'routine' | `main:${string}`;
+/** `main:` takes any queue item id (QUEUE_ID_RE's shape): a stricter pattern would let the sanitizer
+ *  drop a real main origin, and an item with no origin is the OWNER's (it would be announced). */
+export const WORK_ORIGIN_RE = /^(owner|routine|main:[a-z0-9-]{1,40})$/;
+export function parseWorkOrigin(raw: unknown): SuperWorkOrigin | null {
+  return typeof raw === 'string' && WORK_ORIGIN_RE.test(raw) ? raw as SuperWorkOrigin : null;
+}
+
+/** A member Super's live children (the owner's brief: at most two at once; more wait in its pool). */
+export const MAX_MEMBER_LIVE_CHILDREN = 2;
+/** The vault-wide ceiling: every super record's live children together (a safety bound). */
+export const MAX_VAULT_LIVE_CHILDREN = 15;
+/** Open `request` items one member's queue may hold (`team ask` answers 429 `member_queue_full`). */
+export const MAX_OPEN_REQUESTS = 20;
+/** The longest `request` text / `reply` text / `result` a record keeps. */
+export const MAX_REQUEST_TEXT = 16_000;
+export const MAX_REQUEST_RESULT = 4_000;
+
+/**
+ * One member as `GET /api/agent/sessions?summary=1` lists it (plan-r10 1, 1f; Wave 3 reads it):
+ * derived on the server from the member's record, counting only `owner` and `routine` work.
+ * `superOnly`: it works only for main Super right now (the Ekip list's "Super için" tag, no count).
+ */
+export interface SuperMemberSummary {
+  slug: string;
+  /** A global member (`~/.dreamcontext/agents/`), Super in this project. */
+  global: boolean;
+  /** The member's `call.enabled`. */
+  enabled: boolean;
+  /** Owner- or routine-origin jobs running now. */
+  ownerWorking: number;
+  /** An owner-facing question is open. */
+  asking: boolean;
+  /** Its one approval card waits (a synced or widening change). */
+  approval: boolean;
+  /** Owner-origin turns he has not read. */
+  unread: number;
+  superOnly: boolean;
+  /** Its newest activity (epoch ms), 0 = never. */
+  lastAt: number;
 }
 
 /** The cards a question can point at to be read: what carries information, never a picture
@@ -697,6 +777,9 @@ export interface SuperTeamJob {
   /** Who wrote the follow-up: `super` when the Super Agent asked the same member again
    *  (`team ask` continuing its conversation, plan-r10 1b). Absent = the owner wrote it. */
   by?: 'super';
+  /** A job given to the member's OWN Super (plan-r10 1, Wave 2): the `request` item's id in the
+   *  member's record. Its card and status read that record; no thread holds it. */
+  request?: string;
 }
 
 /** What a team job's ending tells the super: it finished, failed, or its run stopped to ask the owner. */
@@ -721,6 +804,9 @@ export function trimTeamJobs(team: SuperTeamJob[], max: number = MAX_TEAM_JOBS):
   const current = new Set<string>();
   const seen = new Set<string>();
   for (const j of team) {
+    // A job whose request in a member's Super is still open is never cut: its `team done` must
+    // find it (plan-r10 1), or main never hears the result.
+    if (j.request && j.open) current.add(j.id);
     if (j.followUpOf || seen.has(j.member)) continue;
     seen.add(j.member);
     current.add(j.id);
@@ -728,7 +814,7 @@ export function trimTeamJobs(team: SuperTeamJob[], max: number = MAX_TEAM_JOBS):
   const drop = new Set<string>();
   let over = team.length - max;
   // Oldest first: follow-ups, then roots that are no longer a member's current one.
-  for (const pass of [(j: SuperTeamJob) => !!j.followUpOf, (j: SuperTeamJob) => !j.followUpOf && !current.has(j.id)]) {
+  for (const pass of [(j: SuperTeamJob) => !!j.followUpOf && !current.has(j.id), (j: SuperTeamJob) => !j.followUpOf && !current.has(j.id)]) {
     for (let i = team.length - 1; i >= 0 && over > 0; i--) {
       const j = team[i];
       if (drop.has(j.id) || !pass(j)) continue;
@@ -816,6 +902,11 @@ export interface SuperState {
   padSeq?: number;
   /** Picture questions' cards (ask-show.ts), at most MAX_ASK_SHOWS (the presented one never dropped). Absent = none. */
   askShows?: AskShow[];
+  /** A member Super's record (`state/.super/members/<slug>.json`): its member slug. Absent = main. */
+  member?: string;
+  /** Batch ids of a member Super's turns that were main Super's work (`main:*`): the owner's unread
+   *  skips them. A ring of MAX_MAIN_BATCHES beside `ownerBatches`. Absent = none. */
+  mainBatches?: string[];
 }
 
 /**
@@ -916,6 +1007,9 @@ export const MAX_REPLY_QUOTE = 100;
  * quote is what the page showed him: data, never his instruction. Not `[super `.
  */
 export const ABOUT_CARD_RE = /^\[About card @card:([A-Za-z0-9_-]{1,64})\]/;
+/** The task a member stage's strip is about (plan-r10 1c): the header alone, no second line. The
+ *  task-slug charset, no 64 cap (slugs reach ~100 characters). Never closes an open ask. */
+export const ABOUT_TASK_RE = /^\[About task ([a-z0-9][a-z0-9-]{0,251})\]/;
 export const MAX_SELECTION_QUOTE = 1000;
 
 /** At most this many references (agenda lines, replied messages) in one owner message; a
@@ -923,7 +1017,7 @@ export const MAX_SELECTION_QUOTE = 1000;
 export const MAX_MESSAGE_REFS = 5;
 /** One reference header in an owner message: what it names, where it starts, and where its
  *  block (the header and its `line:`/`quote:` line) ends. */
-export interface AboutHead { kind: 'note' | 'item' | 'reply' | 'card'; id: string; at: number; end: number }
+export interface AboutHead { kind: 'note' | 'item' | 'reply' | 'card' | 'task'; id: string; at: number; end: number }
 
 /**
  * Every reference header in an owner message, in order (owner 2026-10-24: several references in
@@ -943,12 +1037,13 @@ export function aboutHeads(text: string): AboutHead[] {
     const s = text.slice(at);
     const a = ABOUT_AGENDA_RE.exec(s);
     const c = a ? null : ABOUT_CARD_RE.exec(s);
-    const r = a || c ? null : REPLY_TO_RE.exec(s);
-    if (!a && !c && !r) continue;
-    const kind = a ? (a[1] as 'note' | 'item') : c ? 'card' : 'reply';
-    let len = (a ?? c ?? r as RegExpExecArray)[0].length;
+    const t = a || c ? null : ABOUT_TASK_RE.exec(s);
+    const r = a || c || t ? null : REPLY_TO_RE.exec(s);
+    if (!a && !c && !t && !r) continue;
+    const kind = a ? (a[1] as 'note' | 'item') : c ? 'card' : t ? 'task' : 'reply';
+    let len = (a ?? c ?? t ?? r as RegExpExecArray)[0].length;
     const second = /^\n(line|quote): ([^\n]*)/.exec(s.slice(len));
-    if (kind === 'item') {
+    if (kind === 'item' || kind === 'task') {
       if (second?.[1] === 'line') continue;
     } else {
       if (!second || second[1] !== (kind === 'note' ? 'line' : 'quote')) continue;
@@ -956,7 +1051,7 @@ export function aboutHeads(text: string): AboutHead[] {
       len += second[0].length;
     }
     if (len < s.length && s[len] !== '\n') continue;
-    out.push({ kind, id: a ? a[2] : (c ?? r as RegExpExecArray)[1], at, end: at + len });
+    out.push({ kind, id: a ? a[2] : (c ?? t ?? r as RegExpExecArray)[1], at, end: at + len });
   }
   return out;
 }
@@ -1190,6 +1285,8 @@ export const MAX_POOL = 30;
 export const MAX_POOL_PROMPT = 16_384;
 export const MAX_POOL_BYTES = 524_288;
 export const MAX_OWNER_BATCHES = 100;
+/** `mainBatches`' ring (a member Super's main-origin turns). */
+export const MAX_MAIN_BATCHES = 100;
 /** `super ask`: at most this many options, each at most this many characters (refused, never cut). */
 export const MAX_ASK_OPTIONS = 4;
 export const MAX_ASK_OPTION = 24;
@@ -1401,6 +1498,8 @@ export const SUPER_VERBS = [
   'end', 'resume', 'update', 'adopt',
   'clean', 'team-ask', 'team-amend',
   'note-add', 'note-done', 'note-drop', 'note-clear', 'note-keep',
+  // A member's Super closes main's request; main answers a member's question (plan-r10 1).
+  'team-done', 'team-answer',
 ] as const;
 export type SuperVerb = typeof SUPER_VERBS[number];
 

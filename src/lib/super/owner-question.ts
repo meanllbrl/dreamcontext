@@ -90,6 +90,8 @@ function remember(id: string, reach: OwnerQuestionReach): void {
 
 /** Does the owner answer this item (not a permission: the window rings that one)? */
 function announces(item: SuperQueueItem | null): item is SuperQueueItem {
+  // Main Super's work in a member's Super (`main:*`, plan-r10 1) is never the owner's to answer.
+  if (typeof item?.workOrigin === 'string' && item.workOrigin.startsWith('main:')) return false;
   if (item?.kind === 'owner') return item.state !== 'done';
   // A child's question shown to him from birth (`direct`): announced when it is asked.
   if (item?.kind === 'question' && item.direct === true && !item.team) return item.state !== 'done';
@@ -131,7 +133,12 @@ function aheadOf(state: Pick<SuperState, 'queue'>, item: SuperQueueItem): number
  * A write left `head` at the head of a handed-over vault's queue: announce it, once. Called from
  * every record write (`afterSuperWrite`); `vaultOf` is read only past the cheap guards.
  */
-export function announceOwnerHead(vaultOf: () => string, state: Pick<SuperState, 'enabled' | 'session' | 'queue'> & { children?: SuperState['children'] }, head: SuperQueueItem | null): void {
+export function announceOwnerHead(vaultOf: () => string, state: Pick<SuperState, 'enabled' | 'session' | 'queue'> & { children?: SuperState['children'] }, head: SuperQueueItem | null, memberTitle?: string): void {
+  // A member's child doing main Super's work never asks the owner (plan-r10 1).
+  if (head && memberTitle !== undefined) {
+    const ch = state.children && Object.prototype.hasOwnProperty.call(state.children, head.sessionId) ? state.children[head.sessionId] : undefined;
+    if (typeof ch?.workOrigin === 'string' && ch.workOrigin.startsWith('main:')) return;
+  }
   if (!state.enabled || !state.session || !announces(head) || announced.has(head.id)) return;
   const session = state.session;
   const vault = vaultOf();
@@ -146,8 +153,10 @@ export function announceOwnerHead(vaultOf: () => string, state: Pick<SuperState,
   // A child's own question names its job and opens ITS chat, one click (owner 2026-10-27).
   const direct = head.kind === 'question' && head.direct === true;
   const job = direct ? clip(state.children?.[head.sessionId]?.brief ?? '').slice(0, JOB_CHARS) : '';
-  const title = head.kind === 'owner' ? `A job needs you · ${vault}`
-    : direct ? `${job || 'A job'} asks · ${vault}` : `Super Agent asks · ${vault}`;
+  // A member's Super speaks under the member's own name (plan-r10 2.3): "Rota · acme-storefront".
+  const title = memberTitle !== undefined ? `${clip(memberTitle).slice(0, JOB_CHARS) || 'A member'} · ${vault}`
+    : head.kind === 'owner' ? `A job needs you · ${vault}`
+      : direct ? `${job || 'A job'} asks · ${vault}` : `Super Agent asks · ${vault}`;
   const body = bodyOf(head);
   if (!here) {
     let link: string | null = null;

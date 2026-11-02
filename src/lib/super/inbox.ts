@@ -7,7 +7,7 @@ import { formatLocalFire } from '../automations/schedule.js';
 import { wrapUntrusted } from '../assistant/autonomy.js';
 import { GONE_DEBOUNCE_MS } from '../assistant/delegations.js';
 import { BROWSER_IDLE_MS, settleChild as settleCards } from './proactive.js';
-import { armTeamJobWatches, awaitedTeamItem, staleTeamItem, teamItemLines, teamLiveRows } from './team.js';
+import { armTeamJobWatches, awaitedTeamItem, setRequestSource, staleTeamItem, teamItemLines, teamLiveRows } from './team.js';
 import { closeAnswered, markPadTold, padNotice, settlePad } from './pad.js';
 import { superRestoreHold } from './restore.js';
 import { sanitizeModel } from '../claude-args.js';
@@ -23,15 +23,16 @@ import { pushFrame, tokenOfSession } from '../window-control.js';
 import { announceOwnerHead, seedOwnerHead, serverBannered } from './owner-question.js';
 import { clearFresh, hasFreshLatch, isRotating, onRotatingChanged } from './fresh-session.js';
 import { readHandoffRecord } from '../context-watch.js';
+import { memberCallState } from '../agents/team-roster.js';
 import {
-  isSuperChild, primeSuperIndex, readSuperState, superIndex, superRootOfChild, superRootOfEnded, superRootOfSession,
+  dropSuperIndex, isSuperChild, keyOfRef, listMemberSupers, memberOfSuperId, parseSuperKey, primeSuperIndex, readSuperState, superEntry, superIdOfMember, superKey, superOfChild, superOfEnded, superOfSession,
   updateSuperState, type SanitizeOpts,
 } from './store.js';
 import {
   CHILD_ARRIVE_MS, DONE_SETTLE_MS, MAX_START_ERROR, STOPPED_SETTLE_MS, MAX_BATCH, MAX_CONTAINERS, MAX_FLOAT, MAX_WAIT_KEY, MAX_OWNER_BATCHES, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS,
   SUPER_FRAME_STATE, floatCount, leaveGroups, AGENDA_REF, AGENDA_SIZE,
   type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
-  MAX_HELD, PAD_ID_RE, type SuperHeldEvent, type SuperQueueItem, type SuperState, type SuperStateView,
+  MAX_HELD, MAX_MAIN_BATCHES, PAD_ID_RE, type SuperHeldEvent, type SuperId, type SuperQueueItem, type SuperState, type SuperStateView, type SuperWorkOrigin,
 } from './types.js';
 
 /**
@@ -73,6 +74,25 @@ import {
 // ─── Small helpers ──────────────────────────────────────────────────────────────
 
 const keyOf = (root: string) => resolve(root);
+/** Every map below is keyed by a SUPER (plan-r10 1): `superKey(root, superId)`; main's key is the
+ *  vault root itself, so main's maps read exactly as before. A key back to its vault root and id: */
+const rootOf = (key: string): string => parseSuperKey(key).root;
+const idOf = (key: string): SuperId => parseSuperKey(key).superId;
+/** The key of the super whose OWN session `sid` is, or null. */
+const superKeyOfSession = (sid: string): string | null => keyOfRef(superOfSession(sid));
+/** The key of the super that owns child `sid` (live), or null. */
+const superKeyOfChild = (sid: string): string | null => keyOfRef(superOfChild(sid));
+/** Whose work an item is (plan-r10 1, `wnfvtj`): its own origin, its child's, else the owner's. */
+export function itemOrigin(s: Pick<SuperState, 'children'>, q: SuperQueueItem): SuperWorkOrigin {
+  if (q.workOrigin) return q.workOrigin;
+  if (q.kind === 'request') return `main:${q.id}`;
+  const ch = Object.prototype.hasOwnProperty.call(s.children, q.sessionId) ? s.children[q.sessionId] : undefined;
+  return ch?.workOrigin ?? 'owner';
+}
+/** Main Super's work (`main:*`): between the member and main only, never the owner's. */
+export const isMainWork = (o: SuperWorkOrigin | undefined): boolean => typeof o === 'string' && o.startsWith('main:');
+/** An item the owner answers or sees (never main Super's work). */
+export const ownerFacing = (s: Pick<SuperState, 'children'>, q: SuperQueueItem): boolean => !isMainWork(itemOrigin(s, q));
 const isLive = (e: ChatEntry | null) => !!e && e.status !== 'gone';
 
 /** A registry entry that may never be a child: another mode's chat or an Assistant delegation. */
@@ -87,14 +107,14 @@ export function superSanitizeOpts(): SanitizeOpts {
 }
 
 /** The vault's registered name for a context root (the chat registry's own fallback otherwise). */
-export function superVaultName(contextRoot: string): string {
-  const want = resolve(contextRoot);
+export function superVaultName(contextRootOrKey: string): string {
+  const want = resolve(rootOf(contextRootOrKey));
   const v = listVaults().find((x) => resolve(join(x.path, '_dream_context')) === want);
   return v?.name ?? basename(dirname(want));
 }
 
 export function superView(contextRoot: string, state: SuperState): SuperStateView {
-  const teamLive = teamLiveRows(contextRoot, state);
+  const teamLive = teamLiveRows(rootOf(contextRoot), state);
   const bannered = serverBannered(state.queue);
   const rotating = isRotating(state.session);
   return {
@@ -227,6 +247,14 @@ export function noteOwnerBatch(s: SuperState, batch: string | undefined): void {
   if (s.ownerBatches.length > MAX_OWNER_BATCHES) s.ownerBatches.splice(0, s.ownerBatches.length - MAX_OWNER_BATCHES);
 }
 
+/** A member Super's main-origin turn (plan-r10 1): ring of MAX_MAIN_BATCHES beside `ownerBatches`. */
+export function noteMainBatch(s: SuperState, batch: string | undefined): void {
+  if (!batch) return;
+  const have = s.mainBatches ?? [];
+  if (have.includes(batch)) return;
+  s.mainBatches = [...have, batch].slice(-MAX_MAIN_BATCHES);
+}
+
 // ─── The queue head (D16: what reaches the owner) ───────────────────────────────
 
 /**
@@ -235,8 +263,9 @@ export function noteOwnerBatch(s: SuperState, batch: string | undefined): void {
  * the super agent escalated, its own `ask`, or an AI Team approval (`super team ask` on a member
  * not approved here). A second one waits behind the first, so the owner never has two at once.
  */
-export function superQueueHead(state: Pick<SuperState, 'queue'>): SuperQueueItem | null {
-  const byAge = [...state.queue].sort((a, b) => a.createdAt - b.createdAt);
+export function superQueueHead(state: Pick<SuperState, 'queue'> & { children?: SuperState['children'] }): SuperQueueItem | null {
+  // Main Super's work (`main:*`, a member Super's) never reaches the owner's bar.
+  const byAge = [...state.queue].filter((q) => ownerFacing({ children: state.children ?? {} }, q)).sort((a, b) => a.createdAt - b.createdAt);
   return byAge.find((q) => q.kind === 'permission' && q.state !== 'done')
     ?? byAge.find((q) => ((q.kind === 'question' || q.kind === 'ask' || q.kind === 'approval') && q.state === 'escalated')
       // A child waiting on something only he can do is his from birth, not after a super turn;
@@ -261,8 +290,11 @@ function stillAsking(item: SuperQueueItem): boolean {
  *  agent's own `ask`, or an escalated child question the child is STILL asking. A `direct` child
  *  question holds nothing: it reached him on its own, and holding every other event behind it
  *  made a finished job wait minutes for an answer to someone else's question (owner 2026-10-27). */
-export function ownerQuestionOpen(state: Pick<SuperState, 'queue'>): boolean {
-  return state.queue.some((q) => q.state === 'escalated'
+export function ownerQuestionOpen(state: Pick<SuperState, 'queue'> & { children?: SuperState['children'] }): boolean {
+  // Main Super's work in a member's Super (`main:*`, by the item's OWN origin or its child's) holds
+  // nothing: it is never the owner's question, and main's reply must still go in.
+  const children = state.children ?? {};
+  return state.queue.some((q) => q.state === 'escalated' && !isMainWork(itemOrigin({ children }, q))
     && (q.kind === 'ask' || (q.kind === 'question' && q.direct !== true && stillAsking(q))));
 }
 
@@ -275,7 +307,7 @@ const lastStates = new Map<string, SuperState>();
 function noteHead(root: string, state: SuperState): void {
   lastStates.set(keyOf(root), state);
   // Read at boot, on attach and after every write: a team job whose ending is owed is watched from it.
-  armTeamJobWatches(root, state);
+  armTeamJobWatches(rootOf(root), state);
   heads.set(keyOf(root), {
     root: keyOf(root),
     vault: superVaultName(root),
@@ -288,7 +320,7 @@ function noteHead(root: string, state: SuperState): void {
 /** Per handed-over vault, its queue head when that is a permission or an escalation. */
 export function superAttentionRows(): Array<{ root: string; vault: string; item: SuperQueueItem }> {
   const out: Array<{ root: string; vault: string; item: SuperQueueItem }> = [];
-  for (const h of heads.values()) if (h.enabled && h.head) out.push({ root: h.root, vault: h.vault, item: h.head });
+  for (const h of heads.values()) if (h.enabled && h.head) out.push({ root: rootOf(h.root), vault: h.vault, item: h.head });
   return out;
 }
 
@@ -311,7 +343,9 @@ export interface SuperWorkRow {
 export function superWork(now = Date.now()): SuperWorkRow[] {
   const out: SuperWorkRow[] = [];
   for (const h of heads.values()) {
-    const { session, enabled, children } = superIndex(h.root);
+    // The project's own Super: a member's work shows on its Ekip row (Wave 3), not as a vault row.
+    if (idOf(h.root) !== 'main') continue;
+    const { session, enabled, children } = superEntry(h.root);
     if (!enabled || !session) continue;
     const self = getChat(session);
     const own = self ? activityOf(self, now) : null;
@@ -337,7 +371,7 @@ export function setSuperDigestSink(fn: ((contextRoot: string, state: SuperState)
 export function pushSuperState(contextRoot: string, state: SuperState): boolean {
   if (!state.session) return false;
   // Before the window's own push: a phone is told even while no window socket is there.
-  try { superDigestSink?.(contextRoot, state); } catch (err) { console.error('[super] digest push failed:', err); }
+  try { superDigestSink?.(rootOf(contextRoot), state); } catch (err) { console.error('[super] digest push failed:', err); }
   const token = tokenOfSession(state.session);
   return token ? pushFrame(token, { subtype: SUPER_FRAME_STATE, state: superView(contextRoot, state) }) : false;
 }
@@ -346,11 +380,21 @@ export function pushSuperState(contextRoot: string, state: SuperState): boolean 
  *  stale sweep armed or stopped by the rows it now holds. */
 export function afterSuperWrite(contextRoot: string, state: SuperState): void {
   noteHead(contextRoot, state);
-  // A question that reached the head is announced to the owner, once (owner-question.ts).
-  announceOwnerHead(() => superVaultName(contextRoot), state, superQueueHead(state));
+  // A question that reached the head is announced to the owner, once (owner-question.ts): a
+  // member's with its own name ("<Title> · <project>"), never main Super's work.
+  announceOwnerHead(() => superVaultName(contextRoot), state, superQueueHead(state), state.member ? memberTitle(rootOf(contextRoot), state.member) : undefined);
   pushSuperState(contextRoot, state);
   syncSweep(keyOf(contextRoot), state);
+  // Main's card for this member reads the member's record (plan-r10 1): it moves with it.
+  if (idOf(contextRoot) !== 'main' && state.queue.some((q) => q.kind === 'request')) {
+    const main = lastStates.get(keyOf(rootOf(contextRoot)));
+    if (main) pushSuperState(rootOf(contextRoot), main);
+  }
 }
+
+// Main's team cards read a request from the member record this module last saw (plan-r10 1).
+setRequestSource((root, member, requestId) =>
+  lastStates.get(superKey(root, superIdOfMember(member)))?.queue.find((q) => q.id === requestId && q.kind === 'request') ?? null);
 
 // ─── What piles up while the owner has a question open (the held ledger) ────────────
 
@@ -380,12 +424,27 @@ export function noteHeld(s: SuperState): boolean {
  *  Every write also notes what a question open with the owner holds back (`noteHeld`), settles
  *  picture questions' cards (`settleAskShows`), and floats every live child's card (live.ts: a live job is never in Others or a group unless the
  *  owner put it there himself). */
+export type SuperWriteFn = (draft: SuperState) => SuperState | void;
+export interface SuperWriteOpts { onDemoted?: (ids: string[]) => void }
+
+/**
+ * `writeSuper(root, fn)` writes main's record, as before Wave 2; `writeSuper(root, id, fn)` writes
+ * `id`'s (plan-r10 1: a member Super's own record, never main's). The same draft rules for every
+ * super. A member's write pushes its state down ITS chat's socket only; its glance, announce, phone
+ * and sweep are Wave 2 step A2.
+ */
+export async function writeSuper(contextRoot: string, fn: SuperWriteFn, opts?: SuperWriteOpts): Promise<SuperState>;
+export async function writeSuper(contextRoot: string, id: SuperId, fn: SuperWriteFn, opts?: SuperWriteOpts): Promise<SuperState>;
 export async function writeSuper(
   contextRoot: string,
-  fn: (draft: SuperState) => SuperState | void,
-  opts: { onDemoted?: (ids: string[]) => void } = {},
+  a: SuperId | SuperWriteFn,
+  b?: SuperWriteFn | SuperWriteOpts,
+  c: SuperWriteOpts = {},
 ): Promise<SuperState> {
-  const next = await updateSuperState(contextRoot, (draft) => {
+  const id: SuperId = typeof a === 'function' ? 'main' : a;
+  const fn = (typeof a === 'function' ? a : b) as SuperWriteFn;
+  const opts = (typeof a === 'function' ? (b as SuperWriteOpts | undefined) ?? {} : c);
+  const draftRules = (draft: SuperState): SuperState => {
     const out = fn(draft) ?? draft;
     floatLiveChildren(out);
     noteHeld(out);
@@ -394,9 +453,22 @@ export async function writeSuper(
     // A Now line about a job follows that job (pad.ts): every write sees the rows it moved.
     settlePad(out);
     return out;
-  }, { ...superSanitizeOpts(), ...(opts.onDemoted ? { onDemoted: opts.onDemoted } : {}) });
-  afterSuperWrite(contextRoot, next);
+  };
+  const sanitize = { ...superSanitizeOpts(), ...(opts.onDemoted ? { onDemoted: opts.onDemoted } : {}) };
+  // One key per super: a root naming main, or a member's (its key, or the root and its id).
+  const key = contextRoot.includes('\u0000') ? contextRoot : superKey(contextRoot, id);
+  const next = await updateSuperState(key, draftRules, sanitize);
+  afterSuperWrite(key, next);
   return next;
+}
+
+/** A member's display name for its announce and its event lines (its title, else its slug). */
+let memberTitleSource: (contextRoot: string, slug: string) => string = (_root, slug) => slug;
+export function setMemberTitleSource(fn: ((contextRoot: string, slug: string) => string) | null): void {
+  memberTitleSource = fn ?? ((_root, slug) => slug);
+}
+export function memberTitle(contextRoot: string, slug: string): string {
+  try { return memberTitleSource(contextRoot, slug) || slug; } catch { return slug; }
 }
 
 /**
@@ -405,7 +477,7 @@ export async function writeSuper(
  * it differs; not a child of any Super, nothing.
  */
 export async function noteChildModel(sessionId: string, model: string): Promise<void> {
-  const root = superRootOfChild(sessionId);
+  const root = superKeyOfChild(sessionId);
   // Only what `super resume` accepts back (sanitizeModel): a `[1m]`-tagged id would make the
   // child impossible to resume, so the record keeps what it had.
   if (!root || model.length > 60 || sanitizeModel(model) !== model) return;
@@ -466,7 +538,7 @@ export function attachSuperInbox(inbox: SuperInbox): () => void {
 /** The super chat's socket (re)attached: it gets the state at once, the rows a reconcile, and
  *  the queue a chance. */
 export function superSocketAttached(sessionId: string): void {
-  const root = superRootOfSession(sessionId);
+  const root = superKeyOfSession(sessionId);
   if (!root) return;
   void track(readSuperState(root, superSanitizeOpts()).then(async (s) => {
     const swept = await sweepOrphanFresh(root, s).catch(() => s);
@@ -502,7 +574,7 @@ export function freshInFlight(contextRoot: string, state: SuperState): boolean {
 
 // Every rotating change reaches the window at once (it never polls) and lets the pump go.
 onRotatingChanged((session) => {
-  const root = superRootOfSession(session);
+  const root = superKeyOfSession(session);
   if (!root) return;
   void track(readSuperState(root, superSanitizeOpts()).then((s) => {
     pushSuperState(root, s);
@@ -537,9 +609,10 @@ const openBatch = new Map<string, { batch: string; inboxId: string; root: string
 function endTurn(sessionId: string, inboxId: string | null, exited: boolean): void {
   const ob = openBatch.get(sessionId);
   if (ob && (inboxId === null || ob.inboxId === inboxId)) openBatch.delete(sessionId);
-  const root = superRootOfSession(sessionId);
+  const root = superKeyOfSession(sessionId);
   if (!root) return;
   const key = keyOf(root);
+  lastTurnEnd.set(key, Date.now());
   const list = turnsEnded.get(key) ?? [];
   endSeq += 1;
   list.push({ inboxId, seq: endSeq, exited });
@@ -581,12 +654,38 @@ async function settleCarried(key: string): Promise<boolean> {
   const keep = list.filter((c) => ends(c).length === 0);
   if (!settle.length) return false;
   if (keep.length) carried.set(key, keep); else carried.delete(key);
+  const requestNotes: Array<{ key: string; request: string; note: 'exits' }> = [];
+  /** A main:* child question the member left twice: main hears it (never the owner). */
+  const mainQuestions: Array<{ origin: SuperWorkOrigin; text: string }> = [];
   try {
     await writeSuper(key, (s) => {
       for (const c of settle) {
         const it = s.queue.find((q) => q.id === c.itemId);
         if (!it || it.state !== 'delivered') continue;
         const pureExit = ends(c).every((e) => e.exited);
+        // A request (plan-r10 1): its turn's result end makes it the member's work (`acceptedAt`),
+        // never done (only `team done` closes it). A pure exit before that puts it back under the
+        // exits < 2 rule; at the second exit it STAYS pending and main Super hears it once.
+        if (it.kind === 'request') {
+          if (!pureExit) { it.acceptedAt = Date.now(); continue; }
+          const exits = (it.exits ?? 0) + 1;
+          it.exits = exits;
+          it.state = 'pending';
+          delete it.batch;
+          if (exits === 2) requestNotes.push({ key, request: it.id, note: 'exits' });
+          continue;
+        }
+        // A reply: delivered means the member heard main's answer; its ask closes with it.
+        if (it.kind === 'reply') {
+          if (pureExit && (it.exits ?? 0) < 1) { it.exits = (it.exits ?? 0) + 1; it.state = 'pending'; delete it.batch; continue; }
+          it.state = 'done';
+          continue;
+        }
+        // A member's question to main Super stays open until main answers it (`super team answer`).
+        if (it.kind === 'question' && it.team && it.answers) {
+          if (pureExit && (it.exits ?? 0) < 1) { it.exits = (it.exits ?? 0) + 1; it.state = 'pending'; delete it.batch; }
+          continue;
+        }
         if (pureExit && it.kind === 'fresh') {
           // A "New session" turn whose process died never rotates and is never re-sent to the
           // successor: the owner presses again if he still wants one.
@@ -598,7 +697,11 @@ async function settleCarried(key: string): Promise<boolean> {
           const exits = (it.exits ?? 0) + 1;
           it.exits = exits;
           if (exits < 2) { it.state = 'pending'; delete it.batch; continue; }
-          if (it.kind === 'question' && stillAsking(it)) { it.state = 'escalated'; if (!it.direct) it.ownerText = childQuestionText(it.sessionId, it.requestId); continue; }
+          if (it.kind === 'question' && stillAsking(it)) {
+            // Main Super's work never reaches the owner: the member left it twice, main hears it.
+            if (isMainWork(itemOrigin(s, it))) { it.state = 'done'; mainQuestions.push({ origin: itemOrigin(s, it), text: childQuestionText(it.sessionId, it.requestId) }); continue; }
+            it.state = 'escalated'; if (!it.direct) it.ownerText = childQuestionText(it.sessionId, it.requestId); continue;
+          }
           if (it.kind === 'owner') { it.state = ownerWaitStands(it) ? 'escalated' : 'done'; continue; }
           it.state = 'done';
           continue;
@@ -624,6 +727,7 @@ async function settleCarried(key: string): Promise<boolean> {
         const attempts = (it.attempts ?? 0) + 1;
         it.attempts = attempts;
         if (attempts < 2) { it.state = 'pending'; continue; }
+        if (isMainWork(itemOrigin(s, it))) { it.state = 'done'; mainQuestions.push({ origin: itemOrigin(s, it), text: childQuestionText(it.sessionId, it.requestId) }); continue; }
         it.state = 'escalated';
         it.ownerText = childQuestionText(it.sessionId, it.requestId);
       }
@@ -633,6 +737,8 @@ async function settleCarried(key: string): Promise<boolean> {
     turnsEnded.set(key, [...ended, ...(turnsEnded.get(key) ?? [])]);
     throw err;
   }
+  for (const n of requestNotes) void track(noteRequestToMain(n.key, n.request, n.note));
+  for (const q of mainQuestions) void track(noteRequestToMain(key, q.origin.slice('main:'.length), 'question', q.text));
   return true;
 }
 
@@ -669,8 +775,8 @@ export function takeSuperEscalation(sessionId: string): boolean {
 
 /** Is `sessionId` a vault's super session while that vault is handed over? */
 export function isHandedOverSuperSession(sessionId: string): boolean {
-  const root = superRootOfSession(sessionId);
-  return !!root && superIndex(root).enabled;
+  const root = superKeyOfSession(sessionId);
+  return !!root && superEntry(root).enabled;
 }
 
 /** The super session or one of its children, while handed over: the Assistant leaves it alone. */
@@ -731,10 +837,12 @@ export function clearOwnerLease(contextRoot: string): void {
  * `about` is another agenda line (`aboutKeepsAsks`).
  */
 export function superOwnerSpoke(sessionId: string, now = Date.now(), told: readonly string[] = [], abouts: readonly AgendaAbout[] = [], midTurn = false): void {
-  const root = superRootOfSession(sessionId);
+  const root = superKeyOfSession(sessionId);
   if (!root) return;
   const key = keyOf(root);
   leases.set(key, now);
+  // A turn an owner message is in (or steered into) is the owner's from now on (plan-r10 1).
+  turnOrigins.set(sessionId, 'owner');
   // Written while the super was idle (`midTurn` false: the bridge had no turn in flight): the
   // turn it starts is his, and its end ends the lease. Written into a running turn, it may be
   // folded in or race that turn's `result` and run as its own turn after it: no registry edge
@@ -749,6 +857,8 @@ export function superOwnerSpoke(sessionId: string, now = Date.now(), told: reado
   if (ob) {
     for (const c of carried.get(key) ?? []) if (c.batch === ob.batch) c.steered = true;
     openBatch.delete(sessionId);
+    // A member's turn for main Super that the owner steered into is his from now on: drawn in full.
+    if (idOf(key) !== 'main') void track(writeSuper(key, (s) => { if (s.mainBatches?.includes(ob.batch)) s.mainBatches = s.mainBatches.filter((b) => b !== ob.batch); }));
   }
   if (aboutKeepsAsks(lastStates.get(key), abouts)) return;
   void track(closeOpenAsks(key, sessionId, told));
@@ -757,7 +867,7 @@ export function superOwnerSpoke(sessionId: string, now = Date.now(), told: reado
 /** One agenda line an owner message is written about (an `[About agenda line …]` header), a
  *  message it replies to (`[Reply to message ref=…]`, `id` its ref) or a passage of a stage card
  *  (`[About card …]`, `id` the card): one per part. */
-export interface AgendaAbout { kind: 'note' | 'item' | 'reply' | 'card'; id: string }
+export interface AgendaAbout { kind: 'note' | 'item' | 'reply' | 'card' | 'task'; id: string }
 
 /**
  * A message about agenda lines (owner 2026-10-23; several in one message since 2026-10-24)
@@ -768,7 +878,7 @@ export interface AgendaAbout { kind: 'note' | 'item' | 'reply' | 'card'; id: str
  */
 function aboutKeepsAsks(s: SuperState | undefined, abouts: readonly AgendaAbout[]): boolean {
   if (!abouts.length) return false;
-  const open = (s?.queue ?? []).filter((q) => q.kind === 'ask' && q.state !== 'done').map((q) => q.id);
+  const open = (s?.queue ?? []).filter((q) => q.kind === 'ask' && q.state !== 'done' && !isMainWork(q.workOrigin)).map((q) => q.id);
   return !abouts.some((a) => a.kind === 'item' && open.includes(a.id));
 }
 
@@ -780,7 +890,9 @@ function aboutKeepsAsks(s: SuperState | undefined, abouts: readonly AgendaAbout[
  */
 async function closeOpenAsks(key: string, sessionId: string, told: readonly string[]): Promise<void> {
   const cur = await readSuperState(key, superSanitizeOpts());
-  if (!cur.queue.some((q) => q.kind === 'ask' && q.state !== 'done') && !told.length) return;
+  // His message answers HIS question; a member's question to main Super stays open (plan-r10 1).
+  const ownerAsk = (q: SuperQueueItem) => q.kind === 'ask' && !isMainWork(q.workOrigin);
+  if (!cur.queue.some((q) => ownerAsk(q) && q.state !== 'done') && !told.length) return;
   const inbox = inboxes.get(sessionId);
   // Agenda note ids told in the same message (`superAnswerDigest`): stamped, never carried.
   const padIds = told.filter((id) => PAD_ID_RE.test(id));
@@ -791,7 +903,7 @@ async function closeOpenAsks(key: string, sessionId: string, told: readonly stri
   }
   await writeSuper(key, (s) => {
     for (const q of s.queue) {
-      if (q.kind === 'ask') {
+      if (ownerAsk(q)) {
         if (q.state !== 'done') closeAnswered(s, q.ask?.questions[0]?.question ?? q.ownerText ?? '');
         q.state = 'done';
       } else if (ids.has(q.id) && q.state === 'pending') { q.state = inbox ? 'delivered' : q.kind === 'owner' ? 'escalated' : 'done'; q.batch = batch; }
@@ -843,7 +955,7 @@ export function heldBlock(contextRoot: string, s: SuperState, now = Date.now()):
  * open rides in the SAME message, as one more block. `items` go to `superOwnerSpoke`.
  */
 export function superAnswerDigest(sessionId: string, now = Date.now(), abouts: readonly AgendaAbout[] = []): { text: string; items: string[] } | null {
-  const root = superRootOfSession(sessionId);
+  const root = superKeyOfSession(sessionId);
   if (!root) return null;
   const s = lastStates.get(keyOf(root));
   if (!s || !s.enabled || s.session !== sessionId) return null;
@@ -896,9 +1008,9 @@ export const AUTOMATION_LINE = `An item whose own server line says event=automat
 function automationItemLines(root: string, item: SuperQueueItem): string[] {
   const slug = item.automation ?? '';
   let head = `- item=${item.id} event=automation automation=${slug} decision=${item.decision ?? 'approved'}`;
-  const m = slug ? getAutomation(root, slug) : null;
+  const m = slug ? getAutomation(rootOf(root), slug) : null;
   if (!m) return [`${head} state=gone`];
-  const f = approvalCardFacts(dirname(root), m, { mcp: () => [] });
+  const f = approvalCardFacts(dirname(rootOf(root)), m, { mcp: () => [] });
   const state = !f.approved ? 'not-approved' : f.enabled ? 'on' : 'off';
   head += ` state=${state}`;
   if (f.nextFireAt && f.approved) head += ` next=${formatLocalFire(new Date(f.nextFireAt))}`;
@@ -941,10 +1053,18 @@ function childLine(vault: string, s: SuperState, sid: string, now: number): stri
   return lines;
 }
 
+/** The pool line a member Super's child-finished event carries (plan-r10 1): its waiting jobs, or ''. */
+export function memberPoolLine(state: Pick<SuperState, 'member' | 'pool'>): string {
+  if (!state.member) return '';
+  const n = state.pool.length;
+  return n ? `${n} waiting in your pool, start the next with \`super delegate --from <id>\`` : '';
+}
+
 /** One event inside a batch: the server's line, then the child's text fenced. */
 function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueItem, now: number): string[] {
-  if (item.team) return teamItemLines(root, vault, s, item);
+  if (item.team) return teamItemLines(rootOf(root), vault, s, item);
   if (item.kind === 'automation') return automationItemLines(root, item);
+  if (item.kind === 'request' || item.kind === 'reply') return requestItemLines(vault, item);
   const sid = item.sessionId;
   const e = getChat(sid);
   const status = e ? activityOf(e, now) : 'gone';
@@ -969,6 +1089,9 @@ function itemLines(root: string, vault: string, s: SuperState, item: SuperQueueI
   }
   const last = e?.lastAssistantText[e.lastAssistantText.length - 1];
   if (last) lines.push(...lastReplyLines(vault, sid, last));
+  // A member's Super has two slots: a finished child frees one, and its pool says what waits.
+  const pool = item.kind === 'done' || item.kind === 'gone' ? memberPoolLine(s) : '';
+  if (pool) lines.push(pool);
   return lines;
 }
 
@@ -991,9 +1114,34 @@ export function superBatchText(contextRoot: string, state: SuperState, items: re
   ].join('\n');
 }
 
+/** The frame a request or reply turn opens with on the member's stage: "Super Agent'tan". */
+export const REQUEST_FROM = "Super Agent'tan";
+
+/** A request's or a reply's own lines (the main Super's words are data for the member). */
+function requestItemLines(vault: string, item: SuperQueueItem): string[] {
+  if (item.kind === 'reply') {
+    return [
+      `- item=${item.id} event=reply${item.answers ? ` answers=${item.answers}` : ''} from=super`,
+      wrapUntrusted(vault, `${REQUEST_FROM}, the answer to your question: ${item.text ?? ''}`),
+    ];
+  }
+  return [
+    `- item=${item.id} event=request from=super${item.model ? ` model=${item.model}` : ''}${item.effort ? ` effort=${item.effort}` : ''}${item.light ? ' light' : ''}`,
+    wrapUntrusted(vault, `${REQUEST_FROM}: ${item.text ?? ''}`),
+  ];
+}
+
+/** The member's instructions for one request or reply turn: in full, never the one-line rule. */
+export const REQUEST_LAST_LINE = `This is work the Super Agent gave you (main Super), not the owner's: it is shown on your stage as "${REQUEST_FROM}". Do it through your children when it is real work (\`super delegate --for <item>\`, passing any model= and effort= above to them; at most two at once, more wait in your pool), and answer in text as you go. A question about it goes to the Super Agent (\`super ask --for <item>\`), never the owner. When it is finished, close it: \`dreamcontext super team done <item> "<the result in a few lines>"\`.`;
+export const REPLY_LAST_LINE = `The Super Agent answered your question about its request. Go on with that request (its item is named in your question), and close it with \`dreamcontext super team done <item> "<result>"\` when it is finished.`;
+
 /** The text of a solo turn (handover, recap); any other item is a batch of one. Exported for tests. */
 export function superEventText(contextRoot: string, state: SuperState, item: SuperQueueItem, now = Date.now(), batch = item.batch ?? newBatchId()): string {
   const vault = superVaultName(contextRoot);
+  if (item.kind === 'request' || item.kind === 'reply') {
+    // A request turn shows the full text framed (exempt from the one-line BATCH_LAST_LINE rule).
+    return [`[super events] batch=${batch} items=1`, ...requestItemLines(vault, item), item.kind === 'request' ? REQUEST_LAST_LINE : REPLY_LAST_LINE].join('\n');
+  }
   if (item.kind === 'handover') {
     const ids = Object.keys(state.children);
     return [
@@ -1043,14 +1191,16 @@ function scheduleRetry(key: string, at: number): void {
   retry.set(key, { at, t });
 }
 
-const SOLO: Partial<Record<QueueKind, number>> = { handover: 0, fresh: 1, recap: 2 };
+const SOLO: Partial<Record<QueueKind, number>> = { handover: 0, fresh: 1, recap: 2, request: 3, reply: 4 };
 const BATCHED = new Set<QueueKind>(['question', 'done', 'gone', 'stuck', 'owner', 'automation']);
 
 /** An event no longer true: a question no longer asked, a `done`/`stuck` whose row moved on
  *  (the child started working again), a `gone` whose child is live. A team item reads its
  *  member's question from `root` when given. */
 function staleItem(state: SuperState, q: SuperQueueItem, root?: string): boolean {
-  if (q.team) return staleTeamItem(state, q, root);
+  if (q.team) return staleTeamItem(state, q, root === undefined ? undefined : rootOf(root));
+  // A request or a reply is the member's until it is closed; it is never "moved on".
+  if (q.kind === 'request' || q.kind === 'reply') return false;
   const row = state.children[q.sessionId]?.row;
   return (q.kind === 'question' && !stillAsking(q))
     || (q.kind === 'done' && row !== 'done')
@@ -1156,10 +1306,14 @@ export function nextBatch(state: SuperState, root?: string): { items: SuperQueue
   if (solo.length) return { items: [solo[0]], drop: [] };
   const items: SuperQueueItem[] = [];
   const drop: string[] = [];
+  // One origin per event turn (plan-r10 1): the oldest item's; the others wait for the next turn.
+  let origin: SuperWorkOrigin | null = null;
   for (const q of pending) {
     if (!BATCHED.has(q.kind)) continue;
     if (staleItem(state, q, root)) { drop.push(q.id); continue; }
-    if (items.length < MAX_BATCH) items.push(q);
+    const o = itemOrigin(state, q);
+    if (origin !== null && o !== origin) continue;
+    if (items.length < MAX_BATCH) { items.push(q); origin = o; }
   }
   return { items, drop };
 }
@@ -1168,7 +1322,7 @@ export function nextBatch(state: SuperState, root?: string): { items: SuperQueue
  *  has a fresh record) adds the single-question rule. Exported for tests. */
 export function deliveryBlocker(contextRoot: string, now = Date.now(), state?: Pick<SuperState, 'queue'>): string | null {
   const key = keyOf(contextRoot);
-  const idx = superIndex(key);
+  const idx = superEntry(key);
   if (!idx.enabled || !idx.session) return 'off';
   // Between `/clear` and the fresh session's first finished turn nothing is delivered: a child
   // event must reach a session that has read its handoff (fresh-session.ts).
@@ -1199,8 +1353,10 @@ function track(p: Promise<unknown>): Promise<void> {
 /** Deliver the next batch when D7 allows. Single-flight per vault; one turn per call. Never
  *  rejects: every caller fires and forgets it, and a record that cannot be written (the vault
  *  removed, a refused file) must end this pass, not the server. The next event pumps again. */
-export function pumpSuper(contextRoot: string): Promise<void> {
-  return track(pumpRun(keyOf(contextRoot)));
+export function pumpSuper(contextRoot: string, id: SuperId = 'main'): Promise<void> {
+  // One pump per super (plan-r10 1): a root names main (or `id`), a super key names its own super.
+  const key = contextRoot.includes('\u0000') ? contextRoot : superKey(contextRoot, id);
+  return track(pumpRun(key));
 }
 
 async function pumpRun(key: string): Promise<void> {
@@ -1249,7 +1405,7 @@ async function pumpOnce(key: string): Promise<void> {
   try { await settleCarried(key); } catch { /* the record could not be written: next turn end */ }
   const now = Date.now();
   const blocker = deliveryBlocker(key, now);
-  const idx = superIndex(key);
+  const idx = superEntry(key);
   if (blocker === 'starting') {
     const chat = idx.session ? getChat(idx.session) : null;
     if (chat) scheduleRetry(key, Date.parse(chat.lastFrameAt) + STARTING_GRACE_MS + 50);
@@ -1260,7 +1416,14 @@ async function pumpOnce(key: string): Promise<void> {
     if (at !== undefined) scheduleRetry(key, at + OWNER_LEASE_MS + 50);
     return;
   }
-  if (blocker) return;
+  if (blocker) {
+    // A member chat that is not even running: the fallback still reads its open requests.
+    if (idOf(key) !== 'main') {
+      const s = lastStates.get(key);
+      if (s) checkQuietRequests(key, s, now);
+    }
+    return;
+  }
   const session = idx.session as string;
   const inbox = inboxes.get(session) as SuperInbox;
   let state: SuperState;
@@ -1281,7 +1444,7 @@ async function pumpOnce(key: string): Promise<void> {
     }
     // A "New session" asked before a rotation that already happened (a nudge-driven handoff):
     // the session it wanted is the one running now.
-    const acted = Date.parse(readHandoffRecord(key, session)?.actedAt ?? '');
+    const acted = Date.parse(readHandoffRecord(rootOf(key), session)?.actedAt ?? '');
     if (Number.isFinite(acted) && state.queue.some((q) => q.kind === 'fresh' && q.state === 'pending' && q.createdAt < acted)) {
       state = await writeSuper(key, (s) => { for (const q of s.queue) if (q.kind === 'fresh' && q.state === 'pending' && q.createdAt < acted) q.state = 'done'; });
     }
@@ -1290,6 +1453,16 @@ async function pumpOnce(key: string): Promise<void> {
     // own "New session" press is the exception: it goes, and the questions travel in its text.
     const freshNext = nextBatch(state).items.some((q) => q.kind === 'fresh');
     if (!freshNext && ownerQuestionOpen(state)) return;
+    // A member Super's requests wait while it is off or unapproved (security r8-3): never delivered,
+    // and main Super hears it once per request.
+    if (state.member) {
+      const blocked = memberBlocked(rootOf(key), state.member);
+      if (blocked) {
+        const waiting = state.queue.filter((q) => q.kind === 'request' && q.state === 'pending');
+        for (const q of waiting) if (!offTold.has(`${key}\u0000${q.id}`)) { offTold.add(`${key}\u0000${q.id}`); void track(noteRequestToMain(key, q.id, blocked)); }
+        if (waiting.length) state = { ...state, queue: state.queue.filter((q) => !(q.kind === 'request' && q.state === 'pending')) };
+      }
+    }
     let { items, drop } = nextBatch(state, key);
     if (drop.length) {
       state = await writeSuper(key, (s) => { for (const q of s.queue) if (drop.includes(q.id) && q.state === 'pending') q.state = 'done'; });
@@ -1304,9 +1477,13 @@ async function pumpOnce(key: string): Promise<void> {
     if (!items.length && !held) return;
     const batch = newBatchId();
     const text = solo ? superEventText(key, state, items[0], now, batch) : superBatchText(key, state, items.filter((q) => !heldIds.has(q.id)), batch, now, held);
-    const event: SuperEventFrame = solo
+    // A request or reply goes as a batch of one (its own kind is no event kind of the window's).
+    const asBatch = !solo || items[0].kind === 'request' || items[0].kind === 'reply';
+    const event: SuperEventFrame = !asBatch
       ? { kind: items[0].kind as SuperEventKind, child: items[0].sessionId, batch }
       : { kind: 'batch', child: items[0]?.sessionId ?? session, batch, items: items.map((q) => ({ item: q.id, child: q.sessionId, kind: q.kind })) };
+    // Whose work this turn is (plan-r10 1): a request's or reply's `main:<item>`, a batch's one origin.
+    const turnOrigin = turnOriginOf(state, items);
     let ok = false;
     try { ok = await bounded((cancelled) => inbox.deliver(text, event, cancelled)); } catch { ok = false; }
     if (!ok) return;
@@ -1314,6 +1491,7 @@ async function pumpOnce(key: string): Promise<void> {
     // turn's (or a later one's), every end before it belongs to an earlier turn.
     const seq = endSeq;
     markSuperEventTurn(session, true);
+    turnOrigins.set(session, turnOrigin);
     openBatch.set(session, { batch, inboxId: inbox.id, root: key });
     // Carried BEFORE the record write, so an end arriving while it waits still finds it; a
     // carried item the write did not mark `delivered` is skipped when settled.
@@ -1328,13 +1506,205 @@ async function pumpOnce(key: string): Promise<void> {
     await writeSuper(key, (s) => {
       markPadTold(s, toldPad, now);
       for (const it of s.queue) if (ids.has(it.id) && it.state === 'pending') { it.state = 'delivered'; it.batch = batch; }
+      // A reply's delivery closes the member's ask it answers (plan-r10 1).
+      for (const it of s.queue) {
+        if (!ids.has(it.id) || it.kind !== 'reply' || !it.answers) continue;
+        const ask = s.queue.find((q) => q.id === it.answers && q.kind === 'ask');
+        if (ask) ask.state = 'done';
+      }
       // The super's own question closes with its session; its text rode the fresh turn.
       if (fresh) for (const it of s.queue) if (it.kind === 'ask' && it.state === 'escalated') it.state = 'done';
       if (held && s.held) s.held = s.held.filter((h) => !heldIds.has(h.item));
       // The super tells the owner a result he waits on (or what waits on him): that turn renders in full.
-      if (tells) noteOwnerBatch(s, batch);
+      if (tells && !isMainWork(turnOrigin)) noteOwnerBatch(s, batch);
+      // A member Super's turn for main Super: the owner's unread skips it (`mainBatches`).
+      if (isMainWork(turnOrigin)) noteMainBatch(s, batch);
     });
   } catch { /* the record could not be written: the next event pumps again */ }
+}
+
+
+// ─── A member Super's requests (plan-r10 1: "Requests to a member") ─────────────────
+
+/** When each super's last turn ended (the 30-minute fallback reads it). In memory. */
+const lastTurnEnd = new Map<string, number>();
+/** Whose work each super session's running turn is: `owner` (his message), or main's request. */
+const turnOrigins = new Map<string, SuperWorkOrigin>();
+/** Requests main Super was already told are waiting on an off or unapproved member (per key + id). */
+const offTold = new Set<string>();
+/** Requests main Super was already told have gone quiet for 30 minutes. */
+const staleTold = new Set<string>();
+
+/** The origin of the turn running in a super session right now: `owner` when none is known. */
+export function superTurnOrigin(sessionId: string): SuperWorkOrigin {
+  return turnOrigins.get(sessionId) ?? 'owner';
+}
+
+/** A delivered turn's origin: a request's or a reply's main Super, else the batch's one origin. */
+function turnOriginOf(state: SuperState, items: readonly SuperQueueItem[]): SuperWorkOrigin {
+  const first = items[0];
+  if (!first) return 'owner';
+  if (first.kind === 'request') return `main:${first.id}`;
+  if (first.kind === 'reply') {
+    const ask = state.queue.find((q) => q.id === first.answers);
+    return ask?.workOrigin ?? first.workOrigin ?? 'owner';
+  }
+  return itemOrigin(state, first);
+}
+
+/** Why a member's requests may not go in now (security r8-3), or null when it is ready. Tests swap it. */
+let memberGate: (contextRoot: string, slug: string) => 'off' | 'unapproved' | null = (contextRoot, slug) => {
+  try {
+    const call = memberCallState(contextRoot, slug);
+    if (call.state === 'ready') return null;
+    return call.state === 'needs-approval' ? 'unapproved' : 'off';
+  } catch { return 'off'; }
+};
+export function setMemberGateForTest(fn: ((contextRoot: string, slug: string) => 'off' | 'unapproved' | null) | null): void {
+  memberGate = fn ?? ((contextRoot, slug) => {
+    try {
+      const call = memberCallState(contextRoot, slug);
+      if (call.state === 'ready') return null;
+      return call.state === 'needs-approval' ? 'unapproved' : 'off';
+    } catch { return 'off'; }
+  });
+}
+function memberBlocked(contextRoot: string, slug: string): 'off' | 'unapproved' | null {
+  return memberGate(contextRoot, slug);
+}
+
+/** After this long with an accepted request open and no turn and no live child, main hears it once. */
+export const REQUEST_QUIET_MS = 30 * 60_000;
+
+export type RequestNote = 'exits' | 'off' | 'unapproved' | 'stale' | 'done' | 'question';
+
+/**
+ * ONE event line on MAIN Super about a request it gave a member (plan-r10 1): its `team done`
+ * (the job's done, with the result), or a note that closes nothing (two exits, the member off or
+ * unapproved, 30 minutes quiet). On the team job whose `request` it is; nothing without one.
+ */
+export async function noteRequestToMain(memberKey: string, requestId: string, note: RequestNote, text = ''): Promise<boolean> {
+  const { root, superId } = parseSuperKey(memberKey);
+  const slug = memberOfSuperId(superId);
+  if (!slug) return false;
+  const title = memberTitle(root, slug);
+  const line = note === 'done' ? text
+    : note === 'exits' ? `${title}'s Super stopped twice before it took this job; it stays in its queue and goes in when its chat runs again.`
+      : note === 'off' ? `${title} is turned off: this job waits in its queue, not delivered, until the owner turns it on.`
+        : note === 'unapproved' ? `${title} waits for its one approval card: this job waits in its queue, not delivered.`
+          : note === 'question' ? `A child of ${title} asks about this job and ${title}'s Super left it twice: ${text}`
+            : `${title} has not closed this job; last line: ${text || '(none)'}`;
+  // Nothing to tell when main gave no such job (or is off): its record is not even written.
+  let cur: SuperState;
+  try { cur = await readSuperState(root, superSanitizeOpts()); } catch { return false; }
+  const owed = cur.team.find((j) => j.request === requestId && j.member === slug);
+  if (!cur.enabled || !cur.session || !owed || (note === 'done' && owed.told === 'done')) return false;
+  let added = false;
+  await writeSuper(root, (s) => {
+    if (!s.enabled || !s.session) return;
+    const job = s.team.find((j) => j.request === requestId && j.member === slug);
+    if (!job) return;
+    if (note === 'done') {
+      if (job.told === 'done') return;
+      job.told = 'done';
+      job.outcome = 'done';
+      job.endedAt = Date.now();
+      delete job.open;
+      // The job is over: the member's questions about it to main close with it (plan-r10 1).
+      for (const q of s.queue) if (q.kind === 'question' && q.team === job.id && q.state !== 'done') q.state = 'done';
+    }
+    s.queue.push({
+      id: newQueueId(), sessionId: s.session, kind: 'done', state: 'pending', createdAt: Date.now(), team: job.id,
+      ...(note === 'done' ? {} : { partial: true as const }), ...(line ? { text: line } : {}),
+    });
+    countEvent(s);
+    added = true;
+  });
+  if (added) void pumpSuper(root);
+  return added;
+}
+
+/** `super team done` (the member's own verb): main hears the result once. */
+export function noteRequestDone(contextRoot: string, slug: string, requestId: string, result: string): Promise<boolean> {
+  return noteRequestToMain(superKey(contextRoot, superIdOfMember(slug)), requestId, 'done', result);
+}
+
+/**
+ * The 30-minute fallback (plan-r10 1), inside the pump and sweep passes, never a timer of its own:
+ * an accepted request with no `team done`, while the member had no turn and no live child for
+ * REQUEST_QUIET_MS, gives main ONE line ("<member> has not closed <request>; last line: ...") and
+ * closes nothing.
+ */
+export function checkQuietRequests(key: string, s: SuperState, now = Date.now()): void {
+  if (!s.member || !s.enabled) return;
+  const lastTurn = lastTurnEnd.get(key) ?? 0;
+  if (now - lastTurn < REQUEST_QUIET_MS) return;
+  const liveChild = Object.keys(s.children).some((sid) => s.children[sid].endedAt === undefined && isLive(getChat(sid)));
+  if (liveChild) return;
+  const self = s.session ? getChat(s.session) : null;
+  if (self && (self.status === 'working' || self.status === 'asking')) return;
+  for (const q of s.queue) {
+    if (q.kind !== 'request' || q.state === 'done' || q.acceptedAt === undefined) continue;
+    if (now - q.acceptedAt < REQUEST_QUIET_MS) continue;
+    const mark = `${key}\u0000${q.id}`;
+    if (staleTold.has(mark)) continue;
+    staleTold.add(mark);
+    const last = self?.lastAssistantText[self.lastAssistantText.length - 1] ?? '';
+    void track(noteRequestToMain(key, q.id, 'stale', last.slice(0, 300)));
+  }
+}
+
+/** Does a member record hold an accepted, open request (the sweep keeps its fallback going)? */
+function holdsOpenRequest(s: SuperState): boolean {
+  return !!s.member && s.queue.some((q) => q.kind === 'request' && q.state !== 'done' && q.acceptedAt !== undefined);
+}
+
+/** Open requests in a member's queue (the 21st is refused: 429 member_queue_full). */
+export function openRequests(s: Pick<SuperState, 'queue'>): number {
+  return s.queue.filter((q) => q.kind === 'request' && q.state !== 'done').length;
+}
+
+/**
+ * A member's Super went off or left the project: every in-memory key of that super dies with it
+ * (pattern every-store-key-needs-a-death), not only at process exit. Its record stays on disk.
+ */
+export function retireMemberSuper(contextRoot: string, slug: string, opts: { keepIndex?: boolean } = {}): void {
+  const key = superKey(contextRoot, superIdOfMember(slug));
+  // Turned OFF (not gone): its index entry and last record stay, as `enabled: false`, so a respawn
+  // of one of its children is still its crew and main's card still reads its requests.
+  const maps = (opts.keepIndex ? [carried, turnsEnded, leases, spokeTurns, lastTurnEnd] : [heads, lastStates, carried, turnsEnded, leases, spokeTurns, lastTurnEnd]) as Array<Map<string, unknown>>;
+  for (const m of maps) m.delete(key);
+  pumping.delete(key);
+  again.delete(key);
+  const r = retry.get(key);
+  if (r) { clearTimeout(r.t); retry.delete(key); }
+  stopSweep(key);
+  if (opts.keepIndex) return;
+  for (const set of [offTold, staleTold]) for (const k of [...set]) if (k.startsWith(`${key}\u0000`)) set.delete(k);
+  dropSuperIndex(contextRoot, superIdOfMember(slug));
+}
+
+/** The member was turned off: main hears once per open request that it waits, undelivered. */
+export async function noteMemberOff(contextRoot: string, slug: string, s: SuperState): Promise<void> {
+  const key = superKey(contextRoot, superIdOfMember(slug));
+  for (const q of s.queue) {
+    if (q.kind !== 'request' || q.state === 'done') continue;
+    const mark = `${key}\u0000${q.id}`;
+    if (offTold.has(mark)) continue;
+    offTold.add(mark);
+    await noteRequestToMain(key, q.id, 'off').catch(() => false);
+  }
+}
+
+/** At boot (plan-r10 1): a request delivered by a turn that never finished goes back to pending; an
+ *  accepted one stays open. Pure: returns whether it changed something. */
+export function bootRequests(s: SuperState): boolean {
+  let changed = false;
+  for (const q of s.queue) {
+    if (q.kind !== 'request' && q.kind !== 'reply') continue;
+    if (q.state === 'delivered' && (q.kind === 'reply' || q.acceptedAt === undefined)) { q.state = 'pending'; delete q.batch; changed = true; }
+  }
+  return changed;
 }
 
 // ─── Rows: settle, reconcile, sweep (plan r4 D5, D6, D15, D17) ──────────────────
@@ -1469,7 +1839,7 @@ function armSettle(root: string, sid: string, ms = settleWindow(getChat(sid))): 
   clearTimer(settleTimers, sid);
   const t = setTimeout(() => {
     settleTimers.delete(sid);
-    if (!superIndex(root).enabled) return;
+    if (!superEntry(root).enabled) return;
     void track(settleChild(root, sid));
   }, Math.max(0, ms));
   t.unref?.();
@@ -1610,6 +1980,7 @@ export async function reconcileRows(contextRoot: string, now = Date.now()): Prom
   let s: SuperState;
   try { s = await readSuperState(key, superSanitizeOpts()); } catch { stopSweep(key); return; }
   if (!s.enabled) { stopSweep(key); return; }
+  checkQuietRequests(key, s, now);
   const armed = (sid: string) => settleTimers.has(sid);
   const probe = reconcileDraft(structuredClone(s), now, armed);
   if (!probe.changed) { for (const a of probe.arm) armSettle(key, a.sid, a.ms); syncSweep(key, s); return; }
@@ -1623,7 +1994,7 @@ export async function reconcileRows(contextRoot: string, now = Date.now()): Prom
 
 /** Does this record need the sweep: handed over, and a row works or is stuck as stale. */
 function needsSweep(s: SuperState): boolean {
-  return s.enabled && Object.values(s.children).some((c) => c.endedAt === undefined && (c.row === 'working' || (c.row === 'stuck' && c.stuckReason === 'stale')));
+  return s.enabled && (holdsOpenRequest(s) || Object.values(s.children).some((c) => c.endedAt === undefined && (c.row === 'working' || (c.row === 'stuck' && c.stuckReason === 'stale'))));
 }
 
 function syncSweep(key: string, s: SuperState): void {
@@ -1740,10 +2111,12 @@ async function onAsking(root: string, entry: ChatEntry): Promise<void> {
     if (s.queue.some((i) => i.sessionId === sid && i.requestId === q.requestId && i.state !== 'done')) return;
     // A question is the owner's from birth (`direct`): his bar shows it now, the Super hears it in
     // its next event turn. A permission was always his alone.
+    // A member child doing main Super's work (`main:*`) asks the member, never the owner first.
+    const mainWork = isMainWork(s.children[sid].workOrigin);
     s.queue.push({
       id: newQueueId(), sessionId: sid, kind: q.isPermission ? 'permission' : 'question',
       requestId: q.requestId, state: 'pending', createdAt: Date.now(),
-      ...(q.isPermission ? {} : { direct: true as const, ownerText: childQuestionText(sid, q.requestId) }),
+      ...(q.isPermission ? {} : { ...(mainWork ? {} : { direct: true as const }), ownerText: childQuestionText(sid, q.requestId) }),
     });
     countEvent(s);
     added = true;
@@ -1771,7 +2144,7 @@ function armBrowserIdle(root: string, sid: string): void {
   const t = setTimeout(() => {
     browserTimers.delete(sid);
     const now = getChat(sid);
-    if (!now || now.status !== 'idle' || !superIndex(root).enabled) return;
+    if (!now || now.status !== 'idle' || !superEntry(root).enabled) return;
     void track(settleSuperChild(root, sid, 'idle'));
   }, browserIdleMs());
   t.unref?.();
@@ -1788,7 +2161,7 @@ function armGone(root: string, sid: string, ms: number, map: Map<string, ReturnT
   const t = setTimeout(() => {
     map.delete(sid);
     if (isLive(getChat(sid))) return;
-    const idx = superIndex(root);
+    const idx = superEntry(root);
     if (!idx.enabled || !idx.children.has(sid)) return;
     clearTimer(browserTimers, sid);
     void track(addGone(root, sid));
@@ -1821,10 +2194,10 @@ export function noteResuming(sessionId: string, on: boolean): void {
 export function noteChatStarted(sessionId: string): Promise<void> {
   // A new process of a child whose row says gone: it is not gone any more, so the next relaunch
   // resumes it again (restore.ts) and its next exit is news again (addGone).
-  const live = superRootOfChild(sessionId);
+  const live = superKeyOfChild(sessionId);
   if (live) return track(startedAgain(live, sessionId));
   if (resuming.has(sessionId)) return Promise.resolve();
-  const root = superRootOfEnded(sessionId);
+  const root = keyOfRef(superOfEnded(sessionId));
   return root ? track(reopenedByOwner(root, sessionId)) : Promise.resolve();
 }
 
@@ -1855,18 +2228,19 @@ async function reopenedByOwner(root: string, sid: string): Promise<void> {
 
 function onChange({ entry, from }: ChatChange): void {
   const sid = entry.sessionId;
-  const superRoot = superRootOfSession(sid);
+  const superRoot = superKeyOfSession(sid);
   if (superRoot) {
     followSpokeTurn(keyOf(superRoot), entry.status);
     // The super chat settled: the next batch may go.
     if (entry.status === 'idle' || entry.status === 'starting') void pumpSuper(superRoot);
     return;
   }
-  const root = superRootOfChild(sid);
+  // The super that OWNS the child (main's or a member's): its row and items go to that record.
+  const root = superKeyOfChild(sid);
   if (!root) return;
   if (entry.status !== 'gone') { clearTimer(goneTimers, sid); clearTimer(regraceTimers, sid); }
   if (entry.status !== 'idle') { clearTimer(settleTimers, sid); clearTimer(browserTimers, sid); }
-  if (!superIndex(root).enabled) return;
+  if (!superEntry(root).enabled) return;
   // Failures are swallowed by `track` (a write that could not land: the next change retries).
   switch (entry.status) {
     case 'asking':
@@ -1899,8 +2273,8 @@ export function wireSuperInbox(): void {
   if (unsubscribe) return;
   const offStatus = onChatChange(onChange);
   const offOwner = onOwnerWaitChange((entry) => {
-    const root = superRootOfChild(entry.sessionId);
-    if (root && superIndex(root).enabled) void track(onOwnerWaits(root, entry.sessionId));
+    const root = superKeyOfChild(entry.sessionId);
+    if (root && superEntry(root).enabled) void track(onOwnerWaits(root, entry.sessionId));
   });
   unsubscribe = () => { offStatus(); offOwner(); };
 }
@@ -1914,7 +2288,8 @@ export function wireSuperInbox(): void {
 export async function startSuperInbox(contextRoots: readonly string[], opts: { parked?: (sessionId: string) => boolean } = {}): Promise<void> {
   await primeSuperIndex(contextRoots, superSanitizeOpts());
   wireSuperInbox();
-  await Promise.all(contextRoots.map(async (root) => {
+  // Main's boot, then the vault's member Supers (whether or not main is handed over).
+  const bootMain = async (root: string): Promise<void> => {
     let s: SuperState;
     try { s = await readSuperState(root, superSanitizeOpts()); } catch { return; }
     noteHead(root, s);
@@ -1950,7 +2325,25 @@ export async function startSuperInbox(contextRoots: readonly string[], opts: { p
     }
     syncSweep(keyOf(root), s);
     await reconcileRows(root);
+  };
+  await Promise.all(contextRoots.map(async (root) => {
+    await bootMain(root);
+    await startMemberSupers(root);
   }));
+}
+
+/** At boot, each member Super of a vault (plan-r10 1): its head and sweep, and a request whose
+ *  turn never finished back to pending (an accepted one stays open). A refused record is skipped. */
+async function startMemberSupers(root: string): Promise<void> {
+  for (const slug of await listMemberSupers(root)) {
+    const key = superKey(root, superIdOfMember(slug));
+    let s: SuperState;
+    try { s = await readSuperState(key, superSanitizeOpts()); } catch { continue; }
+    if (bootRequests(structuredClone(s))) {
+      try { s = await writeSuper(key, (d) => { bootRequests(d); }); } catch { continue; }
+    } else noteHead(key, s);
+    syncSweep(key, s);
+  }
 }
 
 /** Tests only: the inbox the bridge attached for a super session. */
@@ -1979,8 +2372,13 @@ export function _resetSuperInbox(): void {
   leases.clear();
   spokeTurns.clear();
   heads.clear();
+  lastStates.clear();
   pumping.clear();
   again.clear();
+  lastTurnEnd.clear();
+  turnOrigins.clear();
+  offTold.clear();
+  staleTold.clear();
   unsubscribe?.();
   unsubscribe = null;
 }

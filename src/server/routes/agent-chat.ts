@@ -45,7 +45,7 @@ import {
   chatSpawnRoster, collectTeam, renderSuperTeamBlock, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
 } from '../../lib/agents/team-roster.js';
 import { refreshSuperTools, superOwnerToolsBlock, toolsBlockFingerprint, toolsBlockNow } from '../../lib/super/tools-block.js';
-import { SUPER_BRIEF_TEXT, modeBriefing, type ChatMode } from '../chat-modes.js';
+import { SUPER_BRIEF_TEXT, memberSlotOf, modeBriefing, superMemberBriefing, type ChatMode } from '../chat-modes.js';
 import { appChatBriefing } from '../chat-surface.js';
 import { heldModeFromTranscript, modeNoteHookOutput, modeNoteSettings, modeNoteSources, modeSwitchNote, superBriefState } from '../chat-mode-drift.js';
 import { worktreeIsolationAllowed } from '../../lib/worktree-gate.js';
@@ -112,8 +112,13 @@ import { assistantToken, clearTaint, markTainted, setAssistantSurface } from '..
 import { collectRoster, renderRoster } from '../../lib/assistant/roster.js';
 import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
-import { SUPER_CREW_ENV } from '../../lib/automations/types.js';
-import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChild, peekSuperNote, readSuperState, setPhoneHoldsProbe, superIndex, superRootOfChild } from '../../lib/super/store.js';
+import { DEFAULT_AGENT_AUTONOMY, MEMBER_CREW_ENV, MEMBER_SUPER_ENV, SUPER_CREW_ENV } from '../../lib/automations/types.js';
+import { levelPermissionArgs } from '../../lib/agents/permission.js';
+import { memberSummaries, memberSuperSessions } from '../../lib/super/member-summary.js';
+import type { SuperMemberSummary } from '../../lib/super/types.js';
+import { consumeCrewTicket, membersDelegating } from '../../lib/super/delegating.js';
+import { crewBridgeMode, crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
+import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChild, keyOfRef, mainRootOf, memberOfSuperId, peekSuperNote, readSuperState, setPhoneHoldsProbe, superEntry, superIdOfMember, superOfChild, superOfEnded, superOfSession } from '../../lib/super/store.js';
 import { remoteViewOf } from './super-remote.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
 import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, type PhoneSuperRecord, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
@@ -378,20 +383,75 @@ export function assistantAllowedTools(autonomy: Autonomy): string[] {
 }
 
 /**
- * Who may open a chat in `super` mode (plan-r7 D3): exactly the vault's ONE recorded super
- * session (`POST /api/super/enable` mints it), by pin or resume id — a same-id respawn passes,
- * any other id is a second super agent (409), and so is a vault with no session yet. Never from
- * the phone (403: the hand-over is the desktop's). Read from the in-memory index (no disk on the
+ * Who may open a chat in `super` mode (plan-r7 D3, plan-r10 1): exactly ONE recorded session per
+ * super, by pin or resume id. The project's own Super (no `chatAgent`): the session
+ * `POST /api/super/enable` minted. A member's Super (`chatAgent: <slug>`): the session its record
+ * was born with (`POST /api/super/member`, or main's first `team ask`). A same-id respawn passes;
+ * any other id is a second super (409), and so is a super with no session recorded yet. Never from
+ * the phone (403: the stage is the desktop's). Read from the in-memory index (no disk on the
  * upgrade path).
  */
 export function superUpgradeRefusal(o: {
-  mode: string; phone: boolean; contextRoot: string; resumeId: string; sessionId: string;
+  mode: string; phone: boolean; contextRoot: string; resumeId: string; sessionId: string; chatAgent?: string | null;
 }): 403 | 409 | null {
   if (o.mode !== 'super') return null;
   if (o.phone) return 403;
-  const recorded = superIndex(o.contextRoot).session;
+  const recorded = superEntry(o.contextRoot, o.chatAgent ? superIdOfMember(o.chatAgent) : 'main').session;
   const asked = o.resumeId || o.sessionId;
   return recorded && asked === recorded ? null : 409;
+}
+
+/** The crew mark of a child no ticket or record ties to exactly ONE member (security, end review):
+ *  never a slug, so no member's "own run" rule ever reads it as that member. */
+export const AMBIGUOUS_CREW = '*';
+
+/**
+ * A member Super's child (security r8-2): the pane's mode, capped at the narrowest of the levels
+ * of the members it may belong to (one when it is tied exactly). Never wider than any of them.
+ * The ambiguous mark itself names no member and is skipped.
+ */
+export function memberCrewPermissionMode(contextRoot: string, slugs: string | readonly string[], bypass: boolean): string {
+  const list = (typeof slugs === 'string' ? [slugs] : [...slugs]).filter((x) => x !== AMBIGUOUS_CREW);
+  return narrowestMode(permissionModeFor(bypass), contextRoot, list);
+}
+
+export interface CrewDecision {
+  /** DREAMCONTEXT_MEMBER_CREW: a member's slug (tied exactly), AMBIGUOUS_CREW, or null (none). */
+  mark: string | null;
+  /** The members whose levels cap it (the narrowest wins). */
+  cap: string[];
+}
+
+/**
+ * Whose crew a lean child is, decided by the SERVER (plan-r10 1, end review; the lane R contract):
+ *  - its record (any super that names it, live or ended, a turned-off member's too): exact;
+ *  - a valid `crewTicket` the server minted for one member's `delegate` (consumed once): exact;
+ *  - else FAIL CLOSED: any member delegate in flight, or a `memberCrew` hint naming a member, marks
+ *    it AMBIGUOUS_CREW and caps it at the narrowest of those members' levels. A forged or replayed
+ *    ticket, or the hint, only ever narrows;
+ *  - no member in flight, no ticket, no hint: none, exactly as before (main's children unchanged).
+ */
+export function memberCrewDecision(o: { conversation: string; ticket?: string | null; hint?: string | null; contextRoot: string }): CrewDecision {
+  const ref = o.conversation ? (superOfChild(o.conversation) ?? superOfEnded(o.conversation) ?? handedOverChildRoot(o.conversation)) : null;
+  if (ref) {
+    const slug = memberOfSuperId(ref.superId);
+    return slug ? { mark: slug, cap: [slug] } : { mark: null, cap: [] };
+  }
+  const tied = o.ticket ? consumeCrewTicket(o.ticket, o.contextRoot) : null;
+  if (tied) return { mark: tied, cap: [tied] };
+  const hint = o.hint && parseChatAgent(o.hint) ? [o.hint] : [];
+  const cap = [...new Set([...membersDelegating(o.contextRoot), ...hint])];
+  return cap.length ? { mark: AMBIGUOUS_CREW, cap } : { mark: null, cap: [] };
+}
+
+/** The mark alone (no ticket): see {@link memberCrewDecision}. */
+export function memberCrewOf(conversation: string, urlSlug: string | null, contextRoot?: string): string | null {
+  return contextRoot || conversation ? memberCrewDecision({ conversation, hint: urlSlug, contextRoot: contextRoot ?? '' }).mark : null;
+}
+
+/** The cap alone (no ticket): see {@link memberCrewDecision}. */
+export function memberCrewCandidates(conversation: string, contextRoot?: string, urlSlug: string | null = null): string[] {
+  return memberCrewDecision({ conversation, hint: urlSlug, contextRoot: contextRoot ?? '' }).cap;
 }
 
 /**
@@ -1090,7 +1150,7 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
   for (const [path, name] of byPath) {
     if (!visible(name)) continue;
     const ctx = join(path, '_dream_context');
-    const idx = superIndex(ctx);
+    const idx = superEntry(ctx);
     if (!idx.session) continue;
     // The record is read only for a project handed over: a parked one is just its session id.
     // A record that will not read costs its jobs, never the phone's whole list.
@@ -1108,7 +1168,19 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
     });
   }
   const view = phoneLiveChats(chats, records);
-  sendJson(res, 200, { chats: view.chats, draining, ...(view.supers.length ? { supers: view.supers } : {}), ...(view.parked.length ? { parked: view.parked } : {}) });
+  // Each project's AI Team members as Supers (plan-r10 2.4): one entry per project with each
+  // member's owner-facing state; a member's Super session and its children are never his chats.
+  const memberRows: Array<{ vault: string; members: SuperMemberSummary[] }> = [];
+  const memberHeld = new Set<string>();
+  for (const [path, name] of byPath) {
+    if (!visible(name)) continue;
+    const ctx = join(path, '_dream_context');
+    for (const id of await memberSuperSessions(ctx, superSanitizeOpts()).catch(() => new Set<string>())) memberHeld.add(id);
+    const members = await memberSummaries(ctx, superSanitizeOpts()).catch(() => [] as SuperMemberSummary[]);
+    if (members.length) memberRows.push({ vault: name, members });
+  }
+  const ownChats = memberHeld.size ? view.chats.filter((c) => !memberHeld.has((c as { conversationId: string }).conversationId)) : view.chats;
+  sendJson(res, 200, { chats: ownChats, draining, ...(view.supers.length ? { supers: view.supers } : {}), ...(view.parked.length ? { parked: view.parked } : {}), ...(memberRows.length ? { members: memberRows } : {}) });
 }
 
 /** AC18: what the drawer says about a live chat. A question waiting wins; then a turn running
@@ -1350,6 +1422,12 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     });
     if (lean === 'refuse') { rejectUpgrade(socket, 400); return; }
     const leanMcp = lean ?? undefined;
+    // A member Super's child (plan-r10 1, security r8-2): marked, and capped at the member's level.
+    // Its crew: the record, else the one-time `crewTicket` its member's delegate minted, else fail
+    // closed while any member delegates (the cap reads every member the mark could stand for).
+    const crew = leanMcp ? memberCrewDecision({ conversation: resumeId || sessionId, ticket: url.searchParams.get('crewTicket'), hint: url.searchParams.get('memberCrew'), contextRoot: join(projectRoot, '_dream_context') }) : { mark: null, cap: [] };
+    const memberCrew = crew.mark;
+    const memberCrewCap = crew.cap;
     // The project's Super Agent (plan-r7 D3): exactly ONE super session per vault, the one the
     // hand-over recorded (`POST /api/super/enable` mints it). A different id is a second super
     // agent and is refused; a same-id respawn (account switch, Resume, reattach) passes. The
@@ -1358,8 +1436,11 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // live super chat as a MIRROR beside the window that holds it, never adopting, superseding or
     // respawning it; any other phone open naming that session, and `mode=super`, is refused.
     const superCtx = join(projectRoot, '_dream_context');
-    const superIdx = superIndex(superCtx);
+    const superIdx = superEntry(superCtx);
     const liveSuper = superIdx.session ? findLiveChat(superIdx.session) : null;
+    // A member's own Super session (plan-r10 2.4): a phone never adopts, resumes or respawns it,
+    // exactly as main's (its stage is the desktop's in this wave).
+    if (phone && [resumeId, sessionId].some((id) => { const ref = id ? superOfSession(id) : null; return !!ref && ref.superId !== 'main'; })) { rejectUpgrade(socket, 403); return; }
     const phoneSuper = phone
       ? phoneSuperOpen({ mode, resumeId, sessionId, index: superIdx, liveSuper: !!liveSuper?.mirror && liveSuper.projectRoot === projectRoot })
       : 'pass';
@@ -1404,7 +1485,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
       const child = [resumeId, sessionId].find((id) => !!id && isHandedOverChild(id));
       if (child) { watchChild(req, socket, head, child, superCtx); return; }
     }
-    const superRefused = superUpgradeRefusal({ mode, phone, contextRoot: superCtx, resumeId, sessionId });
+    const superRefused = superUpgradeRefusal({ mode, phone, contextRoot: superCtx, resumeId, sessionId, chatAgent: parseChatAgent(url.searchParams.get('chatAgent')) });
     if (superRefused) { rejectUpgrade(socket, superRefused); return; }
     // Which Claude ACCOUNT this session runs on. '' = none requested, which resolves to the
     // preferred account (and, with no preferred account, to account #0 — the real HOME, i.e.
@@ -1560,7 +1641,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
             if (outcome !== 'unadoptable') { releaseOpening(); return; }
             const child = childNow();
             if (child) { toWatch(ws, child); return; }
-            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...toolOpt });
+            startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
             releaseOpening();
           });
           return;
@@ -1571,7 +1652,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
         // A reattach that found nothing to adopt (the child exited while the client was away)
         // resumes the conversation in a new process — and never re-submits an opening prompt.
         if (reattach) {
-          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...toolOpt });
+          startChatSession(ws, projectRoot, { bypass, sessionId: '', resumeId, model, effort, mode, account, initialPrompt: '', deferPrompt: false, vault: vault ?? undefined, fromAssistant, reattachFallback: true, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
           releaseOpening();
           return;
         }
@@ -1596,7 +1677,7 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
           if (!stageAgent) return;
           try { recordStageHomeSession(projectRoot, stageAgent, conversation); } catch { /* the stage opens a fresh one next time */ }
         };
-        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...toolOpt });
+        startChatSession(ws, projectRoot, { bypass, sessionId, resumeId, model, effort, mode, account, initialPrompt, deferPrompt, vault: vault ?? undefined, assistantEnv, fromAssistant, onAccepted, ...(card ? { card } : {}), ...(chatAgent ? { agent: chatAgent } : {}), ...(leanMcp ? { leanMcp } : {}), ...(memberCrew ? { memberCrew, memberCrewCap } : {}), ...toolOpt });
         appUpgrade?.hold?.();
         settleSupersede(accepted);
         releaseOpening();
@@ -1629,7 +1710,7 @@ function watchChild(req: IncomingMessage, socket: Duplex, head: Buffer, child: s
   const hash = authFor(req) ? deviceIdHash(req) : null;
   const tag: DeviceTag | null = hash ? { store: 'mac', idHash: hash } : null;
   const lc = findLiveChat(child) ?? findLiveChat(child.toLowerCase());
-  const ownRecord = !!lc && handedOverChildRoot(lc.conversationId) === resolve(superCtx);
+  const ownRecord = !!lc && mainRootOf(handedOverChildRoot(lc.conversationId)) === resolve(superCtx);
   if (!tag || !lc?.watch || !ownRecord) { rejectUpgrade(socket, 403); return; }
   if (!lc.watchRoom?.(tag)) { rejectUpgrade(socket, 503); return; }
   void (async () => {
@@ -1721,6 +1802,12 @@ interface ChatSpawnOpts {
   /** A LEAN Super Agent child (orchestration plan r5 D14): `--strict-mcp-config` with only these
    *  of the user's MCP servers plus the app's own configs. Absent = every chat as before. */
   leanMcp?: string[];
+  /** A LEAN child of a member's Super (plan-r10 1): carries `DREAMCONTEXT_MEMBER_CREW=<slug>` and
+   *  runs no wider than that member's own level. */
+  memberCrew?: string;
+  /** Every member that mark could stand for (its first spawn, ambiguous among members): the
+   *  permission caps at the narrowest of them. Absent = the crew member alone. */
+  memberCrewCap?: string[];
   /** A tool other than Claude (plan r5, Track T): the pane runs `dreamcontext t3-chat`, the T3
    *  bridge child, which speaks the same stream-json. Absent = today's Claude path, unchanged. */
   tool?: BridgeTool;
@@ -2240,7 +2327,8 @@ export function startChatSession(
   }
   // The Super's `## Your AI Team` ('' without a team; a failed read costs the block, never the spawn).
   let superTeamBlock = '';
-  if (isSuper) {
+  // A member's Super does not lead the team (plan-r10 1): no `## Your AI Team` block.
+  if (isSuper && !opts.agent) {
     try { superTeamBlock = superSpawnTeamBlock(contextRoot, superVaultName(contextRoot)); } catch { superTeamBlock = ''; }
   }
   // The Super's `## Tools on this Mac` (tools-block.ts): which tools can start a child right now
@@ -2296,7 +2384,10 @@ export function startChatSession(
     }
     // A card speaks as its agent: the card briefing takes the mode brief's place. An agent in a
     // Chat tab keeps the tab's mode too: who it is first, then how this tab asked it to work.
-    const tabBrief = modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot), assistant: assistantCtx });
+    // A member's own Super (plan-r10 1): the Super briefing with its member slot, after who it is.
+    const tabBrief = isSuper && agentChat
+      ? superMemberBriefing(memberSlotOf(agentChat.manifest))
+      : modeBriefing(mode, { worktreeAllowed: worktreeIsolationAllowed(projectRoot), assistant: assistantCtx });
     const ownBrief = app ? app.briefing : card ? card.briefing : agentChat ? [agentChat.briefing, tabBrief].filter(Boolean).join('\n\n') : tabBrief;
     // Named only when the `--agents` definitions really ride this spawn (`subagents` is cleared
     // when their file could not be written), so the model is never told about agents it lacks.
@@ -2339,10 +2430,11 @@ export function startChatSession(
       const transcript = findFirstTranscriptPath([resumeTarget]);
       const jsonl = transcript ? readFileSync(transcript, 'utf-8') : '';
       // No transcript found for a resume: nothing proves the revision arrived, so it rides once.
-      if (isSuper) Object.assign(superBrief, transcript ? superBriefState(jsonl, SUPER_BRIEF_REV) : { inPrompt: false, due: true });
+      // Main's briefing revision only: a member's Super carries its own slot (chat-modes.ts).
+      if (isSuper && !opts.agent) Object.assign(superBrief, transcript ? superBriefState(jsonl, SUPER_BRIEF_REV) : { inPrompt: false, due: true });
       // The team it holds: the header in its birth prompt, or the last `<super-team>` a message
       // carried since its last compaction. No transcript: nothing proves a team arrived.
-      if (isSuper && transcript) Object.assign(superTeam, superTeamState(jsonl));
+      if (isSuper && !opts.agent && transcript) Object.assign(superTeam, superTeamState(jsonl));
       const state = transcript ? heldModeFromTranscript(jsonl) : null;
       const sources = modeNoteSources(state, mode);
       if (state && sources.length) {
@@ -2428,7 +2520,7 @@ export function startChatSession(
     // allowlist), in place of the pane's mode, exactly as its runs do (board-scope.ts).
     // An agent in a Chat tab (its stage included) runs at its autonomy level (agents/permission.ts),
     // decided above from its manifest; the pane's bypass flag never reaches it.
-    ...(app ? ['--permission-mode', app.permissionMode] : envelope?.permissionArgs ?? agentChat?.levelArgs ?? ['--permission-mode', assistantConfig ? assistantPermissionMode(assistantConfig.autonomy) : permissionModeFor(bypass)]),
+    ...(app ? ['--permission-mode', app.permissionMode] : envelope?.permissionArgs ?? agentChat?.levelArgs ?? ['--permission-mode', assistantConfig ? assistantPermissionMode(assistantConfig.autonomy) : opts.memberCrew ? memberCrewPermissionMode(contextRoot, [opts.memberCrew, ...(opts.memberCrewCap ?? [])], bypass) : permissionModeFor(bypass)]),
     ...(app?.allowed.length ? ['--allowedTools', ...app.allowed] : []),
     ...(app?.settingSources ? ['--setting-sources', app.settingSources] : []),
     ...(app?.addDirs.flatMap((d) => ['--add-dir', d]) ?? []),
@@ -2476,8 +2568,20 @@ export function startChatSession(
   // Said before anything starts: a chat on a Codex that cannot start would only end in silence.
   const codexMissing = bridgeTool === 'codex' ? codexStartProblem() : null;
   // One command, two spellings: win32 spawns it as an argv array, POSIX quotes it into the script.
+  // A member's child on a bridge tool runs at the member's level (security, end review): Codex
+  // `default` for an Ask member, its row otherwise; a tool with no mode that narrow is refused.
+  const crewBridge = opts.memberCrew && bridgeTool ? crewBridgeMode(bridgeTool, memberCrewPermissionMode(contextRoot, [opts.memberCrew, ...(opts.memberCrewCap ?? [])], bypass)) : undefined;
+  if (crewBridge === null) {
+    const why = crewToolRefusal(bridgeTool ?? undefined, 'default') ?? 'This child cannot run on that tool within its member\'s level.';
+    noteLeanChildFailed(why);
+    try { ws.send(JSON.stringify({ type: '_meta', subtype: 'error', code: 'tool_refused', message: why })); } catch { /* gone */ }
+    try { ws.close(); } catch { /* already closed */ }
+    releaseHeld();
+    cleanupBriefing(); cleanupAgents(); cleanupModeNote(); cleanupDeferred();
+    return;
+  }
   const bridgeCommand = bridgeTool && bridgeNodePath && !noEnvGate && !codexMissing
-    ? bridgeChatCommand({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : opts.leanMcp ? HEADLESS_ENVELOPES['super-child'].codex ?? 'default' : permissionModeFor(bypass), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(carryThread ? { carry: carryThread } : {}), ...(leanMcpPath ? { mcpConfig: leanMcpPath } : {}), ...(opts.leanMcp ? { strictMcp: true, unattended: true } : {}), ...(!assistantConfig && !opts.leanMcp && !scopedCard ? { storeMcp: true } : {}), ...(toolAccountId ? { account: toolAccountId } : {}) })
+    ? bridgeChatCommand({ tool: bridgeTool, model: spawnModel, effort: spawnEffort, mode: assistantConfig ? 'default' : crewBridge ?? (opts.leanMcp ? HEADLESS_ENVELOPES['super-child'].codex ?? 'default' : permissionModeFor(bypass)), pane: pinId, resume: resumeTarget, briefingArg, node: bridgeNodePath, extraRoots: linkedWritableRoots(projectRoot), ...(carryThread ? { carry: carryThread } : {}), ...(leanMcpPath ? { mcpConfig: leanMcpPath } : {}), ...(opts.leanMcp ? { strictMcp: true, unattended: true } : {}), ...(!assistantConfig && !opts.leanMcp && !scopedCard ? { storeMcp: true } : {}), ...(toolAccountId ? { account: toolAccountId } : {}) })
     : null;
   const bridgeScript = bridgeCommand ? `exec ${[bridgeCommand.file, ...bridgeCommand.args].map((a) => `"${a}"`).join(' ')}` : null;
   if (bridgeTool && !bridgeScript) {
@@ -2554,6 +2658,8 @@ export function startChatSession(
       contextRoot,
       sessionId: chatRegistryId,
       mode,
+      // Which super this token speaks for (plan-r10 1): a member's Super chat is that member's.
+      ...(isSuper ? { superId: opts.agent ? superIdOfMember(opts.agent) : 'main' as const } : {}),
     })
     : null;
   // The prompt hook's AI TEAM MEMBER line (team-roster.ts): `super` for the Super, `offer` for an
@@ -2566,7 +2672,10 @@ export function startChatSession(
   // `leanMcp` too: a delegated child opens BEFORE its record lands, and a resumed one is out of the
   // index, and both carry that flag; a forged one only narrows what the sender may do.
   const superCrewEnv = isSuper || !!opts.leanMcp || [resumeId, sessionId].some((id) => !!id && isHandedOverChild(id)) ? '1' : '';
-  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', DREAMCONTEXT_TEAM_ROUTE: teamRoute, [SUPER_CREW_ENV]: superCrewEnv, ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...storeMcp.env, ...(envelope?.env ?? {}), ...(app?.env ?? {}) } as Record<string, string | undefined>;
+  // A member's own Super chat and its children (plan-r10 1): ALWAYS set, as above ('' = none).
+  const memberSuperEnv = isSuper && opts.agent ? opts.agent : '';
+  const memberCrewEnv = opts.memberCrew ?? '';
+  const childEnv = { PATH: claudeAwarePath(), ...CHAT_QUESTION_ENV, ...tabEnv, ...deferredEnv, ...(windowControl?.env ?? {}), DREAMCONTEXT_CHAT_TAB: isAssistant || card ? '' : '1', DREAMCONTEXT_TEAM_ROUTE: teamRoute, [SUPER_CREW_ENV]: superCrewEnv, [MEMBER_SUPER_ENV]: memberSuperEnv, [MEMBER_CREW_ENV]: memberCrewEnv, ...(isAssistant ? opts.assistantEnv ?? {} : {}), ...recallEnv, ...storeMcp.env, ...(envelope?.env ?? {}), ...(app?.env ?? {}) } as Record<string, string | undefined>;
   // An app chat's hook and listed verbs call `dreamcontext` with no login-shell PATH behind them.
   if (app) childEnv.PATH = cliAwarePath(childEnv.PATH ?? '');
   // Held from the spawn to the child's exit; nothing async ran since `appChatHasRoom`.
@@ -3291,7 +3400,7 @@ export function startChatSession(
     // steered, an open `ask` answered, the held events it carried delivered (plan r4 D4, D7, D18).
     if (isSuper && wrote && !text.startsWith('/')) superOwnerSpoke(chatRegistryId, Date.now(), held?.items ?? [], abouts, midTurn);
     if (note && wrote) {
-      void clearSuperNote(superRootOfChild(chatRegistryId) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
+      void clearSuperNote(mainRootOf(superOfChild(chatRegistryId)) ?? contextRoot, chatRegistryId, note).catch(() => { /* memory already cleared */ });
     }
     if (brief && wrote) superBrief.due = false;
     if (teamTurn && wrote) superTeam.delivered = teamTurn.delivered;
@@ -5027,7 +5136,7 @@ export function startChatSession(
       const texts = Array.isArray((msg as { texts?: unknown }).texts)
         ? ((msg as { texts: unknown[] }).texts).filter((t): t is string => typeof t === 'string').slice(0, 50)
         : [];
-      const root = pinId ? superRootOfChild(pinId) : null;
+      const root = pinId ? keyOfRef(superOfChild(pinId)) : null;
       if (root && texts.length) void dropFromOutbox(root, pinId, texts).catch((err) => console.warn(`[super outbox] drop failed: ${(err as Error).message}`));
       return;
     }
@@ -5052,7 +5161,7 @@ export function startChatSession(
 
     if (msg.type === 'interrupt') {
       // Stop holds the window's queue: what the outbox kept for this child is held with it.
-      const stopRoot = pinId ? superRootOfChild(pinId) : null;
+      const stopRoot = pinId ? keyOfRef(superOfChild(pinId)) : null;
       if (stopRoot) void dropFromOutbox(stopRoot, pinId).catch((err) => console.warn(`[super outbox] drop failed: ${(err as Error).message}`));
       // Empirically verified against claude 2.1.218 (scratch-dir experiment): a
       // control_request{subtype:'interrupt'} on stdin aborts the in-flight turn — the CLI

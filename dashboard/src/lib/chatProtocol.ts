@@ -364,7 +364,9 @@ export type ChatEvent =
   /** A Super Agent verb only the window can run (`delegate`, `answer`), sent down the SUPER
    *  chat's own socket (src/lib/window-control.ts `sendSuperCommand`). Answered with a
    *  `super_command_result` frame. */
-  | { kind: 'super-command'; id: string; verb: string; args: Record<string, unknown> }
+  /** `superId` (plan-r10 1): which super's record the verb is for, `m:<member slug>` for a member's
+   *  own Super; absent = `main` (MIRROR of superTypes.ts `SuperId`; this file imports nothing). */
+  | { kind: 'super-command'; id: string; verb: string; args: Record<string, unknown>; superId?: 'main' | `m:${string}` }
   /** The server asks the window to PARK this chat under machine load (or `super end`): the
    *  window re-checks, answers `park_result`, and on yes closes the process and turns the tab
    *  dormant (src/server/chat-park.ts). Never a window verb, so no agent can name another tab.
@@ -1219,7 +1221,9 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
     const id = str(obj.id);
     const verb = str(obj.verb);
     if (!id || !verb) return ignored('_meta:super_command');
-    return { kind: 'super-command', id, verb, args: isRecord(obj.args) ? obj.args : {} };
+    // A member's Super names itself; anything else is main's (a malformed id is no member).
+    const sid = typeof obj.superId === 'string' && /^m:[a-z0-9][a-z0-9-]{0,99}$/.test(obj.superId) ? obj.superId as `m:${string}` : undefined;
+    return { kind: 'super-command', id, verb, args: isRecord(obj.args) ? obj.args : {}, ...(sid ? { superId: sid } : {}) };
   }
   if (subtype === 'super_state') {
     return isRecord(obj.state) ? { kind: 'super-state', state: obj.state } : ignored('_meta:super_state');

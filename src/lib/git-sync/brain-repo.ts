@@ -217,7 +217,8 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
     'state/.whiteboard-prefs.json',
     // The Super Agent's hand-over state: this machine's live sessions, layout and queue.
     'state/.super-agent.json',
-    // The Super Agent's own handoff file (its sessions and worktrees on this machine).
+    // The Super Agent's own handoff file (its sessions and worktrees on this machine), and every
+    // AI Team member's Super record, read marks and handoff (`state/.super/members/`, plan-r10 1).
     'state/.super/',
     // A running session's id, per machine (automations/run-session.ts).
     'state/.run-sessions/',
@@ -304,6 +305,7 @@ export const FULL_REPO_LOCAL_GITIGNORE_ENTRIES = [
   '_dream_context/state/.lab-prefs.json',
   '_dream_context/state/.whiteboard-prefs.json',
   '_dream_context/state/.super-agent.json',
+  // Covers the member Super records too (`state/.super/members/`, plan-r10 1).
   '_dream_context/state/.super/',
   '_dream_context/state/.run-sessions/',
   '_dream_context/state/.lab-freshness.json',

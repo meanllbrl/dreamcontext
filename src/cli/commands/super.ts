@@ -1,18 +1,19 @@
 import { Command } from 'commander';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { request } from 'node:http';
 import { windowEnv } from './window.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { compareVersions } from '../../lib/version-check.js';
 import { MAX_LIVE_CHILDREN } from '../../lib/super/types.js';
-import { insideAgentRun } from '../../lib/automations/types.js';
+import { insideAgentRun, memberSuperProcess } from '../../lib/automations/types.js';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { error, info, success } from '../../lib/format.js';
 import { HANDOFF_FIELDS, contextHandoffGaps, formatGaps, type HandoffFields } from '../../lib/handoff-readiness.js';
 import { handoffKey, writeHandoffRecord, type HandoffRecord } from '../../lib/context-watch.js';
 import { superHandoffContext } from '../../lib/super/handoff-task.js';
 import { buildAskBody, collectOption, showBody, type AskCliOpts } from '../../lib/super/ask-cli.js';
-import { SUPER_HANDOFF_REL, SUPER_HANDOFF_TASK, renderSuperHandoffEntry, writeSuperHandoff } from '../../lib/super/handoff-file.js';
+import { SUPER_HANDOFF_REL, renderSuperHandoffEntry, superHandoffTask, writeSuperHandoff } from '../../lib/super/handoff-file.js';
 import { locateHandoffSession, writeHandoffArtifacts } from './handoff-artifacts.js';
 
 /**
@@ -35,9 +36,19 @@ export const NOT_THE_SUPER_AGENT = '`dreamcontext super` works only from the pro
 
 interface CallResult { status: number; body: Record<string, unknown> }
 
+/**
+ * May this process reach the Super verbs at all? The project's Super chat (no agent marker), or an AI
+ * Team member's OWN Super chat (plan-r10 1: `DREAMCONTEXT_MEMBER_SUPER` equal to its
+ * `DREAMCONTEXT_AGENT_CHAT`, no run marker). A member's run, conversation or child is refused here.
+ * The server's token check is the real gate: this only keeps a member's run from posting at all.
+ */
+export function mayCallSuper(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !insideAgentRun(env) || memberSuperProcess(env) !== null;
+}
+
 export function callSuper(verb: string, body: Record<string, unknown>, env: NodeJS.ProcessEnv = process.env): Promise<CallResult> {
   // A key inherited from the Super Agent's shell does not make a member's run the Super Agent.
-  const e = insideAgentRun(env) ? null : windowEnv(env);
+  const e = mayCallSuper(env) ? windowEnv(env) : null;
   if (!e) return Promise.resolve({ status: 401, body: { error: 'not_a_chat', message: NOT_THE_SUPER_AGENT } });
   const url = new URL(`/api/super/v/${verb}`, e.url);
   const payload = JSON.stringify(body);
@@ -124,6 +135,9 @@ export const OPEN_REF_HELP = [
 ].join('\n');
 const usage = (message: string) => print({ status: 400, body: { error: 'invalid_args', message } });
 
+/** `--for` on a member Super's job or question (plan-r10 1): whose work it is. */
+const FOR_HELP = 'A member\'s Super only: whose work this is, `owner` or one of your requests from the Super Agent (its item id). Default: the turn\'s own';
+
 /** `--origin` on a job verb: in the owner's turn the server records his message by itself. */
 const ORIGIN_HELP = 'The owner message this job answers (its <owner-msg ref>); only outside his turn: in his turn it is recorded by itself. Its results come to you awaited=owner origin=<ref>';
 
@@ -159,15 +173,17 @@ export function registerSuperCommand(program: Command): void {
     .option('--force', 'With --from: start a job whose earlier start went unconfirmed')
     .option('--succeeds <child>', 'It takes this child\'s work over (a context handoff): the card, brief and task pass to it, and the old child is ended (told to stop first if busy)')
     .option('--note <line>', 'Its Now line on the owner\'s agenda, linked to this child: it moves to Done by itself when the job is done, ended or gone')
-    .option('--origin <ref>', ORIGIN_HELP))
-    .action(async (o: JobOpts & { from?: string; force?: boolean; succeeds?: string; note?: string; origin?: string }) => {
+    .option('--origin <ref>', ORIGIN_HELP)
+    .option('--for <item|owner>', FOR_HELP))
+    .action(async (o: JobOpts & { from?: string; force?: boolean; succeeds?: string; note?: string; origin?: string; for?: string }) => {
       const behind = serverBehindLine(await serverVersion(), dreamcontextVersion());
       if (behind) process.stderr.write(behind);
       const note = o.note !== undefined ? { note: o.note } : {};
       const origin = o.origin !== undefined ? { origin: o.origin } : {};
-      if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds, ...note, ...origin });
+      const forWho = o.for !== undefined ? { for: o.for } : {};
+      if (o.from) return run('delegate', { from: o.from, force: o.force === true, succeeds: o.succeeds, ...note, ...origin, ...forWho });
       if (!o.prompt) return usage('give --prompt, or --from <pool id>');
-      return run('delegate', { ...jobBody(o), succeeds: o.succeeds, ...note, ...origin });
+      return run('delegate', { ...jobBody(o), succeeds: o.succeeds, ...note, ...origin, ...forWho });
     });
 
   s.command('open <kind> [refs...]')
@@ -312,6 +328,14 @@ export function registerSuperCommand(program: Command): void {
       ...(o.light ? { light: true } : {}),
     }));
 
+  team.command('done <item> <result>')
+    .description('A member\'s Super only: close a request the Super Agent gave you, with its result in a few lines. The Super Agent hears it as one event. Refused: `already_done` (it is closed), `unknown_item`, `member_only` (the project\'s Super Agent has no requests)')
+    .action((item: string, result: string) => run('team-done', { item, result }));
+
+  team.command('answer <item> <text>')
+    .description('The project\'s Super Agent only: answer a member\'s question about a job you gave it (an item in your queue). The answer reaches the member\'s Super as an event, never as the owner\'s words. When you cannot answer it, ask the owner with your own `super ask`. Refused from a member\'s Super (`main_only`)')
+    .action((item: string, text: string) => run('team-answer', { item, text }));
+
   team.command('amend <member>')
     .description('Correct a member\'s instructions after a mistake: only its prompt, soul or a routine\'s job. It stays approved, no card goes to the owner, and he reads the change and can undo it on its AI Team page; text the risk filter flags (an address, a command, a secret path, a hidden character) still lands, and its trace row names the flag. Refused: `amend_limit` (a daily ceiling, 1 for a member that runs unattended), `amend_unreviewed_change`, `owner_reverted` (he took this text back), `amend_global`')
     .requiredOption('--why <line>', 'The mistake this fixes, in a line the owner reads')
@@ -391,10 +415,11 @@ export function registerSuperCommand(program: Command): void {
     .option('--options <a|b>', 'Short answers separated by | (the old form; each at most 24 characters)')
     .option('--show <cards...>', 'The cards the stage presents with the question (default: the pictures its option previews\' <img src> point at, else your last picture set within 10 minutes); the server presents them and puts them back after his answer')
     .option('--no-show', 'Present no cards with the question')
-    .action((text: string | undefined, o: AskCliOpts) => {
+    .option('--for <item|owner>', FOR_HELP)
+    .action((text: string | undefined, o: AskCliOpts & { for?: string }) => {
       let body: Record<string, unknown>;
       try { body = buildAskBody(text, o); } catch (err) { usage((err as Error).message); return; }
-      return run('ask', body);
+      return run('ask', o.for !== undefined ? { ...body, for: o.for } : body);
     });
 
   s.command('merge <children...>')
@@ -447,7 +472,7 @@ export function superHandoff(noteParts: string[], opts: HandoffFields, env: Node
   }
   const now = new Date();
   try {
-    writeSuperHandoff(root, [renderSuperHandoffEntry(now.toISOString(), opts, noteParts.join(' '))], now);
+    writeSuperHandoff(root, [renderSuperHandoffEntry(now.toISOString(), opts, noteParts.join(' '))], now, ctx.superId ?? 'main');
   } catch (err) {
     error(`Handoff refused: the handoff file could not be written (${(err as Error).message}). Retry in a moment.`);
     process.exitCode = 1;
@@ -455,7 +480,8 @@ export function superHandoff(noteParts: string[], opts: HandoffFields, env: Node
   }
   const session = locateHandoffSession(root, env);
   const record: HandoffRecord = {
-    task: SUPER_HANDOFF_TASK,
+    // A member's Super names ITS file: its fresh session never reads main's, nor main a member's.
+    task: superHandoffTask(ctx.superId ?? 'main'),
     title: 'Super Agent',
     at: now.toISOString(),
     contextTokens: session.contextTokens,
@@ -469,7 +495,8 @@ export function superHandoff(noteParts: string[], opts: HandoffFields, env: Node
     return;
   }
   writeHandoffArtifacts(root, session);
-  success(`Handoff written to _dream_context/${SUPER_HANDOFF_REL}${session.contextTokens !== null ? ` at ~${Math.round(session.contextTokens / 1000)}k tokens` : ''}.`);
+  const written = ctx.superId && ctx.superId !== 'main' ? join('state', '.super', 'members', `${ctx.superId.slice(2)}.handoff.md`) : SUPER_HANDOFF_REL;
+  success(`Handoff written to _dream_context/${written.split('\\').join('/')}${session.contextTokens !== null ? ` at ~${Math.round(session.contextTokens / 1000)}k tokens` : ''}.`);
   info(session.tab
     ? 'A fresh session opens on the same stage after this turn — finish your sentence and stop.'
     : 'Run /clear in this session to continue from the handoff file.');

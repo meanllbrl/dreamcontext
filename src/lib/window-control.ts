@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import type { SuperId } from './super/types.js';
 
 /**
  * Window control: how a chat's own agent drives the chat surface it is drawn in — open a
@@ -35,6 +36,9 @@ export interface WindowChannel {
   contextRoot?: string;
   sessionId?: string;
   mode?: string;
+  /** Which super a `super`-mode chat speaks for (plan-r10 1): the project's own (`main`) or an AI
+   *  Team member's (`m:<slug>`). Absent = `main`. The verb routes read the record by it. */
+  superId?: SuperId;
 }
 
 /** What a token says about its chat — never the `send` function. */
@@ -43,6 +47,8 @@ export interface WindowIdentity {
   contextRoot: string;
   sessionId: string;
   mode: string;
+  /** Always set: `main` when the channel named none. */
+  superId: SuperId;
 }
 
 /** Which frame a command travels as, and which result frame may settle it. */
@@ -115,7 +121,7 @@ function settle(id: string, r: WindowResult): boolean {
 export function identityOf(token: string): WindowIdentity | null {
   const c = channels.get(token);
   if (!c || !c.vault || !c.contextRoot || !c.sessionId || !c.mode) return null;
-  return { vault: c.vault, contextRoot: c.contextRoot, sessionId: c.sessionId, mode: c.mode };
+  return { vault: c.vault, contextRoot: c.contextRoot, sessionId: c.sessionId, mode: c.mode, superId: c.superId ?? 'main' };
 }
 
 /** The live token of the chat with pin id `sessionId`, or null. The server uses it to push a
@@ -163,7 +169,9 @@ function sendCommand(
     timer.unref?.();
     const p: Pending = { token, subtype, resolve, timer, sent: false, ...(channel.sessionId ? { sessionId: channel.sessionId } : {}) };
     pending.set(id, p);
-    if (channel.send({ subtype, id, verb, args })) p.sent = true;
+    // A member Super's verb names its super (plan-r10 1); main's frame stays exactly as before.
+    const superId = subtype === 'super_command' && channel.superId && channel.superId !== 'main' ? { superId: channel.superId } : {};
+    if (channel.send({ subtype, id, verb, args, ...superId })) p.sent = true;
     else settle(id, noWindow(subtype, false));
   });
 }

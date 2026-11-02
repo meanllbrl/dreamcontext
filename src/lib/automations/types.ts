@@ -1116,6 +1116,15 @@ export const AGENT_CHAT_ENV = 'DREAMCONTEXT_AGENT_CHAT';
  *  text nobody here wrote. What they create is not approved by creating it. */
 export const SUPER_CREW_ENV = 'DREAMCONTEXT_SUPER_CREW';
 
+/** Env var on an AI Team member's OWN Super chat (plan-r10 1), beside `DREAMCONTEXT_AGENT_CHAT`
+ *  (which keeps every owner-only verb refused there): its member slug. `dreamcontext super` lets
+ *  that one process through (`callSuper`); the marker grants nothing by itself, the server's token
+ *  check is the gate. */
+export const MEMBER_SUPER_ENV = 'DREAMCONTEXT_MEMBER_SUPER';
+/** Env var on a member Super's CHILDREN (security r8-2): the member's slug. `insideAgentRun` is true
+ *  for them, so no owner-only verb runs there, and their permission mode never exceeds the member's. */
+export const MEMBER_CREW_ENV = 'DREAMCONTEXT_MEMBER_CREW';
+
 /** True when a create must leave its approval to the owner: an agent's run or conversation, or the
  *  Super Agent's crew. The owner's own Chat keeps "the human who wrote it approved it". */
 export function createNeedsOwner(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -1125,7 +1134,23 @@ export function createNeedsOwner(env: NodeJS.ProcessEnv = process.env): boolean 
 /** True inside anything an agent drives: a run (scheduled, called, a task job) or a conversation
  *  with it. The ONE predicate every owner-only CLI verb asks (autonomy, filing approval, assign). */
 export function insideAgentRun(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env[AGENT_SELF_ENV] !== undefined || env.DREAMCONTEXT_AUTOMATION_RUN !== undefined || env[AGENT_CHAT_ENV] !== undefined;
+  return env[AGENT_SELF_ENV] !== undefined || env.DREAMCONTEXT_AUTOMATION_RUN !== undefined || env[AGENT_CHAT_ENV] !== undefined
+    || !!env[MEMBER_CREW_ENV];
+}
+
+/**
+ * The one process a member's own Super chat is (plan-r10 1, critic 1): it carries
+ * `DREAMCONTEXT_MEMBER_SUPER` equal to its `DREAMCONTEXT_AGENT_CHAT`, and neither a run's
+ * `DREAMCONTEXT_AGENT_SELF` nor `DREAMCONTEXT_AUTOMATION_RUN` (an inherited key is still not the
+ * Super). Its slug, or null. Only `dreamcontext super` asks this; every owner-only verb still asks
+ * `insideAgentRun`, which stays true here.
+ */
+export function memberSuperProcess(env: NodeJS.ProcessEnv = process.env): string | null {
+  const slug = env[MEMBER_SUPER_ENV];
+  if (!slug || slug !== env[AGENT_CHAT_ENV]) return null;
+  if (env[AGENT_SELF_ENV] !== undefined || env.DREAMCONTEXT_AUTOMATION_RUN !== undefined) return null;
+  if (env[MEMBER_CREW_ENV]) return null;
+  return slug;
 }
 
 /** Env var naming the per-spawn scratch folder a home-board agent may write. */

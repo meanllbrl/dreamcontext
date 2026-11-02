@@ -3474,7 +3474,8 @@
         "--header",
         "--option",
         "--options",
-        "--show"
+        "--show",
+        "--for"
       ]
     },
     {
@@ -3513,6 +3514,7 @@
         "--succeeds",
         "--note",
         "--origin",
+        "--for",
         "--brief",
         "--mode",
         "--model",
@@ -3789,6 +3791,14 @@
       ]
     },
     {
+      "path": "super team answer",
+      "desc": "The project's Super Agent only: answer a member's question about a job you gave it (an item in your queue). The answer reaches the member's Super as an event, never as the owner's words. When you cannot answer it, ask the owner with your own `super ask`. Refused from a member's Super (`main_only`)",
+      "args": [
+        "<item>",
+        "<text>"
+      ]
+    },
+    {
       "path": "super team ask",
       "desc": "Give an AI Team member a job: it lands in the member's own thread and starts now in its own session on its own approval, beside whatever else the member is doing, on its own model unless this job names one. A member is a project agent or, when no project member holds its name, one of this machine's global agents (~/.dreamcontext/agents): both are asked the same way. Refused when the member is off (say_disabled) or not approved here (say_unapproved: the owner approves it in AI Team; his queue strip asks him). A member takes any number of jobs at once; only the general limit of live jobs (say_at_limit) and the heavy-step queue bound them",
       "args": [
@@ -3800,6 +3810,14 @@
         "--model",
         "--effort",
         "--origin"
+      ]
+    },
+    {
+      "path": "super team done",
+      "desc": "A member's Super only: close a request the Super Agent gave you, with its result in a few lines. The Super Agent hears it as one event. Refused: `already_done` (it is closed), `unknown_item`, `member_only` (the project's Super Agent has no requests)",
+      "args": [
+        "<item>",
+        "<result>"
       ]
     },
     {

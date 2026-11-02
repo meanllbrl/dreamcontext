@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { countEvent, newQueueId, pumpSuper, writeSuper } from './inbox.js';
-import { okMember, superRootOfChild, superRootOfSession } from './store.js';
+import { mainRootOf, okMember, superOfChild, superOfSession } from './store.js';
 
 /**
  * The owner decided on an automation's approval card in the Super Agent's chat (or in one of its
@@ -19,7 +19,7 @@ export async function tellSuperAutomationDecision(
   now = Date.now(),
 ): Promise<boolean> {
   if (!okMember(slug)) return false;
-  const root = superRootOfSession(sessionId) ?? superRootOfChild(sessionId);
+  const root = mainRootOf(superOfSession(sessionId)) ?? mainRootOf(superOfChild(sessionId));
   if (!root || resolve(root) !== resolve(contextRoot)) return false;
   let added = false;
   await writeSuper(root, (s) => {

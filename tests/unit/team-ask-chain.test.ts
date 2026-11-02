@@ -89,7 +89,7 @@ import { SUPER_STATE_REL, memberTeamCardId, readSuperState, resetSuperIndex, san
 import { MAX_TEAM_JOBS, emptySuperState, trimTeamJobs, type SuperState, type SuperTeamJob } from '../../src/lib/super/types.js';
 import { _resetSuperInbox } from '../../src/lib/super/inbox.js';
 import { teamItemLines } from '../../src/lib/super/team.js';
-import { handleSuperVerb } from '../../src/server/routes/super.js';
+import { handleSuperVerb, setTeamAskRouteForTest } from '../../src/server/routes/super.js';
 import { replyToAgent } from '../../src/server/routes/automations.js';
 import { mintWindowToken, resetWindowControl } from '../../src/lib/window-control.js';
 import { createAgent } from '../../src/lib/agents/store.js';
@@ -107,6 +107,11 @@ const RUN2 = '2026-11-02T09:00:00.000Z';
 function makeVault(state: Partial<SuperState> = {}): void {
   writeFileSync(join(root, SUPER_STATE_REL), JSON.stringify({ ...emptySuperState(), session: SUPER, enabled: true, ...state }));
 }
+
+// Wave 1's headless team-ask chain (it still serves in-flight jobs and the owner's thread reply):
+// these tests drive it through `team ask`; Wave 2's request route is super-multi-*.test.ts.
+beforeEach(() => { setTeamAskRouteForTest('say'); });
+afterEach(() => { setTeamAskRouteForTest(null); });
 
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'team-chain-')));

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { activityOf, chatTopic, getChat, pendingRequest, pendingRequestIds } from '../assistant/chat-registry.js';
-import { isReservedId, peekSuperNote, phoneHeld, superIndex } from './store.js';
+import { isReservedId, peekSuperNote, phoneHeld, superEntry } from './store.js';
 import { clearFresh } from './fresh-session.js';
 import { MAX_BRIEF, MAX_FORMER_CHILDREN, SESSION_ID_RE, type SuperChild, type SuperState } from './types.js';
 import {
@@ -186,7 +186,7 @@ export async function disableSuper(contextRoot: string): Promise<SuperState> {
   stopSweep(contextRoot);
   // A "New session" turn already running when the owner takes the screen back must not rotate
   // the pane afterwards through the fallback (fresh-session.ts): nobody wants a fresh super now.
-  const recorded = superIndex(contextRoot).session;
+  const recorded = superEntry(contextRoot).session;
   if (recorded) clearFresh(recorded);
   return writeSuper(contextRoot, (s) => {
     // Read once, at the moment it goes off: a second take-back must not forget a parked chat.

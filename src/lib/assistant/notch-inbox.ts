@@ -6,7 +6,7 @@ import { readAccountRejections } from '../claude-limit-rejections.js';
 import { getChat, onChatChange, type ChatChange, type ChatEntry } from './chat-registry.js';
 import { isDelegatedSession } from './delegations.js';
 import { isSuperChild } from '../super/store.js';
-import { isHandedOverSuperSession, takeSuperEscalation } from '../super/inbox.js';
+import { isHandedOverSuperSession, isMainWork, superTurnOrigin, takeSuperEscalation } from '../super/inbox.js';
 import { buildAppLink } from '../app-link.js';
 
 /**
@@ -189,6 +189,8 @@ function onChange({ entry, from }: ChatChange): void {
   if (isSuperChild(id)) return;
   clearFinishTimer(id);
   if (isHandedOverSuperSession(id)) {
+    // A member's Super finishing a turn of main Super's work (`main:*`, plan-r10 1) is not his news.
+    if (isMainWork(superTurnOrigin(id))) { takeSuperEscalation(id); return; }
     // Owner, 2026-10-21: the Super Agent's own reply is the ONE thing that reaches him, every
     // turn of it (the server-opened event turns too: the briefing makes them a sentence for
     // him), as a banner as well as a row. At once, not debounced: the queue pump may start its

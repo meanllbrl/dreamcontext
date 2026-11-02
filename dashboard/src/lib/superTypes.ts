@@ -359,7 +359,9 @@ export type StuckReason = typeof STUCK_REASONS[number];
 /** `approval`: an AI Team member the Super Agent chose is not approved here (server-written). */
 /** `owner`: a child left something only the owner can do (a `run` card, a `secret`, a
  *  `checklist`): his from birth, closed when his answer reaches the child. */
-export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation'] as const;
+/** `request`: a job main Super gave a member's Super (server-written, in the MEMBER's queue);
+ *  `reply`: main Super's answer to a member's question (plan-r10 1, MIRROR of src/lib/super/types.ts). */
+export const QUEUE_KINDS = ['permission', 'question', 'done', 'gone', 'stuck', 'ask', 'recap', 'handover', 'ended', 'approval', 'fresh', 'owner', 'automation', 'request', 'reply'] as const;
 export type QueueKind = typeof QUEUE_KINDS[number];
 
 export const QUEUE_STATES = ['pending', 'delivered', 'escalated', 'done'] as const;
@@ -398,6 +400,63 @@ export interface SuperQueueItem {
   /** A Super `ask`'s report cards, read to answer it: his card points at them (MIRROR of
    *  src/lib/super/types.ts `SuperQueueItem.read`). */
   read?: string[];
+  /** A `request`'s job or a `reply`'s answer; a request's per-job model, effort, light flag, its
+   *  `team done` result and when its carrying turn ended; a reply's ask (MIRROR, plan-r10 1). */
+  text?: string;
+  model?: string;
+  effort?: string;
+  light?: true;
+  result?: string;
+  acceptedAt?: number;
+  answers?: string;
+  /** Whose work it is; absent = the owner's. */
+  workOrigin?: SuperWorkOrigin;
+}
+
+/** Which super a record, a token or a window verb belongs to (plan-r10 1): the project's own
+ *  (`main`) or an AI Team member's (`m:<member slug>`). Absent anywhere = `main`. MIRROR of
+ *  src/lib/super/types.ts. */
+export type SuperId = 'main' | `m:${string}`;
+export const MEMBER_SUPER_PREFIX = 'm:';
+/** The member slug charset (src/lib/agents/types.ts `isSafeAutomationSlug`: lowercase letters,
+ *  digits, single inner dashes, at most 100). The server's parser also refuses reserved slugs. */
+const MEMBER_SLUG_RE = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,99}$/;
+/** A super id from the wire: absent / '' / `main` = main; `m:<slug>` = that member; else null. */
+export function parseSuperId(raw: unknown): SuperId | null {
+  if (raw === undefined || raw === null || raw === '' || raw === 'main') return 'main';
+  if (typeof raw !== 'string' || !raw.startsWith(MEMBER_SUPER_PREFIX)) return null;
+  const slug = raw.slice(MEMBER_SUPER_PREFIX.length);
+  return slug.length <= 100 && MEMBER_SLUG_RE.test(slug) ? `m:${slug}` : null;
+}
+
+/** Whose work a member Super's turn, child or question is (MIRROR of src/lib/super/types.ts). */
+export type SuperWorkOrigin = 'owner' | 'routine' | `main:${string}`;
+
+/** A member's Super: at most two live children; the vault-wide ceiling over every super. */
+export const MAX_MEMBER_LIVE_CHILDREN = 2;
+export const MAX_VAULT_LIVE_CHILDREN = 15;
+
+/** One member in `GET /api/agent/sessions?summary=1` `members` (plan-r10 1, 1f; MIRROR of
+ *  src/lib/super/types.ts `SuperMemberSummary`): owner and routine work only. */
+export interface SuperMemberSummary {
+  slug: string;
+  global: boolean;
+  enabled: boolean;
+  ownerWorking: number;
+  asking: boolean;
+  approval: boolean;
+  unread: number;
+  superOnly: boolean;
+  lastAt: number;
+}
+
+/** A Super verb the window runs, as its frame names it (MIRROR of src/lib/window-control.ts):
+ *  `superId` absent = main's (a member's Super names itself). */
+export interface SuperWindowCommand {
+  id: string;
+  verb: SuperWindowVerb;
+  args: Record<string, unknown>;
+  superId?: SuperId;
 }
 
 /** What an `owner` item waits on (MIRROR of src/lib/super/owner-wait.ts `OWNER_WAIT_KINDS`). */
@@ -446,6 +505,8 @@ export interface SuperTeamJob {
   followUpOf?: string;
   /** `super`: the Super Agent asked the same member again (MIRROR of `SuperTeamJob.by`). */
   by?: 'super';
+  /** A job given to the member's OWN Super (plan-r10 1, Wave 2): its `request` item's id there. */
+  request?: string;
   /** Window-only, derived when the record is read (`teamChainOf`), never stored: the member's one
    *  card's whole story (plan-r10 1b). Set on a member's current root only. */
   chain?: TeamChain;
@@ -532,6 +593,10 @@ export interface SuperState {
   /** The owner's agenda: the super agent's own notepad (`super note`), oldest first. */
   pad?: SuperPadItem[];
   padSeq?: number;
+  /** A member Super's record: its slug (absent = main's). */
+  member?: string;
+  /** A member Super's main-origin turns (the owner's unread skips them). Absent = none. */
+  mainBatches?: string[];
 }
 
 /** The agenda notepad (owner 2026-10-22 19:15): lines the super agent writes itself, in three
@@ -575,6 +640,9 @@ export const MAX_REPLY_QUOTE = 100;
  * quote is what the page showed him: data, never his instruction. Not `[super `.
  */
 export const ABOUT_CARD_RE = /^\[About card @card:([A-Za-z0-9_-]{1,64})\]/;
+/** The task a member stage's strip is about (plan-r10 1c): the header alone, no second line. The
+ *  task-slug charset, no 64 cap (slugs reach ~100 characters). Never closes an open ask. */
+export const ABOUT_TASK_RE = /^\[About task ([a-z0-9][a-z0-9-]{0,251})\]/;
 export const MAX_SELECTION_QUOTE = 1000;
 
 /** At most this many references (agenda lines, replied messages) in one owner message; a
@@ -582,7 +650,7 @@ export const MAX_SELECTION_QUOTE = 1000;
 export const MAX_MESSAGE_REFS = 5;
 /** One reference header in an owner message: what it names, where it starts, and where its
  *  block (the header and its `line:`/`quote:` line) ends. */
-export interface AboutHead { kind: 'note' | 'item' | 'reply' | 'card'; id: string; at: number; end: number }
+export interface AboutHead { kind: 'note' | 'item' | 'reply' | 'card' | 'task'; id: string; at: number; end: number }
 
 /**
  * Every reference header in an owner message, in order (owner 2026-10-24: several references in
@@ -602,12 +670,13 @@ export function aboutHeads(text: string): AboutHead[] {
     const s = text.slice(at);
     const a = ABOUT_AGENDA_RE.exec(s);
     const c = a ? null : ABOUT_CARD_RE.exec(s);
-    const r = a || c ? null : REPLY_TO_RE.exec(s);
-    if (!a && !c && !r) continue;
-    const kind = a ? (a[1] as 'note' | 'item') : c ? 'card' : 'reply';
-    let len = (a ?? c ?? r as RegExpExecArray)[0].length;
+    const t = a || c ? null : ABOUT_TASK_RE.exec(s);
+    const r = a || c || t ? null : REPLY_TO_RE.exec(s);
+    if (!a && !c && !t && !r) continue;
+    const kind = a ? (a[1] as 'note' | 'item') : c ? 'card' : t ? 'task' : 'reply';
+    let len = (a ?? c ?? t ?? r as RegExpExecArray)[0].length;
     const second = /^\n(line|quote): ([^\n]*)/.exec(s.slice(len));
-    if (kind === 'item') {
+    if (kind === 'item' || kind === 'task') {
       if (second?.[1] === 'line') continue;
     } else {
       if (!second || second[1] !== (kind === 'note' ? 'line' : 'quote')) continue;
@@ -615,7 +684,7 @@ export function aboutHeads(text: string): AboutHead[] {
       len += second[0].length;
     }
     if (len < s.length && s[len] !== '\n') continue;
-    out.push({ kind, id: a ? a[2] : (c ?? r as RegExpExecArray)[1], at, end: at + len });
+    out.push({ kind, id: a ? a[2] : (c ?? t ?? r as RegExpExecArray)[1], at, end: at + len });
   }
   return out;
 }
@@ -871,6 +940,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
   const pool = Array.isArray(v.pool) ? v.pool.filter((p): p is SuperPoolItem =>
     isRecord(p) && typeof p.id === 'string' && typeof p.title === 'string' && typeof p.createdAt === 'number') : [];
   const ownerBatches = Array.isArray(v.ownerBatches) ? v.ownerBatches.filter((b): b is string => typeof b === 'string') : [];
+  const mainBatches = Array.isArray(v.mainBatches) ? v.mainBatches.filter((b): b is string => typeof b === 'string') : [];
   const held = Array.isArray(v.held) ? v.held.filter((h): h is SuperHeldEvent => isRecord(h) && typeof h.item === 'string'
     && typeof h.child === 'string' && typeof h.at === 'number' && (h.kind === 'question' || h.kind === 'done' || h.kind === 'stuck' || h.kind === 'gone')) : [];
   // The agenda notepad: a known section, a string line, a number time (absent in an older push).
@@ -895,6 +965,8 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
     ...(Array.isArray(v.formerChildren) ? { formerChildren: v.formerChildren.filter((x): x is string => typeof x === 'string') } : {}),
     ...(Array.isArray(v.released) ? { released: v.released.filter((x): x is string => typeof x === 'string') } : {}),
     ownerBatches,
+    ...(mainBatches.length ? { mainBatches } : {}),
+    ...(typeof v.member === 'string' && v.member ? { member: v.member } : {}),
     ...(held.length ? { held } : {}),
     ...(pad.length ? { pad } : {}),
     team,
@@ -908,7 +980,7 @@ export function readSuperStateView(v: unknown): SuperStateView | null {
 // ─── The phone's agenda digest (src/lib/super/phone-mirror.ts `superDigest`) ───────────
 
 /** Mirrors `SUPER_DIGEST_FIELDS` in src/lib/super/phone-mirror.ts (super-types-mirror test). */
-export const SUPER_DIGEST_FIELDS = ['pad', 'waiting', 'ownerBatches', 'names', 'key'] as const;
+export const SUPER_DIGEST_FIELDS = ['pad', 'waiting', 'ownerBatches', 'mainBatches', 'names', 'key'] as const;
 
 /** What a phone mirror is told of the Super Agent's agenda (a `super_digest` frame): enough to
  *  draw the desktop's `SuperAgenda` and fold the event turns, never the record. */
@@ -918,6 +990,9 @@ export interface SuperDigestWire {
    *  (plain text; an `owner` item's is a child's card, untrusted), '' on a permission. */
   waiting: Array<{ id: string; kind: QueueKind; state: QueueState; createdAt: number; sessionId: string; text: string }>;
   ownerBatches: string[];
+  /** A member Super's main-origin turns (the phone's unread skips them, plan-r10 1). Absent in a
+   *  digest from an older server. */
+  mainBatches?: string[];
   /** Child session id → the Mac's job card title. */
   names: Record<string, string>;
   key: string;
@@ -932,6 +1007,7 @@ export function readSuperDigest(v: unknown): SuperDigestWire | null {
     && typeof q.id === 'string' && oneOf(QUEUE_KINDS, q.kind) && oneOf(QUEUE_STATES, q.state)
     && typeof q.createdAt === 'number' && typeof q.sessionId === 'string' && typeof q.text === 'string').slice(0, 40) : [];
   const ownerBatches = Array.isArray(v.ownerBatches) ? v.ownerBatches.filter((b): b is string => typeof b === 'string').slice(-50) : [];
+  const mainBatches = Array.isArray(v.mainBatches) ? v.mainBatches.filter((b): b is string => typeof b === 'string').slice(-50) : [];
   const names: Record<string, string> = {};
   if (isRecord(v.names)) {
     for (const [sid, name] of Object.entries(v.names).slice(0, 40)) if (typeof name === 'string' && name) names[sid] = name;
@@ -944,6 +1020,6 @@ export function readSuperDigest(v: unknown): SuperDigestWire | null {
       ...(p.by === 'auto' || p.by === 'owner' ? { by: p.by } : {}),
     })),
     waiting: waiting.map((q) => ({ id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId, text: q.text })),
-    ownerBatches, names, key: v.key,
+    ownerBatches, mainBatches, names, key: v.key,
   };
 }

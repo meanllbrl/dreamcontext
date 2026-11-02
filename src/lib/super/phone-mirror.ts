@@ -352,7 +352,7 @@ function phoneJobs(children: PhoneSuperRecord['children'], live: readonly LiveRo
 // ─── The agenda's digest (task hands-free-telefonda-super-agent-sohbeti-ajandayi…) ──────────
 
 /** The digest's fields, mirrored by `dashboard/src/lib/superTypes.ts` (super-types-mirror test). */
-export const SUPER_DIGEST_FIELDS = ['pad', 'waiting', 'ownerBatches', 'names', 'key'] as const;
+export const SUPER_DIGEST_FIELDS = ['pad', 'waiting', 'ownerBatches', 'mainBatches', 'names', 'key'] as const;
 export const DIGEST_MAX_PAD = 40;
 export const DIGEST_MAX_PAD_TEXT = 160;
 export const DIGEST_MAX_WAITING = 40;
@@ -364,10 +364,12 @@ export const DIGEST_MAX_NAME = 80;
 /** The slice of the super record a digest reads (`SuperState` satisfies it). */
 export interface SuperDigestSource {
   pad?: ReadonlyArray<{ id: string; section: string; text: string; at: number; for?: string; by?: 'auto' | 'owner' }>;
-  queue: ReadonlyArray<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string; direct?: true }>;
+  queue: ReadonlyArray<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; ownerText?: string; direct?: true; workOrigin?: string }>;
   ownerBatches: readonly string[];
+  /** A member Super's main-origin turns (plan-r10 1); absent = none. */
+  mainBatches?: readonly string[];
   containers: ReadonlyArray<{ kind: string; ref: string; title?: string }>;
-  children: Readonly<Record<string, { brief: string; startedAt: number }>>;
+  children: Readonly<Record<string, { brief: string; startedAt: number; workOrigin?: string }>>;
 }
 
 /**
@@ -386,6 +388,8 @@ export interface SuperDigest {
    *  '' on a permission. */
   waiting: Array<{ id: string; kind: string; state: string; createdAt: number; sessionId: string; text: string }>;
   ownerBatches: string[];
+  /** A member Super's main-origin turns: the phone's unread skips them (plan-r10 1). */
+  mainBatches: string[];
   names: Record<string, string>;
   /** Changes when (and only when) anything above changes. */
   key: string;
@@ -422,13 +426,17 @@ export function superDigest(state: SuperDigestSource): SuperDigest {
       ...(p.by === 'auto' || p.by === 'owner' ? { by: p.by } : {}),
     }))
     .filter((p) => p.id && p.text);
+  // Main Super's work in a member's Super (`main:*`, plan-r10 1) never waits on the owner.
+  const mainWork = (o: string | undefined) => typeof o === 'string' && o.startsWith('main:');
   const owes = (q: SuperDigestSource['queue'][number]) => q.state !== 'done'
+    && !mainWork(q.workOrigin) && !mainWork(Object.prototype.hasOwnProperty.call(state.children, q.sessionId) ? state.children[q.sessionId].workOrigin : undefined)
     && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && (q.state === 'pending' || q.direct === true)));
   const waiting = state.queue.filter(owes).slice(0, DIGEST_MAX_WAITING).map((q) => ({
     id: q.id, kind: q.kind, state: q.state, createdAt: q.createdAt, sessionId: q.sessionId,
     text: q.kind === 'permission' ? '' : digestText(q.ownerText, DIGEST_MAX_OWNER_TEXT),
   }));
   const ownerBatches = state.ownerBatches.filter((b) => typeof b === 'string').slice(-DIGEST_MAX_BATCHES);
+  const mainBatches = (state.mainBatches ?? []).filter((b) => typeof b === 'string').slice(-DIGEST_MAX_BATCHES);
   // The children the phone may name: the ones it waits on first, then the newest.
   const sids = [...new Set([
     ...waiting.map((w) => w.sessionId).filter((sid) => state.children[sid]),
@@ -439,11 +447,11 @@ export function superDigest(state: SuperDigestSource): SuperDigest {
     const name = childDigestName(state, sid);
     if (name) names[sid] = name;
   }
-  const body = { pad, waiting, ownerBatches, names };
+  const body = { pad, waiting, ownerBatches, mainBatches, names };
   return { ...body, key: fnv(JSON.stringify(body)) };
 }
 
 /** The `_meta` frame carrying `d` to a phone mirror. */
 export function superDigestFrame(d: SuperDigest): string {
-  return JSON.stringify({ type: '_meta', subtype: 'super_digest', pad: d.pad, waiting: d.waiting, ownerBatches: d.ownerBatches, names: d.names, key: d.key });
+  return JSON.stringify({ type: '_meta', subtype: 'super_digest', pad: d.pad, waiting: d.waiting, ownerBatches: d.ownerBatches, mainBatches: d.mainBatches, names: d.names, key: d.key });
 }

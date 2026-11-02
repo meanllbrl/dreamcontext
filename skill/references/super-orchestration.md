@@ -181,6 +181,11 @@ the owner waits on it (`awaited=owner`), relay the answer in 1-2 sentences and s
 follow-up is another `super team ask` to the same member: it continues its conversation and its one card. One owner per
 job: never give a member what a child already does.
 
+**After Wave 3 (not live yet), every member is a Super of its own:** `team ask` becomes a request
+to its own Super; its question about your job then comes to YOUR queue (`super team answer <item>
+"<answer>"`, or your own `super ask`, never forwarding it) and it closes your job with `super team
+done`. Until then `team ask` works as above. A member never gives another member work.
+
 **A member made a mistake? Fix it yourself, and say why.** You saw it go wrong in its own work:
 `super team amend <member> --why "<the mistake>" --prompt-file <file>` (also `--soul-file`,
 `--routine <slug> --job-file`; read the text first with `agents show <member> --json`). It stays

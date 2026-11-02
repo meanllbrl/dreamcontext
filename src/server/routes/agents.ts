@@ -634,6 +634,15 @@ export async function handleAgentsSetEnabled(
   }
   try {
     setAgentCallEnabled(contextRoot, params.slug, body.enabled);
+    // Turned off: its live member Super stops (plan-r10 1, security r8-3), its keys die. Only a
+    // member that has a Super record here; a pending request then waits and main hears it once.
+    if (body.enabled === false) {
+      const { listMemberSupers } = await import('../../lib/super/store.js');
+      if ((await listMemberSupers(contextRoot)).includes(params.slug)) {
+        const { stopMemberSuper } = await import('./super.js');
+        await stopMemberSuper(contextRoot, params.slug).catch((err: unknown) => console.warn(`[super] ${params.slug}: its Super did not stop: ${(err as Error).message}`));
+      }
+    }
     sendSummary(res, contextRoot, params.slug);
   } catch (err) {
     sendWriteError(res, err, 'enable_failed', 'Failed to switch the member.');

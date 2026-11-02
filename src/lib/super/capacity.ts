@@ -9,8 +9,8 @@ import type { MacThermalState } from '../handsfree/mac/contract.js';
 import { heavyLimitFor, parseVmStat, readBagMode, readHeatLevel } from '../heat.js';
 
 export { parseVmStat };
-import { MAX_LIVE_CHILDREN, type SuperState } from './types.js';
-import { superWorktreeRoot } from './store.js';
+import { MAX_LIVE_CHILDREN, MAX_MEMBER_LIVE_CHILDREN, MAX_VAULT_LIVE_CHILDREN, type SuperState } from './types.js';
+import { listMemberSupers, readSuperState, superIdOfMember, superWorktreeRoot, type SanitizeOpts } from './store.js';
 
 /**
  * How much room this machine has for another child chat (plan-r7 D11, decision 5).
@@ -429,8 +429,31 @@ export function liveChildren(state: SuperState, now = Date.now()): string[] {
   });
 }
 
-/** May `super delegate` start one more child? Adoption never asks this. */
-export function delegationAllowed(state: SuperState, now = Date.now()): { ok: boolean; live: number; max: number } {
+/** One super's own cap (plan-r10 1): the project's Super 15, a member's Super 2. */
+export function superChildCap(state: Pick<SuperState, 'member'>): number {
+  return state.member ? MAX_MEMBER_LIVE_CHILDREN : MAX_LIVE_CHILDREN;
+}
+
+/**
+ * May `super delegate` start one more child? Adoption never asks this. Two caps (plan-r10 1): the
+ * super's own (`superChildCap`), and, when `vaultLive` is given, the vault-wide safety ceiling: the
+ * live children of EVERY super record of the vault together (a young unregistered child counts:
+ * read from the records, `liveChildren`) stay at most MAX_VAULT_LIVE_CHILDREN.
+ */
+export function delegationAllowed(state: SuperState, now = Date.now(), vaultLive?: number): {
+  ok: boolean; live: number; max: number; vaultLive: number; vaultMax: number; bound: 'own' | 'vault' | null;
+} {
   const live = liveChildren(state, now).length;
-  return { ok: live < MAX_LIVE_CHILDREN, live, max: MAX_LIVE_CHILDREN };
+  const max = superChildCap(state);
+  const vault = vaultLive ?? live;
+  const bound = live >= max ? 'own' : vaultLive !== undefined && vault >= MAX_VAULT_LIVE_CHILDREN ? 'vault' : null;
+  return { ok: bound === null, live, max, vaultLive: vault, vaultMax: MAX_VAULT_LIVE_CHILDREN, bound };
+}
+
+/** The live children of every super record of a vault (main's and each member's), read from the
+ *  records themselves; a record that does not read counts none. */
+export async function vaultLiveChildren(contextRoot: string, now = Date.now(), opts: SanitizeOpts = {}): Promise<number> {
+  const ids = ['main' as const, ...(await listMemberSupers(contextRoot)).map(superIdOfMember)];
+  const counts = await Promise.all(ids.map((id) => readSuperState(contextRoot, id, opts).then((s) => liveChildren(s, now).length, () => 0)));
+  return counts.reduce((a, b) => a + b, 0);
 }

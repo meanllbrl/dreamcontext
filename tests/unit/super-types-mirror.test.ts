@@ -11,6 +11,7 @@ import * as server from '../../src/lib/super/types.js';
 import * as client from '../../dashboard/src/lib/superTypes.js';
 import * as ownerWait from '../../src/lib/super/owner-wait.js';
 import * as phoneMirror from '../../src/lib/super/phone-mirror.js';
+import * as store from '../../src/lib/super/store.js';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -189,6 +190,30 @@ describe('super types — server record <-> window mirror', () => {
 
   it('the phone\'s agenda digest has the same fields on both sides', () => {
     expect(client.SUPER_DIGEST_FIELDS).toEqual(phoneMirror.SUPER_DIGEST_FIELDS);
+  });
+
+  it('plan-r10 Wave 2: superId, the request/reply kinds, [About task] and the caps are one contract on both sides', () => {
+    expect(String(client.ABOUT_TASK_RE)).toBe(String(server.ABOUT_TASK_RE));
+    expect(client.MEMBER_SUPER_PREFIX).toBe(server.MEMBER_SUPER_PREFIX);
+    expect(client.MAX_MEMBER_LIVE_CHILDREN).toBe(server.MAX_MEMBER_LIVE_CHILDREN);
+    expect(client.MAX_VAULT_LIVE_CHILDREN).toBe(server.MAX_VAULT_LIVE_CHILDREN);
+    expect(server.MAX_MEMBER_LIVE_CHILDREN).toBe(2);
+    expect(server.MAX_VAULT_LIVE_CHILDREN).toBe(15);
+    expect(server.QUEUE_KINDS).toContain('request');
+    expect(server.QUEUE_KINDS).toContain('reply');
+    for (const raw of [undefined, '', 'main', 'm:rota', 'm:ua-manager', 'm:..', 'm:a/b', 'm:', 'm:Rota', 'm:a--b', 'm:a-', 'x:rota', 42, null]) {
+      expect(client.parseSuperId(raw), String(raw)).toBe(store.parseSuperId(raw));
+    }
+    // A task header parses the same on both sides, never needs a second line, and a long slug passes.
+    const long = `a${'-b'.repeat(50)}`;
+    for (const t of [`[About task fix-login]\nwhy`, `[About task ${long}]`, `hi\n\n[About task x]\n\n[Reply to message ref=k3f9q0 from=super]\nquote: "q"\n\nok`, '[About task Bad]']) {
+      expect(client.aboutHeads(t)).toEqual(server.aboutHeads(t));
+      expect(client.partRefs(t)).toEqual(server.partRefs(t));
+    }
+    expect(server.aboutHeads(`[About task ${long}]`)).toEqual([{ kind: 'task', id: long, at: 0, end: long.length + 13 }]);
+    // A member record's own fields reach the window.
+    const view: server.SuperStateView = { ...server.emptySuperState(), vault: 'acme-app', session: 's-m', enabled: true, member: 'rota', mainBatches: ['b-1'] };
+    expect(client.readSuperStateView(JSON.parse(JSON.stringify(view)))).toEqual(view);
   });
 
   it('both files carry the MIRRORED comment that sends the next reader to the other one', () => {

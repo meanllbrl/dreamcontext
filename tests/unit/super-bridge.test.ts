@@ -342,6 +342,41 @@ describe('the super chat follows the vault\'s permission switch (D15)', () => {
   });
 });
 
+describe('one recorded session PER SUPER at the upgrade (plan-r10 1: a member\'s own Super)', () => {
+  const MEMBER_SESSION = '99999999-8888-4777-8666-555555555555';
+  const ask = (o: Partial<{ resumeId: string; sessionId: string; chatAgent: string | null }>) =>
+    superUpgradeRefusal({ mode: 'super', phone: false, contextRoot: root, resumeId: '', sessionId: '', ...o });
+
+  it('a member Super chat passes only with ITS record\'s session; main\'s gate never takes a member\'s session', async () => {
+    const { withSuperState } = await import('../../src/lib/super/store.js');
+    expect(ask({ sessionId: MEMBER_SESSION, chatAgent: 'rota' })).toBe(409); // no record yet: 409
+    await record({ enabled: true });
+    await withSuperState(root, 'm:rota', (s) => { s.session = MEMBER_SESSION; s.enabled = true; });
+    expect(ask({ sessionId: MEMBER_SESSION, chatAgent: 'rota' })).toBeNull();
+    expect(ask({ resumeId: MEMBER_SESSION, chatAgent: 'rota' })).toBeNull();
+    // Main's session is not the member's, the member's is not main's, nor another member's.
+    expect(ask({ sessionId: SUPER, chatAgent: 'rota' })).toBe(409);
+    expect(ask({ sessionId: MEMBER_SESSION })).toBe(409);
+    expect(ask({ sessionId: MEMBER_SESSION, chatAgent: 'mira' })).toBe(409);
+    expect(ask({ sessionId: SUPER })).toBeNull();
+    // The phone never opens a member's Super either.
+    expect(superUpgradeRefusal({ mode: 'super', phone: true, contextRoot: root, resumeId: '', sessionId: MEMBER_SESSION, chatAgent: 'rota' })).toBe(403);
+  });
+
+  it('a phone never opens a member\'s Super session, whatever the mode (refused like main\'s)', () => {
+    const src = readFileSync(new URL('../../src/server/routes/agent-chat.ts', import.meta.url), 'utf-8');
+    const handler = src.slice(src.indexOf('export function attachAgentChat'), src.indexOf('export function chatOpenDecision'));
+    const refusal = handler.indexOf("if (phone && [resumeId, sessionId].some((id) => { const ref = id ? superOfSession(id) : null; return !!ref && ref.superId !== 'main'; })) { rejectUpgrade(socket, 403); return; }");
+    expect(refusal).toBeGreaterThan(0);
+    expect(refusal).toBeLessThan(handler.indexOf('startChatSession('));
+  });
+
+  it('the upgrade handler names the chat\'s agent to the gate', () => {
+    const src = readFileSync(new URL('../../src/server/routes/agent-chat.ts', import.meta.url), 'utf-8');
+    expect(src).toMatch(/superUpgradeRefusal\(\{ mode, phone, contextRoot: superCtx, resumeId, sessionId, chatAgent: parseChatAgent\(url\.searchParams\.get\('chatAgent'\)\) \}\)/);
+  });
+});
+
 describe('one super session per vault at the upgrade (D3)', () => {
   const ask = (o: Partial<{ mode: string; phone: boolean; resumeId: string; sessionId: string }>) =>
     superUpgradeRefusal({ mode: 'super', phone: false, contextRoot: root, resumeId: '', sessionId: '', ...o });

@@ -30,6 +30,21 @@ export const SUPER_HANDOFF_REL = join('state', '.super', 'handoff.md');
 /** The record's `task` value: a path stem, so an older reader's generic "read state/<task>.md"
  *  still sends the fresh session to the right file. */
 export const SUPER_HANDOFF_TASK = '.super/handoff';
+
+/** A member Super's handoff record `task` (plan-r10 1): its own file's path stem under `state/`. */
+export const MEMBER_HANDOFF_TASK_RE = /^\.super\/members\/([a-z0-9][a-z0-9-]{0,99})\.handoff$/;
+
+/** The record `task` of a super's handoff: main's `.super/handoff`, a member's
+ *  `.super/members/<slug>.handoff` (so `state/<task>.md` is always that super's own file). */
+export function superHandoffTask(superId: string = 'main'): string {
+  return superId.startsWith('m:') ? `.super/members/${superId.slice(2)}.handoff` : SUPER_HANDOFF_TASK;
+}
+
+/** The file a super handoff record names, project-relative with `/` (main's for anything else). */
+export function superHandoffFileOf(task: string): string {
+  const own = MEMBER_HANDOFF_TASK_RE.test(task) ? `state/${task}.md` : SUPER_HANDOFF_REL.split('\\').join('/');
+  return `_dream_context/${own}`;
+}
 export const MAX_ENTRIES = 5;
 export const MAX_FILE_BYTES = 64 * 1024;
 export const MAX_FIELD_BYTES = 4 * 1024;
@@ -38,8 +53,12 @@ const TRUNCATED = ' …(kısaltıldı)';
 const HEADING = '# Super Agent devri';
 const ENTRY_RE = /^## .* — Handoff$/m;
 
-export function superHandoffPath(contextRoot: string): string {
-  return join(contextRoot, SUPER_HANDOFF_REL);
+/** Main's file (SUPER_HANDOFF_REL), or a member Super's beside its record (plan-r10 1):
+ *  `state/.super/members/<slug>.handoff.md`. `superId` is `main` or `m:<slug>` (the slug checked
+ *  by whoever resolved the super). */
+export function superHandoffPath(contextRoot: string, superId: string = 'main'): string {
+  if (superId === 'main' || !superId.startsWith('m:')) return join(contextRoot, SUPER_HANDOFF_REL);
+  return join(contextRoot, 'state', '.super', 'members', `${superId.slice(2)}.handoff.md`);
 }
 
 const clean = (s: string | undefined): string => (s ?? '').replace(/\s+/g, ' ').trim();
@@ -96,9 +115,10 @@ export function renderSuperHandoffFile(entries: readonly string[], updated: stri
  * (best-effort): the project's `.gitignore`, and the brain repo's own `_dream_context/.gitignore`
  * when it has one, so a vault set up before this file existed never commits it.
  */
-function ensureSuperDir(contextRoot: string): string {
+function ensureSuperDir(contextRoot: string, superId: string = 'main'): string {
   const stateDir = join(contextRoot, 'state');
   const dir = dirname(superHandoffPath(contextRoot));
+  const own = dirname(superHandoffPath(contextRoot, superId));
   if (existsSync(stateDir) && !lstatSync(stateDir).isDirectory()) throw new Error('state is not a directory');
   if (existsSync(dir) && !lstatSync(dir).isDirectory()) throw new Error('state/.super is not a directory');
   if (!existsSync(dir)) {
@@ -107,20 +127,29 @@ function ensureSuperDir(contextRoot: string): string {
     try { if (existsSync(join(contextRoot, '.gitignore'))) ensureGitignoreEntries(contextRoot, ['state/.super/'], { comment }); } catch { /* best effort */ }
     mkdirSync(dir, { recursive: true });
   }
-  return dir;
+  // A member's file lives one folder down: never through a link.
+  if (own !== dir) {
+    if (existsSync(own) && !lstatSync(own).isDirectory()) throw new Error('state/.super/members is not a directory');
+    if (!existsSync(own)) mkdirSync(own, { recursive: true, mode: 0o700 });
+  }
+  return own;
 }
 
 /** Read the file, or null when there is none (or it cannot be read). */
-export function readSuperHandoff(contextRoot: string): string | null {
-  try { return readFileSync(superHandoffPath(contextRoot), 'utf-8'); } catch { return null; }
+export function readSuperHandoff(contextRoot: string, superId: string = 'main'): string | null {
+  try {
+    const path = superHandoffPath(contextRoot, superId);
+    if (lstatSync(path).isSymbolicLink()) return null;
+    return readFileSync(path, 'utf-8');
+  } catch { return null; }
 }
 
 /**
  * Prepend one entry (or several, oldest last, for the one-time migration) and write the file
  * under the lock. Returns the path written.
  */
-export function writeSuperHandoff(contextRoot: string, newEntries: readonly string[], now: Date = new Date()): string {
-  const path = superHandoffPath(contextRoot);
+export function writeSuperHandoff(contextRoot: string, newEntries: readonly string[], now: Date = new Date(), superId: string = 'main'): string {
+  const path = superHandoffPath(contextRoot, superId);
   const entries = newEntries.map((e) => e.replace(/\r\n?/g, '\n').trim());
   for (const e of entries) {
     if (parseSuperHandoffEntries(e).length !== 1 || !e.startsWith('## ')) {
@@ -128,7 +157,8 @@ export function writeSuperHandoff(contextRoot: string, newEntries: readonly stri
     }
   }
   return withTaskFileLock(contextRoot, LOCK_NAME, () => {
-    ensureSuperDir(contextRoot);
+    ensureSuperDir(contextRoot, superId);
+    if (existsSync(path) && lstatSync(path).isSymbolicLink()) throw new Error('the handoff file is a symlink');
     const existing = existsSync(path) ? parseSuperHandoffEntries(readFileSync(path, 'utf-8')) : [];
     const text = renderSuperHandoffFile([...entries, ...existing], now.toISOString());
     const tmp = `${path}.${randomUUID()}.tmp`;
