@@ -2,14 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../../context/I18nContext';
 import { emitInstance, useApi, useVault } from '../../../context/VaultContext';
-import type { AgentToolInfo } from '../../../hooks/useAgentCapabilities';
+import type { AgentToolInfo, ClaudeAccountsResponse } from '../../../hooks/useAgentCapabilities';
 import { fetchReadiness, READINESS_QUERY_KEY, useFixRuns } from '../../../hooks/useOnboarding';
 import { useShellProjects } from '../../../hooks/useShellProjects';
 import { chipSummary, setupProblems, type SetupProblem } from '../../../lib/setupStatus';
+import { pollMs } from '../../../lib/windowActivity';
 import './SetupStatusChip.css';
 
-/** How old a read may be before a window focus reads again. No interval: nothing here polls. */
-const FOCUS_STALE_MS = 30_000;
+/** How old a read may be before a window focus (or a project switch) reads again. */
+const FOCUS_STALE_MS = 5 * 60_000;
+/** Only while the report says offline: a light re-read so "No internet" clears by itself. */
+const OFFLINE_REREAD_MS = 15_000;
 
 /**
  * The setup status chip, left of the sleep score (owner 2026-11-03). Draws NOTHING unless a big
@@ -17,10 +20,13 @@ const FOCUS_STALE_MS = 30_000;
  * one and how many more, and a click lists them with their one-click fixes.
  *
  * Reads: the machine report (`GET /api/onboarding/readiness`, the server's memo, never a forced
- * probe) and the tool list (`GET /api/agent/tools`), each once when the chip mounts and again
- * when the window comes back into focus and the last read is older than 30 s. No interval.
- * Both share their cache keys with the onboarding checklist and the composer, so a fix run
- * anywhere updates this chip too.
+ * probe), the tool list (`GET /api/agent/tools`) and the app's Claude accounts
+ * (`GET /api/agent/accounts`), each once when the chip mounts and again when the window comes back
+ * into focus and the last read is older than 5 minutes. No interval, except a light re-read every
+ * 15 s while the report says offline, so a false "No internet" cannot outlive the outage. The
+ * keys are shared with the checklist, the composer and Settings, so a fix run anywhere (or their
+ * own polls) updates this chip too. A failed re-read keeps the last answer; no answer at all
+ * means "cannot tell", which never alarms.
  */
 export function SetupStatusChip() {
   const { t } = useI18n();
@@ -32,7 +38,8 @@ export function SetupStatusChip() {
     queryFn: () => fetchReadiness(false),
     staleTime: FOCUS_STALE_MS,
     refetchOnWindowFocus: true,
-    refetchInterval: false,
+    refetchOnReconnect: 'always',
+    refetchInterval: (q) => (q.state.data && !q.state.data.online ? pollMs(OFFLINE_REREAD_MS) : false),
     retry: false,
   });
   const tools = useQuery({
@@ -43,11 +50,26 @@ export function SetupStatusChip() {
     refetchInterval: false,
     retry: false,
   });
+  const accounts = useQuery({
+    queryKey: ['agent-claude-accounts'],
+    queryFn: () => api.get<ClaudeAccountsResponse>('/agent/accounts'),
+    staleTime: FOCUS_STALE_MS,
+    refetchOnWindowFocus: true,
+    refetchInterval: false,
+    retry: false,
+  });
   const projects = useShellProjects(true).data?.vaults;
   const projectMissing = !!vault && projects?.find((p) => p.name === vault)?.exists === false;
-  // An older server with no tool list: Claude is the only tool there is.
-  const toolList = tools.isError ? [] : tools.isFetched && Array.isArray(tools.data) ? tools.data : null;
-  const problems = setupProblems({ report: report.data, tools: toolList, projectMissing });
+  // The last good answer wins over a failed re-read; never an answer = cannot tell (null).
+  const toolList = Array.isArray(tools.data) ? tools.data : null;
+  const claudeAccounts = Array.isArray(accounts.data?.accounts) ? accounts.data.accounts : null;
+  // "No internet" only once two different reads agree: one slow 3 s ping (a proxy, a wake from
+  // sleep) must not paint the chip red.
+  const offlineReads = useRef<Set<number>>(new Set());
+  if (report.data && report.data.online) offlineReads.current.clear();
+  else if (report.data && !report.data.online) offlineReads.current.add(report.data.generatedAt);
+  const offlineConfirmed = offlineReads.current.size >= 2;
+  const problems = setupProblems({ report: report.data, tools: toolList, claudeAccounts, projectMissing, offlineConfirmed });
   const summary = chipSummary(problems);
 
   const [open, setOpen] = useState(false);

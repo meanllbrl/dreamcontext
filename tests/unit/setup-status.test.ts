@@ -40,13 +40,15 @@ const tool = (t: AgentToolInfo['tool'], installed: boolean, signedIn: boolean): 
 });
 const CLAUDE_ONLY = [tool('claude', true, true), tool('codex', false, false), tool('antigravity', false, false)];
 
-const ids = (r: ReadinessReport, tools: AgentToolInfo[] | null = CLAUDE_ONLY, projectMissing = false) =>
-  setupProblems({ report: r, tools, projectMissing }).map((p) => `${p.id}:${p.tone}`);
+// No Claude accounts recorded (a fresh machine): the report's own sign-in row decides.
+const NO_ACCOUNTS: { state: string }[] = [];
+const ids = (r: ReadinessReport, tools: AgentToolInfo[] | null = CLAUDE_ONLY, projectMissing = false, claudeAccounts: { state: string }[] | null = NO_ACCOUNTS) =>
+  setupProblems({ report: r, tools, claudeAccounts, projectMissing }).map((p) => `${p.id}:${p.tone}`);
 
 describe('nothing drawn', () => {
   it('(a) everything fine', () => {
     expect(ids(report())).toEqual([]);
-    expect(chipSummary(setupProblems({ report: report(), tools: CLAUDE_ONLY, projectMissing: false }))).toBeNull();
+    expect(chipSummary(setupProblems({ report: report(), tools: CLAUDE_ONLY, claudeAccounts: NO_ACCOUNTS, projectMissing: false }))).toBeNull();
   });
 
   it('(b) Codex, Antigravity, git, GitHub, gh and the terminal all missing', () => {
@@ -71,7 +73,27 @@ describe('nothing drawn', () => {
 
   it('a sign-in blocked only by the network is not "signed out"', () => {
     const r = report({ network: { status: 'missing', reason: 'offline' }, claude: { status: 'blocked', blockedBy: ['network'] }, 'claude-auth': { status: 'blocked', blockedBy: ['claude', 'network'] } });
-    expect(ids(r)).toEqual(['network:bad']);
+    expect(setupProblems({ report: r, tools: CLAUDE_ONLY, claudeAccounts: NO_ACCOUNTS, projectMissing: false, offlineConfirmed: true }).map((p) => p.id)).toEqual(['network']);
+  });
+
+  it('one offline read (a slow 3 s ping, a proxy, a wake from sleep) is not "No internet"', () => {
+    expect(ids(report({ network: { status: 'missing', reason: 'offline' } }))).toEqual([]);
+  });
+
+  it('node, npm or the CLI off the shell PATH (needs-action) is not red: the app runs anyway', () => {
+    expect(ids(report({ node: { status: 'needs-action', reason: 'not-on-path' }, cli: { status: 'needs-action', reason: 'not-on-path' } }))).toEqual([]);
+  });
+
+  it("the owner's Mac: the report says Claude signed out, the app's own accounts work = nothing", () => {
+    // Read from the real app on 2026-11-03: claude-auth needs-action/signed-out, five accounts ok.
+    const r = report({ 'claude-auth': { status: 'needs-action', reason: 'signed-out' } });
+    expect(ids(r, CLAUDE_ONLY, false, [{ state: 'ok' }, { state: 'ok' }])).toEqual([]);
+    expect(ids(r, [tool('claude', true, true), tool('codex', true, true)], false, [{ state: 'ok' }])).toEqual([]);
+  });
+
+  it('Claude accounts unanswered: the sign-in is unknown, never red', () => {
+    const r = report({ 'claude-auth': { status: 'needs-action', reason: 'signed-out' } });
+    expect(ids(r, CLAUDE_ONLY, false, null)).toEqual([]);
   });
 
   it('agent rows wait for the tool list instead of guessing', () => {
@@ -80,14 +102,14 @@ describe('nothing drawn', () => {
   });
 
   it('no report yet: nothing but a missing folder', () => {
-    expect(setupProblems({ report: undefined, tools: null, projectMissing: false })).toEqual([]);
+    expect(setupProblems({ report: undefined, tools: null, claudeAccounts: NO_ACCOUNTS, projectMissing: false })).toEqual([]);
   });
 });
 
 describe('the quiet gray note', () => {
   it('(c) Claude missing but Codex signed in: only the gray "Sleep needs Claude" row', () => {
     const r = report({ claude: { status: 'missing' }, 'claude-auth': { status: 'blocked', blockedBy: ['claude'] } });
-    const problems = setupProblems({ report: r, tools: [tool('codex', true, true), tool('antigravity', false, false)], projectMissing: false });
+    const problems = setupProblems({ report: r, tools: [tool('codex', true, true), tool('antigravity', false, false)], claudeAccounts: NO_ACCOUNTS, projectMissing: false });
     expect(problems.map((p) => `${p.id}:${p.tone}`)).toEqual(['claude-only:quiet']);
     expect(problems[0].fix).toBe('claude-install');
     expect(chipSummary(problems)?.tone).toBe('quiet');
@@ -102,23 +124,29 @@ describe('the quiet gray note', () => {
 describe('red', () => {
   it('(d) Node missing: red, with its fix; what depends on it stays out', () => {
     const r = report({ node: { status: 'missing', reason: 'too-old' }, npm: { status: 'blocked', blockedBy: ['node'] }, cli: { status: 'blocked', blockedBy: ['npm'] } });
-    const problems = setupProblems({ report: r, tools: CLAUDE_ONLY, projectMissing: false });
+    const problems = setupProblems({ report: r, tools: CLAUDE_ONLY, claudeAccounts: NO_ACCOUNTS, projectMissing: false });
     expect(problems.map((p) => `${p.id}:${p.tone}`)).toEqual(['node:bad']);
     expect(chipSummary(problems)).toMatchObject({ tone: 'bad', more: 0, first: { labelKey: 'setupStatus.node' } });
   });
 
-  it('npm and the CLI each count', () => {
+  it('npm and the CLI each count when missing', () => {
     expect(ids(report({ npm: { status: 'missing' } }))).toEqual(['npm:bad']);
-    expect(ids(report({ cli: { status: 'needs-action', reason: 'not-on-path' } }))).toEqual(['cli:bad']);
+    expect(ids(report({ cli: { status: 'missing', reason: 'not-installed' } }))).toEqual(['cli:bad']);
   });
 
-  it('no network', () => {
-    expect(ids(report({ network: { status: 'missing', reason: 'offline' } }))).toEqual(['network:bad']);
+  it('no network, confirmed by a second read', () => {
+    const r = report({ network: { status: 'missing', reason: 'offline' } });
+    expect(setupProblems({ report: r, tools: CLAUDE_ONLY, claudeAccounts: NO_ACCOUNTS, projectMissing: false, offlineConfirmed: true }).map((p) => `${p.id}:${p.tone}`)).toEqual(['network:bad']);
+  });
+
+  it('a Codex that is signed in but will not start does not make Claude optional', () => {
+    const r = report({ claude: { status: 'missing' }, 'claude-auth': { status: 'blocked', blockedBy: ['claude'] } });
+    expect(ids(r, [{ ...tool('codex', true, true), ready: false }])).toEqual(['no-signin:bad']);
   });
 
   it('(e) all three signed out = red "no agent signed in", with the Claude sign-in as its fix', () => {
     const r = report({ 'claude-auth': { status: 'needs-action', reason: 'signed-out' } });
-    const problems = setupProblems({ report: r, tools: [tool('claude', true, false), tool('codex', true, false), tool('antigravity', true, false)], projectMissing: false });
+    const problems = setupProblems({ report: r, tools: [tool('claude', true, false), tool('codex', true, false), tool('antigravity', true, false)], claudeAccounts: NO_ACCOUNTS, projectMissing: false });
     expect(problems.map((p) => `${p.id}:${p.tone}`)).toEqual(['no-signin:bad']);
     expect(problems[0].fix).toBe('claude-signin');
   });
@@ -126,8 +154,12 @@ describe('red', () => {
   it('no agent installed at all = red "no agent installed"', () => {
     const r = report({ claude: { status: 'missing' }, 'claude-auth': { status: 'blocked', blockedBy: ['claude'] } });
     expect(ids(r, [tool('claude', false, false), tool('codex', false, false), tool('antigravity', false, false)])).toEqual(['no-agent:bad']);
-    // An older server with no tool list: Claude is the only tool there is.
+    // A server that lists no other tool: Claude is the only one there is.
     expect(ids(r, [])).toEqual(['no-agent:bad']);
+  });
+
+  it("every account the app has for Claude needs a new sign-in, and nothing else is signed in = red", () => {
+    expect(ids(report(), CLAUDE_ONLY, false, [{ state: 'needs-relogin' }])).toEqual(['no-signin:bad']);
   });
 
   it('Claude missing, Codex installed but signed out = nobody signed in', () => {
@@ -136,14 +168,14 @@ describe('red', () => {
   });
 
   it('(f) the project folder is gone: red, naming the fix', () => {
-    const problems = setupProblems({ report: report(), tools: CLAUDE_ONLY, projectMissing: true });
+    const problems = setupProblems({ report: report(), tools: CLAUDE_ONLY, claudeAccounts: NO_ACCOUNTS, projectMissing: true });
     expect(problems.map((p) => `${p.id}:${p.tone}`)).toEqual(['project-missing:bad']);
     expect(problems[0].detailKey).toBe('setupStatus.projectMissing.detail');
   });
 
   it('the chip counts only the other red rows', () => {
     const r = report({ node: { status: 'missing' }, cli: { status: 'missing' } });
-    const s = chipSummary(setupProblems({ report: r, tools: CLAUDE_ONLY, projectMissing: true }));
+    const s = chipSummary(setupProblems({ report: r, tools: CLAUDE_ONLY, claudeAccounts: NO_ACCOUNTS, projectMissing: true }));
     expect(s).toMatchObject({ tone: 'bad', more: 2, first: { id: 'project-missing' } });
   });
 });
@@ -158,10 +190,17 @@ describe('the chip on screen', () => {
     expect(controls).toMatch(/!phone && phoneAllows\('GET', '\/api\/onboarding\/readiness'\) && <SetupStatusChip \/>/);
   });
 
-  it('never polls: one read on open, again on focus when older than 30 s, never a forced probe', () => {
+  it('never polls: one read on open, again on focus after 5 min, a re-read only while offline', () => {
     expect(chip).toMatch(/fetchReadiness\(false\)/);
+    expect(chip).toMatch(/const FOCUS_STALE_MS = 5 \* 60_000;/);
     expect(chip.match(/refetchInterval: false/g)?.length).toBe(2);
-    expect(chip).not.toMatch(/useReadiness\(|useAgentTools\(|fetchReadiness\(true\)/);
+    expect(chip).toMatch(/refetchInterval: \(q\) => \(q\.state\.data && !q\.state\.data\.online \? pollMs\(OFFLINE_REREAD_MS\) : false\)/);
+    expect(chip).not.toMatch(/useReadiness\(|useAgentTools\(|useClaudeAccounts\(|fetchReadiness\(true\)/);
+  });
+
+  it('a failed re-read keeps the last answer; no answer is "cannot tell"', () => {
+    expect(chip).toMatch(/const toolList = Array\.isArray\(tools\.data\) \? tools\.data : null;/);
+    expect(chip).not.toMatch(/isError \? \[\]/);
   });
 
   it('ships Turkish copy', () => {

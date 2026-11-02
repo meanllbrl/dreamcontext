@@ -10,7 +10,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  padding: 3px 9px;
+  padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-full, 999px);
   border: 1px solid var(--color-border);
   background: var(--color-bg-tertiary);
@@ -29,8 +29,8 @@
 }
 
 .ns-setup-dot {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex: none;
   background: var(--color-text-tertiary);
@@ -43,7 +43,7 @@
 
 .ns-setup-pop {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + var(--space-2));
   right: 0;
   z-index: 50;
   width: min(360px, calc(100vw - 2 * var(--space-4)));
