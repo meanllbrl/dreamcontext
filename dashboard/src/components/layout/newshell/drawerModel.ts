@@ -7,8 +7,8 @@
  * project has a member of its own (plan-r10 1d: faces and one count, from `summary=1` `members`;
  * ten members are still one row), and one row per chat window that holds a chat, with its own
  * ring and count (W3, D8). A project with none has one New Chat row instead: nothing here opens
- * onto an empty screen. A collapsed project's row carries the sum of those same rows and keeps
- * its Ekip row. Members of all projects are in ONE Global ekip row at the very bottom (1f).
+ * onto an empty screen. A collapsed project's row carries the sum of those same rows and hides
+ * its Ekip row with the rest (owner 2026-11-03); a member's question still lights its asking dot. Members of all projects are in ONE Global ekip row at the very bottom (1f).
  */
 import type { ProjectRollup } from '../../sleepy/agentStatus';
 import {
@@ -160,12 +160,10 @@ export interface DrawerProjectRow {
   /** Where its child rows came from. `none` = expanded, but nothing read yet. */
   source: 'mounted' | 'fanout' | 'none';
   children: DrawerChild[];
-  /** Collapsed: its Super Agent (or a child) waits on the owner. */
+  /** Collapsed: its Super Agent, a child or an Ekip member waits on the owner. */
   superAsking?: boolean;
   /** Collapsed: the sum of the rows it would show, for the ring beside the name. */
   sum?: { live: number; asking: number; working: number; idle: number; flagged: number };
-  /** Collapsed: its Ekip row stays under it (r8-05). */
-  team?: Extract<DrawerChild, { kind: 'team' }>;
 }
 
 /** The Global ekip row (plan-r10 1f, r8-12): every member of all projects once. */
@@ -371,11 +369,10 @@ export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout
     if (isOpen) return { ...base, source, children };
     // Folded, the project row carries what its rows would say: no second count.
     const sum = sumOf(children, source);
-    // A question still reaches the owner too.
-    const ask = children.some((c) => c.kind === 'super' && c.asking);
-    // Its Ekip row stays under it, folded or not (r8-05).
-    const team = children.find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team');
-    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(ask ? { superAsking: true } : {}), ...(team ? { team } : {}) };
+    // Folded, its Ekip row folds with the rest (owner 2026-11-03); a question, the Super's or a
+    // member's, still reaches the owner as the asking dot.
+    const ask = children.some((c) => (c.kind === 'super' || c.kind === 'team') && c.asking);
+    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(ask ? { superAsking: true } : {}) };
   });
 }
 
@@ -483,7 +480,8 @@ function deviceProjectRow(p: DrawerProjectInput, o: { activeVault: string | null
     const working = chats.filter((c) => c.state === 'working').length;
     const flagged = chats.filter((c) => c.flagged).length;
     const sum = chats.length ? { live: chats.length, asking, working, idle: chats.length - asking - working, flagged } : undefined;
-    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(team ? { team } : {}) };
+    // The Ekip row folds with the project; a member's question keeps the asking dot.
+    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(team?.asking ? { superAsking: true } : {}) };
   }
   if (!children.some((c) => c.kind === 'chat' && c.row.kind !== 'super')) children.push({ kind: 'new-chat' });
   // Team last, after the chats and New chat, as on the desktop (plan r4 R5).

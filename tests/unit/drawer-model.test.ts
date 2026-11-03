@@ -295,7 +295,7 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
   });
   const teamOf = (rows: ReturnType<typeof buildDrawerRows>, i = 0) => {
     const r = rows[i];
-    return (r.children.find((c) => c.kind === 'team') ?? r.team) as Extract<DrawerChild, { kind: 'team' }> | undefined;
+    return r.children.find((c) => c.kind === 'team') as Extract<DrawerChild, { kind: 'team' }> | undefined;
   };
 
   it('ten members are ONE row, the last row of the project', () => {
@@ -307,6 +307,19 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
     expect(rows[0].children.filter((c) => c.kind === 'team')).toHaveLength(1);
     expect(rows[0].children.at(-1)!.kind).toBe('team');
     expect(teamOf(rows)!.members).toHaveLength(10);
+  });
+
+  it('a collapsed project hides its Ekip row with the rest; a member question keeps the asking dot (owner 2026-11-03)', () => {
+    const fold = (members: ReturnType<typeof summary>[]) => buildDrawerRows({
+      projects: [project('acme', { mounted: true, rollup: rollup() })], activeVault: 'acme', expanded: [],
+      facts: { acme: facts(members) as any }, fanout: {},
+    })[0];
+    const quiet = fold([summary('rota', { unread: 1 })]);
+    expect(quiet.expanded).toBe(false);
+    expect(quiet.children).toEqual([]);
+    expect('team' in quiet).toBe(false);
+    expect(quiet.superAsking).toBeUndefined();
+    expect(fold([summary('rota', { asking: true })]).superAsking).toBe(true);
   });
 
   it('one count = owner questions + owner unread + approval cards; question colour when one waits', () => {
@@ -367,14 +380,18 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
     expect(ekipFaces(members).map((m) => m.slug)).toEqual(['c', 'd', 'a']);
   });
 
-  it('a collapsed project keeps its Ekip row (from the folded read)', () => {
-    const fanout = fanoutWithMarks({}, { far: { working: 0, asking: false } }, ['far'], {
-      far: { members: [summary('rota', { unread: 1 })], identities: [{ slug: 'rota', title: 'Rota', hasPhoto: false }] },
-    });
-    const rows = buildDrawerRows({ projects: [project('far')], activeVault: null, expanded: [], facts: {}, fanout });
-    expect(rows[0].expanded).toBe(false);
-    expect(rows[0].team).toMatchObject({ kind: 'team', vault: 'far', count: 1 });
-    expect(rows[0].team!.members[0].title).toBe('Rota');
+  it('a collapsed project not in this window hides its Ekip row too; a member question lights the asking dot', () => {
+    const fold = (asking: boolean) => {
+      const fanout = fanoutWithMarks({}, { far: { working: 0, asking: false } }, ['far'], {
+        far: { members: [summary('rota', { unread: 1, asking })], identities: [{ slug: 'rota', title: 'Rota', hasPhoto: false }] },
+      });
+      return buildDrawerRows({ projects: [project('far')], activeVault: null, expanded: [], facts: {}, fanout })[0];
+    };
+    expect(fold(false).expanded).toBe(false);
+    expect(fold(false).children).toEqual([]);
+    expect('team' in fold(false)).toBe(false);
+    expect(fold(false).superAsking).toBeUndefined();
+    expect(fold(true).superAsking).toBe(true);
   });
 
   it('global members are only in the Global ekip row: summed over projects, approval card once, opening where they face the owner', () => {
@@ -445,6 +462,15 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
       device: { rows: [], members: liveMembersOf(live) },
     });
     expect(rows[0].children.map((c) => c.kind)).toEqual(['new-chat', 'team']);
+    // Folded on the phone, the Ekip row folds too; a member's question keeps the asking dot.
+    const [folded] = buildDrawerRows({
+      projects: [project('acme', { mounted: true })], activeVault: 'acme', expanded: [], facts: {}, fanout: {},
+      device: { rows: [], members: liveMembersOf(live) },
+    });
+    expect(folded.expanded).toBe(false);
+    expect(folded.children).toEqual([]);
+    expect('team' in folded).toBe(false);
+    expect(folded.superAsking).toBe(true);
   });
 
   it('members with an approval card, a question or an unread answer sit above all others (R-AC2)', () => {

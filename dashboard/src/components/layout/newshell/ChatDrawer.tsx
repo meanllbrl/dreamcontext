@@ -274,7 +274,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
 
   const teamOf = (vault: string): EkipMember[] => {
     const row = p.rows.find((r) => r.name === vault);
-    return row?.children.find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team')?.members ?? row?.team?.members ?? [];
+    return row?.children.find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team')?.members ?? [];
   };
 
   /** The member's stage, its one conversation, in the project it is opened for. */
@@ -458,7 +458,6 @@ export function ChatDrawer(p: ChatDrawerProps) {
               <svg className={`ns-dr-chev${row.expanded ? ' is-open' : ''}`} viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>
             </div>
             {row.expanded && <div className="ns-dr-children">{row.children.map((c) => child(row, c))}</div>}
-            {!row.expanded && row.team && <div className="ns-dr-children">{teamRow(row.team)}</div>}
           </div>
         ))}
         {drag && drag.over >= p.rows.length && <div className="ns-dr-drop-end" aria-hidden="true" />}
