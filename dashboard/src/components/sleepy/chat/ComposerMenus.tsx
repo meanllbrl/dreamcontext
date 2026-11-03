@@ -450,7 +450,7 @@ export interface AccountOption {
   email: string;
   organizationName: string;
   preferred: boolean;
-  state: 'ok' | 'needs-relogin';
+  state: 'ok' | 'needs-relogin' | 'other-account';
   /** 0-100, or null when nothing is cached for this account yet. */
   sessionPercent: number | null;
 }

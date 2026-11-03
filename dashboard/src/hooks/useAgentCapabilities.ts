@@ -168,7 +168,9 @@ export interface ClaudeAccountWire {
   tier: string;
   preferred: boolean;
   isPrimary: boolean;
-  state: 'ok' | 'needs-relogin';
+  /** `other-account`: its directory is signed in as `signedInAs`, so no reading is drawn. */
+  state: 'ok' | 'needs-relogin' | 'other-account';
+  signedInAs?: string;
   limits: UsageLimitWire[];
   fetchedAtMs: number | null;
   /** The API refused this account; it stays out until then (epoch ms). */
