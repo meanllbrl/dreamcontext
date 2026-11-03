@@ -389,6 +389,9 @@ export interface PlanOptions {
   /** An owner's card a side is too tall for leaves the column at his size instead of shrinking:
    *  set by `planStage` itself, which keeps that plan only when it is no worse (callers leave it out). */
   ownerAside?: boolean;
+  /** The centre stays in the middle even beside an agenda-only wide side (the old rule): set by
+   *  `planStageAgenda` itself as the fallback for an agenda width (callers leave it out). */
+  agendaCentred?: boolean;
 }
 
 
@@ -554,12 +557,12 @@ interface SizedSolution extends FloatSolution {
  * card before a chat); only then the owner's own cards, the same way. A one-column side of
  * small cards keeps its orbit.
  */
-function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[], agendaCap?: number, ownerAside = false, lean = false): SizedSolution {
-  return solveSizedAt(f, left, right, agendaCap ?? null, ownerAside, lean);
+function solveSized(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[], agendaCap?: number, ownerAside = false, lean = false, agendaCentred = false): SizedSolution {
+  return solveSizedAt(f, left, right, agendaCap ?? null, ownerAside, lean, agendaCentred);
 }
 
 /** `solveSized` with the agenda drawn at most `agendaCap` tiles wide (null: its own size). */
-function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[], agendaCap: number | null, ownerAside: boolean, lean = false): SizedSolution {
+function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly SizedSlot[], agendaCap: number | null, ownerAside: boolean, lean = false, agendaCentred = false): SizedSolution {
   const { GAP, MARGIN, TILE: T, ORBIT_DEPTH } = STAGE;
   const W = f.width;
   const span = f.content.height;
@@ -666,10 +669,27 @@ function solveSizedAt(f: Frame, left: readonly SizedSlot[], right: readonly Size
   // take it under CENTRE_MIN does it move off the middle, right after the left side.
   const need = Math.max(unitsPx(cols.left) + (cols.left ? GAP : 0), unitsPx(cols.right) + (cols.right ? GAP : 0));
   const centred = Math.min(preferred, W - 2 * MARGIN - 2 * need);
-  const plainW = centred >= STAGE.CENTRE_MIN - 1e-9 ? centred : Math.max(STAGE.CENTRE_MIN, Math.min(preferred, avail()));
-  const plainX = centred >= STAGE.CENTRE_MIN - 1e-9
-    ? (W - plainW) / 2
-    : MARGIN + unitsPx(cols.left) + (cols.left ? GAP : 0) + Math.max(0, (avail() - plainW) / 2);
+  // The agenda is never mirrored (owner 2026-11-03, a ~1800 px window: "bu ekranda super agent daha
+  // geniş olmalı ama değil daha sıkışmış duruyor"): a side made wider ONLY by the agenda would cost
+  // the centre the same width again on the empty side (646 px of a 1430 px stage). Then the centre
+  // keeps its preferred width in the room beside the sides instead, off the middle. A side widened
+  // by any other card keeps the rule above: narrow evenly, stay in the middle.
+  const agSide = ag && !agendaCentred && !overflow.has(ag.id) ? (left.includes(ag) ? 'left' : 'right') : null;
+  // The agenda alone: it spans its column (a column widened to pair small cards is not the
+  // agenda's doing) and no other card there is as wide.
+  const agendaWidens = !!agSide && cols[agSide] > cols[agSide === 'left' ? 'right' : 'left']
+    && SIZE_UNITS[drawn.get(ag!.id)!].w === cols[agSide]
+    && live(agSide).every((s) => s === ag || SIZE_UNITS[drawn.get(s.id)!].w < cols[agSide]);
+  const offMiddle = centred < STAGE.CENTRE_MIN - 1e-9 || (agendaWidens && centred < preferred - 1e-9);
+  const plainW = offMiddle ? Math.max(centred, STAGE.CENTRE_MIN, Math.min(preferred, avail())) : centred;
+  // Off the middle, the centre sits in the middle of the free room; beside an empty right side it
+  // leans left just enough to leave the Others stack its narrowest beside it (else it would move to
+  // the chat's head).
+  const slack = Math.max(0, avail() - plainW);
+  const othersRoom = !cols.right && agendaWidens ? Math.max(0, slack - STAGE.GAP - STAGE.OTHERS_MIN_W) : slack;
+  const plainX = offMiddle
+    ? MARGIN + unitsPx(cols.left) + (cols.left ? GAP : 0) + Math.min(slack / 2, othersRoom)
+    : (W - plainW) / 2;
   const leaning = lean ? leanCentre(f, cols.left ? unitsPx(cols.left) : 0, cols.right ? unitsPx(cols.right) : 0, plainW) : null;
   const centre: Rect = { x: leaning?.x ?? plainX, y: f.content.y, width: leaning?.width ?? plainW, height: f.content.height };
   const mid = centre.y + centre.height / 2;
@@ -1056,15 +1076,42 @@ function planStageAgenda(
   // the middle, no more cards in Others, none more off the stage or over another.
   const ag = opts.agendaCap === undefined ? containers.find((c) => c.kind === 'agenda' && c.place === 'float') : undefined;
   const own = ag ? SIZE_UNITS[sizeOf(ag)].w : 1;
-  if (own <= 1) return planStageOnce(containers, view, stage, opts);
-  const counts = planStageOnce(containers, view, stage, { ...opts, agendaCap: 1 });
+  if (own <= 1) return planLeaning(containers, view, stage, opts)[0];
+  const counts = planLeaning(containers, view, stage, { ...opts, agendaCap: 1 })[0];
   const worse = stageCost(counts);
+  // Off the middle is no cost when the centre keeps its full width there (the agenda's lean, below).
+  const full = Math.min(preferredCentre(stage.width, opts.centreMin), counts.centre.width) - 1e-6;
   for (let cap = own; cap > 1; cap--) {
-    const p = planStageOnce(containers, view, stage, { ...opts, agendaCap: cap });
-    const c = stageCost(p);
-    if (c.offMid <= worse.offMid + 1e-6 && c.others <= worse.others && c.unsound <= worse.unsound) return p;
+    for (const p of planLeaning(containers, view, stage, { ...opts, agendaCap: cap })) {
+      const c = stageCost(p);
+      const placed = c.offMid <= worse.offMid + 1e-6 || p.centre.width >= full;
+      if (placed && c.others <= worse.others && c.unsound <= worse.unsound) return p;
+    }
   }
   return counts;
+}
+
+/**
+ * The agenda is never mirrored on an empty side (owner 2026-11-03, "super agent daha geniş
+ * olmalı"): beside a side made wide only by the agenda, the centre leaves the middle to keep its
+ * preferred width. That plan stands only against the centred one (the old rule) for the same
+ * cards: a wider chat, no card drawn smaller or sent off the stage, none more off the stage or
+ * over another. The
+ * candidates, best first; the centred plan is always last.
+ */
+function planLeaning(containers: readonly StageItem[], view: SuperView, stage: { width: number; height: number }, opts: PlanOptions): StagePlan[] {
+  const centred = planStageOnce(containers, view, stage, { ...opts, agendaCentred: true });
+  if (opts.agendaCentred || centred.mode !== 'float') return [centred];
+  const leaned = planStageOnce(containers, view, stage, opts);
+  const k = stageCost(centred);
+  const l = stageCost(leaned);
+  // No card, the agenda included, is drawn smaller for the wider chat (owner 2026-10-29: the
+  // agenda's list whenever there is room).
+  const area = (p: StagePlan, id: string) => { const u = SIZE_UNITS[p.cards[id]?.size ?? 'small']; return u.w * u.h; };
+  const kept = Object.keys(centred.cards).every((id) => centred.cards[id].where !== 'float'
+    || (leaned.cards[id]?.where === 'float' && area(leaned, id) >= area(centred, id)));
+  const wins = kept && leaned.centre.width > centred.centre.width + 1e-6 && l.others <= k.others && l.unsound <= k.unsound;
+  return wins ? [leaned, centred] : [centred];
 }
 
 /** What a plan costs the owner: the centre off the middle, cards in Others, floating cards off the stage or over another. */
@@ -1448,7 +1495,7 @@ function planWith(
   // size (solveSized).
   const sized = floating.some((c) => sizeById.get(c.id) !== 'small');
   const sol = sized
-    ? solveSized(f, slotsOn('left').map(withSize), slotsOn('right').map(withSize), opts.agendaCap, !!opts.ownerAside, !!opts.leanNow && !narrow)
+    ? solveSized(f, slotsOn('left').map(withSize), slotsOn('right').map(withSize), opts.agendaCap, !!opts.ownerAside, !!opts.leanNow && !narrow, !!opts.agendaCentred)
     : { ...solveFloat(f, slotsOn('left'), slotsOn('right'), !!opts.leanNow && !narrow), drawn: new Map<string, ContainerSize>(), uRight: undefined };
   const drawnOf = (id: string): ContainerSize => sol.drawn.get(id) ?? 'small';
   // The float centre takes the stage's height (owner 2026-10-25; 2026-10-28 for a windowed app):

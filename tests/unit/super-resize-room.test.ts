@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  STAGE, anchoredPos, fitsNow, planStage, stageItems, type Rect, type StagePlan,
+  STAGE, anchoredPos, fitsNow, planStage, preferredCentre, stageItems, type Rect, type StagePlan,
 } from '../../dashboard/src/components/sleepy/super/superLayout.js';
 import type { ContainerSize, SuperContainer } from '../../dashboard/src/lib/superTypes.js';
 
@@ -123,7 +123,12 @@ describe('a card grows into the empty column beside the centre', () => {
     expect(fits).toBe(true);
     expect(after.cards['chat-d2']).toMatchObject({ where: 'float', size: 'large' });
     expect(after.cards['chat-d2'].rect.y).toBeCloseTo(cp.rect.y, 0);
-    expect(after.centre).toEqual(before.centre);
+    // Beside the agenda alone the centre leaned off the middle at a wider width (the agenda is
+    // never mirrored, owner 2026-11-03); with a 2x2 on the right too it is back in the middle, at
+    // the width the two equal sides leave it, never wider than before.
+    expect(before.centre.width).toBeGreaterThanOrEqual(after.centre.width - 1e-6);
+    expect(after.centre.x + after.centre.width / 2).toBeCloseTo(after.width / 2, 6);
+    expect(after.centre.width).toBeCloseTo(Math.min(preferredCentre(after.width), after.width - 2 * STAGE.MARGIN - 2 * (344 + STAGE.GAP)), 6);
     // His agenda keeps its size and its spot top-left.
     expect(after.cards['agenda-1']).toMatchObject({ where: 'float', size: 'large' });
     expectSound(after, 'owner');
