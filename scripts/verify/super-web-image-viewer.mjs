@@ -169,7 +169,7 @@ try {
     ok("the page's own click handler still ran", Number(await frame.evaluate(() => document.body.dataset.clicks)) >= 2);
     await page.waitForTimeout(600);
     await page.screenshot({ path: join(shots, '1-open.png') });
-    const level = () => viewer.locator('.image-viewer-level').innerText();
+    const level = () => viewer.locator('.viewer-tool--level').innerText();
     const l0 = await level();
     const c = await page.locator('.image-viewer-stage').boundingBox();
     await page.mouse.move(c.x + c.width / 2, c.y + c.height / 2);
