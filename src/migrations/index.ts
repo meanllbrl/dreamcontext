@@ -11,6 +11,7 @@ import { migration0280 } from './0.28.0.js';
 import { migration0310 } from './0.31.0.js';
 import { migration0320 } from './0.32.0.js';
 import { migration0345 } from './0.34.5.js';
+import { migration0402 } from './0.40.2.js';
 import type { Migration } from './types.js';
 
 /**
@@ -23,7 +24,7 @@ import type { Migration } from './types.js';
 // the runner gates each step by its own id, merges same-version changelog
 // entries, and unfinishedAgentTasks matches each agentTask id separately.
 // The user-split entry stays FIRST so its residue task is printed first.
-export const REGISTRY: Migration[] = [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280, migration0310, migration0320, migration0345];
+export const REGISTRY: Migration[] = [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280, migration0310, migration0320, migration0345, migration0402];
 
 /**
  * The registry as read at CALL time. A migration module sits in an import cycle (0.31.0 → the
@@ -33,7 +34,7 @@ export const REGISTRY: Migration[] = [migration070, migration072, migration080, 
  */
 function registry(): Migration[] {
   return REGISTRY.includes(undefined as unknown as Migration)
-    ? [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280, migration0310, migration0320, migration0345]
+    ? [migration070, migration072, migration080, migration1007, migration0180, migration0230, migration0230SoulSplit, migration0280, migration0310, migration0320, migration0345, migration0402]
     : REGISTRY;
 }
 

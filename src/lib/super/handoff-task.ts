@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { MAX_FILE_BYTES, MEMBER_SUPER_DIR, okMember, superRecordPath } from './store.js';
+import { bindingVerdict } from './record-binding.js';
 import { superHandoffFileOf, superHandoffTask } from './handoff-file.js';
 
 /**
@@ -48,6 +49,8 @@ export function superHandoffContext(contextRoot: string, ids: ReadonlyArray<stri
   } catch { /* no members folder */ }
   for (const c of candidates) {
     const raw = readRecord(c.path);
+    // Another Mac's or another folder's record is not this vault's Super (record-binding.ts).
+    if (raw && bindingVerdict(raw, contextRoot, c.path) === 'foreign') continue;
     const session = typeof raw?.session === 'string' ? raw.session : null;
     if (!raw || !session || raw.enabled !== true || !ids.some((id) => id === session)) continue;
     const children: string[] = [];

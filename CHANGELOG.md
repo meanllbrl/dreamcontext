@@ -4,6 +4,8 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+- **Your Super Agent stays on your Mac.** A project set up by an older version could commit the Super Agent's record to git, so someone who cloned the repo saw your last question. `dreamcontext update` now adds the missing lines to the brain's `.gitignore`, takes any Super file git still tracks out of its index (the file stays on your disk; commit that removal), and a Super record written on another Mac or in another folder is no longer opened.
+
 ## [0.40.2] - 2026-11-02
 
 Patch on 0.40.0. It carries 0.40.1, which was cut locally and never published, plus AI Team Waves 1 to 3, the Super Agent's permission fix, app data and several fixes. Local build; not published.
