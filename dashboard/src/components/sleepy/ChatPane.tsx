@@ -657,7 +657,7 @@ export function ChatPane({
   taskSlug, onContinueInTerminal,
   permissionMode, onPermissionModeChange, mode, onModeChange, onAgentPick, toolPick, onHandoffToDevelop,
   onResume, automation, onOpenAppPage, onSignIn,
-  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, readOnly = false, aboveComposer, feed, sendVia,
+  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, superMember, readOnly = false, aboveComposer, feed, sendVia,
 }: {
   session: ChatSession;
   modelConfig: ModelConfig;
@@ -739,6 +739,9 @@ export function ChatPane({
   agentBound?: boolean;
   /** The composer's idle placeholder, when the host names who is listening. */
   idlePlaceholder?: string;
+  /** A member's phone mirror (an ordinary chat mode, never bound to the member): whose Super it
+   *  shows, so its unread marks are the member's, never main's. */
+  superMember?: string;
   /** A child of the handed-over Super Agent (plan-r7 D10, owner decision 3): the owner looks,
    *  and writes only to the Super Agent, so the composer is replaced by one line saying so.
    *  'finished': a child with no process left, drawn from its transcript (transcriptSession.ts). */
@@ -805,7 +808,8 @@ export function ChatPane({
   // Any other chat has no context and draws nothing new.
   const superCtx = useSuperEventContext(superView ? session.claudeId : null);
   /** Whose Super this chat is: a member's (`m:<slug>`, its chat is bound to that member) or main's. */
-  const paneSuperId: SuperId = session.mode === 'super' && chatAgentFor(session.claudeId) ? memberSuperId(chatAgentFor(session.claudeId)) : 'main';
+  const paneMember = superMember || (session.mode === 'super' ? chatAgentFor(session.claudeId) : '');
+  const paneSuperId: SuperId = paneMember ? memberSuperId(paneMember) : 'main';
   const { t } = useI18n();
   const [openEvents, setOpenEvents] = useState<ReadonlySet<string>>(() => new Set());
   const toggleEvent = useCallback((anchor: string) => setOpenEvents((prev) => {

@@ -7352,6 +7352,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
           // A member's phone mirror (an ordinary chat mode) asks "<name> ne yapsın?" too; main's
           // mirror and every other chat are unchanged.
           idlePlaceholder={cs.mode === 'super' || memberMirrorsRef.current.has(cs.claudeId) ? superPlaceholderFor(cs) : undefined}
+          // A member's phone mirror reads and marks the member's unread, never main's.
+          superMember={memberMirrorsRef.current.get(cs.claudeId)}
           aboveComposer={cs.id === mobileActive?.id ? phoneToastEl : undefined}
         />
         </StageCardsContext.Provider>,

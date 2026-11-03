@@ -78,7 +78,7 @@ export interface ChatSurfaceActions {
 
 function ChatPaneHostInner({
   session, actions, modelConfig, model, effort, mode, automation, permissionMode, canSignInInApp,
-  signInCommand, bare, agentBound, idlePlaceholder, readOnly, aboveComposer, feed, sendVia,
+  signInCommand, bare, agentBound, idlePlaceholder, superMember, readOnly, aboveComposer, feed, sendVia,
 }: {
   session: ChatSession;
   actions: ChatSurfaceActions;
@@ -102,6 +102,8 @@ function ChatPaneHostInner({
   /** See ChatPane's `agentBound`: the full pane, bound to one agent (the AI Team page). */
   agentBound?: boolean;
   idlePlaceholder?: string;
+  /** The member a phone mirror shows (ChatPane's `superMember`). */
+  superMember?: string;
   /** A handed-over Super Agent's child: the owner looks, never types (ChatPane's `readOnly`).
    *  A primitive, so the memo boundary holds. 'finished': no process left (transcriptSession.ts). */
   readOnly?: boolean | 'finished' | 'silent';
@@ -176,6 +178,7 @@ function ChatPaneHostInner({
       bare={bare}
       agentBound={agentBound}
       idlePlaceholder={idlePlaceholder}
+      superMember={superMember}
       readOnly={readOnly}
       aboveComposer={aboveComposer}
       sendVia={sendVia}
