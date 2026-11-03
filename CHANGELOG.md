@@ -6,8 +6,15 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [0.40.2] - 2026-11-02
 
-Patch on 0.40.0. It carries 0.40.1, which was cut locally and never published, plus AI Team Waves 1 and 2 and the Super Agent's permission fix. Local build; not published.
+Patch on 0.40.0. It carries 0.40.1, which was cut locally and never published, plus AI Team Waves 1 to 3, the Super Agent's permission fix, app data and several fixes. Local build; not published.
 
+- **The app no longer freezes for minutes** on a Mac whose temp folder holds many old test folders: measuring leftovers is now fast.
+- **Every AI Team member is a Super Agent of its own.** Each member opens on its own stage; one Ekip row per project and a Global ekip row; a New chat menu and Üyeleri yönet. The main Super's request lands in the member's own Super, and the phone can open a member's live Super, write to it and answer its question.
+- **App data lives in the brain**, stays on this Mac, never syncs, and is backed up outside every repo. An app's own assistant writes only in its own data folder and reads no other app's data; a bound AI Team member is not held to that.
+- **A project's right-click menu can remove it from the app** after asking; the folder stays.
+- **A setup chip beside the sleep score shows only real problems.** Codex and Antigravity are optional tools, listed gray and neutral.
+- **A chat picked in History opens in its own window** and the chat area comes forward.
+- **Every picture on a report card opens again** after the viewer closes.
 - **The Super Agent answers the permissions of a child you run in Bypass.** A permission such a child still asks goes to its Super first, which allows or denies it; one it cannot decide, or does not decide in time, comes to you on the screen and on your phone with Allow and Deny. A permission that is no longer asked leaves no card behind.
 - **Switching project keeps the page you are on.** On Whiteboards, the next project opens on Whiteboards; on Chat, on Chat. Before, it opened whatever page you last had in that project.
 
