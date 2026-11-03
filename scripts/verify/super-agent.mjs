@@ -427,6 +427,26 @@ async function sayInVisibleComposer(page, text, which = 0, { typed = false } = {
 }
 const surfaceShown = (page) => page.locator('[data-testid="super-surface"]:visible').count().then((n) => n > 0);
 
+/**
+ * Hand over / take back. The hand-over button left the UI in 0.36.1 (the Super Agent became a
+ * row of its own): the row opens the stage, Chat closes it. The old button is pressed where a
+ * surface still draws it.
+ */
+async function toggleSuper(p) {
+  const btn = p.locator('[data-testid="super-handover-btn"]:visible').first();
+  if (await btn.count()) { await btn.click(); return; }
+  const shown = await surfaceShown(p);
+  if (!shown) {
+    const row = p.locator('[data-testid="drawer-super-row"]:visible').first();
+    if (await row.count()) { await row.click(); return; }
+    await p.locator('aside, nav').getByText('Super Agent', { exact: true }).first().click();
+    return;
+  }
+  const chat = p.locator('[data-testid="ns-rail-chat"]:visible').first();
+  if (await chat.count()) { await chat.click(); return; }
+  await p.locator('aside button, nav button').filter({ hasText: /^\s*Chat\s*\d*\s*$/ }).first().click();
+}
+
 // ─── the stage (plan-r8) ────────────────────────────────────────────────────────────────
 
 const RECORD = join(PROJ, '_dream_context', 'state', '.super-agent.json');
@@ -827,12 +847,11 @@ async function flow(browser, base) {
   await page.waitForTimeout(1500);
   const before = await paneLayout(page);
   report.note(`panes before: ${JSON.stringify(before)}`);
-  ok('the button reads "Hand over to the Super Agent" (or the Turkish label)', await until(page, async () => (await page.getByTestId('super-handover-btn').count()) > 0));
   await page.screenshot({ path: join(OUT, 'flow-01-before.png') });
   const mountedBefore = await page.locator('.chat-scroll').count();
 
   console.log('\n── hand over');
-  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+  await toggleSuper(page);
   ok('the surface shows', await until(page, () => surfaceShown(page)));
   await until(page, async () => (await page.locator('[data-super-motion="running"]').count()) === 0, 5000);
   ok('three chat containers', await until(page, async () => (await page.locator('[data-testid="super-container"][data-kind="chat"]').count()) >= 3, 15000),
@@ -941,7 +960,7 @@ async function flow(browser, base) {
   ok('the same containers', await until(page, async () => JSON.stringify((await containerIds()).sort()) === JSON.stringify([...idsHanded].sort()), 15000), `${JSON.stringify(await containerIds())} vs ${JSON.stringify(idsHanded)}`);
 
   console.log('\n── take back');
-  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+  await toggleSuper(page);
   ok('the surface is gone', await until(page, async () => !(await surfaceShown(page)), 10000));
   await page.waitForTimeout(1500);
   const after = await paneLayout(page);
@@ -987,7 +1006,7 @@ async function flow(browser, base) {
   report.note(`panes before the second hand-over: ${JSON.stringify(before2)}`);
 
   console.log('\n── hand over again: the same session and layout');
-  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+  await toggleSuper(page);
   ok('handed over again', await until(page, () => surfaceShown(page), 15000));
   ok('the open permission is at the queue head at once, with Allow/Deny', await until(page, async () => (await page.getByTestId('super-queue-allow').count()) > 0
     && /echo pre-handover|Bash/.test(await page.getByTestId('super-queue-head').innerText().catch(() => '')), 8000),
@@ -1030,7 +1049,7 @@ async function flow(browser, base) {
   await page.waitForTimeout(900);
 
   console.log('\n── take back with no reload: the terminal returns to its exact place');
-  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+  await toggleSuper(page);
   ok('the surface is gone (second take-back)', await until(page, async () => !(await surfaceShown(page)), 10000));
   await page.waitForTimeout(1500);
   const after2 = await paneLayout(page);
@@ -1049,11 +1068,6 @@ async function flow(browser, base) {
   await page.screenshot({ path: join(OUT, 'settings-super-group.png') });
   await page.locator('aside button, nav button').filter({ hasText: /^\s*Chat\s*\d*\s*$/ }).first().click();
   await until(page, async () => (await page.locator('.agent-surface.expanded').count()) > 0, 5000);
-  ok('the Super Agent tab is pinned at the start of the chat tabs', await until(page, async () => page.evaluate(() => {
-    const bar = [...document.querySelectorAll('.agent-pane-tabbar')].find((b) => b.getClientRects().length);
-    const first = bar && [...bar.children].find((c) => c.getClientRects().length);
-    return !!first && first.matches('[data-testid="super-handover-btn"]');
-  }), 5000));
 
   const result = { page, context, before, adopted, ho, errors };
   return result;
@@ -1137,7 +1151,7 @@ const motionIdle = (page) => until(page, async () => (await page.locator('[data-
 /** One transition with the probe on; returns its numbers. */
 async function measured(page, label) {
   await armProbe(page);
-  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+  await toggleSuper(page);
   await page.waitForTimeout(60);
   await motionIdle(page);
   const running = await runningAfter(page);
@@ -1160,7 +1174,7 @@ async function motion(engineName, browserType, base) {
   await page.bringToFront();
   // Start taken back, with the five chats as tabs.
   if (await until(page, () => surfaceShown(page), 6000)) {
-    await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+    await toggleSuper(page);
     await motionIdle(page);
     await page.waitForTimeout(800);
   }
@@ -1259,15 +1273,15 @@ async function motion(engineName, browserType, base) {
   }
 
   // Mid-flight reverse: press again 150 ms in; it must come back to where it started.
-  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+  await toggleSuper(page);
   await page.waitForTimeout(150);
-  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+  await toggleSuper(page);
   await motionIdle(page);
   await page.waitForTimeout(1500);
   ok(`${engineName}: a press mid-flight reverses back to the start`, !(await surfaceShown(page)) && within1(await rectsOf(page, '.agent-pane'), paneRects0), `surface=${await surfaceShown(page)} ${JSON.stringify(await rectsOf(page, '.agent-pane'))}`);
 
   // Filmstrip of one hand-over (screenshots slow the frames, so this run is not measured).
-  await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
+  await toggleSuper(page);
   const t0 = Date.now();
   for (const pct of [0, 25, 50, 75, 100]) {
     const wait = t0 + (450 * pct) / 100 - Date.now();
@@ -1536,7 +1550,7 @@ async function board(engineName, browserType, base, full) {
   try {
     await openChat(page, base);
     if (!(await until(page, () => surfaceShown(page), 8000))) {
-      await page.locator('[data-testid="super-handover-btn"]:visible').first().click().catch(() => {});
+      await toggleSuper(page).catch(() => {});
       await until(page, () => surfaceShown(page), 20000);
     }
     ok(`${engineName}: handed over for the board checks`, await surfaceShown(page));
@@ -1786,7 +1800,7 @@ try {
       const p = await c.newPage();
       await openChat(p, base);
       if (!(await until(p, () => surfaceShown(p), 8000))) {
-        await p.locator('[data-testid="super-handover-btn"]:visible').first().click();
+        await toggleSuper(p);
         await until(p, () => surfaceShown(p), 15000);
       }
       await p.waitForTimeout(2000);
