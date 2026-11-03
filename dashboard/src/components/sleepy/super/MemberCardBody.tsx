@@ -70,11 +70,19 @@ function WindowLayer({ children }: { children: ReactNode }) {
   );
 }
 
+/** Its routines. An UNSPLIT member's own manifest IS the member (`implicit`, read from the agent
+ *  record: the list API names every automation's agent, so the automation cannot tell): never a
+ *  routine row with a Sil. A split member's same-name routine is a routine like any other. */
+export function memberRoutines(all: readonly TeamAutomation[], slug: string, implicit: boolean): TeamAutomation[] {
+  return all.filter((a) => routineOf(a, slug) && !(implicit && a.slug === slug));
+}
+
 function useMemberRoutines(slug: string): TeamAutomation[] {
   const autos = useAutomations();
+  const implicit = !!findAgent(useAgents().data, slug)?.implicit;
   // The member's own unsplit scheduled manifest IS the member (the server's rule): never a row
   // here, so a routine's Sil can never delete the member itself, and the count is the dialog's.
-  return useMemo(() => ((autos.data ?? []) as TeamAutomation[]).filter((a) => routineOf(a, slug) && !(a.slug === slug && !a.agent)), [autos.data, slug]);
+  return useMemo(() => memberRoutines((autos.data ?? []) as TeamAutomation[], slug, implicit), [autos.data, slug, implicit]);
 }
 
 function RoutinesCard(p: CardProps) {

@@ -174,7 +174,9 @@ export async function deleteMember(
   // 3. Every routine (remove + revoke, one helper with the routine route). Not after a failure
   //    above: a member that stays keeps its routines (all or nothing, plan r4 F4).
   for (const p of left.length ? [] : projects) {
-    for (const r of plan.routines.filter((x) => x.project === p.name)) {
+    // By ROOT, never by display name: two projects may share a folder name.
+    const here = new Set(routinesBoundTo(p.root, slug));
+    for (const r of plan.routines.filter((x) => x.project === p.name && here.has(x.slug))) {
       if (left.length) break;
       try { deleteRoutine(p.root, r.slug); } catch { left.push(`${p.name}: ${r.title}`); }
     }

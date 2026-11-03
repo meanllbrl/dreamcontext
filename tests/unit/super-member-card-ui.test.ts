@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { applyLayoutPatch, patchEchoed } from '../../dashboard/src/components/sleepy/super/superLayout.js';
-import { deleteDialog } from '../../dashboard/src/components/sleepy/super/MemberCardBody.js';
+import { deleteDialog, memberRoutines } from '../../dashboard/src/components/sleepy/super/MemberCardBody.js';
 import { panelCloseOf } from '../../dashboard/src/components/sleepy/super/GroupPanel.js';
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(`../../dashboard/src/components/sleepy/super/${rel}`, import.meta.url)), 'utf8');
@@ -44,6 +44,13 @@ describe('member cards in the window', () => {
     // The stage modules never import the chat UI: the body is a render prop.
     expect(surface).not.toContain('MemberCardBody');
     expect(src).not.toContain('MemberCardBody');
+  });
+
+  it('Rutinler: an unsplit member\'s own manifest is no row; a split member\'s same-name routine is', () => {
+    const r = (slug: string, agent: string) => ({ slug, agent, runKind: 'automation', mode: 'sched', enabled: true, title: slug }) as never;
+    const all = [r('ua', 'ua'), r('morning', 'ua'), r('other', 'x')];
+    expect(memberRoutines(all, 'ua', true).map((a: { slug: string }) => a.slug)).toEqual(['morning']);
+    expect(memberRoutines(all, 'ua', false).map((a: { slug: string }) => a.slug)).toEqual(['ua', 'morning']);
   });
 
   it('the delete dialog is filled from the plan: routines by name, by project for a global member, no undo, a trash copy', () => {
@@ -82,7 +89,7 @@ describe('member cards in the window', () => {
     expect(body).toMatch(/data-testid="member-delete" disabled=\{busy \|\| p\.working\}/);
     expect(body).toContain("{ withRoutines: true, dryRun: true }");
     // The member's own unsplit manifest is the member: never a routine row with a Sil.
-    expect(body).toContain('routineOf(a, slug) && !(a.slug === slug && !a.agent)');
+    expect(body).toContain('memberRoutines((autos.data');
     // Its dialogs draw at the window's level, never inside the card's strict-contained clip.
     expect(body).toContain('createPortal(');
     expect(body).toMatch(/<WindowLayer>\s*<AutomationDialog/);
