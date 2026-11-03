@@ -882,6 +882,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const memberMirrorsRef = useRef<Map<string, string>>(new Map());
   /** Why the member on the stage could not be opened (its approval card, off, gone), or null. */
   const [memberRefusal, setMemberRefusal] = useState<{ slug: string; refusal: MemberRefusal } | null>(null);
+  // A refused member's own record as it stands (an off member keeps one): its cards' layout only.
+  const [memberSaved, setMemberSaved] = useState<{ slug: string; state: SuperStateView | null } | null>(null);
   /** Show another super's stage: the view state stays one copy, re-bound to it (its pending edits
    *  were the old super's and go). The record view moves in the same batch, so no frame draws the
    *  new super's head over the old one's record. Every chat stays as it is. */
@@ -3846,7 +3848,12 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const marked = childMarks(allSupersView, superDelegated, Date.now()).marked;
   // A member's stage with no record here yet (its birth refused: its approval card, off; or still on
   // its way) still draws, from the member's manifest and summary (plan-r10 1e, 1f): a view only.
-  const memberPlaceholder = useMemo(() => (memberOf(activeSuperId) ? memberPlaceholderState(vault ?? '') : null), [activeSuperId, vault]);
+  // An off member's record still holds the owner's card layout: drawn from it (G-AC1).
+  const memberPlaceholder = useMemo(() => {
+    const slug = memberOf(activeSuperId);
+    if (!slug) return null;
+    return memberPlaceholderState(vault ?? '', memberSaved?.slug === slug ? memberSaved.state : null);
+  }, [activeSuperId, vault, memberSaved]);
   const stageView = superState ?? memberPlaceholder;
   const handedOver = superView === 'super' && !!stageView && !isMobile;
   // The Super dock's ONE gate (plan R1) and whether its window is open now. Never written from
@@ -5851,7 +5858,16 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       if (r.ok && canSpawn) { if (r.born) memberFreshRef.current.add(r.session); ensureSuperSession(r.session, sid); }
       return;
     }
-    if (!r.ok) { setMemberRefusal({ slug, refusal: memberOpenRefusal(r) ?? 'unreachable' }); return; }
+    if (!r.ok) {
+      const refusal = memberOpenRefusal(r) ?? 'unreachable';
+      setMemberRefusal({ slug, refusal });
+      // Off or waiting for its card: its record (if any) keeps the owner's card layout. Read, never written.
+      if (refusal === 'off' || refusal === 'unapproved') {
+        const saved = await fetchSuperState(scopedApi, sid);
+        if (seq === openMemberSeq.current && activeSuperIdRef.current === sid) setMemberSaved({ slug, state: saved });
+      }
+      return;
+    }
     if (r.born) memberFreshRef.current.add(r.session);
     ensureSuperSession(r.session, sid);
   };

@@ -263,10 +263,13 @@ export function stripRound(job: Pick<AgentJob, 'round' | 'cap' | 'step'> | null 
  * summary: its head, its approval band, its project chip, the refusal line, its own three cards.
  * Nothing else on it is the server's: no chat, no other card, no queue. View only, never written to the record store.
  */
-export function memberPlaceholderState(vault: string): SuperStateView | null {
-  // Its own three cards at their defaults (plan r4 G3): an off or unapproved member can still be
-  // turned on, or deleted, from its stage. Drawn only; a layout change to them waits for the record.
-  const cards = [
+export function memberPlaceholderState(vault: string, saved?: SuperStateView | null): SuperStateView | null {
+  // Its own three cards (plan r4 G3): an off or unapproved member can still be turned on, or
+  // deleted, from its stage. A member turned off keeps its record: its cards stand where the owner
+  // left them (K-AC3, G-AC1); a never-born one gets the defaults. Drawn only; a layout change to them
+  // waits for the record.
+  const kept = (saved?.containers ?? []).filter((c) => c.kind === 'member');
+  const cards = kept.length > 0 ? kept : [
     { id: 'member-routines', kind: 'member', ref: 'routines', shape: 'square', size: 'large', place: 'float' },
     { id: 'member-instructions', kind: 'member', ref: 'instructions', shape: 'square', place: 'float' },
     { id: 'member-settings', kind: 'member', ref: 'settings', shape: 'square', place: 'others' },

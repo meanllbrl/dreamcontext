@@ -244,6 +244,24 @@ describe('observed run fixes (super-members.mjs)', () => {
     expect(surface).not.toMatch(/setSuperRecordFor\([^)]*memberPlaceholder/);
   });
 
+  it('an off member with a record draws its own saved card layout, never the defaults (G-AC1)', () => {
+    const saved = memberPlaceholderState('acme', {
+      ...memberPlaceholderState('acme')!,
+      containers: [
+        { id: 'member-routines', kind: 'member', ref: 'routines', shape: 'tall', size: 'wide', place: 'others' },
+        { id: 'member-settings', kind: 'member', ref: 'settings', shape: 'square', place: 'float', pos: { x: 0.4, y: 0.2 } },
+        { id: 'w1', kind: 'web', ref: 'https://example.com', shape: 'square', place: 'float' },
+      ] as never,
+    });
+    expect(saved!.containers.map((c) => [c.ref, c.place])).toEqual([['routines', 'others'], ['settings', 'float']]);
+    expect(saved!.containers[0]).toMatchObject({ shape: 'tall', size: 'wide' });
+    // No record (never born): the defaults.
+    expect(memberPlaceholderState('acme', null)!.containers).toHaveLength(3);
+    // The surface reads the record on an off or unapproved refusal, and only draws it.
+    expect(surface).toMatch(/if \(refusal === 'off' \|\| refusal === 'unapproved'\) \{\s*const saved = await fetchSuperState\(scopedApi, sid\);/);
+    expect(surface).toMatch(/memberPlaceholderState\(vault \?\? '', memberSaved\?\.slug === slug \? memberSaved\.state : null\)/);
+  });
+
   it('the global member\'s chip reads the summary too, and the band shows TeamApproval whole', () => {
     const parts = src('dashboard/src/components/sleepy/super/MemberStage.tsx');
     expect(parts).toMatch(/const global = agent\?\.scope === 'global' \|\| info\.global === true;/);
