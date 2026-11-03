@@ -171,10 +171,10 @@ export const CHECK_TIERS: Readonly<Record<CheckId, CheckTier>> = {
   cli: 'required',
   claude: 'required',
   'claude-auth': 'required',
-  // Recommended, never required: Codex is set up by default, and a failed install must not keep
-  // anyone from their Claude chats (`ready` reads required rows only).
-  codex: 'recommended',
-  'codex-auth': 'recommended',
+  // Optional (owner 2026-11-03): nothing needs Codex. "Set everything up" never installs it or
+  // asks for its sign-in, the "N left" count skips it, and its row offers its own button only.
+  codex: 'optional',
+  'codex-auth': 'optional',
   git: 'recommended',
   github: 'recommended',
   gh: 'recommended',

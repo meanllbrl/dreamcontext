@@ -1,0 +1,106 @@
+/* The setup status chip beside the sleep score (SetupStatusChip.tsx). Tokens only. Red means a
+   big problem and nothing else; the quiet tone is the neutral chip surface with a gray dot. */
+.ns-setup-wrap {
+  position: relative;
+  display: inline-flex;
+  margin-right: var(--space-2);
+}
+
+.ns-setup-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-full, 999px);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ns-setup-chip--bad {
+  border-color: var(--color-error);
+  background: var(--color-error-subtle);
+  color: var(--color-error-ink);
+}
+
+.ns-setup-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--color-text-tertiary);
+}
+
+.ns-setup-chip--bad .ns-setup-dot,
+.ns-setup-row--bad .ns-setup-dot {
+  background: var(--color-error);
+}
+
+.ns-setup-pop {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 50;
+  width: min(360px, calc(100vw - 2 * var(--space-4)));
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated, var(--color-bg));
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+}
+
+.ns-setup-pop-head {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text);
+}
+
+.ns-setup-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.ns-setup-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.ns-setup-title {
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.ns-setup-detail {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.ns-setup-foot {
+  padding: var(--space-2);
+  border: 0;
+  border-top: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ns-setup-foot:hover {
+  color: var(--color-text);
+}

@@ -34,6 +34,8 @@ export interface ChatDrawerProps {
   onMoveWindow(vault: string, windowId: string, before: string | null): void;
   onOpenInWindow(name: string): void;
   onCloseProject(name: string): void;
+  /** "Remove from app…": asks first, then drops the project from the list (its folder stays). */
+  onRemoveProject?(name: string): void;
   /** "+" beside Projects: the app's Add Project flow. */
   onNewProject(): void;
   /** Bumped by ⌘N: open the New chat window picker at its row. */
@@ -473,6 +475,15 @@ export function ChatDrawer(p: ChatDrawerProps) {
                 onClick={() => { closeMenu(); p.onCloseProject(menu.name!); }}>
                 {t('shell.drawer.closeProject')}
               </button>
+              {p.onRemoveProject && (
+              <>
+              <hr className="ns-drawer-menu-sep" aria-hidden="true" />
+              <button type="button" role="menuitem" className="ns-drawer-menu-item" data-testid="drawer-project-remove"
+                onClick={() => { closeMenu(); p.onRemoveProject!(menu.name!); }}>
+                {t('shell.drawer.removeProject')}
+              </button>
+              </>
+              )}
               </>
               )}
             </>

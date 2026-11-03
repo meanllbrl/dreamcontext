@@ -12,6 +12,7 @@ import { setActiveOverlayScope } from '../../lib/overlayStack';
 import {
   focusThisWindow,
   focusWindow,
+  confirmAction,
   isDesktop,
   openVaultWindow,
   setGoToProjectHandler,
@@ -40,6 +41,8 @@ import { ProjectTabs, type ProjectChip } from './ProjectTabs';
 import { readDeviceShell, useIsNewShell, type NewProjectLanding } from '../../lib/uxMode';
 import { readLayoutPrefs, writeLayoutPrefs } from '../../lib/launcherPrefs';
 import { useShellProjects } from '../../hooks/useShellProjects';
+import { useUnregisterVault } from '../../hooks/useLauncher';
+import { confirmRemoveProject, nextProjectAfterRemove } from '../../lib/removeProject';
 import { TitleBar } from './newshell/TitleBar';
 import type { PickerRow } from './newshell/ProjectPicker';
 import { mergeProjectOrder } from './newshell/projectOrder';
@@ -1142,6 +1145,44 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     });
   }, [newShell, launcherStatus, projectOrder, open, activeVault, drawerExpanded, drawerFacts, fanout, deviceShell, deviceChats]);
 
+  // "Remove from app…" (owner 2026-11-03): ask, drop the registry entry (the folder stays). When the
+  // project is this window's only one, the window lands on another project FIRST: the server refuses
+  // every request naming an unregistered project, so a window must never be left on one. With
+  // nowhere to land, nothing is asked and nothing is removed.
+  const unregisterVault = useUnregisterVault();
+  const removeProject = useCallback(async (name: string) => {
+    const entry = (launcherStatus?.vaults ?? []).find((v) => v.name === name) as { path?: unknown } | undefined;
+    const path = typeof entry?.path === 'string' ? entry.path : null;
+    let landOn: string | null = null;
+    if (openRef.current.some((p) => p.vault === name) && openRef.current.length <= 1) {
+      // A project open in another window would only bring that window forward.
+      const order = projectOrderRef.current.filter((n) => n === name || !findWindowForVault(n));
+      landOn = nextProjectAfterRemove(order, name);
+      if (!landOn) {
+        notify(tRef.current('shell.drawer.removeNeedsAnother').replace('{name}', name));
+        return;
+      }
+    }
+    let removed = false;
+    try {
+      removed = await confirmRemoveProject(name, path, {
+        confirm: confirmAction,
+        unregister: async (n) => {
+          if (landOn) {
+            const landed = await addTab(landOn);
+            if (landed !== 'added' && landed !== 'focused-tab') throw new Error(tRef.current('shell.drawer.removeCannotLand'));
+          }
+          return unregisterVault.mutateAsync(n);
+        },
+        t: tRef.current,
+      });
+    } catch (err) {
+      notify(tRef.current('shell.drawer.removeFailed').replace('{name}', name).replace('{error}', err instanceof Error ? err.message : String(err)));
+      return;
+    }
+    if (removed && openRef.current.some((p) => p.vault === name)) closeTab(name);
+  }, [launcherStatus, unregisterVault, notify, addTab, closeTab]);
+
   // The queue (D5): a row's click brings its project forward FIRST, and the intent travels
   // only when that project is now on screen and mounted (the `landLink` rule).
   const [pendingDrawerIntents, setPendingDrawerIntents] = useState<Record<string, PendingDrawerIntent>>(
@@ -1413,6 +1454,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                   else void openVaultWindow(name).catch((err) => notify(`Couldn't open a window for ${name}: ${err instanceof Error ? err.message : String(err)}`));
                 }}
                 onCloseProject={(name) => closeTab(name)}
+                {...(deviceShell ? {} : { onRemoveProject: (name: string) => { void removeProject(name); } })}
                 newWindowNonce={newWindowNonce}
                 {...(deviceShell ? { device: true } : {})}
                 {...(tunnel ? { foot: <PhoneDrawerFoot /> } : {})}

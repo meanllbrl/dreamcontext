@@ -11,6 +11,7 @@ import { SleepSettings } from '../../SleepSettings';
 import { TaskOverrideEditor } from '../../TaskOverrideEditor';
 import { ConnectionsManager } from '../../ConnectionsManager';
 import { SystemDependencies } from '../../SystemDependencies';
+import { OptionalTools } from '../../OptionalTools';
 import { AutoUpdateSetting } from '../../AutoUpdateSetting';
 import { LoopbackPorts } from '../../LoopbackPorts';
 import { LinkedRepos } from '../../../brain/LinkedRepos';
@@ -315,6 +316,7 @@ export function SystemPage() {
     <>
       <Head id="system" />
       <SettingGroup title={t('shell.sw.system.software')}><div className="sw-wide"><SystemDependencies /></div></SettingGroup>
+      <SettingGroup title={t('settings.system.optionalTools')} note={t('settings.system.optionalTools.note')}><div className="sw-wide"><OptionalTools /></div></SettingGroup>
       <AutoUpdateSetting />
     </>
   );

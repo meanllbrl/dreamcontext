@@ -547,6 +547,13 @@
   color: var(--color-text-tertiary);
 }
 
+/* Between the everyday items and "Remove from app…". */
+.ns-drawer-menu-sep {
+  margin: var(--space-1) var(--space-2);
+  border: 0;
+  border-top: 1px solid var(--color-border);
+}
+
 /* Close window: the one item that ends something. */
 .ns-drawer-menu-item.is-danger {
   color: var(--color-error-ink);
