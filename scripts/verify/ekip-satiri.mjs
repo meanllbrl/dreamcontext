@@ -323,6 +323,10 @@ async function run(base) {
 
   try {
   console.log('── s7 on from the stage; the owner\'s size and place stay');
+  // A wide screen: at 1440 with the drawer open the side columns are ~225 px, so no card can grow
+  // past small there (the stage's own room rule, same for every card; run s13).
+  const WIDE = { width: 1920, height: 1080 };
+  await page.setViewportSize(WIDE);
   await openUye();
   const sw = st.getByTestId('member-card-switch').first();
   await sw.click().catch(() => {});
@@ -358,6 +362,7 @@ async function run(base) {
   await shots(page, '07', 'kartlar-sahibin-duzeni', (w) => stageOnly(page, w));
 
   console.log('── s8 off again: its own saved layout');
+  await applyTheme(page, 'light'); await page.setViewportSize(WIDE);
   await openUye();
   const sw2 = st.getByTestId('member-card-switch').first();
   await sw2.click().catch(() => {});
@@ -381,7 +386,8 @@ async function run(base) {
   const kept = existsSync(trashDir) ? readdirSync(trashDir).filter((d) => d.endsWith('-ua-manager')) : [];
   ok('s9 a trash copy with a receipt', kept.length === 1 && existsSync(join(trashDir, kept[0], 'receipt.json')), JSON.stringify(kept));
   await ensureDrawer(page);
-  ok('s9 no Team row for it', (await page.locator('[data-testid="team-list-member"][data-slug="ua-manager"], [data-testid="team-popout"][data-slug="ua-manager"]').count()) === 0);
+  // The list re-reads its members right after the delete: wait for that read, a few seconds at most.
+  ok('s9 no Team row for it', await until(page, async () => (await page.locator('[data-testid="team-list-member"][data-slug="ua-manager"], [data-testid="team-popout"][data-slug="ua-manager"]').count()) === 0, 5000));
   await shots(page, '09', 'uye-silindi', () => ensureDrawer(page));
   } catch (e) { ok('s7-s9 ran', false, e?.message ?? e); }
   ok('no console errors', watch.errors.length === 0, watch.errors.slice(0, 6).join('\n'));
