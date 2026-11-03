@@ -130,7 +130,8 @@ a neutral step stays neutral, a block tinted end to end says nothing. Numbered c
 (\`dc-bg|f|s1..8\`) are CHART fills, never a surface under words. ONE channel a sentence:
 bold OR highlight OR a tint. Little content takes \`dc-doc--hug\`; a wide table a
 \`dc-table-wrap\`; two columns claim the pair is comparable — dense prose in both is one
-column or a \`dc-table\`.
+column or a \`dc-table\`. A \`dc-kv\` is \`<dt>\`key\`<dd>\`value pairs, or one \`<div>\` per row
+that opens with a \`dc-label\`.
 
 Layout \`dc-doc dc-doc--hug dc-row dc-row--between dc-stack dc-grid dc-grid--2|3|4
 dc-rail dc-spacer dc-divider dc-divider-label\` · Text \`dc-h1|h2|h3 dc-lede dc-p dc-muted
