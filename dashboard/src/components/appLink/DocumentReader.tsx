@@ -24,7 +24,7 @@ import {
 import { MarkdownPreview } from '../core/MarkdownPreview';
 import {
   CHAT_HTML_KIT_CSS, CHAT_HTML_SANDBOX, HEIGHT_BRIDGE, HEIGHT_REQUEST_KEY, MAX_HTML_HEIGHT,
-  readHeightMessage, resolveChatKitTokens,
+  KIT_BEHAVIOUR, readHeightMessage, resolveChatKitTokens,
 } from '../sleepy/chat/chatHtmlKit';
 import { inlineMediaKind, joinChildPath, useInlineMedia } from '../sleepy/chat/chatEntities';
 import { FileActions } from '../sleepy/chat/FileActions';
@@ -543,7 +543,9 @@ function HtmlPage(props: Parameters<typeof HtmlPageLive>[0]) {
  * a keystroke or a click into the host. The page's own project-local pictures and stylesheets
  * are written INTO the document by the host ({@link useProjectHtml}), so they show while the CSP
  * still blocks every fetch; a link click does nothing (LINK_GUARD), which the line under the
- * frame says.
+ * frame says. The kit's runtime rides with its CSS (KIT_BEHAVIOUR, as in a chat block): a report
+ * page's dc-graph is laid out and drawn and its dc-tabs switch. It touches only the page's own
+ * markup; no network, no parent.
  */
 function HtmlPageLive({
   path, vaultReads, fileActions, zoomBridge = false, fill = false, desktop = false, onPageFit,
@@ -590,7 +592,7 @@ function HtmlPageLive({
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
       html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: themeNow.current, overrideCss: pageDefaultCss(fill),
-      headScript: [HEIGHT_BRIDGE, SELECTION_BRIDGE, LINK_GUARD, THEME_BRIDGE, SCROLL_KEEP_BRIDGE, ...(zoomBridge ? [ZOOM_BRIDGE, IMAGE_BRIDGE] : []), ...(reportsFit ? [PAGE_FIT_BRIDGE] : [])].join('\n'),
+      headScript: [HEIGHT_BRIDGE, SELECTION_BRIDGE, LINK_GUARD, THEME_BRIDGE, SCROLL_KEEP_BRIDGE, ...(zoomBridge ? [ZOOM_BRIDGE, IMAGE_BRIDGE] : []), ...(reportsFit ? [PAGE_FIT_BRIDGE] : []), KIT_BEHAVIOUR].join('\n'),
     })),
     [html, zoomBridge, fill, reportsFit],
   );
