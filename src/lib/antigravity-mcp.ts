@@ -3,7 +3,9 @@
  *  - they ride `session/new`; the agent connects them when the first turn starts, not before;
  *  - ONE server that will not start, or answers Unauthorized, refuses every turn of that session at
  *    0 tokens ("The MCP server 'x' failed to initialize"), and only a new session gets past it. So
- *    a server goes in only after it answered `initialize` to us, the same call the agent makes;
+ *    a server goes in only after it answered us the handshake the agent makes (`server/discover`,
+ *    then `initialize` when discover is refused): `initialize` alone let a server through that dies
+ *    on discover, and the agent then took minutes to refuse the turn (3 Nov 2026);
  *  - there is no sign-in for a server over ACP, so a server that wants one cannot reach this agent;
  *  - the session writes `brain/<thread>/mcp/<server>/<tool>.json` for each server it connected:
  *    that folder is the live report, and it is read by name and count only.
@@ -24,7 +26,13 @@ export const MCP_CHECK_LIMIT_MS = 8_000;
 
 export type ServerCheck = 'connected' | 'needs-auth' | 'failed';
 
-const INITIALIZE = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'dreamcontext', version: '0' } } };
+/**
+ * The handshake the agent makes, measured on agent 1.4.1 (3 Nov 2026): `server/discover` first; on a
+ * JSON-RPC error it falls back to `initialize`. A server that answers `initialize` but dies on
+ * `server/discover` (an older Python FastMCP) refuses the whole chat, so the check asks both, in order.
+ */
+const DISCOVER = { jsonrpc: '2.0', id: 1, method: 'server/discover', params: { _meta: { 'io.modelcontextprotocol/clientCapabilities': {}, 'io.modelcontextprotocol/clientInfo': { name: 'dreamcontext', version: '0' }, 'io.modelcontextprotocol/protocolVersion': '2026-07-28' } } };
+const INITIALIZE = { jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'dreamcontext', version: '0' } } };
 
 function checkStdio(server: Extract<AcpMcpServer, { command: string }>, env: NodeJS.ProcessEnv, ms: number): Promise<ServerCheck> {
   return new Promise((resolve) => {
@@ -46,27 +54,46 @@ function checkStdio(server: Extract<AcpMcpServer, { command: string }>, env: Nod
     child.stdin.on('error', () => undefined);
     child.stdout.on('data', (c: Buffer) => {
       out += c.toString('utf-8');
-      for (const line of out.split('\n')) {
-        try {
-          const m = JSON.parse(line) as { id?: unknown; result?: unknown };
-          if (m.id === 1) finish(m.result ? 'connected' : 'failed');
-        } catch { /* not a whole line yet */ }
+      const lines = out.split('\n');
+      out = lines.pop() ?? '';
+      for (const line of lines) {
+        let m: { id?: unknown; result?: unknown; error?: unknown };
+        try { m = JSON.parse(line) as typeof m; } catch { continue; }
+        // The agent's own fallback: a server that refuses `server/discover` is asked to `initialize`.
+        if (m.id === DISCOVER.id) {
+          if (m.result) finish('connected');
+          else if (m.error) child.stdin.write(`${JSON.stringify(INITIALIZE)}\n`);
+          else finish('failed');
+        }
+        if (m.id === INITIALIZE.id) finish(m.result ? 'connected' : 'failed');
       }
     });
-    child.stdin.write(`${JSON.stringify(INITIALIZE)}\n`);
+    child.stdin.write(`${JSON.stringify(DISCOVER)}\n`);
   });
 }
 
 async function checkHttp(server: Extract<AcpMcpServer, { url: string }>, ms: number): Promise<ServerCheck> {
+  // The agent's order: `server/discover`, then `initialize` when that one is not understood.
+  const deadline = Date.now() + ms;
+  const discovered = await postHttp(server, DISCOVER, ms);
+  if (discovered !== 'no-result') return discovered;
+  const left = deadline - Date.now();
+  if (left <= 0) return 'failed';
+  const initialized = await postHttp(server, INITIALIZE, left);
+  return initialized === 'no-result' ? 'failed' : initialized;
+}
+
+/** One POST: a JSON-RPC result, a sign-in, or neither. */
+async function postHttp(server: Extract<AcpMcpServer, { url: string }>, body: object, ms: number): Promise<ServerCheck | 'no-result'> {
   try {
     const r = await fetch(server.url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
-      body: JSON.stringify(INITIALIZE),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(ms),
     });
     if (r.status === 401 || r.status === 403) { await r.body?.cancel().catch(() => undefined); return 'needs-auth'; }
-    if (!r.ok || !r.body) return 'failed';
+    if (!r.ok || !r.body) { await r.body?.cancel().catch(() => undefined); return 'no-result'; }
     // A login page answers 200 too: only a JSON-RPC result is a server, or it refuses the whole chat.
     const reader = r.body.getReader();
     let text = '';
@@ -77,7 +104,7 @@ async function checkHttp(server: Extract<AcpMcpServer, { url: string }>, ms: num
       if (done) break;
     }
     await reader.cancel().catch(() => undefined);
-    return 'failed';
+    return 'no-result';
   } catch {
     return 'failed';
   }

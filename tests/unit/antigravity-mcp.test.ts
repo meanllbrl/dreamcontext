@@ -55,6 +55,38 @@ describe('asking a server before a chat is given it', () => {
     expect([...r.values()]).toEqual(['connected', 'failed', 'failed']);
   }, 20_000);
 
+  // The agent's handshake (measured on agent 1.4.1, 3 Nov 2026): `server/discover`, then `initialize`
+  // when discover is refused. An older Python FastMCP answers `initialize` and dies on discover: the
+  // agent then refused the owner's whole chat after minutes, so the check must ask what the agent asks.
+  it('a stdio server that answers initialize but dies on server/discover stays out; one that refuses discover politely goes in', async () => {
+    const reply = (on: string) => `process.stdin.on('data',(d)=>{for(const l of String(d).split('\\n').filter(Boolean)){const m=JSON.parse(l);${on}}});`;
+    const diesOnDiscover = script(reply(`if(m.method==='initialize')process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{}})+'\\n');else process.exit(1);`));
+    const refusesDiscover = script(reply(`process.stdout.write(JSON.stringify(m.method==='initialize'?{jsonrpc:'2.0',id:m.id,result:{}}:{jsonrpc:'2.0',id:m.id,error:{code:-32601,message:'Method not found'}})+'\\n');`));
+    const knowsDiscover = script(reply(`process.stdout.write(JSON.stringify(m.method==='server/discover'?{jsonrpc:'2.0',id:m.id,result:{}}:{jsonrpc:'2.0',id:m.id,error:{code:-32601,message:'no'}})+'\\n');`));
+    const r = await checkAcpServers([diesOnDiscover, refusesDiscover, knowsDiscover].map((file, i) => ({ name: `s${i}`, command: process.execPath, args: [file], env: [] })), { env: process.env, limitMs: 3000 });
+    expect([...r.values()]).toEqual(['failed', 'connected', 'connected']);
+  }, 20_000);
+
+  it('an HTTP server is asked server/discover first, and initialize when it does not know it', async () => {
+    const asked: string[] = [];
+    const srv = createServer((q, s) => {
+      let body = '';
+      q.on('data', (c) => { body += c; });
+      q.on('end', () => {
+        const m = JSON.parse(body) as { id: number; method: string };
+        asked.push(`${q.url} ${m.method}`);
+        if (m.method === 'server/discover') { s.writeHead(400); s.end(JSON.stringify({ jsonrpc: '2.0', id: m.id, error: { code: -32600, message: 'Server not initialized' } })); return; }
+        s.writeHead(200, { 'content-type': 'application/json' }); s.end(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: {} }));
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const port = (srv.address() as { port: number }).port;
+    const r = await checkAcpServers([{ type: 'http', name: 'old', url: `http://127.0.0.1:${port}/old`, headers: [] }], { env: process.env, limitMs: 1500 });
+    expect(Object.fromEntries(r)).toEqual({ old: 'connected' });
+    expect(asked).toEqual(['/old server/discover', '/old initialize']);
+    srv.close();
+  }, 20_000);
+
   it('tells an HTTP server that wants a sign-in from one that answers or is gone', async () => {
     const srv = createServer((q, s) => {
       if (q.url === '/login') { s.writeHead(200, { 'content-type': 'text/html' }); s.end('<html>Sign in</html>'); return; }
