@@ -77,7 +77,7 @@ import { McpControl, isSafeAuthUrl, redactContextFor, redactStatus, routeChildLi
 import { removeMcpHealth, writeMcpHealth } from '../../lib/mcp-health.js';
 import { isUsableServerName, type McpLiveServer } from '../../lib/mcp-wire.js';
 import { probeAccountForDecision, type ProbeOutcome } from '../../lib/claude-usage-probe.js';
-import { readUsageLimits, usageReadingIsCurrent, type UsageLimitsResponse } from '../../lib/claude-usage.js';
+import { otherAccountSignedIn, readUsageLimits, usageReadingIsCurrent, type UsageLimitsResponse } from '../../lib/claude-usage.js';
 import {
   SWITCH_THRESHOLD_PERCENT, chooseAccount, provenPastThreshold, shouldProbe, shouldSwitchAway, type AccountReading, type ChooseResult,
 } from '../../lib/claude-account-switch.js';
@@ -4226,7 +4226,9 @@ export function startChatSession(
   /** One `rate_limit_event`: record the reading, and end a refusal the API has just outlived. */
   const noteTurnUsage = (frame: unknown): void => {
     const reading = readUsageMeterFrame(frame);
-    if (reading) recordUsageMeter(accountConfigDir, reading);
+    // Never under an account's name while its folder is signed in as another account: the
+    // frame measures whoever is signed in, and the meter is keyed by folder, not by account.
+    if (reading && otherAccountSignedIn(accountConfigDir) === null) recordUsageMeter(accountConfigDir, reading);
     // The API just SERVED a turn here with room in the window it once refused, so that refusal
     // is over — an estimated 20-minute exile, or a window that reopened early. Narrow on purpose
     // (`meterEndsRefusal`): a weekly or per-model refusal, or one a few seconds old, stands.

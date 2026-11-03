@@ -1530,7 +1530,11 @@ export function Composer({
         organizationName: a.organizationName,
         preferred: a.preferred,
         state: a.state,
+        ...(a.signedInAs ? { signedInAs: a.signedInAs } : {}),
         sessionPercent: a.limits.find((l) => l.key === 'session')?.percent ?? null,
+        ...(a.noSessionWindow
+          ? { noSessionWindow: true, weeklyPercent: a.limits.find((l) => l.key === 'weekly')?.percent ?? null }
+          : {}),
       }))),
     [isCodex, session.tool, codexRes, accountsRes, t],
   );

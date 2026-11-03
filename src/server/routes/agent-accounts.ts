@@ -36,8 +36,9 @@ import {
 import { asSwitchStrategy, sanitizeSwitchWeights } from '../../lib/claude-account-switch.js';
 import { ensureSandbox, sandboxHasIdentity } from '../../lib/claude-account-sandbox.js';
 import { claudeAuthStatus, resetClaudeAuthCache } from '../../lib/claude-auth.js';
-import { readUsageLimits, type UsageLimitWire } from '../../lib/claude-usage.js';
-import { probeAccountUsage } from '../../lib/claude-usage-probe.js';
+import { accountPlanName, configDirIdentity, readUsageLimits, type UsageLimitWire } from '../../lib/claude-usage.js';
+import { probeAccountUsage, type ProbeOutcome } from '../../lib/claude-usage-probe.js';
+import { readSignedOut } from '../../lib/claude-signed-out.js';
 import { readAccountRejections } from '../../lib/claude-limit-rejections.js';
 import { chatSpawnAccount, clearAccountWait, readAccountWait } from '../../lib/automations/account.js';
 
@@ -77,14 +78,25 @@ interface AccountWire {
   /** "Only mine": unattended agent work never starts on it. */
   ownerOnly: boolean;
   /**
-   * `ok` — usable. `needs-relogin` — its credential is gone; the UI says "sign in again"
-   * rather than showing an ambiguous blank row.
+   * `ok` — usable. `needs-relogin` — its credential is gone, or a turn on it was refused for
+   * sign-in (`claude-signed-out.ts`); the UI says "sign in again" rather than drawing old
+   * numbers as if the account could serve. `other-account` — its directory is signed in as a
+   * DIFFERENT account (`signedInAs`), so every reading there describes that one; none is drawn.
    */
-  state: 'ok' | 'needs-relogin';
+  state: 'ok' | 'needs-relogin' | 'other-account';
+  /** Only on `other-account`: whose credential the directory holds now. */
+  signedInAs?: string;
   /** The account's cached limits. Empty when there is nothing cached yet. */
   limits: UsageLimitWire[];
   /** When the CLI last refreshed that cache, so a stale reading can be labelled. */
   fetchedAtMs: number | null;
+  /** The usage data says this account has NO 5-hour window: no session bar is drawn for it. */
+  noSessionWindow?: true;
+  /**
+   * The plan as the account's own profile names it now (e.g. "Ultra"). `tier` is the CLI's
+   * subscription type recorded at sign-in ("max"), which outlived a plan rename.
+   */
+  planName?: string;
   /**
    * The API REFUSED this account and it stays out until then (`claude-limit-rejections.ts`).
    * The percentages can trail a refusal, so the row has to say it in so many words: a 97% bar
@@ -129,17 +141,27 @@ export async function handleAgentAccountsList(req: IncomingMessage, res: ServerR
 
 
   const refusals = readAccountRejections(home);
+  const signedOut = readSignedOut(home);
   const wire: AccountWire[] = accounts.map((acc) => {
     const dir = acc.configDir ?? home;
     const refusal = refusals[acc.id];
     const hasIdentity = sandboxHasIdentity(dir, home);
+    // WHOSE numbers these are, before any is drawn: a directory signed in as another account
+    // reads that account's cache and meter, which drew one account's week on two rows.
+    const identity = hasIdentity ? configDirIdentity(acc, home) : { kind: 'none' as const };
+    const state: AccountWire['state'] = !hasIdentity || signedOut[acc.id] !== undefined
+      ? 'needs-relogin'
+      : identity.kind === 'other' ? 'other-account' : 'ok';
     let limits: UsageLimitWire[] = [];
     let fetchedAtMs: number | null = null;
-    if (hasIdentity) {
+    let noSessionWindow = false;
+    if (hasIdentity && identity.kind !== 'other') {
       const reading = readUsageLimits(dir);
       limits = reading.limits;
       fetchedAtMs = reading.fetchedAtMs;
+      noSessionWindow = reading.noSessionWindow === true;
     }
+    const planName = identity.kind === 'match' ? accountPlanName(acc, home) : null;
     return {
       id: acc.id,
       email: acc.email,
@@ -148,9 +170,12 @@ export async function handleAgentAccountsList(req: IncomingMessage, res: ServerR
       preferred: acc.preferred,
       isPrimary: acc.configDir === null,
       ownerOnly: acc.ownerOnly === true,
-      state: hasIdentity ? 'ok' : 'needs-relogin',
+      state,
+      ...(identity.kind === 'other' && identity.email ? { signedInAs: identity.email } : {}),
       limits,
       fetchedAtMs,
+      ...(noSessionWindow ? { noSessionWindow: true as const } : {}),
+      ...(planName ? { planName } : {}),
       ...(refusal ? { refusedUntil: refusal.until } : {}),
       ...(refusal && (refusal.window === 'session' || refusal.window === 'weekly') ? { refusedWindow: refusal.window } : {}),
     };
@@ -413,17 +438,39 @@ export async function handleAgentAccountsReorder(req: IncomingMessage, res: Serv
   }
 }
 
+/** How long ONE account's refresh may take. The CLI writes its numbers ~6s in; past this the
+ *  row keeps the reading it had and says how old it is. */
+export const REFRESH_PROBE_TIMEOUT_MS = 15_000;
+
+/** Probes in flight, by config dir: a second ask for the same account waits on the first. */
+const refreshInFlight = new Map<string, Promise<ProbeOutcome>>();
+
+/** Injectable for tests: the probe a refresh runs. `null` puts the real one back. */
+let refreshProbe: typeof probeAccountUsage = probeAccountUsage;
+export function setRefreshProbeForTests(fn: typeof probeAccountUsage | null): void {
+  refreshProbe = fn ?? probeAccountUsage;
+  refreshInFlight.clear();
+}
+
 /**
- * POST /api/agent/accounts/refresh — `{ id? }`. Re-probe usage and answer with the new list.
+ * POST /api/agent/accounts/refresh — `{ id? }`. Re-probe usage and say which accounts came back.
  *
  * The list route deliberately never probes (N spawns on every paint), which left the numbers
  * as fresh as whenever the CLI last happened to write them and no way to ask for better. This
- * is that way: one account by id, or every signed-in account when `id` is omitted.
+ * is that way: one account by id, or every signed-in account when `id` is omitted. The panel
+ * asks ONE id per request, all at once, so each row updates as its own answer lands.
  *
- * Probes run SEQUENTIALLY. Concurrent `claude -p` children on N accounts is the spawn storm
- * the list route exists to avoid; a refresh is user-initiated and rare, so it can take its
- * time. A probe that fails is not an error for the request — the account keeps whatever
- * reading it had and the response says which ids came back fresh.
+ * IN PARALLEL, each bounded by {@link REFRESH_PROBE_TIMEOUT_MS}. They used to run one after
+ * another on a 20s budget each, and on CLI 2.1.317 `/usage` takes 40-130s (it scans every local
+ * transcript after fetching the numbers), so every probe timed out, nothing was re-read, and
+ * the list sat on "Refreshing…" for 85s on a five-account machine (measured 2026-11-03). The
+ * probe now stops the child as soon as the cache moves and skips the spawn for a cache that
+ * is already current, so the spawn storm the old note feared is a handful of children for a
+ * few seconds. A second refresh of an account already in flight joins the first.
+ *
+ * A probe that fails is not an error for the request: the account keeps whatever reading it
+ * had and the response says which ids came back fresh. A directory signed in as ANOTHER account
+ * is never probed (`other-account`): it would only measure that other account.
  */
 export async function handleAgentAccountsRefresh(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!guard(req, res)) return;
@@ -436,18 +483,23 @@ export async function handleAgentAccountsRefresh(req: IncomingMessage, res: Serv
     return;
   }
 
-  const refreshed: string[] = [];
-  const failed: { id: string; why: string }[] = [];
-  for (const acc of accounts) {
+  const results = await Promise.all(accounts.map(async (acc): Promise<{ id: string; why: string | null }> => {
     const dir = acc.configDir ?? home;
-    if (!sandboxHasIdentity(dir, home)) {
-      failed.push({ id: acc.id, why: 'needs-relogin' });
-      continue;
+    if (!sandboxHasIdentity(dir, home)) return { id: acc.id, why: 'needs-relogin' };
+    if (configDirIdentity(acc, home).kind === 'other') return { id: acc.id, why: 'other-account' };
+    let pending = refreshInFlight.get(dir);
+    if (!pending) {
+      const started = refreshProbe(dir, { home, timeoutMs: REFRESH_PROBE_TIMEOUT_MS, trustCurrentCache: true })
+        .catch((err): ProbeOutcome => ({ status: 'unknown', reason: (err as Error)?.message ?? String(err) }))
+        .finally(() => { if (refreshInFlight.get(dir) === started) refreshInFlight.delete(dir); });
+      refreshInFlight.set(dir, started);
+      pending = started;
     }
-    const outcome = await probeAccountUsage(dir, { home });
-    if (outcome.status === 'ok') refreshed.push(acc.id);
-    else failed.push({ id: acc.id, why: outcome.status });
-  }
+    const outcome = await pending;
+    return { id: acc.id, why: outcome.status === 'ok' ? null : outcome.status };
+  }));
+  const refreshed = results.filter((r) => r.why === null).map((r) => r.id);
+  const failed = results.filter((r): r is { id: string; why: string } => r.why !== null);
   sendJson(res, 200, { refreshed, failed });
 }
 
