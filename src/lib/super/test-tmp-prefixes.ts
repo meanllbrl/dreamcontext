@@ -809,6 +809,7 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'super-rows-home-',
   'super-size-',
   'super-size-home-',
+  'super-stage-fallback-',
   'super-store-',
   'super-succ-',
   'super-succ-home-',

@@ -65,7 +65,8 @@ export function superStagePass(gitCwd: string, contextRoot: string): string[] {
     git.removeFromIndexForce(at.top, at.specs);
     return staged;
   } catch {
-    // Could not list them: drop them unlisted.
+    // Could not list them: drop them unlisted, a planted record set aside first as above.
+    setAsideForeignRecords(contextRoot);
     try { git.removeFromIndexForce(at.top, at.specs); } catch { /* git cannot answer at all */ }
     return [];
   }
