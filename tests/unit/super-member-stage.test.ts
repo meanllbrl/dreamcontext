@@ -278,10 +278,12 @@ describe('observed run fixes (super-members.mjs)', () => {
     expect(surface).toMatch(/placeholderPatches\.patches\.reduce<SuperStateView>\(\(st, patch\) => applyLayoutPatch\(st, patch\), base\)/);
   });
 
-  it('deleting a routine drops its own detail before the list is read again (no 404 for the gone one)', () => {
+  it('deleting a routine never re-reads its own detail (no 404 for the gone one, even with its row open)', () => {
     const hooks = src('dashboard/src/hooks/useAutomations.ts');
     const del = hooks.slice(hooks.indexOf('export function useDeleteAgent()'), hooks.indexOf('export function useDeleteAgent()') + 900);
-    expect(del).toMatch(/removeQueries\(\{ queryKey: \['automations', slug\], exact: true \}\);\s*queryClient\.invalidateQueries\(\{ queryKey: \['automations'\] \}\)/);
+    expect(del).toMatch(/invalidateQueries\(\{ queryKey: \['automations'\], predicate: \(q\) => q\.queryKey\[1\] !== slug \}\)/);
+    // Removing it from the cache made the open row's observer fetch it again on the next render.
+    expect(del).not.toMatch(/removeQueries/);
   });
 
   it('the global member\'s chip reads the summary too, and the band shows TeamApproval whole', () => {

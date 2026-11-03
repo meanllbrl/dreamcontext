@@ -657,9 +657,10 @@ export function useDeleteAgent() {
     mutationFn: (slug: string) =>
       api.post<{ ok: true; slug: string; agentKept?: string | null }>(`/automations/${slug}/delete`, {}),
     onSuccess: (_data, slug) => {
-      // The deleted one's own detail goes first: invalidating the list prefix would read it again (a 404).
-      queryClient.removeQueries({ queryKey: ['automations', slug], exact: true });
-      queryClient.invalidateQueries({ queryKey: ['automations'] });
+      // Never re-read the deleted one's own detail (a 404): an open row still watches it, so removing
+      // it from the cache would refetch on the next render. Leave it as is; the row unmounts once the
+      // list comes back without it, and the unwatched entry is collected.
+      queryClient.invalidateQueries({ queryKey: ['automations'], predicate: (q) => q.queryKey[1] !== slug });
       queryClient.invalidateQueries({ queryKey: ['agents'] });
     },
   });
