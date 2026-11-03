@@ -86,6 +86,12 @@ describe('toolAction: Bash', () => {
     expect(line('Bash', { command: 'x', description: 'Warm the cache...' }, 'done')).toBe('Warm the cache');
   });
 
+  it('turns a past-tense title back into its verb when the step failed (Antigravity: "Ran command")', () => {
+    expect(line('Bash', { command: 'pwd', description: 'Ran command' }, 'error')).toBe('Tried to run command');
+    expect(line('Bash', { command: 'x', description: 'Wrote the config' }, 'error')).toBe('Tried to write the config');
+    expect(line('Bash', { command: 'pwd' }, 'error')).toMatch(/^Couldn't run a command/);
+  });
+
   it('keeps a name in capitals when a failure lowercases the sentence', () => {
     expect(line('Bash', { command: 'x', description: 'CI checks for the branch' }, 'error')).toBe('Tried to CI checks for the branch');
   });

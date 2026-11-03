@@ -99,7 +99,9 @@ export function antigravityQuotaReply(text: string, now: number): { resetsAtMs: 
 export function toolCallFor(item: TurnItem): { name: string; input: Record<string, unknown> } | null {
   switch (item.type) {
     case 'command_execution':
-      return { name: 'Bash', input: { command: item.input, ...(item.title ? { description: item.title } : {}) } };
+      // T3's own fallback title ("Ran command") is no description of the step: without it the row says
+      // "Ran a command" or "Couldn't run a command" with the command itself (toolAction.ts).
+      return { name: 'Bash', input: { command: item.input, ...(item.title && !/^ran command$/i.test(item.title.trim()) ? { description: item.title } : {}) } };
     case 'file_change': {
       // Codex reports a unified diff (`diffStr`); an Edit card with `patch` draws it as a diff.
       if (item.oldStr !== undefined || item.newStr !== undefined) {
