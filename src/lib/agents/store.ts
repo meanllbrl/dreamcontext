@@ -643,13 +643,16 @@ export function routinesBoundTo(contextRoot: string, slug: string): string[] {
  * `approvals[slug]` survives only as the current record of a scheduled
  * automation now in that slot.
  */
-export function removeAgent(contextRoot: string, slug: string, opts: { home?: string } = {}): RemoveAgentResult {
+export function removeAgent(contextRoot: string, slug: string, opts: { home?: string; ownSchedule?: boolean } = {}): RemoveAgentResult {
   const agent = getAgent(contextRoot, slug);
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
   assertOwned({ owner: agent.owner }, agent.title || slug);
+  // `ownSchedule`: the member delete removes the agent WITH its own unsplit scheduled manifest
+  // (that manifest is the agent), so it does not count as a routine still running as it.
   const usedBy = readSlotFiles(contextRoot)
     .filter((f) => boundJobOf(f, slug) !== null)
-    .map((f) => f.slug);
+    .map((f) => f.slug)
+    .filter((s) => !(opts.ownSchedule && s === slug && agent.implicit));
   if (usedBy.length > 0) return { removed: false, usedBy };
   if (agent.scope === 'global') return removeGlobalAgent(slug, opts);
 

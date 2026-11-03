@@ -2,9 +2,9 @@ import { cpSync, existsSync, lstatSync, mkdirSync, rmSync, writeFileSync } from 
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { getAgent, removeAgent, routinesBoundTo } from '../lib/agents/store.js';
 import { assertOwned } from '../lib/agents/owner.js';
-import { globalAgentHome } from '../lib/agents/scope.js';
+import { globalAgentHome, isGlobalAgentHere } from '../lib/agents/scope.js';
 import { automationPath, getAutomation, removeAutomation, resolveAutomationPhoto } from '../lib/automations/store.js';
-import { revokeApproval } from '../lib/automations/registry.js';
+import { listRegisteredProjects, revokeApproval } from '../lib/automations/registry.js';
 import { listVaults } from '../lib/vaults.js';
 import { readSuperState, superIdOfMember, superReadMarksPath, superRecordPath } from '../lib/super/store.js';
 import { activityOf, getChat } from '../lib/assistant/chat-registry.js';
@@ -26,19 +26,28 @@ export interface MemberDeletePlan {
   global: boolean;
   routines: MemberRoutine[];
   /** Why it may not go now; empty = it may. */
-  blockers: Array<'read_only' | 'member_working' | 'routine_running'>;
+  blockers: Array<'read_only' | 'member_working' | 'routine_running' | 'routine_not_owned'>;
 }
 
 interface Project { name: string; root: string }
 
 /** The projects a member lives in: its own, or every registered one for a global member. */
-function projectsOf(contextRoot: string, global: boolean, home?: string): Project[] {
+function projectsOf(contextRoot: string, slug: string, global: boolean, home?: string): Project[] {
   const here: Project = { name: basename(dirname(contextRoot)), root: resolve(contextRoot) };
   if (!global) return [here];
   const out = new Map<string, Project>([[here.root, here]]);
-  for (const v of listVaults(home)) {
+  // Every project the global agent's own delete reaches (the automations registry), and every
+  // open one (vaults): the same set the final removeGlobalAgent checks, so nothing is missed.
+  const candidates = [
+    ...listVaults(home).map((v) => ({ name: v.name, path: v.path })),
+    ...listRegisteredProjects(home).map((p) => ({ name: basename(p), path: p })),
+  ];
+  for (const v of candidates) {
     const root = resolve(join(v.path, '_dream_context'));
-    if (!out.has(root) && existsSync(root)) out.set(root, { name: v.name, root });
+    if (out.has(root) || !existsSync(root)) continue;
+    // A project whose own agent shadows the name is not this member's: its routines stay.
+    if (!isGlobalAgentHere(root, slug, home)) continue;
+    out.set(root, { name: v.name, root });
   }
   return [...out.values()];
 }
@@ -66,11 +75,14 @@ export async function planMemberDelete(contextRoot: string, slug: string, home?:
   const blockers = new Set<MemberDeletePlan['blockers'][number]>();
   try { assertOwned({ owner: agent.owner }, agent.title || slug); } catch { blockers.add('read_only'); }
   const routines: MemberRoutine[] = [];
-  for (const p of projectsOf(contextRoot, global, home)) {
+  for (const p of projectsOf(contextRoot, slug, global, home)) {
     for (const r of routinesBoundTo(p.root, slug)) {
       if (r === slug) continue; // the agent's own unsplit manifest IS the agent: it goes with it
-      routines.push({ project: p.name, slug: r, title: getAutomation(p.root, r, home)?.title || r });
+      const a = getAutomation(p.root, r, home);
+      routines.push({ project: p.name, slug: r, title: a?.title || r });
       if (agentActivity(p.root, r)) blockers.add('routine_running');
+      // A teammate's routine cannot be removed by this Mac: refused before anything goes.
+      try { if (a) assertOwned({ owner: (a as { owner?: unknown }).owner } as never, a.title || r); } catch { blockers.add('routine_not_owned'); }
     }
     if (agentActivity(p.root, slug)) blockers.add('member_working');
     if (await workingIn(p.root, slug)) blockers.add('member_working');
@@ -110,14 +122,18 @@ export async function deleteMember(
   if (!plan) return null;
   if (plan.blockers.length) return { ok: false, plan, trash: null, left: [] };
   const agent = getAgent(contextRoot, slug, deps.home)!;
-  const projects = projectsOf(contextRoot, plan.global, deps.home);
+  const projects = projectsOf(contextRoot, slug, plan.global, deps.home);
 
   // 1. The copy, before anything goes.
   const trashRoot = join(contextRoot, 'state', '.trash');
   plainDir(join(contextRoot, 'state'));
   plainDir(trashRoot);
+  // The only thing keeping the copy out of git: never trusted, never written through a link, and
+  // always exactly `*` (a planted `!*` would push other projects' data to this repo's remote).
   const ignore = join(trashRoot, '.gitignore');
-  if (!existsSync(ignore)) writeFileSync(ignore, '*\n', 'utf-8');
+  const ig = lstatSync(ignore, { throwIfNoEntry: false });
+  if (ig && (ig.isSymbolicLink() || !ig.isFile())) throw new Error('state/.trash/.gitignore is not a plain file');
+  writeFileSync(ignore, '*\n', 'utf-8');
   plainDir(join(trashRoot, 'members'));
   let trash = join(trashRoot, 'members', `${stamp(deps.now ?? new Date())}-${slug}`);
   for (let i = 2; existsSync(trash); i++) trash = `${trash.replace(/-\d+$/, '')}-${i}`;
@@ -143,6 +159,7 @@ export async function deleteMember(
   const left: string[] = [];
   // 2. Its Super stops in every project (main is told), then its record and marks go.
   for (const p of projects) {
+    if (left.length) break;
     if (!existsSync(superRecordPath(p.root, superIdOfMember(slug)))) continue;
     try {
       await deps.stopSuper(p.root, slug);
@@ -152,21 +169,22 @@ export async function deleteMember(
       }
     } catch { left.push(`${p.name}: stage`); }
   }
-  // 3. Every routine (remove + revoke, one helper with the routine route).
-  for (const p of projects) {
+  // 3. Every routine (remove + revoke, one helper with the routine route). Not after a failure
+  //    above: a member that stays keeps its routines (all or nothing, plan r4 F4).
+  for (const p of left.length ? [] : projects) {
     for (const r of plan.routines.filter((x) => x.project === p.name)) {
+      if (left.length) break;
       try { deleteRoutine(p.root, r.slug); } catch { left.push(`${p.name}: ${r.title}`); }
     }
   }
   // 4. The member last: a failure above keeps it, so nothing half-deleted still runs.
   if (!left.length) {
     try {
-      // Its own unsplit scheduled manifest is the agent itself.
-      if (routinesBoundTo(contextRoot, slug).includes(slug)) deleteRoutine(contextRoot, slug);
-      if (getAgent(contextRoot, slug, deps.home)) {
-        const r = removeAgent(contextRoot, slug, { home: deps.home });
-        if (!r.removed) left.push(...r.usedBy);
-      }
+      // Its own unsplit scheduled manifest is the agent itself: removeAgent takes it with every
+      // key's death (grant, local entries, task jobs, reports), never a bare manifest delete.
+      const r = removeAgent(contextRoot, slug, { home: deps.home, ownSchedule: true });
+      if (!r.removed) left.push(...r.usedBy);
+      else if (routinesBoundTo(contextRoot, slug).includes(slug)) deleteRoutine(contextRoot, slug);
     } catch { left.push(plan.title); }
   }
   writeFileSync(join(trash, 'receipt.json'), `${JSON.stringify({ member: slug, title: plan.title, global: plan.global, deletedAt: (deps.now ?? new Date()).toISOString(), routines: plan.routines, files, left }, null, 2)}\n`, 'utf-8');

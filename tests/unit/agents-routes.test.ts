@@ -197,6 +197,55 @@ describe('writes', () => {
     expect(readFileSync(join(contextRoot, 'state', '.trash', '.gitignore'), 'utf-8')).toBe('*\n');
   });
 
+  it('withRoutines: a member whose stage cannot be stopped keeps its routines (all or nothing)', async () => {
+    const { deleteMember } = await import('../../src/server/member-delete.js');
+    const { superRecordPath } = await import('../../src/lib/super/store.js');
+    const { emptySuperState } = await import('../../src/lib/super/types.js');
+    const { writeFileSync } = await import('node:fs');
+    createAgent(contextRoot, { slug: 'writer', title: 'Writer', prompt: 'Write.' }, { approve: { now: NOW } });
+    createAutomation(contextRoot, { slug: 'daily-notes', title: 'Daily notes', agent: 'writer', days: 'daily', at: '08:00' });
+    mkdirSync(join(contextRoot, 'state', '.super', 'members'), { recursive: true });
+    writeFileSync(superRecordPath(contextRoot, 'm:writer'), JSON.stringify({ ...emptySuperState(), session: null, enabled: false, member: 'writer' }));
+    const out = await deleteMember(contextRoot, 'writer', { stopSuper: async () => { throw new Error('stuck'); }, retireSuper: () => undefined });
+    expect(out?.ok).toBe(false);
+    expect(out?.left.length).toBeGreaterThan(0);
+    expect(existsSync(join(contextRoot, 'automations', 'daily-notes.md'))).toBe(true);
+    expect(getAgent(contextRoot, 'writer')).not.toBeNull();
+  });
+
+  it('withRoutines: an unsplit scheduled member goes with its own manifest and its grant', async () => {
+    const digest = createAutomation(contextRoot, { slug: 'digest', title: 'Digest', prompt: 'Write the digest.', days: 'daily', at: '18:00' });
+    approveAutomation(projectRoot, digest, NOW);
+    const dry = makeRes();
+    await handleAgentsDelete(post({ withRoutines: true, dryRun: true }), dry.res, { slug: 'digest' }, contextRoot);
+    expect(dry.body().plan).toMatchObject({ routines: [], blockers: [] });
+    const del = makeRes();
+    await handleAgentsDelete(post({ withRoutines: true }), del.res, { slug: 'digest' }, contextRoot);
+    expect(del.status()).toBe(200);
+    expect(getAgent(contextRoot, 'digest')).toBeNull();
+    expect(existsSync(join(contextRoot, 'automations', 'digest.md'))).toBe(false);
+    const again = createAutomation(contextRoot, { slug: 'digest', title: 'Digest', prompt: 'Write the digest.', days: 'daily', at: '18:00' });
+    expect(checkApproval(projectRoot, again).approved).toBe(false);
+  });
+
+  it('withRoutines: a planted trash .gitignore is overwritten with *, a symlinked one refuses the delete', async () => {
+    const { writeFileSync, symlinkSync } = await import('node:fs');
+    createAgent(contextRoot, { slug: 'writer', title: 'Writer', prompt: 'Write.' }, { approve: { now: NOW } });
+    mkdirSync(join(contextRoot, 'state', '.trash'), { recursive: true });
+    symlinkSync(join(projectRoot, 'elsewhere'), join(contextRoot, 'state', '.trash', '.gitignore'));
+    const refused = makeRes();
+    await handleAgentsDelete(post({ withRoutines: true }), refused.res, { slug: 'writer' }, contextRoot);
+    expect(refused.status()).toBeGreaterThanOrEqual(400);
+    expect(getAgent(contextRoot, 'writer')).not.toBeNull();
+    expect(existsSync(join(projectRoot, 'elsewhere'))).toBe(false);
+    rmSync(join(contextRoot, 'state', '.trash', '.gitignore'));
+    writeFileSync(join(contextRoot, 'state', '.trash', '.gitignore'), '!*\n');
+    const del = makeRes();
+    await handleAgentsDelete(post({ withRoutines: true }), del.res, { slug: 'writer' }, contextRoot);
+    expect(del.status()).toBe(200);
+    expect(readFileSync(join(contextRoot, 'state', '.trash', '.gitignore'), 'utf-8')).toBe('*\n');
+  });
+
   it('withRoutines is refused from the phone and from outside the owner\'s page; without it the 409 stands', async () => {
     createAgent(contextRoot, { slug: 'writer', title: 'Writer', prompt: 'Write.' }, { approve: { now: NOW } });
     createAutomation(contextRoot, { slug: 'daily-notes', title: 'Daily notes', agent: 'writer', days: 'daily', at: '08:00' });
