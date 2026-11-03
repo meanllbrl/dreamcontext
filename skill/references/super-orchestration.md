@@ -79,6 +79,11 @@ read, the card still goes, with a `warning`.
 **A report on a plan or on options is drawn, never written** (2026-10-31, the owner on a written
 plan: "görsel olarak görmek istiyorum, bu tip yazılı işi sevmem"): screen mockups, options side by
 side, short headings; text at the minimum, the 3-6 bullets become labels on the drawing.
+A mockup of a real product screen copies THAT product's look from its source styles (colors,
+type, radii, buttons, sidebar, window frame), inline, light theme; the `dc-` kit is only the
+report around it, grey boxes only for a wireframe he asked for. Steps in order (a user journey)
+are a `dc-graph` with edges, never a row of chips; color a node only when it means something,
+mixed tones with a one-line legend (2026-11-03).
 
 **Weigh his idea before you say yes** (owner, 2026-11-02). A new idea, design change or
 direction: does it hold, does it break an earlier decision or a project pattern, what does it

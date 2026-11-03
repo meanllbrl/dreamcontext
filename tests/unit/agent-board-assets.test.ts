@@ -391,9 +391,13 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * 2026-11-03: +94 for the one-line `dc-kv` shape (dt/dd pairs, or a div per row opening
    * with a dc-label), owner screenshot of a report whose kv rows crushed to a letter a line.
    * Actual 14,743; still under 14800.
+   * 2026-11-03: -> 15100 for +304, owner ("Kuralı düzelt", a plan report of grey boxes and a
+   * 13-chip journey): a product mockup copies that product's real look (the kit rule is the
+   * page's), a sequence past 2-4 steps is a dc-graph never a chip row, mixed node tones get a
+   * legend. Actual 15,047.
    */
   it('stays small enough to ride in every chat turn', () => {
-    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(14800);
+    expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(15100);
   });
 
   /**
@@ -404,7 +408,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 14743)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 15047)).toBeLessThanOrEqual(20);
   });
 
   /**

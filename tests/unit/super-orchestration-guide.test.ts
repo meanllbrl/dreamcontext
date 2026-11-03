@@ -104,8 +104,10 @@ describe('super-orchestration guide: shape', () => {
   // +450 (2026-11-02, plan-r10 Wave 2): every member is a Super; `team answer`, `team done`, no member assigns.
   // +500 (2026-11-02): a Bypass child's permission is the Super's to allow, deny or hand to the owner.
   // Wave 3 rewrote the request route in place (+0). Merged in 0.40.2 (measured 24,236).
-  it('is at most 24,250 bytes', () => {
-    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(24_250);
+  // +425 (2026-11-03, rapor-kurali): a product mockup copies that product's real look, the kit is
+  // only the report around it; steps in order are a dc-graph, never chips (measured 24,661).
+  it('is at most 24,700 bytes', () => {
+    expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(24_700);
   });
 
   it('routes a member\'s field to the member, and says its answer comes back (AI Team routing, 2026-10-29)', () => {
@@ -124,6 +126,12 @@ describe('super-orchestration guide: shape', () => {
     expect(FLAT).toContain('Its question about your job comes to YOUR queue, never his: `super team answer <item> "<answer>"`, or your own `super ask`, never forwarding it.');
     expect(FLAT).toContain('A member never gives another member work.');
     expect(FLAT).not.toMatch(/not live yet|After Wave 3|Until then `team ask`|member's own thread/);
+  });
+
+  it('draws a product mockup in that product\'s real look and a sequence as a dc-graph (owner, 2026-11-03)', () => {
+    expect(FLAT).toContain('A mockup of a real product screen copies THAT product\'s look from its source styles');
+    expect(FLAT).toContain('the `dc-` kit is only the report around it, grey boxes only for a wireframe he asked for');
+    expect(FLAT).toContain('Steps in order (a user journey) are a `dc-graph` with edges, never a row of chips');
   });
 
   it('has the seven sections in order', () => {

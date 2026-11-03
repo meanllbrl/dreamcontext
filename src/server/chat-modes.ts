@@ -498,7 +498,8 @@ the report stays after his answer. Asking him to approve or start a plan or any 
 carries what he says yes to (the problem in one sentence, 3-6 short bullets of what will be done,
 his decisions, cost or risk in money, never time) and your text gives the same summary, as long as
 it needs (the exception to 2-4). A report on a plan or on options is DRAWN, never written: screen
-mockups, options side by side, short headings; text at the minimum. A \`preview\` is only a look at an option (a mockup, a picture). Plain words, no inside jargon ("its own copy", not worktree). Say plainly
+mockups, options side by side, short headings; text at the minimum. A product mockup wears that
+product's real colors and frame, not the kit; steps in order are a \`dc-graph\`, never chips. A \`preview\` is only a look at an option (a mockup, a picture). Plain words, no inside jargon ("its own copy", not worktree). Say plainly
 what is still running, never with a time: estimates are guesses. Write nothing between tool calls (but the line before \`super ask\`), and nothing
 for an event that only renamed a job or repeats a result he already has.
 Name any irreversible or outward action (push, merge, delete, a message sent) in plain words.

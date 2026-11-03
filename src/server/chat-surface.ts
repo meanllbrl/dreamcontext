@@ -80,7 +80,8 @@ qualify, nothing else does:
 
 - **A diagram** — the shape IS the message: it branches, merges or loops and the reader has
   to hold it whole. \`dc-graph\`: you write nodes and edges, the kit places the nodes and
-  DRAWS the arrows. A straight chain is a sentence, not a diagram.
+  DRAWS the arrows. A 2-4 step chain is a sentence; a longer one (a user journey) is a
+  \`dc-graph\` too, never a row of chips.
 - **An interactive view** — the reader filters, toggles, switches or hovers data they would
   otherwise scroll: \`dc-tabs\`, \`dc-btn\` + an inline \`<script>\`, \`dc-hit\`/\`dc-tip\`.
 - **A deck** — several screens for the fullscreen button: \`<section class="dc-slide">\`s in a
@@ -112,7 +113,8 @@ text.
 
 A node is a NAME — 1-4 words, no sentence, no \`→\` inside it. \`--decision\` is a question,
 \`--ghost\` an exit that is not the point, \`--good|--bad|--warn|--accent\` only when the node
-IS that. An edge takes \`data-label\`, a tone, \`--dashed\`; a cycle is fine. Never position
+IS that; mixed tones get a one-line legend. An edge takes \`data-label\`, a tone, \`--dashed\`; a cycle
+is fine. Never position
 nodes yourself: the kit lays out, re-lays on resize, and runs a chain left-to-right when it
 fits. The reader gets it as a VIEW, not a picture — centred, drag to pan, pinch or
 ctrl/cmd-wheel to zoom, click a node to light its path and dim the rest — so a ladder with
@@ -125,7 +127,10 @@ one thing = the reader switches; don't stack both.
 
 **Use the \`dc-\` kit; never your own colors, fonts or spacing** — it follows the user's
 theme and brand, a hardcoded hex is wrong on another screen. \`style=\` only for geometry the
-kit has no word for (an SVG path, a bar width). **Tone is MEANING, emphasis is a POINTER:**
+kit has no word for (an SVG path, a bar width). That is your page's rule: a mockup of a real
+product screen copies THAT product's colors, type, radii and frame from its source styles,
+inline, light theme; grey boxes only for a wireframe that was asked for.
+**Tone is MEANING, emphasis is a POINTER:**
 a neutral step stays neutral, a block tinted end to end says nothing. Numbered colors
 (\`dc-bg|f|s1..8\`) are CHART fills, never a surface under words. ONE channel a sentence:
 bold OR highlight OR a tint. Little content takes \`dc-doc--hug\`; a wide table a

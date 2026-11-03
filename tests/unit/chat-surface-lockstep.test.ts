@@ -262,8 +262,17 @@ describe('CHAT_SURFACE_BRIEFING — prose first, HTML only where it beats prose'
     expect(section).toMatch(/delete the block and keep the prose/);
   });
 
-  it('states that a straight chain is a sentence — the shape the chip-row kept being drawn for', () => {
-    expect(CHAT_SURFACE_BRIEFING).toMatch(/A straight chain is a sentence, not a diagram/);
+  it('states that a short chain is a sentence and a longer sequence a dc-graph, never a chip row', () => {
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/A 2-4 step chain is a sentence/);
+    // Owner 2026-11-03: a 13-step journey drawn as wrapped chips was unreadable.
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/a longer one \(a user journey\) is a\s+\\?`dc-graph\\?` too, never a row of chips/);
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/only when the node\s+IS that; mixed tones get a one-line legend/);
+  });
+
+  it('keeps the kit rule for the page and lets a product mockup wear that product\'s real look', () => {
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/never your own colors, fonts or spacing/);
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/That is your page's rule: a mockup of a real\s+product screen copies THAT product's colors, type, radii and frame from its source styles/);
+    expect(CHAT_SURFACE_BRIEFING).toMatch(/grey boxes only for a wireframe that was asked for/);
   });
 
   it('shows a dc-graph as THE dream-html example, with edges the kit draws', () => {
