@@ -188,6 +188,17 @@ export class ToWire {
   }
   /** Questions per request, so an AskUserQuestion answer maps back to T3 question ids. */
   readonly questionsByRequest = new Map<string, ReadonlyArray<{ id: string; question: string }>>();
+  /**
+   * Codex's async questions (`request_user_input_async`): the tool ends its turn right after
+   * asking and takes the answer as the next message. The chat waits on them as it waits on
+   * Claude's AskUserQuestion: the turn's `result` is held until every one is answered, so the
+   * card, the chat's status and a Super child's queue item all stay open. T3 request ids.
+   */
+  private readonly asyncAsks = new Set<string>();
+  /** The `result` held while {@link asyncAsks} wait. */
+  private heldResult: WireFrame | null = null;
+  /** The answers given so far to the held questions, as the words the tool gets next. */
+  private readonly asyncAnswers: string[] = [];
   private turnOpen = false;
   private lastAssistantText = '';
   /** This turn's tokens, as T3 reported them last. */
@@ -712,6 +723,7 @@ export class ToWire {
     if (item.status !== 'waiting' && item.status !== 'pending') return [];
     if (this.openAsks.has(item.requestId)) return [];
     this.openAsks.add(item.requestId);
+    if (item.responseMode === 'message') this.asyncAsks.add(item.requestId);
     this.questionsByRequest.set(item.requestId, item.questions.map((q) => ({ id: q.id, question: q.question })));
     return [{
       type: 'control_request',
@@ -725,7 +737,8 @@ export class ToWire {
             question: q.question,
             header: q.header.slice(0, 12),
             multiSelect: q.multiSelect ?? false,
-            options: q.options.map((o) => ({ label: o.label, description: o.description })),
+            // T3 fills a missing description with the label (Codex's async options are bare labels): no echo.
+            options: q.options.map((o) => ({ label: o.label, ...(o.description && o.description !== o.label ? { description: o.description } : {}) })),
           })),
         },
       },
@@ -739,10 +752,17 @@ export class ToWire {
       out.push({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text: 'Plan written. Switch to Develop to build it.' }], is_error: false }] }, parent_tool_use_id: null, session_id: this.sessionId });
     }
     this.openPlans.clear();
-    // Cards still open when the turn ends can no longer be answered.
-    for (const id of this.openAsks) out.push({ type: 'control_cancel_request', request_id: this.wireIdFor(id) });
-    this.openAsks.clear();
     const ok = event.status === 'completed';
+    // An async question outlives the turn that asked it, but only a turn that finished.
+    const holding = ok && this.asyncAsks.size > 0;
+    // Cards still open when the turn ends can no longer be answered.
+    for (const id of this.openAsks) {
+      if (holding && this.asyncAsks.has(id)) continue;
+      out.push({ type: 'control_cancel_request', request_id: this.wireIdFor(id) });
+    }
+    this.openAsks.clear();
+    if (holding) for (const id of this.asyncAsks) this.openAsks.add(id);
+    else { this.asyncAsks.clear(); this.asyncAnswers.length = 0; }
     const failure = event.status === 'failed' ? event.failure : null;
     // A usage-limit refusal (T3 `failure.class === 'usage_limit'`): the server's switch reads it
     // like Claude's refusal frame, with the reset T3 knows (plan r5 §4d "Limit detection").
@@ -750,7 +770,7 @@ export class ToWire {
     const quota = ok && this.opts.tool === 'antigravity' ? antigravityQuotaReply(this.lastAssistantText, now) : null;
     const limited = failure?.class === 'usage_limit' || kind === 'limit' || !!quota;
     const limitResetMs = failure?.class === 'usage_limit' && failure.resetAt ? Date.parse(failure.resetAt) : quota?.resetsAtMs ?? NaN;
-    out.push({
+    const result: WireFrame = {
       type: 'result',
       subtype: ok ? 'success' : 'error_during_execution',
       is_error: !ok,
@@ -765,7 +785,71 @@ export class ToWire {
       ...(this.turnUsage ? { dc_turn_usage: this.turnUsage } : {}),
       ...(limited ? { dc_limit: { resetsAtMs: Number.isFinite(limitResetMs) ? limitResetMs : null } } : {}),
       ...(kind === 'signed-out' ? { dc_signed_out: true } : {}),
-    });
+    };
+    if (holding) {
+      // The turn stays open on the wire until the owner answers: no `result` yet.
+      this.heldResult = result;
+      return out;
+    }
+    this.heldResult = null;
+    out.push(result);
+    this.turnOpen = false;
+    return out;
+  }
+
+  /** Is the chat waiting on an async question (a finished turn whose `result` is held)? */
+  get holding(): boolean {
+    return this.heldResult !== null;
+  }
+
+  /** Is this card (the client's id) an async question? */
+  isAsyncAsk(wireId: string): boolean {
+    return this.asyncAsks.has(this.t3RequestId(wireId));
+  }
+
+  /**
+   * The owner answered (or closed) an async question card. Once every held question is settled:
+   * the words to send the tool as the next message, or, with no answer at all, the held `result`
+   * that ends the turn on the wire.
+   */
+  settleAsyncAsk(wireId: string, response: { behavior?: string; updatedInput?: unknown; message?: string }): { send: string | null; frames: WireFrame[] } {
+    const t3Id = this.t3RequestId(wireId);
+    if (!this.asyncAsks.delete(t3Id)) return { send: null, frames: [] };
+    this.openAsks.delete(t3Id);
+    // A plain dismissal reaches us as the server's default deny ("Denied"): no words for the tool.
+    const said = response.message?.trim();
+    const words = response.behavior === 'allow'
+      ? asyncAnswerText(this.questionsByRequest.get(t3Id) ?? [], response.updatedInput)
+      : (said && said !== 'Denied' ? `I did not pick an option. ${said}` : '');
+    if (words) this.asyncAnswers.push(words);
+    if (this.asyncAsks.size) return { send: null, frames: [] };
+    const send = this.asyncAnswers.splice(0).join('\n\n');
+    if (send) return { send, frames: [] };
+    return { send: null, frames: this.endHeld() };
+  }
+
+  /**
+   * A new run starts while the questions wait (the owner wrote instead of picking, a compaction):
+   * their cards close and the held `result` goes; the turn stays open for the run that continues it.
+   */
+  dropAsyncAsks(): WireFrame[] {
+    const out: WireFrame[] = [];
+    for (const id of this.asyncAsks) {
+      this.openAsks.delete(id);
+      out.push({ type: 'control_cancel_request', request_id: this.wireIdFor(id) });
+    }
+    this.asyncAsks.clear();
+    this.asyncAnswers.length = 0;
+    this.heldResult = null;
+    return out;
+  }
+
+  /** End a held turn without an answer (Stop, or every card closed): its cards close, its `result` goes. */
+  endHeld(): WireFrame[] {
+    const result = this.heldResult;
+    const out = this.dropAsyncAsks();
+    if (!result) return out;
+    out.push(result);
     this.turnOpen = false;
     return out;
   }
@@ -786,4 +870,22 @@ export class ToWire {
     }
     return out;
   }
+}
+
+/**
+ * The owner's pick on an async question, as the message the tool reads next: each question with
+ * its answer, and his note when he typed one (`annotations[question].notes`).
+ */
+export function asyncAnswerText(questions: ReadonlyArray<{ id: string; question: string }>, updatedInput: unknown): string {
+  const given = isRecord(updatedInput) && isRecord(updatedInput.answers) ? updatedInput.answers : {};
+  const notes = isRecord(updatedInput) && isRecord(updatedInput.annotations) ? updatedInput.annotations : {};
+  const lines: string[] = [];
+  for (const q of questions) {
+    const a = given[q.question];
+    if (typeof a !== 'string' || !a.trim()) continue;
+    const note = isRecord(notes[q.question]) && typeof (notes[q.question] as Record<string, unknown>).notes === 'string'
+      ? String((notes[q.question] as Record<string, unknown>).notes).trim() : '';
+    lines.push(`${q.question}\nMy answer: ${a.trim()}${note ? `\nMy note: ${note}` : ''}`);
+  }
+  return lines.join('\n\n');
 }
