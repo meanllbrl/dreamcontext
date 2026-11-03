@@ -77,7 +77,9 @@ export async function planMemberDelete(contextRoot: string, slug: string, home?:
   const routines: MemberRoutine[] = [];
   for (const p of projectsOf(contextRoot, slug, global, home)) {
     for (const r of routinesBoundTo(p.root, slug)) {
-      if (r === slug) continue; // the agent's own unsplit manifest IS the agent: it goes with it
+      // An UNSPLIT member's own manifest IS the member: it goes with it. A split member's routine
+      // of the same name is a routine like any other: listed, and removed in step 3.
+      if (r === slug && agent.implicit && p.root === resolve(contextRoot)) continue;
       const a = getAutomation(p.root, r, home);
       routines.push({ project: p.name, slug: r, title: a?.title || r });
       if (agentActivity(p.root, r)) blockers.add('routine_running');

@@ -228,6 +228,22 @@ describe('writes', () => {
     expect(checkApproval(projectRoot, again).approved).toBe(false);
   });
 
+  it('withRoutines: a SPLIT scheduled member lists its same-name routine and goes whole', async () => {
+    const digest = createAutomation(contextRoot, { slug: 'digest', title: 'Digest', prompt: 'Write the digest.', days: 'daily', at: '18:00' });
+    approveAutomation(projectRoot, digest, NOW);
+    expect(splitLegacyManifest(contextRoot, 'digest', { home: fakeHome }).outcome).toBe('split');
+    createAutomation(contextRoot, { slug: 'extra', title: 'Extra', agent: 'digest', days: 'daily', at: '07:00' });
+    const dry = makeRes();
+    await handleAgentsDelete(post({ withRoutines: true, dryRun: true }), dry.res, { slug: 'digest' }, contextRoot);
+    expect((dry.body().plan as { routines: Array<{ slug: string }> }).routines.map((r) => r.slug).sort()).toEqual(['digest', 'extra']);
+    const del = makeRes();
+    await handleAgentsDelete(post({ withRoutines: true }), del.res, { slug: 'digest' }, contextRoot);
+    expect(del.status()).toBe(200);
+    expect(getAgent(contextRoot, 'digest')).toBeNull();
+    expect(existsSync(join(contextRoot, 'automations', 'digest.md'))).toBe(false);
+    expect(existsSync(join(contextRoot, 'automations', 'extra.md'))).toBe(false);
+  });
+
   it('withRoutines: a planted trash .gitignore is overwritten with *, a symlinked one refuses the delete', async () => {
     const { writeFileSync, symlinkSync } = await import('node:fs');
     createAgent(contextRoot, { slug: 'writer', title: 'Writer', prompt: 'Write.' }, { approve: { now: NOW } });

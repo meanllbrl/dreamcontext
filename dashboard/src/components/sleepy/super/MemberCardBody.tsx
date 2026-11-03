@@ -74,7 +74,7 @@ function useMemberRoutines(slug: string): TeamAutomation[] {
   const autos = useAutomations();
   // The member's own unsplit scheduled manifest IS the member (the server's rule): never a row
   // here, so a routine's Sil can never delete the member itself, and the count is the dialog's.
-  return useMemo(() => ((autos.data ?? []) as TeamAutomation[]).filter((a) => routineOf(a, slug) && a.slug !== slug), [autos.data, slug]);
+  return useMemo(() => ((autos.data ?? []) as TeamAutomation[]).filter((a) => routineOf(a, slug) && !(a.slug === slug && !a.agent)), [autos.data, slug]);
 }
 
 function RoutinesCard(p: CardProps) {
