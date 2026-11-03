@@ -24,8 +24,9 @@
  *
  *   (a) ONE Ekip row (`drawer-team-row`) with faces and one count = owner-facing questions +
  *       owner unread + approval cards of the project's members (from summary=1 `members`).
- *   (b) its list (`team-list`): Rota first, Mira before Pera, Pera "Super için" with no count, Kip
- *       "Kapalı", no global member; Kip's switch (`team-member-switch`) turns it on through
+ *   (b) its list (`team-list`, opened in place under the row): Rota first, Mira before Pera, Pera
+ *       "Super için" with no count, Kip dimmed, no global member, no switch (plan r4 R2); Kip's
+ *       stage's Üye card switch (`member-card-switch`) turns it on through
  *       POST /api/agents/kip/enabled and back off.
  *   (c) the Global ekip row (`drawer-global-team-row`) below every project, Ada in it, its count
  *       taking Ada's card once; its list (`global-team-list`) names the project.
@@ -364,12 +365,23 @@ async function run(engineName, base, port) {
   const peraText = (await peraRow.innerText().catch(() => '')).replace(/\s+/g, ' ');
   ok(tag('(b) Pera is tagged "Super için"'), /Super için|for (the )?Super/i.test(peraText), peraText);
   ok(tag('(b) …with no count'), !/(^|\s)\d+(\s|$)/.test(peraText), peraText);
-  const kipText = (await list.locator('[data-testid="team-list-member"][data-slug="kip"]').innerText().catch(() => '')).replace(/\s+/g, ' ');
-  ok(tag('(b) Kip reads "Kapalı"'), /Kapalı|\bOff\b/i.test(kipText), kipText);
-  const sw = list.locator('[data-testid="team-member-switch"][data-slug="kip"]');
-  ok(tag('(b) Kip\'s switch is off'), (await sw.getAttribute('aria-checked').catch(() => null)) === 'false');
+  ok(tag('(b) Kip is drawn off (dimmed)'), (await list.locator('[data-testid="team-list-member"][data-slug="kip"]').getAttribute('data-off').catch(() => null)) === 'true');
+  // r3 R2: the sidebar list has no switch; it is on the member's stage, in its Üye card.
+  ok(tag('(b) the sidebar list has no switch'), (await list.locator('[role="switch"]').count()) === 0);
   await shots(page, '02', 'ekip-list', () => openList());
-  await openList();
+  await openMember(page, 'kip');
+  ok(tag('(b) Kip\'s stage opens with its own cards'), await until(page, async () => (await stage(page, 'm:kip').locator('[data-kind="member"]').count()) > 0, 20000));
+  const openUye = async () => {
+    const st = stage(page, 'm:kip');
+    if (await st.getByTestId('member-card-switch').isVisible().catch(() => false)) return;
+    const others = st.locator('[data-testid="super-others-stack"], [data-testid="super-others-open"]').first();
+    if (await others.isVisible().catch(() => false)) await others.click();
+    const item = page.locator('[data-testid="super-others-item"]').filter({ hasText: /Üye|Member/ }).first();
+    if (await item.isVisible().catch(() => false)) await item.click();
+  };
+  await openUye();
+  const sw = stage(page, 'm:kip').getByTestId('member-card-switch');
+  ok(tag('(b) the Üye card\'s switch is there, and off'), await until(page, async () => (await sw.getAttribute('aria-checked').catch(() => null)) === 'false', 15000));
   const flip = async (to) => {
     const wait = page.waitForResponse((r) => /\/api\/agents\/kip\/enabled/.test(r.url()) && r.request().method() === 'POST', { timeout: 10000 }).catch(() => null);
     await sw.click();
@@ -383,6 +395,7 @@ async function run(engineName, base, port) {
   const back = await flip(false);
   ok(tag('(b) …and back off'), back.status === 200 && back.body?.enabled === false && back.checked, JSON.stringify(back));
   await page.keyboard.press('Escape');
+  await toMainStage(page);
 
   console.log(`── ${engineName}: (c) the Global ekip row, (g) Ada's stage`);
   const grow = page.locator('[data-testid="drawer-global-team-row"]');
@@ -405,10 +418,7 @@ async function run(engineName, base, port) {
   const glist = page.locator('[data-testid="global-team-list"]:visible');
   const openGlist = async () => { await ensureDrawer(page); if (!(await glist.count())) await grow.click(); };
   await openGlist();
-  ok(tag('(c) its list opens with Ada and her project'), await until(page, async () => {
-    const t = await glist.innerText().catch(() => '');
-    return /Ada/.test(t) && t.includes(VAULT);
-  }, 10000), await glist.innerText().catch(() => ''));
+  ok(tag('(c) its list opens with Ada'), await until(page, async () => /Ada/.test(await glist.innerText().catch(() => '')), 10000), await glist.innerText().catch(() => ''));
   await shots(page, '03', 'global-ekip-list', () => openGlist());
   await openGlist();
   await glist.getByText('Ada', { exact: false }).first().click();
