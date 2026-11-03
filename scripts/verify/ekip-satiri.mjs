@@ -369,8 +369,12 @@ async function run(base) {
   ok('s8 the Üye card turns it off', await until(page, async () => (await sw2.getAttribute('aria-checked').catch(() => null)) === 'false', 10000));
   await toFloat();
   ok('s8 after a reload its stage draws its cards', await reopen());
-  ok(`s8 Talimatlar is still ${want}, Rutinler still in Others (its own layout, not the defaults)`,
-    (await st.locator(`[data-kind="member"][data-size="${want}"]`).filter({ has: page.locator('[data-member-card="instructions"]') }).count()) === 1
+  // data-size is the DRAWN size, which the stage's room decides (the Üye card is on it now): the
+  // owner's size is read from the off member's own record, the place from the screen (run s14).
+  ok(`s8 its record still says Talimatlar ${want}, Rutinler in Others`,
+    cardOf(await record(), 'instructions')?.size === want && cardOf(await record(), 'routines')?.place === 'others', JSON.stringify((await record()).containers ?? []).slice(0, 400));
+  ok('s8 its stage draws that layout, not the defaults: Talimatlar on the stage, Rutinler not',
+    (await st.locator('[data-kind="member"][data-size]').filter({ has: page.locator('[data-member-card="instructions"]') }).count()) === 1
     && (await st.locator('[data-kind="member"][data-size]').filter({ has: page.locator('[data-member-card="routines"]') }).count()) === 0);
   await shots(page, '08', 'kapali-uye-kendi-duzeni', (w) => stageOnly(page, w));
 
