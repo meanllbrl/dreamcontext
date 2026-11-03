@@ -388,6 +388,9 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * about that picture. Both rules kept in one briefing.
    * 2026-11-01: +231 for the `automation` approval card (owner: "onay sohbette kart olarak
    * gelsin"), one worked example as the lockstep test requires; still under 14800.
+   * 2026-11-03: +94 for the one-line `dc-kv` shape (dt/dd pairs, or a div per row opening
+   * with a dc-label), owner screenshot of a report whose kv rows crushed to a letter a line.
+   * Actual 14,743; still under 14800.
    */
   it('stays small enough to ride in every chat turn', () => {
     expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(14800);
@@ -401,7 +404,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 14649)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 14743)).toBeLessThanOrEqual(20);
   });
 
   /**

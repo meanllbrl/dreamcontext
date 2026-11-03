@@ -360,8 +360,20 @@ body {
 .dc-kv { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 4px 14px; font-size: 0.929rem; }
 .dc-kv dt { color: var(--color-text-tertiary); }
 .dc-kv dd { margin: 0; color: var(--color-text); }
+/* The OTHER shape agents write: one child per row, a `dc-label` inline and the text after
+   it (`<div><span class="dc-label">Risk</span> text</div>`). Dealt into the grid, every other
+   row landed in the value column and the auto key column, grown to a whole sentence, left it
+   one letter wide (owner screenshot 2026-11-03, "BLOK / LAYA / N"). Such a row is a whole
+   pair, so it spans both columns; dt/dd are excluded, a label styled inside a dt is a key.
+   And any kv holding a non-dt/dd child gets a value column floored at a LINE, never zero.
+   Only that kv: a pure dt/dd list sized to its content (dc-doc--hug, a dc-row item) cannot
+   resolve the percentage and would hand the floor out of the KEY column instead. */
+.dc-kv > :has(> .dc-label):not(dt):not(dd) { grid-column: 1 / -1; color: var(--color-text); }
+.dc-kv > :has(> .dc-label):not(dt):not(dd) > .dc-label { margin-right: 6px; }
+.dc-kv:has(> :not(dt):not(dd)) { grid-template-columns: minmax(0, auto) minmax(min(16ch, 100%), 1fr); }
 @container (max-width: 360px) {
   .dc-kv { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .dc-kv:has(> :not(dt):not(dd)) { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .dc-kv dd + dt { margin-top: 8px; }
 }
 
