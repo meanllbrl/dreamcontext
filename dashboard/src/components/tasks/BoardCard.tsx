@@ -11,7 +11,7 @@ import {
 import { JobChipView } from './JobChipView';
 import { jobChip } from '../../lib/taskAgentJob';
 import { useI18n } from '../../context/I18nContext';
-import { TaskAgentFace } from './AssignToAgentComposer';
+import { TaskFaceButton } from './detail/AgentJobRow';
 import { BoardSubtasks } from './BoardSubtasks';
 
 interface BoardCardProps {
@@ -189,8 +189,8 @@ export function BoardCard({
           </span>
         )}
         {showVersion && <span className="bd-ver-chip" title="Versions & Sprints">{task.version}</span>}
-        {agent && <TaskAgentFace slug={agent} />}
-        {reviewer && reviewer !== agent && <span className="bd-card-reviewer" data-testid="card-reviewer"><TaskAgentFace slug={reviewer} /></span>}
+        {agent && <TaskFaceButton slug={agent} task={task.slug} role="doer" />}
+        {reviewer && reviewer !== agent && <span className="bd-card-reviewer" data-testid="card-reviewer"><TaskFaceButton slug={reviewer} task={task.slug} role="reviewer" /></span>}
         {showAssignee && <AvatarStack slugs={assignees} ring="var(--color-bg-elevated)" nameOf={nameOf} />}
         {!cp.priority && !showVersion && <span className="bd-card-mono">{fmtUpdated(task.updated_at)}</span>}
       </div>

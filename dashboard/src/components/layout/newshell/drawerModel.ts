@@ -3,14 +3,18 @@
  * knows (the picker order, the mounted instances' rollups and drawer facts, the fan-out reads of
  * expanded projects that are not mounted) and `ChatDrawer` draws exactly the rows this returns.
  *
- * Under each expanded project, in order: the Super Agent row (always, D6), the AI Team members
- * that have work (LISTED statuses only, D7, never a job the Super Agent gave them), and one row per
- * chat window that holds a chat, with its own ring and count (W3, D8). A project with none has one
- * New Chat row instead: nothing here opens onto an empty screen. A collapsed project's row carries
- * the sum of those same rows.
+ * Under each expanded project, in order: the Super Agent row (always, D6), ONE Ekip row when the
+ * project has a member of its own (plan-r10 1d: faces and one count, from `summary=1` `members`;
+ * ten members are still one row), and one row per chat window that holds a chat, with its own
+ * ring and count (W3, D8). A project with none has one New Chat row instead: nothing here opens
+ * onto an empty screen. A collapsed project's row carries the sum of those same rows and keeps
+ * its Ekip row. Members of all projects are in ONE Global ekip row at the very bottom (1f).
  */
 import type { ProjectRollup } from '../../sleepy/agentStatus';
-import type { TeamRow, TeamStatus } from '../../aiteam/teamModel';
+import {
+  buildEkip, buildGlobalEkip, ekipAsking, ekipCount, projectEkip,
+  type EkipIdentity, type EkipMember, type EkipSummary, type GlobalEkipMember, type TeamRow, type TeamStatus,
+} from '../../aiteam/teamModel';
 import type { AddTabResult } from '../WindowChrome';
 import type { DrawerChatFact, DrawerWindowFact } from '../../../lib/drawerIntents';
 import type { LiveChatWire, LiveChatsWire } from '../../handsfree/macContract';
@@ -34,6 +38,18 @@ export interface DrawerTeamRow {
   title: string;
   hasPhoto: boolean;
   status: TeamStatus;
+  /** Everything that makes it busy is the Super Agent's (a headless `team` job). */
+  superOnly?: boolean;
+  /** Its open question's words (a headless routine's). */
+  preview?: string | null;
+}
+
+/** What one project's Ekip row is read from: the summary's `members` and who they are. */
+export interface DrawerEkipFacts {
+  /** `GET /agent/sessions?summary=1` `members`; absent before the first read. */
+  members?: EkipSummary[];
+  /** `GET /agents`: names and faces. */
+  identities?: EkipIdentity[];
 }
 
 /** What a mounted instance publishes up (`DrawerFactsBridge`). */
@@ -58,6 +74,9 @@ export interface DrawerFacts {
   chats?: DrawerChatFact[];
   /** The tab on screen. */
   activeChatId?: string;
+  /** The Ekip row's read (plan-r10 1d). */
+  members?: EkipSummary[];
+  identities?: EkipIdentity[];
 }
 
 /** What the fan-out reads for an expanded project that is not mounted (D7). No ring: nothing
@@ -70,6 +89,9 @@ export interface FanoutFacts {
   windows?: Array<{ id: string; name: string; tabs: number }>;
   /** The same marks, read from that project's record. */
   superMarks?: { working: number; asking: boolean };
+  /** The Ekip row's read, collapsed projects included. */
+  members?: EkipSummary[];
+  identities?: EkipIdentity[];
 }
 
 export interface DrawerProjectInput {
@@ -87,7 +109,8 @@ export interface DrawerProjectInput {
 
 export type DrawerChild =
   | { kind: 'super'; on: boolean; selected: boolean; working: number; asking: boolean }
-  | { kind: 'member'; slug: string; title: string; hasPhoto: boolean; status: TeamStatus; selected: boolean }
+  /** ONE Ekip row (plan-r10 1d): the project's own members, in the list's order; one count. */
+  | { kind: 'team'; vault: string; members: EkipMember[]; count: number; asking: boolean; selected: boolean }
   | {
     kind: 'window';
     id: string;
@@ -141,6 +164,70 @@ export interface DrawerProjectRow {
   superAsking?: boolean;
   /** Collapsed: the sum of the rows it would show, for the ring beside the name. */
   sum?: { live: number; asking: number; working: number; idle: number; flagged: number };
+  /** Collapsed: its Ekip row stays under it (r8-05). */
+  team?: Extract<DrawerChild, { kind: 'team' }>;
+}
+
+/** The Global ekip row (plan-r10 1f, r8-12): every member of all projects once. */
+export interface GlobalTeamRow {
+  members: GlobalEkipMember[];
+  count: number;
+  asking: boolean;
+}
+
+/** The headless rows the Ekip row still reads: in-flight headless `team` jobs (the Super's) and
+ *  a routine's open question. Everything else comes from the summary's `members`. */
+export function headlessRowsOf(roster: readonly TeamRow[]): DrawerTeamRow[] {
+  return roster
+    .filter((r) => !r.readOnly && (r.status === 'working' || r.status === 'needs' || r.status === 'approval'))
+    .map((r) => ({ slug: r.slug, title: r.title, hasPhoto: r.hasPhoto, status: r.status, superOnly: r.superOnly, preview: r.preview }));
+}
+
+/** One project's members, globals included, from what the window read for it. */
+export function ekipOf(read: (DrawerEkipFacts & { team?: readonly DrawerTeamRow[] }) | undefined): EkipMember[] {
+  if (!read?.members) return [];
+  return buildEkip(read.members, read.identities, read.team ?? []);
+}
+
+/** The Ekip row of a project, or null when it has no member of its own. */
+export function teamChildOf(vault: string, all: readonly EkipMember[], selected: boolean): Extract<DrawerChild, { kind: 'team' }> | null {
+  const members = projectEkip(all);
+  if (!members.length) return null;
+  return { kind: 'team', vault, members, count: ekipCount(members), asking: ekipAsking(members), selected };
+}
+
+/**
+ * The Global ekip row over the listed projects, or null when no project has a member of all
+ * projects. Its count: each project's owner-facing questions and owner-origin unread of global
+ * members, summed, plus each global member's approval card ONCE (one machine-wide bucket).
+ */
+export function buildGlobalTeam(perProject: ReadonlyArray<{ vault: string; members: readonly EkipMember[] }>, inView: string | null): GlobalTeamRow | null {
+  const members = buildGlobalEkip(perProject, inView);
+  if (!members.length) return null;
+  let count = 0;
+  for (const p of perProject) {
+    for (const m of p.members) {
+      if (!m.global || !m.enabled || m.superOnly) continue;
+      if (m.asking) count += 1;
+      count += m.unread;
+    }
+  }
+  for (const m of members) if (m.approval) count += 1;
+  return { members, count, asking: members.some((m) => m.approval || (m.asking && m.enabled && !m.superOnly)) };
+}
+
+/** Every listed project's members (globals included), for the Global ekip row: the mounted
+ *  ones' facts, the fan-out's reads, a device shell's live read. */
+export function ekipByProject(input: Pick<DrawerModelInput, 'projects' | 'facts' | 'fanout' | 'device'>): Array<{ vault: string; members: EkipMember[] }> {
+  return input.projects.map((p) => {
+    const mine = p.mounted ? input.facts[p.name] : undefined;
+    const far = p.mounted ? undefined : input.fanout[p.name];
+    if (input.device) {
+      const live = input.device.members?.find((x) => x.vault === p.name)?.members;
+      return { vault: p.name, members: ekipOf({ members: live, identities: mine?.identities }) };
+    }
+    return { vault: p.name, members: ekipOf(mine ?? far) };
+  });
 }
 
 /** The listed members of a roster, those that want the owner first (needs, approval), then the
@@ -170,6 +257,8 @@ export interface DrawerModelInput {
 export interface DeviceDrawerInput {
   /** Every chat row over the chosen projects (`homeRows`), Super rows included. */
   rows: readonly HomeRow[];
+  /** Each project's members (`live-chats` `members` on a phone): its Ekip row. */
+  members?: ReadonlyArray<{ vault: string; members: EkipSummary[] }>;
 }
 
 /** The device shell's published chat facts. Off a device shell it is {@link NO_DEVICE_CHATS}. */
@@ -180,6 +269,8 @@ export interface DeviceChats {
   liveAnswered: boolean;
   /** Conversations History must not list here: running, draining, or a Super's or its child's. */
   hiddenIds: ReadonlySet<string>;
+  /** Each project's members (`live-chats` `members`), for the phone's Ekip rows. */
+  members?: Array<{ vault: string; members: EkipSummary[] }>;
 }
 
 export const NO_DEVICE_CHATS: DeviceChats = { rows: [], liveAnswered: true, hiddenIds: new Set() };
@@ -210,7 +301,22 @@ export function deviceChatsOf(o: {
     ...(o.live?.parked ?? []),
     ...closed,
   ]);
-  return { rows, liveAnswered: o.tunnel ? o.liveAnswered : true, hiddenIds };
+  const members = liveMembersOf(o.live);
+  return { rows, liveAnswered: o.tunnel ? o.liveAnswered : true, hiddenIds, ...(members.length ? { members } : {}) };
+}
+
+/** `live-chats` `members` on a phone (plan-r10 2.4), each entry checked: it is another
+ *  machine's answer read over the wire. */
+export function liveMembersOf(live: unknown): Array<{ vault: string; members: EkipSummary[] }> {
+  const raw = (live as { members?: unknown } | null | undefined)?.members;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((e) => {
+    if (!e || typeof e !== 'object') return [];
+    const { vault, members } = e as { vault?: unknown; members?: unknown };
+    if (typeof vault !== 'string' || !Array.isArray(members)) return [];
+    const ok = members.filter((m): m is EkipSummary => !!m && typeof m === 'object' && typeof (m as { slug?: unknown }).slug === 'string');
+    return ok.length ? [{ vault, members: ok }] : [];
+  });
 }
 
 /** A device shell's chat rows of one project, from its published rows: the Super Agent's row
@@ -267,7 +373,9 @@ export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout
     const sum = sumOf(children, source);
     // A question still reaches the owner too.
     const ask = children.some((c) => c.kind === 'super' && c.asking);
-    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(ask ? { superAsking: true } : {}) };
+    // Its Ekip row stays under it, folded or not (r8-05).
+    const team = children.find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team');
+    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(ask ? { superAsking: true } : {}), ...(team ? { team } : {}) };
   });
 }
 
@@ -289,9 +397,9 @@ function childrenOf(
     // Always there, even before anything is read: it is how a project with no chat starts one.
     { kind: 'super', on: !!(mine?.superOn ?? far?.superOn), selected: superSelected, working: marks?.working ?? 0, asking: !!marks?.asking },
   ];
-  for (const m of (mine?.team ?? far?.team ?? [])) {
-    children.push({ kind: 'member', slug: m.slug, title: m.title, hasPhoto: m.hasPhoto, status: m.status, selected: onChat && mine?.member === m.slug });
-  }
+  // ONE Ekip row (plan-r10 1d): selected while a member's stage is on screen.
+  const team = teamChildOf(p.name, ekipOf(mine ?? far), onChat && !!mine?.member);
+  if (team) children.push(team);
   const r = p.mounted ? (mine?.shown ?? p.rollup) : null;
   const windowsOn = onChat && !superSelected && !mine?.member;
   const before = children.length;
@@ -320,7 +428,9 @@ function childrenOf(
   }
   // Only on a known answer: before the roster is restored, or after a failed read, no row is
   // better than offering a chat over chats that are there.
-  if (children.length === before && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
+  // A project with members keeps its New chat row (r8-07): its chevron is where a member's one
+  // conversation starts.
+  if ((children.length === before || team) && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
   return { source, children };
 }
 
@@ -362,13 +472,18 @@ function deviceProjectRow(p: DrawerProjectInput, o: { activeVault: string | null
     name: p.name, logo: p.logo, logoStamp: p.logoStamp, active, held: p.mounted || p.asleep,
     asleep: p.asleep, otherWindow: p.otherWindow, expanded: isOpen,
   };
+  // The phone's Ekip row (r8-05 at 390): from `live-chats` `members`; names from a mounted
+  // project's read, else the slug.
+  const live = o.device.members?.find((x) => x.vault === p.name)?.members;
+  const team = teamChildOf(p.name, ekipOf({ members: live, identities: mine?.identities }), onChat && !!mine?.member);
+  if (team) children.splice(children[0]?.kind === 'chat' && children[0].row.kind === 'super' ? 1 : 0, 0, team);
   if (!isOpen) {
     const chats = children.filter((c): c is Extract<DrawerChild, { kind: 'chat' }> => c.kind === 'chat');
     const asking = chats.filter((c) => c.state === 'asking').length;
     const working = chats.filter((c) => c.state === 'working').length;
     const flagged = chats.filter((c) => c.flagged).length;
     const sum = chats.length ? { live: chats.length, asking, working, idle: chats.length - asking - working, flagged } : undefined;
-    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}) };
+    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(team ? { team } : {}) };
   }
   if (!children.some((c) => c.kind === 'chat' && c.row.kind !== 'super')) children.push({ kind: 'new-chat' });
   return { ...base, source: p.mounted ? 'mounted' : 'none', children };
@@ -430,11 +545,14 @@ export function fanoutWithMarks(
   facts: Readonly<Record<string, FanoutFacts>>,
   marks: Readonly<Record<string, NonNullable<FanoutFacts['superMarks']>>>,
   folded: readonly string[],
+  /** A folded project's Ekip read (its row stays under it). */
+  teams: Readonly<Record<string, DrawerEkipFacts | undefined>> = {},
 ): Record<string, FanoutFacts> {
   const out = { ...facts };
   for (const v of folded) {
     delete out[v];
-    if (marks[v]) out[v] = { tabs: 0, superOn: true, team: [], superMarks: marks[v] };
+    const ekip = teams[v];
+    if (marks[v]) out[v] = { tabs: 0, superOn: true, team: [], superMarks: marks[v], ...(ekip?.members ? { members: ekip.members, identities: ekip.identities ?? [] } : {}) };
   }
   return out;
 }

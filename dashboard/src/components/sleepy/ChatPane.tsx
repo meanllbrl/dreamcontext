@@ -76,7 +76,11 @@ import { msgRef, splitPageContext } from '../../lib/superTypes';
 import { createHiddenRenderGate } from './chat/hiddenRenderGate';
 import { shouldInterruptChat } from './chat/interruptKey';
 import { useI18n } from '../../context/I18nContext';
-import { groupSuperEventTurns, replyAboutBlock, replySelectionBlock, selectionQuote, splitAbout, splitAboutParts, superEventOf, type SuperEventGroup } from './super/superHandover';
+import { groupSuperEventTurns, replyAboutBlock, replySelectionBlock, selectionQuote, splitAbout, splitAboutParts, superEventOf, requestTurnOf, type SuperEventGroup } from './super/superHandover';
+import { SuperRequestBlock } from './super/MemberStage';
+import { memberSuperId } from './super/memberStageModel';
+import { chatAgentFor } from '../../lib/chatAgentBinding';
+import type { SuperId } from '../../lib/superTypes';
 import { parseSuperAnswer, placeQuestionCards, type AskRef } from './super/superQuestions';
 import { SuperAnswerReceipt, SuperQuestionCard, SuperQuestionTail } from './super/SuperQuestionCard';
 import { SuperEventLine } from './super/SuperEventLine';
@@ -800,6 +804,8 @@ export function ChatPane({
   // expands one with a click. The phone's mirror folds too, from the Mac's digest (PhoneAgenda).
   // Any other chat has no context and draws nothing new.
   const superCtx = useSuperEventContext(superView ? session.claudeId : null);
+  /** Whose Super this chat is: a member's (`m:<slug>`, its chat is bound to that member) or main's. */
+  const paneSuperId: SuperId = session.mode === 'super' && chatAgentFor(session.claudeId) ? memberSuperId(chatAgentFor(session.claudeId)) : 'main';
   const { t } = useI18n();
   const [openEvents, setOpenEvents] = useState<ReadonlySet<string>>(() => new Set());
   const toggleEvent = useCallback((anchor: string) => setOpenEvents((prev) => {
@@ -2045,8 +2051,22 @@ export function ChatPane({
           </SuperRecapCard>
         );
       }
+      // Main Super's request (or its answer) on a member's stage: framed, in full (plan-r10 1).
+      // Stored (its fenced text) or live (the chip's item, its text from the member's record).
+      const request = requestTurnOf(item.text, superCtx?.requests);
+      if (request) return <SuperRequestBlock key={item.id} turn={request} itemId={item.id} />;
       if (group && superCtx) {
-        return <SuperEventLine key={item.id} group={group} titleFor={superCtx.titleFor} expanded={openEvents.has(item.id)} onToggle={toggleEvent} />;
+        const line = <SuperEventLine key={item.id} group={group} titleFor={superCtx.titleFor} expanded={openEvents.has(item.id)} onToggle={toggleEvent} />;
+        // A member's turn for main Super: marked "Super için" (never the owner's to answer).
+        if (group.batch && superCtx.mainBatches?.includes(group.batch)) {
+          return (
+            <div key={item.id} className="super-for-main-turn" data-testid="super-for-main">
+              <span className="super-for-main">{t('superStage.member.forSuper')}</span>
+              {line}
+            </div>
+          );
+        }
+        return line;
       }
       return <SuperEventChip key={item.id} text={item.text} />;
     }
@@ -2176,7 +2196,10 @@ export function ChatPane({
     let kept = piece;
     let drawn = piece;
     if (superCtx) {
-      const folded = groupSuperEventTurns(piece as Array<T & { text?: string }>, { ownerBatches: superCtx.ownerBatches, expanded: openEvents });
+      // A request turn's answer is the member's reply to main Super: drawn, never folded away.
+      const requests = piece.filter((it) => it.kind === 'user' && requestTurnOf((it as { text?: string }).text, superCtx.requests) !== null).map((it) => it.id);
+      const expanded = requests.length ? new Set([...openEvents, ...requests]) : openEvents;
+      const folded = groupSuperEventTurns(piece as Array<T & { text?: string }>, { ownerBatches: superCtx.ownerBatches, expanded });
       for (const [k, g] of folded.groups) superGroups.set(k, g);
       const inCard = new Set<string>();
       for (const [k, g] of folded.groups) {
@@ -2547,10 +2570,13 @@ export function ChatPane({
     // The view is null once taken back: the record is gone then, and the session may stay.
     enabled: !!superView && !!superQuestionView,
     vault: vault ?? null,
+    // A member's Super chat (mode super, bound to its member): its own marks and its own count.
+    superId: paneSuperId,
     api,
     items: unreadItems,
     fold: !!superCtx,
     ownerBatches: superCtx?.ownerBatches ?? NO_BATCHES,
+    mainBatches: superCtx?.mainBatches ?? NO_BATCHES,
     openQuestions: superQuestionView?.open ?? NO_QUESTIONS,
     scrollRef,
     contentRef,

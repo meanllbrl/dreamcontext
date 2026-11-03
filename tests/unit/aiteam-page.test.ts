@@ -1,18 +1,14 @@
 /**
- * AI Team, wave 2: the page's surfaces.
- *
- * The team list is RENDERED (static markup, its two hooks pinned), because what a row says
- * and in which order is the claim (A2). The conversation, the panel and the model picker are
- * React surfaces with query and mutation hooks all through them, so the rest is a source scan
- * of the seams the plan pins: Chat's own Composer, the answer path while a question waits
- * (A4), the routine editor's reuse (A5), the temporary model (A8) and the empty states (A9).
- * What renders end to end is the A13 browser proof.
+ * The AI Team page is gone (plan-r10 1d, Wave 3 lane C): `pages/AiTeamPage.tsx` is the deep-link
+ * alias that opens "Üyeleri yönet" (`aiteam/ManageMembersModal.tsx`, see
+ * manage-members-modal.test.ts), plus an app's embedded team screen, which still reads a member's
+ * conversation through `TeamConversation` (AC23). What is left here: the list's rules
+ * (`listedRows`, `buildRoster`), the panels the modal hosts (a source scan of the seams the plan
+ * pins: the routine editor's reuse, the new teammate), the embedded conversation, and the alias.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { createElement } from '../../dashboard/node_modules/react/index.js';
-import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
 import type { TeamRow } from '../../dashboard/src/components/aiteam/teamModel';
 import { workingLine } from '../../dashboard/src/components/aiteam/teamModel';
 
@@ -37,10 +33,8 @@ vi.mock('../../dashboard/src/components/automations/AutomationsDispatcherBar.js'
   AutomationsDispatcherBar: () => null,
 }));
 
-const { TeamRoster } = await import('../../dashboard/src/components/aiteam/TeamRoster.js');
 const { listedRows } = await import('../../dashboard/src/components/aiteam/teamTree.js');
 const { buildRoster } = await import('../../dashboard/src/components/aiteam/teamModel.js');
-const { buildTree } = await import('../../src/lib/agents/tree.js');
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const read = (rel: string) => readFileSync(join(ROOT, 'dashboard/src', rel), 'utf-8');
@@ -52,43 +46,6 @@ function row(slug: string, over: Partial<TeamRow> = {}): TeamRow {
     preview: null, lastAt: null, unread: 0, section: 'team', ...over,
   };
 }
-
-const render = (rows: TeamRow[], draft: { title: string } | null = null) => renderToStaticMarkup(createElement(TeamRoster, {
-  rows, selected: rows[0]?.slug ?? null, draft, onSelect: () => {}, onNew: () => {}, onToast: () => {}, nextRun: 'Next run · tomorrow 09:00',
-}));
-
-describe('the team list (A2)', () => {
-  const html = render([
-    row('growth', { title: 'Growth analyst', status: 'needs', section: 'needs', preview: 'What now?', lastAt: '2026-10-19T18:00:00Z' }),
-    row('scout', { title: 'Scout', status: 'working', workingSince: Date.now() - 72_000 }),
-    row('brief', { title: 'Brief', status: 'paused', unread: 1, preview: 'Morning.' }),
-    row('support', { title: 'Support', status: 'approval' }),
-  ]);
-
-  it('sections in order, one row each, the count in the head', () => {
-    expect(html).toContain('4 teammates');
-    expect(html.indexOf('Needs you')).toBeLessThan(html.indexOf('>Team<'));
-    expect([...html.matchAll(/data-team-row="([a-z]+)"/g)].map((m) => m[1])).toEqual(['growth', 'scout', 'brief', 'support']);
-  });
-
-  it('a row is one line: name, and on the right only a state dot or unread', () => {
-    expect(html).toMatch(/aiteam-row-dot--needs/);
-    expect(html).toMatch(/aiteam-row-dot--working/);
-    expect(html).toMatch(/aiteam-row-dot--paused/);
-    expect(html).toMatch(/sidebar-badge">1</);
-    expect(html).not.toContain('aiteam-row-preview');
-    expect(html).not.toMatch(/>Routine paused</);
-    expect(html).not.toContain('aiteam-tag');
-    // What was said stays one hover away.
-    expect(html).toContain('title="Brief · Morning."');
-  });
-
-  it('a new teammate being written stands at the top as a draft row', () => {
-    const d = render([row('growth')], { title: 'Store reviewer' });
-    expect(d.indexOf('aiteam-row--draft')).toBeLessThan(d.indexOf('data-team-row="growth"'));
-    expect(d).toMatch(/aiteam-row-name">Store reviewer</);
-  });
-});
 
 describe('teammates in all projects', () => {
   const ads = (over: Partial<TeamRow> = {}) => row('ads', { title: 'Ads Manager', global: true, ...over });
@@ -107,51 +64,10 @@ describe('teammates in all projects', () => {
     expect(listedRows(rows).map((r) => r.slug)).toEqual(['scout', 'ads', 'asks', 'runs']);
   });
 
-  it('it stands in the roster order, last talk first, with the globe and its hint', () => {
-    const html = render([
-      row('newer', { lastAt: '2026-10-20T18:00:00Z' }),
-      ads({ lastAt: '2026-10-19T18:00:00Z' }),
-      local,
-    ]);
-    expect([...html.matchAll(/data-team-row="([a-z]+)"/g)].map((m) => m[1])).toEqual(['newer', 'ads', 'scout']);
-    expect(html).toContain('title="Stays on this Mac."');
-    expect(html.match(/data-global-chip/g)).toHaveLength(1);
-    expect(html).toContain('>Team<');
-  });
-
-  it('needs you stays first, globe and all; read-only stays last', () => {
-    const html = render([
-      ads({ status: 'needs', section: 'needs', lastAt: '2026-10-19T18:00:00Z' }),
-      local,
-      row('kim', { title: 'Theirs', section: 'readonly', readOnly: true, ownerLabel: 'Kim' }),
-    ]);
-    expect(html.indexOf('Needs you')).toBeLessThan(html.indexOf('data-team-row="ads"'));
-    expect(html.indexOf('data-team-row="ads"')).toBeLessThan(html.indexOf('data-team-row="scout"'));
-    expect(html.indexOf('data-team-row="scout"')).toBeLessThan(html.indexOf('data-readonly-section'));
-    expect(html).toContain('data-global-chip');
-  });
-
   it('a stage talk counts: the server\'s fact gives the row its last talk', () => {
     const agent = { slug: 'ads', title: 'Ads', hasPhoto: false, roleLine: '', description: '', approvedForChat: true, approvedToRun: true, approvalReason: null, model: null, effort: null, scope: 'global' as const };
     expect(buildRoster([{ ...agent, lastTalkAt: '2026-10-20T10:00:00.000Z' }], [], null)[0].lastAt).toBe('2026-10-20T10:00:00.000Z');
     expect(buildRoster([agent], [], null)[0].lastAt).toBeNull();
-  });
-
-  it('an empty list says where the others are, and the way there stays', () => {
-    const html = renderToStaticMarkup(createElement(TeamRoster, {
-      rows: [], beyond: 2, selected: null, draft: null, onSelect: () => {}, onNew: () => {}, onToast: () => {}, onOrgChart: () => {}, nextRun: '',
-    }));
-    expect(html).toContain('aiteam.roster.emptyProject');
-    expect(html).toContain('data-page-view="org"');
-  });
-
-  it('a fold never hides a question behind a working dot', () => {
-    const html = renderToStaticMarkup(createElement(TeamRoster, {
-      rows: [row('lead', { status: 'working' }), row('kid', { status: 'needs', section: 'needs' })],
-      tree: buildTree([{ slug: 'lead', reportsTo: null, team: null }, { slug: 'kid', reportsTo: 'lead', team: null }]),
-      view: 'tree', selected: null, draft: null, onSelect: () => {}, onNew: () => {}, onToast: () => {}, nextRun: '',
-    }));
-    expect(html.match(/data-team-row="kid"[\s\S]*?<\/button>/)![0]).toContain('aiteam-row-dot--needs');
   });
 
   it('no way to place them, and nobody can be placed under them', () => {
@@ -247,20 +163,52 @@ describe('the panel (A5) and the new teammate (A10)', () => {
   });
 });
 
-describe('the page (A1, A9)', () => {
+describe('the page is a deep-link alias (plan-r10 1d)', () => {
   const page = code(read('pages/AiTeamPage.tsx'));
 
-  it('list | conversation | panel, the list and the conversation taking turns on a phone', () => {
-    expect(page).toMatch(/aiteam--panel/);
-    expect(page).toMatch(/const narrow = width < NARROW_BELOW;/);
-    expect(page).toMatch(/onBack=\{narrow \? \(\) => setMobileShow\('list'\) : undefined\}/);
-    expect(page).toMatch(/aiteam-panel-scrim/);
+  it('draws no roster, stage, Activity feed or conversation of its own', () => {
+    expect(page).not.toMatch(/AgentStage|stageSession|TeamRoster|RunFoot/);
+    expect(page).not.toMatch(/<OrgView|<TeamPanel|<NewTeammate/);
   });
 
-  it('a team with nobody in it opens on three starters, a blank start and the safety line', () => {
-    expect(page).toMatch(/TEAM_STARTERS\.map/);
-    expect(page).toMatch(/t\('agents\.empty\.blank'\)/);
-    expect(page).toMatch(/t\('aiteam\.zero\.safety'\)/);
+  it('every arrival opens "Üyeleri yönet": bare, on a member, on the create flow, on an automation\'s member', () => {
+    expect(page).toMatch(/requestManageMembers\(\);/);
+    expect(page).toMatch(/agentsFocus\.slug \? \{ slug: agentsFocus\.slug \} : \{\}/);
+    expect(page).toMatch(/agentsFocus\.create \? \{ create: true \} : \{\}/);
+    expect(page).toMatch(/agentsFocus\.create && agentsFocus\.whiteboard \? \{ whiteboard: agentsFocus\.whiteboard \} : \{\}/);
+    expect(page).toMatch(/else requestManageMembers\(\{ slug: route\.slug \}\)/);
+  });
+
+  it('an automation link (the "needs your answer" banner) of a member\'s routine opens THAT member\'s stage', async () => {
+    const { automationLinkRoute } = await import('../../dashboard/src/lib/openAgents.js');
+    const agents = [{ slug: 'rota' }, { slug: 'mira' }];
+    const automations = [
+      { slug: 'rota-weekly', agent: 'rota', runKind: 'automation' },
+      { slug: 'mira', runKind: 'agent' },
+      { slug: 'legacy-job', runKind: 'automation' },
+      { slug: 'ghost-routine', agent: 'gone', runKind: 'automation' },
+    ];
+    // A member's routine: that member's stage, where its open question is answered.
+    expect(automationLinkRoute('rota-weekly', automations, agents)).toEqual({ to: 'member', slug: 'rota' });
+    // A member's own call target.
+    expect(automationLinkRoute('mira', automations, agents)).toEqual({ to: 'member', slug: 'mira' });
+    // A routine of no member, one whose member is not here, and an unknown slug keep the modal.
+    expect(automationLinkRoute('legacy-job', automations, agents)).toEqual({ to: 'manage', slug: 'legacy-job' });
+    expect(automationLinkRoute('ghost-routine', automations, agents)).toEqual({ to: 'manage', slug: 'gone' });
+    expect(automationLinkRoute('nope', automations, agents)).toEqual({ to: 'manage', slug: 'nope' });
+  });
+
+  it('an app\'s embedded team screen still reads its member\'s conversation and speaks as the app (AC23)', () => {
+    expect(page).toMatch(/if \(embed\) return <EmbeddedTeam/);
+    expect(page).toMatch(/<TeamConversation\b/);
+    expect(page).toMatch(/sendMessage=\{embedSend\}/);
+    expect(page).toMatch(/sayFromApp\(embed, selectedRef\.current \?\? '', text\)/);
+    expect(page).toMatch(/runFilter=\{embedChat \? embedRuns : undefined\}/);
+    expect(page).toMatch(/<OpenInMainApp grant=\{embed\} page="agents" \/>/);
+  });
+
+  it('the drafts and staged chips still die with the page', () => {
+    expect(page).toMatch(/useEffect\(\(\) => \(\) => dropThreadScratch\(\), \[\]\)/);
   });
 });
 

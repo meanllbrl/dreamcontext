@@ -29,7 +29,13 @@ import { AppsPage } from './pages/AppsPage';
 import { dropBoardAgentScratch } from './components/whiteboard/boardAgentScratch';
 import type { Page } from './components/layout/Sidebar';
 import { parseAppLink } from './lib/appLink';
-import { OPEN_AGENTS_EVENT, readOpenAgentsDetail, type AgentsFocus, type OpenAgentsDetail } from './lib/openAgents';
+import {
+  MANAGE_MEMBERS_EVENT, OPEN_AGENTS_EVENT, readManageMembersDetail, readOpenAgentsDetail, routeOpenAgents,
+  type AgentsFocus, type ManageMembersDetail, type OpenAgentsDetail,
+} from './lib/openAgents';
+import { ManageMembersModal } from './components/aiteam/ManageMembersModal';
+import { useAgents } from './hooks/useAgents';
+import { isMacPhoneSurface } from './lib/phoneSurface';
 import { TALK_TO_AGENT_REQUEST_EVENT, forwardTalkToAgent } from './lib/talkToAgent';
 import { OPEN_SESSION_EVENT, type OpenSessionDetail } from './lib/openSession';
 import {
@@ -43,7 +49,7 @@ import { PAGE_LABEL_KEY } from './lib/pageLabels';
 import { DrawerFactsBridge } from './components/layout/newshell/DrawerFactsBridge';
 import { DrawerIntentBridge } from './components/layout/newshell/DrawerIntentBridge';
 import type { DrawerFacts } from './components/layout/newshell/drawerModel';
-import { DRAWER_PAGE_EVENT, landsOnChat, type PendingDrawerIntent } from './lib/drawerIntents';
+import { DRAWER_INTENT_EVENT, DRAWER_PAGE_EVENT, landsOnChat, memberIntent, type DrawerIntent, type PendingDrawerIntent } from './lib/drawerIntents';
 import { TOGGLE_PAGE_DRAWER_EVENT, drawerTogglePanel, readDeviceShell, useIsNewShell } from './lib/uxMode';
 import { AGENT_SURFACE_EXPANDED_EVENT, openAgentSurface } from './lib/agentSettings';
 import './ProjectInstance.css';
@@ -179,22 +185,36 @@ function OpenStatsBridge({ nav }: { nav: ShellNavigation }) {
   return null;
 }
 
-function OpenAgentsBridge({
-  nav, onAgentsFocus,
-}: {
-  nav: ShellNavigation;
-  onAgentsFocus: (focus: OpenAgentsDetail) => void;
-}) {
-  const { isActive } = useVault();
+/**
+ * Where `requestOpenAgents` lands now (plan-r10 1c, 1d): `{slug}` and `{slug, task}` open that
+ * member's stage, its one conversation, through the drawer's member intent rung on this
+ * instance's bus (`AgentSurface` takes it, the task strip with it); `{create}`, `{whiteboard}` and
+ * a bare request open "Üyeleri yönet". `requestManageMembers` opens the modal. Renders nothing.
+ */
+function OpenAgentsBridge({ onManage }: { onManage: (detail: ManageMembersDetail) => void }) {
+  const { isActive, bus } = useVault();
+  const agentsQ = useAgents({ enabled: isActive });
+  const agentsRef = useRef(agentsQ.data);
+  agentsRef.current = agentsQ.data;
   useEffect(() => {
-    if (!isActive) return;
-    const listener = (event: Event) => {
-      nav.navigate('agents', null);
-      onAgentsFocus(readOpenAgentsDetail((event as CustomEvent<unknown>).detail));
+    if (!isActive) return undefined;
+    const onOpen = (event: Event) => {
+      const route = routeOpenAgents(readOpenAgentsDetail((event as CustomEvent<unknown>).detail));
+      if (route.to === 'manage') { onManage(route.detail); return; }
+      const title = agentsRef.current?.find((a) => a.slug === route.slug)?.title ?? route.slug;
+      const intent = memberIntent(route.slug, title, route.task);
+      if (!intent) return;
+      openAgentSurface(bus);
+      emitInstance<DrawerIntent>(bus, DRAWER_INTENT_EVENT, intent);
     };
-    window.addEventListener(OPEN_AGENTS_EVENT, listener);
-    return () => window.removeEventListener(OPEN_AGENTS_EVENT, listener);
-  }, [isActive, nav, onAgentsFocus]);
+    const onManageEvent = (event: Event) => onManage(readManageMembersDetail((event as CustomEvent<unknown>).detail));
+    window.addEventListener(OPEN_AGENTS_EVENT, onOpen);
+    window.addEventListener(MANAGE_MEMBERS_EVENT, onManageEvent);
+    return () => {
+      window.removeEventListener(OPEN_AGENTS_EVENT, onOpen);
+      window.removeEventListener(MANAGE_MEMBERS_EVENT, onManageEvent);
+    };
+  }, [isActive, bus, onManage]);
   return null;
 }
 
@@ -478,8 +498,9 @@ const PageRouter = memo(function PageRouter({
       return <StatsPage onNavigate={(page) => nav.navigate(page, null)} />;
     case 'automations':
     case 'agents':
-      // ONE page for both keys: the AI Team. `agents` is its old Agents page key, kept so its
-      // deep links (`page/agents/<slug>`, `requestOpenAgents`) land on that teammate.
+      // Deep-link aliases only (plan-r10 1d): no rail row lands here. `page/agents/<slug>`, an
+      // automation link or a palette hit opens "Üyeleri yönet" on that member; an app's embedded
+      // team screen still reads its member's conversation.
       return (
         <AiTeamPage
           automationFocus={automationFocus}
@@ -557,12 +578,17 @@ export interface ProjectInstanceProps {
   /** New shell: a drawer intent queued for this project (D5). */
   pendingDrawerIntent?: PendingDrawerIntent | null;
   onDrawerIntentConsumed?: (vault: string, nonce: number) => void;
+  /** New shell: "Üyeleri yönet" was asked for this project from the drawer while it was not on
+   *  screen (a nonce); the modal opens once this instance is active. */
+  pendingManage?: number | null;
+  onManageConsumed?: (vault: string, nonce: number) => void;
 }
 
 export function ProjectInstance({
   vault, instanceId, isActive, sidebarCollapsed, onToggleSidebar, onRollup, pendingLink = null, onLinkConsumed,
   pendingStart = null, onStartConsumed, drawerToggleNonce = 0, onDrawerToggle, onDrawerDismiss,
   drawerVisible = false, onDrawerFacts, pendingDrawerIntent = null, onDrawerIntentConsumed,
+  pendingManage = null, onManageConsumed,
 }: ProjectInstanceProps) {
   const newShell = useIsNewShell();
   /*
@@ -597,6 +623,20 @@ export function ProjectInstance({
     setAgentsFocus({ ...focus, nonce: focusSeq.current });
   }, []);
   const clearAgentsFocus = useCallback(() => setAgentsFocus(null), []);
+  // "Üyeleri yönet" (plan-r10 1d): a modal over whatever is on screen, desktop only.
+  const [manage, setManage] = useState<(ManageMembersDetail & { nonce: number }) | null>(null);
+  const openManage = useCallback((detail: ManageMembersDetail) => {
+    if (isMacPhoneSurface()) return;
+    focusSeq.current += 1;
+    setManage({ ...detail, nonce: focusSeq.current });
+  }, []);
+  const closeManage = useCallback(() => setManage(null), []);
+  // The window's queued "Üyeleri yönet" for this project: taken once, when this project is on screen.
+  useEffect(() => {
+    if (pendingManage === null || !isActive) return;
+    onManageConsumed?.(vault, pendingManage);
+    openManage({});
+  }, [pendingManage, isActive, vault, onManageConsumed, openManage]);
   const consumeLink = useCallback((nonce: number) => onLinkConsumed?.(vault, nonce), [onLinkConsumed, vault]);
   const consumeStart = useCallback((nonce: number) => onStartConsumed?.(vault, nonce), [onStartConsumed, vault]);
   // A project opened (or reached) by "Start with Claude" is about to show the initializer chat,
@@ -659,7 +699,7 @@ export function ProjectInstance({
                       />
                     )}
                     <AgentPageNavBridge nav={nav} />
-                    <OpenAgentsBridge nav={nav} onAgentsFocus={focusAgents} />
+                    <OpenAgentsBridge onManage={openManage} />
                     <OpenStatsBridge nav={nav} />
                     <NavFocusAgentsBridge nav={nav} onAgentsFocus={focusAgents} />
                     <TalkToAgentBridge />
@@ -695,6 +735,7 @@ export function ProjectInstance({
                 arrival={newShell && pendingDrawerIntent && landsOnChat(pendingDrawerIntent.intent) ? pendingDrawerIntent : null} />
               {/* AFTER the surface: an intent rung before it subscribed would be lost. */}
               {newShell && <DrawerIntentBridge pending={pendingDrawerIntent} onConsumed={onDrawerIntentConsumed} />}
+              {manage && isActive && <ManageMembersModal focus={manage} onClose={closeManage} />}
             </I18nProvider>
           </ProjectProvider>
         </VaultProvider>

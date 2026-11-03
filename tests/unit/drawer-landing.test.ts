@@ -91,8 +91,15 @@ describe('one step to what was clicked', () => {
   it('the surface takes it before the first paint', () => {
     expect(src('dashboard/src/components/sleepy/AgentSurface.tsx')).toMatch(/useLayoutEffect\(\(\) => \{\s*if \(!arrival \|\| !windowed\) return;\s*setExpanded\(true\);/);
   });
-  it("a member's conversation fills the chat area", () => {
-    expect(src('dashboard/src/components/sleepy/AgentTerminal.css')).toMatch(/\.agent-peek-body > \.aiteam-convo \{[^}]*flex: 1 1 auto/);
+  it("a member lands on its own stage (plan-r10 1), a task intent included; the peek is transcripts only", () => {
+    expect(landsOnChat({ kind: 'member', slug: 'a', title: 'A', task: 'some-task' })).toBe(true);
+    const surface = src('dashboard/src/components/sleepy/AgentSurface.tsx');
+    expect(surface).toMatch(/void openMemberStage\(intent\.slug, intent\.task\);/);
+    expect(surface).toMatch(/setSuperView\('super'\);\s*setExpanded\(true\);/);
+    expect(surface).toMatch(/\{windowed && superPeek && \(/);
+    expect(surface).toMatch(/\{renderChildTranscript\(superPeek\.claudeId\)\}/);
+    // The drawer marks the member's row while its stage shows, not main's.
+    expect(surface).toMatch(/const peekMember = superView === 'super' \? memberOf\(activeSuperId\) : null;/);
   });
 });
 

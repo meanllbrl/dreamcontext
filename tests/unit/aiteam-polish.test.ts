@@ -134,8 +134,9 @@ describe('the surfaces wire it (source scan; the behaviour is proven in the brow
     expect(convo).toMatch(/if \(!flash\) return;\s*const timer = setTimeout\(\(\) => setFlash\(null\), 2400\)/);
   });
   it('the ONE card is the stage\'s strip, never a duplicate in the conversation, and Approve waits for a fresh read', () => {
-    const stage = readFileSync('dashboard/src/components/aiteam/AgentStage.tsx', 'utf8');
-    expect(stage).toMatch(/<TeamApproval agentTitle=\{agent\.title\} pending=\{pending\}/);
+    // The card lives in "Üyeleri yönet" (and on the member stage's band, lane B), plan-r10 1e.
+    const modal = readFileSync('dashboard/src/components/aiteam/ManageMembersModal.tsx', 'utf8');
+    expect(modal).toMatch(/<TeamApproval agentTitle=\{agent\.title\} pending=\{pending\}/);
     expect(convo).not.toMatch(/<TeamApproval\b/);
     expect(convo).toMatch(/const blocked = talkBlocked\(pending\)/);
     // The card names the fields a synced or waiting change moved.

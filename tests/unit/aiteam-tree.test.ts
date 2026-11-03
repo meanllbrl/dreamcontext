@@ -113,9 +113,7 @@ describe('the List | Tree choice', () => {
 describe('the page wiring', () => {
   const src = (p: string) => readFileSync(join(ROOT, p), 'utf8');
   it('the roster offers List | Tree and draws folds; the head shows the manager path', () => {
-    const roster = src('dashboard/src/components/aiteam/TeamRoster.tsx');
-    expect(roster).toContain('data-roster-view');
-    expect(roster).toContain('aria-expanded={!line.collapsed}');
+    // TeamRoster.tsx retired with the AI Team page (plan-r10 Wave 3); the folds live in the org view.
     expect(src('dashboard/src/components/aiteam/TeamConversation.tsx')).toContain('data-convo-path');
   });
   it('Profile hosts "Place in team", writing through the unhashed place route', () => {

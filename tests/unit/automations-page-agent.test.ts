@@ -195,7 +195,8 @@ describe('every face on this page is the agent\'s', () => {
   });
 
   it('the AI Team draws every face from the agent route under the agent slug', () => {
-    for (const rel of ['components/aiteam/TeamRoster.tsx', 'components/aiteam/TeamConversation.tsx']) {
+    // TeamRoster.tsx retired with the AI Team page (plan-r10 Wave 3): the Ekip list replaces it.
+    for (const rel of ['components/aiteam/TeamConversation.tsx']) {
       const src = read(rel);
       expect(src, rel).toMatch(/<AgentAvatar of="agent" slug=\{(row|agent)\.slug\}|<AgentAvatar of="agent" slug=\{slug\}/);
       expect(src, rel).not.toMatch(/<AgentAvatar\s+slug=/);

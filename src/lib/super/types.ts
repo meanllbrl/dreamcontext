@@ -553,7 +553,7 @@ export type StuckReason = typeof STUCK_REASONS[number];
  * to the owner (`super ask`). `ended` = `super end` closed the child: born `done`, a record of
  * its last brief, never delivered as a turn. `approval`: an AI Team member the super gave a job to
  * is not approved on this machine. The server writes it (never the super agent's words, like a
- * permission) and the owner settles it in AI Team; it closes once the member is approved, turned
+ * permission) and the owner settles it on its card (its stage, "Üyeleri yönet"); it closes once the member is approved, turned
  * off or gone, or by `super queue done`. `fresh`: the owner pressed "New session" — one solo
 `[super fresh]` turn in which the super writes its handoff file, after which its pane rotates into
 a fresh session (super/fresh-session.ts). Its `sessionId` is the super's own.
@@ -709,6 +709,10 @@ export interface SuperMemberSummary {
   superOnly: boolean;
   /** Its newest activity (epoch ms), 0 = never. */
   lastAt: number;
+  /** Its `request` and `reply` queue items still `pending` (waiting for its Super to be attached):
+   *  the window spawns a cold member's Super when this is above 0 and no live chat holds it
+   *  (plan-r10 1 "Spawning a cold member"). Never an owner-facing count. */
+  pending: number;
 }
 
 /** The cards a question can point at to be read: what carries information, never a picture

@@ -16,7 +16,7 @@
  * mention's words, cardMention.ts).
  */
 import {
-  ABOUT_AGENDA_RE, ABOUT_CARD_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
+  ABOUT_AGENDA_RE, ABOUT_CARD_RE, ABOUT_TASK_RE, MAX_ABOUT_LINE, MAX_REPLY_QUOTE, MAX_SELECTION_QUOTE, PAD_STALE_MS, REPLY_TO_RE, SUPER_EVENT_PREFIXES, aboutHeads, msgRef, type ChildRow, type QueueKind, type SuperChild, type SuperEventKind, type SuperQueueItem, type SuperState,
 } from '../../../lib/superTypes';
 import { cardMentionText } from '../../../lib/cardMention';
 
@@ -1320,4 +1320,95 @@ export function superDockPill(opts: {
     asking,
     news: !asking && opts.superAttention,
   };
+}
+
+// ─── A member's stage (plan-r10 1, 1c) ─────────────────────────────────────────────
+
+/** The server's frame word for main Super's work on a member's stage (`REQUEST_FROM`, inbox.ts). */
+export const REQUEST_FROM = "Super Agent'tan";
+
+/** A `request` or `reply` delivery turn on a member's stage: main Super's words, in full. */
+export interface SuperRequestTurn { kind: 'request' | 'reply'; itemId: string; text: string }
+
+/** The server's three lines, in order, nothing before them (inbox.ts `superEventText`). */
+const REQUEST_HEAD = /^\[super events\] batch=[A-Za-z0-9_-]{1,80} items=1$/;
+const REQUEST_LINE = /^- item=([A-Za-z0-9_-]{1,80}) event=(request|reply)\b[^\n<]*\bfrom=super(?: [^\n<]*)?$/;
+const FENCE_OPEN = /^<untrusted-project-output vault="[^"\n]*">/;
+const FENCE_CLOSE = '</untrusted-project-output>';
+
+/**
+ * A member Super's delivery turn of main's `request` (or `reply`): its item and main's text, read
+ * from the server's own lines ONLY, at their fixed places (end review M4): line 1 the
+ * `[super events] batch=… items=1` head, line 2 the `- item=… event=request|reply … from=super`
+ * line, line 3 opening the fence whose text runs to the FIRST close. Nothing after that first fence
+ * is ever read, so a child's text in a later fence (or inside this one: its `<` is `‹`) can never
+ * pass for main's request. The `‹` goes back to `<` for reading (React escapes it). Null otherwise.
+ */
+export function superRequestOf(text: unknown): SuperRequestTurn | null {
+  if (typeof text !== 'string') return null;
+  const lines = text.split('\n');
+  if (lines.length < 3 || !REQUEST_HEAD.test(lines[0]) ) return null;
+  const m = REQUEST_LINE.exec(lines[1]);
+  if (!m) return null;
+  const rest = lines.slice(2).join('\n');
+  const open = FENCE_OPEN.exec(rest);
+  if (!open) return null;
+  const close = rest.indexOf(FENCE_CLOSE, open[0].length);
+  if (close < 0) return null;
+  let body = rest.slice(open[0].length, close).replace(/\u2039/g, '<');
+  const answer = `${REQUEST_FROM}, the answer to your question: `;
+  if (body.startsWith(answer)) body = body.slice(answer.length);
+  else if (body.startsWith(`${REQUEST_FROM}: `)) body = body.slice(REQUEST_FROM.length + 2);
+  else return null;
+  return { kind: m[2] as 'request' | 'reply', itemId: m[1], text: body.trim() };
+}
+
+/** The window's own LIVE chip for a request/reply turn (`superEventText` of a `super_event` batch
+ *  frame): exactly the head and ONE item line, no fence (the text never rides the frame). */
+const LIVE_REQUEST_LINE = /^- item=([A-Za-z0-9_-]{1,80}) child=[A-Za-z0-9_-]{0,80} event=(request|reply)$/;
+
+/**
+ * A member's live delivery turn (the chip the window wrote from the frame, before any replay):
+ * its item and kind, read from the chip's two lines only. Its TEXT is the member record's own
+ * request item (`SuperEventContext.requests`), never anything in the turn. Null otherwise.
+ */
+export function superLiveRequestOf(text: unknown): { kind: 'request' | 'reply'; itemId: string } | null {
+  if (typeof text !== 'string') return null;
+  const lines = text.split('\n');
+  if (lines.length !== 2 || !REQUEST_HEAD.test(lines[0])) return null;
+  const m = LIVE_REQUEST_LINE.exec(lines[1]);
+  return m ? { kind: m[2] as 'request' | 'reply', itemId: m[1] } : null;
+}
+
+/**
+ * The request block a turn draws, stored or live (end review / super-team.mjs T3): the stored
+ * turn's own fenced text, else the live chip's item looked up in the member's record. Null when
+ * neither says it is main's request (or the record no longer holds its text).
+ */
+export function requestTurnOf(text: unknown, requests?: Readonly<Record<string, { kind: 'request' | 'reply'; text: string }>>): SuperRequestTurn | null {
+  const stored = superRequestOf(text);
+  if (stored) return stored;
+  const live = superLiveRequestOf(text);
+  const known = live ? requests?.[live.itemId] : undefined;
+  return live && known && known.text ? { kind: live.kind, itemId: live.itemId, text: known.text } : null;
+}
+
+/** `[About task <slug>]` for a well-formed task slug, else '' (ABOUT_TASK_RE: no 64 cap). */
+export function aboutTaskHeader(slug: string | null | undefined): string {
+  if (!slug) return '';
+  const head = `[About task ${slug}]`;
+  const m = ABOUT_TASK_RE.exec(head);
+  return m && m[0] === head ? head : '';
+}
+
+/**
+ * The owner's message while a member's task strip is up: the task's header first, so the member
+ * reads it from the task (`dreamcontext tasks show <slug>`). A message that already carries THAT
+ * task's header is left as it is; an empty one stays empty.
+ */
+export function withAboutTask(text: string, slug: string | null | undefined): string {
+  const head = aboutTaskHeader(slug);
+  if (!head || !text.trim()) return text;
+  if (aboutHeads(text).some((h) => h.kind === 'task' && h.id === slug)) return text;
+  return `${head}\n\n${text}`;
 }

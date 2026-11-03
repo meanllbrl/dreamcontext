@@ -102,9 +102,12 @@ describe('the Org chart in the page', () => {
     expect(readPageView(storage)).toBe('conversations');
     writePageView(storage, 'org');
     expect(readPageView(storage)).toBe('org');
-    const page = src('dashboard/src/pages/AiTeamPage.tsx');
-    expect(page).toContain('<OrgView');
-    expect(page).toContain("team={{ rows, tree, onTalk: talkTo }}");
+    // The chart and the panel's Team tab live in "Üyeleri yönet" now (plan-r10 1d); talking to a
+    // member opens its stage.
+    const modal = src('dashboard/src/components/aiteam/ManageMembersModal.tsx');
+    expect(modal).toContain('<OrgView');
+    expect(modal).toContain('onTalk={openChat}');
+    expect(modal).toContain("team={{ rows, tree, onTalk: openChat }}");
   });
   it('the side panel has a Team tab; a card click selects, a double-click talks', () => {
     expect(src('dashboard/src/components/aiteam/TeamPanel.tsx')).toContain("tab === 'team' && team");

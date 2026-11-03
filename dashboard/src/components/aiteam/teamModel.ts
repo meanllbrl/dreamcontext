@@ -2,6 +2,7 @@ import type {
   AgentActivity, AgentFeed, AutomationSummary, FeedMessage, RunAnswer, ThreadEntry, ThreadSummaryRow,
 } from '../../hooks/useAutomations';
 import type { AgentSummary } from '../../hooks/useAgents';
+import type { SuperMemberSummary } from '../../lib/superTypes';
 
 /**
  * THE AI TEAM, as data. Two pure functions and nothing that renders:
@@ -582,4 +583,235 @@ export function workingLine(row: Pick<TeamRow, 'workingCount'>, time: string, t:
   return row.workingCount > 1
     ? t('aiteam.workingMany').replace('{n}', String(row.workingCount)).replace('{time}', time)
     : t('aiteam.working').replace('{time}', time);
+}
+
+// ── The Ekip row (plan-r10 1d, 1f) ──────────────────────────────────────────────────
+
+/** One member as `GET /agent/sessions?summary=1` `members` names it (MIRROR of
+ *  `SuperMemberSummary`, `lib/superTypes.ts`). Its `pending` (request and reply items still
+ *  waiting for delivery) is MAIN's work, never the owner's: nothing here reads it (AC45; it is
+ *  only the stage's spawn signal for a cold member). */
+export type EkipSummary = SuperMemberSummary & { pending?: number };
+
+/** Who a member is, from `GET /agents`: what the summary does not carry. */
+export interface EkipIdentity {
+  slug: string;
+  title: string;
+  hasPhoto: boolean;
+  global?: boolean;
+}
+
+/** One member of a project's Ekip list, everything its row draws. */
+export interface EkipMember {
+  slug: string;
+  title: string;
+  hasPhoto: boolean;
+  global: boolean;
+  enabled: boolean;
+  /** Owner-origin work running now (its children at work for the owner). */
+  ownerWorking: number;
+  /** A question waits on the owner. */
+  asking: boolean;
+  /** One approval card waits on the owner (a synced or widening change). */
+  approval: boolean;
+  /** Owner-origin turns the owner has not read. */
+  unread: number;
+  /** Everything it does now is the Super Agent's (`main:*`): listed with "Super için", no count. */
+  superOnly: boolean;
+  /** Epoch ms of its last work here; 0 never. */
+  lastAt: number;
+  /** The open question's words when the read knows them (a headless routine's), else null. */
+  question: string | null;
+}
+
+/** The drawer's headless rows (`teamRowsOf`) a project may still carry: in-flight headless
+ *  `team` jobs (Super's, before the member Super takes the request) and routine questions. */
+export interface EkipHeadless {
+  slug: string;
+  status: TeamStatus;
+  /** Only the Super's jobs make it busy. */
+  superOnly?: boolean;
+  preview?: string | null;
+}
+
+/** Does this member want the owner (a question, an approval card, unread, or work of his)? */
+export function ownerFacing(m: Pick<EkipMember, 'asking' | 'approval' | 'unread' | 'ownerWorking' | 'superOnly'>): boolean {
+  if (m.approval) return true;
+  if (m.superOnly) return false;
+  return m.asking || m.unread > 0 || m.ownerWorking > 0;
+}
+
+/** Which part of the list a member sits in: 0 owner-facing, 1 "Super için", 2 idle, 3 off. */
+export function ekipRank(m: EkipMember): number {
+  if (!m.enabled) return 3;
+  if (ownerFacing(m)) return 0;
+  if (m.superOnly) return 1;
+  return 2;
+}
+
+/**
+ * A project's members, in the list's order: owner-facing first (a question or an approval card
+ * before unread, unread before work), then "Super için", then idle, then off; within a part the
+ * newest work first, then by name. Built from the summary's `members` (the server counts
+ * owner and routine work only); the identity read adds the name and face; a headless row adds
+ * an in-flight headless job (working for the Super) or a routine's open question.
+ */
+export function buildEkip(
+  summaries: readonly EkipSummary[] | null | undefined,
+  identities: readonly EkipIdentity[] | null | undefined,
+  headless: readonly EkipHeadless[] = [],
+): EkipMember[] {
+  const who = new Map((identities ?? []).map((a) => [a.slug, a] as const));
+  const old = new Map(headless.map((h) => [h.slug, h] as const));
+  const out = (summaries ?? []).map((s): EkipMember => {
+    const id = who.get(s.slug);
+    const h = old.get(s.slug);
+    // A headless routine's question is the owner's; a headless team job is the Super's.
+    const headlessAsk = !!h && h.status === 'needs' && !h.superOnly;
+    const headlessSuper = !!h && !!h.superOnly && (h.status === 'working' || h.status === 'needs');
+    const asking = s.asking || headlessAsk;
+    const ownerWorking = Math.max(0, s.ownerWorking | 0);
+    const unread = Math.max(0, s.unread | 0);
+    // "Super için" only when nothing of the owner's is there.
+    // `pending` is main's requests and replies: it never makes a member the owner's.
+    const superOnly = (s.superOnly || headlessSuper) && !asking && unread === 0 && ownerWorking === 0;
+    return {
+      slug: s.slug,
+      title: id?.title || s.slug,
+      hasPhoto: !!id?.hasPhoto,
+      global: s.global === true || id?.global === true,
+      enabled: s.enabled !== false,
+      ownerWorking,
+      asking,
+      approval: s.approval === true || h?.status === 'approval',
+      unread,
+      superOnly,
+      lastAt: typeof s.lastAt === 'number' && Number.isFinite(s.lastAt) ? s.lastAt : 0,
+      question: headlessAsk ? (h?.preview ?? null) : null,
+    };
+  });
+  const sub = (m: EkipMember) => (m.asking || m.approval ? 0 : m.unread > 0 ? 1 : 2);
+  return out.sort((a, b) => ekipRank(a) - ekipRank(b) || (ekipRank(a) === 0 ? sub(a) - sub(b) : 0)
+    || b.lastAt - a.lastAt || a.title.localeCompare(b.title));
+}
+
+/** The Ekip row's ONE number: owner-facing questions + owner-origin unread + approval cards.
+ *  A "Super için" member counts nothing (only its approval card, which is the owner's). */
+export function ekipCount(members: readonly EkipMember[]): number {
+  let n = 0;
+  for (const m of members) {
+    if (m.approval) n += 1;
+    if (m.superOnly || !m.enabled) continue;
+    if (m.asking) n += 1;
+    n += m.unread;
+  }
+  return n;
+}
+
+/** The row wears the question colour: a question or an approval card waits on the owner. */
+export function ekipAsking(members: readonly EkipMember[]): boolean {
+  return members.some((m) => m.approval || (m.asking && !m.superOnly && m.enabled));
+}
+
+/** Up to three faces, the ones at work first (for the owner, then for the Super), then the
+ *  list's order. */
+export function ekipFaces(members: readonly EkipMember[], max = 3): EkipMember[] {
+  const working = (m: EkipMember) => m.enabled && (m.ownerWorking > 0 || m.superOnly);
+  return [...members.filter(working), ...members.filter((m) => !working(m))].slice(0, max);
+}
+
+/** A project's own members (a member of all projects is in the Global ekip row instead). */
+export function projectEkip(members: readonly EkipMember[]): EkipMember[] {
+  return members.filter((m) => !m.global);
+}
+
+/** One member of the Global ekip list: its state summed over the open projects, and the project
+ *  a click opens it in. */
+export interface GlobalEkipMember extends EkipMember {
+  /** The project of its newest owner-facing item, or null when nothing faces the owner. */
+  project: string | null;
+  /** Where a click opens its stage (`globalOpenVault`). */
+  openIn: string | null;
+}
+
+/**
+ * Where a global member opens (plan-r10 1f): the project of its newest owner-facing item, else
+ * the project in view, else the project it last worked in, else the first open project.
+ */
+export function globalOpenVault(
+  slug: string,
+  perProject: ReadonlyArray<{ vault: string; members: readonly EkipMember[] }>,
+  inView: string | null,
+): { project: string | null; openIn: string | null } {
+  const mine = perProject.flatMap((p) => p.members.filter((m) => m.slug === slug).map((m) => ({ vault: p.vault, m })));
+  const facing = mine.filter((x) => ownerFacing(x.m) && x.m.enabled).sort((a, b) => b.m.lastAt - a.m.lastAt)[0];
+  if (facing) return { project: facing.vault, openIn: facing.vault };
+  if (inView && perProject.some((p) => p.vault === inView)) return { project: null, openIn: inView };
+  const last = mine.filter((x) => x.m.lastAt > 0).sort((a, b) => b.m.lastAt - a.m.lastAt)[0];
+  if (last) return { project: null, openIn: last.vault };
+  return { project: null, openIn: perProject[0]?.vault ?? inView ?? null };
+}
+
+/**
+ * The Global ekip row: each global member ONCE, its questions and unread summed over the open
+ * projects, its approval card counted once (one machine-wide bucket), enabled when its global
+ * manifest is (the same in every project), in the list's order.
+ */
+export function buildGlobalEkip(
+  perProject: ReadonlyArray<{ vault: string; members: readonly EkipMember[] }>,
+  inView: string | null,
+): GlobalEkipMember[] {
+  const by = new Map<string, EkipMember>();
+  for (const p of perProject) {
+    for (const m of p.members) {
+      if (!m.global) continue;
+      const had = by.get(m.slug);
+      if (!had) { by.set(m.slug, { ...m }); continue; }
+      by.set(m.slug, {
+        ...had,
+        title: had.title === had.slug ? m.title : had.title,
+        hasPhoto: had.hasPhoto || m.hasPhoto,
+        enabled: had.enabled && m.enabled,
+        ownerWorking: had.ownerWorking + m.ownerWorking,
+        asking: had.asking || m.asking,
+        approval: had.approval || m.approval,
+        unread: had.unread + m.unread,
+        superOnly: had.superOnly && m.superOnly,
+        lastAt: Math.max(had.lastAt, m.lastAt),
+        question: had.question ?? m.question,
+      });
+    }
+  }
+  const rows = [...by.values()].map((m): GlobalEkipMember => {
+    // "Super için" holds only when no project has the owner's work for it.
+    const superOnly = m.superOnly && !m.asking && m.unread === 0 && m.ownerWorking === 0;
+    return { ...m, superOnly, ...globalOpenVault(m.slug, perProject, inView) };
+  });
+  const sub = (m: EkipMember) => (m.asking || m.approval ? 0 : m.unread > 0 ? 1 : 2);
+  return rows.sort((a, b) => ekipRank(a) - ekipRank(b) || (ekipRank(a) === 0 ? sub(a) - sub(b) : 0)
+    || b.lastAt - a.lastAt || a.title.localeCompare(b.title));
+}
+
+/** The one line under a member's name in the Ekip list (r8-06), as an i18n key and its fields. */
+export type EkipLine =
+  | { key: 'drawer.team.question'; text: string }
+  | { key: 'drawer.member.working'; n: number; q: number }
+  | { key: 'drawer.team.superWorking' }
+  | { key: 'drawer.team.off' }
+  | { key: 'drawer.member.idle'; when: number };
+
+export function ekipLine(m: EkipMember): EkipLine {
+  if (!m.enabled) return { key: 'drawer.team.off' };
+  if (m.asking && m.question) return { key: 'drawer.team.question', text: m.question };
+  // No owner-origin queue count exists (the summary's `pending` is main's): the "sırada" half is
+  // left out (q 0), never filled from main's requests.
+  if (!m.superOnly && m.ownerWorking > 0) return { key: 'drawer.member.working', n: m.ownerWorking, q: 0 };
+  if (m.superOnly) return { key: 'drawer.team.superWorking' };
+  return { key: 'drawer.member.idle', when: m.lastAt };
+}
+
+/** The switch: `POST /api/agents/:slug/enabled` (the owner page only; a global member's writes
+ *  its global manifest, so it is off in every project). */
+export function setMemberEnabled(api: { post<T>(path: string, body: unknown): Promise<T> }, slug: string, enabled: boolean): Promise<unknown> {
+  return api.post<unknown>(`/agents/${encodeURIComponent(slug)}/enabled`, { enabled });
 }

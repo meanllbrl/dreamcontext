@@ -102,7 +102,8 @@ describe('super-orchestration guide: shape', () => {
   // +300 (2026-11-02, 0.36.15): `--tool antigravity` on a delegated child and the rows the integration merges added (measured 22,977).
   // +500 (2026-11-02): weigh the owner's idea before saying yes, never agree or argue by reflex (measured 23,448).
   // +450 (2026-11-02, plan-r10 Wave 2): every member is a Super; `team answer`, `team done`, no member assigns.
-  // +500 (2026-11-02): a Bypass child's permission is the Super's to allow, deny or hand to the owner. Both merged in 0.40.2 (measured 24,244).
+  // +500 (2026-11-02): a Bypass child's permission is the Super's to allow, deny or hand to the owner.
+  // Wave 3 rewrote the request route in place (+0). Merged in 0.40.2 (measured 24,236).
   it('is at most 24,250 bytes', () => {
     expect(Buffer.byteLength(GUIDE, 'utf-8')).toBeLessThanOrEqual(24_250);
   });
@@ -115,6 +116,14 @@ describe('super-orchestration guide: shape', () => {
     expect(FLAT).toContain('A follow-up is another `super team ask` to the same member');
     expect(FLAT).not.toContain('No event comes when it ends');
     expect(FLAT).not.toContain('is never listed here');
+  });
+
+  it('describes the request route as live (plan-r10 1, Wave 3): the member\'s own Super, `team done`, `team answer`', () => {
+    expect(FLAT).toContain('lands in the member\'s own Super as a request (its stage shows it as "Super Agent\'tan")');
+    expect(FLAT).toContain('a done is its `super team done`');
+    expect(FLAT).toContain('Its question about your job comes to YOUR queue, never his: `super team answer <item> "<answer>"`, or your own `super ask`, never forwarding it.');
+    expect(FLAT).toContain('A member never gives another member work.');
+    expect(FLAT).not.toMatch(/not live yet|After Wave 3|Until then `team ask`|member's own thread/);
   });
 
   it('has the seven sections in order', () => {

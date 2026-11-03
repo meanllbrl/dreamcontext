@@ -50,10 +50,13 @@ import { chill, liveInstanceCount, oldestEvictable } from './instanceCeiling';
 import { ChatDrawer } from './newshell/ChatDrawer';
 import { NewProjectFlow } from './newshell/NewProjectFlow';
 import {
-  buildDrawerRows, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, intentLands, moveInOrder, NO_DEVICE_CHATS,
+  buildDrawerRows, buildGlobalTeam, ekipByProject, deviceChatsOf, deviceWaitingCount, DRAWER_INTENT_TTL_MS, dropInOrder, intentLands, moveInOrder, NO_DEVICE_CHATS,
   type DeviceChats, type DrawerFacts,
 } from './newshell/drawerModel';
 import { useDrawerProjects } from '../../hooks/useDrawerProjects';
+import { ApiClient } from '../../api/client';
+import { setMemberEnabled } from '../aiteam/teamModel';
+import { requestManageMembers } from '../../lib/openAgents';
 import { useDrawerChats } from '../../hooks/useDrawerChats';
 import { recentlyClosed } from '../sleepy/phoneClosed';
 import type { HomeRow } from '../sleepy/phoneHome';
@@ -131,6 +134,10 @@ export interface ChromeApi {
   /** Close the floating drawer: every bottom-bar / rail tap and a project pick (a phone's first
    *  screen opens with it over the page, so a tap must not rely on a page change to close it). */
   dismissDrawer(): void;
+  /** Bring `vault` forward and hand it `intent` through the drawer's own per-project pending-intent
+   *  queue (what a drawer row's click does): the intent lands once that project is mounted and on
+   *  screen, never by a timer. A global member's project chip and the Global ekip list use it. */
+  queueDrawerIntent(vault: string, intent: DrawerIntent): void;
 }
 
 /**
@@ -157,6 +164,7 @@ const DETACHED_CHROME: ChromeApi = {
   deviceChats: NO_DEVICE_CHATS,
   openHistory: () => {},
   dismissDrawer: () => {},
+  queueDrawerIntent: () => {},
 };
 
 const ChromeContext = createContext<ChromeApi>(DETACHED_CHROME);
@@ -1120,11 +1128,10 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     for (const [v, f] of Object.entries(drawerFacts)) tabsByVault[v] = f.chats;
     return deviceChatsOf({ activeVault, projects: projectOrder, tabsByVault, live: liveChats, tunnel, liveAnswered, closed: recentlyClosed() });
   }, [deviceShell, activeVault, projectOrder, drawerFacts, liveChats, tunnel, liveAnswered]);
-  const drawerRows = useMemo(() => {
+  const drawerProjects = useMemo(() => {
     if (!newShell) return [];
     const byName = new Map((launcherStatus?.vaults ?? []).map((v) => [v.name, v] as const));
-    return buildDrawerRows({
-      projects: projectOrder.map((name) => {
+    return projectOrder.map((name) => {
         const held = open.find((p) => p.vault === name);
         const v = byName.get(name);
         return {
@@ -1136,14 +1143,60 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
           otherWindow: !held && !!findWindowForVault(name),
           rollup: held?.rollup ?? null,
         };
-      }),
+      });
+  }, [newShell, launcherStatus, projectOrder, open]);
+  const drawerRows = useMemo(() => {
+    if (!newShell) return [];
+    return buildDrawerRows({
+      projects: drawerProjects,
       activeVault,
       expanded: drawerExpanded,
       facts: drawerFacts,
       fanout,
       ...(deviceShell ? { device: deviceChats } : {}),
     });
-  }, [newShell, launcherStatus, projectOrder, open, activeVault, drawerExpanded, drawerFacts, fanout, deviceShell, deviceChats]);
+  }, [newShell, drawerProjects, activeVault, drawerExpanded, drawerFacts, fanout, deviceShell, deviceChats]);
+  // The Global ekip row (plan-r10 1f): the members of all projects over every listed project.
+  const globalTeam = useMemo(() => {
+    if (!newShell) return null;
+    return buildGlobalTeam(ekipByProject({ projects: drawerProjects, facts: drawerFacts, fanout, ...(deviceShell ? { device: deviceChats } : {}) }), activeVault || null);
+  }, [newShell, drawerProjects, drawerFacts, fanout, deviceShell, deviceChats, activeVault]);
+  /** An Ekip list's switch (`POST /api/agents/:slug/enabled`): the server's answer, and the
+   *  project's next read shows it. A refusal (a phone and a member of all projects, a teammate's
+   *  member) is said once. */
+  const switchMember = useCallback((vault: string, slug: string, enabled: boolean) => (
+    setMemberEnabled(new ApiClient(vault), slug, enabled).catch((err: unknown) => {
+      notify(`${slug}: ${err instanceof Error ? err.message : String(err)}`);
+      throw err;
+    })
+  ), [notify]);
+  /** "Üyeleri yönet" for a project not on screen: queued per project (like a drawer intent) and
+   *  taken by that project's instance once it is mounted and active, never by a timer. */
+  const [pendingManage, setPendingManage] = useState<Record<string, number>>({});
+  const manageSeqRef = useRef(0);
+  const consumeManage = useCallback((vault: string, nonce: number) => {
+    setPendingManage((prev) => {
+      if (prev[vault] !== nonce) return prev;
+      const { [vault]: _gone, ...rest } = prev;
+      return rest;
+    });
+  }, []);
+  /** "Üyeleri yönet": the modal opens in that project, which comes forward first. */
+  const manageMembers = useCallback((vault: string | null) => {
+    const target = vault ?? activeRef.current;
+    if (!target) return;
+    setFloatingOpen(false);
+    if (target === activeRef.current) { requestManageMembers(); return; }
+    manageSeqRef.current += 1;
+    const nonce = manageSeqRef.current;
+    setPendingManage((prev) => ({ ...prev, [target]: nonce }));
+    if (openRef.current.some((p) => p.vault === target)) { activate(target); return; }
+    void addTab(target).then((result) => {
+      const tab = openRef.current.find((p) => p.vault === target);
+      // Another window took it, or the ceiling refused: nothing waits here.
+      if (!intentLands(result, !!tab && !tab.cold)) consumeManage(target, nonce);
+    });
+  }, [activate, addTab, consumeManage]);
 
   // "Remove from app…" (owner 2026-11-03): ask, drop the registry entry (the folder stays). When the
   // project is this window's only one, the window lands on another project FIRST: the server refuses
@@ -1260,8 +1313,11 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
     };
   }, [backMarkOn]);
   const chrome = useMemo<ChromeApi>(
-    () => ({ open, activeVault, addTab, activate, closeTab, detachToWindow, zoom, setZoom: setZoomLevel, openChatRow, deviceChats, openHistory, dismissDrawer: dismissFloating }),
-    [open, activeVault, addTab, activate, closeTab, detachToWindow, zoom, setZoomLevel, openChatRow, deviceChats, openHistory, dismissFloating],
+    () => ({
+      open, activeVault, addTab, activate, closeTab, detachToWindow, zoom, setZoom: setZoomLevel, openChatRow, deviceChats, openHistory, dismissDrawer: dismissFloating,
+      queueDrawerIntent: (vault: string, intent: DrawerIntent) => { void queueDrawerIntent(vault, intent); },
+    }),
+    [open, activeVault, addTab, activate, closeTab, detachToWindow, zoom, setZoomLevel, openChatRow, deviceChats, openHistory, dismissFloating, queueDrawerIntent],
   );
   const consumeDrawerIntent = useCallback((vault: string, nonce: number) => {
     setPendingDrawerIntents((prev) => {
@@ -1456,6 +1512,9 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                 onCloseProject={(name) => closeTab(name)}
                 {...(deviceShell ? {} : { onRemoveProject: (name: string) => { void removeProject(name); } })}
                 newWindowNonce={newWindowNonce}
+                globalTeam={globalTeam}
+                onSwitchMember={switchMember}
+                onManage={manageMembers}
                 {...(deviceShell ? { device: true } : {})}
                 {...(tunnel ? { foot: <PhoneDrawerFoot /> } : {})}
               />
@@ -1481,6 +1540,8 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
                   onDrawerFacts={handleDrawerFacts}
                   pendingDrawerIntent={pendingDrawerIntents[p.vault] ?? null}
                   onDrawerIntentConsumed={consumeDrawerIntent}
+                  pendingManage={pendingManage[p.vault] ?? null}
+                  onManageConsumed={consumeManage}
                 />
               ))}
             </div>

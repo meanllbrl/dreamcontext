@@ -41,6 +41,8 @@ import { LIGHT_POLL_FACTOR, pollMs, useWindowActivity } from '../../../lib/windo
 import { useStageCues, withGhosts } from './useStageCues';
 import { deviceAspect, isWebDevice, useWebDevices } from '../../../lib/webDevice';
 import { pageFitKey, pageFitOf, pageFitsVersion, subscribePageFits } from '../../../lib/pageFit';
+import { MemberAgendaTasks, MemberApprovalBand, MemberRefusalLine, MemberStageHead, type MemberStageInfo } from './MemberStage';
+import { TaskStrip } from './TaskStrip';
 import './SuperSurface.css';
 import './superTone.css';
 import './superCentre.css';
@@ -125,6 +127,10 @@ export interface SuperSurfaceProps {
    *  session, no terminals, no Allow/Deny; a card it cannot show draws "on the Mac". `touch`: a
    *  finger, whose stage floats cards down to {@link TOUCH_REMOTE_NARROW_STAGE_PX}. */
   remote?: { touch: boolean };
+  /** A MEMBER's stage (plan-r10 1, mockup r8-08): the same stage, the member's head (face, name,
+   *  model, Profil), its task strip and approval band above the chat, "Görevleri" in its agenda.
+   *  Absent = main's stage, exactly as before. */
+  member?: MemberStageInfo & { spawn: { model: string; effort: string } };
 }
 
 export interface StageShowChild { show: (sid: string) => void; showCard: (id: string) => void; ready: boolean }
@@ -151,8 +157,10 @@ export function jobLookOf({ sessionFor, titleFor, nameFor, children, superTitle 
  * New session. The stage centre and the Super dock both draw it; the dock passes no agenda (the
  * agenda is a stage card) and its two buttons as `actions`.
  */
-export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSession, onTurnOff, actions }: {
+export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSession, onTurnOff, actions, who }: {
   chat: string;
+  /** A member's stage: its own head (face, name, model) instead of the Super Agent's mark and name. */
+  who?: ReactNode;
   agenda?: ReactNode;
   pending: boolean;
   onNewSession: () => Promise<boolean>;
@@ -165,9 +173,13 @@ export function SuperCentreHead({ chat, agenda, pending, onNewSession, noNewSess
   const { t } = useI18n();
   return (
     <div className="super-centre-head">
-      <BrandMark size={28} />
-      <span className="super-centre-name">{t('super.centre.name')}</span>
-      {chat === 'column' && <span className="super-centre-sub">{t('super.centre.sub')}</span>}
+      {who ?? (
+        <>
+          <BrandMark size={28} />
+          <span className="super-centre-name">{t('super.centre.name')}</span>
+          {chat === 'column' && <span className="super-centre-sub">{t('super.centre.sub')}</span>}
+        </>
+      )}
       {chat === 'column' && agenda}
       {chat === 'column' && !noNewSession && <NewSessionButton pending={pending} onPress={onNewSession} />}
       {chat === 'column' && onTurnOff && (
@@ -213,6 +225,27 @@ function CardSelectionScope({ id, onComment, onCommented, children }: {
 
 export function SuperSurface(props: SuperSurfaceProps) {
   const { state, pending, motion, superSession, onSlotsChanged } = props;
+  const member = props.member;
+  // The member's top area (task strip, approval band, refusal) takes its own room above the chat,
+  // in the column's flow; it grows after its task loads, so the chat is re-placed and re-pinned
+  // whenever its height changes (the slot's epoch), never left scrolled under it at 390.
+  const memberTopRef = useRef<HTMLDivElement | null>(null);
+  const slotsChangedRef = useRef(onSlotsChanged);
+  slotsChangedRef.current = onSlotsChanged;
+  const hasMember = !!member;
+  useEffect(() => {
+    const el = memberTopRef.current;
+    if (!hasMember || !el || typeof ResizeObserver === 'undefined') return undefined;
+    let last = el.offsetHeight;
+    const ro = new ResizeObserver(() => {
+      const h = el.offsetHeight;
+      if (h === last) return;
+      last = h;
+      slotsChangedRef.current();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hasMember]);
   const remote = props.remote ?? null;
   // A remote screen's gestures pass the server's allowlist first (super/remoteStage.ts): what it
   // may not do (close, Others, group, a look) is not done here either, never applied for show.
@@ -401,11 +434,18 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const groupsById = useMemo(() => new Map(state.groups.map((g) => [g.id, g] as const)), [state.groups]);
   // Every card's readable name (superTitles.ts): a task by its title, a file by its name, never a path or slug.
   const { data: tasks } = useTasks();
-  const titleOf = useCallback((c: Container) => c.kind === 'agenda' ? t('super.agenda.label') : cardTitle(c, {
-    chat: props.titleFor,
-    team: (ref) => state.team.find((j) => j.id === ref)?.member,
-    task: (slug) => tasks?.find((x) => x.slug === slug)?.name,
-  }), [props.titleFor, state.team, tasks, t]);
+  const titleOf = useCallback((c: Container) => {
+    if (c.kind === 'agenda') return t('super.agenda.label');
+    const title = cardTitle(c, {
+      chat: props.titleFor,
+      team: (ref) => state.team.find((j) => j.id === ref)?.member,
+      task: (slug) => tasks?.find((x) => x.slug === slug)?.name,
+    });
+    // A member's child doing main Super's work (plan-r10 1): marked "Super için" on its stage. The
+    // record names it by `workOrigin` (`main:<item>`); read through a cast, absent on older records.
+    const origin = c.kind === 'chat' && hasOwnKey(state.children, c.ref) ? (state.children[c.ref] as { workOrigin?: unknown }).workOrigin : undefined;
+    return typeof origin === 'string' && origin.startsWith('main:') ? `${title} · ${t('superStage.member.forSuper')}` : title;
+  }, [props.titleFor, state.team, state.children, tasks, t]);
   /** A team card's job and its status now (the view's `teamLive`); undefined when the job is gone. */
   const teamCardOf = useCallback((c: Container): TeamCard | undefined => {
     if (c.kind !== 'team') return undefined;
@@ -840,7 +880,16 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // for the super session, notified only when one of them changes (superJobsStore).
   const superId = superSession?.claudeId ?? null;
   const titleKey = Object.keys(state.children).map((sid) => `${sid}=${props.titleFor(sid)}`).join('\u0001');
-  const batchKey = state.ownerBatches.join(',');
+  // A member's requests from main, by item (the live delivery chip's text comes from here).
+  const requestTexts = useMemo(() => {
+    const out: Record<string, { kind: 'request' | 'reply'; text: string }> = {};
+    for (const q of state.queue) {
+      if ((q.kind === 'request' || q.kind === 'reply') && typeof q.text === 'string' && q.text) out[q.id] = { kind: q.kind, text: q.text };
+    }
+    return out;
+  }, [state.queue]);
+  const requestKey = Object.entries(requestTexts).map(([id, r]) => `${id}:${r.kind}:${r.text.length}`).join(',');
+  const batchKey = `${state.ownerBatches.join(',')}|${(state.mainBatches ?? []).join(',')}|${requestKey}`;
   const titleForRef = useRef(props.titleFor);
   titleForRef.current = props.titleFor;
   // Published once the stage has landed, never mid-flight: a change re-renders the centre's
@@ -848,8 +897,14 @@ export function SuperSurface(props: SuperSurfaceProps) {
   // super session's own chat reads it), so the next hand-over re-renders nothing.
   useEffect(() => {
     if (!superId || motion === 'running') return;
-    publishSuperEventContext(superId, { ownerBatches: state.ownerBatches, titleFor: (c) => titleForRef.current(c) }, `${batchKey}\u0002${titleKey}`);
-  }, [superId, batchKey, titleKey, state.ownerBatches, motion]);
+    publishSuperEventContext(superId, {
+      ownerBatches: state.ownerBatches,
+      // A member's turns for main Super: "Super için" on its stage, never unread (plan-r10 1).
+      ...(state.mainBatches?.length ? { mainBatches: state.mainBatches } : {}),
+      ...(Object.keys(requestTexts).length ? { requests: requestTexts } : {}),
+      titleFor: (c) => titleForRef.current(c),
+    }, `${batchKey}\u0002${titleKey}`);
+  }, [superId, batchKey, titleKey, state.ownerBatches, state.mainBatches, requestTexts, motion]);
   // The agenda and the question band read the same record and the children's live sessions (0 requests).
   const jobLook: JobLook = jobLookOf({ sessionFor: props.sessionFor, titleFor: props.titleFor, nameFor: props.nameFor, children: state.children, superTitle: t('super.centre.name') });
   // A child the agenda points at (a permission waiting on the owner) shows beside the centre,
@@ -929,6 +984,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       taskRows={taskRows}
       onOpenTask={(slug) => emitInstance(bus, 'dreamcontext-agent-open-page', { page: 'tasks', id: slug })}
       onMoveNote={props.onMoveNote}
+      extra={member && variant === 'full' ? <MemberAgendaTasks slug={member.slug} selected={member.task} onPick={(task) => member.onTask(task)} /> : undefined}
     />
   );
   const pillItem = (id: string): OthersItem => {
@@ -952,6 +1008,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
       ref={rootRef}
       className="super-surface"
       data-testid="super-surface"
+      data-super-id={member ? `m:${member.slug}` : 'main'}
       data-super-motion={motion}
       data-mode={plan.mode}
       data-narrow={plan.narrow ? 'true' : undefined}
@@ -977,6 +1034,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
           <div className="super-centre-clip">
             <SuperCentreHead
               chat={plan.chat}
+              who={member ? <MemberStageHead info={member} spawn={member.spawn} /> : undefined}
               agenda={(
                 <>
                   {!agendaOnStage && <AgendaButton state={state} look={jobLook} onOpen={openAgenda} />}
@@ -1001,6 +1059,17 @@ export function SuperSurface(props: SuperSurfaceProps) {
                 </>
               )}
             />
+            {member && (
+              <div className="super-member-top" ref={memberTopRef} data-testid="super-member-top">
+                {member.task && (
+                  <TaskStrip task={member.task} member={member.slug} onOpenTask={member.onOpenTask} onClose={() => member.onTask(null)} />
+                )}
+                {(member.approval || member.refusal === 'unapproved') && <MemberApprovalBand slug={member.slug} />}
+                {member.refusal && <MemberRefusalLine slug={member.slug} refusal={member.refusal} onRetry={member.onRetry} />}
+                {/* Its routines' open questions, answered here (the Ekip row counts them). */}
+                {member.routineQuestions}
+              </div>
+            )}
             <div className="super-slot" data-super-slot="centre" />
           </div>
           {hot === 'centre' && <div className="super-ask-target" data-testid="super-ask-target" aria-hidden>{t('super.card.askAbout')}</div>}

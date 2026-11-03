@@ -363,12 +363,36 @@ describe('one recorded session PER SUPER at the upgrade (plan-r10 1: a member\'s
     expect(superUpgradeRefusal({ mode: 'super', phone: true, contextRoot: root, resumeId: '', sessionId: MEMBER_SESSION, chatAgent: 'rota' })).toBe(403);
   });
 
-  it('a phone never opens a member\'s Super session, whatever the mode (refused like main\'s)', () => {
+  it('a phone never resumes or spawns a member\'s Super session; it only mirrors a live one, like main\'s (AC9)', async () => {
     const src = readFileSync(new URL('../../src/server/routes/agent-chat.ts', import.meta.url), 'utf-8');
     const handler = src.slice(src.indexOf('export function attachAgentChat'), src.indexOf('export function chatOpenDecision'));
-    const refusal = handler.indexOf("if (phone && [resumeId, sessionId].some((id) => { const ref = id ? superOfSession(id) : null; return !!ref && ref.superId !== 'main'; })) { rejectUpgrade(socket, 403); return; }");
-    expect(refusal).toBeGreaterThan(0);
-    expect(refusal).toBeLessThan(handler.indexOf('startChatSession('));
+    // Another project's member Super session: refused before anything else.
+    const other = handler.indexOf("if (phone && [resumeId, sessionId].some((id) => { const ref = id ? superOfSession(id) : null; return !!ref && ref.superId !== 'main' && resolve(ref.root) !== resolve(superCtx); })) { rejectUpgrade(socket, 403); return; }");
+    expect(other).toBeGreaterThan(0);
+    // This project's: decided with main's, before any spawn; refuse is a 403.
+    const decide = handler.indexOf('phoneSuperOpen({ mode, resumeId, sessionId, index: superIdx, liveSuper: !!mirrorable(superIdx.session), members: memberSupers })');
+    expect(decide).toBeGreaterThan(other);
+    expect(decide).toBeLessThan(handler.indexOf('startChatSession('));
+    expect(handler).toMatch(/if \(phoneSuper === 'refuse'\) \{ rejectUpgrade\(socket, 403\); return; \}/);
+    expect(handler).toContain("ready: () => memberCallState(superCtx, slug).state === 'ready'");
+    // The decision itself: mirror only when live + enabled + ready + its own session; any other
+    // open naming it (resume, spawn, reattach) is refused, whatever the mode.
+    const { phoneSuperOpen } = await import('../../src/lib/super/phone-mirror.js');
+    const MEMBER_SESSION = '99999999-8888-4777-8666-555555555555';
+    const m = (o: Partial<{ enabled: boolean; live: boolean; ready: boolean }> = {}) =>
+      [{ slug: 'rota', session: MEMBER_SESSION, enabled: o.enabled ?? true, live: o.live ?? true, ready: () => o.ready ?? true }];
+    const open = (o: { mode?: string; resumeId?: string; sessionId?: string; members: ReturnType<typeof m> }) =>
+      phoneSuperOpen({ mode: o.mode ?? 'basic', resumeId: o.resumeId ?? '', sessionId: o.sessionId ?? '', index: { session: SUPER, enabled: true }, liveSuper: true, members: o.members });
+    expect(open({ sessionId: MEMBER_SESSION, members: m() })).toBe('mirror');
+    for (const mode of ['basic', 'plan', 'develop', 'super']) {
+      expect(open({ mode, resumeId: MEMBER_SESSION, members: m({ live: false }) })).toBe('refuse');
+      expect(open({ mode, sessionId: MEMBER_SESSION, members: m({ live: false }) })).toBe('refuse');
+      expect(open({ mode, sessionId: MEMBER_SESSION, members: m({ enabled: false }) })).toBe('refuse');
+      expect(open({ mode, sessionId: MEMBER_SESSION, members: m({ ready: false }) })).toBe('refuse');
+    }
+    // A session that is not the member record's own is not its mirror.
+    expect(open({ sessionId: 'another-chat', members: m() })).toBe('pass');
+    expect(open({ mode: 'super', sessionId: 'another-chat', members: m() })).toBe('refuse');
   });
 
   it('the upgrade handler names the chat\'s agent to the gate', () => {

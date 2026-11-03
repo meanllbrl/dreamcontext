@@ -76,7 +76,8 @@ function makeVault(state: Partial<SuperState> = {}): void {
 }
 
 // Wave 1's headless team-ask chain (it still serves in-flight jobs and the owner's thread reply):
-// these tests drive it through `team ask`; Wave 2's request route is super-multi-*.test.ts.
+// these tests drive it through `team ask` by naming the `say` route; the live default since Wave 3
+// is the request route (the block at the end, and super-multi-*.test.ts).
 beforeEach(() => { setTeamAskRouteForTest('say'); });
 afterEach(() => { setTeamAskRouteForTest(null); });
 
@@ -157,7 +158,8 @@ describe('super team ask — through the AI Team\'s say path', () => {
     const r = await verb('team-ask', { member: 'scout', text: 'look at the funnel' });
     expect(r.status).toBe(409);
     expect(r.json.error).toBe('say_unapproved');
-    expect(String(r.json.message)).toMatch(/You cannot approve it: the owner does, in AI Team/);
+    expect(String(r.json.message)).toContain('You cannot approve it: the owner does, on its approval card (its stage, or "Üyeleri yönet").');
+    expect(String(r.json.message)).not.toMatch(/AI Team page|in AI Team\./);
     let s = await stored();
     expect(s.queue).toHaveLength(1);
     const [item] = s.queue;

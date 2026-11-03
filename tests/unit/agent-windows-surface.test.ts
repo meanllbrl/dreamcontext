@@ -287,8 +287,9 @@ describe('the 40-tab ceiling (admitTab)', () => {
       if (!exempt && !before.includes('admitTab()')) unguarded.push(i + 1);
     }
     expect(unguarded).toEqual([]);
-    // Exactly the three the plan names: the restore, Plan→Develop, the Super Agent's own session.
-    expect(SURFACE.match(/admitTab: exempt/g)).toHaveLength(3);
+    // Exactly the four the plans name: the restore, Plan→Develop, the Super Agent's own session,
+    // and an AI Team member's own Super session (plan-r10 Wave 3: a Super is never a tab).
+    expect(SURFACE.match(/admitTab: exempt/g)).toHaveLength(4);
     // `spawnAndRegister` is gated by its callers, and only these two call it.
     expect([...SURFACE.matchAll(/spawnAndRegister\(/g)]).toHaveLength(2);
     for (const fn of ['const addSession = useCallback(', 'const addSplitSession = useCallback(']) {

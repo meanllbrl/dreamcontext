@@ -28,6 +28,11 @@ export function onOpenJobRow(fn: Listener): () => void {
 
 export interface SuperEventContext {
   ownerBatches: readonly string[];
+  /** A member Super's turns for main Super (plan-r10 1): marked "Super için", never unread. */
+  mainBatches?: readonly string[];
+  /** A member Super's open and recent `request`/`reply` items by id, with main's text: its live
+   *  delivery chip carries no text, so its framed block reads it here (plan-r10 1). */
+  requests?: Readonly<Record<string, { kind: 'request' | 'reply'; text: string }>>;
   titleFor: (child: string) => string;
 }
 const contexts = new Map<string, SuperEventContext>();

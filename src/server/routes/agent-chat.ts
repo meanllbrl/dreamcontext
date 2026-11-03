@@ -42,7 +42,7 @@ import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.
 import { parseCardRef, parseChatAgent, prepareAgentChat, prepareCardChat, type CardRef } from '../../lib/whiteboards/card-chat.js';
 import { chatSubagents } from '../../lib/automations/chat-subagents.js';
 import {
-  chatSpawnRoster, collectTeam, renderSuperTeamBlock, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
+  chatSpawnRoster, collectTeam, memberCallState, renderSuperTeamBlock, superOwnerTurnBlocks, superSpawnTeamBlock, superTeamState, teamBlockFingerprint, teamFingerprint,
 } from '../../lib/agents/team-roster.js';
 import { refreshSuperTools, superOwnerToolsBlock, toolsBlockFingerprint, toolsBlockNow } from '../../lib/super/tools-block.js';
 import { SUPER_BRIEF_TEXT, memberSlotOf, modeBriefing, superMemberBriefing, type ChatMode } from '../chat-modes.js';
@@ -115,14 +115,14 @@ import { deliverResult, failAllCommands } from '../../lib/assistant/relay.js';
 import { attachAssistantInbox } from '../../lib/assistant/delegations.js';
 import { DEFAULT_AGENT_AUTONOMY, MEMBER_CREW_ENV, MEMBER_SUPER_ENV, SUPER_CREW_ENV } from '../../lib/automations/types.js';
 import { levelPermissionArgs } from '../../lib/agents/permission.js';
-import { memberSummaries, memberSuperSessions } from '../../lib/super/member-summary.js';
+import { memberSummaries, memberSuperSessions, phoneMemberRow } from '../../lib/super/member-summary.js';
 import type { SuperMemberSummary } from '../../lib/super/types.js';
 import { consumeCrewTicket, membersDelegating } from '../../lib/super/delegating.js';
 import { crewBridgeMode, crewToolRefusal, narrowestMode } from '../../lib/super/member-crew.js';
-import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChild, keyOfRef, mainRootOf, memberOfSuperId, peekSuperNote, readSuperState, setPhoneHoldsProbe, superEntry, superIdOfMember, superOfChild, superOfEnded, superOfSession } from '../../lib/super/store.js';
+import { clearSuperNote, delegatedChildMcp, handedOverChildRoot, isHandedOverChild, keyOfRef, mainRootOf, memberOfSuperId, peekSuperNote, readSuperState, setPhoneHoldsProbe, superEntry, superIdOfMember, superIndex, superOfChild, superOfEnded, superOfSession } from '../../lib/super/store.js';
 import { remoteViewOf } from './super-remote.js';
 import { OWNER_VOICE_TEXT, SUPER_BRIEF_REV, SUPER_FRAME_EVENT, SUPER_NOTE_TEXT, aboutHeads, msgRef, ownerMsgBlock } from '../../lib/super/types.js';
-import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, type PhoneSuperRecord, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
+import { childDigestName, MIRROR_CLOSE_ENDED, MIRROR_CLOSE_REVOKED, MirrorSet, mirrorOwnerText, phoneLiveChats, type PhoneMemberSuper, type PhoneSuperRecord, opensSession, phoneSuperOpen, stageImageItems, stageMediaFrame, superDigest, superDigestFrame } from '../../lib/super/phone-mirror.js';
 import {
   attachSuperInbox, markSuperEventTurn, noteChatStarted, noteChildModel, noteChildStartFailed, noteSuperOwnerMsg, setSuperDigestSink, superAnswerDigest, superOwnerSpoke, superSanitizeOpts, superSocketAttached, superTurnEnded, superVaultName,
 } from '../../lib/super/inbox.js';
@@ -403,13 +403,25 @@ export function assistantAllowedTools(autonomy: Autonomy): string[] {
  * upgrade path).
  */
 export function superUpgradeRefusal(o: {
-  mode: string; phone: boolean; contextRoot: string; resumeId: string; sessionId: string; chatAgent?: string | null;
+  mode: string; phone: boolean; contextRoot: string; resumeId: string; sessionId: string; chatAgent?: string | null; home?: string;
 }): 403 | 409 | null {
   if (o.mode !== 'super') return null;
   if (o.phone) return 403;
-  const recorded = superEntry(o.contextRoot, o.chatAgent ? superIdOfMember(o.chatAgent) : 'main').session;
+  const entry = superEntry(o.contextRoot, o.chatAgent ? superIdOfMember(o.chatAgent) : 'main');
   const asked = o.resumeId || o.sessionId;
-  return recorded && asked === recorded ? null : 409;
+  if (!entry.session || asked !== entry.session) return 409;
+  // A member turned off or waiting for its approval card has no Super (review 2026-11-02): a
+  // Resume or a reattach fallback must not bring back the chat `stopMemberSuper` ended, to run on
+  // what the owner types. Its record says off first (no disk); its manifest is read only for a
+  // member Super, and an unreadable one refuses.
+  if (o.chatAgent) {
+    if (!entry.enabled) return 409;
+    try {
+      const call = memberCallState(o.contextRoot, o.chatAgent, o.home).state;
+      if (call === 'off' || call === 'needs-approval' || call === 'not_owner') return 409;
+    } catch { return 409; }
+  }
+  return null;
 }
 
 /** The crew mark of a child no ticket or record ties to exactly ONE member (security, end review):
@@ -1181,14 +1193,15 @@ export async function handleAgentLiveChats(req: IncomingMessage, res: ServerResp
   const view = phoneLiveChats(chats, records);
   // Each project's AI Team members as Supers (plan-r10 2.4): one entry per project with each
   // member's owner-facing state; a member's Super session and its children are never his chats.
-  const memberRows: Array<{ vault: string; members: SuperMemberSummary[] }> = [];
+  // `pending` is the window's spawn signal (the phone never opens a Super chat): never sent here.
+  const memberRows: Array<{ vault: string; members: Array<ReturnType<typeof phoneMemberRow>> }> = [];
   const memberHeld = new Set<string>();
   for (const [path, name] of byPath) {
     if (!visible(name)) continue;
     const ctx = join(path, '_dream_context');
     for (const id of await memberSuperSessions(ctx, superSanitizeOpts()).catch(() => new Set<string>())) memberHeld.add(id);
     const members = await memberSummaries(ctx, superSanitizeOpts()).catch(() => [] as SuperMemberSummary[]);
-    if (members.length) memberRows.push({ vault: name, members });
+    if (members.length) memberRows.push({ vault: name, members: members.map(phoneMemberRow) });
   }
   const ownChats = memberHeld.size ? view.chats.filter((c) => !memberHeld.has((c as { conversationId: string }).conversationId)) : view.chats;
   sendJson(res, 200, { chats: ownChats, draining, ...(view.supers.length ? { supers: view.supers } : {}), ...(view.parked.length ? { parked: view.parked } : {}), ...(memberRows.length ? { members: memberRows } : {}) });
@@ -1448,15 +1461,24 @@ export function attachAgentChat(server: Server, opts: { networkToken?: string | 
     // respawning it; any other phone open naming that session, and `mode=super`, is refused.
     const superCtx = join(projectRoot, '_dream_context');
     const superIdx = superEntry(superCtx);
-    const liveSuper = superIdx.session ? findLiveChat(superIdx.session) : null;
-    // A member's own Super session (plan-r10 2.4): a phone never adopts, resumes or respawns it,
-    // exactly as main's (its stage is the desktop's in this wave).
-    if (phone && [resumeId, sessionId].some((id) => { const ref = id ? superOfSession(id) : null; return !!ref && ref.superId !== 'main'; })) { rejectUpgrade(socket, 403); return; }
+    /** A super chat live on the Mac in THIS project, with mirrors to join. */
+    const mirrorable = (sid: string | null) => { const l = sid ? findLiveChat(sid) : null; return l?.mirror && l.projectRoot === projectRoot ? l : null; };
+    // A member's own Super session of ANOTHER project (plan-r10 2.4): never opened from here.
+    if (phone && [resumeId, sessionId].some((id) => { const ref = id ? superOfSession(id) : null; return !!ref && ref.superId !== 'main' && resolve(ref.root) !== resolve(superCtx); })) { rejectUpgrade(socket, 403); return; }
+    // This project's member Supers (plan-r10 2.4): each record's session is held like main's. The
+    // phone MIRRORS a live one (on, approved, live on the Mac) and is refused any other open of it.
+    const memberSupers: PhoneMemberSuper[] = phone ? [...superIndex(superCtx)].flatMap(([id, e]) => {
+      const slug = memberOfSuperId(id);
+      return slug ? [{ slug, session: e.session, enabled: e.enabled, live: !!mirrorable(e.session), ready: () => memberCallState(superCtx, slug).state === 'ready' }] : [];
+    }) : [];
     const phoneSuper = phone
-      ? phoneSuperOpen({ mode, resumeId, sessionId, index: superIdx, liveSuper: !!liveSuper?.mirror && liveSuper.projectRoot === projectRoot })
+      ? phoneSuperOpen({ mode, resumeId, sessionId, index: superIdx, liveSuper: !!mirrorable(superIdx.session), members: memberSupers })
       : 'pass';
     if (phoneSuper === 'refuse') { rejectUpgrade(socket, 403); return; }
     if (phoneSuper === 'mirror') {
+      // Main's live Super, or the named member's: the owner's words go to THAT chat as his message.
+      const member = opensSession({ resumeId, sessionId }, superIdx.session) ? null : memberSupers.find((m) => opensSession({ resumeId, sessionId }, m.session));
+      const liveSuper = mirrorable(member ? member.session : superIdx.session);
       const mirrorHash = authFor(req) ? deviceIdHash(req) : null;
       const mirrorTag: DeviceTag | null = mirrorHash ? { store: 'mac', idHash: mirrorHash } : null;
       if (!mirrorTag || !liveSuper?.mirror) { rejectUpgrade(socket, 403); return; }
