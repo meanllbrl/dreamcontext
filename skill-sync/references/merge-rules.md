@@ -35,7 +35,7 @@ own `.gitignore` must exclude the machine-local brain runtime + secrets (prefixe
 | `overrides/**` | tracked | tracked |
 | `state/*.md` (tasks) | tracked (source of truth) | gitignored (local mirror; issues/ClickUp are source of truth) |
 | `state/.config.json`, `.active-version.json`, `.migrations.json` | tracked | tracked |
-| `state/.secrets.json`, `.sleep.json`, `.sleep-history.json`, `.agent-sessions.json`, `.session-digests/`, `.conflicts/`, `.brain-merge/`, `.version-check.json`, `.auto-upgrade.json`, `.brain-local.json`, `.lab-prefs.json`, `.tasks-map.json`, `.tasks-sync.*`, `.tasks-queue.json`, `.obsidian/`, `tmp/`, `**/.env`, `**/.DS_Store` | gitignored | gitignored |
+| `state/.secrets.json`, `.sleep.json`, `.sleep-history.json`, `.agent-sessions.json` (and `.agent-sessions.*`), `.super-agent.json` (and `.super-agent.json.*`), `.super/`, `.session-digests/`, `.conflicts/`, `.brain-merge/`, `.version-check.json`, `.auto-upgrade.json`, `.brain-local.json`, `.lab-prefs.json`, `.tasks-map.json`, `.tasks-sync.*`, `.tasks-queue.json`, `.obsidian/`, `tmp/`, `**/.env`, `**/.DS_Store` | gitignored | gitignored |
 | `lab/**` (insights + cache) | tracked | tracked |
 | `lab/credentials.json` / `lab/credentials.*` (except the tracked `credentials.example.json`) | gitignored | gitignored |
 

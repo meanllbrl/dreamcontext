@@ -740,6 +740,25 @@ export function removeFromIndex(cwd: string, pathspecs: string[]): void {
   run(cwd, ['rm', '--cached', '-r', '-q', '--ignore-unmatch', '--', ...pathspecs]);
 }
 
+/** {@link removeFromIndex} with `-f`: also drops an entry whose staged copy differs from both HEAD
+ *  and the file (a live record staged a moment before it changed again). `--cached` never touches
+ *  the work tree, so `-f` loses nothing on disk. THROWS when git cannot. */
+export function removeFromIndexForce(cwd: string, pathspecs: string[]): void {
+  run(cwd, ['rm', '--cached', '-f', '-r', '-q', '--ignore-unmatch', '--', ...pathspecs]);
+}
+
+/** Does git's ignore machinery exclude `relPath` (repo-relative)? A path whose last matching rule
+ *  is a `!` negation is NOT ignored. Null when git cannot answer. */
+export function isIgnored(cwd: string, relPath: string): boolean | null {
+  try {
+    const out = run(cwd, ['check-ignore', '--no-index', '-v', '-n', '--', relPath]).trim();
+    const pattern = out.split('\t')[0].split(':').slice(2).join(':');
+    return pattern.length > 0 && !pattern.startsWith('!');
+  } catch {
+    return null;
+  }
+}
+
 /** The commits a push would send: `HEAD --not <remoteRef>`, or `--not --remotes` when it has none. THROWS. */
 export function commitsToPush(cwd: string, remoteRef: string | null): string[] {
   const args = remoteRef ? ['rev-list', 'HEAD', '--not', remoteRef] : ['rev-list', 'HEAD', '--not', '--remotes'];

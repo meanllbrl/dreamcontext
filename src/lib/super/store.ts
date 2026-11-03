@@ -16,6 +16,7 @@ import { OWNER_WAIT_KINDS, type OwnerWaitKind } from './owner-wait.js';
 import { parseMcpNames } from './lean-mcp.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
 import { renameWithRetry } from '../fs-retry.js';
+import { bindingVerdict, currentBinding, noteOwnWrite } from './record-binding.js';
 
 /**
  * The Super Agent's state file — `state/.super-agent.json`, one per vault (plan-r7 D2).
@@ -814,19 +815,34 @@ function ownedBy(state: SuperState, id: SuperId): SuperState {
   return state;
 }
 
-/** The record on disk, sanitized, with no effect on the index. */
+/** The record on disk, sanitized, with no effect on the index. A record stamped for another Mac
+ *  or another folder, or an unstamped one git tracks (`record-binding.ts`), reads as empty. */
 async function loadSuperState(contextRoot: string, opts: SanitizeOpts, id: SuperId = 'main'): Promise<SuperState> {
+  return (await loadSuperRecord(contextRoot, opts, id)).state;
+}
+
+async function loadSuperRecord(contextRoot: string, opts: SanitizeOpts, id: SuperId): Promise<{ state: SuperState; foreign: boolean }> {
   const path = await assertContained(contextRoot, id);
   let text: string;
   try {
     text = await fsp.readFile(path, 'utf-8');
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return ownedBy(emptySuperState(), id);
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { state: ownedBy(emptySuperState(), id), foreign: false };
     throw err;
   }
   let parsed: unknown = null;
   try { parsed = JSON.parse(text); } catch { parsed = null; }
-  return ownedBy(sanitizeSuperState(parsed, opts), id);
+  if (parsed !== null && bindingVerdict(parsed, text, contextRoot, path) === 'foreign') {
+    return { state: ownedBy(emptySuperState(), id), foreign: true };
+  }
+  return { state: ownedBy(sanitizeSuperState(parsed, opts), id), foreign: false };
+}
+
+/** Keep a foreign record beside the new one (`<file>.foreign-<time>`, ignored like the record)
+ *  instead of overwriting it: it may be the owner's own, from a folder he moved. */
+async function setAsideForeign(contextRoot: string, id: SuperId): Promise<void> {
+  const path = superRecordPath(contextRoot, id);
+  await fsp.rename(path, `${path}.foreign-${Date.now()}`).catch((e: NodeJS.ErrnoException) => { if (e.code !== 'ENOENT') throw e; });
 }
 
 const isSuperId = (v: unknown): v is SuperId => v === 'main' || (typeof v === 'string' && v.startsWith(MEMBER_SUPER_PREFIX));
@@ -853,7 +869,8 @@ export async function readSuperState(rootOrKey: string, idOrOpts?: SuperId | San
 
 async function writeSuperState(contextRoot: string, state: SuperState, id: SuperId = 'main'): Promise<void> {
   const path = await assertContained(contextRoot, id, true);
-  const text = `${JSON.stringify(state, null, 2)}\n`;
+  // Stamped with this Mac and this folder on every write; never in the state callers see.
+  const text = `${JSON.stringify({ ...state, bound: currentBinding(contextRoot) }, null, 2)}\n`;
   // Measured in UTF-8 bytes, as the read's `st.size` is: never write what the read refuses.
   if (Buffer.byteLength(text, 'utf-8') > MAX_FILE_BYTES) throw new SuperStoreRefused('too_large', 'this change would make the Super record too large; nothing was written');
   const tmp = `${path}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
@@ -864,6 +881,7 @@ async function writeSuperState(contextRoot: string, state: SuperState, id: Super
     await fsp.rm(tmp, { force: true }).catch(() => { /* already gone */ });
     throw err;
   }
+  noteOwnWrite(path, text);
 }
 
 const locks = new Map<string, Promise<unknown>>();
@@ -971,7 +989,8 @@ export function withSuperState(
   const { root: contextRoot, superId: id } = splitSuperRoot(rootOrKey, idIn);
   const key = superKey(contextRoot, id);
   return withVaultLock(key, async () => {
-    const draft = await loadSuperState(contextRoot, opts, id);
+    const { state: draft, foreign } = await loadSuperRecord(contextRoot, opts, id);
+    if (foreign) await setAsideForeign(contextRoot, id);
     const before = beforeWrite(draft);
     const out = fn(draft) ?? draft;
     const demoted = demotePhoneHeld(before, out);

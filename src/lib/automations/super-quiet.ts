@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { readMachineIdentity } from '../machine-id.js';
 import { getAutomation } from './store.js';
 import { MAX_FILE_BYTES, superRecordPath } from '../super/store.js';
+import { bindingVerdict } from '../super/record-binding.js';
 import { listQuestions } from './hitl.js';
 import { parseDayFile, readThread, threadSlugDir } from './threads.js';
 import type { AutomationQuestion, ThreadEntry } from './types.js';
@@ -43,7 +44,10 @@ function readRecord(contextRoot: string): SuperRecord | null {
     const path = superRecordPath(contextRoot, 'main');
     const st = lstatSync(path);
     if (!st.isFile() || st.size > MAX_FILE_BYTES) return null;
-    const raw = JSON.parse(readFileSync(path, 'utf-8')) as { enabled?: unknown; team?: unknown; queue?: unknown };
+    const text = readFileSync(path, 'utf-8');
+    const raw = JSON.parse(text) as { enabled?: unknown; team?: unknown; queue?: unknown };
+    // Another Mac's or another folder's record says nothing about this one (record-binding.ts).
+    if (bindingVerdict(raw, text, contextRoot, path) === 'foreign') return null;
     const team = Array.isArray(raw.team) ? raw.team as Array<{ id?: unknown; runId?: unknown; member?: unknown; told?: unknown }> : [];
     const queue = Array.isArray(raw.queue) ? raw.queue as Array<{ team?: unknown; state?: unknown }> : [];
     // The jobs whose ending the Super never heard: not told, or told and still waiting in its queue.

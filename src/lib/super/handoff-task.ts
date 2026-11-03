@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { MAX_FILE_BYTES, MEMBER_SUPER_DIR, okMember, superRecordPath } from './store.js';
+import { bindingVerdict } from './record-binding.js';
 import { superHandoffFileOf, superHandoffTask } from './handoff-file.js';
 
 /**
@@ -20,11 +21,15 @@ export interface SuperHandoffContext {
 }
 
 /** One record read synchronously through the store's guards (no link, a file, not oversize). */
-function readRecord(path: string): { session?: unknown; enabled?: unknown; children?: Record<string, { endedAt?: unknown }> } | null {
+/** The record, or null when absent, not a plain file, oversize, unparsable, or another Mac's or
+ *  another folder's (record-binding.ts): that one is not this vault's Super. */
+function readRecord(contextRoot: string, path: string): { session?: unknown; enabled?: unknown; children?: Record<string, { endedAt?: unknown }> } | null {
   try {
     const st = lstatSync(path);
     if (!st.isFile() || st.size > MAX_FILE_BYTES) return null;
-    return JSON.parse(readFileSync(path, 'utf-8'));
+    const text = readFileSync(path, 'utf-8');
+    const raw = JSON.parse(text);
+    return bindingVerdict(raw, text, contextRoot, path) === 'foreign' ? null : raw;
   } catch { return null; }
 }
 
@@ -47,7 +52,7 @@ export function superHandoffContext(contextRoot: string, ids: ReadonlyArray<stri
     }
   } catch { /* no members folder */ }
   for (const c of candidates) {
-    const raw = readRecord(c.path);
+    const raw = readRecord(contextRoot, c.path);
     const session = typeof raw?.session === 'string' ? raw.session : null;
     if (!raw || !session || raw.enabled !== true || !ids.some((id) => id === session)) continue;
     const children: string[] = [];
