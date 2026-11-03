@@ -193,7 +193,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       { type: 'assistant', message: { role: 'assistant', model: args.model, content: [{ type: 'text', text }] }, parent_tool_use_id: null, session_id: session.nativeThreadId },
       { type: 'result', subtype: 'success', is_error: false, result: '', num_turns: 0, total_cost_usd: 0, usage: {}, session_id: session.nativeThreadId, dc_tool: args.tool, dc_synthetic: true },
     ];
-    if (session.busy) heldAnswers.push(...answer);
+    // A turn held on an async question is still open on the server's books too.
+    if (session.busy || session.wire.holding) heldAnswers.push(...answer);
     else for (const f of answer) emit(f);
   };
   /** Edit cards open in this turn (tool_use id → file): a clean result runs the edit checks (row 11). */

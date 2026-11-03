@@ -729,6 +729,8 @@ export class BridgeSession {
   ): Promise<string | null> {
     const session = this.session!;
     const providerThread = this.providerThread!;
+    // The turn held on async questions goes on in this run: cards still open are no longer asked.
+    if (this.wire.holding && !this.hidden) for (const frame of this.wire.dropAsyncAsks()) this.opts.emit(frame);
     const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     this.runOrdinal += 1;
     const runId = RunId.make(`run-${stamp}`);
@@ -817,7 +819,8 @@ export class BridgeSession {
    * the session ends like any dead tool, and the pane offers Resume.
    */
   async hiddenTurn(text: string, ms = 45_000): Promise<string> {
-    if (this.closed || this.activeRun || this.hidden || !this.session || !this.providerThread) return '';
+    // A turn held on an async question is the owner's still: nothing runs under it unseen.
+    if (this.closed || this.activeRun || this.hidden || this.wire.holding || !this.session || !this.providerThread) return '';
     let finish = (): void => undefined;
     const finished = new Promise<void>((r) => { finish = r; });
     const hidden = { text: '', finished, finish, stopping: false };
@@ -853,6 +856,11 @@ export class BridgeSession {
   /** Stop the running turn. Resolves once Codex accepted the interrupt (or nothing was running). */
   async interrupt(): Promise<void> {
     const session = this.session;
+    // A Stop while the chat waits on an async question: nothing runs, the held turn just ends.
+    if (!this.activeRun && this.wire.holding) {
+      for (const frame of this.wire.endHeld()) this.opts.emit(frame);
+      return;
+    }
     // A Stop right after a send waits for Codex to report the turn, then stops it.
     await this.awaitTurnId();
     const run = this.activeRun;
@@ -939,6 +947,14 @@ export class BridgeSession {
   async answer(requestId: string, response: { behavior?: string; updatedInput?: unknown; message?: string }): Promise<void> {
     const session = this.session;
     if (!session) return;
+    // Codex's async question: the tool already ended its turn and reads the answer as the next
+    // message, so the pick goes as one (the held turn goes on in that run).
+    if (this.wire.isAsyncAsk(requestId)) {
+      const settled = this.wire.settleAsyncAsk(requestId, response);
+      for (const frame of settled.frames) this.opts.emit(frame);
+      if (settled.send) await this.send(settled.send);
+      return;
+    }
     const t3Id = this.wire.t3RequestId(requestId);
     const questions = this.wire.questionsByRequest.has(t3Id);
     const allow = response.behavior === 'allow';
@@ -957,6 +973,8 @@ export class BridgeSession {
   async newThread(): Promise<string> {
     const session = this.session;
     if (!session) return '';
+    // A question held from the old thread is not the new thread's: its turn ends here.
+    if (this.wire.holding) for (const frame of this.wire.endHeld()) this.opts.emit(frame);
     this.providerThread = await this.run(session.ensureThread({
       threadId: this.threadId,
       modelSelection: this.modelSelection(),

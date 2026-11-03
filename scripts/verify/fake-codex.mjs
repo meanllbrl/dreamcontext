@@ -10,6 +10,9 @@
  *   APPROVE → a shell command that asks for approval     QUESTION → a structured question
  *   DIFF    → a file change behind an approval           INTERRUPT → a turn that waits to be stopped
  *   PLAN    → a plan (todo list)                          RUN: <cmd> → runs <cmd> in a shell, the reply is its output
+ *   ASYNCASK → an async question (`request_user_input_async`: Codex 0.164 ends the turn on an
+ *              agentMessage with `delivery: "async"` and its `questions`); the next turn that
+ *              carries "My answer: X" replies "PICKED X"
  *   anything else → a short text reply. The tab name only
  *                                                          comes from the bridge's hidden follow-up turn.
  *
@@ -87,6 +90,9 @@ let pending = null; // { entries, pos } waiting at an expect_outbound
 /** BRAIN turns: the reply quotes what arrived as app context (W3), instead of the fixture text. */
 let override = '';
 let overrideSent = false;
+/** ASYNCASK turns: the reply is an async question instead of the fixture text. */
+let asyncAsk = false;
+const ASYNC_QUESTION = { title: 'Which color?', options: ['Red', 'Blue'] };
 /** Like real Codex: injected context and the owner's text are tagged by kind in the rollout. */
 function recordUser(kind, text) {
   record({ type: 'message', role: 'user', content: [{ type: 'input_text', text }], internal_chat_message_metadata_passthrough: { content_item_kinds: [kind] } });
@@ -126,6 +132,15 @@ async function pump(entries, pos, from, scenario) {
     let frame = rehome(e.frame, from);
     // Responses to requests already answered (or never sent by this client) are not replayed.
     if (frame.id !== undefined && !frame.method) continue;
+    // An async question arrives whole, on its item/completed, as in a real Codex 0.164 rollout.
+    if (asyncAsk && scenario === 'simple') {
+      const item = frame.params?.item;
+      if (frame.method === 'item/agentMessage/delta' || (frame.method === 'item/started' && item?.type === 'agentMessage')) continue;
+      if (frame.method === 'item/completed' && item?.type === 'agentMessage') {
+        frame = { ...frame, params: { ...frame.params, item: { ...item, text: `${ASYNC_QUESTION.title}\n- ${ASYNC_QUESTION.options.join('\n- ')}`, delivery: 'async', questions: [ASYNC_QUESTION] } } };
+        asyncAsk = false;
+      }
+    }
     // A BRAIN turn: the first text delta carries the whole override, later ones are dropped.
     if (override && scenario === 'simple' && frame.method === 'item/agentMessage/delta') {
       if (overrideSent) continue;
@@ -197,6 +212,9 @@ async function onRequest(msg) {
         override = `RAN (exit ${r.status}): ${`${r.stdout ?? ''}${r.stderr ?? ''}`.trim().slice(0, 600)}`;
       }
       // A carried chat (W4): the reply quotes what the new thread was handed from the old one.
+      if (/\bASYNCASK\b/.test(text)) asyncAsk = true;
+      const answer = text.match(/My answer: ([^\n]+)/);
+      if (answer) override = `PICKED ${answer[1].trim()}`;
       if (/\bHISTORY\b/.test(text)) override = `Handed over: ${String(extra['dreamcontext-prompt']?.value ?? '').split('\n').find((l) => /marigold/.test(l))?.trim() ?? '(nothing)'}`;
       recordUser(wantTitle ? 'user.text' : 'user.text', text);
       record({ type: 'token_usage_record', usage: { input_tokens: 4000, cached_input_tokens: 1000, output_tokens: 120 }, response_id: `resp_${turnSeq}` });
