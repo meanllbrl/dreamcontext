@@ -35,6 +35,7 @@ import type { WireFrame } from './to-wire.js';
 import { fitCodexContext, type BrainContext } from './context.js';
 import { appendSubagentStep } from './subagent-log.js';
 import { isInjectedUserText } from './codex-history.js';
+import { isCardFeedbackText } from '../chat-view-spec.js';
 import { expandSlash, slashCommandNames } from './slash.js';
 import { codexStorePlan, planLaunchArgs } from '../codex-mcp.js';
 
@@ -505,6 +506,10 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
         return;
       }
       // ACP takes no message into a running turn: this one waits for the turn's end (row 3).
+      // A skipped card told back (card-feedback.ts) is written only at a clean, idle turn end; busy
+      // now means the owner spoke first, so it is stale. Never held nor steered in: held texts are
+      // joined into one owner turn and announced to the owner, and this text is neither his nor for him.
+      if (session.busy && isCardFeedbackText(text)) return;
       if (isInstanceTool(args.tool) && session.busy) {
         heldMessages.push(text);
         say(`${toolLabel(args.tool)} cannot take a message while it works: this one goes in as soon as the turn ends.`);

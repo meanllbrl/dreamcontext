@@ -36,7 +36,7 @@ import { safeChildPath } from '../safe-path.js';
 import { sessionWorktreeRoot } from '../session-worktree.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js';
-import { CardFeedbackTracker } from '../card-feedback.js';
+import { CardFeedbackTracker, endedClean } from '../card-feedback.js';
 import { recordAgentSession, recordStageHomeSession } from '../../lib/local-store.js';
 import { getRunTarget } from '../../lib/automations/store.js';
 import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.js';
@@ -2840,6 +2840,10 @@ export function startChatSession(
   /** The request id of the interrupt last written, so ITS `control_response` can be told apart
    *  from a model or mode switch's. */
   let interruptRequestId: string | null = null;
+  /** The owner pressed Stop since the last main `result`: the turn that ends next was cut short,
+   *  so nothing is fed back to the agent at its end (card-feedback.ts). Cleared at that `result`
+   *  or, when an idle CLI sends none, when the interrupt settles. */
+  let stopAskedThisTurn = false;
   /** Armed when the CLI acked an interrupt: if no `result` follows, nothing was running and the
    *  turn is closed here (`settleAfterInterrupt`). */
   let interruptSettleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3140,6 +3144,7 @@ export function startChatSession(
    */
   const settleAfterInterrupt = (): void => {
     interruptSettleTimer = null;
+    stopAskedThisTurn = false;
     if (!alive) return;
     // Stop with no `result`: a "New session" turn never rotates now, and a rotation that will
     // never see its continue result stops holding the Super Agent's inbox (fresh-session.ts).
@@ -4000,9 +4005,16 @@ export function startChatSession(
         // A card the chat skipped in this answer goes back to the agent as one hidden turn, so it
         // sends the card again by the rules and stops telling the owner it is there (card-feedback.ts).
         // Only after a turn that ended cleanly, with nothing about to rotate, restart or wait behind it.
-        const rotating = !!handoffRun && handoffRun.stage !== 'done' && handoffRun.stage !== 'failed';
-        const cleanEnd = obj.subtype === 'success' && obj.is_error !== true && !limit && !limitHitThisTurn
-          && !rotating && respawnTo === null && turnsInFlight === 0;
+        // Stop ends a turn as subtype `success` with terminal_reason `aborted_*`: that is not clean.
+        // A pending account switch, held owner texts or a closing stdin each mean another writer
+        // (the next child, the held message) owns the next turn, so the hidden one is not written.
+        const cleanEnd = endedClean({
+          subtype: obj.subtype, isError: obj.is_error === true, terminalReason: obj.terminal_reason,
+          stopAsked: stopAskedThisTurn, limited: !!limit || limitHitThisTurn,
+          rotating: !!handoffRun && handoffRun.stage !== 'done' && handoffRun.stage !== 'failed',
+          respawning: respawnTo !== null, turnsInFlight, switchPending, heldTexts: heldTexts.length, stdinEnding: stdinEnding(),
+        });
+        stopAskedThisTurn = false;
         const told = cardFeedback.atResult(cleanEnd);
         if (told) {
           openTurn();
@@ -5250,6 +5262,7 @@ export function startChatSession(
       interruptRequestId = randomUUID();
       writeStdin({ type: 'control_request', request_id: interruptRequestId, request: { subtype: 'interrupt' } });
       registry?.interrupted();
+      stopAskedThisTurn = true;
       clearInterruptTimers();
       interruptWatchdog = setTimeout(() => {
         interruptWatchdog = null;

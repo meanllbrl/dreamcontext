@@ -4,7 +4,8 @@
  * two-line run card `"command":"ls\npwd"`, and the chat dropped it with only a note for the owner.
  */
 import { describe, expect, it } from 'vitest';
-import { CARD_FEEDBACK_TAG, CardFeedbackTracker, cardFeedback, skippedCards } from '../../src/server/card-feedback.js';
+import { CARD_FEEDBACK_TAG, CardFeedbackTracker, cardFeedback, endedClean, skippedCards, type TurnEnd } from '../../src/server/card-feedback.js';
+import { isCardFeedbackText } from '../../src/lib/chat-view-spec.js';
 import { userPromptOf } from '../../src/lib/transcript-history.js';
 import { isInjectedUserText } from '../../src/lib/t3-bridge/codex-history.js';
 import { parseViewBlock } from '../../dashboard/src/lib/chatViewSpec.js';
@@ -86,5 +87,43 @@ describe('one chat\'s tracker', () => {
     t.noteFrame(assistant(TWO_LINE_RUN));
     expect(t.atResult(false)).toBeNull();
     expect(t.atResult(true)).toBeNull();
+  });
+});
+
+describe('when a hidden turn may follow (reviewer 2026-11-03, M1 and M2)', () => {
+  const clean: TurnEnd = {
+    subtype: 'success', isError: false, terminalReason: 'completed', stopAsked: false, limited: false,
+    rotating: false, respawning: false, turnsInFlight: 0, switchPending: false, heldTexts: 0, stdinEnding: false,
+  };
+
+  it('a turn that simply ended may be told', () => {
+    expect(endedClean(clean)).toBe(true);
+    expect(endedClean({ ...clean, terminalReason: undefined })).toBe(true);
+  });
+
+  it('a Stop is never answered by a hidden turn: Claude ends it as success with terminal_reason aborted_*', () => {
+    expect(endedClean({ ...clean, terminalReason: 'aborted_tools' })).toBe(false);
+    expect(endedClean({ ...clean, terminalReason: 'aborted_streaming' })).toBe(false);
+    expect(endedClean({ ...clean, stopAsked: true })).toBe(false);
+  });
+
+  it('another writer owns the next turn: a pending switch, held owner texts, a closing stdin', () => {
+    expect(endedClean({ ...clean, switchPending: true })).toBe(false);
+    expect(endedClean({ ...clean, heldTexts: 1 })).toBe(false);
+    expect(endedClean({ ...clean, stdinEnding: true })).toBe(false);
+    expect(endedClean({ ...clean, turnsInFlight: 1 })).toBe(false);
+  });
+
+  it('an error, a limit, a rotation or a respawn is not clean', () => {
+    expect(endedClean({ ...clean, subtype: 'error_during_execution' })).toBe(false);
+    expect(endedClean({ ...clean, isError: true })).toBe(false);
+    expect(endedClean({ ...clean, limited: true })).toBe(false);
+    expect(endedClean({ ...clean, rotating: true })).toBe(false);
+    expect(endedClean({ ...clean, respawning: true })).toBe(false);
+  });
+
+  it('the bridge tells the hidden turn from the owner words by the same tag (stdio.ts drops it when busy)', () => {
+    expect(isCardFeedbackText(cardFeedback(TWO_LINE_RUN)!)).toBe(true);
+    expect(isCardFeedbackText('OWNER words <dreamcontext-card-feedback>')).toBe(false);
   });
 });

@@ -19,14 +19,14 @@
  * turn: the answer to a feedback turn is never fed back again, so a model that repeats its mistake
  * costs one extra turn, never a loop.
  */
-import { MAX_VIEWS_PER_MESSAGE, parseViewBlock } from '../lib/chat-view-spec.js';
+import { CARD_FEEDBACK_TAG, MAX_VIEWS_PER_MESSAGE, parseViewBlock } from '../lib/chat-view-spec.js';
+
+export { CARD_FEEDBACK_TAG };
 
 /** The chat's own `dream-view` fence (chatActions.ts BLOCK_FENCE_RE, the view half): indented or
  *  not, backticks or tildes, closed by the same fence. An unclosed fence is not a card yet. */
 const VIEW_FENCE_RE = /^([ \t]*)(```|~~~)[ \t]*dream-view[ \t]*\r?\n([\s\S]*?)\r?\n?\1\2[ \t]*$/gim;
 
-/** The tag the hidden turn is wrapped in. */
-export const CARD_FEEDBACK_TAG = 'dreamcontext-card-feedback';
 
 /** What the chat skipped in one answer, as the owner was told it; empty = every card was drawn. */
 export function skippedCards(answer: string): string[] {
@@ -53,6 +53,36 @@ export function cardFeedback(answer: string): string | null {
     'If you told the owner a card is there, say plainly that it was not drawn, then send it again by the rules: a run card\'s "command" is ONE line (join steps with && or ;, or write a script and run that), and one answer holds at most ' + `${MAX_VIEWS_PER_MESSAGE} cards. Do not mention this note itself.`,
     `</${CARD_FEEDBACK_TAG}>`,
   ].join('\n');
+}
+
+/** What the chat route knows at a main `result`, for `endedClean`. */
+export interface TurnEnd {
+  readonly subtype: unknown;
+  readonly isError: boolean;
+  /** The result frame's `terminal_reason`: Stop ends a Claude turn as `success` + `aborted_*`. */
+  readonly terminalReason: unknown;
+  /** The owner pressed Stop since the last main result. */
+  readonly stopAsked: boolean;
+  /** The API refused this turn (a limit), or a refusal was seen earlier in it. */
+  readonly limited: boolean;
+  /** A handoff is rotating this pane, or a respawn is queued. */
+  readonly rotating: boolean;
+  readonly respawning: boolean;
+  readonly turnsInFlight: number;
+  /** An account switch is pending: the next child owns the next turn. */
+  readonly switchPending: boolean;
+  /** Owner messages held for the switch or the resend. */
+  readonly heldTexts: number;
+  /** The child's stdin is closing (linger, handed off). */
+  readonly stdinEnding: boolean;
+}
+
+/** Did the turn end so that a hidden turn may follow it? Anything else writing next, or a turn the
+ *  owner cut short, means no: the hidden turn would race the other writer or answer a Stop. */
+export function endedClean(t: TurnEnd): boolean {
+  const stopped = t.stopAsked || (typeof t.terminalReason === 'string' && t.terminalReason.startsWith('aborted'));
+  return t.subtype === 'success' && !t.isError && !stopped && !t.limited && !t.rotating && !t.respawning
+    && t.turnsInFlight === 0 && !t.switchPending && t.heldTexts === 0 && !t.stdinEnding;
 }
 
 /**

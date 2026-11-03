@@ -287,6 +287,15 @@ export interface AutomationViewSpec {
 
 export const MAX_VIEW_BYTES = 64 * 1024;
 export const MAX_VIEWS_PER_MESSAGE = 4;
+
+/** The tag the server wraps a skipped card's hidden turn in (src/server/card-feedback.ts). Here, not
+ *  there, so the bridge can tell that turn from the owner's words without importing the server. */
+export const CARD_FEEDBACK_TAG = 'dreamcontext-card-feedback';
+
+/** True for the hidden turn that tells the agent a card was skipped. */
+export function isCardFeedbackText(text: string): boolean {
+  return text.trimStart().startsWith(`<${CARD_FEEDBACK_TAG}>`);
+}
 export const MAX_CHECKLIST_ITEMS = 40;
 
 // MIRROR — the four below have ONE owner, `src/lib/env-secrets.ts`, which is what the
