@@ -278,6 +278,12 @@ describe('observed run fixes (super-members.mjs)', () => {
     expect(surface).toMatch(/placeholderPatches\.patches\.reduce<SuperStateView>\(\(st, patch\) => applyLayoutPatch\(st, patch\), base\)/);
   });
 
+  it('deleting a routine drops its own detail before the list is read again (no 404 for the gone one)', () => {
+    const hooks = src('dashboard/src/hooks/useAutomations.ts');
+    const del = hooks.slice(hooks.indexOf('export function useDeleteAgent()'), hooks.indexOf('export function useDeleteAgent()') + 900);
+    expect(del).toMatch(/removeQueries\(\{ queryKey: \['automations', slug\], exact: true \}\);\s*queryClient\.invalidateQueries\(\{ queryKey: \['automations'\] \}\)/);
+  });
+
   it('the global member\'s chip reads the summary too, and the band shows TeamApproval whole', () => {
     const parts = src('dashboard/src/components/sleepy/super/MemberStage.tsx');
     expect(parts).toMatch(/const global = agent\?\.scope === 'global' \|\| info\.global === true;/);

@@ -656,7 +656,9 @@ export function useDeleteAgent() {
   return useMutation({
     mutationFn: (slug: string) =>
       api.post<{ ok: true; slug: string; agentKept?: string | null }>(`/automations/${slug}/delete`, {}),
-    onSuccess: () => {
+    onSuccess: (_data, slug) => {
+      // The deleted one's own detail goes first: invalidating the list prefix would read it again (a 404).
+      queryClient.removeQueries({ queryKey: ['automations', slug], exact: true });
       queryClient.invalidateQueries({ queryKey: ['automations'] });
       queryClient.invalidateQueries({ queryKey: ['agents'] });
     },
