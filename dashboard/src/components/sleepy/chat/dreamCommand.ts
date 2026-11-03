@@ -603,6 +603,8 @@ export function dreamOutcome(result: string | undefined, domain?: string): Dream
  */
 export function teamDoneText(command: string | undefined): string | null {
   const actions = parseDreamActions(command);
+  // Only a call the row draws as the quote (one action): else the answer would show nowhere.
+  if (actions.length !== 1) return null;
   const done = actions.find((a) => a.path === 'super team done');
   const text = done?.args[1];
   return typeof text === 'string' && text.trim() ? text.trim() : null;
@@ -626,7 +628,8 @@ export function teamDoneRepeats(items: ReadonlyArray<{ kind: string; id: string;
     if (it.kind === 'user') { done = null; continue; }
     if (it.kind === 'tool' && it.name === 'Bash') {
       const cmd = it.input && typeof it.input === 'object' ? (it.input as Record<string, unknown>).command : undefined;
-      const t = teamDoneText(typeof cmd === 'string' ? cmd : undefined);
+      const failed = (it as { status?: string }).status === 'error';
+      const t = failed ? null : teamDoneText(typeof cmd === 'string' ? cmd : undefined);
       if (t) done = normalizedAnswer(t);
       continue;
     }

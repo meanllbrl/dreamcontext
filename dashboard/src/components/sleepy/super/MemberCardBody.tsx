@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../../../context/I18nContext';
 import { useApi } from '../../../context/VaultContext';
@@ -57,9 +58,23 @@ export function MemberCardBody(props: MemberCardBodyProps) {
   );
 }
 
+/**
+ * A dialog a card opens, drawn at the window's level: a floating card's clip has `contain:
+ * strict`, which would lay a fixed overlay out (and clip it) inside the card. Its pointer events
+ * stop here, so a press in the dialog never arms the card's drag behind it.
+ */
+function WindowLayer({ children }: { children: ReactNode }) {
+  return createPortal(
+    <div data-member-card-layer onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>{children}</div>,
+    document.body,
+  );
+}
+
 function useMemberRoutines(slug: string): TeamAutomation[] {
   const autos = useAutomations();
-  return useMemo(() => ((autos.data ?? []) as TeamAutomation[]).filter((a) => routineOf(a, slug)), [autos.data, slug]);
+  // The member's own unsplit scheduled manifest IS the member (the server's rule): never a row
+  // here, so a routine's Sil can never delete the member itself, and the count is the dialog's.
+  return useMemo(() => ((autos.data ?? []) as TeamAutomation[]).filter((a) => routineOf(a, slug) && a.slug !== slug), [autos.data, slug]);
 }
 
 function RoutinesCard(p: CardProps) {
@@ -103,8 +118,10 @@ function RoutinesCard(p: CardProps) {
         </button>
       )}
       {creating && (
-        <AutomationDialog automation={null} onToast={p.onToast} onClose={() => setCreating(false)}
-          initial={{ title: '', description: '', mode: 'sched', agent: p.slug }} />
+        <WindowLayer>
+          <AutomationDialog automation={null} onToast={p.onToast} onClose={() => setCreating(false)}
+            initial={{ title: '', description: '', mode: 'sched', agent: p.slug }} />
+        </WindowLayer>
       )}
     </div>
   );
@@ -142,8 +159,10 @@ function InstructionsCard(p: CardProps) {
         </button>
       )}
       {editing && (
-        <AgentIdentityDialog slug={p.slug} onClose={() => setEditing(false)}
-          onSaved={(_slug, message) => { setEditing(false); p.onToast(message); }} />
+        <WindowLayer>
+          <AgentIdentityDialog slug={p.slug} onClose={() => setEditing(false)}
+            onSaved={(_slug, message) => { setEditing(false); p.onToast(message); }} />
+        </WindowLayer>
       )}
     </div>
   );

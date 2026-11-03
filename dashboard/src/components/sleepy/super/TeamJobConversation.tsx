@@ -63,10 +63,19 @@ export function useMemberSuperRecord(vault: string, member: string, enabled: boo
 /** The record's copy of main's request, shown at the END of the flow only until the member's
  *  transcript holds a request turn with the same item id (plan r4 E1'). Never two copies. */
 function RequestFallback({ session, running, itemId, text }: { session: string | null; running: boolean; itemId: string; text: string }) {
-  const { t } = useI18n();
-  const history = useChildHistory(session ?? '', running && !!session);
+  // No session yet: nothing to read, the record's copy stands.
+  if (!session) return <RequestWaiting itemId={itemId} text={text} />;
+  return <RequestUntilInFlow session={session} running={running} itemId={itemId} text={text} />;
+}
+
+function RequestUntilInFlow({ session, running, itemId, text }: { session: string; running: boolean; itemId: string; text: string }) {
+  const history = useChildHistory(session, running);
   const inFlow = (history.data ?? []).some((e) => e.kind === 'user' && superRequestOf(e.text)?.itemId === itemId);
-  if (inFlow) return null;
+  return inFlow ? null : <RequestWaiting itemId={itemId} text={text} />;
+}
+
+function RequestWaiting({ itemId, text }: { itemId: string; text: string }) {
+  const { t } = useI18n();
   return (
     <div className="super-team-job-waiting" data-testid="team-job-request-fallback">
       <SuperRequestBlock turn={{ kind: 'request', itemId, text }} itemId={`req-${itemId}`} />

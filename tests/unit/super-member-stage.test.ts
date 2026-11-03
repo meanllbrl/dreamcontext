@@ -489,7 +489,7 @@ describe("the request on the member's own stage, live (super-team.mjs T3)", () =
     // The fallback sits AFTER the transcript, and goes once a stored turn names the same item.
     expect(card.indexOf('<ChildTranscript key={memberSession}')).toBeLessThan(card.indexOf('<RequestFallback'));
     expect(card).toMatch(/superRequestOf\(e\.text\)\?\.itemId === itemId/);
-    expect(card).toMatch(/if \(inFlow\) return null;/);
+    expect(card).toMatch(/return inFlow \? null : <RequestWaiting/);
   });
 });
 

@@ -35,6 +35,10 @@ describe('the answer to the Super Agent', () => {
     ];
     expect([...teamDoneRepeats(items)]).toEqual(['a1', 'a2']);
     expect(normalizedAnswer('İçerik, HAZIR!')).toBe('içerik hazır');
+    // A failed or chained call draws no quote, so the closing text stays.
+    const failed = { ...done('t9', 'Hazır.'), status: 'error' };
+    expect([...teamDoneRepeats([failed, say('a9', 'Hazır.')])]).toEqual([]);
+    expect(teamDoneText('dreamcontext super team done q "Hazır." && dreamcontext tasks list')).toBeNull();
   });
 
   it('the row is one quiet line and a quote; the command only behind its expand; the request is a quote', () => {

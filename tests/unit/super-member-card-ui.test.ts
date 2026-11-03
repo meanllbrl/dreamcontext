@@ -81,5 +81,11 @@ describe('member cards in the window', () => {
     expect(body).toContain("initial={{ title: '', description: '', mode: 'sched', agent: p.slug }}");
     expect(body).toMatch(/data-testid="member-delete" disabled=\{busy \|\| p\.working\}/);
     expect(body).toContain("{ withRoutines: true, dryRun: true }");
+    // The member's own unsplit manifest is the member: never a routine row with a Sil.
+    expect(body).toContain('routineOf(a, slug) && a.slug !== slug');
+    // Its dialogs draw at the window's level, never inside the card's strict-contained clip.
+    expect(body).toContain('createPortal(');
+    expect(body).toMatch(/<WindowLayer>\s*<AutomationDialog/);
+    expect(body).toMatch(/<WindowLayer>\s*<AgentIdentityDialog/);
   });
 });
