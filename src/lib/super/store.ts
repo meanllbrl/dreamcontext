@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
-  AGENDA_REF, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
+  AGENDA_REF, isMemberCardRef, MAX_PAD, PAD_AUTO_WHY, PAD_ID_RE, PAD_SECTIONS, cleanPadText, CHILD_ROWS, CONTAINER_ID_RE, CONTAINER_KINDS, CONTAINER_PLACES, CONTAINER_SHAPES, MAX_BRIEF, MAX_WAIT_KEY, MAX_CONTAINERS, MAX_DISMISSED, MAX_ENDED_CHILDREN,
   MAX_OWNER_BATCHES, MAX_MAIN_BATCHES, MAX_OWNER_TEXT, MAX_REQUEST_TEXT, MAX_REQUEST_RESULT, MEMBER_SUPER_PREFIX, parseWorkOrigin, MAX_POOL, MAX_POOL_BYTES, MAX_POOL_PROMPT, MAX_QUEUE, MAX_REF, MAX_TEAM_JOBS, MAX_TITLE,
   CONTAINER_SIZES, MAX_START_ERROR, MSG_REF_RE, POOL_ID_RE, QUEUE_ID_RE, QUEUE_KINDS, QUEUE_STATES, STUCK_REASONS, TASK_SLUG_RE, TEAM_JOB_ID_RE, VIEW_MODES, askLine, cleanAskOptions, cleanAskSpec, defaultShape, isMediaKind, MAX_HELD,
   ASK_SHOW_VIAS, ASPECT_MAX, ASPECT_MIN, MAX_ASK_PICTURES, MAX_FORMER_CHILDREN, MAX_ASK_READS, SESSION_ID_RE, SUPER_BRANCH_RE, SUPER_NOTES, SUPER_STATE_VERSION, emptySuperState, normalizeGroups, resolvePresent, trimTeamJobs, viewWithout,
@@ -197,6 +197,8 @@ function sanitizeContainers(raw: unknown, children: Readonly<Record<string, Supe
     if (c.kind === 'team' && !(TEAM_JOB_ID_RE.test(c.ref) && teamIds.has(c.ref))) continue;
     // The agenda is one card with one ref.
     if (c.kind === 'agenda' && c.ref !== AGENDA_REF) continue;
+    // A member card is one of three sub-types (plan r4 K1); only a member's record keeps one (ownedBy).
+    if (c.kind === 'member' && !isMemberCardRef(c.ref)) continue;
     const title = cap(c.title, MAX_TITLE);
     const pos = isRecord(c.pos) ? { x: unit(c.pos.x), y: unit(c.pos.y) } : null;
     ids.add(c.id);
@@ -798,7 +800,16 @@ async function assertContained(contextRoot: string, id: SuperId = 'main', create
  *  says), main's never names one. */
 function ownedBy(state: SuperState, id: SuperId): SuperState {
   const member = memberOfSuperId(id);
-  if (member === null) { if (state.member !== undefined) delete state.member; return state; }
+  if (member === null) {
+    if (state.member !== undefined) delete state.member;
+    // Main's stage never shows a member's cards (plan r4 K4).
+    if (state.containers.some((c) => c.kind === 'member')) {
+      const gone = new Set(state.containers.filter((c) => c.kind === 'member').map((c) => c.id));
+      state.containers = state.containers.filter((c) => !gone.has(c.id));
+      state.groups = state.groups.map((g) => ({ ...g, cards: g.cards.filter((k) => !gone.has(k)) })).filter((g) => g.cards.length > 0);
+    }
+    return state;
+  }
   state.member = member;
   return state;
 }

@@ -72,14 +72,14 @@ export function stackForLive(s: SuperState, target: number, busy: BusyTest = cha
   type Item = { id: string; owner: boolean; at: number; put: () => void };
   const items: Item[] = [];
   s.containers.forEach((c, i) => {
-    if (c.place !== 'float' || c.min || grouped.has(c.id) || shown.has(c.id) || c.kind === 'agenda') return;
+    if (c.place !== 'float' || c.min || grouped.has(c.id) || shown.has(c.id) || c.kind === 'agenda' || c.kind === 'member') return;
     if (isLiveChatCard(s, c, busy)) return;
     items.push({ id: c.id, owner: !!c.pos || c.sizeBy === 'owner', at: i, put: () => { c.place = 'others'; } });
   });
   for (const g of s.groups) {
     if (g.place !== 'float') continue;
     const cards = g.cards.map((id) => byId.get(id)).filter((c): c is SuperContainer => !!c);
-    if (cards.some((c) => shown.has(c.id) || c.kind === 'agenda' || isLiveChatCard(s, c, busy))) continue;
+    if (cards.some((c) => shown.has(c.id) || c.kind === 'agenda' || c.kind === 'member' || isLiveChatCard(s, c, busy))) continue;
     const at = Math.min(...cards.map((c) => s.containers.indexOf(c)));
     items.push({ id: g.id, owner: !!g.pos, at, put: () => { g.place = 'others'; } });
   }

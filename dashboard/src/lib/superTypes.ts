@@ -11,8 +11,11 @@
 
 export const SUPER_STATE_VERSION = 1 as const;
 
-export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'pdf', 'video', 'browser', 'team', 'agenda'] as const;
+export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'pdf', 'video', 'browser', 'team', 'agenda', 'member'] as const;
 export type ContainerKind = typeof CONTAINER_KINDS[number];
+/** A member stage's own cards (plan r4 K1, MIRROR of src/lib/super/types.ts): the owner's, pinned. */
+export const MEMBER_CARD_REFS = ['routines', 'instructions', 'settings'] as const;
+export type MemberCardRef = typeof MEMBER_CARD_REFS[number];
 
 /** The agenda card's one ref (one agenda per stage) and the size it opens at. */
 export const AGENDA_REF = 'agenda';

@@ -110,6 +110,9 @@ function remoteContainer(c: SuperState['containers'][number], tunnelHost: string
       return ID_RE.test(c.ref) ? { ...base, ref: c.ref } : base;
     case 'agenda':
       return { ...base, ref: 'agenda' };
+    case 'member':
+      // A member's own card (plan r4 K7): its sub-type only, nothing else rides.
+      return { ...base, ref: c.ref };
     case 'web':
       return { ...base, ...remoteWeb(c.ref, tunnelHost) };
     case 'browser':
