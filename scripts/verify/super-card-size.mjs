@@ -240,6 +240,28 @@ async function pickSize(page, id, size) {
   await settle(page);
 }
 
+/**
+ * Drag a floating card's corner handle by (dx, dy) and read the outline mid-drag; `end` is 'esc' (Esc, then the
+ * pointer goes up) or 'release'. Returns the outline's snapped size, whether the stage can draw it, and its note.
+ */
+async function dragHandle(page, id, dx, dy, end) {
+  await hoverCard(page, id);
+  const hb = await card(page, id).locator('[data-testid="super-card-resize"]').boundingBox();
+  if (!hb) throw new Error(`no resize handle on ${id}`);
+  const sx = hb.x + hb.width / 2;
+  const sy = hb.y + hb.height / 2;
+  await page.mouse.move(sx, sy);
+  await page.mouse.down();
+  for (let i = 1; i <= 12; i++) { await page.mouse.move(sx + (dx * i) / 12, sy + (dy * i) / 12); await page.waitForTimeout(16); }
+  const o = page.locator('[data-testid="super-resize-outline"]');
+  const outline = (await o.count()) === 1
+    ? { size: await o.getAttribute('data-size'), fits: await o.getAttribute('data-fits'), note: (await o.innerText()).trim() }
+    : { size: null, fits: null, note: '' };
+  if (end === 'esc') await page.keyboard.press('Escape');
+  await page.mouse.up();
+  return { outline };
+}
+
 let server = null;
 let browser = null;
 let lastPage = null;
@@ -295,41 +317,37 @@ try {
   ok('a medium task tile lists its next two criteria', (await card(page, ids.task).locator('[data-testid="super-tile-next"]').count()) === 2);
 
   console.log('\n── the corner handle: Esc mid-drag cancels, the stage stays');
+  // A page opens large since 0.34.0 (the agent's own size, no owner mark); the 1440×900 stage has no room to draw it
+  // large, so it is drawn medium. The cancel is only proven by a drag whose release WOULD write: toward small.
+  const pgRec0 = JSON.stringify(record().containers.find((c) => c.id === ids.page));
+  ok('the page card starts with the agent\'s size and no owner mark', record().containers.find((c) => c.id === ids.page)?.size === 'large' && !record().containers.find((c) => c.id === ids.page)?.sizeBy, pgRec0);
   const pgA = await rectOf(page, ids.page);
-  await hoverCard(page, ids.page);
-  const hA = await card(page, ids.page).locator('[data-testid="super-card-resize"]').boundingBox();
-  if (hA) {
-    const sx = hA.x + hA.width / 2;
-    const sy = hA.y + hA.height / 2;
-    const dir = pgA.side === 'left' ? -1 : 1;
-    await page.mouse.move(sx, sy);
-    await page.mouse.down();
-    for (let i = 1; i <= 12; i++) { await page.mouse.move(sx + dir * 15 * i, sy + 15 * i); await page.waitForTimeout(16); }
-    await page.keyboard.press('Escape');
-    await page.mouse.up();
-  }
+  const dirA = pgA.side === 'left' ? -1 : 1;
+  const escDrag = await dragHandle(page, ids.page, -dirA * 184, 0, 'esc');
+  ok('the drag toward small drew an outline at small', escDrag.outline.size === 'small' && escDrag.outline.fits === 'true', JSON.stringify(escDrag.outline));
   await page.waitForTimeout(600);
   ok('Esc during a resize leaves the stage open', (await page.locator('[data-testid="super-surface"]:visible').count()) > 0);
-  ok('…writes no size and leaves no outline', !record().containers.find((c) => c.id === ids.page)?.size && (await page.locator('[data-testid="super-resize-outline"]').count()) === 0);
+  ok('…writes no size (the record is exactly as it was) and leaves no outline', JSON.stringify(record().containers.find((c) => c.id === ids.page)) === pgRec0 && (await page.locator('[data-testid="super-resize-outline"]').count()) === 0);
+
+  console.log('\n── the corner handle: a size the stage has no room for is shown and refused');
+  // The old diagonal drag (180 px out, 180 px down) was cut for a small card (160 → 340). From the medium-drawn page it
+  // lands on wide, which would leave the centre chat under its floor: the outline says so and the release writes nothing.
+  const pg0 = await rectOf(page, ids.page);
+  ok('the page card is drawn medium (344×160), not small', pg0.w === 344 && pg0.h === 160, JSON.stringify(pg0));
+  const noRoom = await dragHandle(page, ids.page, dirA * 180, 180, 'release');
+  ok('the diagonal drag draws the outline at wide, marked "no room"', noRoom.outline.size === 'wide' && noRoom.outline.fits === 'false' && noRoom.outline.note.length > 0, JSON.stringify(noRoom.outline));
+  await settle(page);
+  ok('…and its release writes nothing', JSON.stringify(record().containers.find((c) => c.id === ids.page)) === pgRec0 && (await rectOf(page, ids.page)).h === 160);
 
   console.log('\n── the corner handle: the page to large');
-  const pg0 = await rectOf(page, ids.page);
-  const handle = card(page, ids.page).locator('[data-testid="super-card-resize"]');
-  await hoverCard(page, ids.page);
-  const hb = await handle.boundingBox();
-  if (hb) {
-    const sx = hb.x + hb.width / 2;
-    const sy = hb.y + hb.height / 2;
-    const dir = pg0.side === 'left' ? -1 : 1;
-    await page.mouse.move(sx, sy);
-    await page.mouse.down();
-    for (let i = 1; i <= 12; i++) { await page.mouse.move(sx + dir * 15 * i, sy + 15 * i); await page.waitForTimeout(16); }
-    ok('a dashed outline shows the size the drag would land on', (await page.locator('[data-testid="super-resize-outline"]').count()) === 1);
-    await page.mouse.up();
-  } else ok('the corner handle is there', false);
+  // Straight down: 160 → 344 high, same width. The handle grows from where the card is drawn, so large fits here even
+  // though the size menu (which keeps an automatic card in its column) offers it disabled.
+  const grow = await dragHandle(page, ids.page, 0, 184, 'release');
+  ok('a dashed outline shows the size the drag would land on', grow.outline.size === 'large' && grow.outline.fits === 'true', JSON.stringify(grow.outline));
   await settle(page);
   const pg1 = await rectOf(page, ids.page);
-  ok('the handle grew the page card to large (344×344)', pg1.w === 344 && pg1.h === 344 && record().containers.find((c) => c.id === ids.page)?.size === 'large', JSON.stringify(pg1));
+  const recG = record().containers.find((c) => c.id === ids.page);
+  ok('the handle grew the page card to large (344×344) and the record carries his mark', pg1.w === 344 && pg1.h === 344 && recG?.size === 'large' && recG?.sizeBy === 'owner', JSON.stringify({ pg1, recG }));
 
   console.log('\n── the big local page (596 KB, base64 picture) shows');
   const loaded = await until(page, async () => (await card(page, ids.page).locator('iframe').count()) > 0, 20000);
