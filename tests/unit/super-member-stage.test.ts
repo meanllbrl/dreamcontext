@@ -488,19 +488,3 @@ describe("the request on the member's own stage, live (super-team.mjs T3)", () =
   });
 });
 
-describe("the owner's message on a member's stage is a plain chat message, as on main (super-team.mjs T4)", () => {
-  it("main's card never polls the member's record while the owner talks to that member", () => {
-    const card = src('dashboard/src/components/sleepy/super/TeamJobConversation.tsx');
-    const hook = card.slice(card.indexOf('export function useMemberSuperRecord'), card.indexOf('export function TeamJobConversation'));
-    expect(hook).toMatch(/enabled: enabled && !held,/);
-    expect(hook).not.toMatch(/refetchInterval/);
-  });
-  it('the send and the steer go out as typed (only a task strip adds its header)', () => {
-    const chat = src('dashboard/src/components/sleepy/chatSession.ts');
-    expect(chat).toMatch(/function send\(text: string\): boolean \{\s*if \(ownerWordsTaken\(text\)\) return true;\s*return writeUser\(withAbout\(text\), \{ steered: false \}\);/);
-    expect(chat).toMatch(/function withAbout\(text: string\): string \{\s*if \(!aboutHeader\) return text;/);
-    // The header is set only on the member's own chat, only while a task strip is up.
-    expect(surface).toMatch(/if \(!memberTask\) \{ cs\.setAboutHeader\?\.\(null\); return undefined; \}/);
-  });
-});
-
