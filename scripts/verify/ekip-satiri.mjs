@@ -274,12 +274,19 @@ async function run(base) {
     // Already open side by side (the card's delete button shows): the Others panel would cover it.
     if (await st.getByTestId('member-delete').isVisible().catch(() => false)) return;
     // A small Üye tile on the stage opens side by side from its frame; else it is in Others.
-    const tile = st.locator('[data-testid="super-container"]').filter({ has: page.locator('[data-member-card="settings"]') }).first();
+    const tile = st.locator('[data-testid="super-container"]:visible').filter({ has: page.locator('[data-member-card="settings"]') }).first();
     if (await tile.isVisible().catch(() => false)) { await tile.click({ timeout: 5000 }).catch(() => {}); await page.waitForTimeout(600); if (await st.getByTestId('member-delete').isVisible().catch(() => false)) return; }
-    const others = st.locator('[data-testid="super-others-stack"], [data-testid="super-others-open"]').first();
-    if (await others.isVisible().catch(() => false)) await others.click();
-    const uye = page.locator('[data-testid="super-others-item"]').filter({ hasText: /Üye|Member/ }).first();
-    if (await uye.isVisible().catch(() => false)) await uye.click();
+    // Only a VISIBLE Others button: a hidden one earlier in the DOM made .first() miss (run s10).
+    const others = page.locator('[data-testid="super-others-stack"]:visible, [data-testid="super-others-open"]:visible').first();
+    const seen = await others.count();
+    if (seen) await others.click({ timeout: 5000 }).catch(() => {});
+    const fan = page.locator('[data-testid="super-others-fan"]:visible');
+    await until(page, async () => (await fan.count()) > 0, 4000);
+    const items = page.locator('[data-testid="super-others-item"]:visible');
+    const uye = items.filter({ has: page.locator('[data-member-card="settings"]') }).or(items.filter({ hasText: /Üye|Member/ })).first();
+    console.log(`   openUye: others buttons ${seen}, panel ${await fan.count()}, items ${await items.count()} [${(await items.allInnerTexts().catch(() => [])).map((x) => x.replace(/\s+/g, ' ').slice(0, 30)).join(' | ')}]`);
+    if (await uye.isVisible().catch(() => false)) await uye.click({ timeout: 5000 }).catch(() => {});
+    await until(page, async () => st.getByTestId('member-delete').isVisible().catch(() => false), 5000);
   };
   await openUye();
   const del = st.getByTestId('member-delete');
