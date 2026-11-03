@@ -628,6 +628,13 @@ export function upsertSectionAfter(raw: string, heading: string, body: string, a
 
 export type RemoveAgentResult = { removed: true } | { removed: false; usedBy: string[] };
 
+/** The automations (by slug) that run as `slug` in this project: what `removeAgent` refuses on
+ *  (plan r4 F4: the member delete names and removes exactly these). Its own unsplit scheduled
+ *  manifest included. */
+export function routinesBoundTo(contextRoot: string, slug: string): string[] {
+  return readSlotFiles(contextRoot).filter((f) => boundJobOf(f, slug) !== null).map((f) => f.slug);
+}
+
 /**
  * Delete an agent. Refused (nothing written) while an automation runs as it —
  * its own unsplit scheduled manifest included. An unsplit on-call agent IS its

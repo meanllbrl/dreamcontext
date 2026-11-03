@@ -11,8 +11,8 @@
  *    through its binding, rule (c)) reads `approvedForChat: false` and the same test fails.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -167,6 +167,104 @@ describe('writes', () => {
     await handleAgentsDelete(post(), ok.res, { slug: 'loner' }, contextRoot);
     expect(ok.status()).toBe(200);
     expect((await list()).map((a) => a.slug)).toEqual(['writer']);
+  });
+
+  it('withRoutines: a dry run names the routines and changes nothing; the delete removes routines, then the member, revokes, and leaves a trash copy with a receipt (plan r4 F2-F5)', async () => {
+    createAgent(contextRoot, { slug: 'writer', title: 'Writer', prompt: 'Write.' }, { approve: { now: NOW } });
+    const daily = createAutomation(contextRoot, { slug: 'daily-notes', title: 'Daily notes', agent: 'writer', days: 'daily', at: '08:00' });
+    approveAutomation(projectRoot, daily, NOW);
+    const dry = makeRes();
+    await handleAgentsDelete(post({ withRoutines: true, dryRun: true }), dry.res, { slug: 'writer' }, contextRoot);
+    expect(dry.status()).toBe(200);
+    expect(dry.body().plan).toMatchObject({ slug: 'writer', title: 'Writer', global: false, blockers: [], routines: [{ slug: 'daily-notes', title: 'Daily notes' }] });
+    expect(getAgent(contextRoot, 'writer')).not.toBeNull();
+    expect(existsSync(join(contextRoot, 'automations', 'daily-notes.md'))).toBe(true);
+
+    const del = makeRes();
+    await handleAgentsDelete(post({ withRoutines: true }), del.res, { slug: 'writer' }, contextRoot);
+    expect(del.status()).toBe(200);
+    expect(getAgent(contextRoot, 'writer')).toBeNull();
+    expect(existsSync(join(contextRoot, 'automations', 'daily-notes.md'))).toBe(false);
+    // The routine's approval went with it: one re-created under the same slug is not approved.
+    const again = createAutomation(contextRoot, { slug: 'daily-notes', title: 'Daily notes', prompt: 'x', days: 'daily', at: '08:00' });
+    expect(checkApproval(projectRoot, again).approved).toBe(false);
+    // A trash copy with a receipt naming each file.
+    const trash = join(projectRoot, String(del.body().trash));
+    const receipt = JSON.parse(readFileSync(join(trash, 'receipt.json'), 'utf-8'));
+    expect(receipt).toMatchObject({ member: 'writer', routines: [{ slug: 'daily-notes' }], left: [] });
+    expect(receipt.files.map((f: { to: string }) => f.to)).toEqual(expect.arrayContaining([join('routines', basename(projectRoot), 'daily-notes.md')]));
+    expect(existsSync(join(trash, 'routines', basename(projectRoot), 'daily-notes.md'))).toBe(true);
+    expect(readFileSync(join(contextRoot, 'state', '.trash', '.gitignore'), 'utf-8')).toBe('*\n');
+  });
+
+  it('withRoutines is refused from the phone and from outside the owner\'s page; without it the 409 stands', async () => {
+    createAgent(contextRoot, { slug: 'writer', title: 'Writer', prompt: 'Write.' }, { approve: { now: NOW } });
+    createAutomation(contextRoot, { slug: 'daily-notes', title: 'Daily notes', agent: 'writer', days: 'daily', at: '08:00' });
+    const bare = Object.assign(Readable.from([Buffer.from(JSON.stringify({ withRoutines: true }))]), { method: 'POST', headers: {} }) as unknown as IncomingMessage;
+    const r = makeRes();
+    await handleAgentsDelete(bare, r.res, { slug: 'writer' }, contextRoot);
+    expect(r.status()).toBe(403);
+    expect(getAgent(contextRoot, 'writer')).not.toBeNull();
+    const old = makeRes();
+    await handleAgentsDelete(post(), old.res, { slug: 'writer' }, contextRoot);
+    expect(old.status()).toBe(409);
+  });
+
+  it('withRoutines: refused while the member works for main (open request); its Super record and marks go to the trash and leave the index', async () => {
+    const { superRecordPath, superReadMarksPath, superIndex, primeSuperIndex, resetSuperIndex } = await import('../../src/lib/super/store.js');
+    const { emptySuperState } = await import('../../src/lib/super/types.js');
+    const { writeFileSync } = await import('node:fs');
+    createAgent(contextRoot, { slug: 'writer', title: 'Writer', prompt: 'Write.' }, { approve: { now: NOW } });
+    mkdirSync(join(contextRoot, 'state', '.super', 'members'), { recursive: true });
+    const rec = (queue: unknown[]) => writeFileSync(superRecordPath(contextRoot, 'm:writer'), JSON.stringify({ ...emptySuperState(), session: 'sess-w', enabled: true, member: 'writer', queue }));
+    rec([{ id: 'q-1', kind: 'request', state: 'delivered', createdAt: 1, sessionId: 'sess-main', text: 'go' }]);
+    writeFileSync(superReadMarksPath(contextRoot, 'm:writer'), JSON.stringify({ since: 1, read: [], replies: [5] }));
+    resetSuperIndex();
+    await primeSuperIndex([contextRoot]);
+    const busy = makeRes();
+    await handleAgentsDelete(post({ withRoutines: true }), busy.res, { slug: 'writer' }, contextRoot);
+    expect(busy.status()).toBe(409);
+    expect(busy.body().error).toBe('member_working');
+    expect(getAgent(contextRoot, 'writer')).not.toBeNull();
+    rec([]);
+    resetSuperIndex();
+    await primeSuperIndex([contextRoot]);
+    const del = makeRes();
+    await handleAgentsDelete(post({ withRoutines: true }), del.res, { slug: 'writer' }, contextRoot);
+    expect(del.status()).toBe(200);
+    expect(existsSync(superRecordPath(contextRoot, 'm:writer'))).toBe(false);
+    expect(existsSync(superReadMarksPath(contextRoot, 'm:writer'))).toBe(false);
+    expect([...superIndex(contextRoot).keys()]).toEqual(['main']);
+    const trash = join(projectRoot, String(del.body().trash));
+    expect(existsSync(join(trash, 'super', basename(projectRoot), 'writer.json'))).toBe(true);
+    expect(existsSync(join(trash, 'super', basename(projectRoot), 'writer.read-marks.json'))).toBe(true);
+    resetSuperIndex();
+  });
+
+  it('withRoutines on a GLOBAL member: its routine in another project is named by project and removed with it', async () => {
+    const { addVault } = await import('../../src/lib/vaults.js');
+    const other = mkdtempSync(join(tmpdir(), 'dc-agents-routes-'));
+    try {
+      const otherCtx = join(other, '_dream_context');
+      mkdirSync(join(otherCtx, 'automations'), { recursive: true });
+      addVault('acme', projectRoot, fakeHome);
+      addVault('globex', other, fakeHome);
+      const c = makeRes();
+      await handleAgentsCreate(post({ title: 'Critic', prompt: 'You review.', scope: 'global' }), c.res, {}, contextRoot);
+      expect(c.status()).toBe(200);
+      createAutomation(otherCtx, { slug: 'weekly-review', title: 'Weekly review', agent: 'critic', days: 'daily', at: '09:00' });
+      const dry = makeRes();
+      await handleAgentsDelete(post({ withRoutines: true, dryRun: true }), dry.res, { slug: 'critic' }, contextRoot);
+      expect(dry.body().plan).toMatchObject({ global: true, routines: [{ project: 'globex', slug: 'weekly-review' }] });
+      const del = makeRes();
+      await handleAgentsDelete(post({ withRoutines: true }), del.res, { slug: 'critic' }, contextRoot);
+      expect(del.status()).toBe(200);
+      expect(existsSync(join(otherCtx, 'automations', 'weekly-review.md'))).toBe(false);
+      expect(getAgent(contextRoot, 'critic')).toBeNull();
+      expect(getAgent(otherCtx, 'critic')).toBeNull();
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+    }
   });
 
   it('approve grants the call target, so a scheduled agent may then run', async () => {

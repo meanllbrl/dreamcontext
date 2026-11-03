@@ -49,6 +49,7 @@ import { agentActivity, runIsActive, type AgentActivity } from '../automation-jo
 import { isAgentRequest } from '../desktop.js';
 import { isPhoneSocket } from '../phone-origin.js';
 import { findLiveChat } from './agent-chat-live.js';
+import { deleteMember, planMemberDelete } from '../member-delete.js';
 import { roleLineOf, soulExcerpt } from '../../lib/agents/soul.js';
 import {
   approvalFields,
@@ -703,6 +704,39 @@ export async function handleAgentsDelete(
   if (refuseGlobalOnPhone(req, res, isGlobalHere(contextRoot, params.slug))) return;
   if (!isSafeAutomationSlug(params.slug) || !getAgent(contextRoot, params.slug)) {
     sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`);
+    return;
+  }
+  // The member's own delete from its stage (plan r4 R4, F2-F5): `{ withRoutines: true }` removes
+  // every routine that runs as it too (in every project for a global member), all or nothing,
+  // with a trash copy; `dryRun` answers the plan the dialog shows and changes nothing. Mac only,
+  // from the owner's own page. Without the flag the old 409 `agent_in_use` stands.
+  const body = (await parseJsonBody(req)) ?? {};
+  if (body.withRoutines === true) {
+    if (refuseUnlessOwnerPage(req, res, 'deletes a member')) return;
+    if (isPhoneSocket(req)) { sendError(res, 403, 'phone_unavailable', 'A member is deleted on the Mac itself.'); return; }
+    try {
+      if (body.dryRun === true) {
+        const plan = await planMemberDelete(contextRoot, params.slug);
+        if (!plan) { sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`); return; }
+        sendJson(res, 200, { ok: true, plan });
+        return;
+      }
+      const { stopMemberSuper } = await import('./super.js');
+      const { retireMemberSuper } = await import('../../lib/super/inbox.js');
+      const out = await deleteMember(contextRoot, params.slug, { stopSuper: stopMemberSuper, retireSuper: (root, slug) => retireMemberSuper(root, slug) });
+      if (!out) { sendError(res, 404, 'not_found', `Agent not found: ${params.slug}`); return; }
+      if (out.plan.blockers.length) {
+        sendJson(res, 409, { error: out.plan.blockers.includes('read_only') ? 'read_only' : 'member_working', message: 'The member cannot be deleted right now.', plan: out.plan });
+        return;
+      }
+      if (!out.ok) {
+        sendJson(res, 500, { error: 'delete_incomplete', message: `Not everything could be deleted: ${out.left.join(', ')}.`, left: out.left, trash: out.trash });
+        return;
+      }
+      sendJson(res, 200, { ok: true, slug: params.slug, routines: out.plan.routines, trash: out.trash });
+    } catch (err) {
+      sendWriteError(res, err, 'delete_failed', 'Failed to delete the member.');
+    }
     return;
   }
   try {
