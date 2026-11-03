@@ -278,6 +278,12 @@ describe('observed run fixes (super-members.mjs)', () => {
     expect(surface).toMatch(/placeholderPatches\.patches\.reduce<SuperStateView>\(\(st, patch\) => applyLayoutPatch\(st, patch\), base\)/);
   });
 
+  it('a member made or deleted re-reads the Team summary at once (no deleted row for up to 15 s)', () => {
+    const bridge = src('dashboard/src/components/layout/newshell/DrawerFactsBridge.tsx');
+    expect(bridge).toMatch(/const agentSet = useMemo\(\(\) => \(agentsQ\.data \?\? \[\]\)\.map\(\(a\) => a\.slug\)\.sort\(\)\.join\('\\n'\), \[agentsQ\.data\]\);/);
+    expect(bridge).toMatch(/\}, \[api, drawerVisible, agentSet\]\);/);
+  });
+
   it('deleting a routine never re-reads its own detail (no 404 for the gone one, even with its row open)', () => {
     const hooks = src('dashboard/src/hooks/useAutomations.ts');
     const del = hooks.slice(hooks.indexOf('export function useDeleteAgent()'), hooks.indexOf('export function useDeleteAgent()') + 900);

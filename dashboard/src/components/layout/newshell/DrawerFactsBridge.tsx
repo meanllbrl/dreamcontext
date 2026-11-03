@@ -36,6 +36,9 @@ export function DrawerFactsBridge({ vault, drawerVisible, onFacts }: {
   );
   const identities = useMemo(() => identitiesOf(agentsQ.data ?? []), [agentsQ.data]);
   const [members, setMembers] = useState<EkipSummary[] | undefined>(undefined);
+  // The set of agents: a member made or deleted re-reads the summary at once, so a deleted member
+  // leaves the Team list with the delete, not at the next 15 s read.
+  const agentSet = useMemo(() => (agentsQ.data ?? []).map((a) => a.slug).sort().join('\n'), [agentsQ.data]);
   useEffect(() => {
     let gone = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -53,7 +56,7 @@ export function DrawerFactsBridge({ vault, drawerVisible, onFacts }: {
       read();
     });
     return () => { gone = true; offFocus(); if (timer) clearTimeout(timer); };
-  }, [api, drawerVisible]);
+  }, [api, drawerVisible, agentSet]);
   const [surface, setSurface] = useState<DrawerSurfaceState>({ superOn: false, superSelected: false });
   const [chatOpen, setChatOpen] = useState(false);
   useInstanceEvent<DrawerSurfaceState>(DRAWER_SURFACE_EVENT, (s) => { if (s) setSurface(s); });
