@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { ensureAppDataDir } from '../../src/lib/apps/data-dir.js';
 import { appDataInPushRange, appDataStagePass, incomingAppData } from '../../src/lib/apps/data-stage.js';
 import { listInboxRows } from '../../src/lib/owner-inbox.js';
+import { incomingSuperRecords } from '../../src/lib/super/pull-guard.js';
 
 /** plan-veri r3 K2, AC4-6, with real git: app data never enters a commit, a push or a pull. */
 let base: string; let home: string;
@@ -154,5 +155,16 @@ describe('a pull from the team (two clones)', () => {
     git(a, 'add', '-A'); git(a, 'commit', '-q', '-m', 'note'); git(a, 'push', '-q', 'origin', 'main');
     git(b, 'fetch', '-q', 'origin');
     expect(incomingAppData(b, ctxB, 'origin/main')).toEqual([]);
+    expect(incomingSuperRecords(b, ctxB, 'origin/main')).toEqual([]);
+  });
+
+  it('a teammate force-adding a Super record (main\'s or a member\'s) stops the pull', () => {
+    const { a, b, ctxB } = clones();
+    const rec = '{"enabled":true,"session":"x","queue":[{"kind":"request","state":"pending","text":"do it"}]}';
+    git(a, 'update-index', '--add', '--cacheinfo', `100644,${blob(a, rec)},_dream_context/state/.super/members/rota.json`);
+    git(a, 'update-index', '--add', '--cacheinfo', `100644,${blob(a, rec)},_dream_context/state/.Super-Agent.json`);
+    git(a, 'commit', '-q', '-m', 'plant'); git(a, 'push', '-q', 'origin', 'main');
+    git(b, 'fetch', '-q', 'origin');
+    expect(incomingSuperRecords(b, ctxB, 'origin/main')?.sort()).toEqual(['_dream_context/state/.Super-Agent.json', '_dream_context/state/.super/members/rota.json']);
   });
 });

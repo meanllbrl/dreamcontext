@@ -2,6 +2,7 @@ import { dirname } from 'node:path';
 import { readSetupConfig, readBrainLocal, writeBrainLocal, type SetupConfig } from '../setup-config.js';
 import * as git from './git.js';
 import { APP_DATA_HELD_NOTE, APP_DATA_PULL_NOTE, appDataInPushRange, appDataStagePass, incomingAppData } from '../apps/data-stage.js';
+import { SUPER_RECORD_PULL_NOTE, incomingSuperRecords } from '../super/pull-guard.js';
 import { GitSyncError } from './git.js';
 import { scrubStagedFiles, scrubCommitRange, summarizeScrub, type ScrubHit } from './scrub.js';
 import { resolveConflicts } from './semantic-merge.js';
@@ -180,6 +181,8 @@ export interface SyncEngineDeps {
   appDataInPushRange: typeof appDataInPushRange;
   /** plan-veri K2: the pull gate (incoming app data). */
   incomingAppData: typeof incomingAppData;
+  /** The pull gate for Super Agent records (they never sync). */
+  incomingSuperRecords: typeof incomingSuperRecords;
 }
 
 const defaultDeps: SyncEngineDeps = {
@@ -200,6 +203,7 @@ const defaultDeps: SyncEngineDeps = {
   pendingOwnAgentFiles,
   appDataInPushRange,
   incomingAppData,
+  incomingSuperRecords,
 };
 
 /** Uncommitted changes, plus this machine's own agent files waiting to be force-added: an ignored
@@ -578,6 +582,12 @@ function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcom
   const incomingApps = d.incomingAppData(gitCwd, contextRoot, ctx.remoteRef);
   if (incomingApps === null || incomingApps.length > 0) {
     return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: incomingApps === null ? 'Skipped the pull: could not check whether the team\'s update carries app data. It is retried at the next sync.' : APP_DATA_PULL_NOTE }, needsTaskSync: false };
+  }
+  // A Super Agent record never comes in either: a pulled member record could start that Super
+  // on this Mac with a job a teammate wrote. A guard that cannot answer stops too.
+  const incomingSuper = d.incomingSuperRecords(gitCwd, contextRoot, ctx.remoteRef);
+  if (incomingSuper === null || incomingSuper.length > 0) {
+    return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: incomingSuper === null ? 'Skipped the pull: could not check whether the team\'s update carries a Super Agent record. It is retried at the next sync.' : SUPER_RECORD_PULL_NOTE }, needsTaskSync: false };
   }
   const guard = d.guardPullCollisions(gitCwd, contextRoot, ctx.remoteRef);
   if (!guard.ok) return { result: { action: 'noop', scrub: EMPTY_SCRUB, note: guard.note }, needsTaskSync: false };

@@ -208,6 +208,15 @@ describe('git-sync/sync-engine — runBrainSync', () => {
       expect(r.note).toContain('app data');
       expect(state.commitCalls).toHaveLength(0);
     });
+    it('a pull carrying a Super Agent record stops before the merge, and so does a guard that cannot answer', async () => {
+      const state = makeState({ aheadCount: 1 });
+      const r = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, { ...baseDeps(state), incomingSuperRecords: () => ['_dream_context/state/.super/members/rota.json'] });
+      expect(r.action).toBe('noop');
+      expect(r.note).toContain('Super Agent record');
+      expect(state.commitCalls).toHaveLength(0);
+      const r2 = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, { ...baseDeps(makeState({ aheadCount: 1 })), incomingSuperRecords: () => null });
+      expect(r2.note).toContain('could not check');
+    });
   });
 
   // ── basic auto flow ────────────────────────────────────────────────────
