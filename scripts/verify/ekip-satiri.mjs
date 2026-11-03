@@ -285,9 +285,11 @@ async function run(base) {
     const items = page.locator('[data-testid="super-others-item"]:visible');
     // Every member item carries the kind label "MEMBER/ÜYE" (b9137b33), so match the Üye card's own
     // title, the word right before its "Live …/Yan yana …" line: a bare /Member/ picked Talimatlar (run s11).
-    const uye = items.filter({ hasText: /(Üye|Member)\s+(Live|Plays|Reads|Yan yana)/ }).first();
+    // Text content joins the tile's spans with no space ("MemberMemberLive…"), so \s* not \s+ (run s12).
+    const uye = items.filter({ hasText: /(Üye|Member)\s*(Live|Plays|Reads|Yan yana)/ }).first();
     console.log(`   openUye: others buttons ${seen}, panel ${await fan.count()}, items ${await items.count()} [${(await items.allInnerTexts().catch(() => [])).map((x) => x.replace(/\s+/g, ' ').slice(0, 30)).join(' | ')}]`);
-    if (await uye.isVisible().catch(() => false)) await uye.click({ timeout: 5000 }).catch(() => {});
+    console.log(`   openUye: Üye items matched ${await uye.count()}`);
+    if (await uye.isVisible().catch(() => false)) await uye.click({ timeout: 5000 }).catch((e) => console.log(`   openUye click: ${String(e?.message ?? e).split('\n')[0]}`));
     await until(page, async () => st.getByTestId('member-delete').isVisible().catch(() => false), 5000);
   };
   await openUye();
