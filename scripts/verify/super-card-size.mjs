@@ -392,7 +392,7 @@ try {
   await clickIn(page, ids.image, 'super-card-fullscreen');
   ok('the picture viewer opens', await until(page, async () => (await page.locator('.image-viewer:not(.frame-viewer)').count()) === 1, 5000));
   await page.waitForTimeout(800);
-  const level = () => page.locator('.image-viewer:not(.frame-viewer) .image-viewer-level').innerText();
+  const level = () => page.locator('.image-viewer:not(.frame-viewer) .viewer-tool--level').innerText();
   const fitted = await level();
   await shot(page, '3-image-fit');
   await page.keyboard.press('+');
@@ -446,9 +446,9 @@ try {
   const L1 = await pct();
   ok('a many-frame pinch from a zoomed view lands at start × scale (it never snaps back toward fit)', Math.abs(L1 - L0 * 0.8) <= Math.max(3, L0 * 0.05), `${L0}% → ${L1}% (want ≈ ${Math.round(L0 * 0.8)}%)`);
   const spyBefore = await page.evaluate(() => window.__boardGestures);
-  await fireAt('.image-viewer-bar', 'gesturestart', 1);
-  await fireAt('.image-viewer-bar', 'gesturechange', 2);
-  await fireAt('.image-viewer-bar', 'gestureend', 2);
+  await fireAt('.image-viewer-toolbar', 'gesturestart', 1);
+  await fireAt('.image-viewer-toolbar', 'gesturechange', 2);
+  await fireAt('.image-viewer-toolbar', 'gestureend', 2);
   await page.waitForTimeout(200);
   ok('a pinch over the viewer\'s bar reaches no board either', (await page.evaluate(() => window.__boardGestures)) === spyBefore);
   await page.keyboard.press('Escape');
