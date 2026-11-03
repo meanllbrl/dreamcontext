@@ -57,6 +57,8 @@ function superTurn(text) {
       cli('super', 'open', 'image', 'pics/release-diagram.png', '--size', 'large'),
       cli('super', 'open', 'web', 'mockups/share-sheet-before-after.html'),
       cli('super', 'open', 'whiteboard', 'share-flow'),
+      // A page opens side by side since 0.34.0 (an automatic half); the cards-at-their-sizes proof needs the floating stage.
+      cli('super', 'half', '--off'),
     ];
     report({ kind: 'handover', steps });
     return 'arranged';
@@ -124,6 +126,8 @@ ${img}<table>${rows}</table>${img}<p id="bottom">The end of the mockup.</p>`;
 function setupScratch() {
   rmSync(SCRATCH, { recursive: true, force: true });
   for (const d of [join(HOME, '.dreamcontext'), join(HOME, '.local', 'bin'), join(HOME, '.claude-worktrees'), join(PROJ, '_dream_context', 'state'), join(PROJ, 'pics'), join(PROJ, 'mockups'), OUT]) mkdirSync(d, { recursive: true });
+  // The desktop hands the chat over with the Super tab of the CLASSIC shell; the new shell has no such button (its drawer row is the way in).
+  writeFileSync(join(HOME, '.dreamcontext', 'launcher-ui.json'), JSON.stringify({ view: 'list', shell: 'classic' }));
   writeFileSync(join(HOME, '.dreamcontext', 'agent-ui.json'), `${JSON.stringify({
     enabled: true, restoreTabs: true, defaultAgent: 'claude', autoTitle: false, hotkey: 'Ctrl+A', renderer: 'dom',
     chatView: true, screenMigrated: true, chatPermissionMode: 'auto', chatDefaultModel: '', chatDefaultEffort: '', lightMode: 'off',
