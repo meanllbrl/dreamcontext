@@ -4,6 +4,20 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.40.5] - 2026-11-04
+
+Patch on 0.40.4: every approved branch of the last days in one local build. Account usage that is right and fast, a Super chat that uses wide screens, parked chats that stay visible, a calmer Team row and a Codex that can ask you a question. Local build; not published.
+
+- **Account usage is right and quick.** Each account reads its own numbers (a folder signed in as someone else says whose it is and shows none), Refresh re-reads every account at once in seconds with "Reading usage…" per row, and the panel refreshes itself while open. The plan badge is the account's own, so the $200 plan reads Claude Ultra, and an account with no 5-hour limit draws no 5-hour row. A full bar reads "full · back in X" and the refusal names the window.
+- **"Keep for my chats only"** replaces the old label, with what it does always visible beside it. If every account is kept that way, the list warns you and one click opens the top account to routines. A routine that waits for this says so in plain words.
+- **A parked chat stays visible.** It looks like any chat with the composer open, and your first message wakes it and is answered once, with no divider.
+- **The Super chat takes the room on wide screens.** The agenda is no longer mirrored on an empty side, so on a 1800 px window the chat grows from 730 to 848 px.
+- **The Team row lines up with Chat.** A project with no members reads "Set your team" on the same left edge as "Chat", and members hang one level under the Team row, smaller and lighter.
+- **Report pages draw their graphs and tabs on the Super stage.** A dc-graph shows its arrows and dc-tabs switch, in the card and in fullscreen.
+- **Report rules.** A product mockup in a plan report wears the product's real look, and a sequence of more than four steps is a graph, not a row of chips.
+- **A Codex chat can ask you a question** and gets your pick back. Before, the card closed itself and Codex said "sent" into nothing.
+- **A sharper design skill:** hierarchy, spacing and colour budgets, states and truth, a new product UI page, and phone layout traps.
+
 ## [0.40.4] - 2026-11-03
 
 Patch on 0.40.3: the Super Agent's record stays on your Mac, a calmer left drawer and a flatter image viewer. Local build; not published.
