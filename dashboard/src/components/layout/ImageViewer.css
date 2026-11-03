@@ -189,6 +189,58 @@
 
 .image-viewer-close:hover { background: rgba(255, 255, 255, 0.18); }
 
+/* The picture viewer's docked strip (the page viewer keeps the floating foot above). The stage
+   ends where the strip begins (ImageViewer sets its `bottom` to the strip's measured height), so
+   at fit the whole picture sits ABOVE the controls and none of it is covered. Zoomed, the picture
+   runs on under the strip (the stage does not clip), and the strip fades after a quiet pointer;
+   hovering it or focusing into it brings it back. */
+.image-viewer:not(.frame-viewer) > .image-viewer-stage { overflow: visible; }
+
+.image-viewer-foot--dock {
+  bottom: 0;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  background: rgba(10, 10, 14, 0.62);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  /* The strip itself takes the pointer, so hovering anywhere on it keeps it up and a click on
+     its empty part does not fall through to the picture. */
+  pointer-events: auto;
+  transition: opacity 240ms ease, transform 240ms ease;
+}
+
+.image-viewer-foot--dock[data-hidden] {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.image-viewer-foot--dock[data-hidden] > * { pointer-events: none; }
+
+/* Keyboard focus inside the strip always wins over the idle fade. */
+.image-viewer-foot--dock:focus-within {
+  opacity: 1;
+  transform: none;
+}
+.image-viewer-foot--dock:focus-within > * { pointer-events: auto; }
+
+/* File name and the once-per-open hint share one row inside the strip. */
+.image-viewer-foot-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  max-width: 90vw;
+}
+.image-viewer-foot--dock .image-viewer-hint {
+  margin: 0;
+  transition: opacity 400ms ease;
+}
+.image-viewer-foot--dock .image-viewer-hint[data-gone] { opacity: 0; }
+
+/* The bar sits ON the blurred strip now; it needs no extra glass of its own. */
+.image-viewer-foot--dock .image-viewer-bar,
+.image-viewer-foot--dock .image-viewer-caption { background: rgba(255, 255, 255, 0.06); }
+
 /* Several pictures (a report page): side steps and a position chip. */
 .image-viewer-step {
   position: absolute;
@@ -213,6 +265,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .image-viewer { animation: none; }
+  .image-viewer-foot--dock { transition: none; }
 }
 
 /* On a phone the hint is describing gestures the viewer already reads natively,
@@ -220,4 +273,8 @@
 @media (max-width: 640px) {
   .image-viewer-hint { display: none; }
   .image-viewer-foot { bottom: max(var(--space-4), env(safe-area-inset-bottom)); }
+  .image-viewer-foot--dock {
+    bottom: 0;
+    padding: var(--space-2) var(--space-3) max(var(--space-3), env(safe-area-inset-bottom));
+  }
 }

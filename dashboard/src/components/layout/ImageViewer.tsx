@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useI18n } from '../../context/I18nContext';
 import { usePanZoom, type View } from './usePanZoom';
@@ -38,6 +38,22 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n
 
 const FOCUSABLE = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])';
 
+/** How long a zoomed picture waits without the pointer moving before its controls fade. */
+export const CONTROLS_IDLE_MS = 1500;
+/** How long the gesture hint stays up after the viewer opens. */
+export const HINT_MS = 3500;
+
+/**
+ * Whether the bottom strip (file name, file actions, zoom bar) is on screen.
+ *
+ * At fit it always is: the picture is fitted into the space ABOVE the strip, so it costs the
+ * picture nothing. Once zoomed the picture runs under the strip, so the strip steps aside after
+ * a quiet pointer, and comes back while the pointer rests on it or keyboard focus is inside it.
+ */
+export function controlsShown(s: { zoomed: boolean; idle: boolean; hovering: boolean; focusInside: boolean }): boolean {
+  return !s.zoomed || !s.idle || s.hovering || s.focusInside;
+}
+
 /**
  * A picture opened at full size: edge-to-edge over the whole window, zoomable to
  * the pixel, pannable while zoomed.
@@ -66,6 +82,14 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, step, o
    *  (see `Lightbox`: granting access re-requests the same file under a new URL). */
   const [failed, setFailed] = useState(false);
   const [stage, setStage] = useState<{ w: number; h: number } | null>(null);
+  const footRef = useRef<HTMLDivElement | null>(null);
+  /** The strip's height: the stage ends where it starts, so "fit" never puts a control on the picture. */
+  const [footH, setFootH] = useState(0);
+  const [idle, setIdle] = useState(false);
+  const [hovering, setHovering] = useState(false);
+  const [focusInside, setFocusInside] = useState(false);
+  /** Once per open, not per picture: stepping through a set does not bring it back. */
+  const [hintUp, setHintUp] = useState(true);
   // A new image is a new subject — never inherit the previous one's zoom or pan.
   useEffect(() => {
     setNatural(null);
@@ -80,6 +104,21 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, step, o
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = footRef.current;
+    if (!el) return;
+    const measure = () => setFootH(el.offsetHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const id = window.setTimeout(() => setHintUp(false), HINT_MS);
+    return () => window.clearTimeout(id);
   }, []);
 
   // Lock the page behind the viewer. Nested under FullscreenOverlay's own lock is
@@ -184,6 +223,26 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, step, o
   const zoomed = view.scale > 1.01;
   const percent = Math.round(base * view.scale * 100);
 
+  // Any zoom or pan counts as activity: the strip shows, then fades after a quiet spell. A
+  // pointer move restarts the clock (`wake`). At fit there is no clock: the strip stays.
+  const idleTimer = useRef<number | undefined>(undefined);
+  const wake = () => {
+    setIdle(false);
+    window.clearTimeout(idleTimer.current);
+    idleTimer.current = window.setTimeout(() => setIdle(true), CONTROLS_IDLE_MS);
+  };
+  const wakeRef = useRef(wake);
+  wakeRef.current = wake;
+  useEffect(() => {
+    if (zoomed) wakeRef.current();
+    else { window.clearTimeout(idleTimer.current); setIdle(false); }
+  }, [zoomed, view.x, view.y, view.scale]);
+  useEffect(() => () => window.clearTimeout(idleTimer.current), []);
+  // The first zoom means the gestures were found; the hint has nothing left to say.
+  useEffect(() => { if (zoomed) setHintUp(false); }, [zoomed]);
+
+  const shown = controlsShown({ zoomed, idle, hovering, focusInside });
+
   return createPortal(
     <div
       ref={rootRef}
@@ -192,11 +251,13 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, step, o
       aria-modal="true"
       aria-label={alt || t('imageViewer.label')}
       tabIndex={-1}
+      onPointerMove={zoomed ? wake : undefined}
     >
       <div
         ref={stageRef}
         className="image-viewer-stage"
         data-pinch-owner="true"
+        style={{ bottom: footH }}
         data-zoomed={zoomed || undefined}
         data-grabbing={(pz.grabbing && zoomed) || undefined}
         data-failed={failed || undefined}
@@ -227,8 +288,27 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, step, o
         )}
       </div>
 
-      <div className="image-viewer-foot">
-        {caption && <div className="image-viewer-caption">{caption}</div>}
+      <div
+        ref={footRef}
+        className="image-viewer-foot image-viewer-foot--dock"
+        data-hidden={!shown || undefined}
+        onPointerEnter={() => setHovering(true)}
+        onPointerLeave={() => setHovering(false)}
+        onFocus={() => setFocusInside(true)}
+        onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusInside(false); }}
+      >
+        {/* The hint shares the file name's row and only fades (never unmounts), so its going
+            never changes the strip's height and the fitted picture never jumps. */}
+        {(caption || !failed) && (
+          <div className="image-viewer-foot-row">
+            {caption && <div className="image-viewer-caption">{caption}</div>}
+            {!failed && (
+              <p className="image-viewer-hint" data-gone={!(hintUp && !zoomed) || undefined} aria-hidden={!(hintUp && !zoomed) || undefined}>
+                {t('imageViewer.hint')}
+              </p>
+            )}
+          </div>
+        )}
         {/* Above the zoom bar, not in it: these act on the FILE, the bar acts on the view. */}
         {actions && <div className="image-viewer-actions">{actions}</div>}
         {!failed && <div className="image-viewer-bar">
@@ -261,9 +341,6 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, step, o
             ＋
           </button>
         </div>}
-        {/* Only while fitted: once you have zoomed you have already discovered the
-            gestures, and the hint is then just text over the thing you came to read. */}
-        {!zoomed && !failed && <p className="image-viewer-hint">{t('imageViewer.hint')}</p>}
       </div>
 
       {step && (
