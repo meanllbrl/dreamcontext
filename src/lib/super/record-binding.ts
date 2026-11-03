@@ -11,18 +11,28 @@
  *     random, never synced) and the vault's real path;
  *   - a read whose stamp names another machine or another folder gets an empty record, and the
  *     next write sets the foreign file aside (`<file>.foreign-<time>`, ignored) before replacing it;
+ *   - a stamp is not a secret (the machine id names synced thread files), so a record whose bytes
+ *     are exactly what HEAD holds for it came from a commit (a pull overwrites an ignored file)
+ *     and is foreign, stamp or not. HEAD, not the index: the owner's own `git add -A` stages his
+ *     live record a moment before the sync's stage pass drops it again. This process's own last
+ *     write is recognised without asking git;
  *   - an UNSTAMPED record (written before this change) is this Mac's unless git tracks it: a
  *     record in the index or in HEAD came from a commit, and is this Mac's only when its Super
- *     session's transcript is on this Mac (a session id is never shared across machines).
+ *     session's transcript is on this Mac, under any Claude account or Codex (a session id is
+ *     never shared across machines).
  *
- * Names and paths only; the record's content is never read to decide.
+ * The decision reads the stamp, the session id and the bytes' git object id; nothing else.
  */
 
-import { realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { readMachineIdentity } from '../machine-id.js';
 import * as git from '../git-sync/git.js';
-import { findTranscriptBySessionId } from '../transcript-locate.js';
+import { findTranscriptBySessionId, isSafeSessionId } from '../transcript-locate.js';
+import { listClaudeAccounts } from '../claude-accounts.js';
+import { findCodexRollout } from '../t3-bridge/codex-threads.js';
 
 export interface SuperBinding {
   machine: string;
@@ -70,38 +80,85 @@ function repoPath(absPath: string): { top: string; rel: string } | null {
 
 /** Git holds `absPath` in its index or in HEAD. False outside a repo or when git cannot answer. */
 export function trackedInGit(absPath: string): boolean {
-  const at = repoPath(absPath);
-  if (!at) return false;
-  return git.blobId(at.top, `:${at.rel}`) !== null || git.blobId(at.top, `HEAD:${at.rel}`) !== null;
+  return gitBlobs(absPath).length > 0;
 }
 
-/** Unstamped records' answer (git, then the transcript), once per path per process. A stamped
- *  record never asks. */
-const legacyCache = new Map<string, boolean>();
+/** The object ids git holds for `absPath` (index, HEAD); empty outside a repo or untracked. */
+function gitBlobs(absPath: string, which: 'index-and-head' | 'head' = 'index-and-head'): string[] {
+  const at = repoPath(absPath);
+  if (!at) return [];
+  const specs = which === 'head' ? [`HEAD:${at.rel}`] : [`:${at.rel}`, `HEAD:${at.rel}`];
+  return specs.map((spec) => git.blobId(at.top, spec)).filter((b): b is string => b !== null);
+}
+
+/** The git (SHA-1) object id of `text` as a blob. */
+export function blobIdOf(text: string): string {
+  const body = Buffer.from(text, 'utf-8');
+  return createHash('sha1').update(`blob ${body.length}\0`).update(body).digest('hex');
+}
+
+/** A Super session's transcript is on this Mac: HOME's Claude projects, every registered Claude
+ *  account's sandbox, Antigravity, or a Codex rollout. */
+export function sessionIsHere(session: unknown, home: string = homedir()): boolean {
+  if (typeof session !== 'string' || !isSafeSessionId(session)) return false;
+  if (findTranscriptBySessionId([session], home) !== null) return true;
+  let accounts: ReturnType<typeof listClaudeAccounts> = [];
+  try { accounts = listClaudeAccounts(home); } catch { /* no register */ }
+  for (const a of accounts) {
+    if (!a.configDir) continue;
+    const base = join(a.configDir, 'projects');
+    let dirs: string[] = [];
+    try { dirs = readdirSync(base); } catch { continue; }
+    if (dirs.some((d) => existsSync(join(base, d, `${session}.jsonl`)))) return true;
+  }
+  try { return findCodexRollout(session, join(home, '.codex')) !== null; } catch { return false; }
+}
+
+/** The blob id of this process's last write of each record: its own bytes need no git. */
+const ownWrites = new Map<string, string>();
+
+/** The record store calls this after every write of `recordPath`. */
+export function noteOwnWrite(recordPath: string, text: string): void {
+  ownWrites.set(recordPath, blobIdOf(text));
+}
+
+/** Answers that cost git or a transcript search, per path and content, once per process. */
+const verdictCache = new Map<string, boolean>();
 
 export type BindingVerdict = 'mine' | 'legacy' | 'foreign';
 
 /**
- * Whose is this parsed record? `mine`: stamped for this Mac and this folder. `legacy`: no stamp,
- * not from git, adopted (the next write stamps it). `foreign`: anything else.
+ * Whose is this record (`raw` parsed from `text`, read from `recordPath`)? `mine`: stamped for
+ * this Mac and this folder, and not a copy of what git holds. `legacy`: no stamp, not from git (or
+ * its session is here), adopted; the next write stamps it. `foreign`: anything else.
  */
-export function bindingVerdict(raw: unknown, contextRoot: string, recordPath: string): BindingVerdict {
+export function bindingVerdict(raw: unknown, text: string, contextRoot: string, recordPath: string): BindingVerdict {
   const stamp = readBinding(raw);
   if (stamp) {
     const here = currentBinding(contextRoot);
-    return stamp.machine === here.machine && stamp.root === here.root ? 'mine' : 'foreign';
+    if (stamp.machine !== here.machine || stamp.root !== here.root) return 'foreign';
+    const blob = blobIdOf(text);
+    if (ownWrites.get(recordPath) === blob) return 'mine';
+    const key = `${recordPath}\0${blob}`;
+    let fromGit = verdictCache.get(key);
+    if (fromGit === undefined) {
+      fromGit = gitBlobs(recordPath, 'head').includes(blob);
+      verdictCache.set(key, fromGit);
+    }
+    return fromGit ? 'foreign' : 'mine';
   }
   if (hasBoundKey(raw)) return 'foreign';
-  let mine = legacyCache.get(recordPath);
+  const key = `${recordPath}\0legacy`;
+  let mine = verdictCache.get(key);
   if (mine === undefined) {
-    const session = (raw as { session?: unknown } | null)?.session;
-    mine = !trackedInGit(recordPath) || (typeof session === 'string' && findTranscriptBySessionId([session]) !== null);
-    legacyCache.set(recordPath, mine);
+    mine = !trackedInGit(recordPath) || sessionIsHere((raw as { session?: unknown } | null)?.session);
+    verdictCache.set(key, mine);
   }
   return mine ? 'legacy' : 'foreign';
 }
 
-/** Tests only: forget the cached git answers. */
+/** Tests only: forget the cached answers. */
 export function resetBindingCache(): void {
-  legacyCache.clear();
+  verdictCache.clear();
+  ownWrites.clear();
 }

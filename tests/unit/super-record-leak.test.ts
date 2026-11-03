@@ -19,6 +19,8 @@ import { emptySuperState } from '../../src/lib/super/types.js';
 import { readMachineIdentity } from '../../src/lib/machine-id.js';
 import { resetBindingCache } from '../../src/lib/super/record-binding.js';
 import { superHandoffContext } from '../../src/lib/super/handoff-task.js';
+import { superStagePass } from '../../src/lib/super/pull-guard.js';
+import { claudeAccountsFilePath, sandboxDirFor } from '../../src/lib/claude-accounts.js';
 
 let dir: string;
 let project: string;
@@ -202,5 +204,69 @@ describe('a record from another Mac or another folder is not this Super', () => 
     expect(superHandoffContext(root, [SESSION])).not.toBeNull();
     await updateSuperState(root, () => {});
     expect(JSON.parse(readFileSync(join(root, SUPER_STATE_REL), 'utf-8')).bound.machine).toBe(readMachineIdentity().id);
+  });
+});
+
+describe('review round 1: what the first fix left open', () => {
+  const stamped = () => ({ machine: readMachineIdentity().id, root: realpathSync(root) });
+
+  it('C1: a pulled `!` negation cannot put the record into a sync commit (stage pass), and update re-asserts the ignore', () => {
+    ensureBrainGitignore(root);
+    writeFileSync(join(root, '.gitignore'), `${readFileSync(join(root, '.gitignore'), 'utf-8')}!state/.super-agent.json\n`);
+    writeRecord(record());
+    git(['add', '-A']);
+    expect(tracked('_dream_context/state/.super-agent.json')).toBe(true);
+    expect(superStagePass(project, root)).toEqual(['_dream_context/state/.super-agent.json']);
+    expect(tracked('_dream_context/state/.super-agent.json')).toBe(false);
+    expect(existsSync(join(root, SUPER_STATE_REL))).toBe(true);
+    // update: the Super lines go below the negation, and git ignores the record again.
+    expect(ignored('_dream_context/state/.super-agent.json')).toBe(false);
+    migration0402.steps[0](root);
+    expect(ignored('_dream_context/state/.super-agent.json')).toBe(true);
+    expect(migration0402.steps[0](root).detected).toBe(true);
+  });
+
+  it('M1: a live record staged and then changed again still leaves the index, without pinning the version', () => {
+    writeFileSync(join(root, '.gitignore'), OLD_GITIGNORE);
+    writeRecord(record({ away: { since: 1, events: 0 } }));
+    git(['add', '-A']);
+    git(['commit', '-q', '-m', 'leak']);
+    writeRecord(record({ away: { since: 2, events: 0 } }));
+    git(['add', '-A']);
+    writeRecord(record({ away: { since: 3, events: 0 } }));
+    const r = untrackSuperRecords(root);
+    expect(r.failedCount ?? 0).toBe(0);
+    expect(tracked('_dream_context/state/.super-agent.json')).toBe(false);
+  });
+
+  it('M2: a stamp copied in by a pull (bytes equal to HEAD) is foreign; this Mac\'s own write is not', async () => {
+    writeFileSync(join(root, '.gitignore'), OLD_GITIGNORE);
+    writeRecord(record({ bound: stamped() }));
+    git(['add', '-A']);
+    git(['commit', '-q', '-m', 'forged']);
+    expect((await readSuperState(root)).session).toBeNull();
+    expect(superHandoffContext(root, [SESSION])).toBeNull();
+    // Once this Mac writes its own record, its bytes differ from HEAD and it is read as its own.
+    await updateSuperState(root, (d) => { d.session = SESSION; d.enabled = true; });
+    resetSuperIndex();
+    expect((await readSuperState(root)).session).toBe(SESSION);
+    resetBindingCache();
+    expect((await readSuperState(root)).session).toBe(SESSION);
+  });
+
+  it('M3: a committed legacy record whose session lives under a second Claude account stays', async () => {
+    const dirAcc = sandboxDirFor('work', home);
+    mkdirSync(join(dirAcc, 'projects', '-p'), { recursive: true });
+    writeFileSync(join(dirAcc, 'projects', '-p', `${SESSION}.jsonl`), '{}\n');
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+    writeFileSync(claudeAccountsFilePath(home), JSON.stringify({ accounts: [{ id: 'work', configDir: dirAcc }] }));
+    writeFileSync(join(root, '.gitignore'), OLD_GITIGNORE);
+    writeRecord(record());
+    git(['add', '-A']);
+    git(['commit', '-q', '-m', 'leak']);
+    migration0402.steps.forEach((step) => step(root));
+    expect(existsSync(join(root, SUPER_STATE_REL))).toBe(true);
+    resetBindingCache();
+    expect((await readSuperState(root)).session).toBe(SESSION);
   });
 });

@@ -16,7 +16,7 @@ import { OWNER_WAIT_KINDS, type OwnerWaitKind } from './owner-wait.js';
 import { parseMcpNames } from './lean-mcp.js';
 import { isSafeAutomationSlug } from '../agents/slot.js';
 import { renameWithRetry } from '../fs-retry.js';
-import { bindingVerdict, currentBinding } from './record-binding.js';
+import { bindingVerdict, currentBinding, noteOwnWrite } from './record-binding.js';
 
 /**
  * The Super Agent's state file — `state/.super-agent.json`, one per vault (plan-r7 D2).
@@ -821,7 +821,7 @@ async function loadSuperRecord(contextRoot: string, opts: SanitizeOpts, id: Supe
   }
   let parsed: unknown = null;
   try { parsed = JSON.parse(text); } catch { parsed = null; }
-  if (parsed !== null && bindingVerdict(parsed, contextRoot, path) === 'foreign') {
+  if (parsed !== null && bindingVerdict(parsed, text, contextRoot, path) === 'foreign') {
     return { state: ownedBy(emptySuperState(), id), foreign: true };
   }
   return { state: ownedBy(sanitizeSuperState(parsed, opts), id), foreign: false };
@@ -870,6 +870,7 @@ async function writeSuperState(contextRoot: string, state: SuperState, id: Super
     await fsp.rm(tmp, { force: true }).catch(() => { /* already gone */ });
     throw err;
   }
+  noteOwnWrite(path, text);
 }
 
 const locks = new Map<string, Promise<unknown>>();

@@ -1,10 +1,11 @@
-import { existsSync, lstatSync, readFileSync, readdirSync, renameSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, readFileSync, readdirSync, renameSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { brainPrefix } from '../lib/agents/agent-sync.js';
 import { currentTaskBackend, ensureBrainGitignore, ensureFullRepoGitignore } from '../lib/git-sync/brain-repo.js';
 import * as git from '../lib/git-sync/git.js';
 import { readSetupConfig } from '../lib/setup-config.js';
 import { bindingVerdict } from '../lib/super/record-binding.js';
+import { SUPER_LOCAL_PATHSPECS, superPathspecs } from '../lib/super/pull-guard.js';
 import type { Migration, MigrationStepResult } from './types.js';
 
 /**
@@ -17,7 +18,8 @@ import type { Migration, MigrationStepResult } from './types.js';
  *
  * `everyRun`, cheap when there is nothing to do:
  *   1. the brain `.gitignore` gains every machine-local line it lacks (and, in full-repo mode, the
- *      project root `.gitignore` its brain lines);
+ *      project root `.gitignore` its brain lines); when git still does not ignore the record (a
+ *      later `!` negation, a teammate's), the Super lines go to the end again, where they win;
  *   2. a Super file git still tracks (main's record and its temp files, `state/.super/`, the
  *      session rosters) leaves the INDEX only (`git rm --cached`): the file stays on disk, and
  *      the owner's next commit carries the removal. A tracked record that is not this Mac's
@@ -27,14 +29,26 @@ import type { Migration, MigrationStepResult } from './types.js';
  * is retried on the next update.
  */
 
-/** The machine-local Super and session files, brain-relative (git pathspecs). */
-export const SUPER_LOCAL_PATHSPECS = [
-  'state/.super-agent.json',
-  'state/.super-agent.json.*',
-  'state/.super',
-  'state/.agent-sessions.json',
-  'state/.agent-sessions.*',
-] as const;
+export { SUPER_LOCAL_PATHSPECS };
+
+/** The Super lines of the brain `.gitignore`, re-asserted last when a negation beats them. */
+const SUPER_GITIGNORE_LINES = ['state/.super-agent.json', 'state/.super-agent.json.*', 'state/.super/', 'state/.agent-sessions.*'];
+
+/** Does git ignore the record? Re-append the Super lines at the end when it does not. */
+function reassertSuperIgnore(root: string): string[] {
+  let top: string | null;
+  try { top = git.topLevel(root); } catch { top = null; }
+  const prefix = top ? brainPrefix(root, root) : null;
+  if (!top || prefix === null) return [];
+  if (git.isIgnored(top, `${prefix}state/.super-agent.json`) !== false) return [];
+  const path = join(root, '.gitignore');
+  try {
+    if (!lstatSync(path).isFile()) return [];
+    const current = readFileSync(path, 'utf-8');
+    appendFileSync(path, `${current.endsWith('\n') ? '' : '\n'}# dreamcontext: the Super Agent's files stay on this Mac (last, so no negation above wins)\n${SUPER_GITIGNORE_LINES.join('\n')}\n`);
+  } catch { return []; }
+  return SUPER_GITIGNORE_LINES;
+}
 
 /** Main's record and every member's, as files on disk (read marks and handoffs are not records). */
 function recordFiles(root: string): string[] {
@@ -56,9 +70,10 @@ function setAsideForeignRecords(root: string): string[] {
   for (const file of recordFiles(root)) {
     try {
       if (!lstatSync(file).isFile()) continue;
+      const text = readFileSync(file, 'utf-8');
       let parsed: unknown = null;
-      try { parsed = JSON.parse(readFileSync(file, 'utf-8')); } catch { continue; }
-      if (bindingVerdict(parsed, root, file) !== 'foreign') continue;
+      try { parsed = JSON.parse(text); } catch { continue; }
+      if (bindingVerdict(parsed, text, root, file) !== 'foreign') continue;
       const to = `${file}.foreign-${Date.now()}`;
       renameSync(file, to);
       moved.push(to);
@@ -71,25 +86,25 @@ export function untrackSuperRecords(root: string): MigrationStepResult {
   const step = 'untrack-super-records';
   const none: MigrationStepResult = { step, filesTouched: [], summary: 'No Super Agent file is tracked by git', detected: true };
   if (!existsSync(join(root, 'state'))) return none;
-  let top: string | null;
-  try { top = git.topLevel(root); } catch { top = null; }
-  if (!top) return none;
-  const prefix = brainPrefix(root, root);
-  if (prefix === null) return none;
-  const specs = SUPER_LOCAL_PATHSPECS.map((p) => `${prefix}${p}`);
+  let at: ReturnType<typeof superPathspecs>;
+  try { at = superPathspecs(root, root); } catch { at = null; }
+  if (!at) return none;
+  const { top, specs } = at;
+  const prefix = brainPrefix(root, root) ?? '';
   let tracked: string[];
   try { tracked = git.indexPaths(top, specs); } catch {
     return { step, filesTouched: [], summary: 'Could not ask git which Super Agent files it tracks; retried on the next update', detected: false, failedCount: 1 };
   }
   if (tracked.length === 0) return none;
   const moved = setAsideForeignRecords(root);
-  try { git.removeFromIndex(top, tracked); } catch {
-    return { step, filesTouched: moved, summary: `Git tracks ${tracked.length} Super Agent file(s) but would not drop them from its index (a held lock?); retried on the next update`, detected: false, failedCount: 1 };
+  // `-f`: a live record staged a moment before it changed again is dropped too (index only).
+  try { git.removeFromIndexForce(top, specs); } catch {
+    return { step, filesTouched: moved, summary: `Git tracks ${tracked.length} Super Agent file(s) but would not drop them from its index (an index.lock held by another git?); retried on the next update`, detected: false, failedCount: 1 };
   }
   const names = tracked.map((p) => relative(prefix || '.', p) || p).join(', ');
   return {
     step,
-    filesTouched: [...tracked.map((p) => join(top!, p)), ...moved],
+    filesTouched: [...tracked.map((p) => join(top, p)), ...moved],
     detected: false,
     summary: `Took ${tracked.length} Super Agent file(s) out of git's index, kept on disk (${names}); commit that removal${moved.length ? `. Set aside ${moved.length} record(s) from another Mac or folder` : ''}`,
   };
@@ -108,6 +123,7 @@ export const migration0402: Migration = {
       }
       let rootAdded: string[] = [];
       if (readSetupConfig(projectRoot)?.brainRepo?.mode === 'full-repo') rootAdded = ensureFullRepoGitignore(projectRoot, currentTaskBackend(projectRoot));
+      added = added.concat(reassertSuperIgnore(root));
       if (added.length === 0 && rootAdded.length === 0) {
         return { step, filesTouched: [], detected: true, summary: 'The .gitignore already keeps every machine-local file out of git' };
       }

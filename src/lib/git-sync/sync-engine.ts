@@ -2,7 +2,7 @@ import { dirname } from 'node:path';
 import { readSetupConfig, readBrainLocal, writeBrainLocal, type SetupConfig } from '../setup-config.js';
 import * as git from './git.js';
 import { APP_DATA_HELD_NOTE, APP_DATA_PULL_NOTE, appDataInPushRange, appDataStagePass, incomingAppData } from '../apps/data-stage.js';
-import { SUPER_RECORD_PULL_NOTE, incomingSuperRecords } from '../super/pull-guard.js';
+import { SUPER_RECORD_PULL_NOTE, incomingSuperRecords, superStagePass } from '../super/pull-guard.js';
 import { GitSyncError } from './git.js';
 import { scrubStagedFiles, scrubCommitRange, summarizeScrub, type ScrubHit } from './scrub.js';
 import { resolveConflicts } from './semantic-merge.js';
@@ -225,6 +225,9 @@ function stageForSync(ctx: Ctx, scope: 'all' | 'brain' = 'all'): void {
   ctx.d.agentStagePass(ctx.gitCwd, ctx.contextRoot);
   // App data never enters git, a `git add -f` included (plan-veri K2): out of the index again.
   appDataStagePass(ctx.gitCwd, ctx.contextRoot);
+  // The Super Agent's record and session rosters never enter a sync commit, whatever a pulled
+  // `.gitignore` says (2026-11-03 leak): out of the index again.
+  superStagePass(ctx.gitCwd, ctx.contextRoot);
 }
 
 interface Ctx {
