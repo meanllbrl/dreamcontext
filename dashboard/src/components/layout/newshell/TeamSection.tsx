@@ -58,7 +58,7 @@ function MemberRow({ m, onOpen, popout = false }: { m: EkipMember; onOpen(m: Eki
       <button type="button" className={`ns-team-mrow${popout ? ' is-pop' : ''}`} data-testid={popout ? 'team-popout' : 'team-list-member'} data-slug={m.slug}
         data-off={m.enabled ? undefined : 'true'} data-asking={m.enabled && m.asking && !m.superOnly ? 'true' : undefined}
         onClick={() => onOpen(m)}>
-        <AgentAvatar of="agent" slug={m.slug} title={m.title} hasPhoto={m.hasPhoto} size={22} />
+        <AgentAvatar of="agent" slug={m.slug} title={m.title} hasPhoto={m.hasPhoto} size={18} />
         <span className="ns-team-mname">{m.title}</span>
         <MemberMark m={m} />
       </button>

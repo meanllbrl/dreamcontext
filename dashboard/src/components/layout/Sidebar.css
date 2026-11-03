@@ -498,6 +498,11 @@
   gap: 2px;
 }
 
+/* The classic rail's Team: its members hang from the row's chevron (TeamList.css). */
+.ns-team-sec:has(> .sidebar-item) {
+  --ns-team-in: var(--space-3);
+}
+
 .sidebar-item {
   position: relative;
   display: flex;
