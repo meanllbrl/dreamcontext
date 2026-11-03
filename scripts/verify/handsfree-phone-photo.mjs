@@ -259,6 +259,15 @@ async function openChat(page, base) {
 const imgs = (page, scope, needle) => page.evaluate(([s, n]) => [...document.querySelectorAll(`${s} img`)]
   .filter((i) => i.getBoundingClientRect().height > 0 && decodeURIComponent(i.getAttribute('src') || '').includes(n))
   .map((i) => ({ w: i.naturalWidth, ok: i.complete && i.naturalWidth > 0 })), [scope, needle]);
+/** Every picture chip (a `mark` with a painted thumbnail) under `scope` whose thumbnail URL names `needle`, and whether that URL decodes. */
+const chipPics = (page, scope, needle) => page.evaluate(async ([s, n]) => {
+  const urls = [...document.querySelectorAll(`${s} .chat-cmp-hl-thumb`)]
+    .filter((t) => t.getBoundingClientRect().height > 0)
+    .map((t) => /url\("?(.*?)"?\)/.exec(t.style.backgroundImage || '')?.[1] ?? '')
+    .filter((u) => decodeURIComponent(u).includes(n));
+  return Promise.all(urls.map((u) => new Promise((res) => { const i = new Image(); i.onload = () => res({ w: i.naturalWidth, ok: i.naturalWidth > 0 }); i.onerror = () => res({ w: 0, ok: false }); i.src = u; })));
+}, [scope, needle]);
+const chipsLoaded = async (page, scope, needle, n = 1) => (await chipPics(page, scope, needle)).filter((x) => x.ok).length >= n;
 const loaded = async (page, scope, needle, n = 1) => { const l = await imgs(page, scope, needle); return l.filter((x) => x.ok).length >= n; };
 
 let server = null;
@@ -332,7 +341,9 @@ try {
   const send = async (text) => {
     const box = vis('.chat-cmp-input').first();
     await box.click();
-    await box.fill(text);
+    // Attachments are chips INSIDE the draft: fill() would replace them, so the words go after them.
+    await box.evaluate((el) => { el.focus(); el.setSelectionRange(el.value.length, el.value.length); });
+    await phone.keyboard.type(text);
     await phone.waitForTimeout(150);
     await submit(phone);
   };
@@ -389,10 +400,10 @@ try {
   report.check('the phone\'s composer has a photo button and no "+"', (await vis('[data-testid="phone-photo-button"]').count()) === 1 && (await vis('[aria-label="Attach"]').count()) === 0);
   // THREE at once: more than the Mac takes in flight per device (2), so the phone must queue.
   await phone.locator('[data-testid="phone-photo-input"]').setInputFiles([join(UPLOADS, 'IMG_0042.jpg'), join(UPLOADS, 'Screenshot.png'), join(UPLOADS, 'IMG_0043.jpg')]);
-  report.check('three photo chips appear with a count line', await until(async () => (await vis('.chat-cmp-attachment-image').count()) === 3 && /3/.test(await vis('[data-testid="phone-photo-meta"]').first().innerText().catch(() => '')), 10000));
+  report.check('three photo chips appear with a count line', await until(async () => (await vis('.chat-cmp-hl .chat-cmp-hl-img').count()) === 3 && /3/.test(await vis('[data-testid="phone-photo-meta"]').first().innerText().catch(() => '')), 10000));
   await phone.screenshot({ path: join(SHOTS, '390x844-photo-chips.png') });
-  report.check('all three finish uploading (none refused by the per-device gate)', await until(async () => (await phone.locator('.chat-cmp-attachment-image[data-state="ready"]').count()) === 3, 30000),
-    JSON.stringify(await phone.locator('.chat-cmp-attachment-image').evaluateAll((e) => e.map((x) => x.getAttribute('data-state')))));
+  report.check('all three finish uploading (none refused by the per-device gate)', await until(async () => (await phone.locator('.chat-cmp-hl .chat-cmp-hl-img[data-state="ready"]').count()) === 3, 30000),
+    JSON.stringify(await phone.locator('.chat-cmp-hl .chat-cmp-hl-img').evaluateAll((e) => e.map((x) => x.getAttribute('data-state')))));
   const drops = () => { try { return readdirSync(join(PROJ, '_dream_context', 'tmp', 'agent-drops')).filter((n) => n.startsWith('phone-')); } catch { return []; } };
   const dropped = drops();
   report.check('the Mac saved them as JPEGs (the PNG re-encoded too), server-named, in the project\'s tmp', dropped.length === 3 && dropped.every((n) => /^phone-\d+-[0-9a-f]{8}\.jpg$/.test(n)
@@ -403,14 +414,15 @@ try {
   await send('this row looks cut off on the phone');
   report.check('the agent receives the photos as paths in the message', await until(async () => {
     const t = (await vis(pane).first().innerText().catch(() => '')).replace(/\s+/g, ' ');
-    return /ECHO this row looks cut off on the phone .*phone-\d+-[0-9a-f]{8}\.jpg.*phone-\d+-[0-9a-f]{8}\.jpg.*phone-\d+-[0-9a-f]{8}\.jpg/.test(t);
+    // The chips are in the draft before the words, so their paths come first.
+    return /ECHO .*phone-\d+-[0-9a-f]{8}\.jpg.*phone-\d+-[0-9a-f]{8}\.jpg.*phone-\d+-[0-9a-f]{8}\.jpg.* this row looks cut off on the phone/.test(t);
   }, 20000));
-  report.check('the owner\'s bubble on the phone shows all three photos', await until(() => loaded(phone, '.chat-msg-user-media', '/phone-', 3), 15000), JSON.stringify(await imgs(phone, '.chat-msg-user-media', '/phone-')));
-  await phone.locator('.chat-msg-user-media:visible').last().scrollIntoViewIfNeeded().catch(() => {});
+  report.check('the owner\'s bubble on the phone shows all three photos', await until(() => chipsLoaded(phone, '.chat-msg-pics', '/phone-', 3), 15000), JSON.stringify(await chipPics(phone, '.chat-msg-pics', '/phone-')));
+  await phone.locator('.chat-msg-pics:visible').last().scrollIntoViewIfNeeded().catch(() => {});
   await phone.waitForTimeout(400);
   await phone.screenshot({ path: join(SHOTS, '390x844-photo-sent.png') });
-  report.check('AC10: the Mac shows the same bubble with all three photos', await until(() => loaded(desk, '.chat-msg-user-media', '/phone-', 3), 20000), JSON.stringify(await imgs(desk, '.chat-msg-user-media', '/phone-')));
-  await desk.locator('.chat-msg-user-media:visible').last().scrollIntoViewIfNeeded().catch(() => {});
+  report.check('AC10: the Mac shows the same bubble with all three photos', await until(() => chipsLoaded(desk, '.chat-msg-pics', '/phone-', 3), 20000), JSON.stringify(await chipPics(desk, '.chat-msg-pics', '/phone-')));
+  await desk.locator('.chat-msg-pics:visible').last().scrollIntoViewIfNeeded().catch(() => {});
   await desk.waitForTimeout(400);
   await desk.screenshot({ path: join(SHOTS, '1440-mac-same-bubble.png') });
 
@@ -424,18 +436,34 @@ try {
   for (const [n, b] of Object.entries(FILES)) writeFileSync(join(UPLOADS, n), b);
   const before = new Set(drops());
   await phone.locator('[data-testid="phone-photo-input"]').setInputFiles(Object.keys(FILES).map((n) => join(UPLOADS, n)));
-  const fileChips = () => phone.locator('.chat-cmp-attachment-file:visible').evaluateAll((els) => els.map((e) => ({
-    text: e.querySelector('.chat-cmp-attachment-name')?.textContent ?? '', size: e.querySelector('[data-testid="phone-file-size"]')?.textContent ?? '',
-    img: !!e.querySelector('img'), state: e.getAttribute('data-state'),
-  })));
+  // A file is an inline chip too (a `mark` with its kind's icon in the thumbnail's room, no picture painted); its size is in
+  // the popover a press on the chip opens.
+  const fileChips = async () => {
+    const base = await phone.locator('.chat-cmp-hl .chat-cmp-hl-img:visible').evaluateAll((els) => els.map((e) => {
+      const r = e.getBoundingClientRect();
+      const th = e.querySelector('.chat-cmp-hl-thumb');
+      return { text: (e.textContent ?? '').replace(/ /g, ' ').trim(), img: !!th?.style.backgroundImage, icon: th?.getAttribute('data-icon') ?? '', state: e.getAttribute('data-state'), x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    }));
+    return base;
+  };
+  const fileSize = async (c) => {
+    await phone.mouse.click(c.x, c.y);
+    const pop = phone.locator('[data-testid="chat-cmp-ref-pop"] [data-testid="phone-file-size"]').first();
+    const size = await pop.waitFor({ state: 'visible', timeout: 2000 }).then(() => pop.textContent()).catch(() => '');
+    await phone.keyboard.press('Escape');
+    return size ?? '';
+  };
   let fc = [];
-  report.check('three file chips appear, each with its name and size and no picture', await until(async () => {
+  report.check('three file chips appear, each with its name and an icon and no picture', await until(async () => {
     fc = await fileChips();
-    return fc.length === 3 && fc.every((c) => c.size && !c.img) && ['site-export.zip', 'Q3 report.pdf', 'notes.txt'].every((n) => fc.some((c) => c.text.includes(n)));
+    return fc.length === 3 && fc.every((c) => c.icon && !c.img) && ['site-export.zip', 'Q3 report.pdf', 'notes.txt'].every((n) => fc.some((c) => c.text.includes(n)));
   }, 10000), JSON.stringify(fc));
   report.check('the count line says 3 files', /3/.test(await vis('[data-testid="phone-photo-meta"]').first().innerText().catch(() => '')));
   report.check('all three finish uploading', await until(async () => (await fileChips()).filter((c) => c.state === 'ready').length === 3, 30000), JSON.stringify(await fileChips()));
   await phone.screenshot({ path: join(SHOTS, '390x844-file-chips.png') });
+  const sizes = [];
+  for (const c of await fileChips()) sizes.push(await fileSize(c));
+  report.check('a press on each file chip says its size', sizes.length === 3 && sizes.every((z) => /\d/.test(z)), JSON.stringify(sizes));
   const added = drops().filter((n) => !before.has(n));
   const onDisk = (n) => readFileSync(join(PROJ, '_dream_context', 'tmp', 'agent-drops', n));
   report.check('the Mac saved each file byte for byte under its own name (the zip stays one file)', added.length === 3
@@ -443,7 +471,8 @@ try {
   await send('please look at these');
   report.check('the agent receives the three files as paths in the message', await until(async () => {
     const t = (await vis(pane).first().innerText().catch(() => '')).replace(/\s+/g, ' ');
-    return /ECHO please look at these .*site-export\.zip/.test(t) && /ECHO please look at these .*Q3_report\.pdf/.test(t) && /ECHO please look at these .*notes\.txt/.test(t);
+    // Chips first, then his words.
+    return /ECHO .*site-export\.zip.*Q3_report\.pdf.*notes\.txt.* please look at these/.test(t);
   }, 20000));
   await phone.waitForTimeout(400);
   await phone.screenshot({ path: join(SHOTS, '390x844-files-sent.png') });
@@ -454,7 +483,7 @@ try {
   report.check('at 375x667 nothing runs off the side', !(await phone.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)));
   await phone.screenshot({ path: join(SHOTS, '375x667-chat.png') });
   await phone.locator('[data-testid="phone-photo-input"]').setInputFiles([join(UPLOADS, 'Screenshot.png')]);
-  await until(async () => (await phone.locator('.chat-cmp-attachment-image[data-state="ready"]').count()) === 1, 15000);
+  await until(async () => (await phone.locator('.chat-cmp-hl .chat-cmp-hl-img[data-state="ready"]').count()) === 1, 15000);
   await phone.screenshot({ path: join(SHOTS, '375x667-photo-chip.png') });
 
   report.check('no console error on the phone', errors.length === 0, errors.slice(0, 5).join(' | '));
