@@ -138,7 +138,8 @@ describe('the create dialog picks an agent (S2)', () => {
   });
 
   it('reads the roster from useAgents and shows each agent\'s approval state in the picker', () => {
-    expect(dialog).toMatch(/useAgents\(\{ enabled: pickable \}\)/);
+    // A member's stage opens the create on that member (plan r4 R-AC4): the roster is read for it too.
+    expect(dialog).toMatch(/useAgents\(\{ enabled: pickable \|\| !!preset \}\)/);
     expect(dialog).toMatch(/a\.approvedForChat \? a\.title : `\$\{a\.title\} · \$\{t\('agents\.picker\.unapproved'\)\}`/);
     expect(dialog).toContain("t('automations.pickAgent')");
   });
@@ -165,8 +166,10 @@ describe('the create dialog picks an agent (S2)', () => {
   });
 
   it('an edit is the form it always was: no picker, prompt-gated, legacy shape', () => {
-    expect(dialog).toMatch(/const pickable = !editing && !start\?\.whiteboard;/);
-    expect(dialog).toMatch(/const bound = pickable && choice !== OWN_AGENT;/);
+    // A preset agent (the member's own Rutinler card) is no pick: the create runs as that member.
+    expect(dialog).toMatch(/const preset = !editing \? start\?\.agent : undefined;/);
+    expect(dialog).toMatch(/const pickable = !editing && !start\?\.whiteboard && !preset;/);
+    expect(dialog).toMatch(/const bound = \(pickable \|\| !!preset\) && choice !== OWN_AGENT;/);
   });
 });
 
