@@ -89,6 +89,8 @@ export interface BridgeSessionOptions {
   readonly gateBeat?: string;
   /** How long a start may take before it is refused. Default {@link OPEN_LIMIT_MS}. */
   readonly openLimitMs?: number;
+  /** How long an Antigravity turn may stay silent before it is stopped. Default {@link FIRST_WORD_LIMIT_MS}. */
+  readonly firstWordLimitMs?: number;
   /** A live limit update from the account (T3 `onUsageLimits`): windows as T3 builds them. */
   readonly onUsageLimits?: (update: { readonly windows: ReadonlyArray<unknown>; readonly checkedAt: string }) => void;
   /** The environment the Codex process inherits (already scrubbed by the caller). */
@@ -277,6 +279,17 @@ type Runtime = ManagedRuntime.ManagedRuntime<
 /** How long a Stop waits for the agent to end the turn before the bridge closes it. */
 export const STOP_CONFIRM_MS = 5_000;
 
+/**
+ * An Antigravity turn that says nothing at all this long is stuck, not thinking. Measured on agent
+ * 1.4.1 (3 Nov 2026): a tool server that hangs on the agent's handshake holds the turn with no event
+ * past "running" for minutes, and the owner saw "Working… 207s". A turn that thinks or runs a tool
+ * sends events within seconds; only one that never began is stopped, and the owner is told why.
+ */
+export const FIRST_WORD_LIMIT_MS = 90_000;
+
+/** Events that come before the agent said anything: the turn opened, the thread was renamed. */
+const BEFORE_FIRST_WORD = new Set(['provider_turn.updated', 'provider_thread.updated']);
+
 export class BridgeSession {
   readonly wire: ToWire;
   private readonly opts: BridgeSessionOptions;
@@ -295,6 +308,8 @@ export class BridgeSession {
   /** Resolves once the active run has its provider turn id (or ended): a Stop or a steer that
    *  arrives before Codex reported the turn running waits for it instead of being lost. */
   private turnKnown: { promise: Promise<void>; resolve: () => void } | null = null;
+  /** The first-word limit of the owner's running turn ({@link FIRST_WORD_LIMIT_MS}). */
+  private firstWord: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
   /** Requests answered for Bypass: their cancel frames are nobody's to read. */
   private readonly bypassAnswered = new Set<string>();
@@ -524,6 +539,8 @@ export class BridgeSession {
 
   private onEvent(event: ProviderAdapter.ProviderAdapterV2Event): void {
     this.traceEvent(event);
+    // The agent said something: the turn is alive, whatever it does next and however long.
+    if (this.firstWord && !BEFORE_FIRST_WORD.has(event.type)) this.clearFirstWord();
     // A sub-agent's turn (its own thread) is never the run a Stop or a steer is for.
     const childTurn = event.type === 'provider_turn.updated' && !!event.threadId && event.threadId !== this.threadId;
     if (event.type === 'provider_turn.updated' && !childTurn && this.activeRun && event.providerTurn.status === 'running') {
@@ -674,8 +691,12 @@ export class BridgeSession {
       return;
     }
     for (const frame of this.wire.beginTurn()) this.opts.emit(frame);
-    const failure = await this.startRun(message, appContext);
+    const starting = this.startRun(message, appContext);
+    // startRun set the run synchronously: the limit is the run's, whenever startTurn resolves.
+    this.armFirstWord();
+    const failure = await starting;
     if (failure) {
+      this.clearFirstWord();
       this.opts.emit({
         type: 'result', subtype: 'error_during_execution', is_error: true,
         result: `${toolLabel(this.opts.tool)} could not start the turn: ${failure}`,
@@ -842,19 +863,57 @@ export class BridgeSession {
    * from the agent (known by its turn id) then reaches nothing, and never ends the run after it.
    */
   private closeAfterStop(run: NonNullable<BridgeSession['activeRun']>): void {
-    setTimeout(() => {
-      if (this.closed || this.hidden || this.activeRun !== run) return;
-      this.stoppedTurn = run.providerTurnId;
-      // The end the agent never sent, read like a real one: its open cards close and the wire's
-      // turn ends, so the next message is not taken for a step of this one.
-      const end = {
-        type: 'turn.terminal', driver: this.opts.tool, providerThreadId: this.providerThread?.id, providerTurnId: run.providerTurnId,
-        runOrdinal: this.runOrdinal, status: 'interrupted', failure: null, threadDisposition: 'reusable',
-      } as unknown as ProviderAdapter.ProviderAdapterV2Event;
-      for (const frame of this.wire.translate(end)) this.opts.emit(frame);
-      this.activeRun = null;
-      this.turnKnown?.resolve();
-    }, STOP_CONFIRM_MS).unref();
+    setTimeout(() => { this.closeRun(run); }, STOP_CONFIRM_MS).unref();
+  }
+
+  /**
+   * Antigravity only (ACP: no message joins a running turn, so a stuck one holds every next
+   * message too). Started with the owner's turn; the agent's first event ends it.
+   */
+  private armFirstWord(): void {
+    this.clearFirstWord();
+    const run = this.activeRun;
+    if (!run || !isInstanceTool(this.opts.tool)) return;
+    const ms = this.opts.firstWordLimitMs ?? FIRST_WORD_LIMIT_MS;
+    this.firstWord = setTimeout(() => { this.firstWord = null; this.stopSilentTurn(run, ms); }, ms);
+    this.firstWord.unref?.();
+  }
+
+  private clearFirstWord(): void {
+    if (this.firstWord) clearTimeout(this.firstWord);
+    this.firstWord = null;
+  }
+
+  /** The turn never began: the owner hears why in plain words, and the turn ends like a Stop. */
+  private stopSilentTurn(run: NonNullable<BridgeSession['activeRun']>, ms: number): void {
+    if (this.closed || this.hidden || this.activeRun !== run) return;
+    const tool = toolLabel(this.opts.tool);
+    this.opts.emit({
+      type: 'assistant',
+      message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: `${tool} did not start answering within ${Math.round(ms / 1000)} seconds, so this turn was stopped. A tool server that does not answer it holds every turn this way: Settings > Tool servers shows which one. Open a new chat to try again.` }] },
+      parent_tool_use_id: null, session_id: this.wire.sessionId,
+    });
+    const session = this.session;
+    // No turn id yet: there is nothing to tell the agent, so the bridge ends the run now.
+    if (!session || !this.providerThread || !run.providerTurnId) { this.closeRun(run); return; }
+    this.closeAfterStop(run);
+    void this.run(session.interruptTurn({ providerThread: this.providerThread, providerTurnId: run.providerTurnId as never })).catch(() => undefined);
+  }
+
+  /** End a run the agent did not end: its open cards close and the wire's turn ends. */
+  private closeRun(run: NonNullable<BridgeSession['activeRun']>): void {
+    if (this.closed || this.hidden || this.activeRun !== run) return;
+    this.stoppedTurn = run.providerTurnId;
+    // The end the agent never sent, read like a real one: its open cards close and the wire's
+    // turn ends, so the next message is not taken for a step of this one.
+    const end = {
+      type: 'turn.terminal', driver: this.opts.tool, providerThreadId: this.providerThread?.id, providerTurnId: run.providerTurnId,
+      runOrdinal: this.runOrdinal, status: 'interrupted', failure: null, threadDisposition: 'reusable',
+    } as unknown as ProviderAdapter.ProviderAdapterV2Event;
+    for (const frame of this.wire.translate(end)) this.opts.emit(frame);
+    this.activeRun = null;
+    this.turnKnown?.resolve();
+    this.clearFirstWord();
   }
 
   /** The owner answered an approval or a question card. */
@@ -922,6 +981,7 @@ export class BridgeSession {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.clearFirstWord();
     this.hidden?.finish();
     try {
       if (this.scope && this.runtime) await this.runtime.runPromise(Scope.close(this.scope, Exit.void));
