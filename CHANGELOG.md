@@ -4,6 +4,16 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.40.4] - 2026-11-03
+
+Patch on 0.40.3: the Super Agent's record stays on your Mac, a calmer left drawer and a flatter image viewer. Local build; not published.
+
+- **Your Super Agent stays on your Mac.** A project set up by an older version could commit the Super Agent's record to git, so someone who cloned the repo saw your last question. `dreamcontext update` now adds the missing lines to the brain's `.gitignore`, takes any Super file git still tracks out of its index (the file stays on your disk; commit that removal), and a Super record written on another Mac or in another folder is no longer opened.
+- **Search your projects** from the Projects header in the left drawer.
+- **The drawer opens at its narrowest width** by default, and a collapsed project hides its Team row too.
+- **Every project has its Team row,** also with no members yet: an empty one lets you make the first member.
+- **The image viewer has one solid bar under the picture.** Its buttons no longer cover the image or each other, the name gives way first on a narrow window, only keyboard focus keeps the bar up (a tap wakes it), and the images of a task step through the viewer one by one.
+
 ## [0.40.3] - 2026-11-03
 
 Patch on 0.40.2: the Team row in the drawer, a Gemini reply fix and a report-page fix. Local build; not published.
