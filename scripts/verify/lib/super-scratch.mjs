@@ -225,6 +225,8 @@ process.stdin.on('data', (c) => {
     const content = (o.message && o.message.content) || [];
     const blocks = typeof content === 'string' ? [content] : content.filter((b) => b.type === 'text').map((b) => b.text);
     if (!blocks.length) continue;
+    // On arrival, before the turn chain: a turn that never runs is then the stand-in's, not the server's.
+    report({ kind: 'stdin-user', role, slug, sid, text: blocks.join('\\n').slice(0, 200) });
     chain = chain.then(() => turn(blocks, content));
   }
 });

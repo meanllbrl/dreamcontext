@@ -200,7 +200,21 @@ async function run(engineName, base) {
   const browserType = engineName === 'webkit' ? webkit : chromium;
   const browser = await browserType.launch();
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  await context.addInitScript(() => {
+    const set = new Set();
+    const send = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (d) { set.add(this); const r = send.call(this, d); if (typeof d === 'string' && d.includes('which step?')) { this.__ownerSentAt = Date.now(); this.__bufAfterSend = this.bufferedAmount; } return r; };
+    window.__wsProbe = () => [...set].map((w) => ({ url: w.url.replace(/^wss?:\/\/[^/]+/, '').slice(0, 110), rs: w.readyState, buf: w.bufferedAmount, ownerAt: w.__ownerSentAt ?? null, bufAfter: w.__bufAfterSend ?? null }));
+  });
   const page = await context.newPage();
+  // Diagnostics for a red T4 owner-message check: every chat socket, and the frames that carry the owner's words.
+  const wsLog = [];
+  page.on('websocket', (ws) => {
+    const u = ws.url().replace(/^wss?:\/\/[^/]+/, '');
+    wsLog.push(`${Date.now()} open ${u}`);
+    ws.on('close', () => wsLog.push(`${Date.now()} close ${u}`));
+    ws.on('framesent', (f) => { if (typeof f.payload === 'string' && f.payload.includes('which step?')) wsLog.push(`${Date.now()} SENT on ${u}: ${f.payload.slice(0, 200)}`); });
+  });
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   // T1/T2: the unapproved member's stage asks for its birth and is refused 409 member_unapproved
@@ -456,6 +470,12 @@ async function run(engineName, base) {
   await until(page, async () => ownerTurns().length > 0, 60000);
   const reachedMs = ownerTurns()[0] ? ownerTurns()[0].t - sentAt : null;
   console.log(`  the owner's message reached the member's Super after ${reachedMs ?? 'never (60 s)'} ms`);
+  if (reachedMs === null) {
+    console.log(`  sent at ${sentAt}; member processes: ${JSON.stringify(reports().filter((r) => r.slug === MEMBER || !r.slug).map((r) => ({ k: r.kind, pid: r.pid, sid: r.sid, t: r.t, x: (r.text || r.prompt || '').slice(0, 60), st: r.step ? `${r.step.status} ${String(r.step.out).slice(0, 160)}` : undefined })))}`);
+    console.log(`  browser sockets: ${JSON.stringify(await page.evaluate(() => window.__wsProbe?.() ?? null).catch((e) => String(e)))}`);
+    console.log(`  scout record queue: ${JSON.stringify((memberRecord(MEMBER)?.queue ?? []).map((q) => ({ id: q.id, kind: q.kind, st: q.status, at: q.deliveredAt ?? q.delivered })))}`);
+    console.log(`  chat sockets:\n    ${wsLog.filter((l) => /agent|chat|which step/.test(l)).slice(-25).join('\n    ')}`);
+  }
   await until(page, async () => /The pricing step/.test(await stageText()), 30000);
   await page.screenshot({ path: join(OUT, `${engineName}-member-stage-answered.png`) });
   ok(tag('T4 …the owner\'s words reach the member\'s Super as a plain message'), ownerTurns().length === 1 && !ownerTurns()[0].text.startsWith('[super'),
@@ -562,7 +582,7 @@ async function main() {
   }
   console.log(`\n${result.pass} passed, ${result.fails.length} failed${result.fails.length ? `:\n  - ${result.fails.join('\n  - ')}` : ''}`);
   console.log(`screenshots: ${OUT} and ${OUT_W1}`);
-  rmSync(SCRATCH, { recursive: true, force: true });
+  if (!process.env.KEEP_SCRATCH) rmSync(SCRATCH, { recursive: true, force: true }); else console.log(`scratch kept: ${SCRATCH}`);
   process.exit(result.fails.length ? 1 : 0);
 }
 main();
