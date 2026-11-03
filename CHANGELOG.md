@@ -4,6 +4,17 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.40.3] - 2026-11-03
+
+Patch on 0.40.2: the Team row in the drawer, a Gemini reply fix and a report-page fix. Local build; not published.
+
+- **The Team row opens in place** under a project, after the chats and New chat, and stays usable with 20 or more members: each member scrolls in its own box, and a member's answer to you is a notification again.
+- **A member's own stage shows its own cards:** Rutinler, Talimatlar and an Üye card that names the member. Its saved card layout comes back, and your gestures on an off member's stage work, so its Üye card opens.
+- **Delete a member in one step.** It removes the member with its routines, all or nothing, keeps a trash copy outside git, and the member leaves the Team list at once. A routine's delete no longer fails with a 404 while its row is open.
+- **A request to a Super Agent shows once in the flow, and its answer once.** After a restart, a turn that closed main's request is still counted as main's work.
+- **A Gemini (Antigravity) reply no longer cuts off or hangs.** The first-word limit never closes a turn that is still starting; a turn the agent never starts answering stops after 90 seconds and says why; a tool server is checked with the agent's own handshake.
+- **A report page no longer squeezes a list of label and text rows** into one letter per line.
+
 ## [0.40.2] - 2026-11-02
 
 Patch on 0.40.0. It carries 0.40.1, which was cut locally and never published, plus AI Team Waves 1 to 3, the Super Agent's permission fix, app data and several fixes. Local build; not published.
