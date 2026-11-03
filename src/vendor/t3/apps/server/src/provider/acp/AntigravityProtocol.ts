@@ -234,9 +234,39 @@ function antigravityClientReadPath(update: {
   return typeof target === "string" && target ? target : undefined;
 }
 
+/** The path a native read (`view_file`) names: its location, or its input's own field. */
+function antigravityReadPath(update: {
+  readonly kind?: string | null;
+  readonly title?: string | null;
+  readonly locations?: ReadonlyArray<{ readonly path: string }> | null;
+  readonly rawInput?: unknown;
+}): string | undefined {
+  const input = Predicate.isObject(update.rawInput) ? update.rawInput : undefined;
+  const isRead = update.kind === "read" || /\bview_file\b/.test(update.title ?? "");
+  if (!isRead) return undefined;
+  const target = update.locations?.[0]?.path ?? input?.AbsolutePath ?? input?.absolute_path;
+  return typeof target === "string" && target ? target : undefined;
+}
+
+/** The path an "Access to path X is denied" step error names, or undefined for any other text. */
+function deniedPathOf(output: unknown): string | undefined {
+  const text = typeof output === "string" ? output : output === undefined ? "" : JSON.stringify(output);
+  const match = /Access to path \\?["']([^"'\\]+)\\?["'] is denied/.exec(text);
+  return match?.[1];
+}
+
+/** What a read the agent left open says when it is failed with another step's error. */
+export const ANTIGRAVITY_UNREPORTED_READ = "Antigravity did not report this read's result.";
+
 /**
  * The agent never completes a subagent's `client_view_file` call, then fails every open call
  * with the next unrelated step error. Report reads T3 served as completed instead.
+ *
+ * Its own `view_file` calls in a subagent go the same way (dreamcontext, real run 2026-11-04: eight
+ * reads that Antigravity's own transcript shows answered all came back failed with "Access to path
+ * <package.json> is denied", a later step's refusal). A read failed with a refusal that names ANOTHER
+ * path is not that read's failure: it is reported as ended with no result, not as a failure. A
+ * refusal naming the read's own path stays a failure.
  */
 export function makeAntigravityReadRepair() {
   type Outcome = "served" | "refused";
@@ -244,12 +274,15 @@ export function makeAntigravityReadRepair() {
     string,
     { readonly path: string; readonly sessionId: string; outcome?: Outcome }
   >();
+  // Native reads by call id: the path each one names, to tell its own refusal from a smeared one.
+  const nativeReads = new Map<string, string>();
   // The agent runs a client tool in a background task, so its request can precede the announcement.
   const earlyOutcomes: Array<{ readonly path: string; readonly outcome: Outcome }> = [];
   return {
     /** Earlier turns' rows are already settled, and their unanswered reads must not take credit. */
     reset: () => {
       openReads.clear();
+      nativeReads.clear();
       earlyOutcomes.length = 0;
     },
     /**
@@ -271,6 +304,20 @@ export function makeAntigravityReadRepair() {
     ): EffectAcpSchema.SessionNotification => {
       const update = notification.update;
       if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
+        return notification;
+      }
+      const nativePath = antigravityReadPath(update);
+      if (nativePath !== undefined && antigravityClientReadPath(update) === undefined) {
+        nativeReads.set(update.toolCallId, nativePath);
+      }
+      const ownPath = nativeReads.get(update.toolCallId);
+      if (ownPath !== undefined && (update.status === "completed" || update.status === "failed")) {
+        nativeReads.delete(update.toolCallId);
+        const denied = update.status === "failed" ? deniedPathOf(update.rawOutput ?? update.content) : undefined;
+        if (denied !== undefined && denied !== ownPath) {
+          const { rawOutput: _otherStepError, content: _otherContent, ...rest } = update;
+          return { ...notification, update: { ...rest, status: "completed", rawOutput: ANTIGRAVITY_UNREPORTED_READ } };
+        }
         return notification;
       }
       const path = antigravityClientReadPath(update);

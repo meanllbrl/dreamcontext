@@ -14,6 +14,7 @@ import {
   normalizeAntigravitySessionUpdate,
   normalizeAntigravityToolCall,
   sanitizeAntigravityToolPayload,
+  ANTIGRAVITY_UNREPORTED_READ,
   makeAntigravityReadRepair,
 } from "./AntigravityProtocol.ts";
 import {
@@ -492,5 +493,65 @@ describe("Antigravity served reads", () => {
       toolCallId: "call_current",
       status: "completed",
     });
+  });
+});
+
+describe("Antigravity native reads failed with another step's refusal (dreamcontext, real run 2026-11-04)", () => {
+  const PROJECT = "/private/var/folders/x/T/lumen-notes";
+  const announce = (reads: ReturnType<typeof makeAntigravityReadRepair>, toolCallId: string, path: string) =>
+    reads.repair({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId,
+        title: "Running view_file",
+        kind: "read",
+        status: "in_progress",
+        rawInput: { AbsolutePath: path },
+      },
+    });
+  const fail = (reads: ReturnType<typeof makeAntigravityReadRepair>, toolCallId: string, denied: string) =>
+    reads.repair({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: "failed",
+        rawOutput: `denied by pre-tool hook: Access to path "${denied}" is denied. It is outside the allowed workspace directories: [${PROJECT}]`,
+      },
+    }).update;
+
+  it("a read failed with a refusal naming another path ends with no result, not as a failure", () => {
+    const reads = makeAntigravityReadRepair();
+    announce(reads, "call_readme", `${PROJECT}/README.md`);
+    const update = fail(reads, "call_readme", "/opt/homebrew/lib/node_modules/dreamcontext/package.json");
+    expect(update).toMatchObject({ status: "completed", rawOutput: ANTIGRAVITY_UNREPORTED_READ });
+    expect(JSON.stringify(update)).not.toContain("package.json");
+  });
+
+  it("a read refused for its own path stays a failure, with its own words", () => {
+    const reads = makeAntigravityReadRepair();
+    const own = "/opt/homebrew/lib/node_modules/dreamcontext/package.json";
+    announce(reads, "call_pkg", own);
+    expect(fail(reads, "call_pkg", own)).toMatchObject({ status: "failed" });
+  });
+
+  it("any other failure text is left as the agent sent it", () => {
+    const reads = makeAntigravityReadRepair();
+    announce(reads, "call_other", `${PROJECT}/a.md`);
+    const update = reads.repair({
+      sessionId: "session-1",
+      update: { sessionUpdate: "tool_call_update", toolCallId: "call_other", status: "failed", rawOutput: "file not found" },
+    }).update;
+    expect(update).toMatchObject({ status: "failed", rawOutput: "file not found" });
+  });
+
+  it("a non-read tool failed with a refusal is left alone", () => {
+    const reads = makeAntigravityReadRepair();
+    reads.repair({
+      sessionId: "session-1",
+      update: { sessionUpdate: "tool_call", toolCallId: "call_cmd", title: "Running run_command", kind: "execute", status: "in_progress", rawInput: { CommandLine: "pwd" } },
+    });
+    expect(fail(reads, "call_cmd", "/elsewhere/x")).toMatchObject({ status: "failed" });
   });
 });
