@@ -366,7 +366,7 @@ try {
     const v = await phone.evaluate(() => { const i = document.querySelector('.image-viewer-img'); return i ? i.naturalWidth : 0; });
     return v > 0;
   }, 10000));
-  report.check('the full-size view has no laptop-only file buttons', (await phone.locator('.image-viewer-actions').count()) === 0);
+  report.check('the full-size view has no laptop-only file buttons', (await phone.locator('.image-viewer-toolbar .chat-fileactions').count()) === 0);
   await phone.screenshot({ path: join(SHOTS, '390x844-lightbox.png') });
   await phone.keyboard.press('Escape');
   await phone.locator('.image-viewer').waitFor({ state: 'detached', timeout: 5000 }).catch(async () => { await phone.locator('.image-viewer button[aria-label*="Close" i]').first().click().catch(() => {}); });
