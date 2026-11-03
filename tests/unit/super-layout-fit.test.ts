@@ -85,6 +85,12 @@ describe('the centre takes the stage\'s height in a window (problem 1)', () => {
 });
 
 describe('the agenda sizes itself (problem 2)', () => {
+  // The agenda is never mirrored on an empty side (owner 2026-11-03, "super agent daha geniş
+  // olmalı"): the centre may leave the middle, but only to keep its full width, its preferred or
+  // what the 1x1 counts would give it, whichever is less.
+  const offMidOf = (p: StagePlan) => Math.abs(p.centre.x + p.centre.width / 2 - p.width / 2);
+  const placedWell = (p: StagePlan, q: StagePlan, centreMin?: number) => offMidOf(p) <= offMidOf(q) + 1e-6
+    || p.centre.width >= Math.min(preferredCentre(p.width, centreMin), q.centre.width) - 1e-6;
   it('on a small window it is the 1x1 counts and the centre keeps its preferred width, centred', () => {
     for (const size of ['medium', 'large', 'wide'] as const) {
       const p = plan([agenda(size, { sizeBy: 'owner' }), card('a'), card('b')], WINDOWS.small);
@@ -105,7 +111,8 @@ describe('the agenda sizes itself (problem 2)', () => {
       for (const size of ['medium', 'large', 'wide'] as const) {
         const p = at(size, s);
         expect(p.centre.width, `${name}/${size}`).toBeGreaterThanOrEqual(STAGE.CENTRE_MIN - EPS);
-        expect(p.centre.x + p.centre.width / 2, `${name}/${size} centred`).toBeCloseTo(s.width / 2, 6);
+        const q = plan([agenda(size), card('a'), card('b'), card('c')], s, { agendaCap: 1 });
+        expect(placedWell(p, q), `${name}/${size} centred or at its full width`).toBe(true);
         expectSound(p, [agenda(size), card('a'), card('b'), card('c')], `${name}/${size}`);
       }
     }
@@ -126,15 +133,74 @@ describe('the agenda sizes itself (problem 2)', () => {
     }
   });
 
+  it('only the agenda moves the centre off the middle: a side widened to pair small cards keeps it centred (review 2026-11-03)', () => {
+    // The reviewer's cases: the agenda drawn as its 1x1 counts or 2 tiles while small cards pair
+    // up into a wider column; the centre narrows evenly and stays in the middle, as on base.
+    for (const [width, height] of [[1870, 500], [1870, 640], [1390, 500], [1574, 500], [1700, 500], [2200, 500]] as const) {
+      for (const size of ['medium', 'large'] as const) {
+        for (let n = 4; n <= 9; n++) {
+          const cs = [agenda(size), ...Array.from({ length: n }, (_, i) => card(`c${i}`))];
+          const p = plan(cs, { width, height });
+          // Off the middle where the counts would not be (a centre at its floor leaves it on any
+          // rule): then the agenda is what made its side wider, drawn as wide as its column.
+          if (offMidOf(p) <= offMidOf(plan(cs, { width, height }, { agendaCap: 1 })) + 1e-6) continue;
+          const a = p.cards.ag;
+          const side = a.rect.x + a.rect.width / 2 < p.centre.x ? 'left' : 'right';
+          const column = floats(p).filter((c) => (c.rect.x + c.rect.width / 2 < p.centre.x ? 'left' : 'right') === side);
+          const span = Math.max(...column.map((c) => c.rect.x + c.rect.width)) - Math.min(...column.map((c) => c.rect.x));
+          expect(a.rect.width, `${width}x${height} ${size} n=${n}`).toBeCloseTo(span, 6);
+        }
+      }
+    }
+  });
+
   it('on a touch remote (a lower floor) the agenda never pushes the centre off the middle (review r1)', () => {
     for (const width of [1264, 1280, 1300, 1632, 1700]) {
       for (const size of ['large', 'wide'] as const) {
         const cs = [agenda(size), card('a'), card('b'), card('c')];
         const p = plan(cs, { width, height: 900 }, { centreMin: 480 });
-        expect(p.centre.x + p.centre.width / 2, `${width}/${size}`).toBeCloseTo(width / 2, 6);
+        const q = plan(cs, { width, height: 900 }, { centreMin: 480, agendaCap: 1 });
+        expect(placedWell(p, q, 480), `${width}/${size}`).toBe(true);
         expectSound(p, cs, `touch ${width}/${size}`);
       }
     }
+  });
+
+  it('beside an agenda alone the centre leaves the middle to keep its preferred width (owner 2026-11-03, "daha geniş olmalı")', () => {
+    // His ~1800 px window: the default agenda dropped top-left, nothing else floating.
+    for (const width of [1430, 1514, 1634]) {
+      const s = { width, height: 1000 };
+      const cs = [agenda('large', { pos: { x: 0.02, y: 0.05 } }), card('o1', { place: 'others' })];
+      const p = plan(cs, s);
+      expect(p.cards.ag.size, `${width}`).toBe('large');
+      const room = width - 2 * STAGE.MARGIN - 344 - STAGE.GAP;
+      expect(p.centre.width, `${width}`).toBeCloseTo(Math.min(preferredCentre(width), room), 6);
+      // Mirrored, it would have been width - 2*(margin + 344 + gap): narrower.
+      expect(p.centre.width, `${width}`).toBeGreaterThan(width - 2 * (STAGE.MARGIN + 344 + STAGE.GAP) + 1);
+      expect(p.othersInHead, `${width}`).toBe(false);
+      expectSound(p, cs, `lean ${width}`);
+    }
+  });
+
+  it('the lean never costs a card its place: the centred plan stands at the same agenda width (review r1, 2026-11-03)', () => {
+    const cs = [
+      agenda('wide', { pos: { x: 0.238, y: 0.777 } }),
+      card('c0', { size: 'large' }),
+      card('c1'),
+      card('c2', { pos: { x: 0.934, y: 0.714 } }),
+      card('c3', { pos: { x: 0.661, y: 0.353 } }),
+    ];
+    const p = plan(cs, { width: 1839, height: 900 });
+    expect(p.others).toEqual([]);
+    expect(p.cards.ag.size).toBe('wide');
+    expectSound(p, cs, 'review r1');
+  });
+
+  it('the lean never draws the agenda smaller (review r2, 2026-11-03)', () => {
+    const a = [agenda('large', { pos: { x: 0.391, y: 0.448 } }), card('c0', { pos: { x: 0.5, y: 0.432 } }), card('c1', { size: 'wide', place: 'others' })];
+    expect(plan(a, { width: 1622, height: 636 }).cards.ag.size).toBe('large');
+    const b = [agenda('medium', { pos: { x: 0.346, y: 0.758 } }), card('c0', { pos: { x: 0.219, y: 0.643 } }), card('c1', { pos: { x: 0.562, y: 0.259 } }), card('c2', { pos: { x: 0.114, y: 0.572 } })];
+    expect(plan(b, { width: 1408, height: 909 }, { centreMin: 480 }).cards.ag.size).toBe('medium');
   });
 
   it('a side crowded with cards never pays for the agenda\'s list: the centre stays as centred and no more cards go to Others than with the counts (review r2)', () => {
@@ -143,7 +209,7 @@ describe('the agenda sizes itself (problem 2)', () => {
     for (const s of [WINDOWS.mid, OWNER_1630, { width: 1500, height: 900 }]) {
       const cs = [agenda('large'), ...Array.from({ length: 10 }, (_, i) => card(`c${i}`))];
       const p = plan(cs, s);
-      expect(offMid(p), `${s.width}`).toBeLessThan(1e-6);
+      expect(placedWell(p, plan(cs, s, { agendaCap: 1 })), `${s.width}`).toBe(true);
       expect(p.others, `${s.width}`).toEqual([]);
       expectSound(p, cs, `crowded ${s.width}`);
     }
@@ -161,7 +227,7 @@ describe('the agenda sizes itself (problem 2)', () => {
               // A sized stage may trade the middle for keeping cards out of Others (its old rule);
               // the agenda's list never costs both, and never costs a card.
               expect(p.others.length, at).toBeLessThanOrEqual(q.others.length);
-              expect(offMid(p) <= offMid(q) + 1e-6 || p.others.length < q.others.length, at).toBe(true);
+              expect(placedWell(p, q, centreMin) || p.others.length < q.others.length, at).toBe(true);
               expect(p.centre.width, at).toBeGreaterThanOrEqual(Math.min(q.centre.width, STAGE.CENTRE_MIN) - 1e-6);
             }
           }
@@ -200,7 +266,7 @@ describe('the agenda sizes itself (problem 2)', () => {
                 const q = plan(cs, { width, height }, { ...opts, agendaCap: 1 });
                 const at = `${width}x${height} n=${n} ${size} ${drop} ${centreMin ?? 'desk'}`;
                 expect(p.others.length, at).toBeLessThanOrEqual(q.others.length);
-                expect(offMid(p), at).toBeLessThanOrEqual(offMid(q) + 1e-6);
+                expect(placedWell(p, q, centreMin), at).toBe(true);
                 expect(offStage(p), at).toBeLessThanOrEqual(offStage(q));
               }
             }

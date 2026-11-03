@@ -15,7 +15,7 @@
  * WHAT IT PROVES, at 1108x932, 900x1000, 1140x710, 1280x720, 1440x900, 1920x1080 and 2560x1440:
  * the bare stage's chat runs margin to margin (metrics in $OUT/<tag>-<engine>-metrics.json). (1) the centre chat runs the stage's
  * height, margin to margin; (2) the agenda is drawn no wider than leaves the centre its 560 px
- * floor in the middle (the 1x1 counts on a small window); (3) no floating card overlaps another or the centre, none
+ * floor in the middle, or off the middle only at its full width (owner 2026-11-03; the 1x1 counts on a small window); (3) no floating card overlaps another or the centre, none
  * is off the stage, and every card is on the stage or in Others; (4) side by side, the web card's
  * phone / tablet / desktop switch reshapes the CARD (narrow tall → wide) and the centre takes
  * what it leaves, nothing overlapping. Screenshots: $OUT/<tag>-<engine>-*.png. Exit 0 iff all pass
@@ -383,7 +383,7 @@ try {
     const a = m.cards.find((c) => c.id === ag);
     // The agenda (owner 2026-10-29, "Agenda büyümüyor?"): as wide as leaves the centre its 560 px
     // floor in the middle; the 1x1 counts only when even that does not fit.
-    if (m.stage.w >= NARROW_STAGE) check(`${name}: the agenda is on the stage and leaves the centre its floor, centred (share ${Math.round(share)} px)`, a?.where === 'float' && (a.w <= 160 || (m.centre.w >= 560 - 2 && Math.abs(m.centre.x + m.centre.w / 2 - m.stage.w / 2) <= 2)), JSON.stringify({ centre: m.centre, agenda: a }));
+    if (m.stage.w >= NARROW_STAGE) check(`${name}: the agenda is on the stage and leaves the centre its floor, centred (share ${Math.round(share)} px)`, a?.where === 'float' && (a.w <= 160 || (m.centre.w >= 560 - 2 && (Math.abs(m.centre.x + m.centre.w / 2 - m.stage.w / 2) <= 2 || m.centre.w >= Math.min(1120, 0.56 * m.stage.w) - 2))), JSON.stringify({ centre: m.centre, agenda: a }));
     if (m.stage.w >= NARROW_STAGE && m.stage.w < 1300) check(`${name}: on a small window the agenda is the 1x1 counts`, a?.size === 'small', JSON.stringify(a));
     const bad = [];
     for (const c of fl) {
