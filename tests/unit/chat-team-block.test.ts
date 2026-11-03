@@ -300,6 +300,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       'his decisions, cost or risk in money, never time) and your text gives the same summary, as long as',
       'it needs (the exception to 2-4). A report on a plan or on options is DRAWN, never written: screen',
       expect.stringContaining('mockups, options side by side, short headings; text at the minimum.'),
+      // rev 29 (2026-11-03): a product mockup wears the product's real look; steps in order are a graph.
+      expect.stringContaining("product's real colors and frame, not the kit; steps in order are a `dc-graph`, never chips."),
       expect.stringContaining('Write nothing between tool calls (but the line before `super ask`), and nothing'),
       // rev 26 (2026-11-02): weigh a new idea from the owner before agreeing.
       'A new idea, design change or direction from him: weigh it before you agree or start. Does it hold,',
@@ -335,8 +337,8 @@ describe('T07: a team-less Super\'s spawn prompt differs from the frozen 0.36.1 
       "  permission is the owner's alone: never try.",
       expect.stringContaining('with `origin=<ref>`'),
       '  result with `<!-- re:<ref> -->`.',
-      expect.stringContaining('<super-brief rev=28>'),
+      expect.stringContaining('<super-brief rev=29>'),
     ]);
-    expect(after.length).toBe(before.length + 26); // +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two)
+    expect(after.length).toBe(before.length + 27); // +21 (rev 26 tool pick) +4 (weigh a new idea before agreeing) +1 (rev 28: one permission line became two) +1 (rev 29: the mockup and flow line)
   });
 });
