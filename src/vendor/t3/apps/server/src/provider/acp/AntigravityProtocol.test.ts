@@ -521,11 +521,11 @@ describe("Antigravity native reads failed with another step's refusal (dreamcont
       },
     }).update;
 
-  it("a read failed with a refusal naming another path ends with no result, not as a failure", () => {
+  it("a read failed with a refusal naming another path says its result is unknown, and stays failed", () => {
     const reads = makeAntigravityReadRepair();
     announce(reads, "call_readme", `${PROJECT}/README.md`);
     const update = fail(reads, "call_readme", "/opt/homebrew/lib/node_modules/dreamcontext/package.json");
-    expect(update).toMatchObject({ status: "completed", rawOutput: ANTIGRAVITY_UNREPORTED_READ });
+    expect(update).toMatchObject({ status: "failed", rawOutput: ANTIGRAVITY_UNREPORTED_READ });
     expect(JSON.stringify(update)).not.toContain("package.json");
   });
 
@@ -533,7 +533,9 @@ describe("Antigravity native reads failed with another step's refusal (dreamcont
     const reads = makeAntigravityReadRepair();
     const own = "/opt/homebrew/lib/node_modules/dreamcontext/package.json";
     announce(reads, "call_pkg", own);
-    expect(fail(reads, "call_pkg", own)).toMatchObject({ status: "failed" });
+    const update = fail(reads, "call_pkg", own);
+    expect(update).toMatchObject({ status: "failed" });
+    expect(String(update.rawOutput)).toContain(own);
   });
 
   it("any other failure text is left as the agent sent it", () => {

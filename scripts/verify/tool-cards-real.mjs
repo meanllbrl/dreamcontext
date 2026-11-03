@@ -31,9 +31,10 @@
  * the read row worked out again from their tool rows (when the accounts are out of quota).
  *
  * The read row counts every file read the chat showed (main agent and sub-agent): how many came back
- * failed, and how many of those failures named a path other than the read's own. That second number
- * is Antigravity failing a sub-agent's open reads with a later step's refusal (AntigravityProtocol.ts
- * makeAntigravityReadRepair), not a read that really failed.
+ * failed, and how many of those carried a refusal about ANOTHER path, or the repair's "result unknown"
+ * note in its place. Those are Antigravity failing a sub-agent's open reads with a later step's error:
+ * their real result is unknown (most were answered, some really refused; only Antigravity's own
+ * transcript says which), so they count as failed, never as reads that worked.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -189,12 +190,13 @@ const READ_TOOL = /^(Read|mcp__Read|view_file|client_view_file|read_file)$/;
 function readRow(chat) {
   const reads = chat.turns.flatMap((t) => t.tools ?? []).filter((x) => READ_TOOL.test(x.name) && x.result);
   const failed = reads.filter((x) => x.result.error);
+  const unknown = failed.filter((x) => /did not report this read's result/.test(x.result.text));
   const otherPath = failed.filter((x) => {
     const named = /Access to path \\?["']([^"'\\]+)\\?["'] is denied/.exec(x.result.text)?.[1];
     return named !== undefined && !x.input.includes(named);
   });
   if (!reads.length) return 'n/a (no read)';
-  return `${failed.length}/${reads.length} failed${otherPath.length ? `, ${otherPath.length} with another path's error` : ''}`;
+  return `${failed.length}/${reads.length} failed${otherPath.length + unknown.length ? `, ${otherPath.length + unknown.length} result unknown (another step's error)` : ''}`;
 }
 
 function judge(chat) {

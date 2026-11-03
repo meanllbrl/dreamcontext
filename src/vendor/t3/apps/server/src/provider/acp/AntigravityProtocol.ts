@@ -256,17 +256,19 @@ function deniedPathOf(output: unknown): string | undefined {
 }
 
 /** What a read the agent left open says when it is failed with another step's error. */
-export const ANTIGRAVITY_UNREPORTED_READ = "Antigravity did not report this read's result.";
+export const ANTIGRAVITY_UNREPORTED_READ =
+  "Antigravity did not report this read's result: it ended the call with a later step's error, about another file.";
 
 /**
  * The agent never completes a subagent's `client_view_file` call, then fails every open call
  * with the next unrelated step error. Report reads T3 served as completed instead.
  *
  * Its own `view_file` calls in a subagent go the same way (dreamcontext, real run 2026-11-04: eight
- * reads that Antigravity's own transcript shows answered all came back failed with "Access to path
- * <package.json> is denied", a later step's refusal). A read failed with a refusal that names ANOTHER
- * path is not that read's failure: it is reported as ended with no result, not as a failure. A
- * refusal naming the read's own path stays a failure.
+ * reads came back failed with "Access to path <package.json> is denied", a later step's refusal;
+ * Antigravity's own transcript shows seven of them answered and one, gate.js, refused for its own
+ * path). The stream never carries a native read's real outcome, so a refusal naming ANOTHER path is
+ * replaced by a note saying the result is unknown. The row stays failed: never a success nothing
+ * confirms. A refusal naming the read's own path is left exactly as sent.
  */
 export function makeAntigravityReadRepair() {
   type Outcome = "served" | "refused";
@@ -316,7 +318,7 @@ export function makeAntigravityReadRepair() {
         const denied = update.status === "failed" ? deniedPathOf(update.rawOutput ?? update.content) : undefined;
         if (denied !== undefined && denied !== ownPath) {
           const { rawOutput: _otherStepError, content: _otherContent, ...rest } = update;
-          return { ...notification, update: { ...rest, status: "completed", rawOutput: ANTIGRAVITY_UNREPORTED_READ } };
+          return { ...notification, update: { ...rest, status: "failed", rawOutput: ANTIGRAVITY_UNREPORTED_READ } };
         }
         return notification;
       }
