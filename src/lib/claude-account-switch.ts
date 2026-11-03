@@ -576,7 +576,8 @@ export function chooseAccount(readings: AccountReading[], opts: ChooseOptions): 
       session: w.session?.measured ?? null,
       weekly: w.weekly?.measured ?? null,
       thin: opts.threshold - worst < THIN_HEADROOM_PERCENT ? 1 : 0,
-      partial: (w.session === null) !== (w.weekly === null) ? 1 : 0,
+      // An account WITHOUT a 5-hour window (the source says so) is fully measured by its week.
+      partial: !reading.limits.noSessionWindow && (w.session === null) !== (w.weekly === null) ? 1 : 0,
       // Rounded HERE, once, so every later comparison is between two settled numbers — see
       // `roundScore`. Two candidates that are mathematically tied but differ by ~1e-16 in
       // binary float would otherwise defeat every tie-break below and move a session for a

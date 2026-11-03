@@ -123,7 +123,7 @@ describe('GET /api/agent/accounts — whose numbers a row draws', () => {
     signIn(OTHER.configDir!, 'me@other.example', 30);
     const { body } = await call(handleAgentAccountsList);
     const allowed = new Set(['id', 'email', 'organizationName', 'tier', 'preferred', 'isPrimary', 'ownerOnly',
-      'state', 'signedInAs', 'limits', 'fetchedAtMs', 'refusedUntil', 'refusedWindow']);
+      'state', 'signedInAs', 'limits', 'fetchedAtMs', 'noSessionWindow', 'planName', 'refusedUntil', 'refusedWindow']);
     for (const a of body.accounts) for (const k of Object.keys(a)) expect(allowed.has(k)).toBe(true);
     expect(JSON.stringify(body)).not.toContain('uuid-');
   });
@@ -240,5 +240,29 @@ describe('chatSpawnAccount — a refused preferred account hands new chats to on
     recordAccountRejection('b-full', { window: 'session', resetsAtMs: now + 19 * 60_000, via: 'rateLimitEvent' }, HOME, now);
     const readUsage = (dir: string) => (dir === B.configDir ? r(32, 100) : r(92, 2));
     expect(chatSpawnAccount({ home: HOME, now, readUsage, signedOut: new Set() }).id).toBe('a-room');
+  });
+});
+
+describe('GET /api/agent/accounts — the plan and the windows each account reports', () => {
+  it('names the plan from the account\'s own profile and sends no 5-hour window it does not have', async () => {
+    signIn(HOME, 'me@personal.example', 10);
+    signIn(OTHER.configDir!, 'me@other.example', 30);
+    mkdirSync(TEAM.configDir!, { recursive: true });
+    writeFileSync(join(TEAM.configDir!, '.claude.json'), JSON.stringify({
+      oauthAccount: { accountUuid: 'uuid-u', emailAddress: 'me@team.example', planDisplayName: 'Ultra' },
+      cachedUsageUtilization: {
+        fetchedAtMs: Date.now(), accountUuid: 'uuid-u',
+        utilization: { five_hour: null, seven_day: { utilization: 100, resets_at: soon() }, limits: [{ kind: 'weekly_all', percent: 100, resets_at: soon() }] },
+      },
+    }), 'utf-8');
+    const { body } = await call(handleAgentAccountsList);
+    const ultra = body.accounts.find((a: any) => a.id === 'team');
+    expect(ultra.planName).toBe('Ultra');
+    expect(ultra.noSessionWindow).toBe(true);
+    expect(ultra.limits.map((l: any) => l.key)).toEqual(['weekly']);
+    // An account with a 5-hour window and no profile plan name carries neither field.
+    const other = body.accounts.find((a: any) => a.id === 'other');
+    expect(other.noSessionWindow).toBeUndefined();
+    expect(other.planName).toBeUndefined();
   });
 });

@@ -267,8 +267,12 @@ export function mergeUsageReadings(
     return fromCache;
   };
   const limits = [pick('session'), pick('weekly')].filter((l): l is UsageLimitWire => l !== undefined);
+  // "No 5-hour window" comes from the cache (a frame cannot say it); it holds only while the
+  // merged reading has no session window, so a meter that measured one ends it.
+  const noSession = cache.noSessionWindow === true && !limits.some((l) => l.key === 'session');
   return {
     limits,
     fetchedAtMs: Math.max(cache.fetchedAtMs ?? 0, meter.fetchedAtMs),
+    ...(noSession ? { noSessionWindow: true as const } : {}),
   };
 }

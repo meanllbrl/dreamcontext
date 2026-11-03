@@ -28,7 +28,10 @@ import './ClaudeAccounts.css';
  * `<configDir>/.claude.json`, written by the CLI, so the numbers here are read WITHOUT
  * switching to the account they describe.
  *
- * ── Both windows are ALWAYS drawn ─────────────────────────────────────────────────────
+ * ── Both windows are ALWAYS drawn (that the account HAS) ──────────────────────────────
+ * Exception, 2026-11-03: an account whose usage data has no 5-hour window at all (the plan its
+ * profile calls "Ultra") draws the weekly row only — see `noSessionWindow`.
+ *
  * Owner, 2026-09-05, looking at two accounts side by side: one drew two bars, the other a
  * sentence saying nothing was cached. Two accounts you cannot compare are the one thing this
  * panel exists to make possible, so every account now draws a 5-hour row and a weekly row.
@@ -508,7 +511,9 @@ export function ClaudeAccounts({ policy = true }: { policy?: boolean } = {}) {
                     <div className="dc-acct-head">
                       <span className="dc-acct-rank" aria-hidden="true">{i + 1}</span>
                       <span className="dc-acct-who">{a.email || a.id}</span>
-                      {a.tier && <span className="dc-acct-plan">Claude {planLabel(a.tier)}</span>}
+                      {/* The plan as the account's OWN profile names it now ("Ultra"); the type
+                          recorded at sign-in ("max") outlived a rename and is only the fallback. */}
+                      {(a.planName || a.tier) && <span className="dc-acct-plan">Claude {a.planName || planLabel(a.tier)}</span>}
                       {/* Never beside "limit hit": when no account has room the spawn still has to
                           name one, but a refused account is not where a chat can start. */}
                       {a.id === startsHereId && !refused && <span className="dc-acct-tag dc-acct-tag--top">new chats start here</span>}
@@ -537,13 +542,16 @@ export function ClaudeAccounts({ policy = true }: { policy?: boolean } = {}) {
 
                     {/* BOTH windows, always. See the header note. */}
                     <div className={`dc-acct-bars${rowReading ? ' is-refreshing' : ''}`}>
-                      <Bar
+                      {/* An account whose usage data has NO 5-hour window gets no 5-hour row: a
+                          hatched "not measured" track there would claim a limit that does not
+                          exist. Decided by the data (`noSessionWindow`), never by the plan. */}
+                      {!(a.noSessionWindow && !blank) && <Bar
                         label="5-hour session"
                         percent={blank || !session ? null : session.percent}
                         resetsAt={session?.resetsAt ?? 0}
                         locked={session?.lockedReason}
                         now={now}
-                      />
+                      />}
                       <Bar
                         label="Weekly"
                         percent={blank || !weekly ? null : weekly.percent}

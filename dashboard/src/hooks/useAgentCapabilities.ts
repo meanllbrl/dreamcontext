@@ -173,6 +173,10 @@ export interface ClaudeAccountWire {
   signedInAs?: string;
   limits: UsageLimitWire[];
   fetchedAtMs: number | null;
+  /** The usage data says this account has no 5-hour window (absent on an older server). */
+  noSessionWindow?: true;
+  /** The plan as the account's own profile names it ("Ultra"); `tier` is the sign-in type. */
+  planName?: string;
   /** The API refused this account; it stays out until then (epoch ms). */
   refusedUntil?: number;
   refusedWindow?: 'session' | 'weekly';

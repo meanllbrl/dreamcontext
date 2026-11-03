@@ -75,6 +75,15 @@ export interface UsageLimitsResponse {
   limits: UsageLimitWire[];
   /** When the CLI last refreshed the cache. The client labels or hides a stale reading. */
   fetchedAtMs: number | null;
+  /**
+   * The SOURCE says this account has no 5-hour window at all (present only when true). Not "we
+   * could not read it": the cache states `five_hour: null` with no `session` entry, or the
+   * live report lists the week and no session line. Owner, 2026-11-03: the $200 plan (shown as
+   * "Ultra" in the account's own profile) dropped the 5-hour limit; a row drew a hatched
+   * "not measured" track for a limit that does not exist. Derived from the data, never from
+   * the plan name.
+   */
+  noSessionWindow?: true;
 }
 
 export const EMPTY_USAGE_LIMITS: UsageLimitsResponse = { limits: [], fetchedAtMs: null };
@@ -368,7 +377,29 @@ function usageFromBlob(blob: Record<string, unknown> | null): UsageLimitsRespons
 
   const limits = [toWire('session', session), toWire('weekly', weekly)]
     .filter((w): w is UsageLimitWire => w !== null);
-  return { limits, fetchedAtMs };
+  // `five_hour` PRESENT and null, and no `session` entry: the account has no such window. An
+  // absent key or an unreadable entry stays "unknown" (the bar is simply missing a reading).
+  const noSession = !limits.some((l) => l.key === 'session')
+    && Object.prototype.hasOwnProperty.call(util, 'five_hour') && util.five_hour === null
+    && !entries.some((e) => asRecord(e)?.kind === 'session');
+  return noSession ? { limits, fetchedAtMs, noSessionWindow: true } : { limits, fetchedAtMs };
+}
+
+/**
+ * The plan name the account's OWN profile states (`oauthAccount.planDisplayName`, e.g. "Ultra"),
+ * or null. Only for a folder signed in as that very account: another account's profile names
+ * another plan. Narrowed to a short plain string; nothing else from the profile is returned.
+ */
+export function accountPlanName(account: AccountIdentity, home: string = homedir()): string | null {
+  let blob: Record<string, unknown> | null;
+  try {
+    blob = readJsonSafe(join(assertConfinedConfigDir(account.configDir ?? home, home), '.claude.json'));
+  } catch {
+    return null;
+  }
+  if (!signedInAs(blob, account)) return null;
+  const name = trimmedString(asRecord(blob?.oauthAccount)?.planDisplayName);
+  return name && name.length <= 40 && /^[\p{L}\p{N} ._+-]+$/u.test(name) ? name : null;
 }
 
 /** `primary` when it has a percent, else whatever the fallback finds. */

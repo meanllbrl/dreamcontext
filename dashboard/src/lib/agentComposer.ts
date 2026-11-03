@@ -821,6 +821,8 @@ export interface UsageLimitWire {
 export interface UsageLimitsResponse {
   limits: UsageLimitWire[];
   fetchedAtMs: number | null;
+  /** The account has no 5-hour window (the source says so); present only when true. */
+  noSessionWindow?: true;
 }
 
 /** One rendered bar. `context` is computed locally and has no reset; the account caps come

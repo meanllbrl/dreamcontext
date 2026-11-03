@@ -36,7 +36,7 @@ import {
 import { asSwitchStrategy, sanitizeSwitchWeights } from '../../lib/claude-account-switch.js';
 import { ensureSandbox, sandboxHasIdentity } from '../../lib/claude-account-sandbox.js';
 import { claudeAuthStatus, resetClaudeAuthCache } from '../../lib/claude-auth.js';
-import { configDirIdentity, readUsageLimits, type UsageLimitWire } from '../../lib/claude-usage.js';
+import { accountPlanName, configDirIdentity, readUsageLimits, type UsageLimitWire } from '../../lib/claude-usage.js';
 import { probeAccountUsage, type ProbeOutcome } from '../../lib/claude-usage-probe.js';
 import { readSignedOut } from '../../lib/claude-signed-out.js';
 import { readAccountRejections } from '../../lib/claude-limit-rejections.js';
@@ -90,6 +90,13 @@ interface AccountWire {
   limits: UsageLimitWire[];
   /** When the CLI last refreshed that cache, so a stale reading can be labelled. */
   fetchedAtMs: number | null;
+  /** The usage data says this account has NO 5-hour window: no session bar is drawn for it. */
+  noSessionWindow?: true;
+  /**
+   * The plan as the account's own profile names it now (e.g. "Ultra"). `tier` is the CLI's
+   * subscription type recorded at sign-in ("max"), which outlived a plan rename.
+   */
+  planName?: string;
   /**
    * The API REFUSED this account and it stays out until then (`claude-limit-rejections.ts`).
    * The percentages can trail a refusal, so the row has to say it in so many words: a 97% bar
@@ -147,11 +154,14 @@ export async function handleAgentAccountsList(req: IncomingMessage, res: ServerR
       : identity.kind === 'other' ? 'other-account' : 'ok';
     let limits: UsageLimitWire[] = [];
     let fetchedAtMs: number | null = null;
+    let noSessionWindow = false;
     if (hasIdentity && identity.kind !== 'other') {
       const reading = readUsageLimits(dir);
       limits = reading.limits;
       fetchedAtMs = reading.fetchedAtMs;
+      noSessionWindow = reading.noSessionWindow === true;
     }
+    const planName = identity.kind === 'match' ? accountPlanName(acc, home) : null;
     return {
       id: acc.id,
       email: acc.email,
@@ -164,6 +174,8 @@ export async function handleAgentAccountsList(req: IncomingMessage, res: ServerR
       ...(identity.kind === 'other' && identity.email ? { signedInAs: identity.email } : {}),
       limits,
       fetchedAtMs,
+      ...(noSessionWindow ? { noSessionWindow: true as const } : {}),
+      ...(planName ? { planName } : {}),
       ...(refusal ? { refusedUntil: refusal.until } : {}),
       ...(refusal && (refusal.window === 'session' || refusal.window === 'weekly') ? { refusedWindow: refusal.window } : {}),
     };
