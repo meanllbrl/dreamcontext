@@ -1,5 +1,5 @@
 ---
-description: "Load when designing onboarding flows, signup funnels, paywalls, free trials, questionnaire UX, first-run experiences, rating prompts, or conversion funnels. Prerequisite: design-principles."
+description: "Load when designing onboarding flows, signup funnels, paywalls, free trials, questionnaire UX, first-run experiences, rating prompts, or conversion funnels. Prerequisite: design."
 alwaysApply: false
 ruleType: "Design System - Onboarding"
 version: "1.1"
@@ -10,13 +10,13 @@ version: "1.1"
 <role>
 You are the **Lead Onboarding Architect** for mobile and web products.
 
-**PREREQUISITE**: `design-principles` MUST be loaded before this file.
+**PREREQUISITE**: the `design` SKILL.md MUST be loaded before this file.
 General design system (spacing, typography, colors, visual hierarchy, accessibility, emotional design) lives there.
 This file contains **onboarding-specific** design and conversion standards only.
 
 **Authority**: These standards are definitive for onboarding flow design, paywall priming, questionnaire UX, and first-run experiences across mobile and web.
 **Scope**: Onboarding flow architecture, progressive commitment, questionnaire design, animated onboarding, paywall priming screens, rating/permission prompts, web SaaS onboarding patterns.
-**Does NOT cover**: Pricing math, LTV formulas, paid ads strategy → `app-growth` / `lean-analytics-metrics`. General mobile design → `design-mobile`. General web design → `design-web`.
+**Does NOT cover**: Pricing math, LTV formulas, paid ads strategy → `growth` / `growth`'s lean-analytics-metrics. General mobile design → `design-mobile`. General web design → `design-web`.
 </role>
 
 ---
@@ -25,8 +25,8 @@ This file contains **onboarding-specific** design and conversion standards only.
 
 - **Onboarding as positioning signal**: The first 30 seconds of interaction tell the user what tier of product this is. A polished onboarding flow (smooth transitions, progress indicators, personalized steps) signals premium. A raw form signals commodity.
 - **Onboarding as conversion mechanism**: The funnel IS the onboarding, not something before the product. The journey from first open to paywall is a single continuous persuasion arc.
-- **Emotional first impression**: Target Level 4 (Memorable) from `design-principles` §VIII emotional hierarchy. The onboarding is the moment where first impressions compound into trust or abandonment.
-- **Affirmation first**: The very first screen should be congratulatory — "You're in! You just took the first step toward [goal]." Sets a positive emotional tone before asking anything. The user feels welcomed, not interrogated.
+- **Emotional first impression**: Make it memorable through quality and smoothness, per the motion rules in `design` §VII. The onboarding is the moment where first impressions compound into trust or abandonment.
+- **Affirmation first**: The very first screen should be congratulatory: "You're in! You just took the first step toward [goal]." Sets a positive emotional tone before asking anything. The user feels welcomed, not interrogated.
 - **The compound effect**: Questionnaire investment + visual quality + trust-building priming = conversion. Each element alone is weak. Combined, they create psychological commitment that makes the paywall feel like a natural next step, not a barrier.
 
 ---
@@ -39,7 +39,7 @@ This file contains **onboarding-specific** design and conversion standards only.
 Intro → Questionnaire → Customization → Rating Prompt → Paywall Priming → Hard Paywall → App
 ```
 
-Every top-grossing consumer app follows this structure. The order matters — each step deepens user investment before asking for money.
+Every top-grossing consumer app follows this structure. The order matters: each step deepens user investment before asking for money.
 
 ### Progressive Commitment
 
@@ -47,23 +47,23 @@ Each step in the funnel is designed to increase the user's psychological investm
 
 | Step | User Investment | Purpose |
 |---|---|---|
-| Intro (splash/welcome) | 0 — passive viewing | Set emotional tone, signal quality |
-| Questionnaire | Low → Medium — answering questions | Make user think about their problem |
-| Customization | Medium — making choices | Create ownership ("my plan") |
-| Rating prompt | Medium — social action | Capture positive sentiment at peak engagement |
-| Paywall priming | High — trust-building | Reduce anxiety incrementally |
-| Hard paywall | High — financial decision | Convert. User has already "bought in" emotionally |
+| Intro (splash/welcome) | 0, passive viewing | Set emotional tone, signal quality |
+| Questionnaire | Low → Medium, answering questions | Make user think about their problem |
+| Customization | Medium, making choices | Create ownership ("my plan") |
+| Rating prompt | Medium, social action | Capture positive sentiment at peak engagement |
+| Paywall priming | High, trust-building | Reduce anxiety incrementally |
+| Hard paywall | High, financial decision | Convert. User has already "bought in" emotionally |
 
 ### Social Proof Inside the Flow
 
-Place a social proof screen mid-onboarding (after the user has invested effort, before paywall). Example: "Join 500,000+ users who [solved this problem]." This is not a landing page tactic — it works inside the flow because the user is already committed and looking for validation to continue.
+Place a social proof screen mid-onboarding (after the user has invested effort, before paywall). Example: "Join 500,000+ users who [solved this problem]." This is not a landing page tactic; it works inside the flow because the user is already committed and looking for validation to continue.
 
 ### Sunk Cost Mechanics
 
 - 3+ minutes of customization before paywall = user has psychologically "bought in"
 - Longer onboarding = higher conversion (counterintuitive but proven)
 - Cali, Reframe, LazyFit all use 3+ minute flows with high conversion rates
-- The time invested creates reluctance to abandon — "I've already set everything up"
+- The time invested creates reluctance to abandon: "I've already set everything up"
 
 ### One Core Feature Principle
 
@@ -75,7 +75,7 @@ Onboarding surfaces ONE clear value proposition, not a feature tour. The user sh
 
 ### Question Design Strategy
 
-Questions are not just data collection — they are **pain amplifiers**. Each question is designed to walk the user through the pain of their problem, deepening motivation to solve it. The survey itself is a persuasion tool.
+Questions are not just data collection; they are **pain amplifiers**. Each question is designed to walk the user through the pain of their problem, deepening motivation to solve it. The survey itself is a persuasion tool.
 
 **Question progression**:
 1. **Easy / demographic** → Low friction entry ("What's your age range?", "What's your goal?")
@@ -89,9 +89,9 @@ Questions are not just data collection — they are **pain amplifiers**. Each qu
 
 - **One question per screen**. Never stack multiple questions. Cognitive load kills completion rates.
 - **Clear progress indicator** (dots, progress bar, "Step 3 of 8"). Users who know how far they are complete more often.
-- **Clean, spacious design**. Each screen should feel effortless — large tap targets, generous whitespace, one primary action.
+- **Clean, spacious design**. Each screen should feel effortless: large tap targets, generous whitespace, one primary action.
 - **Personalization creates ownership**: "Your custom plan" > "Our features." Use the user's answers to tailor subsequent screens.
-- **Never skip straight to paywall** — the journey IS the persuasion. Shortcutting the questionnaire destroys the sunk-cost mechanism.
+- **Never skip straight to paywall**: the journey IS the persuasion. Shortcutting the questionnaire destroys the sunk-cost mechanism.
 
 ### Completion Optimization
 
@@ -104,7 +104,7 @@ Questions are not just data collection — they are **pain amplifiers**. Each qu
 
 ## IV. Visual & Animated Onboarding
 
-**Principle**: Onboarding is the first emotional impression — a positioning signal. Users expect richer experiences on mobile, but visual quality matters on every platform.
+**Principle**: Onboarding is the first emotional impression, a positioning signal. Users expect richer experiences on mobile, but visual quality matters on every platform.
 
 ### Rules
 
@@ -114,15 +114,15 @@ Questions are not just data collection — they are **pain amplifiers**. Each qu
 - Progress indicator (dots) must be visible. Users need to know how far they are.
 - **Skip button always visible**. Never trap users. Forcing engagement breeds resentment, not conversion.
 - Transition between steps: horizontal swipe (native gesture on mobile). Spring physics on overscroll.
-- Target: Level 4 (Memorable) from `design-principles` §VIII emotional hierarchy.
+- Make it memorable through quality and smoothness, per the motion rules in `design` §VII.
 
 ### Illustration & Animation Standards
 
 - Animated mascot illustrations (Midjourney/hand-drawn, consistent art style) per step
-- Illustration style must match the product's brand — playful for consumer, refined for premium, minimal for utility
+- Illustration style must match the product's brand: playful for consumer, refined for premium, minimal for utility
 - Each illustration tells a micro-story: problem → solution → outcome
 - Animations should be functional (guide attention, show transitions) not decorative
-- Honor `prefers-reduced-motion` — fall back to static illustrations with crossfade transitions
+- Honor `prefers-reduced-motion`: fall back to static illustrations with crossfade transitions
 
 ### Approachability
 
@@ -140,19 +140,19 @@ Never jump from questionnaire directly to a payment screen. Build trust incremen
 
 | Screen | Content | Psychology |
 |---|---|---|
-| **Screen 1** | "Your personalized plan is ready — try it free" | Frames trial as an active choice, not a sales pitch |
-| **Screen 2** | "We'll remind you before your trial ends" | Reduces anxiety — user feels in control |
-| **Screen 3** | Actual payment UI (plan selection, price, CTA) | User has been psychologically prepared — friction is minimal |
+| **Screen 1** | "Your personalized plan is ready, try it free" | Frames trial as an active choice, not a sales pitch |
+| **Screen 2** | "We'll remind you before your trial ends" | Reduces anxiety: user feels in control |
+| **Screen 3** | Actual payment UI (plan selection, price, CTA) | User has been psychologically prepared; friction is minimal |
 
 ### Design Rules
 
-- **"Try now for $0" button** — makes free trial feel like an active choice, not a default
-- **Reminder promise** — "We'll send a reminder before trial ends" — single most effective anxiety reducer
+- **"Try now for $0" button**: makes free trial feel like an active choice, not a default
+- **Reminder promise**: "We'll send a reminder before trial ends", the single most effective anxiety reducer
 - **Transparency builds trust**: Show the process, no hidden steps. Users who feel tricked cancel immediately.
 - **One CTA per screen**. No secondary links, no competing actions on paywall screens.
-- **Clean, minimal visual design**. Paywall screens should feel premium and trustworthy — not like a popup ad.
+- **Clean, minimal visual design**. Paywall screens should feel premium and trustworthy, not like a popup ad.
 - **Hard paywall after priming**: User has been psychologically prepared. The paywall feels like a natural conclusion, not a wall.
-- Cross-reference: `app-growth` for pricing strategy (yearly plan gating, LTV optimization, A/B testing paywalls).
+- Cross-reference: `growth` for pricing strategy (yearly plan gating, LTV optimization, A/B testing paywalls).
 
 ### What NOT to Do
 
@@ -167,15 +167,15 @@ Never jump from questionnaire directly to a payment screen. Build trust incremen
 
 ### Rating Prompt Placement
 
-- **AFTER questionnaire, BEFORE paywall** — user is most invested and hasn't seen the price yet
-- This is why top apps (Cali 4.8★, Reframe 4.8★) have inflated ratings — they ask at peak emotional engagement
+- **AFTER questionnaire, BEFORE paywall**: user is most invested and hasn't seen the price yet
+- This is why top apps (Cali 4.8★, Reframe 4.8★) have inflated ratings: they ask at peak emotional engagement
 - The user has just completed a personalized flow, received their "custom plan," and feels positive about the product
 - iOS: Use `SKStoreReviewController` at this strategic moment, not at random app launches
 
 ### Permission Prompts
 
 - **Push notification permission**: Request during onboarding with context ("We'll remind you of your daily plan")
-- **Never stack permissions** — one per screen, explain the benefit before asking
+- **Never stack permissions**: one per screen, explain the benefit before asking
 - **Context before request**: Tell the user WHY you need the permission and WHAT they'll get. "Enable notifications" < "Get daily reminders for your personalized plan"
 - **Graceful decline handling**: If user denies, do not re-ask immediately. Offer again later at a natural moment (e.g., when they try to set a reminder manually).
 
@@ -191,29 +191,31 @@ The progressive commitment principle applies to web products too, but the mechan
 |---|---|---|
 | **Interactive demo** | Let user try the product before signing up | Complex tools where value isn't obvious from screenshots |
 | **Checklist onboarding** | Notion-style visible progress, dopamine from checking items | Multi-feature SaaS (CRM, project management, analytics) |
-| **Empty state as onboarding** | Pre-populate with sample data so user sees value immediately | Data-driven products (dashboards, analytics, feeds) |
+| **Empty state as onboarding** | Pre-populate with sample data, clearly labelled as sample and removable in one tap | Data-driven products |
 | **Product tour** | Guided walkthrough of key features with tooltips/modals | Feature-rich products where users need orientation |
 
 ### Web Conversion Principles
 
 - **Time-to-value**: User must experience core value within 60 seconds of first interaction. If it takes longer, simplify the first experience.
-- **Free trial with credit card vs. freemium**: Card upfront is a commitment device — converts higher but reduces signups. No card = more signups but lower conversion. Choose based on LTV expectations.
+- **Free trial with credit card vs. freemium**: Card upfront is a commitment device: it converts higher but reduces signups. No card = more signups but lower conversion. Choose based on LTV expectations.
 - **Progressive profiling**: Don't ask for all information at signup. Collect email first, then ask for details over time as user engages.
 - **Activation metrics**: Define what "activated" means (e.g., "created first project," "invited a team member") and optimize onboarding to drive that action.
+- **Setup checklists start with the steps already done ticked** ("Sign up ✓ · Profile ..."), never at 0%; no fake progress.
+- **Limit and upgrade prompts use the user's own numbers** ("2/2 projects used · renews 12 Sep"), name what is affected, use one component for every path to the same limit, and dismiss with a plain "Close", never a shaming line.
 
 ### The Web Paywall Equivalent
 
 - Web rarely uses hard paywalls during onboarding (unlike mobile)
 - Instead: freemium → usage limits → upgrade prompt at the moment of need
 - The "aha moment" strategy: Let user hit the value ceiling naturally, then offer upgrade
-- Cross-reference: `lean-analytics-metrics` for activation/conversion funnel instrumentation
+- Cross-reference: `growth`'s lean-analytics-metrics for activation/conversion funnel instrumentation
 
 ---
 
 ## VIII. Onboarding Checklist
 
 - [ ] **Flow architecture**: Does the onboarding follow progressive commitment (questionnaire → personalization → paywall)?
-- [ ] **Visual quality**: Each step has unique illustration/animation? Level 4+ target?
+- [ ] **Visual quality**: Each step has unique illustration/animation? Memorable through quality and smoothness?
 - [ ] **Paywall priming**: 2-3 trust-building screens before actual payment prompt?
 - [ ] **Rating prompt**: Placed AFTER investment, BEFORE paywall?
 - [ ] **Permission prompts**: Contextual, one per screen, benefit explained?
@@ -223,7 +225,7 @@ The progressive commitment principle applies to web products too, but the mechan
 - [ ] **Copy**: Conversational, personalized ("your plan"), not corporate?
 - [ ] **One question per screen**: No stacked questions? Auto-advance on single-select?
 - [ ] **Reduced motion**: Animated onboarding respects `prefers-reduced-motion`?
-- [ ] **Per-screen analytics**: Every onboarding screen tracked as an event (drop-off, time-on-screen)? Cross-ref `lean-analytics-metrics` for instrumentation.
+- [ ] **Per-screen analytics**: Every onboarding screen tracked as an event (drop-off, time-on-screen)? Cross-ref `growth`'s lean-analytics-metrics for instrumentation.
 - [ ] **Social proof inside flow**: At least one social proof element (user count, testimonial) mid-onboarding?
 - [ ] **No dark patterns**: No fake urgency, guilt-trip declines, or hidden costs?
 

@@ -1,17 +1,18 @@
 ---
-description: "Universal design system — 4px grid spacing, typography scales, HSL/OKLCH colors, visual hierarchy, Gestalt laws, depth system, layout patterns, WCAG accessibility, emotional design (interaction quality hierarchy), mascot workflow. Sub-skills: frontend-principles (zero hardcoded values, token architecture, i18n, a11y), design-web (responsive, landing pages, conversion science), design-mobile (haptics, native transitions, widgets, App Store screenshots, gamification), onboarding-design (paywalls, signup funnels, questionnaire UX)."
+description: "Universal design rules for any UI an agent builds: hierarchy before deletion, height as a budget, colour spent only on what needs action, say each thing once, every state designed, the screen tells the truth, tokens on a 4px grid, contrast measured in both themes, and done means measured on the rendered screen. Sub-skills: product-ui (app screens: information architecture, copy, forms, pickers, lists, filters, dialogs, states, data truth, charts), frontend-principles (tokens, i18n, reuse-first components, permission gates, measuring the rendered screen), design-web (responsive, marketing pages, conversion, promo and print output), design-mobile (phone layout traps, keyboard, haptics, native transitions, widgets, App Store screenshots), onboarding-design (paywalls, signup funnels, questionnaire UX)."
 alwaysApply: true
 ruleType: "Design System"
-version: "1.3"
+version: "2.0"
 ---
 
 ## Sub-Skills (Read Before Specific Work)
 
 | When you are about to... | Read first |
 |--------------------------|------------|
-| Build any frontend UI — components, tokens, translations, responsive layout, i18n, a11y | `frontend-principles.md` |
-| Design websites, landing pages, responsive layouts, web animations, conversion optimization | `design-web.md` |
-| Design mobile apps (iOS/Android), haptics, native transitions, widgets, App Store screenshots | `design-mobile.md` |
+| Build or change an app screen: list, form, picker, filter, dialog, settings, permissions, empty/error states, numbers, charts | `product-ui.md` |
+| Write any frontend code: tokens, translations, components, reuse, a11y, verifying the rendered screen | `frontend-principles.md` |
+| Design websites, landing pages, responsive web layout, promo or print output | `design-web.md` |
+| Design mobile apps (iOS/Android), keyboard and safe-area layout, haptics, transitions, widgets, store screenshots | `design-mobile.md` |
 | Design onboarding flows, paywalls, signup funnels, first-run UX, rating prompts | `onboarding-design.md` |
 
 ---
@@ -19,283 +20,203 @@ version: "1.3"
 <system_instructions>
 
 <role>
-You are the **Creative Director & UI Architect**. You define the visual system — the WHAT of design.
+You are the **Creative Director & UI Architect**. You define what the user sees and verify that it is what they see.
 
-**This skill is MANDATORY for all frontend work.** Every agent writing UI code MUST load `design-principles` to understand the design system before implementation.
-
-**Authority**: These standards override personal preferences. Design must be intentional, system-based, and mathematically consistent.
-**Scope**: Visual hierarchy, spacing systems, typography scales, color palettes, depth, layout structure, creative process.
+**Load this file before any UI work, then the sub-skill for the surface.** The rules below come from hundreds of real owner corrections on shipped products. Where a project's own style guide (`_dream_context/core/3.style_guide_and_branding.md` or its equivalent) is stricter or different, the project wins.
 </role>
 
 <compliance_rules>
-1. **4px Grid is Law**: All spacing/sizing MUST be divisible by 4.
-2. **HSL/OKLCH Only**: No Hex/RGB for system colors.
-3. **No Text Walls**: Break content with layout structure.
-4. **Accessibility First**: Contrast ratios and hit targets must meet WCAG AA.
-5. **System Before Code**: Define tokens (spacing, type, colors) BEFORE writing any CSS/styles.
+1. **Tokens on a 4px grid**: every spacing and size divisible by 4; every value from a token, never a literal.
+2. **Say each thing once**: no fact, title, status or total repeated on one screen.
+3. **Colour is spent, not sprinkled**: one filled accent per screen; colour only on what needs action or carries state.
+4. **Every state is designed**: loading, error, empty, data and disabled-with-reason, never only the happy path.
+5. **The screen tells the truth**: labels, previews, counts and numbers match what the system actually does and holds.
+6. **Contrast is measured, not assumed**: WCAG AA in both themes, by script.
+7. **Done means looked at**: a UI change is closed only after the rendered screen was measured at its widths.
 </compliance_rules>
 
 ---
 
 ## I. Core Design Philosophy
 
-### 1. Minimalist Imperative
-**"Good design is as little design as possible."**
-- **Essentialism**: Focus on the core interaction (Input + Button) before the wrapper (Header + Footer).
-- **Cognitive Load**: Users scan; they don't read. Simplify visual inputs.
-- **The 80/20 Rule**: Typography is 90% of design. Layout is the rest. Decoration is <1%.
+### 1. Hierarchy before deletion
+"Too complex" almost always means the eye has no entry point, not that there are too many parts. A small screen with flat hierarchy feels more complex than a big one with a clear lead.
+- First give the screen **one dominant element and one primary action**; push everything else a level down. Delete only what still has no job.
+- Build hierarchy with **size, weight and lightness**, never with extra boxes, borders or tints.
+- A block that asks for action needs a heading that can compete with the biggest object inside it. If the user chose the words, "make it clearer" is a typography fix, not a rewrite.
+- *Do*: make the invoice total larger and bolder. *Don't*: wrap it in a tinted, bordered box.
 
-### 2. Gestalt Laws
-| Law | Principle | Application |
-|---|---|---|
-| **Proximity** | Objects close together = related | Use spacing to group inputs with labels. |
-| **Similarity** | Same style = same function | All primary buttons must look identical. |
-| **Closure** | Brain fills gaps | Use whitespace instead of borders to separate sections. |
+### 2. Components follow the job, not the look-alike
+Pick each component from the question it answers on THIS screen. An automatic-alerts log that copies a chat list inherits sender avatars nobody needs. If an element answers no question the user brought, it goes. Same style means same function: all primary buttons look identical; related items sit closer to each other than to anything else.
 
-### 3. Visual Hierarchy
-**Tools of Emphasis** (in order of power):
-1. **Size**: Larger = more important (but don't overdo it).
-2. **Weight**: Bold > Regular.
-3. **Color**: High Contrast (Black/White) > Low Contrast (Gray).
-4. **Spacing**: Isolated elements draw attention.
-5. **Depth**: Raised elements (Shadows) > Flat elements.
+### 3. Height is a budget
+- The block doing the screen's main job takes the remaining height and scrolls inside itself; helper blocks get a fixed cap.
+- Measure where the primary action sits relative to the fold in the **fullest** state, not the empty one.
+- Report savings in measured pixels ("first row moved up 153px at 375px"), never "saves a lot of space"; estimates are routinely off by 2x.
 
-**The "Squint Test"**: If you squint, the primary action and H1 must be the only things visible.
+### 4. Show the real thing
+- Previews use the real template, real data, real brand colours and real fonts. Filler like "..." or lorem reads as broken.
+- If the real thing looks bad, fix the product, not the preview.
+- **Content first**: write the real headings, labels and data, then choose the layout, then style; decoration last.
 
-### 4. Iconography Consistency
+### 5. The squint test
+Squint at the screen: only the things the user must look at or act on should remain visible. If chrome survives the squint, it is too loud.
 
-**Rule**: Never mix lined (outline) and filled icon styles in the same UI. Pick one style and use it system-wide.
+### 6. Iconography and words
+- One icon set, one style (outline or filled) per UI; the only accepted mix is outline for unselected and filled for selected tabs. Icon sizes on the grid: 16, 20, 24, 32.
+- **Words beat icons for abstract states and labelled actions.** "Trial", "Archived", "Inactive" have no universal glyph: write the word in a neutral chip. No decorative icons in section headers.
 
-| Convention | Rule |
-|---|---|
-| **Single style** | All icons in a view use the same weight/fill. No mixing icon sets. |
-| **Tab bar exception** | Lined icons for unselected state, filled for selected state — the only acceptable mixing pattern. |
-| **Sizing** | Icons follow the 4px grid: 16px, 20px, 24px, 32px. No odd sizes. |
-| **Consistency > novelty** | Swapping default AI-suggested icons to a single consistent set = immediate quality boost. |
-
-**Icon Resources**: Hero Icons (free, first choice) → Font Awesome → Nucleio (premium).
+### 7. Familiar beats clever
+Users spend most of their time in other products (Jakob's law). Spend innovation on product value, not on navigation or standard controls.
 
 ---
 
 ## II. The Spacing System (4px Grid)
 
-**Standard**: All spatial values (margins, padding, sizing, line-height) must be divisible by **4**.
+**Standard**: all spatial values (margins, padding, sizing, line-height) are divisible by **4**.
 
-### The Scale (REM-based)
 | Token | REM | Pixels | Usage |
 |---|---|---|---|
 | `--space-1` | `0.25rem` | 4px | Icon optical adjustment |
-| `--space-2` | `0.5rem` | 8px | Tight grouping (Label + Input) |
+| `--space-2` | `0.5rem` | 8px | Tight grouping (label + input), title to detail line |
 | `--space-3` | `0.75rem` | 12px | Compact separation |
-| `--space-4` | `1rem` | 16px | **Base Unit** / Component padding |
+| `--space-4` | `1rem` | 16px | **Base unit** / component padding |
 | `--space-5` | `1.25rem` | 20px | Navigation items |
 | `--space-6` | `1.5rem` | 24px | Card padding |
-| `--space-8` | `2rem` | 32px | Section separation (Internal) |
-| `--space-12` | `3rem` | 48px | Section separation (External) |
-| `--space-20` | `5rem` | 80px | Hero / Footer padding |
+| `--space-8` | `2rem` | 32px | Section separation (internal) |
+| `--space-12` | `3rem` | 48px | Section separation (external) |
+| `--space-20` | `5rem` | 80px | Hero / footer padding (marketing) |
 
-### Spacing Rules
-- **Vertical Rhythm**: Rows need breathing room (50px-80px padding).
-- **Start Big**: Always start with *too much* whitespace, then reduce.
-- **Line Height**: Acts as natural bottom margin. Don't add `margin-bottom` to text unless it exceeds the line-height gap.
+- **Density by surface**: app screens are dense and scannable (height is a budget); marketing pages breathe (see `design-web.md`).
+- Leave **at least 8px of real white space** between a bold title and the smaller line under it; 4px reads as zero. The eye measures the white space, not the line box.
+- Line height is the natural bottom margin; don't add `margin-bottom` to text unless the gap must exceed it.
 
 ---
 
 ## III. Typography System
 
-**Strategy**: Limit choices to maximize consistency. You only need **3 sizes** for 90% of the UI.
+You need **3-4 sizes** for nearly all UI.
+1. **Body**: 15-16px. The workhorse.
+2. **Heading**: 18-24px. Section and card titles.
+3. **Small (meta)**: 13-14px. Captions, hints, field labels.
+*(Display 28px+ only for a marketing hero or a mobile large title.)*
 
-### The Minimal Scale
-1. **Base (Body)**: 16px (`1rem`). The workhorse.
-2. **Heading (Title)**: 20px-24px (`1.25rem`-`1.5rem`). Section headers.
-3. **Small (Meta)**: 13px-14px (`0.875rem`). Captions, hints.
-*(Display sizes of 32px+ are reserved for H1 Hero only)*
-
-### Hierarchy via Weight & Color
-Don't rely on size alone. Use **HSL Lightness** for hierarchy:
-
-| Role | Weight | Lightness (Light Mode) | Lightness (Dark Mode) |
+| Role | Weight | Lightness (light) | Lightness (dark) |
 |---|---|---|---|
-| **Primary** | 600 (Semi) | 0-10% (Black) | 90-100% (White) |
-| **Secondary** | 400 (Reg) | 40% (Dark Gray) | 60% (Light Gray) |
-| **Tertiary** | 400 (Reg) | 60% (Gray) | 40% (Dim Gray) |
+| **Primary** | 600 | 0-10% | 90-100% |
+| **Secondary** | 400 | 40% | 60% |
+| **Tertiary** | 400 | 60% | 40% |
 
-### Line Height Logic
-- **Inverse Proportionality**: Smaller text = larger line-height.
-  - Body (16px) → 1.5 - 1.6
-  - Headings (24px+) → 1.1 - 1.2
-- **Optical Spacing**: Line-height creates "phantom" padding. Account for it.
+- Line height is inversely proportional to size: body 1.5-1.6, headings 1.1-1.2.
+- In app UI a body block runs **at most two lines**; if it runs longer, cut the copy, don't shrink the type.
+- Text smaller than body needs about **7:1** contrast and is never under 11px; AA (4.5:1) is a floor, not a target, for small type.
+- **Sentence case** for labels, headings and inline links. Only real buttons look like buttons.
 
 ---
 
-## IV. Color System (HSL / OKLCH)
+## IV. Color System
 
-**Imperative**: Use **HSL** or **OKLCH**. Never use Hex for system colors.
+### Tokens, not literals
+Colours live in tokens with semantic names (`--color-primary`, `--color-surface`, `--color-error`); components never hold a literal. Author new palettes in HSL or OKLCH (lightness math is easy), but the format of a token's value is not the rule: the token is.
 
-### The Palette Structure
-- **Neutrals** (Saturation 0%): The UI skeleton.
-  - **Base**: Background (L=100% Light / L=0% Dark).
-  - **Surface**: Cards/Panels (L=96% Light / L=5% Dark).
-  - **Border**: Dividers (L=90% Light / L=15% Dark).
-- **Primary** (Brand): Action color. Used on <10% of UI (Buttons, Links).
-- **Semantic**: Signal colors (Success/Green, Error/Red, Warning/Yellow).
+### Palette structure
+- **Neutrals**: the skeleton. Base (background), Surface (cards, panels), Border (dividers).
+- **Primary (brand)**: the action colour.
+- **Semantic**: success, error, warning, each with a fill swatch AND a separate ink token for text on paper (swatches usually fail as text).
 
-### Dark/Light Conversion
-**Physics Rule**: Light comes from the top.
-- **Light Mode**: "Raised" elements are *lighter* (closer to light source).
-- **Dark Mode**: "Raised" elements are *lighter* (closer to light source).
-- **Algorithm**: `Light_L = 100 - Dark_L` (baseline, then optically adjust).
+### The colour budget
+- **One filled accent per screen**: the primary action (also the "on" state and the focus ring). Selected tabs, card borders, badges and info strips stay neutral.
+- Spend colour on **what the row is about and states that need action**; never on identity (hash-coloured avatars) or chrome. Neutralise chrome, not content: greying a row's core data makes it look dead. A row goes from seven colours to about three, not to zero.
+- Different states look different: "broken" and "not set up" must not share one grey dash; a fresh failure outranks a standing gap.
+- Long text the reader re-reads never sits on a solid accent fill: use a tinted surface (accent mixed a little into a theme surface, a bit more into the border) with ordinary body text. Something read through mid-sentence (a highlight) sets its background only, never its colour.
+- When one small element carries two independent states, give each its own channel: colour for one (status), shape or motion for the other (kind).
+- Third-party brand colours are the real ones, in both themes.
+- A brand colour that fails contrast is raised with the owner, not patched on one screen.
 
-### Depth System
-Depth = **Layers** + **Shadows** + **Highlights**.
-- **Layers**: 3 levels of background lightness (Base < Surface < Elevated).
-- **Shadows**:
-  - `sm`: `0 1px 2px` (Buttons)
-  - `md`: `0 4px 6px` (Cards)
-  - `xl`: `0 20px 25px` (Modals)
-  - *Pro Tip*: Use colored shadows (primary hue, 15% opacity) for richness.
-- **Highlight**: 1px top border (white/lighter) mimics light hitting the edge.
+### Surfaces and depth
+- Nested surfaces differ by at least one tone; in dark mode the inner surface is **lighter**. Mix tints against theme tokens, never a fixed grey (many stock greys are blue-tinted and read navy inside neutral cards).
+- **Screens are flat.** Separate cards with a one-tone step or a 1px border. Shadow only for layers that float: popovers (`md`), dialogs (`xl`), dragged items and floating buttons (`sm`).
+- Interactive things may look raised and press down; the page itself does not.
+- Light/dark baseline: `Light_L = 100 - Dark_L`, then adjust optically.
 
 ---
 
 ## V. Layout Fundamentals
 
-### Row-Based Architecture
-- **Rule of Isolation**: One idea per row.
-- **Visual Separation**: Alternate row backgrounds (White → Gray → White) to delineate sections.
-- **Container**: Max-width (e.g., `1200px`) centers content; background spans full width.
-
-### Standard Patterns
-- **Hero**: H1 + Subtext + CTA + Visual.
-- **Bento Grid**: Asymmetric boxes for features.
-- **Split Screen**: 50/50 Image/Text (Alternate L/R).
-- **Card Grid**: Repeated items (Testimonials, Features).
-
-### Content-First Workflow
-1. **Draft**: Write the content (headings, bullets).
-2. **Structure**: Choose the layout pattern that fits the content density.
-3. **Style**: Apply typography and spacing systems.
-4. **Decorate**: Add shadows, gradients, and icons **last**.
+- **One template per kind of screen.** A screen that should feel like another shares its skeleton (top bar, section headers, filter row, column widths, vertical rhythm), not just its atoms. Squint at both screenshots side by side: two instances of one template, or two buildings from the same bricks?
+- **App screens need no page headline** when navigation already names the page; use section headings. A back control carries a word ("‹ Projects"), not a bare icon.
+- Container max-width centres content; the background spans full width.
+- Marketing page patterns (hero, bento, split screen, alternating rows) live in `design-web.md`.
 
 ---
 
 ## VI. Accessibility Standards
 
-- **Contrast**: WCAG AA minimum — 4.5:1 for body text, 3:1 for large text and UI components.
-- **Hit targets**: Minimum 44x44px for touch, 24x24px for pointer.
-- **Motion**: Respect `prefers-reduced-motion`. Provide alternatives.
-- **Color alone**: Never convey information by color alone (use icons/labels too).
+- **Contrast**: WCAG AA minimum, 4.5:1 body text, 3:1 large text and non-text marks; small text about 7:1. Measure with a script, in both themes, after compositing translucent colours over their real background.
+- **Hit targets**: 44x44px touch, 24x24px pointer.
+- **Visible labels**: every input shows its own name; `aria-label` does not replace a visible label. Two inputs of one type (start and end date) get two labels.
+- **Focus**: replace the browser default ring with the brand focus ring on every interactive element; never remove `outline` without a replacement.
+- **Motion**: respect `prefers-reduced-motion`.
+- **Colour alone** never carries meaning: pair it with a word, shape or position.
 
 ---
 
-## VII. The Creative Process (The Remix Strategy)
+## VII. Motion and Feedback
 
-**Core Principle**: Everything is a Remix. Originality is overrated; execution is everything.
+- **Nothing opens or closes abruptly.** Height and opacity animate: tab switches, side panels, accordions, and a dialog whose content changes size. Enter about 200-250ms ease-out, exit about 180ms; one easing curve per product. Motion asked for in one dialog belongs to all dialogs.
+- Scroll something into view only when the user opened it; a section open by default never scrolls the page.
+- **Every action answers three questions where the user is looking**: what happened, can I undo it, what is next. A toast alone is not enough when the result landed out of view: take the user to it.
+- Celebrate **real milestones only** (first payment received, setup finished), calmly and briefly. No confetti on routine actions. Polish is consistency and smoothness, not spectacle; in money, health and security products correct numbers and smooth flows ARE the trust signal.
+- Mascots and illustration appear at emotional moments (onboarding, first-run empty, error recovery, a real milestone) and nowhere else. The logo is identity; the mascot is emotion.
 
-### The Remix Workflow
-1. **Inspiration**: Never start from a blank canvas. Source from the Design Inspiration Resources table below. Find 3 proven patterns. Real products > Dribbble concepts.
-2. **Deconstruction**: Analyze *why* it works. "Why is this button here?" "Why this spacing?"
-3. **Transformation**: Combine + improve. Apply your 4px grid and type system. Make it cleaner, faster, more accessible. Adapt for your user persona.
-4. **Assembly**: Define `spacing`, `type-scale`, `colors` tokens BEFORE building. Construct using *only* system tokens.
-5. **Refinement**: Squint Test → Consistency Check (all margins ÷ 4?) → Add subtle character (gradients, noise, organic shapes).
+### Interaction states (every interactive element)
 
-### Mascot & Custom Illustration Workflow
-
-Mascots create emotional connection and give apps personality. They turn empty states, onboarding, and error pages from dead screens into character moments.
-
-1. **Commission base art**: Hire an illustrator ($200-300) for the initial character. This creates a unique reference that AI cannot replicate from text prompts alone.
-2. **Mash references**: Feed 2+ visual references into AI image generation. Single reference = derivative; multiple references = original synthesis.
-3. **AI iteration**: Use ChatGPT with commissioned art as reference. One ask at a time yields better results than complex multi-instruction prompts. ChatGPT > Gemini for initial character creation; Gemini better for iterations on established base.
-4. **Animation**: Use Midjourney (feed static mascot as starting frame) to create animated variants for splash screens, login, onboarding.
-5. **Placement rule**: Mascots appear at emotional touchpoints (onboarding, empty states, error recovery, celebration moments) — not on every screen.
-
-### App Naming Strategy
-
-- **Check domain availability early**: Don't fall in love with a name you can't own online.
-- **Avoid unusual spelling**: Clever misspellings create confusion and hurt discoverability.
-- **Short name + descriptive suffix**: e.g., ellieplanner.com, lunabudgeting.com. The suffix helps with SEO and user understanding.
-- **Treat early names as placeholders**: Rebrand without guilt once the product has traction. Don't over-invest in naming pre-launch (~2 hours max).
-
-### Design Inspiration Resources
-
-| Resource | Focus | Notes |
-|---|---|---|
-| **Mobbin** | Real app screenshots & flows | Primary resource. Paid. Browse to build design taste. |
-| **60fps.design** | Interaction & animation references | Discover novel micro-interactions from top apps. |
-| **Spotted & Prod** | Top app animations curated | Same concept as 60fps — curated animation inspiration. |
-| **Screenshot First Company** | App Store screenshot design | Twitter/X account. Before/after ASO screenshot examples. |
-| **Figma Community** | Component libraries, templates | Free starting points and pattern references. |
-
-### Originality vs. Usability
-| Concept | Rule |
+| State | Rule |
 |---|---|
-| **Jakob's Law** | Users spend most time on *other* sites. They expect yours to work the same way. |
-| **Innovation Tokens** | Spend innovation on the *product value*, not the navigation bar. |
-| **Trend Cycles** | Trends are circular. Don't chase trends; build timeless systems. |
+| **Default** | Clearly interactive (cursor, affordance). |
+| **Hover** | Subtle shift within 100-200ms; never the same look as Selected. |
+| **Focus** | Visible brand ring, 2px+. |
+| **Active/Pressed** | Slight scale-down (0.97-0.98) or darken. |
+| **Selected** | Unmistakable and different from hover; a neutral surface, not a second accent fill. |
+| **Disabled** | Reduced opacity **plus a one-line reason next to it**. If no input could ever enable it, don't draw it; say what the user can do instead. |
 
 ---
 
-## VIII. Emotional Design System
+## VIII. Agreeing a Design With the Owner
 
-**Core Principle**: Design triggers emotional responses, not just functional outcomes. Interaction quality determines whether a product feels cheap, competent, or premium. (Reference: Don Norman's *Emotional Design*)
-
-### 1. Interaction Quality Hierarchy
-
-Every UI element exists on a 5-level scale. Target **Level 3 minimum**; Level 4+ for primary flows.
-
-| Level | Name | Definition | Example |
-|---|---|---|---|
-| 1 | **Functional** | It works. No feedback beyond state change. | Button submits form, nothing else happens. |
-| 2 | **Smooth** | Transitions and timing feel natural. No jank. | 200ms ease-out on state changes. |
-| 3 | **Delightful** | Interaction produces a small positive emotion. | Success checkmark animates in with a bounce. |
-| 4 | **Memorable** | User remembers and talks about the experience. | Celebration confetti on first milestone. |
-| 5 | **Premium** | Polish signals quality of the entire product. | Every micro-interaction compounds into brand perception. |
-
-### 2. Emotional Feedback Loop Rules
-
-- **Feedback must be emotional, not just functional**: A toggle that snaps with a micro-animation > a toggle that just changes state. The response IS the reward.
-- **Progress must be visible and celebrated**: Never let the user achieve something silently. Acknowledge every milestone: progress bars, streak counters, completion animations.
-- **Success states are designed, not default**: Empty success (plain text "Done") is a missed opportunity. Design success states with the same care as error states.
-- **Polish is not decoration — it is trust**: In high-stakes domains (finance, health, security), micro-interaction quality directly signals product reliability. Users equate visual polish with backend competence.
-
-### 3. Interaction State Design (Mandatory)
-
-Every interactive element MUST define all 5 states. No state may be left to browser defaults.
-
-| State | Purpose | Design Rule |
-|---|---|---|
-| **Default** | Resting appearance | Must clearly signal interactivity (cursor, affordance). |
-| **Hover** | Discovery / anticipation | Subtle lift or color shift. Change within 100ms. |
-| **Focus** | Keyboard navigation / a11y | Visible ring (2px+). Never remove `outline` without replacement. |
-| **Active/Pressed** | Confirmation of action | Slight scale-down (0.97-0.98) or darken. Feels tactile. |
-| **Disabled** | Unavailable | Reduced opacity (0.5) + `cursor: not-allowed`. Never just gray text. |
-
-### 4. Domain-Specific Emotional Models
-
-Select the emotional model that matches the product domain:
-
-| Model | Domain | Emotional Strategy | Reference |
-|---|---|---|---|
-| **Habit Loop** | Education, fitness, social | Celebrate small wins, streaks, mascot expressions. Make repetition rewarding. | Duolingo |
-| **Trust Signal** | Finance, security, health | Polish = safety. Smooth feedback during risky actions. Approachable language for complex concepts. | Phantom |
-| **Premium Perception** | Fintech, SaaS, luxury | Micro-interactions compound into quality perception. Tactile data viz. Onboarding signals positioning. | Revolut |
+- **Ask design decisions as drawings, not text.** Show 2-3 options side by side with real components, real colours and real data, at phone and desktop width. A drawing often surfaces the option nobody had named.
+- **Draw a state table, not one happy mockup**: default, selected, hover, error, long name, empty, loading, failed, no search match. Open one filled record and one empty record in every round.
+- Treat the owner's suggestion as the **intent to solve**, not a spec to apply literally ("you applied it literally, I want better"). But the owner's **copy goes in verbatim**, tone of address included; fix only obvious typos and say so.
+- Split a complaint into its separate defects (did not understand, could not reach, looks wrong); measure and close each.
+- A point request ("add a date filter") is a symptom: check whether the screen answers the question the user actually came with.
+- Before drawing a change, find the **current** version of the flow (newest branch, live screen) and draw inside it; a new option never becomes a separately drawn dialog.
+- Study real shipped products (e.g. Mobbin, 60fps.design), not concept shots, and use your own product for a while as a real user: list every seam where it stops feeling like one product (two words for one thing, two skeletons, two screens for one job).
+- Take blunt feedback without defending: read the screen, fix, report in one paragraph. Iterate in small single-focus rounds.
 
 ---
 
-## IX. Design Checklist
+## IX. Done Means Measured
 
-- [ ] **Sourced**: Found 3 real-world examples (not concepts)?
-- [ ] **Systematized**: Tokens defined before implementation?
-- [ ] **Spacing**: All values rem-based and divisible by 4?
-- [ ] **Typography**: Using only the 3-size scale (+ Hero display)?
-- [ ] **Colors**: HSL/OKLCH only? Semantic names? No hex in components?
-- [ ] **Hierarchy**: Passes Squint Test?
-- [ ] **Accessibility**: WCAG AA contrast? Touch targets ≥ 44px?
-- [ ] **Consistency**: Same patterns used for same functions everywhere?
-- [ ] **Iconography**: Single icon style used consistently? Active/inactive states use weight shift (thin→filled)?
-- [ ] **Interaction States**: All interactive elements define Default/Hover/Focus/Active/Disabled?
-- [ ] **Emotional Feedback**: Primary actions have Level 3+ feedback (not just functional state change)?
-- [ ] **Design tie-breaker**: Stuck between two options? Use a public poll (Twitter/X) to break the tie with real user input.
-- [ ] **Success States**: Success/completion moments are designed, not just plain text?
+- A UI fix is **not closed until the rendered screen was looked at and measured** at its widths (phone 360-390, tablet 768, desktop 1280-1440) in both themes. Type checks and unit tests do not see layout. If there is no harness, build one.
+- Measure **painted geometry** (`getBoundingClientRect`, `Range.getClientRects`), not CSS values: a rule that says 26px can paint 35px.
+- **Validate the instrument**: a result that is unbelievably bad or suspiciously uniform is a tool bug first. Then look anyway; some defects no script sees.
+- Recipes: `frontend-principles.md` §VII.
+
+---
+
+## X. Design Checklist
+
+- [ ] **Hierarchy**: squint test passes; one primary action; one filled accent.
+- [ ] **Once**: no fact, title, status or total repeated on the screen.
+- [ ] **Height**: main block takes the rest; primary action above the fold in the fullest state (measured).
+- [ ] **States**: loading, error, empty, data, disabled-with-reason all drawn.
+- [ ] **Truth**: labels, previews and numbers match real behaviour and real data.
+- [ ] **Copy**: one word per object; every heading true for every row; numbers say what they count.
+- [ ] **Colour**: only on action and state; tokens only; no identity colours.
+- [ ] **Spacing and type**: 4px grid; 3-4 sizes; at least 8px title-to-detail gap.
+- [ ] **Accessibility**: contrast measured in both themes; visible labels; 44px touch targets; reduced motion.
+- [ ] **Motion**: nothing abrupt; one curve; celebration only at real milestones.
+- [ ] **Reuse**: existing components used; no second implementation.
+- [ ] **Verified**: screenshots at phone and desktop width, both themes, no console errors.
 
 </system_instructions>
