@@ -1,5 +1,5 @@
 ---
-description: "Load when designing websites, landing pages, web layouts, hero sections, CTAs, responsive CSS, web animation, scroll effects, or conversion optimization. Prerequisite: design-principles."
+description: "Load when designing websites, landing pages, web layouts, hero sections, CTAs, responsive CSS, web animation, scroll effects, or conversion optimization. Prerequisite: design."
 alwaysApply: false
 ruleType: "Design System - Web"
 version: "1.1-emotional"
@@ -10,9 +10,11 @@ version: "1.1-emotional"
 <role>
 You are the **Lead Web Architect** for design and strategy.
 
-**PREREQUISITE**: `design-principles` MUST be loaded before this file.
+**PREREQUISITE**: the `design` SKILL.md MUST be loaded before this file.
 General design system (spacing, typography, colors, visual hierarchy, accessibility) lives there.
 This file contains **web-specific** design standards only.
+
+**Web app screens** (lists, forms, dialogs, settings): read `product-ui.md`. This file covers the web platform, marketing pages and promo/print output.
 
 **Authority**: These standards are definitive. Opinions defer to metrics, performance laws, and engineering best practices.
 **Scope**: Project classification, responsive mechanics, animation performance, landing page psychology, web-specific a11y.
@@ -58,15 +60,21 @@ This file contains **web-specific** design standards only.
 - **Tablet**: `grid-template-columns: repeat(2, 1fr)` (2-up).
 - **Desktop**: Sidebar (`fixed width`) + Main (`flex: 1`).
 
-### Positioning Types
-- `Relative`: Unlocks z-index/offsets, keeps space. Parent for Absolute.
-- `Absolute`: Removed from flow. Positions relative to nearest `relative` parent.
-- `Fixed`: Relative to viewport (Modals, Toasts).
-- **Media queries**: Always at the **bottom** of the file/block to prevent cascade conflicts.
+### Containers, Not Viewports
+Inside a panel, card or dialog, respond to the container (`@container`), not the viewport; a 420px modal on a 1440px screen is a phone layout. Measure the crossover width; don't pick a round number.
 
 ---
 
-## III. High-Performance Motion
+## III. Marketing Page Layout
+
+- **Breathe**: start with generous whitespace and reduce; rows take 48-80px vertical padding. (App screens are the opposite: see `product-ui.md`.)
+- **One idea per row**; alternate row backgrounds to delineate sections; separate sections with whitespace before borders.
+- **Container**: max-width (e.g. 1200px) centres content; the background spans full width.
+- **Patterns**: Hero (H1 + sub + CTA + visual), Bento grid (asymmetric feature boxes), Split screen (50/50, alternate sides), Card grid (testimonials, features).
+
+---
+
+## IV. High-Performance Motion
 
 > Animation property safety (green/red list) is also covered in `web-app-frontend`. The rules below focus on **design patterns and advanced techniques**.
 
@@ -78,7 +86,7 @@ This file contains **web-specific** design standards only.
 
 ---
 
-## IV. Landing Page Conversion Science
+## V. Landing Page Conversion Science
 
 **Goal**: A seamless, objection-free journey from "Stranger" to "Lead".
 
@@ -99,21 +107,20 @@ This file contains **web-specific** design standards only.
 - **The Quiz/Assessment**: "Answer 5 questions to get [Result]." Captures lead *during* value creation. 20-40% conversion.
 - **The Long-Form Page**: Length doesn't kill conversion; boredom does. Long pages work if they address every objection.
 - **The Waitlist**: Minimalist. 1 Screenshot + Email Form. "Join X others."
-- **The Design Tweet/Video**: Post a polished concept video or mockup on social media before building. If the design goes viral, build it. If it doesn't resonate, iterate or kill. A fake door test (see `lean-analytics-experiments`) for design validation.
 
 ### Emotional Conversion Triggers
 
-Conversion is not just logical (objection removal) — it is emotional (desire creation).
+Conversion is not just logical (objection removal); it is emotional (desire creation).
 
 - **Onboarding as conversion mechanism**: See `onboarding-design` for the full onboarding-as-conversion framework (flow architecture, paywall priming, questionnaire UX). Load that skill when designing first-run experiences.
 - **Micro-interactions build conversion momentum**: Each smooth interaction on the page (hover effects on feature cards, animated number counters, parallax on scroll) compounds into subconscious trust. Users who feel "this is well-made" convert at higher rates.
 - **Approachability through language and visuals**: Complex products must feel simple. Use conversational copy, friendly illustrations, and progressive disclosure. If the user feels overwhelmed, they bounce.
 - **Character/mascot as engagement anchor**: A consistent visual character (illustration style, mascot, or avatar) creates emotional connection and increases time-on-page. Use in onboarding, empty states, and error pages.
-- **Tactile scroll experiences**: Scroll-linked animations that respond to user input (not just time-based) create a sense of control and engagement. Combine with `design-principles` Level 3+ feedback.
+- **Tactile scroll experiences**: Scroll-linked animations that respond to user input (not just time-based) create a sense of control and engagement. Follow the motion rules in `design` §VII.
 
 ---
 
-## V. Trust-Building Design Patterns
+## VI. Trust-Building Design Patterns
 
 > These patterns apply to websites/landing pages in high-stakes domains (fintech, health, security, B2B SaaS). For in-app trust implementation, see `web-app-frontend`.
 
@@ -122,7 +129,7 @@ Conversion is not just logical (objection removal) — it is emotional (desire c
 In domains where users risk money, data, or health, visual quality is a direct proxy for product reliability.
 
 **Rules:**
-- **No janky transitions on critical flows**: Sign-up, payment, and data-entry pages must be Level 2+ (Smooth) minimum from `design-principles` hierarchy. Any stutter or layout shift destroys trust.
+- **No janky transitions on critical flows**: Sign-up, payment and data-entry pages never stutter or shift layout. Any stutter or layout shift destroys trust.
 - **Loading states must feel intentional**: Skeleton screens over spinners. Progress indicators over blank waits. The user must never wonder "did it break?"
 - **Error recovery must be graceful**: Errors on landing pages (form validation, failed submissions) must use inline feedback with clear recovery paths. Never a generic alert box.
 
@@ -131,14 +138,27 @@ In domains where users risk money, data, or health, visual quality is a direct p
 | Pattern | Implementation | When to Use |
 |---|---|---|
 | **Social Proof Cascade** | Logos → Testimonial quotes → Case study links (progressive depth) | All landing pages |
-| **Security Theater** | Lock icons near forms, "256-bit encrypted" badges, privacy policy links near CTAs | Payment, sign-up, data collection |
+| **Security Cues** | Lock icon near payment fields, privacy link near CTAs, encryption badge only when it is true | Payment, sign-up, data collection |
 | **Progressive Disclosure** | Show complexity in layers (overview → details → deep dive) | Complex/technical products |
-| **Real-Time Validation** | Inline form feedback as user types (green checks, helpful hints) | Sign-up, onboarding forms |
+| **Inline Validation** | Errors appear inline as they happen, with the fix; success takes no row | Sign-up, onboarding forms |
 | **Smooth State Transitions** | Animate between form steps (slide, fade) instead of hard page reloads | Multi-step flows |
 
 ---
 
-## VI. Web-Specific Accessibility & Performance
+## VII. Promo, Marketing and Print Output
+
+- **A signed-in visitor sees "Go to account"** on marketing pages, never a sign-up CTA.
+- **Take a reference site's style by measuring it** (sizes, spacing, colours into tokens), not by eye. External examples give structure only; colours and logo come from your own brand.
+- **Product shots look perfect**: frame ratio equals content ratio, no cropping, no re-encoding; real UI at real size; a floating card never covers the device screen (0px² overlap at 375, 412 and 1440px).
+- **Show visuals, not paragraphs**; headline and body at most 2 lines each. A new iteration keeps the liked parts and changes only what was asked.
+- **Every figure is checked on the day it is published**, and only live features are mentioned; a stale figure is a wrong figure.
+- **Demos pay off fast**: the reward appears within about 5s and stays at least 3.5s.
+- **Approval copies use the real product template**, never raw internal HTML; internal-only notes go on a separate, labelled last page.
+- **Print**: measure, then place. Never split a card across pages (accept more pages). Colour is never the only carrier; text at least about 8pt; check figures for collisions at 2.5x; paper stays white in dark mode; no "today" highlight on a printout; watermark at most twice per page.
+
+---
+
+## VIII. Web-Specific Accessibility & Performance
 
 - **Semantic HTML**: Foundation of both accessibility and SEO.
 - **Motion**: Respect `prefers-reduced-motion` media query.

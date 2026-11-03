@@ -65,8 +65,13 @@
         "i18n"
       ],
       "alwaysApply": true,
-      "base": "Universal design system: spacing (4px grid), typography, colors (HSL/OKLCH), visual hierarchy, layout, accessibility, emotional design",
+      "base": "Universal design rules: hierarchy, height budget, colour budget, say it once, every state designed, honest screens, 4px grid tokens, measured contrast, done means measured",
       "subSkills": [
+        {
+          "name": "product-ui",
+          "file": "product-ui.md",
+          "description": "App screens: information architecture, copy, layout, dialogs, forms, pickers, lists, filters, states, data truth, charts"
+        },
         {
           "name": "frontend-principles",
           "file": "frontend-principles.md",

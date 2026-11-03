@@ -702,7 +702,7 @@ dreamcontext install-skill --list                     # See everything available
 | Pack | What it covers | Inside |
 |------|---------------|--------|
 | **engineering** _(always-on)_ | Coding standards, security, testing, architecture | backend-principles, web-app-frontend, firebase-cloud-functions, firebase-firestore |
-| **design** _(always-on)_ | Design systems, typography, color, accessibility | frontend-principles, design-web, design-mobile, onboarding-design |
+| **design** _(always-on)_ | Design systems, typography, color, accessibility | product-ui, frontend-principles, design-web, design-mobile, onboarding-design |
 | **growth** | Retention, distribution, monetization, analytics | performance-marketing, lean-analytics-experiments, lean-analytics-metrics |
 | **brand-voice** | Brand enforcement, discovery, guideline generation | discover-brand, guideline-generation |
 | **council** | Multi-persona debate for hard decisions | `council-persona`, `council-synthesizer` agents |
