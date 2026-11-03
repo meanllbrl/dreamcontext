@@ -40,6 +40,7 @@ import {
   superQueueHead, superSanitizeOpts, superVaultName, superView, writeSuper, noteSuperEscalation, permissionGoesToSuper, permissionToOwner,
 } from '../../lib/super/inbox.js';
 import { ownerQuestionReach } from '../../lib/super/owner-question.js';
+import { pinnedMemberCard } from '../../lib/super/inbox.js';
 import { freshInFlight, isMainWork, isSuperEventTurn, noteMemberOff, noteRequestDone, openRequests, retireMemberSuper, setMemberTitleSource, superOwnerMsgRef, superTurnOrigin, sweepOrphanFresh } from '../../lib/super/inbox.js';
 import { isRotating } from '../../lib/super/fresh-session.js';
 import { clearReadMarks } from '../../lib/super/read-marks.js';
@@ -184,7 +185,9 @@ async function closeGroupCards(c: SuperCaller, b: Record<string, unknown>, res: 
     groups = [g];
   }
   const ids = [...new Set(groups.flatMap((g) => g.cards))].filter((id) => c.state.containers.some((k) => k.id === id));
-  const skipped = liveCards(c.state, ids);
+  // A member's own card stays, like a live job's (plan r4 G1): the call is not refused for it.
+  const pinned = ids.filter((id) => c.state.containers.some((k) => k.id === id && k.kind === 'member'));
+  const skipped = [...liveCards(c.state, ids), ...pinned];
   const closing = ids.filter((id) => !skipped.includes(id));
   if (!all && !closing.length && skipped.length) { refuseLive(res, skipped, 'closed'); return; }
   if (closing.length) {
@@ -195,6 +198,19 @@ async function closeGroupCards(c: SuperCaller, b: Record<string, unknown>, res: 
     });
   }
   ok(res, { closed: closing, skipped, groups: groups.map((g) => g.id) });
+}
+
+/**
+ * 403 pinned_card (plan r4 G1): a member stage's own cards (Rutinler, Talimatlar, Üye) are the
+ * owner's. No agent verb moves, resizes, groups, ungroups, halves or closes one; a group id stands
+ * for its cards. True = refused (the answer is sent).
+ */
+function refusePinned(c: Pick<SuperCaller, 'state'>, ids: readonly string[], res: ServerResponse): boolean {
+  const expanded = ids.flatMap((id) => c.state.groups.find((g) => g.id === id)?.cards ?? [id]);
+  const hit = pinnedMemberCard(c.state, expanded);
+  if (!hit) return false;
+  refuse(res, 403, 'pinned_card', `${hit} is one of the member's own cards: they are the owner's, never moved, resized, grouped or closed by an agent. Leave them as they are`, { card: hit });
+  return true;
 }
 
 /** 409 live_child: a live job's card stays a floating card (owner 2026-10-23). */
@@ -1002,7 +1018,10 @@ async function openCards(c: OpenCaller, b: Record<string, unknown>, res: ServerR
   // nothing, in one locked write. Only NEW refs need room: a ref already on the record is
   // the same card (brought back from Others), and a group is one floating item.
   let kind = str(b.kind);
-  if (!kind || !(CONTAINER_KINDS as readonly string[]).includes(kind)) { refuse(res, 400, 'invalid_args', `kind must be one of ${CONTAINER_KINDS.join(' | ')}`); return; }
+  const openable = CONTAINER_KINDS.filter((k) => k !== 'member');
+  if (!kind || !(CONTAINER_KINDS as readonly string[]).includes(kind)) { refuse(res, 400, 'invalid_args', `kind must be one of ${openable.join(' | ')}`); return; }
+  // A member's own cards are placed by its stage (plan r4 K3): never opened by a verb.
+  if (kind === 'member') { refuse(res, 400, 'invalid_args', 'the member\'s cards are placed by the stage; they are always there'); return; }
   const look = shapeOrSize(b);
   if ('error' in look) { refuse(res, 400, 'invalid_args', look.error); return; }
   const { shape: shapeArg, size: sizeArg } = look;
@@ -1571,6 +1590,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
   shape: async (c, b, res) => {
     const id = containerArg(c, b, res);
     if (!id) return;
+    if (refusePinned(c, [id], res)) return;
     const look = shapeOrSize(b);
     if ('error' in look) { refuse(res, 400, 'invalid_args', look.error); return; }
     if (!look.shape && !look.size) { refuse(res, 400, 'invalid_args', `shape must be one of ${[...CONTAINER_SIZES, ...CONTAINER_SHAPES].join(' | ')}`); return; }
@@ -1602,6 +1622,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     const id = containerArg(c, b, res);
     if (!id) return;
+    if (refusePinned(c, [id], res)) return;
     const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       const k = s.containers.find((x) => x.id === id);
       if (!k) return;
@@ -1667,6 +1688,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const t = targetArg(c, b, res);
     if (!t) return;
     const id = t.id;
+    if (refusePinned(c, [id], res)) return;
     const live = liveCards(c.state, [id]);
     if (live.length) { refuseLive(res, live, 'in Others'); return; }
     if (t.group) {
@@ -1695,6 +1717,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     const t = targetArg(c, b, res);
     if (!t) return;
     const id = t.id;
+    if (refusePinned(c, [id], res)) return;
     if (t.group) {
       await writeSuper(c.who.contextRoot, callerSuper(c), (s) => { const g = s.groups.find((x) => x.id === id); if (g) { g.place = 'float'; delete g.pos; } });
       ok(res, { group: id, place: 'float' });
@@ -1722,6 +1745,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
     }
     const id = containerArg(c, b, res);
     if (!id) return;
+    if (refusePinned(c, [id], res)) return;
     // The agenda is never closed: it collapses to its pill in the bottom-left corner (owner
     // 2026-10-22 23:44); the owner's pill or the centre's Agenda button brings it back.
     if (c.state.containers.some((x) => x.id === id && x.kind === 'agenda')) {
@@ -1748,6 +1772,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
       if (!c.state.containers.some((k) => k.id === id)) { refuse(res, 404, 'unknown_container', `no such card: ${id} (\`dreamcontext super state\` lists them)`); return; }
     }
     if (groupIds.length > 1) { refuse(res, 400, 'invalid_args', 'name at most one group; `super ungroup` the other first'); return; }
+    if (refusePinned(c, ids, res)) return;
     const live = liveCards(c.state, cards);
     if (live.length) { refuseLive(res, live, 'in a group'); return; }
     let id = groupIds[0];
@@ -1773,6 +1798,7 @@ export const SUPER_VERB_HANDLERS: Record<SuperVerb, SuperVerbHandler> = {
         return;
       }
     }
+    if (refusePinned(c, ids, res)) return;
     const state = await writeSuper(c.who.contextRoot, callerSuper(c), (s) => {
       dissolveGroups(s, ids.filter((id) => s.groups.some((g) => g.id === id)));
       leaveGroups(s, ids);
@@ -3286,6 +3312,8 @@ export function applyOwnerLayout(s: SuperState, body: Record<string, unknown>): 
   if (body.agenda === 'open') ensureAgendaCard(s, { bring: true, owner: true });
   if (ungroup.length) dissolveGroups(s, ungroup);
   const gone = new Set((closed as unknown[]).filter((x): x is string => typeof x === 'string'));
+  // A member's own cards are never closed (plan r4 K3): a close naming one is ignored for it.
+  for (const k of s.containers) if (k.kind === 'member') gone.delete(k.id);
   // The agenda never leaves the stage (owner 2026-10-22 23:44): its close, or the owner's
   // minimise, collapses it to the pill in the bottom-left corner.
   const agendaId = s.containers.find((x) => x.kind === 'agenda')?.id;

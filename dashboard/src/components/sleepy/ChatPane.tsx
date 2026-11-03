@@ -24,7 +24,7 @@ import {
   isHeadlessAgentShell, isTeammateRun,
   type SubAgentRun, type ScrollIntent, type RunSegment, type CardWindow,
 } from './chat/chatEntities';
-import { isDreamcontextCommand } from './chat/dreamCommand';
+import { isDreamcontextCommand, teamDoneRepeats } from './chat/dreamCommand';
 import { isQuestOnlyCommand, stepStretches, type StretchProbe } from './chat/toolAction';
 import { chatLineage, deriveChatQuest, questTaskSlug, partyBatches, type Party } from './chat/questModel';
 import { ChatQuestBar } from './chat/ChatQuestBar';
@@ -2032,6 +2032,8 @@ export function ChatPane({
   };
 
   type Stretch = { stretch: 'lead' | 'follow'; running: boolean } | undefined;
+  /** Filled once the slices are known (below), read when the items are drawn. */
+  let doneRepeats = new Set<string>();
 
   const itemNode = (item: ChatItem, stretch: Stretch, accruing = false): React.ReactNode => {
     // A turn the Super Agent's inbox injected — live (`superEvent`) or replayed from the
@@ -2085,6 +2087,7 @@ export function ChatPane({
     if (item.kind === 'user' && superView && parseSuperAnswer(item.text)) {
       return <SuperAnswerReceipt key={item.id} text={item.text} itemId={item.id} />;
     }
+    if (item.kind === 'text' && doneRepeats.has(item.id)) return null;
     const shape = shapeOf(item);
     switch (shape.draw) {
       case 'nothing': return null;
@@ -2223,6 +2226,8 @@ export function ChatPane({
   };
   const historySlice = conv.history.slice(historyFrom);
   const liveSlice = conv.items.slice(itemsFrom);
+  // The member's closing words that repeat its answer to the Super Agent: drawn once (plan r4 E4).
+  doneRepeats = teamDoneRepeats([...historySlice, ...liveSlice] as never);
   const historySegments = segmentToolRuns(foldSuper(historySlice), isPlainToolCard, MIN_TOOL_RUN, rendersNothing, isQuestOnlyItem);
   // The handoff receipt and the account move are drawn WHERE THEY HAPPENED, not docked under
   // the newest message: the turns that followed belong below them (owner, 2026-10-10). The

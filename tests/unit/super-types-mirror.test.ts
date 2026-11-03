@@ -19,6 +19,7 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 describe('super types — server record <-> window mirror', () => {
   it('every list and limit matches, in order', () => {
     expect([...client.CONTAINER_KINDS]).toEqual([...server.CONTAINER_KINDS]);
+    expect([...client.MEMBER_CARD_REFS]).toEqual([...server.MEMBER_CARD_REFS]);
     expect([...client.PAD_SECTIONS]).toEqual([...server.PAD_SECTIONS]);
     expect([client.MAX_PAD, client.MAX_PAD_TEXT]).toEqual([server.MAX_PAD, server.MAX_PAD_TEXT]);
     expect([client.AGENDA_REF, client.AGENDA_SIZE]).toEqual([server.AGENDA_REF, server.AGENDA_SIZE]);

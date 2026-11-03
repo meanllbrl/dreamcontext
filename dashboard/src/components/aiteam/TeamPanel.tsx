@@ -149,13 +149,15 @@ const HISTORY_WORD: Record<string, string> = {
  * through the same update the old automation dialog used (which re-approves it here).
  * Closed, it is one line: its name and when it runs.
  */
-function RoutineCard({
-  routine, agentTitle, startOpen, onToast,
+export function RoutineCard({
+  routine, agentTitle, startOpen, onToast, onDelete,
 }: {
   routine: TeamAutomation;
   agentTitle: string;
   startOpen: boolean;
   onToast: (msg: string) => void;
+  /** A member's stage deletes a routine here (plan r4 R3.1); the caller asks in-app first. */
+  onDelete?: () => void;
 }) {
   const { t } = useI18n();
   const { bus } = useVault();
@@ -249,6 +251,11 @@ function RoutineCard({
               <TeamIcon name="play" size={12} /> {t('aiteam.routine.runNow')}
             </button>
             <button type="button" className="agent-btn" onClick={train}>{t('aiteam.routine.train')}</button>
+            {onDelete && (
+              <button type="button" className="agent-btn agent-btn--danger" data-testid="member-routine-delete" onClick={onDelete}>
+                {t('superStage.member.cards.routineDelete')}
+              </button>
+            )}
           </div>
           {!manifest ? (
             <p className="agent-note" role={detail.isError ? 'alert' : undefined}>

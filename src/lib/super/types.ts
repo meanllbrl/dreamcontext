@@ -17,8 +17,24 @@ export type SuperChildTool = 'codex' | 'antigravity';
 
 /** What a container can show. `chat` is a child chat's card; `agenda` the super's own agenda
  *  (Waiting on you / Now / Done / Up next, one per stage); the rest are read-only views. */
-export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'pdf', 'video', 'browser', 'team', 'agenda'] as const;
+export const CONTAINER_KINDS = ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'pdf', 'video', 'browser', 'team', 'agenda', 'member'] as const;
 export type ContainerKind = typeof CONTAINER_KINDS[number];
+
+/**
+ * A MEMBER stage's own cards (plan r4 K1): its routines, its instructions (soul + job) and its
+ * settings (on/off, delete). One kind with the sub-type in `ref`, on a member's record only. They
+ * are the owner's: no agent verb opens, moves, resizes or closes one, no sweep closes or retires
+ * one, and a missing one comes back at its default place (`ensureMemberCards`).
+ */
+export const MEMBER_CARD_REFS = ['routines', 'instructions', 'settings'] as const;
+export type MemberCardRef = typeof MEMBER_CARD_REFS[number];
+/** First-open defaults (K5, G2): Rutinler large, Talimatlar small, Üye small in Others. */
+export const MEMBER_CARD_DEFAULTS: Readonly<Record<MemberCardRef, { size: ContainerSize; place: ContainerPlace }>> = {
+  routines: { size: 'large', place: 'float' },
+  instructions: { size: 'small', place: 'float' },
+  settings: { size: 'small', place: 'others' },
+};
+export const isMemberCardRef = (r: unknown): r is MemberCardRef => typeof r === 'string' && (MEMBER_CARD_REFS as readonly string[]).includes(r);
 
 /** The agenda card's one ref: there is one agenda per stage (owner 2026-10-22: "a card, not a
  *  column"). The hand-over opens it; the owner reopens it from the centre's head. */

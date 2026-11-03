@@ -14,6 +14,7 @@ import {
   coldMembers, memberOf, memberOpenRefusal, memberSuperId, memberSuperSpawn, openMemberSuper, readMemberSummaries, superIdOfIntent, unionSuperView,
 } from '../../dashboard/src/components/sleepy/super/memberStageModel';
 import { REQUEST_FROM, requestTurnOf, superEventText, superLiveRequestOf, superRequestOf } from '../../dashboard/src/components/sleepy/super/superHandover';
+import { applyLayoutPatch } from '../../dashboard/src/components/sleepy/super/superLayout';
 import { COLD_RETRY_MS, PHONE_MIRROR_WAIT_MS, coldRetryAt, coldWaiting, memberMirrorVerdict, memberPlaceholderState, memberRoutineQuestions, phoneMemberOpen } from '../../dashboard/src/components/sleepy/super/memberStageModel';
 
 const src = (p: string) => readFileSync(join(__dirname, '..', '..', p), 'utf-8');
@@ -234,12 +235,61 @@ describe('observed run fixes (super-members.mjs)', () => {
   it('a refused member still has a stage: drawn from a placeholder view, never a plain chat tab', () => {
     const v = memberPlaceholderState('acme');
     expect(v).not.toBeNull();
-    expect(v).toMatchObject({ vault: 'acme', session: null, enabled: true, containers: [], queue: [], children: {} });
+    expect(v).toMatchObject({ vault: 'acme', session: null, enabled: true, queue: [], children: {} });
+    // Its own three cards stand on it (plan r4 G3): an off member is turned on from its stage.
+    expect(v!.containers.map((c) => [c.kind, c.ref, c.place])).toEqual([['member', 'routines', 'float'], ['member', 'instructions', 'float'], ['member', 'settings', 'others']]);
     expect(surface).toMatch(/const stageView = superState \?\? memberPlaceholder;/);
     expect(surface).toMatch(/const handedOver = superView === 'super' && !!stageView && !isMobile;/);
     expect(surface).toMatch(/\{handedOver && stageView && \(\s*<SuperSurface/);
     // The placeholder is a view only: never written to the record store.
     expect(surface).not.toMatch(/setSuperRecordFor\([^)]*memberPlaceholder/);
+  });
+
+  it('an off member with a record draws its own saved card layout, never the defaults (G-AC1)', () => {
+    const saved = memberPlaceholderState('acme', {
+      ...memberPlaceholderState('acme')!,
+      containers: [
+        { id: 'member-routines', kind: 'member', ref: 'routines', shape: 'tall', size: 'wide', place: 'others' },
+        { id: 'member-settings', kind: 'member', ref: 'settings', shape: 'square', place: 'float', pos: { x: 0.4, y: 0.2 } },
+        { id: 'w1', kind: 'web', ref: 'https://example.com', shape: 'square', place: 'float' },
+      ] as never,
+    });
+    expect(saved!.containers.map((c) => [c.ref, c.place])).toEqual([['routines', 'others'], ['settings', 'float']]);
+    expect(saved!.containers[0]).toMatchObject({ shape: 'tall', size: 'wide' });
+    // No record (never born): the defaults.
+    expect(memberPlaceholderState('acme', null)!.containers).toHaveLength(3);
+    // The surface reads the record on an off or unapproved refusal, and only draws it.
+    expect(surface).toMatch(/if \(refusal === 'off' \|\| refusal === 'unapproved'\) \{\s*const saved = await fetchSuperState\(scopedApi, sid\);/);
+    expect(surface).toMatch(/memberPlaceholderState\(vault \?\? '', memberSaved\?\.slug === slug \? memberSaved\.state : null\)/);
+  });
+
+  it('a refused member\'s stage takes the owner\'s gestures locally: its Üye card opens from Others, nothing is posted', () => {
+    // Opening Üye from Others on the placeholder: the patch applies to the view.
+    const base = memberPlaceholderState('acme')!;
+    const settings = base.containers.find((c) => c.ref === 'settings')!;
+    const opened = applyLayoutPatch(base, { cards: [{ id: settings.id, place: 'float' }], view: { mode: 'half', card: settings.id } });
+    expect(opened.containers.find((c) => c.ref === 'settings')!.place).toBe('float');
+    expect(opened.view).toMatchObject({ mode: 'half', card: settings.id });
+    // The surface keeps such a gesture off the server while the stage has no record.
+    expect(surface).toMatch(/const placeholderOf = memberOf\(sid\);\s*if \(placeholderOf && !superStateRef\.current\) \{[\s\S]{0,200}?return;\s*\}\s*const api = forSuper\(scopedApi, sid\);/);
+    // Kept across a retry of the same member's open; dropped when the stage shows another super.
+    expect(surface).toMatch(/pendingPatchesRef\.current = \[\];\s*\/\/[^\n]*\n\s*setPlaceholderPatches\(\{ slug: '', patches: \[\] \}\);\s*activeSuperIdRef\.current = id;/);
+    expect(surface.slice(surface.indexOf('const openMemberStage = async'), surface.indexOf('const openMemberStageRef'))).not.toContain('setPlaceholderPatches');
+    expect(surface).toMatch(/placeholderPatches\.patches\.reduce<SuperStateView>\(\(st, patch\) => applyLayoutPatch\(st, patch\), base\)/);
+  });
+
+  it('a member made or deleted re-reads the Team summary at once (no deleted row for up to 15 s)', () => {
+    const bridge = src('dashboard/src/components/layout/newshell/DrawerFactsBridge.tsx');
+    expect(bridge).toMatch(/const agentSet = useMemo\(\(\) => \(agentsQ\.data \?\? \[\]\)\.map\(\(a\) => a\.slug\)\.sort\(\)\.join\('\\n'\), \[agentsQ\.data\]\);/);
+    expect(bridge).toMatch(/\}, \[api, drawerVisible, agentSet\]\);/);
+  });
+
+  it('deleting a routine never re-reads its own detail (no 404 for the gone one, even with its row open)', () => {
+    const hooks = src('dashboard/src/hooks/useAutomations.ts');
+    const del = hooks.slice(hooks.indexOf('export function useDeleteAgent()'), hooks.indexOf('export function useDeleteAgent()') + 900);
+    expect(del).toMatch(/invalidateQueries\(\{ queryKey: \['automations'\], predicate: \(q\) => q\.queryKey\[1\] !== slug \}\)/);
+    // Removing it from the cache made the open row's observer fetch it again on the next render.
+    expect(del).not.toMatch(/removeQueries/);
   });
 
   it('the global member\'s chip reads the summary too, and the band shows TeamApproval whole', () => {
@@ -479,12 +529,15 @@ describe("the request on the member's own stage, live (super-team.mjs T3)", () =
     // The block is drawn before the event line is: the request is never folded behind "Show".
     expect(pane.indexOf('const request = requestTurnOf(')).toBeLessThan(pane.indexOf('const line = <SuperEventLine'));
   });
-  it("main's card shows the request and the member's answer from the member's record at once (T4)", () => {
+  it("main's card pins nothing above the conversation; the record's request shows only until the transcript holds it (plan r4 E1)", () => {
     const card = src('dashboard/src/components/sleepy/super/TeamJobConversation.tsx');
     expect(card).toMatch(/const item = requestId \? rec\?\.queue\.find\(\(x\) => x\.id === requestId && x\.kind === 'request'\) : undefined;/);
-    expect(card).toContain('data-testid="team-job-request"');
-    expect(card).toContain('data-testid="team-job-result"');
-    expect(card).toMatch(/<SuperRequestBlock turn=\{\{ kind: 'request', itemId: card\.job\.request \?\? '', text: memberRec\.request\.text \}\}/);
+    expect(card).not.toContain('data-testid="team-job-request"');
+    expect(card).not.toContain('data-testid="team-job-result"');
+    // The fallback sits AFTER the transcript, and goes once a stored turn names the same item.
+    expect(card.indexOf('<ChildTranscript key={memberSession}')).toBeLessThan(card.indexOf('<RequestFallback'));
+    expect(card).toMatch(/superRequestOf\(e\.text\)\?\.itemId === itemId/);
+    expect(card).toMatch(/return inFlow \? null : <RequestWaiting/);
   });
 });
 

@@ -397,9 +397,9 @@ function childrenOf(
     // Always there, even before anything is read: it is how a project with no chat starts one.
     { kind: 'super', on: !!(mine?.superOn ?? far?.superOn), selected: superSelected, working: marks?.working ?? 0, asking: !!marks?.asking },
   ];
-  // ONE Ekip row (plan-r10 1d): selected while a member's stage is on screen.
+  // ONE Ekip row (plan-r10 1d): selected while a member's stage is on screen. It goes LAST (plan
+  // r4 R5): it is the one block that grows (the list opens in place), so it pushes nothing down.
   const team = teamChildOf(p.name, ekipOf(mine ?? far), onChat && !!mine?.member);
-  if (team) children.push(team);
   const r = p.mounted ? (mine?.shown ?? p.rollup) : null;
   const windowsOn = onChat && !superSelected && !mine?.member;
   const before = children.length;
@@ -431,6 +431,7 @@ function childrenOf(
   // A project with members keeps its New chat row (r8-07): its chevron is where a member's one
   // conversation starts.
   if ((children.length === before || team) && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
+  if (team) children.push(team);
   return { source, children };
 }
 
@@ -476,7 +477,6 @@ function deviceProjectRow(p: DrawerProjectInput, o: { activeVault: string | null
   // project's read, else the slug.
   const live = o.device.members?.find((x) => x.vault === p.name)?.members;
   const team = teamChildOf(p.name, ekipOf({ members: live, identities: mine?.identities }), onChat && !!mine?.member);
-  if (team) children.splice(children[0]?.kind === 'chat' && children[0].row.kind === 'super' ? 1 : 0, 0, team);
   if (!isOpen) {
     const chats = children.filter((c): c is Extract<DrawerChild, { kind: 'chat' }> => c.kind === 'chat');
     const asking = chats.filter((c) => c.state === 'asking').length;
@@ -486,6 +486,8 @@ function deviceProjectRow(p: DrawerProjectInput, o: { activeVault: string | null
     return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(team ? { team } : {}) };
   }
   if (!children.some((c) => c.kind === 'chat' && c.row.kind !== 'super')) children.push({ kind: 'new-chat' });
+  // Team last, after the chats and New chat, as on the desktop (plan r4 R5).
+  if (team) children.push(team);
   return { ...base, source: p.mounted ? 'mounted' : 'none', children };
 }
 

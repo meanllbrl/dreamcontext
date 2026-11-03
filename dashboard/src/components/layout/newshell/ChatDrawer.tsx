@@ -7,6 +7,7 @@ import { ProjectChipBubbles } from '../ProjectTabs';
 import { AgentAvatar } from '../../agents/AgentAvatar';
 import type { EkipMember } from '../../aiteam/teamModel';
 import { TeamList, TeamRowButton, type TeamListMember } from './TeamList';
+import { TeamSection } from './TeamSection';
 import { DRAWER_WIDTH_MAX, DRAWER_WIDTH_MIN } from '../../../lib/launcherPrefs';
 import type { DrawerIntent } from '../../../lib/drawerIntents';
 import { armPointerDrag } from '../../sleepy/tabDrag';
@@ -250,13 +251,19 @@ export function ChatDrawer(p: ChatDrawerProps) {
     if (p.floating) p.onClose();
   };
 
-  /** A project's Ekip row (r8-05): faces, one count; a click opens its list. */
-  const teamRow = (c: Extract<DrawerChild, { kind: 'team' }>) => (
+  /** A project's Ekip row (r8-05): faces, one count. On the desktop it opens IN PLACE (plan r4
+   *  D1); a phone keeps its bottom sheet. */
+  const teamRow = (c: Extract<DrawerChild, { kind: 'team' }>) => (!phone ? (
+    <TeamSection key="team" members={c.members} kind="project" vault={c.vault} label={t('drawer.team.row')}
+      selected={c.selected} className="ns-dr-child" testid="drawer-team-row"
+      onOpen={(m) => openMember(c.vault, m)}
+      {...(p.onManage ? { onManage: () => p.onManage?.(c.vault) } : {})} />
+  ) : (
     <TeamRowButton key="team" members={c.members} count={c.count} asking={c.asking} label={t('drawer.team.row')}
       selected={c.selected} className="ns-dr-child" testid={p.device ? 'phone-team-row' : 'drawer-team-row'} vault={c.vault}
       expanded={teamOpen?.kind === 'project' && teamOpen.vault === c.vault}
       onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setTeamOpen({ kind: 'project', vault: c.vault, x: r.right + 8, y: r.top }); }} />
-  );
+  ));
 
   /** A project's members for the New chat menu: its own, then the members of all projects. */
   const newChatMembers = (row: DrawerProjectRow): EkipMember[] => {
@@ -460,10 +467,16 @@ export function ChatDrawer(p: ChatDrawerProps) {
         // r8-12: outside every project, at the very bottom.
         <div className="ns-team-global">
           <div className="ns-team-global-head">{t('drawer.team.independent')}</div>
+          {!phone ? (
+            <TeamSection members={p.globalTeam.members} kind="global" label={t('drawer.team.global')} testid="drawer-global-team-row"
+              onOpen={(m) => { const g = p.globalTeam?.members.find((x) => x.slug === m.slug); if (g?.openIn) openMember(g.openIn, m); }}
+              {...(p.onManage ? { onManage: () => p.onManage?.(null) } : {})} />
+          ) : (
           <TeamRowButton members={p.globalTeam.members} count={p.globalTeam.count} asking={p.globalTeam.asking}
             label={t('drawer.team.global')} testid={p.device ? 'phone-global-team-row' : 'drawer-global-team-row'}
             expanded={teamOpen?.kind === 'global'}
             onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setTeamOpen({ kind: 'global', x: r.right + 8, y: r.bottom }); }} />
+          )}
         </div>
       )}
       {p.foot && <div className="ns-dr-foot" data-testid="drawer-foot">{p.foot}</div>}

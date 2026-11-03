@@ -170,6 +170,23 @@ export function useSuperUnread({ enabled, vault, superId = 'main', api, items, f
   }, [enabled, vault, count, paneToken, superId, asking]);
   useEffect(() => (enabled && vault ? () => dropSuperUnread(vault, paneToken, superId) : undefined), [enabled, vault, paneToken, superId]);
 
+  // A MEMBER's stage read to the end tells the server (plan r4 D7): its replies stop counting on
+  // the Team row. Only once its marks are LOADED (before that the count is a false 0), only while
+  // the window is seen, and again whenever the chat grows (every turn end is a new item), so a
+  // reply that lands while he reads is cleared too. Never for main (the server refuses it).
+  const seenSent = useRef<string>('');
+  const lastItem = items.length ? `${items.length}:${items[items.length - 1].id}` : '0';
+  useEffect(() => {
+    if (superId === 'main' || !enabled || !marks || count !== 0) return undefined;
+    const send = () => {
+      if (!getWindowActivity().visible || seenSent.current === lastItem) return;
+      seenSent.current = lastItem;
+      void apiRef.current.post<unknown>('/agent/super-read', { seen: true }).catch(() => { seenSent.current = ''; });
+    };
+    send();
+    return onWindowActivity(() => send());
+  }, [superId, enabled, marks, count, lastItem]);
+
   const markRead = useCallback((seen: readonly UnreadUnit[]) => {
     if (!seen.length) return;
     const read = seen.map(({ key, ts }) => ({ key, ts }));

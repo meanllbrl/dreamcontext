@@ -99,13 +99,14 @@ import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { dropSurveyDraftsFor } from './chat/surveyDrafts';
 import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
-import { readSuperStateView, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
+import { readSuperStateView, type MemberCardRef, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
 import { MAIN_SUPER, dropSuperRecords, readSuperRecord, subscribeSuperRecords, superIdOf, useVaultSuperRecords, writeSuperRecord, type SuperRecordUpdate } from './super/superRecordStore';
 import { coldMembers, coldWaiting, memberMirrorVerdict, type ColdTry, phoneMemberOpen, memberOf, memberOpenRefusal, memberPlaceholderState, memberSuperId, memberSuperSpawn, openMemberSuper, superIdOfIntent, unionSuperView, type MemberRefusal } from './super/memberStageModel';
 import { useMemberSummaries } from './super/useMemberSummaries';
 import { MemberApprovalBand, MemberRefusalLine } from './super/MemberStage';
 import { PhoneMemberStage } from './super/PhoneMemberStage';
 import { MemberRoutineQuestions } from './super/MemberRoutineQuestions';
+import { MemberCardBody } from './super/MemberCardBody';
 import { AgentAvatar } from '../agents/AgentAvatar';
 import { cardTitle } from './super/superTitles';
 import type { SurveyRead } from './chat/SurveyCard';
@@ -156,7 +157,7 @@ import {
   actionGeneration, adoptionBody, cardReference, headAlarmOnce, childMarks, DELEGATE_MARK_GRACE_MS, delegateArgs, delegateExpired, delegateMarkUntil, endedChildIds, hasOwnKey,
   homedSessions, isSuperSession, markedChildren, withAboutTask, needsOwner, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, ownerAnswerPicks, superAnswerPicks, superWindowRefusal, terminalTabs,
   SUPER_CHILD_VERBS, windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
-  linkOpensSuperStage, presenceChatId, leanMcpFor, agendaAboutBlock, agendaRefName, type AgendaRow,
+  linkOpensSuperStage, superStageOfLink, presenceChatId, leanMcpFor, agendaAboutBlock, agendaRefName, type AgendaRow,
   freshPending, superDockLift, superDockOn, superDockPill, superSlotFor,
   cardSelectionBlock, selectionQuote,
 } from './super/superHandover';
@@ -881,12 +882,18 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const memberMirrorsRef = useRef<Map<string, string>>(new Map());
   /** Why the member on the stage could not be opened (its approval card, off, gone), or null. */
   const [memberRefusal, setMemberRefusal] = useState<{ slug: string; refusal: MemberRefusal } | null>(null);
+  // A refused member's own record as it stands (an off member keeps one): its cards' layout only.
+  const [memberSaved, setMemberSaved] = useState<{ slug: string; state: SuperStateView | null } | null>(null);
+  // The owner's gestures on a refused member's placeholder stage (view only, never posted).
+  const [placeholderPatches, setPlaceholderPatches] = useState<{ slug: string; patches: LayoutPatch[] }>({ slug: '', patches: [] });
   /** Show another super's stage: the view state stays one copy, re-bound to it (its pending edits
    *  were the old super's and go). The record view moves in the same batch, so no frame draws the
    *  new super's head over the old one's record. Every chat stays as it is. */
   const setActiveSuperId = useCallback((id: SuperId) => {
     if (activeSuperIdRef.current === id) return;
     pendingPatchesRef.current = [];
+    // A refused member's local gestures belong to that stage only (a retry of its open keeps them).
+    setPlaceholderPatches({ slug: '', patches: [] });
     activeSuperIdRef.current = id;
     setActiveSuperIdState(id);
     // The ref too, at once: the same handler reads it next (the Super row's plan, the chat row's
@@ -3143,6 +3150,21 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // before the roster lands would open the conversation a second time beside the tab the
   // roster is about to restore, so a request that has no live tab yet waits (bounded) for all
   // three. The ACK is set on receipt so the sender stops asking.
+  // A link to ANY super of the vault opens that super's stage (plan r4 D6b): main's as before, a
+  // member's through its stage open (it becomes the active super), never as a plain tab.
+  const openLinkedStage = (claudeId: string): boolean => {
+    if (linkOpensSuperStage(claudeId, superStateRef.current) && activeSuperIdRef.current === MAIN_SUPER) {
+      setSuperView('super');
+      setExpanded(true);
+      return true;
+    }
+    const sid = superStageOfLink(claudeId, vaultSupersRef.current);
+    if (!sid) return false;
+    const slug = memberOf(sid as SuperId);
+    if (!slug) { setActiveSuperId(MAIN_SUPER); setSuperView('super'); setExpanded(true); return true; }
+    void openMemberStageRef.current(slug);
+    return true;
+  };
   const [linkedSession, setLinkedSession] = useState<{ claudeId: string; since: number; pick?: boolean } | null>(null);
   const [, bumpLinkWait] = useReducer((x: number) => x + 1, 0);
   useInstanceEvent<OpenSessionDetail>(OPEN_SESSION_EVENT, (detail) => {
@@ -3150,9 +3172,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     // The handed-over Super Agent on the Mac (its reply's banner, its queue's alarm, a notch
     // row): open its stage. It is never a tab there, so a resume would fork it. The phone has
     // no stage and keeps opening the chat.
-    if (!isMobile && !isMacPhoneSurface() && linkOpensSuperStage(detail.claudeId, superStateRef.current)) {
-      setSuperView('super');
-      setExpanded(true);
+    if (!isMobile && !isMacPhoneSurface() && openLinkedStage(detail.claudeId)) {
       detail.accepted = true;
       return;
     }
@@ -3171,11 +3191,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       return () => window.clearTimeout(timer);
     }
     setLinkedSession(null);
-    if (!isMobile && !isMacPhoneSurface() && linkOpensSuperStage(claudeId, superStateRef.current)) {
-      setSuperView('super');
-      setExpanded(true);
-      return undefined;
-    }
+    if (!isMobile && !isMacPhoneSurface() && openLinkedStage(claudeId)) return undefined;
     if (!existing && !canSpawn) {
       console.warn('[app-link] cannot open chat', claudeId, 'here: the agent surface is unavailable');
       return undefined;
@@ -3836,7 +3852,16 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const marked = childMarks(allSupersView, superDelegated, Date.now()).marked;
   // A member's stage with no record here yet (its birth refused: its approval card, off; or still on
   // its way) still draws, from the member's manifest and summary (plan-r10 1e, 1f): a view only.
-  const memberPlaceholder = useMemo(() => (memberOf(activeSuperId) ? memberPlaceholderState(vault ?? '') : null), [activeSuperId, vault]);
+  // An off member's record still holds the owner's card layout: drawn from it (G-AC1). The owner's
+  // gestures on it (open Üye side by side, send to Others) apply here only, never saved: the record
+  // is written once the member runs again.
+  const memberPlaceholder = useMemo(() => {
+    const slug = memberOf(activeSuperId);
+    if (!slug) return null;
+    const base = memberPlaceholderState(vault ?? '', memberSaved?.slug === slug ? memberSaved.state : null);
+    if (!base || placeholderPatches.slug !== slug) return base;
+    return placeholderPatches.patches.reduce<SuperStateView>((st, patch) => applyLayoutPatch(st, patch), base);
+  }, [activeSuperId, vault, memberSaved, placeholderPatches]);
   const stageView = superState ?? memberPlaceholder;
   const handedOver = superView === 'super' && !!stageView && !isMobile;
   // The Super dock's ONE gate (plan R1) and whether its window is open now. Never written from
@@ -4399,6 +4424,12 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const editSuperLayout = useCallback((patch: LayoutPatch) => {
     // The super the gesture was made on: its answer is written there, even after a switch.
     const sid = activeSuperIdRef.current;
+    // A refused member's stage has no record to write: its placeholder takes the gesture (G-AC1).
+    const placeholderOf = memberOf(sid);
+    if (placeholderOf && !superStateRef.current) {
+      setPlaceholderPatches((prev) => ({ slug: placeholderOf, patches: prev.slug === placeholderOf ? [...prev.patches, patch] : [patch] }));
+      return;
+    }
     const api = forSuper(scopedApi, sid);
     const setSuperState = (next: SuperRecordUpdate) => setSuperRecordFor(sid, next);
     pendingPatchesRef.current = [...pendingPatchesRef.current, patch];
@@ -5841,7 +5872,16 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       if (r.ok && canSpawn) { if (r.born) memberFreshRef.current.add(r.session); ensureSuperSession(r.session, sid); }
       return;
     }
-    if (!r.ok) { setMemberRefusal({ slug, refusal: memberOpenRefusal(r) ?? 'unreachable' }); return; }
+    if (!r.ok) {
+      const refusal = memberOpenRefusal(r) ?? 'unreachable';
+      setMemberRefusal({ slug, refusal });
+      // Off or waiting for its card: its record (if any) keeps the owner's card layout. Read, never written.
+      if (refusal === 'off' || refusal === 'unapproved') {
+        const saved = await fetchSuperState(scopedApi, sid);
+        if (seq === openMemberSeq.current && activeSuperIdRef.current === sid) setMemberSaved({ slug, state: saved });
+      }
+      return;
+    }
     if (r.born) memberFreshRef.current.add(r.session);
     ensureSuperSession(r.session, sid);
   };
@@ -6734,6 +6774,14 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     spawn: memberSpawnRef.current(stageMember),
     // Its routines' open questions, answered on its stage (the card is chat UI: mounted from here).
     routineQuestions: <MemberRoutineQuestions slug={stageMember} />,
+    // Its own stage cards' bodies (plan r4 K2): chat UI too, so handed in from here.
+    card: (ref: MemberCardRef, variant: 'tile' | 'full') => (
+      <MemberCardBody slug={stageMember} cardRef={ref} variant={variant}
+        enabled={stageSummary?.enabled !== false}
+        working={(stageSummary?.ownerWorking ?? 0) > 0 || !!stageSummary?.superOnly || (stageSummary?.pending ?? 0) > 0}
+        phone={isMacPhoneSurface()}
+        onDeleted={() => { setActiveSuperId(MAIN_SUPER); setSuperView('super'); }} />
+    ),
   } : undefined;
   let body: React.ReactNode;
   if (capsError) {
@@ -6829,6 +6877,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             session={phoneMember?.slug === stageMember ? phoneMember.session : null}
             refusal={memberRefusal?.slug === stageMember ? memberRefusal.refusal : null}
             onRetry={() => void openMemberStageRef.current(stageMember, memberTaskRef.current ?? undefined)}
+            card={stageMemberInfo?.card}
           />
         )}
         {superView === 'super' && stageMember && !superState && isMobile && !phoneMemberShown && phoneMirror?.slug !== stageMember && (

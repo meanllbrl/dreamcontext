@@ -208,7 +208,7 @@ export function planTidy(s: SuperState, touched: (id: string) => number | undefi
    *  moved on LOOK_GRACE_MS ago (a look of his since unlinked it); 'idle': untouched. */
   const verdict = (id: string): 'seen' | 'idle' | undefined => {
     const c = s.containers.find((k) => k.id === id);
-    if (!c || shown.has(id) || c.by === 'auto' || c.sizeBy === 'owner' || c.kind === 'agenda') return undefined;
+    if (!c || shown.has(id) || c.by === 'auto' || c.sizeBy === 'owner' || c.kind === 'agenda' || c.kind === 'member') return undefined;
     const on = isMediaKind(c.kind) ? jobMovedOn(c, s.children) : undefined;
     if (on !== undefined) {
       if (now - on < graceMs()) return undefined;
@@ -263,7 +263,7 @@ export function applyTidy(s: SuperState, ids: readonly string[]): void {
  * clock's: it ends first and its card goes with it. Closing removes only the record's row.
  */
 function othersKeeps(s: SuperState, c: SuperContainer, busy: BusyTest): boolean {
-  if (c.kind === 'agenda' || c.by === 'auto' || c.pos || c.sizeBy === 'owner' || c.keptBy === 'owner' || c.heldAt !== undefined) return true;
+  if (c.kind === 'agenda' || c.kind === 'member' || c.by === 'auto' || c.pos || c.sizeBy === 'owner' || c.keptBy === 'owner' || c.heldAt !== undefined) return true;
   if (s.askShows?.some((a) => a.cards.includes(c.id))) return true;
   if (c.forChild && (childIsLive(s, c.forChild, busy) || s.queue.some((q) => q.sessionId === c.forChild && q.state !== 'done'))) return true;
   if (c.kind === 'chat') {
@@ -347,10 +347,10 @@ export function endPresent(s: SuperState): string[] {
   const ids = new Set<string>();
   for (const id of shown) {
     const c = s.containers.find((k) => k.id === id);
-    if (!c || c.kind === 'agenda' || c.by === 'auto') continue;
+    if (!c || c.kind === 'agenda' || c.kind === 'member' || c.by === 'auto') continue;
     const g = groupOf.get(id);
     if (!g) ids.add(id);
-    else if (g.cards.every((k) => set.has(k) && s.containers.find((x) => x.id === k)?.kind !== 'agenda')) ids.add(g.id);
+    else if (g.cards.every((k) => set.has(k) && !['agenda', 'member'].includes(s.containers.find((x) => x.id === k)?.kind ?? ''))) ids.add(g.id);
   }
   applyTidy(s, [...ids]);
   return [...ids];

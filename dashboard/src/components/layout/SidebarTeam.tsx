@@ -1,21 +1,21 @@
-import { useContext, useEffect, useMemo, useState, type MouseEvent } from 'react';
+import { useContext, useEffect, useMemo, useState } from 'react';
 import { QueryClientContext } from '@tanstack/react-query';
-import { useApi } from '../../context/VaultContext';
+import { useApi, useVaultId } from '../../context/VaultContext';
 import { useI18n } from '../../context/I18nContext';
 import { useAgents } from '../../hooks/useAgents';
 import { identitiesOf, membersOf } from '../../hooks/useDrawerProjects';
-import { pollMs } from '../../lib/windowActivity';
+import { onWindowActivity, pollMs } from '../../lib/windowActivity';
 import { requestManageMembers, requestOpenAgents } from '../../lib/openAgents';
-import { buildEkip, ekipAsking, ekipCount, projectEkip, setMemberEnabled, type EkipSummary } from '../aiteam/teamModel';
+import { buildEkip, projectEkip, type EkipSummary } from '../aiteam/teamModel';
 import { buildGlobalTeam, DRAWER_POLL_MS } from './newshell/drawerModel';
-import { TeamList, TeamRowButton } from './newshell/TeamList';
+import { TeamSection } from './newshell/TeamSection';
 
 /**
  * The classic rail's Ekip row (under Chat) and its Global ekip row (in the footer): the same
  * row and list as the new shell's drawer (plan-r10 1d, 1f), for the ONE project this rail
- * belongs to. Members come from `GET /agent/sessions?summary=1` `members`; a member click opens
- * its stage (`requestOpenAgents({ slug })`, the active instance routes it), the switch is
- * `POST /api/agents/:slug/enabled`, "Üyeleri yönet" opens the modal.
+ * belongs to. Members come from `GET /agent/sessions?summary=1` `members`; the row opens in
+ * place (plan r4 D5, `TeamSection`); a member click opens its stage (`requestOpenAgents({ slug })`,
+ * the active instance routes it), "Üyeleri yönet" opens the modal. The switch is on the stage.
  */
 export function SidebarTeam({ kind }: { kind: 'project' | 'global' }) {
   // Outside a query client (a bare render of the rail) there is nothing to read: no row, and the
@@ -27,9 +27,9 @@ export function SidebarTeam({ kind }: { kind: 'project' | 'global' }) {
 function SidebarTeamRows({ kind }: { kind: 'project' | 'global' }) {
   const { t } = useI18n();
   const api = useApi();
+  const { vault: vaultId } = useVaultId();
   const agentsQ = useAgents();
   const [summaries, setSummaries] = useState<EkipSummary[] | undefined>(undefined);
-  const [open, setOpen] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     let gone = false;
@@ -41,32 +41,25 @@ function SidebarTeamRows({ kind }: { kind: 'project' | 'global' }) {
       ).finally(() => { if (!gone) timer = setTimeout(read, pollMs(DRAWER_POLL_MS)); });
     };
     read();
-    return () => { gone = true; if (timer) clearTimeout(timer); };
+    // Back in front: read at once (plan r4 D8).
+    const offFocus = onWindowActivity((next, prev) => {
+      if (gone || !next.focused || prev.focused) return;
+      if (timer) clearTimeout(timer);
+      read();
+    });
+    return () => { gone = true; offFocus(); if (timer) clearTimeout(timer); };
   }, [api]);
 
   const all = useMemo(() => buildEkip(summaries, identitiesOf(agentsQ.data ?? [])), [summaries, agentsQ.data]);
   const own = useMemo(() => projectEkip(all), [all]);
   const global = useMemo(() => buildGlobalTeam([{ vault: '', members: all }], ''), [all]);
 
-  const toggle = (slug: string, enabled: boolean) => setMemberEnabled(api, slug, enabled);
-  const anchor = (e: MouseEvent<HTMLButtonElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    setOpen(open ? null : { x: r.right + 8, y: kind === 'global' ? r.bottom : r.top });
-  };
-
   if (kind === 'project') {
     if (!own.length) return null;
     return (
       <li className="sidebar-team">
-        <TeamRowButton members={own} count={ekipCount(own)} asking={ekipAsking(own)} label={t('drawer.team.row')}
-          className="sidebar-item" testid="drawer-team-row" expanded={!!open} onClick={anchor} />
-        {open && (
-          <TeamList title={t('drawer.team.row')} members={own} sheet={false} testid="team-list" anchor={open}
-            onOpen={(m) => { setOpen(null); requestOpenAgents({ slug: m.slug }); }}
-            onSwitch={(m, enabled) => toggle(m.slug, enabled)}
-            onManage={() => requestManageMembers()}
-            onClose={() => setOpen(null)} />
-        )}
+        <TeamSection members={own} kind="project" vault={vaultId} label={t('drawer.team.row')} className="sidebar-item" testid="drawer-team-row"
+          onOpen={(m) => requestOpenAgents({ slug: m.slug })} onManage={() => requestManageMembers()} />
       </li>
     );
   }
@@ -74,16 +67,8 @@ function SidebarTeamRows({ kind }: { kind: 'project' | 'global' }) {
   return (
     <div className="ns-team-global">
       <div className="ns-team-global-head">{t('drawer.team.independent')}</div>
-      <TeamRowButton members={global.members} count={global.count} asking={global.asking} label={t('drawer.team.global')}
-        className="sidebar-item" testid="drawer-global-team-row" expanded={!!open} onClick={anchor} />
-      {open && (
-        <TeamList title={`${t('drawer.team.global')} · ${t('drawer.team.globalAll')}`} members={global.members.map((m) => ({ ...m, project: null }))}
-          sheet={false} testid="global-team-list" anchor={open}
-          onOpen={(m) => { setOpen(null); requestOpenAgents({ slug: m.slug }); }}
-          onSwitch={(m, enabled) => toggle(m.slug, enabled)}
-          onManage={() => requestManageMembers()}
-          onClose={() => setOpen(null)} />
-      )}
+      <TeamSection members={global.members} kind="global" label={t('drawer.team.global')} className="sidebar-item" testid="drawer-global-team-row"
+        onOpen={(m) => requestOpenAgents({ slug: m.slug })} onManage={() => requestManageMembers()} />
     </div>
   );
 }

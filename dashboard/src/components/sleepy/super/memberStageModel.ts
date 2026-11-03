@@ -260,13 +260,23 @@ export function stripRound(job: Pick<AgentJob, 'round' | 'cap' | 'step'> | null 
 /**
  * The stage of a member that has no record here (plan-r10 1e, 1f): its birth was refused (its
  * approval card, off) or is still on its way. The stage still draws, from the member's manifest and
- * summary: its head, its approval band, its project chip, the refusal line. Nothing on it is the
- * server's: no chat, no card, no queue. View only, never written to the record store.
+ * summary: its head, its approval band, its project chip, the refusal line, its own three cards.
+ * Nothing else on it is the server's: no chat, no other card, no queue. View only, never written to the record store.
  */
-export function memberPlaceholderState(vault: string): SuperStateView | null {
+export function memberPlaceholderState(vault: string, saved?: SuperStateView | null): SuperStateView | null {
+  // Its own three cards (plan r4 G3): an off or unapproved member can still be turned on, or
+  // deleted, from its stage. A member turned off keeps its record: its cards stand where the owner
+  // left them (K-AC3, G-AC1); a never-born one gets the defaults. Drawn only; a layout change to them
+  // waits for the record.
+  const kept = (saved?.containers ?? []).filter((c) => c.kind === 'member');
+  const cards = kept.length > 0 ? kept : [
+    { id: 'member-routines', kind: 'member', ref: 'routines', shape: 'square', size: 'large', place: 'float' },
+    { id: 'member-instructions', kind: 'member', ref: 'instructions', shape: 'square', place: 'float' },
+    { id: 'member-settings', kind: 'member', ref: 'settings', shape: 'square', place: 'others' },
+  ];
   return readSuperStateView({
     v: SUPER_STATE_VERSION, vault, session: null, enabled: true,
-    containers: [], groups: [], queue: [], children: {}, notes: {}, away: { since: null, events: 0 },
+    containers: cards, groups: [], queue: [], children: {}, notes: {}, away: { since: null, events: 0 },
     dismissed: [], pool: [], ownerBatches: [], team: [],
   });
 }

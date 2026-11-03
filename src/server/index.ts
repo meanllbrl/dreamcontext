@@ -556,7 +556,8 @@ export function buildRouter(): Router {
   // The notch inbox: finished chats, automation posts and runs, account notices (notch-inbox.ts).
   wireNotchInbox();
   // The Super Agent's reply while handed over is also a banner a click routes to its stage.
-  setSuperFinishBanner((title, body, link) => { if (isDesktop()) notifyViaBundle(title, body, undefined, { link }); });
+  // A member's reply comes with sound (plan r4 D6); main's own stays silent.
+  setSuperFinishBanner((title, body, link, sound) => { if (isDesktop()) notifyViaBundle(title, body, undefined, { link, ...(sound ? { sound } : {}) }); });
   // A question the Super Agent puts to the owner reaches him whatever page the window shows.
   setOwnerQuestionSinks({
     presence: () => ({ vault: lookingAt(), session: lookingAtSession() }),

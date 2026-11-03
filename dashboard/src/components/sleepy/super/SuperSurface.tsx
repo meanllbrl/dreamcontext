@@ -436,6 +436,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
   const { data: tasks } = useTasks();
   const titleOf = useCallback((c: Container) => {
     if (c.kind === 'agenda') return t('super.agenda.label');
+    if (c.kind === 'member') return t(`superStage.member.cards.${c.ref}`);
     const title = cardTitle(c, {
       chat: props.titleFor,
       team: (ref) => state.team.find((j) => j.id === ref)?.member,
@@ -599,6 +600,8 @@ export function SuperSurface(props: SuperSurfaceProps) {
         requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>('[data-testid="super-agenda-pill-btn"]')?.focus());
         return;
       }
+      // A member's own card is never closed (plan r4 K3, G4).
+      if (byId.get(id)?.kind === 'member') return;
       if (remote) return;
       closeCards([id]); focusAfter(id);
     },
@@ -783,7 +786,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
     for (const gid of groupIds) {
       for (const id of groupsById.get(gid)?.cards ?? []) {
         const c = byId.get(id);
-        if (!c || seen.has(id) || c.kind === 'agenda') continue;
+        if (!c || seen.has(id) || c.kind === 'agenda' || c.kind === 'member') continue;
         seen.add(id);
         const live = c.kind === 'chat' && childIsLive(state, c.ref, props.sessionFor(c.ref) ? chatStatus(props.sessionFor(c.ref)).kind : null);
         if (!live) out.push(c);
@@ -1127,6 +1130,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
               onPressResize={ghost ? undefined : onPressResize}
               remote={!!remote}
               agenda={c.kind === 'agenda' ? renderAgenda : undefined}
+              member={c.kind === 'member' ? props.member?.card : undefined}
               // One big page (spotlight, review's site, a filmstrip's big card): at a desktop width.
               // A report in the brain is a document, not a site: scaled down it read at 10 px.
               desktopViewport={(plan.layout === 'spotlight' || plan.layout === 'review' || plan.layout === 'filmstrip') && cp.where === 'present' && !cp.fitted && !c.ref.startsWith('_dream_context/')}

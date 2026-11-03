@@ -22,6 +22,8 @@ import { loadOrCreateVapid, sendPush, type VapidKeys } from '../../lib/handsfree
 import { PushStore, setVerifyPushOrigin, subscriptionRefusal } from '../../lib/handsfree/mac/push-store.js';
 import { PushNotifier, type PushNotifierDeps } from '../../lib/handsfree/mac/push-notifier.js';
 import { setOwnerQuestionSinks } from '../../lib/super/owner-question.js';
+import { isMainWork, memberTurnOrigin } from '../../lib/super/inbox.js';
+import { memberNameOf } from '../../lib/assistant/notch-inbox.js';
 import { MacModeError, MacSession, type MacSessionDeps } from '../../lib/handsfree/mac/session.js';
 import { isValidHostname } from '../../lib/handsfree/mac/tunnel.js';
 import { MAC_THERMAL_STATES, type MacErrorCode, type MacThermalState } from '../../lib/handsfree/mac/contract.js';
@@ -377,6 +379,10 @@ export function armPushNotifier(): PushNotifier {
       return idx.enabled && idx.session ? idx.session : null;
     },
     superChild: (id) => isHandedOverChild(id),
+    memberOf: (sid) => {
+      const name = memberNameOf(sid);
+      return name ? { name, mainWork: isMainWork(memberTurnOrigin(sid)) } : null;
+    },
     send: (sub, payload) => (pushSendOverride ?? ((x, p) => sendPush(x, p, { vapid: macVapid(), contact: macPublicOrigin() ?? 'mailto:handsfree@dreamcontext.ai' })))(sub, payload),
   });
   const n = notifier;

@@ -24,13 +24,14 @@ import { announceOwnerHead, seedOwnerHead, serverBannered } from './owner-questi
 import { clearFresh, hasFreshLatch, isRotating, onRotatingChanged } from './fresh-session.js';
 import { readHandoffRecord } from '../context-watch.js';
 import { memberCallState } from '../agents/team-roster.js';
+import { noteReply } from './read-marks.js';
 import {
-  dropSuperIndex, isSuperChild, keyOfRef, listMemberSupers, memberOfSuperId, parseSuperKey, primeSuperIndex, readSuperState, superEntry, superIdOfMember, superKey, superOfChild, superOfEnded, superOfSession,
+  dropSuperIndex, isSuperChild, keyOfRef, superHasOpenMainRequest, listMemberSupers, memberOfSuperId, parseSuperKey, primeSuperIndex, readSuperState, superEntry, superIdOfMember, superKey, superOfChild, superOfEnded, superOfSession,
   updateSuperState, type SanitizeOpts,
 } from './store.js';
 import {
   CHILD_ARRIVE_MS, DONE_SETTLE_MS, MAX_START_ERROR, STOPPED_SETTLE_MS, MAX_BATCH, MAX_CONTAINERS, MAX_FLOAT, MAX_WAIT_KEY, MAX_OWNER_BATCHES, OWNER_LEASE_MS, READOPT_GRACE_MS, STALE_SWEEP_MS, SUPER_PERMISSION_GRACE_MS,
-  SUPER_FRAME_STATE, floatCount, leaveGroups, AGENDA_REF, AGENDA_SIZE,
+  SUPER_FRAME_STATE, floatCount, leaveGroups, AGENDA_REF, AGENDA_SIZE, MEMBER_CARD_DEFAULTS, MEMBER_CARD_REFS,
   type ChildRow, type QueueKind, type StuckReason, type SuperChild, type SuperContainer, type SuperEventKind,
   MAX_HELD, MAX_MAIN_BATCHES, PAD_ID_RE, type SuperHeldEvent, type SuperId, type SuperQueueItem, type SuperState, type SuperStateView, type SuperWorkOrigin,
 } from './types.js';
@@ -190,6 +191,33 @@ export function ensureAgendaCard(s: SuperState, opts: { first?: boolean; bring?:
   const card = { id, kind: 'agenda' as const, ref: AGENDA_REF, shape: 'square' as const, size: AGENDA_SIZE, place: room() ? 'float' as const : 'others' as const };
   if (opts.first) s.containers.unshift(card); else s.containers.push(card);
   return id;
+}
+
+/**
+ * A member's stage always holds its three cards (plan r4 K3, G3): any one missing is added at its
+ * default place; one that is there is never moved, resized or regrouped (the owner's layout
+ * stands). Main's record never gets them. Counted in the record's cap but never retired (room.ts);
+ * a full record makes room first. Returns the ids it added.
+ */
+export function ensureMemberCards(s: SuperState, id: SuperId): string[] {
+  if (id === 'main') return [];
+  const added: string[] = [];
+  for (const ref of MEMBER_CARD_REFS) {
+    const cid = containerIdFor('member', ref);
+    if (s.containers.some((c) => c.id === cid)) continue;
+    if (s.containers.length >= MAX_CONTAINERS) makeRoom(s, 1, added);
+    if (s.containers.length >= MAX_CONTAINERS) break;
+    const d = MEMBER_CARD_DEFAULTS[ref];
+    s.containers.push({ id: cid, kind: 'member', ref, shape: 'square', ...(d.size !== 'small' ? { size: d.size } : {}), place: d.place });
+    added.push(cid);
+  }
+  return added;
+}
+
+/** Is any of these card ids a member card (the owner's, never an agent verb's)? */
+export function pinnedMemberCard(s: Pick<SuperState, 'containers'>, ids: readonly string[]): string | null {
+  const set = new Set(ids);
+  return s.containers.find((c) => set.has(c.id) && c.kind === 'member')?.id ?? null;
 }
 
 /**
@@ -449,8 +477,13 @@ export async function writeSuper(
   const id: SuperId = typeof a === 'function' ? 'main' : a;
   const fn = (typeof a === 'function' ? a : b) as SuperWriteFn;
   const opts = (typeof a === 'function' ? (b as SuperWriteOpts | undefined) ?? {} : c);
+  // One key per super: a root naming main, or a member's (its key, or the root and its id).
+  const key = contextRoot.includes('\u0000') ? contextRoot : superKey(contextRoot, id);
+  const superId = parseSuperKey(key).superId;
   const draftRules = (draft: SuperState): SuperState => {
     const out = fn(draft) ?? draft;
+    // A member's three cards are always there, an off member's too (plan r4 G3).
+    ensureMemberCards(out, superId);
     floatLiveChildren(out);
     noteHeld(out);
     // A picture question's cards: presented at the head, put back once it closes (ask-show.ts).
@@ -460,8 +493,6 @@ export async function writeSuper(
     return out;
   };
   const sanitize = { ...superSanitizeOpts(), ...(opts.onDemoted ? { onDemoted: opts.onDemoted } : {}) };
-  // One key per super: a root naming main, or a member's (its key, or the root and its id).
-  const key = contextRoot.includes('\u0000') ? contextRoot : superKey(contextRoot, id);
   const next = await updateSuperState(key, draftRules, sanitize);
   afterSuperWrite(key, next);
   return next;
@@ -1574,6 +1605,44 @@ export function superTurnOrigin(sessionId: string): SuperWorkOrigin {
   return turnOrigins.get(sessionId) ?? 'owner';
 }
 
+/**
+ * The origin of a MEMBER super session's turn, with the restart fallback (plan r4 D6): the memory
+ * map is lost on a restart, so a session it does not know reads as main's work while its record
+ * holds an open request from main, else as the owner's. Read it synchronously at the idle edge.
+ */
+export function memberTurnOrigin(sessionId: string): SuperWorkOrigin {
+  const known = turnOrigins.get(sessionId);
+  if (known) return known;
+  const ref = superOfSession(sessionId);
+  if (ref && ref.superId !== 'main' && superHasOpenMainRequest(ref.root, ref.superId)) return 'main:restart';
+  return 'owner';
+}
+
+/** Which session the owner is looking at right now (the notch's presence; set at its load). */
+let watchedSession: () => string | null = () => null;
+export function setOwnerWatchProbe(fn: () => string | null): void {
+  watchedSession = fn;
+}
+
+/**
+ * A member Super's own turn ended (plan r4 D7): an owner-origin turn that was not interrupted is
+ * one more reply for the Team count, seen at once when he watched it arrive. Main's work, an
+ * interrupted turn and main's own Super append nothing. The origin is taken BEFORE any await.
+ */
+export function noteMemberTurnEnd(superRoot: string, entry: Pick<ChatEntry, 'sessionId' | 'status' | 'lastTurn'>, from: string | undefined, now = Date.now()): Promise<unknown> | null {
+  if (entry.status !== 'idle' || from !== 'working') return null;
+  const { root, superId } = parseSuperKey(superRoot);
+  if (superId === 'main') return null;
+  if (entry.lastTurn?.interrupted) return null;
+  if (isMainWork(memberTurnOrigin(entry.sessionId))) return null;
+  const seen = watchedSession() === entry.sessionId;
+  return noteReply(root, superId, now, seen).catch((err: unknown) => {
+    // Loud, never silent: the banner went out but the Team count will not rise for this reply.
+    console.warn(`[super] ${root} ${superId}: the reply of ${entry.sessionId} was not counted: ${(err as Error)?.message ?? err}`);
+    return null;
+  });
+}
+
 /** A delivered turn's origin: a request's or a reply's main Super, else the batch's one origin. */
 function turnOriginOf(state: SuperState, items: readonly SuperQueueItem[]): SuperWorkOrigin {
   const first = items[0];
@@ -2357,6 +2426,7 @@ function onChange({ entry, from }: ChatChange): void {
   const sid = entry.sessionId;
   const superRoot = superKeyOfSession(sid);
   if (superRoot) {
+    void noteMemberTurnEnd(superRoot, entry, from);
     followSpokeTurn(keyOf(superRoot), entry.status);
     // The super chat settled: the next batch may go.
     if (entry.status === 'idle' || entry.status === 'starting') void pumpSuper(superRoot);

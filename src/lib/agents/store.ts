@@ -628,6 +628,13 @@ export function upsertSectionAfter(raw: string, heading: string, body: string, a
 
 export type RemoveAgentResult = { removed: true } | { removed: false; usedBy: string[] };
 
+/** The automations (by slug) that run as `slug` in this project: what `removeAgent` refuses on
+ *  (plan r4 F4: the member delete names and removes exactly these). Its own unsplit scheduled
+ *  manifest included. */
+export function routinesBoundTo(contextRoot: string, slug: string): string[] {
+  return readSlotFiles(contextRoot).filter((f) => boundJobOf(f, slug) !== null).map((f) => f.slug);
+}
+
 /**
  * Delete an agent. Refused (nothing written) while an automation runs as it —
  * its own unsplit scheduled manifest included. An unsplit on-call agent IS its
@@ -636,13 +643,16 @@ export type RemoveAgentResult = { removed: true } | { removed: false; usedBy: st
  * `approvals[slug]` survives only as the current record of a scheduled
  * automation now in that slot.
  */
-export function removeAgent(contextRoot: string, slug: string, opts: { home?: string } = {}): RemoveAgentResult {
+export function removeAgent(contextRoot: string, slug: string, opts: { home?: string; ownSchedule?: boolean } = {}): RemoveAgentResult {
   const agent = getAgent(contextRoot, slug);
   if (!agent) throw new AutomationError(`No agent named "${slug}" in this project.`);
   assertOwned({ owner: agent.owner }, agent.title || slug);
+  // `ownSchedule`: the member delete removes the agent WITH its own unsplit scheduled manifest
+  // (that manifest is the agent), so it does not count as a routine still running as it.
   const usedBy = readSlotFiles(contextRoot)
     .filter((f) => boundJobOf(f, slug) !== null)
-    .map((f) => f.slug);
+    .map((f) => f.slug)
+    .filter((s) => !(opts.ownSchedule && s === slug && agent.implicit));
   if (usedBy.length > 0) return { removed: false, usedBy };
   if (agent.scope === 'global') return removeGlobalAgent(slug, opts);
 

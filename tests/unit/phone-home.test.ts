@@ -116,7 +116,7 @@ describe('phone 390 Sohbetler: the Ekip rows and the Global ekip group (plan-r10
 
   it('main\'s Super row, then ONE Ekip row per project with its own members; no member rows', () => {
     const rows = buildDrawerRows({ projects, activeVault: 'acme', expanded: ['acme', 'payments'], facts: {}, fanout: {}, device });
-    expect(rows[0].children.map((c) => c.kind === 'chat' ? `chat:${c.row.kind}` : c.kind)).toEqual(['chat:super', 'team', 'new-chat']);
+    expect(rows[0].children.map((c) => c.kind === 'chat' ? `chat:${c.row.kind}` : c.kind)).toEqual(['chat:super', 'new-chat', 'team']);
     const acme = rows[0].children.find((c) => c.kind === 'team') as any;
     expect(acme.members.map((x: any) => x.slug)).toEqual(['rota', 'mira']);
     expect(acme.count).toBe(2);

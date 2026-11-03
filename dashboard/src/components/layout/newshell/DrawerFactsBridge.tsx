@@ -5,7 +5,7 @@ import { useAgentFeed, useAutomations } from '../../../hooks/useAutomations';
 import { identitiesOf, membersOf } from '../../../hooks/useDrawerProjects';
 import { AGENT_SURFACE_EXPANDED_EVENT } from '../../../lib/agentSettings';
 import { DRAWER_SURFACE_EVENT, type DrawerSurfaceState } from '../../../lib/drawerIntents';
-import { pollMs } from '../../../lib/windowActivity';
+import { pollMs, onWindowActivity } from '../../../lib/windowActivity';
 import { buildRoster, type EkipSummary, type TeamAgent } from '../../aiteam/teamModel';
 import { DRAWER_POLL_MS, headlessRowsOf, type DrawerFacts } from './drawerModel';
 
@@ -36,6 +36,9 @@ export function DrawerFactsBridge({ vault, drawerVisible, onFacts }: {
   );
   const identities = useMemo(() => identitiesOf(agentsQ.data ?? []), [agentsQ.data]);
   const [members, setMembers] = useState<EkipSummary[] | undefined>(undefined);
+  // The set of agents: a member made or deleted re-reads the summary at once, so a deleted member
+  // leaves the Team list with the delete, not at the next 15 s read.
+  const agentSet = useMemo(() => (agentsQ.data ?? []).map((a) => a.slug).sort().join('\n'), [agentsQ.data]);
   useEffect(() => {
     let gone = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -46,8 +49,14 @@ export function DrawerFactsBridge({ vault, drawerVisible, onFacts }: {
       ).finally(() => { if (!gone && drawerVisible) timer = setTimeout(read, pollMs(DRAWER_POLL_MS)); });
     };
     read();
-    return () => { gone = true; if (timer) clearTimeout(timer); };
-  }, [api, drawerVisible]);
+    // Back in front: read at once (plan r4 D8), a member's answer may have landed meanwhile.
+    const offFocus = onWindowActivity((next, prev) => {
+      if (gone || !next.focused || prev.focused) return;
+      if (timer) clearTimeout(timer);
+      read();
+    });
+    return () => { gone = true; offFocus(); if (timer) clearTimeout(timer); };
+  }, [api, drawerVisible, agentSet]);
   const [surface, setSurface] = useState<DrawerSurfaceState>({ superOn: false, superSelected: false });
   const [chatOpen, setChatOpen] = useState(false);
   useInstanceEvent<DrawerSurfaceState>(DRAWER_SURFACE_EVENT, (s) => { if (s) setSurface(s); });

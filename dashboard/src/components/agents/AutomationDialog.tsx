@@ -202,6 +202,9 @@ export interface AutomationDialogInitial {
    *  Sent with the create and never shown as a field: the board the dialog was opened on IS
    *  the answer, and an edit never changes it. */
   whiteboard?: string;
+  /** A member's stage makes a routine FOR that member (plan r4 R3.1): the picker is hidden and
+   *  the create is bound to it; the server still refuses one the member is not approved for. */
+  agent?: string;
 }
 
 /**
@@ -271,13 +274,14 @@ export function AutomationDialog({
 
   /** Only a plain create picks an agent: an edit keeps what it runs as, and a whiteboard's
    *  create makes that board's own agent. */
-  const pickable = !editing && !start?.whiteboard;
-  const rosterQ = useAgents({ enabled: pickable });
+  const preset = !editing ? start?.agent : undefined;
+  const pickable = !editing && !start?.whiteboard && !preset;
+  const rosterQ = useAgents({ enabled: pickable || !!preset });
   // Only agents this machine owns take a routine (B1-4: a routine is a write to its agent).
   const roster = useMemo(() => ({ ...rosterQ, data: rosterQ.data?.filter((a) => !a.readOnly) }), [rosterQ]);
   // A starter arrives with its own description, so it opens on the self-contained form.
-  const [choice, setChoice] = useState<string>(start ? OWN_AGENT : '');
-  const bound = pickable && choice !== OWN_AGENT;
+  const [choice, setChoice] = useState<string>(preset ?? (start ? OWN_AGENT : ''));
+  const bound = (pickable || !!preset) && choice !== OWN_AGENT;
   const pickedAgent = bound ? findAgent(roster.data, choice) : null;
   /** The agent the server just refused (409 `agent_unapproved`), so the notice can stay up
    *  even when the roster still says otherwise. Cleared by picking again. */

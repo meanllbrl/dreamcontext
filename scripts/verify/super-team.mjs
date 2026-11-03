@@ -436,6 +436,9 @@ async function run(engineName, base) {
   ok(tag('T4 …and never the composer of a new conversation'), !/Start a new conversation/.test(await frame.innerHTML().catch(() => '')));
   ok(tag('T4 …no composer on the card (the owner writes on the member\'s stage)'), (await frame.locator('.chat-cmp-input, [data-testid="team-job-reply"]').count()) === 0);
   ok(tag('T4 …and its "Sohbeti aç" button'), (await convo.getByTestId('team-job-open-member').count()) === 1);
+  // plan r4 E1: nothing pinned above the conversation; the request shows exactly once on the card.
+  ok(tag('T4 …nothing pinned above it'), (await convo.getByTestId('team-job-request').count()) === 0);
+  ok(tag('T4 …exactly one request block on main\'s card'), await until(page, async () => (await convo.getByTestId('super-request-block').count()) === 1, 15000), String(await convo.getByTestId('super-request-block').count()));
   // The keyboard does what the click does: back to its tile, Enter on the focused card opens it too.
   await frame.getByTestId('super-card-minimize').click().catch(() => {});
   ok(tag('T4 minimized, it is a floating tile again'), await until(page, async () =>

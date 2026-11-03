@@ -258,8 +258,12 @@ describe('quiet children (D16, AC6 client half)', () => {
     const open = surface.slice(surface.indexOf('useInstanceEvent<OpenSessionDetail>(OPEN_SESSION_EVENT'), surface.indexOf('setLinkedSession({ claudeId: detail.claudeId'));
     // A link that lands before the record waits for it, then re-checks before any resume.
     expect(surface).toMatch(/const ready = caps !== null && settingsReady && hydratedRef\.current && superKnownRef\.current;/);
-    expect(surface).toMatch(/setLinkedSession\(null\);\s*if \(!isMobile && !isMacPhoneSurface\(\) && linkOpensSuperStage\(claudeId, superStateRef\.current\)\) \{/);
-    expect(open).toMatch(/if \(!isMobile && !isMacPhoneSurface\(\) && linkOpensSuperStage\(detail\.claudeId, superStateRef\.current\)\) \{\s*setSuperView\('super'\);\s*setExpanded\(true\);\s*detail\.accepted = true;\s*return;/);
+    expect(surface).toMatch(/setLinkedSession\(null\);\s*if \(!isMobile && !isMacPhoneSurface\(\) && openLinkedStage\(claudeId\)\) return undefined;/);
+    expect(open).toMatch(/if \(!isMobile && !isMacPhoneSurface\(\) && openLinkedStage\(detail\.claudeId\)\) \{\s*detail\.accepted = true;\s*return;/);
+    // Main's stage as before; a MEMBER's session opens that member's stage (plan r4 D6b).
+    expect(surface).toMatch(/if \(linkOpensSuperStage\(claudeId, superStateRef\.current\) && activeSuperIdRef\.current === MAIN_SUPER\) \{\s*setSuperView\('super'\);\s*setExpanded\(true\);\s*return true;/);
+    expect(surface).toMatch(/const sid = superStageOfLink\(claudeId, vaultSupersRef\.current\);/);
+    expect(surface).toMatch(/void openMemberStageRef\.current\(slug\);/);
   });
 
   it('the project chip ignores marked children and counts only the queue head', () => {
@@ -614,6 +618,8 @@ describe('TR + EN for every new string; the button reads the owner\'s words', ()
     for (const k of ['saved', 'starting', 'working', 'asking', 'ready', 'ended']) keys.add(`super.card.state.${k}`);
     for (const k of ['question', 'idle', 'gone', 'recap', 'handover', 'other']) keys.add(`super.event.${k}`);
     for (const k of ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'group']) keys.add(`super.tile.kind.${k}`);
+    // An Others tile labels its card's kind (SuperTiles.tsx `super.tile.kind.${kind}`): a member card too.
+    keys.add('super.tile.kind.member');
     expect(keys.size).toBeGreaterThan(30);
     for (const k of keys) {
       expect(en, `EN ${k}`).toContain(`'${k}':`);

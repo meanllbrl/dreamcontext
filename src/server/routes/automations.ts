@@ -1,4 +1,5 @@
 import { isCodexAccountId } from '../../lib/t3-bridge/accounts.js';
+import { deleteRoutine } from '../member-delete.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -1655,27 +1656,19 @@ export async function handleAutomationsDelete(
       return;
     }
     const boundTo = boundAgentOf(contextRoot, params.slug);
-    removeAutomation(contextRoot, params.slug);
+    // Remove + revoke, the one helper the member delete uses too (plan r4 F2). A split
+    // automation: only ITS record goes; its agent stays, its own approval untouched. A registry
+    // that could not be rewritten must not turn a completed delete into an error the user would
+    // retry against a slug that no longer exists (the manifest, the part that runs, is gone).
+    let refused = false;
+    deleteRoutine(contextRoot, params.slug, (err) => {
+      if (sendIfNotOwner(res, err)) { refused = true; return; }
+      console.error('[automations] delete: could not revoke approval', err);
+    });
+    if (refused) return;
     if (boundTo) {
-      // A split automation: only ITS record goes. Its agent stays, with its own
-      // approval untouched, and nothing is re-stamped.
-      try {
-        revokeApproval(dirname(contextRoot), params.slug);
-      } catch (err) {
-    if (sendIfNotOwner(res, err)) return;
-        console.error('[automations] delete: could not revoke approval', err);
-      }
       sendJson(res, 200, { ok: true, slug: params.slug, agentKept: getAgent(contextRoot, boundTo) ? boundTo : null });
       return;
-    }
-    try {
-      revokeApproval(dirname(contextRoot), params.slug);
-    } catch (err) {
-    if (sendIfNotOwner(res, err)) return;
-      // The manifest is already gone, which is the part that matters — a
-      // registry that could not be rewritten must not turn a completed delete
-      // into an error the user would retry against a slug that no longer exists.
-      console.error('[automations] delete: could not revoke approval', err);
     }
     sendJson(res, 200, { ok: true, slug: params.slug });
   } catch (err) {

@@ -7,7 +7,8 @@ import { teamStatusOf, type TeamCard } from './TeamTile';
 import { useQuery } from '@tanstack/react-query';
 import { useApi } from '../../../context/VaultContext';
 import { requestOpenAgents } from '../../../lib/openAgents';
-import { ChildTranscript } from './ChildTranscript';
+import { ChildTranscript, useChildHistory } from './ChildTranscript';
+import { superRequestOf } from './superHandover';
 import { fetchSuperState } from './superApi';
 import { memberSuperId } from './memberStageModel';
 import { readSuperRecord } from './superRecordStore';
@@ -59,6 +60,30 @@ export function useMemberSuperRecord(vault: string, member: string, enabled: boo
  * turns, or a conversation that could not be continued) a first line "önceki konuşma" opens the
  * previous run's transcript.
  */
+/** The record's copy of main's request, shown at the END of the flow only until the member's
+ *  transcript holds a request turn with the same item id (plan r4 E1'). Never two copies. */
+function RequestFallback({ session, running, itemId, text }: { session: string | null; running: boolean; itemId: string; text: string }) {
+  // No session yet: nothing to read, the record's copy stands.
+  if (!session) return <RequestWaiting itemId={itemId} text={text} />;
+  return <RequestUntilInFlow session={session} running={running} itemId={itemId} text={text} />;
+}
+
+function RequestUntilInFlow({ session, running, itemId, text }: { session: string; running: boolean; itemId: string; text: string }) {
+  const history = useChildHistory(session, running);
+  const inFlow = (history.data ?? []).some((e) => e.kind === 'user' && superRequestOf(e.text)?.itemId === itemId);
+  return inFlow ? null : <RequestWaiting itemId={itemId} text={text} />;
+}
+
+function RequestWaiting({ itemId, text }: { itemId: string; text: string }) {
+  const { t } = useI18n();
+  return (
+    <div className="super-team-job-waiting" data-testid="team-job-request-fallback">
+      <SuperRequestBlock turn={{ kind: 'request', itemId, text }} itemId={`req-${itemId}`} />
+      <p className="super-request-waiting">{t('superStage.member.waiting')}</p>
+    </div>
+  );
+}
+
 export function TeamJobConversation({ card, vault = '' }: { card: TeamCard; vault?: string }) {
   const { t } = useI18n();
   // A request to the member's own Super (Wave 3): the card IS that member's one conversation, read
@@ -93,18 +118,16 @@ export function TeamJobConversation({ card, vault = '' }: { card: TeamCard; vaul
   if (isRequest) {
     return (
       <section className="super-team-job" data-testid="team-job-conversation" data-team-status={status} data-request={card.job.request}>
-        {/* The request and the member's answer, from its record: shown at once (T4), above the
-            conversation it happened in. */}
-        {memberRec.request && (
-          <div className="super-team-job-request" data-testid="team-job-request">
-            <SuperRequestBlock turn={{ kind: 'request', itemId: card.job.request ?? '', text: memberRec.request.text }} itemId={`req-${card.job.request ?? ''}`} />
-            {memberRec.request.result && <p className="super-team-job-result" data-testid="team-job-result">{memberRec.request.result}</p>}
-          </div>
-        )}
+        {/* Nothing pinned above the conversation (plan r4 E1): the request shows ONCE, in the
+            flow where it arrived. Only while the transcript has not loaded that turn yet (T4) the
+            record's copy stands at the end, waiting, and goes the moment the turn is there. */}
         <div className="super-team-job-body">
           {memberSession
             ? <ChildTranscript key={memberSession} claudeId={memberSession} live={running} foot="own" />
             : <p className="aiteam-stage-note">{running ? t('super.team.reply.starting') : card.lastLine}</p>}
+          {memberRec.request && (
+            <RequestFallback session={memberSession} running={running} itemId={card.job.request ?? ''} text={memberRec.request.text} />
+          )}
         </div>
         <button type="button" className="aiteam-pill" data-testid="team-job-open-member" onClick={() => requestOpenAgents({ slug: card.job.member })}>
           {t('aiteam.manage.openChat')}
