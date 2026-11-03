@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  buildDrawerRows, buildGlobalTeam, dropInOrder, ekipByProject, fanoutWithMarks, intentLands, liveMembersOf, moveInOrder, teamChildOf,
+  buildDrawerRows, buildGlobalTeam, filterProjectRows, dropInOrder, ekipByProject, fanoutWithMarks, intentLands, liveMembersOf, moveInOrder, teamChildOf,
   teamRowsOf, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectInput,
 } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
 import { buildEkip, ekipFaces, ekipLine, ekipPopOuts, ekipRank, ekipWorkingCount, globalOpenVault, ownerFacing, setMemberEnabled } from '../../dashboard/src/components/aiteam/teamModel.js';
@@ -495,5 +495,23 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
     expect(ekipPopOuts(list, 10).shown.map((m) => m.slug).sort()).toEqual(['a', 'b', 'c', 'd']);
     expect(ekipWorkingCount(list)).toBe(1);
     expect(ekipWorkingCount(buildEkip([summary('o', { enabled: false, ownerWorking: 1 })], []))).toBe(0);
+  });
+});
+
+describe('the Projects search (owner 2026-11-03)', () => {
+  const rows = ['Tilki', 'dreamcontext', 'Second-brain', 'kader-matik', 'Genevous', 'ouromedia', 'Çiçek Şöleni'].map((name) => ({ name }));
+  const names = (q: string) => filterProjectRows(rows, q).map((r) => r.name);
+  it('filters by name, case- and diacritic-insensitive, Turkish İ/ı included', () => {
+    expect(names('tilki')).toEqual(['Tilki']);
+    expect(names('TİLKİ')).toEqual(['Tilki']);
+    expect(names('tılkı')).toEqual(['Tilki']);
+    expect(names('cicek')).toEqual(['Çiçek Şöleni']);
+    expect(names('SÖLEN')).toEqual(['Çiçek Şöleni']);
+    expect(names('e')).toEqual(['dreamcontext', 'Second-brain', 'kader-matik', 'Genevous', 'ouromedia', 'Çiçek Şöleni']);
+  });
+  it('an empty or blank query is the whole list, in order; no match is empty', () => {
+    expect(names('')).toEqual(rows.map((r) => r.name));
+    expect(names('   ')).toEqual(rows.map((r) => r.name));
+    expect(names('zzz')).toEqual([]);
   });
 });

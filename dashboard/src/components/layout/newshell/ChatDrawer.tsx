@@ -11,7 +11,7 @@ import { TeamSection } from './TeamSection';
 import { DRAWER_WIDTH_MAX, DRAWER_WIDTH_MIN } from '../../../lib/launcherPrefs';
 import type { DrawerIntent } from '../../../lib/drawerIntents';
 import { armPointerDrag } from '../../sleepy/tabDrag';
-import { windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow, type GlobalTeamRow } from './drawerModel';
+import { filterProjectRows, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectRow, type GlobalTeamRow } from './drawerModel';
 import './ChatDrawer.css';
 
 /** Pixels a press must travel before it is a drag, not a click (`tabDrag.ts`'s threshold). */
@@ -246,6 +246,14 @@ export function ChatDrawer(p: ChatDrawerProps) {
     p.onMove(name, e.key === 'ArrowUp' ? -1 : 1);
   };
 
+  /** The Projects header's search (owner 2026-11-03): null = closed; while it holds a query the
+   *  list is filtered and project drag is off (a drop index would point into the full list). */
+  const [search, setSearch] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const searching = !!search?.trim();
+  const shownRows = searching ? filterProjectRows(p.rows, search!) : p.rows;
+  useEffect(() => { if (search !== null) searchRef.current?.focus(); }, [search !== null]);
+
   const pick = (vault: string, intent: DrawerIntent) => {
     p.onIntent(vault, intent);
     if (p.floating) p.onClose();
@@ -418,21 +426,36 @@ export function ChatDrawer(p: ChatDrawerProps) {
         </button>
         )}
 
-        <div className="ns-dr-sec">
-          <span>{t('shell.drawer.projects')}</span>
-          {!p.device && (
-          <button type="button" className="ns-dr-sec-add" aria-label={t('shell.drawer.newProject')} title={t('shell.drawer.newProject')}
-            data-testid="drawer-new-project" onClick={p.onNewProject}>+</button>
+        <div className="ns-dr-sec" data-searching={search !== null ? 'true' : undefined}>
+          {search === null ? <span>{t('shell.drawer.projects')}</span> : (
+            <input ref={searchRef} type="search" className="ns-dr-search" data-testid="drawer-project-search" value={search}
+              placeholder={t('shell.drawer.searchProjects')} aria-label={t('shell.drawer.searchProjects')}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setSearch(null); } }}
+              onBlur={() => { if (!search) setSearch(null); }} />
           )}
+          <span className="ns-dr-sec-acts">
+            <button type="button" className="ns-dr-sec-add" aria-label={t('shell.drawer.searchProjects')} title={t('shell.drawer.searchProjects')}
+              aria-pressed={search !== null} data-testid="drawer-project-search-btn"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setSearch((v) => (v === null ? '' : null))}>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.2" /><path d="M10.2 10.2l3.3 3.3" /></svg>
+            </button>
+            {!p.device && (
+            <button type="button" className="ns-dr-sec-add" aria-label={t('shell.drawer.newProject')} title={t('shell.drawer.newProject')}
+              data-testid="drawer-new-project" onClick={p.onNewProject}>+</button>
+            )}
+          </span>
         </div>
-        {p.rows.map((row, i) => (
+        {searching && shownRows.length === 0 && <div className="ns-dr-empty" data-testid="drawer-project-nomatch">{t('shell.drawer.noProjectMatch')}</div>}
+        {shownRows.map((row, i) => (
           <div key={row.name} className="ns-dr-project" data-drawer-project={row.name}
             data-drop-before={drag && drag.over === i && drag.name !== row.name ? 'true' : undefined}
             data-dragging={drag?.name === row.name ? 'true' : undefined}>
             {/* Two sibling buttons, never one inside the other: the row's own toggle (name, notes)
                 and "+". The rest of the row (the chevron, the gaps) toggles on a pointer click. */}
             <div className={`ns-dr-row ns-dr-proj${row.active ? ' is-cur' : ''}`}
-              onPointerDown={p.device ? undefined : (e) => startDrag(e, row.name)}
+              onPointerDown={p.device ? undefined : (e) => { if (!searching) startDrag(e, row.name); }}
               onClick={(e) => {
                 if (justDragged.current || (e.target instanceof Element && e.target.closest('button'))) return;
                 p.onToggleExpanded(row.name);
@@ -440,7 +463,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
               onContextMenu={(e) => { e.preventDefault(); openMenu({ kind: 'project', name: row.name, x: e.clientX, y: e.clientY }); }}>
               <button type="button" className="ns-dr-toggle" aria-expanded={row.expanded} data-testid="drawer-project-row"
                 onClick={() => { if (!justDragged.current) p.onToggleExpanded(row.name); }}
-                onKeyDown={(e) => onRowKey(e, row.name)}>
+                onKeyDown={(e) => { if (!searching) onRowKey(e, row.name); }}>
                 <span className="ns-dr-pic">
                   {row.logo
                     ? <VaultLogo key={row.logoStamp} name={row.name} hasLogo={row.logo} stamp={row.logoStamp} size={18} />

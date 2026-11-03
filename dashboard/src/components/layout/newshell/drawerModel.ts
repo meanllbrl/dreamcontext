@@ -355,6 +355,20 @@ function chatChild(vault: string, r: OpenRow, o: { selected: boolean; windowId?:
   };
 }
 
+/** A name folded for search: the language's own case rules (Turkish İ/ı), no diacritics, and the
+ *  dotless ı read as i, so "tilki", "TİLKİ" and "Tılkı" are one name. */
+export function foldProjectName(name: string, locale = 'tr'): string {
+  return name.toLocaleLowerCase(locale).normalize('NFD').replace(/\p{M}/gu, '').replace(/ı/g, 'i').trim();
+}
+
+/** The drawer's project search (owner 2026-11-03): rows whose name holds the query, in order.
+ *  An empty query is the whole list. */
+export function filterProjectRows<T extends { name: string }>(rows: readonly T[], query: string, locale = 'tr'): T[] {
+  const q = foldProjectName(query, locale);
+  if (!q) return [...rows];
+  return rows.filter((r) => foldProjectName(r.name, locale).includes(q));
+}
+
 export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout, device }: DrawerModelInput): DrawerProjectRow[] {
   const open = new Set(expanded);
   if (device) return projects.map((p) => deviceProjectRow(p, { activeVault, open, facts, device }));
