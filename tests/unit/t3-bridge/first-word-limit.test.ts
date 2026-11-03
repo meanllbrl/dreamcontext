@@ -35,7 +35,7 @@ const results = (frames: Frame[]): Frame[] => frames.filter((f) => f.type === 'r
 afterEach(() => { vi.useRealTimers(); });
 
 describe('the first-word limit on an Antigravity turn', () => {
-  it('a turn that only ever said "running" is stopped, the agent is told, and the owner reads why', () => {
+  it('a turn that only ever said "running" is stopped, the agent is told, and the owner reads why', async () => {
     vi.useFakeTimers();
     const frames: Frame[] = [];
     const s = session(frames);
@@ -46,25 +46,54 @@ describe('the first-word limit on an Antigravity turn', () => {
     s.armFirstWord();
     s.onEvent({ type: 'provider_turn.updated', threadId: undefined, providerTurn: { id: 'turn-1', status: 'running' } });
     s.onEvent({ type: 'provider_thread.updated', providerThread: { id: 'pt-1' } });
-    vi.advanceTimersByTime(LIMIT);
+    await vi.advanceTimersByTimeAsync(LIMIT);
     expect(said(frames)).toMatch(/Antigravity did not start answering within 1 seconds/);
     expect(said(frames)).toMatch(/Settings > Tool servers/);
     expect(interrupts).toHaveLength(1);
     // The agent never confirms: the bridge ends the turn, once, so the next message is not held.
-    vi.advanceTimersByTime(STOP_CONFIRM_MS);
+    await vi.advanceTimersByTimeAsync(STOP_CONFIRM_MS);
     expect(results(frames)).toHaveLength(1);
     expect(results(frames)[0]).toMatchObject({ dc_tool: 'antigravity' });
     expect(s.activeRun).toBeNull();
   });
 
-  it('a turn with no turn id yet ends at once: there is nothing to tell the agent', () => {
+  // Review (3 Nov): a run whose start is still under way must never be closed by hand, or its late
+  // events reach the pane and the next run. It is stopped once the agent names the turn.
+  it('a turn still starting is not closed by hand: it is stopped once the agent names it', async () => {
     vi.useFakeTimers();
     const frames: Frame[] = [];
     const s = session(frames);
+    const interrupts: unknown[] = [];
+    s.session = { interruptTurn: (x: unknown) => { interrupts.push(x); return 'effect'; } };
+    s.run = async () => undefined;
     s.activeRun = { runId: 'run-1', providerTurnId: null };
+    (s as unknown as { turnKnown: unknown }).turnKnown = (() => { let r = (): void => undefined; const p = new Promise<void>((x) => { r = x; }); return { promise: p, resolve: () => r() }; })();
     s.armFirstWord();
-    vi.advanceTimersByTime(LIMIT);
+    await vi.advanceTimersByTimeAsync(LIMIT);
     expect(said(frames)).toMatch(/did not start answering/);
+    expect(results(frames)).toHaveLength(0);
+    expect(s.activeRun).not.toBeNull();
+    s.onEvent({ type: 'provider_turn.updated', providerTurn: { id: 'turn-1', status: 'running' } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(interrupts).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(STOP_CONFIRM_MS);
+    expect(results(frames)).toHaveLength(1);
+    expect(s.activeRun).toBeNull();
+  });
+
+  it('a turn the agent never names at all is a dead tool: the session ends, once', async () => {
+    vi.useFakeTimers();
+    const frames: Frame[] = [];
+    const fatals: string[] = [];
+    const Make = BridgeSession as unknown as new (opts: unknown) => Inner;
+    const s = new Make({ tool: 'antigravity', cwd: '/tmp/x', model: '', mode: 'auto', paneId: 'pane-1', firstWordLimitMs: LIMIT, emit: (f: Frame) => { frames.push(f); }, onFatal: (m: string) => { fatals.push(m); } });
+    s.providerThread = { id: 'pt-1' };
+    s.activeRun = { runId: 'run-1', providerTurnId: null };
+    (s as unknown as { turnKnown: unknown }).turnKnown = { promise: new Promise<void>(() => undefined), resolve: () => undefined };
+    s.armFirstWord();
+    await vi.advanceTimersByTimeAsync(LIMIT + 15_000);
+    expect(said(frames)).toMatch(/did not start answering/);
+    expect(fatals).toEqual(['Antigravity stopped responding.']);
     expect(results(frames)).toHaveLength(1);
     expect(s.activeRun).toBeNull();
   });

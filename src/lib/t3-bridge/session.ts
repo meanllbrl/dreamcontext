@@ -310,6 +310,8 @@ export class BridgeSession {
   private turnKnown: { promise: Promise<void>; resolve: () => void } | null = null;
   /** The first-word limit of the owner's running turn ({@link FIRST_WORD_LIMIT_MS}). */
   private firstWord: ReturnType<typeof setTimeout> | null = null;
+  /** Runs the bridge ended itself (their result is out): a late failure of one draws nothing. */
+  private readonly endedRuns = new WeakSet<object>();
   private closed = false;
   /** Requests answered for Bypass: their cancel frames are nobody's to read. */
   private readonly bypassAnswered = new Set<string>();
@@ -503,6 +505,7 @@ export class BridgeSession {
         type: 'result', subtype: 'error_during_execution', is_error: true, result: message,
         num_turns: 0, total_cost_usd: 0, usage: {}, session_id: this.wire.sessionId, dc_tool: this.opts.tool,
       });
+      this.endedRuns.add(this.activeRun);
       this.activeRun = null;
       this.turnKnown?.resolve();
     }
@@ -693,10 +696,12 @@ export class BridgeSession {
     for (const frame of this.wire.beginTurn()) this.opts.emit(frame);
     const starting = this.startRun(message, appContext);
     // startRun set the run synchronously: the limit is the run's, whenever startTurn resolves.
+    const run = this.activeRun;
     this.armFirstWord();
     const failure = await starting;
-    if (failure) {
-      this.clearFirstWord();
+    // A run the bridge already ended (the limit, a dead tool) has had its result: no second one.
+    if (failure && !(run && this.endedRuns.has(run))) {
+      if (!this.activeRun) this.clearFirstWord();
       this.opts.emit({
         type: 'result', subtype: 'error_during_execution', is_error: true,
         result: `${toolLabel(this.opts.tool)} could not start the turn: ${failure}`,
@@ -749,8 +754,11 @@ export class BridgeSession {
     const run = op === 'compactThread' && session.compactThread ? session.compactThread(input) : session.startTurn(input);
     const exit = await this.runtime!.runPromiseExit(run);
     if (Exit.isFailure(exit)) {
-      this.activeRun = null;
-      this.turnKnown?.resolve();
+      // Only its own run: one the bridge already ended may have a successor by now.
+      if (this.activeRun?.runId === runId) {
+        this.activeRun = null;
+        this.turnKnown?.resolve();
+      }
       return String(exit.cause).slice(0, 400);
     }
     return null;
@@ -893,11 +901,21 @@ export class BridgeSession {
       message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: `${tool} did not start answering within ${Math.round(ms / 1000)} seconds, so this turn was stopped. A tool server that does not answer it holds every turn this way: Settings > Tool servers shows which one. Open a new chat to try again.` }] },
       parent_tool_use_id: null, session_id: this.wire.sessionId,
     });
+    void this.stopWhenKnown(run).catch(() => undefined);
+  }
+
+  /**
+   * A run whose start is still under way is never closed by hand: its late events would reach the
+   * pane and the next run. It is stopped once the agent names the turn; one that never does within
+   * the bound is a dead tool, and the session ends (the pane offers Resume).
+   */
+  private async stopWhenKnown(run: NonNullable<BridgeSession['activeRun']>): Promise<void> {
+    await this.awaitTurnId();
+    if (this.closed || this.hidden || this.activeRun !== run) return;
     const session = this.session;
-    // No turn id yet: there is nothing to tell the agent, so the bridge ends the run now.
-    if (!session || !this.providerThread || !run.providerTurnId) { this.closeRun(run); return; }
+    if (!session || !this.providerThread || !run.providerTurnId) { this.fatal(`${toolLabel(this.opts.tool)} stopped responding.`); return; }
     this.closeAfterStop(run);
-    void this.run(session.interruptTurn({ providerThread: this.providerThread, providerTurnId: run.providerTurnId as never })).catch(() => undefined);
+    await this.run(session.interruptTurn({ providerThread: this.providerThread, providerTurnId: run.providerTurnId as never }));
   }
 
   /** End a run the agent did not end: its open cards close and the wire's turn ends. */
@@ -911,6 +929,7 @@ export class BridgeSession {
       runOrdinal: this.runOrdinal, status: 'interrupted', failure: null, threadDisposition: 'reusable',
     } as unknown as ProviderAdapter.ProviderAdapterV2Event;
     for (const frame of this.wire.translate(end)) this.opts.emit(frame);
+    this.endedRuns.add(run);
     this.activeRun = null;
     this.turnKnown?.resolve();
     this.clearFirstWord();
