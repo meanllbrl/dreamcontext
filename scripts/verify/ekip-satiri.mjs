@@ -373,9 +373,10 @@ async function run(base) {
   // owner's size is read from the off member's own record, the place from the screen (run s14).
   ok(`s8 its record still says Talimatlar ${want}, Rutinler in Others`,
     cardOf(await record(), 'instructions')?.size === want && cardOf(await record(), 'routines')?.place === 'others', JSON.stringify((await record()).containers ?? []).slice(0, 400));
+  const onStage = async (ref) => st.locator('[data-kind="member"][data-size]').filter({ has: page.locator(`[data-member-card="${ref}"]`) }).count();
   ok('s8 its stage draws that layout, not the defaults: Talimatlar on the stage, Rutinler not',
-    (await st.locator('[data-kind="member"][data-size]').filter({ has: page.locator('[data-member-card="instructions"]') }).count()) === 1
-    && (await st.locator('[data-kind="member"][data-size]').filter({ has: page.locator('[data-member-card="routines"]') }).count()) === 0);
+    await until(page, async () => (await onStage('instructions')) === 1 && (await onStage('routines')) === 0, 8000),
+    `on the stage: instructions ${await onStage('instructions')}, routines ${await onStage('routines')}`);
   await shots(page, '08', 'kapali-uye-kendi-duzeni', (w) => stageOnly(page, w));
 
   console.log('── s9 Bu üyeyi sil, for real');
