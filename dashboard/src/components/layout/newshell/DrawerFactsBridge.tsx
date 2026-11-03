@@ -5,7 +5,7 @@ import { useAgentFeed, useAutomations } from '../../../hooks/useAutomations';
 import { identitiesOf, membersOf } from '../../../hooks/useDrawerProjects';
 import { AGENT_SURFACE_EXPANDED_EVENT } from '../../../lib/agentSettings';
 import { DRAWER_SURFACE_EVENT, type DrawerSurfaceState } from '../../../lib/drawerIntents';
-import { pollMs } from '../../../lib/windowActivity';
+import { pollMs, onWindowActivity } from '../../../lib/windowActivity';
 import { buildRoster, type EkipSummary, type TeamAgent } from '../../aiteam/teamModel';
 import { DRAWER_POLL_MS, headlessRowsOf, type DrawerFacts } from './drawerModel';
 
@@ -46,7 +46,13 @@ export function DrawerFactsBridge({ vault, drawerVisible, onFacts }: {
       ).finally(() => { if (!gone && drawerVisible) timer = setTimeout(read, pollMs(DRAWER_POLL_MS)); });
     };
     read();
-    return () => { gone = true; if (timer) clearTimeout(timer); };
+    // Back in front: read at once (plan r4 D8), a member's answer may have landed meanwhile.
+    const offFocus = onWindowActivity((next, prev) => {
+      if (gone || !next.focused || prev.focused) return;
+      if (timer) clearTimeout(timer);
+      read();
+    });
+    return () => { gone = true; offFocus(); if (timer) clearTimeout(timer); };
   }, [api, drawerVisible]);
   const [surface, setSurface] = useState<DrawerSurfaceState>({ superOn: false, superSelected: false });
   const [chatOpen, setChatOpen] = useState(false);

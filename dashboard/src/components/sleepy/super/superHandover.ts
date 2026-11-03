@@ -279,6 +279,17 @@ export function linkOpensSuperStage(claudeId: string, state: Pick<SuperState, 'e
   return !!state?.enabled && !!state.session && state.session === claudeId;
 }
 
+/**
+ * Which super's stage a session link opens (plan r4 D6b): main's, or a MEMBER's, whichever
+ * record holds that session while on. A member's finish banner, its notch row and its question
+ * banner all carry the session link; matched against EVERY super of the vault, never only the
+ * active one (usually main), so a member's never opens as a plain chat tab. Null = no super's.
+ */
+export function superStageOfLink(claudeId: string, records: ReadonlyArray<{ superId: string; record: Pick<SuperState, 'enabled' | 'session'> | null | undefined }>): string | null {
+  for (const r of records) if (linkOpensSuperStage(claudeId, r.record)) return r.superId;
+  return null;
+}
+
 /** The width a head's option buttons needed, learned the one time they overflowed the pill. */
 export interface OptionsFit { key: string; need: number }
 

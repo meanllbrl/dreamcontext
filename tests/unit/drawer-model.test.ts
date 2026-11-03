@@ -10,7 +10,7 @@ import {
   buildDrawerRows, buildGlobalTeam, dropInOrder, ekipByProject, fanoutWithMarks, intentLands, liveMembersOf, moveInOrder, teamChildOf,
   teamRowsOf, windowDropBefore, windowDropIsNoop, type DrawerChild, type DrawerProjectInput,
 } from '../../dashboard/src/components/layout/newshell/drawerModel.js';
-import { buildEkip, ekipFaces, ekipLine, ekipRank, globalOpenVault, ownerFacing, setMemberEnabled } from '../../dashboard/src/components/aiteam/teamModel.js';
+import { buildEkip, ekipFaces, ekipLine, ekipPopOuts, ekipRank, ekipWorkingCount, globalOpenVault, ownerFacing, setMemberEnabled } from '../../dashboard/src/components/aiteam/teamModel.js';
 import type { SuperMemberSummary } from '../../dashboard/src/lib/superTypes.js';
 import { fanOutHistory, HISTORY_PARALLEL, HISTORY_PER_VAULT } from '../../dashboard/src/components/layout/newshell/historyFanout.js';
 import { chill, oldestEvictable } from '../../dashboard/src/components/layout/instanceCeiling.js';
@@ -265,7 +265,7 @@ describe('where a dragged chat row lands', () => {
     expect(windowDropIsNoop(ids, 'c', 'a')).toBe(false);
   });
 
-  it('only window rows are chats: Super Agent and the team sit before them, whatever the order', () => {
+  it('only window rows are chats: Super Agent first, then the chats, New chat, and Team last (plan r4 R5)', () => {
     const [row] = buildDrawerRows({
       projects: [{ name: 'acme', logo: false, logoStamp: null, mounted: true, asleep: false, otherWindow: false, rollup: null }],
       activeVault: 'acme',
@@ -284,7 +284,7 @@ describe('where a dragged chat row lands', () => {
       fanout: {},
     });
     // A project with members keeps its New chat row (r8-07): its chevron starts a member's conversation.
-    expect(row.children.map((c) => (c.kind === 'window' ? c.id : c.kind))).toEqual(['super', 'team', 'w2', 'main', 'new-chat']);
+    expect(row.children.map((c) => (c.kind === 'window' ? c.id : c.kind))).toEqual(['super', 'w2', 'main', 'new-chat', 'team']);
   });
 });
 
@@ -298,14 +298,14 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
     return (r.children.find((c) => c.kind === 'team') ?? r.team) as Extract<DrawerChild, { kind: 'team' }> | undefined;
   };
 
-  it('ten members are ONE row, under the Super Agent row', () => {
+  it('ten members are ONE row, the last row of the project', () => {
     const ten = Array.from({ length: 10 }, (_, i) => summary(`m${i}`, { unread: i === 3 ? 2 : 0 }));
     const rows = buildDrawerRows({
       projects: [project('acme', { mounted: true, rollup: rollup() })], activeVault: 'acme', expanded: ['acme'],
       facts: { acme: facts(ten) as any }, fanout: {},
     });
     expect(rows[0].children.filter((c) => c.kind === 'team')).toHaveLength(1);
-    expect(rows[0].children[1].kind).toBe('team');
+    expect(rows[0].children.at(-1)!.kind).toBe('team');
     expect(teamOf(rows)!.members).toHaveLength(10);
   });
 
@@ -444,6 +444,30 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
       projects: [project('acme', { mounted: true })], activeVault: 'acme', expanded: ['acme'], facts: {}, fanout: {},
       device: { rows: [], members: liveMembersOf(live) },
     });
-    expect(rows[0].children.map((c) => c.kind)).toEqual(['team', 'new-chat']);
+    expect(rows[0].children.map((c) => c.kind)).toEqual(['new-chat', 'team']);
+  });
+
+  it('members with an approval card, a question or an unread answer sit above all others (R-AC2)', () => {
+    const list = buildEkip([
+      summary('idle'), summary('off', { enabled: false }), summary('worker', { ownerWorking: 1 }),
+      summary('mainjob', { superOnly: true }), summary('reader', { unread: 2 }), summary('asker', { asking: true }),
+      summary('card', { approval: true }),
+    ], []);
+    const slugs = list.map((m) => m.slug);
+    expect(slugs.slice(0, 3).sort()).toEqual(['asker', 'card', 'reader']);
+    expect(slugs.slice(3)).toEqual(['worker', 'mainjob', 'idle', 'off']);
+  });
+
+  it('pop-outs: approval, question or unread, enabled and not for the Super, at most 3 then a rest count', () => {
+    const list = buildEkip([
+      summary('a', { unread: 1 }), summary('b', { asking: true }), summary('c', { approval: true }), summary('d', { unread: 4 }),
+      summary('w', { ownerWorking: 2 }), summary('s', { superOnly: true }), summary('o', { enabled: false, unread: 3 }),
+    ], []);
+    const pop = ekipPopOuts(list);
+    expect(pop.shown.map((m) => m.slug).sort()).toEqual(['b', 'c', 'a'].sort());
+    expect(pop.more).toBe(1);
+    expect(ekipPopOuts(list, 10).shown.map((m) => m.slug).sort()).toEqual(['a', 'b', 'c', 'd']);
+    expect(ekipWorkingCount(list)).toBe(1);
+    expect(ekipWorkingCount(buildEkip([summary('o', { enabled: false, ownerWorking: 1 })], []))).toBe(0);
   });
 });

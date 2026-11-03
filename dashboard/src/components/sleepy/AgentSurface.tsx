@@ -156,7 +156,7 @@ import {
   actionGeneration, adoptionBody, cardReference, headAlarmOnce, childMarks, DELEGATE_MARK_GRACE_MS, delegateArgs, delegateExpired, delegateMarkUntil, endedChildIds, hasOwnKey,
   homedSessions, isSuperSession, markedChildren, withAboutTask, needsOwner, ownerQueueCount, placeDelegatedChild, queueHead, shouldRecap, shownChild, ownerAnswerPicks, superAnswerPicks, superWindowRefusal, terminalTabs,
   SUPER_CHILD_VERBS, windowTabsFor, type HandoverTab, type SuperCaller, type SuperSendTarget,
-  linkOpensSuperStage, presenceChatId, leanMcpFor, agendaAboutBlock, agendaRefName, type AgendaRow,
+  linkOpensSuperStage, superStageOfLink, presenceChatId, leanMcpFor, agendaAboutBlock, agendaRefName, type AgendaRow,
   freshPending, superDockLift, superDockOn, superDockPill, superSlotFor,
   cardSelectionBlock, selectionQuote,
 } from './super/superHandover';
@@ -3143,6 +3143,21 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   // before the roster lands would open the conversation a second time beside the tab the
   // roster is about to restore, so a request that has no live tab yet waits (bounded) for all
   // three. The ACK is set on receipt so the sender stops asking.
+  // A link to ANY super of the vault opens that super's stage (plan r4 D6b): main's as before, a
+  // member's through its stage open (it becomes the active super), never as a plain tab.
+  const openLinkedStage = (claudeId: string): boolean => {
+    if (linkOpensSuperStage(claudeId, superStateRef.current) && activeSuperIdRef.current === MAIN_SUPER) {
+      setSuperView('super');
+      setExpanded(true);
+      return true;
+    }
+    const sid = superStageOfLink(claudeId, vaultSupersRef.current);
+    if (!sid) return false;
+    const slug = memberOf(sid as SuperId);
+    if (!slug) { setActiveSuperId(MAIN_SUPER); setSuperView('super'); setExpanded(true); return true; }
+    void openMemberStageRef.current(slug);
+    return true;
+  };
   const [linkedSession, setLinkedSession] = useState<{ claudeId: string; since: number; pick?: boolean } | null>(null);
   const [, bumpLinkWait] = useReducer((x: number) => x + 1, 0);
   useInstanceEvent<OpenSessionDetail>(OPEN_SESSION_EVENT, (detail) => {
@@ -3150,9 +3165,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     // The handed-over Super Agent on the Mac (its reply's banner, its queue's alarm, a notch
     // row): open its stage. It is never a tab there, so a resume would fork it. The phone has
     // no stage and keeps opening the chat.
-    if (!isMobile && !isMacPhoneSurface() && linkOpensSuperStage(detail.claudeId, superStateRef.current)) {
-      setSuperView('super');
-      setExpanded(true);
+    if (!isMobile && !isMacPhoneSurface() && openLinkedStage(detail.claudeId)) {
       detail.accepted = true;
       return;
     }
@@ -3171,11 +3184,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
       return () => window.clearTimeout(timer);
     }
     setLinkedSession(null);
-    if (!isMobile && !isMacPhoneSurface() && linkOpensSuperStage(claudeId, superStateRef.current)) {
-      setSuperView('super');
-      setExpanded(true);
-      return undefined;
-    }
+    if (!isMobile && !isMacPhoneSurface() && openLinkedStage(claudeId)) return undefined;
     if (!existing && !canSpawn) {
       console.warn('[app-link] cannot open chat', claudeId, 'here: the agent surface is unavailable');
       return undefined;
