@@ -33,8 +33,13 @@ describe('ImageViewer docked controls', () => {
     expect(src).toMatch(/style=\{\{ bottom: footH \}\}/);
     expect(src).toMatch(/image-viewer-foot image-viewer-foot--dock/);
     const css = read('dashboard/src/components/layout/ImageViewer.css');
-    expect(css).toMatch(/\.image-viewer-foot--dock:focus-within\s*\{[^}]*opacity: 1/);
+    expect(css).toMatch(/\.image-viewer-foot--dock:has\(:focus-visible\)\s*\{[^}]*opacity: 1/);
     expect(css).toMatch(/backdrop-filter: blur/);
+    // A mouse-clicked zoom button stays focused in Chrome; only keyboard focus may hold the strip.
+    expect(css).not.toMatch(/foot--dock:focus-within/);
+    expect(src).toMatch(/setFocusInside\(e\.target\.matches\(':focus-visible'\)\)/);
+    // A still tap fires no pointermove: a press must wake the strip too.
+    expect(src).toMatch(/onPointerDown=\{zoomed \? wake : undefined\}/);
     expect(read('dashboard/src/components/layout/FrameViewer.tsx')).not.toMatch(/image-viewer-foot--dock/);
   });
 });

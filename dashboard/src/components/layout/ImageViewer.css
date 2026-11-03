@@ -215,12 +215,12 @@
 }
 .image-viewer-foot--dock[data-hidden] > * { pointer-events: none; }
 
-/* Keyboard focus inside the strip always wins over the idle fade. */
-.image-viewer-foot--dock:focus-within {
+/* Keyboard focus inside the strip always wins over the idle fade (a mouse-clicked button does not). */
+.image-viewer-foot--dock:has(:focus-visible) {
   opacity: 1;
   transform: none;
 }
-.image-viewer-foot--dock:focus-within > * { pointer-events: auto; }
+.image-viewer-foot--dock:has(:focus-visible) > * { pointer-events: auto; }
 
 /* File name and the once-per-open hint share one row inside the strip. */
 .image-viewer-foot-row {

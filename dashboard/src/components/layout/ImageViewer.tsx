@@ -252,6 +252,8 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, step, o
       aria-label={alt || t('imageViewer.label')}
       tabIndex={-1}
       onPointerMove={zoomed ? wake : undefined}
+      // A still tap on a touch screen fires no move: a press anywhere brings the strip back too.
+      onPointerDown={zoomed ? wake : undefined}
     >
       <div
         ref={stageRef}
@@ -294,7 +296,9 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, step, o
         data-hidden={!shown || undefined}
         onPointerEnter={() => setHovering(true)}
         onPointerLeave={() => setHovering(false)}
-        onFocus={() => setFocusInside(true)}
+        // Only KEYBOARD focus holds the strip: Chrome and WebView2 leave a clicked ＋ focused, and
+        // that must not pin the strip over a zoomed picture.
+        onFocus={(e) => setFocusInside(e.target.matches(':focus-visible'))}
         onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusInside(false); }}
       >
         {/* The hint shares the file name's row and only fades (never unmounts), so its going
