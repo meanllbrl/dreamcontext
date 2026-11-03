@@ -6,11 +6,14 @@
  *   npm run build && node scripts/verify/only-mine-accounts.mjs [outDir]
  *
  * Drives the BUILT dashboard server against an isolated scratch vault (fake HOME), real Chromium,
- * 1440 light, English and Turkish. Two fictional accounts. For each locale:
- *   1. one account open: the label and its hint are visible on every row, no warning;
+ * English (the product's only language), 1440 light and dark, and a narrow 760 light. The hint is
+ * never louder than its label and reads at AA in both themes. Two fictional accounts. Each run:
+ *   1. one account open: the label and its hint are visible on every row, inside the account's
+ *      own column (no middle column of their own), nothing overflows the row; no warning;
  *   2. both kept for the owner: the warning stands at the top of the list;
  *   3. the fix opens the top account: the warning goes, the register on disk agrees.
- * Screenshots: <outDir>/accounts-<locale>-{one-open,all-closed}.png. Exit 1 on any FAIL or
+ * Screenshots: <outDir>/accounts-en-{one-open,all-closed}.png (1440 light
+ * only). Exit 1 on any FAIL or
  * console error.
  */
 import { spawn, spawnSync } from 'node:child_process';
@@ -19,7 +22,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { distIndex, markAnnouncementsSeen, setTheme } from './lib/measure.mjs';
+import { contrast, distIndex, markAnnouncementsSeen, setTheme } from './lib/measure.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SHOTS = resolve(process.argv[2] ?? join(REPO, 'tmp', 'verify-only-mine'));
@@ -84,26 +87,6 @@ async function startServer(port) {
   throw new Error(`dashboard server did not come up: ${log.slice(-400)}`);
 }
 
-/** The dashboard has no locale switch on screen: set it through every I18n provider's own setter
- *  (the settings window mounts its own). */
-async function setLocale(page, locale) {
-  return await page.evaluate((loc) => {
-    const host = document.getElementById('root');
-    const key = Object.keys(host).find((k) => k.startsWith('__reactContainer'));
-    const stack = [host[key]];
-    let n = 0;
-    let found = false;
-    while (stack.length && n++ < 200000) {
-      const f = stack.pop();
-      const v = f?.memoizedProps?.value;
-      if (v && typeof v.setLocale === 'function' && typeof v.t === 'function' && 'locale' in v) { v.setLocale(loc); found = true; }
-      if (f?.sibling) stack.push(f.sibling);
-      if (f?.child) stack.push(f.child);
-    }
-    return found;
-  }, locale);
-}
-
 async function main() {
   setupScratch();
   writeRegister([false, true]);
@@ -113,61 +96,80 @@ async function main() {
   const consoleErrors = [];
   const browser = await chromium.launch();
   try {
-    for (const locale of ['en', 'tr']) {
+    for (const [width, theme] of [[1440, 'light'], [1440, 'dark'], [760, 'light']]) {
+      const tag = `${width}-${theme}`;
+      const keepShots = width === 1440 && theme === 'light';
       writeRegister([false, true]);
-      const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light', deviceScaleFactor: 2 });
-      await setTheme(context, 'light');
+      const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, deviceScaleFactor: 2 });
+      await setTheme(context, theme);
       await markAnnouncementsSeen(context, base);
       const page = await context.newPage();
-      page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(`${locale}: ${m.text()}`); });
-      page.on('pageerror', (e) => consoleErrors.push(`${locale} pageerror: ${e.message}`));
+      page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(`${tag}: ${m.text()}`); });
+      page.on('pageerror', (e) => consoleErrors.push(`${tag} pageerror: ${e.message}`));
       const wait = (ms) => page.waitForTimeout(ms);
       const until = async (fn, ms = 12000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn().catch(() => false)) return true; await wait(150); } return false; };
       const shot = async (name) => {
         const el = page.locator('.dc-accts').first();
         await el.scrollIntoViewIfNeeded().catch(() => {});
         await wait(500);
-        await el.screenshot({ path: join(SHOTS, `accounts-${locale}-${name}.png`) });
+        if (keepShots) await el.screenshot({ path: join(SHOTS, `accounts-en-${name}.png`) });
       };
       const openAccounts = async () => {
         await page.goto(`${base}/?vault=lumen&page=settings`, { waitUntil: 'domcontentloaded' });
         await wait(2000);
         for (let i = 0; i < 3 && (await page.locator('.announcements-modal-scrim').count()); i++) { await page.keyboard.press('Escape'); await wait(300); }
-        check(`${locale}: locale set`, await until(() => setLocale(page, locale), 8000));
         await page.locator('[data-sw-nav="models"]').click();
         await wait(500);
         await page.locator('[data-sw-tab="claude"]').click();
-        await setLocale(page, locale);
-        await wait(400);
         await page.locator('[data-only-mine="team-example-test"]').waitFor({ timeout: 15000 });
         await until(async () => /could not be re-read|Updated \d+ account/.test(await page.locator('.dc-acct-foot, .settings-section').first().innerText()), 30000);
       };
-      const label = locale === 'tr' ? 'Yalnız benim sohbetlerim için' : 'Keep for my chats only';
-      const hint = locale === 'tr' ? 'Rutinler ve arka plan işleri bu hesabı kullanmaz.' : "Routines and background jobs won't use this account.";
-      const warn = locale === 'tr' ? 'Hiçbir hesap rutinlere açık değil: rutinler başlamaz.' : 'No account is open to routines: they will not start.';
+      const label = 'Keep for my chats only';
+      const hint = "Routines and background jobs won't use this account.";
+      const warn = 'No account is open to routines: they will not start.';
 
       await openAccounts();
       const listText = await page.locator('.dc-acct-list').innerText();
-      check(`${locale}: every row carries the label`, listText.split(label).length - 1 === 2, label);
-      check(`${locale}: every row shows the hint, not only as a tooltip`, (await page.locator('.dc-acct-onlymine-hint:visible').count()) === 2);
-      check(`${locale}: …and the hint reads`, listText.includes(hint));
-      check(`${locale}: one account open: no warning`, (await page.locator('[data-none-open]').count()) === 0);
+      check(`${tag}: every row carries the label`, listText.split(label).length - 1 === 2, label);
+      check(`${tag}: every row shows the hint, not only as a tooltip`, (await page.locator('.dc-acct-onlymine-hint:visible').count()) === 2);
+      check(`${tag}: …and the hint reads`, listText.includes(hint));
+      const ink = (sel) => page.locator(sel).first().evaluate((el) => getComputedStyle(el).color);
+      check(`${tag}: the hint is the label's colour, never louder`, (await ink('.dc-acct-onlymine-hint')) === (await ink('.dc-acct-onlymine span')), `${await ink('.dc-acct-onlymine-hint')} vs ${await ink('.dc-acct-onlymine span')}`);
+      const ratio = await contrast(page.locator('.dc-acct-onlymine-hint').first());
+      check(`${tag}: the hint reads at AA`, ratio >= 4.5, ratio.toFixed(2));
+      // Compact: the control lives in the account's own column; the right side keeps only the
+      // arrows and Remove; nothing in a row is wider than the row.
+      check(`${tag}: the control sits in the account's column`, (await page.locator('.dc-acct-main .dc-acct-onlymine-row').count()) === 2 && (await page.locator('.dc-acct-side [data-only-mine]').count()) === 0);
+      const geo = await page.locator('.dc-acct-list > li').evaluateAll((lis) => lis.map((li) => {
+        const box = li.getBoundingClientRect();
+        const side = li.querySelector('.dc-acct-side')?.getBoundingClientRect();
+        const spill = [...li.querySelectorAll('*')].filter((el) => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && (r.right > box.right + 0.5 || r.left < box.left - 0.5);
+        }).length;
+        const label = li.querySelector('.dc-acct-onlymine')?.getBoundingClientRect();
+        return { sideShare: side ? side.width / box.width : 1, spill, over: li.scrollWidth > li.clientWidth + 1, labelLines: label ? Math.round(label.height / 14) : 0 };
+      }));
+      check(`${tag}: nothing overflows a row`, geo.every((g) => g.spill === 0 && !g.over), JSON.stringify(geo));
+      check(`${tag}: the right side is narrow (arrows and Remove only)`, geo.every((g) => g.sideShare < 0.2), geo.map((g) => g.sideShare.toFixed(2)).join(','));
+      check(`${tag}: the label stays on one line`, geo.every((g) => g.labelLines <= 1), geo.map((g) => g.labelLines).join(','));
+      check(`${tag}: one account open: no warning`, (await page.locator('[data-none-open]').count()) === 0);
       await shot('one-open');
 
       // Close the open one too, through the control itself.
       await page.locator('[data-only-mine="owner-example-test"]').click();
-      check(`${locale}: all closed: the warning stands`, await until(() => page.locator('[data-none-open]').isVisible(), 8000));
-      check(`${locale}: …in plain words`, (await page.locator('[data-none-open]').innerText()).includes(warn));
+      check(`${tag}: all closed: the warning stands`, await until(() => page.locator('[data-none-open]').isVisible(), 8000));
+      check(`${tag}: …in plain words`, (await page.locator('[data-none-open]').innerText()).includes(warn));
       const listBox = await page.locator('.dc-acct-list').boundingBox();
       const warnBox = await page.locator('[data-none-open]').boundingBox();
-      check(`${locale}: …at the top of the list`, warnBox && listBox && warnBox.y < listBox.y);
+      check(`${tag}: …at the top of the list`, warnBox && listBox && warnBox.y < listBox.y);
       await shot('all-closed');
 
       // The one-click fix opens the top account.
       await page.locator('[data-none-open] button').click();
-      check(`${locale}: the fix clears the warning`, await until(async () => (await page.locator('[data-none-open]').count()) === 0, 8000));
+      check(`${tag}: the fix clears the warning`, await until(async () => (await page.locator('[data-none-open]').count()) === 0, 8000));
       const reg = JSON.parse(readFileSync(REGISTER, 'utf-8'));
-      check(`${locale}: …and opens the top account on disk`, !reg.accounts[0].ownerOnly && reg.accounts[1].ownerOnly === true, JSON.stringify(reg.accounts.map((a) => !!a.ownerOnly)));
+      check(`${tag}: …and opens the top account on disk`, !reg.accounts[0].ownerOnly && reg.accounts[1].ownerOnly === true, JSON.stringify(reg.accounts.map((a) => !!a.ownerOnly)));
       await context.close();
     }
   } finally {

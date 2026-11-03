@@ -491,6 +491,24 @@ export function ClaudeAccounts({ policy = true }: { policy?: boolean } = {}) {
                       {org && <span className="dc-acct-tag">{org}</span>}
                     </div>
 
+                    {/* Says what it does, with the consequence in sight, on one line of the
+                        account itself: "Only mine" alone left the owner with every account ticked
+                        and no routine able to start (2026-11-03). */}
+                    <div className="dc-acct-onlymine-row">
+                      <label className="dc-acct-onlymine" title={t('accounts.onlyMine.hint')}>
+                        <input
+                          type="checkbox"
+                          checked={a.ownerOnly === true}
+                          disabled={busy !== ''}
+                          data-only-mine={a.id}
+                          aria-describedby={`only-hint-${a.id}`}
+                          onChange={() => void run(`only-${a.id}`, () => api.post('/agent/accounts/owner-only', { id: a.id, ownerOnly: !a.ownerOnly }))}
+                        />
+                        <span>{t('accounts.onlyMine')}</span>
+                      </label>
+                      <span className="dc-acct-onlymine-hint" id={`only-hint-${a.id}`}>{t('accounts.onlyMine.hint')}</span>
+                    </div>
+
                     {stale && <p className="dc-acct-warn">Signed out — sign in again to use this account.</p>}
 
                     {/* BOTH windows, always. See the header note. */}
@@ -581,22 +599,6 @@ export function ClaudeAccounts({ policy = true }: { policy?: boolean } = {}) {
                         {busy === `relogin-${a.id}` ? 'Waiting for the browser…' : 'Sign in again'}
                       </button>
                     )}
-                    {/* Says what it does, with the consequence in sight: "Only mine" alone left the
-                        owner with every account ticked and no routine able to start (2026-11-03). */}
-                    <div className="dc-acct-onlymine-wrap">
-                      <label className="dc-acct-onlymine">
-                        <input
-                          type="checkbox"
-                          checked={a.ownerOnly === true}
-                          disabled={busy !== ''}
-                          data-only-mine={a.id}
-                          aria-describedby={`only-hint-${a.id}`}
-                          onChange={() => void run(`only-${a.id}`, () => api.post('/agent/accounts/owner-only', { id: a.id, ownerOnly: !a.ownerOnly }))}
-                        />
-                        <span>{t('accounts.onlyMine')}</span>
-                      </label>
-                      <span className="dc-acct-onlymine-hint" id={`only-hint-${a.id}`}>{t('accounts.onlyMine.hint')}</span>
-                    </div>
                     <button
                       type="button"
                       className="btn btn--danger-ghost btn--sm"
