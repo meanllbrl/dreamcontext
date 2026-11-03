@@ -91,6 +91,12 @@ export type ShellPref = 'classic' | 'new';
 export const MAX_LAYOUT_PROJECTS = 200;
 export const DRAWER_WIDTH_MIN = 200;
 export const DRAWER_WIDTH_MAX = 480;
+/** A drawer nobody has sized opens at its narrowest (owner 2026-11-03). A width he dragged is his
+ *  (`drawerWidth`, written only on a drag's release) and is never reset. */
+export const DRAWER_WIDTH_DEFAULT = DRAWER_WIDTH_MIN;
+export function drawerWidthOf(stored: number | null | undefined): number {
+  return typeof stored === 'number' && Number.isFinite(stored) ? stored : DRAWER_WIDTH_DEFAULT;
+}
 
 export interface LayoutPrefs {
   lastVault: string | null;
