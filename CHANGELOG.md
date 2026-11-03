@@ -6,7 +6,7 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [0.40.5] - 2026-11-04
 
-Patch on 0.40.4: every approved branch of the last days in one local build. Account usage that is right and fast, a Super chat that uses wide screens, parked chats that stay visible, a calmer Team row and a Codex that can ask you a question. Local build; not published.
+Patch on 0.40.4: every approved branch of the last days in one local build. Account usage that is right and fast, a Super chat that uses wide screens, parked chats that stay visible, a calmer Team row and a Codex that can ask you a question, and tool cards that tell the truth on Codex and Gemini. Local build; not published.
 
 - **Account usage is right and quick.** Each account reads its own numbers (a folder signed in as someone else says whose it is and shows none), Refresh re-reads every account at once in seconds with "Reading usage…" per row, and the panel refreshes itself while open. The plan badge is the account's own, so the $200 plan reads Claude Ultra, and an account with no 5-hour limit draws no 5-hour row. A full bar reads "full · back in X" and the refusal names the window.
 - **"Keep for my chats only"** replaces the old label, with what it does always visible beside it. If every account is kept that way, the list warns you and one click opens the top account to routines. A routine that waits for this says so in plain words.
@@ -16,6 +16,8 @@ Patch on 0.40.4: every approved branch of the last days in one local build. Acco
 - **Report pages draw their graphs and tabs on the Super stage.** A dc-graph shows its arrows and dc-tabs switch, in the card and in fullscreen.
 - **Report rules.** A product mockup in a plan report wears the product's real look, and a sequence of more than four steps is a graph, not a row of chips.
 - **A Codex chat can ask you a question** and gets your pick back. Before, the card closed itself and Codex said "sent" into nothing.
+- **A card the chat skipped is told to the agent.** When Codex or Gemini writes a run card the chat has to drop (a command on two lines), the agent now hears what was skipped and why, once, after a clean finish, and fixes it. Never after you pressed Stop, switched account or typed over it.
+- **Gemini (Antigravity) tool rows are honest.** A failed command reads "Couldn't run a command" with the command, not "Tried to ran command". A sub-agent's shell runs in your project, not in a skills folder. A file read that another step's refusal marked as failed says "result unknown" instead of showing the wrong path.
 - **A sharper design skill:** hierarchy, spacing and colour budgets, states and truth, a new product UI page, and phone layout traps.
 
 ## [0.40.4] - 2026-11-03
