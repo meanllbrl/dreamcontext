@@ -155,7 +155,9 @@
    padding and separator instead of inheriting a panel's. */
 .chat-fileactions.compact .chat-fileactions-row { gap: 6px; }
 /* Icon-only: one line in the image viewer's toolbar row; a failure shows in the row, ellipsized. */
-.chat-fileactions.icon-only { display: flex; align-items: center; gap: var(--space-1); flex: 0 1 auto; min-width: 0; }
+/* `contents`: its buttons and note become items of the toolbar's own tools group, so only the note
+   can shrink there and a button never spills out of a box narrower than itself. */
+.chat-fileactions.icon-only { display: contents; }
 .chat-fileactions.icon-only .chat-fileactions-note {
   margin: 0;
   flex: 0 1 auto;

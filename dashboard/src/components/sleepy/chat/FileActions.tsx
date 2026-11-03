@@ -71,7 +71,7 @@ export function FileActions({
     const revealText = busy === 'reveal' ? 'Showing…' : revealLabel();
     return (
       <div className={`chat-fileactions icon-only${className ? ` ${className}` : ''}`}>
-        {note && <span className="chat-fileactions-note" role="status" title={`Couldn’t do that — ${note}`}>Couldn’t do that — {note}</span>}
+        {note && <span className="chat-fileactions-note" role="status" title={`Couldn’t do that: ${note}`}>Couldn’t do that: {note}</span>}
         {extra}
         <button type="button" className="viewer-tool" onClick={() => handoff(openMode)} disabled={busy !== null} aria-label={openLabel} title={openLabel}>
           <ComputerIcon />

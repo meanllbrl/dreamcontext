@@ -210,7 +210,8 @@
 
 /* Muted and the first thing to give way: on a phone it ellipsizes to nothing before an icon does. */
 .image-viewer-toolbar-name {
-  flex: 1 1 auto;
+  /* Basis 0: the name gives up ALL its room before anything on the right shrinks. */
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

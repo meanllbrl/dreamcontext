@@ -52,7 +52,8 @@ describe('ImageViewer toolbar under the picture', () => {
 describe('ImageViewer toolbar stays one row at 390 px', () => {
   it('a failure note shrinks instead of pushing the zoom group off-screen', () => {
     expect(css).toMatch(/\.image-viewer-toolbar-tools \{ flex: 0 1 auto; min-width: 0; \}/);
-    expect(read('dashboard/src/components/sleepy/chat/overlays.css')).toMatch(/\.chat-fileactions\.icon-only \{[^}]*flex: 0 1 auto; min-width: 0;/);
+    expect(read('dashboard/src/components/sleepy/chat/overlays.css')).toMatch(/\.chat-fileactions\.icon-only \{ display: contents; \}/);
+    expect(block('.image-viewer-toolbar-name')).toMatch(/flex: 1 1 0;/);
   });
 
   it('task attachments step through the viewer, with icon-only file actions', () => {
