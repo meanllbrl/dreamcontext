@@ -14,6 +14,7 @@ import {
   coldMembers, memberOf, memberOpenRefusal, memberSuperId, memberSuperSpawn, openMemberSuper, readMemberSummaries, superIdOfIntent, unionSuperView,
 } from '../../dashboard/src/components/sleepy/super/memberStageModel';
 import { REQUEST_FROM, requestTurnOf, superEventText, superLiveRequestOf, superRequestOf } from '../../dashboard/src/components/sleepy/super/superHandover';
+import { applyLayoutPatch } from '../../dashboard/src/components/sleepy/super/superLayout';
 import { COLD_RETRY_MS, PHONE_MIRROR_WAIT_MS, coldRetryAt, coldWaiting, memberMirrorVerdict, memberPlaceholderState, memberRoutineQuestions, phoneMemberOpen } from '../../dashboard/src/components/sleepy/super/memberStageModel';
 
 const src = (p: string) => readFileSync(join(__dirname, '..', '..', p), 'utf-8');
@@ -260,6 +261,18 @@ describe('observed run fixes (super-members.mjs)', () => {
     // The surface reads the record on an off or unapproved refusal, and only draws it.
     expect(surface).toMatch(/if \(refusal === 'off' \|\| refusal === 'unapproved'\) \{\s*const saved = await fetchSuperState\(scopedApi, sid\);/);
     expect(surface).toMatch(/memberPlaceholderState\(vault \?\? '', memberSaved\?\.slug === slug \? memberSaved\.state : null\)/);
+  });
+
+  it('a refused member\'s stage takes the owner\'s gestures locally: its Üye card opens from Others, nothing is posted', () => {
+    // Opening Üye from Others on the placeholder: the patch applies to the view.
+    const base = memberPlaceholderState('acme')!;
+    const settings = base.containers.find((c) => c.ref === 'settings')!;
+    const opened = applyLayoutPatch(base, { cards: [{ id: settings.id, place: 'float' }], view: { mode: 'half', card: settings.id } });
+    expect(opened.containers.find((c) => c.ref === 'settings')!.place).toBe('float');
+    expect(opened.view).toMatchObject({ mode: 'half', card: settings.id });
+    // The surface keeps such a gesture off the server while the stage has no record.
+    expect(surface).toMatch(/const placeholderOf = memberOf\(sid\);\s*if \(placeholderOf && !superStateRef\.current\) \{[\s\S]{0,200}?return;\s*\}\s*const api = forSuper\(scopedApi, sid\);/);
+    expect(surface).toMatch(/placeholderPatches\.patches\.reduce<SuperStateView>\(\(st, patch\) => applyLayoutPatch\(st, patch\), base\)/);
   });
 
   it('the global member\'s chip reads the summary too, and the band shows TeamApproval whole', () => {

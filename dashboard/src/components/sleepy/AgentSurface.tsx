@@ -884,6 +884,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const [memberRefusal, setMemberRefusal] = useState<{ slug: string; refusal: MemberRefusal } | null>(null);
   // A refused member's own record as it stands (an off member keeps one): its cards' layout only.
   const [memberSaved, setMemberSaved] = useState<{ slug: string; state: SuperStateView | null } | null>(null);
+  // The owner's gestures on a refused member's placeholder stage (view only, never posted).
+  const [placeholderPatches, setPlaceholderPatches] = useState<{ slug: string; patches: LayoutPatch[] }>({ slug: '', patches: [] });
   /** Show another super's stage: the view state stays one copy, re-bound to it (its pending edits
    *  were the old super's and go). The record view moves in the same batch, so no frame draws the
    *  new super's head over the old one's record. Every chat stays as it is. */
@@ -3848,12 +3850,16 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const marked = childMarks(allSupersView, superDelegated, Date.now()).marked;
   // A member's stage with no record here yet (its birth refused: its approval card, off; or still on
   // its way) still draws, from the member's manifest and summary (plan-r10 1e, 1f): a view only.
-  // An off member's record still holds the owner's card layout: drawn from it (G-AC1).
+  // An off member's record still holds the owner's card layout: drawn from it (G-AC1). The owner's
+  // gestures on it (open Üye side by side, send to Others) apply here only, never saved: the record
+  // is written once the member runs again.
   const memberPlaceholder = useMemo(() => {
     const slug = memberOf(activeSuperId);
     if (!slug) return null;
-    return memberPlaceholderState(vault ?? '', memberSaved?.slug === slug ? memberSaved.state : null);
-  }, [activeSuperId, vault, memberSaved]);
+    const base = memberPlaceholderState(vault ?? '', memberSaved?.slug === slug ? memberSaved.state : null);
+    if (!base || placeholderPatches.slug !== slug) return base;
+    return placeholderPatches.patches.reduce<SuperStateView>((st, patch) => applyLayoutPatch(st, patch), base);
+  }, [activeSuperId, vault, memberSaved, placeholderPatches]);
   const stageView = superState ?? memberPlaceholder;
   const handedOver = superView === 'super' && !!stageView && !isMobile;
   // The Super dock's ONE gate (plan R1) and whether its window is open now. Never written from
@@ -4416,6 +4422,12 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const editSuperLayout = useCallback((patch: LayoutPatch) => {
     // The super the gesture was made on: its answer is written there, even after a switch.
     const sid = activeSuperIdRef.current;
+    // A refused member's stage has no record to write: its placeholder takes the gesture (G-AC1).
+    const placeholderOf = memberOf(sid);
+    if (placeholderOf && !superStateRef.current) {
+      setPlaceholderPatches((prev) => ({ slug: placeholderOf, patches: prev.slug === placeholderOf ? [...prev.patches, patch] : [patch] }));
+      return;
+    }
     const api = forSuper(scopedApi, sid);
     const setSuperState = (next: SuperRecordUpdate) => setSuperRecordFor(sid, next);
     pendingPatchesRef.current = [...pendingPatchesRef.current, patch];
@@ -5827,6 +5839,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     setActiveSuperId(sid);
     setMemberTask(task ?? null);
     setMemberRefusal(null);
+    setPlaceholderPatches({ slug: '', patches: [] });
     setSuperView('super');
     setExpanded(true);
     // The tunnel (a remote screen, the phone) reads the member's stage through its own door
