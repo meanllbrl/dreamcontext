@@ -595,3 +595,45 @@ export function dreamOutcome(result: string | undefined, domain?: string): Dream
   }
   return found;
 }
+
+/**
+ * The member's answer to the Super Agent (plan r4 E3): a `super team done <item> "<result>"` call,
+ * read through the manifest-derived parse (pattern cli-derived-action-rows). Its result text, or
+ * null when the call is not one.
+ */
+export function teamDoneText(command: string | undefined): string | null {
+  const actions = parseDreamActions(command);
+  const done = actions.find((a) => a.path === 'super team done');
+  const text = done?.args[1];
+  return typeof text === 'string' && text.trim() ? text.trim() : null;
+}
+
+/** Text as compared for "the same answer": case, spacing and punctuation dropped. */
+export function normalizedAnswer(text: string): string {
+  return text.toLocaleLowerCase('tr').replace(/[\p{P}\p{S}]+/gu, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The member's closing words that only repeat what it passed to `super team done` (plan r4 E4'):
+ * hidden, so the answer shows once. Only when the final text, normalised, EQUALS the done text or
+ * is CONTAINED in it; a text that adds anything is kept. Scoped to the turn: an owner message
+ * between them ends it.
+ */
+export function teamDoneRepeats(items: ReadonlyArray<{ kind: string; id: string; text?: string; name?: string; input?: unknown }>): Set<string> {
+  const out = new Set<string>();
+  let done: string | null = null;
+  for (const it of items) {
+    if (it.kind === 'user') { done = null; continue; }
+    if (it.kind === 'tool' && it.name === 'Bash') {
+      const cmd = it.input && typeof it.input === 'object' ? (it.input as Record<string, unknown>).command : undefined;
+      const t = teamDoneText(typeof cmd === 'string' ? cmd : undefined);
+      if (t) done = normalizedAnswer(t);
+      continue;
+    }
+    if (it.kind === 'text' && done && it.text) {
+      const n = normalizedAnswer(it.text);
+      if (n && (n === done || done.includes(n))) out.add(it.id);
+    }
+  }
+  return out;
+}

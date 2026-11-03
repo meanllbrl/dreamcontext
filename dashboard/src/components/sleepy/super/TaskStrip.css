@@ -259,24 +259,42 @@
 
 /* ── A request from main Super, framed, on the member's stage ── */
 .super-request-block {
+  /* A quote in the reply-strip language (plan r4 E2): an accent bar, a soft tint, no frame. */
   margin: var(--space-2) 0;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-left: 4px solid var(--color-accent);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-elevated);
+  border: 0;
+  border-left: 3px solid var(--color-accent);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--color-accent-soft);
   font-size: var(--font-size-sm);
   color: var(--color-text);
 }
 .super-request-block-head {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
   margin-bottom: var(--space-1);
   font-size: var(--font-size-xs);
   font-weight: 600;
-  color: var(--color-text-secondary);
+  color: var(--color-accent);
 }
+.super-request-block-mark { font-size: var(--font-size-2xs); }
+.super-request-waiting { margin: 0 0 var(--space-2); font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+/* The member's answer to the Super (plan r4 E3): a quiet line, then the answer as a quote. */
+.super-answer-line { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-2) 0 var(--space-1); font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+.super-answer-dot { width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--color-success); flex: none; }
+.super-answer-more { margin-left: auto; padding: 0; border: 0; background: transparent; color: var(--color-text-secondary); font: inherit; font-size: var(--font-size-xs); cursor: pointer; }
+.super-answer-more:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.super-answer-quote {
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--color-success);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+  font-size: var(--font-size-sm);
+}
+.super-answer-quote-head { display: flex; align-items: center; gap: var(--space-1); margin-bottom: var(--space-1); font-size: var(--font-size-xs); font-weight: 600; color: var(--color-success); }
+.super-answer-quote-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text); }
 .super-request-block-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .super-for-main {
   display: inline-block;

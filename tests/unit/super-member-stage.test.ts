@@ -481,12 +481,15 @@ describe("the request on the member's own stage, live (super-team.mjs T3)", () =
     // The block is drawn before the event line is: the request is never folded behind "Show".
     expect(pane.indexOf('const request = requestTurnOf(')).toBeLessThan(pane.indexOf('const line = <SuperEventLine'));
   });
-  it("main's card shows the request and the member's answer from the member's record at once (T4)", () => {
+  it("main's card pins nothing above the conversation; the record's request shows only until the transcript holds it (plan r4 E1)", () => {
     const card = src('dashboard/src/components/sleepy/super/TeamJobConversation.tsx');
     expect(card).toMatch(/const item = requestId \? rec\?\.queue\.find\(\(x\) => x\.id === requestId && x\.kind === 'request'\) : undefined;/);
-    expect(card).toContain('data-testid="team-job-request"');
-    expect(card).toContain('data-testid="team-job-result"');
-    expect(card).toMatch(/<SuperRequestBlock turn=\{\{ kind: 'request', itemId: card\.job\.request \?\? '', text: memberRec\.request\.text \}\}/);
+    expect(card).not.toContain('data-testid="team-job-request"');
+    expect(card).not.toContain('data-testid="team-job-result"');
+    // The fallback sits AFTER the transcript, and goes once a stored turn names the same item.
+    expect(card.indexOf('<ChildTranscript key={memberSession}')).toBeLessThan(card.indexOf('<RequestFallback'));
+    expect(card).toMatch(/superRequestOf\(e\.text\)\?\.itemId === itemId/);
+    expect(card).toMatch(/if \(inFlow\) return null;/);
   });
 });
 

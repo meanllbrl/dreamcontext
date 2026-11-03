@@ -181,8 +181,9 @@ export function SuperRequestBlock({ turn, itemId }: { turn: SuperRequestTurn; it
   const { t } = useI18n();
   return (
     <div className="super-request-block" role="note" data-testid="super-request-block" data-item-id={itemId} data-kind={turn.kind} data-request={turn.itemId}>
+      {/* A quote in the reply-strip language (plan r4 E2): accent bar, "Super Agent'tan", the text. */}
       <div className="super-request-block-head">
-        <span aria-hidden>◆</span>
+        <span className="super-request-block-mark" aria-hidden>◆</span>
         <span>{t('superStage.member.fromSuper')}</span>
       </div>
       <p className="super-request-block-text">{turn.text}</p>
