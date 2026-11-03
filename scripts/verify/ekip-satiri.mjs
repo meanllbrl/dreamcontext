@@ -273,6 +273,9 @@ async function run(base) {
   const openUye = async () => {
     // Already open side by side (the card's delete button shows): the Others panel would cover it.
     if (await st.getByTestId('member-delete').isVisible().catch(() => false)) return;
+    // A small Üye tile on the stage opens side by side from its frame; else it is in Others.
+    const tile = st.locator('[data-testid="super-container"]').filter({ has: page.locator('[data-member-card="settings"]') }).first();
+    if (await tile.isVisible().catch(() => false)) { await tile.click({ timeout: 5000 }).catch(() => {}); await page.waitForTimeout(600); if (await st.getByTestId('member-delete').isVisible().catch(() => false)) return; }
     const others = st.locator('[data-testid="super-others-stack"], [data-testid="super-others-open"]').first();
     if (await others.isVisible().catch(() => false)) await others.click();
     const uye = page.locator('[data-testid="super-others-item"]').filter({ hasText: /Üye|Member/ }).first();
@@ -320,9 +323,11 @@ async function run(base) {
   const tal = st.locator('[data-kind="member"]').filter({ has: page.locator('[data-member-card="instructions"]') }).first();
   await tal.hover().catch(() => {});
   await tal.locator('[data-testid="super-card-more"], [data-testid="super-card-size-btn"]').first().click().catch(() => {});
-  const wideOk = await page.getByTestId('super-size-wide').first().isEnabled().catch(() => false);
-  const want = wideOk ? 'wide' : 'medium';
-  await page.getByTestId(`super-size-${want}`).first().click().catch(() => {});
+  // The largest size the stage has room for (a size with no room is disabled in the menu).
+  let want = 'medium';
+  for (const sz of ['wide', 'large', 'medium']) if (await page.getByTestId(`super-size-${sz}`).first().isEnabled().catch(() => false)) { want = sz; break; }
+  console.log(`   size menu open: ${await page.getByTestId('super-card-size').count()}; picking ${want}`);
+  await page.getByTestId(`super-size-${want}`).first().click({ timeout: 5000 }).catch((e) => console.log(`   size click: ${String(e?.message ?? e).split('\n')[0]}`));
   ok(`s7 Talimatlar resized to ${want} (record, by the owner)`, await until(page, async () => cardOf(await record(), 'instructions')?.size === want, 8000), JSON.stringify(cardOf(await record(), 'instructions')));
   // Dragged: a press on its head moved across the stage changes its place in the record.
   const posBefore = JSON.stringify(cardOf(await record(), 'instructions')?.pos ?? null);
