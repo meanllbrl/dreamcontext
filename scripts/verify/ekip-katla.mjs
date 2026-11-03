@@ -4,7 +4,7 @@
  *   0 a collapsed project hides its Team row too; open, the Team row is the last row.
  *   A the Projects header's search filters the list (Turkish-safe); Esc restores it.
  *   B a drawer nobody sized opens at its narrowest width; a dragged width is kept over a reload.
- *   C a project with no member still has its Team row (an empty slot); a click opens Manage members.
+ *   C a project with no member reads "Set your team" (a plain row, no faces); a click opens Manage members.
  *
  *   npm run build && node scripts/verify/ekip-katla.mjs [outDir]
  *
@@ -132,7 +132,8 @@ async function run(base) {
   if ((await emptyToggle.getAttribute('aria-expanded')) !== 'true') await emptyToggle.click();
   const emptyRow = emptyProj.locator('[data-testid="drawer-team-row"]');
   ok('C the memberless project shows its Team row', await until(page, async () => (await emptyRow.count()) === 1, 15000));
-  ok('C with an empty slot, no faces', (await emptyRow.getAttribute('data-empty')) === 'true' && (await emptyRow.locator('[data-testid="team-empty-slot"]').count()) === 1);
+  ok('C it reads "Set your team", no faces', (await emptyRow.getAttribute('data-empty')) === 'true' && (await emptyRow.innerText()).trim() === 'Set your team'
+    && (await emptyRow.locator('.ns-team-faces, .ns-team-chev').count()) === 0);
   ok('C the member project still shows faces', (await teamRow.first().getAttribute('data-empty')) === null);
   await page.waitForTimeout(500);
   await page.screenshot({ path: join(OUT, 'c-uyesiz-proje-team-1440-dark.png') });

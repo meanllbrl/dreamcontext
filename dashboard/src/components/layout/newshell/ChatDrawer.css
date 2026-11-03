@@ -368,6 +368,11 @@
   width: calc(100% - 19px - var(--space-4));
 }
 
+/* A Team's members hang one step further in, the same step (TeamList.css draws them). */
+.ns-team-sec:has(> .ns-dr-child) {
+  --ns-team-in: calc(19px + var(--space-4));
+}
+
 .ns-dr-cdot {
   flex: none;
   width: 7px;
