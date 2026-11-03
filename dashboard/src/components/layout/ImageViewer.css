@@ -189,6 +189,83 @@
 
 .image-viewer-close:hover { background: rgba(255, 255, 255, 0.18); }
 
+/* The picture viewer's toolbar: ONE solid row under the picture (the page viewer keeps the
+   floating foot above). ImageViewer sets the stage's `bottom` to this row's measured height, so
+   the picture, fitted or zoomed, is clipped at the row's top edge and nothing draws over it. */
+.image-viewer-toolbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  padding-bottom: max(var(--space-2), env(safe-area-inset-bottom));
+  background: var(--color-bg-elevated);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+/* Muted and the first thing to give way: on a phone it ellipsizes to nothing before an icon does. */
+.image-viewer-toolbar-name {
+  /* Basis 0: the name gives up ALL its room before anything on the right shrinks. */
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.image-viewer-toolbar-tools,
+.image-viewer-zoom {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+/* The tools may shrink (a failure note inside them ellipsizes); the buttons and the zoom group never do. */
+.image-viewer-toolbar-tools { flex: 0 1 auto; min-width: 0; }
+.image-viewer-zoom,
+.image-viewer-toolbar-divider { flex: none; }
+
+.image-viewer-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 var(--space-1);
+  background: var(--color-border);
+}
+
+/* Every control in the row: one height, one radius. Shared with FileActions' icon-only form. */
+.viewer-tool {
+  flex: none;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 var(--space-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.viewer-tool:hover:not(:disabled) { background: var(--color-bg-tertiary); color: var(--color-text); }
+.viewer-tool:disabled { opacity: 0.4; cursor: default; }
+.viewer-tool:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+
+/* The readout is also the fit / actual-size toggle and carries the gesture hint as its tooltip. */
+.viewer-tool--level {
+  min-width: 52px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Several pictures (a report page): side steps and a position chip. */
 .image-viewer-step {
   position: absolute;

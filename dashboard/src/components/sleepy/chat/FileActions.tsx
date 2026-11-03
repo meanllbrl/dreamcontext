@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { useApi } from '../../../context/VaultContext';
 import { revealPath } from './chatEntities';
 import { revealLabel } from '../../../lib/reveal';
+import { ComputerIcon, CopyIcon, FolderIcon } from '../../whiteboard/PanelIcons';
 
 /**
  * What a surface showing ONE file owes the user besides the file itself: the two ways out to
@@ -28,7 +29,7 @@ import { revealLabel } from '../../../lib/reveal';
  * opened behind the window (owner report 07-28).
  */
 export function FileActions({
-  path, extra, className, compact, openMode = 'auto',
+  path, extra, className, compact, iconOnly, openMode = 'auto',
 }: {
   /** The file, as the transcript named it. Resolved server-side — see `resolveChatReference`. */
   path: string;
@@ -37,6 +38,9 @@ export function FileActions({
   className?: string;
   /** Icon-and-short-label form, for a viewer's chrome rather than a panel's toolbar. */
   compact?: boolean;
+  /** Icons with tooltips only, sized for the image viewer's single toolbar row (`.viewer-tool`).
+   *  A failure line then sits IN the row, so the row never grows over the picture. */
+  iconOnly?: boolean;
   /** What "Open on computer" asks the route for. A caller showing a file it must never LAUNCH
    *  (a task attachment that is not media or a PDF: .html, .svg, a script) passes 'reveal', so
    *  the button only ever shows the file in Finder. The route can narrow, never widen. */
@@ -61,6 +65,26 @@ export function FileActions({
       () => setNote('couldn’t copy the path'),
     );
   };
+
+  if (iconOnly) {
+    const openLabel = busy === 'open' ? 'Opening…' : 'Open on computer';
+    const revealText = busy === 'reveal' ? 'Showing…' : revealLabel();
+    return (
+      <div className={`chat-fileactions icon-only${className ? ` ${className}` : ''}`}>
+        {note && <span className="chat-fileactions-note" role="status" title={`Couldn’t do that: ${note}`}>Couldn’t do that: {note}</span>}
+        {extra}
+        <button type="button" className="viewer-tool" onClick={() => handoff(openMode)} disabled={busy !== null} aria-label={openLabel} title={openLabel}>
+          <ComputerIcon />
+        </button>
+        <button type="button" className="viewer-tool" onClick={() => handoff('reveal')} disabled={busy !== null} aria-label={revealText} title={revealText}>
+          <FolderIcon />
+        </button>
+        <button type="button" className="viewer-tool" onClick={copyPath} aria-label="Copy path" title="Copy path">
+          <CopyIcon />
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className={`chat-fileactions${compact ? ' compact' : ''}${className ? ` ${className}` : ''}`}>
