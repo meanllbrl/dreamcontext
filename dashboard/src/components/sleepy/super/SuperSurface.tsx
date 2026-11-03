@@ -1062,7 +1062,7 @@ export function SuperSurface(props: SuperSurfaceProps) {
             {member && (
               <div className="super-member-top" ref={memberTopRef} data-testid="super-member-top">
                 {member.task && (
-                  <TaskStrip task={member.task} member={member.slug} onOpenTask={member.onOpenTask} onClose={() => member.onTask(null)} />
+                  <TaskStrip key={member.task} task={member.task} member={member.slug} onOpenTask={member.onOpenTask} onClose={() => member.onTask(null)} />
                 )}
                 {(member.approval || member.refusal === 'unapproved') && <MemberApprovalBand slug={member.slug} />}
                 {member.refusal && <MemberRefusalLine slug={member.slug} refusal={member.refusal} onRetry={member.onRetry} />}

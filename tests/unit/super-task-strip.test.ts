@@ -57,6 +57,9 @@ describe('a button sends the job row\'s own action body', () => {
     expect(strip).toContain('data-testid="super-task-strip"');
     expect(strip).toContain('data-task={task.slug}');
   });
+  it('another task gets a fresh strip: an open Send back never carries over to it', () => {
+    expect(src('dashboard/src/components/sleepy/super/SuperSurface.tsx')).toMatch(/<TaskStrip key=\{member\.task\} task=\{member\.task\}/);
+  });
 });
 
 describe('role, round and who it waits on', () => {
