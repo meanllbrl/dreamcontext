@@ -618,6 +618,8 @@ describe('TR + EN for every new string; the button reads the owner\'s words', ()
     for (const k of ['saved', 'starting', 'working', 'asking', 'ready', 'ended']) keys.add(`super.card.state.${k}`);
     for (const k of ['question', 'idle', 'gone', 'recap', 'handover', 'other']) keys.add(`super.event.${k}`);
     for (const k of ['chat', 'insight', 'task', 'knowledge', 'whiteboard', 'board', 'web', 'image', 'group']) keys.add(`super.tile.kind.${k}`);
+    // An Others tile labels its card's kind (SuperTiles.tsx `super.tile.kind.${kind}`): a member card too.
+    keys.add('super.tile.kind.member');
     expect(keys.size).toBeGreaterThan(30);
     for (const k of keys) {
       expect(en, `EN ${k}`).toContain(`'${k}':`);
