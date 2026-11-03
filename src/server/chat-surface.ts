@@ -250,7 +250,8 @@ see the value and it is not in this conversation. \`file\` defaults to \`.env\` 
 Drawn with a ▶ that opens a real terminal here; they type into it, and on exit the card posts
 the exit code and output tail back to you, so carry on from there. Never say "run this in
 your terminal", and never send an interactive command through Bash — it hangs with nobody at
-the keyboard. One line; \`cwd\` is project-relative; \`why\` says what makes it theirs.
+the keyboard. ONE line: a \`\\n\` in \`command\` drops the card; use \`&&\`.
+\`cwd\` is project-relative; \`why\` says what makes it theirs.
 
 \`\`\`dream-view
 {"type":"run","id":"fb-login","command":"firebase login","why":"it opens a browser and waits for you to sign in"}

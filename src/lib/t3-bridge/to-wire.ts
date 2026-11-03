@@ -99,7 +99,9 @@ export function antigravityQuotaReply(text: string, now: number): { resetsAtMs: 
 export function toolCallFor(item: TurnItem): { name: string; input: Record<string, unknown> } | null {
   switch (item.type) {
     case 'command_execution':
-      return { name: 'Bash', input: { command: item.input, ...(item.title ? { description: item.title } : {}) } };
+      // T3's own fallback title ("Ran command") is no description of the step: without it the row says
+      // "Ran a command" or "Couldn't run a command" with the command itself (toolAction.ts).
+      return { name: 'Bash', input: { command: item.input, ...(item.title && !/^ran command$/i.test(item.title.trim()) ? { description: item.title } : {}) } };
     case 'file_change': {
       // Codex reports a unified diff (`diffStr`); an Edit card with `patch` draws it as a diff.
       if (item.oldStr !== undefined || item.newStr !== undefined) {
@@ -120,6 +122,25 @@ export function toolCallFor(item: TurnItem): { name: string; input: Record<strin
   }
 }
 
+/** What a read row says when Antigravity ended it with another step's refusal. */
+export const UNREPORTED_READ = "Antigravity did not report this read's result: it ended the call with a later step's error, about another file.";
+
+/**
+ * Antigravity leaves a sub-agent's `view_file` calls open and fails every one with the NEXT step's
+ * error (real run 2026-11-04: eight reads failed with "Access to path <package.json> is denied";
+ * Antigravity's own transcript shows seven answered and one, gate.js, refused for its own path). The
+ * stream never carries a native read's real outcome, so a refusal naming ANOTHER path is replaced by
+ * a note that the result is unknown; the row stays failed, never a success nothing confirms. A
+ * refusal naming the read's own path is left exactly as sent. Here, not in the vendored T3 adapter:
+ * vendor files change only through `src/vendor/t3/patches`, and those are capped.
+ */
+export function readFailureText(input: unknown, output: string): string {
+  const denied = /Access to path \\?["']([^"'\\]+)\\?["'] is denied/.exec(output)?.[1];
+  if (denied === undefined || !isRecord(input)) return output;
+  const own = [input.AbsolutePath, input.absolute_path, input.path, input.file_path].filter((v): v is string => typeof v === 'string' && !!v);
+  return own.length && !own.includes(denied) ? UNREPORTED_READ : output;
+}
+
 function toolResultText(item: TurnItem): { text: string; isError: boolean } {
   switch (item.type) {
     case 'command_execution':
@@ -134,8 +155,11 @@ function toolResultText(item: TurnItem): { text: string; isError: boolean } {
       return { text: (item.results ?? []).map((r) => [r.title, r.url].filter(Boolean).join(' ')).join('\n'), isError: item.status === 'failed' };
     case 'file_search':
       return { text: (item.results ?? []).map((r) => r.fileName).join('\n'), isError: item.status === 'failed' };
-    case 'dynamic_tool':
-      return { text: typeof item.output === 'string' ? item.output : JSON.stringify(item.output ?? ''), isError: item.status === 'failed' };
+    case 'dynamic_tool': {
+      const text = typeof item.output === 'string' ? item.output : JSON.stringify(item.output ?? '');
+      const failed = item.status === 'failed';
+      return { text: failed && item.toolName === 'Read' ? readFailureText(item.input, text) : text, isError: failed };
+    }
     case 'subagent':
       return { text: item.result ?? item.progress ?? '', isError: item.status === 'failed' };
     default:

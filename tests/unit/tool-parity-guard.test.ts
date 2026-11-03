@@ -35,7 +35,7 @@ export function claudeCapabilities(): string[] {
   const catalog = JSON.parse(read('skill-packs/catalog.json')) as { packs: { name: string }[]; standalone: { name: string }[] };
   for (const p of [...catalog.packs, ...catalog.standalone]) ids.add(`skill-pack:${p.name}`);
   for (const dir of ['agents', 'skill-packs/agents']) for (const f of readdirSync(join(ROOT, dir))) if (f.endsWith('.md')) ids.add(`agent:${f.slice(0, -3)}`);
-  const views = read('dashboard/src/lib/chatViewSpec.ts').match(/export const VIEW_TYPES = \[([^\]]+)\]/);
+  const views = read('src/lib/chat-view-spec.ts').match(/export const VIEW_TYPES = \[([^\]]+)\]/);
   for (const t of views![1].matchAll(/'([a-z-]+)'/g)) ids.add(`dream-view:${t[1]}`);
   for (const m of CHAT_MODES) ids.add(`mode:${m}`);
   // Control requests the server writes to a session's stdin, and the MCP channel's own.

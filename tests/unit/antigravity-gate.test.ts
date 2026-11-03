@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, win32 } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { antigravityProfileDir } from '../../src/lib/antigravity-accounts.js';
-import { ANTIGRAVITY_GATE_NAME, antigravityCallAsClaude, antigravityGateCommand, antigravityGateGap, antigravityHooksFile, guardedByName, isAntigravityGateFile, movesGuardedPlace, shellTouchesGuarded, syncAntigravityGate } from '../../src/lib/antigravity-gate.js';
+import { ANTIGRAVITY_GATE_NAME, antigravityCallAsClaude, antigravitySkillsCwd, antigravityGateCommand, antigravityGateGap, antigravityHooksFile, guardedByName, isAntigravityGateFile, movesGuardedPlace, shellTouchesGuarded, syncAntigravityGate } from '../../src/lib/antigravity-gate.js';
 import { bypassNeedsOwner } from '../../src/lib/t3-bridge/policy.js';
 import { shellWriteTarget } from '../../src/lib/agents/member-file-guard.js';
 
@@ -282,4 +282,54 @@ describe('the hook itself, built CLI', () => {
     run(tool('view_file', { AbsolutePath: join(dir, 'a') }), { DREAMCONTEXT_GATE_BEAT: beat });
     expect(existsSync(beat)).toBe(true);
   }, 30_000);
+});
+
+describe('a shell that would run in a skills folder instead of the project', () => {
+  // The workspaces a real Antigravity turn hands its hook (3 Nov 2026): the project, then four skills folders.
+  let base: string;
+  beforeEach(() => { base = realpathSync(mkdtempSync(join(tmpdir(), 'dc-agy-cwd-'))); });
+  afterEach(() => { rmSync(base, { recursive: true, force: true }); });
+  const call = (cwd: string, extra: string[] = []) => {
+    const project = join(base, 'lumen-notes');
+    const profile = join(base, 'providers', 'antigravity', 'a'.repeat(64));
+    for (const d of [project, join(profile, 'config', 'skills'), join(profile, 'antigravity-cli', 'skills'), join(project, '.gemini', 'skills')]) mkdirSync(d, { recursive: true });
+    return {
+      project,
+      profile,
+      input: {
+        toolCall: { name: 'run_command', args: { CommandLine: 'pwd', Cwd: cwd.replace('<project>', project).replace('<profile>', profile), WaitMsBeforeAsync: 5000 } },
+        workspacePaths: [project, join(profile, 'config', 'skills'), join(project, '.gemini', 'skills'), join(profile, 'antigravity-cli', 'skills'), ...extra],
+      },
+    };
+  };
+
+  it('names the project folder for a sub-agent whose shell started in the profile\'s skills folder', () => {
+    const { project, input } = call('<profile>/antigravity-cli/skills');
+    expect(antigravitySkillsCwd(input)).toBe(project);
+    expect(antigravitySkillsCwd(call('<profile>/config/skills/dreamcontext').input)).toBe(call('').project);
+  });
+
+  it('leaves the project, a folder in it, and any other workspace alone', () => {
+    expect(antigravitySkillsCwd(call('<project>').input)).toBeNull();
+    expect(antigravitySkillsCwd(call('<project>/.gemini/skills').input)).toBeNull();
+    const linked = join(base, 'greeter');
+    mkdirSync(linked, { recursive: true });
+    expect(antigravitySkillsCwd(call(linked, [linked]).input)).toBeNull();
+  });
+
+  it('reads only a shell command that names its folder', () => {
+    const { input } = call('<profile>/antigravity-cli/skills');
+    expect(antigravitySkillsCwd({ ...input, toolCall: { name: 'view_file', args: { AbsolutePath: '/x' } } })).toBeNull();
+    expect(antigravitySkillsCwd({ ...input, toolCall: { name: 'run_command', args: { CommandLine: 'pwd' } } })).toBeNull();
+    expect(antigravitySkillsCwd({ toolCall: input.toolCall })).toBeNull();
+  });
+
+  const cli = resolve(import.meta.dirname, '../../dist/index.js');
+  it.skipIf(!existsSync(cli))('is refused by the real hook with the project folder in the reason', () => {
+    const { project, input } = call('<profile>/antigravity-cli/skills');
+    const r = spawnSync(process.execPath, [cli, 'hook', 'pre-tool-use', '--format', 'antigravity'], { cwd: project, input: JSON.stringify(input), encoding: 'utf-8', env: { ...process.env, HOME: base } });
+    const out = JSON.parse(r.stdout) as { decision?: string; reason?: string };
+    expect(out.decision).toBe('deny');
+    expect(out.reason).toContain(`Cwd set to ${project}`);
+  });
 });

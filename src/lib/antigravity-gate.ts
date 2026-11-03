@@ -252,3 +252,30 @@ export function antigravityCallAsClaude(input: Record<string, unknown>): GateCal
   if (key) return { toolName: call.name === 'create_file' ? 'Write' : 'Edit', toolInput: { file_path: args[key] }, cwd };
   return { toolName: call.name, toolInput: args, cwd };
 }
+
+/**
+ * A shell command about to run in one of the agent's SKILLS folders instead of the project: the
+ * project folder it should run in, or null. Antigravity hands a session its project and the skills
+ * folders as workspaces, and a sub-agent's shell starts in one of the skills folders (measured
+ * 2026-11-03, agent 1.4.1: `pwd` printed `<profile>/antigravity-cli/skills`). There `README.md` is
+ * missing, `dreamcontext` finds no brain, and in the owner's chat the snapshot died with `EPERM
+ * uv_cwd`. Refused with the project folder named, the agent runs the command again with that `Cwd`.
+ * A folder that is not a skills folder (a linked repo the owner opened as a workspace) is left alone.
+ */
+export function antigravitySkillsCwd(input: Record<string, unknown>): string | null {
+  const call = input.toolCall as { name?: unknown; args?: unknown } | undefined;
+  if (call?.name !== 'run_command' || !call.args || typeof call.args !== 'object') return null;
+  const cwd = (call.args as { Cwd?: unknown }).Cwd;
+  const paths = (Array.isArray(input.workspacePaths) ? input.workspacePaths : []).filter((p): p is string => typeof p === 'string' && isAbsolute(p));
+  const root = paths[0];
+  if (typeof cwd !== 'string' || !cwd || !root) return null;
+  const here = lower(nearestReal(resolve(cwd)));
+  const project = lower(nearestReal(resolve(root)));
+  if (aboveOrSelf(project, here)) return null;
+  const inSkills = paths.slice(1).some((p) => {
+    if (basename(p.replace(/[\\/]+$/, '')) !== 'skills') return false;
+    const skills = lower(nearestReal(resolve(p)));
+    return aboveOrSelf(skills, here);
+  });
+  return inSkills ? root : null;
+}

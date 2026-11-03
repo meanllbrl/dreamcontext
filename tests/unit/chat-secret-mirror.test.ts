@@ -1,8 +1,8 @@
 /**
  * DRIFT LOCK — the secret card's constants have ONE owner (`src/lib/env-secrets.ts`, which
  * is what the server validates a submitted body against) and are MIRRORED into
- * `dashboard/src/lib/chatViewSpec.ts` because the dashboard is a separate bundle and cannot
- * import from `src/`.
+ * `src/lib/chat-view-spec.ts` (the chat's card rules, which the dashboard re-exports), written
+ * as literals there so the card rules stay one self-contained file.
  *
  * A mirror that drifts here is not cosmetic: the card would draw a field the server then
  * refuses, or accept a `.env.<something>` path the writer will not write — a submit that
@@ -15,7 +15,7 @@ import { join } from 'node:path';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const owner = readFileSync(join(ROOT, 'src/lib/env-secrets.ts'), 'utf-8');
-const mirror = readFileSync(join(ROOT, 'dashboard/src/lib/chatViewSpec.ts'), 'utf-8');
+const mirror = readFileSync(join(ROOT, 'src/lib/chat-view-spec.ts'), 'utf-8');
 const runOwner = readFileSync(join(ROOT, 'src/server/routes/agent-spawn-shared.ts'), 'utf-8');
 
 /** The literal right-hand side of `export const <name> = <value>;`, as written. */

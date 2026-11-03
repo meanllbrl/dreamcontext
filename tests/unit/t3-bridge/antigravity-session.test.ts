@@ -311,6 +311,38 @@ describe.skipIf(nodeMajor < 22)('Antigravity on the bridge (fake ACP agent)', ()
     expect(results[0]).toMatchObject({ subtype: 'error_during_execution', dc_tool: 'antigravity' });
   }, 60_000);
 
+  it('a skipped card told back while the agent works is dropped: never held, never joined to the owner words (card-feedback.ts)', async () => {
+    process.env.T3_ACP_HANG_PROMPT_FOREVER = '1';
+    const cwd = join(dir, 'project');
+    mkdirSync(join(cwd, '_dream_context'), { recursive: true });
+    const input = new PassThrough();
+    const frames: Record<string, any>[] = [];
+    const done = runBridgeStdio(
+      { tool: 'antigravity', cwd, model: '', mode: 'auto', paneId: 'pane-1', binaryPath: fakeAgent(dir) },
+      { input, home: dir, env: { ...process.env, DREAMCONTEXT_CLI: '/fake/cli.js' }, write: (l) => { frames.push(JSON.parse(l) as Record<string, any>); } },
+    );
+    const say = (text: string): void => { input.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: text } })}\n`); };
+    say('take your time');
+    for (let i = 0; i < 200 && !frames.some((f) => f.type === 'system' && f.subtype === 'init'); i++) await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 500));
+    say('<dreamcontext-card-feedback>\nFEEDBACK-MARKER\n</dreamcontext-card-feedback>');
+    say('OWNER-LATE');
+    await new Promise((r) => setTimeout(r, 300));
+    input.write(`${JSON.stringify({ type: 'control_request', request_id: 'stop-1', request: { subtype: 'interrupt' } })}\n`);
+    const prompts = (): string[] => readFileSync(log, 'utf-8').split('\n').filter((l) => l.includes('session/prompt'));
+    // Under a full suite the Stop's own end can take seconds: wait for it, then for the held message's prompt.
+    for (let i = 0; i < 800 && !frames.some((f) => f.type === 'result'); i++) await new Promise((r) => setTimeout(r, 50));
+    for (let i = 0; i < 400 && prompts().length < 2; i++) await new Promise((r) => setTimeout(r, 50));
+    input.end();
+    await done;
+    const busyNotices = frames.filter((f) => JSON.stringify(f).includes('cannot take a message'));
+    expect(busyNotices).toHaveLength(1);
+    const all = prompts();
+    expect(all).toHaveLength(2);
+    expect(all[1]).toContain('OWNER-LATE');
+    expect(all.join('\n')).not.toContain('FEEDBACK-MARKER');
+  }, 90_000);
+
   it('a Stop the agent is slow to confirm is acked at once and ends the turn once, from the Stop', async () => {
     // The mock answers a cancel after about 15 s, past the server's 5 s watchdog on the ack.
     process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL = '1';
