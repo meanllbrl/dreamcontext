@@ -210,10 +210,10 @@ describe('a record from another Mac or another folder is not this Super', () => 
 describe('review round 1: what the first fix left open', () => {
   const stamped = () => ({ machine: readMachineIdentity().id, root: realpathSync(root) });
 
-  it('C1: a pulled `!` negation cannot put the record into a sync commit (stage pass), and update re-asserts the ignore', () => {
+  it('C1: a pulled `!` negation cannot put the record into a sync commit (stage pass), and update re-asserts the ignore', async () => {
     ensureBrainGitignore(root);
     writeFileSync(join(root, '.gitignore'), `${readFileSync(join(root, '.gitignore'), 'utf-8')}!state/.super-agent.json\n`);
-    writeRecord(record());
+    await updateSuperState(root, (d) => { d.session = SESSION; d.enabled = true; });
     git(['add', '-A']);
     expect(tracked('_dream_context/state/.super-agent.json')).toBe(true);
     expect(superStagePass(project, root)).toEqual(['_dream_context/state/.super-agent.json']);
@@ -267,6 +267,32 @@ describe('review round 1: what the first fix left open', () => {
     migration0402.steps.forEach((step) => step(root));
     expect(existsSync(join(root, SUPER_STATE_REL))).toBe(true);
     resetBindingCache();
+    expect((await readSuperState(root)).session).toBe(SESSION);
+  });
+});
+
+describe('review round 2: the stage pass keeps the evidence', () => {
+  it('a planted stamped record is set aside by the sync stage pass before its removal is committed', async () => {
+    ensureBrainGitignore(root);
+    writeRecord(record({ bound: { machine: readMachineIdentity().id, root: realpathSync(root) } }));
+    git(['add', '-f', '--', '_dream_context/state/.super-agent.json']);
+    git(['commit', '-q', '-m', 'planted']);
+    expect((await readSuperState(root)).session).toBeNull();
+    superStagePass(project, root);
+    git(['commit', '-q', '-m', 'sync']);
+    resetSuperIndex();
+    resetBindingCache();
+    expect(existsSync(join(root, SUPER_STATE_REL))).toBe(false);
+    expect((await readSuperState(root)).session).toBeNull();
+  });
+
+  it('this Mac\'s own staged record survives the stage pass', async () => {
+    ensureBrainGitignore(root);
+    await updateSuperState(root, (d) => { d.session = SESSION; d.enabled = true; });
+    git(['add', '-f', '--', '_dream_context/state/.super-agent.json']);
+    superStagePass(project, root);
+    resetBindingCache();
+    expect(existsSync(join(root, SUPER_STATE_REL))).toBe(true);
     expect((await readSuperState(root)).session).toBe(SESSION);
   });
 });

@@ -11,6 +11,7 @@
 
 import { brainPrefix } from '../agents/agent-sync.js';
 import * as git from '../git-sync/git.js';
+import { setAsideForeignRecords } from './record-binding.js';
 
 /** Incoming non-deletion entries of Super records in `HEAD...remoteRef`, or null when git cannot answer. */
 export function incomingSuperRecords(gitCwd: string, contextRoot: string, remoteRef: string): string[] | null {
@@ -57,7 +58,11 @@ export function superStagePass(gitCwd: string, contextRoot: string): string[] {
   if (!at) return [];
   try {
     const staged = git.indexPaths(at.top, at.specs);
-    if (staged.length) git.removeFromIndexForce(at.top, at.specs);
+    if (!staged.length) return [];
+    // While HEAD still holds a pulled record's bytes: once this commit drops it, nothing would
+    // tell a planted copy from this Mac's own (record-binding.ts).
+    setAsideForeignRecords(contextRoot);
+    git.removeFromIndexForce(at.top, at.specs);
     return staged;
   } catch {
     // Could not list them: drop them unlisted.

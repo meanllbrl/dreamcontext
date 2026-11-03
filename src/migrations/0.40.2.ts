@@ -1,10 +1,10 @@
-import { appendFileSync, existsSync, lstatSync, readFileSync, readdirSync, renameSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, readFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { brainPrefix } from '../lib/agents/agent-sync.js';
 import { currentTaskBackend, ensureBrainGitignore, ensureFullRepoGitignore } from '../lib/git-sync/brain-repo.js';
 import * as git from '../lib/git-sync/git.js';
 import { readSetupConfig } from '../lib/setup-config.js';
-import { bindingVerdict } from '../lib/super/record-binding.js';
+import { setAsideForeignRecords } from '../lib/super/record-binding.js';
 import { SUPER_LOCAL_PATHSPECS, superPathspecs } from '../lib/super/pull-guard.js';
 import type { Migration, MigrationStepResult } from './types.js';
 
@@ -48,38 +48,6 @@ function reassertSuperIgnore(root: string): string[] {
     appendFileSync(path, `${current.endsWith('\n') ? '' : '\n'}# dreamcontext: the Super Agent's files stay on this Mac (last, so no negation above wins)\n${SUPER_GITIGNORE_LINES.join('\n')}\n`);
   } catch { return []; }
   return SUPER_GITIGNORE_LINES;
-}
-
-/** Main's record and every member's, as files on disk (read marks and handoffs are not records). */
-function recordFiles(root: string): string[] {
-  const out = [join(root, 'state', '.super-agent.json')];
-  const members = join(root, 'state', '.super', 'members');
-  try {
-    if (lstatSync(join(root, 'state', '.super')).isDirectory() && lstatSync(members).isDirectory()) {
-      for (const name of readdirSync(members)) {
-        if (name.endsWith('.json') && !name.endsWith('.read-marks.json')) out.push(join(members, name));
-      }
-    }
-  } catch { /* no members folder */ }
-  return out;
-}
-
-/** Set aside every record on disk that is not this Mac's. Returns the files moved. */
-function setAsideForeignRecords(root: string): string[] {
-  const moved: string[] = [];
-  for (const file of recordFiles(root)) {
-    try {
-      if (!lstatSync(file).isFile()) continue;
-      const text = readFileSync(file, 'utf-8');
-      let parsed: unknown = null;
-      try { parsed = JSON.parse(text); } catch { continue; }
-      if (bindingVerdict(parsed, text, root, file) !== 'foreign') continue;
-      const to = `${file}.foreign-${Date.now()}`;
-      renameSync(file, to);
-      moved.push(to);
-    } catch { /* gone or unreadable: nothing to set aside */ }
-  }
-  return moved;
 }
 
 export function untrackSuperRecords(root: string): MigrationStepResult {

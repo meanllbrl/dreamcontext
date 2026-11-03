@@ -25,7 +25,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { readMachineIdentity } from '../machine-id.js';
@@ -155,6 +155,47 @@ export function bindingVerdict(raw: unknown, text: string, contextRoot: string, 
     verdictCache.set(key, mine);
   }
   return mine ? 'legacy' : 'foreign';
+}
+
+/** The record store's size ceiling (`store.ts` MAX_FILE_BYTES; not imported: store imports this). */
+const MAX_RECORD_BYTES = 2 * 1024 * 1024;
+
+/** Main's record and every member's, as files on disk (read marks and handoffs are not records). */
+function recordFiles(contextRoot: string): string[] {
+  const out = [join(contextRoot, 'state', '.super-agent.json')];
+  const members = join(contextRoot, 'state', '.super', 'members');
+  try {
+    if (lstatSync(join(contextRoot, 'state', '.super')).isDirectory() && lstatSync(members).isDirectory()) {
+      for (const name of readdirSync(members)) {
+        if (name.endsWith('.json') && !name.endsWith('.read-marks.json')) out.push(join(members, name));
+      }
+    }
+  } catch { /* no members folder */ }
+  return out;
+}
+
+/**
+ * Set aside (`<file>.foreign-<time>`, ignored) every record on disk that is not this Mac's.
+ * Run BEFORE a Super file leaves the index: a pulled record is foreign by its HEAD blob, and the
+ * commit that drops it from git also drops that evidence. A link or an oversize file is skipped
+ * (the store refuses both anyway). Returns the files moved.
+ */
+export function setAsideForeignRecords(contextRoot: string): string[] {
+  const moved: string[] = [];
+  for (const file of recordFiles(contextRoot)) {
+    try {
+      const st = lstatSync(file);
+      if (!st.isFile() || st.size > MAX_RECORD_BYTES) continue;
+      const text = readFileSync(file, 'utf-8');
+      let parsed: unknown = null;
+      try { parsed = JSON.parse(text); } catch { continue; }
+      if (bindingVerdict(parsed, text, contextRoot, file) !== 'foreign') continue;
+      const to = `${file}.foreign-${Date.now()}`;
+      renameSync(file, to);
+      moved.push(to);
+    } catch { /* gone or unreadable: nothing to set aside */ }
+  }
+  return moved;
 }
 
 /** Tests only: forget the cached answers. */
