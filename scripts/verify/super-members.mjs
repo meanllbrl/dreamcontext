@@ -218,7 +218,12 @@ async function summaryMembers(page) {
   return Array.isArray(r.json?.members) ? r.json.members : [];
 }
 /** The count the plan pins for a row: owner-facing questions + owner unread + approval cards. */
-const countOf = (ms) => ms.reduce((n, m) => n + (m.asking ? 1 : 0) + (Number(m.unread) || 0) + (m.approval ? 1 : 0), 0);
+// The folded Ekip row (task ekip-satiri, criterion 4 and plan r2): a ring with the number of members
+// working for the owner when any does, else the aggregate count, where a member working for main's
+// Super or turned off adds only its approval card (teamModel.ts ekipCount / ekipWorkingCount).
+const countOf = (ms) => ms.reduce((n, m) => n + (m.approval ? 1 : 0)
+  + (m.superOnly || !m.enabled ? 0 : (m.asking ? 1 : 0) + (Number(m.unread) || 0)), 0);
+const workingOf = (ms) => ms.filter((m) => m.enabled && !m.superOnly && Number(m.ownerWorking) > 0).length;
 
 async function handOver(page, base) {
   await page.goto(`${base}/?vault=${VAULT}`, { waitUntil: 'domcontentloaded' });
@@ -344,11 +349,17 @@ async function run(engineName, base, port) {
   ok(tag('(a) with faces (one to three)'), faces >= 1 && faces <= 3, String(faces));
   let want = -1;
   let shown = -1;
-  ok(tag('(a) its one count = owner questions + owner unread + approval cards'), await until(page, async () => {
-    want = countOf((await summaryMembers(page)).filter((m) => !m.global));
-    shown = lastInt(await row.innerText());
+  let ring = false;
+  ok(tag('(a) its one mark: the ring (members working for the owner) when any works, else owner questions + owner unread + approval cards'), await until(page, async () => {
+    const own = (await summaryMembers(page)).filter((m) => !m.global);
+    const working = workingOf(own);
+    ring = working > 0;
+    want = ring ? working : countOf(own);
+    shown = ring
+      ? ((await row.getByTestId('team-row-ring').count()) === 1 && (await row.getByTestId('team-row-count').count()) === 0 ? lastInt(await row.getByTestId('team-row-ring').innerText()) : -1)
+      : lastInt(await row.innerText());
     return want >= 1 && shown === want;
-  }, 20000), `row ${shown}, summary ${want}: ${(await row.innerText().catch(() => '')).replace(/\s+/g, ' ')}`);
+  }, 20000), `${ring ? 'ring' : 'count'}: row ${shown}, summary ${want}: ${(await row.innerText().catch(() => '')).replace(/\s+/g, ' ')}`);
   await shots(page, '01', 'ekip-row', () => ensureDrawer(page));
 
   console.log(`── ${engineName}: (b) its list and the switch`);
