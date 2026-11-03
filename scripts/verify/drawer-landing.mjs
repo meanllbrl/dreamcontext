@@ -171,23 +171,26 @@ async function main(browser) {
     await shot(p, '1-drawer');
     const acmeText = await p.locator('[data-drawer-project="acme"]').textContent();
     report.acmeRows = acmeText;
-    check('1: a Super job leaves no row', !acmeText.includes('Scout'), acmeText);
-    check('1: the owner\'s member stays', acmeText.includes('Owl'), acmeText);
+    // Since Wave 3 (plan-r10 1d) a member never gets its own drawer row: the project holds ONE
+    // Ekip row and its members live in that row's list.
+    const teamRow = p.locator('[data-drawer-project="acme"] [data-testid="drawer-team-row"]');
+    check('1: no member gets its own row', (await p.locator('[data-drawer-project="acme"] [data-testid="drawer-member-row"]').count()) === 0 && !acmeText.includes('Scout'), acmeText);
+    check('1: one Ekip row for the project', (await teamRow.count()) === 1, String(await teamRow.count()));
     check('2: no closed Chat row on an empty project', (await p.locator('[data-drawer-project="globex"] [data-testid="drawer-window-row"]').count()) === 0);
     check('2: New Chat there instead', await seen(p, '[data-drawer-project="globex"] [data-testid="drawer-new-chat"]'));
     check('2: a saved chat keeps its row', await seen(p, '[data-drawer-project="initech"] [data-testid="drawer-window-row"]'));
-    // 3: the member's page.
-    const owl = p.locator('[data-drawer-project="acme"] [data-testid="drawer-member-row"]', { hasText: 'Owl' });
+    // 3: the member's own Super stage, opened from the Ekip list.
+    await teamRow.first().click().catch(() => {});
+    const owl = p.locator('[data-testid="team-list"]:visible [data-testid="team-list-member"][data-slug="owl"]');
     if (await owl.isVisible().catch(() => false)) {
       await owl.click(); await wait(p, 2500);
       await shot(p, '3-member');
-      const box = await p.locator('[data-testid="agent-conversation"]').first().boundingBox().catch(() => null);
+      const owlStage = p.locator('[data-testid="super-surface"][data-super-id="m:owl"]:visible');
+      const box = await owlStage.first().boundingBox().catch(() => null);
       report.memberBox = box;
-      check('3: the conversation has a height', (box?.height ?? 0) > 300, JSON.stringify(box));
-      check('3: a composer is there', await seen(p, '[data-testid="agent-peek"] textarea, [data-testid="agent-peek"] [contenteditable="true"]'));
-      await p.getByTestId('agent-peek-close').click().catch(() => {});
-      await wait(p, 400);
-    } else check('3: a member row to press', false);
+      check('3: Owl opens her own stage', (box?.height ?? 0) > 300, JSON.stringify(box));
+      check('3: a composer is there', await seen(p, '[data-testid="super-surface"][data-super-id="m:owl"] textarea, [data-testid="super-surface"][data-super-id="m:owl"] [contenteditable="true"]'));
+    } else check('3: Owl in the Ekip list to press', false);
     // 4: another project's Super, not mounted, from a chat.
     await startFrames(p);
     await clickProjectRow(p, 'globex', 'drawer-super-row');
