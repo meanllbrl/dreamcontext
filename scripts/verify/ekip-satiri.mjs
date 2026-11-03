@@ -253,7 +253,8 @@ async function run(base) {
   console.log('── s5c a routine edited and deleted from the card');
   const rc = page.locator('[data-testid="member-card-routines"]:visible').first();
   const yorgun = rc.locator('[data-routine]').filter({ hasText: 'Yorgun reklam taraması' }).first();
-  const autoList = async () => (await pageFetch(page, VAULT, 'GET', '/automations')).json?.automations ?? [];
+  // Routines only: the list also carries each agent's own call target (runKind 'agent').
+  const autoList = async () => ((await pageFetch(page, VAULT, 'GET', '/automations')).json?.automations ?? []).filter((a) => a.runKind !== 'agent');
   const yorgunOn = async () => (await autoList()).find((a) => a.title === 'Yorgun reklam taraması')?.enabled;
   await yorgun.getByRole('switch').first().click().catch(() => {});
   ok('s5c its switch turns the routine on (an edit)', await until(page, async () => (await yorgunOn()) === true, 8000));
@@ -270,6 +271,8 @@ async function run(base) {
 
   console.log('── s6 Bu üyeyi sil');
   const openUye = async () => {
+    // Already open side by side (the card's delete button shows): the Others panel would cover it.
+    if (await st.getByTestId('member-delete').isVisible().catch(() => false)) return;
     const others = st.locator('[data-testid="super-others-stack"], [data-testid="super-others-open"]').first();
     if (await others.isVisible().catch(() => false)) await others.click();
     const uye = page.locator('[data-testid="super-others-item"]').filter({ hasText: /Üye|Member/ }).first();
