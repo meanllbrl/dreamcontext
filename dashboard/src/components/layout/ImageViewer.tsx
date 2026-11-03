@@ -34,25 +34,19 @@ const HARD_MAX = 8;
 /** One press of ＋ / − / the keyboard. */
 const STEP = 1.4;
 
+/** A ＋ or − drawn in the panel icon set's hand (24 grid, 1.75 stroke), not a text glyph. */
+function ToolGlyph({ d }: { d: string }) {
+  return (
+    <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" aria-hidden="true" focusable="false">
+      <path d={d} />
+    </svg>
+  );
+}
+
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
 const FOCUSABLE = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])';
 
-/** How long a zoomed picture waits without the pointer moving before its controls fade. */
-export const CONTROLS_IDLE_MS = 1500;
-/** How long the gesture hint stays up after the viewer opens. */
-export const HINT_MS = 3500;
-
-/**
- * Whether the bottom strip (file name, file actions, zoom bar) is on screen.
- *
- * At fit it always is: the picture is fitted into the space ABOVE the strip, so it costs the
- * picture nothing. Once zoomed the picture runs under the strip, so the strip steps aside after
- * a quiet pointer, and comes back while the pointer rests on it or keyboard focus is inside it.
- */
-export function controlsShown(s: { zoomed: boolean; idle: boolean; hovering: boolean; focusInside: boolean }): boolean {
-  return !s.zoomed || !s.idle || s.hovering || s.focusInside;
-}
 
 /**
  * A picture opened at full size: edge-to-edge over the whole window, zoomable to
@@ -83,13 +77,9 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, step, o
   const [failed, setFailed] = useState(false);
   const [stage, setStage] = useState<{ w: number; h: number } | null>(null);
   const footRef = useRef<HTMLDivElement | null>(null);
-  /** The strip's height: the stage ends where it starts, so "fit" never puts a control on the picture. */
+  /** The toolbar's height: the stage (and so the picture, fitted or zoomed) ends where it starts.
+   *  Measured, not assumed, because the phone adds the home-indicator inset under it. */
   const [footH, setFootH] = useState(0);
-  const [idle, setIdle] = useState(false);
-  const [hovering, setHovering] = useState(false);
-  const [focusInside, setFocusInside] = useState(false);
-  /** Once per open, not per picture: stepping through a set does not bring it back. */
-  const [hintUp, setHintUp] = useState(true);
   // A new image is a new subject — never inherit the previous one's zoom or pan.
   useEffect(() => {
     setNatural(null);
@@ -114,11 +104,6 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, step, o
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const id = window.setTimeout(() => setHintUp(false), HINT_MS);
-    return () => window.clearTimeout(id);
   }, []);
 
   // Lock the page behind the viewer. Nested under FullscreenOverlay's own lock is
@@ -223,25 +208,6 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, step, o
   const zoomed = view.scale > 1.01;
   const percent = Math.round(base * view.scale * 100);
 
-  // Any zoom or pan counts as activity: the strip shows, then fades after a quiet spell. A
-  // pointer move restarts the clock (`wake`). At fit there is no clock: the strip stays.
-  const idleTimer = useRef<number | undefined>(undefined);
-  const wake = () => {
-    setIdle(false);
-    window.clearTimeout(idleTimer.current);
-    idleTimer.current = window.setTimeout(() => setIdle(true), CONTROLS_IDLE_MS);
-  };
-  const wakeRef = useRef(wake);
-  wakeRef.current = wake;
-  useEffect(() => {
-    if (zoomed) wakeRef.current();
-    else { window.clearTimeout(idleTimer.current); setIdle(false); }
-  }, [zoomed, view.x, view.y, view.scale]);
-  useEffect(() => () => window.clearTimeout(idleTimer.current), []);
-  // The first zoom means the gestures were found; the hint has nothing left to say.
-  useEffect(() => { if (zoomed) setHintUp(false); }, [zoomed]);
-
-  const shown = controlsShown({ zoomed, idle, hovering, focusInside });
 
   return createPortal(
     <div
@@ -251,9 +217,6 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, step, o
       aria-modal="true"
       aria-label={alt || t('imageViewer.label')}
       tabIndex={-1}
-      onPointerMove={zoomed ? wake : undefined}
-      // A still tap on a touch screen fires no move: a press anywhere brings the strip back too.
-      onPointerDown={zoomed ? wake : undefined}
     >
       <div
         ref={stageRef}
@@ -290,61 +253,47 @@ export function ImageViewer({ src, alt = '', caption, actions, fallback, step, o
         )}
       </div>
 
-      <div
-        ref={footRef}
-        className="image-viewer-foot image-viewer-foot--dock"
-        data-hidden={!shown || undefined}
-        onPointerEnter={() => setHovering(true)}
-        onPointerLeave={() => setHovering(false)}
-        // Only KEYBOARD focus holds the strip: Chrome and WebView2 leave a clicked ＋ focused, and
-        // that must not pin the strip over a zoomed picture.
-        onFocus={(e) => setFocusInside(e.target.matches(':focus-visible'))}
-        onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusInside(false); }}
-      >
-        {/* The hint shares the file name's row and only fades (never unmounts), so its going
-            never changes the strip's height and the fitted picture never jumps. */}
-        {(caption || !failed) && (
-          <div className="image-viewer-foot-row">
-            {caption && <div className="image-viewer-caption">{caption}</div>}
-            {!failed && (
-              <p className="image-viewer-hint" data-gone={!(hintUp && !zoomed) || undefined} aria-hidden={!(hintUp && !zoomed) || undefined}>
-                {t('imageViewer.hint')}
-              </p>
-            )}
-          </div>
-        )}
-        {/* Above the zoom bar, not in it: these act on the FILE, the bar acts on the view. */}
-        {actions && <div className="image-viewer-actions">{actions}</div>}
-        {!failed && <div className="image-viewer-bar">
-          <button
-            type="button"
-            className="image-viewer-btn"
-            onClick={() => zoomAround((s) => s / STEP)}
-            disabled={view.scale <= 1}
-            aria-label={t('imageViewer.zoomOut')}
-            title={t('imageViewer.zoomOut')}
-          >
-            −
-          </button>
-          <button
-            type="button"
-            className="image-viewer-level"
-            onClick={() => (zoomed ? setView(FIT) : zoomAround(() => (actual > 1.01 ? actual : maxScale)))}
-            title={zoomed ? t('imageViewer.fit') : t('imageViewer.actual')}
-          >
-            {percent}%
-          </button>
-          <button
-            type="button"
-            className="image-viewer-btn"
-            onClick={() => zoomAround((s) => s * STEP)}
-            disabled={view.scale >= maxScale}
-            aria-label={t('imageViewer.zoomIn')}
-            title={t('imageViewer.zoomIn')}
-          >
-            ＋
-          </button>
-        </div>}
+      {/* ONE solid row under the picture, never over it: file name on the left, the file's
+          own actions and the zoom group on the right. The stage ends at its top edge. */}
+      <div ref={footRef} className="image-viewer-toolbar" role="toolbar" aria-label={t('imageViewer.label')}>
+        <div className="image-viewer-toolbar-name" title={typeof caption === 'string' ? caption : undefined}>{caption}</div>
+        <div className="image-viewer-toolbar-tools">
+          {actions}
+          {actions && !failed && <span className="image-viewer-toolbar-divider" aria-hidden="true" />}
+          {!failed && (
+            <div className="image-viewer-zoom">
+              <button
+                type="button"
+                className="viewer-tool"
+                onClick={() => zoomAround((s) => s / STEP)}
+                disabled={view.scale <= 1}
+                aria-label={t('imageViewer.zoomOut')}
+                title={t('imageViewer.zoomOut')}
+              >
+                <ToolGlyph d="M6 12h12" />
+              </button>
+              <button
+                type="button"
+                className="viewer-tool viewer-tool--level"
+                onClick={() => (zoomed ? setView(FIT) : zoomAround(() => (actual > 1.01 ? actual : maxScale)))}
+                // The gesture hint lives here now: one tooltip instead of a line over the picture.
+                title={`${zoomed ? t('imageViewer.fit') : t('imageViewer.actual')} · ${t('imageViewer.hint')}`}
+              >
+                {percent}%
+              </button>
+              <button
+                type="button"
+                className="viewer-tool"
+                onClick={() => zoomAround((s) => s * STEP)}
+                disabled={view.scale >= maxScale}
+                aria-label={t('imageViewer.zoomIn')}
+                title={t('imageViewer.zoomIn')}
+              >
+                <ToolGlyph d="M6 12h12M12 6v12" />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {step && (

@@ -154,6 +154,15 @@
 /* In a viewer's chrome the row sits on the viewer's own surface, so it brings its own
    padding and separator instead of inheriting a panel's. */
 .chat-fileactions.compact .chat-fileactions-row { gap: 6px; }
+/* Icon-only: one line in the image viewer's toolbar row; a failure shows in the row, ellipsized. */
+.chat-fileactions.icon-only { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.chat-fileactions.icon-only .chat-fileactions-note {
+  margin: 0;
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ── PDF viewer (a document opened at full window, like an image) ──────────────────── */
 

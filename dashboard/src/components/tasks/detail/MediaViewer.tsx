@@ -79,7 +79,7 @@ export function MediaViewer({ slug, files, index, onIndex, onClose }: {
   const actions: ReactNode = (
     <span className="mv-actions">
       {nav}
-      {desktop ? <FileActions path={projectPath} compact openMode={openModeFor(file.kind)} /> : <CopyPath path={projectPath} />}
+      {desktop ? <FileActions path={projectPath} compact iconOnly={file.kind === 'image'} openMode={openModeFor(file.kind)} /> : <CopyPath path={projectPath} />}
     </span>
   );
 
