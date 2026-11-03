@@ -34,6 +34,7 @@ import { HIDDEN_TITLE_PROMPT, TabTitler, titleBlock, titleIn } from './tab-title
 import type { WireFrame } from './to-wire.js';
 import { fitCodexContext, type BrainContext } from './context.js';
 import { appendSubagentStep } from './subagent-log.js';
+import { isInjectedUserText } from './codex-history.js';
 import { expandSlash, slashCommandNames } from './slash.js';
 import { codexStorePlan, planLaunchArgs } from '../codex-mcp.js';
 
@@ -541,7 +542,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       gateNotice = null;
       serversNotice = null;
       if (notice) emit({ type: 'assistant', message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: notice }] }, parent_tool_use_id: null, session_id: session.nativeThreadId });
-      if (keepsThread) recordThreadTurn(session.nativeThreadId, args.cwd, 'user', text, home, args.account);
+      // A hidden turn the server wrote (a skipped card told back, card-feedback.ts) is no owner text.
+      if (keepsThread && !isInjectedUserText(text)) recordThreadTurn(session.nativeThreadId, args.cwd, 'user', text, home, args.account);
       const context = session.busy || nativeCommand ? [] : [...titler.nudge(), ...pending.splice(0), ...onceAThread(brain)];
       await session.send(expanded ?? text, args.tool === 'codex' ? fitCodexContext(context) : context);
       return;

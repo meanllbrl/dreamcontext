@@ -36,6 +36,7 @@ import { safeChildPath } from '../safe-path.js';
 import { sessionWorktreeRoot } from '../session-worktree.js';
 import { resolveChatReference, isInside } from '../chat-reference-path.js';
 import { CHAT_SURFACE_BRIEFING, SUPER_CHILD_BRIEFING } from '../chat-surface.js';
+import { CardFeedbackTracker } from '../card-feedback.js';
 import { recordAgentSession, recordStageHomeSession } from '../../lib/local-store.js';
 import { getRunTarget } from '../../lib/automations/store.js';
 import { isGlobalAgentHere, listGlobalAgentSlugs } from '../../lib/agents/scope.js';
@@ -3100,6 +3101,8 @@ export function startChatSession(
   /** The main chain's context as of its latest assistant frame — the handoff's "before" when
    *  the record itself did not carry one. */
   let lastMainContext = 0;
+  /** The main agent's words this turn, read for cards the chat skipped (card-feedback.ts). */
+  const cardFeedback = new CardFeedbackTracker();
   const setHandoffRun = (next: HandoffRun | null): void => {
     if (!next) return;
     handoffRun = next;
@@ -3927,6 +3930,7 @@ export function startChatSession(
       const stageBefore = handoffRun?.stage;
       const turnsBefore = turnsInFlight;
       if (handoffRun) setHandoffRun(advanceHandoffRun(handoffRun, obj, turnsInFlight));
+      cardFeedback.noteFrame(obj);
       if (obj.type === 'assistant' && !obj.parent_tool_use_id) {
         const used = contextTokensFromUsage((obj.message as { usage?: Record<string, unknown> } | undefined)?.usage);
         if (used > 0) lastMainContext = used;
@@ -3991,6 +3995,18 @@ export function startChatSession(
           if (failed) setHandoffRun(failed);
           else sendMeta(handoffProgressFrame({ id: Date.now(), stage: 'failed', task: '', title: '', message }));
           if (isSuper) stopRotating(chatRegistryId);
+        }
+
+        // A card the chat skipped in this answer goes back to the agent as one hidden turn, so it
+        // sends the card again by the rules and stops telling the owner it is there (card-feedback.ts).
+        // Only after a turn that ended cleanly, with nothing about to rotate, restart or wait behind it.
+        const rotating = !!handoffRun && handoffRun.stage !== 'done' && handoffRun.stage !== 'failed';
+        const cleanEnd = obj.subtype === 'success' && obj.is_error !== true && !limit && !limitHitThisTurn
+          && !rotating && respawnTo === null && turnsInFlight === 0;
+        const told = cardFeedback.atResult(cleanEnd);
+        if (told) {
+          openTurn();
+          if (!writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: told }] } })) closeTurn();
         }
       }
 

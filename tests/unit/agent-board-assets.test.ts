@@ -391,6 +391,8 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * 2026-11-03: +94 for the one-line `dc-kv` shape (dt/dd pairs, or a div per row opening
    * with a dc-label), owner screenshot of a report whose kv rows crushed to a letter a line.
    * Actual 14,743; still under 14800.
+   * 2026-11-03: +46 for the run card's one-line rule said plainly (Gemini and Codex both wrote
+   * `"command":"ls\npwd"`, a card the chat drops). Actual 14,789; still under 14800.
    */
   it('stays small enough to ride in every chat turn', () => {
     expect(CHAT_SURFACE_BRIEFING.length).toBeLessThan(14800);
@@ -404,7 +406,7 @@ describe('CHAT_SURFACE_BRIEFING', () => {
    * is.
    */
   it('is the length its docstring claims — within a wording tweak', () => {
-    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 14743)).toBeLessThanOrEqual(20);
+    expect(Math.abs(CHAT_SURFACE_BRIEFING.length - 14789)).toBeLessThanOrEqual(20);
   });
 
   /**
