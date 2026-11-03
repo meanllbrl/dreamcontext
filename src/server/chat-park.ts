@@ -3,7 +3,6 @@ import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'n
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { recordNotification } from '../lib/notification-log.js';
 import { isDelegatedSuperChild } from '../lib/super/store.js';
 import {
   SOFT_AVAIL_MEM_GB, SOFT_DISK_GB, SOFT_SWAP_SHARE,
@@ -285,7 +284,9 @@ const defaultSweepDeps = (): SweepDeps => ({
   readFacts: () => readCapacityFactsFresh(),
   ps: async () => (await run('ps', ['-axo', 'pid=,ppid=,comm='], { timeout: 5_000, maxBuffer: 8 * 1024 * 1024 })).stdout,
   activity: (p) => transcriptActivity(p.transcriptPath?.() ?? null),
-  notice: (parked, pressure) => { recordNotification(parkNoticeText(parked, pressure)); },
+  // Parking is never shown to the owner (2026-11-03: a parked chat looks like any chat), so it
+  // leaves a log line, not a notification.
+  notice: (parked, pressure) => { console.log(`[chat-park] ${parkNoticeText(parked, pressure, false).body}`); },
 });
 
 let sweepDeps: SweepDeps | null = null;
