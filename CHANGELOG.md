@@ -24,6 +24,10 @@ AI Team:
 - **Approval only when it matters.** Your own changes and the Super Agent's need no approval card; a card comes up only for a synced change, a change that widens a member's rights, or a risky change from a background run. A member can be turned on or off without losing its approval.
 - **Review rounds show on the task** and say who they wait on: the reviewer, you, or nobody because it is stuck. A Codex or Antigravity member that cannot run a task step is refused when you assign it.
 - **A project can hold several Super Agents:** the main one plus one per AI Team member, each with its own record, inbox and limits. A member's helpers never run with wider rights than the member, a member cannot read or write another Super's record, and the phone page cannot start a member. The main Super works as before.
+- **A permission from a member's helper always reaches you,** also when the helper works on the main Super's request. Before, it waited on a card nobody saw.
+- **A Super Agent record never comes in from the team.** A brain sync whose update carries one stops before merging, so a teammate's push cannot start a member's Super on your Mac.
+- **On the phone, reading a member's chat marks the member's messages read,** not the main Super's.
+- **Send back on a member's task strip goes to the task you picked.** Text typed for one task no longer carries over when you switch to another.
 
 From 0.40.1:
 
