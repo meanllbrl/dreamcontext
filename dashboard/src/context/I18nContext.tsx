@@ -3366,6 +3366,7 @@ const translations: Record<string, Record<string, string>> = {
     'drawer.team.superWorking': 'Working for Super',
     'drawer.team.manage': 'Manage members',
     'drawer.team.addFirst': 'add the first member',
+    'drawer.team.setYour': 'Set your team',
     'drawer.team.global': 'Global team',
     'drawer.team.globalAll': 'All projects',
     'drawer.team.independent': 'Outside projects',

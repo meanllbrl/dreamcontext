@@ -261,7 +261,14 @@ export function ChatDrawer(p: ChatDrawerProps) {
 
   /** A project's Ekip row (r8-05): faces, one count. On the desktop it opens IN PLACE (plan r4
    *  D1); a phone keeps its bottom sheet. */
-  const teamRow = (c: Extract<DrawerChild, { kind: 'team' }>) => (phone && c.members.length === 0 ? null : !phone ? (
+  const teamRow = (c: Extract<DrawerChild, { kind: 'team' }>) => (phone && c.members.length === 0 ? null : !phone && c.members.length === 0 && p.onManage ? (
+    // No member yet (owner 2026-11-03): one plain row like "Chat", same edge, type and states; it opens team setup.
+    <button key="team" type="button" className={`ns-dr-row ns-dr-child ns-dr-team-empty${c.selected ? ' is-sel' : ''}`}
+      data-testid="drawer-team-row" data-vault={c.vault} data-empty="true" aria-haspopup="dialog"
+      onClick={() => p.onManage?.(c.vault)}>
+      <span className="ns-dr-t">{t('drawer.team.setYour')}</span>
+    </button>
+  ) : !phone ? (
     <TeamSection key="team" members={c.members} kind="project" vault={c.vault} label={t('drawer.team.row')}
       selected={c.selected} className="ns-dr-child" testid="drawer-team-row"
       onOpen={(m) => openMember(c.vault, m)}

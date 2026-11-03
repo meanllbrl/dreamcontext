@@ -16,7 +16,8 @@
  *   h2 the Global team: the same depth relative to its own row.
  *   h3 open, 20 members: still a box 8 rows tall that scrolls inside; the row under it holds still.
  *   h4 folded, a member with unread pops out at the members' depth with its count.
- *   h5 no member: the Team row keeps its empty slot.
+ *   h5 no member: one plain "Set your team" row whose text starts where "Chat" starts (1px), in
+ *      every width and theme; no faces, no chevron.
  * Console errors and failed requests are a FAIL.
  */
 
@@ -58,6 +59,11 @@ function setup() {
     chatView: true, screenMigrated: true, chatPermissionMode: 'auto', chatDefaultModel: '', chatDefaultEffort: '', lightMode: 'off', superAgent: true,
   }, null, 2)}\n`);
   spawnSync('git', ['-C', PROJ, 'init', '-q'], { encoding: 'utf-8' });
+  // One chat window named "Chat" (the row h5 lines "Set your team" up with).
+  writeFileSync(join(PROJ, '_dream_context', 'state', '.agent-sessions.json'), JSON.stringify({
+    sessions: [{ title: 'Chat', kind: 'chat', sessionId: '6f1c2a9e-3b4d-4e5f-8a7b-1c2d3e4f5a6b', pane: 0, active: true, window: 'main', size: 1, bypass: false, minimized: false }],
+    activePane: 0, chatPermissionMode: 'auto', windows: [{ id: 'main', name: 'Chat', activePane: 0 }], generation: 1,
+  }));
   mkdirSync(join(HOME, '.local', 'bin'), { recursive: true });
   const bin = join(HOME, '.local', 'bin', 'claude');
   writeFileSync(bin, superStandin({ reports: join(SCRATCH, 'reports.ndjson'), cli: CLI }));
@@ -219,11 +225,49 @@ async function run(base) {
   const pg = await measure(page, `[data-testid="drawer-team-row"][data-vault="${VAULT}"]`);
   ok('h4 the pop-out sits at the members\' depth', pg?.avatar && own?.avatar && Math.abs(pg.avatar.l - own.avatar.l) <= 1, `pop ${pg?.avatar?.l} open ${own?.avatar?.l}`);
 
-  // The classic rail draws no Team row for an empty team (SidebarTeam); the drawer keeps its slot.
+  // The classic rail draws no Team row for an empty team (SidebarTeam); the drawer reads "Set your team".
   if (!CLASSIC) {
     console.log('── h5 no member');
     ok('h5 the row is there', await show(page, base, 'empty', { open: false }));
-    ok('h5 the empty slot', (await row(page).getAttribute('data-empty')) === 'true' && (await page.getByTestId('team-empty-slot').count()) >= 1);
+    const r = row(page);
+    ok('h5 it reads "Set your team"', (await r.getAttribute('data-empty')) === 'true' && (await r.innerText()).trim() === 'Set your team');
+    ok('h5 no faces, no chevron, no empty slot', (await r.locator('.ns-team-faces, .ns-team-chev, [data-testid="team-empty-slot"]').count()) === 0);
+    /** The left edge of a row's painted text, and its type. */
+    const edges = () => page.evaluate((v) => {
+      const text = (btn) => {
+        const t = btn?.querySelector('.ns-dr-t');
+        if (!t) return null;
+        const rg = document.createRange(); rg.selectNodeContents(t);
+        const cs = getComputedStyle(t);
+        return { cls: btn.classList.contains('ns-dr-row') && btn.classList.contains('ns-dr-child'), l: rg.getBoundingClientRect().left, r: btn.getBoundingClientRect().right, fs: cs.fontSize, fw: cs.fontWeight, color: cs.color, h: btn.getBoundingClientRect().height };
+      };
+      const proj = document.querySelector(`[data-drawer-project="${v}"]`) ?? document;
+      const vis = (sel) => [...proj.querySelectorAll(sel)].find((e) => e.offsetParent !== null);
+      const team = vis('[data-testid="drawer-team-row"]');
+      const pane = team?.closest('.ns-dr-children')?.getBoundingClientRect();
+      return { team: text(team), chat: text(vis('[data-testid="drawer-window-row"]')), paneR: pane?.right ?? null };
+    }, VAULT);
+    for (const [w, h] of [[1440, 900], [390, 844]]) for (const theme of ['light', 'dark']) {
+      await page.setViewportSize({ width: w, height: h });
+      await applyTheme(page, theme);
+      await page.waitForTimeout(500);
+      await ensureDrawer(page);
+      if (w <= 600 && !(await drawerShown(page))) await openDrawer(page).catch(() => {});
+      await page.waitForTimeout(500);
+      const e = await edges();
+      const tag = `h5 ${w} ${theme}`;
+      await page.screenshot({ path: join(OUT, `${PREFIX}-empty-${w}-${theme}.png`) }).catch(() => {});
+      ok(`${tag}: a "Chat" row to compare with`, !!e.chat && !!e.team, JSON.stringify(e));
+      if (!e.chat || !e.team) continue;
+      ok(`${tag}: "Set your team" starts where "Chat" starts (1px)`, Math.abs(e.team.l - e.chat.l) <= 1, `team ${e.team.l} chat ${e.chat.l}`);
+      // Chat is the row on screen (selected), so weight and colour are compared through the classes: the same row rules.
+      ok(`${tag}: Chat's row (its classes, size and height)`, e.team.cls && e.team.fs === e.chat.fs && e.team.h === e.chat.h, JSON.stringify(e));
+      ok(`${tag}: no overflow past the drawer`, e.paneR === null || e.team.r <= e.paneR + 0.5, JSON.stringify(e));
+    }
+    await applyTheme(page, 'light');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await r.click();
+    ok('h5 a click opens Manage members', await until(page, async () => (await page.locator('[data-testid="manage-members-modal"]:visible').count()) === 1, 20000));
   }
 
   ok('no console errors', watch.errors.length === 0, watch.errors.slice(0, 6).join('\n'));
