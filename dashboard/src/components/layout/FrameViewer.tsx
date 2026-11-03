@@ -10,7 +10,7 @@ import { frameEscSpent, useFrameSelection } from '../sleepy/chat/SelectionBar';
 import { pageDefaultCss } from '../../lib/pageDefaultCss';
 import {
   CHAT_HTML_KIT_CSS, CHAT_HTML_SANDBOX, HEIGHT_BRIDGE, HEIGHT_REQUEST_KEY, MAX_HTML_HEIGHT,
-  readHeightMessage, resolveChatKitTokens,
+  KIT_BEHAVIOUR, readHeightMessage, resolveChatKitTokens,
 } from '../sleepy/chat/chatHtmlKit';
 import { useProjectHtml } from '../appLink/DocumentReader';
 import { LINK_GUARD } from '../../lib/htmlLocalAssets';
@@ -251,7 +251,8 @@ function FrameViewerLive({ subject, deviceKey, onClose }: { subject: FrameSubjec
 }
 
 /** A project page in the chat's strict sandbox (no network, no navigation), with the height
- *  bridge (its own height) and the zoom bridge (its wheel and pinch in Click mode). */
+ *  bridge (its own height), the zoom bridge (its wheel and pinch in Click mode) and the kit's
+ *  runtime (a dc-graph is laid out and drawn, a dc-tabs switches), as on its card. */
 function HtmlFrame({ path, frameRef, onHeightRequest }: {
   path: string; frameRef: React.MutableRefObject<HTMLIFrameElement | null>; onHeightRequest: () => void;
 }) {
@@ -264,7 +265,7 @@ function HtmlFrame({ path, frameRef, onHeightRequest }: {
   const html = state.html;
   const srcDoc = useMemo(
     () => (html === null ? null : buildSandboxSrcdoc({
-      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, overrideCss: pageDefaultCss(true), headScript: `${HEIGHT_BRIDGE}\n${SELECTION_BRIDGE}\n${LINK_GUARD}\n${ZOOM_BRIDGE}`,
+      html, css: CHAT_HTML_KIT_CSS, tokens: resolveChatKitTokens(), scheme: theme, overrideCss: pageDefaultCss(true), headScript: `${HEIGHT_BRIDGE}\n${SELECTION_BRIDGE}\n${LINK_GUARD}\n${ZOOM_BRIDGE}\n${KIT_BEHAVIOUR}`,
     })),
     [html, theme],
   );
