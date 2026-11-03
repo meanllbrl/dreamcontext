@@ -3,7 +3,7 @@ import { TeamTile, teamRingKind, teamStatusOf, type TeamCard } from './TeamTile'
 import { useI18n } from '../../../context/I18nContext';
 import { useVaultId } from '../../../context/VaultContext';
 import { pageFitKey, setPageFit } from '../../../lib/pageFit';
-import { CONTAINER_SIZES, SIZE_UNITS, type ContainerSize, type SuperChild, type SuperContainer as Container } from '../../../lib/superTypes';
+import { CONTAINER_SIZES, SIZE_UNITS, type ContainerSize, type MemberCardRef, type SuperChild, type SuperContainer as Container } from '../../../lib/superTypes';
 import type { WidgetSize } from '../../../lib/whiteboardWidgets';
 import { BoardEmbed, BoardFullscreen } from '../chat/BoardEmbed';
 import { DocumentReader } from '../../appLink/DocumentReader';
@@ -204,6 +204,9 @@ export interface SuperContainerProps extends SuperCardActions {
   onPressResize?: (e: PointerEvent<HTMLElement>, id: string) => void;
   /** `agenda`: the super's agenda as this card draws it (SuperAgenda), the counts tile or the list. */
   agenda?: (variant: 'tile' | 'full', wide: boolean) => ReactNode;
+  /** `member`: a member stage's own card body (plan r4 K2: Rutinler, Talimatlar, Üye), a render
+   *  prop from the Chat surface; a small card is its summary tile, medium and up the live body. */
+  member?: (ref: MemberCardRef, variant: 'tile' | 'full') => ReactNode;
   /** A web page shown big in a presentation (spotlight, review, a filmstrip's big card): laid
    *  out at a desktop width and scaled to the card (plan-r2 D8). */
   desktopViewport?: boolean;
@@ -268,7 +271,8 @@ export function SuperContainer(props: SuperContainerProps) {
   const small = drawnSize === 'small';
   const closeLabel = asksOnClose ? t('super.close.chatLabel') : t('super.container.close');
   // The agenda is never closed: its close collapses it to its pill in the bottom-left corner.
-  const closeBtn = c.kind === 'agenda'
+  // A member's own card is never closed by anyone (plan r4 K3): no close control at all.
+  const closeBtn = c.kind === 'member' ? null : c.kind === 'agenda'
     ? <IconButton icon="corner" label={t('super.agenda.minimize')} onClick={onCloseClick} testId="super-agenda-minimize" />
     : props.remote ? null : <IconButton icon="close" label={closeLabel} onClick={onCloseClick} testId="super-card-close" />;
   // What only the Mac can show: drawn as a placeholder, never loaded from here.
@@ -279,6 +283,8 @@ export function SuperContainer(props: SuperContainerProps) {
     // The agenda's list is live on its card (its rows are the buttons): a click between them is
     // no "show side by side". Its counts tile opens like any card.
     if (c.kind === 'agenda' && !small && drawnSize !== 'medium') return;
+    // A member card's body is live from medium up (plan r4 G2): a click in it is its own.
+    if (c.kind === 'member' && !small) return;
     props.onSideBySide(c.id);
   };
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -316,9 +322,9 @@ export function SuperContainer(props: SuperContainerProps) {
         ...(plan.hidden ? { visibility: 'hidden' as const } : {}),
         ...(props.cue ? { ['--cue-dx' as string]: `${props.cue.dx}px`, ['--cue-dy' as string]: `${props.cue.dy}px` } : {}),
       }}
-      onPointerDown={floating && !props.parked ? (e) => { if (!inFullscreen(e.target)) props.onPress(e, c.id); } : undefined}
+      onPointerDown={floating && !props.parked ? (e) => { if (!inFullscreen(e.target) && !onControl(c, e.target)) props.onPress(e, c.id); } : undefined}
       onClick={thumb ? () => props.onSelectThumb?.(c.id)
-        : floating && !props.parked ? (e) => { if (!(e.target as HTMLElement).closest('button') && !inFullscreen(e.target)) openCard(); } : undefined}
+        : floating && !props.parked ? (e) => { if (!(e.target as HTMLElement).closest('button') && !onControl(c, e.target) && !inFullscreen(e.target)) openCard(); } : undefined}
       onKeyDown={onKeyDown}
     >
       <div className="super-card-lift" aria-hidden />
@@ -415,6 +421,13 @@ export function SuperContainer(props: SuperContainerProps) {
   );
 }
 
+/** A press on a live control inside a member card's body (a switch, a field, a link): the
+ *  control's, never the card's drag or "show side by side" (plan r4 G2). */
+function onControl(c: Container, target: EventTarget): boolean {
+  if (c.kind !== 'member' || !(target instanceof Element)) return false;
+  return !!target.closest('input, textarea, select, label, a, button, [role="switch"], [contenteditable="true"]');
+}
+
 /** A press inside what is full screen now (a floating clip's own player): the player's, never the
  *  card's grab or "show side by side", which would move the card or remount the player. */
 function inFullscreen(target: EventTarget): boolean {
@@ -495,6 +508,15 @@ function FloatBody(p: BodyProps): ReactNode {
     return (
       <div className="super-card-body super-mini-job" data-inert="true" data-kind={p.asksOwner ? 'asking' : p.status?.kind} title={p.title}>
         <span className="super-mini-job-dot" aria-hidden="true" />
+      </div>
+    );
+  }
+  if (c.kind === 'member') {
+    const full = size !== 'small';
+    return (
+      <div className="super-card-body super-card-large" data-inert={full ? undefined : 'true'} data-member-card={c.ref}>
+        <CardHead kind={c.kind} title={p.title} />
+        <div className="super-card-large-body">{p.member?.(c.ref as MemberCardRef, full ? 'full' : 'tile')}</div>
       </div>
     );
   }
@@ -749,6 +771,7 @@ function viewFor(p: BodyProps): ReactNode {
   const c = p.container;
   // The agenda reads the pushed record only (no fetch, no layout of its own): it draws at once.
   if (c.kind === 'agenda') return p.agenda?.('full', false) ?? null;
+  if (c.kind === 'member') return p.member?.(c.ref as MemberCardRef, 'full') ?? null;
   if (!p.viewReady) return null;
   const size = widgetSize(p.plan);
   switch (c.kind) {

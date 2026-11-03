@@ -306,3 +306,11 @@
 /* Main's card for a member's request: the request and its result above the conversation. */
 .super-team-job-request { flex: none; display: flex; flex-direction: column; gap: var(--space-1); padding: 0 var(--space-3); }
 .super-team-job-result { margin: 0; font-size: var(--font-size-sm); color: var(--color-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* A member's own cards on the phone (plan r4 G6): three chips under its head, each a sheet. */
+.phone-member-chips { display: flex; gap: var(--space-2); padding: 0 var(--space-3) var(--space-2); overflow-x: auto; }
+.phone-member-chip {
+  flex: none; padding: var(--space-1) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-full);
+  background: var(--color-bg-secondary); color: var(--color-text); font: inherit; font-size: var(--font-size-sm); cursor: pointer;
+}
+.phone-member-chip:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }

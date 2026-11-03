@@ -1701,7 +1701,9 @@ export function applyLayoutPatch<S extends Staged>(state: S, patch: LayoutPatch)
     unshown.add(agendaId);
   }
   if (patch.ungroup?.length) dissolveGroups(st, patch.ungroup);
-  const gone = new Set((patch.closed ?? []).filter((id) => id !== agendaId));
+  // A member's own card is never closed (plan r4 G4): the server ignores it, the patch does too.
+  const pinned = new Set(st.containers.filter((x) => x.kind === 'member').map((x) => x.id));
+  const gone = new Set((patch.closed ?? []).filter((id) => id !== agendaId && !pinned.has(id)));
   for (const id of gone) unshown.add(id);
   if (gone.size) st.containers = st.containers.filter((x) => !gone.has(x.id));
   const { containers, groups } = normalizeGroups(st.containers, st.groups);
@@ -1732,7 +1734,7 @@ export function patchEchoed(state: Staged, patch: LayoutPatch): boolean {
       && (sizeOf(k) !== p.size || k.sizeBy !== 'owner')) return false;
   }
   const agenda = state.containers.find((x) => x.kind === 'agenda');
-  for (const id of patch.closed ?? []) if (id !== agenda?.id && state.containers.some((x) => x.id === id)) return false;
+  for (const id of patch.closed ?? []) if (id !== agenda?.id && state.containers.some((x) => x.id === id && x.kind !== 'member')) return false;
   if (patch.agenda === 'open' && (!agenda || agenda.min || agenda.place !== 'float')) return false;
   if ((patch.agenda === 'min' || (agenda && patch.closed?.includes(agenda.id))) && !agenda?.min) return false;
   for (const id of patch.leave ?? []) if (groups.some((g) => g.cards.includes(id))) return false;

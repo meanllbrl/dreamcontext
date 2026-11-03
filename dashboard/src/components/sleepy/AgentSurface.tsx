@@ -99,13 +99,14 @@ import { recordPhoneEvent } from '../../lib/phoneConnLog';
 import { dropSurveyDraftsFor } from './chat/surveyDrafts';
 import { isLightMode } from '../../lib/lightMode';
 import { onWindowActivity, useWindowActivity } from '../../lib/windowActivity';
-import { readSuperStateView, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
+import { readSuperStateView, type MemberCardRef, type SuperDigestWire, type SuperId, type SuperQueueItem, type SuperStateView } from '../../lib/superTypes';
 import { MAIN_SUPER, dropSuperRecords, readSuperRecord, subscribeSuperRecords, superIdOf, useVaultSuperRecords, writeSuperRecord, type SuperRecordUpdate } from './super/superRecordStore';
 import { coldMembers, coldWaiting, memberMirrorVerdict, type ColdTry, phoneMemberOpen, memberOf, memberOpenRefusal, memberPlaceholderState, memberSuperId, memberSuperSpawn, openMemberSuper, superIdOfIntent, unionSuperView, type MemberRefusal } from './super/memberStageModel';
 import { useMemberSummaries } from './super/useMemberSummaries';
 import { MemberApprovalBand, MemberRefusalLine } from './super/MemberStage';
 import { PhoneMemberStage } from './super/PhoneMemberStage';
 import { MemberRoutineQuestions } from './super/MemberRoutineQuestions';
+import { MemberCardBody } from './super/MemberCardBody';
 import { AgentAvatar } from '../agents/AgentAvatar';
 import { cardTitle } from './super/superTitles';
 import type { SurveyRead } from './chat/SurveyCard';
@@ -6743,6 +6744,14 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     spawn: memberSpawnRef.current(stageMember),
     // Its routines' open questions, answered on its stage (the card is chat UI: mounted from here).
     routineQuestions: <MemberRoutineQuestions slug={stageMember} />,
+    // Its own stage cards' bodies (plan r4 K2): chat UI too, so handed in from here.
+    card: (ref: MemberCardRef, variant: 'tile' | 'full') => (
+      <MemberCardBody slug={stageMember} cardRef={ref} variant={variant}
+        enabled={stageSummary?.enabled !== false}
+        working={(stageSummary?.ownerWorking ?? 0) > 0 || !!stageSummary?.superOnly || (stageSummary?.pending ?? 0) > 0}
+        phone={isMacPhoneSurface()}
+        onDeleted={() => { setActiveSuperId(MAIN_SUPER); setSuperView('super'); }} />
+    ),
   } : undefined;
   let body: React.ReactNode;
   if (capsError) {
@@ -6838,6 +6847,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
             session={phoneMember?.slug === stageMember ? phoneMember.session : null}
             refusal={memberRefusal?.slug === stageMember ? memberRefusal.refusal : null}
             onRetry={() => void openMemberStageRef.current(stageMember, memberTaskRef.current ?? undefined)}
+            card={stageMemberInfo?.card}
           />
         )}
         {superView === 'super' && stageMember && !superState && isMobile && !phoneMemberShown && phoneMirror?.slug !== stageMember && (

@@ -8,6 +8,7 @@ import { AgentAvatar } from '../../agents/AgentAvatar';
 import { TeamApproval } from '../../aiteam/TeamApproval';
 import { pendingApprovals } from '../../aiteam/teamModel';
 import { JobChipView } from '../../tasks/JobChipView';
+import type { MemberCardRef } from '../../../lib/superTypes';
 import { memberTasks, stripRound, type MemberRefusal } from './memberStageModel';
 import type { SuperRequestTurn } from './superHandover';
 // TeamApproval's own styles (the AI Team page's sheet, as "Üyeleri yönet" loads it), then the band's.
@@ -35,6 +36,8 @@ export interface MemberStageInfo {
   onRetry?: () => void;
   /** The strip itself, drawn by the stage (TaskStrip). */
   strip?: ReactNode;
+  /** Its own cards' bodies (plan r4 K2), handed in by the Chat surface like the routine questions. */
+  card?: (ref: MemberCardRef, variant: 'tile' | 'full') => ReactNode;
   /** Its routines' open questions (MemberRoutineQuestions), handed in by the Chat surface: the
    *  answer card is chat UI, which this pure stage module must not import (super-size.test.ts). */
   routineQuestions?: ReactNode;

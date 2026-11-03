@@ -234,7 +234,9 @@ describe('observed run fixes (super-members.mjs)', () => {
   it('a refused member still has a stage: drawn from a placeholder view, never a plain chat tab', () => {
     const v = memberPlaceholderState('acme');
     expect(v).not.toBeNull();
-    expect(v).toMatchObject({ vault: 'acme', session: null, enabled: true, containers: [], queue: [], children: {} });
+    expect(v).toMatchObject({ vault: 'acme', session: null, enabled: true, queue: [], children: {} });
+    // Its own three cards stand on it (plan r4 G3): an off member is turned on from its stage.
+    expect(v!.containers.map((c) => [c.kind, c.ref, c.place])).toEqual([['member', 'routines', 'float'], ['member', 'instructions', 'float'], ['member', 'settings', 'others']]);
     expect(surface).toMatch(/const stageView = superState \?\? memberPlaceholder;/);
     expect(surface).toMatch(/const handedOver = superView === 'super' && !!stageView && !isMobile;/);
     expect(surface).toMatch(/\{handedOver && stageView && \(\s*<SuperSurface/);

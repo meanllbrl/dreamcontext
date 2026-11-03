@@ -67,7 +67,7 @@ export interface TeamRow {
 
 /** Is this automation one of `agentSlug`'s routines? An older backend names no agent: the
  *  automation runs as itself, so its own slug is the agent's. */
-function routineOf(a: TeamAutomation, agentSlug: string): boolean {
+export function routineOf(a: TeamAutomation, agentSlug: string): boolean {
   return a.runKind !== 'agent' && a.mode === 'sched' && (a.agent ?? a.slug) === agentSlug;
 }
 
