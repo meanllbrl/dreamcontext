@@ -445,7 +445,8 @@ export async function runBridgeStdio(args: StdioArgs, deps: StdioDeps): Promise<
       : [];
     // A sub-agent of this agent starts with none of this (TABLO row 8, real turn 2 Nov: "No
     // dreamcontext project brain or snapshot in context"): it is told how to get the brain itself.
-    own.push({ key: 'dreamcontext-subagents', text: `Your sub-agents (invoke_subagent) start without this project's brain or these notes. Begin every task you give one with: "First run \`dreamcontext snapshot\` in ${args.cwd} and read what it prints; it is this project's memory."` });
+    // Its shell also starts outside the project (in a skills folder, measured 3 Nov): the folder is named.
+    own.push({ key: 'dreamcontext-subagents', text: `Your sub-agents (invoke_subagent) start without this project's brain or these notes, and their shell starts outside the project. Begin every task you give one with: "This project's folder is ${args.cwd}: run every shell command with Cwd set to it and read files by their path in it. First run \`dreamcontext snapshot\` there and read what it prints; it is this project's memory."` });
     // The note says where a role's file is, for a project role made with define_subagent.
     const roleDirs = [findPackageDir('agents'), join(home, '.claude', 'agents'), join(args.cwd, '.claude', 'agents')].filter((d): d is string => !!d && existsSync(d));
     own.push({ key: 'dreamcontext-tools', text: toolNote('antigravity', { roleDirs }) });

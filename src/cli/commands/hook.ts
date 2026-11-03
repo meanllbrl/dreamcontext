@@ -3,7 +3,7 @@ import { logHandoff } from '../../lib/usage-records.js';
 import { directHeavy, shellQuote } from '../../lib/run-budget.js';
 import { isCodexRollout, readTranscriptText } from '../../lib/codex-rollout.js';
 import { hookTool, setHookTool } from '../../lib/hook-tool.js';
-import { GATE_BEAT_ENV, antigravityCallAsClaude, isAntigravityGateFile, movesGuardedPlace, shellTouchesGuarded } from '../../lib/antigravity-gate.js';
+import { GATE_BEAT_ENV, antigravityCallAsClaude, antigravitySkillsCwd, isAntigravityGateFile, movesGuardedPlace, shellTouchesGuarded } from '../../lib/antigravity-gate.js';
 import { classifyBash, gateHookOutput, parseGateContext, type BashGateContext } from '../../lib/apps/bash-gate.js';
 import { classifyFileTool } from '../../lib/apps/write-gate.js';
 import { AGENT_CHAT_ENV } from '../../lib/automations/types.js';
@@ -2944,9 +2944,21 @@ export function registerHookCommand(program: Command): void {
       };
       // Antigravity has no sandbox: a call this gate cannot read is refused, never waved through.
       const agy = hookTool() === 'antigravity' ? (input ? antigravityCallAsClaude(input) : null) : undefined;
-      if (agy === null) { deny('Denied by dreamcontext: the gate could not read this tool call.'); return; }
+      if (agy === null) {
+        // Named, so a refusal in a sub-agent's row says which call the gate could not read.
+        const name = (input?.toolCall as { name?: unknown } | undefined)?.name;
+        deny(`Denied by dreamcontext: the gate could not read this tool call${typeof name === 'string' && /^[\w.-]{1,64}$/.test(name) ? ` (${name})` : ''}.`);
+        return;
+      }
       if (agy && process.env[GATE_BEAT_ENV]) {
         try { writeFileSync(process.env[GATE_BEAT_ENV], ''); } catch { /* a child without its beat stops itself */ }
+      }
+      // A shell in a skills folder instead of the project (a sub-agent's starts there): run it again in
+      // the project (antigravity-gate.ts antigravitySkillsCwd).
+      const projectCwd = agy && input ? antigravitySkillsCwd(input) : null;
+      if (projectCwd) {
+        deny(`Not run: this command would run in a skills folder, not in the project. Run it again with Cwd set to ${projectCwd}.`);
+        return;
       }
       if (!input) process.exit(0); // allow — no input means nothing to gate
 
