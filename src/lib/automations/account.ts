@@ -296,7 +296,9 @@ async function decide(deps: PickDeps): Promise<AutomationAccount> {
 // second chooser. Nothing left: the start waits until the earliest window reset or refusal end.
 // Owner-typed messages never pass through here: a person at the keyboard decides for themself.
 
-export type ProtectedPick = { account: AutomationAccount } | { waitUntil: number };
+/** `noneOpen`: every account is kept for the owner's own chats, so nothing can start until one is
+ *  opened to routines again (no reset will fix that, and the reason must say so). */
+export type ProtectedPick = { account: AutomationAccount } | { waitUntil: number; noneOpen?: true };
 
 /** When nothing at all says when an account frees up (every one is "Only mine" or signed out). */
 const UNKNOWN_WAIT_MS = 30 * 60_000;
@@ -348,6 +350,9 @@ export async function protectedAutomationAccount(deps: PickDeps & { threshold?: 
         continue;
       }
       if (await serves(a.configDir ?? home)) return { account: toAccount(a, home) };
+    }
+    if (c.accounts.every((a) => a.ownerOnly)) {
+      return { waitUntil: wakes.length > 0 ? Math.min(...wakes) : now + UNKNOWN_WAIT_MS, noneOpen: true };
     }
   }
   return { waitUntil: wakes.length > 0 ? Math.min(...wakes) : now + UNKNOWN_WAIT_MS };

@@ -238,6 +238,8 @@ export function ClaudeAccounts({ policy = true }: { policy?: boolean } = {}) {
   const accounts: ClaudeAccountWire[] = order
     ? order.map((id) => serverAccounts.find((a) => a.id === id)).filter((a): a is ClaudeAccountWire => !!a)
     : serverAccounts;
+  // Every account kept for the owner's chats: no routine or background job can start anywhere.
+  const noneOpen = accounts.length > 0 && accounts.every((a) => a.ownerOnly === true);
 
   useEffect(() => {
     if (!order) return;
@@ -418,6 +420,19 @@ export function ClaudeAccounts({ policy = true }: { policy?: boolean } = {}) {
         </p>
       ) : (
         <>
+          {noneOpen && (
+            <div className="dc-acct-noneopen" role="alert" data-none-open>
+              <span>{t('accounts.noneOpen')}</span>
+              <button
+                type="button"
+                className="btn btn--sm btn--secondary"
+                disabled={busy !== ''}
+                onClick={() => void run(`only-${accounts[0].id}`, () => api.post('/agent/accounts/owner-only', { id: accounts[0].id, ownerOnly: false }))}
+              >
+                {t('accounts.noneOpen.fix')}
+              </button>
+            </div>
+          )}
           <div className="dc-acct-toolbar">
             <span className="dc-acct-toolbar-note">
               Drag to set the order. A new chat opens on the highest account that has room. A chat
@@ -474,6 +489,24 @@ export function ClaudeAccounts({ policy = true }: { policy?: boolean } = {}) {
                       )}
                       {a.isPrimary && <span className="dc-acct-tag">this machine</span>}
                       {org && <span className="dc-acct-tag">{org}</span>}
+                    </div>
+
+                    {/* Says what it does, with the consequence in sight, on one line of the
+                        account itself: "Only mine" alone left the owner with every account ticked
+                        and no routine able to start (2026-11-03). */}
+                    <div className="dc-acct-onlymine-row">
+                      <label className="dc-acct-onlymine" title={t('accounts.onlyMine.hint')}>
+                        <input
+                          type="checkbox"
+                          checked={a.ownerOnly === true}
+                          disabled={busy !== ''}
+                          data-only-mine={a.id}
+                          aria-describedby={`only-hint-${a.id}`}
+                          onChange={() => void run(`only-${a.id}`, () => api.post('/agent/accounts/owner-only', { id: a.id, ownerOnly: !a.ownerOnly }))}
+                        />
+                        <span>{t('accounts.onlyMine')}</span>
+                      </label>
+                      <span className="dc-acct-onlymine-hint" id={`only-hint-${a.id}`}>{t('accounts.onlyMine.hint')}</span>
                     </div>
 
                     {stale && <p className="dc-acct-warn">Signed out — sign in again to use this account.</p>}
@@ -566,16 +599,6 @@ export function ClaudeAccounts({ policy = true }: { policy?: boolean } = {}) {
                         {busy === `relogin-${a.id}` ? 'Waiting for the browser…' : 'Sign in again'}
                       </button>
                     )}
-                    <label className="dc-acct-onlymine" title={t('accounts.onlyMine.hint')}>
-                      <input
-                        type="checkbox"
-                        checked={a.ownerOnly === true}
-                        disabled={busy !== ''}
-                        data-only-mine={a.id}
-                        onChange={() => void run(`only-${a.id}`, () => api.post('/agent/accounts/owner-only', { id: a.id, ownerOnly: !a.ownerOnly }))}
-                      />
-                      <span>{t('accounts.onlyMine')}</span>
-                    </label>
                     <button
                       type="button"
                       className="btn btn--danger-ghost btn--sm"
@@ -678,7 +701,8 @@ export function ClaudeAccounts({ policy = true }: { policy?: boolean } = {}) {
               </span>
             }
           />
-          {agentWaitUntil && agentWaitUntil > now && (
+          {/* With every account closed the warning above says why; a wake time would be a promise. */}
+          {!noneOpen && agentWaitUntil && agentWaitUntil > now && (
             <p className="dc-acct-waiting" data-agent-wait>
               {t('accounts.waiting').replace('{time}', waitWords(agentWaitUntil, locale))}
             </p>
