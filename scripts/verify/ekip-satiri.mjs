@@ -18,13 +18,17 @@
  *   s4 folded, one works for the owner and one asks: the ring, the label in the question colour,
  *      the asker popped out.
  *   s5 a member's stage: Rutinler (its routines), Talimatlar, Üye in Others; no close control.
+ *   s5c Rutinler opened: a routine is edited (its switch) and deleted after the in-app ask.
  *   s6 "Bu üyeyi sil": the in-app dialog names its routines; Vazgeç changes nothing.
- *   s7 the owner resizes Talimatlar: after a reload it keeps his size.
+ *   s7 turned on from its Üye card; the owner resizes Talimatlar and sends Rutinler to Others:
+ *      the record keeps his size and place, and a reload draws them so.
+ *   s8 turned off again from the stage: its stage draws its OWN saved layout (G-AC1).
+ *   s9 "Bu üyeyi sil" for real: no Team row, no routine left, a trash copy with a receipt.
  * Console errors and failed requests are recorded: any is a FAIL.
  */
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -167,6 +171,10 @@ async function run(base) {
     if (slug && !on) await pageFetch(page, VAULT, 'POST', `/automations/${slug}/disable`, {});
   }
 
+  const warns = [];
+  page.on('console', (msg) => { if (/\[super\]|\[member\]/.test(msg.text())) warns.push(`${msg.type()}: ${msg.text()}`.slice(0, 300)); });
+  // ONLY_STAGE=1 skips the Team row states (s1-s4) for a quicker look at the member's stage.
+  if (!process.env.ONLY_STAGE) {
   console.log('── s1 folded, a member answered');
   ok('s1 the row is there', await showState(page, base, 's1', false));
   ok('s1 folded (aria-expanded false)', (await row(page).getAttribute('aria-expanded')) === 'false');
@@ -214,6 +222,7 @@ async function run(base) {
   ok('s4 the asker pops out', (await page.locator('[data-testid="team-popout"][data-slug="veri-analisti"]:visible').count()) === 1);
   await shots(page, '04', 'calisiyor-ve-soru-bekliyor', () => ensureDrawer(page));
 
+  }
   console.log('── s5 a member\'s stage and its cards');
   staged = null;
   const off = await pageFetch(page, VAULT, 'POST', '/agents/ua-manager/enabled', { enabled: false });
@@ -228,54 +237,133 @@ async function run(base) {
   const cards = st.locator('[data-kind="member"]');
   ok('s5 its own cards are on it', await until(page, async () => (await cards.count()) >= 2, 15000), String(await cards.count()));
   ok('s5 Rutinler says 3 routines on its tile', /3/.test(await st.locator('[data-member-card="routines"]').innerText().catch(() => '')));
+  ok('s5 Talimatlar shows its job', /Meta ve TikTok/.test(await st.locator('[data-member-card="instructions"]').innerText().catch(() => '')) || (await st.locator('[data-member-card="instructions"]').count()) > 0);
   await shots(page, '05', 'uye-sahnesi-kartlar', (w) => stageOnly(page, w));
   // A click on its tile opens it side by side, where its full body is live.
-  await st.locator('[data-member-card="routines"]').first().click().catch(() => {});
+  const frameOf = (ref) => st.locator('[data-testid="super-container"]').filter({ has: page.locator(`[data-member-card="${ref}"]`) }).first();
+  await frameOf('routines').click({ timeout: 5000 }).catch((e) => console.log(`   click: ${String(e?.message ?? e).split('\n')[0]}`));
+  await page.waitForTimeout(1500);
+  console.log(`   stage mode after the click: ${await st.getAttribute('data-mode').catch(() => '?')}; [super] lines: ${JSON.stringify(warns.slice(-6))}`);
   ok('s5 Rutinler opened lists exactly its 3 routines', await until(page, async () => (await page.locator('[data-testid="member-card-routines"]:visible [data-routine]').count()) === 3, 15000));
   ok('s5 …and offers a new routine for it', (await page.locator('[data-testid="member-routine-new"]:visible').count()) === 1);
   await shots(page, '05b', 'rutinler-acik', (w) => stageOnly(page, w));
-  ok('s5 Talimatlar shows its job', /Meta ve TikTok/.test(await st.locator('[data-member-card="instructions"]').innerText().catch(() => '')) || (await st.locator('[data-member-card="instructions"]').count()) > 0);
   ok('s5 no close control on a member card', (await cards.locator('[data-testid="super-card-close"], [data-testid="super-agenda-minimize"]').count()) === 0);
   await page.keyboard.press('Escape');
 
+  console.log('── s5c a routine edited and deleted from the card');
+  const rc = page.locator('[data-testid="member-card-routines"]:visible').first();
+  const yorgun = rc.locator('[data-routine]').filter({ hasText: 'Yorgun reklam taraması' }).first();
+  const autoList = async () => (await pageFetch(page, VAULT, 'GET', '/automations')).json?.automations ?? [];
+  const yorgunOn = async () => (await autoList()).find((a) => a.title === 'Yorgun reklam taraması')?.enabled;
+  await yorgun.getByRole('switch').first().click().catch(() => {});
+  ok('s5c its switch turns the routine on (an edit)', await until(page, async () => (await yorgunOn()) === true, 8000));
+  await yorgun.locator('.aiteam-routine-id').click().catch(() => {});
+  await yorgun.getByTestId('member-routine-delete').click().catch(() => {});
+  const rDialog = page.locator('[role="alertdialog"], [role="dialog"]').filter({ hasText: 'Yorgun reklam taraması' }).first();
+  ok('s5c deleting asks in the app first', await until(page, async () => rDialog.isVisible().catch(() => false), 6000));
+  await page.screenshot({ path: join(OUT, '05c-rutin-sil-onayi-1440-light.png') }); taken.push('05c');
+  await rDialog.getByRole('button', { name: /Sil|Delete/ }).last().click().catch(() => {});
+  ok('s5c the routine is gone, the other two stay', await until(page, async () => { const a = await autoList(); return !a.some((x) => x.title === 'Yorgun reklam taraması') && a.filter((x) => x.agent === 'ua-manager').length === 2; }, 10000));
+  ok('s5c the card lists 2', await until(page, async () => (await rc.locator('[data-routine]').count()) === 2, 8000));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(400);
+
   console.log('── s6 Bu üyeyi sil');
-  const others = st.locator('[data-testid="super-others-stack"], [data-testid="super-others-open"]').first();
-  if (await others.isVisible().catch(() => false)) await others.click();
-  const uye = page.locator('[data-testid="super-others-item"]').filter({ hasText: /Üye|Member/ }).first();
-  if (await uye.isVisible().catch(() => false)) await uye.click();
+  const openUye = async () => {
+    const others = st.locator('[data-testid="super-others-stack"], [data-testid="super-others-open"]').first();
+    if (await others.isVisible().catch(() => false)) await others.click();
+    const uye = page.locator('[data-testid="super-others-item"]').filter({ hasText: /Üye|Member/ }).first();
+    if (await uye.isVisible().catch(() => false)) await uye.click();
+  };
+  await openUye();
   const del = st.getByTestId('member-delete');
   ok('s6 the Üye card holds the switch and "Bu üyeyi sil"', await until(page, async () => (await del.isVisible().catch(() => false)) && (await st.getByTestId('member-card-switch').count()) > 0, 10000));
   await del.click().catch(() => {});
-  const dialog = page.getByRole('dialog').filter({ hasText: /silinsin mi|Delete UA Manager/ }).first();
+  const dialog = page.locator('[role="alertdialog"], [role="dialog"]').filter({ hasText: /silinsin mi|Delete UA Manager/ }).first();
   ok('s6 an in-app dialog opens', await until(page, async () => dialog.isVisible().catch(() => false), 8000));
   const dt = await dialog.innerText().catch(() => '');
-  ok('s6 it names the 3 routines', /Sabah bütçe kontrolü/.test(dt) && /Haftalık kreatif raporu/.test(dt) && /Yorgun reklam taraması/.test(dt), dt.slice(0, 400));
+  ok('s6 it names its 2 routines', /Sabah bütçe kontrolü/.test(dt) && /Haftalık kreatif raporu/.test(dt), dt.slice(0, 400));
   ok('s6 it says there is no undo and a copy stays', /geri alma yok|no undo/i.test(dt) && /çöp|trash/i.test(dt), dt.slice(0, 400));
-  await page.screenshot({ path: join(OUT, '06-uyeyi-sil-onayi-1440-light.png') }); taken.push('06');
-  await applyTheme(page, 'dark'); await page.waitForTimeout(300);
-  await page.screenshot({ path: join(OUT, '06-uyeyi-sil-onayi-1440-dark.png') });
-  await applyTheme(page, 'light');
+  for (const [w, h] of SIZES) for (const theme of THEMES) {
+    await page.setViewportSize({ width: w, height: h }); await applyTheme(page, theme); await page.waitForTimeout(400);
+    await page.screenshot({ path: join(OUT, `06-uyeyi-sil-onayi-${w}-${theme}.png`) }); taken.push('06');
+  }
+  await applyTheme(page, 'light'); await page.setViewportSize({ width: 1440, height: 900 });
   await dialog.getByRole('button', { name: /Vazgeç|Cancel/ }).click().catch(() => {});
   const still = await pageFetch(page, VAULT, 'GET', '/agents');
-  ok('s6 Vazgeç changes nothing', JSON.stringify(still.json ?? {}).includes('ua-manager'));
+  ok('s6 Vazgeç changes nothing', JSON.stringify(still.json ?? {}).includes('ua-manager') && (await autoList()).filter((x) => x.agent === 'ua-manager').length === 2);
+  await page.keyboard.press('Escape');
+
+  const record = async () => (await pageFetch(page, VAULT, 'GET', '/super/state?superId=m:ua-manager')).json ?? {};
+  const cardOf = (rec, ref) => (rec.containers ?? []).find((c) => c.kind === 'member' && c.ref === ref);
+  const reopen = async () => {
+    await page.goto(`${base}/?vault=${VAULT}`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(2500);
+    for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await page.waitForTimeout(100); }
+    await openMember(page, 'ua-manager');
+    return until(page, async () => (await st.locator('[data-kind="member"]').count()) >= 2, 20000);
+  };
 
   try {
-  console.log('── s7 the owner\'s size stays');
+  console.log('── s7 on from the stage; the owner\'s size and place stay');
+  await openUye();
+  const sw = st.getByTestId('member-card-switch').first();
+  await sw.click().catch(() => {});
+  ok('s7 the Üye card turns it on', await until(page, async () => (await sw.getAttribute('aria-checked').catch(() => null)) === 'true', 10000));
+  // Back to the floating stage (the Üye card was opened side by side).
+  const toFloat = async () => { const mn = st.getByTestId('super-card-minimize').first(); if (await mn.isVisible().catch(() => false)) { await mn.click(); await page.waitForTimeout(500); } };
+  ok('s7 its stage now has a record', await reopen() && await until(page, async () => !!cardOf(await record(), 'instructions'), 30000), JSON.stringify((await record()).containers ?? []).slice(0, 400));
+  await toFloat();
   const tal = st.locator('[data-kind="member"]').filter({ has: page.locator('[data-member-card="instructions"]') }).first();
-  const ids = await cards.evaluateAll((els) => els.map((e) => [e.getAttribute('data-container-id'), e.querySelector('[data-member-card]')?.getAttribute('data-member-card')]));
-  const talId = ids.find(([, r]) => r === 'instructions')?.[0];
-  ok('s7 Talimatlar is a card', !!talId, JSON.stringify(ids));
-  if (await tal.isVisible().catch(() => false)) {
-    await tal.hover();
-    const sizeBtn = tal.locator('[data-testid="super-card-more"], [data-testid="super-card-size-btn"]').first();
-    await sizeBtn.click().catch(() => {});
-    const wide = page.getByRole('menuitemradio', { name: /wide|geniş/i }).first();
-    if (await wide.isVisible().catch(() => false)) await wide.click();
-    await page.waitForTimeout(800);
-    await shots(page, '07', 'kartlar-sahibin-duzeni', (w) => stageOnly(page, w));
+  await tal.hover().catch(() => {});
+  await tal.locator('[data-testid="super-card-more"], [data-testid="super-card-size-btn"]').first().click().catch(() => {});
+  const wideOk = await page.getByTestId('super-size-wide').first().isEnabled().catch(() => false);
+  const want = wideOk ? 'wide' : 'medium';
+  await page.getByTestId(`super-size-${want}`).first().click().catch(() => {});
+  ok(`s7 Talimatlar resized to ${want} (record, by the owner)`, await until(page, async () => cardOf(await record(), 'instructions')?.size === want, 8000), JSON.stringify(cardOf(await record(), 'instructions')));
+  // Dragged: a press on its head moved across the stage changes its place in the record.
+  const posBefore = JSON.stringify(cardOf(await record(), 'instructions')?.pos ?? null);
+  const head = tal.locator('.super-card-head, [class*="card-head"]').first();
+  const hb = await head.boundingBox().catch(() => null);
+  if (hb) { await page.mouse.move(hb.x + 40, hb.y + 10); await page.mouse.down(); await page.mouse.move(hb.x - 160, hb.y + 120, { steps: 12 }); await page.mouse.up(); }
+  ok('s7 Talimatlar dragged to a new place (record)', await until(page, async () => JSON.stringify(cardOf(await record(), 'instructions')?.pos ?? null) !== posBefore, 8000), posBefore);
+  const rut = st.locator('[data-kind="member"]').filter({ has: page.locator('[data-member-card="routines"]') }).first();
+  if (await rut.isVisible().catch(() => false)) {
+    await rut.hover().catch(() => {});
+    await rut.getByRole('button', { name: /Diğerleri|Others/ }).first().click().catch(() => {});
   }
+  ok('s7 Rutinler sent to Others (record)', await until(page, async () => cardOf(await record(), 'routines')?.place === 'others', 8000), JSON.stringify(cardOf(await record(), 'routines')));
+  ok('s7 a reload draws both so', await reopen()
+    && await until(page, async () => (await st.locator(`[data-kind="member"][data-size="${want}"]`).filter({ has: page.locator('[data-member-card="instructions"]') }).count()) === 1, 10000));
+  await shots(page, '07', 'kartlar-sahibin-duzeni', (w) => stageOnly(page, w));
 
-  } catch (e) { ok('s7 ran', false, e?.message ?? e); }
+  console.log('── s8 off again: its own saved layout');
+  await openUye();
+  const sw2 = st.getByTestId('member-card-switch').first();
+  await sw2.click().catch(() => {});
+  ok('s8 the Üye card turns it off', await until(page, async () => (await sw2.getAttribute('aria-checked').catch(() => null)) === 'false', 10000));
+  await toFloat();
+  ok('s8 after a reload its stage draws its cards', await reopen());
+  ok(`s8 Talimatlar is still ${want}, Rutinler still in Others (its own layout, not the defaults)`,
+    (await st.locator(`[data-kind="member"][data-size="${want}"]`).filter({ has: page.locator('[data-member-card="instructions"]') }).count()) === 1
+    && (await st.locator('[data-kind="member"][data-size]').filter({ has: page.locator('[data-member-card="routines"]') }).count()) === 0);
+  await shots(page, '08', 'kapali-uye-kendi-duzeni', (w) => stageOnly(page, w));
+
+  console.log('── s9 Bu üyeyi sil, for real');
+  await openUye();
+  await st.getByTestId('member-delete').click().catch(() => {});
+  const d2 = page.locator('[role="alertdialog"], [role="dialog"]').filter({ hasText: /silinsin mi|Delete UA Manager/ }).first();
+  ok('s9 the dialog asks again', await until(page, async () => d2.isVisible().catch(() => false), 8000));
+  await d2.getByRole('button', { name: /Sil|Delete/ }).last().click().catch(() => {});
+  ok('s9 the member is gone', await until(page, async () => !JSON.stringify((await pageFetch(page, VAULT, 'GET', '/agents')).json ?? {}).includes('"ua-manager"'), 15000));
+  ok('s9 none of its routines is left', (await autoList()).every((x) => x.agent !== 'ua-manager'));
+  const trashDir = join(PROJ, '_dream_context', 'state', '.trash', 'members');
+  const kept = existsSync(trashDir) ? readdirSync(trashDir).filter((d) => d.endsWith('-ua-manager')) : [];
+  ok('s9 a trash copy with a receipt', kept.length === 1 && existsSync(join(trashDir, kept[0], 'receipt.json')), JSON.stringify(kept));
+  await ensureDrawer(page);
+  ok('s9 no Team row for it', (await page.locator('[data-testid="team-list-member"][data-slug="ua-manager"], [data-testid="team-popout"][data-slug="ua-manager"]').count()) === 0);
+  await shots(page, '09', 'uye-silindi', () => ensureDrawer(page));
+  } catch (e) { ok('s7-s9 ran', false, e?.message ?? e); }
   ok('no console errors', watch.errors.length === 0, watch.errors.slice(0, 6).join('\n'));
   ok('no failed requests', watch.failed.length === 0, watch.failed.slice(0, 8).join('\n'));
   await browser.close();
