@@ -30,8 +30,16 @@ export const MAX_READ_PATCH = 200;
 export const READ_KEY_RE = /^[A-Za-z0-9:_.-]{1,96}$/;
 
 export interface ReadMark { key: string; ts: number }
-export interface SuperReadMarks { since: number; read: ReadMark[] }
-export interface ReadPatch { read?: ReadMark[] }
+/**
+ * A MEMBER Super's marks also say which of its own replies he has seen (plan r4 D7): `replies` =
+ * the end times of the member session's owner-origin turns (newest {@link MAX_REPLIES}), `seenAt`
+ * = the newest time he looked at the member's stage. Unread = replies newer than `seenAt`. Main's
+ * file never carries them (its unread is the window's message count).
+ */
+export interface SuperReadMarks { since: number; read: ReadMark[]; replies?: number[]; seenAt?: number }
+export interface ReadPatch { read?: ReadMark[]; seen?: true }
+/** Replies a member's marks remember. */
+export const MAX_REPLIES = 20;
 
 const okTime = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
 
@@ -44,7 +52,25 @@ export function sanitizeReadMarks(raw: unknown): SuperReadMarks | null {
     const m = x as Partial<ReadMark> | null;
     return m && typeof m.key === 'string' && READ_KEY_RE.test(m.key) && okTime(m.ts) ? [{ key: m.key, ts: m.ts }] : [];
   });
-  return capReadMarks({ since: o.since, read });
+  const out = capReadMarks({ since: o.since, read });
+  if (Array.isArray(o.replies)) {
+    const replies = cleanReplies(o.replies);
+    if (replies.length) out.replies = replies;
+  }
+  if (okTime(o.seenAt)) out.seenAt = o.seenAt;
+  return out;
+}
+
+/** Finite, non-negative, sorted, the newest MAX_REPLIES; anything else dropped. */
+function cleanReplies(raw: readonly unknown[]): number[] {
+  return raw.filter(okTime).sort((a, b) => a - b).slice(-MAX_REPLIES);
+}
+
+/** How many of a member's replies he has not seen. */
+export function unseenReplies(marks: SuperReadMarks | null): number {
+  if (!marks?.replies) return 0;
+  const seen = marks.seenAt ?? -1;
+  return marks.replies.filter((t) => t > seen).length;
 }
 
 /** Oldest marks past the cap fold into `since`; a mark `since` already covers is dropped. */
@@ -62,7 +88,12 @@ export function capReadMarks(marks: SuperReadMarks): SuperReadMarks {
  *  One key may hold several marks: the same words at another time are another message. */
 export function mergeReadMarks(marks: SuperReadMarks, patch: ReadPatch): SuperReadMarks {
   const byId = new Map([...marks.read, ...(patch.read ?? [])].map((m) => [`${m.key}|${m.ts}`, m]));
-  return capReadMarks({ since: marks.since, read: [...byId.values()] });
+  return { ...extras(marks), ...capReadMarks({ since: marks.since, read: [...byId.values()] }) };
+}
+
+/** A member's reply fields, carried through a merge or a cap untouched. */
+function extras(m: SuperReadMarks): Pick<SuperReadMarks, 'replies' | 'seenAt'> {
+  return { ...(m.replies ? { replies: m.replies } : {}), ...(m.seenAt !== undefined ? { seenAt: m.seenAt } : {}) };
 }
 
 /** A request body as a patch, or null when it is not one. */
@@ -79,6 +110,10 @@ export function parseReadPatch(body: unknown): ReadPatch | null {
       read.push({ key: m.key, ts: m.ts });
     }
     patch.read = read;
+  }
+  if (o.seen !== undefined) {
+    if (o.seen !== true) return null;
+    patch.seen = true;
   }
   return patch;
 }
@@ -151,5 +186,34 @@ export function clearReadMarks(contextRoot: string, id: SuperId = 'main'): Promi
   return serial(path, async () => {
     await checkDir(dirname(path));
     await fsp.rm(path, { force: true });
+  });
+}
+
+/**
+ * A member Super's turn for the owner ended at `at` (plan r4 D7). `seen`: he was looking at that
+ * member's stage as it arrived, so it never counts (`seenAt` is raised with it). Never for main.
+ */
+export function noteReply(contextRoot: string, id: SuperId, at: number, seen: boolean): Promise<SuperReadMarks | null> {
+  if (id === 'main') return Promise.resolve(null);
+  const path = marksPath(contextRoot, id);
+  return serial(path, async () => {
+    const cur = (await loadFile(path)) ?? { since: at, read: [] };
+    const next: SuperReadMarks = { ...cur, replies: cleanReplies([...(cur.replies ?? []), at]) };
+    if (seen) next.seenAt = Math.max(cur.seenAt ?? 0, at);
+    await saveFile(path, next);
+    return next;
+  });
+}
+
+/** He has seen the member's stage up to `now`: `seenAt` only ever rises. Never for main. */
+export function markSeen(contextRoot: string, id: SuperId, now: number = Date.now()): Promise<SuperReadMarks | null> {
+  if (id === 'main') return Promise.resolve(null);
+  const path = marksPath(contextRoot, id);
+  return serial(path, async () => {
+    const cur = (await loadFile(path)) ?? { since: now, read: [] };
+    if (cur.seenAt !== undefined && cur.seenAt >= now) return cur;
+    const next: SuperReadMarks = { ...cur, seenAt: now };
+    await saveFile(path, next);
+    return next;
   });
 }

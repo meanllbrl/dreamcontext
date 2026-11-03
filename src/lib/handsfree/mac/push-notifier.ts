@@ -55,6 +55,9 @@ export interface PushNotifierDeps {
   superSession?: (vault: string) => string | null;
   /** Is this conversation a child of a handed-over Super Agent? Absent = none is. */
   superChild?: (id: string) => boolean;
+  /** A MEMBER Super's own session (plan r4 D6): its name, and whether the turn now ending is main
+   *  Super's work. Read synchronously at the edge. Absent / null = not a member's session. */
+  memberOf?: (sessionId: string) => { name: string; mainWork: boolean } | null;
   now?: () => number;
 }
 
@@ -78,8 +81,10 @@ export function pushUrl(vault: string, conversationId: string | null): string {
   }
 }
 
-/** The push for one registry change, or null when this change is not one of the three. */
-export function pushFor(change: ChatChange): { key: string; payload: Omit<PushPayload, 'url'> } | null {
+/** The push for one registry change, or null when this change is not one of the three. A member
+ *  Super's turn is titled with the member and says only that it answered (no reply text on the
+ *  lock screen, plan r4 D6). */
+export function pushFor(change: ChatChange, member: { name: string } | null = null): { key: string; payload: Omit<PushPayload, 'url'> } | null {
   const e: ChatEntry = change.entry;
   const base = { vault: e.vault, conversationId: e.conversationId };
   if (e.status === 'asking' && e.pendingQuestion) {
@@ -90,6 +95,7 @@ export function pushFor(change: ChatChange): { key: string; payload: Omit<PushPa
     return { key: `ask:${e.sessionId}:${q.requestId}`, payload: { ...base, kind: 'question', title: 'Claude is asking', body: clip(q.text || 'Claude has a question for you.') } };
   }
   if (e.status === 'idle' && (change.from === 'working' || change.from === 'asking') && e.lastTurn && !e.lastTurn.interrupted) {
+    if (member) return { key: `turn:${e.sessionId}:${e.lastTurn.resultSeq}`, payload: { ...base, kind: 'turn', title: clip(member.name, 80), body: 'Cevap verdi' } };
     return { key: `turn:${e.sessionId}:${e.lastTurn.resultSeq}`, payload: { ...base, kind: 'turn', title: clip(e.title || 'Claude', 80), body: 'Turn finished' } };
   }
   return null;
@@ -125,7 +131,11 @@ export class PushNotifier {
   async onChange(change: ChatChange): Promise<number> {
     const exposed = this.d.exposed();
     if (!exposed.length) return 0;
-    const p = pushFor(change);
+    // Read before anything else: the member's next turn may overwrite the origin (plan r4 D6).
+    const member = this.d.memberOf?.(change.entry.sessionId) ?? null;
+    const p = pushFor(change, member);
+    // A member's turn of main Super's work is not his news, on the phone either.
+    if (p && member?.mainWork && p.payload.kind === 'turn') return 0;
     if (!p || !p.payload.vault || !exposed.includes(p.payload.vault)) return 0;
     const sup = this.d.superSession?.(p.payload.vault) ?? null;
     if (!superAllows(sup, change.entry, this.d.superChild ?? (() => false))) {

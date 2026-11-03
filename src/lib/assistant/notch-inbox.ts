@@ -5,8 +5,11 @@ import { listClaudeAccounts } from '../claude-accounts.js';
 import { readAccountRejections } from '../claude-limit-rejections.js';
 import { getChat, onChatChange, type ChatChange, type ChatEntry } from './chat-registry.js';
 import { isDelegatedSession } from './delegations.js';
-import { isSuperChild } from '../super/store.js';
-import { isHandedOverSuperSession, isMainWork, superTurnOrigin, takeSuperEscalation } from '../super/inbox.js';
+import { isSuperChild, superOfSession } from '../super/store.js';
+import { isHandedOverSuperSession, isMainWork, memberTurnOrigin, setOwnerWatchProbe, takeSuperEscalation } from '../super/inbox.js';
+import { memberOfSuperId } from '../super/store.js';
+import { getAgent } from '../agents/store.js';
+import { NOTIFY_SOUND_OK } from '../automations/notifier.js';
 import { buildAppLink } from '../app-link.js';
 
 /**
@@ -65,6 +68,8 @@ export interface FinishedEvent {
   title: string;
   /** PROJECT text (the turn's last reply). */
   lastText: string;
+  /** A member Super's reply (plan r4 D6): the member's name, which titles the row and banner. */
+  member?: string;
 }
 
 export interface AccountEvent {
@@ -136,6 +141,8 @@ export function lookingAtSession(now = Date.now()): string | null {
   if (!presence || now - presence.at > PRESENCE_TTL_MS) return null;
   return presence.sessionId;
 }
+// The Super inbox counts a member's reply he watched arrive as seen (plan r4 D7).
+setOwnerWatchProbe(() => lookingAtSession());
 
 // ─── Events ─────────────────────────────────────────────────────────────────────────
 
@@ -190,13 +197,17 @@ function onChange({ entry, from }: ChatChange): void {
   clearFinishTimer(id);
   if (isHandedOverSuperSession(id)) {
     // A member's Super finishing a turn of main Super's work (`main:*`, plan-r10 1) is not his news.
-    if (isMainWork(superTurnOrigin(id))) { takeSuperEscalation(id); return; }
+    if (isMainWork(memberTurnOrigin(id))) { takeSuperEscalation(id); return; }
+    // A member's own reply to him (plan r4 D6): its own name, with sound, its stage on a click.
+    if (entry.lastTurn?.interrupted) { takeSuperEscalation(id); return; }
     // Owner, 2026-10-21: the Super Agent's own reply is the ONE thing that reaches him, every
     // turn of it (the server-opened event turns too: the briefing makes them a sentence for
     // him), as a banner as well as a row. At once, not debounced: the queue pump may start its
     // next turn within the debounce and the reply would never be news. A turn that escalated a
     // question is not a second ping: the queue head raised the one alarm for it.
     if (takeSuperEscalation(id) || lookingAtSession() === id) return;
+    const member = memberNameOf(id);
+    if (member) { postMemberFinish(recordFinished(entry, Date.now(), member)); return; }
     postSuperFinish(recordFinished(entry));
     return;
   }
@@ -215,7 +226,7 @@ function onChange({ entry, from }: ChatChange): void {
 
 /** Posts a routable macOS banner (and its Notifications-window row). Set by the server at
  *  boot (desktop only: `notifyViaBundle`); null = no banners, only the notch row. */
-export type FinishBannerPoster = (title: string, body: string, link: string | null) => void;
+export type FinishBannerPoster = (title: string, body: string, link: string | null, sound?: string) => void;
 let finishBanner: FinishBannerPoster | null = null;
 
 export function setSuperFinishBanner(fn: FinishBannerPoster | null): void {
@@ -225,18 +236,38 @@ export function setSuperFinishBanner(fn: FinishBannerPoster | null): void {
 /** A banner body macOS shows whole. */
 const BANNER_BODY_CHARS = 180;
 
-function postSuperFinish(ev: FinishedEvent): void {
-  if (!finishBanner) return;
+function bannerParts(ev: FinishedEvent): { link: string | null; body: string } {
   let link: string | null = null;
-  // The click lands on the Super Agent's stage (AgentSurface opens it, never a second tab).
+  // The click lands on that Super's stage (AgentSurface opens it, never a second tab).
   try { link = buildAppLink({ kind: 'session', vault: ev.vault, claudeId: ev.sessionId }); } catch { link = null; }
   const flat = ev.lastText.replace(/\s+/g, ' ').trim();
   const body = flat.length > BANNER_BODY_CHARS ? `${flat.slice(0, BANNER_BODY_CHARS - 1).trimEnd()}…` : flat;
+  return { link, body };
+}
+
+function postSuperFinish(ev: FinishedEvent): void {
+  if (!finishBanner) return;
+  const { link, body } = bannerParts(ev);
   try { finishBanner(`Super Agent · ${ev.vault}`, body || 'Replied.', link); } catch { /* the notch row still stands */ }
 }
 
+/** A member Super's reply to him: titled with the member, with sound (plan r4 D6). */
+function postMemberFinish(ev: FinishedEvent): void {
+  if (!finishBanner) return;
+  const { link, body } = bannerParts(ev);
+  try { finishBanner(`${ev.member ?? 'Member'} · ${ev.vault}`, body || 'Replied.', link, NOTIFY_SOUND_OK); } catch { /* the notch row still stands */ }
+}
+
+/** The member a super session belongs to, by its title (slug when it has none); null for main's. */
+export function memberNameOf(sessionId: string): string | null {
+  const ref = superOfSession(sessionId);
+  const slug = ref ? memberOfSuperId(ref.superId) : null;
+  if (!ref || !slug) return null;
+  try { return getAgent(ref.root, slug)?.title?.trim() || slug; } catch { return slug; }
+}
+
 /** Exported for tests: a finished turn, recorded as if its debounce had already stood. */
-export function recordFinished(e: ChatEntry, now = Date.now()): FinishedEvent {
+export function recordFinished(e: ChatEntry, now = Date.now(), member?: string): FinishedEvent {
   const ev: FinishedEvent = {
     id: `fin:${e.sessionId}`,
     kind: 'finished',
@@ -246,6 +277,7 @@ export function recordFinished(e: ChatEntry, now = Date.now()): FinishedEvent {
     mode: e.mode,
     title: e.title,
     lastText: e.lastAssistantText[e.lastAssistantText.length - 1] ?? '',
+    ...(member ? { member } : {}),
   };
   push(ev);
   return ev;

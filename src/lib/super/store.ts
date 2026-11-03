@@ -996,6 +996,8 @@ interface IndexEntry {
   session: string | null;
   enabled: boolean;
   children: Set<string>;
+  /** A request from main Super is open on this record (the restart fallback of a turn's origin). */
+  mainOpen: boolean;
   /** The live children `super delegate` started (never the owner's adopted chats). */
   delegated: Set<string>;
   /** Every child `super delegate` started (live or ended), with the MCP servers it runs with. */
@@ -1028,6 +1030,7 @@ function indexState(key: string, state: SuperState): void {
     superId,
     session: state.session,
     enabled: state.enabled,
+    mainOpen: state.queue.some((q) => q.kind === 'request' && q.state !== 'done'),
     // An ended child is history, not a child: no events, the notch shows it if reopened.
     children: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt === undefined)),
     delegated: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt === undefined && !state.children[k].adopted)),
@@ -1142,6 +1145,12 @@ export function superOfSession(sessionId: string): SuperRef | null {
   if (!sessionId) return null;
   for (const e of index.values()) if (e.session === sessionId) return { root: e.root, superId: e.superId };
   return null;
+}
+
+/** A super whose record holds an open request from main Super (memory only; false when unknown). */
+export function superHasOpenMainRequest(rootOrKey: string, idIn: SuperId = 'main'): boolean {
+  const { root, superId } = splitSuperRoot(rootOrKey, idIn);
+  return index.get(superKey(resolve(root), superId))?.mainOpen ?? false;
 }
 
 /** THE resolver of a recorded LIVE child (handed over or not): the super that owns it. */

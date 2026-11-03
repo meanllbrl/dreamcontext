@@ -3,6 +3,8 @@ import { getAgent, listAgentTargets } from '../agents/store.js';
 import { memberCallState } from '../agents/team-roster.js';
 import { listMemberSupers, readSuperState, superIdOfMember, type SanitizeOpts } from './store.js';
 import type { SuperMemberSummary, SuperState } from './types.js';
+import { isMainWork, memberTurnOrigin } from './inbox.js';
+import { readReadMarks, unseenReplies, type SuperReadMarks } from './read-marks.js';
 
 /**
  * The Ekip row's facts (plan-r10 1 "Who sees a member's work", 1f; `summary=1` `members`): one
@@ -20,10 +22,21 @@ function runsNow(sid: string): boolean {
   return a === 'working' || a === 'starting' || a === 'asking' || a === 'stale';
 }
 
-/** One member's entry from its record (pure but for the registry's live status). */
+/** The member's OWN session runs a turn for the owner right now (plan r4 D7), never main's work. */
+function ownerTurnRuns(sid: string): boolean {
+  return runsNow(sid) && !isMainWork(memberTurnOrigin(sid));
+}
+
+/**
+ * One member's entry from its record (pure but for the registry's live status). `marks` = the
+ * member's own read marks: its replies to the owner he has not seen count as unread (plan r4 D7),
+ * and its own session's owner turn counts as working, beside its children's.
+ */
 export function summarizeMember(
   slug: string, s: SuperState | null, facts: { global: boolean; enabled: boolean; approval: boolean },
   live: (sid: string) => boolean = runsNow,
+  marks: SuperReadMarks | null = null,
+  ownTurn: (sid: string) => boolean = ownerTurnRuns,
 ): SuperMemberSummary {
   const base: SuperMemberSummary = { slug, global: facts.global, enabled: facts.enabled, ownerWorking: 0, asking: false, approval: facts.approval, unread: 0, superOnly: false, lastAt: 0, pending: 0 };
   if (!s) return base;
@@ -32,18 +45,21 @@ export function summarizeMember(
   const pending = s.queue.filter((q) => (q.kind === 'request' || q.kind === 'reply') && q.state === 'pending').length;
   const kids = Object.entries(s.children);
   const ownerKids = kids.filter(([, c]) => !isMain(c.workOrigin));
-  const ownerWorking = ownerKids.filter(([sid, c]) => c.endedAt === undefined && (c.row === 'working' || c.row === 'asking') && live(sid)).length;
+  const ownerWorking = ownerKids.filter(([sid, c]) => c.endedAt === undefined && (c.row === 'working' || c.row === 'asking') && live(sid)).length
+    + (s.session && ownTurn(s.session) ? 1 : 0);
   const childOrigin = (sid: string) => (Object.prototype.hasOwnProperty.call(s.children, sid) ? s.children[sid].workOrigin : undefined);
   // A permission is the owner's whoever's work it is (D7), unless its Super decides it first.
   const ownerPermission = (q: SuperState['queue'][number]) => q.kind === 'permission' && !q.toSuper;
   const asking = s.queue.some((q) => q.state !== 'done' && (ownerPermission(q) || (!isMain(q.workOrigin) && !isMain(childOrigin(q.sessionId))
     && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && q.direct === true)))));
-  const unread = ownerKids.filter(([, c]) => c.finishedAt !== undefined && !(c.seenAt !== undefined && c.seenAt >= c.finishedAt)).length;
+  const unread = ownerKids.filter(([, c]) => c.finishedAt !== undefined && !(c.seenAt !== undefined && c.seenAt >= c.finishedAt)).length
+    + unseenReplies(marks);
   const mainOpen = s.queue.some((q) => q.kind === 'request' && q.state !== 'done')
     || kids.some(([sid, c]) => isMain(c.workOrigin) && c.endedAt === undefined && live(sid));
   const times = [
     ...kids.flatMap(([, c]) => [c.startedAt, c.rowAt ?? 0, c.finishedAt ?? 0]),
     ...s.queue.map((q) => q.createdAt),
+    ...(marks?.replies ?? []),
   ];
   return {
     ...base,
@@ -81,10 +97,12 @@ export async function memberSummaries(contextRoot: string, opts: SanitizeOpts & 
     let global = false;
     try { global = getAgent(contextRoot, t.slug, opts.home)?.scope === 'global'; } catch { global = false; }
     let s: SuperState | null = null;
+    let marks: SuperReadMarks | null = null;
     if (withRecord.has(t.slug)) {
       try { s = await readSuperState(contextRoot, superIdOfMember(t.slug), opts); } catch { s = null; }
+      try { marks = await readReadMarks(contextRoot, superIdOfMember(t.slug)); } catch { marks = null; }
     }
-    out.push(summarizeMember(t.slug, s, { global, enabled, approval }));
+    out.push(summarizeMember(t.slug, s, { global, enabled, approval }, runsNow, marks));
   }
   return out;
 }

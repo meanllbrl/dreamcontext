@@ -24,8 +24,9 @@ import { announceOwnerHead, seedOwnerHead, serverBannered } from './owner-questi
 import { clearFresh, hasFreshLatch, isRotating, onRotatingChanged } from './fresh-session.js';
 import { readHandoffRecord } from '../context-watch.js';
 import { memberCallState } from '../agents/team-roster.js';
+import { noteReply } from './read-marks.js';
 import {
-  dropSuperIndex, isSuperChild, keyOfRef, listMemberSupers, memberOfSuperId, parseSuperKey, primeSuperIndex, readSuperState, superEntry, superIdOfMember, superKey, superOfChild, superOfEnded, superOfSession,
+  dropSuperIndex, isSuperChild, keyOfRef, superHasOpenMainRequest, listMemberSupers, memberOfSuperId, parseSuperKey, primeSuperIndex, readSuperState, superEntry, superIdOfMember, superKey, superOfChild, superOfEnded, superOfSession,
   updateSuperState, type SanitizeOpts,
 } from './store.js';
 import {
@@ -1574,6 +1575,40 @@ export function superTurnOrigin(sessionId: string): SuperWorkOrigin {
   return turnOrigins.get(sessionId) ?? 'owner';
 }
 
+/**
+ * The origin of a MEMBER super session's turn, with the restart fallback (plan r4 D6): the memory
+ * map is lost on a restart, so a session it does not know reads as main's work while its record
+ * holds an open request from main, else as the owner's. Read it synchronously at the idle edge.
+ */
+export function memberTurnOrigin(sessionId: string): SuperWorkOrigin {
+  const known = turnOrigins.get(sessionId);
+  if (known) return known;
+  const ref = superOfSession(sessionId);
+  if (ref && ref.superId !== 'main' && superHasOpenMainRequest(ref.root, ref.superId)) return 'main:restart';
+  return 'owner';
+}
+
+/** Which session the owner is looking at right now (the notch's presence; set at its load). */
+let watchedSession: () => string | null = () => null;
+export function setOwnerWatchProbe(fn: () => string | null): void {
+  watchedSession = fn;
+}
+
+/**
+ * A member Super's own turn ended (plan r4 D7): an owner-origin turn that was not interrupted is
+ * one more reply for the Team count, seen at once when he watched it arrive. Main's work, an
+ * interrupted turn and main's own Super append nothing. The origin is taken BEFORE any await.
+ */
+export function noteMemberTurnEnd(superRoot: string, entry: Pick<ChatEntry, 'sessionId' | 'status' | 'lastTurn'>, from: string | undefined, now = Date.now()): Promise<unknown> | null {
+  if (entry.status !== 'idle' || from !== 'working') return null;
+  const { root, superId } = parseSuperKey(superRoot);
+  if (superId === 'main') return null;
+  if (entry.lastTurn?.interrupted) return null;
+  if (isMainWork(memberTurnOrigin(entry.sessionId))) return null;
+  const seen = watchedSession() === entry.sessionId;
+  return noteReply(root, superId, now, seen).catch(() => null);
+}
+
 /** A delivered turn's origin: a request's or a reply's main Super, else the batch's one origin. */
 function turnOriginOf(state: SuperState, items: readonly SuperQueueItem[]): SuperWorkOrigin {
   const first = items[0];
@@ -2357,6 +2392,7 @@ function onChange({ entry, from }: ChatChange): void {
   const sid = entry.sessionId;
   const superRoot = superKeyOfSession(sid);
   if (superRoot) {
+    void noteMemberTurnEnd(superRoot, entry, from);
     followSpokeTurn(keyOf(superRoot), entry.status);
     // The super chat settled: the next batch may go.
     if (entry.status === 'idle' || entry.status === 'starting') void pumpSuper(superRoot);
