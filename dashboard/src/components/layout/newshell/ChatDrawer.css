@@ -114,6 +114,29 @@
   cursor: pointer;
 }
 .ns-dr-sec-add:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.ns-dr-sec-add svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.ns-dr-sec-add[aria-pressed='true'] { color: var(--color-text); }
+.ns-dr-sec-acts { display: inline-flex; align-items: center; gap: var(--space-1); flex-shrink: 0; }
+.ns-dr-sec[data-searching='true'] { gap: var(--space-2); }
+.ns-dr-search {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  letter-spacing: normal;
+}
+.ns-dr-search:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 0; }
+.ns-dr-empty {
+  padding: var(--space-2) var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
 .ns-dr-sec-add:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
 
 /* ── A project row ───────────────────────────────────────────────────────────────── */

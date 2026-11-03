@@ -39,7 +39,7 @@ import { useKeyboardUp } from '../../hooks/useKeyboardUp';
 import { ChromeSlotsProvider, type ChromeSlots } from './chromeSlots';
 import { ProjectTabs, type ProjectChip } from './ProjectTabs';
 import { readDeviceShell, useIsNewShell, type NewProjectLanding } from '../../lib/uxMode';
-import { readLayoutPrefs, writeLayoutPrefs } from '../../lib/launcherPrefs';
+import { drawerWidthOf, readLayoutPrefs, writeLayoutPrefs } from '../../lib/launcherPrefs';
 import { useShellProjects } from '../../hooks/useShellProjects';
 import { useUnregisterVault } from '../../hooks/useLauncher';
 import { confirmRemoveProject, nextProjectAfterRemove } from '../../lib/removeProject';
@@ -1104,7 +1104,7 @@ export function WindowChrome({ initialVault, initialLink, initialStart = null, i
       }
     });
   }, []);
-  const [drawerWidth, setDrawerWidth] = useState(() => readLayoutPrefs().drawerWidth ?? 280);
+  const [drawerWidth, setDrawerWidth] = useState(() => drawerWidthOf(readLayoutPrefs().drawerWidth));
   const resizeDrawer = useCallback((w: number) => {
     setDrawerWidth(w);
     writeLayoutPrefs({ drawerWidth: w });

@@ -90,6 +90,8 @@ export function TeamSection(p: TeamSectionProps) {
 
   const toggle = (next = !open) => { setOpen(next); writeOpen(key, next); if (!next) setQuery(''); };
 
+  /** No member yet (owner 2026-11-03): the row opens the members flow to make the first. */
+  const empty = p.members.length === 0 && !!p.onManage;
   const count = ekipCount(p.members);
   const asking = ekipAsking(p.members);
   const working = ekipWorkingCount(p.members);
@@ -120,12 +122,13 @@ export function TeamSection(p: TeamSectionProps) {
   return (
     <div className={`ns-team-sec${open ? ' is-open' : ''}`} data-testid={`${p.testid}-section`} data-open={open ? 'true' : 'false'}>
       <button ref={rowRef} type="button" className={`ns-team-row ns-team-sec-row${p.selected ? ' is-sel' : ''} ${p.className ?? ''}`.trim()}
-        data-testid={p.testid} data-vault={p.vault ?? undefined} data-asking={asking ? 'true' : undefined}
-        aria-expanded={open} aria-label={named ? `${p.label} (${named})` : p.label}
-        onClick={() => toggle()}
+        data-testid={p.testid} data-vault={p.vault ?? undefined} data-asking={asking ? 'true' : undefined} data-empty={empty ? 'true' : undefined}
+        aria-expanded={empty ? undefined : open} aria-haspopup={empty ? 'dialog' : undefined}
+        aria-label={empty ? `${p.label} (${t('drawer.team.addFirst')})` : named ? `${p.label} (${named})` : p.label}
+        onClick={() => (empty ? p.onManage?.() : toggle())}
         onKeyDown={(e) => { if (e.key === 'Escape' && open) { e.preventDefault(); toggle(false); } else if (e.key === 'ArrowDown' && open) onListKey(e); }}>
-        <svg className={`ns-team-chev${open ? ' is-open' : ''}`} viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" /></svg>
-        <TeamFaces members={p.members} />
+        <svg className={`ns-team-chev${open && !empty ? ' is-open' : ''}`} viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" /></svg>
+        {empty ? <span className="ns-team-faces" aria-hidden="true"><span className="ns-team-face ns-team-face--empty" data-testid="team-empty-slot" /></span> : <TeamFaces members={p.members} />}
         <span className="ns-team-label">{p.label}</span>
         {working > 0
           ? <span data-testid="team-row-ring"><ProjectChipBubbles chip={{ live: working, asking: 0, working, idle: 0, flagged: 0 }} /></span>
@@ -145,7 +148,7 @@ export function TeamSection(p: TeamSectionProps) {
         </ul>
       )}
 
-      {open && (
+      {open && !empty && (
         <div className="ns-team-open-list" onKeyDown={onListKey}>
           {searchable && (
             <input type="search" className="ns-team-search" data-testid="team-search" value={query}

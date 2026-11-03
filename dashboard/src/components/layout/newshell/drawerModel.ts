@@ -7,8 +7,8 @@
  * project has a member of its own (plan-r10 1d: faces and one count, from `summary=1` `members`;
  * ten members are still one row), and one row per chat window that holds a chat, with its own
  * ring and count (W3, D8). A project with none has one New Chat row instead: nothing here opens
- * onto an empty screen. A collapsed project's row carries the sum of those same rows and keeps
- * its Ekip row. Members of all projects are in ONE Global ekip row at the very bottom (1f).
+ * onto an empty screen. A collapsed project's row carries the sum of those same rows and hides
+ * its Ekip row with the rest (owner 2026-11-03); a member's question still lights its asking dot. Members of all projects are in ONE Global ekip row at the very bottom (1f).
  */
 import type { ProjectRollup } from '../../sleepy/agentStatus';
 import {
@@ -160,12 +160,10 @@ export interface DrawerProjectRow {
   /** Where its child rows came from. `none` = expanded, but nothing read yet. */
   source: 'mounted' | 'fanout' | 'none';
   children: DrawerChild[];
-  /** Collapsed: its Super Agent (or a child) waits on the owner. */
+  /** Collapsed: its Super Agent, a child or an Ekip member waits on the owner. */
   superAsking?: boolean;
   /** Collapsed: the sum of the rows it would show, for the ring beside the name. */
   sum?: { live: number; asking: number; working: number; idle: number; flagged: number };
-  /** Collapsed: its Ekip row stays under it (r8-05). */
-  team?: Extract<DrawerChild, { kind: 'team' }>;
 }
 
 /** The Global ekip row (plan-r10 1f, r8-12): every member of all projects once. */
@@ -189,10 +187,11 @@ export function ekipOf(read: (DrawerEkipFacts & { team?: readonly DrawerTeamRow[
   return buildEkip(read.members, read.identities, read.team ?? []);
 }
 
-/** The Ekip row of a project, or null when it has no member of its own. */
-export function teamChildOf(vault: string, all: readonly EkipMember[], selected: boolean): Extract<DrawerChild, { kind: 'team' }> | null {
+/** The Ekip row of a project, or null when it has no member of its own. With `empty` (the desktop,
+ *  owner 2026-11-03) a project with none still gets its row: it is where the first one is made. */
+export function teamChildOf(vault: string, all: readonly EkipMember[], selected: boolean, empty = false): Extract<DrawerChild, { kind: 'team' }> | null {
   const members = projectEkip(all);
-  if (!members.length) return null;
+  if (!members.length && !empty) return null;
   return { kind: 'team', vault, members, count: ekipCount(members), asking: ekipAsking(members), selected };
 }
 
@@ -357,6 +356,20 @@ function chatChild(vault: string, r: OpenRow, o: { selected: boolean; windowId?:
   };
 }
 
+/** A name folded for search: the language's own case rules (Turkish İ/ı), no diacritics, and the
+ *  dotless ı read as i, so "tilki", "TİLKİ" and "Tılkı" are one name. */
+export function foldProjectName(name: string, locale = 'tr'): string {
+  return name.toLocaleLowerCase(locale).normalize('NFD').replace(/\p{M}/gu, '').replace(/ı/g, 'i').trim();
+}
+
+/** The drawer's project search (owner 2026-11-03): rows whose name holds the query, in order.
+ *  An empty query is the whole list. */
+export function filterProjectRows<T extends { name: string }>(rows: readonly T[], query: string, locale = 'tr'): T[] {
+  const q = foldProjectName(query, locale);
+  if (!q) return [...rows];
+  return rows.filter((r) => foldProjectName(r.name, locale).includes(q));
+}
+
 export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout, device }: DrawerModelInput): DrawerProjectRow[] {
   const open = new Set(expanded);
   if (device) return projects.map((p) => deviceProjectRow(p, { activeVault, open, facts, device }));
@@ -371,11 +384,10 @@ export function buildDrawerRows({ projects, activeVault, expanded, facts, fanout
     if (isOpen) return { ...base, source, children };
     // Folded, the project row carries what its rows would say: no second count.
     const sum = sumOf(children, source);
-    // A question still reaches the owner too.
-    const ask = children.some((c) => c.kind === 'super' && c.asking);
-    // Its Ekip row stays under it, folded or not (r8-05).
-    const team = children.find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team');
-    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(ask ? { superAsking: true } : {}), ...(team ? { team } : {}) };
+    // Folded, its Ekip row folds with the rest (owner 2026-11-03); a question, the Super's or a
+    // member's, still reaches the owner as the asking dot.
+    const ask = children.some((c) => (c.kind === 'super' || c.kind === 'team') && c.asking);
+    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(ask ? { superAsking: true } : {}) };
   });
 }
 
@@ -399,7 +411,10 @@ function childrenOf(
   ];
   // ONE Ekip row (plan-r10 1d): selected while a member's stage is on screen. It goes LAST (plan
   // r4 R5): it is the one block that grows (the list opens in place), so it pushes nothing down.
-  const team = teamChildOf(p.name, ekipOf(mine ?? far), onChat && !!mine?.member);
+  // Every project has it once its roster is read (owner 2026-11-03): empty, it makes the first
+  // member. Before the read, no row: an empty slot would flash before the faces.
+  const read = mine ?? far;
+  const team = teamChildOf(p.name, ekipOf(read), onChat && !!mine?.member, !!read?.members);
   const r = p.mounted ? (mine?.shown ?? p.rollup) : null;
   const windowsOn = onChat && !superSelected && !mine?.member;
   const before = children.length;
@@ -430,7 +445,7 @@ function childrenOf(
   // better than offering a chat over chats that are there.
   // A project with members keeps its New chat row (r8-07): its chevron is where a member's one
   // conversation starts.
-  if ((children.length === before || team) && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
+  if ((children.length === before || (team && team.members.length > 0)) && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
   if (team) children.push(team);
   return { source, children };
 }
@@ -483,7 +498,8 @@ function deviceProjectRow(p: DrawerProjectInput, o: { activeVault: string | null
     const working = chats.filter((c) => c.state === 'working').length;
     const flagged = chats.filter((c) => c.flagged).length;
     const sum = chats.length ? { live: chats.length, asking, working, idle: chats.length - asking - working, flagged } : undefined;
-    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(team ? { team } : {}) };
+    // The Ekip row folds with the project; a member's question keeps the asking dot.
+    return { ...base, source: 'none', children: [], ...(sum ? { sum } : {}), ...(team?.asking ? { superAsking: true } : {}) };
   }
   if (!children.some((c) => c.kind === 'chat' && c.row.kind !== 'super')) children.push({ kind: 'new-chat' });
   // Team last, after the chats and New chat, as on the desktop (plan r4 R5).
