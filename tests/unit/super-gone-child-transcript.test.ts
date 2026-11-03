@@ -93,7 +93,7 @@ describe('the shown card: the slot for a live child, the transcript for a finish
 
   it('reads the transcript from chat-history into the existing ChatPane, read only as finished', () => {
     expect(pane).toMatch(/\/agent\/chat-history\?claudeId=/);
-    expect(pane).toMatch(/<ChatPaneHost[\s\S]*readOnly=\{foot === 'own' \? 'silent' : live \? true : 'finished'\}/);
+    expect(pane).toMatch(/<ChatPaneHost[\s\S]*readOnly=\{foot === 'own' \? 'silent' : live \|\| parked \? true : 'finished'\}/);
     expect(pane).not.toMatch(/createChatSession/);
   });
 });

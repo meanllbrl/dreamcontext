@@ -41,7 +41,7 @@ updated: "<DATE>"
 
 > Working set only — full history (archived decisions, changelog, sessions): `dreamcontext memory recall "<keywords>"`.
 
-**Note:** The CLI version (v0.40.4) is older than the last setup version (v1). This is unusual — consider upgrading the CLI.
+**Note:** The CLI version (v0.40.5) is older than the last setup version (v1). This is unusual — consider upgrading the CLI.
 
 
 ## Automations

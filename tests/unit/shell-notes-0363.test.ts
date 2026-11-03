@@ -158,10 +158,12 @@ describe('note 7: the stage leans right beside the drawer', () => {
     expect(right).toBeTruthy();
   });
 
-  it('closed, the plan is byte for byte the centred one', () => {
+  it('closed, the plan is the centred one, or the wider chat beside an agenda-only side (0.40.5)', () => {
     const cs = [agenda, card('a'), card('b')];
     const a = plan(cs, 1400, false);
-    expect(a.centre.x + a.centre.width / 2).toBeCloseTo(700, 6);
+    const centred = planStage(stageItems(cs as never, [] as never, FLOAT), FLOAT, { width: 1400, height: 900 }, { agendaCentred: true } as never);
+    expect(centred.centre.x + centred.centre.width / 2).toBeCloseTo(700, 6);
+    expect(a.centre.width).toBeGreaterThanOrEqual(centred.centre.width - 1e-6);
     expect(JSON.stringify(planStage(stageItems(cs as never, [] as never, FLOAT), FLOAT, { width: 1400, height: 900 }, {}))).toBe(JSON.stringify(a));
   });
 
