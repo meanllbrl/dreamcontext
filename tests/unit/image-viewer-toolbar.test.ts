@@ -48,3 +48,19 @@ describe('ImageViewer toolbar under the picture', () => {
     expect(read('dashboard/src/components/layout/FrameViewer.tsx')).not.toMatch(/image-viewer-toolbar/);
   });
 });
+
+describe('ImageViewer toolbar stays one row at 390 px', () => {
+  it('a failure note shrinks instead of pushing the zoom group off-screen', () => {
+    expect(css).toMatch(/\.image-viewer-toolbar-tools \{ flex: 0 1 auto; min-width: 0; \}/);
+    expect(read('dashboard/src/components/sleepy/chat/overlays.css')).toMatch(/\.chat-fileactions\.icon-only \{[^}]*flex: 0 1 auto; min-width: 0;/);
+  });
+
+  it('task attachments step through the viewer, with icon-only file actions', () => {
+    const mv = read('dashboard/src/components/tasks/detail/MediaViewer.tsx');
+    expect(mv).toMatch(/step=\{n > 1 \?/);
+    expect(mv).toMatch(/<FileActions path=\{projectPath\} iconOnly/);
+    expect(mv).toMatch(/<CopyPath path=\{projectPath\} icon \/>/);
+    // The viewer owns the arrows for an image; the panel must not step a second time.
+    expect(mv).toMatch(/if \(file\?\.kind === 'image'\) return;/);
+  });
+});

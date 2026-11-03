@@ -221,11 +221,14 @@
 
 .image-viewer-toolbar-tools,
 .image-viewer-zoom {
-  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: var(--space-1);
 }
+/* The tools may shrink (a failure note inside them ellipsizes); the buttons and the zoom group never do. */
+.image-viewer-toolbar-tools { flex: 0 1 auto; min-width: 0; }
+.image-viewer-zoom,
+.image-viewer-toolbar-divider { flex: none; }
 
 .image-viewer-toolbar-divider {
   width: 1px;
@@ -236,6 +239,7 @@
 
 /* Every control in the row: one height, one radius. Shared with FileActions' icon-only form. */
 .viewer-tool {
+  flex: none;
   height: 28px;
   min-width: 28px;
   padding: 0 var(--space-1);

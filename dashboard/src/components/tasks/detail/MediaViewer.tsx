@@ -8,6 +8,7 @@ import { ImageViewer } from '../../layout/ImageViewer';
 import { MediaEmbed } from '../../sleepy/chat/MediaEmbed';
 import { PdfViewer } from '../../sleepy/chat/PdfViewer';
 import { FileActions } from '../../sleepy/chat/FileActions';
+import { CopyIcon } from '../../whiteboard/PanelIcons';
 
 type FileEntry = Extract<TaskAssetEntry, { size: number }>;
 
@@ -27,7 +28,16 @@ export function openModeFor(kind: FileEntry['kind']): 'auto' | 'reveal' {
   return kind === 'image' || kind === 'video' || kind === 'audio' || kind === 'pdf' ? 'auto' : 'reveal';
 }
 
-function CopyPath({ path }: { path: string }) {
+function CopyPath({ path, icon }: { path: string; icon?: boolean }) {
+  const copy = () => { void navigator.clipboard?.writeText(path).catch(() => {}); };
+  // In the image viewer's toolbar row: the same icon button as every other control there.
+  if (icon) {
+    return (
+      <button type="button" className="viewer-tool" onClick={copy} aria-label="Copy path" title="Copy path">
+        <CopyIcon />
+      </button>
+    );
+  }
   return (
     <button type="button" className="chat-btn" onClick={() => { void navigator.clipboard?.writeText(path).catch(() => {}); }}>
       <span aria-hidden>⧉</span> Copy path
@@ -58,9 +68,12 @@ export function MediaViewer({ slug, files, index, onIndex, onClose }: {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // An image steps through ImageViewer's own `step` (its keys included): handling the
+      // arrows here too would move two files per press.
+      if (file?.kind === 'image') return;
       if (e.key === 'ArrowRight' && n > 1) { e.preventDefault(); go(1); }
       else if (e.key === 'ArrowLeft' && n > 1) { e.preventDefault(); go(-1); }
-      else if (e.key === 'Escape' && file && file.kind !== 'image') { e.preventDefault(); e.stopPropagation(); onClose(); }
+      else if (e.key === 'Escape' && file) { e.preventDefault(); e.stopPropagation(); onClose(); }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -79,12 +92,25 @@ export function MediaViewer({ slug, files, index, onIndex, onClose }: {
   const actions: ReactNode = (
     <span className="mv-actions">
       {nav}
-      {desktop ? <FileActions path={projectPath} compact iconOnly={file.kind === 'image'} openMode={openModeFor(file.kind)} /> : <CopyPath path={projectPath} />}
+      {desktop ? <FileActions path={projectPath} compact openMode={openModeFor(file.kind)} /> : <CopyPath path={projectPath} />}
     </span>
   );
 
   if (file.kind === 'image') {
-    return <ImageViewer src={url} alt={file.name} caption={`${file.path} · ${formatBytes(file.size)}`} actions={actions} onClose={onClose} />;
+    // One toolbar row: prev / next go to the viewer's side steps, the file actions are icons.
+    const imageActions = desktop
+      ? <FileActions path={projectPath} iconOnly openMode={openModeFor(file.kind)} />
+      : <CopyPath path={projectPath} icon />;
+    return (
+      <ImageViewer
+        src={url}
+        alt={file.name}
+        caption={`${file.path} · ${formatBytes(file.size)}`}
+        actions={imageActions}
+        step={n > 1 ? { pos: `${index + 1} / ${n}`, onStep: (d) => go(d) } : undefined}
+        onClose={onClose}
+      />
+    );
   }
 
   return createPortal(
