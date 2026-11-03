@@ -304,7 +304,7 @@ describe('the phone layout in the new shell (part 2)', () => {
     expect(chrome).toMatch(/if \(isMobile && !prev\.onChat && activeOnChat && prev\.vault === activeVault\) return;/);
     // A link landing closes it; so does a project pick.
     expect(chrome).toMatch(/if \(Object\.keys\(pendingLinks\)\.length > 0\) setFloatingOpen\(false\);/);
-    expect(chrome).toMatch(/onPick=\{\(name\) => \{ setFloatingOpen\(false\); void addTab\(name\); \}\}/);
+    expect(chrome).toMatch(/onPick=\{\(name\) => \{ setFloatingOpen\(false\); markProjectSwitch\(name\); void addTab\(name\); \}\}/);
   });
 
   it('every rail and bottom-bar tap dismisses the drawer', () => {
