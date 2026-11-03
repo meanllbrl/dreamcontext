@@ -493,6 +493,24 @@ describe('window, sessions, summary', () => {
     expect(onlyMain).toMatchObject({ ownerWorking: 0, superOnly: true, approval: true, asking: false, unread: 0 });
   });
 
+  it('a member child doing main\'s work asks a permission: it still reaches the owner (D7)', () => {
+    const s: SuperState = {
+      ...emptySuperState(), session: 's', enabled: true, member: 'rota',
+      children: { mainKid: { sessionId: 'mainKid', brief: '', adopted: false, startedAt: 20, row: 'asking', workOrigin: 'main:q-r-0000000r' } },
+      queue: [
+        { id: 'q-r-0000000r', sessionId: 's', kind: 'request', state: 'delivered', createdAt: 30, text: 'x' },
+        { id: 'q-mq-0000000q', sessionId: 'mainKid', kind: 'question', requestId: 'r-q', state: 'pending', createdAt: 35 },
+        { id: 'q-mp-0000000p', sessionId: 'mainKid', kind: 'permission', requestId: 'r-p', state: 'pending', createdAt: 40 },
+      ] as SuperQueueItem[],
+    };
+    expect(superQueueHead(s)?.id).toBe('q-mp-0000000p');
+    expect(summarizeMember('rota', s, { global: false, enabled: true, approval: false }, () => true)).toMatchObject({ asking: true, superOnly: false });
+    // Its question stays main's; a permission its Super decides first is not his yet.
+    const superFirst = { ...s, queue: s.queue.map((q) => (q.kind === 'permission' ? { ...q, toSuper: true as const } : q)) };
+    expect(superQueueHead(superFirst)).toBeNull();
+    expect(summarizeMember('rota', superFirst, { global: false, enabled: true, approval: false }, () => true).asking).toBe(false);
+  });
+
   it('summary members[].pending: request and reply items still pending, nothing else; owner counts unchanged', () => {
     const item = (id: string, kind: SuperQueueItem['kind'], state: SuperQueueItem['state'], extra: Partial<SuperQueueItem> = {}) =>
       ({ id, sessionId: 's', kind, state, createdAt: 5, text: 'x', ...extra }) as SuperQueueItem;

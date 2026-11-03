@@ -34,8 +34,10 @@ export function summarizeMember(
   const ownerKids = kids.filter(([, c]) => !isMain(c.workOrigin));
   const ownerWorking = ownerKids.filter(([sid, c]) => c.endedAt === undefined && (c.row === 'working' || c.row === 'asking') && live(sid)).length;
   const childOrigin = (sid: string) => (Object.prototype.hasOwnProperty.call(s.children, sid) ? s.children[sid].workOrigin : undefined);
-  const asking = s.queue.some((q) => q.state !== 'done' && !isMain(q.workOrigin) && !isMain(childOrigin(q.sessionId))
-    && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && q.direct === true)));
+  // A permission is the owner's whoever's work it is (D7), unless its Super decides it first.
+  const ownerPermission = (q: SuperState['queue'][number]) => q.kind === 'permission' && !q.toSuper;
+  const asking = s.queue.some((q) => q.state !== 'done' && (ownerPermission(q) || (!isMain(q.workOrigin) && !isMain(childOrigin(q.sessionId))
+    && (q.kind === 'permission' || q.kind === 'owner' || q.state === 'escalated' || (q.kind === 'question' && q.direct === true)))));
   const unread = ownerKids.filter(([, c]) => c.finishedAt !== undefined && !(c.seenAt !== undefined && c.seenAt >= c.finishedAt)).length;
   const mainOpen = s.queue.some((q) => q.kind === 'request' && q.state !== 'done')
     || kids.some(([sid, c]) => isMain(c.workOrigin) && c.endedAt === undefined && live(sid));

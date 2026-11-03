@@ -268,8 +268,9 @@ export function noteMainBatch(s: SuperState, batch: string | undefined): void {
  * not approved here). A second one waits behind the first, so the owner never has two at once.
  */
 export function superQueueHead(state: Pick<SuperState, 'queue'> & { children?: SuperState['children'] }): SuperQueueItem | null {
-  // Main Super's work (`main:*`, a member Super's) never reaches the owner's bar.
-  const byAge = [...state.queue].filter((q) => ownerFacing({ children: state.children ?? {} }, q)).sort((a, b) => a.createdAt - b.createdAt);
+  // Main Super's work (`main:*`, a member Super's) never reaches the owner's bar, except a
+  // permission: it is only ever the owner's or its own Super's to decide (D7), whoever's work it is.
+  const byAge = [...state.queue].filter((q) => q.kind === 'permission' || ownerFacing({ children: state.children ?? {} }, q)).sort((a, b) => a.createdAt - b.createdAt);
   return byAge.find((q) => q.kind === 'permission' && q.state !== 'done' && !q.toSuper)
     ?? byAge.find((q) => ((q.kind === 'question' || q.kind === 'ask' || q.kind === 'approval') && q.state === 'escalated')
       // A child waiting on something only he can do is his from birth, not after a super turn;
