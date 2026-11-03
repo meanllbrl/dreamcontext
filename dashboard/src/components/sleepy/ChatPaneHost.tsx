@@ -78,7 +78,7 @@ export interface ChatSurfaceActions {
 
 function ChatPaneHostInner({
   session, actions, modelConfig, model, effort, mode, automation, permissionMode, canSignInInApp,
-  signInCommand, bare, agentBound, idlePlaceholder, superMember, readOnly, aboveComposer, feed, sendVia,
+  signInCommand, bare, agentBound, idlePlaceholder, superMember, readOnly, aboveComposer, feed, sendVia, quietResume,
 }: {
   session: ChatSession;
   actions: ChatSurfaceActions;
@@ -110,6 +110,8 @@ function ChatPaneHostInner({
   /** One line drawn right above the composer (the phone's waiting toast, hands-free W3). */
   aboveComposer?: ReactNode;
   sendVia?: (message: string) => boolean;
+  /** See ChatPane's `quietResume`. */
+  quietResume?: boolean;
   /** An agent's past sessions above the conversation (the AI Team stage). Its identity changes
    *  only when the feed does (the stage entry's snapshot), so the memo boundary holds. */
   feed?: ChatFeed;
@@ -182,6 +184,7 @@ function ChatPaneHostInner({
       readOnly={readOnly}
       aboveComposer={aboveComposer}
       sendVia={sendVia}
+      quietResume={quietResume}
       feed={feed}
     />
   );

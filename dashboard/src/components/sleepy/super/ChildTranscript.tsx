@@ -40,7 +40,7 @@ export function useChildHistory(claudeId: string, live: boolean) {
  * folder); no `claude` is started for it. The live chat takes the slot back the moment the child
  * runs again (`super resume`), because the card then has a session and draws the slot instead.
  */
-export function ChildTranscript({ claudeId, live = false, foot, prepare }: {
+export function ChildTranscript({ claudeId, live = false, foot, prepare, parked = false }: {
   claudeId: string;
   /** The job still runs on the Mac (the phone reads it from here): the transcript keeps refreshing. */
   live?: boolean;
@@ -48,6 +48,9 @@ export function ChildTranscript({ claudeId, live = false, foot, prepare }: {
   foot?: 'own';
   /** What of the saved transcript is drawn (a run's steps leave out the composed prompt). */
   prepare?: (items: HistoryEntry[]) => HistoryEntry[];
+  /** Parked under machine load, not finished: it reads like a live child (the same read-only
+   *  line), since parking is never shown (owner 2026-11-03). */
+  parked?: boolean;
 }) {
   const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
   const [session] = useState(() => createTranscriptSession(claudeId));
@@ -79,9 +82,9 @@ export function ChildTranscript({ claudeId, live = false, foot, prepare }: {
       canSignInInApp={false}
       signInCommand="claude auth login"
       // A run's steps are nobody's chat to write in, and whatever stands under them is the host's.
-      readOnly={foot === 'own' ? 'silent' : live ? true : 'finished'}
+      readOnly={foot === 'own' ? 'silent' : live || parked ? true : 'finished'}
     />
-  ), [session, modelConfig, live, foot]);
+  ), [session, modelConfig, live, foot, parked]);
   // A read-only transcript never draws a new chat's "Say something to start": until the history
   // is read the pane stays hidden behind a loading line, and an empty one says so (super-team.mjs T4).
   const { t } = useI18n();

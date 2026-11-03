@@ -657,7 +657,7 @@ export function ChatPane({
   taskSlug, onContinueInTerminal,
   permissionMode, onPermissionModeChange, mode, onModeChange, onAgentPick, toolPick, onHandoffToDevelop,
   onResume, automation, onOpenAppPage, onSignIn,
-  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, superMember, readOnly = false, aboveComposer, feed, sendVia,
+  canSignInInApp, signInCommand, bare = false, agentBound = false, idlePlaceholder, superMember, readOnly = false, aboveComposer, feed, sendVia, quietResume = false,
 }: {
   session: ChatSession;
   modelConfig: ModelConfig;
@@ -750,6 +750,8 @@ export function ChatPane({
   aboveComposer?: React.ReactNode;
   /** The message goes here instead of this session: a run the owner continues. */
   sendVia?: (message: string) => boolean;
+  /** Woken from a park: the replayed history carries no "resumed" divider (parking is never shown). */
+  quietResume?: boolean;
   /** An agent's PAST sessions drawn above this conversation (the AI Team stage, chatFeed.ts):
    *  read-only rows at the head of the window. Absent (every Chat tab): exactly as before. */
   feed?: ChatFeed;
@@ -2835,7 +2837,7 @@ export function ChatPane({
             {showsHistory && (
               <>
                 {historyNodes}
-                {!feed && <div className="chat-history-divider" aria-hidden>earlier conversation ↑ · resumed</div>}
+                {!feed && !quietResume && <div className="chat-history-divider" aria-hidden>earlier conversation ↑ · resumed</div>}
               </>
             )}
             {liveNodes}
