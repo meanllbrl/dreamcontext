@@ -451,6 +451,8 @@ export interface AccountOption {
   organizationName: string;
   preferred: boolean;
   state: 'ok' | 'needs-relogin' | 'other-account';
+  /** On `other-account`: whose credential its folder holds now. */
+  signedInAs?: string;
   /** 0-100, or null when nothing is cached for this account yet. */
   sessionPercent: number | null;
 }
@@ -634,12 +636,14 @@ export function UsageMenu({
           const active = accounts.find((a) => a.id === activeAccountId) ?? accounts[0];
           const row = (a: AccountOption, isActive: boolean) => {
             const broken = a.state === 'needs-relogin';
+            // Its folder is signed in as SOMEONE ELSE: a chat there bills that other account.
+            const elsewhere = a.state === 'other-account';
             const tight = a.sessionPercent !== null && a.sessionPercent >= CONTEXT_TIGHT_PCT;
             return (
               <span className="chat-cmp-acct-line">
                 <span className="chat-cmp-acct-name">{a.email || a.id}</span>
-                <span className="chat-cmp-acct-meta" data-warn={broken ? '' : undefined} data-tight={tight ? '' : undefined}>
-                  {broken ? 'sign in again' : a.sessionPercent === null ? '—' : `${Math.round(a.sessionPercent)}%`}
+                <span className="chat-cmp-acct-meta" data-warn={broken || elsewhere ? '' : undefined} data-tight={tight ? '' : undefined}>
+                  {broken ? 'sign in again' : elsewhere ? 'other account' : a.sessionPercent === null ? '—' : `${Math.round(a.sessionPercent)}%`}
                 </span>
                 {isActive && <span className="chat-cmp-acct-caret" aria-hidden>▾</span>}
               </span>
@@ -674,9 +678,11 @@ export function UsageMenu({
                       role="menuitemradio"
                       aria-checked={false}
                       className="chat-cmp-acct"
-                      disabled={!onAccountChange || a.state === 'needs-relogin'}
+                      disabled={!onAccountChange || a.state === 'needs-relogin' || a.state === 'other-account'}
                       title={a.state === 'needs-relogin'
                         ? `${a.email || a.id} — signed out, sign in again from Settings`
+                        : a.state === 'other-account'
+                          ? `${a.email || a.id} — its folder is signed in as ${a.signedInAs || 'a different account'}, so a chat there would bill that account`
                         : `${a.organizationName || a.email || a.id}${a.preferred ? ' · preferred account' : ''}`}
                       onClick={() => { setAcctOpen(false); onAccountChange?.(a.id); }}
                     >
