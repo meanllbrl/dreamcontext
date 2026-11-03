@@ -892,6 +892,8 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   const setActiveSuperId = useCallback((id: SuperId) => {
     if (activeSuperIdRef.current === id) return;
     pendingPatchesRef.current = [];
+    // A refused member's local gestures belong to that stage only (a retry of its open keeps them).
+    setPlaceholderPatches({ slug: '', patches: [] });
     activeSuperIdRef.current = id;
     setActiveSuperIdState(id);
     // The ref too, at once: the same handler reads it next (the Super row's plan, the chat row's
@@ -5839,7 +5841,6 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
     setActiveSuperId(sid);
     setMemberTask(task ?? null);
     setMemberRefusal(null);
-    setPlaceholderPatches({ slug: '', patches: [] });
     setSuperView('super');
     setExpanded(true);
     // The tunnel (a remote screen, the phone) reads the member's stage through its own door

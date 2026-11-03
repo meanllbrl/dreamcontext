@@ -272,6 +272,9 @@ describe('observed run fixes (super-members.mjs)', () => {
     expect(opened.view).toMatchObject({ mode: 'half', card: settings.id });
     // The surface keeps such a gesture off the server while the stage has no record.
     expect(surface).toMatch(/const placeholderOf = memberOf\(sid\);\s*if \(placeholderOf && !superStateRef\.current\) \{[\s\S]{0,200}?return;\s*\}\s*const api = forSuper\(scopedApi, sid\);/);
+    // Kept across a retry of the same member's open; dropped when the stage shows another super.
+    expect(surface).toMatch(/pendingPatchesRef\.current = \[\];\s*\/\/[^\n]*\n\s*setPlaceholderPatches\(\{ slug: '', patches: \[\] \}\);\s*activeSuperIdRef\.current = id;/);
+    expect(surface.slice(surface.indexOf('const openMemberStage = async'), surface.indexOf('const openMemberStageRef'))).not.toContain('setPlaceholderPatches');
     expect(surface).toMatch(/placeholderPatches\.patches\.reduce<SuperStateView>\(\(st, patch\) => applyLayoutPatch\(st, patch\), base\)/);
   });
 
