@@ -283,7 +283,9 @@ async function run(base) {
     const fan = page.locator('[data-testid="super-others-fan"]:visible');
     await until(page, async () => (await fan.count()) > 0, 4000);
     const items = page.locator('[data-testid="super-others-item"]:visible');
-    const uye = items.filter({ has: page.locator('[data-member-card="settings"]') }).or(items.filter({ hasText: /Üye|Member/ })).first();
+    // Every member item carries the kind label "MEMBER/ÜYE" (b9137b33), so match the Üye card's own
+    // title, the word right before its "Live …/Yan yana …" line: a bare /Member/ picked Talimatlar (run s11).
+    const uye = items.filter({ hasText: /(Üye|Member)\s+(Live|Plays|Reads|Yan yana)/ }).first();
     console.log(`   openUye: others buttons ${seen}, panel ${await fan.count()}, items ${await items.count()} [${(await items.allInnerTexts().catch(() => [])).map((x) => x.replace(/\s+/g, ' ').slice(0, 30)).join(' | ')}]`);
     if (await uye.isVisible().catch(() => false)) await uye.click({ timeout: 5000 }).catch(() => {});
     await until(page, async () => st.getByTestId('member-delete').isVisible().catch(() => false), 5000);
@@ -333,6 +335,7 @@ async function run(base) {
   // The largest size the stage has room for (a size with no room is disabled in the menu).
   let want = 'medium';
   for (const sz of ['wide', 'large', 'medium']) if (await page.getByTestId(`super-size-${sz}`).first().isEnabled().catch(() => false)) { want = sz; break; }
+  if (!(await page.getByTestId(`super-size-${want}`).first().isEnabled().catch(() => false))) console.log('   size menu: no size above small has room on this stage');
   console.log(`   size menu open: ${await page.getByTestId('super-card-size').count()}; picking ${want}`);
   await page.getByTestId(`super-size-${want}`).first().click({ timeout: 5000 }).catch((e) => console.log(`   size click: ${String(e?.message ?? e).split('\n')[0]}`));
   ok(`s7 Talimatlar resized to ${want} (record, by the owner)`, await until(page, async () => cardOf(await record(), 'instructions')?.size === want, 8000), JSON.stringify(cardOf(await record(), 'instructions')));
