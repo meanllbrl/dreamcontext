@@ -109,6 +109,11 @@ import {
  * never called from `runAutomation` or `tick`.
  */
 
+/** Why an unattended start waits when every account is kept for the owner's own chats. Plain words
+ *  and the setting that fixes it: no reset will free an account that is closed to routines. */
+export const NONE_OPEN_REASON =
+  'no account is open to routines: every account is set to "Keep for my chats only", so routines and background jobs will not start. Untick it on one account in Settings > Claude accounts';
+
 /** Telegram caps a message at 4096 chars; the result delivery is capped well
  *  under that (same headroom reasoning as `TELEGRAM_BODY_MAX` in telegram.ts)
  *  so the title line always survives. */
@@ -2310,7 +2315,9 @@ export async function runAutomation(contextRoot: string, slug: string, opts: Run
       } catch (err) {
         logFn(`warning: could not record the account wait for "${slug}": ${(err as Error).message}`);
       }
-      return shortCircuit('deferred', `every account is near its usage limit; it waits until ${new Date(pick.waitUntil).toISOString()}`);
+      return shortCircuit('deferred', 'noneOpen' in pick && pick.noneOpen
+        ? NONE_OPEN_REASON
+        : `every account is near its usage limit; it waits until ${new Date(pick.waitUntil).toISOString()}`);
     }
     protectedAccount = pick.account;
   }

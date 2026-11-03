@@ -28,7 +28,7 @@ import { approveAutomation, checkApproval, manifestHash } from '../../src/lib/au
 import { AGENT_CHAT_ENV, AGENT_SELF_ENV, insideAgentRun } from '../../src/lib/automations/types.js';
 import { resumeRunsBypass } from '../../src/server/routes/agent-chat.js';
 import { levelBrief, levelPermissionArgs, REVIEW_DISALLOWED_TOOLS, TASK_DOER_ALLOWED, TASK_REVIEWER_ALLOWED } from '../../src/lib/agents/permission.js';
-import { composePrompt } from '../../src/lib/automations/runner.js';
+import { composePrompt, NONE_OPEN_REASON } from '../../src/lib/automations/runner.js';
 import { prepareAgentChat } from '../../src/lib/whiteboards/card-chat.js';
 import {
   protectedAutomationAccount, readAccountWait, recordAccountWait, withoutOwnerOnly,
@@ -357,6 +357,21 @@ describe('AC-A1-3 account protection', () => {
     cache('two', 10, 95, 0, { session: T + 3_600_000, weekly: T + 2 * 3_600_000 });
     const pick = await protectedAutomationAccount({ home, now: T });
     expect(pick).toEqual({ waitUntil: T + 2 * 3_600_000 });
+  });
+
+  it('every account kept for the owner: the wait says none is open, and the run reason says so in plain words', async () => {
+    account('one', true); account('two');
+    setAccountOwnerOnly('one', true, home);
+    setAccountOwnerOnly('two', true, home);
+    const pick = await protectedAutomationAccount({ home, probe: probeWith({ one: [1, 1], two: [1, 1] }), now: T });
+    expect(pick).toEqual({ waitUntil: expect.any(Number), noneOpen: true });
+    expect(NONE_OPEN_REASON).toContain('Keep for my chats only');
+    expect(NONE_OPEN_REASON).toContain('Settings > Claude accounts');
+    expect(NONE_OPEN_REASON).not.toContain('\u2014');
+    // One account open again: no `noneOpen`, the ordinary pick.
+    setAccountOwnerOnly('two', false, home);
+    const open = await protectedAutomationAccount({ home, probe: probeWith({ one: [1, 1], two: [1, 1] }), now: T });
+    expect('account' in open && open.account.id).toBe('two');
   });
 
   it('auto-switch off keeps the preferred account as the only candidate', async () => {
