@@ -1636,7 +1636,11 @@ export function noteMemberTurnEnd(superRoot: string, entry: Pick<ChatEntry, 'ses
   if (entry.lastTurn?.interrupted) return null;
   if (isMainWork(memberTurnOrigin(entry.sessionId))) return null;
   const seen = watchedSession() === entry.sessionId;
-  return noteReply(root, superId, now, seen).catch(() => null);
+  return noteReply(root, superId, now, seen).catch((err: unknown) => {
+    // Loud, never silent: the banner went out but the Team count will not rise for this reply.
+    console.warn(`[super] ${root} ${superId}: the reply of ${entry.sessionId} was not counted: ${(err as Error)?.message ?? err}`);
+    return null;
+  });
 }
 
 /** A delivered turn's origin: a request's or a reply's main Super, else the batch's one origin. */

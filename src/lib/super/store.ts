@@ -1009,6 +1009,9 @@ interface IndexEntry {
   children: Set<string>;
   /** A request from main Super is open on this record (the restart fallback of a turn's origin). */
   mainOpen: boolean;
+  /** When the last open request closed (memory only): a turn that closed it with `super team done`
+   *  still ends as main's work after a restart. */
+  mainClosedAt?: number;
   /** The live children `super delegate` started (never the owner's adopted chats). */
   delegated: Set<string>;
   /** Every child `super delegate` started (live or ended), with the MCP servers it runs with. */
@@ -1036,12 +1039,16 @@ function indexState(key: string, state: SuperState): void {
   const notes = new Map(Object.entries(state.notes));
   if (pending) for (const [sid, note] of pending) if (notes.get(sid) === note) notes.delete(sid);
   const { root, superId } = parseSuperKey(key);
+  const was = index.get(key);
+  const mainOpen = state.queue.some((q) => q.kind === 'request' && q.state !== 'done');
+  const mainClosedAt = was?.mainOpen && !mainOpen ? Date.now() : was?.mainClosedAt;
   index.set(key, {
     root,
     superId,
     session: state.session,
     enabled: state.enabled,
-    mainOpen: state.queue.some((q) => q.kind === 'request' && q.state !== 'done'),
+    mainOpen,
+    ...(mainClosedAt !== undefined ? { mainClosedAt } : {}),
     // An ended child is history, not a child: no events, the notch shows it if reopened.
     children: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt === undefined)),
     delegated: new Set(Object.keys(state.children).filter((k) => state.children[k].endedAt === undefined && !state.children[k].adopted)),
@@ -1159,10 +1166,15 @@ export function superOfSession(sessionId: string): SuperRef | null {
 }
 
 /** A super whose record holds an open request from main Super (memory only; false when unknown). */
-export function superHasOpenMainRequest(rootOrKey: string, idIn: SuperId = 'main'): boolean {
+export function superHasOpenMainRequest(rootOrKey: string, idIn: SuperId = 'main', now = Date.now()): boolean {
   const { root, superId } = splitSuperRoot(rootOrKey, idIn);
-  return index.get(superKey(resolve(root), superId))?.mainOpen ?? false;
+  const e = index.get(superKey(resolve(root), superId));
+  if (!e) return false;
+  // Closed within the last turn's reach (`super team done` mid-turn): still main's work.
+  return e.mainOpen || (e.mainClosedAt !== undefined && now - e.mainClosedAt < MAIN_CLOSED_GRACE_MS);
 }
+/** How long after main's last request closed an unknown turn still reads as main's work. */
+export const MAIN_CLOSED_GRACE_MS = 10 * 60_000;
 
 /** THE resolver of a recorded LIVE child (handed over or not): the super that owns it. */
 export function superOfChild(sessionId: string): SuperRef | null {

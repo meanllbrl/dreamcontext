@@ -124,6 +124,21 @@ describe('a member\'s own reply to the owner', () => {
     expect((await readReadMarks(root, 'm:rota'))?.replies).toHaveLength(1);
   });
 
+  it('after a restart, a turn that closed main\'s request itself (team done) is still main\'s work', async () => {
+    await makeVault({ queue: [openRequest] as unknown as SuperState['queue'] });
+    wireNotchInbox();
+    const banners: string[] = [];
+    setSuperFinishBanner((t) => { banners.push(t); });
+    // The member closes the request mid-turn: the record's request is done before the turn ends.
+    const { writeSuper } = await import('../../src/lib/super/inbox.js');
+    await writeSuper(root, 'm:rota', (s) => { for (const q of s.queue) q.state = 'done'; });
+    expect(memberTurnOrigin(ROTA)).toBe('main:restart');
+    answer(reg(ROTA));
+    await settle();
+    expect(banners).toEqual([]);
+    expect((await readReadMarks(root, 'm:rota'))?.replies).toBeUndefined();
+  });
+
   it('an interrupted turn posts and counts nothing', async () => {
     await makeVault();
     wireNotchInbox();
