@@ -26,6 +26,14 @@
  *
  * Output: a table on stdout and `<OUT>/tool-cards-<tool>.json` (every answer and tool row), OUT =
  * $OUT_DIR or the scratch folder.
+ *
+ * `--judge <tool-cards-*.json>...` spends nothing: it prints the table of runs already saved, with
+ * the read row worked out again from their tool rows (when the accounts are out of quota).
+ *
+ * The read row counts every file read the chat showed (main agent and sub-agent): how many came back
+ * failed, and how many of those failures named a path other than the read's own. That second number
+ * is Antigravity failing a sub-agent's open reads with a later step's refusal (AntigravityProtocol.ts
+ * makeAntigravityReadRepair), not a read that really failed.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -176,6 +184,19 @@ function judgeCards(answer) {
 
 const cell = (ok, partial = false) => (ok ? 'works' : partial ? 'partial' : 'broken');
 
+const READ_TOOL = /^(Read|mcp__Read|view_file|client_view_file|read_file)$/;
+/** Every read row of a chat: `failed/total`, and how many failures named another path. */
+function readRow(chat) {
+  const reads = chat.turns.flatMap((t) => t.tools ?? []).filter((x) => READ_TOOL.test(x.name) && x.result);
+  const failed = reads.filter((x) => x.result.error);
+  const otherPath = failed.filter((x) => {
+    const named = /Access to path \\?["']([^"'\\]+)\\?["'] is denied/.exec(x.result.text)?.[1];
+    return named !== undefined && !x.input.includes(named);
+  });
+  if (!reads.length) return 'n/a (no read)';
+  return `${failed.length}/${reads.length} failed${otherPath.length ? `, ${otherPath.length} with another path's error` : ''}`;
+}
+
 function judge(chat) {
   const PROJ = chat.proj;
   const T = Object.fromEntries(chat.turns.map((t) => [t.key, t]));
@@ -207,11 +228,18 @@ function judge(chat) {
   const subErr = sub?.tools.filter((x) => x.sub && x.result?.error).map((x) => x.result.text.slice(0, 120));
   rows['sub-agent: starts'] = cell(spawned);
   rows['sub-agent: shell + snapshot'] = spawned ? cell(subRan && subSnap, subRan || subSnap) : 'n/a';
+  rows['file reads: failed'] = readRow(chat);
   return { rows, notices: { cards1: c1.notices, cards1b: c1b.notices, cards2: c2.notices, multiline: ml.notices }, subErrors: subErr ?? [] };
 }
 
+const JUDGE = process.argv.includes('--judge') ? process.argv.slice(process.argv.indexOf('--judge') + 1).filter((a) => a.endsWith('.json')) : null;
 const results = [];
-for (const tool of TOOLS) {
+if (JUDGE) for (const file of JUDGE) {
+  const chat = JSON.parse(readFileSync(file, 'utf8'));
+  // The saved rows stand (the scratch project is gone); only the read row is worked out again.
+  results.push({ tool: chat.tool, verdict: { ...chat.verdict, rows: { ...chat.verdict.rows, 'file reads: failed': readRow(chat) } } });
+}
+for (const tool of JUDGE ? [] : TOOLS) {
   process.stderr.write(`${tool}: starting\n`);
   const chat = await runChat(tool);
   const verdict = judge(chat);
