@@ -36,6 +36,15 @@
 }
 .ns-team-face + .ns-team-face { margin-left: calc(-1 * var(--space-1)); }
 .ns-team-face[data-off="true"] { opacity: 0.5; }
+/* No member yet (owner 2026-11-03): an empty slot where the faces go; the row opens the members flow. */
+.ns-team-face--empty {
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px dashed var(--color-text-tertiary);
+  box-shadow: none;
+}
+.ns-team-row[data-empty="true"] .ns-team-chev { visibility: hidden; }
 
 /* One count: the accent for unread, the question colour when a question or a card waits. */
 .ns-team-count {

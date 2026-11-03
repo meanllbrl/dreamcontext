@@ -187,10 +187,11 @@ export function ekipOf(read: (DrawerEkipFacts & { team?: readonly DrawerTeamRow[
   return buildEkip(read.members, read.identities, read.team ?? []);
 }
 
-/** The Ekip row of a project, or null when it has no member of its own. */
-export function teamChildOf(vault: string, all: readonly EkipMember[], selected: boolean): Extract<DrawerChild, { kind: 'team' }> | null {
+/** The Ekip row of a project, or null when it has no member of its own. With `empty` (the desktop,
+ *  owner 2026-11-03) a project with none still gets its row: it is where the first one is made. */
+export function teamChildOf(vault: string, all: readonly EkipMember[], selected: boolean, empty = false): Extract<DrawerChild, { kind: 'team' }> | null {
   const members = projectEkip(all);
-  if (!members.length) return null;
+  if (!members.length && !empty) return null;
   return { kind: 'team', vault, members, count: ekipCount(members), asking: ekipAsking(members), selected };
 }
 
@@ -410,7 +411,10 @@ function childrenOf(
   ];
   // ONE Ekip row (plan-r10 1d): selected while a member's stage is on screen. It goes LAST (plan
   // r4 R5): it is the one block that grows (the list opens in place), so it pushes nothing down.
-  const team = teamChildOf(p.name, ekipOf(mine ?? far), onChat && !!mine?.member);
+  // Every project has it once its roster is read (owner 2026-11-03): empty, it makes the first
+  // member. Before the read, no row: an empty slot would flash before the faces.
+  const read = mine ?? far;
+  const team = teamChildOf(p.name, ekipOf(read), onChat && !!mine?.member, !!read?.members);
   const r = p.mounted ? (mine?.shown ?? p.rollup) : null;
   const windowsOn = onChat && !superSelected && !mine?.member;
   const before = children.length;
@@ -441,7 +445,7 @@ function childrenOf(
   // better than offering a chat over chats that are there.
   // A project with members keeps its New chat row (r8-07): its chevron is where a member's one
   // conversation starts.
-  if ((children.length === before || team) && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
+  if ((children.length === before || (team && team.members.length > 0)) && (mine?.windows || far?.windows)) children.push({ kind: 'new-chat' });
   if (team) children.push(team);
   return { source, children };
 }

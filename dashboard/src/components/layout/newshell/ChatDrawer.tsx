@@ -261,7 +261,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
 
   /** A project's Ekip row (r8-05): faces, one count. On the desktop it opens IN PLACE (plan r4
    *  D1); a phone keeps its bottom sheet. */
-  const teamRow = (c: Extract<DrawerChild, { kind: 'team' }>) => (!phone ? (
+  const teamRow = (c: Extract<DrawerChild, { kind: 'team' }>) => (phone && c.members.length === 0 ? null : !phone ? (
     <TeamSection key="team" members={c.members} kind="project" vault={c.vault} label={t('drawer.team.row')}
       selected={c.selected} className="ns-dr-child" testid="drawer-team-row"
       onOpen={(m) => openMember(c.vault, m)}

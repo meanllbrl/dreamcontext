@@ -6,6 +6,8 @@
  * the owner, else the aggregate count.
  */
 import { describe, it, expect, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createElement } from '../../dashboard/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../../dashboard/node_modules/react-dom/server.node.js';
 import { TeamSection, filterMembers, teamOpenKey } from '../../dashboard/src/components/layout/newshell/TeamSection.js';
@@ -111,5 +113,22 @@ describe('a member\'s notification opens its stage (plan r4 D6b)', () => {
     expect(superStageOfLink('sess-main', records)).toBe('main');
     expect(superStageOfLink('sess-off', records)).toBeNull();
     expect(superStageOfLink('ordinary', records)).toBeNull();
+  });
+});
+
+describe('a project with no member yet (owner 2026-11-03)', () => {
+  it('draws the Team row with an empty slot, opens the members flow, never an empty list', () => {
+    withStore({ 'dc.drawer.team.acme': '1' });
+    const html = render([]);
+    expect(html).toMatch(/data-testid="drawer-team-row"[^>]*data-empty="true"/);
+    expect(html).toContain('data-testid="team-empty-slot"');
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).not.toContain('data-testid="team-list"');
+    expect(html).not.toContain('aria-expanded');
+    const src = readFileSync(fileURLToPath(new URL('../../dashboard/src/components/layout/newshell/TeamSection.tsx', import.meta.url)), 'utf-8');
+    expect(src).toContain('onClick={() => (empty ? p.onManage?.() : toggle())}');
+  });
+  it('without a members flow to open, an empty section stays a plain row', () => {
+    expect(render([], { onManage: undefined })).not.toContain('data-empty');
   });
 });

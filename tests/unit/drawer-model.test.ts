@@ -380,6 +380,20 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
     expect(ekipFaces(members).map((m) => m.slug)).toEqual(['c', 'd', 'a']);
   });
 
+  it('a project with no member of its own still has its Team row once its roster is read, and keeps no extra New chat', () => {
+    const none = buildDrawerRows({
+      projects: [project('acme', { mounted: true, rollup: rollup() })], activeVault: 'acme', expanded: ['acme'],
+      facts: { acme: facts([], { windows: [{ id: 'main', name: 'Chat', tabs: 2, working: 0, asking: 0, flagged: 0, other: 2 }], activeWindowId: 'main' }) as any }, fanout: {},
+    })[0];
+    expect(none.children.map((c) => (c.kind === 'window' ? c.id : c.kind))).toEqual(['super', 'main', 'team']);
+    expect(teamOf([none])!).toMatchObject({ members: [], count: 0, asking: false });
+    const unread = buildDrawerRows({
+      projects: [project('acme', { mounted: true, rollup: rollup() })], activeVault: 'acme', expanded: ['acme'],
+      facts: { acme: { superOn: true, superSelected: false, chatOpen: true, team: [] } as any }, fanout: {},
+    })[0];
+    expect(unread.children.some((c) => c.kind === 'team')).toBe(false);
+  });
+
   it('a collapsed project not in this window hides its Ekip row too; a member question lights the asking dot', () => {
     const fold = (asking: boolean) => {
       const fanout = fanoutWithMarks({}, { far: { working: 0, asking: false } }, ['far'], {
@@ -403,7 +417,8 @@ describe('the Ekip row (plan-r10 1d) and the Global ekip row (1f)', () => {
       facts: { acme: facts(acme) as any }, fanout: { globex: { tabs: 0, superOn: true, team: [], members: globex, identities: [] } },
     });
     expect(teamOf(rows, 0)!.members.map((m) => m.slug)).toEqual(['rota']);
-    expect(teamOf(rows, 1)).toBeUndefined();
+    // globex has no member of its own: its Team row is there, empty (owner 2026-11-03), never a global one.
+    expect(teamOf(rows, 1)!.members).toEqual([]);
     const global = buildGlobalTeam(ekipByProject({
       projects: [project('acme', { mounted: true }), project('globex')],
       facts: { acme: facts(acme) as any }, fanout: { globex: { tabs: 0, superOn: true, team: [], members: globex, identities: [] } },
