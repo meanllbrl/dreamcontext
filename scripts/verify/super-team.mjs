@@ -571,14 +571,51 @@ async function run(engineName, base) {
   await browser.close();
 }
 
+/**
+ * The server's event loop answering at all: polled every second. A request unanswered for over
+ * 5 s is a frozen server (a lost owner message is often that): its child processes and a native
+ * sample of its stack are printed once per freeze, and how long it lasted when it ends.
+ */
+function serverWatchdog(base, pid) {
+  let pending = null;
+  let captured = false;
+  const timer = setInterval(() => {
+    if (pending) {
+      const silent = Date.now() - pending;
+      if (silent > 5000 && !captured) {
+        captured = true;
+        const tree = spawnSync('ps', ['-axo', 'pid,ppid,etime,stat,command'], { encoding: 'utf-8' }).stdout.split('\n');
+        const mine = new Set([String(pid)]);
+        for (let grew = true; grew;) { grew = false; for (const l of tree) { const [p, pp] = l.trim().split(/\s+/); if (mine.has(pp) && !mine.has(p)) { mine.add(p); grew = true; } } }
+        console.log(`  WATCHDOG: server ${pid} silent ${silent} ms at ${Date.now()}; its processes:\n${tree.filter((l) => mine.has(l.trim().split(/\s+/)[0])).map((l) => `    ${l.slice(0, 400)}`).join('\n')}`);
+        const smp = spawnSync('sample', [String(pid), '2'], { encoding: 'utf-8', timeout: 30000 });
+        const lines = `${smp.stdout || ''}${smp.stderr || ''}`.split('\n');
+        const i = Math.max(0, lines.findIndex((l) => /Call graph:/.test(l)));
+        console.log(`  WATCHDOG sample:\n${lines.slice(i, i + 90).map((l) => `    ${l.slice(0, 220)}`).join('\n')}`);
+      }
+      return;
+    }
+    const at = Date.now();
+    pending = at;
+    fetch(`${base}/`, { signal: AbortSignal.timeout(600000) }).catch(() => {}).finally(() => {
+      const took = Date.now() - at;
+      if (took > 5000) console.log(`  WATCHDOG: the server answered again after ${took} ms`);
+      pending = null;
+      captured = false;
+    });
+  }, 1000);
+  return { stop: () => clearInterval(timer) };
+}
+
 async function main() {
   for (const engine of ENGINES) {
     setupScratch();
     const port = await freePort();
     const srv = await startServer(port);
+    const dog = serverWatchdog(`http://127.0.0.1:${port}`, srv.pid);
     try { await run(engine, `http://127.0.0.1:${port}`); }
     catch (e) { ok(`[${engine}] ran to the end`, false, e?.stack ?? e); }
-    finally { srv.kill(); spawnSync('pkill', ['-f', SCRATCH]); }
+    finally { dog.stop(); srv.kill(); spawnSync('pkill', ['-f', SCRATCH]); }
   }
   console.log(`\n${result.pass} passed, ${result.fails.length} failed${result.fails.length ? `:\n  - ${result.fails.join('\n  - ')}` : ''}`);
   console.log(`screenshots: ${OUT} and ${OUT_W1}`);
