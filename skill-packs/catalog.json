@@ -33,10 +33,7 @@
           "description": "Product analytics, KPIs, event schemas, Mixpanel, cohort/funnel analysis"
         }
       ],
-      "crossPackDeps": [
-        "design/onboarding-design (for paywall priming)",
-        "design/design-mobile (for widget/recording design)"
-      ]
+      "crossPackDeps": []
     },
     {
       "name": "brand-voice",
@@ -126,9 +123,7 @@
         "review-frontend",
         "review-edge-cases"
       ],
-      "crossPackDeps": [
-        "design (frontend specialist loads design tokens + a11y)"
-      ]
+      "crossPackDeps": []
     },
     {
       "name": "goal-skill",
@@ -191,7 +186,6 @@
       "alwaysApply": false,
       "crossPackDeps": [
         "growth (post-build growth strategy)",
-        "design/design-web (landing page design)",
         "business-idea-validation (deep validation after discovery)"
       ]
     },
@@ -317,8 +311,7 @@
       ],
       "crossPackDeps": [
         "growth (marketing-video teardown handoff)",
-        "meta-marketing (ad-creative teardown handoff)",
-        "design/onboarding-design (app-demo / FTE reconstruction handoff)"
+        "meta-marketing (ad-creative teardown handoff)"
       ]
     },
     {

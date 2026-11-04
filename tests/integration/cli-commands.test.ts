@@ -1570,22 +1570,22 @@ parent_task: null
 
   describe('install-skill --skill', () => {
     it('installs a single sub-skill', () => {
-      const output = run('install-skill --skill design-web', tmpDir);
-      expect(output).toContain('design-web');
-      expect(output).toContain('design');
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'design', 'design-web.md'))).toBe(true);
+      const output = run('install-skill --skill performance-marketing', tmpDir);
+      expect(output).toContain('performance-marketing');
+      expect(output).toContain('growth');
+      expect(existsSync(join(tmpDir, '.claude', 'skills', 'growth', 'performance-marketing.md'))).toBe(true);
     });
 
     it('warns when base pack is not installed', () => {
-      const output = run('install-skill --skill design-web', tmpDir);
+      const output = run('install-skill --skill performance-marketing', tmpDir);
       expect(output).toContain('Base');
-      expect(output).toContain('design');
+      expect(output).toContain('growth');
       expect(output).toContain('not installed');
     });
 
     it('does not warn when base pack is already installed', () => {
-      run('install-skill --packs design', tmpDir);
-      const output = run('install-skill --skill design-web', tmpDir);
+      run('install-skill --packs growth', tmpDir);
+      const output = run('install-skill --skill performance-marketing', tmpDir);
       expect(output).not.toContain('not installed');
     });
 
@@ -1603,17 +1603,11 @@ parent_task: null
       expect(output).toContain('growth');
       expect(output).toContain('brand-voice');
       expect(output).toContain('system-prompts');
-      expect(output).toContain('frontend-principles');
       expect(output).toContain('performance-marketing');
     });
 
-    it('shows always active badge', () => {
-      const output = run('install-skill --list', tmpDir);
-      expect(output).toContain('always active');
-    });
-
     it('shows installed status for installed packs', () => {
-      run('install-skill --packs design', tmpDir);
+      run('install-skill --packs growth', tmpDir);
       const output = run('install-skill --list', tmpDir);
       expect(output).toContain('installed');
     });

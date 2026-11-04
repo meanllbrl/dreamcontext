@@ -43,19 +43,19 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-// ─── A1 / A2 — install design, goal-skill (claude) ────────────────────────────
+// ─── A1 / A2 — install growth, goal-skill (claude) ────────────────────────────
 
-describe('installPack — design (claude)', () => {
+describe('installPack — growth (claude)', () => {
   it('A1: writes SKILL.md, records pack-skill kind + pack entry, ANSI-free rel paths', () => {
-    const result = installPack('design', tmpDir, ['claude'], manifest);
+    const result = installPack('growth', tmpDir, ['claude'], manifest);
 
-    const skillMd = join(tmpDir, '.claude', 'skills', 'design', 'SKILL.md');
+    const skillMd = join(tmpDir, '.claude', 'skills', 'growth', 'SKILL.md');
     expect(existsSync(skillMd)).toBe(true);
 
-    const baseRel = '.claude/skills/design/SKILL.md';
+    const baseRel = '.claude/skills/growth/SKILL.md';
     expect(result.installed).toContain(baseRel);
     expect(manifest.files[baseRel]?.kind).toBe('pack-skill');
-    expect(manifest.packs.design).toBeDefined();
+    expect(manifest.packs.growth).toBeDefined();
 
     // Every returned path is a clean, ANSI-free relative string.
     for (const p of result.installed) {
@@ -78,21 +78,21 @@ describe('installPack — design (claude)', () => {
   });
 });
 
-// ─── A3 — uninstall design ────────────────────────────────────────────────────
+// ─── A3 — uninstall growth ────────────────────────────────────────────────────
 
-describe('uninstallPack — design (claude)', () => {
+describe('uninstallPack — growth (claude)', () => {
   it('A3: removes skill dir files, deletes the manifest pack entry, removed lists files', () => {
-    installPack('design', tmpDir, ['claude'], manifest);
-    const skillMd = join(tmpDir, '.claude', 'skills', 'design', 'SKILL.md');
+    installPack('growth', tmpDir, ['claude'], manifest);
+    const skillMd = join(tmpDir, '.claude', 'skills', 'growth', 'SKILL.md');
     expect(existsSync(skillMd)).toBe(true);
 
-    const result = uninstallPack('design', tmpDir, ['claude'], manifest);
+    const result = uninstallPack('growth', tmpDir, ['claude'], manifest);
 
     expect(existsSync(skillMd)).toBe(false);
     // R9 happy path: the strict-child skill dir itself is gone.
-    expect(existsSync(join(tmpDir, '.claude', 'skills', 'design'))).toBe(false);
-    expect(manifest.packs.design).toBeUndefined();
-    expect(result.removed).toContain('.claude/skills/design/SKILL.md');
+    expect(existsSync(join(tmpDir, '.claude', 'skills', 'growth'))).toBe(false);
+    expect(manifest.packs.growth).toBeUndefined();
+    expect(result.removed).toContain('.claude/skills/growth/SKILL.md');
     expect(result.removed.length).toBeGreaterThan(0);
     // No removed path is unsafe to delete.
     for (const rel of result.removed) {
@@ -154,7 +154,7 @@ describe('installPack — unknown name', () => {
 
 describe('uninstallPack — idempotent', () => {
   it('A8: uninstalling a never-installed (but catalog-valid) pack returns removed:[] and does not throw', () => {
-    const result = uninstallPack('design', tmpDir, ['claude'], manifest);
+    const result = uninstallPack('growth', tmpDir, ['claude'], manifest);
     expect(result.removed).toEqual([]);
   });
 });
