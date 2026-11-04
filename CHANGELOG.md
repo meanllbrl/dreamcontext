@@ -8,7 +8,7 @@ All notable changes to dreamcontext will be documented in this file.
 
 Patch on 0.40.6: four approved branches in one local build. Nothing limits how many references you can attach to a Super message, board groups reorder by drag, the design skill ships with every project, and the engineering skill is folded into the agents that build and review code. Local build; not published.
 
-- **No limit on references in a Super message.** Attach as many files, tasks and notes as you need; the old cap of five is gone, and nothing is silently dropped.
+- **No limit on references in a Super message.** The "at most 5 references" notice is gone: attach as many files, tasks and notes as you need (a hidden safety ceiling of 100 only guards against a broken message).
 - **Board groups can be reordered.** Drag a group header in the Whiteboards list to a new place, or use the group's ⋯ menu (Move up, Move down). The order is kept with the brain, so another machine sees it too.
 - **The design skill comes with dreamcontext.** It is installed in every project and every AI tool, no longer an optional pack, and `/apps` loads it. A design file you edited is kept on `dreamcontext update`, never overwritten, and named in the update notes.
 - **The engineering skill is retired.** Its rules now live inside the agents that build and review code, so nothing needs installing. `dreamcontext update` removes an installed copy that you never changed and keeps one you edited, telling you which.
