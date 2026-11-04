@@ -244,5 +244,27 @@
       "0.36.14",
       "0.36.15"
     ]
+  },
+  {
+    "id": "v0-41-0",
+    "date": "2026-11-04",
+    "version": "0.41.0",
+    "title": "Every AI Team member has a stage of its own",
+    "summary": "Everything since 0.40.0 in one release. Each AI Team member opens on its own stage with its agenda, instructions and routines, the Team row sits under each project in the drawer, board groups take your order, and the design skill comes with every project while the engineering skill is folded into the agents. Antigravity stays in beta.",
+    "tags": [
+      "agents",
+      "whiteboards",
+      "skills"
+    ],
+    "story": "v0-41-0.json",
+    "covers": [
+      "0.40.1",
+      "0.40.2",
+      "0.40.3",
+      "0.40.4",
+      "0.40.5",
+      "0.40.6",
+      "0.40.7"
+    ]
   }
 ]
