@@ -1535,8 +1535,8 @@ parent_task: null
     });
 
     it('installs multiple packs at once', () => {
-      const output = run('install-skill --packs design growth', tmpDir);
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'design', 'SKILL.md'))).toBe(true);
+      const output = run('install-skill --packs engineering growth', tmpDir);
+      expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'SKILL.md'))).toBe(true);
       expect(existsSync(join(tmpDir, '.claude', 'skills', 'growth', 'SKILL.md'))).toBe(true);
       expect(output).toContain('files installed');
     });
@@ -1546,15 +1546,15 @@ parent_task: null
       expect(existsSync(join(tmpDir, '.claude', 'skills', 'system-prompts', 'SKILL.md'))).toBe(true);
     });
 
-    it('warns about cross-pack dependencies', () => {
+    it('no longer recommends design next to engineering: design is core', () => {
       const output = run('install-skill --packs engineering', tmpDir);
-      expect(output).toContain('recommends');
-      expect(output).toContain('design');
+      expect(output).not.toContain('recommends');
     });
 
-    it('suppresses cross-pack warning when dep is also selected', () => {
-      const output = run('install-skill --packs engineering design', tmpDir);
-      expect(output).not.toContain('recommends');
+    it('answers a request for the old design pack with where it went', () => {
+      const output = run('install-skill --packs design', tmpDir);
+      expect(output).toContain('core skill now');
+      expect(output).not.toContain('not found');
     });
 
     it('errors on unknown pack name', () => {
@@ -1602,7 +1602,6 @@ parent_task: null
     it('shows all available packs and skills', () => {
       const output = run('install-skill --list', tmpDir);
       expect(output).toContain('engineering');
-      expect(output).toContain('design');
       expect(output).toContain('growth');
       expect(output).toContain('brand-voice');
       expect(output).toContain('system-prompts');

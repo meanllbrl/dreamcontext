@@ -39,6 +39,7 @@
       "../../skill-patterns": "skill-patterns",
       "../../skill-agent-core": "skill-agent-core",
       "../../skill-apps": "skill-apps",
+      "../../skill-design": "skill-design",
       "sleepy": "sleepy"
     },
     "macOS": {

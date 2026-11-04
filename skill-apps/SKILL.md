@@ -29,7 +29,13 @@ key-based MCP servers directly.
 The template carries no design on purpose: no colors, no fonts, no cards. Design is entirely this
 app's. It need not resemble dreamcontext, there is no kit to use, and what the owner asks for wins.
 
-1. Before any UI, load `frontend-design` and `design`.
+1. Before any UI, load the `design` skill: it is installed with dreamcontext on every project, so
+   it is always there. Read its `product-ui.md` first (app screens), then `frontend-principles.md`.
+   It gives the principles (hierarchy, every state designed, measured contrast, a 4px grid, a
+   screen that tells the truth), never a look: the look still comes from this app. Its "the
+   project's style guide wins" line does not apply here: that guide is the host's brand, not
+   this app's; this app's own direction (step 2) takes its place. If
+   `frontend-design` is also available, use it for the visual direction; it is never required.
 2. Pick one visual direction that comes from THIS app's subject (a freight tracker and a poetry
    journal should not look related). State it in a sentence. Never fall back on a default dashboard:
    a purple accent, a card grid, rounded buttons on a gray page.

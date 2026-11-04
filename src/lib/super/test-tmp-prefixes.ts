@@ -225,6 +225,8 @@ export const TEST_TMP_PREFIXES: readonly string[] = [
   'dc-declined-',
   'dc-dedup-',
   'dc-delivery-audit-',
+  'dc-design-core-',
+  'dc-design-core-out-',
   'dc-dictation-',
   'dc-dictation-choice-',
   'dc-dispatch-home-',

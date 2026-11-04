@@ -1,4 +1,5 @@
 ---
+name: design
 description: "Universal design rules for any UI an agent builds: hierarchy before deletion, height as a budget, colour spent only on what needs action, say each thing once, every state designed, the screen tells the truth, tokens on a 4px grid, contrast measured in both themes, and done means measured on the rendered screen. Sub-skills: product-ui (app screens: information architecture, copy, forms, pickers, lists, filters, dialogs, states, data truth, charts), frontend-principles (tokens, i18n, reuse-first components, permission gates, measuring the rendered screen), design-web (responsive, marketing pages, conversion, promo and print output), design-mobile (phone layout traps, keyboard, haptics, native transitions, widgets, App Store screenshots), onboarding-design (paywalls, signup funnels, questionnaire UX)."
 alwaysApply: true
 ruleType: "Design System"
@@ -130,6 +131,10 @@ Colours live in tokens with semantic names (`--color-primary`, `--color-surface`
 - Different states look different: "broken" and "not set up" must not share one grey dash; a fresh failure outranks a standing gap.
 - Long text the reader re-reads never sits on a solid accent fill: use a tinted surface (accent mixed a little into a theme surface, a bit more into the border) with ordinary body text. Something read through mid-sentence (a highlight) sets its background only, never its colour.
 - When one small element carries two independent states, give each its own channel: colour for one (status), shape or motion for the other (kind).
+- **Tone is meaning, emphasis is a pointer.** A semantic tone (success, warning, danger) goes only on the thing that IS that state; a neutral step stays neutral, and a block tinted end to end says nothing. Emphasis points the eye at a few load-bearing words per screen, one channel per phrase (bold, or a highlight, or a tint), never stacked.
+- **Hot hues stay rare.** Warning and danger are reserved for what is genuinely urgent; used as decoration they train the eye to skip them. A fixed hue on chrome (a nav section colour) is decoration, never a state.
+- **Chart colours are for data marks**, never a surface under words.
+- **A state-to-look mapping is total**: an unknown or new state falls back to the plain neutral look, never borrows another state's colour and never breaks the screen.
 - Third-party brand colours are the real ones, in both themes.
 - A brand colour that fails contrast is raised with the owner, not patched on one screen.
 
@@ -167,6 +172,7 @@ Colours live in tokens with semantic names (`--color-primary`, `--color-surface`
 - Scroll something into view only when the user opened it; a section open by default never scrolls the page.
 - **Every action answers three questions where the user is looking**: what happened, can I undo it, what is next. A toast alone is not enough when the result landed out of view: take the user to it.
 - Celebrate **real milestones only** (first payment received, setup finished), calmly and briefly. No confetti on routine actions. Polish is consistency and smoothness, not spectacle; in money, health and security products correct numbers and smooth flows ARE the trust signal.
+- **Density beats theatricality**: the result sits above the fold; non-blocking work in progress is one calm line, not a show. A live indicator moves with one rhythm across the product, and a running step reads in its verb tense ("Checking…", then "Checked"), not only in an icon.
 - Mascots and illustration appear at emotional moments (onboarding, first-run empty, error recovery, a real milestone) and nowhere else. The logo is identity; the mascot is emotion.
 
 ### Interaction states (every interactive element)
