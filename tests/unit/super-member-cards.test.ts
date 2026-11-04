@@ -19,7 +19,7 @@ import { _resetSuperInbox, containerIdFor, ensureMemberAgenda, ensureMemberCards
 import { _resetChatRegistry } from '../../src/lib/assistant/chat-registry.js';
 import { resetWindowControl } from '../../src/lib/window-control.js';
 import { AGENDA_REF, MAX_CONTAINERS, emptySuperState, type SuperState } from '../../src/lib/super/types.js';
-import { retirable } from '../../src/lib/super/room.js';
+import { makeRoom, retirable } from '../../src/lib/super/room.js';
 import { SUPER_OWNER_HANDLERS, SUPER_VERB_HANDLERS, type SuperCaller } from '../../src/server/routes/super.js';
 
 let dir: string;
@@ -209,6 +209,23 @@ describe('a member stage\'s own agenda', () => {
     expect(r.status).toBe(200);
     expect((await readSuperState(root, M)).pad?.map((p) => p.text)).toEqual(['Kampanya taslağını yazıyorum']);
     expect((await readSuperState(root)).pad ?? []).toEqual([]);
+  });
+
+  it('an agenda the owner put in Others stays there when the record fills (never retired, never re-shown)', async () => {
+    makeMember();
+    await writeSuper(root, M, () => {});
+    await layout({ cards: [{ id: A, place: 'others' }] });
+    await writeSuper(root, M, (s) => {
+      const free = MAX_CONTAINERS - s.containers.length;
+      for (let i = 0; i < free; i++) s.containers.push({ id: `insight-${i}`, kind: 'insight', ref: `i${i}`, shape: 'square', place: 'others' });
+    });
+    expect((await readSuperState(root, M)).containers).toHaveLength(MAX_CONTAINERS);
+    // A new card on a full record retires one finished card; the agenda is never it.
+    const s = await writeSuper(root, M, (d) => { makeRoom(d, 1); d.containers.push({ id: 'insight-new', kind: 'insight', ref: 'new', shape: 'square', place: 'others' }); });
+    expect(agendas(s)).toHaveLength(1);
+    expect(agendas(s)[0]).toMatchObject({ id: A, place: 'others' });
+    expect(s.containers.length).toBeLessThanOrEqual(MAX_CONTAINERS);
+    expect(retirable(s, agendas(s)[0], () => false)).toBe(false);
   });
 
   it('a full record makes room for it', () => {
