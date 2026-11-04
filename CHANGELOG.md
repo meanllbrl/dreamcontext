@@ -9,6 +9,7 @@ All notable changes to dreamcontext will be documented in this file.
 Patch on 0.40.5. Local build; not published.
 
 - **The open AI Team member is the selected row in the left menu.** Open a member and its own row lights up, not the Team row above it, so you always see who you are looking at.
+- **Every AI Team member's stage keeps its own agenda card.** Each member shows its own agenda on its stage, and the card is never retired to make room for another.
 
 ## [0.40.5] - 2026-11-04
 
