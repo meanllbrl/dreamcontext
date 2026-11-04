@@ -13,13 +13,13 @@ import { useI18n } from '../../context/I18nContext';
 import { useDismissOnOutside } from '../../lib/useDismissOnOutside';
 import {
   useCreateWhiteboard, useDeleteWhiteboard, useRenameWhiteboard, useRenameWhiteboardGroup, useSetWhiteboardGroup,
-  useWhiteboardList, type GroupMoveNote, type WhiteboardSummary,
+  useSetWhiteboardGroupOrder, useWhiteboardGroupOrder, useWhiteboardList, type GroupMoveNote, type WhiteboardSummary,
 } from '../../hooks/useWhiteboards';
 import { BoardGlyph, PlusGlyph, SearchGlyph } from './BoardSwitcher';
 import { DEFAULT_BOARD_SLUG, canDeleteBoard, fold, isDefaultBoard, newBoardName } from './boardSwitcherLogic';
 import {
-  addEmptyGroup, buildExplorer, keepGroupIfEmptied, pruneExplorerPrefs, realGroupNames, removeEmptyGroup,
-  renameGroupInPrefs, toggleCollapsed, togglePin, validGroupName, GROUP_MAX, type ExplorerGroup, type ExplorerPrefs,
+  addEmptyGroup, buildExplorer, keepGroupIfEmptied, moveGroup, pruneExplorerPrefs, realGroupNames, removeEmptyGroup,
+  renameGroupInPrefs, stepGroup, toggleCollapsed, togglePin, validGroupName, GROUP_MAX, type ExplorerGroup, type ExplorerPrefs,
 } from './explorerLogic';
 import './BoardExplorer.css';
 
@@ -70,6 +70,9 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
   const [confirm, setConfirm] = useState<string | null>(null);
   const [drag, setDrag] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<string | null>(null);
+  /** A GROUP being dragged (its key), and where it would land: before or after another group. */
+  const [dragGroup, setDragGroup] = useState<string | null>(null);
+  const [groupDropAt, setGroupDropAt] = useState<{ key: string; after: boolean } | null>(null);
   const rootRef = useRef<HTMLElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -118,6 +121,8 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
   const create = useCreateWhiteboard();
   const renameBoard = useRenameWhiteboard();
   const del = useDeleteWhiteboard();
+  const groupOrder = useWhiteboardGroupOrder();
+  const setGroupOrder = useSetWhiteboardGroupOrder();
   const groupMutations = useIsMutating({ mutationKey: ['whiteboard-group'] });
 
   // The explorer re-asks on open: a board the CLI or an agent made a second ago must be in it.
@@ -130,7 +135,8 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
     change((p) => pruneExplorerPrefs(p, boards));
   }, [list.isSuccess, list.isFetching, groupMutations, boards, change]);
 
-  const view = useMemo(() => buildExplorer(boards, prefs, query, openSlug), [boards, prefs, query, openSlug]);
+  const order = groupOrder.data;
+  const view = useMemo(() => buildExplorer(boards, prefs, query, openSlug, order ?? []), [boards, prefs, query, openSlug, order]);
   const groupNames = useMemo(() => realGroupNames(boards), [boards]);
   const bySlug = useMemo(() => new Map(boards.map((b) => [b.slug, b])), [boards]);
 
@@ -232,7 +238,26 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
     });
   };
 
+  /** Store a new group order (every group, top first). Never while searching: only some show. */
+  const reorder = (next: string[] | null) => {
+    if (!next || view.searching) return;
+    setNote(null);
+    setGroupOrder.mutate(next, { onError: (e: Error) => setNote({ text: e.message }) });
+  };
+
   // ── drag ──
+  const endDrag = () => { setDrag(null); setDropAt(null); setDragGroup(null); setGroupDropAt(null); };
+  /** A group dragged over another group's block: the line goes above it or below it, by half. */
+  const onGroupDragOver = (e: DragEvent<HTMLDivElement>, target: string) => {
+    if (!dragGroup) return false;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const head = e.currentTarget.querySelector('.wbx-row--group') ?? e.currentTarget;
+    const r = head.getBoundingClientRect();
+    const after = e.clientY > r.top + r.height / 2;
+    if (groupDropAt?.key !== target || groupDropAt.after !== after) setGroupDropAt({ key: target, after });
+    return true;
+  };
   const onDragOver = (e: DragEvent, target: string) => {
     if (!drag) return;
     e.preventDefault();
@@ -242,8 +267,12 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
   const onDrop = (e: DragEvent, target: string) => {
     e.preventDefault();
     if (drag) moveTo(drag, target === UNGROUPED ? null : target);
-    setDrag(null);
-    setDropAt(null);
+    endDrag();
+  };
+  const onGroupDrop = (e: DragEvent, target: string) => {
+    e.preventDefault();
+    if (dragGroup && groupDropAt?.key === target) reorder(moveGroup(view.groups, dragGroup, target, groupDropAt.after));
+    endDrag();
   };
   // WKWebView reports `relatedTarget = null` mid-drag: a leave with no target is not a leave.
   const onDragLeave = (e: DragEvent, target: string) => {
@@ -315,14 +344,34 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
         key={`g:${g.key}`}
         className="wbx-group"
         data-drop={dropAt === g.key ? '' : undefined}
-        onDragOver={(e) => onDragOver(e, g.key)}
-        onDragLeave={(e) => onDragLeave(e, g.key)}
-        onDrop={(e) => onDrop(e, g.name)}
+        data-drop-line={groupDropAt?.key === g.key && dragGroup !== g.key ? (groupDropAt.after ? 'after' : 'before') : undefined}
+        data-dragging={dragGroup === g.key ? '' : undefined}
+        onDragOver={(e) => { if (!onGroupDragOver(e, g.key)) onDragOver(e, g.key); }}
+        onDragLeave={(e) => {
+          if (dragGroup) {
+            const to = e.relatedTarget as Node | null;
+            if (to && !e.currentTarget.contains(to) && groupDropAt?.key === g.key) setGroupDropAt(null);
+            return;
+          }
+          onDragLeave(e, g.key);
+        }}
+        onDrop={(e) => (dragGroup ? onGroupDrop(e, g.key) : onDrop(e, g.name))}
       >
         {renaming ? (
           <InlineField initial={g.name} label={t('whiteboard.explorer.groupName')} maxLength={GROUP_MAX} onDone={commitField} onCancel={cancelField} />
         ) : (
-          <div className="wbx-row wbx-row--group">
+          <div
+            className="wbx-row wbx-row--group"
+            draggable={!view.searching}
+            onDragStart={(e) => {
+              e.dataTransfer.effectAllowed = 'move';
+              e.dataTransfer.setData('text/plain', g.name);
+              setMenu(null);
+              setDrag(null);
+              setDragGroup(g.key);
+            }}
+            onDragEnd={endDrag}
+          >
             <button
               type="button"
               className="wbx-row-open"
@@ -398,7 +447,7 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
         </div>
       )}
 
-      <div className="wbx-scroll" ref={scrollRef} onDragEnd={() => { setDrag(null); setDropAt(null); }}>
+      <div className="wbx-scroll" ref={scrollRef} onDragEnd={endDrag}>
         {list.isLoading && <p className="wbx-hint">{t('common.loading')}</p>}
         {list.isError && <p className="wbx-hint wbx-hint--bad">{t('whiteboard.page.loadFailed')} {list.error?.message}</p>}
 
@@ -503,6 +552,21 @@ export function BoardExplorer({ openSlug, onOpen, prefs, change, onHide, phone, 
             <>
               <MenuButton label={t('whiteboard.explorer.renameGroup')} autoFocus onClick={() => { setMenu(null); setField({ kind: 'rename-group', key: menuGroup.key }); }} />
               <MenuButton label={t('whiteboard.explorer.newBoardIn').replace('{name}', menuGroup.name)} onClick={() => { setMenu(null); setField({ kind: 'new-board', group: menuGroup.name }); }} />
+              {!view.searching && view.groups.length > 1 && (
+                <>
+                  <div className="wbx-menu-sep" role="separator" />
+                  <MenuButton
+                    label={t('whiteboard.explorer.moveGroupUp')}
+                    disabled={view.groups[0]?.key === menuGroup.key}
+                    onClick={() => { reorder(stepGroup(view.groups, menuGroup.key, -1)); closeMenu(); }}
+                  />
+                  <MenuButton
+                    label={t('whiteboard.explorer.moveGroupDown')}
+                    disabled={view.groups[view.groups.length - 1]?.key === menuGroup.key}
+                    onClick={() => { reorder(stepGroup(view.groups, menuGroup.key, 1)); closeMenu(); }}
+                  />
+                </>
+              )}
               <div className="wbx-menu-sep" role="separator" />
               <MenuButton
                 label={menuGroup.empty ? t('whiteboard.explorer.deleteEmptyGroup') : t('whiteboard.explorer.ungroupAll')}

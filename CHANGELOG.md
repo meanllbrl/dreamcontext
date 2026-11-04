@@ -4,6 +4,8 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+- **Board groups can be reordered.** Drag a group header in the Whiteboards list to a new place, or use the group's ⋯ menu (Move up, Move down). The order is kept with the brain, so another machine sees it too.
+
 ## [0.40.6] - 2026-11-04
 
 Patch on 0.40.5. Local build; not published.

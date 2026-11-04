@@ -91,6 +91,8 @@ const restoreUrl = (id: string) => `${TRASH_PATH}/${encodeURIComponent(id)}/rest
 
 const LIST_KEY = ['whiteboards'] as const;
 const TRASH_KEY = [...LIST_KEY, 'trash'] as const;
+const GROUP_ORDER_KEY = [...LIST_KEY, 'group-order'] as const;
+const GROUP_ORDER_PATH = `${LIST_PATH}/groups/order`;
 
 /** The fit-on-open's clear margins, in screen px: the top clears Excalidraw's tool bar and the
  *  "To move canvas…" hint under it; the sides and bottom keep content off the edges. */
@@ -215,9 +217,43 @@ export function useRenameWhiteboardGroup(fold: (s: string) => string) {
       return { before };
     },
     onError: (_err, _input, ctx) => { if (ctx?.before) qc.setQueryData(LIST_KEY, ctx.before); },
-    onSettled: () => { void qc.invalidateQueries({ queryKey: LIST_KEY, exact: true }); },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: LIST_KEY, exact: true });
+      // The server carried the group's place over to its new name.
+      void qc.invalidateQueries({ queryKey: GROUP_ORDER_KEY, exact: true });
+    },
     mutationKey: ['whiteboard-group'],
     scope: { id: 'whiteboard-group' },
+  });
+}
+
+/**
+ * The explorer's group order (`whiteboards/.groups.json`, synced with the brain like the boards'
+ * groups), top first. A failed read is the empty order: groups then sort by name.
+ */
+export function useWhiteboardGroupOrder() {
+  const api = useApi();
+  return useQuery({
+    queryKey: GROUP_ORDER_KEY,
+    queryFn: async () => (await api.get<{ order?: string[] }>(GROUP_ORDER_PATH)).order ?? [],
+  });
+}
+
+/** Store a new group order; shown at once, rolled back if the write fails. */
+export function useSetWhiteboardGroupOrder() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (order: string[]) => api.put<{ order: string[] }>(GROUP_ORDER_PATH, { order }),
+    onMutate: async (order) => {
+      await qc.cancelQueries({ queryKey: GROUP_ORDER_KEY, exact: true });
+      const before = qc.getQueryData<string[]>(GROUP_ORDER_KEY);
+      qc.setQueryData<string[]>(GROUP_ORDER_KEY, order);
+      return { before };
+    },
+    onError: (_err, _order, ctx) => { qc.setQueryData(GROUP_ORDER_KEY, ctx?.before ?? []); },
+    onSettled: () => { void qc.invalidateQueries({ queryKey: GROUP_ORDER_KEY, exact: true }); },
+    scope: { id: 'whiteboard-group-order' },
   });
 }
 

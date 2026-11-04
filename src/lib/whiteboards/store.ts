@@ -27,6 +27,7 @@ import {
   WhiteboardValidationError,
 } from './errors.js';
 import type { WhiteboardElement } from './widgets.js';
+import { renameInGroupOrder } from './group-order.js';
 
 /**
  * The whiteboard store (D2, D4). Every board lives at
@@ -656,6 +657,11 @@ export async function renameWhiteboardGroup(
       if (err instanceof WhiteboardConflictError && err.code === 'stale_group') { skipped.push(b.slug); continue; }
       failed.push({ slug: b.slug, reason: err instanceof WhiteboardConflictError ? err.code : (err as Error).message });
     }
+  }
+  // The group keeps its place in the explorer under its new name (ungroup-all drops it).
+  // Best-effort: the boards moved, a busy order file must not turn that into an error.
+  if (moved.length > 0 && failed.length === 0) {
+    try { await renameInGroupOrder(root, source, target); } catch { /* order is a preference */ }
   }
   return { from: source, to: target, moved, skipped, failed };
 }
