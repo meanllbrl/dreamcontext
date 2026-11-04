@@ -608,7 +608,7 @@
   cursor: pointer;
 }
 .chat-cmp-ref-pop-btn:hover { background: var(--color-bg-tertiary); }
-/* The sixth ↩: one line under the field, for three seconds. */
+/* A composer notice (Attach files… opened nothing): one line under the field. */
 .chat-cmp-ref-notice {
   padding: 0 var(--space-2) var(--space-1);
   font-size: var(--font-size-xs);

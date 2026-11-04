@@ -4675,7 +4675,7 @@ export function AgentSurface({ stageBesideDrawer = false, arrival = null }: {
   /**
    * "Write about this" on an agenda line (owner 2026-10-23): the line drops into the Super
    * Agent's composer as a chip AT THE CARET (owner 2026-10-24: a second press ADDS one; the same
-   * line again flashes the chip it has; a sixth is refused with a notice), the draft untouched.
+   * line again flashes the chip it has; past the hidden ceiling nothing is added, silently), the draft untouched.
    * Its part of the message opens with the line's block (`agendaAboutBlock`).
    */
   /** Stage `row` as an About chip in `cs`'s composer, and focus it. */

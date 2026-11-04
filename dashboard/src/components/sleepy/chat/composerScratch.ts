@@ -106,9 +106,6 @@ export interface ComposerScratch {
    *  last, at most MAX_RECENT: a paste or the same ↩ brings one back with its own id. Absent:
    *  none. */
   recent?: Attachment[];
-  /** Bumped when a ↩ was refused because MAX_MESSAGE_REFS chips are already in the box: the
-   *  composer shows its one-line notice. Absent: never. */
-  refused?: number;
 }
 
 /** Refs kept for a paste or a repeated ↩ after they left the box. */
@@ -145,7 +142,7 @@ export function readScratch(convId: string): ComposerScratch {
 function commit(convId: string, next: ComposerScratch): void {
   // An empty conversation is DELETED rather than stored empty, so a long session that attaches
   // and sends repeatedly does not accumulate a map entry per conversation it has finished with.
-  if (next.attachments.length === 0 && next.quote === null && !next.recent?.length && !next.refused) store.delete(convId);
+  if (next.attachments.length === 0 && next.quote === null && !next.recent?.length) store.delete(convId);
   else store.set(convId, next);
   const settled = readScratch(convId);
   listeners.get(convId)?.forEach((fn) => fn(settled));
@@ -278,7 +275,7 @@ export function removeAttachment(convId: string, id: string): void {
  */
 export function dropSentAttachments(convId: string, opts: { keepAbout?: boolean; keepInline?: boolean } = {}): void {
   const cur = readScratch(convId);
-  if (!cur.attachments.length && cur.quote === null && !cur.recent && !cur.refused) return;
+  if (!cur.attachments.length && cur.quote === null && !cur.recent) return;
   // A slash command never carries the About block, so its chip stays for the next message; nor
   // its inline chips (`keepInline`). The page chip stays always: the next message is still
   // written from that page.
@@ -321,7 +318,8 @@ let flashSeq = 0;
  *   chip flashes and the caret goes after it (`flash`);
  * - the same target in `recent` (cut, deleted): that ref comes back with its own id, so a paste
  *   of its old token afterwards is text, never a second chip;
- * - MAX_MESSAGE_REFS already staged: nothing is added and `refused` is bumped for the notice.
+ * - the hidden MAX_MESSAGE_REFS ceiling already staged: nothing is added, silently (no notice:
+ *   owner 2026-11-04, he never sees a limit).
  */
 export function insertRef(convId: string, att: Attachment): 'added' | 'flash' | 'max' {
   const cur = readScratch(convId);
@@ -332,10 +330,7 @@ export function insertRef(convId: string, att: Attachment): 'added' | 'flash' | 
     commit(convId, { ...cur, attachments: cur.attachments.map((a) => (a === same ? { ...a, flash: ++flashSeq } : a)) });
     return 'flash';
   }
-  if (abouts.length >= MAX_MESSAGE_REFS) {
-    commit(convId, { ...cur, refused: (cur.refused ?? 0) + 1 });
-    return 'max';
-  }
+  if (abouts.length >= MAX_MESSAGE_REFS) return 'max';
   const back = key ? (cur.recent ?? []).find((a) => refKey(a) === key) : undefined;
   const recent = (cur.recent ?? []).filter((a) => a !== back);
   const staged: Attachment = { ...(back ?? att), kind: 'about', pending: true };

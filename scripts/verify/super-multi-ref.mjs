@@ -7,18 +7,19 @@
  *
  *   npm run build && node scripts/verify/super-multi-ref.mjs
  *
- * The owner hands one chat over; the stand-in super writes six agenda lines and answers once.
+ * The owner hands one chat over; the stand-in super writes twelve agenda lines and answers once.
  * In the composer: words, agenda ↩, words, agenda ↩, words, message ↩, words: three chips INLINE
  * at the caret, slots 1/2/3, his words untouched; ←/→ never stop inside a chip; the same line
  * again flashes the chip it has; a chip opens its popover (whole line, Remove), Esc closes it;
- * five chips and a sixth ↩ shows the notice and adds nothing; Remove and Backspace take a chip
- * whole; cut + paste moves a chip with its reference. Sent: the frame carries the headers in
+ * no visible limit (owner 2026-11-04): eight chips go in and no notice ever shows; Remove and
+ * Backspace take a chip whole; cut + paste moves a chip with its reference. Sent: the frame carries the headers in
  * draft order and `<owner-msg … parts="…">`; the bubble shows the chips inline with his words in
  * the same slots, no header text anywhere in the DOM. The stand-in answers each part in its own
  * section (a stacked pair one per line): the heads show those parts' chips in the same colours,
  * a head click lands on the bubble and flashes that chip. A queued multi-part row shows its
  * chips. Rewind gives the chips back (never header text), and a file dropped afterwards keeps
- * them. A reload draws the same bubble. 1440x900 dark and light, 390x844: the widest chip at
+ * them. A reload draws the same bubble. Messages with 8 and 12 references go out whole: every
+ * header in draft order, one part ref each in `<owner-msg parts=…>`, all chips in the bubble. 1440x900 dark and light, 390x844: the widest chip at
  * most 60% of the field, no chip broken across lines, no horizontal overflow; the token's id
  * digits draw nothing in Chromium and WebKit. Zero page errors.
  *
@@ -53,6 +54,12 @@ const NOTES = [
   ['now', 'Fiyat kartı adı Takım oldu mu'],
   ['waiting', 'Bülten taslağına bir göz at'],
   ['waiting', WIDE],
+  ['now', 'Sürüm notları kimde'],
+  ['waiting', 'Yedekleme gece çalışıyor mu'],
+  ['now', 'Giriş sayfası yavaş'],
+  ['waiting', 'Destek kuyruğu boşaldı mı'],
+  ['now', 'Logo dosyası güncel değil'],
+  ['waiting', 'Haftalık rapor saat kaçta'],
 ];
 
 // ─── the stand-in `claude` ──────────────────────────────────────────────────────────────
@@ -109,6 +116,7 @@ async function superTurn(text, parts) {
     await sleep(9000);
     return 'Bitti.';
   }
+  if (parts.length >= 8) { report({ kind: 'many', parts }); return 'Hepsini aldım.'; }
   if (parts.length >= 3) {
     // A section per part, in his order; the stacked pair (2 and 3) one mark per line.
     report({ kind: 'parts', parts });
@@ -171,6 +179,8 @@ function setupScratch() {
   rmSync(SCRATCH, { recursive: true, force: true });
   rmSync(OUT, { recursive: true, force: true });
   for (const d of [join(HOME, '.dreamcontext'), join(HOME, '.local', 'bin'), join(PROJ, '_dream_context', 'state'), OUT, LOGS]) mkdirSync(d, { recursive: true });
+  // The handover button is the CLASSIC shell's Super tab; the new shell's way in is its drawer row.
+  writeFileSync(join(HOME, '.dreamcontext', 'launcher-ui.json'), JSON.stringify({ view: 'list', shell: 'classic' }));
   writeFileSync(join(HOME, '.dreamcontext', 'agent-ui.json'), `${JSON.stringify({
     enabled: true, restoreTabs: true, defaultAgent: 'claude', autoTitle: false, hotkey: 'Ctrl+A', renderer: 'dom',
     chatView: true, screenMigrated: true, chatPermissionMode: 'auto', chatDefaultModel: '', chatDefaultEffort: '', lightMode: 'off', superAgent: true,
@@ -277,7 +287,8 @@ async function aboutRow(page, text) {
   await page.waitForTimeout(250);
 }
 const value = (page) => centreInput(page).inputValue();
-const tokensIn = (v) => [...v.matchAll(/\u2068([●↩])\u00A0([^\u2068\u2069\n\u2061-\u2064]*)[\u2061-\u2064]+\u2069/g)].map((m) => ({ glyph: m[1], label: m[2].replace(/\u00A0/g, ' '), start: m.index, end: m.index + m[0].length }));
+// A token: FSI, a padding NBSP, the glyph, NBSP, the label, a padding NBSP, the id digits, PDI.
+const tokensIn = (v) => [...v.matchAll(/\u2068\u00A0?([●↩])\u00A0([^\u2068\u2069\n\u2061-\u2064]*?)\u00A0?[\u2061-\u2064]+\u2069/g)].map((m) => ({ glyph: m[1], label: m[2].replace(/\u00A0/g, ' '), start: m.index, end: m.index + m[0].length }));
 const stripped = (v) => v.replace(/\u2068[^\u2069]*\u2069/g, '').replace(/\s+/g, ' ').trim();
 const marks = (page) => centre(page).locator('.chat-cmp-hl mark.chat-cmp-hl-ref');
 const markInfo = (page) => marks(page).evaluateAll((ms) => ms.map((m) => ({ slot: m.getAttribute('data-slot'), flash: m.classList.contains('is-flash'), rects: m.getClientRects().length, w: Math.round(m.getBoundingClientRect().width), bg: getComputedStyle(m).backgroundColor })));
@@ -319,9 +330,9 @@ async function main() {
     await page.waitForTimeout(1500);
     await page.locator('[data-testid="super-handover-btn"]:visible').first().click();
     await motionIdle(page);
-    ok('the super took over and wrote six agenda lines', await until(page, async () => turnEnds() >= 1 && (record().pad ?? []).length === 6 && (await centreInput(page).count()) === 1, 90000), JSON.stringify(record().pad ?? null));
+    ok('the super took over and wrote twelve agenda lines', await until(page, async () => turnEnds() >= 1 && (record().pad ?? []).length === NOTES.length && (await centreInput(page).count()) === 1, 90000), JSON.stringify(record().pad ?? null));
     await page.evaluate(async () => fetch('/api/super/layout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dreamcontext-Vault': 'orbit' }, body: JSON.stringify({ view: { mode: 'float' } }) }));
-    ok('the agenda shows the lines, each with its ↩', await until(page, async () => (await page.locator('[data-testid="super-agenda-about"]').count()) >= 6, 20000));
+    ok('the agenda shows the lines, each with its ↩', await until(page, async () => (await page.locator('[data-testid="super-agenda-about"]').count()) >= NOTES.length, 20000));
     await motionIdle(page);
     ok('the super answered once (a message to reply to)', await sendAndWait(page, 'HAZIR mısın?'));
     await page.waitForTimeout(600);
@@ -331,7 +342,7 @@ async function main() {
     await typeIn(page, 'Üç şey:');
     await aboutRow(page, NOTES[0][1]);
     let v = await value(page);
-    ok('agenda ↩ puts a chip AT THE CARET, after his words (they stay)', v.startsWith('Üç şey: \u2068●\u00A0') && tokensIn(v).length === 1, JSON.stringify(v));
+    ok('agenda ↩ puts a chip AT THE CARET, after his words (they stay)', /^Üç şey: \u2068\u00A0?●\u00A0/.test(v) && tokensIn(v).length === 1, JSON.stringify(v));
     ok('…no chip above the box (the old About row)', (await centre(page).locator('.chat-cmp-attachment-about').count()) === 0);
     await typeIn(page, 'Windows: evet, yalnız CLI.');
     await aboutRow(page, NOTES[1][1]);
@@ -393,16 +404,26 @@ async function main() {
     await page.keyboard.press('Shift+Tab');
     ok('…Shift+Tab is back in the box, nothing removed', tokensIn(await value(page)).length === 3);
 
-    // 5. Five chips; a sixth ↩ shows the notice and adds nothing.
+    // 5. No visible limit (owner 2026-11-04): a sixth, seventh and eighth ↩ go in, no notice.
     await setCaret(page, (await value(page)).length);
     await aboutRow(page, NOTES[2][1]);
     await aboutRow(page, NOTES[5][1]);
     ok('five chips staged', tokensIn(await value(page)).length === 5);
-    await aboutRow(page, NOTES[4][1]);
     const notice = centre(page).locator('[data-testid="chat-cmp-ref-notice"]');
-    ok('a sixth ↩: "At most 5 references in one message", nothing added', await until(page, async () => (await notice.count()) === 1, 3000) && tokensIn(await value(page)).length === 5, await notice.innerText().catch(() => ''));
-    await shot(page, '04-five-chips-notice-1440-dark.png');
-    ok('…the notice goes again within 4 s', await until(page, async () => (await notice.count()) === 0, 4500));
+    for (const i of [4, 6, 7]) await aboutRow(page, NOTES[i][1]);
+    ok('a sixth, seventh and eighth ↩ each add a chip: eight staged', await until(page, async () => tokensIn(await value(page)).length === 8, 3000), JSON.stringify(tokensIn(await value(page)).map((t) => t.label)));
+    await page.waitForTimeout(600);
+    ok('…and no limit notice anywhere', (await notice.count()) === 0 && !/At most|en fazla/i.test(await centre(page).innerText()));
+    await shot(page, '04-eight-chips-no-notice-1440-dark.png');
+    // Back to five for the steps below: Remove takes the three newest out.
+    const popR = page.locator('[data-testid="chat-cmp-ref-pop"]');
+    for (let k = 8; k > 5; k--) {
+      const mk = await marks(page).nth(k - 1).boundingBox();
+      await page.mouse.click(mk.x + mk.width / 2, mk.y + mk.height / 2);
+      await popR.locator('[data-testid="chat-cmp-ref-remove"]').click();
+      await until(page, async () => tokensIn(await value(page)).length === k - 1, 2000);
+    }
+    ok('…Remove brings it back to five', tokensIn(await value(page)).length === 5);
     // The widest possible chip (a 24-grapheme label of W) at 1440, measured again at 390 below.
     // 6. Remove (popover) and Backspace take a chip whole.
     const m5 = await marks(page).nth(4).boundingBox();
@@ -558,6 +579,32 @@ async function main() {
     ok('↑, ↩, ↑: the new chip and the recalled ones stay (a draft with chips is never recalled over)', tokensIn(v).length === 3, JSON.stringify(v));
     await setCaret(page, 0, v.length);
     await page.keyboard.press('Backspace');
+
+    // 12c. Eight and twelve references go out whole (owner 2026-11-04: no visible limit).
+    for (const count of [8, 12]) {
+      await centreInput(page).click();
+      await typeIn(page, `${count} şey:`);
+      for (let i = 0; i < count; i++) { await aboutRow(page, NOTES[i][1]); await typeIn(page, `p${i + 1}`); }
+      ok(`${count} chips staged in the box`, tokensIn(await value(page)).length === count, JSON.stringify(tokensIn(await value(page)).length));
+      const n0 = superFrames().length;
+      const e0 = turnEnds();
+      await page.keyboard.press('Enter');
+      ok(`${count}: the frame carries all ${count} headers in draft order and ${count} part refs`, await until(page, async () => {
+        const f = superFrames().slice(n0).find((x) => x.blocks[0].startsWith(`${count} şey:`));
+        if (!f) return false;
+        const t = f.blocks[0];
+        const at = NOTES.slice(0, count).map(([, line]) => t.indexOf(`line: ${JSON.stringify(line)}`));
+        const pm = f.blocks.map((b) => /^<owner-msg ref="[0-9a-z]{6}" parts="([0-9a-z ]+)"\/>$/.exec(b)).find(Boolean);
+        return aboutHeadCount(t) === count && at.every((x, i) => x >= 0 && (i === 0 || x > at[i - 1]))
+          && !!pm && new Set(pm[1].split(' ')).size === count && pm[1].split(' ').length === count;
+      }, 15000), JSON.stringify(superFrames().slice(n0).map((x) => x.blocks.slice(-1))));
+      ok(`${count}: the Super got every part`, await until(page, async () => turnEnds() > e0 && reports().some((r) => r.kind === 'many' && r.parts.length === count), 20000));
+      const bub = centre(page).locator('.chat-msg-user-row').filter({ hasText: `${count} şey:` }).last();
+      ok(`${count}: the bubble shows all ${count} chips, no header text`, await until(page, async () => (await bub.locator('.chat-ref-chip').count()) === count, 8000) && !(await headerText(page)));
+      await bub.evaluate((el) => el.scrollIntoView({ block: 'center' })).catch(() => {});
+      await page.waitForTimeout(300);
+      await shot(page, `09b-${count}-refs-sent-1440-dark.png`);
+    }
 
     // 13. Light theme, then 390x844.
     await page.evaluate(() => localStorage.setItem('dreamcontext-theme', 'light'));
