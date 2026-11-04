@@ -259,6 +259,12 @@ export function ChatDrawer(p: ChatDrawerProps) {
     if (p.floating) p.onClose();
   };
 
+  /** The open member's slug when it is one of the global members. */
+  const globalOpenSlug = (() => {
+    const open = p.rows.flatMap((r) => r.children).find((c): c is Extract<DrawerChild, { kind: 'team' }> => c.kind === 'team' && !!c.openSlug)?.openSlug;
+    return open && p.globalTeam?.members.some((m) => m.slug === open) ? open : null;
+  })();
+
   /** A project's Ekip row (r8-05): faces, one count. On the desktop it opens IN PLACE (plan r4
    *  D1); a phone keeps its bottom sheet. */
   const teamRow = (c: Extract<DrawerChild, { kind: 'team' }>) => (phone && c.members.length === 0 ? null : !phone && c.members.length === 0 && p.onManage ? (
@@ -270,7 +276,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
     </button>
   ) : !phone ? (
     <TeamSection key="team" members={c.members} kind="project" vault={c.vault} label={t('drawer.team.row')}
-      selected={c.selected} className="ns-dr-child" testid="drawer-team-row"
+      openSlug={c.openSlug ?? null} className="ns-dr-child" testid="drawer-team-row"
       onOpen={(m) => openMember(c.vault, m)}
       {...(p.onManage ? { onManage: () => p.onManage?.(c.vault) } : {})} />
   ) : (
@@ -497,7 +503,7 @@ export function ChatDrawer(p: ChatDrawerProps) {
         <div className="ns-team-global">
           <div className="ns-team-global-head">{t('drawer.team.independent')}</div>
           {!phone ? (
-            <TeamSection members={p.globalTeam.members} kind="global" label={t('drawer.team.global')} testid="drawer-global-team-row"
+            <TeamSection members={p.globalTeam.members} kind="global" label={t('drawer.team.global')} testid="drawer-global-team-row" openSlug={globalOpenSlug}
               onOpen={(m) => { const g = p.globalTeam?.members.find((x) => x.slug === m.slug); if (g?.openIn) openMember(g.openIn, m); }}
               {...(p.onManage ? { onManage: () => p.onManage?.(null) } : {})} />
           ) : (

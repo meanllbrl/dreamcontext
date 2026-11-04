@@ -132,3 +132,23 @@ describe('a project with no member yet (owner 2026-11-03)', () => {
     expect(render([], { onManage: undefined })).not.toContain('data-empty');
   });
 });
+
+describe('the open member is the selected row (owner 2026-11-04)', () => {
+  it('open list: only the open member row is selected, the Team row never is', () => {
+    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    const html = render(many(4), { openSlug: 'm2' });
+    expect(countOf(html, 'ns-team-mrow is-sel')).toBe(1);
+    expect(html).toMatch(/data-slug="m2"[^>]*>/);
+    expect(html).toMatch(/ns-team-mrow is-sel"[^>]*aria-current="page"[^>]*data-testid="team-list-member" data-slug="m2"/);
+    expect(html).not.toMatch(/ns-team-row ns-team-sec-row is-sel/);
+  });
+  it('folded: the open member still shows under the row, selected, once', () => {
+    const html = render([member('a', { unread: 2 }), member('b')], { openSlug: 'a' });
+    expect(countOf(html, 'ns-team-mrow is-sel')).toBe(1);
+    expect(countOf(html, 'data-slug="a"')).toBe(1);
+  });
+  it('no open member: nothing is selected', () => {
+    withStore({ [teamOpenKey('project', 'acme')]: '1' });
+    expect(render(many(3))).not.toContain('is-sel');
+  });
+});
