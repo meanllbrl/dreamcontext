@@ -4,6 +4,12 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+## [0.40.6] - 2026-11-04
+
+Patch on 0.40.5. Local build; not published.
+
+- **The open AI Team member is the selected row in the left menu.** Open a member and its own row lights up, not the Team row above it, so you always see who you are looking at.
+
 ## [0.40.5] - 2026-11-04
 
 Patch on 0.40.4: every approved branch of the last days in one local build. Account usage that is right and fast, a Super chat that uses wide screens, parked chats that stay visible, a calmer Team row and a Codex that can ask you a question, and tool cards that tell the truth on Codex and Gemini. Local build; not published.
