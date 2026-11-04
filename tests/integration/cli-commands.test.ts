@@ -1502,25 +1502,23 @@ parent_task: null
 
   describe('install-skill --packs', () => {
     it('installs a specific pack by name', () => {
-      const output = run('install-skill --packs engineering', tmpDir);
-      expect(output).toContain('engineering');
+      const output = run('install-skill --packs growth', tmpDir);
+      expect(output).toContain('growth');
       expect(output).toContain('files installed');
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'SKILL.md'))).toBe(true);
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'backend-principles.md'))).toBe(true);
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'web-app-frontend.md'))).toBe(true);
-    });
-
-    it('installs firebase sub-skills with references', () => {
-      run('install-skill --packs engineering', tmpDir);
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'firebase-cloud-functions', 'SKILL.md'))).toBe(true);
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'firebase-cloud-functions', 'references', 'idempotency.md'))).toBe(true);
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'firebase-firestore', 'SKILL.md'))).toBe(true);
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'firebase-firestore', 'references', 'security_rules.md'))).toBe(true);
+      expect(existsSync(join(tmpDir, '.claude', 'skills', 'growth', 'SKILL.md'))).toBe(true);
+      expect(existsSync(join(tmpDir, '.claude', 'skills', 'growth', 'performance-marketing.md'))).toBe(true);
     });
 
     it('installs related agents alongside pack', () => {
-      run('install-skill --packs engineering', tmpDir);
+      run('install-skill --packs goal-skill', tmpDir);
       expect(existsSync(join(tmpDir, '.claude', 'agents', 'reviewer.md'))).toBe(true);
+      expect(existsSync(join(tmpDir, '.claude', 'agents', 'goal-implementer.md'))).toBe(true);
+    });
+
+    it('the retired engineering pack is not offered', () => {
+      const output = run('install-skill --packs engineering', tmpDir);
+      expect(output).toContain('not found');
+      expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering'))).toBe(false);
     });
 
     it('installs brand-voice pack with discover-brand agent', () => {
@@ -1535,8 +1533,8 @@ parent_task: null
     });
 
     it('installs multiple packs at once', () => {
-      const output = run('install-skill --packs engineering growth', tmpDir);
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'SKILL.md'))).toBe(true);
+      const output = run('install-skill --packs council growth', tmpDir);
+      expect(existsSync(join(tmpDir, '.claude', 'skills', 'council', 'SKILL.md'))).toBe(true);
       expect(existsSync(join(tmpDir, '.claude', 'skills', 'growth', 'SKILL.md'))).toBe(true);
       expect(output).toContain('files installed');
     });
@@ -1546,15 +1544,21 @@ parent_task: null
       expect(existsSync(join(tmpDir, '.claude', 'skills', 'system-prompts', 'SKILL.md'))).toBe(true);
     });
 
-    it('no longer recommends design next to engineering: design is core', () => {
-      const output = run('install-skill --packs engineering', tmpDir);
-      expect(output).not.toContain('recommends');
-    });
-
     it('answers a request for the old design pack with where it went', () => {
       const output = run('install-skill --packs design', tmpDir);
       expect(output).toContain('core skill now');
       expect(output).not.toContain('not found');
+    });
+
+    it('warns about cross-pack dependencies', () => {
+      const output = run('install-skill --packs goal-skill', tmpDir);
+      expect(output).toContain('recommends');
+      expect(output).toContain('multi-review');
+    });
+
+    it('suppresses cross-pack warning when dep is also selected', () => {
+      const output = run('install-skill --packs goal-skill multi-review', tmpDir);
+      expect(output).not.toContain('recommends');
     });
 
     it('errors on unknown pack name', () => {
@@ -1566,28 +1570,22 @@ parent_task: null
 
   describe('install-skill --skill', () => {
     it('installs a single sub-skill', () => {
-      const output = run('install-skill --skill backend-principles', tmpDir);
-      expect(output).toContain('backend-principles');
-      expect(output).toContain('engineering');
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'backend-principles.md'))).toBe(true);
-    });
-
-    it('installs a sub-skill with references', () => {
-      run('install-skill --skill firebase-firestore', tmpDir);
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'firebase-firestore', 'SKILL.md'))).toBe(true);
-      expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'firebase-firestore', 'references', 'security_rules.md'))).toBe(true);
+      const output = run('install-skill --skill design-web', tmpDir);
+      expect(output).toContain('design-web');
+      expect(output).toContain('design');
+      expect(existsSync(join(tmpDir, '.claude', 'skills', 'design', 'design-web.md'))).toBe(true);
     });
 
     it('warns when base pack is not installed', () => {
-      const output = run('install-skill --skill backend-principles', tmpDir);
+      const output = run('install-skill --skill design-web', tmpDir);
       expect(output).toContain('Base');
-      expect(output).toContain('engineering');
+      expect(output).toContain('design');
       expect(output).toContain('not installed');
     });
 
     it('does not warn when base pack is already installed', () => {
-      run('install-skill --packs engineering', tmpDir);
-      const output = run('install-skill --skill backend-principles', tmpDir);
+      run('install-skill --packs design', tmpDir);
+      const output = run('install-skill --skill design-web', tmpDir);
       expect(output).not.toContain('not installed');
     });
 
@@ -1601,12 +1599,12 @@ parent_task: null
   describe('install-skill --list', () => {
     it('shows all available packs and skills', () => {
       const output = run('install-skill --list', tmpDir);
-      expect(output).toContain('engineering');
+      expect(output).toContain('multi-review');
       expect(output).toContain('growth');
       expect(output).toContain('brand-voice');
       expect(output).toContain('system-prompts');
-      expect(output).toContain('backend-principles');
-      expect(output).toContain('firebase-cloud-functions');
+      expect(output).toContain('frontend-principles');
+      expect(output).toContain('performance-marketing');
     });
 
     it('shows always active badge', () => {
@@ -1615,7 +1613,7 @@ parent_task: null
     });
 
     it('shows installed status for installed packs', () => {
-      run('install-skill --packs engineering', tmpDir);
+      run('install-skill --packs design', tmpDir);
       const output = run('install-skill --list', tmpDir);
       expect(output).toContain('installed');
     });

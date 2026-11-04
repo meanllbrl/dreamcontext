@@ -76,7 +76,7 @@ Inside a panel, card or dialog, respond to the container (`@container`), not the
 
 ## IV. High-Performance Motion
 
-> Animation property safety (green/red list) is also covered in `web-app-frontend`. The rules below focus on **design patterns and advanced techniques**.
+> The rules below focus on **design patterns and advanced techniques**.
 
 ### Advanced Techniques
 - **FLIP / Ghost Elements**: For structural changes (sorting lists, moving items to cart), use a "Ghost" clone. Calculate Start/End positions, then `translate` the ghost.
@@ -122,7 +122,7 @@ Conversion is not just logical (objection removal); it is emotional (desire crea
 
 ## VI. Trust-Building Design Patterns
 
-> These patterns apply to websites/landing pages in high-stakes domains (fintech, health, security, B2B SaaS). For in-app trust implementation, see `web-app-frontend`.
+> These patterns apply to websites/landing pages in high-stakes domains (fintech, health, security, B2B SaaS).
 
 ### When Polish = Trust
 

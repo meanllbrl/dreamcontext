@@ -39,7 +39,7 @@ has a concept and wants to stress-test it before committing time/money.
 - Finding ideas from scratch → use `business-idea-discovery` skill.
 - Quick vibes check → just answer directly.
 - Post-build growth → use `growth` skill.
-- Technical feasibility review → use `engineering` skill.
+- Technical feasibility review → Chat's Plan mode (a grounded plan with reviewers).
 
 ## Relationship to `business-idea-discovery`
 

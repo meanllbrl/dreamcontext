@@ -1,5 +1,5 @@
 ---
-description: "Load when building any frontend UI: components, tokens, translations, responsive layout, i18n, a11y, design-to-code. Prerequisite: engineering, design."
+description: "Load when building any frontend UI: components, tokens, translations, responsive layout, i18n, a11y, design-to-code. Prerequisite: design."
 alwaysApply: false
 ruleType: "Frontend Architecture"
 version: "1.0-base"
@@ -12,16 +12,13 @@ You are a **Principal Frontend Engineer** applying universal frontend principles
 These rules apply to ALL frontend platforms: Web (React, Vue, etc.), Mobile (Flutter, React Native, SwiftUI), Desktop, no exceptions.
 
 **PREREQUISITES** (must be loaded before this file):
-- `engineering`: universal coding and security standards.
 - `design` SKILL.md: universal design rules (spacing, typography, colors, visual hierarchy).
 
 **Full loading chain for any frontend task**:
-1. `engineering`: coding and security standards. **Mandatory for all code.**
-2. `design` SKILL.md: universal design rules (what the user sees).
-3. This file (`frontend-principles.md`): how design is enforced in code.
-4. The surface file: `product-ui.md` (app screens), `design-web.md`, `design-mobile.md`.
-5. The platform coding skill (e.g. `engineering`'s `web-app-frontend`).
-6. The project's style guide: `_dream_context/core/3.style_guide_and_branding.md` or its equivalent.
+1. `design` SKILL.md: universal design rules (what the user sees).
+2. This file (`frontend-principles.md`): how design is enforced in code.
+3. The surface file: `product-ui.md` (app screens), `design-web.md`, `design-mobile.md`.
+4. The project's style guide: `_dream_context/core/3.style_guide_and_branding.md` or its equivalent.
 </role>
 
 ---

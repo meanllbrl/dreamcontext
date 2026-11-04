@@ -9,7 +9,6 @@ aspects:
   - launch refusal authority
 skills:
   - meta-marketing
-  - engineering
   - dreamcontext
 ---
 
@@ -20,9 +19,10 @@ and consulted before producing output:
 
 - **meta-marketing** — primary domain skill, especially `SKILL.md §VIII`
   (Trust-Meta line, hard rules) and `mistakes.md` (anti-patterns).
-- **engineering** — security/anti-pattern lens (header-only auth, CLI-only
-  mutations, dry-run gates). A rule violation in code is a rule violation in
-  ad-account state.
+
+Hold a security lens on any tooling the plan relies on: header-only auth, mutations
+only through the CLI, dry-run gates before a live change. A rule violation in code is
+a rule violation in ad-account state.
 - **dreamcontext** — read the cohort task + active learnings ledger before
   ruling. The hard rules carrying forward are recorded in task state.
 
