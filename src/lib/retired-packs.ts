@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, rmdirSync, rmSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { installAgentForPlatform } from './install-packs.js';
-import { isCustomizedAgent } from './sleep-specialist-frontmatter.js';
-import { dreamcontextVersion, recordFile, type Manifest } from './manifest.js';
+import { agentBaselineSha, isCustomizedAgent } from './sleep-specialist-frontmatter.js';
+import { dreamcontextVersion, recordFile, PRE_MANIFEST_VERSION, type Manifest } from './manifest.js';
 
 /**
  * Skill packs dreamcontext once shipped and has retired.
@@ -19,8 +19,11 @@ import { dreamcontextVersion, recordFile, type Manifest } from './manifest.js';
  * match proves the copy is unmodified.
  *
  * `keepAgents` are agents the retired pack used to install that still ship in another
- * pack. A project that only had the retired pack keeps them, refreshed from the package,
- * instead of losing them to the stale prune.
+ * pack, each with the canonical hash (`agentBaselineSha`) of every version it shipped. A
+ * project that only had the retired pack keeps them, refreshed from the package, instead
+ * of losing them to the stale prune. The hashes matter on a project with no manifest (a
+ * fresh clone or worktree: `_dream_context/state/` is gitignored): there the bootstrap
+ * records the agent as a legacy file, and only its content can prove it is ours.
  */
 export interface RetiredPack {
   name: string;
@@ -28,7 +31,7 @@ export interface RetiredPack {
   /** One line for the user: where the pack's content went. */
   replacedBy: string;
   shipped: Readonly<Record<string, readonly string[]>>;
-  keepAgents: readonly string[];
+  keepAgents: Readonly<Record<string, readonly string[]>>;
 }
 
 export const RETIRED_PACKS: readonly RetiredPack[] = [
@@ -57,7 +60,17 @@ export const RETIRED_PACKS: readonly RetiredPack[] = [
       'firebase-firestore/references/security_rules.md': ['0fa0204822a98e98595c66fbcb8bc8bfb6030bfd2c40a17992338d62395ba282'],
       'firebase-firestore/references/web_sdk_usage.md': ['c07f07b09b9e6744b6d3168f27dfaec07c4ed3371bf8817b160a909c1af0a9bf'],
     },
-    keepAgents: ['reviewer'],
+    // Every reviewer.md the package shipped up to 0.40.6, canonical form (model/effort excluded).
+    keepAgents: {
+      reviewer: [
+        '4f4894bf7d897ae2e34bdadcac08c22ff8acfd6da3866307999e9ac2e064074d',
+        '5522fa4b0bf96fc46eb7a98a1a8be07ac2ff36eb2418e8c0fcdc757620eab15d',
+        '6fcbb459689c9301ebe2eacdf4587195cbcbee4b5d4770cf8b6a4ec141d47e1a',
+        '7bbed1f539e0714591337215552681e272c9b48bc1477999ada1ce1ae8f3520e',
+        '8227b510fa3219b7520135ef704c0621279132149f77ed8ddf1881464f7ab592',
+        'd7730f23f049341b9a2c74ed1335f79de9a0e251029c4aaa30efa307b28fa8aa',
+      ],
+    },
   },
 ];
 
@@ -119,6 +132,8 @@ export function pruneRetiredPacks(
     const prefix = `${folderRel}/`;
     const wasTracked = (rel: string): boolean => Boolean(oldManifest.files[rel]);
     const keptTracked: string[] = [];
+    const keptHere: string[] = [];
+    const stuck: string[] = [];
 
     const folder = join(projectRoot, folderRel);
     let isDir = false;
@@ -130,6 +145,7 @@ export function pruneRetiredPacks(
     } catch {
       // not installed
     }
+    const hadPack = isDir || Boolean(oldManifest.packs[pack.name]);
 
     if (isLink) {
       if (oldManifest.packs[pack.name]) {
@@ -144,67 +160,112 @@ export function pruneRetiredPacks(
         const rel = `${prefix}${inPack}`;
         const ours = (pack.shipped[inPack] ?? []).includes(sha256(readFileSync(abs)));
         if (ours) {
-          rmSync(abs, { force: true });
-          result.removed.push(rel);
+          try {
+            rmSync(abs, { force: true });
+            result.removed.push(rel);
+          } catch (e: unknown) {
+            // One locked file (Windows EBUSY, a read-only file) must not abort the update:
+            // keep it tracked so the next run tries again.
+            result.kept.push(rel);
+            stuck.push(rel);
+            result.notes.push(`Could not remove ${rel}: ${e instanceof Error ? e.message : String(e)}`);
+          }
         } else {
           result.kept.push(rel);
+          keptHere.push(rel);
           if (wasTracked(rel)) keptTracked.push(rel);
         }
       }
       for (const abs of links) {
         const rel = `${prefix}${toPosix(relative(folder, abs))}`;
         result.kept.push(rel);
+        keptHere.push(rel);
         if (wasTracked(rel)) keptTracked.push(rel);
       }
-      removeEmptyDirs(folder);
+      try {
+        removeEmptyDirs(folder);
+      } catch {
+        // A folder that will not go is harmless: the files that mattered are decided above.
+      }
     }
 
-    if (result.removed.some((r) => r.startsWith(prefix))) {
+    // "Once": this is the run that retires the pack, i.e. it removed shipped files, still had
+    // the user's files tracked, or still had the pack recorded. Afterwards none of those holds.
+    const removedHere = result.removed.some((r) => r.startsWith(prefix));
+    const retiringNow = removedHere || keptTracked.length > 0 || Boolean(oldManifest.packs[pack.name]);
+    if (removedHere) {
       result.notes.push(`Removed the retired ${pack.name} skill pack: ${pack.replacedBy}.`);
     }
-    if (keptTracked.length > 0) {
+    if (keptHere.length > 0 && retiringNow) {
       result.notes.push(
-        `Kept ${keptTracked.length} edited file(s) in ${folderRel}/: the ${pack.name} pack is retired (${pack.replacedBy}), `
+        `Kept ${keptHere.length} file(s) in ${folderRel}/ that differ from what dreamcontext shipped: the ${pack.name} pack is retired (${pack.replacedBy}), `
         + 'and dreamcontext no longer updates or tracks them. Delete the folder when you no longer need it.',
       );
     }
 
-    for (const rel of Object.keys(oldManifest.files)) if (rel.startsWith(prefix)) delete oldManifest.files[rel];
+    for (const rel of Object.keys(oldManifest.files)) if (rel.startsWith(prefix) && !stuck.includes(rel)) delete oldManifest.files[rel];
     for (const rel of Object.keys(newManifest.files)) if (rel.startsWith(prefix)) delete newManifest.files[rel];
+    // A file that could not be removed stays tracked, so the next update tries it again.
+    for (const rel of stuck) recordFile(newManifest, rel, oldManifest.files[rel]?.version ?? dreamcontextVersion(), 'pack-skill');
     delete oldManifest.packs[pack.name];
     delete newManifest.packs[pack.name];
 
-    for (const agent of pack.keepAgents) keepAgent(projectRoot, agent, oldManifest, newManifest, packsDir, result);
+    for (const [agent, shippedShas] of Object.entries(pack.keepAgents)) {
+      keepAgent(projectRoot, pack.name, agent, shippedShas, hadPack, retiringNow, oldManifest, newManifest, packsDir, result);
+    }
   }
   return result;
 }
 
 /**
  * An agent the retired pack installed, still shipped elsewhere, that no pack installed this
- * run: keep it (refreshed when unedited) instead of letting the stale prune delete it.
+ * run: keep it (refreshed when it is exactly a version we shipped) instead of letting the
+ * stale prune delete it, or, on a project with no manifest, leave a stale copy that still
+ * names the retired skill.
+ *
+ * Ours when the manifest says so (`pack-agent`, judged against its install baseline), or,
+ * when the retired pack was present and the agent has no real record (no manifest: the
+ * bootstrap marks it a legacy file), when its content matches a shipped version.
  */
 function keepAgent(
   projectRoot: string,
+  packName: string,
   name: string,
+  shippedShas: readonly string[],
+  hadPack: boolean,
+  retiringNow: boolean,
   oldManifest: Manifest,
   newManifest: Manifest,
   packsDir: string | null,
   result: RetiredPackResult,
 ): void {
   const rel = `.claude/agents/${name}.md`;
+  if (newManifest.files[rel]) return; // another pack installed it this run
   const recorded = oldManifest.files[rel];
-  if (newManifest.files[rel] || !recorded || recorded.kind !== 'pack-agent') return;
+  const legacy = !recorded || recorded.version === PRE_MANIFEST_VERSION;
+  if (recorded?.kind !== 'pack-agent' && !(hadPack && legacy)) return; // not ours to manage
+
   const abs = join(projectRoot, rel);
   let installed: string;
   try {
-    if (lstatSync(abs).isSymbolicLink()) return;
+    if (lstatSync(abs).isSymbolicLink()) {
+      if (recorded) newManifest.files[rel] = recorded; // never followed, never pruned
+      return;
+    }
     installed = readFileSync(abs, 'utf-8');
   } catch {
     return; // gone: nothing to keep
   }
+
+  const edited = recorded?.kind === 'pack-agent' && !legacy
+    ? isCustomizedAgent(installed, recorded.baselineSha)
+    : !shippedShas.includes(agentBaselineSha(installed));
   const source = packsDir ? join(packsDir, 'agents', `${name}.md`) : null;
-  if (!source || !existsSync(source) || isCustomizedAgent(installed, recorded.baselineSha)) {
-    newManifest.files[rel] = recorded; // the user's edit, or no package copy: leave it, keep it tracked
+  if (edited || !source || !existsSync(source)) {
+    if (recorded) newManifest.files[rel] = recorded; // the user's edit, or no package copy: leave it, keep it tracked
+    if (edited && retiringNow && new RegExp(`^\\s*-\\s*${packName}\\s*$`, 'm').test(installed)) {
+      result.notes.push(`Kept your edited ${rel}; it still lists the retired ${packName} skill under skills:, which no longer exists. Remove that line.`);
+    }
     return;
   }
   const agent = installAgentForPlatform('claude', projectRoot, source, name);
