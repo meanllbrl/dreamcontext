@@ -101,6 +101,7 @@ const NON_TEXT_FILLS: Record<string, string> = {
   'components/sleepy/chat/cards.css::.chat-surveycard-opt.on .chat-surveycard-opt-mark': 'check mark',
   'components/settings/SettingRow.css::.setting-switch:checked': 'switch track',
   'components/layout/newshell/TeamList.css::.ns-team-switch[aria-checked="true"]': 'switch track (the Ekip list\'s on/off, plan-r10 1d)',
+  'components/layout/newshell/TeamList.css::.ns-team-mrow.is-sel::before': 'selected-row marker bar (2px, no text)',
   'components/sleepy/AgentTerminal.css::.agent-tab-menu-switch[data-on]': 'switch track',
   'components/sleepy/chat/composer.css::.chat-cmp-handoffswitch-track[data-on]': 'switch track',
   'components/sleepy/chat/notices.css::.chat-notice-ctx-bar[data-pending]::after': 'progress sweep (bar)',
